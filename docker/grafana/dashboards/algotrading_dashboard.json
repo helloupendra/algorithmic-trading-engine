@@ -1,0 +1,91 @@
+{
+  "title": "AlgoTrading Dashboard",
+  "tags": [
+    "algotrading"
+  ],
+  "timezone": "browser",
+  "refresh": "5s",
+  "schemaVersion": 30,
+  "panels": [
+    {
+      "title": "Redis Queue Lag",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "algotrading_redis_lag_seconds",
+          "legendFormat": "Lag (seconds)"
+        }
+      ]
+    },
+    {
+      "title": "End-to-End Latency (C# API)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "rate(algotrading_tick_processing_latency_seconds_sum[1m]) / rate(algotrading_tick_processing_latency_seconds_count[1m])",
+          "legendFormat": "Avg Processing Latency"
+        }
+      ]
+    },
+    {
+      "title": "Strategy Loop Duration",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "rate(algotrading_strategy_loop_duration_seconds_sum[1m]) / rate(algotrading_strategy_loop_duration_seconds_count[1m])",
+          "legendFormat": "Avg Loop Duration"
+        }
+      ]
+    },
+    {
+      "title": "Throughput",
+      "type": "stat",
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 6,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "rate(algotrading_ticks_processed_total[1m])",
+          "legendFormat": "Ticks/sec"
+        }
+      ]
+    },
+    {
+      "title": "Orders Emitted",
+      "type": "stat",
+      "gridPos": {
+        "x": 18,
+        "y": 8,
+        "w": 6,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "increase(algotrading_orders_emitted_total[1h])",
+          "legendFormat": "Orders/hr"
+        }
+      ]
+    }
+  ]
+}

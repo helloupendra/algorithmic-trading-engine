@@ -1,77 +1,104 @@
-version: '3.8'
+# AlgoTrading local infrastructure.
+#
+# Lives at the repo root so `docker compose` picks up the sibling `.env`
+# automatically. Run everything with:
+#
+#   docker compose up -d
+#
+# Config files for Prometheus and Grafana stay under ./docker.
+#
+# Every credential below comes from `.env` (see `.env.example`). The `:?` form
+# makes compose refuse to start with a clear error rather than silently booting
+# with a blank password.
+
+name: algotrading
 
 services:
-  # --- Infrastructure ---
-  postgres:
+  timescaledb:
     image: timescale/timescaledb:latest-pg15
-    container_name: algo_timescale
+    container_name: algotrading_db
     environment:
-      POSTGRES_USER: algo_user
-      POSTGRES_PASSWORD: algo_password
-      POSTGRES_DB: algotrading
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is not set — copy .env.example to .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set — copy .env.example to .env}
+      POSTGRES_DB: ${POSTGRES_DB:-algotrading}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      # Maps our local SQL script to initialize the hypertable on first boot
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
-    restart: unless-stopped
+      - timescaledb_data:/var/lib/postgresql/data
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U algo_user -d algotrading" ]
+      # Lets `docker compose up --wait` and the setup scripts block until
+      # Postgres genuinely accepts connections, instead of guessing with sleep.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
-    container_name: algo_redis
+    container_name: algotrading_redis
+    command: >
+      sh -c 'if [ -n "$$REDIS_PASSWORD" ];
+             then exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD";
+             else exec redis-server --appendonly yes; fi'
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     ports:
-      - "6379:6379"
-    restart: unless-stopped
-    command: redis-server --save 60 1 --loglevel warning
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
 
-  # --- Microservices ---
-  strategy-backend:
-    build:
-      context: ./strategy-backend
-      dockerfile: Dockerfile
-    container_name: algo_strategy_fastapi
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: algotrading_prometheus
     ports:
-      - "8000:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    environment:
-      - DATABASE_URL=postgresql://algo_user:algo_password@postgres:5432/algotrading
-      - REDIS_URL=redis://redis:6379/0
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    extra_hosts:
+      # Lets Prometheus scrape the .NET API/workers running natively on the host.
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
 
-  execution-backend:
-    build:
-      context: ./execution-backend
-      dockerfile: Dockerfile
-    container_name: algo_execution_csharp
-    ports:
-      - "5000:5000"
-    depends_on:
-      - redis
-    environment:
-      - REDIS_URL=redis://redis:6379/0
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: algo_frontend_react
+  grafana:
+    image: grafana/grafana:latest
+    container_name: algotrading_grafana
     ports:
       - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/etc/grafana/dashboards:ro
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
     depends_on:
-      - strategy-backend
-      - execution-backend
+      - prometheus
+    restart: unless-stopped
+
+  # Optional Redis GUI. Not started by default:
+  #   docker compose --profile tools up -d
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: algotrading_redisinsight
+    profiles: ["tools"]
+    ports:
+      - "8001:5540"
+    depends_on:
+      - redis
+    restart: unless-stopped
 
 volumes:
-  postgres_data:
+  timescaledb_data:
   redis_data:
+  prometheus_data:
+  grafana_data:

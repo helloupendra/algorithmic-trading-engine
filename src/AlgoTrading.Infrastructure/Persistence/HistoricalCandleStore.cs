@@ -1,0 +1,102 @@
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using AlgoTrading.Application.Interfaces;
+using AlgoTrading.Domain.Entities;
+using AlgoTrading.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+
+namespace AlgoTrading.Infrastructure.Persistence
+{
+    public class HistoricalCandleStore : IHistoricalCandleStore
+    {
+        private readonly TradingDbContext _dbContext;
+
+        public HistoricalCandleStore(TradingDbContext dbContext)
+        {
+            _dbContext = dbContext;
+        }                        
+
+        public async Task<CandleUpsertResult> UpsertAsync(
+            string symbol,
+            string resolution,
+            IReadOnlyList<HistoryCandleBar> candles,
+            CancellationToken cancellationToken = default)
+        {
+            var result = new CandleUpsertResult();
+            if (candles == null || candles.Count == 0)
+                return result;
+
+            var entitiesToInsert = candles.Select(c => new Candle
+            {
+                Symbol = symbol,
+                Resolution = resolution,
+                TimeStampUtc = c.TimestampUtc,
+                Open = c.Open,
+                High = c.High,
+                Low = c.Low,
+                Close = c.Close,
+                Volume = (long)c.Volume
+            }).ToList();
+
+            var timestamps = entitiesToInsert.Select(x => x.TimeStampUtc).ToList();
+
+            var existingCandles = await _dbContext.Candles
+                .Where(x =>
+                    x.Symbol == symbol &&
+                    x.Resolution == resolution &&
+                    timestamps.Contains(x.TimeStampUtc))
+                .ToListAsync(cancellationToken);
+
+            var existingMap = existingCandles.ToDictionary(x => x.TimeStampUtc);
+
+            var newEntities = new List<Candle>();
+
+            foreach (var incoming in entitiesToInsert)
+            {
+                if (!existingMap.TryGetValue(incoming.TimeStampUtc, out var existing))
+                {
+                    newEntities.Add(incoming);
+                    result.Inserted++;
+                }
+                else
+                {
+                    bool changed =
+                        existing.Open != incoming.Open ||
+                        existing.High != incoming.High ||
+                        existing.Low != incoming.Low ||
+                        existing.Close != incoming.Close ||
+                        existing.Volume != incoming.Volume;
+
+                    if (changed)
+                    {
+                        existing.Open = incoming.Open;
+                        existing.High = incoming.High;
+                        existing.Low = incoming.Low;
+                        existing.Close = incoming.Close;
+                        existing.Volume = incoming.Volume;
+
+                        result.Updated++;
+                    }
+                    else
+                    {
+                        result.Skipped++;
+                    }
+                }
+            }
+
+            if (newEntities.Count > 0)
+            {
+                await _dbContext.Candles.AddRangeAsync(newEntities, cancellationToken);
+            }
+
+            if (newEntities.Count > 0 || result.Updated > 0)
+            {
+                await _dbContext.SaveChangesAsync(cancellationToken);
+            }
+
+            return result;
+        }
+    }
+}

@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: 'algotrading_csharp_api'
+    static_configs:
+      - targets: ['host.docker.internal:5025']
+
+  - job_name: 'algotrading_python_engine'
+    static_configs:
+      - targets: ['host.docker.internal:8000']

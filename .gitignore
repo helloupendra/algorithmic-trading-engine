@@ -1,54 +1,144 @@
+# ---------------------------------------------------------------------------
+# Secrets — never commit these. See .env.example for the template.
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+appsettings.Local.json
+appsettings.*.Local.json
+*.pfx
+*.p12
+secrets.json
+
+# ---------------------------------------------------------------------------
+# Private / personal — local only, never published
+# ---------------------------------------------------------------------------
+# Personal strategy scripts. These stay on the developer's machine; the logic
+# they contain is already implemented inside src/AlgoTrading.PythonEngine.
+reference/
+private/
+
+# ---------------------------------------------------------------------------
+# Generated data — re-fetched by scripts/setup.*, never committed
+# ---------------------------------------------------------------------------
+# FYERS instrument masters (~18 MB, refreshed daily by the broker).
+# scripts/fetch-instruments.* downloads current copies into data/instruments/.
+data/instruments/*.csv
+data/**/*.parquet
+data/**/*.db
+
+# ---------------------------------------------------------------------------
+# .NET / C#
+# ---------------------------------------------------------------------------
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+artifacts/
+publish/
+*.user
+*.userosscache
+*.suo
+*.sln.docstates
+*.userprefs
+*.nupkg
+*.snupkg
+project.lock.json
+project.fragment.lock.json
+.packages/
+BenchmarkDotNet.Artifacts/
+TestResults/
+*.trx
+*.coverage
+*.coverxml
+coverage*.json
+coverage*.xml
+coverage*.info
+
+# ---------------------------------------------------------------------------
 # Python
+# ---------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-env/
 build/
 develop-eggs/
 dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
-parts/
 sdist/
-var/
 wheels/
 share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
-# Virtual environments
+# Virtual environments (any name, any depth)
+.venv/
 venv/
+env/
 ENV/
+.venv_temp/
 env.bak/
 venv.bak/
+pip-log.txt
+pip-delete-this-directory.txt
 
-# Environment variables
-.env
+# Test / type-check caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
 
-# .NET / C#
-bin/
-obj/
-*.user
-*.userosscache
-*.sln.docstates
-
-# Node.js / React
+# ---------------------------------------------------------------------------
+# Node.js (future frontend)
+# ---------------------------------------------------------------------------
 node_modules/
-npm-debug.log
-yarn-error.log
-yarn-debug.log
+npm-debug.log*
+yarn-error.log*
+yarn-debug.log*
+pnpm-debug.log*
 .pnp
 .pnp.js
-build/
-dist/
 
-# OS generated files
+# ---------------------------------------------------------------------------
+# Logs and runtime output
+# ---------------------------------------------------------------------------
+*.log
+logs/
+fyersDataSocket.log
+
+# ---------------------------------------------------------------------------
+# IDEs and editors
+# ---------------------------------------------------------------------------
+.vs/
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.iml
+*.ntvs*
+*.njsproj
+*.swp
+*.swo
+*~
+
+# ---------------------------------------------------------------------------
+# OS cruft
+# ---------------------------------------------------------------------------
 .DS_Store
 .DS_Store?
 ._*
@@ -56,11 +146,4 @@ dist/
 .Trashes
 ehthumbs.db
 Thumbs.db
-
-# IDEs / Editors
-.vscode/
-.idea/
-*.suo
-*.ntvs*
-*.njsproj
-*.sln.docstates
+desktop.ini
