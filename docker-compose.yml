@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  # --- Infrastructure ---
+  postgres:
+    image: timescale/timescaledb:latest-pg15
+    container_name: algo_timescale
+    environment:
+      POSTGRES_USER: algo_user
+      POSTGRES_PASSWORD: algo_password
+      POSTGRES_DB: algotrading
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Maps our local SQL script to initialize the hypertable on first boot
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U algo_user -d algotrading" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: algo_redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+
+  # --- Microservices ---
+  strategy-backend:
+    build:
+      context: ./strategy-backend
+      dockerfile: Dockerfile
+    container_name: algo_strategy_fastapi
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      - DATABASE_URL=postgresql://algo_user:algo_password@postgres:5432/algotrading
+      - REDIS_URL=redis://redis:6379/0
+
+  execution-backend:
+    build:
+      context: ./execution-backend
+      dockerfile: Dockerfile
+    container_name: algo_execution_csharp
+    ports:
+      - "5000:5000"
+    depends_on:
+      - redis
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: algo_frontend_react
+    ports:
+      - "3000:3000"
+    depends_on:
+      - strategy-backend
+      - execution-backend
+
+volumes:
+  postgres_data:
+  redis_data:
