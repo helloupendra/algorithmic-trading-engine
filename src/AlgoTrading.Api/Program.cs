@@ -2,6 +2,9 @@
 /// Application entry point. Configures services, routing, Swagger UI, and the DI container.
 /// </summary>
 
+using Microsoft.AspNetCore.Authorization;
+using AlgoTrading.Domain.Constants;
+using AlgoTrading.Api.Security;
 using AlgoTrading.Application.Configuration;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Domain.Entities;
@@ -64,6 +67,9 @@ builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.Configure<JwtOptions>(
     builder.Configuration.GetSection("Jwt"));
 
+builder.Services.Configure<AlgoTrading.Api.Configuration.StrategyRunnerOptions>(
+    builder.Configuration.GetSection(AlgoTrading.Api.Configuration.StrategyRunnerOptions.SectionName));
+
 builder.Services.AddScoped<PasswordHasher<AppUser>>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 
@@ -92,15 +98,32 @@ builder.Services
         };
     });
 
-builder.Services.AddAuthorization();
+// Deny by default. Any endpoint without explicit authorization metadata requires a
+// valid token, so a newly added controller is protected the moment it is written
+// rather than the moment someone remembers to add [Authorize]. Public endpoints
+// (login, register, broker OAuth callback, metrics) opt out with [AllowAnonymous].
+builder.Services.AddAuthorizationBuilder()
+    .SetFallbackPolicy(new AuthorizationPolicyBuilder()
+        .RequireAuthenticatedUser()
+        .Build())
+    .AddPolicy(AuthorizationPolicies.AdminOnly, policy =>
+        policy.RequireRole(UserRoles.Admin));
+
+// The browser client sends its bearer token from a different origin, so the allowed
+// origins are explicit and configurable. AllowAnyOrigin is never used: combined with
+// credentialed requests it would let any site on the internet drive this API.
+var corsOrigins = builder.Configuration
+    .GetSection("Cors:AllowedOrigins")
+    .Get<string[]>() ?? new[] { "http://localhost:5173", "http://localhost:3000" };
 
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowAll", builder =>
+    options.AddPolicy(CorsPolicies.WebClient, policy =>
     {
-        builder.AllowAnyOrigin()
-               .AllowAnyMethod()
-               .AllowAnyHeader();
+        policy.WithOrigins(corsOrigins)
+              .AllowAnyMethod()
+              .AllowAnyHeader()
+              .AllowCredentials();
     });
 });
 
@@ -119,13 +142,16 @@ if (app.Environment.IsDevelopment())
 app.UseRouting();
 app.UseHttpMetrics();
 
-app.UseCors("AllowAll");
+app.UseCors(CorsPolicies.WebClient);
 
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
-app.MapMetrics();
+
+// Prometheus scrapes this without a bearer token, so it opts out of the fallback
+// policy. Keep the port off the public internet.
+app.MapMetrics().AllowAnonymous();
 
 
 
@@ -138,6 +164,11 @@ using (var scope = app.Services.CreateScope())
 
     var seeder = services.GetRequiredService<ReferenceDataSeeder>();
     await seeder.SeedAsync();
+
+    // Runs after seeding so it can promote a seeded account if one matches.
+    var adminBootstrapper = services.GetRequiredService<AdminBootstrapper>();
+    await adminBootstrapper.EnsureAdminAsync();
+    await adminBootstrapper.EnsureServiceAccountAsync();
 }
 
 

@@ -142,7 +142,8 @@ public class AuthService : IAuthService
             {
                 Id = existing.User.Id,
                 UserName = existing.User.UserName,
-                Email = existing.User.Email
+                Email = existing.User.Email,
+                Role = existing.User.Role
             }
         };
     }
@@ -180,7 +181,12 @@ public class AuthService : IAuthService
         {
             Id = user.Id,
             UserName = user.UserName,
-            Email = user.Email
+            Email = user.Email,
+            Role = user.Role,
+            TotalCapital = user.TotalCapital,
+            IsActive = user.IsActive,
+            CreatedUtc = user.CreatedUtc,
+            LastLoginUtc = user.LastLoginUtc
         };
     }
 
@@ -192,7 +198,12 @@ public class AuthService : IAuthService
             {
                 Id = user.Id,
                 UserName = user.UserName,
-                Email = user.Email
+                Email = user.Email,
+                Role = user.Role,
+                TotalCapital = user.TotalCapital,
+                IsActive = user.IsActive,
+                CreatedUtc = user.CreatedUtc,
+                LastLoginUtc = user.LastLoginUtc
             })
             .ToListAsync(cancellationToken);
     }
@@ -210,7 +221,12 @@ public class AuthService : IAuthService
         {
             Id = user.Id,
             UserName = user.UserName,
-            Email = user.Email
+            Email = user.Email,
+            Role = user.Role,
+            TotalCapital = user.TotalCapital,
+            IsActive = user.IsActive,
+            CreatedUtc = user.CreatedUtc,
+            LastLoginUtc = user.LastLoginUtc
         };
     }
 
@@ -254,18 +270,28 @@ public class AuthService : IAuthService
             {
                 Id = user.Id,
                 UserName = user.UserName,
-                Email = user.Email
+                Email = user.Email,
+                Role = user.Role
             }
         };
     }
 
     private string GenerateAccessToken(AppUser user)
     {
+        // ClaimTypes.Role is what [Authorize(Roles = ...)] reads by default. Fall back
+        // to Trader so a row predating the role column can never be treated as Admin.
+        var role = AlgoTrading.Domain.Constants.UserRoles.Normalize(user.Role)
+                   ?? AlgoTrading.Domain.Constants.UserRoles.Trader;
+
         var claims = new List<Claim>
         {
             new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
             new Claim(JwtRegisteredClaimNames.UniqueName, user.UserName),
-            new Claim(JwtRegisteredClaimNames.Email, user.Email)
+            new Claim(JwtRegisteredClaimNames.Email, user.Email),
+            new Claim(ClaimTypes.Role, role),
+            // Duplicated under the short name so non-.NET consumers (the web client)
+            // can read the role straight off the decoded token payload.
+            new Claim("role", role)
         };
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtOptions.SecretKey));

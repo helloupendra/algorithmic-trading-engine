@@ -1,4 +1,5 @@
 import requests
+from core.api_client import api_get, api_post, api_delete, api_put
 import argparse
 import time
 import sys
@@ -16,7 +17,7 @@ from core.config import API_BASE_URL
 def fetch_and_display(run_id: int):
     try:
         # Fetch Portfolio
-        resp_port = requests.get(f"{API_BASE_URL}/api/Simulator/runs/{run_id}/portfolio", verify=False)
+        resp_port = api_get(f"{API_BASE_URL}/api/Simulator/runs/{run_id}/portfolio", verify=False)
         if resp_port.status_code == 404:
             print(f"Simulation run {run_id} not found.")
             return False
@@ -25,12 +26,12 @@ def fetch_and_display(run_id: int):
         portfolio = resp_port.json()
 
         # Fetch Positions
-        resp_pos = requests.get(f"{API_BASE_URL}/api/Simulator/runs/{run_id}/positions", verify=False)
+        resp_pos = api_get(f"{API_BASE_URL}/api/Simulator/runs/{run_id}/positions", verify=False)
         resp_pos.raise_for_status()
         positions = resp_pos.json()
 
         # Fetch Orders
-        resp_ord = requests.get(f"{API_BASE_URL}/api/Simulator/runs/{run_id}/orders", verify=False)
+        resp_ord = api_get(f"{API_BASE_URL}/api/Simulator/runs/{run_id}/orders", verify=False)
         resp_ord.raise_for_status()
         orders = resp_ord.json()
 

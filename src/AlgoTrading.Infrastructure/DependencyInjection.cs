@@ -134,6 +134,7 @@ public static class DependencyInjection
         services.AddScoped<IEquityGroupService, EquityGroupService>();
 
         services.AddScoped<ReferenceDataSeeder>();
+        services.AddScoped<AdminBootstrapper>();
 
         services.AddScoped<IEquityLiveSnapshotService, EquityLiveSnapshotService>();
 

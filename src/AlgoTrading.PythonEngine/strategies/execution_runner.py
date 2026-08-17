@@ -8,6 +8,7 @@ import os
 import threading
 import redis
 import requests
+from core.api_client import build_session
 import urllib3
 from typing import List, Dict, Any, Optional
 
@@ -15,12 +16,31 @@ from typing import List, Dict, Any, Optional
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from messaging.redis_subscriber import build_subscriber_from_env
-from strategies.base_strategy import StrategyInput, StrategySignal, OptionContract
-from strategies.titli.titli_standard import TitliStrategy
-from strategies.titli.titli_2_straddle_20 import Titli2Straddle20Strategy
-from strategies.titli.titli_3_straddle_175 import Titli3Straddle175Strategy
-from strategies.titli.titli_multi import TitliMultiStraddleStrategy
-from strategies.titli.titli_qty_adj import TitliQtyAdjustmentStrategy
+import pkgutil
+import inspect
+import importlib
+import strategies
+from strategies.base_strategy import StrategyInput, StrategySignal, OptionContract, BaseStrategy
+
+try:
+    from strategies.private_strategies import get_private_strategies
+except ImportError:
+    def get_private_strategies(): return {}
+
+def discover_strategies() -> Dict[str, Any]:
+    discovered = {}
+    for info in pkgutil.walk_packages(strategies.__path__, strategies.__name__ + "."):
+        try:
+            module = importlib.import_module(info.name)
+            for name, obj in inspect.getmembers(module, inspect.isclass):
+                if issubclass(obj, BaseStrategy) and obj is not BaseStrategy:
+                    if obj.__module__ == info.name:
+                        strategy_name = getattr(obj, "name", obj.__name__)
+                        discovered[strategy_name] = lambda cls=obj: cls()
+        except Exception:
+            pass
+    return discovered
+
 
 from state_management.state_models import StrategyState
 from state_management.state_store import StrategyStateStore
@@ -61,7 +81,7 @@ class PlatformApiClient:
     def __init__(self, base_url: str, verify_ssl: bool = False):
         self.base_url = base_url.rstrip("/")
         self.verify_ssl = verify_ssl
-        self.http = requests.Session()
+        self.http = build_session()
 
     def get_latest_quote(self, symbol: str) -> Dict[str, Any]:
         resp = self.http.get(
@@ -317,24 +337,19 @@ def wait_for_contract_price(api: PlatformApiClient, symbol: str, retries: int = 
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run a specific Titli Strategy.")
-    parser.add_argument("--strategy", type=str, required=True, help="The strategy name to run (e.g., Titli, Titli2Straddle20, TitliMulti50).")
+    parser = argparse.ArgumentParser(description="Run a specific strategy.")
+    parser.add_argument("--strategy", type=str, required=True, help="The strategy name to run (e.g., ExampleStraddle).")
     parser.add_argument("--user-id", type=int, required=True, help="The User ID to associate with this simulation run.")
     parser.add_argument("--run-id", type=int, required=False, help="Optional: The SimulationRunId generated from the C# Backend API. If not provided, a new run will be created automatically.")
     args = parser.parse_args()
 
     api = PlatformApiClient(API_BASE_URL, verify_ssl=VERIFY_SSL)
 
-    # Dictionary to pick strategy
-    strategies_map = {
-        "Titli": lambda: TitliStrategy(params={"strike_step": 100}),
-        "Titli2Straddle20": lambda: Titli2Straddle20Strategy(params={"adjustment_threshold": 20}),
-        "Titli3Straddle175": lambda: Titli3Straddle175Strategy(),
-        "TitliMulti50": lambda: TitliMultiStraddleStrategy(params={"adjustment_threshold": 50, "minor_threshold": 10}),
-        "TitliMulti70": lambda: TitliMultiStraddleStrategy(params={"adjustment_threshold": 70, "minor_threshold": 10}),
-        "TitliMulti90": lambda: TitliMultiStraddleStrategy(params={"adjustment_threshold": 90, "minor_threshold": 10}),
-        "TitliQtyAdjustment": lambda: TitliQtyAdjustmentStrategy(params={"adjustment_threshold": 70, "minor_threshold": 10}),
-    }
+    # Dynamically discover all BaseStrategy subclasses in the strategies folder
+    strategies_map = discover_strategies()
+    
+    # Update with any explicit overrides/parameterized instances from private_strategies.py
+    strategies_map.update(get_private_strategies())
 
     if args.strategy not in strategies_map:
         print(f"ERROR: Strategy '{args.strategy}' not found. Available strategies: {list(strategies_map.keys())}")
@@ -347,7 +362,13 @@ if __name__ == "__main__":
     if not expiries:
         raise RuntimeError(f"No expiries found for {UNDERLYING}")
 
-    expiry_date = str(expiries[0]["expiryDate"])
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    valid_expiries = [x for x in expiries if str(x["expiryDate"]) >= today_str]
+    
+    if not valid_expiries:
+        raise RuntimeError(f"No future expiries found for {UNDERLYING}")
+
+    expiry_date = str(valid_expiries[0]["expiryDate"])
     print(f"Using expiry: {expiry_date}")
 
     run_id = args.run_id

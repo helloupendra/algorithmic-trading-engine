@@ -1,4 +1,5 @@
 import requests
+from core.api_client import api_get, api_post, api_delete, api_put
 import argparse
 import urllib3
 import os
@@ -16,7 +17,7 @@ from core.config import API_BASE_URL
 def get_spot_price(symbol: str) -> float:
     url = f"{API_BASE_URL}/api/LiveData/latest?symbol={symbol}"
     try:
-        response = requests.get(url, verify=False)
+        response = api_get(url, verify=False)
         response.raise_for_status()
         data = response.json()
         ltp = data.get('lastTradedPrice')
@@ -122,7 +123,7 @@ def add_symbols_to_watchlist(symbols: list):
             "DataType": "symbolUpdate"
         }
         try:
-            res = requests.post(url, json=payload, verify=False)
+            res = api_post(url, json=payload, verify=False)
             if res.status_code == 200:
                 success_count += 1
         except Exception as e:

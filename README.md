@@ -266,15 +266,14 @@ python src/AlgoTrading.PythonEngine/data_ingestion/option_chain_tracker.py
 
 # Run a strategy
 python src/AlgoTrading.PythonEngine/strategies/execution_runner.py \
-    --strategy Titli --user-id 1
+    --strategy ExampleStraddle --user-id 1
 
 # Live PnL / positions dashboard
 python src/AlgoTrading.PythonEngine/tools/strategy_live_terminal_dashboard_v2.py \
     --user-id 1
 ```
 
-Available strategies: `Titli`, `Titli2Straddle20`, `Titli3Straddle175`,
-`TitliMulti50`, `TitliMulti70`, `TitliMulti90`, `TitliQtyAdjustment`.
+Available strategies: `ExampleStraddle`. You can add your own by creating them in the `strategies/` directory!
 
 ### Service endpoints
 

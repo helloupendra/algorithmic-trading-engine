@@ -12,6 +12,7 @@ import threading
 import traceback
 import urllib3
 import requests
+from core.api_client import build_session
 import sys
 import os
 from datetime import datetime, timezone
@@ -45,7 +46,7 @@ fyers = None
 subscribed_symbols = set()
 
 # Shared HTTP session
-http = requests.Session()
+http = build_session()
 
 # Heartbeat/watchlist state
 last_watchlist_refresh_utc = None

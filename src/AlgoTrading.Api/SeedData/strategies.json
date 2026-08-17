@@ -1,37 +1,7 @@
 [
   {
-    "Name": "Titli",
-    "Description": "Default short straddle strategy, step 100",
-    "DefaultParametersJson": "{}"
-  },
-  {
-    "Name": "Titli2Straddle20",
-    "Description": "Adjustment threshold: 20",
-    "DefaultParametersJson": "{}"
-  },
-  {
-    "Name": "TitliMulti50",
-    "Description": "Adjustment threshold: 50, minor threshold: 10",
-    "DefaultParametersJson": "{}"
-  },
-  {
-    "Name": "TitliMulti70",
-    "Description": "Adjustment threshold: 70, minor threshold: 10",
-    "DefaultParametersJson": "{}"
-  },
-  {
-    "Name": "TitliMulti90",
-    "Description": "Adjustment threshold: 90, minor threshold: 10",
-    "DefaultParametersJson": "{}"
-  },
-  {
-    "Name": "TitliQtyAdjustment",
-    "Description": "Adjustment threshold: 70, minor threshold: 10",
-    "DefaultParametersJson": "{}"
-  },
-  {
-    "Name": "Titli3Straddle175",
-    "Description": "Strategy variant",
+    "Name": "ExampleStraddle",
+    "Description": "Default example straddle strategy",
     "DefaultParametersJson": "{}"
   }
 ]

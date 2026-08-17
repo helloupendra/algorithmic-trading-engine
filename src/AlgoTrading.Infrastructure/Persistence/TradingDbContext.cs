@@ -45,4 +45,6 @@ public class TradingDbContext : DbContext
 
     public DbSet<AppUser> AppUsers => Set<AppUser>();
     public DbSet<UserRefreshToken> UserRefreshTokens => Set<UserRefreshToken>();
+
+    public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
 }

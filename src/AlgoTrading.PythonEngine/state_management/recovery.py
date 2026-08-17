@@ -92,7 +92,7 @@ keepalive_thread = threading.Thread(target=keepalive_loop, daemon=True)
 keepalive_thread.start()
 
 E. Persist state when a group opens
-Wherever your strategy opens a new group / straddle / Titli structure, add:
+Wherever your strategy opens a new group / straddle structure, add:
 
 # Example after opening a new group
 state.current_group_id = current_group_id

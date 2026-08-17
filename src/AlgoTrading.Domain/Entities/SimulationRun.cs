@@ -57,7 +57,7 @@ namespace AlgoTrading.Domain.Entities
         public string Status { get; set; } = "Pending";
 
         /// <summary>
-        /// The name of the specific strategy implementation being executed (e.g., "Titli").
+        /// The name of the specific strategy implementation being executed (e.g., "ExampleStraddle").
         /// </summary>
         public string StrategyName { get; set; } = string.Empty;
 

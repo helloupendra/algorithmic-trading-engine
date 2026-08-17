@@ -98,10 +98,10 @@ def main():
                     
             elif choice == "7":
                 print("\nStarting Strategy Runner...")
-                print("Available Strategies: Titli, Titli2Straddle20, Titli3Straddle175, TitliMulti50, TitliMulti70, TitliMulti90, TitliQtyAdjustment")
-                strategy = input("Enter Strategy Name [Default: Titli]: ").strip()
+                print("Available Strategies: ExampleStraddle")
+                strategy = input("Enter Strategy Name [Default: ExampleStraddle]: ").strip()
                 if not strategy:
-                    strategy = "Titli"
+                    strategy = "ExampleStraddle"
                 user_id = input("Enter User ID [Default: 1]: ").strip()
                 if not user_id:
                     user_id = "1"

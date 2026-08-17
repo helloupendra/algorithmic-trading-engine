@@ -101,6 +101,11 @@ def as_float(env: dict[str, str], key: str, default: float) -> float:
         return default
 
 
+def split_csv(value: str) -> list[str]:
+    """Split a comma-separated setting into a clean list, dropping empties."""
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
 def main() -> int:
     quiet = "--quiet" in sys.argv
 
@@ -135,6 +140,20 @@ def main() -> int:
         "RiskManagement": {
             "MaxOrdersPerMinute": as_int(env, "RISK_MAX_ORDERS_PER_MINUTE", 50),
             "MaxDailyLoss": as_float(env, "RISK_MAX_DAILY_LOSS", -50000.0),
+        },
+        "Bootstrap": {
+            "AdminUserName": env.get("ADMIN_USERNAME", "admin"),
+            "AdminEmail": env.get("ADMIN_EMAIL", "admin@localhost"),
+            # Empty means "generate one and print it once" — see AdminBootstrapper.
+            "AdminPassword": env.get("ADMIN_PASSWORD", ""),
+            # The Python engine signs in as this account to reach the API.
+            "ServiceUserName": env.get("ENGINE_SERVICE_USERNAME", "engine-service"),
+            "ServicePassword": env.get("ENGINE_SERVICE_PASSWORD", ""),
+        },
+        "Cors": {
+            "AllowedOrigins": split_csv(
+                env.get("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000")
+            ),
         },
     }
 

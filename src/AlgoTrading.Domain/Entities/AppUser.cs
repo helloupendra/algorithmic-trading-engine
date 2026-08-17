@@ -12,6 +12,12 @@ namespace AlgoTrading.Domain.Entities
 
         public string PasswordHash { get; set; } = string.Empty;
 
+        /// <summary>
+        /// Authorization role, one of <see cref="Constants.UserRoles"/>.
+        /// New accounts default to Trader; Admin must be granted deliberately.
+        /// </summary>
+        public string Role { get; set; } = Constants.UserRoles.Trader;
+
         public decimal TotalCapital { get; set; } = 0m;
 
         public bool IsActive { get; set; } = true;

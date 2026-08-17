@@ -19,7 +19,7 @@ public class PaperPosition
     public long SimulationRunId { get; set; }
 
     /// <summary>
-    /// The name of the strategy that opened this position (e.g., "Titli").
+    /// The name of the strategy that opened this position (e.g., "ExampleStraddle").
     /// </summary>
     public string StrategyName { get; set; } = string.Empty;
 

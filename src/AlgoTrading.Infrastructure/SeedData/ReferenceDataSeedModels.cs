@@ -7,6 +7,12 @@ namespace AlgoTrading.Infrastructure.SeedData
         public string Username { get; set; } = string.Empty;
         public string Email { get; set; } = string.Empty;
         public decimal TotalCapital { get; set; }
+
+        /// <summary>
+        /// Optional role. Defaults to Trader when omitted — a seed file can never
+        /// silently mint an administrator.
+        /// </summary>
+        public string? Role { get; set; }
     }
 
     public class StrategySeedItem

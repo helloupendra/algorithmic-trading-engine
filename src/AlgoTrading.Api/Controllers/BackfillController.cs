@@ -1,6 +1,8 @@
 using AlgoTrading.Application.UseCases.MarketData;
 using AlgoTrading.Contracts.MarketData;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
+using AlgoTrading.Api.Security;
 
 
 namespace AlgoTrading.Api.Controllers;
@@ -8,6 +10,7 @@ namespace AlgoTrading.Api.Controllers;
 /// <summary>
 /// Exposes endpoints to manually trigger historical data backfill for a symbol over a specified date range.
 /// </summary>
+[Authorize(Policy = AuthorizationPolicies.AdminOnly)]
 [ApiController]
 [Route("api/[controller]")]
 public class BackfillController : ControllerBase

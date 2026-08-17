@@ -2,9 +2,12 @@
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.Options;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
+using AlgoTrading.Api.Security;
 
 namespace AlgoTrading.Api.Controllers;
 
+[Authorize(Policy = AuthorizationPolicies.AdminOnly)]
 [ApiController]
 [Route("api/Options/history")]
 public class OptionsHistoryController : ControllerBase

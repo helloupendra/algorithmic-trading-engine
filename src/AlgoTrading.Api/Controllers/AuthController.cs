@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using AlgoTrading.Domain.Entities;
+using Microsoft.AspNetCore.Authorization;
 
 namespace AlgoTrading.Api.Controllers;
 
@@ -39,6 +40,7 @@ namespace AlgoTrading.Api.Controllers;
         });
     }
 
+    [AllowAnonymous]
     [HttpGet("callback")]
     public async Task<IActionResult> Callback(
         [FromQuery(Name = "auth_code")] string? authCode,

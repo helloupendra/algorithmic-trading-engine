@@ -1,4 +1,5 @@
 import requests
+from core.api_client import api_get, api_post, api_delete, api_put
 import time
 import argparse
 import urllib3
@@ -21,7 +22,7 @@ def monitor_live_prices(group_name: str, interval: int):
     
     while True:
         try:
-            response = requests.get(url, params={"groupName": group_name}, verify=False)
+            response = api_get(url, params={"groupName": group_name}, verify=False)
             response.raise_for_status()
             
             data = response.json()

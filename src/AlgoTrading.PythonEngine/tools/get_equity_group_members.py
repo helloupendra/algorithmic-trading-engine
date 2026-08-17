@@ -1,4 +1,5 @@
 import requests
+from core.api_client import api_get, api_post, api_delete, api_put
 import argparse
 import urllib3
 import os
@@ -16,7 +17,7 @@ def get_group_members(group_name: str):
     url = f"{API_BASE_URL}/api/Equities/groups/{group_name}/members"
     
     try:
-        response = requests.get(url, verify=False)
+        response = api_get(url, verify=False)
         response.raise_for_status()
         
         members = response.json()

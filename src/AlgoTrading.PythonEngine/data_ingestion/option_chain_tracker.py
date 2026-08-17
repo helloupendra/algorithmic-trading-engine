@@ -1,4 +1,5 @@
 import requests
+from core.api_client import api_get, api_post, api_delete, api_put
 import time
 import argparse
 import urllib3
@@ -22,12 +23,12 @@ class OptionChainRecorder:
         self.active_subscriptions = set()
 
     def get_spot_price(self) -> float:
-        resp = requests.get(f"{API_BASE_URL}/api/LiveData/latest", params={"symbol": self.spot_symbol}, verify=False)
+        resp = api_get(f"{API_BASE_URL}/api/LiveData/latest", params={"symbol": self.spot_symbol}, verify=False)
         resp.raise_for_status()
         return float(resp.json()["lastTradedPrice"])
 
     def get_nearest_expiry(self) -> str:
-        resp = requests.get(f"{API_BASE_URL}/api/Instruments/derivatives/expiries", params={"underlying": self.underlying}, verify=False)
+        resp = api_get(f"{API_BASE_URL}/api/Instruments/derivatives/expiries", params={"underlying": self.underlying}, verify=False)
         resp.raise_for_status()
         expiries = resp.json()
         if not expiries:
@@ -36,7 +37,7 @@ class OptionChainRecorder:
 
     def resolve_symbol(self, expiry: str, strike: int, option_type: str) -> str:
         try:
-            resp = requests.get(
+            resp = api_get(
                 f"{API_BASE_URL}/api/Instruments/derivatives/contract",
                 params={
                     "underlying": self.underlying,
@@ -62,7 +63,7 @@ class OptionChainRecorder:
                 "isActive": True,
                 "priority": priority
             }
-            resp = requests.post(f"{API_BASE_URL}/api/LiveData/watchlist", json=payload, verify=False)
+            resp = api_post(f"{API_BASE_URL}/api/LiveData/watchlist", json=payload, verify=False)
             resp.raise_for_status()
         except Exception as e:
             print(f"Failed to upsert {symbol} to watchlist: {e}")

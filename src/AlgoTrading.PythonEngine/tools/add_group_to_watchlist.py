@@ -1,4 +1,5 @@
 import requests
+from core.api_client import api_get, api_post, api_delete, api_put
 import argparse
 import urllib3
 import os
@@ -20,7 +21,7 @@ def add_group_to_watchlist(group_name: str):
     }
     
     try:
-        response = requests.post(url, json=payload, verify=False)
+        response = api_post(url, json=payload, verify=False)
         response.raise_for_status()
         
         result = response.json()
@@ -44,7 +45,7 @@ def add_symbol_to_watchlist(symbol: str):
     }
     
     try:
-        response = requests.post(url, json=payload, verify=False)
+        response = api_post(url, json=payload, verify=False)
         response.raise_for_status()
         
         result = response.json()

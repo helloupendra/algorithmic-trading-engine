@@ -24,7 +24,12 @@ namespace AlgoTrading.Infrastructure.Persistence.Configurations
             builder.Property(x => x.PasswordHash)
                 .IsRequired()
                 .HasColumnType("text");
-            
+
+            builder.Property(x => x.Role)
+                .IsRequired()
+                .HasMaxLength(50)
+                .HasDefaultValue(Domain.Constants.UserRoles.Trader);
+
             builder.Property(x => x.CreatedUtc).IsRequired();
             builder.Property(x => x.UpdatedUtc).IsRequired();
 

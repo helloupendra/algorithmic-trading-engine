@@ -17,6 +17,7 @@ secrets.json
 # they contain is already implemented inside src/AlgoTrading.PythonEngine.
 reference/
 private/
+src/AlgoTrading.PythonEngine/strategies/titli/
 
 # ---------------------------------------------------------------------------
 # Generated data — re-fetched by scripts/setup.*, never committed
@@ -147,3 +148,4 @@ fyersDataSocket.log
 ehthumbs.db
 Thumbs.db
 desktop.ini
+src/AlgoTrading.PythonEngine/strategies/private_strategies.py

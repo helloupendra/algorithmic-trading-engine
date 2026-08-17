@@ -90,14 +90,13 @@ python data_ingestion/historical_replayer.py \
     --start "2026-06-10T09:15:00" --end "2026-06-10T15:30:00" --speed 10
 
 # Strategy execution
-python strategies/execution_runner.py --strategy Titli --user-id 1
+python strategies/execution_runner.py --strategy ExampleStraddle --user-id 1
 
 # Live PnL / positions dashboard
 python tools/strategy_live_terminal_dashboard_v2.py --user-id 1
 ```
 
-Available strategies: `Titli`, `Titli2Straddle20`, `Titli3Straddle175`,
-`TitliMulti50`, `TitliMulti70`, `TitliMulti90`, `TitliQtyAdjustment`.
+Available strategies: `ExampleStraddle`.
 
 > Ticks published to Redis are only persisted to TimescaleDB while
 > `AlgoTrading.Worker.MarketData` is running:
@@ -114,7 +113,7 @@ Available strategies: `Titli`, `Titli2Straddle20`, `Titli3Straddle175`,
 | `data_ingestion/` | FYERS live stream, option-chain tracker, historical replayer |
 | `messaging/` | Redis Streams publisher and subscriber |
 | `strategies/` | Base strategy contract, execution runner, contract/price resolution |
-| `strategies/titli/` | Titli strategy variants |
+| `strategies/example/` | Example strategy variants |
 | `state_management/` | Strategy state models, store and crash recovery |
 | `tools/` | Monitors, dashboards, watchlist and order-analysis utilities |
 

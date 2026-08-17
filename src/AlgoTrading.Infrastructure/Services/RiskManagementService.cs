@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AlgoTrading.Application.Exceptions;
 using AlgoTrading.Application.Interfaces;
+using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Config;
 using AlgoTrading.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -17,10 +18,18 @@ public class RiskManagementService : IRiskManagementService
 {
     private readonly TradingDbContext _dbContext;
     private readonly RiskManagementSettings _settings;
-    
-    // Global static state for kill switch and rate limiting across scoped instances
-    private static bool _isKillSwitchActive = false;
+
+    // Rate limiting is intentionally in-process: it is a per-instance burst guard,
+    // and losing the window on restart fails safe (the counter restarts at zero).
     private static readonly ConcurrentDictionary<long, ConcurrentQueue<DateTime>> _orderTimestamps = new();
+
+    // The kill switch, by contrast, is persisted. A restart must NOT silently resume
+    // trading after an operator has halted it, so the flag lives in system_settings
+    // and this cache exists only to keep the hot order path off the database.
+    private static volatile bool _killSwitchCache;
+    private static DateTime _killSwitchCacheExpiresUtc = DateTime.MinValue;
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(2);
+    private static readonly SemaphoreSlim CacheLock = new(1, 1);
 
     public RiskManagementService(TradingDbContext dbContext, IOptions<RiskManagementSettings> settings)
     {
@@ -31,7 +40,7 @@ public class RiskManagementService : IRiskManagementService
     public async Task EvaluateOrderAsync(long simulationRunId, string symbol, string side, int quantity, CancellationToken cancellationToken)
     {
         // 1. Check Kill Switch
-        if (_isKillSwitchActive)
+        if (await IsKillSwitchActiveAsync(cancellationToken))
         {
             throw new RiskViolationException("GLOBAL KILL SWITCH IS ACTIVE. ALL ORDERS REJECTED.");
         }
@@ -69,19 +78,86 @@ public class RiskManagementService : IRiskManagementService
     }
 
     public Task ActivateKillSwitchAsync(CancellationToken cancellationToken)
-    {
-        _isKillSwitchActive = true;
-        return Task.CompletedTask;
-    }
+        => SetKillSwitchAsync(true, updatedBy: null, reason: null, cancellationToken);
 
     public Task DeactivateKillSwitchAsync(CancellationToken cancellationToken)
+        => SetKillSwitchAsync(false, updatedBy: null, reason: null, cancellationToken);
+
+    public Task ActivateKillSwitchAsync(string? updatedBy, string? reason, CancellationToken cancellationToken)
+        => SetKillSwitchAsync(true, updatedBy, reason, cancellationToken);
+
+    public Task DeactivateKillSwitchAsync(string? updatedBy, string? reason, CancellationToken cancellationToken)
+        => SetKillSwitchAsync(false, updatedBy, reason, cancellationToken);
+
+    public async Task<bool> IsKillSwitchActiveAsync(CancellationToken cancellationToken)
     {
-        _isKillSwitchActive = false;
-        return Task.CompletedTask;
+        if (DateTime.UtcNow < _killSwitchCacheExpiresUtc)
+        {
+            return _killSwitchCache;
+        }
+
+        await CacheLock.WaitAsync(cancellationToken);
+        try
+        {
+            // Another caller may have refreshed while we waited.
+            if (DateTime.UtcNow < _killSwitchCacheExpiresUtc)
+            {
+                return _killSwitchCache;
+            }
+
+            var setting = await _dbContext.SystemSettings
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Key == SystemSettingKeys.KillSwitchActive, cancellationToken);
+
+            _killSwitchCache = string.Equals(setting?.Value, "true", StringComparison.OrdinalIgnoreCase);
+            _killSwitchCacheExpiresUtc = DateTime.UtcNow.Add(CacheTtl);
+            return _killSwitchCache;
+        }
+        finally
+        {
+            CacheLock.Release();
+        }
     }
 
-    public Task<bool> IsKillSwitchActiveAsync(CancellationToken cancellationToken)
+    public async Task<KillSwitchState> GetKillSwitchStateAsync(CancellationToken cancellationToken)
     {
-        return Task.FromResult(_isKillSwitchActive);
+        var setting = await _dbContext.SystemSettings
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Key == SystemSettingKeys.KillSwitchActive, cancellationToken);
+
+        return new KillSwitchState
+        {
+            IsActive = string.Equals(setting?.Value, "true", StringComparison.OrdinalIgnoreCase),
+            UpdatedBy = setting?.UpdatedBy,
+            Reason = setting?.Reason,
+            UpdatedUtc = setting?.UpdatedUtc
+        };
+    }
+
+    private async Task SetKillSwitchAsync(bool active, string? updatedBy, string? reason, CancellationToken cancellationToken)
+    {
+        var setting = await _dbContext.SystemSettings
+            .FirstOrDefaultAsync(x => x.Key == SystemSettingKeys.KillSwitchActive, cancellationToken);
+
+        if (setting is null)
+        {
+            setting = new SystemSetting
+            {
+                Key = SystemSettingKeys.KillSwitchActive,
+                CreatedUtc = DateTime.UtcNow
+            };
+            await _dbContext.SystemSettings.AddAsync(setting, cancellationToken);
+        }
+
+        setting.Value = active ? "true" : "false";
+        setting.UpdatedBy = updatedBy;
+        setting.Reason = reason;
+        setting.UpdatedUtc = DateTime.UtcNow;
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        // Publish immediately so the change takes effect without waiting out the TTL.
+        _killSwitchCache = active;
+        _killSwitchCacheExpiresUtc = DateTime.UtcNow.Add(CacheTtl);
     }
 }

@@ -63,10 +63,19 @@ public class ReferenceDataSeeder
                     UserName = item.Username,
                     Email = item.Email,
                     TotalCapital = item.TotalCapital,
+                    // Unrecognised or omitted roles fall back to Trader, so a seed
+                    // file typo can never create an administrator.
+                    Role = Domain.Constants.UserRoles.Normalize(item.Role)
+                           ?? Domain.Constants.UserRoles.Trader,
                     CreatedUtc = DateTime.UtcNow,
                     UpdatedUtc = DateTime.UtcNow,
                     IsActive = true
                 }, cancellationToken);
+
+                _logger.LogWarning(
+                    "Seeded user '{UserName}' has no password and cannot sign in. " +
+                    "Set one from the admin panel before using this account.",
+                    item.Username);
             }
             else
             {

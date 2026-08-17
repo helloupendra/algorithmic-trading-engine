@@ -150,7 +150,7 @@ def print_header(run_id: int):
     print(SEPARATOR)
 
 def print_top_market_banner(spot_quote: Optional[Dict[str, Any]], portfolio: Dict[str, Any], positions: List[Dict[str, Any]]):
-    print(f"{BOLD}{MAGENTA}LIVE UNDERLYING + CURRENT TITLI GROUP{RESET}")
+    print(f"{BOLD}{MAGENTA}LIVE UNDERLYING + CURRENT ACTIVE GROUP{RESET}")
     if spot_quote:
         ltp = safe_float(spot_quote.get("lastTradedPrice"))
         atm = round_to_step(ltp, STRIKE_STEP)

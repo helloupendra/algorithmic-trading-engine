@@ -5,6 +5,7 @@ using AlgoTrading.Contracts.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.IdentityModel.Tokens.Jwt;
+using AlgoTrading.Api.Security;
 
 namespace AlgoTrading.Api.Controllers
 {
@@ -21,6 +22,7 @@ namespace AlgoTrading.Api.Controllers
             _authService = authService;
         }
 
+        [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
         [HttpPost("register")]
         public async Task<IActionResult> Register(
             [FromBody] RegisterRequest request,
@@ -37,6 +39,7 @@ namespace AlgoTrading.Api.Controllers
             }
         }
 
+        [AllowAnonymous]
         [HttpPost("login")]
         public async Task<IActionResult> Login(
             [FromBody] LoginRequest request,
@@ -53,6 +56,7 @@ namespace AlgoTrading.Api.Controllers
             }
         }
 
+        [AllowAnonymous]
         [HttpPost("refresh")]
         public async Task<IActionResult> Refresh(
             [FromBody] RefreshTokenRequest request,
@@ -86,7 +90,11 @@ namespace AlgoTrading.Api.Controllers
             }
         }
 
-        [Authorize]
+        /// <summary>
+        /// Lists every account. Admin-only: it exposes usernames, emails and
+        /// allocated capital across all traders.
+        /// </summary>
+        [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
         [HttpGet]
         public async Task<IActionResult> GetAll(CancellationToken cancellationToken)
         {
@@ -94,7 +102,7 @@ namespace AlgoTrading.Api.Controllers
             return Ok(result);
         }
 
-        [Authorize]
+        [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
         [HttpGet("{id}")]
         public async Task<IActionResult> GetById(long id, CancellationToken cancellationToken)
         {
@@ -105,7 +113,7 @@ namespace AlgoTrading.Api.Controllers
             return Ok(result);
         }
 
-        [Authorize]
+        [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
         [HttpDelete("{username}")]
         public async Task<IActionResult> DeleteByUsername(string username, CancellationToken cancellationToken)
         {
