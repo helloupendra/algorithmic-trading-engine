@@ -15,10 +15,29 @@ cp .env.example .env     # Windows: Copy-Item .env.example .env
 npm run dev
 ```
 
-Then open <http://localhost:5173>.
+Then open <http://localhost:5173>. The landing page is public; `/trader` and
+`/admin` require signing in.
 
-Sign in with the admin account. Its password is printed to the API console the
-first time the API starts:
+### Signing in as admin
+
+Set the password you want in the repo-root `.env`, then restart the API:
+
+```ini
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=YourStrongPassword
+```
+
+```bash
+python3 scripts/_gen_local_settings.py
+dotnet run --project src/AlgoTrading.Api
+```
+
+`AdminBootstrapper` brings the stored password in line with that value on every
+start, so this is also how you recover from a lost password — no database
+surgery needed.
+
+Leave `ADMIN_PASSWORD` empty instead and the API generates a strong one and
+prints it to its console **once**:
 
 ```
 ==============================================================
@@ -28,7 +47,7 @@ first time the API starts:
 ==============================================================
 ```
 
-Pin it afterwards by setting `ADMIN_PASSWORD` in the repo-root `.env`.
+An existing account is never modified while `ADMIN_PASSWORD` is empty.
 
 | Script | Does |
 |---|---|

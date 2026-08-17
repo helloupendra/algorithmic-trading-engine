@@ -43,18 +43,27 @@ public class AdminBootstrapper
 
     public async Task EnsureAdminAsync(CancellationToken cancellationToken = default)
     {
+        string userName = _configuration["Bootstrap:AdminUserName"]?.Trim() ?? "admin";
+        string email = _configuration["Bootstrap:AdminEmail"]?.Trim().ToLowerInvariant()
+                       ?? "admin@localhost";
+        string? configuredPassword = _configuration["Bootstrap:AdminPassword"];
+
         bool adminExists = await _dbContext.AppUsers
             .AnyAsync(x => x.Role == UserRoles.Admin && x.IsActive, cancellationToken);
 
         if (adminExists)
         {
+            // An admin is already provisioned. When ADMIN_PASSWORD is explicitly
+            // set, keep the stored hash in step with it — that is the recovery path
+            // if the one-time generated password was lost, and it lets an operator
+            // pin a chosen password without touching the database. Leaving
+            // ADMIN_PASSWORD empty never modifies an existing account.
+            if (!string.IsNullOrWhiteSpace(configuredPassword))
+            {
+                await SyncConfiguredAdminPasswordAsync(userName, configuredPassword, cancellationToken);
+            }
             return;
         }
-
-        string userName = _configuration["Bootstrap:AdminUserName"]?.Trim() ?? "admin";
-        string email = _configuration["Bootstrap:AdminEmail"]?.Trim().ToLowerInvariant()
-                       ?? "admin@localhost";
-        string? configuredPassword = _configuration["Bootstrap:AdminPassword"];
 
         bool generated = string.IsNullOrWhiteSpace(configuredPassword);
         string password = generated ? GeneratePassword() : configuredPassword!;
@@ -120,6 +129,67 @@ public class AdminBootstrapper
         else
         {
             _logger.LogInformation("Admin account '{UserName}' ensured.", userName);
+        }
+    }
+
+    /// <summary>
+    /// Brings the configured admin account's password in line with
+    /// Bootstrap:AdminPassword, creating the account if the configured username
+    /// does not yet exist (for example when a different account holds Admin).
+    /// </summary>
+    private async Task SyncConfiguredAdminPasswordAsync(
+        string userName, string password, CancellationToken cancellationToken)
+    {
+        var account = await _dbContext.AppUsers
+            .FirstOrDefaultAsync(x => x.UserName.ToLower() == userName.ToLower(), cancellationToken);
+
+        if (account is null)
+        {
+            account = new AppUser
+            {
+                UserName = userName,
+                Email = _configuration["Bootstrap:AdminEmail"]?.Trim().ToLowerInvariant()
+                        ?? $"{userName}@localhost",
+                Role = UserRoles.Admin,
+                IsActive = true,
+                CreatedUtc = DateTime.UtcNow,
+                UpdatedUtc = DateTime.UtcNow
+            };
+            account.PasswordHash = _passwordHasher.HashPassword(account, password);
+            await _dbContext.AppUsers.AddAsync(account, cancellationToken);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+            _logger.LogWarning("Created additional admin '{UserName}' from configuration.", userName);
+            return;
+        }
+
+        bool changed = false;
+
+        if (account.Role != UserRoles.Admin)
+        {
+            account.Role = UserRoles.Admin;
+            changed = true;
+        }
+
+        if (!account.IsActive)
+        {
+            account.IsActive = true;
+            changed = true;
+        }
+
+        var check = _passwordHasher.VerifyHashedPassword(account, account.PasswordHash, password);
+        if (check == PasswordVerificationResult.Failed || string.IsNullOrEmpty(account.PasswordHash))
+        {
+            account.PasswordHash = _passwordHasher.HashPassword(account, password);
+            changed = true;
+            _logger.LogWarning(
+                "Reset admin '{UserName}' password from Bootstrap:AdminPassword.", userName);
+        }
+
+        if (changed)
+        {
+            account.UpdatedUtc = DateTime.UtcNow;
+            await _dbContext.SaveChangesAsync(cancellationToken);
         }
     }
 

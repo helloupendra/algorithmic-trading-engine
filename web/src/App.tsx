@@ -1,9 +1,10 @@
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider } from './lib/auth'
 import { AppLayout } from './components/AppLayout'
 import { RedirectIfAuthenticated, RequireAuth, RequireRole } from './components/RouteGuards'
 import { LoginPage } from './pages/LoginPage'
+import { HomePage } from './pages/HomePage'
 import {
   AdminHome,
   ForbiddenPage,
@@ -35,6 +36,9 @@ export default function App() {
       <BrowserRouter>
         <AuthProvider>
           <Routes>
+            {/* Public front door — reachable signed in or out. */}
+            <Route path="/" element={<HomePage />} />
+
             <Route element={<RedirectIfAuthenticated />}>
               <Route path="/login" element={<LoginPage />} />
             </Route>
@@ -176,7 +180,6 @@ export default function App() {
             </Route>
 
             <Route path="/forbidden" element={<ForbiddenPage />} />
-            <Route path="/" element={<Navigate to="/trader" replace />} />
             <Route path="*" element={<NotFoundPage />} />
           </Routes>
         </AuthProvider>
