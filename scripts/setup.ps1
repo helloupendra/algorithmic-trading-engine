@@ -191,6 +191,7 @@ function Get-InstrumentMaster {
 }
 Get-InstrumentMaster 'https://public.fyers.in/sym_details/NSE_CM.csv' 'data/instruments/NSE_CM.csv'
 Get-InstrumentMaster 'https://public.fyers.in/sym_details/NSE_FO.csv' 'data/instruments/NSE_FO.csv'
+Get-InstrumentMaster 'https://public.fyers.in/sym_details/MCX_COM.csv' 'data/instruments/MCX_COM.csv'
 
 # ---------------------------------------------------------------------------
 Write-Step '6/7  Building the .NET solution'

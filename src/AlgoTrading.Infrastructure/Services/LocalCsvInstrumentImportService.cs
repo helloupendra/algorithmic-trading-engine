@@ -112,7 +112,7 @@ namespace AlgoTrading.Infrastructure.Services
                 DateOnly? expiryDate = null;
 
                 // Extra parsing for derivatives
-                if (segmentFromFile == "FO")
+                if (segmentFromFile == "FO" || segmentFromFile == "COM")
                 {
                     var parsed = ParseDerivativeFields(fullSymbol, description);
                     underlying = parsed.underlying;
@@ -257,6 +257,9 @@ namespace AlgoTrading.Infrastructure.Services
 
             if (fileName.Contains("_CM"))
                 return "CM";
+
+            if (fileName.Contains("_COM"))
+                return "COM";
 
             return string.Empty;
         }

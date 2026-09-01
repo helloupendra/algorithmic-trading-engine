@@ -1600,3 +1600,208 @@ select.field__input {
 
 .param-grid { display: grid; gap: 8px; margin-bottom: 10px; }
 .param-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: center; }
+
+/* ---- TradingView Style Symbol Search ---- */
+.tv-search-container {
+  background: var(--bg);
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.tv-search-header {
+  padding: 16px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.tv-search-input-wrapper {
+  display: flex;
+  align-items: center;
+  position: relative;
+}
+
+.tv-search-input-icon {
+  position: absolute;
+  left: 12px;
+  color: var(--fg-muted);
+  width: 18px;
+  height: 18px;
+}
+
+.tv-search-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  font-size: 1.1rem;
+  color: var(--fg);
+  padding: 8px 8px 8px 40px;
+  outline: none;
+  font-family: inherit;
+}
+
+.tv-search-input::placeholder {
+  color: var(--fg-muted);
+}
+
+.tv-chips-container {
+  display: flex;
+  gap: 8px;
+  padding-top: 16px;
+  overflow-x: auto;
+}
+
+.tv-chip {
+  padding: 6px 14px;
+  background: var(--bg-inset);
+  color: var(--fg-muted);
+  border-radius: 20px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.tv-chip:hover {
+  background: var(--border-soft);
+  color: var(--fg);
+}
+
+.tv-chip.active {
+  background: #1e222d;
+  color: #fff;
+}
+@media (prefers-color-scheme: light) {
+  .tv-chip.active { background: #2962ff; color: #fff; }
+}
+
+.tv-list-header {
+  display: grid;
+  grid-template-columns: 1.5fr 2fr auto;
+  padding: 12px 16px;
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.tv-list-body {
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.tv-list-row {
+  display: grid;
+  grid-template-columns: 1.5fr 2fr auto;
+  padding: 12px 16px;
+  align-items: center;
+  border-bottom: 1px solid var(--border-soft);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.tv-list-row:hover {
+  background: var(--bg-hover);
+}
+
+.tv-list-row:last-child {
+  border-bottom: none;
+}
+
+.tv-symbol-col {
+  display: flex;
+  flex-direction: column;
+}
+
+.tv-symbol-exchange {
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+  margin-right: 4px;
+}
+
+.tv-symbol-name {
+  font-weight: 500;
+  color: var(--fg);
+}
+
+.tv-desc-col {
+  color: var(--fg-muted);
+  font-size: 0.85rem;
+}
+
+.tv-action-col {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.tv-type-label {
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+}
+
+.tv-exchange-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--fg);
+}
+
+.tv-highlight {
+  color: #2962ff;
+  font-weight: 600;
+}
+@media (prefers-color-scheme: dark) {
+  .tv-highlight { color: #2962ff; }
+}
+
+.tv-add-btn {
+  background: transparent;
+  border: none;
+  color: #2962ff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 50%;
+  transition: background 0.15s;
+}
+
+.tv-add-btn:hover {
+  background: rgba(41, 98, 255, 0.1);
+}
+
+.tv-add-btn.subscribed {
+  color: var(--pos);
+}
+.tv-add-btn.subscribed:hover {
+  background: rgba(var(--pos-rgb), 0.1);
+}
+
+.tv-search-icon {
+  width: 16px; height: 16px;
+  fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+
+/* Flashing animations for Live Quotes */
+@keyframes flashGreen {
+  0% { background-color: rgba(38, 166, 154, 0.5); color: #fff; }
+  100% { background-color: transparent; }
+}
+
+@keyframes flashRed {
+  0% { background-color: rgba(239, 83, 80, 0.5); color: #fff; }
+  100% { background-color: transparent; }
+}
+
+.flash-up {
+  animation: flashGreen 0.8s ease-out;
+}
+
+.flash-down {
+  animation: flashRed 0.8s ease-out;
+}
