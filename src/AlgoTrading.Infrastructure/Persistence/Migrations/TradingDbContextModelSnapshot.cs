@@ -553,8 +553,17 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
+                    b.Property<decimal?>("Delta")
+                        .HasColumnType("numeric");
+
+                    b.Property<decimal?>("Gamma")
+                        .HasColumnType("numeric");
+
                     b.Property<decimal?>("High")
                         .HasColumnType("numeric(18,6)");
+
+                    b.Property<decimal?>("ImpliedVolatility")
+                        .HasColumnType("numeric");
 
                     b.Property<decimal?>("LastTradedPrice")
                         .HasColumnType("numeric(18,6)");
@@ -565,6 +574,9 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.Property<decimal?>("Open")
                         .HasColumnType("numeric(18,6)");
 
+                    b.Property<long?>("OpenInterest")
+                        .HasColumnType("bigint");
+
                     b.Property<string>("RawPayload")
                         .IsRequired()
                         .HasColumnType("text");
@@ -574,8 +586,14 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
+                    b.Property<decimal?>("Theta")
+                        .HasColumnType("numeric");
+
                     b.Property<DateTime>("UpdatedUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal?>("Vega")
+                        .HasColumnType("numeric");
 
                     b.Property<long?>("Volume")
                         .HasColumnType("bigint");

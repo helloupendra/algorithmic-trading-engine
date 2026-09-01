@@ -61,6 +61,36 @@ namespace AlgoTrading.Domain.Entities
         public string RawPayload { get; set; } = string.Empty;
 
         /// <summary>
+        /// Total Open Interest.
+        /// </summary>
+        public long? OpenInterest { get; set; }
+
+        /// <summary>
+        /// Implied Volatility (IV).
+        /// </summary>
+        public decimal? ImpliedVolatility { get; set; }
+
+        /// <summary>
+        /// Delta.
+        /// </summary>
+        public decimal? Delta { get; set; }
+
+        /// <summary>
+        /// Gamma.
+        /// </summary>
+        public decimal? Gamma { get; set; }
+
+        /// <summary>
+        /// Theta.
+        /// </summary>
+        public decimal? Theta { get; set; }
+
+        /// <summary>
+        /// Vega.
+        /// </summary>
+        public decimal? Vega { get; set; }
+
+        /// <summary>
         /// The timestamp of the last quote update for this symbol.
         /// </summary>
         public DateTime UpdatedUtc { get; set; } = DateTime.UtcNow;

@@ -52,6 +52,36 @@ namespace AlgoTrading.Contracts.LiveData
         public long? Volume { get; set; }
 
         /// <summary>
+        /// Total Open Interest.
+        /// </summary>
+        public long? OpenInterest { get; set; }
+
+        /// <summary>
+        /// Implied Volatility (IV).
+        /// </summary>
+        public decimal? ImpliedVolatility { get; set; }
+
+        /// <summary>
+        /// Delta.
+        /// </summary>
+        public decimal? Delta { get; set; }
+
+        /// <summary>
+        /// Gamma.
+        /// </summary>
+        public decimal? Gamma { get; set; }
+
+        /// <summary>
+        /// Theta.
+        /// </summary>
+        public decimal? Theta { get; set; }
+
+        /// <summary>
+        /// Vega.
+        /// </summary>
+        public decimal? Vega { get; set; }
+
+        /// <summary>
         /// Timestamp of the last received quote.
         /// </summary>
         public DateTime UpdatedUtc { get; set; }

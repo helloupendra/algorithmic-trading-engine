@@ -43,8 +43,8 @@ export function LiveQuotesMonitor() {
     <Panel title="Live Prices Monitor">
       <QueryBoundary query={query} empty="No live quotes available yet.">
         {(data) => (
-          <div className="tablewrap">
-            <table className="table">
+          <div className="tv-monitor-wrap">
+            <table className="tv-monitor-table">
               <thead>
                 <tr>
                   <th>Symbol</th>
@@ -58,7 +58,7 @@ export function LiveQuotesMonitor() {
               <tbody>
                 {data.map((q) => (
                   <tr key={q.symbol}>
-                    <td className="mono">{shortSymbol(q.symbol)}</td>
+                    <td className="mono tv-highlight">{shortSymbol(q.symbol)}</td>
                     <FlashingCell value={q.lastTradedPrice} formatFn={formatPrice} className="r mono" />
                     <td className="r mono">{formatPrice(q.open)}</td>
                     <td className="r mono">{formatPrice(q.high)}</td>

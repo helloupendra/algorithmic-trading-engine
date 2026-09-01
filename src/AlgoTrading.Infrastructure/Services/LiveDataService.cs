@@ -133,6 +133,12 @@ public class LiveDataService : ILiveDataService
                 Close = request.Close,
                 Volume = request.Volume,
                 RawPayload = request.RawPayload,
+                OpenInterest = request.OpenInterest,
+                ImpliedVolatility = request.ImpliedVolatility,
+                Delta = request.Delta,
+                Gamma = request.Gamma,
+                Theta = request.Theta,
+                Vega = request.Vega,
                 UpdatedUtc = DateTime.UtcNow
             };
 
@@ -148,6 +154,12 @@ public class LiveDataService : ILiveDataService
             existing.Close = request.Close;
             existing.Volume = request.Volume;
             existing.RawPayload = request.RawPayload;
+            existing.OpenInterest = request.OpenInterest;
+            existing.ImpliedVolatility = request.ImpliedVolatility;
+            existing.Delta = request.Delta;
+            existing.Gamma = request.Gamma;
+            existing.Theta = request.Theta;
+            existing.Vega = request.Vega;
             existing.UpdatedUtc = DateTime.UtcNow;
         }
 
@@ -463,6 +475,12 @@ public class LiveDataService : ILiveDataService
             Low = row.Low,
             Close = row.Close,
             Volume = row.Volume,
+            OpenInterest = row.OpenInterest,
+            ImpliedVolatility = row.ImpliedVolatility,
+            Delta = row.Delta,
+            Gamma = row.Gamma,
+            Theta = row.Theta,
+            Vega = row.Vega,
             UpdatedUtc = row.UpdatedUtc
         };
     }
