@@ -137,6 +137,7 @@ function Import-InstrumentCsv {
 
 Import-InstrumentCsv 'Cash Market'       'data/instruments/NSE_CM.csv'
 Import-InstrumentCsv 'Futures & Options' 'data/instruments/NSE_FO.csv'
+Import-InstrumentCsv 'Commodities'       'data/instruments/MCX_COM.csv'
 
 Write-Host ''
 Write-Host 'Reference data loaded.' -ForegroundColor Green

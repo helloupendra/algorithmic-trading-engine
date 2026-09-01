@@ -129,10 +129,14 @@ export function useRemoveWatchlistSymbol() {
 
 // ---------- Instruments & derivatives ----------
 
-export function useInstrumentSearch(query: string) {
+export function useInstrumentSearch(query: string, type?: string) {
   return useQuery({
-    queryKey: ['instruments', 'search', query],
-    queryFn: () => api.get<Instrument[]>(`/api/Instruments/search?query=${encodeURIComponent(query)}`),
+    queryKey: ['instruments', 'search', query, type],
+    queryFn: () => {
+      let url = `/api/Instruments/search?query=${encodeURIComponent(query)}`
+      if (type) url += `&type=${type}`
+      return api.get<Instrument[]>(url)
+    },
     enabled: query.trim().length >= 2,
     staleTime: 60_000,
   })

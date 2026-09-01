@@ -41,15 +41,33 @@ public class InstrumentsController : ControllerBase
 
 
     [HttpGet("search")]
-    public async Task<IActionResult> Search([FromQuery] string query, CancellationToken cancellationToken)
+    public async Task<IActionResult> Search([FromQuery] string query, [FromQuery] string? type, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(query))
             return BadRequest(new { message = "query is required" });
 
-        var rows = await _dbContext.Instruments
+        var dbQuery = _dbContext.Instruments
             .AsNoTracking()
-            .Where(x => x.Symbol.Contains(query) || x.Description.Contains(query))
-            .OrderBy(x => x.Symbol)
+            .Where(x => x.Symbol.Contains(query) || x.Description.Contains(query));
+
+        if (!string.IsNullOrEmpty(type))
+        {
+            if (type == "EQ") dbQuery = dbQuery.Where(x => x.InstrumentType == "EQ" || x.InstrumentType == null);
+            else if (type == "FUT") dbQuery = dbQuery.Where(x => x.InstrumentType != null && x.InstrumentType.Contains("FUT"));
+            else if (type == "OPT") dbQuery = dbQuery.Where(x => (x.InstrumentType != null && (x.InstrumentType.Contains("OPT") || x.InstrumentType == "CE" || x.InstrumentType == "PE")) || x.OptionType != null);
+            else if (type == "INDEX") dbQuery = dbQuery.Where(x => (x.InstrumentType != null && x.InstrumentType.Contains("INDEX")) || (x.Segment != null && x.Segment.Contains("INDEX")));
+            
+            dbQuery = dbQuery.OrderBy(x => x.Symbol);
+        }
+        else
+        {
+            // For "All types", prioritize base instruments (Futures, Stocks) over Options so they aren't pushed out of the top 50
+            dbQuery = dbQuery
+                .OrderBy(x => (x.InstrumentType != null && (x.InstrumentType.Contains("OPT") || x.InstrumentType == "CE" || x.InstrumentType == "PE")) || x.OptionType != null ? 1 : 0)
+                .ThenBy(x => x.Symbol);
+        }
+
+        var rows = await dbQuery
             .Take(50)
             .ToListAsync(cancellationToken);
 

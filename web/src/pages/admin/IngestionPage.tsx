@@ -9,6 +9,8 @@ import {
   useIngestorStatuses,
   useLatestQuotes,
   useStaleQuotes,
+  useWatchlist,
+  useRemoveWatchlistSymbol,
 } from '../../lib/queries'
 import { formatAge, formatDateTime, formatPrice, shortSymbol } from '../../lib/format'
 import { Badge, InlineError, Panel, QueryBoundary } from '../../components/ui'
@@ -18,6 +20,8 @@ export function IngestionPage() {
   const statuses = useIngestorStatuses()
   const stale = useStaleQuotes(120)
   const backfill = useBackfillHistory()
+  const watchlist = useWatchlist()
+  const removeWatchlist = useRemoveWatchlistSymbol()
 
   const [form, setForm] = useState({
     symbol: 'NSE:SBIN-EQ',
@@ -76,6 +80,48 @@ export function IngestionPage() {
       </Panel>
 
       {showMonitor && <LiveQuotesMonitor />}
+
+      <Panel title="Active Live Feeds (Watchlist)">
+        <QueryBoundary query={watchlist} empty="No active symbols in the watchlist.">
+          {(data) => (
+            <div className="tablewrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th>Data Type</th>
+                    <th>Status</th>
+                    <th className="r">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.map((item) => (
+                    <tr key={item.id}>
+                      <td className="mono">{shortSymbol(item.symbol)}</td>
+                      <td>{item.dataType}</td>
+                      <td>
+                        <Badge tone={item.isActive ? 'pos' : 'neutral'}>
+                          {item.isActive ? 'Active' : 'Paused'}
+                        </Badge>
+                      </td>
+                      <td className="r">
+                        <button
+                          className="btn btn--secondary btn--sm"
+                          disabled={removeWatchlist.isPending}
+                          onClick={() => removeWatchlist.mutate(item.id)}
+                          title="Unsubscribe from live feed"
+                        >
+                          Unsubscribe
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </QueryBoundary>
+      </Panel>
 
       <Panel title="Stale quotes (older than 2 minutes)">
         <QueryBoundary query={stale} empty="Nothing is stale — or nothing has data.">
