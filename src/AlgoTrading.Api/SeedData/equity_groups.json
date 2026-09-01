@@ -1,0 +1,23 @@
+[
+  {
+    "name": "BANKNIFTY_CONSTITUENTS",
+    "exchange": "NSE",
+    "displayName": "Bank Nifty Constituents",
+    "description": "Current NSE Bank Nifty constituent equities",
+    "isEnabled": true
+  },
+  {
+    "name": "NIFTY50_CONSTITUENTS",
+    "exchange": "NSE",
+    "displayName": "Nifty 50 Constituents",
+    "description": "Current NSE Nifty 50 constituent equities",
+    "isEnabled": true
+  },
+  {
+    "name": "SENSEX_CONSTITUENTS",
+    "exchange": "BSE",
+    "displayName": "Sensex Constituents",
+    "description": "Current BSE Sensex constituent equities",
+    "isEnabled": true
+  }
+]

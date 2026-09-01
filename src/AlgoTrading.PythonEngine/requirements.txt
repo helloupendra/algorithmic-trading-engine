@@ -1,0 +1,7 @@
+redis
+requests
+urllib3
+python-dotenv
+prometheus_client
+fyers_apiv3
+psycopg2-binary

@@ -1,0 +1,20 @@
+[
+  {
+    "Symbol": "NSE:NIFTYBANK-INDEX",
+    "DataType": "symbolUpdate",
+    "IsActive": true,
+    "Priority": 100
+  },
+  {
+    "Symbol": "NSE:NIFTY50-INDEX",
+    "DataType": "symbolUpdate",
+    "IsActive": true,
+    "Priority": 90
+  },
+  {
+    "Symbol": "NSE:SBIN-EQ",
+    "DataType": "symbolUpdate",
+    "IsActive": true,
+    "Priority": 50
+  }
+]

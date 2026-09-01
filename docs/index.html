@@ -1,0 +1,1073 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AlgoTrading — Research &amp; Architecture</title>
+<meta name="description" content="Architecture and design rationale for a polyglot, event-driven algorithmic trading engine for Indian markets.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
+<style>
+:root {
+  --bg: #ffffff;
+  --bg-soft: #f6f8fa;
+  --bg-inset: #f0f3f6;
+  --fg: #1f2328;
+  --fg-muted: #59636e;
+  --fg-faint: #818b98;
+  --border: #d1d9e0;
+  --border-soft: #e4e8ed;
+  --accent: #0969da;
+  --accent-soft: #ddf4ff;
+  --shadow: 0 1px 3px rgba(31,35,40,.08), 0 8px 24px rgba(31,35,40,.06);
+  --radius: 10px;
+  --sidebar-w: 288px;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1117;
+    --bg-soft: #151b23;
+    --bg-inset: #010409;
+    --fg: #e6edf3;
+    --fg-muted: #9198a1;
+    --fg-faint: #6e7681;
+    --border: #3d444d;
+    --border-soft: #262c36;
+    --accent: #4493f8;
+    --accent-soft: #121d2f;
+    --shadow: 0 1px 3px rgba(1,4,9,.5), 0 8px 24px rgba(1,4,9,.4);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1117;
+  --bg-soft: #151b23;
+  --bg-inset: #010409;
+  --fg: #e6edf3;
+  --fg-muted: #9198a1;
+  --fg-faint: #6e7681;
+  --border: #3d444d;
+  --border-soft: #262c36;
+  --accent: #4493f8;
+  --accent-soft: #121d2f;
+  --shadow: 0 1px 3px rgba(1,4,9,.5), 0 8px 24px rgba(1,4,9,.4);
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 80px; -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.65;
+  overflow-wrap: break-word;
+}
+
+/* ---------- top bar ---------- */
+.topbar {
+  position: sticky; top: 0; z-index: 50;
+  display: flex; align-items: center; gap: 12px;
+  height: 56px; padding: 0 16px;
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  backdrop-filter: saturate(1.6) blur(12px);
+  -webkit-backdrop-filter: saturate(1.6) blur(12px);
+  border-bottom: 1px solid var(--border-soft);
+}
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: -.01em; min-width: 0; }
+.brand .dot { width: 9px; height: 9px; border-radius: 50%; background: linear-gradient(135deg,#3fb950,#4493f8); flex: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
+.brand span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spacer { flex: 1; }
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 32px; padding: 0 11px;
+  font: inherit; font-size: 13px; font-weight: 500;
+  color: var(--fg); background: var(--bg-soft);
+  border: 1px solid var(--border); border-radius: 7px;
+  cursor: pointer; text-decoration: none; white-space: nowrap;
+  transition: background .14s, border-color .14s;
+}
+.btn:hover { background: var(--bg-inset); border-color: var(--fg-faint); }
+.btn svg { width: 15px; height: 15px; }
+#menuBtn { display: none; }
+
+/* ---------- layout ---------- */
+.shell { display: grid; grid-template-columns: var(--sidebar-w) minmax(0,1fr); gap: 0; align-items: start; }
+
+/* ---------- sidebar ---------- */
+.sidebar {
+  position: sticky; top: 56px;
+  height: calc(100vh - 56px);
+  overflow-y: auto; overscroll-behavior: contain;
+  padding: 24px 12px 48px 20px;
+  border-right: 1px solid var(--border-soft);
+}
+.sidebar h2 {
+  margin: 0 0 12px; padding: 0 8px;
+  font-size: 11px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--fg-faint);
+}
+#toc { list-style: none; margin: 0; padding: 0; }
+#toc li { margin: 0; }
+#toc a {
+  display: block; padding: 5px 10px; margin: 1px 0;
+  color: var(--fg-muted); text-decoration: none;
+  font-size: 13.5px; line-height: 1.45;
+  border-radius: 6px;
+  border-left: 2px solid transparent;
+  transition: color .12s, background .12s;
+}
+#toc a:hover { color: var(--fg); background: var(--bg-soft); }
+#toc a.lvl-3 { padding-left: 22px; font-size: 12.5px; color: var(--fg-faint); }
+#toc a.active { color: var(--accent); background: var(--accent-soft); border-left-color: var(--accent); font-weight: 550; }
+
+/* ---------- content ---------- */
+.content { padding: 40px 40px 120px; max-width: 940px; margin: 0 auto; min-width: 0; }
+#doc > *:first-child { margin-top: 0; }
+
+#doc h1 { font-size: 2.05rem; font-weight: 700; letter-spacing: -.02em; line-height: 1.25; margin: 0 0 6px; }
+#doc h2 {
+  font-size: 1.45rem; font-weight: 650; letter-spacing: -.015em;
+  margin: 56px 0 18px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-soft); scroll-margin-top: 76px;
+}
+#doc h3 { font-size: 1.13rem; font-weight: 640; margin: 34px 0 12px; letter-spacing: -.01em; scroll-margin-top: 76px; }
+#doc h4 { font-size: 1rem; font-weight: 640; margin: 26px 0 10px; color: var(--fg-muted); }
+#doc h1 + h3 { margin-top: 10px; color: var(--fg-muted); font-weight: 500; font-size: 1.08rem; }
+
+#doc p { margin: 0 0 15px; }
+#doc a { color: var(--accent); text-decoration: none; }
+#doc a:hover { text-decoration: underline; }
+#doc strong { font-weight: 640; color: var(--fg); }
+#doc ul, #doc ol { margin: 0 0 15px; padding-left: 1.6em; }
+#doc li { margin: 4px 0; }
+#doc li::marker { color: var(--fg-faint); }
+#doc hr { height: 1px; border: 0; background: var(--border-soft); margin: 44px 0; }
+
+#doc blockquote {
+  margin: 20px 0; padding: 12px 18px;
+  border-left: 3px solid var(--accent);
+  background: var(--bg-soft);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  color: var(--fg-muted);
+}
+#doc blockquote > *:last-child { margin-bottom: 0; }
+#doc blockquote strong { color: var(--fg); }
+
+#doc code {
+  font-family: var(--mono); font-size: .875em;
+  background: var(--bg-soft); border: 1px solid var(--border-soft);
+  padding: .13em .38em; border-radius: 5px;
+}
+#doc pre {
+  margin: 0 0 18px; padding: 15px 17px;
+  background: var(--bg-inset); border: 1px solid var(--border-soft);
+  border-radius: var(--radius); overflow-x: auto;
+  font-size: 13px; line-height: 1.55;
+}
+#doc pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+
+.table-wrap { overflow-x: auto; margin: 0 0 20px; border: 1px solid var(--border-soft); border-radius: var(--radius); }
+#doc table { border-collapse: collapse; width: 100%; font-size: 14.2px; }
+#doc th, #doc td { padding: 9px 14px; text-align: left; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+#doc thead th { background: var(--bg-soft); font-weight: 620; font-size: 13px; letter-spacing: .01em; white-space: nowrap; }
+#doc tbody tr:last-child td { border-bottom: 0; }
+#doc tbody tr:hover { background: color-mix(in srgb, var(--bg-soft) 60%, transparent); }
+#doc td code { white-space: nowrap; }
+
+#doc img { max-width: 100%; vertical-align: middle; }
+#doc p > img[src*="shields.io"] { margin: 0 3px 5px 0; }
+
+.mermaid-wrap {
+  margin: 0 0 22px; padding: 20px 16px;
+  background: var(--bg-soft); border: 1px solid var(--border-soft);
+  border-radius: var(--radius); overflow-x: auto;
+}
+.mermaid { display: flex; justify-content: center; min-width: max-content; margin: 0 auto; }
+.mermaid svg { max-width: 100%; height: auto; }
+
+#doc div[align="center"] { text-align: center; margin: 34px 0 0; color: var(--fg-muted); }
+
+.anchor { float: left; margin-left: -0.85em; padding-right: .25em; opacity: 0; text-decoration: none !important; color: var(--fg-faint) !important; font-weight: 400; }
+h2:hover .anchor, h3:hover .anchor { opacity: 1; }
+
+/* ---------- states ---------- */
+.state { padding: 80px 20px; text-align: center; color: var(--fg-muted); }
+.spinner {
+  width: 26px; height: 26px; margin: 0 auto 14px;
+  border: 2.5px solid var(--border); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.state pre {
+  display: inline-block; text-align: left; margin-top: 12px;
+  background: var(--bg-inset); border: 1px solid var(--border-soft);
+  padding: 10px 14px; border-radius: 8px; font-family: var(--mono); font-size: 12.5px;
+}
+
+/* ---------- responsive ---------- */
+@media (max-width: 1000px) {
+  .shell { grid-template-columns: 1fr; }
+  #menuBtn { display: inline-flex; }
+  .sidebar {
+    position: fixed; top: 56px; left: 0; width: min(320px, 86vw);
+    background: var(--bg); border-right: 1px solid var(--border);
+    box-shadow: var(--shadow); z-index: 40;
+    transform: translateX(-102%); transition: transform .2s ease;
+  }
+  .sidebar.open { transform: translateX(0); }
+  .content { padding: 28px 20px 100px; }
+  #doc h1 { font-size: 1.7rem; }
+  #doc h2 { font-size: 1.3rem; margin-top: 42px; }
+}
+@media print {
+  .topbar, .sidebar { display: none !important; }
+  .shell { display: block; }
+  .content { max-width: none; padding: 0; }
+  #doc h2 { break-after: avoid; }
+  .mermaid-wrap, .table-wrap, #doc pre { break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <button class="btn" id="menuBtn" aria-label="Toggle contents">
+    <svg viewBox="0 0 16 16" fill="currentColor"><path d="M1 3h14v2H1zm0 4h14v2H1zm0 4h14v2H1z"/></svg>
+  </button>
+  <div class="brand"><span class="dot"></span><span>AlgoTrading&nbsp;·&nbsp;Architecture</span></div>
+  <div class="spacer"></div>
+  <a class="btn" id="rawLink" href="RESEARCH_AND_ARCHITECTURE.md">
+    <svg viewBox="0 0 16 16" fill="currentColor"><path d="M3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25V1.75C2 .784 2.784 0 3.75 0m0 1.5a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h9.5a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 9 4.25V1.5Zm6.75.664V4.25c0 .138.112.25.25.25h2.086z"/></svg>
+    Raw
+  </a>
+  <button class="btn" id="themeBtn" aria-label="Toggle theme" title="Toggle theme">
+    <svg id="themeIcon" viewBox="0 0 16 16" fill="currentColor"></svg>
+  </button>
+</header>
+
+<div class="shell">
+  <nav class="sidebar" id="sidebar">
+    <h2>Contents</h2>
+    <ul id="toc"></ul>
+  </nav>
+  <main class="content">
+    <div id="doc">
+      <div class="state" id="loading"><div class="spinner"></div>Loading document…</div>
+    </div>
+  </main>
+</div>
+
+<!-- Offline fallback: verbatim copy of RESEARCH_AND_ARCHITECTURE.md, used only when fetch() is
+     blocked (i.e. opening this file directly via file://). When served over http(s) the live
+     .md file is fetched instead, so the rendered page always reflects the source of truth. -->
+<script type="text/plain" id="md-embedded"># Research & Architecture Report
+
+### A Polyglot, Event-Driven Execution Engine for Indian Equity & Derivatives Markets
+
+![.NET](https://img.shields.io/badge/.NET-10.0-512BD4)
+![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB)
+![React](https://img.shields.io/badge/React-19-61DAFB)
+![TimescaleDB](https://img.shields.io/badge/TimescaleDB-PostgreSQL%2015-FDB515)
+![Redis](https://img.shields.io/badge/Redis-7--alpine-DC382D)
+![Architecture](https://img.shields.io/badge/architecture-Clean%20%2F%20Event--Driven-success)
+![Status](https://img.shields.io/badge/status-active%20development-orange)
+
+> **Author:** Upendra Singh Chauhan
+> **Domain:** NSE / BSE — Index Options (BankNifty, Nifty, Sensex), Equity Cash, Derivatives
+> **Broker Integration:** FYERS API v3
+> **Document Type:** Technical Architecture & Design Rationale
+
+---
+
+## Table of Contents
+
+1. [Executive Summary](#1-executive-summary)
+2. [Architectural Drivers](#2-architectural-drivers)
+3. [System Architecture](#3-system-architecture)
+4. [Component Breakdown](#4-component-breakdown)
+5. [Authentication & Session Management](#5-authentication--session-management)
+6. [Risk Management & Capital Protection](#6-risk-management--capital-protection)
+7. [Simulation, Replay & Paper Trading](#7-simulation-replay--paper-trading)
+8. [Observability](#8-observability)
+9. [Data Model](#9-data-model)
+10. [Repository Layout](#10-repository-layout)
+11. [Engineering Roadmap](#11-engineering-roadmap)
+12. [Risk Disclaimer](#12-risk-disclaimer)
+
+---
+
+## 1. Executive Summary
+
+This repository implements a **production-oriented algorithmic trading platform** for the Indian capital markets, built as a set of loosely coupled microservices communicating over a Redis message backbone and persisting to a TimescaleDB time-series store.
+
+The system is deliberately **polyglot**. Rather than forcing a single language across the whole stack, each runtime is assigned the workload it is objectively best at:
+
+| Runtime | Assigned Responsibility | Why This Runtime |
+| :--- | :--- | :--- |
+| **C# / .NET 10** | Transactional core, REST API, durable stream consumption, persistence, risk enforcement | Strong typing, mature EF Core data layer, low-allocation async I/O, first-class background-service hosting |
+| **Python 3.11+** | Market-data ingestion, quantitative strategy logic, broker WebSocket handling | The FYERS SDK, plus the entire quant ecosystem (`pandas`, `numpy`), are Python-native |
+| **React 19 / TypeScript** | Real-time operator dashboard | Rich, reactive visualisation of streaming market state |
+
+### 1.1 Capability Matrix
+
+An honest statement of maturity — what is implemented and running versus what is scaffolded or planned:
+
+| Capability | Status | Notes |
+| :--- | :--- | :--- |
+| FYERS OAuth 2.0 session lifecycle | ✅ Implemented | Full authorisation-code flow with durable token persistence |
+| Live tick ingestion via FYERS WebSocket | ✅ Implemented | Python ingestor with auto-resubscribe |
+| Redis Streams transport (`market:ticks`) | ✅ Implemented | Consumer groups, explicit acknowledgement, capped stream |
+| Durable tick archival to TimescaleDB | ✅ Implemented | Batched, transactional, hypertable-backed |
+| Instrument master & option-chain resolution | ✅ Implemented | NSE CM + FO symbol masters, expiry rule engine |
+| Historical candle sync & backfill | ✅ Implemented | Coverage tracking via `symbol_sync_state` |
+| Paper trading & portfolio accounting | ✅ Implemented | Orders, positions, MTM, equity curve |
+| Historical replay backtesting | ✅ Implemented | `ReplayFeedProvider` drives simulations from stored data |
+| Pre-trade risk gate (kill switch, rate limit, daily loss) | ✅ Implemented | Enforced in `RiskManagementService` |
+| Application authentication (JWT) | ✅ Implemented | Access + refresh token rotation |
+| Prometheus / Grafana observability | ✅ Implemented | Custom trading metrics exported from both runtimes |
+| React operator dashboard | ✅ Implemented | Live prices, option chain, DOM, P&L heatmap, latency gauge |
+| Live order placement to broker | 🔶 Planned | Risk layer and paper engine are complete; broker order adapter is next |
+| `AlgoTrading.Worker.Strategy` signal consumer | 🔶 Scaffolded | Host wired; signal subscription loop pending |
+| Containerised application services | 🔶 Planned | Compose currently provisions infrastructure only |
+| FastAPI control plane for the Python engine | 🔶 Planned | Engine currently runs as CLI-invoked processes |
+
+---
+
+## 2. Architectural Drivers
+
+Every significant decision in this system traces back to one of five non-functional requirements characteristic of the Indian derivatives market.
+
+**D1 — Latency budget.** Index option premiums on BankNifty and Sensex re-price on sub-second timescales. Any hop between ingestion and strategy evaluation must be measured in **microseconds to low milliseconds**, not in HTTP round-trips.
+
+**D2 — Write amplification.** A modest watchlist of 200 instruments during peak volatility generates **tens of thousands of ticks per minute**. Naïve row-by-row inserts into a conventional RDBMS collapse under this load.
+
+**D3 — Fault isolation.** A malformed payload, a strategy exception, or a dropped broker WebSocket must **degrade** the system, never halt it. Trading capital is exposed while a process is down.
+
+**D4 — Auditability.** Every tick that informed a decision, and every decision taken, must be reconstructable after the fact — both for strategy research and for regulatory defensibility.
+
+**D5 — Session volatility.** The FYERS access token expires **daily**. Every service that talks to the broker must obtain a valid token without manual intervention or a redeploy.
+
+```mermaid
+graph LR
+    D1["D1 · Latency budget"] --> R["Redis Pub/Sub + Streams"]
+    D2["D2 · Write amplification"] --> T["TimescaleDB hypertables<br/>+ batched writes"]
+    D3["D3 · Fault isolation"] --> M["Independent processes<br/>+ consumer groups"]
+    D4["D4 · Auditability"] --> A["Immutable tick archive<br/>+ signal ledger"]
+    D5["D5 · Session volatility"] --> S["Centralised broker<br/>session store"]
+
+    style D1 fill:#1e3a5f,stroke:#4a90d9,color:#fff
+    style D2 fill:#1e3a5f,stroke:#4a90d9,color:#fff
+    style D3 fill:#1e3a5f,stroke:#4a90d9,color:#fff
+    style D4 fill:#1e3a5f,stroke:#4a90d9,color:#fff
+    style D5 fill:#1e3a5f,stroke:#4a90d9,color:#fff
+```
+
+---
+
+## 3. System Architecture
+
+### 3.1 The Polyglot Rationale
+
+A single-language stack would have been simpler to operate. It was rejected because the two halves of this problem have **irreconcilable optimisation targets**.
+
+Quantitative strategy development is an *exploratory* discipline. It rewards fast iteration, notebook-driven experimentation, and access to a mature numerical ecosystem. It is also where the vendor SDK lives — FYERS ships `fyers_apiv3` for Python, and reimplementing its WebSocket protocol in another language would be gratuitous risk for zero strategic gain.
+
+Order execution and state management are the opposite. They are *transactional* disciplines that reward compile-time guarantees, explicit concurrency control, and predictable memory behaviour. A mistyped field in a strategy notebook costs an afternoon; a mistyped field in an order router costs capital.
+
+The architecture therefore places a **message broker at the seam** between the two, so that each side can be developed, tested, deployed, and scaled independently — and so that either side can be replaced without rewriting the other.
+
+```mermaid
+graph TB
+    subgraph EXT["External"]
+        FY["FYERS API v3<br/>REST + WebSocket"]
+    end
+
+    subgraph PY["Python Engine · Quant Plane"]
+        ING["fyers_live_stream<br/>WebSocket ingestor"]
+        STR["Strategy Runtime<br/>execution_runner · titli/*"]
+        SEL["contract_selector<br/>price_resolver"]
+        ST["state_management<br/>store · recovery"]
+    end
+
+    subgraph BUS["Redis 7 · Message Backbone"]
+        STREAM[["Stream: market:ticks<br/>consumer group"]]
+        PUBSUB[["Pub/Sub: watchlist_updates"]]
+    end
+
+    subgraph CS["C# .NET 10 · Transactional Plane"]
+        API["AlgoTrading.Api<br/>REST + Swagger + JWT"]
+        WMD["Worker.MarketData<br/>stream consumer"]
+        WST["Worker.Strategy<br/>scaffolded"]
+        SIM["Simulation & Paper Trading"]
+        RISK["Risk Management Gate"]
+    end
+
+    subgraph DATA["Persistence"]
+        TS[("TimescaleDB<br/>PostgreSQL 15")]
+    end
+
+    subgraph OBS["Observability"]
+        PROM["Prometheus"]
+        GRAF["Grafana"]
+    end
+
+    subgraph UI["Operator Console"]
+        REACT["React 19 + TypeScript"]
+    end
+
+    FY -->|"live ticks"| ING
+    ING -->|"XADD"| STREAM
+    STREAM -->|"XREADGROUP"| WMD
+    WMD -->|"batched insert"| TS
+    API -->|"watchlist change"| PUBSUB
+    PUBSUB -->|"resubscribe"| ING
+    STREAM -->|"consume"| STR
+    SEL --> STR
+    ST --> STR
+    STR --> SIM
+    SIM --> RISK
+    RISK --> TS
+    API --> TS
+    API -->|"OAuth 2.0"| FY
+    REACT -->|"REST"| API
+    PROM --> GRAF
+    ING -.->|"metrics"| PROM
+    API -.->|"metrics"| PROM
+
+    style BUS fill:#2d1b1b,stroke:#dc382d,color:#fff
+    style DATA fill:#2a2416,stroke:#fdb515,color:#fff
+    style CS fill:#1f1a2e,stroke:#512bd4,color:#fff
+    style PY fill:#16242e,stroke:#3776ab,color:#fff
+```
+
+### 3.2 The Tick Lifecycle
+
+The canonical hot path — from broker socket to durable storage — is fully asynchronous and contains no blocking database call on the ingestion side.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant FY as FYERS WebSocket
+    participant PY as Python Ingestor
+    participant RS as Redis Stream
+    participant WK as C# MarketData Worker
+    participant DB as TimescaleDB
+
+    FY->>PY: tick frame (LTP, OI, bid/ask depth)
+    PY->>PY: normalise → canonical schema
+    PY->>RS: XADD market:ticks (MAXLEN ~ 500_000)
+    Note over PY: returns immediately —<br/>no DB round-trip on hot path
+
+    loop consumer group poll
+        WK->>RS: XREADGROUP market-data-workers
+        RS-->>WK: batch (up to ReadBatchSize = 200)
+        WK->>WK: normalise + de-duplicate by symbol
+        WK->>DB: BEGIN TRANSACTION
+        WK->>DB: append raw ticks → market_ticks hypertable
+        WK->>DB: upsert live_quote_latest
+        WK->>DB: fold 1-minute live_bars
+        WK->>DB: COMMIT
+        WK->>RS: XACK (per successfully processed entry)
+    end
+```
+
+Three properties of this design are worth drawing out:
+
+- **Back-pressure is bounded, not unbounded.** The stream is capped with `MAXLEN ≈ 500,000`. If the consumer stalls, the oldest ticks are evicted rather than exhausting Redis memory — a deliberate choice that favours *system survival* over *total completeness* for a data class that is already archived downstream.
+- **Acknowledgement is explicit and per-entry.** `XACK` is issued only after the database transaction commits. A worker crash mid-batch leaves entries in the Pending Entries List, where a restarted or sibling consumer reclaims them. Ticks are not silently lost.
+- **Writes are amortised.** One transaction absorbs up to 200 ticks and performs the archive append, the latest-quote upsert, and the 1-minute bar fold together — turning what would be hundreds of round-trips into one.
+
+### 3.3 Why Redis
+
+Redis was selected over a conventional broker (Kafka, RabbitMQ) after evaluating the workload's actual shape.
+
+| Requirement | How Redis Satisfies It |
+| :--- | :--- |
+| Sub-millisecond fan-out | In-memory, single-threaded command loop; no disk fsync on the publish path |
+| Durable, replayable consumption | **Streams** with consumer groups, Pending Entries List, and explicit `XACK` — at-least-once delivery without Kafka's operational weight |
+| Ephemeral broadcast | **Pub/Sub** for fire-and-forget control messages (`watchlist_updates`) where replay is meaningless |
+| Bounded memory under stall | `MAXLEN` capped streams |
+| Operational simplicity | A single `redis:7-alpine` container — no ZooKeeper, no broker cluster, no partition rebalancing |
+
+The dual use of **Streams for data** and **Pub/Sub for control** is intentional. A tick that arrives late is still valuable and must be replayable; a watchlist-change notification that arrives late is worthless and should not accumulate. Using one primitive for both would over-engineer the control path or under-engineer the data path.
+
+> **Engineering note.** Kafka becomes the correct answer at multi-broker, multi-day-retention scale. At the current scale — one venue, one trading session, sub-second retention requirements — Redis delivers the needed semantics at a fraction of the operational cost. This is a documented trade-off, not an oversight.
+
+### 3.4 Why TimescaleDB
+
+Market data is time-series data with relational neighbours. Instruments, expiry rules, equity groups, users, and simulation runs are all naturally relational; ticks and candles are not. TimescaleDB resolves this tension without a second database.
+
+**Hypertable partitioning.** The `market_ticks` table is converted into a hypertable partitioned on `ReceivedUtc` with **one-day chunks**:
+
+```sql
+SELECT create_hypertable(
+    'market_ticks',
+    'ReceivedUtc',
+    chunk_time_interval => INTERVAL '1 day',
+    migrate_data => true
+);
+```
+
+This aligns the physical layout with the access pattern exactly. Indian markets trade a single continuous session per day, so a one-day chunk *is* a trading session. Backtest queries scoped to a date range touch only the relevant chunks; the planner excludes the rest before reading a single page.
+
+**Why not a dedicated TSDB?** InfluxDB or ClickHouse would offer higher raw ingest ceilings. Both would also require the relational half of the domain — the instrument master, the option-chain expiry logic, the user and simulation tables, and their foreign keys — to live in a second system, with all the dual-write and consistency burden that implies. TimescaleDB is PostgreSQL: full SQL, full ACID, full EF Core support, and mature tooling, with time-series performance layered on top. For this workload, one correct database beats two fast ones.
+
+---
+
+## 4. Component Breakdown
+
+### 4.1 The .NET Solution — Clean Architecture
+
+The C# side is organised as a strict **Clean Architecture** solution. Dependencies point inward only; the domain knows nothing of the database, and the API knows nothing of EF Core.
+
+```mermaid
+graph TD
+    API["AlgoTrading.Api<br/><i>controllers · JWT · Swagger</i>"]
+    WMD["Worker.MarketData<br/><i>stream consumer</i>"]
+    WST["Worker.Strategy<br/><i>scaffold</i>"]
+    BT["AlgoTrading.Backtester"]
+    INF["AlgoTrading.Infrastructure<br/><i>EF Core · FYERS clients · services</i>"]
+    APP["AlgoTrading.Application<br/><i>use cases · interfaces</i>"]
+    CON["AlgoTrading.Contracts<br/><i>request / response DTOs</i>"]
+    DOM["AlgoTrading.Domain<br/><i>entities · enums · value objects</i>"]
+
+    API --> APP
+    API --> CON
+    WMD --> APP
+    WST --> APP
+    BT --> APP
+    API -.->|"composition root only"| INF
+    WMD -.->|"composition root only"| INF
+    INF --> APP
+    APP --> DOM
+    APP --> CON
+    CON --> DOM
+    INF --> DOM
+
+    style DOM fill:#1a3a1a,stroke:#4caf50,color:#fff
+    style APP fill:#1a2f3a,stroke:#2196f3,color:#fff
+    style INF fill:#3a2a1a,stroke:#ff9800,color:#fff
+```
+
+| Project | Role |
+| :--- | :--- |
+| `AlgoTrading.Domain` | Pure business entities (`Instrument`, `MarketTick`, `PaperOrder`, `SimulationRun`, `ExpiryRule`, `BrokerSession`) and enums. Zero external dependencies. |
+| `AlgoTrading.Application` | Use-case classes — one per operation — plus the interface contracts (`IMarketDataService`, `IRiskManagementService`, `IBrokerSessionStore`, `IReplayFeedProvider`) that Infrastructure implements. |
+| `AlgoTrading.Contracts` | Versioned request/response DTOs shared with the frontend. Isolates the wire format from the domain model. |
+| `AlgoTrading.Infrastructure` | EF Core `TradingDbContext`, 20+ migrations, entity configurations, FYERS REST/history clients, Redis publisher, and all concrete services. |
+| `AlgoTrading.Api` | ASP.NET Core host. 14 controllers, JWT bearer authentication, Swagger with bearer security definition, Prometheus scrape endpoint. |
+| `AlgoTrading.Worker.MarketData` | Background service hosting the Redis Streams consumer and the historical sync worker. |
+| `AlgoTrading.Worker.Strategy` | Dedicated host reserved for the signal-consumption and execution loop. Currently a scaffold. |
+| `AlgoTrading.Backtester` | Offline strategy evaluation harness. |
+
+**The use-case pattern.** Rather than fat services, each operation is a single-responsibility class — `SyncHistoryUseCase`, `StartSimulationRunUseCase`, `UpsertLiveQuoteUseCase`, `GetSimulationEquityCurveUseCase`. Controllers do nothing but bind, delegate, and map. This keeps the API surface thin and makes each unit independently testable.
+
+### 4.2 The Python Engine — Quant Plane
+
+```
+src/AlgoTrading.PythonEngine/
+├── core/                     # configuration + Prometheus metric definitions
+├── data_ingestion/           # FYERS WebSocket, historical replayer, option-chain tracker
+├── messaging/                # Redis Streams publisher / subscriber
+├── state_management/         # durable strategy state, models, crash recovery
+├── strategies/               # base strategy, contract selector, price resolver, runner
+│   └── titli/                # concrete straddle strategy family
+└── tools/                    # operational CLI utilities
+```
+
+**Ingestion (`data_ingestion/fyers_live_stream.py`).** Maintains the FYERS WebSocket, normalises inbound frames, and publishes to the Redis stream. It concurrently subscribes to the `watchlist_updates` Pub/Sub channel, so an operator adding a symbol through the API causes a live resubscribe with no process restart.
+
+**Strategy runtime (`strategies/`).** A `base_strategy` contract with pluggable implementations. The `titli/` package holds a family of index-option straddle variants differentiated by strike offset and adjustment policy (20 / 50 / 70 / 90 / 175-point variants, plus a quantity-adjustment strategy). `contract_selector` resolves the tradeable option contract for a given spot and expiry; `price_resolver` derives the reference price used for entry and adjustment decisions.
+
+**State management (`state_management/`).** Strategies are stateful — an open straddle has legs, adjustment history, and realised P&L that must survive a process restart. This package persists that state and provides a recovery path on startup, so a crashed strategy resumes rather than abandoning open positions.
+
+### 4.3 The Operator Console — React 19
+
+A Vite-built React 19 + TypeScript dashboard. Widgets are composed from a shared API client (`src/lib/api.ts`) against the .NET REST surface.
+
+| Widget | Purpose |
+| :--- | :--- |
+| `LivePricesWidget` · `WatchlistWidget` | Streaming quote grid and watchlist management |
+| `OptionChainWidget` | Strike ladder with expiry resolution |
+| `DepthOfMarketWidget` | Level-2 bid/ask ladder |
+| `PortfolioWidget` · `OrdersWidget` | Positions, MTM, and order blotter |
+| `PnLHeatmap` | Per-symbol profit-and-loss distribution (d3) |
+| `LatencyGauge` · `SystemObservabilityWidget` · `SystemStatusWidget` | Pipeline health, ingestion lag, service liveness |
+| `SimulatorConfigWidget` | Backtest and paper-run configuration |
+| `GlobalAlertsCenter` | Risk and system alert surface |
+
+Stack: React 19, TypeScript 5.8, Vite 6, Tailwind CSS 4, Recharts + d3 for visualisation, Motion for transitions, Lucide for iconography.
+
+### 4.4 Infrastructure Topology
+
+`docker/docker-compose.yml` provisions the stateful backing services. Application services currently run on the host against these containers.
+
+| Service | Image | Port | Role |
+| :--- | :--- | :--- | :--- |
+| `timescaledb` | `timescale/timescaledb:latest-pg15` | 5432 | Primary datastore, hypertable-backed |
+| `redis` | `redis:7-alpine` | 6379 | Streams + Pub/Sub backbone |
+| `redisinsight` | `redis/redisinsight:latest` | 8001 | Stream and key inspection |
+| `prometheus` | `prom/prometheus:latest` | 9090 | Metric scraping (`host.docker.internal` bridged) |
+| `grafana` | `grafana/grafana:latest` | 3000 | Provisioned dashboards and datasources |
+
+---
+
+## 5. Authentication & Session Management
+
+The platform operates **two independent authentication planes**. Conflating them is a common design error; separating them is what allows the operator console to remain logged in across a broker token expiry.
+
+```mermaid
+graph LR
+    subgraph P1["Plane 1 · Application Identity"]
+        U["Operator"] -->|"credentials"| AC["UserAuthController"]
+        AC -->|"JWT access + refresh"| U
+        AC --> AU[("app_users<br/>user_refresh_tokens")]
+    end
+
+    subgraph P2["Plane 2 · Broker Authorisation"]
+        API2["AuthController"] -->|"OAuth 2.0"| FY["FYERS"]
+        FY -->|"auth_code → access_token"| API2
+        API2 --> BS[("broker_sessions")]
+    end
+
+    style P1 fill:#1a2f3a,stroke:#2196f3,color:#fff
+    style P2 fill:#3a2a1a,stroke:#ff9800,color:#fff
+```
+
+### 5.1 Plane 1 — Application Identity (JWT)
+
+Operators authenticate against the platform itself. `AuthService` hashes credentials with ASP.NET Core's `PasswordHasher<AppUser>` and issues a signed JWT alongside a persisted refresh token.
+
+- **Access token:** short-lived bearer JWT, validated on issuer, audience, signing key, and lifetime, with a one-minute clock skew tolerance.
+- **Refresh token:** persisted in `user_refresh_tokens`, enabling rotation and server-side revocation — a stolen access token expires on its own; a compromised session can be killed centrally.
+
+### 5.2 Plane 2 — Broker Authorisation (OAuth 2.0)
+
+The FYERS access token is **valid for a single trading day**. The platform automates the full authorisation-code exchange.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant OP as Operator
+    participant API as AlgoTrading.Api
+    participant FY as FYERS Auth Server
+    participant DB as broker_sessions
+    participant SVC as Downstream Services
+
+    OP->>API: GET /api/auth/start
+    API->>API: StartBrokerAuthUseCase<br/>builds authorisation URL
+    API-->>OP: redirect to FYERS consent screen
+    OP->>FY: authenticate + grant consent
+    FY-->>API: GET /api/auth/callback?auth_code=...
+    API->>API: GenerateAccessTokenUseCase
+    API->>FY: exchange auth_code + app secret
+    FY-->>API: access_token + refresh_token
+    API->>DB: DatabaseBrokerSessionStore.SaveAsync()
+    Note over DB: single active session per broker<br/>upsert, IsActive = true
+
+    SVC->>DB: GetCurrentAsync()
+    DB-->>SVC: active token
+    SVC->>FY: authorised REST / WebSocket calls
+```
+
+**Design decision — centralised session store.** The token is written once to the `broker_sessions` table behind the `IBrokerSessionStore` abstraction and read by every consumer that needs it. No service holds its own copy, and no service re-runs the OAuth dance. A single daily authorisation makes the entire fleet operational.
+
+The abstraction is deliberate: `DatabaseBrokerSessionStore` is one implementation of `IBrokerSessionStore`. Substituting a Redis-backed cache — trading durability for read latency, with the database as write-through backing — is a configuration change in the composition root, not a refactor. That substitution is on the roadmap (§11).
+
+---
+
+## 6. Risk Management & Capital Protection
+
+`RiskManagementService` implements a **pre-trade gate**. Every order proposal passes through `EvaluateOrderAsync` before it can reach an execution path, and a violation raises `RiskViolationException` rather than returning a status code — making the failure impossible to ignore by omission.
+
+```mermaid
+flowchart TD
+    S["Strategy emits order proposal"] --> K{"Global kill switch<br/>active?"}
+    K -->|"yes"| REJ["❌ RiskViolationException"]
+    K -->|"no"| R{"Trailing 60s order count<br/>exceeds MaxOrdersPerMinute?"}
+    R -->|"yes"| REJ
+    R -->|"no"| L{"Realised + unrealised P&L<br/>breaches MaxDailyLoss?"}
+    L -->|"yes"| REJ
+    L -->|"no"| OK["✅ Order admitted"]
+
+    style REJ fill:#3a1a1a,stroke:#f44336,color:#fff
+    style OK fill:#1a3a1a,stroke:#4caf50,color:#fff
+```
+
+| Control | Mechanism | Rationale |
+| :--- | :--- | :--- |
+| **Global kill switch** | Static flag checked first, shared across all scoped service instances | A human operator must be able to halt every strategy instantly, without a deploy |
+| **Order rate limiting** | Per-run `ConcurrentQueue<DateTime>` maintaining a sliding 60-second window | Contains runaway strategy loops and respects broker throttles |
+| **Daily loss ceiling** | Aggregate P&L evaluated against a configured negative threshold | Enforces the single most important discipline in systematic trading — bounded daily drawdown |
+
+The kill-switch and rate-limit state are held in `static` fields precisely because the service is registered as scoped: risk state must be **process-global**, not per-request. A per-request limiter would enforce nothing.
+
+---
+
+## 7. Simulation, Replay & Paper Trading
+
+The platform can execute a strategy against historical data with the **same code path** used for live evaluation. This is the difference between a backtest that is informative and one that is merely reassuring.
+
+```mermaid
+graph LR
+    HIST[("historical_candles<br/>market_ticks")] --> RFP["ReplayFeedProvider"]
+    RFP --> SRS["SimulationRunnerService"]
+    SRS --> SIG["SimulationSignal ledger"]
+    SIG --> RISK["Risk gate"]
+    RISK --> PTS["PaperTradingService"]
+    PTS --> PO["paper_orders"]
+    PTS --> PP["paper_positions"]
+    PP --> EQ["equity snapshots"]
+    EQ --> PERF["Performance metrics"]
+
+    style HIST fill:#2a2416,stroke:#fdb515,color:#fff
+    style PERF fill:#1a3a1a,stroke:#4caf50,color:#fff
+```
+
+| Component | Responsibility |
+| :--- | :--- |
+| `ReplayFeedProvider` | Streams stored candles/ticks as a synthetic live feed, preserving temporal ordering |
+| `SimulationRunnerService` | Drives a run's lifecycle from `initial_capital` through to completion |
+| `SimulationSignal` | Immutable ledger of every decision the strategy made, with its trigger context |
+| `PaperTradingService` | Simulated fills, position accounting, mark-to-market valuation |
+| `SimulationEquitySnapshot` | Time-ordered equity curve, the basis for drawdown and return metrics |
+| Performance layer | Aggregate metrics exposed through `GetSimulationPerformanceUseCase` |
+
+Because replay ticks are tagged, the archival path deliberately **excludes them** from the raw tick archive — simulation cannot contaminate the historical record that future simulations depend on.
+
+---
+
+## 8. Observability
+
+Both runtimes export Prometheus metrics; Grafana consumes them through provisioned datasources and dashboards under `docker/grafana/`.
+
+**Python engine** (`core/metrics.py`) — served from a daemon-thread HTTP server:
+
+| Metric | Type | Signal |
+| :--- | :--- | :--- |
+| `algotrading_redis_lag_seconds` | Gauge | Delta between tick timestamp and processing time — **the primary pipeline health indicator** |
+| `algotrading_ticks_processed_total` | Counter | Ingestion throughput |
+| `algotrading_orders_emitted_total` | Counter | Strategy activity |
+| `algotrading_strategy_loop_duration_seconds` | Histogram | Strategy evaluation latency distribution |
+
+**.NET services** expose the standard `prometheus-net` surface — request rates, durations, GC and thread-pool behaviour — from the API host.
+
+`algotrading_redis_lag_seconds` is the metric that matters most. In an event-driven pipeline, rising consumer lag is the earliest observable symptom of nearly every failure mode: a stalled consumer, a slow database, a network partition, or a volatility spike exceeding processing capacity. It is the first panel on the dashboard for that reason.
+
+---
+
+## 9. Data Model
+
+Managed by EF Core with 20+ sequential migrations. Selected tables:
+
+| Table | Purpose |
+| :--- | :--- |
+| `instruments` | NSE CM + FO symbol master, including strike, option type, and expiry metadata |
+| `expiry_rules` | Declarative weekly/monthly expiry resolution with holiday-shift handling |
+| `market_ticks` | **Hypertable.** Immutable raw tick archive, 1-day chunks |
+| `live_quote_latest` | Hot upsert table — current quote per symbol |
+| `live_ticks` · `live_bars` | Recent tick window and folded 1-minute OHLC bars |
+| `historical_candles` · `symbol_sync_state` | Backfilled OHLC history with per-symbol coverage tracking |
+| `live_watchlist_items` | Active subscription set driving ingestion |
+| `equity_groups` · `equity_group_members` | Named instrument baskets for bulk watchlist operations |
+| `broker_sessions` | Active broker OAuth tokens |
+| `app_users` · `user_refresh_tokens` | Platform identity and session rotation |
+| `simulation_runs` · `simulation_signals` · `simulation_equity_snapshots` | Backtest lifecycle, decision ledger, equity curve |
+| `paper_orders` · `paper_positions` | Simulated execution and position state |
+| `live_ingestor_status` | Ingestor heartbeat and liveness |
+
+The `expiry_rules` table deserves specific mention. Indian index-option expiry is genuinely non-trivial — it varies by index, has shifted schedules repeatedly, and moves when expiry day falls on an exchange holiday. Encoding this as **data with a resolver service** (`ExpiryResolverService`, `ExpiryDayOfWeek`, `HolidayShiftRule`) rather than as conditional logic scattered through strategies means an exchange circular becomes a row update, not a code change and redeploy.
+
+---
+
+## 10. Repository Layout
+
+```
+AlgoTrading/
+├── src/
+│   ├── AlgoTrading.Domain/            # entities · enums · value objects
+│   ├── AlgoTrading.Application/       # use cases · interfaces
+│   ├── AlgoTrading.Contracts/         # API DTOs
+│   ├── AlgoTrading.Infrastructure/    # EF Core · FYERS · Redis · services
+│   ├── AlgoTrading.Api/               # REST host
+│   ├── AlgoTrading.Worker.MarketData/ # stream consumer · historical sync
+│   ├── AlgoTrading.Worker.Strategy/   # execution host (scaffold)
+│   ├── AlgoTrading.Backtester/        # offline harness
+│   └── AlgoTrading.PythonEngine/      # ingestion · strategies · state
+├── algorithmic-trading-dashboard/     # React 19 + TypeScript console
+├── tests/                             # unit · integration · backtest suites
+├── docker/                            # compose · prometheus · grafana provisioning
+└── docs/                              # architecture · deployment · risk guides
+```
+
+---
+
+## 11. Engineering Roadmap
+
+### Phase 1 — Close the Execution Loop `in progress`
+
+- [ ] Implement the `trade_signals` Redis channel: Python publishes structured signals, `Worker.Strategy` consumes them
+- [ ] Build the FYERS order adapter behind an `IOrderExecutionService` abstraction so paper and live share one interface
+- [ ] Route live orders through the existing `RiskManagementService` gate — no separate live path
+- [ ] Idempotent order submission keyed on a client order ID, to make broker-side retries safe
+
+### Phase 2 — Containerisation & Deployment
+
+- [ ] Multi-stage `Dockerfile` per .NET service (SDK build → runtime image)
+- [ ] `Dockerfile` for the Python engine with pinned, hash-verified dependencies
+- [ ] Extend Compose to orchestrate application services alongside infrastructure, with health checks and dependency ordering
+- [ ] Version-pin all `:latest` image tags for reproducible builds
+- [ ] CI pipeline: build, test, and image publication on push
+
+### Phase 3 — Python Control Plane
+
+- [ ] **FastAPI** service exposing strategy lifecycle control (start / stop / status / parameter update) over REST
+- [ ] Migrate the engine to a DDD layout (`api/`, `core/`, `services/`, `models/`) as the surface grows
+- [ ] Structured JSON logging with correlation IDs traced across the Redis boundary
+- [ ] Pydantic schemas for every message crossing the language boundary — a typed contract between runtimes
+
+### Phase 4 — Performance & Resilience
+
+- [ ] Redis-backed broker session cache behind the existing `IBrokerSessionStore` interface
+- [ ] TimescaleDB continuous aggregates for pre-computed multi-timeframe OHLC
+- [ ] Compression and retention policies on the `market_ticks` hypertable
+- [ ] Horizontal scale-out of the consumer group across multiple worker replicas
+- [ ] Circuit breakers and exponential backoff on all FYERS API interactions
+
+### Phase 5 — Quantitative Depth
+
+- [ ] Real-time Greeks (delta, gamma, theta, vega) and implied-volatility surface
+- [ ] Portfolio-level risk aggregation across concurrent strategies
+- [ ] Walk-forward optimisation and parameter-sweep harness
+- [ ] Slippage and market-impact modelling in the paper engine for realistic backtests
+- [ ] ML-based regime detection to gate strategy activation
+
+### Phase 6 — Operator Experience
+
+- [ ] WebSocket or SSE push to the dashboard, replacing REST polling
+- [ ] Strategy configuration and deployment from the console
+- [ ] Alert routing to Telegram / email on risk-threshold breach
+- [ ] Multi-user role-based access control
+
+---
+
+## 12. Risk Disclaimer
+
+> **This software is provided for research and educational purposes.**
+>
+> Algorithmic trading in equity and derivatives markets carries substantial risk of financial loss. Derivatives are leveraged instruments; losses can exceed the initial capital deployed. Backtested or simulated performance is **not** indicative of future results and systematically omits real-world frictions including slippage, partial fills, latency, and liquidity constraints.
+>
+> Nothing in this repository constitutes financial advice or a recommendation to trade. Any deployment against a live brokerage account is undertaken **entirely at the operator's own risk**. Users are solely responsible for compliance with all applicable SEBI regulations, exchange bye-laws, and broker terms of service.
+>
+> **Always validate strategies in paper-trading mode across multiple market regimes before committing capital.**
+
+---
+
+## Appendix — Technology Stack
+
+| Layer | Technology |
+| :--- | :--- |
+| Execution backend | C# / .NET 10, ASP.NET Core, EF Core |
+| Quant engine | Python 3.11+, `fyers_apiv3`, `pandas`, `numpy` |
+| Frontend | React 19, TypeScript 5.8, Vite 6, Tailwind CSS 4, Recharts, d3 |
+| Message broker | Redis 7 (Streams + Pub/Sub) |
+| Database | TimescaleDB on PostgreSQL 15 |
+| Observability | Prometheus, Grafana, `prometheus-net`, `prometheus_client` |
+| API documentation | Swagger / OpenAPI with JWT bearer scheme |
+| Broker | FYERS API v3 (REST + WebSocket) |
+| Orchestration | Docker Compose |
+
+---
+
+<div align="center">
+
+**Maintained by Upendra Singh Chauhan**
+
+*Building institutional-grade trading infrastructure for Indian markets.*
+
+</div>
+</script>
+
+<script type="module">
+import { marked } from 'https://cdn.jsdelivr.net/npm/marked@12.0.2/lib/marked.esm.js';
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs';
+
+const docEl   = document.getElementById('doc');
+const tocEl   = document.getElementById('toc');
+const root    = document.documentElement;
+const MD_PATH = 'RESEARCH_AND_ARCHITECTURE.md';
+
+/* ---------------- theme ---------------- */
+const SUN = '<path d="M8 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6m0 1.5a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9M8 0a.75.75 0 0 1 .75.75v1a.75.75 0 0 1-1.5 0v-1A.75.75 0 0 1 8 0m0 13a.75.75 0 0 1 .75.75v1a.75.75 0 0 1-1.5 0v-1A.75.75 0 0 1 8 13m8-5a.75.75 0 0 1-.75.75h-1a.75.75 0 0 1 0-1.5h1A.75.75 0 0 1 16 8M3 8a.75.75 0 0 1-.75.75h-1a.75.75 0 0 1 0-1.5h1A.75.75 0 0 1 3 8m10.657-5.657a.75.75 0 0 1 0 1.061l-.708.707a.75.75 0 1 1-1.06-1.06l.707-.708a.75.75 0 0 1 1.06 0M4.111 11.889a.75.75 0 0 1 0 1.06l-.707.708a.75.75 0 0 1-1.061-1.061l.707-.707a.75.75 0 0 1 1.061 0m9.546 1.768a.75.75 0 0 1-1.06 0l-.708-.707a.75.75 0 0 1 1.061-1.061l.707.707a.75.75 0 0 1 0 1.061M4.111 4.111a.75.75 0 0 1-1.06 0l-.708-.707a.75.75 0 1 1 1.061-1.061l.707.707a.75.75 0 0 1 0 1.061"/>';
+const MOON = '<path d="M9.598 1.591a.75.75 0 0 1 .785-.175 7 7 0 1 1-8.967 8.967.75.75 0 0 1 .961-.96 5.5 5.5 0 0 0 7.046-7.046.75.75 0 0 1 .175-.786m1.616 1.945a7 7 0 0 1-7.678 7.678 5.5 5.5 0 1 0 7.678-7.678"/>';
+const icon = document.getElementById('themeIcon');
+
+function effectiveTheme() {
+  const set = localStorage.getItem('algotrading-theme');
+  if (set === 'dark' || set === 'light') return set;
+  return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+function applyTheme(t, rerender = true) {
+  root.setAttribute('data-theme', t);
+  icon.innerHTML = t === 'dark' ? SUN : MOON;
+  if (rerender) drawDiagrams(t);
+}
+document.getElementById('themeBtn').addEventListener('click', () => {
+  const next = effectiveTheme() === 'dark' ? 'light' : 'dark';
+  localStorage.setItem('algotrading-theme', next);
+  applyTheme(next);
+});
+applyTheme(effectiveTheme(), false);
+
+/* ---------------- mermaid ---------------- */
+async function drawDiagrams(theme) {
+  const nodes = document.querySelectorAll('.mermaid');
+  if (!nodes.length) return;
+  nodes.forEach(n => { n.removeAttribute('data-processed'); n.innerHTML = n.dataset.src; });
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: theme === 'dark' ? 'dark' : 'default',
+    securityLevel: 'loose',
+    fontFamily: getComputedStyle(document.body).fontFamily,
+    flowchart: { curve: 'basis', useMaxWidth: false },
+    sequence: { useMaxWidth: false, actorMargin: 42 }
+  });
+  try { await mermaid.run({ querySelector: '.mermaid' }); }
+  catch (e) { console.error('mermaid render failed', e); }
+}
+
+/* ---------------- load ---------------- */
+async function loadMarkdown() {
+  try {
+    const res = await fetch(MD_PATH, { cache: 'no-cache' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const text = await res.text();
+    if (text.trim()) return text;
+    throw new Error('empty response');
+  } catch (err) {
+    const embedded = document.getElementById('md-embedded').textContent;
+    if (embedded && !embedded.includes('__MARKDOWN' + '_FALLBACK__')) return embedded;
+    throw err;
+  }
+}
+
+const slug = s => s.toLowerCase().trim()
+  .replace(/[^\w\s·-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-');
+
+function render(md) {
+  marked.setOptions({ gfm: true, breaks: false });
+  docEl.innerHTML = marked.parse(md);
+
+  // fenced ```mermaid -> live diagram containers
+  docEl.querySelectorAll('code.language-mermaid').forEach(code => {
+    const wrap = document.createElement('div');
+    wrap.className = 'mermaid-wrap';
+    const el = document.createElement('div');
+    el.className = 'mermaid';
+    el.dataset.src = code.textContent;
+    el.textContent = code.textContent;
+    wrap.appendChild(el);
+    code.parentElement.replaceWith(wrap);
+  });
+
+  // horizontally scrollable tables
+  docEl.querySelectorAll('table').forEach(t => {
+    const w = document.createElement('div');
+    w.className = 'table-wrap';
+    t.replaceWith(w);
+    w.appendChild(t);
+  });
+
+  buildToc();
+  drawDiagrams(effectiveTheme());
+  if (location.hash) {
+    const t = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+    if (t) setTimeout(() => t.scrollIntoView(), 60);
+  }
+}
+
+function buildToc() {
+  // The in-page "Table of Contents" section is redundant here — the sidebar replaces it.
+  const tocHead = [...docEl.querySelectorAll('h2')]
+    .find(h => /^table of contents$/i.test(h.textContent.trim()));
+  if (tocHead) {
+    let n = tocHead.nextElementSibling;
+    while (n && !/^H[12]$/.test(n.tagName)) { const next = n.nextElementSibling; n.remove(); n = next; }
+    if (n && n.tagName === 'HR') n.remove();
+    tocHead.remove();
+  }
+
+  const heads = [...docEl.querySelectorAll('h2, h3')]
+    // drop the document subtitle (the h3 sitting directly under the h1)
+    .filter(h => !(h.tagName === 'H3' && h.previousElementSibling?.tagName === 'H1'));
+  const seen = new Map();
+  const frag = document.createDocumentFragment();
+
+  heads.forEach(h => {
+    let id = slug(h.textContent);
+    if (seen.has(id)) { const n = seen.get(id) + 1; seen.set(id, n); id = `${id}-${n}`; }
+    else seen.set(id, 0);
+    h.id = id;
+
+    const a = document.createElement('a');
+    a.className = 'anchor';
+    a.href = '#' + id;
+    a.textContent = '#';
+    a.setAttribute('aria-hidden', 'true');
+    h.prepend(a);
+
+    const li = document.createElement('li');
+    const link = document.createElement('a');
+    link.href = '#' + id;
+    link.textContent = h.textContent.replace(/^#/, '').trim();
+    link.className = h.tagName === 'H3' ? 'lvl-3' : 'lvl-2';
+    li.appendChild(link);
+    frag.appendChild(li);
+  });
+
+  tocEl.innerHTML = '';
+  tocEl.appendChild(frag);
+
+  // scroll spy
+  const links = new Map([...tocEl.querySelectorAll('a')].map(a => [a.getAttribute('href').slice(1), a]));
+  let current = null;
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(e => { if (e.isIntersecting) current = e.target.id; });
+    links.forEach((a, id) => a.classList.toggle('active', id === current));
+  }, { rootMargin: '-72px 0px -72% 0px', threshold: 0 });
+  heads.forEach(h => io.observe(h));
+
+  tocEl.addEventListener('click', e => {
+    if (e.target.tagName === 'A' && innerWidth <= 1000) sidebar.classList.remove('open');
+  });
+}
+
+/* ---------------- sidebar toggle ---------------- */
+const sidebar = document.getElementById('sidebar');
+document.getElementById('menuBtn').addEventListener('click', e => {
+  e.stopPropagation();
+  sidebar.classList.toggle('open');
+});
+document.addEventListener('click', e => {
+  if (innerWidth <= 1000 && sidebar.classList.contains('open') && !sidebar.contains(e.target)) {
+    sidebar.classList.remove('open');
+  }
+});
+
+/* ---------------- boot ---------------- */
+loadMarkdown()
+  .then(render)
+  .catch(err => {
+    docEl.innerHTML = `<div class="state">
+      <p><strong>Could not load ${MD_PATH}</strong></p>
+      <p>Serve this folder over HTTP and reload:</p>
+      <pre>python3 -m http.server 8080
+# then open http://localhost:8080/</pre>
+      <p style="margin-top:14px;font-size:13px;color:var(--fg-faint)">${String(err)}</p>
+    </div>`;
+  });
+</script>
+</body>
+</html>

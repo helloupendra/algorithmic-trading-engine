@@ -1,0 +1,53 @@
+using System;
+using System.Collections.Generic;
+using System.Text;
+
+namespace AlgoTrading.Contracts.MarketData
+{
+    /// <summary>
+    /// Data Transfer Object representing a single historical candlestick.
+    /// Used by frontend charts or simulator APIs to return historical data.
+    /// </summary>
+    public class CandleResponse
+    {
+        /// <summary>
+        /// The trading symbol.
+        /// </summary>
+        public string Symbol { get; set; } = string.Empty;
+
+        /// <summary>
+        /// The timeframe (e.g., "1m").
+        /// </summary>
+        public string Resolution { get; set; } = string.Empty;
+
+        /// <summary>
+        /// The UTC timestamp of the start of the bar.
+        /// </summary>
+        public DateTime TimestampUtc { get; set; }
+
+        /// <summary>
+        /// Open price.
+        /// </summary>
+        public decimal Open { get; set; }
+
+        /// <summary>
+        /// High price.
+        /// </summary>
+        public decimal High { get; set; }
+
+        /// <summary>
+        /// Low price.
+        /// </summary>
+        public decimal Low { get; set; }
+
+        /// <summary>
+        /// Close price.
+        /// </summary>
+        public decimal Close { get; set; }
+
+        /// <summary>
+        /// Traded volume.
+        /// </summary>
+        public decimal Volume { get; set; }
+    }
+}

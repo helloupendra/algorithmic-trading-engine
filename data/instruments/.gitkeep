@@ -1,0 +1,2 @@
+# Instrument masters are downloaded here by scripts/setup.sh|ps1 and are
+# git-ignored: FYERS regenerates them daily, so a committed copy goes stale.

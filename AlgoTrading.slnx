@@ -1,0 +1,17 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AlgoTrading.Api/AlgoTrading.Api.csproj" />
+    <Project Path="src/AlgoTrading.Application/AlgoTrading.Application.csproj" />
+    <Project Path="src/AlgoTrading.Backtester/AlgoTrading.Backtester.csproj" />
+    <Project Path="src/AlgoTrading.Contracts/AlgoTrading.Contracts.csproj" />
+    <Project Path="src/AlgoTrading.Domain/AlgoTrading.Domain.csproj" />
+    <Project Path="src/AlgoTrading.Infrastructure/AlgoTrading.Infrastructure.csproj" />
+    <Project Path="src/AlgoTrading.Worker.MarketData/AlgoTrading.Worker.MarketData.csproj" />
+    <Project Path="src/AlgoTrading.Worker.Strategy/AlgoTrading.Worker.Strategy.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AlgoTrading.BacktestTests/AlgoTrading.BacktestTests.csproj" />
+    <Project Path="tests/AlgoTrading.IntegrationTests/AlgoTrading.IntegrationTests.csproj" />
+    <Project Path="tests/AlgoTrading.UnitTests/AlgoTrading.UnitTests.csproj" />
+  </Folder>
+</Solution>
