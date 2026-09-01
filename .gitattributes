@@ -1,0 +1,49 @@
+# Normalise line endings so the repo behaves identically on Windows, macOS and
+# Linux. Without this, shell scripts cloned on Windows pick up CRLF and fail
+# with "bad interpreter" the moment they run under WSL, Git Bash or Docker.
+
+* text=auto eol=lf
+
+# Scripts that MUST stay LF — they are executed by bash/sh.
+*.sh            text eol=lf
+*.bash          text eol=lf
+
+# Scripts that MUST stay CRLF — Windows PowerShell is happiest with them.
+*.ps1           text eol=crlf
+*.psm1          text eol=crlf
+*.cmd           text eol=crlf
+*.bat           text eol=crlf
+
+# Source and config
+*.cs            text eol=lf diff=csharp
+*.csproj        text eol=lf
+*.slnx          text eol=lf
+*.py            text eol=lf diff=python
+*.md            text eol=lf
+*.json          text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.sql           text eol=lf
+*.html          text eol=lf
+*.css           text eol=lf
+*.js            text eol=lf
+Dockerfile      text eol=lf
+.gitignore      text eol=lf
+.gitattributes  text eol=lf
+
+# Binary — never touch these
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.ico           binary
+*.pdf           binary
+*.zip           binary
+*.gz            binary
+*.nupkg         binary
+*.dll           binary
+*.so            binary
+*.dylib         binary
+
+# Large generated data — keep diffs out of review
+*.csv           text eol=lf -diff

@@ -1,0 +1,52 @@
+[
+  {
+    "groupName": "BANKNIFTY_CONSTITUENTS",
+    "symbol": "NSE:HDFCBANK-EQ",
+    "weight": 17.93,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "BANKNIFTY_CONSTITUENTS",
+    "symbol": "NSE:ICICIBANK-EQ",
+    "weight": 13.63,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "BANKNIFTY_CONSTITUENTS",
+    "symbol": "NSE:AXISBANK-EQ",
+    "weight": 10.28,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:HDFCBANK-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+  {
+    "groupName": "NIFTY50_CONSTITUENTS",
+    "symbol": "NSE:RELIANCE-EQ",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  },
+
+  {
+    "groupName": "SENSEX_CONSTITUENTS",
+    "symbol": "BSE:RELIANCE",
+    "weight": null,
+    "effectiveFrom": "2026-01-01",
+    "effectiveTo": null,
+    "isEnabled": true
+  }
+]

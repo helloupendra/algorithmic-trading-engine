@@ -1,0 +1,7 @@
+[
+  {
+    "Name": "ExampleStraddle",
+    "Description": "Default example straddle strategy",
+    "DefaultParametersJson": "{}"
+  }
+]
