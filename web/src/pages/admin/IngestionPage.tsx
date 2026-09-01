@@ -11,6 +11,9 @@ import {
   useStaleQuotes,
   useWatchlist,
   useRemoveWatchlistSymbol,
+  useIngestorProcessStatus,
+  useStartIngestor,
+  useStopIngestor,
 } from '../../lib/queries'
 import { formatAge, formatDateTime, formatPrice, shortSymbol } from '../../lib/format'
 import { Badge, InlineError, Panel, QueryBoundary } from '../../components/ui'
@@ -22,6 +25,10 @@ export function IngestionPage() {
   const backfill = useBackfillHistory()
   const watchlist = useWatchlist()
   const removeWatchlist = useRemoveWatchlistSymbol()
+
+  const processStatus = useIngestorProcessStatus()
+  const startIngestor = useStartIngestor()
+  const stopIngestor = useStopIngestor()
 
   const [form, setForm] = useState({
     symbol: 'NSE:SBIN-EQ',
@@ -44,12 +51,33 @@ export function IngestionPage() {
       <Panel
         title="Ingestors"
         actions={
-          <button
-            className="btn btn--secondary"
-            onClick={() => setShowMonitor(!showMonitor)}
-          >
-            {showMonitor ? 'Close Live Prices Monitor' : 'Open Live Prices Monitor'}
-          </button>
+          <div className="flex gap-2">
+            <button
+              className="btn btn--secondary"
+              onClick={() => setShowMonitor(!showMonitor)}
+            >
+              {showMonitor ? 'Close Live Prices Monitor' : 'Open Live Prices Monitor'}
+            </button>
+            <QueryBoundary query={processStatus} empty="">
+              {(data) => data.isRunning ? (
+                <button 
+                  className="btn btn--primary" 
+                  disabled={stopIngestor.isPending}
+                  onClick={() => stopIngestor.mutate()}
+                >
+                  Stop Ingestor Process
+                </button>
+              ) : (
+                <button 
+                  className="btn btn--pos" 
+                  disabled={startIngestor.isPending}
+                  onClick={() => startIngestor.mutate()}
+                >
+                  Start Live Ingestor
+                </button>
+              )}
+            </QueryBoundary>
+          </div>
         }
       >
         <QueryBoundary query={statuses} empty="No ingestor has ever reported a heartbeat.">

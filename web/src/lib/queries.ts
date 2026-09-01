@@ -96,6 +96,34 @@ export function useIngestorStatuses() {
   })
 }
 
+export function useIngestorProcessStatus() {
+  return useQuery({
+    queryKey: ['ingestor', 'process'],
+    queryFn: () => api.get<{ isRunning: boolean }>('/api/Ingestor/status'),
+    refetchInterval: POLL_SLOW,
+  })
+}
+
+export function useStartIngestor() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.post<{ message: string }>('/api/Ingestor/start'),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['ingestor'] })
+    },
+  })
+}
+
+export function useStopIngestor() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.post<{ message: string }>('/api/Ingestor/stop'),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['ingestor'] })
+    },
+  })
+}
+
 export function useStaleQuotes(staleAfterSeconds = 60) {
   return useQuery({
     queryKey: ['quotes', 'stale', staleAfterSeconds],

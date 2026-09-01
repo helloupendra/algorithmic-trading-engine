@@ -45,34 +45,75 @@ public class StrategyController : ControllerBase
         _logger = logger;
     }
 
-    [HttpGet]
-    public async Task<ActionResult<IEnumerable<object>>> GetAll(CancellationToken cancellationToken)
+    private List<StrategyDefinition> GetDiscoveredStrategies()
     {
-        var strategies = await _dbContext.Strategies.ToListAsync(cancellationToken);
+        var engineDirectory = ResolveEngineDirectory();
+        var strategiesPath = Path.Combine(engineDirectory, "strategies");
+        var list = new List<StrategyDefinition>();
+        
+        if (!Directory.Exists(strategiesPath)) return list;
 
-        return strategies.Select(s =>
+        var excludeFiles = new HashSet<string> { "__init__.py", "base_strategy.py", "execution_runner.py", "logic_engine.py", "contract_selector.py", "price_resolver.py", "list_strategies.py" };
+        var pyFiles = Directory.GetFiles(strategiesPath, "*.py", SearchOption.AllDirectories)
+            .Where(f => !excludeFiles.Contains(Path.GetFileName(f))).ToList();
+
+        foreach (var file in pyFiles)
+        {
+            var content = System.IO.File.ReadAllText(file);
+            var lines = content.Split('\n');
+            string? strategyName = null;
+            
+            foreach (var line in lines)
+            {
+                if (line.StartsWith("class ") && line.Contains("(BaseStrategy)"))
+                {
+                    var parts = line.Split(' ', '(');
+                    if (parts.Length > 1) { strategyName = parts[1].Trim(); break; }
+                }
+            }
+
+            if (string.IsNullOrEmpty(strategyName))
+            {
+                var nameParts = Path.GetFileNameWithoutExtension(file).Split('_');
+                strategyName = string.Join("", nameParts.Select(p => char.ToUpper(p[0]) + p.Substring(1)));
+            }
+
+            int stableId = Math.Abs(strategyName.GetHashCode());
+            if (stableId == 0) stableId = 1;
+
+            list.Add(new StrategyDefinition
+            {
+                Id = stableId,
+                Name = strategyName,
+                Description = $"Discovered from {Path.GetRelativePath(strategiesPath, file).Replace("\\", "/")}",
+                DefaultParametersJson = "{}",
+                CreatedUtc = System.IO.File.GetCreationTimeUtc(file)
+            });
+        }
+        return list;
+    }
+
+    [HttpGet]
+    public IActionResult GetAll()
+    {
+        var strategies = GetDiscoveredStrategies();
+        return Ok(strategies.Select(s =>
         {
             _activeProcesses.TryGetValue(s.Id, out var running);
-            return (object)new
+            return new
             {
-                s.Id,
-                s.Name,
-                s.Description,
-                s.DefaultParametersJson,
-                s.CreatedUtc,
-                IsActive = running is not null,
-                StartedBy = running?.StartedBy,
-                StartedUtc = running?.StartedUtc
+                s.Id, s.Name, s.Description, s.DefaultParametersJson, s.CreatedUtc,
+                IsActive = running is not null, StartedBy = running?.StartedBy, StartedUtc = running?.StartedUtc
             };
-        }).ToList();
+        }).ToList());
     }
 
     [HttpGet("{id}")]
-    public async Task<ActionResult<StrategyDefinition>> GetById(int id, CancellationToken cancellationToken)
+    public IActionResult GetById(int id)
     {
-        var strategy = await _dbContext.Strategies.FindAsync(new object[] { id }, cancellationToken);
+        var strategy = GetDiscoveredStrategies().FirstOrDefault(x => x.Id == id);
         if (strategy == null) return NotFound();
-        return strategy;
+        return Ok(strategy);
     }
 
     /// <summary>
@@ -124,9 +165,9 @@ public class StrategyController : ControllerBase
     /// </summary>
     [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
     [HttpPost("{id}/start")]
-    public async Task<IActionResult> StartStrategy(int id, CancellationToken cancellationToken)
+    public IActionResult StartStrategy(int id, CancellationToken cancellationToken)
     {
-        var strategy = await _dbContext.Strategies.FindAsync(new object[] { id }, cancellationToken);
+        var strategy = GetDiscoveredStrategies().FirstOrDefault(x => x.Id == id);
         if (strategy == null) return NotFound($"Strategy {id} not found");
 
         return LaunchRunner(strategy, runId: null);

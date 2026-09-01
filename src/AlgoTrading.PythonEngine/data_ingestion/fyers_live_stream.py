@@ -18,9 +18,12 @@ import threading
 import traceback
 import urllib3
 import requests
+import re
+import math
 from core.api_client import build_session
 from datetime import datetime, timezone
 from fyers_apiv3.FyersWebsocket import data_ws
+from core.options_analytics import analyze_option
 
 # Add the parent directory to sys.path so that imports resolve correctly
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -156,10 +159,21 @@ def handle_live_tick(raw_msg: dict):
     publisher.publish_tick(normalized)
 
 
+latest_spots = {"NIFTY": 24000.0, "BANKNIFTY": 51000.0}
+
 def map_message_to_payload(message: dict) -> dict | None:
     symbol = message.get("symbol")
     if not symbol:
         return None
+        
+    ltp = message.get("ltp")
+    
+    # Track spot prices for indices
+    if ltp:
+        if symbol == "NSE:NIFTY50-INDEX":
+            latest_spots["NIFTY"] = ltp
+        elif symbol == "NSE:NIFTYBANK-INDEX":
+            latest_spots["BANKNIFTY"] = ltp
 
     exchange_ts = None
     if message.get("last_traded_time"):
@@ -188,6 +202,25 @@ def map_message_to_payload(message: dict) -> dict | None:
         "openInterest": message.get("min_oi") or message.get("oi") or message.get("open_interest", 0),
         "rawPayload": json.dumps(message)
     }
+
+    # Calculate Greeks if it is an Option
+    if payload["lastTradedPrice"] and (symbol.endswith("CE") or symbol.endswith("PE")):
+        m = re.search(r'NSE:([A-Z]+).*?(\d+)(CE|PE)$', symbol)
+        if m:
+            index_name = m.group(1)
+            strike = float(m.group(2))
+            opt_type = m.group(3)
+            
+            spot = latest_spots.get("NIFTY", 24000.0) if "NIFTY" in index_name and "BANK" not in index_name else latest_spots.get("BANKNIFTY", 51000.0)
+            
+            # Approximate days to expiry (7 days for demo)
+            greeks = analyze_option(S=spot, K=strike, T_days=7.0, r=0.10, market_price=payload["lastTradedPrice"], option_type=opt_type)
+            
+            payload["impliedVolatility"] = greeks.get("iv")
+            payload["delta"] = greeks.get("delta")
+            payload["gamma"] = greeks.get("gamma")
+            payload["theta"] = greeks.get("theta")
+            payload["vega"] = greeks.get("vega")
 
     return payload
 

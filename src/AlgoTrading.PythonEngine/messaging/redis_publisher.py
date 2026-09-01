@@ -198,7 +198,13 @@ def normalize_tick(
             raw_msg.get("oi") 
             or raw_msg.get("open_interest")
             or raw_msg.get("min_oi")
+            or raw_msg.get("openInterest")
         ),
+        "impliedVolatility": safe_float(raw_msg.get("impliedVolatility")),
+        "delta": safe_float(raw_msg.get("delta")),
+        "gamma": safe_float(raw_msg.get("gamma")),
+        "theta": safe_float(raw_msg.get("theta")),
+        "vega": safe_float(raw_msg.get("vega")),
         "receivedUtc": utc_now_iso(),
         "rawPayload": json.dumps(raw_msg, default=str),
     }
