@@ -107,7 +107,9 @@ import_csv() {
   printf '      %s\n' "$response"
 }
 import_csv "Cash Market"      "data/instruments/NSE_CM.csv"
-import_csv "Futures & Options" "data/instruments/NSE_FO.csv"
+import_csv "NSE Futures & Options" "data/instruments/NSE_FO.csv"
+import_csv "BSE Futures & Options" "data/instruments/BSE_FO.csv"
+import_csv "Commodities" "data/instruments/MCX_COM.csv"
 
 cat <<EOF
 
