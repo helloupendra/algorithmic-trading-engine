@@ -23,7 +23,7 @@ import math
 from core.api_client import build_session
 from datetime import datetime, timezone
 from fyers_apiv3.FyersWebsocket import data_ws
-from core.options_analytics import analyze_option
+
 
 # Add the parent directory to sys.path so that imports resolve correctly
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -112,14 +112,21 @@ def get_active_watchlist():
     return sorted(set(symbols))
 
 
-def upsert_tick(payload: dict):
-    url = f"{API_BASE_URL}/api/LiveData/ticks/upsert"
-    response = http.post(url, json=payload, verify=VERIFY_SSL, timeout=30)
+import concurrent.futures
+tick_executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 
-    if response.status_code >= 400:
-        print("TICK UPSERT FAILED:", response.status_code, response.text)
-    else:
-        print(f"TICK UPSERT OK: {payload.get('symbol')} | LTP: {payload.get('lastTradedPrice')}")
+def _do_upsert_tick(payload: dict):
+    url = f"{API_BASE_URL}/api/LiveData/ticks/upsert"
+    try:
+        response = http.post(url, json=payload, verify=VERIFY_SSL, timeout=10)
+        if response.status_code >= 400:
+            print("TICK UPSERT FAILED:", response.status_code, response.text)
+    except Exception as e:
+        print("TICK UPSERT HTTP ERROR:", e)
+
+def upsert_tick(payload: dict):
+    # Offload to background thread to prevent blocking the WebSocket loop
+    tick_executor.submit(_do_upsert_tick, payload)
 
 
 def send_heartbeat():
@@ -213,14 +220,30 @@ def map_message_to_payload(message: dict) -> dict | None:
             
             spot = latest_spots.get("NIFTY", 24000.0) if "NIFTY" in index_name and "BANK" not in index_name else latest_spots.get("BANKNIFTY", 51000.0)
             
-            # Approximate days to expiry (7 days for demo)
-            greeks = analyze_option(S=spot, K=strike, T_days=7.0, r=0.10, market_price=payload["lastTradedPrice"], option_type=opt_type)
+            # Approximate days to expiry (7 days for demo) - in production this would fetch real TTE
+            from core.greeks_calculator import calculate_greeks
+            tte_years = 7.0 / 365.0
             
-            payload["impliedVolatility"] = greeks.get("iv")
-            payload["delta"] = greeks.get("delta")
-            payload["gamma"] = greeks.get("gamma")
-            payload["theta"] = greeks.get("theta")
-            payload["vega"] = greeks.get("vega")
+            greeks = calculate_greeks(
+                spot=spot, 
+                strike=strike, 
+                tte_years=tte_years, 
+                option_type=opt_type, 
+                option_price=payload["lastTradedPrice"]
+            )
+            
+            if greeks:
+                payload["impliedVolatility"] = greeks.iv
+                payload["delta"] = greeks.delta
+                payload["gamma"] = greeks.gamma
+                payload["theta"] = greeks.theta
+                payload["vega"] = greeks.vega
+            else:
+                payload["impliedVolatility"] = None
+                payload["delta"] = None
+                payload["gamma"] = None
+                payload["theta"] = None
+                payload["vega"] = None
 
     return payload
 
