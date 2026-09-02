@@ -88,7 +88,7 @@ dotnet user-secrets set "Jwt:SecretKey"   "$(openssl rand -base64 48)"
 ### Python
 
 - Target 3.11+. Type-hint public functions.
-- Follow the existing package layout: ingestion in `data_ingestion/`, transport in `messaging/`, strategy logic in `strategies/`, persistence of run state in `state_management/`.
+- Follow the existing package layout: market data in `market_data/` (live/, options/, historical/), transport in `messaging/`, strategy logic in `strategies/`, persistence of run state in `state_management/`.
 - New strategies subclass the contract in `strategies/base_strategy.py`.
 - No credentials in source — read configuration through `core/config.py`, and give every `os.getenv` call a **non-sensitive** default.
 - Format with `ruff format`; lint with `ruff check`.

@@ -1,5 +1,33 @@
 # AlgoTrading Platform — Progress Summary
 
+> **Current status — September 2026**
+>
+> The sections below this note are a historical progress log (mid-2026). The
+> latest state of the platform:
+>
+> - **Web console v2** (`web/`): the frontend was rebuilt on a single design
+>   system, admin-first. The **Data module is complete** — data overview
+>   (coverage matrix + needs-attention), live feeds (ingestor control, index
+>   tickers, merged live watchlist, diagnostics with process logs, tick/bar
+>   inspector), historical (coverage-first browser + chart + FYERS backfill
+>   incl. ATM±N option chains) and instruments & F&O (master search, expiries,
+>   CE/PE ladder). Other modules run as tagged `v1` screens and are rebuilt one
+>   by one; per-trader module access is planned via the module registry
+>   (`web/src/lib/modules.ts`).
+> - **Live-pipeline hardening**: the ingestor
+>   (`market_data/live/fyers_streamer.py`) now reports an honest heartbeat
+>   (`Running`/`Stalled`/`Disconnected` from real socket + tick state) and a
+>   watchdog forces a full reconnect with a fresh broker token when the socket
+>   stays down — the daily FYERS token expiry can no longer freeze the feed
+>   silently. The API drains and exposes the ingestor's process output
+>   (`GET /api/Ingestor/logs`) and start/stop is race-safe.
+> - **5m/15m live bars**: `GET /api/LiveData/bars` aggregates minute buckets
+>   on read from the stored 1m bars, so strategies that declare 5m/15m
+>   requirements (GhostTangentCrossings, LogicEngine) receive real data.
+> - Known open reliability work (Redis PEL loss, watchlist-change socket
+>   restarts, unbounded live_ticks growth, Greeks pipeline) is tracked and
+>   ordered — ask the maintainers before relying on those paths.
+
 ## Overview
 This project has evolved from a basic broker integration into a working market data and simulator platform foundation. 
 At this stage, the system supports:

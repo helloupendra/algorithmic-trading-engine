@@ -3,7 +3,9 @@
 A polyglot, event-driven algorithmic trading platform for Indian equity and
 derivatives markets. A .NET 10 backend owns persistence, risk and broker
 integration; a Python engine owns live ingestion and strategy execution; Redis
-Streams carry ticks between them; TimescaleDB stores the time series.
+Streams carry ticks between them; TimescaleDB stores the time series; and a
+React **web console** operates the whole thing — live feeds, historical data,
+instruments and F&O chains from the browser.
 
 > **Trading involves financial risk.** This software is provided for research
 > and educational use. Run it in paper/simulation mode until you have validated
@@ -32,7 +34,7 @@ Streams carry ticks between them; TimescaleDB stores the time series.
 ```
                     ┌──────────────────────┐
    FYERS WebSocket  │  Python Engine       │
-   ───────────────► │  fyers_live_stream   │
+   ───────────────► │  fyers_streamer      │
                     └──────────┬───────────┘
                                │ XADD market:ticks
                                ▼
@@ -53,16 +55,22 @@ Streams carry ticks between them; TimescaleDB stores the time series.
    │ execution_runner     │  signals, paper orders, positions
    └──────────────────────┘
 
+   ┌──────────────────────┐
+   │ Web console (React)  │  dev :5173, or served by the API from wwwroot
+   │ admin + trader       │──► AlgoTrading.Api REST (polling)
+   └──────────────────────┘
+
    Observability:  Prometheus :9090  ──►  Grafana :3000
 ```
 
 | Component | Stack | Responsibility |
 |---|---|---|
-| `AlgoTrading.Api` | .NET 10 | REST API, auth, instruments, expiry resolution, simulation, risk |
+| `AlgoTrading.Api` | .NET 10 | REST API, auth, instruments, expiry resolution, simulation, risk; serves the built web console from `wwwroot` |
 | `AlgoTrading.Worker.MarketData` | .NET 10 | Drains the Redis tick stream into TimescaleDB in batches |
-| `AlgoTrading.Worker.Strategy` | .NET 10 | Strategy host (in progress) |
-| `AlgoTrading.Backtester` | .NET 10 | Historical replay and backtesting |
+| `AlgoTrading.Worker.Strategy` | .NET 10 | Strategy host (placeholder — live strategies run in the Python engine) |
+| `AlgoTrading.Backtester` | .NET 10 | Placeholder — backtesting currently runs via the Python CLI tools |
 | `AlgoTrading.PythonEngine` | Python 3.10+ | Live FYERS ingestion, option-chain tracking, strategy execution |
+| `web/` | React 19 + Vite + TypeScript | Web console (v2 design system): admin modules — Data first — plus the trader screens |
 
 The .NET solution follows a clean-architecture split: `Domain` → `Application`
 → `Infrastructure` → `Api`/`Worker.*`, with `Contracts` holding the DTOs shared
@@ -229,7 +237,20 @@ Each of these wants its own terminal.
 | 1 | Infrastructure | `docker compose up -d` |
 | 2 | API | `dotnet run --project src/AlgoTrading.Api` |
 | 3 | Tick writer | `dotnet run --project src/AlgoTrading.Worker.MarketData` |
-| 4 | Python engine | `python src/AlgoTrading.PythonEngine/algo.py` |
+| 4 | Web console (dev) | `cd web && npm run dev` → <http://localhost:5173> |
+| 5 | Python engine (optional CLI) | `python src/AlgoTrading.PythonEngine/algo.py` |
+
+Day-to-day operation is designed to happen **from the web console**: sign in as
+admin, connect FYERS under *Broker*, then use the **Data module** —
+*Live feeds* starts/stops the ingestor and manages the watchlist,
+*Historical* browses coverage and backfills candles from FYERS,
+*Instruments & F&O* explores the contract universe. The `algo.py` menu remains
+as a terminal fallback for the same operations.
+
+To serve the console from the API itself (one origin, no dev server), run
+`./scripts/go-live.sh` — it builds `web/` with relative URLs, copies it into
+`src/AlgoTrading.Api/wwwroot`, starts the API and opens a Cloudflare quick
+tunnel.
 
 Before running anything Python, activate the virtualenv and set `PYTHONPATH` —
 the engine uses absolute package imports, so it will not resolve without it:
@@ -258,11 +279,11 @@ $env:PYTHONPATH = "$PWD\src\AlgoTrading.PythonEngine"
 The underlying scripts can also be driven directly:
 
 ```bash
-# Live tick ingestion from FYERS into Redis
-python src/AlgoTrading.PythonEngine/data_ingestion/fyers_live_stream.py
+# Live tick ingestion from FYERS into Redis + the API
+python src/AlgoTrading.PythonEngine/market_data/live/fyers_streamer.py
 
-# Record the ATM ±15 option chain during market hours (09:15–15:30 IST)
-python src/AlgoTrading.PythonEngine/data_ingestion/option_chain_tracker.py
+# Record the ATM option chain during market hours (09:15–15:30 IST)
+python src/AlgoTrading.PythonEngine/market_data/options/chain_tracker.py
 
 # Run a strategy
 python src/AlgoTrading.PythonEngine/strategies/execution_runner.py \
@@ -273,12 +294,38 @@ python src/AlgoTrading.PythonEngine/tools/strategy_live_terminal_dashboard_v2.py
     --user-id 1
 ```
 
-Available strategies: `ExampleStraddle`. You can add your own by creating them in the `strategies/` directory!
+Available strategies include `GhostTangentCrossings` (5m ellipse-tangent
+breakout on BANKNIFTY/NIFTY/SENSEX), `LogicEngine` (15m rules + Telegram
+alerts) and `ExampleStraddle`. Add your own as `BaseStrategy` subclasses in the
+`strategies/` directory — they are auto-discovered.
+
+The live ingestor is supervised for honesty: its heartbeat reports the real
+websocket state (`Running` / `Stalled` / `Disconnected`), and a watchdog forces
+a full reconnect with a fresh broker token if the socket stays down — so a
+dead feed shows up as degraded in the console instead of silently freezing.
+`GET /api/LiveData/bars` aggregates 5m/15m bars on read from the stored 1m
+live bars.
+
+### The web console
+
+The console (in `web/`) is being rebuilt module by module on a single "v2"
+design system — admin experience first. Current state:
+
+| Module | Status | What it does |
+|---|---|---|
+| **Data** | **v2 — complete** | *Overview* (coverage matrix, pipeline health, needs-attention), *Live feeds* (start/stop the ingestor, index tickers, one merged live watchlist with quotes, diagnostics + process logs, tick/bar inspector), *Historical* (coverage-first candle browser with chart + FYERS backfill incl. ATM±N option chains), *Instruments & F&O* (master search, expiries, CE/PE chain ladder) |
+| Strategies, Backtesting, Risk, Alerts, Users, Broker, System | v1 | Functional screens from the previous design, tagged `v1` in the sidebar; each will be rebuilt in turn |
+| Trader screens | v1 | Rebuild queued after the admin modules; per-trader module access will then be granted from Users |
+
+The module registry lives in `web/src/lib/modules.ts` — the sidebar, the admin
+home grid and (later) per-trader module grants all read from it.
 
 ### Service endpoints
 
 | Service | URL | Credentials |
 |---|---|---|
+| Web console (dev) | <http://localhost:5173> | admin / trader accounts (see [web/README.md](web/README.md)) |
+| Web console (served by API) | <http://localhost:5025> | same — deployed by `scripts/go-live.sh` |
 | API + Swagger | <http://localhost:5025/swagger> | — |
 | Prometheus metrics | <http://localhost:5025/metrics> | — |
 | Grafana | <http://localhost:3000> | from `.env` (`admin`/`admin` by default) |
@@ -307,18 +354,30 @@ algorithmic-trading-engine/
 │   ├── AlgoTrading.Application/     Use cases and interfaces
 │   ├── AlgoTrading.Infrastructure/  EF Core, FYERS clients, services, migrations
 │   ├── AlgoTrading.Contracts/       Request/response DTOs
-│   ├── AlgoTrading.Api/             REST API (:5025)
+│   ├── AlgoTrading.Api/             REST API (:5025), serves web console from wwwroot
 │   ├── AlgoTrading.Worker.MarketData/  Redis -> TimescaleDB tick writer
-│   ├── AlgoTrading.Worker.Strategy/    Strategy host
-│   ├── AlgoTrading.Backtester/         Historical replay
+│   ├── AlgoTrading.Worker.Strategy/    Strategy host (placeholder)
+│   ├── AlgoTrading.Backtester/         Placeholder (backtests run via Python tools)
 │   └── AlgoTrading.PythonEngine/
 │       ├── algo.py                  Interactive control centre
-│       ├── core/                    Config and metrics
-│       ├── data_ingestion/          FYERS live stream, option chain, replayer
+│       ├── core/                    Config, API client, metrics
+│       ├── market_data/
+│       │   ├── live/                fyers_streamer.py — the live ingestor
+│       │   ├── options/             ATM option-chain tracker
+│       │   └── historical/          FYERS downloader, DB replayer
 │       ├── messaging/               Redis stream publisher/subscriber
-│       ├── strategies/              Base strategy, runner, Titli variants
+│       ├── strategies/              Base strategy, runner, Ghost, LogicEngine, Titli
 │       ├── state_management/        Strategy state persistence and recovery
-│       └── tools/                   Monitors, dashboards, watchlist utilities
+│       └── tools/                   Monitors, dashboards, backfill CLIs
+│
+├── web/                         React web console (v2 design system)
+│   └── src/
+│       ├── lib/                 api client, query hooks, module registry, symbols
+│       ├── components/          shell, icons, charts, shared UI primitives
+│       └── pages/
+│           ├── data/            Data module: overview, live feeds, historical, F&O
+│           ├── admin/           admin home + v1 modules awaiting their rebuild
+│           └── trader/          trader screens (v1, rebuild queued)
 │
 ├── tests/                       Unit, integration and backtest projects
 ├── database/
@@ -530,12 +589,17 @@ import is idempotent.
 Work down the chain:
 1. Indian markets are open 09:15–15:30 IST on weekdays.
 2. FYERS access tokens expire daily — re-run
-   <http://localhost:5025/api/auth/start>.
-3. Check the watchlist is not empty (`algo.py` option 3, 4 or 5).
-4. Confirm ticks are reaching Redis:
+   <http://localhost:5025/api/auth/start> (or the console's *Broker* page).
+   The ingestor's heartbeat now reports `Disconnected`/`Stalled` honestly, so
+   the console topbar shows the feed as degraded when this happens.
+3. Check the watchlist is not empty — console → *Data → Live feeds*, or
+   `algo.py` option 3/4/5.
+4. Check the ingestor process output: console → *Data → Live feeds → Feed
+   diagnostics*, or `GET /api/Ingestor/logs`.
+5. Confirm ticks are reaching Redis:
    `docker exec -it algotrading_redis redis-cli XLEN market:ticks`
-5. Confirm `AlgoTrading.Worker.MarketData` is running — nothing reaches
-   TimescaleDB without it.
+6. Confirm `AlgoTrading.Worker.MarketData` is running — nothing reaches the
+   `market_ticks` archive without it.
 </details>
 
 <details>

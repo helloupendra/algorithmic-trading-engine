@@ -121,7 +121,7 @@ graph TB
     end
 
     subgraph PY["Python Engine · Quant Plane"]
-        ING["fyers_live_stream<br/>WebSocket ingestor"]
+        ING["fyers_streamer<br/>WebSocket ingestor"]
         STR["Strategy Runtime<br/>execution_runner · titli/*"]
         SEL["contract_selector<br/>price_resolver"]
         ST["state_management<br/>store · recovery"]
@@ -305,7 +305,7 @@ graph TD
 ```
 src/AlgoTrading.PythonEngine/
 ├── core/                     # configuration + Prometheus metric definitions
-├── data_ingestion/           # FYERS WebSocket, historical replayer, option-chain tracker
+├── market_data/              # live/ (FYERS WebSocket), options/ (chain tracker), historical/
 ├── messaging/                # Redis Streams publisher / subscriber
 ├── state_management/         # durable strategy state, models, crash recovery
 ├── strategies/               # base strategy, contract selector, price resolver, runner
@@ -313,7 +313,7 @@ src/AlgoTrading.PythonEngine/
 └── tools/                    # operational CLI utilities
 ```
 
-**Ingestion (`data_ingestion/fyers_live_stream.py`).** Maintains the FYERS WebSocket, normalises inbound frames, and publishes to the Redis stream. It concurrently subscribes to the `watchlist_updates` Pub/Sub channel, so an operator adding a symbol through the API causes a live resubscribe with no process restart.
+**Ingestion (`market_data/live/fyers_streamer.py`).** Maintains the FYERS WebSocket, normalises inbound frames, and publishes to the Redis stream. It concurrently subscribes to the `watchlist_updates` Pub/Sub channel, so an operator adding a symbol through the API causes a live resubscribe with no process restart.
 
 **Strategy runtime (`strategies/`).** A `base_strategy` contract with pluggable implementations. The `titli/` package holds a family of index-option straddle variants differentiated by strike offset and adjustment policy (20 / 50 / 70 / 90 / 175-point variants, plus a quantity-adjustment strategy). `contract_selector` resolves the tradeable option contract for a given spot and expiry; `price_resolver` derives the reference price used for entry and adjustment decisions.
 

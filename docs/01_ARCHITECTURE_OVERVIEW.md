@@ -32,7 +32,7 @@ This is where the actual quantitative strategies live (e.g. The `Titli` Multi-St
 
 ### Time-Travel Backtesting
 Traditional backtesting uses fake "candle" data or mathematical Black-Scholes pricing. We use True Tick Replay.
-1. `data_ingestion/historical_replayer.py` queries TimescaleDB for specific past days.
+1. `market_data/historical/db_replayer.py` queries TimescaleDB for specific past days.
 2. It pushes these historical ticks back into the Redis stream with an `IsReplay = True` flag.
 3. The C# Engine routes them to the Paper Trading simulator but explicitly blocks them from polluting the live database.
 4. The Strategy Engine trades against exact historical option prices and IV crush behavior.
