@@ -6,14 +6,14 @@ import time
 # Base paths
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 TOOLS_DIR = os.path.join(ROOT_DIR, "tools")
-INGESTION_DIR = os.path.join(ROOT_DIR, "data_ingestion")
+MARKET_DATA_DIR = os.path.join(ROOT_DIR, "market_data")
 STRATEGIES_DIR = os.path.join(ROOT_DIR, "strategies")
 
 def run_script(script_name, *args):
     """Helper to run a python script as a subprocess"""
     script_path = os.path.join(TOOLS_DIR, script_name)
     if not os.path.exists(script_path):
-        script_path = os.path.join(INGESTION_DIR, script_name)
+        script_path = os.path.join(MARKET_DATA_DIR, script_name)
         if not os.path.exists(script_path):
             script_path = os.path.join(STRATEGIES_DIR, script_name)
         
@@ -65,8 +65,9 @@ def main():
             choice = input("\nSelect an option (1-9): ").strip()
             
             if choice == "1":
-                print("\nStarting Ingestor... (Press Ctrl+C to return to menu)")
-                run_script("fyers_live_stream.py")
+                print("Starting Live Data Ingestor...")
+                subprocess.run([sys.executable, os.path.join(MARKET_DATA_DIR, "live", "fyers_streamer.py")])
+                input("\n[Returned to Main Menu] Press Enter to continue...")
                 
             elif choice == "2":
                 print("\nOpening Live Monitor... (Press Ctrl+C to return to menu)")

@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 import sys
 
 # Append parent dir for redis_publisher import
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 from messaging.redis_publisher import build_publisher_from_env, normalize_tick
 
 # Resolve the repo-root .env from this file's location so the replayer works

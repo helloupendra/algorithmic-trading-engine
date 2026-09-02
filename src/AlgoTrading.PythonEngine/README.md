@@ -80,13 +80,13 @@ converts it to the FYERS format (`NSE:IDEA-EQ`) before subscribing.
 
 ```bash
 # Live tick ingestion: FYERS WebSocket -> Redis Streams
-python data_ingestion/fyers_live_stream.py
+python market_data/live/fyers_streamer.py
 
 # Track the ATM ±15 option chain during market hours (09:15–15:30 IST)
-python data_ingestion/option_chain_tracker.py
+python market_data/options/chain_tracker.py
 
 # Replay stored ticks back onto the stream
-python data_ingestion/historical_replayer.py \
+python market_data/historical/db_replayer.py \
     --start "2026-06-10T09:15:00" --end "2026-06-10T15:30:00" --speed 10
 
 # Strategy execution
@@ -110,7 +110,7 @@ Available strategies: `ExampleStraddle`.
 |---|---|
 | `algo.py` | Interactive control centre |
 | `core/` | Configuration (`config.py`) and Prometheus metrics |
-| `data_ingestion/` | FYERS live stream, option-chain tracker, historical replayer |
+| `market_data/` | FYERS live stream, option-chain tracker, historical replayer |
 | `messaging/` | Redis Streams publisher and subscriber |
 | `strategies/` | Base strategy contract, execution runner, contract/price resolution |
 | `strategies/example/` | Example strategy variants |

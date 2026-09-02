@@ -5,6 +5,16 @@ from typing import Any, Dict, List, Optional
 
 
 @dataclass
+class DataRequirement:
+    """
+    Defines a data dependency for a strategy.
+    symbol_type can be 'index', 'atm_ce', 'atm_pe', or an exact symbol string.
+    resolution can be '1m', '5m', '15m', '1D', etc.
+    """
+    symbol_type: str
+    resolution: str
+
+@dataclass
 class OptionContract:
     """
     Represents a tradable option contract retrieved from the platform.
@@ -53,8 +63,8 @@ class StrategyInput:
     # Contextual contracts (e.g., the current ATM CE and PE) provided by the runner.
     contracts: Dict[str, OptionContract] = field(default_factory=dict)
 
-    # Recent historical bars for the underlying and/or option contracts.
-    bars_by_symbol: Dict[str, List[BarFrame]] = field(default_factory=dict)
+    # Hierarchical bars: e.g. bars["1m"]["index"] or bars["5m"]["atm_ce"]
+    bars: Dict[str, Dict[str, List[BarFrame]]] = field(default_factory=dict)
 
     # Any extra context the runner wants to pass to the strategy.
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -92,6 +102,14 @@ class BaseStrategy:
         The runner calls this once when the strategy starts. The state is then passed back into `on_bar` on every cycle.
         """
         return {}
+
+    @classmethod
+    def get_data_requirements(cls) -> List[DataRequirement]:
+        """
+        Strategies override this to declare the timeframes and symbols they need.
+        By default, returns an empty list (meaning it only needs raw ticks).
+        """
+        return []
 
     def on_bar(self, state: Dict[str, Any], inp: StrategyInput) -> List[StrategySignal]:
         """

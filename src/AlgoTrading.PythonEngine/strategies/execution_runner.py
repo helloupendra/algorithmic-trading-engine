@@ -21,7 +21,7 @@ import pkgutil
 import inspect
 import importlib
 import strategies
-from strategies.base_strategy import StrategyInput, StrategySignal, OptionContract, BaseStrategy
+from strategies.base_strategy import StrategyInput, StrategySignal, OptionContract, BaseStrategy, BarFrame
 
 try:
     # pyrefly: ignore [missing-import]
@@ -262,6 +262,24 @@ if __name__ == "__main__":
     if args.run_id is not None:
         try:
             run_row = api.get_simulation_run(args.run_id)
+            
+            # Override spot_symbol and underlying from the frontend's SimulationRun
+            run_symbol = run_row.get("symbol")
+            if run_symbol:
+                args.spot_symbol = run_symbol
+                if "NIFTYBANK" in run_symbol:
+                    args.underlying = "BANKNIFTY"
+                elif "NIFTY50" in run_symbol:
+                    args.underlying = "NIFTY"
+                elif "SENSEX" in run_symbol:
+                    args.underlying = "SENSEX"
+                elif ":" in run_symbol:
+                    # e.g., NSE:RELIANCE-EQ -> RELIANCE
+                    args.underlying = run_symbol.split(":")[1].split("-")[0]
+                else:
+                    args.underlying = run_symbol
+                print(f"Loaded symbol {args.spot_symbol} ({args.underlying}) from run {args.run_id}")
+
             raw = run_row.get("parametersJson") or "{}"
             run_params = json.loads(raw) if isinstance(raw, str) else (raw or {})
             if run_params:
@@ -335,7 +353,7 @@ if __name__ == "__main__":
             simulation_run_id=run_id,
             strategy_name=args.strategy,
             mode="LivePaper",
-            exchange="NSE",
+            exchange=args.spot_symbol.split(":")[0] if ":" in args.spot_symbol else "NSE",
             underlying=args.underlying,
         )
         loaded_state.strategy_data = state
@@ -424,6 +442,68 @@ if __name__ == "__main__":
                 # Make sure live ingestor will start tracking these contracts
                 ensure_contracts_tracked(api, contracts)
 
+                try:
+                    bars_dict: Dict[str, Dict[str, List[BarFrame]]] = {}
+                    
+                    reqs = strategy.get_data_requirements()
+                    
+                    for req in reqs:
+                        res = req.resolution
+                        sym_type = req.symbol_type
+                        
+                        if res not in bars_dict:
+                            bars_dict[res] = {}
+                            
+                        # 1. Fetch for index
+                        if sym_type == "index":
+                            raw_idx = api.get_recent_bars(args.spot_symbol, resolution=res, take=100)
+                            if raw_idx:
+                                bars_dict[res]["index"] = [BarFrame(
+                                    symbol=b.get("symbol", args.spot_symbol),
+                                    resolution=b.get("resolution", res),
+                                    timestamp_utc=str(b.get("barStartUtc", "")),
+                                    open=float(b.get("open", 0.0)),
+                                    high=float(b.get("high", 0.0)),
+                                    low=float(b.get("low", 0.0)),
+                                    close=float(b.get("close", 0.0)),
+                                    volume=float(b.get("volumeDelta", 0.0))
+                                ) for b in raw_idx]
+
+                        # 2. Fetch for atm_ce
+                        elif sym_type == "atm_ce" and atm_ce:
+                            raw_ce = api.get_recent_bars(atm_ce["symbol"], resolution=res, take=100)
+                            if raw_ce:
+                                bars_dict[res]["atm_ce"] = [BarFrame(
+                                    symbol=b.get("symbol", atm_ce["symbol"]),
+                                    resolution=b.get("resolution", res),
+                                    timestamp_utc=str(b.get("barStartUtc", "")),
+                                    open=float(b.get("open", 0.0)),
+                                    high=float(b.get("high", 0.0)),
+                                    low=float(b.get("low", 0.0)),
+                                    close=float(b.get("close", 0.0)),
+                                    volume=float(b.get("volumeDelta", 0.0))
+                                ) for b in raw_ce]
+
+                        # 3. Fetch for atm_pe
+                        elif sym_type == "atm_pe" and atm_pe:
+                            raw_pe = api.get_recent_bars(atm_pe["symbol"], resolution=res, take=100)
+                            if raw_pe:
+                                bars_dict[res]["atm_pe"] = [BarFrame(
+                                    symbol=b.get("symbol", atm_pe["symbol"]),
+                                    resolution=b.get("resolution", res),
+                                    timestamp_utc=str(b.get("barStartUtc", "")),
+                                    open=float(b.get("open", 0.0)),
+                                    high=float(b.get("high", 0.0)),
+                                    low=float(b.get("low", 0.0)),
+                                    close=float(b.get("close", 0.0)),
+                                    volume=float(b.get("volumeDelta", 0.0))
+                                ) for b in raw_pe]
+                        
+                        
+                except Exception as ex:
+                    print(f"WARN: Failed to fetch recent bars: {ex}")
+                    bars_dict = {}
+
                 inp = StrategyInput(
                     mode="LivePaper",
                     timestamp_utc=timestamp_utc,
@@ -431,7 +511,7 @@ if __name__ == "__main__":
                     spot_price=spot_price,
                     atm_strike=atm_strike,
                     contracts=contracts,
-                    bars_by_symbol={},
+                    bars=bars_dict,
                     metadata={"source": "live-api", "tick": tick},
                 )
 
@@ -464,7 +544,9 @@ if __name__ == "__main__":
                     state_store.save(loaded_state)
 
             except Exception as ex:
+                import traceback
                 print("ERROR PROCESSING TICK:", ex)
+                traceback.print_exc()
 
     finally:
         keepalive_running = False
