@@ -9,8 +9,8 @@ import os
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 import sys
-import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Add parent dir to sys.path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from core.config import API_BASE_URL
 POLL_INTERVAL_SECONDS = 300  # Check every 5 minutes
 STRIKE_INTERVAL = 100        # Nifty Bank interval

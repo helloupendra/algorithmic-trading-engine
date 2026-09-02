@@ -65,6 +65,9 @@ def calculate_greeks(S: float, K: float, T: float, r: float, sigma: float, optio
     if T <= 0:
         return {"delta": 0.0, "gamma": 0.0, "theta": 0.0, "vega": 0.0}
         
+    if sigma <= 0:
+        sigma = 1e-5
+
     d1, d2 = calculate_d1_d2(S, K, T, r, sigma)
     
     gamma = norm_pdf(d1) / (S * sigma * math.sqrt(T))

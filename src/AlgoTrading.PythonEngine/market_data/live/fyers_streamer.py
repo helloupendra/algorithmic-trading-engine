@@ -10,7 +10,7 @@ import sys
 import os
 
 # Add the parent directory to sys.path so that absolute-style imports work
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 import json
 import time
@@ -26,7 +26,7 @@ from fyers_apiv3.FyersWebsocket import data_ws
 from core.options_analytics import analyze_option
 
 # Add the parent directory to sys.path so that imports resolve correctly
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from core.config import (
     API_BASE_URL,
