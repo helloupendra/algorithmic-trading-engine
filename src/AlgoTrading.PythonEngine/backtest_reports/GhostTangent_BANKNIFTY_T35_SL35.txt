@@ -1,0 +1,50 @@
+Initializing Ghost Strategy Backtester for BANKNIFTY...
+Connected to Postgres database.
+Loading historical option bars from database (this may take a few seconds)...
+Loaded 3233 historical option bars.
+
+Fetching 5-minute historical index bars for BANKNIFTY from 2026-08-28 to 2026-09-02...
+Downloaded 300 index bars for backtesting.
+
+Starting Simulation Loop...
+
+================================================================================
+BACKTEST REPORT: Ghost Tangent Crossings
+================================================================================
+Trade 01: 08-31 09:25 | BUY  NSE:BANKNIFTY26SEP57400PE | Entry: 593.05 | Exit: 631.35 (09:55) | Cap: Rs.8895.75 | PnL: +Rs. 574.50 (6.5%) | Target Hit (35.0 pts)
+Trade 02: 08-31 09:55 | BUY  NSE:BANKNIFTY26SEP57300PE | Entry: 587.65 | Exit: 623.55 (10:35) | Cap: Rs.8814.75 | PnL: +Rs. 538.50 (6.1%) | Target Hit (35.0 pts)
+Trade 03: 08-31 10:35 | BUY  NSE:BANKNIFTY26SEP57200PE | Entry: 585.20 | Exit: 550.00 (11:15) | Cap: Rs.8778.00 | PnL: -Rs. 528.00 (-6.0%) | Stop Loss Hit (35.0 pts)
+Trade 04: 08-31 11:15 | BUY  NSE:BANKNIFTY26SEP57300PE | Entry: 589.10 | Exit: 553.90 (11:45) | Cap: Rs.8836.50 | PnL: -Rs. 528.00 (-6.0%) | Stop Loss Hit (35.0 pts)
+Trade 05: 08-31 11:45 | BUY  NSE:BANKNIFTY26SEP57400PE | Entry: 590.65 | Exit: 551.75 (11:50) | Cap: Rs.8859.75 | PnL: -Rs. 583.50 (-6.6%) | Stop Loss Hit (35.0 pts)
+Trade 06: 08-31 11:50 | BUY  NSE:BANKNIFTY26SEP57400CE | Entry: 983.80 | Exit: 943.85 (12:45) | Cap: Rs.14757.00 | PnL: -Rs. 599.25 (-4.1%) | Stop Loss Hit (35.0 pts)
+Trade 07: 08-31 12:50 | BUY  NSE:BANKNIFTY26SEP57400PE | Entry: 553.75 | Exit: 595.65 (14:20) | Cap: Rs.8306.25 | PnL: +Rs. 628.50 (7.6%) | Target Hit (35.0 pts)
+Trade 08: 08-31 14:20 | BUY  NSE:BANKNIFTY26SEP57300PE | Entry: 557.95 | Exit: 501.00 (14:40) | Cap: Rs.8369.25 | PnL: -Rs. 854.25 (-10.2%) | Stop Loss Hit (35.0 pts)
+Trade 09: 08-31 14:40 | BUY  NSE:BANKNIFTY26SEP57400CE | Entry: 983.75 | Exit: 957.70 (15:15) | Cap: Rs.14756.25 | PnL: -Rs. 390.75 (-2.6%) | End of Day Square-Off
+Trade 10: 09-01 09:15 | BUY  NSE:BANKNIFTY26SEP57500PE | Entry: 591.30 | Exit: 633.35 (09:20) | Cap: Rs.8869.50 | PnL: +Rs. 630.75 (7.1%) | Target Hit (35.0 pts)
+Trade 11: 09-01 09:20 | BUY  NSE:BANKNIFTY26SEP57400PE | Entry: 594.90 | Exit: 556.80 (09:30) | Cap: Rs.8923.50 | PnL: -Rs. 571.50 (-6.4%) | Stop Loss Hit (35.0 pts)
+Trade 12: 09-01 09:30 | BUY  NSE:BANKNIFTY26SEP57500PE | Entry: 593.90 | Exit: 634.40 (09:40) | Cap: Rs.8908.50 | PnL: +Rs. 607.50 (6.8%) | Target Hit (35.0 pts)
+Trade 13: 09-01 09:40 | BUY  NSE:BANKNIFTY26SEP57400PE | Entry: 591.75 | Exit: 556.60 (10:25) | Cap: Rs.8876.25 | PnL: -Rs. 527.25 (-5.9%) | Stop Loss Hit (35.0 pts)
+Trade 14: 09-01 10:25 | BUY  NSE:BANKNIFTY26SEP57500PE | Entry: 593.55 | Exit: 531.35 (11:05) | Cap: Rs.8903.25 | PnL: -Rs. 933.00 (-10.5%) | Stop Loss Hit (35.0 pts)
+Trade 15: 09-01 13:10 | BUY  NSE:BANKNIFTY26SEP57500PE | Entry: 565.20 | Exit: 609.00 (13:25) | Cap: Rs.8478.00 | PnL: +Rs. 657.00 (7.7%) | Target Hit (35.0 pts)
+Trade 16: 09-01 13:30 | BUY  NSE:BANKNIFTY26SEP57400PE | Entry: 564.85 | Exit: 620.40 (13:45) | Cap: Rs.8472.75 | PnL: +Rs. 833.25 (9.8%) | Target Hit (35.0 pts)
+Trade 17: 09-01 13:45 | BUY  NSE:BANKNIFTY26SEP57300PE | Entry: 581.15 | Exit: 634.95 (14:00) | Cap: Rs.8717.25 | PnL: +Rs. 807.00 (9.3%) | Target Hit (35.0 pts)
+Trade 18: 09-01 14:00 | BUY  NSE:BANKNIFTY26SEP57200PE | Entry: 592.60 | Exit: 565.65 (15:15) | Cap: Rs.8889.00 | PnL: -Rs. 404.25 (-4.5%) | End of Day Square-Off
+Trade 19: 09-02 09:15 | BUY  NSE:BANKNIFTY26SEP57000PE | Entry: 624.55 | Exit: 580.20 (09:30) | Cap: Rs.9368.25 | PnL: -Rs. 665.25 (-7.1%) | Stop Loss Hit (35.0 pts)
+Trade 20: 09-02 09:30 | BUY  NSE:BANKNIFTY26SEP57100PE | Entry: 619.55 | Exit: 571.75 (10:20) | Cap: Rs.9293.25 | PnL: -Rs. 717.00 (-7.7%) | Stop Loss Hit (35.0 pts)
+Trade 21: 09-02 10:20 | BUY  NSE:BANKNIFTY26SEP57200PE | Entry: 610.00 | Exit: 663.30 (11:00) | Cap: Rs.9150.00 | PnL: +Rs. 799.50 (8.7%) | Target Hit (35.0 pts)
+Trade 22: 09-02 11:00 | BUY  NSE:BANKNIFTY26SEP57100PE | Entry: 621.65 | Exit: 572.90 (12:10) | Cap: Rs.9324.75 | PnL: -Rs. 731.25 (-7.8%) | Stop Loss Hit (35.0 pts)
+Trade 23: 09-02 12:10 | BUY  NSE:BANKNIFTY26SEP57100PE | Entry: 572.90 | Exit: 623.00 (12:20) | Cap: Rs.8593.50 | PnL: +Rs. 751.50 (8.7%) | Target Hit (35.0 pts)
+Trade 24: 09-02 12:20 | BUY  NSE:BANKNIFTY26SEP57000PE | Entry: 582.80 | Exit: 525.00 (12:40) | Cap: Rs.8742.00 | PnL: -Rs. 867.00 (-9.9%) | Stop Loss Hit (35.0 pts)
+Trade 25: 09-02 12:40 | BUY  NSE:BANKNIFTY26SEP57100PE | Entry: 563.60 | Exit: 602.90 (13:35) | Cap: Rs.8454.00 | PnL: +Rs. 589.50 (7.0%) | Target Hit (35.0 pts)
+Trade 26: 09-02 13:35 | BUY  NSE:BANKNIFTY26SEP57000PE | Entry: 565.00 | Exit: 529.40 (14:00) | Cap: Rs.8475.00 | PnL: -Rs. 534.00 (-6.3%) | Stop Loss Hit (35.0 pts)
+Trade 27: 09-02 14:00 | BUY  NSE:BANKNIFTY26SEP57100PE | Entry: 561.00 | Exit: 606.85 (15:00) | Cap: Rs.8415.00 | PnL: +Rs. 687.75 (8.2%) | Target Hit (35.0 pts)
+Trade 28: 09-02 15:00 | BUY  NSE:BANKNIFTY26SEP57000PE | Entry: 565.85 | Exit: 538.05 (15:15) | Cap: Rs.8487.75 | PnL: -Rs. 417.00 (-4.9%) | End of Day Square-Off
+--------------------------------------------------------------------------------
+Total Trades        : 28
+Win Rate            : 42.9% (12W - 16L)
+Max Capital Reqd    : Rs. 14757.00 (1 Lot)
+Gross Profit        : Rs. 8105.25
+Gross Loss          : Rs. -9851.25
+Net PnL             : Rs. -1746.00 (-116.40 points)
+================================================================================
+

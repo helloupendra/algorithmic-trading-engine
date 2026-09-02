@@ -384,6 +384,8 @@ namespace AlgoTrading.Infrastructure.Services
                 underlying = "MIDCPNIFTY";
             else if (symbolPart.Contains("NIFTY", StringComparison.OrdinalIgnoreCase))
                 underlying = "NIFTY";
+            else if (symbolPart.Contains("SENSEX", StringComparison.OrdinalIgnoreCase))
+                underlying = "SENSEX";
 
             // Fallback: description
             if (string.IsNullOrWhiteSpace(underlying) && !string.IsNullOrWhiteSpace(description))
@@ -396,6 +398,8 @@ namespace AlgoTrading.Infrastructure.Services
                     underlying = "MIDCPNIFTY";
                 else if (description.Contains("NIFTY", StringComparison.OrdinalIgnoreCase))
                     underlying = "NIFTY";
+                else if (description.Contains("SENSEX", StringComparison.OrdinalIgnoreCase))
+                    underlying = "SENSEX";
             }
 
             return (underlying, strike, optionType);

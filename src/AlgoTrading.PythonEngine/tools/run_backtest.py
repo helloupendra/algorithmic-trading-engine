@@ -18,10 +18,34 @@ def round_strike(price: float, step: int) -> int:
 
 def main():
     parser = argparse.ArgumentParser(description="Backtest Strategy")
-    parser.add_argument("--underlying", type=str, default="BANKNIFTY", choices=["BANKNIFTY", "NIFTY"])
+    parser.add_argument("--underlying", type=str, default="BANKNIFTY", choices=["BANKNIFTY", "NIFTY", "SENSEX"])
+    parser.add_argument("--target-pts", type=float, default=20.0, help="Target in points (default: 20)")
+    parser.add_argument("--sl-pts", type=float, default=20.0, help="Stop loss in points (default: 20)")
     args = parser.parse_args()
     
     underlying = args.underlying
+    
+    # Auto-save report
+    class Tee(object):
+        def __init__(self, name, mode):
+            self.file = open(name, mode, encoding='utf-8')
+            self.stdout = sys.stdout
+            sys.stdout = self
+        def __del__(self):
+            sys.stdout = self.stdout
+            self.file.close()
+        def write(self, data):
+            self.file.write(data)
+            self.stdout.write(data)
+        def flush(self):
+            self.file.flush()
+            self.stdout.flush()
+            
+    report_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backtest_reports"))
+    os.makedirs(report_dir, exist_ok=True)
+    report_filename = os.path.join(report_dir, f"GhostTangent_{underlying}_T{int(args.target_pts)}_SL{int(args.sl_pts)}.txt")
+    tee = Tee(report_filename, 'w')
+    
     if underlying == "BANKNIFTY":
         spot_symbol = "NSE:NIFTYBANK-INDEX"
         lot_size = 15
@@ -30,6 +54,12 @@ def main():
         spot_symbol = "NSE:NIFTY50-INDEX"
         lot_size = 65
         strike_step = 50
+    elif underlying == "SENSEX":
+        spot_symbol = "BSE:SENSEX-INDEX"
+        lot_size = 10
+        strike_step = 100
+    else:
+        raise ValueError(f"Unsupported underlying: {underlying}")
         
     print(f"Initializing Ghost Strategy Backtester for {underlying}...")
     
@@ -43,10 +73,11 @@ def main():
 
     # Load all historical option bars into a DataFrame for fast lookups
     print("Loading historical option bars from database (this may take a few seconds)...")
+    exchange_prefix = "BSE" if underlying == "SENSEX" else "NSE"
     query = f"""
     SELECT "Symbol", "TimeStampUtc", "Open", "High", "Low", "Close"
     FROM candles
-    WHERE "Symbol" LIKE 'NSE:{underlying}%'
+    WHERE "Symbol" LIKE '{exchange_prefix}:{underlying}%'
     ORDER BY "TimeStampUtc" ASC
     """
     options_df = pd.read_sql_query(query, conn)
@@ -103,12 +134,12 @@ def main():
                 
                 profit = current_opt_price - entry_price
                 
-                # Check Target (20 points)
-                if profit >= 20.0:
-                    exit_reason = "Target Hit (20 pts)"
-                # Check Stop Loss (10%)
-                elif returns <= -0.10:
-                    exit_reason = "Stop Loss Hit (10%)"
+                # Check Target
+                if profit >= args.target_pts:
+                    exit_reason = f"Target Hit ({args.target_pts} pts)"
+                # Check Stop Loss
+                elif profit <= -args.sl_pts:
+                    exit_reason = f"Stop Loss Hit ({args.sl_pts} pts)"
                 # Check End of Day (15:15 IST = 09:45 UTC)
                 elif bar.timestamp_start.hour == 9 and bar.timestamp_start.minute >= 45:
                     exit_reason = "End of Day Square-Off"
@@ -148,9 +179,18 @@ def main():
                 atm_strike = round_strike(spot_price, strike_step)
                 
                 opt_type = "CE" if is_buy else "PE"
-                expiry_str = "26SEP" if underlying == "BANKNIFTY" else "26908" # Mocked for this demo, usually resolved dynamically
                 
-                opt_sym = f"NSE:{underlying}{expiry_str}{atm_strike}{opt_type}"
+                if underlying == "BANKNIFTY":
+                    expiry_str = "26SEP"
+                elif underlying == "NIFTY":
+                    expiry_str = "26908"
+                elif underlying == "SENSEX":
+                    expiry_str = "26903"
+                else:
+                    expiry_str = "26SEP"
+                
+                exchange = "BSE" if underlying == "SENSEX" else "NSE"
+                opt_sym = f"{exchange}:{underlying}{expiry_str}{atm_strike}{opt_type}"
                 
                 try:
                     opt_row = options_df.loc[(bar.timestamp_start, opt_sym)]

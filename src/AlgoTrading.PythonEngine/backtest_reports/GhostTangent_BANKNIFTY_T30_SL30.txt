@@ -1,0 +1,30 @@
+Initializing Ghost Strategy Backtester for BANKNIFTY...
+Connected to Postgres database.
+Loading historical option bars from database (this may take a few seconds)...
+Loaded 3233 historical option bars.
+
+Fetching 5-minute historical index bars for BANKNIFTY from 2026-08-28 to 2026-09-02...
+Downloaded 300 index bars for backtesting.
+
+Starting Simulation Loop...
+
+================================================================================
+BACKTEST REPORT: Ghost Tangent Crossings
+================================================================================
+Trade 01: 08-31 09:25 | BUY  NSE:BANKNIFTY26SEP57400PE | Entry: 593.05 | Exit: 627.75 (09:50) | Cap: Rs.8895.75 | PnL: +Rs. 520.50 (5.9%) | Target Hit (30.0 pts)
+Trade 02: 08-31 09:50 | BUY  NSE:BANKNIFTY26SEP57300PE | Entry: 587.15 | Exit: 617.65 (10:30) | Cap: Rs.8807.25 | PnL: +Rs. 457.50 (5.2%) | Target Hit (30.0 pts)
+Trade 03: 08-31 10:30 | BUY  NSE:BANKNIFTY26SEP57200PE | Entry: 579.45 | Exit: 475.00 (15:15) | Cap: Rs.8691.75 | PnL: -Rs. 1566.75 (-18.0%) | End of Day Square-Off
+Trade 04: 09-01 09:15 | BUY  NSE:BANKNIFTY26SEP57500PE | Entry: 591.30 | Exit: 633.35 (09:20) | Cap: Rs.8869.50 | PnL: +Rs. 630.75 (7.1%) | Target Hit (30.0 pts)
+Trade 05: 09-01 09:20 | BUY  NSE:BANKNIFTY26SEP57400PE | Entry: 594.90 | Exit: 653.50 (13:50) | Cap: Rs.8923.50 | PnL: +Rs. 879.00 (9.9%) | Target Hit (30.0 pts)
+Trade 06: 09-01 13:50 | BUY  NSE:BANKNIFTY26SEP57300PE | Entry: 610.20 | Exit: 663.55 (14:05) | Cap: Rs.9153.00 | PnL: +Rs. 800.25 (8.7%) | Target Hit (30.0 pts)
+Trade 07: 09-01 14:10 | BUY  NSE:BANKNIFTY26SEP57200PE | Entry: 609.65 | Exit: 565.65 (15:15) | Cap: Rs.9144.75 | PnL: -Rs. 660.00 (-7.2%) | End of Day Square-Off
+Trade 08: 09-02 09:15 | BUY  NSE:BANKNIFTY26SEP57000PE | Entry: 624.55 | Exit: 538.05 (15:15) | Cap: Rs.9368.25 | PnL: -Rs. 1297.50 (-13.8%) | End of Day Square-Off
+--------------------------------------------------------------------------------
+Total Trades        : 8
+Win Rate            : 62.5% (5W - 3L)
+Max Capital Reqd    : Rs. 9368.25 (1 Lot)
+Gross Profit        : Rs. 3288.00
+Gross Loss          : Rs. -3524.25
+Net PnL             : Rs. -236.25 (-15.75 points)
+================================================================================
+

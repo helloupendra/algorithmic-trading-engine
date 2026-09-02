@@ -1,0 +1,31 @@
+Initializing Ghost Strategy Backtester for BANKNIFTY...
+Connected to Postgres database.
+Loading historical option bars from database (this may take a few seconds)...
+Loaded 3233 historical option bars.
+
+Fetching 5-minute historical index bars for BANKNIFTY from 2026-08-28 to 2026-09-02...
+Downloaded 300 index bars for backtesting.
+
+Starting Simulation Loop...
+
+================================================================================
+BACKTEST REPORT: Ghost Tangent Crossings
+================================================================================
+Trade 01: 08-31 09:25 | BUY  NSE:BANKNIFTY26SEP57400PE | Entry: 593.05 | Exit: 639.35 (10:15) | Cap: Rs.8895.75 | PnL: +Rs. 694.50 (7.8%) | Target Hit (40.0 pts)
+Trade 02: 08-31 10:15 | BUY  NSE:BANKNIFTY26SEP57300PE | Entry: 599.40 | Exit: 511.00 (15:15) | Cap: Rs.8991.00 | PnL: -Rs. 1326.00 (-14.7%) | End of Day Square-Off
+Trade 03: 09-01 09:15 | BUY  NSE:BANKNIFTY26SEP57500PE | Entry: 591.30 | Exit: 633.35 (09:20) | Cap: Rs.8869.50 | PnL: +Rs. 630.75 (7.1%) | Target Hit (40.0 pts)
+Trade 04: 09-01 09:20 | BUY  NSE:BANKNIFTY26SEP57400PE | Entry: 594.90 | Exit: 462.05 (11:10) | Cap: Rs.8923.50 | PnL: -Rs. 1992.75 (-22.3%) | Stop Loss Hit (20.0%)
+Trade 05: 09-01 13:10 | BUY  NSE:BANKNIFTY26SEP57500PE | Entry: 565.20 | Exit: 609.00 (13:25) | Cap: Rs.8478.00 | PnL: +Rs. 657.00 (7.7%) | Target Hit (40.0 pts)
+Trade 06: 09-01 13:30 | BUY  NSE:BANKNIFTY26SEP57400PE | Entry: 564.85 | Exit: 620.40 (13:45) | Cap: Rs.8472.75 | PnL: +Rs. 833.25 (9.8%) | Target Hit (40.0 pts)
+Trade 07: 09-01 13:45 | BUY  NSE:BANKNIFTY26SEP57300PE | Entry: 581.15 | Exit: 634.95 (14:00) | Cap: Rs.8717.25 | PnL: +Rs. 807.00 (9.3%) | Target Hit (40.0 pts)
+Trade 08: 09-01 14:00 | BUY  NSE:BANKNIFTY26SEP57200PE | Entry: 592.60 | Exit: 565.65 (15:15) | Cap: Rs.8889.00 | PnL: -Rs. 404.25 (-4.5%) | End of Day Square-Off
+Trade 09: 09-02 09:15 | BUY  NSE:BANKNIFTY26SEP57000PE | Entry: 624.55 | Exit: 538.05 (15:15) | Cap: Rs.9368.25 | PnL: -Rs. 1297.50 (-13.8%) | End of Day Square-Off
+--------------------------------------------------------------------------------
+Total Trades        : 9
+Win Rate            : 55.6% (5W - 4L)
+Max Capital Reqd    : Rs. 9368.25 (1 Lot)
+Gross Profit        : Rs. 3622.50
+Gross Loss          : Rs. -5020.50
+Net PnL             : Rs. -1398.00 (-93.20 points)
+================================================================================
+

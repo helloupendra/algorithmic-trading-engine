@@ -56,8 +56,14 @@ def trigger_option_chain_backfill(api: PlatformApiClient, underlying: str, days:
     print(f"\n[OPTION CHAIN] Fetching live spot price for {underlying} to determine ATM strike...")
     try:
         engine = DataEngine()
-        # NIFTYBANK is NSE:NIFTYBANK-INDEX, NIFTY is NSE:NIFTY50-INDEX
-        spot_symbol = f"NSE:{'NIFTYBANK' if underlying == 'BANKNIFTY' else 'NIFTY50'}-INDEX"
+        if underlying == 'BANKNIFTY':
+            spot_symbol = "NSE:NIFTYBANK-INDEX"
+        elif underlying == 'NIFTY':
+            spot_symbol = "NSE:NIFTY50-INDEX"
+        elif underlying == 'SENSEX':
+            spot_symbol = "BSE:SENSEX-INDEX"
+        else:
+            raise Exception("Unsupported underlying")
         tick = engine.get_latest_quote(spot_symbol)
         if not tick:
             raise Exception(f"Could not fetch spot price for {spot_symbol}")
@@ -71,7 +77,7 @@ def trigger_option_chain_backfill(api: PlatformApiClient, underlying: str, days:
     from_utc = to_utc - timedelta(days=days)
     
     payload = {
-        "exchange": "NSE",
+        "exchange": "BSE" if underlying == "SENSEX" else "NSE",
         "underlying": underlying,
         "expiryDate": None,
         "underlyingPrice": spot_price,
@@ -129,7 +135,7 @@ if __name__ == "__main__":
     
     # 2. Option Chain Mode
     parser_chain = subparsers.add_parser("chain", help="Backfill an entire Option Chain for an underlying index")
-    parser_chain.add_argument("--underlying", type=str, required=True, help="Underlying Index Name (e.g., BANKNIFTY, NIFTY)")
+    parser_chain.add_argument("--underlying", type=str, required=True, help="Underlying Index Name (e.g., BANKNIFTY, NIFTY, SENSEX)")
     parser_chain.add_argument("--strikes", type=int, default=3, help="Number of strikes on each side of ATM (default: 3)")
     parser_chain.add_argument("--days", type=int, default=5, help="Number of days to backfill (default: 5)")
     parser_chain.add_argument("--res", type=str, default="5m", help="Resolution (e.g., 1m, 5m, 15m) (default: 5m)")
