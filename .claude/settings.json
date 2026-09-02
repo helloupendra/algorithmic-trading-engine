@@ -46,7 +46,8 @@
       "Bash(node -e ' *)",
       "Bash(cp /private/tmp/claude-501/-Users-upendra-Documents-GitHub-algorithmic-trading-engine/88675c6c-6c05-42fa-9bdc-40755a942f38/scratchpad/shoot2.mjs ./shoot.tour.mjs)",
       "Bash(curl -s -o /dev/null -w \"dev5173:%{http_code}\" http://localhost:5173 --max-time 3)",
-      "Bash(curl -s -o /dev/null -w \"api5025:%{http_code}\" http://localhost:5025 --max-time 3)"
+      "Bash(curl -s -o /dev/null -w \"api5025:%{http_code}\" http://localhost:5025 --max-time 3)",
+      "Bash(.venv/bin/python -c \"import ast; ast.parse\\(open\\('src/AlgoTrading.PythonEngine/market_data/live/fyers_streamer.py'\\).read\\(\\)\\); print\\('SYNTAX OK'\\)\")"
     ]
   }
 }

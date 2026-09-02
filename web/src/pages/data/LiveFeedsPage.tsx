@@ -1,17 +1,23 @@
 /**
- * Data module — Live feeds. Operates the live pipeline end to end: ingestor
- * process control, per-source heartbeats, the watchlist that drives broker
- * subscriptions, a flashing quote monitor, and a raw tick/bar inspector.
+ * Data module — Live feeds, v2.1 layout.
+ *
+ * One control: the Start/Stop button in the page header. One data surface:
+ * the live watchlist table, which joins subscriptions with their live quotes
+ * (the old page showed the same symbols twice — once as a bare watchlist,
+ * once as quotes). Index tickers sit on top and start moving the moment the
+ * feed runs. Diagnostics (heartbeats, process logs) fold away at the bottom.
  */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   useAddEquityGroupToWatchlist,
   useAddWatchlistSymbol,
   useEquityGroups,
+  useIngestorLogs,
   useIngestorProcessStatus,
   useIngestorStatuses,
   useInstrumentSearch,
+  useLatestQuotes,
   useLiveBars,
   useMarketSession,
   useRecentTicks,
@@ -24,282 +30,159 @@ import {
 import { formatAge, formatDateTime, formatPrice, shortSymbol } from '../../lib/format'
 import { classifySymbol } from '../../lib/symbols'
 import { Badge, InlineError, Panel, QueryBoundary } from '../../components/ui'
-import { LiveQuotesMonitor } from '../../components/LiveQuotesMonitor'
-import { IconPlay, IconPlus, IconPulse, IconSearch, IconStop, IconTrash, IconWarning } from '../../components/icons'
+import {
+  IconPlay,
+  IconPlus,
+  IconPulse,
+  IconSearch,
+  IconStop,
+  IconTrash,
+  IconWarning,
+} from '../../components/icons'
+import type { LiveQuote } from '../../lib/types'
 
-/** Start/stop + heartbeat health for the ingestor process. */
-function IngestorPanel() {
+/* ---------------------------------------------------------------- flashes */
+
+/** Price text that flashes green/red when the value moves. */
+function FlashPrice({ value, bold }: { value: number | null | undefined; bold?: boolean }) {
+  const prev = useRef<number | null>(null)
+  const [flash, setFlash] = useState<{ dir: string; seq: number }>({ dir: '', seq: 0 })
+
+  useEffect(() => {
+    if (value != null && prev.current != null && value !== prev.current) {
+      setFlash((f) => ({ dir: value > prev.current! ? 'flash-up' : 'flash-down', seq: f.seq + 1 }))
+      const t = setTimeout(() => setFlash((f) => ({ ...f, dir: '' })), 900)
+      return () => clearTimeout(t)
+    }
+    prev.current = value ?? prev.current
+  }, [value])
+
+  useEffect(() => {
+    prev.current = value ?? null
+  })
+
+  return (
+    <span
+      key={flash.seq}
+      className={`mono ${flash.dir}`}
+      style={bold ? { fontWeight: 700 } : undefined}
+    >
+      {formatPrice(value)}
+    </span>
+  )
+}
+
+function changePct(quote: LiveQuote | undefined): number | null {
+  if (!quote || quote.lastTradedPrice == null || quote.close == null || quote.close === 0)
+    return null
+  return ((quote.lastTradedPrice - quote.close) / quote.close) * 100
+}
+
+/* ------------------------------------------------------------ header bits */
+
+function FeedControlButton() {
   const process = useIngestorProcessStatus()
-  const statuses = useIngestorStatuses()
   const session = useMarketSession()
   const start = useStartIngestor()
   const stop = useStopIngestor()
 
-  const marketOpen = session.data?.isMarketOpen ?? false
-
   function confirmStop() {
-    const warning = marketOpen
+    const warning = session.data?.isMarketOpen
       ? 'Market is OPEN. Stopping the ingestor halts tick capture for every running strategy. Stop anyway?'
       : 'Stop the live ingestor process?'
     if (window.confirm(warning)) stop.mutate()
   }
 
   return (
-    <Panel
-      title={
-        <>
-          <IconPulse /> Ingestor
-        </>
-      }
-      actions={
-        process.data?.isRunning ? (
-          <button className="btn btn--danger btn--sm" disabled={stop.isPending} onClick={confirmStop}>
-            <IconStop style={{ width: 13, height: 13 }} /> Stop
-          </button>
-        ) : (
-          <button
-            className="btn btn--pos btn--sm"
-            disabled={start.isPending}
-            onClick={() => start.mutate()}
-          >
-            <IconPlay style={{ width: 13, height: 13 }} /> Start live feed
-          </button>
-        )
-      }
-    >
+    <div className="toolbar">
       {start.isError && <InlineError error={start.error} />}
-      {stop.isError && <InlineError error={stop.error} />}
-
-      <QueryBoundary
-        query={statuses}
-        empty="No heartbeat recorded yet — once the feed starts, each source reports here every few seconds."
-      >
-        {(data) => (
-          <div className="stack-list">
-            {data.map((s) => (
-              <div key={s.sourceName}>
-                <div className="ingestor__head">
-                  <b className="mono">{s.sourceName}</b>
-                  <Badge tone={s.isHealthy ? 'pos' : 'warn'}>
-                    {s.isHealthy ? s.status : `${s.status} · stale`}
-                  </Badge>
-                  <span className="muted">beat {formatAge(s.lastHeartbeatUtc)}</span>
-                  <span className="faint">
-                    watchlist refresh {formatAge(s.lastWatchlistRefreshUtc)}
-                  </span>
-                </div>
-                {s.lastError && <p className="neg" style={{ margin: '2px 0 6px' }}>{s.lastError}</p>}
-                <div className="chip-row">
-                  {s.currentSubscribedSymbols.slice(0, 24).map((sym) => (
-                    <span key={sym} className="badge badge--neutral mono">
-                      {shortSymbol(sym)}
-                    </span>
-                  ))}
-                  {s.currentSubscribedSymbols.length > 24 && (
-                    <span className="badge badge--neutral">
-                      +{s.currentSubscribedSymbols.length - 24} more
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </QueryBoundary>
-    </Panel>
+      {process.data?.isRunning ? (
+        <button className="btn btn--danger" disabled={stop.isPending} onClick={confirmStop}>
+          <IconStop style={{ width: 14, height: 14 }} /> Stop live feed
+        </button>
+      ) : (
+        <button
+          className="btn btn--pos"
+          disabled={start.isPending}
+          onClick={() => start.mutate()}
+        >
+          <IconPlay style={{ width: 14, height: 14 }} />
+          {start.isPending ? 'Starting…' : 'Start live feed'}
+        </button>
+      )}
+    </div>
   )
 }
 
-/** Search-driven add: shows instrument matches before anything is committed. */
-function AddSymbolForm() {
-  const [query, setQuery] = useState('')
-  const [dataType, setDataType] = useState<'symbolUpdate' | 'lite'>('symbolUpdate')
-  const search = useInstrumentSearch(query)
+/* ------------------------------------------------------------ index cards */
+
+const INDEX_CARDS = [
+  { symbol: 'NSE:NIFTYBANK-INDEX', label: 'BANKNIFTY' },
+  { symbol: 'NSE:NIFTY50-INDEX', label: 'NIFTY 50' },
+  { symbol: 'NSE:FINNIFTY-INDEX', label: 'FINNIFTY' },
+  { symbol: 'BSE:SENSEX-INDEX', label: 'SENSEX' },
+]
+
+function IndexTickerRow() {
+  const quotes = useLatestQuotes()
+  const watchlist = useWatchlist()
   const add = useAddWatchlistSymbol()
 
-  const results = search.data ?? []
+  const bySymbol = useMemo(
+    () => new Map((quotes.data ?? []).map((q) => [q.symbol, q])),
+    [quotes.data],
+  )
+  const watched = useMemo(
+    () => new Set((watchlist.data ?? []).map((w) => w.symbol)),
+    [watchlist.data],
+  )
 
   return (
-    <div>
-      <div className="inline-form" style={{ marginBottom: 8 }}>
-        <input
-          className="field__input field__input--sm"
-          style={{ flex: 1, minWidth: 200 }}
-          placeholder="Search instruments — e.g. SBIN, NIFTY, CRUDEOIL…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <div className="seg" role="group" aria-label="Feed detail">
-          {(['symbolUpdate', 'lite'] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              className={`seg__btn ${dataType === t ? 'is-active' : ''}`}
-              onClick={() => setDataType(t)}
-              title={t === 'symbolUpdate' ? 'Full tick detail (bid/ask/depth)' : 'LTP-only, lighter'}
-            >
-              {t === 'symbolUpdate' ? 'Full' : 'Lite'}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {add.isError && <InlineError error={add.error} />}
-
-      {query.trim().length >= 2 && (
-        <div className="tablewrap" style={{ maxHeight: 220, overflowY: 'auto' }}>
-          <table className="table">
-            <tbody>
-              {results.map((inst) => (
-                <tr key={inst.id}>
-                  <td className="mono">{inst.symbol}</td>
-                  <td className="muted">{inst.description}</td>
-                  <td>
-                    <Badge tone="neutral">{inst.instrumentType}</Badge>
-                  </td>
-                  <td className="r">
-                    <button
-                      className="btn btn--ghost btn--sm"
-                      disabled={add.isPending}
-                      onClick={() => add.mutate({ symbol: inst.symbol, dataType })}
-                      title="Add to live watchlist"
-                    >
-                      <IconPlus style={{ width: 13, height: 13 }} /> Watch
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {search.isSuccess && results.length === 0 && (
-                <tr>
-                  <td className="muted">No instruments match “{query}”.</td>
-                </tr>
+    <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
+      {INDEX_CARDS.map(({ symbol, label }) => {
+        const quote = bySymbol.get(symbol)
+        const chg = changePct(quote)
+        return (
+          <div className="stat" key={symbol}>
+            <div className="stat__value">
+              <FlashPrice value={quote?.lastTradedPrice} bold />
+            </div>
+            <div className="stat__label">{label}</div>
+            <div className="stat__sub">
+              {quote ? (
+                <>
+                  <span className={chg == null ? 'muted' : chg >= 0 ? 'pos' : 'neg'}>
+                    {chg == null ? '' : `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`}
+                  </span>{' '}
+                  <span className="faint">· {formatAge(quote.updatedUtc)}</span>
+                </>
+              ) : watched.has(symbol) ? (
+                <span className="faint">awaiting first tick…</span>
+              ) : (
+                <button
+                  className="btn btn--ghost btn--sm"
+                  style={{ padding: '1px 8px' }}
+                  disabled={add.isPending}
+                  onClick={() => add.mutate({ symbol, dataType: 'symbolUpdate' })}
+                >
+                  <IconPlus style={{ width: 11, height: 11 }} /> Watch
+                </button>
               )}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  )
-}
-
-/** Bulk add a whole equity group (e.g. NIFTY50 constituents). */
-function AddGroupForm() {
-  const groups = useEquityGroups()
-  const addGroup = useAddEquityGroupToWatchlist()
-  const [selected, setSelected] = useState('')
-
-  const list = groups.data ?? []
-
-  return (
-    <div className="inline-form">
-      <select
-        className="field__input field__input--sm"
-        value={selected}
-        onChange={(e) => setSelected(e.target.value)}
-      >
-        <option value="">Add an equity group…</option>
-        {list.map((g) => (
-          <option key={g.id} value={g.name}>
-            {g.displayName || g.name} ({g.memberCount} members)
-          </option>
-        ))}
-      </select>
-      <button
-        className="btn btn--sm"
-        disabled={!selected || addGroup.isPending}
-        onClick={() => addGroup.mutate({ groupName: selected, dataType: 'lite' })}
-      >
-        <IconPlus style={{ width: 13, height: 13 }} /> Add group
-      </button>
-      {addGroup.isSuccess && (
-        <span className="muted" style={{ fontSize: 12 }}>
-          Added {addGroup.data.upserted} · skipped {addGroup.data.skipped}
-        </span>
-      )}
-    </div>
-  )
-}
-
-function WatchlistPanel() {
-  const watchlist = useWatchlist()
-  const remove = useRemoveWatchlistSymbol()
-  const session = useMarketSession()
-
-  function confirmRemove(id: number, symbol: string) {
-    const open = session.data?.isMarketOpen
-    const msg = open
-      ? `Market is OPEN. Removing ${symbol} stops its live tick capture immediately. Remove anyway?`
-      : `Remove ${symbol} from the live watchlist?`
-    if (window.confirm(msg)) remove.mutate(id)
-  }
-
-  return (
-    <Panel
-      title={
-        <>
-          <IconSearch /> Watchlist — live subscriptions
-        </>
-      }
-    >
-      <AddSymbolForm />
-      <div style={{ margin: '10px 0' }}>
-        <AddGroupForm />
-      </div>
-
-      <QueryBoundary query={watchlist} empty="Watchlist is empty — the feed subscribes to nothing.">
-        {(items) => (
-          <div className="tablewrap tablewrap--tall">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Symbol</th>
-                  <th>Category</th>
-                  <th>Detail</th>
-                  <th>Active</th>
-                  <th>Added</th>
-                  <th className="r"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((item) => (
-                  <tr key={item.id}>
-                    <td className="mono">{shortSymbol(item.symbol)}</td>
-                    <td>
-                      <Badge tone="neutral">{classifySymbol(item.symbol)}</Badge>
-                    </td>
-                    <td className="muted">{item.dataType === 'symbolUpdate' ? 'Full' : 'Lite'}</td>
-                    <td>
-                      {item.isActive ? <Badge tone="pos">active</Badge> : <Badge tone="warn">off</Badge>}
-                    </td>
-                    <td className="muted">{formatDateTime(item.createdUtc)}</td>
-                    <td className="r">
-                      <button
-                        className="btn btn--ghost btn--sm"
-                        onClick={() => confirmRemove(item.id, item.symbol)}
-                        disabled={remove.isPending}
-                        title="Remove from watchlist"
-                        aria-label={`Remove ${item.symbol}`}
-                      >
-                        <IconTrash style={{ width: 13, height: 13 }} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            </div>
           </div>
-        )}
-      </QueryBoundary>
-    </Panel>
+        )
+      })}
+    </div>
   )
 }
+
+/* ------------------------------------------------------- stale warning bar */
 
 function StalePanel() {
   const session = useMarketSession()
   const stale = useStaleQuotes(120)
-  const marketOpen = session.data?.isMarketOpen ?? false
 
-  if (!marketOpen) return null
+  if (!(session.data?.isMarketOpen ?? false)) return null
   const rows = stale.data ?? []
   if (rows.length === 0) return null
 
@@ -327,7 +210,314 @@ function StalePanel() {
   )
 }
 
-/** Raw ticks + live 1m bars for one symbol off the watchlist. */
+/* ------------------------------------------------- add symbol / add group */
+
+function AddSymbolForm() {
+  const [query, setQuery] = useState('')
+  const [dataType, setDataType] = useState<'symbolUpdate' | 'lite'>('symbolUpdate')
+  const search = useInstrumentSearch(query)
+  const add = useAddWatchlistSymbol()
+
+  const results = search.data ?? []
+
+  return (
+    <div style={{ flex: 1, minWidth: 260 }}>
+      <div className="inline-form">
+        <input
+          className="field__input field__input--sm"
+          style={{ flex: 1, minWidth: 180 }}
+          placeholder="Add symbol — search e.g. SBIN, NIFTY, CRUDEOIL…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <div className="seg" role="group" aria-label="Feed detail">
+          {(['symbolUpdate', 'lite'] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={`seg__btn ${dataType === t ? 'is-active' : ''}`}
+              onClick={() => setDataType(t)}
+              title={t === 'symbolUpdate' ? 'Full tick detail (bid/ask/depth)' : 'LTP-only, lighter'}
+            >
+              {t === 'symbolUpdate' ? 'Full' : 'Lite'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {add.isError && (
+        <div style={{ marginTop: 8 }}>
+          <InlineError error={add.error} />
+        </div>
+      )}
+
+      {query.trim().length >= 2 && (
+        <div className="tablewrap" style={{ maxHeight: 220, overflowY: 'auto', marginTop: 8 }}>
+          <table className="table">
+            <tbody>
+              {results.map((inst) => (
+                <tr key={inst.id}>
+                  <td className="mono">{inst.symbol}</td>
+                  <td className="muted">{inst.description}</td>
+                  <td>
+                    <Badge tone="neutral">{inst.instrumentType}</Badge>
+                  </td>
+                  <td className="r">
+                    <button
+                      className="btn btn--ghost btn--sm"
+                      disabled={add.isPending}
+                      onClick={() => {
+                        add.mutate({ symbol: inst.symbol, dataType })
+                        setQuery('')
+                      }}
+                      title="Add to live watchlist"
+                    >
+                      <IconPlus style={{ width: 13, height: 13 }} /> Watch
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {search.isSuccess && results.length === 0 && (
+                <tr>
+                  <td className="muted">No instruments match “{query}”.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AddGroupForm() {
+  const groups = useEquityGroups()
+  const addGroup = useAddEquityGroupToWatchlist()
+  const [selected, setSelected] = useState('')
+
+  return (
+    <div className="inline-form">
+      <select
+        className="field__input field__input--sm"
+        value={selected}
+        onChange={(e) => setSelected(e.target.value)}
+      >
+        <option value="">Add an equity group…</option>
+        {(groups.data ?? []).map((g) => (
+          <option key={g.id} value={g.name}>
+            {g.displayName || g.name} ({g.memberCount})
+          </option>
+        ))}
+      </select>
+      <button
+        className="btn btn--sm"
+        disabled={!selected || addGroup.isPending}
+        onClick={() => addGroup.mutate({ groupName: selected, dataType: 'lite' })}
+      >
+        <IconPlus style={{ width: 13, height: 13 }} /> Add group
+      </button>
+      {addGroup.isSuccess && (
+        <span className="muted" style={{ fontSize: 12 }}>
+          Added {addGroup.data.upserted} · skipped {addGroup.data.skipped}
+        </span>
+      )}
+    </div>
+  )
+}
+
+/* ---------------------------------------------- merged live watchlist table */
+
+function LiveWatchlistPanel() {
+  const watchlist = useWatchlist()
+  const quotes = useLatestQuotes()
+  const remove = useRemoveWatchlistSymbol()
+  const session = useMarketSession()
+  const [filter, setFilter] = useState('')
+
+  const quoteBySymbol = useMemo(
+    () => new Map((quotes.data ?? []).map((q) => [q.symbol, q])),
+    [quotes.data],
+  )
+
+  function confirmRemove(id: number, symbol: string) {
+    const open = session.data?.isMarketOpen
+    const msg = open
+      ? `Market is OPEN. Removing ${symbol} stops its live tick capture immediately. Remove anyway?`
+      : `Remove ${symbol} from the live watchlist?`
+    if (window.confirm(msg)) remove.mutate(id)
+  }
+
+  return (
+    <Panel
+      title={
+        <>
+          <IconPulse /> Live watchlist
+        </>
+      }
+      actions={
+        <input
+          className="field__input field__input--sm"
+          placeholder="Filter…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+      }
+    >
+      <div className="toolbar" style={{ marginBottom: 12, alignItems: 'flex-start' }}>
+        <AddSymbolForm />
+        <AddGroupForm />
+      </div>
+
+      <QueryBoundary
+        query={watchlist}
+        empty="Watchlist is empty — the feed subscribes to nothing. Add a symbol or a group above."
+      >
+        {(items) => {
+          const needle = filter.trim().toUpperCase()
+          const rows = [...items]
+            .sort((a, b) => a.symbol.localeCompare(b.symbol))
+            .filter((w) => (needle ? w.symbol.toUpperCase().includes(needle) : true))
+          return (
+            <div className="tablewrap tablewrap--tall">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th>Type</th>
+                    <th className="r">LTP</th>
+                    <th className="r">Chg%</th>
+                    <th className="r">Open</th>
+                    <th className="r">High</th>
+                    <th className="r">Low</th>
+                    <th className="r">Volume</th>
+                    <th>Updated</th>
+                    <th>Feed</th>
+                    <th className="r"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((item) => {
+                    const quote = quoteBySymbol.get(item.symbol)
+                    const chg = changePct(quote)
+                    const ageMs = quote ? Date.now() - new Date(quote.updatedUtc).getTime() : null
+                    return (
+                      <tr key={item.id}>
+                        <td className="mono">{shortSymbol(item.symbol)}</td>
+                        <td>
+                          <Badge tone="neutral">{classifySymbol(item.symbol)}</Badge>
+                        </td>
+                        <td className="r">
+                          {quote ? (
+                            <FlashPrice value={quote.lastTradedPrice} />
+                          ) : (
+                            <span className="faint">awaiting tick</span>
+                          )}
+                        </td>
+                        <td className={`r ${chg == null ? 'muted' : chg >= 0 ? 'pos' : 'neg'}`}>
+                          {chg == null ? '—' : `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`}
+                        </td>
+                        <td className="r muted">{formatPrice(quote?.open)}</td>
+                        <td className="r muted">{formatPrice(quote?.high)}</td>
+                        <td className="r muted">{formatPrice(quote?.low)}</td>
+                        <td className="r muted">
+                          {quote?.volume == null ? '—' : quote.volume.toLocaleString('en-IN')}
+                        </td>
+                        <td className={ageMs != null && ageMs > 120_000 ? 'warn' : 'muted'}>
+                          {quote ? formatAge(quote.updatedUtc) : '—'}
+                        </td>
+                        <td>
+                          <span className="muted">{item.dataType === 'symbolUpdate' ? 'Full' : 'Lite'}</span>{' '}
+                          {!item.isActive && <Badge tone="warn">off</Badge>}
+                        </td>
+                        <td className="r">
+                          <button
+                            className="btn btn--ghost btn--sm"
+                            onClick={() => confirmRemove(item.id, item.symbol)}
+                            disabled={remove.isPending}
+                            title="Remove from watchlist"
+                            aria-label={`Remove ${item.symbol}`}
+                          >
+                            <IconTrash style={{ width: 13, height: 13 }} />
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+              {rows.length === 0 && <p className="empty">No symbols match “{filter}”.</p>}
+            </div>
+          )
+        }}
+      </QueryBoundary>
+    </Panel>
+  )
+}
+
+/* ------------------------------------------------------------- diagnostics */
+
+function DiagnosticsPanel() {
+  const [open, setOpen] = useState(false)
+  const statuses = useIngestorStatuses()
+  const logs = useIngestorLogs(open)
+
+  const feeds = statuses.data ?? []
+  // Defensive: an API build without /api/Ingestor/logs answers with the SPA
+  // fallback HTML (a string) — never crash on it.
+  const logLines = Array.isArray(logs.data) ? logs.data : []
+
+  return (
+    <Panel
+      title="Feed diagnostics"
+      actions={
+        <button className="btn btn--ghost btn--sm" onClick={() => setOpen(!open)}>
+          {open ? 'Hide' : 'Show'}
+        </button>
+      }
+    >
+      <div className="chip-row">
+        {feeds.map((s) => (
+          <span key={s.sourceName} className="inline-form" style={{ gap: 6 }}>
+            <b className="mono" style={{ fontSize: 12 }}>{s.sourceName}</b>
+            <Badge tone={s.isHealthy ? 'pos' : 'warn'}>
+              {s.isHealthy ? s.status : `${s.status} · stale`}
+            </Badge>
+            <span className="faint" style={{ fontSize: 12 }}>
+              beat {formatAge(s.lastHeartbeatUtc)} · {s.currentSubscribedSymbols.length} symbols
+            </span>
+          </span>
+        ))}
+        {feeds.length === 0 && <span className="faint">No heartbeat recorded yet.</span>}
+      </div>
+      {feeds.some((s) => s.lastError) && (
+        <p className="neg" style={{ margin: '8px 0 0', fontSize: 12.5 }}>
+          {feeds.find((s) => s.lastError)?.lastError}
+        </p>
+      )}
+
+      {open && (
+        <div style={{ marginTop: 12 }}>
+          <div className="console">
+            <div className="console__bar">
+              <span className="console__dot console__dot--r" />
+              <span className="console__dot console__dot--y" />
+              <span className="console__dot console__dot--g" />
+              <span className="console__title">Ingestor process output</span>
+            </div>
+            <div className={`console__body ${logLines.length === 0 ? 'faint' : ''}`}>
+              {logLines.length === 0
+                ? 'No process output yet — appears after the feed is started from this console (requires the updated API).'
+                : logLines.map((line, i) => <div key={i}>{line}</div>)}
+            </div>
+          </div>
+        </div>
+      )}
+    </Panel>
+  )
+}
+
+/* ---------------------------------------------------------------- inspector */
+
 function InspectorPanel() {
   const watchlist = useWatchlist()
   const [symbol, setSymbol] = useState<string | null>(null)
@@ -337,15 +527,17 @@ function InspectorPanel() {
     [watchlist.data],
   )
 
-  // A symbol removed from the watchlist stops being inspected too — otherwise
-  // the panel would keep polling it forever behind a blank select.
   const activeSymbol = symbol && symbols.includes(symbol) ? symbol : null
   const ticks = useRecentTicks(activeSymbol, 30)
   const bars = useLiveBars(activeSymbol, 30)
 
   return (
     <Panel
-      title="Inspector — raw ticks & 1m bars"
+      title={
+        <>
+          <IconSearch /> Inspector — raw ticks & 1m bars
+        </>
+      }
       actions={
         <select
           className="field__input field__input--sm"
@@ -443,42 +635,25 @@ function InspectorPanel() {
   )
 }
 
-export function LiveFeedsPage() {
-  const [filter, setFilter] = useState('')
+/* --------------------------------------------------------------------- page */
 
+export function LiveFeedsPage() {
   return (
     <div className="page">
       <header className="page__header">
         <div>
           <h1 className="page__title">Live feeds</h1>
           <p className="page__subtitle">
-            The tick pipeline: broker websocket → watchlist subscriptions → quotes, ticks and 1m
-            bars.
+            Broker websocket → watchlist subscriptions → live quotes, ticks and bars.
           </p>
         </div>
+        <FeedControlButton />
       </header>
 
+      <IndexTickerRow />
       <StalePanel />
-
-      <div className="two-col">
-        <IngestorPanel />
-        <WatchlistPanel />
-      </div>
-
-      <Panel
-        title="Live quotes"
-        actions={
-          <input
-            className="field__input field__input--sm"
-            placeholder="Filter symbols…"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-          />
-        }
-      >
-        <LiveQuotesMonitor filter={filter} />
-      </Panel>
-
+      <LiveWatchlistPanel />
+      <DiagnosticsPanel />
       <InspectorPanel />
     </div>
   )
