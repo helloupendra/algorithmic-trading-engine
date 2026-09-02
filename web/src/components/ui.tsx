@@ -67,7 +67,7 @@ export function Badge({
   tone = 'neutral',
   children,
 }: {
-  tone?: 'pos' | 'neg' | 'warn' | 'neutral' | 'accent'
+  tone?: 'pos' | 'neg' | 'warn' | 'neutral' | 'accent' | 'live'
   children: ReactNode
 }) {
   return <span className={`badge badge--${tone}`}>{children}</span>
@@ -100,7 +100,10 @@ export function Loading({ label = 'Loading…' }: { label?: string }) {
 
 /**
  * Renders the three states of a query without each page re-writing them.
- * Data is only handed to children when it exists.
+ *
+ * A failed background refetch keeps showing the last good data (with a small
+ * stale hint) instead of blanking a live table — one dropped poll during
+ * market hours must not wipe a quotes panel.
  */
 export function QueryBoundary<T>({
   query,
@@ -112,13 +115,22 @@ export function QueryBoundary<T>({
   children: (data: T) => ReactNode
 }) {
   if (query.isPending) return <Loading />
-  if (query.isError) return <InlineError error={query.error} />
   const data = query.data
+  if (query.isError && data === undefined) return <InlineError error={query.error} />
   if (
     empty !== undefined &&
     (data == null || (Array.isArray(data) && data.length === 0))
   ) {
     return <EmptyState>{empty}</EmptyState>
   }
-  return <>{children(data)}</>
+  return (
+    <>
+      {query.isError && (
+        <p className="small-note warn" role="status" style={{ margin: '0 0 8px' }}>
+          Refresh failed — showing the last loaded data.
+        </p>
+      )}
+      {children(data as T)}
+    </>
+  )
 }

@@ -1,10 +1,9 @@
-import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider } from './lib/auth'
 import { AppLayout } from './components/AppLayout'
 import { RedirectIfAuthenticated, RequireAuth, RequireRole } from './components/RouteGuards'
 import { LoginPage } from './pages/LoginPage'
-import { HomePage } from './pages/HomePage'
 import { ForbiddenPage, NotFoundPage } from './pages/Placeholders'
 import { OverviewPage } from './pages/trader/OverviewPage'
 import { WatchlistPage } from './pages/trader/WatchlistPage'
@@ -17,14 +16,17 @@ import { MarketNewsPage } from './pages/trader/MarketNewsPage'
 import { TopMoversPage } from './pages/trader/TopMoversPage'
 import { DeployPage } from './pages/trader/DeployPage'
 import { RunDetailPage } from './pages/trader/RunDetailPage'
+import { AdminHomePage } from './pages/admin/AdminHomePage'
 import { AdminOverviewPage } from './pages/admin/AdminOverviewPage'
 import { UsersPage } from './pages/admin/UsersPage'
 import { RiskPage } from './pages/admin/RiskPage'
 import { StrategyControlPage } from './pages/admin/StrategyControlPage'
-import { InstrumentsPage } from './pages/admin/InstrumentsPage'
-import { IngestionPage } from './pages/admin/IngestionPage'
 import { BrokerPage } from './pages/admin/BrokerPage'
 import { LiveAlertsPage } from './pages/admin/LiveAlertsPage'
+import { DataOverviewPage } from './pages/data/DataOverviewPage'
+import { LiveFeedsPage } from './pages/data/LiveFeedsPage'
+import { HistoricalDataPage } from './pages/data/HistoricalDataPage'
+import { InstrumentsFnoPage } from './pages/data/InstrumentsFnoPage'
 import './styles.css'
 
 const queryClient = new QueryClient({
@@ -49,8 +51,9 @@ export default function App() {
       <BrowserRouter>
         <AuthProvider>
           <Routes>
-            {/* Public front door — reachable signed in or out. */}
-            <Route path="/" element={<HomePage />} />
+            {/* Internal console — the root goes straight to sign-in, which
+                bounces authenticated users to their role's home. */}
+            <Route path="/" element={<Navigate to="/login" replace />} />
 
             <Route element={<RedirectIfAuthenticated />}>
               <Route path="/login" element={<LoginPage />} />
@@ -58,7 +61,7 @@ export default function App() {
 
             <Route element={<RequireAuth />}>
               <Route element={<AppLayout />}>
-                {/* Trader area — any signed-in user. */}
+                {/* Trader area — any signed-in user. v1 pages, rebuild queued. */}
                 <Route path="/trader" element={<OverviewPage />} />
                 <Route path="/trader/watchlist" element={<WatchlistPage />} />
                 <Route path="/trader/charts" element={<ChartsPage />} />
@@ -73,14 +76,28 @@ export default function App() {
 
                 {/* Admin area — Admin role only. */}
                 <Route element={<RequireRole role="Admin" />}>
-                  <Route path="/admin" element={<AdminOverviewPage />} />
+                  <Route path="/admin" element={<AdminHomePage />} />
+
+                  {/* Data module (v2). */}
+                  <Route path="/admin/data" element={<DataOverviewPage />} />
+                  <Route path="/admin/data/live" element={<LiveFeedsPage />} />
+                  <Route path="/admin/data/historical" element={<HistoricalDataPage />} />
+                  <Route path="/admin/data/instruments" element={<InstrumentsFnoPage />} />
+
+                  {/* v1 modules, awaiting their rebuild. */}
+                  <Route path="/admin/system" element={<AdminOverviewPage />} />
                   <Route path="/admin/users" element={<UsersPage />} />
                   <Route path="/admin/risk" element={<RiskPage />} />
                   <Route path="/admin/strategies" element={<StrategyControlPage />} />
-                  <Route path="/admin/instruments" element={<InstrumentsPage />} />
-                  <Route path="/admin/ingestion" element={<IngestionPage />} />
                   <Route path="/admin/live-alerts" element={<LiveAlertsPage />} />
                   <Route path="/admin/broker" element={<BrokerPage />} />
+
+                  {/* Old bookmarks from the v1 layout. */}
+                  <Route path="/admin/ingestion" element={<Navigate to="/admin/data/live" replace />} />
+                  <Route
+                    path="/admin/instruments"
+                    element={<Navigate to="/admin/data/instruments" replace />}
+                  />
                 </Route>
               </Route>
             </Route>
