@@ -1,21 +1,15 @@
 /**
- * Sign-in page, in the same visual language as the landing page: aurora glow
- * field, glass card, gradient CTA. Logic is unchanged — username/password to
- * the API, with dev-only one-click logins from web/.env.local.
+ * Sign-in, v2 design. Logic is unchanged — username/password to the API, with
+ * dev-only one-click logins sourced from web/.env.local (never shipped in a
+ * production build).
  */
 
 import { useState, type FormEvent } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { ApiError } from '../lib/api'
+import { IconLogo } from '../components/icons'
 
-/**
- * One-click sign-in shortcuts for local development.
- *
- * Credentials come from web/.env.local (gitignored) and the section renders
- * only on the Vite dev server — a production build never ships either the
- * buttons or the credentials.
- */
 const DEV_LOGINS = import.meta.env.DEV
   ? (
       [
@@ -50,8 +44,6 @@ export function LoginPage() {
     setIsSubmitting(true)
     try {
       const me = await login(name, pass)
-
-      // Send the user back where they were headed, or to their role's home.
       const from = (location.state as { from?: { pathname: string } } | null)?.from?.pathname
       navigate(from ?? (me.role === 'Admin' ? '/admin' : '/trader'), { replace: true })
     } catch (err) {
@@ -71,96 +63,87 @@ export function LoginPage() {
   }
 
   return (
-    <div className="lg">
-      <div className="lp-bg" aria-hidden="true">
-        <span className="lp-orb lp-orb--blue" />
-        <span className="lp-orb lp-orb--green" />
-        <span className="lp-grid" />
-      </div>
-
-      <Link to="/" className="lg-home">
-        <span aria-hidden="true">←</span> Back to home
-      </Link>
-
-      <div className="lg-card">
-        <div className="lg-card__glow" aria-hidden="true" />
-
-        <Link to="/" className="lp-brand lg-brand">
-          <span className="lp-brand__mark">▲</span> AlgoTrading
-        </Link>
-
-        <h1 className="lg-title">Welcome back</h1>
-        <p className="lg-sub">Sign in to your trading console.</p>
-
-        {error && (
-          <div className="alert alert--error" role="alert">
-            {error}
+    <div className="login">
+      <div>
+        <div className="login__card">
+          <div className="login__brand">
+            <span className="shell__brand-mark" aria-hidden="true">
+              <IconLogo />
+            </span>
+            AlgoTrading Console
           </div>
-        )}
 
-        <form onSubmit={handleSubmit} className="lg-form">
-          <label className="field">
-            <span className="field__label">Username or email</span>
-            <input
-              className="field__input lg-input"
-              value={userNameOrEmail}
-              onChange={(e) => setUserNameOrEmail(e.target.value)}
-              autoComplete="username"
-              placeholder="you@example.com"
-              required
-              autoFocus
-            />
-          </label>
+          <h1 className="login__title">Sign in</h1>
+          <p className="login__sub">Live data, strategies and risk — one console.</p>
 
-          <label className="field">
-            <span className="field__label">Password</span>
-            <input
-              className="field__input lg-input"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-              placeholder="••••••••••••"
-              required
-            />
-          </label>
+          {error && (
+            <div className="alert alert--error" role="alert" style={{ marginBottom: 14 }}>
+              {error}
+            </div>
+          )}
 
-          <button type="submit" className="lp-cta lg-submit" disabled={isSubmitting}>
-            {isSubmitting ? 'Signing in…' : 'Sign in'} <span aria-hidden="true">→</span>
-          </button>
-        </form>
+          <form onSubmit={handleSubmit} className="login__form">
+            <label className="field">
+              <span className="field__label">Username or email</span>
+              <input
+                className="field__input"
+                value={userNameOrEmail}
+                onChange={(e) => setUserNameOrEmail(e.target.value)}
+                autoComplete="username"
+                placeholder="you@example.com"
+                required
+                autoFocus
+              />
+            </label>
 
-        <p className="lg-hint">
-          Accounts are issued by an administrator — there is no public sign-up.
+            <label className="field">
+              <span className="field__label">Password</span>
+              <input
+                className="field__input"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                placeholder="••••••••••••"
+                required
+              />
+            </label>
+
+            <button type="submit" className="btn btn--primary btn--block" disabled={isSubmitting}>
+              {isSubmitting ? 'Signing in…' : 'Sign in'}
+            </button>
+          </form>
+
+          <p className="login__hint">
+            Accounts are issued by an administrator — there is no public sign-up.
+          </p>
+
+          {DEV_LOGINS.length > 0 && (
+            <div className="login__dev">
+              <div className="login__dev-label">Dev quick sign-in</div>
+              <div className="login__dev-row">
+                {DEV_LOGINS.map((l) => (
+                  <button
+                    key={l.label}
+                    type="button"
+                    className="login__dev-btn"
+                    disabled={isSubmitting}
+                    title={l.hint}
+                    onClick={() => void signIn(l.user!, l.pass!)}
+                  >
+                    <b>{l.label}</b>
+                    <span>{l.user}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <p className="login__foot">
+          Trading involves financial risk. Validate every strategy on paper first.
         </p>
-
-        {DEV_LOGINS.length > 0 && (
-          <div className="lg-dev">
-            <div className="lg-dev__label">
-              <span /> Dev quick sign-in <span />
-            </div>
-            <div className="lg-dev__row">
-              {DEV_LOGINS.map((l) => (
-                <button
-                  key={l.label}
-                  type="button"
-                  className="lg-dev__btn"
-                  disabled={isSubmitting}
-                  title={l.hint}
-                  onClick={() => void signIn(l.user!, l.pass!)}
-                >
-                  <b>{l.label}</b>
-                  <span>{l.user}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
-
-      <p className="lg-foot">
-        Trading involves financial risk. Validate every strategy on paper first.
-      </p>
     </div>
   )
 }

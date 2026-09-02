@@ -147,8 +147,8 @@ export function DeployPage() {
         </QueryBoundary>
         {!selected && (
           <p className="muted small-note">
-            👆 Kisi card par click karo — select hote hi neeche <b>Step 2 (Configure)</b> aur{' '}
-            <b>Step 3 (Deploy)</b> khul jayenge.
+            Select a strategy card — <b>Step 2 (Configure)</b> and <b>Step 3 (Deploy)</b> unlock
+            below once one is chosen.
           </p>
         )}
       </Panel>

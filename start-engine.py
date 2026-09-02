@@ -58,7 +58,7 @@ def main():
 
         # Start Ingestor
         ingestor_proc = subprocess.Popen(
-            [sys.executable, "src/AlgoTrading.PythonEngine/data_ingestion/fyers_live_stream.py"],
+            [sys.executable, "src/AlgoTrading.PythonEngine/market_data/live/fyers_streamer.py"],
             cwd=ROOT_DIR,
             env=env,
             stdout=subprocess.PIPE,

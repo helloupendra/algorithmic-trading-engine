@@ -1,51 +1,199 @@
 /**
- * The signed-in shell: sidebar navigation, user badge, sign out.
- *
- * Navigation is built from the user's role so a trader never sees an admin
- * destination they would only get a 403 from.
+ * The signed-in shell, v2: grouped sidebar navigation plus a sticky topbar
+ * that keeps the three live health signals — market session, broker session,
+ * ingestor heartbeat — visible on every screen. Navigation is built from the
+ * module registry and the user's role.
  */
 
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
+import { useBrokerSession, useIngestorStatuses, useMarketSession } from '../lib/queries'
+import { DATA_SECTIONS, MODULES } from '../lib/modules'
+import {
+  IconArrowRight,
+  IconCandles,
+  IconClock,
+  IconDashboard,
+  IconDatabase,
+  IconFlask,
+  IconGlobe,
+  IconLayers,
+  IconLogo,
+  IconPlay,
+  IconPulse,
+  IconSignOut,
+  IconSwitch,
+} from './icons'
 
-interface NavItem {
-  to: string
+function StatusPill({
+  tone,
+  label,
+  title,
+}: {
+  tone: 'pos' | 'neg' | 'warn' | 'live' | 'idle'
   label: string
-  /** Emoji stand-in until an icon set is chosen. */
-  icon: string
-  end?: boolean
+  title?: string
+}) {
+  return (
+    <span className={`pill ${tone === 'idle' ? '' : `pill--${tone}`}`} title={title}>
+      <span className="pill__dot" aria-hidden="true" />
+      {label}
+    </span>
+  )
 }
 
-const TRADER_NAV: NavItem[] = [
-  { to: '/trader', label: 'Overview', icon: '📊', end: true },
-  { to: '/trader/watchlist', label: 'Watchlist', icon: '👁' },
-  { to: '/trader/charts', label: 'Charts', icon: '📉' },
-  { to: '/trader/news', label: 'Market news', icon: '📰' },
-  { to: '/trader/movers', label: 'Top movers', icon: '🚀' },
-  { to: '/trader/option-chain', label: 'Option chain', icon: '⛓' },
-  { to: '/trader/positions', label: 'Positions', icon: '📈' },
-  { to: '/trader/orders', label: 'Orders', icon: '🧾' },
-  { to: '/trader/strategies', label: 'Strategies', icon: '🤖' },
-  { to: '/trader/deploy', label: 'Deploy', icon: '🎯' },
+/** Market open/closed, broker connected, ingestor heartbeat — the pulse row. */
+function TopbarStatus() {
+  const session = useMarketSession()
+  const broker = useBrokerSession()
+  const ingestors = useIngestorStatuses()
+
+  const market = session.data
+  const feeds = ingestors.data ?? []
+  const healthyFeeds = feeds.filter((f) => f.isHealthy).length
+
+  return (
+    <div className="topbar__status">
+      {market && (
+        <StatusPill
+          tone={market.isMarketOpen ? 'pos' : 'idle'}
+          label={market.isMarketOpen ? 'NSE open' : 'NSE closed'}
+          title={
+            market.isMarketOpen
+              ? 'Market session is live'
+              : `Next open: ${new Date(market.nextMarketOpenUtc).toLocaleString('en-IN')}`
+          }
+        />
+      )}
+      {broker.data && (
+        <StatusPill
+          tone={broker.data.isAuthenticated ? 'pos' : 'neg'}
+          label={broker.data.isAuthenticated ? 'FYERS linked' : 'FYERS not linked'}
+          title="Broker session"
+        />
+      )}
+      {feeds.length > 0 && (
+        <StatusPill
+          tone={healthyFeeds === feeds.length ? 'live' : 'warn'}
+          label={
+            healthyFeeds === feeds.length
+              ? `Feed live (${feeds.length})`
+              : `Feed degraded (${healthyFeeds}/${feeds.length})`
+          }
+          title="Live ingestor heartbeat"
+        />
+      )}
+    </div>
+  )
+}
+
+const TRADER_NAV = [
+  { to: '/trader', label: 'Overview', icon: IconDashboard, end: true },
+  { to: '/trader/watchlist', label: 'Watchlist', icon: IconPulse },
+  { to: '/trader/charts', label: 'Charts', icon: IconCandles },
+  { to: '/trader/news', label: 'Market news', icon: IconGlobe },
+  { to: '/trader/movers', label: 'Top movers', icon: IconArrowRight },
+  { to: '/trader/option-chain', label: 'Option chain', icon: IconLayers },
+  { to: '/trader/positions', label: 'Positions', icon: IconDatabase },
+  { to: '/trader/orders', label: 'Orders', icon: IconClock },
+  { to: '/trader/strategies', label: 'Strategies', icon: IconFlask },
+  { to: '/trader/deploy', label: 'Deploy', icon: IconPlay },
 ]
 
-const ADMIN_NAV: NavItem[] = [
-  { to: '/admin', label: 'System status', icon: '🖥', end: true },
-  { to: '/admin/broker', label: 'Broker (FYERS)', icon: '🔌' },
-  { to: '/trader/deploy', label: 'Deploy strategy', icon: '🎯' },
-  { to: '/admin/users', label: 'Users', icon: '👥' },
-  { to: '/admin/risk', label: 'Risk & kill switch', icon: '🛑' },
-  { to: '/admin/strategies', label: 'Strategy control', icon: '🎛' },
-  { to: '/admin/instruments', label: 'Instruments', icon: '🗃' },
-  { to: '/admin/ingestion', label: 'Data ingestion', icon: '📡' },
-  { to: '/admin/live-alerts', label: 'Live Alerts', icon: '⚡' },
+function NavItem({
+  to,
+  label,
+  icon: Icon,
+  end,
+  badge,
+}: {
+  to: string
+  label: string
+  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
+  end?: boolean
+  badge?: string
+}) {
+  return (
+    <NavLink
+      to={to}
+      end={end}
+      className={({ isActive }) => (isActive ? 'nav-link nav-link--active' : 'nav-link')}
+    >
+      <span className="nav-link__icon">
+        <Icon />
+      </span>
+      {label}
+      {badge && <span className="nav-badge">{badge}</span>}
+    </NavLink>
+  )
+}
+
+function AdminNav() {
+  const legacyModules = MODULES.filter((m) => m.key !== 'data' && m.status !== 'planned')
+
+  return (
+    <>
+      <div className="nav-group">
+        <NavItem to="/admin" label="Overview" icon={IconDashboard} end />
+      </div>
+
+      <div className="nav-group">
+        <div className="nav-group__label">Data</div>
+        {DATA_SECTIONS.map((s) => (
+          <NavItem key={s.route} to={s.route} label={s.label} icon={s.icon} end={s.end} />
+        ))}
+      </div>
+
+      <div className="nav-group">
+        <div className="nav-group__label">Modules</div>
+        {legacyModules.map((m) => (
+          <NavItem
+            key={m.key}
+            to={m.route}
+            label={m.name}
+            icon={m.icon}
+            badge={m.status === 'legacy' ? 'v1' : undefined}
+          />
+        ))}
+      </div>
+    </>
+  )
+}
+
+function TraderNav() {
+  return (
+    <div className="nav-group">
+      <div className="nav-group__label">Trading</div>
+      {TRADER_NAV.map((item) => (
+        <NavItem key={item.to} to={item.to} label={item.label} icon={item.icon} end={item.end} />
+      ))}
+    </div>
+  )
+}
+
+/** Section title for the topbar, from the deepest matching route. */
+const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]> = [
+  ['/admin/data/live', 'Data', 'Live feeds'],
+  ['/admin/data/historical', 'Data', 'Historical'],
+  ['/admin/data/instruments', 'Data', 'Instruments & F&O'],
+  ['/admin/data', 'Data', 'Overview'],
+  ['/admin/users', 'Modules', 'Users'],
+  ['/admin/risk', 'Modules', 'Risk'],
+  ['/admin/strategies', 'Modules', 'Strategies'],
+  ['/admin/live-alerts', 'Modules', 'Alerts'],
+  ['/admin/broker', 'Modules', 'Broker'],
+  ['/admin/system', 'Modules', 'System'],
+  ['/admin', null, 'Overview'],
+  ['/trader', null, 'Trading'],
 ]
 
 export function AppLayout() {
   const { user, isAdmin, logout } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
 
-  const navItems = isAdmin ? ADMIN_NAV : TRADER_NAV
+  const match = ROUTE_TITLES.find(([prefix]) => location.pathname.startsWith(prefix))
+  const initials = (user?.userName ?? '?').slice(0, 2).toUpperCase()
 
   async function handleSignOut() {
     await logout()
@@ -57,53 +205,57 @@ export function AppLayout() {
       <aside className="shell__sidebar">
         <div className="shell__brand">
           <span className="shell__brand-mark" aria-hidden="true">
-            ▲
+            <IconLogo />
           </span>
-          <span>AlgoTrading</span>
+          <span>
+            AlgoTrading
+            <small>Console</small>
+          </span>
         </div>
 
-        <nav className="shell__nav" aria-label="Main">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              className={({ isActive }) =>
-                isActive ? 'shell__nav-link shell__nav-link--active' : 'shell__nav-link'
-              }
-            >
-              <span className="shell__nav-icon" aria-hidden="true">
-                {item.icon}
-              </span>
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
+        <nav aria-label="Main">{isAdmin ? <AdminNav /> : <TraderNav />}</nav>
 
-        {/* An admin can reach the trading screens too; a trader has no admin link. */}
         {isAdmin && (
-          <NavLink to="/trader" className="shell__nav-link shell__nav-link--secondary">
-            <span className="shell__nav-icon" aria-hidden="true">
-              ↔
-            </span>
-            Trader view
-          </NavLink>
+          <div className="nav-group">
+            <NavItem to="/trader" label="Trader view" icon={IconSwitch} />
+          </div>
         )}
 
         <div className="shell__user">
-          <div className="shell__user-name">{user?.userName}</div>
-          <div className="shell__user-role" data-role={user?.role}>
-            {user?.role}
+          <span className="shell__avatar" aria-hidden="true">
+            {initials}
+          </span>
+          <div className="shell__user-meta">
+            <div className="shell__user-name">{user?.userName}</div>
+            <div className="shell__user-role" data-role={user?.role}>
+              {user?.role}
+            </div>
           </div>
-          <button type="button" className="btn btn--ghost btn--sm" onClick={handleSignOut}>
-            Sign out
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={handleSignOut}
+            title="Sign out"
+            aria-label="Sign out"
+          >
+            <IconSignOut style={{ width: 15, height: 15 }} />
           </button>
         </div>
       </aside>
 
-      <main className="shell__main">
-        <Outlet />
-      </main>
+      <div className="shell__body">
+        <header className="topbar">
+          <span className="topbar__title">
+            {match?.[1] && <span className="topbar__crumb">{match[1]} / </span>}
+            {match?.[2] ?? 'Console'}
+          </span>
+          <TopbarStatus />
+        </header>
+
+        <main className="shell__main">
+          <Outlet />
+        </main>
+      </div>
     </div>
   )
 }

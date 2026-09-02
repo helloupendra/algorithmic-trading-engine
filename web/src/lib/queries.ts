@@ -177,7 +177,8 @@ export function useExpiries(underlying: string) {
       api.get<DerivativeExpiry[]>(
         `/api/Instruments/derivatives/expiries?underlying=${encodeURIComponent(underlying)}`,
       ),
-    enabled: underlying.trim().length >= 3,
+    // >= 1, not >= 3 — NSE has legitimate short underlyings (e.g. M&M → "MM").
+    enabled: underlying.trim().length >= 1,
     staleTime: 5 * 60_000,
   })
 }
@@ -189,7 +190,7 @@ export function useOptionChain(underlying: string, expiry: string | null) {
       api.get<OptionChainItem[]>(
         `/api/Instruments/derivatives/chain?underlying=${encodeURIComponent(underlying)}&expiry=${expiry}`,
       ),
-    enabled: underlying.trim().length >= 3 && !!expiry,
+    enabled: underlying.trim().length >= 1 && !!expiry,
     staleTime: 5 * 60_000,
   })
 }
@@ -393,7 +394,10 @@ export function useBackfillHistory() {
       fromDate: string
       toDate: string
     }) => api.post<BackfillHistoryResponse>('/api/Backfill/history', input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['candles'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['candles'] })
+      qc.invalidateQueries({ queryKey: ['coverage'] })
+    },
   })
 }
 
@@ -507,6 +511,82 @@ export function useStartAlerter() {
   return useMutation({
     mutationFn: () => api.post<{ message: string }>('/api/alerts/start'),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['alerts', 'status'] }),
+  })
+}
+
+// ---------- Data module v2 ----------
+
+/** Expiry dates that actually exist in the instrument universe. */
+export function useAvailableExpiries(exchange: string, underlying: string | null) {
+  return useQuery({
+    queryKey: ['expiries', 'available', exchange, underlying],
+    queryFn: () =>
+      api.get<string[]>(
+        `/api/Expiry/available?exchange=${encodeURIComponent(exchange)}&underlying=${encodeURIComponent(underlying!)}`,
+      ),
+    enabled: !!underlying,
+    staleTime: 10 * 60_000,
+  })
+}
+
+/** Pull candles straight from FYERS into the local store (returns them too). */
+export function useSyncHistory() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: {
+      symbol: string
+      resolution: string
+      fromDate: string
+      toDate: string
+    }) => api.post<CandleDto[]>('/api/MarketData/history/sync', input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['candles'] })
+      qc.invalidateQueries({ queryKey: ['coverage'] })
+    },
+  })
+}
+
+export interface OptionsBackfillRequest {
+  exchange: string
+  underlying: string
+  expiryDate?: string
+  strikeCountEachSide: number
+  strikeStep: number
+  resolution: string
+  fromUtc: string
+  toUtc: string
+  includeCalls: boolean
+  includePuts: boolean
+}
+
+export interface OptionsBackfillResponse {
+  message?: string
+  [key: string]: unknown
+}
+
+/** Backfill candles for an ATM±N option-chain window around an underlying. */
+export function useOptionsBackfill() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: OptionsBackfillRequest) =>
+      api.post<OptionsBackfillResponse>('/api/Options/history/backfill', input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['candles'] })
+      qc.invalidateQueries({ queryKey: ['coverage'] })
+    },
+  })
+}
+
+/** Bulk-add every member of an equity group to the live watchlist. */
+export function useAddEquityGroupToWatchlist() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { groupName: string; dataType: string }) =>
+      api.post<{ groupName: string; totalMemberResolved: number; upserted: number; skipped: number }>(
+        '/api/Equities/live/watchlist/group',
+        { ...input, onlyEnabledMembers: true },
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['watchlist'] }),
   })
 }
 
