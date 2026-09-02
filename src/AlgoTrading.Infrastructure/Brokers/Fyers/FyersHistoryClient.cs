@@ -52,10 +52,14 @@ namespace AlgoTrading.Infrastructure.Brokers.Fyers
             string rangeFrom = new DateTimeOffset(fromUtc).ToUnixTimeSeconds().ToString();
             string rangeTo = new DateTimeOffset(toUtc).ToUnixTimeSeconds().ToString();
 
+            string fyersRes = resolution.EndsWith("m", StringComparison.OrdinalIgnoreCase)
+                ? resolution.Substring(0, resolution.Length - 1)
+                : resolution;
+
             var queryParams = new Dictionary<string, string?>
             {
                 ["symbol"] = symbol,
-                ["resolution"] = resolution,
+                ["resolution"] = fyersRes,
                 ["date_format"] = "0", // 0 for epoch
                 ["range_from"] = rangeFrom,
                 ["range_to"] = rangeTo,

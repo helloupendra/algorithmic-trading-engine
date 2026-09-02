@@ -4,7 +4,7 @@ import threading
 from typing import Optional, Dict, Any, List
 from fyers_apiv3 import fyersModel
 from core.api_client import build_session, VERIFY_SSL
-from core.config import API_BASE_URL, require_app_id
+from core.config import API_BASE_URL, require_app_id, FYERS_LOG_PATH
 
 _fyers_instance: Optional[fyersModel.FyersModel] = None
 
@@ -24,7 +24,7 @@ def get_fyers_client() -> fyersModel.FyersModel:
     if _fyers_instance is None:
         client_id = require_app_id()
         access_token = get_active_session_token()
-        _fyers_instance = fyersModel.FyersModel(client_id=client_id, token=access_token, is_async=False, log_path="")
+        _fyers_instance = fyersModel.FyersModel(client_id=client_id, token=access_token, is_async=False, log_path=FYERS_LOG_PATH)
     return _fyers_instance
 
 def place_market_entry(symbol: str, qty: int, side: int = 1) -> float:
