@@ -37,6 +37,7 @@ from core.config import (
     SOURCE_NAME,
     HEARTBEAT_SECONDS,
     require_app_id,
+    FYERS_LOG_PATH,
 )
 
 from messaging.redis_publisher import build_publisher_from_env, normalize_tick
@@ -534,7 +535,7 @@ def main():
 
             fyers = data_ws.FyersDataSocket(
                 access_token=fyers_socket_token,
-                log_path="",
+                log_path=FYERS_LOG_PATH,
                 litemode=False,
                 write_to_file=False,
                 reconnect=True,

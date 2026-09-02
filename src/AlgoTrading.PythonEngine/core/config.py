@@ -19,6 +19,9 @@ from dotenv import load_dotenv
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ENV_FILE = REPO_ROOT / ".env"
 
+FYERS_LOG_PATH = os.path.join(REPO_ROOT, "logs", "fyers")
+os.makedirs(FYERS_LOG_PATH, exist_ok=True)
+
 # override=False so a real exported environment variable (CI, Docker, systemd)
 # always beats the local file.
 load_dotenv(dotenv_path=ENV_FILE, override=False)

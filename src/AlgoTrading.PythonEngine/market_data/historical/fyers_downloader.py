@@ -26,50 +26,35 @@ def get_active_session():
 
 def download_historical_data(symbol, resolution, start_date, end_date):
     """
-    Download historical OHLCV data from Fyers API.
+    Download historical OHLCV data from Fyers API using the unified DataEngine.
     resolution: '1', '5', '10', '15', '30', '60', '1D'
     start_date, end_date: 'YYYY-MM-DD'
     """
-    access_token = get_active_session()
-    client_id = require_app_id()
+    from core.data_engine import DataEngine
     
-    from fyers_apiv3 import fyersModel
+    print(f"Requesting data for {symbol} ({resolution}m) from {start_date} to {end_date} via DataEngine...")
+    engine = DataEngine()
+    bars = engine.get_historical_bars(symbol, resolution, start_date, end_date)
     
-    # Initialize the FyersModel instance
-    fyers = fyersModel.FyersModel(client_id=client_id, is_async=False, token=access_token, log_path="")
-    
-    data_req = {
-        "symbol": symbol,
-        "resolution": resolution,
-        "date_format": "1", # YYYY-MM-DD
-        "range_from": start_date,
-        "range_to": end_date,
-        "cont_flag": "1" # Continuous flag
-    }
-    
-    print(f"Requesting data for {symbol} ({resolution}m) from {start_date} to {end_date}...")
-    response = fyers.history(data=data_req)
-    
-    if response.get("s") != "ok":
-        print(f"Failed to fetch data: {response.get('message')}")
-        return
-    
-    candles = response.get("candles", [])
-    if not candles:
+    if not bars:
         print("No data returned for the given range.")
         return
-    
-    print(f"Received {len(candles)} candles.")
+        
+    print(f"Received {len(bars)} candles.")
     
     # Convert to DataFrame
-    df = pd.DataFrame(candles, columns=['epoch', 'open', 'high', 'low', 'close', 'volume'])
-    
-    # Convert epoch to proper datetime (UTC)
-    df['datetime'] = pd.to_datetime(df['epoch'], unit='s', utc=True)
-    df.drop(columns=['epoch'], inplace=True)
-    
-    # Reorder columns
-    df = df[['datetime', 'open', 'high', 'low', 'close', 'volume']]
+    data = []
+    for b in bars:
+        data.append({
+            'datetime': b.timestamp_start,
+            'open': b.open,
+            'high': b.high,
+            'low': b.low,
+            'close': b.close,
+            'volume': b.volume
+        })
+        
+    df = pd.DataFrame(data)
     
     # Ensure data directory exists
     save_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'data', 'historical_bars'))
@@ -80,7 +65,7 @@ def download_historical_data(symbol, resolution, start_date, end_date):
     filepath = os.path.join(save_dir, filename)
     
     df.to_csv(filepath, index=False)
-    print(f"✅ Data saved successfully to: {filepath}")
+    print(f"Data saved successfully to: {filepath}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Download Historical Data from FYERS")

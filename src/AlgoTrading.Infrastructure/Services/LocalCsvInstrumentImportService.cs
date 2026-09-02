@@ -338,23 +338,38 @@ namespace AlgoTrading.Infrastructure.Services
 
             decimal? strike = null;
 
-            // Example: BANKNIFTY26JUN54500CE -> capture 54500
-            var strikeMatch = Regex.Match(symbolPart, @"(\d{4,6})(CE|PE)$", RegexOptions.IgnoreCase);
-            if (strikeMatch.Success &&
-                decimal.TryParse(strikeMatch.Groups[1].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsedStrike))
+            if (optionType == "CE" || optionType == "PE")
             {
-                strike = parsedStrike;
-            }
-            else
-            {
-                // Fallback: try any numeric token in the symbol
-                var parts = Regex.Split(symbolPart, @"[^0-9]+");
-                foreach (var part in parts)
+                var descParts = description.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (descParts.Length >= 2)
                 {
-                    if (decimal.TryParse(part, NumberStyles.Any, CultureInfo.InvariantCulture, out var fallbackStrike) &&
-                        fallbackStrike >= 1000)
+                    var possibleStrike = descParts[descParts.Length - 2];
+                    if (decimal.TryParse(possibleStrike, NumberStyles.Any, CultureInfo.InvariantCulture, out var descStrike))
                     {
-                        strike = fallbackStrike;
+                        strike = descStrike;
+                    }
+                }
+            }
+
+            if (strike == null)
+            {
+                var strikeMatch = Regex.Match(symbolPart, @"(\d{4,6})(CE|PE)$", RegexOptions.IgnoreCase);
+                if (strikeMatch.Success &&
+                    decimal.TryParse(strikeMatch.Groups[1].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsedStrike))
+                {
+                    strike = parsedStrike;
+                }
+                else
+                {
+                    // Fallback: try any numeric token in the symbol
+                    var parts = Regex.Split(symbolPart, @"[^0-9]+");
+                    foreach (var part in parts)
+                    {
+                        if (decimal.TryParse(part, NumberStyles.Any, CultureInfo.InvariantCulture, out var fallbackStrike) &&
+                            fallbackStrike >= 1000)
+                        {
+                            strike = fallbackStrike;
+                        }
                     }
                 }
             }

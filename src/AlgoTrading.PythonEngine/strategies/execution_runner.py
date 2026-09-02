@@ -400,62 +400,60 @@ if __name__ == "__main__":
     except Exception as ex:
         print(f"[{args.underlying}] WARN: Could not upsert spot symbol {args.spot_symbol}: {ex}")
 
-    if args.strategy == "GhostTangentCrossings":
-        print(f"[{args.underlying}] Executing Phase 1: Warmup for GhostTangentCrossings...")
-        try:
-            from datetime import datetime, timedelta
-            fyers = fyers_orders.get_fyers_client()
-            
-            end_time = datetime.now()
-            start_time = end_time - timedelta(days=15)
-            
-            data_req = {
-                "symbol": args.spot_symbol,
-                "resolution": "5",
-                "date_format": "1",
-                "range_from": start_time.strftime("%Y-%m-%d"),
-                "range_to": end_time.strftime("%Y-%m-%d"),
-                "cont_flag": "1"
-            }
-            
-            print(f"[{args.underlying}] Requesting historical 5m bars from Fyers API...")
-            history_response = fyers.history(data=data_req)
-            
-            if history_response and history_response.get("s") == "ok":
-                candles = history_response.get("candles", [])
-                candles = candles[-500:] if len(candles) > 500 else candles
-                print(f"[{args.underlying}] Fetched {len(candles)} historical bars. Feeding into strategy...")
+    print(f"[{args.underlying}] Executing Phase 1: Strategy Warmup...")
+    try:
+        from core.data_engine import DataEngine
+        engine = DataEngine()
+        
+        reqs = strategy.get_data_requirements()
+        for req in reqs:
+            if req.symbol_type == "index":
+                print(f"[{args.underlying}] Fetching historical warmup data ({req.resolution}m) for {args.spot_symbol}...")
                 
-                bars_list = []
-                for c in candles:
-                    dt = datetime.fromtimestamp(c[0], tz=timezone.utc).isoformat().replace("+00:00", "Z")
-                    bars_list.append(BarFrame(
-                        symbol=args.spot_symbol,
-                        resolution="5m",
-                        timestamp_utc=dt,
-                        open=float(c[1]),
-                        high=float(c[2]),
-                        low=float(c[3]),
-                        close=float(c[4]),
-                        volume=float(c[5])
-                    ))
+                from datetime import datetime, timedelta
+                end_time = datetime.now()
+                start_time = end_time - timedelta(days=15)
+                
+                bars = engine.get_historical_bars(
+                    symbol=args.spot_symbol,
+                    resolution=req.resolution,
+                    start_date=start_time.strftime("%Y-%m-%d"),
+                    end_date=end_time.strftime("%Y-%m-%d")
+                )
+                
+                if bars:
+                    # Take the last 500 for warmup
+                    warmup_bars = bars[-500:] if len(bars) > 500 else bars
+                    print(f"[{args.underlying}] Feeding {len(warmup_bars)} bars into strategy warmup...")
                     
-                    inp = StrategyInput(
-                        mode="LivePaper",
-                        timestamp_utc=bars_list[-1].timestamp_utc,
-                        underlying=args.underlying,
-                        spot_price=bars_list[-1].close,
-                        atm_strike=int(round(bars_list[-1].close / 100) * 100),
-                        contracts={},
-                        bars={"5m": {"index": list(bars_list)}},
-                        metadata={"source": "warmup"}
-                    )
-                    strategy.on_bar(state, inp)
-                print(f"[{args.underlying}] Warmup complete. State initialized.")
-            else:
-                print(f"[{args.underlying}] WARN: Fyers history fetch failed: {history_response}")
-        except Exception as ex:
-            print(f"[{args.underlying}] WARN: Warmup failed: {ex}")
+                    for b in warmup_bars:
+                        # Map BarData to BarFrame
+                        frame = BarFrame(
+                            symbol=b.symbol,
+                            resolution=b.resolution,
+                            timestamp_utc=b.timestamp_start.isoformat().replace("+00:00", "Z"),
+                            open=b.open,
+                            high=b.high,
+                            low=b.low,
+                            close=b.close,
+                            volume=b.volume
+                        )
+                        
+                        inp = StrategyInput(
+                            mode="LivePaper",
+                            timestamp_utc=frame.timestamp_utc,
+                            underlying=args.underlying,
+                            spot_price=frame.close,
+                            atm_strike=int(round(frame.close / 100) * 100),
+                            contracts={},
+                            bars={req.resolution: {"index": [frame]}},
+                            metadata={"source": "warmup"}
+                        )
+                        strategy.on_bar(state, inp)
+                        
+        print(f"[{args.underlying}] Warmup complete. State initialized.")
+    except Exception as ex:
+        print(f"[{args.underlying}] WARN: Warmup failed: {ex}")
 
     print(f"[{args.underlying}] Listening for live ticks on Redis Stream...")
     subscriber = build_subscriber_from_env()

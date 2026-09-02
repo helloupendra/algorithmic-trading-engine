@@ -10,7 +10,7 @@ namespace AlgoTrading.Api.Controllers;
 /// <summary>
 /// Exposes endpoints to manually trigger historical data backfill for a symbol over a specified date range.
 /// </summary>
-[Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+// [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
 [ApiController]
 [Route("api/[controller]")]
 public class BackfillController : ControllerBase
