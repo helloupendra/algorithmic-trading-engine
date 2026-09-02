@@ -1,0 +1,29 @@
+Initializing Ghost Strategy Backtester for BANKNIFTY...
+Connected to Postgres database.
+Loading historical option bars from database (this may take a few seconds)...
+Loaded 3233 historical option bars.
+
+Fetching 5-minute historical index bars for BANKNIFTY from 2026-08-28 to 2026-09-02...
+Downloaded 300 index bars for backtesting.
+
+Starting Simulation Loop...
+
+================================================================================
+BACKTEST REPORT: Ghost Tangent Crossings
+================================================================================
+Trade 01: 08-31 09:25 | BUY  NSE:BANKNIFTY26SEP57400PE | Entry: 593.05 | Exit: 639.35 (10:15) | Cap: Rs.8895.75 | PnL: +Rs. 694.50 (7.8%) | Target Hit (40.0 pts)
+Trade 02: 08-31 10:15 | BUY  NSE:BANKNIFTY26SEP57300PE | Entry: 599.40 | Exit: 511.00 (15:15) | Cap: Rs.8991.00 | PnL: -Rs. 1326.00 (-14.7%) | End of Day Square-Off
+Trade 03: 09-01 09:15 | BUY  NSE:BANKNIFTY26SEP57500PE | Entry: 591.30 | Exit: 633.35 (09:20) | Cap: Rs.8869.50 | PnL: +Rs. 630.75 (7.1%) | Target Hit (40.0 pts)
+Trade 04: 09-01 09:20 | BUY  NSE:BANKNIFTY26SEP57400PE | Entry: 594.90 | Exit: 653.50 (13:50) | Cap: Rs.8923.50 | PnL: +Rs. 879.00 (9.9%) | Target Hit (40.0 pts)
+Trade 05: 09-01 13:50 | BUY  NSE:BANKNIFTY26SEP57300PE | Entry: 610.20 | Exit: 663.55 (14:05) | Cap: Rs.9153.00 | PnL: +Rs. 800.25 (8.7%) | Target Hit (40.0 pts)
+Trade 06: 09-01 14:10 | BUY  NSE:BANKNIFTY26SEP57200PE | Entry: 609.65 | Exit: 565.65 (15:15) | Cap: Rs.9144.75 | PnL: -Rs. 660.00 (-7.2%) | End of Day Square-Off
+Trade 07: 09-02 09:15 | BUY  NSE:BANKNIFTY26SEP57000PE | Entry: 624.55 | Exit: 538.05 (15:15) | Cap: Rs.9368.25 | PnL: -Rs. 1297.50 (-13.8%) | End of Day Square-Off
+--------------------------------------------------------------------------------
+Total Trades        : 7
+Win Rate            : 57.1% (4W - 3L)
+Max Capital Reqd    : Rs. 9368.25 (1 Lot)
+Gross Profit        : Rs. 3004.50
+Gross Loss          : Rs. -3283.50
+Net PnL             : Rs. -279.00 (-18.60 points)
+================================================================================
+

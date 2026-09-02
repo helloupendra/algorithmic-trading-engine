@@ -1,0 +1,26 @@
+Initializing Ghost Strategy Backtester for SENSEX...
+Connected to Postgres database.
+Loading historical option bars from database (this may take a few seconds)...
+Loaded 1386 historical option bars.
+
+Fetching 5-minute historical index bars for SENSEX from 2026-08-28 to 2026-09-02...
+Downloaded 300 index bars for backtesting.
+
+Starting Simulation Loop...
+
+================================================================================
+BACKTEST REPORT: Ghost Tangent Crossings
+================================================================================
+Trade 01: 09-01 14:05 | BUY  BSE:SENSEX2690376700PE | Entry: 289.50 | Exit: 240.80 (14:25) | Cap: Rs.2895.00 | PnL: -Rs. 487.00 (-16.8%) | Stop Loss Hit (15.0%)
+Trade 02: 09-01 14:25 | BUY  BSE:SENSEX2690376700PE | Entry: 240.80 | Exit: 249.90 (15:15) | Cap: Rs.2408.00 | PnL: +Rs. 91.00 (3.8%) | End of Day Square-Off
+Trade 03: 09-02 10:25 | BUY  BSE:SENSEX2690376500PE | Entry: 255.95 | Exit: 288.25 (10:35) | Cap: Rs.2559.50 | PnL: +Rs. 323.00 (12.6%) | Target Hit (30.0 pts)
+Trade 04: 09-02 14:00 | BUY  BSE:SENSEX2690376500PE | Entry: 226.85 | Exit: 221.25 (15:15) | Cap: Rs.2268.50 | PnL: -Rs. 56.00 (-2.5%) | End of Day Square-Off
+--------------------------------------------------------------------------------
+Total Trades        : 4
+Win Rate            : 50.0% (2W - 2L)
+Max Capital Reqd    : Rs. 2895.00 (1 Lot)
+Gross Profit        : Rs. 414.00
+Gross Loss          : Rs. -543.00
+Net PnL             : Rs. -129.00 (-12.90 points)
+================================================================================
+

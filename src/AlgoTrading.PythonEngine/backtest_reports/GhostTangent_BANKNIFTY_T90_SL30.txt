@@ -1,0 +1,26 @@
+Initializing Ghost Strategy Backtester for BANKNIFTY...
+Connected to Postgres database.
+Loading historical option bars from database (this may take a few seconds)...
+Loaded 3233 historical option bars.
+
+Fetching 5-minute historical index bars for BANKNIFTY from 2026-08-28 to 2026-09-02...
+Downloaded 300 index bars for backtesting.
+
+Starting Simulation Loop...
+
+================================================================================
+BACKTEST REPORT: Ghost Tangent Crossings
+================================================================================
+Trade 01: 08-31 09:25 | BUY  NSE:BANKNIFTY26SEP57400PE | Entry: 593.05 | Exit: 547.25 (15:15) | Cap: Rs.8895.75 | PnL: -Rs. 687.00 (-7.7%) | End of Day Square-Off
+Trade 02: 09-01 09:15 | BUY  NSE:BANKNIFTY26SEP57500PE | Entry: 591.30 | Exit: 698.90 (13:50) | Cap: Rs.8869.50 | PnL: +Rs. 1614.00 (18.2%) | Target Hit (90.0 pts)
+Trade 03: 09-01 13:50 | BUY  NSE:BANKNIFTY26SEP57300PE | Entry: 610.20 | Exit: 607.95 (15:15) | Cap: Rs.9153.00 | PnL: -Rs. 33.75 (-0.4%) | End of Day Square-Off
+Trade 04: 09-02 09:15 | BUY  NSE:BANKNIFTY26SEP57000PE | Entry: 624.55 | Exit: 538.05 (15:15) | Cap: Rs.9368.25 | PnL: -Rs. 1297.50 (-13.8%) | End of Day Square-Off
+--------------------------------------------------------------------------------
+Total Trades        : 4
+Win Rate            : 25.0% (1W - 3L)
+Max Capital Reqd    : Rs. 9368.25 (1 Lot)
+Gross Profit        : Rs. 1614.00
+Gross Loss          : Rs. -2018.25
+Net PnL             : Rs. -404.25 (-26.95 points)
+================================================================================
+

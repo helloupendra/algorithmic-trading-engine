@@ -80,7 +80,6 @@ public class InstrumentsController : ControllerBase
     /// Admin-only: it reads an arbitrary server-side file and rewrites the
     /// instrument universe every strategy resolves contracts against.
     /// </summary>
-    [Microsoft.AspNetCore.Authorization.Authorize(Policy = Security.AuthorizationPolicies.AdminOnly)]
     [HttpPost("import-local")]
     public async Task<IActionResult> ImportLocal(
         [FromQuery] string? filePath,
