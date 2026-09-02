@@ -62,6 +62,27 @@ last_error_message = ""
 restart_required = False
 threads_started = False
 
+# Connection-health state. The heartbeat must report what is actually
+# happening — a hardcoded "Running" hides a dead websocket from every
+# dashboard and strategy (the exact silent failure this ingestor must never
+# have). All timestamps are time.monotonic().
+socket_connected = False
+disconnected_since = None   # set on close, cleared on (re)connect
+last_tick_monotonic = None  # last REAL websocket message of any kind
+
+# Restart the connection (re-fetching the broker token from the API) when a
+# disconnect persists this long. The SDK's own reconnect keeps retrying with
+# the token it was constructed with — after the daily token expiry that loops
+# forever, so the outer restart is what picks up a fresh token.
+DISCONNECT_RESTART_SECONDS = 20
+
+# Consider the feed stalled when the market is open, symbols are subscribed,
+# and nothing has arrived for this long.
+STALL_AFTER_SECONDS = 120
+
+# Cached market-session answer from the API (checked at most once a minute).
+_market_open_cache = {"value": None, "checked_at": 0.0}
+
 
 def utc_now_iso():
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -130,13 +151,57 @@ def upsert_tick(payload: dict):
     tick_executor.submit(_do_upsert_tick, payload)
 
 
+def is_market_open() -> bool | None:
+    """
+    Ask the API whether the NSE cash session is open, cached for 60s.
+    Returns None when the answer is unavailable (API down) — callers should
+    then avoid declaring the feed stalled on guesswork.
+    """
+    now = time.monotonic()
+    if _market_open_cache["value"] is not None and now - _market_open_cache["checked_at"] < 60:
+        return _market_open_cache["value"]
+    try:
+        response = http.get(
+            f"{API_BASE_URL}/api/MarketSession/check?exchange=NSE&segment=CM",
+            verify=VERIFY_SSL,
+            timeout=10,
+        )
+        response.raise_for_status()
+        _market_open_cache["value"] = bool(response.json().get("isMarketOpen"))
+        _market_open_cache["checked_at"] = now
+    except Exception as ex:
+        print("MARKET SESSION CHECK FAILED:", ex)
+        _market_open_cache["value"] = None
+    return _market_open_cache["value"]
+
+
+def compute_status() -> str:
+    """
+    The honest feed status:
+      Disconnected — websocket is down (SDK may be retrying);
+      Stalled      — connected, market open, symbols subscribed, but no data
+                     for STALL_AFTER_SECONDS;
+      Running      — everything else (incl. idle outside market hours).
+    The API marks the source unhealthy for anything except Running.
+    """
+    if not socket_connected:
+        return "Disconnected"
+
+    if subscribed_symbols and last_tick_monotonic is not None:
+        silent_for = time.monotonic() - last_tick_monotonic
+        if silent_for > STALL_AFTER_SECONDS and is_market_open() is True:
+            return "Stalled"
+
+    return "Running"
+
+
 def send_heartbeat():
     """
     Send ingestor heartbeat/status into your .NET API.
     """
     payload = {
         "sourceName": SOURCE_NAME,
-        "status": "Running",
+        "status": compute_status(),
         "lastHeartbeatUtc": utc_now_iso(),
         "lastWatchlistRefreshUtc": (
             last_watchlist_refresh_utc.isoformat().replace("+00:00", "Z")
@@ -152,7 +217,7 @@ def send_heartbeat():
     if response.status_code >= 400:
         print("HEARTBEAT FAILED:", response.status_code, response.text)
     else:
-        print("HEARTBEAT OK")
+        print(f"HEARTBEAT OK ({payload['status']})")
 
 
 def handle_live_tick(raw_msg: dict):
@@ -254,6 +319,9 @@ def onmessage(message):
     Called whenever FYERS sends a live market-data update.
     """
     global last_error_message
+    global last_tick_monotonic
+
+    last_tick_monotonic = time.monotonic()
 
     try:
         if DEBUG_PRINT_MESSAGES:
@@ -293,7 +361,12 @@ def onerror(message):
 
 def onclose(message):
     global last_error_message
+    global socket_connected
+    global disconnected_since
     last_error_message = str(message)
+    socket_connected = False
+    if disconnected_since is None:
+        disconnected_since = time.monotonic()
     print("SOCKET CLOSED:")
     print(message)
 
@@ -412,9 +485,13 @@ def onopen():
     On socket connect
     """
     global last_error_message
+    global socket_connected
+    global disconnected_since
 
     try:
         last_error_message = ""
+        socket_connected = True
+        disconnected_since = None
         print("FYERS WEBSOCKET CONNECTED!")
         
         # Now that socket is ready, fetch the active DB watchlist and subscribe
@@ -493,6 +570,8 @@ def main():
     global last_error_message
     global restart_required
     global threads_started
+    global socket_connected
+    global disconnected_since
 
     print("STARTING FYERS LIVE DATA INGESTOR...")
     print(f"API BASE URL: {API_BASE_URL}")
@@ -526,7 +605,11 @@ def main():
     while True:
         try:
             restart_required = False
-            
+            # Fresh connection attempt: clear the watchdog timer so it only
+            # measures from the next actual close, not the previous outage.
+            socket_connected = False
+            disconnected_since = None
+
             # Wipe the singleton to prevent corruption carrying over
             data_ws.FyersDataSocket._instance = None
             
@@ -548,10 +631,28 @@ def main():
             print("INITIATING FYERS CONNECTION...")
             fyers.connect()
 
-            # Our own robust keep_running loop
+            # Keep-running loop with a disconnect watchdog. The SDK's internal
+            # reconnect reuses the token this socket was built with — after
+            # the daily token expiry that retries forever with a dead token,
+            # while everything looks alive. If the socket stays down past the
+            # threshold, force a full restart so get_active_session() pulls
+            # the CURRENT token from the API (or honestly blocks until a new
+            # broker login happens, with status reported as Disconnected).
+            connect_started = time.monotonic()
             while not restart_required:
                 time.sleep(1)
-                
+                if not socket_connected:
+                    # Down since the last close — or, if it never opened at
+                    # all (e.g. dead token at connect), since connect().
+                    down_base = disconnected_since if disconnected_since is not None else connect_started
+                    down_for = time.monotonic() - down_base
+                    if down_for > DISCONNECT_RESTART_SECONDS:
+                        print(
+                            f"WATCHDOG: socket down for {int(down_for)}s — "
+                            "forcing full reconnect with a fresh broker token."
+                        )
+                        restart_required = True
+
             print("RESTART FLAG DETECTED! CLOSING CURRENT FYERS CONNECTION...")
             try:
                 fyers.close_connection()

@@ -441,26 +441,82 @@ public class LiveDataService : ILiveDataService
         int take,
         CancellationToken cancellationToken = default)
     {
-        var rows = await _dbContext.LiveBars
+        // Only 1m bars are ever written; higher minute resolutions (5m/15m —
+        // what the shipped strategies declare) are aggregated on read.
+        // Before this, any non-1m request silently returned an empty list and
+        // strategies ran with no bars at all.
+        var minutes = ParseResolutionMinutes(resolution);
+
+        if (minutes <= 1)
+        {
+            var rows = await _dbContext.LiveBars
+                .AsNoTracking()
+                .Where(x => x.Symbol == symbol && x.Resolution == "1m")
+                .OrderByDescending(x => x.BarStartUtc)
+                .Take(take)
+                .ToListAsync(cancellationToken);
+
+            return rows.Select(Map1mBar).ToList();
+        }
+
+        var oneMinuteRows = await _dbContext.LiveBars
             .AsNoTracking()
-            .Where(x => x.Symbol == symbol && x.Resolution == resolution)
+            .Where(x => x.Symbol == symbol && x.Resolution == "1m")
             .OrderByDescending(x => x.BarStartUtc)
-            .Take(take)
+            .Take(take * minutes)
             .ToListAsync(cancellationToken);
 
-        return rows.Select(x => new LiveBarResponse
-        {
-            Symbol = x.Symbol,
-            Resolution = x.Resolution,
-            BarStartUtc = x.BarStartUtc,
-            Open = x.Open,
-            High = x.High,
-            Low = x.Low,
-            Close = x.Close,
-            VolumeDelta = x.VolumeDelta,
-            TickCount = x.TickCount,
-            UpdatedUtc = x.UpdatedUtc
-        }).ToList();
+        // Bucket on the UTC clock. 5 and 15 both divide 30, so the buckets
+        // land on IST (+05:30) candle boundaries too — 09:15, 09:20, … .
+        return oneMinuteRows
+            .GroupBy(x => FloorToBucket(x.BarStartUtc, minutes))
+            .OrderByDescending(g => g.Key)
+            .Take(take)
+            .Select(g =>
+            {
+                var ordered = g.OrderBy(x => x.BarStartUtc).ToList();
+                return new LiveBarResponse
+                {
+                    Symbol = symbol,
+                    Resolution = $"{minutes}m",
+                    BarStartUtc = g.Key,
+                    Open = ordered[0].Open,
+                    High = ordered.Max(x => x.High),
+                    Low = ordered.Min(x => x.Low),
+                    Close = ordered[^1].Close,
+                    VolumeDelta = ordered.Sum(x => x.VolumeDelta),
+                    TickCount = ordered.Sum(x => x.TickCount),
+                    UpdatedUtc = ordered.Max(x => x.UpdatedUtc)
+                };
+            })
+            .ToList();
+    }
+
+    private static LiveBarResponse Map1mBar(LiveBar x) => new()
+    {
+        Symbol = x.Symbol,
+        Resolution = x.Resolution,
+        BarStartUtc = x.BarStartUtc,
+        Open = x.Open,
+        High = x.High,
+        Low = x.Low,
+        Close = x.Close,
+        VolumeDelta = x.VolumeDelta,
+        TickCount = x.TickCount,
+        UpdatedUtc = x.UpdatedUtc
+    };
+
+    /// <summary>"1m"/"1" → 1, "5m"/"5" → 5, "15m" → 15; anything else → 1.</summary>
+    private static int ParseResolutionMinutes(string resolution)
+    {
+        var r = (resolution ?? "1m").Trim().ToLowerInvariant().TrimEnd('m');
+        return int.TryParse(r, out var minutes) && minutes >= 1 ? minutes : 1;
+    }
+
+    private static DateTime FloorToBucket(DateTime barStartUtc, int minutes)
+    {
+        var totalMinutes = (long)(barStartUtc - barStartUtc.Date).TotalMinutes;
+        return barStartUtc.Date.AddMinutes(totalMinutes - totalMinutes % minutes);
     }
 
     private static LiveQuoteResponse Map(LiveQuoteLatest row)

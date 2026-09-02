@@ -1,8 +1,9 @@
 /**
- * Data module — Overview. The first screen of the data story: what is flowing
- * live right now, and what history is on disk — grouped by category and
- * resolution so nobody has to guess what a picker will find (coverage before
- * pickers, always).
+ * Data module — Overview, v2.1.
+ *
+ * Only what the topbar does NOT already say (market session and broker live
+ * there): the state of the pipeline, what data exists, what changed last,
+ * and — only when something is actually wrong — what needs attention.
  */
 
 import { Link } from 'react-router-dom'
@@ -17,9 +18,9 @@ import {
   useWatchlist,
   type CoverageRow,
 } from '../../lib/queries'
-import { formatAge, formatNumber } from '../../lib/format'
+import { formatAge, formatDateTime, formatNumber, shortSymbol } from '../../lib/format'
 import { Badge, Panel, QueryBoundary, StatTile } from '../../components/ui'
-import { IconArrowRight, IconCandles, IconDatabase, IconPulse, IconServer } from '../../components/icons'
+import { IconArrowRight, IconDatabase, IconPulse, IconWarning } from '../../components/icons'
 import {
   CATEGORY_ORDER,
   classifySymbol,
@@ -53,6 +54,218 @@ function buildMatrix(rows: CoverageRow[]) {
   return { resolutions, matrix, categories }
 }
 
+/** Renders only when something genuinely needs an operator's eyes. */
+function NeedsAttention() {
+  const process = useIngestorProcessStatus()
+  const ingestors = useIngestorStatuses()
+  const broker = useBrokerSession()
+  const session = useMarketSession()
+  const stale = useStaleQuotes(120)
+  const watchlist = useWatchlist()
+  const quotes = useLatestQuotes()
+
+  const marketOpen = session.data?.isMarketOpen ?? false
+  const items: { text: string; to: string; action: string }[] = []
+
+  if (broker.data && !broker.data.isAuthenticated) {
+    items.push({
+      text: 'FYERS is not linked — the live stream and history sync cannot work without a broker session.',
+      to: '/admin/broker',
+      action: 'Connect broker',
+    })
+  }
+
+  if (process.data && !process.data.isRunning && marketOpen) {
+    items.push({
+      text: 'Market is open but the live ingestor is not running — no ticks are being captured.',
+      to: '/admin/data/live',
+      action: 'Start feed',
+    })
+  }
+
+  const unhealthy = (ingestors.data ?? []).filter((s) => !s.isHealthy)
+  if (process.data?.isRunning && unhealthy.length > 0) {
+    items.push({
+      text: `${unhealthy.length} feed source${unhealthy.length > 1 ? 's' : ''} unhealthy: ${unhealthy
+        .map((s) => `${s.sourceName} (${s.status})`)
+        .join(', ')}.`,
+      to: '/admin/data/live',
+      action: 'Diagnostics',
+    })
+  }
+
+  if (marketOpen && (stale.data?.length ?? 0) > 0) {
+    items.push({
+      text: `${stale.data!.length} watched symbol${stale.data!.length > 1 ? 's' : ''} stopped ticking over 2 minutes ago during market hours.`,
+      to: '/admin/data/live',
+      action: 'View',
+    })
+  }
+
+  if (marketOpen && watchlist.data && quotes.data) {
+    const quoted = new Set(quotes.data.map((q) => q.symbol))
+    const neverTicked = watchlist.data.filter((w) => w.isActive && !quoted.has(w.symbol))
+    if (neverTicked.length > 0) {
+      items.push({
+        text: `${neverTicked.length} watchlist symbol${neverTicked.length > 1 ? 's have' : ' has'} never received a tick.`,
+        to: '/admin/data/live',
+        action: 'View',
+      })
+    }
+  }
+
+  if (items.length === 0) return null
+
+  return (
+    <Panel
+      title={
+        <>
+          <IconWarning /> Needs attention
+        </>
+      }
+      className="panel--danger"
+    >
+      <div className="checklist">
+        {items.map((item, i) => (
+          <div key={i} className="checklist__item">
+            <span className="checklist__state checklist__state--todo">!</span>
+            <span className="checklist__body">
+              <span className="checklist__hint" style={{ fontSize: 13, color: 'var(--text)' }}>
+                {item.text}
+              </span>
+            </span>
+            <Link className="btn btn--sm" to={item.to}>
+              {item.action}
+            </Link>
+          </div>
+        ))}
+      </div>
+    </Panel>
+  )
+}
+
+/** The most recently written data ranges — what actually changed last. */
+function RecentlyUpdated({ rows }: { rows: CoverageRow[] }) {
+  const recent = [...rows]
+    .sort((a, b) => new Date(b.toUtc).getTime() - new Date(a.toUtc).getTime())
+    .slice(0, 6)
+
+  return (
+    <Panel
+      title={
+        <>
+          <IconDatabase /> Recently updated data
+        </>
+      }
+      actions={
+        <Link className="btn btn--ghost btn--sm" to="/admin/data/historical">
+          All ranges <IconArrowRight style={{ width: 12, height: 12 }} />
+        </Link>
+      }
+    >
+      {recent.length === 0 ? (
+        <p className="empty">Nothing stored yet — backfill from Historical, or start the live feed.</p>
+      ) : (
+        <div className="tablewrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Res</th>
+                <th>Source</th>
+                <th className="r">Bars</th>
+                <th>Last bar</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recent.map((r) => (
+                <tr key={`${r.source}|${r.resolution}|${r.symbol}`}>
+                  <td className="mono">{shortSymbol(r.symbol)}</td>
+                  <td>
+                    <Badge tone="neutral">{formatResolution(r.resolution)}</Badge>
+                  </td>
+                  <td>
+                    <Badge tone={r.source === 'live' ? 'live' : 'accent'}>{r.source}</Badge>
+                  </td>
+                  <td className="r">{formatNumber(r.barCount)}</td>
+                  <td className="muted" title={formatDateTime(r.toUtc)}>
+                    {formatAge(r.toUtc)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
+  )
+}
+
+function LivePipelinePanel() {
+  const ingestors = useIngestorStatuses()
+  const process = useIngestorProcessStatus()
+
+  return (
+    <Panel
+      title={
+        <>
+          <IconPulse /> Live pipeline
+        </>
+      }
+      actions={
+        <Link className="btn btn--ghost btn--sm" to="/admin/data/live">
+          Manage <IconArrowRight style={{ width: 12, height: 12 }} />
+        </Link>
+      }
+    >
+      <div className="kv-grid" style={{ marginBottom: 12 }}>
+        <div>
+          <span className="muted">Ingestor process</span>
+          <span className={process.data?.isRunning ? 'pos' : 'muted'}>
+            {process.data?.isRunning ? 'Running' : 'Stopped'}
+          </span>
+        </div>
+      </div>
+      <QueryBoundary
+        query={ingestors}
+        empty="No source has ever reported a heartbeat — start the feed once to see its health here."
+      >
+        {(data) => (
+          <div className="stack-list">
+            {data.map((s) => (
+              <div key={s.sourceName}>
+                <div className="ingestor__head">
+                  <b className="mono">{s.sourceName}</b>
+                  <Badge tone={s.isHealthy ? 'pos' : 'warn'}>
+                    {s.isHealthy ? s.status : `${s.status} · stale`}
+                  </Badge>
+                </div>
+                <div className="kv-grid">
+                  <div>
+                    <span className="muted">Last heartbeat</span>
+                    <span>{formatAge(s.lastHeartbeatUtc)}</span>
+                  </div>
+                  <div>
+                    <span className="muted">Watchlist refresh</span>
+                    <span>{formatAge(s.lastWatchlistRefreshUtc)}</span>
+                  </div>
+                  <div>
+                    <span className="muted">Subscribed symbols</span>
+                    <span>{s.currentSubscribedSymbols.length}</span>
+                  </div>
+                </div>
+                {s.lastError && (
+                  <p className="neg" style={{ margin: '6px 0 0', fontSize: 12.5 }}>{s.lastError}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </QueryBoundary>
+    </Panel>
+  )
+}
+
 export function DataOverviewPage() {
   const coverage = useDataCoverage()
   const watchlist = useWatchlist()
@@ -61,11 +274,9 @@ export function DataOverviewPage() {
   const process = useIngestorProcessStatus()
   const stale = useStaleQuotes(120)
   const session = useMarketSession()
-  const broker = useBrokerSession()
 
   const feeds = ingestors.data ?? []
   const healthy = feeds.filter((f) => f.isHealthy)
-  const lastBeat = feeds[0]?.lastHeartbeatUtc
   const marketOpen = session.data?.isMarketOpen ?? false
 
   const covRows = coverage.data ?? []
@@ -90,6 +301,8 @@ export function DataOverviewPage() {
         </div>
       </header>
 
+      <NeedsAttention />
+
       <div className="stat-grid">
         <StatTile
           label="Live ingestor"
@@ -97,32 +310,10 @@ export function DataOverviewPage() {
           tone={feedTone as 'pos' | 'warn' | undefined}
           sub={
             feeds.length > 0
-              ? `${healthy.length}/${feeds.length} sources healthy · beat ${formatAge(lastBeat)}`
+              ? `${healthy.length}/${feeds.length} sources healthy · beat ${formatAge(feeds[0]?.lastHeartbeatUtc)}`
               : 'no heartbeat recorded yet'
           }
           to="/admin/data/live"
-        />
-        <StatTile
-          label="Market session"
-          value={marketOpen ? 'NSE open' : 'NSE closed'}
-          tone={marketOpen ? 'pos' : undefined}
-          sub={
-            session.data && !marketOpen
-              ? `next open ${new Date(session.data.nextMarketOpenUtc).toLocaleString('en-IN', {
-                  day: '2-digit',
-                  month: 'short',
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}`
-              : 'equities · cash segment'
-          }
-        />
-        <StatTile
-          label="Broker (FYERS)"
-          value={broker.data?.isAuthenticated ? 'Linked' : 'Not linked'}
-          tone={broker.data?.isAuthenticated ? 'pos' : 'neg'}
-          sub={broker.data?.isAuthenticated ? 'history sync + live stream ready' : 'connect before starting the feed'}
-          to="/admin/broker"
         />
         <StatTile
           label="Watchlist"
@@ -212,79 +403,8 @@ export function DataOverviewPage() {
       </Panel>
 
       <div className="two-col">
-        <Panel
-          title={
-            <>
-              <IconPulse /> Live pipeline
-            </>
-          }
-        >
-          <QueryBoundary
-            query={ingestors}
-            empty="No ingestor has ever reported a heartbeat. Start the live feed from Live feeds."
-          >
-            {(data) => (
-              <div className="stack-list">
-                {data.map((s) => (
-                  <div key={s.sourceName}>
-                    <div className="ingestor__head">
-                      <b className="mono">{s.sourceName}</b>
-                      <Badge tone={s.isHealthy ? 'pos' : 'warn'}>
-                        {s.isHealthy ? s.status : `${s.status} · stale`}
-                      </Badge>
-                      <span className="muted">beat {formatAge(s.lastHeartbeatUtc)}</span>
-                    </div>
-                    <div className="muted" style={{ fontSize: 12 }}>
-                      {s.currentSubscribedSymbols.length} symbols subscribed
-                    </div>
-                    {s.lastError && <p className="neg" style={{ margin: '4px 0 0' }}>{s.lastError}</p>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </QueryBoundary>
-        </Panel>
-
-        <Panel
-          title={
-            <>
-              <IconCandles /> Quick actions
-            </>
-          }
-        >
-          <div className="checklist">
-            <Link to="/admin/data/live" className="checklist__item">
-              <span className="checklist__state">
-                <IconPulse style={{ width: 13, height: 13 }} />
-              </span>
-              <span className="checklist__body">
-                <span className="checklist__label">Manage live feeds</span>
-                <div className="checklist__hint">Start/stop the ingestor, edit the watchlist</div>
-              </span>
-              <span className="checklist__go">Open →</span>
-            </Link>
-            <Link to="/admin/data/historical" className="checklist__item">
-              <span className="checklist__state">
-                <IconCandles style={{ width: 13, height: 13 }} />
-              </span>
-              <span className="checklist__body">
-                <span className="checklist__label">Browse & backfill history</span>
-                <div className="checklist__hint">Coverage-first candle browser with FYERS backfill</div>
-              </span>
-              <span className="checklist__go">Open →</span>
-            </Link>
-            <Link to="/admin/data/instruments" className="checklist__item">
-              <span className="checklist__state">
-                <IconServer style={{ width: 13, height: 13 }} />
-              </span>
-              <span className="checklist__body">
-                <span className="checklist__label">Instruments & F&O</span>
-                <div className="checklist__hint">Search the master, explore expiries and option chains</div>
-              </span>
-              <span className="checklist__go">Open →</span>
-            </Link>
-          </div>
-        </Panel>
+        <LivePipelinePanel />
+        <RecentlyUpdated rows={covRows} />
       </div>
     </div>
   )

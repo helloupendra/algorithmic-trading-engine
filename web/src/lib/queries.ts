@@ -516,6 +516,17 @@ export function useStartAlerter() {
 
 // ---------- Data module v2 ----------
 
+/** Recent stdout/stderr of the ingestor process (new endpoint; an older API
+ *  build answers with the SPA fallback, so callers must tolerate non-arrays). */
+export function useIngestorLogs(enabled: boolean) {
+  return useQuery({
+    queryKey: ['ingestor', 'logs'],
+    queryFn: () => api.get<string[]>('/api/Ingestor/logs?take=200'),
+    enabled,
+    refetchInterval: POLL_FAST,
+  })
+}
+
 /** Expiry dates that actually exist in the instrument universe. */
 export function useAvailableExpiries(exchange: string, underlying: string | null) {
   return useQuery({
