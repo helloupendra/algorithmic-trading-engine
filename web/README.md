@@ -1,8 +1,15 @@
 # AlgoTrading Web Client
 
-React + TypeScript client hosting both the **admin panel** and the **trader
-panel**, plus the public pages. One app, one build, with routes gated by the
-signed-in user's role.
+React 19 + TypeScript console hosting the **admin modules** and the **trader
+screens**. One app, one build, routes gated by the signed-in user's role.
+
+The app runs on the **v2 design system**: a single token vocabulary in
+`styles.css` (dark, dense, operator-grade), an SVG icon set, a grouped sidebar
+built from the module registry, and a topbar that keeps the three live health
+signals (market session, broker session, feed heartbeat) on every screen.
+Modules are rebuilt one at a time on this system — **Data is complete**; the
+screens still tagged `v1` in the sidebar run on the old markup but inherit the
+new look through the shared class vocabulary.
 
 ## Running it
 
@@ -15,8 +22,8 @@ cp .env.example .env     # Windows: Copy-Item .env.example .env
 npm run dev
 ```
 
-Then open <http://localhost:5173>. The landing page is public; `/trader` and
-`/admin` require signing in.
+Then open <http://localhost:5173>. The root `/` goes straight to sign-in
+(there is no public landing page); `/trader` and `/admin` require a session.
 
 ### Signing in as admin
 
@@ -73,17 +80,49 @@ re-run `python3 scripts/_gen_local_settings.py`.
 ```
 src/
 ├── lib/
-│   ├── api.ts          Typed fetch client: bearer tokens, 401 refresh, ApiError
-│   └── auth.tsx        AuthProvider / useAuth — session state
+│   ├── api.ts             Typed fetch client: bearer tokens, 401 refresh, ApiError
+│   ├── auth.tsx           AuthProvider / useAuth — session state
+│   ├── queries.ts         One TanStack Query hook per endpoint; polling intervals live here
+│   ├── types.ts           DTO shapes mirroring src/AlgoTrading.Contracts
+│   ├── modules.ts         Module registry — sidebar, admin home grid, future per-trader grants
+│   ├── symbols.ts         Symbol → category classification, resolution helpers
+│   └── format.ts          INR/number/date/age formatting
 ├── components/
-│   ├── AppLayout.tsx   Sidebar shell, role-based navigation
-│   └── RouteGuards.tsx RequireAuth, RequireRole, RedirectIfAuthenticated
+│   ├── AppLayout.tsx      v2 shell: grouped sidebar + topbar health pills
+│   ├── icons.tsx          Inline SVG icon set (no icon library)
+│   ├── ui.tsx             Panel, StatTile, Badge, QueryBoundary primitives
+│   ├── CandleChart.tsx    Persistent lightweight-charts candlestick + volume
+│   ├── LiveQuotesMonitor.tsx  Flashing quote table (used by the v1 System page)
+│   ├── charts.tsx         v1 chart wrappers (legacy pages)
+│   └── RouteGuards.tsx    RequireAuth, RequireRole, RedirectIfAuthenticated
 ├── pages/
 │   ├── LoginPage.tsx
-│   └── Placeholders.tsx
-├── App.tsx             Route table
-└── styles.css          Design tokens and shell styling
+│   ├── data/              THE DATA MODULE (v2)
+│   │   ├── DataOverviewPage.tsx     Coverage matrix, pipeline health, needs-attention
+│   │   ├── LiveFeedsPage.tsx        Feed start/stop, index tickers, merged live watchlist,
+│   │   │                            diagnostics (+ /api/Ingestor/logs), tick/bar inspector
+│   │   ├── HistoricalDataPage.tsx   Coverage-first browser, chart, FYERS backfill,
+│   │   │                            ATM±N option-chain backfill
+│   │   └── InstrumentsFnoPage.tsx   Master search, expiries, CE/PE chain ladder
+│   ├── admin/             AdminHomePage (module grid) + v1 modules awaiting rebuild
+│   └── trader/            Trader screens (v1, rebuild queued)
+├── App.tsx                Route table (old /admin/ingestion and /admin/instruments
+│                          redirect into the Data module)
+└── styles.css             v2 design tokens + the shared class vocabulary
 ```
+
+Design conventions worth knowing:
+
+- **Coverage before pickers.** Any screen that asks for a symbol/date shows
+  what data actually exists first (`/api/MarketData/coverage`, expiry lists).
+- `QueryBoundary` keeps showing the last good data when a background poll
+  fails, with a small stale hint — a dropped poll must never blank a live
+  table.
+- `CandleChart` keeps one chart instance alive and refreshes via `setData`,
+  so polling never resets the user's zoom.
+- New endpoints can be missing from an older running API build (e.g.
+  `/api/Ingestor/logs`); the SPA fallback answers such requests with HTML, so
+  guard with `Array.isArray` before mapping.
 
 ## How authorization works here
 
@@ -110,7 +149,14 @@ cookies would require matching cookie authentication on the API.
 
 1. Add the route in `App.tsx`, inside `RequireAuth` and — for admin screens —
    inside `RequireRole role="Admin"`.
-2. Add the nav entry to `TRADER_NAV` or `ADMIN_NAV` in `AppLayout.tsx`.
-3. Fetch with `api.get<T>('/api/...')` from `lib/api.ts`, wrapped in a
-   `useQuery`. For live data set a `refetchInterval` (1–2s) — the platform
-   polls today; a SignalR/SSE push channel is planned.
+2. Add the nav entry: for a new **module**, register it in
+   `lib/modules.ts` (the sidebar and admin home grid read from there); for a
+   section inside the Data module, extend `DATA_SECTIONS`; for a trader
+   screen, extend `TRADER_NAV` in `AppLayout.tsx`.
+3. Add a hook in `lib/queries.ts` (one hook per endpoint; put the
+   `refetchInterval` there, not in the component) and render through the
+   primitives in `components/ui.tsx`. The platform polls today; a
+   SignalR/SSE push channel is planned.
+4. Build UI from the v2 vocabulary in `styles.css`
+   (`.panel/.stat/.table/.badge/.btn/.field/.seg/.pill/.console` …) and icons
+   from `components/icons.tsx` — no new CSS dialects, no emoji icons.

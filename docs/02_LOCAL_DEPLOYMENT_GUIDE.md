@@ -146,10 +146,10 @@ runner and the live dashboard.
 
 ```bash
 # Live tick ingestion into Redis Streams
-python src/AlgoTrading.PythonEngine/data_ingestion/fyers_live_stream.py
+python src/AlgoTrading.PythonEngine/market_data/live/fyers_streamer.py
 
 # Record ATM ±15 option strikes during market hours (09:15–15:30 IST)
-python src/AlgoTrading.PythonEngine/data_ingestion/option_chain_tracker.py
+python src/AlgoTrading.PythonEngine/market_data/options/chain_tracker.py
 
 # Strategy execution
 python src/AlgoTrading.PythonEngine/strategies/execution_runner.py \
@@ -160,7 +160,7 @@ python src/AlgoTrading.PythonEngine/tools/strategy_live_terminal_dashboard_v2.py
     --user-id 1
 
 # Replay stored ticks
-python src/AlgoTrading.PythonEngine/data_ingestion/historical_replayer.py \
+python src/AlgoTrading.PythonEngine/market_data/historical/db_replayer.py \
     --start "2026-06-10T09:15:00" --end "2026-06-10T15:30:00" --speed 10
 ```
 
