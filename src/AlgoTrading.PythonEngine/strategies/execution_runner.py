@@ -23,6 +23,8 @@ import importlib
 import strategies
 from strategies.base_strategy import StrategyInput, StrategySignal, OptionContract, BaseStrategy, BarFrame
 
+import core.fyers_orders as fyers_orders
+
 try:
     # pyrefly: ignore [missing-import]
     from strategies.private_strategies import get_private_strategies
@@ -152,6 +154,11 @@ def ensure_contracts_tracked(api: PlatformApiClient, contracts: Dict[str, Option
     for _, contract in contracts.items():
         try:
             api.upsert_watchlist(contract.symbol, priority=80)
+        except requests.exceptions.HTTPError as ex:
+            if ex.response is not None and ex.response.status_code == 500:
+                pass # Suppress harmless 500 error for paper trades
+            else:
+                print(f"WARN: failed to ensure watchlist for {contract.symbol}: {ex}")
         except Exception as ex:
             print(f"WARN: failed to ensure watchlist for {contract.symbol}: {ex}")
 
@@ -185,6 +192,9 @@ def enrich_signal_leg_prices(api: PlatformApiClient, sig: StrategySignal, expiry
             # Tell the Live Data Ingestor to subscribe to this exact symbol
             try:
                 api.upsert_watchlist(symbol)
+            except requests.exceptions.HTTPError as ex:
+                if ex.response is not None and ex.response.status_code == 500:
+                    pass
             except Exception as ex:
                 pass
 
@@ -382,8 +392,70 @@ if __name__ == "__main__":
     print(f"[{args.underlying}] Ensuring {args.spot_symbol} is active in the live ingestor watchlist...")
     try:
         api.upsert_watchlist(args.spot_symbol, priority=100)
+    except requests.exceptions.HTTPError as ex:
+        if ex.response is not None and ex.response.status_code == 500:
+            pass # Suppress harmless 500 error
+        else:
+            print(f"[{args.underlying}] WARN: Could not upsert spot symbol {args.spot_symbol}: {ex}")
     except Exception as ex:
         print(f"[{args.underlying}] WARN: Could not upsert spot symbol {args.spot_symbol}: {ex}")
+
+    if args.strategy == "GhostTangentCrossings":
+        print(f"[{args.underlying}] Executing Phase 1: Warmup for GhostTangentCrossings...")
+        try:
+            from datetime import datetime, timedelta
+            fyers = fyers_orders.get_fyers_client()
+            
+            end_time = datetime.now()
+            start_time = end_time - timedelta(days=15)
+            
+            data_req = {
+                "symbol": args.spot_symbol,
+                "resolution": "5",
+                "date_format": "1",
+                "range_from": start_time.strftime("%Y-%m-%d"),
+                "range_to": end_time.strftime("%Y-%m-%d"),
+                "cont_flag": "1"
+            }
+            
+            print(f"[{args.underlying}] Requesting historical 5m bars from Fyers API...")
+            history_response = fyers.history(data=data_req)
+            
+            if history_response and history_response.get("s") == "ok":
+                candles = history_response.get("candles", [])
+                candles = candles[-500:] if len(candles) > 500 else candles
+                print(f"[{args.underlying}] Fetched {len(candles)} historical bars. Feeding into strategy...")
+                
+                bars_list = []
+                for c in candles:
+                    dt = datetime.fromtimestamp(c[0], tz=timezone.utc).isoformat().replace("+00:00", "Z")
+                    bars_list.append(BarFrame(
+                        symbol=args.spot_symbol,
+                        resolution="5m",
+                        timestamp_utc=dt,
+                        open=float(c[1]),
+                        high=float(c[2]),
+                        low=float(c[3]),
+                        close=float(c[4]),
+                        volume=float(c[5])
+                    ))
+                    
+                    inp = StrategyInput(
+                        mode="LivePaper",
+                        timestamp_utc=bars_list[-1].timestamp_utc,
+                        underlying=args.underlying,
+                        spot_price=bars_list[-1].close,
+                        atm_strike=int(round(bars_list[-1].close / 100) * 100),
+                        contracts={},
+                        bars={"5m": {"index": list(bars_list)}},
+                        metadata={"source": "warmup"}
+                    )
+                    strategy.on_bar(state, inp)
+                print(f"[{args.underlying}] Warmup complete. State initialized.")
+            else:
+                print(f"[{args.underlying}] WARN: Fyers history fetch failed: {history_response}")
+        except Exception as ex:
+            print(f"[{args.underlying}] WARN: Warmup failed: {ex}")
 
     print(f"[{args.underlying}] Listening for live ticks on Redis Stream...")
     subscriber = build_subscriber_from_env()
@@ -456,7 +528,7 @@ if __name__ == "__main__":
                             
                         # 1. Fetch for index
                         if sym_type == "index":
-                            raw_idx = api.get_recent_bars(args.spot_symbol, resolution=res, take=100)
+                            raw_idx = api.get_recent_bars(args.spot_symbol, resolution=res, take=500)
                             if raw_idx:
                                 bars_dict[res]["index"] = [BarFrame(
                                     symbol=b.get("symbol", args.spot_symbol),
@@ -471,7 +543,7 @@ if __name__ == "__main__":
 
                         # 2. Fetch for atm_ce
                         elif sym_type == "atm_ce" and atm_ce:
-                            raw_ce = api.get_recent_bars(atm_ce["symbol"], resolution=res, take=100)
+                            raw_ce = api.get_recent_bars(atm_ce["symbol"], resolution=res, take=500)
                             if raw_ce:
                                 bars_dict[res]["atm_ce"] = [BarFrame(
                                     symbol=b.get("symbol", atm_ce["symbol"]),
@@ -486,7 +558,7 @@ if __name__ == "__main__":
 
                         # 3. Fetch for atm_pe
                         elif sym_type == "atm_pe" and atm_pe:
-                            raw_pe = api.get_recent_bars(atm_pe["symbol"], resolution=res, take=100)
+                            raw_pe = api.get_recent_bars(atm_pe["symbol"], resolution=res, take=500)
                             if raw_pe:
                                 bars_dict[res]["atm_pe"] = [BarFrame(
                                     symbol=b.get("symbol", atm_pe["symbol"]),
@@ -520,12 +592,44 @@ if __name__ == "__main__":
                 signals = strategy.on_bar(state, inp)
                 t_end = time.time()
                 STRATEGY_LOOP_DURATION.observe(t_end - t_start)
+                
+                # Print live status to terminal every 10 seconds for user visibility
+                now_ts = time.time()
+                if now_ts - state.get("last_status_print", 0) > 10:
+                    buy_t = state.get('target_buy_trigger')
+                    sell_t = state.get('target_sell_trigger')
+                    buy_str = f"{buy_t:.2f}" if buy_t else "Waiting for pivot"
+                    sell_str = f"{sell_t:.2f}" if sell_t else "Waiting for pivot"
+                    print(f"[{args.underlying} TICK] Spot: {spot_price:.2f} | Triggers -> BUY CE (Up): {buy_str} | BUY PE (Down): {sell_str}")
+                    state["last_status_print"] = now_ts
 
                 print_signals(signals)
                 if DEBUG_PRINT_MESSAGES:
                     print_strategy_state(state)
 
                 for sig in signals:
+                    if args.strategy == "GhostTangentCrossings" and sig.signal_type in {"BUY", "SELL"}:
+                        try:
+                            print(f"Converting {sig.signal_type} to PAPER OPEN_GROUP Signal...")
+                            direction = sig.signal_type
+                            target_contract = atm_ce if direction == "BUY" else atm_pe
+                            if target_contract and "symbol" in target_contract:
+                                exec_symbol = target_contract["symbol"]
+                                print(f"Selected Option Symbol for Paper: {exec_symbol}")
+                                
+                                # Morph the signal into OPEN_GROUP for the Simulator
+                                sig.signal_type = "OPEN_GROUP"
+                                sig.metadata["group_id"] = f"GTC_{int(time.time())}"
+                                sig.metadata["direction"] = direction
+                                sig.legs = [{"symbol": exec_symbol, "side": "BUY", "quantity": 15}]
+                                
+                            else:
+                                print(f"ERROR: Could not resolve contract for {direction}.")
+                        except Exception as ex:
+                            print(f"ERROR during paper conversion: {ex}")
+                            import traceback
+                            traceback.print_exc()
+
                     if sig.signal_type in {"OPEN_GROUP", "CLOSE_GROUP"}:
                         sig = enrich_signal_leg_prices(api, sig, expiry_date)
 

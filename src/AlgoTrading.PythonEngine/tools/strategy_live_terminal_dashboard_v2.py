@@ -12,6 +12,8 @@ import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from core.config import API_BASE_URL
+from core.api_client import build_session
+
 VERIFY_SSL = False
 REFRESH_SECONDS = 2
 MAX_SIGNALS_TO_SHOW = 12
@@ -34,7 +36,7 @@ class ApiClient:
     def __init__(self, base_url: str, verify_ssl: bool = False):
         self.base_url = base_url.rstrip("/")
         self.verify_ssl = verify_ssl
-        self.http = requests.Session()
+        self.http = build_session()
 
     def _get(self, path: str, params: Optional[Dict[str, Any]] = None):
         r = self.http.get(f"{self.base_url}{path}", params=params, verify=self.verify_ssl, timeout=30)
@@ -202,6 +204,34 @@ def print_portfolio(portfolio: Dict[str, Any], perf: Optional[Dict[str, Any]], e
     print(f"Equity Curve     : {sparkline(eq_vals)}" if eq_vals else "Equity Curve     : (no snapshots yet)")
     print(SEPARATOR)
 
+def get_strategy_state(run_id: int) -> Dict[str, Any]:
+    try:
+        import redis
+        from state_management.state_store import StrategyStateStore
+        rc = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
+        store = StrategyStateStore(rc, run_id)
+        loaded = store.load()
+        if loaded:
+            return loaded.strategy_data or {}
+    except Exception:
+        pass
+    return {}
+
+def print_strategy_info(strategy_name: str, run_id: int):
+    if strategy_name == "GhostTangentCrossings":
+        state = get_strategy_state(run_id)
+        buy_trig = state.get("target_buy_trigger")
+        sell_trig = state.get("target_sell_trigger")
+        
+        buy_str = fmt_num(buy_trig) if buy_trig else "Waiting for pivot..."
+        sell_str = fmt_num(sell_trig) if sell_trig else "Waiting for pivot..."
+        
+        print(f"{BOLD}{YELLOW}STRATEGY INSIGHT: Ghost Tangent Crossings{RESET}")
+        print("Execution Trigger: As soon as the live BankNifty spot price crosses and closes beyond")
+        print("one of these active tangent lines, the strategy will instantly generate a BUY or SELL signal.")
+        print(f"Live Triggers -> Upper Breakout (Buy CE) > {buy_str} | Lower Breakout (Buy PE) < {sell_str}")
+        print(SEPARATOR)
+
 def print_group_summary(portfolio: Dict[str, Any]):
     groups = portfolio.get("groups") or []
     print(f"{BOLD}{BLUE}GROUP SUMMARY{RESET}")
@@ -303,6 +333,7 @@ def main() -> int:
             print_header(current_run_id)
             print_top_market_banner(spot_quote, portfolio, positions)
             print_portfolio(portfolio, perf, equity_curve)
+            print_strategy_info(portfolio.get('strategyName', ''), current_run_id)
             print_group_summary(portfolio)
             print_signals(signals)
             print_positions(positions)

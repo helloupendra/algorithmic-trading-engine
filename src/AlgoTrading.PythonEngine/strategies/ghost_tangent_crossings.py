@@ -10,13 +10,14 @@ class GhostTangentCrossingsStrategy(BaseStrategy):
     @classmethod
     def get_data_requirements(cls) -> List[DataRequirement]:
         return [
-            DataRequirement(symbol_type="index", resolution="1m")
+            DataRequirement(symbol_type="index", resolution="5m")
         ]
 
-    def __init__(self, pivot_forward: int = 25, pivot_type: str = "Wick", use_ghost_signals: bool = True):
-        self.pivot_forward = pivot_forward
-        self.pivot_type = pivot_type
-        self.use_ghost_signals = use_ghost_signals
+    def __init__(self, params: Dict[str, Any] = None):
+        params = params or {}
+        self.pivot_forward = int(params.get("pivot_forward", 25))
+        self.pivot_type = str(params.get("pivot_type", "Wick"))
+        self.use_ghost_signals = bool(params.get("use_ghost_signals", True))
 
     def initialize_state(self) -> Dict[str, Any]:
         return {
@@ -175,11 +176,11 @@ class GhostTangentCrossingsStrategy(BaseStrategy):
             bar = bars[list_idx]
             
             if polarity:
-                end_price = self._get_high(bar)
+                end_price = bar.close
                 if end_price < check_price:
                     found = True
             else:
-                end_price = self._get_low(bar)
+                end_price = bar.close
                 if end_price > check_price:
                     found = True
                     
@@ -191,6 +192,12 @@ class GhostTangentCrossingsStrategy(BaseStrategy):
     def _evaluate_zig_zag(self, state: Dict[str, Any], bars: List[Any], bar_index: int, start_x: int, end_x: int, start_y: float, end_y: float, polarity: bool, inp: StrategyInput, is_ghost: bool = False) -> Optional[StrategySignal]:
         ellipse_points = self._generate_ellipse(start_x, end_x, start_y, end_y)
         tangent, slope = self._ellipse_slope(start_x, end_x, start_y, end_y, ellipse_points)
+        
+        current_trigger = tangent["price"] + slope * (bar_index - tangent["index"])
+        if polarity:
+            state["target_sell_trigger"] = current_trigger
+        else:
+            state["target_buy_trigger"] = current_trigger
         
         length = end_x - start_x
         back_length = tangent["index"] - start_x
@@ -221,12 +228,23 @@ class GhostTangentCrossingsStrategy(BaseStrategy):
 
     def on_bar(self, state: Dict[str, Any], inp: StrategyInput) -> List[StrategySignal]:
         signals = []
-        state["bar_index"] += 1
-        bar_index = state["bar_index"]
         
-        bars = inp.bars.get("1m", {}).get("index", [])
+        bars = inp.bars.get("5m", {}).get("index", [])
         if not bars:
             return signals
+
+        # Only increment bar_index if it's a new bar!
+        current_bar_time = getattr(bars[-1], "timestamp_utc", None)
+        last_processed_time = state.get("last_processed_bar_time")
+        
+        if current_bar_time != last_processed_time:
+            state["bar_index"] += 1
+            state["last_processed_bar_time"] = current_bar_time
+            # Clear targets on a new bar, they will be recalculated if conditions are met
+            state["target_buy_trigger"] = None
+            state["target_sell_trigger"] = None
+            
+        bar_index = state["bar_index"]
 
         if len(bars) < self.pivot_forward * 2 + 1:
             return signals
