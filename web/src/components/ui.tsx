@@ -4,9 +4,11 @@
  * ergonomic wrappers over it.
  */
 
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import type { UseQueryResult } from '@tanstack/react-query'
+import { formatPrice } from '../lib/format'
 
 export function Panel({
   title,
@@ -75,6 +77,35 @@ export function Badge({
 
 export function EmptyState({ children }: { children: ReactNode }) {
   return <p className="empty">{children}</p>
+}
+
+/** Price text that flashes green/red when the value moves (live tables). */
+export function FlashPrice({ value, bold }: { value: number | null | undefined; bold?: boolean }) {
+  const prev = useRef<number | null>(null)
+  const [flash, setFlash] = useState<{ dir: string; seq: number }>({ dir: '', seq: 0 })
+
+  useEffect(() => {
+    if (value != null && prev.current != null && value !== prev.current) {
+      setFlash((f) => ({ dir: value > prev.current! ? 'flash-up' : 'flash-down', seq: f.seq + 1 }))
+      const t = setTimeout(() => setFlash((f) => ({ ...f, dir: '' })), 900)
+      return () => clearTimeout(t)
+    }
+    prev.current = value ?? prev.current
+  }, [value])
+
+  useEffect(() => {
+    prev.current = value ?? null
+  })
+
+  return (
+    <span
+      key={flash.seq}
+      className={`mono ${flash.dir}`}
+      style={bold ? { fontWeight: 700 } : undefined}
+    >
+      {formatPrice(value)}
+    </span>
+  )
 }
 
 export function InlineError({ error }: { error: unknown }) {

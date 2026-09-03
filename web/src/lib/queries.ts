@@ -12,7 +12,7 @@
  *  market is closed these queries simply keep returning the stored snapshot.
  */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr'
 import { api, API_BASE_URL } from './api'
@@ -22,6 +22,7 @@ import type {
   CandleDto,
   DerivativeExpiry,
   EquitySnapshot,
+  FnoUnderlying,
   IngestorStatus,
   Instrument,
   KillSwitchState,
@@ -38,7 +39,11 @@ import type {
   SimulationRun,
   SimulationSignal,
   StaleQuote,
+  StartStrategyRequest,
+  StartStrategyResponse,
+  StopStrategyResponse,
   StrategyListItem,
+  StrategyLiveView,
 } from './types'
 import type { MeResponse } from './api'
 
@@ -342,28 +347,124 @@ export function useRefreshPortfolio() {
 
 // ---------- Strategies ----------
 
+const POLL_LIVE_VIEW = 2_000
+const POLL_RUNNER_LOGS = 3_000
+
+/**
+ * An API build older than the catalog rewrite answers without the array
+ * fields; default them so a stale backend degrades to empty chips instead of
+ * crashing every strategy page on `.length`.
+ */
+function normalizeStrategy(s: Partial<StrategyListItem> & { id: number; name: string }): StrategyListItem {
+  return {
+    ...s,
+    description: s.description ?? '',
+    category: s.category ?? 'Other',
+    supportedUnderlyings: s.supportedUnderlyings ?? [],
+    instrumentKind: s.instrumentKind ?? 'options',
+    legsSummary: s.legsSummary ?? '',
+    dataRequirements: s.dataRequirements ?? [],
+    defaultParametersJson: s.defaultParametersJson ?? '{}',
+    defaultLots: s.defaultLots ?? 1,
+    sourceFile: s.sourceFile ?? '',
+    createdUtc: s.createdUtc ?? '',
+    isActive: s.isActive ?? false,
+    startedBy: s.startedBy ?? null,
+    startedUtc: s.startedUtc ?? null,
+    runId: s.runId ?? null,
+    underlying: s.underlying ?? null,
+    spotSymbol: s.spotSymbol ?? null,
+    lots: s.lots ?? null,
+    stopLoss: s.stopLoss ?? null,
+    target: s.target ?? null,
+    processId: s.processId ?? null,
+    lastExit: s.lastExit ?? null,
+  } as StrategyListItem
+}
+
 export function useStrategies() {
   return useQuery({
     queryKey: ['strategies'],
-    queryFn: () => api.get<StrategyListItem[]>('/api/Strategy'),
-    refetchInterval: POLL_SLOW,
+    queryFn: async () => {
+      const rows = await api.get<Array<Partial<StrategyListItem> & { id: number; name: string }>>('/api/Strategy')
+      return (Array.isArray(rows) ? rows : []).map(normalizeStrategy)
+    },
+    refetchInterval: POLL_FAST,
   })
 }
 
+/** Start a strategy on an underlying (paper). Body shape is the API contract. */
 export function useStartStrategy() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: number) =>
-      api.post<{ message: string; processId: number }>(`/api/Strategy/${id}/start`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['strategies'] }),
+    mutationFn: ({ id, body }: { id: number; body: StartStrategyRequest }) =>
+      api.post<StartStrategyResponse>(`/api/Strategy/${id}/start`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['strategies'] })
+      qc.invalidateQueries({ queryKey: ['strategy', 'live'] })
+    },
   })
 }
 
+/** Stop = square off every open position at the last mark and kill the runner. */
 export function useStopStrategy() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: number) => api.post<{ message: string }>(`/api/Strategy/${id}/stop`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['strategies'] }),
+    mutationFn: ({ id, flatten = true }: { id: number; flatten?: boolean }) =>
+      api.post<StopStrategyResponse>(`/api/Strategy/${id}/stop`, { flatten }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['strategies'] })
+      qc.invalidateQueries({ queryKey: ['strategy', 'live'] })
+    },
+  })
+}
+
+function liveViewQuery(id: number, enabled: boolean) {
+  return {
+    queryKey: ['strategy', 'live', id] as const,
+    queryFn: () => api.get<StrategyLiveView>(`/api/Strategy/${id}/live`),
+    enabled,
+    // A finished run's view cannot change, so a stopped card is fetched once and
+    // then left alone (the server marks-to-market on every call). Polling
+    // resumes when the strategy is started again: the start mutation and the
+    // running-list watcher in LiveRunnerPage invalidate the key.
+    refetchInterval: (query: { state: { data?: StrategyLiveView } }) =>
+      query.state.data && !query.state.data.isActive ? false : POLL_LIVE_VIEW,
+  }
+}
+
+/** Position-based live view of one strategy's current (or last) run. */
+export function useStrategyLive(id: number, enabled: boolean) {
+  return useQuery(liveViewQuery(id, enabled))
+}
+
+/**
+ * Live views for a set of strategies at once (page-level totals). Shares the
+ * cache key with useStrategyLive, so a RunCard and the stat row never double
+ * fetch the same run.
+ */
+export function useStrategyLives(ids: number[]) {
+  return useQueries({
+    queries: ids.map((id) => liveViewQuery(id, true)),
+  })
+}
+
+/** Runner stdout/stderr ring buffer; empty when the process is not running. */
+export function useStrategyLogs(id: number, enabled: boolean) {
+  return useQuery({
+    queryKey: ['strategy', 'logs', id],
+    queryFn: () => api.get<string[]>(`/api/Strategy/${id}/logs?take=200`),
+    enabled,
+    refetchInterval: POLL_RUNNER_LOGS,
+  })
+}
+
+/** Underlyings with live option contracts in the instrument master. */
+export function useFnoUnderlyings() {
+  return useQuery({
+    queryKey: ['derivatives', 'underlyings'],
+    queryFn: () => api.get<FnoUnderlying[]>('/api/Instruments/derivatives/underlyings'),
+    staleTime: 5 * 60_000,
   })
 }
 

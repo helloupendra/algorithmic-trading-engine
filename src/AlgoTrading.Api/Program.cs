@@ -64,6 +64,14 @@ builder.Services.AddSwaggerGen(c =>
 
 builder.Services.AddSignalR();
 builder.Services.AddInfrastructure(builder.Configuration);
+
+// Strategy runner plumbing: where Python lives, the catalog it reports, the
+// registry of launched processes, the stop path and the stop-loss/target guard.
+builder.Services.AddSingleton<AlgoTrading.Api.Services.PythonEngineLocator>();
+builder.Services.AddSingleton<AlgoTrading.Api.Services.StrategyCatalogService>();
+builder.Services.AddSingleton<AlgoTrading.Api.Services.StrategyProcessRegistry>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.StrategyRunControl>();
+builder.Services.AddHostedService<AlgoTrading.Api.Services.StrategyRiskGuardService>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketHoursService>();
 
 

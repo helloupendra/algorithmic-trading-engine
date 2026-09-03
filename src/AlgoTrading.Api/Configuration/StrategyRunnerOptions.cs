@@ -29,4 +29,10 @@ public class StrategyRunnerOptions
     /// dashboard cannot exhaust the host.
     /// </summary>
     public int MaxConcurrentProcesses { get; set; } = 10;
+
+    /// <summary>
+    /// How often the risk guard re-evaluates each running strategy's total P&amp;L
+    /// against its stop-loss / target.
+    /// </summary>
+    public int RiskGuardIntervalSeconds { get; set; } = 3;
 }

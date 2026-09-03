@@ -32,6 +32,26 @@ export function formatNumber(value: number | null | undefined): string {
   return num.format(value)
 }
 
+/**
+ * P&L style: always signed, whole rupees, true minus sign — "+₹1,250" /
+ * "−₹640". Zero renders as "₹0" so a flat book does not look like a gain.
+ */
+export function formatInrSigned(value: number | null | undefined): string {
+  if (value == null) return '—'
+  const rounded = Math.round(value)
+  if (rounded === 0) return inrWhole.format(0)
+  const sign = rounded > 0 ? '+' : '−'
+  return `${sign}${inrWhole.format(Math.abs(rounded))}`
+}
+
+/** "2 lots × 30 = 60" — lots, lot size and the resulting unit quantity. */
+export function formatLots(lots: number | null | undefined, lotSize: number | null | undefined): string {
+  if (lots == null) return '—'
+  const unit = lots === 1 ? 'lot' : 'lots'
+  if (lotSize == null || lotSize <= 0) return `${num.format(lots)} ${unit}`
+  return `${num.format(lots)} ${unit} × ${num.format(lotSize)} = ${num.format(lots * lotSize)}`
+}
+
 export function formatPercent(value: number | null | undefined, digits = 2): string {
   if (value == null) return '—'
   return `${value >= 0 ? '+' : ''}${value.toFixed(digits)}%`

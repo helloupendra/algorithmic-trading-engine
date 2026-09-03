@@ -9,10 +9,21 @@ class StrangleStrategy(BaseStrategy):
     Profits from a wider range of sideways movement than a Straddle, but collects lower premium.
     """
     name = "ShortStrangle"
+    description = (
+        "Sells one OTM call and one OTM put of the nearest expiry and holds them. Profits from a wider "
+        "sideways range than a straddle while collecting less premium; loses when the underlying breaks "
+        "out past either strike. Note: the live runner currently provides only ATM contracts, so this "
+        "strategy will wait for entry until OTM contract selection ships."
+    )
+    category = "Neutral"
+    legs_summary = "Sell OTM CE + Sell OTM PE"
+    default_lots = 1
+    default_params: Dict[str, Any] = {}
 
     def __init__(self, params: Dict[str, Any] = None):
         self.params = params or {}
-        self.quantity = self.params.get("quantity", 15)
+        # Lots per leg; the platform multiplies by the contract's lot size.
+        self.lots = self.lots_from(self.params, self.default_lots)
 
     def initialize_state(self) -> Dict[str, Any]:
         return {
@@ -38,8 +49,8 @@ class StrangleStrategy(BaseStrategy):
                     reason=f"Opening Short Strangle at strikes CE:{ce.strike_price}, PE:{pe.strike_price}",
                     metadata={"group_id": group_id, "strategy_type": "Neutral"},
                     legs=[
-                        {"symbol": ce.symbol, "side": "SELL", "quantity": self.quantity},
-                        {"symbol": pe.symbol, "side": "SELL", "quantity": self.quantity}
+                        {"symbol": ce.symbol, "side": "SELL", "quantity": self.lots},
+                        {"symbol": pe.symbol, "side": "SELL", "quantity": self.lots}
                     ]
                 ))
                 

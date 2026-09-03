@@ -29,6 +29,9 @@ export interface LiveQuote {
   close: number | null
   volume: number | null
   updatedUtc: string
+  /** Patched in from SignalR ticks; the REST snapshot does not carry them. */
+  bidPrice?: number | null
+  askPrice?: number | null
 }
 
 export interface LiveBar {
@@ -246,15 +249,141 @@ export interface PerformanceMetrics {
 
 // ---------- Strategies ----------
 
+export interface StrategyDataRequirement {
+  symbolType: string
+  resolution: string
+}
+
+/** Why and when the last run of a strategy ended (survives API restarts). */
+export interface StrategyLastExit {
+  runId: number
+  reason: string
+  atUtc: string
+  underlying: string | null
+}
+
+/** GET /api/Strategy — catalog entry decorated with its run state. */
 export interface StrategyListItem {
   id: number
   name: string
   description: string
+  category: string
+  supportedUnderlyings: string[]
+  instrumentKind: string
+  legsSummary: string
+  dataRequirements: StrategyDataRequirement[]
   defaultParametersJson: string
+  defaultLots: number
+  sourceFile: string
   createdUtc: string
   isActive: boolean
   startedBy: string | null
   startedUtc: string | null
+  runId: number | null
+  underlying: string | null
+  spotSymbol: string | null
+  lots: number | null
+  stopLoss: number | null
+  target: number | null
+  processId: number | null
+  lastExit: StrategyLastExit | null
+}
+
+/** GET /api/Instruments/derivatives/underlyings — what can actually be traded. */
+export interface FnoUnderlying {
+  underlying: string
+  exchange: string
+  spotSymbol: string
+  lotSize: number
+  lotSizeSource: 'master' | 'configured' | 'unknown'
+  strikeStep: number
+  nextExpiry: string
+  expiries: string[]
+  optionContracts: number
+}
+
+export interface StartStrategyRequest {
+  underlying: string
+  lots?: number
+  stopLoss?: number | null
+  target?: number | null
+  parameters?: Record<string, unknown> | null
+  initialCapital?: number
+}
+
+export interface StartStrategyResponse {
+  message: string
+  processId: number
+  runId: number
+  underlying: string
+  spotSymbol: string
+  lots: number
+  stopLoss: number | null
+  target: number | null
+  startedBy: string
+}
+
+export interface StopStrategyResponse {
+  message: string
+  flattened: number
+}
+
+export interface LiveContract {
+  underlying: string
+  strike: number | null
+  optionType: string | null
+  expiryDate: string | null
+  label: string
+}
+
+export interface LivePosition {
+  id: number
+  groupId: string
+  symbol: string
+  contract: LiveContract | null
+  side: 'BUY' | 'SELL'
+  lots: number
+  lotSize: number
+  quantity: number
+  status: 'Open' | 'Closed'
+  entryPrice: number
+  ltp: number | null
+  ltpUpdatedUtc: string | null
+  pnl: number
+  openedUtc: string
+  closedUtc: string | null
+}
+
+export interface LiveActivity {
+  atUtc: string
+  type: string
+  text: string
+  groupId: string
+}
+
+/** GET /api/Strategy/{id}/live — the position-based view of one run. */
+export interface StrategyLiveView {
+  strategyId: number
+  name: string
+  isActive: boolean
+  runId: number | null
+  underlying: string | null
+  spotSymbol: string | null
+  spotLtp: number | null
+  spotUpdatedUtc: string | null
+  lots: number | null
+  lotSize: number | null
+  lotSizeSource: 'master' | 'configured' | 'unknown' | null
+  stopLoss: number | null
+  target: number | null
+  startedBy: string | null
+  startedUtc: string | null
+  stoppedUtc: string | null
+  stopReason: string | null
+  pnl: { realized: number; unrealized: number; total: number }
+  positions: LivePosition[]
+  activity: LiveActivity[]
+  runner: { processId: number; lastLogUtc: string | null } | null
 }
 
 // ---------- Risk / session / system ----------

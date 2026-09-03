@@ -1,7 +1,29 @@
+"""
+strategies/base_strategy.py
+
+Data contracts shared by every strategy (inputs, signals, contracts, bars) and
+the BaseStrategy class they all derive from.
+
+Besides the evaluation hooks (`initialize_state`, `on_bar`) a strategy carries
+catalog metadata as plain class attributes: description, category, supported
+underlyings, legs summary, default lots and default parameters. The metadata is
+read offline by `tools/list_strategies.py` and surfaced by the API as the
+strategy library, so keep it accurate and in plain English.
+
+Leg quantities are LOTS everywhere: the platform multiplies by the instrument's
+lot size when it fills a paper order.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+
+
+# Underlyings a strategy is assumed to handle unless it says otherwise. These
+# are the index option families with weekly/monthly contracts in the FYERS
+# master; stock options are opt-in per strategy.
+DEFAULT_SUPPORTED_UNDERLYINGS: List[str] = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"]
 
 
 @dataclass
@@ -95,6 +117,48 @@ class BaseStrategy:
     Enforces a pure, stateless design where the strategy logic is evaluated based on an explicit state dictionary.
     """
     name = "BaseStrategy"
+
+    # --- Catalog metadata (all optional; override per strategy) ---------------
+    # Plain-English summary: what the strategy does, when it profits, what it
+    # needs. Falls back to the class docstring when left empty.
+    description: str = ""
+    # Neutral / Bullish / Bearish / Directional / Adjustment / Example / ...
+    category: str = "Other"
+    # Underlyings the strategy is designed for (see DEFAULT_SUPPORTED_UNDERLYINGS).
+    supported_underlyings: List[str] = list(DEFAULT_SUPPORTED_UNDERLYINGS)
+    # The kind of instrument the legs trade. Only "options" is supported today.
+    instrument_kind: str = "options"
+    # One-line description of the legs, e.g. "Sell ATM CE + Sell ATM PE".
+    legs_summary: str = ""
+    # Lots per leg when the run does not specify any.
+    default_lots: int = 1
+    # Tunable parameters and their defaults, merged with the run's parametersJson.
+    default_params: Dict[str, Any] = {}
+    # Set to False to keep a runnable-but-internal class out of the catalog.
+    listed: bool = True
+
+    @staticmethod
+    def lots_from(params: Optional[Dict[str, Any]], default: int = 1) -> int:
+        """
+        Resolve the lots per leg from run parameters.
+
+        Accepts `lots` (the current key) or the legacy `quantity`, falls back to
+        `default`, and never returns less than 1.
+        """
+        source = params or {}
+        raw = source.get("lots")
+        if raw is None:
+            raw = source.get("quantity")
+        if raw is None:
+            raw = default
+        try:
+            lots = int(float(raw))
+        except (TypeError, ValueError):
+            try:
+                lots = int(default)
+            except (TypeError, ValueError):
+                lots = 1
+        return max(1, lots)
 
     def initialize_state(self) -> Dict[str, Any]:
         """

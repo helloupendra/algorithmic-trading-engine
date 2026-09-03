@@ -5,7 +5,27 @@ from strategies.base_strategy import BaseStrategy, StrategyInput, StrategySignal
 
 
 class GhostTangentCrossingsStrategy(BaseStrategy):
+    """
+    Port of the "Ghost Tangent Crossings" Pine script: ZigZag pivots joined by an
+    ellipse whose tangent becomes a dynamic trigger line; a close through that
+    line fires a directional signal.
+    """
     name = "GhostTangentCrossings"
+    description = (
+        "Directional breakout strategy that tracks ZigZag pivots on the 5-minute index chart and draws an "
+        "ellipse-tangent trigger line from the last swing; a confirmed or early ('ghost') close through the "
+        "line buys the ATM call on an upside break or the ATM put on a downside break. Profits when the "
+        "break follows through; there is no built-in exit, so use the run's stop-loss/target. Needs "
+        "5-minute index bars (about 15 days of history for warmup) plus live spot ticks."
+    )
+    category = "Directional"
+    legs_summary = "Buy ATM CE on an up-break, or Buy ATM PE on a down-break"
+    default_lots = 1
+    default_params: Dict[str, Any] = {
+        "pivot_forward": 25,
+        "pivot_type": "Wick",
+        "use_ghost_signals": True,
+    }
 
     @classmethod
     def get_data_requirements(cls) -> List[DataRequirement]:
@@ -15,9 +35,12 @@ class GhostTangentCrossingsStrategy(BaseStrategy):
 
     def __init__(self, params: Dict[str, Any] = None):
         params = params or {}
-        self.pivot_forward = int(params.get("pivot_forward", 25))
-        self.pivot_type = str(params.get("pivot_type", "Wick"))
-        self.use_ghost_signals = bool(params.get("use_ghost_signals", True))
+        self.params = params
+        self.pivot_forward = int(params.get("pivot_forward", self.default_params["pivot_forward"]))
+        self.pivot_type = str(params.get("pivot_type", self.default_params["pivot_type"]))
+        self.use_ghost_signals = bool(params.get("use_ghost_signals", self.default_params["use_ghost_signals"]))
+        # Lots per leg; the runner converts BUY/SELL into a one-leg OPEN_GROUP of this size.
+        self.lots = self.lots_from(params, self.default_lots)
 
     def initialize_state(self) -> Dict[str, Any]:
         return {

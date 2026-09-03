@@ -53,7 +53,7 @@ export function StrategiesPage() {
                                 type="button"
                                 className="btn btn--ghost btn--sm"
                                 disabled={stop.isPending}
-                                onClick={() => stop.mutate(s.id)}
+                                onClick={() => stop.mutate({ id: s.id })}
                               >
                                 Stop
                               </button>

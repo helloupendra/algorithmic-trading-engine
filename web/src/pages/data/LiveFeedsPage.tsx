@@ -8,7 +8,7 @@
  * feed runs. Diagnostics (heartbeats, process logs) fold away at the bottom.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   useAddEquityGroupToWatchlist,
   useAddWatchlistSymbol,
@@ -29,12 +29,11 @@ import {
 } from '../../lib/queries'
 import { formatAge, formatDateTime, formatPrice, shortSymbol } from '../../lib/format'
 import { classifySymbol } from '../../lib/symbols'
-import { Badge, InlineError, Panel, QueryBoundary } from '../../components/ui'
+import { Badge, FlashPrice, InlineError, Panel, QueryBoundary } from '../../components/ui'
 import {
   IconDatabase,
   IconPlay,
   IconPlus,
-  IconPulse,
   IconSearch,
   IconStop,
   IconTrash,
@@ -42,36 +41,7 @@ import {
 } from '../../components/icons'
 import type { LiveQuote } from '../../lib/types'
 
-/* ---------------------------------------------------------------- flashes */
-
-/** Price text that flashes green/red when the value moves. */
-function FlashPrice({ value, bold }: { value: number | null | undefined; bold?: boolean }) {
-  const prev = useRef<number | null>(null)
-  const [flash, setFlash] = useState<{ dir: string; seq: number }>({ dir: '', seq: 0 })
-
-  useEffect(() => {
-    if (value != null && prev.current != null && value !== prev.current) {
-      setFlash((f) => ({ dir: value > prev.current! ? 'flash-up' : 'flash-down', seq: f.seq + 1 }))
-      const t = setTimeout(() => setFlash((f) => ({ ...f, dir: '' })), 900)
-      return () => clearTimeout(t)
-    }
-    prev.current = value ?? prev.current
-  }, [value])
-
-  useEffect(() => {
-    prev.current = value ?? null
-  })
-
-  return (
-    <span
-      key={flash.seq}
-      className={`mono ${flash.dir}`}
-      style={bold ? { fontWeight: 700 } : undefined}
-    >
-      {formatPrice(value)}
-    </span>
-  )
-}
+/* ---------------------------------------------------------------- helpers */
 
 function changePct(quote: LiveQuote | undefined): number | null {
   if (!quote || quote.lastTradedPrice == null || quote.close == null || quote.close === 0)

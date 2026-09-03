@@ -1,217 +1,567 @@
-import React, { useState } from 'react'
-import { IconPlay, IconStop, IconBot, IconChevronDown, IconChevronUp } from '../../components/icons'
-import { Panel, QueryBoundary, Badge } from '../../components/ui'
-import { useStrategies, useStartStrategy, useStopStrategy, useStrategySignals, useLatestQuotes } from '../../lib/queries'
-import { formatDateTime } from '../../lib/format'
+/**
+ * Strategies module — Live runner, v2.
+ *
+ * Position-based, not order-based: each running strategy is one RunCard that
+ * shows its spot, P&L, risk limits and every position of the run as a row
+ * (closed legs stay in the table with quantity 0 instead of appearing as a
+ * separate "SELL order"). Starting goes through the LaunchDialog, which makes
+ * the underlying mandatory and stop-loss/target optional.
+ */
 
-function StrategyRow({ s }: { s: any }) {
-  const start = useStartStrategy()
-  const stop = useStopStrategy()
-  const [expanded, setExpanded] = useState(false)
-  const signalsQuery = useStrategySignals(s.id, s.isActive && expanded)
-  const quotesQuery = useLatestQuotes()
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import {
+  useStopStrategy,
+  useStrategies,
+  useStrategyLive,
+  useStrategyLives,
+  useStrategyLogs,
+} from '../../lib/queries'
+import {
+  formatAge,
+  formatInrWhole,
+  formatLots,
+  formatNumber,
+  formatPrice,
+  formatTime,
+} from '../../lib/format'
+import { formatContract } from '../../lib/symbols'
+import { Badge, FlashPrice, InlineError, Loading, QueryBoundary, StatTile } from '../../components/ui'
+import { IconChevronDown, IconChevronRight, IconLayers, IconPlay, IconStop } from '../../components/icons'
+import type { LiveActivity, LivePosition, StrategyListItem, StrategyLiveView } from '../../lib/types'
+import { CategoryBadge, LaunchDialog, PnlValue, ReadinessStrip, StrategyCard } from './shared'
 
-  const getQuote = (symbol: string) => {
-    return quotesQuery.data?.find(q => q.symbol === symbol)
-  }
+/* ------------------------------------------------------------------ helpers */
 
+function exitKey(s: StrategyListItem): string {
+  return `${s.id}:${s.lastExit?.runId ?? 0}`
+}
+
+function isToday(iso: string | null | undefined): boolean {
+  if (!iso) return false
+  const d = new Date(iso)
+  const now = new Date()
   return (
-    <React.Fragment>
-      <tr>
-        <td>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <button 
-              className="btn btn--icon" 
-              onClick={() => setExpanded(!expanded)}
-              style={{ background: 'transparent', padding: 0, opacity: 0.7 }}
-            >
-              {expanded ? <IconChevronUp width={16} height={16} /> : <IconChevronDown width={16} height={16} />}
-            </button>
-            <IconBot style={{ width: 18, height: 18, opacity: 0.7, flexShrink: 0 }} />
-            <strong>{s.name}</strong>
-          </div>
-        </td>
-        <td>
-          {s.isActive ? (
-            <Badge tone="pos">Running</Badge>
-          ) : (
-            <Badge>Stopped</Badge>
-          )}
-        </td>
-        <td>{s.isActive ? s.startedBy : '-'}</td>
-        <td>{s.isActive && s.startedUtc ? formatDateTime(s.startedUtc) : '-'}</td>
-        <td className="text-right">
-          {s.isActive ? (
-            <button
-              type="button"
-              className="btn btn--sm btn--neg"
-              onClick={() => {
-                if (window.confirm(`Stop ${s.name}?`)) stop.mutate(s.id)
-              }}
-              disabled={stop.isPending}
-            >
-              <IconStop style={{ width: 14, height: 14 }} /> Stop
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="btn btn--sm btn--pos"
-              onClick={() => start.mutate(s.id)}
-              disabled={start.isPending}
-            >
-              <IconPlay style={{ width: 14, height: 14 }} /> Start
-            </button>
-          )}
-        </td>
-      </tr>
-      
-      {expanded && (
-        <tr>
-          <td colSpan={5} style={{ background: 'var(--bg-card-alt)', padding: '16px' }}>
-            <h4 style={{ margin: '0 0 12px 0', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.7 }}>
-              Live Signals Feed
-            </h4>
-            {!s.isActive ? (
-              <div className="empty-state" style={{ padding: '24px 0', fontSize: '14px' }}>Start the strategy to see live signals.</div>
-            ) : signalsQuery.isLoading ? (
-              <div style={{ padding: '12px 0', opacity: 0.6 }}>Loading signals...</div>
-            ) : Array.isArray(signalsQuery.data) && signalsQuery.data.length > 0 ? (
-              <div style={{ maxHeight: '400px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px', paddingRight: '8px' }}>
-                {signalsQuery.data.map((sig, idx) => {
-                  const isPos = sig?.signal_type?.includes('BUY') || sig?.signal_type?.includes('OPEN')
-                  return (
-                    <div key={idx} style={{ flexShrink: 0, background: '#ffffff', borderRadius: '8px', overflow: 'hidden', border: '1px solid #e2e8f0', color: '#1e293b', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-                      <div style={{ padding: '8px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                        <div style={{ fontSize: '12px', fontWeight: 600, color: '#64748b' }}>
-                          {sig.timestamp_utc ? new Date(sig.timestamp_utc).toLocaleTimeString() : 'N/A'} • {sig.signal_type || 'UNKNOWN'}
-                        </div>
-                      </div>
-                      <div style={{ padding: '0 16px' }}>
-                        {Array.isArray(sig.legs) && sig.legs.map((leg: any, lidx: number) => {
-                          const sideColor = leg.side === 'BUY' ? '#10b981' : '#ef4444'
-                          const quote = getQuote(leg.symbol) as any
-                          
-                          const ltp = quote?.lastTradedPrice || 0
-                          const entryPrice = leg.price || ltp
-                          const quantity = leg.quantity || 1
-                          
-                          let pnl = 0
-                          if (ltp > 0 && entryPrice > 0) {
-                            if (leg.side === 'BUY') pnl = (ltp - entryPrice) * quantity
-                            else pnl = (entryPrice - ltp) * quantity
-                          }
-                          
-                          const iv = (quote?.impliedVolatility || 0).toFixed(2)
-                          const delta = (quote?.delta || 0).toFixed(2)
-                          const gamma = (quote?.gamma || 0).toFixed(4)
-                          const theta = (quote?.theta || 0).toFixed(2)
-                          const vega = (quote?.vega || 0).toFixed(2)
-
-                          return (
-                            <div key={lidx} style={{ padding: '12px 0', borderBottom: lidx < sig.legs.length - 1 ? '1px solid #f1f5f9' : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <div>
-                                <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '6px', display: 'flex', gap: '8px', alignItems: 'center', color: '#0f172a' }}>
-                                  <span style={{ color: '#64748b' }}>{lidx + 1}.</span>
-                                  <span>{leg?.symbol?.replace('NSE:', '') || leg?.symbol}</span>
-                                  <span style={{ color: sideColor, fontSize: '12px', padding: '2px 6px', background: `${sideColor}15`, borderRadius: '4px' }}>{leg.side} {leg.quantity}x</span>
-                                </div>
-                                <div style={{ fontSize: '11px', color: '#94a3b8', display: 'flex', gap: '8px', fontWeight: 500 }}>
-                                  <span>IV: {iv}%</span>
-                                  <span style={{ color: '#cbd5e1' }}>|</span>
-                                  <span>Delta: {delta}</span>
-                                  <span style={{ color: '#cbd5e1' }}>|</span>
-                                  <span>Gamma: {gamma}</span>
-                                  <span style={{ color: '#cbd5e1' }}>|</span>
-                                  <span>Theta: {theta}</span>
-                                  <span style={{ color: '#cbd5e1' }}>|</span>
-                                  <span>Vega: {vega}</span>
-                                </div>
-                              </div>
-                              <div style={{ display: 'flex', gap: '24px', alignItems: 'center', textAlign: 'right', fontSize: '14px', fontWeight: 500 }}>
-                                <div style={{ width: '40px', color: '#64748b' }} title="Quantity">{quantity}</div>
-                                <div style={{ width: '60px', color: '#64748b' }} title="Entry Price">{entryPrice.toFixed(2)}</div>
-                                <div style={{ width: '60px', color: '#64748b' }} title="LTP">{ltp.toFixed(2)}</div>
-                                <div style={{ width: '80px', color: pnl > 0 ? '#10b981' : pnl < 0 ? '#ef4444' : '#64748b', fontWeight: 700 }} title="PnL">
-                                  {pnl > 0 ? '+' : ''}{pnl.toFixed(2)}
-                                </div>
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            ) : (
-              <div style={{ padding: '24px 0', display: 'flex', alignItems: 'center', gap: '12px', opacity: 0.8 }}>
-                <span style={{ width: '8px', height: '8px', background: 'var(--color-pos)', borderRadius: '50%', boxShadow: '0 0 8px var(--color-pos)' }}></span>
-                <span style={{ fontSize: '14px' }}>Strategy started successfully. Monitoring real-time market data for entry conditions...</span>
-              </div>
-            )}
-          </td>
-        </tr>
-      )}
-    </React.Fragment>
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
   )
 }
 
-function RunnerList() {
-  const strategies = useStrategies()
-  const start = useStartStrategy()
-  const stop = useStopStrategy()
-  
-  const data = strategies.data ?? []
+function activityTone(type: string): 'pos' | 'neg' | 'warn' | 'neutral' | 'accent' {
+  const t = type.toUpperCase()
+  if (t === 'RUN_STOPPED') return 'warn'
+  if (t.startsWith('OPEN') || t === 'BUY') return 'pos'
+  if (t.startsWith('CLOSE') || t === 'SELL') return 'neg'
+  if (t.startsWith('ADJUST')) return 'accent'
+  return 'neutral'
+}
 
-  if (data.length === 0) {
-    return <div className="empty-state">No strategies available to run.</div>
-  }
+function contractLabel(p: LivePosition): string {
+  return p.contract?.label || formatContract(p.symbol)
+}
 
+/* ------------------------------------------------------------- risk metric */
+
+function RiskMetric({
+  label,
+  limit,
+  used,
+  kind,
+}: {
+  label: string
+  limit: number
+  used: number
+  kind: 'stop' | 'target'
+}) {
+  const pct = limit > 0 ? Math.min(100, (Math.max(0, used) / limit) * 100) : 0
+  const modifier =
+    kind === 'target' ? 'progress__bar--pos' : pct >= 100 ? 'progress__bar--neg' : pct >= 70 ? 'progress__bar--warn' : ''
   return (
-    <div className="table-wrapper">
+    <div className="metric">
+      <div className="metric__label">{label}</div>
+      <div className="metric__value">{formatInrWhole(limit)}</div>
+      <div className="metric__sub">{pct.toFixed(0)}% of the way</div>
+      <div
+        className="progress"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(pct)}
+        aria-label={label}
+      >
+        <div className={`progress__bar ${modifier}`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  )
+}
+
+/* ---------------------------------------------------------- positions table */
+
+function PositionsTable({ positions }: { positions: LivePosition[] }) {
+  return (
+    <div className="tablewrap">
       <table className="table">
         <thead>
           <tr>
-            <th>Strategy Name</th>
+            <th>Contract</th>
+            <th>Side</th>
+            <th className="r">Lots</th>
+            <th className="r">Lot size</th>
+            <th className="r">Qty</th>
+            <th className="r">Entry</th>
+            <th className="r">LTP</th>
+            <th className="r">P&L</th>
             <th>Status</th>
-            <th>Started By</th>
-            <th>Started At</th>
-            <th className="text-right">Actions</th>
+            <th>Time</th>
           </tr>
         </thead>
         <tbody>
-          {data.map((s) => (
-            <StrategyRow key={s.id} s={s} />
-          ))}
+          {positions.map((p) => {
+            const open = p.status === 'Open'
+            return (
+              <tr key={p.id} className={open ? '' : 'pos-row--closed'}>
+                <td className="mono" title={`${p.symbol} · group ${p.groupId}`}>
+                  {contractLabel(p)}
+                </td>
+                <td>
+                  <Badge tone={p.side === 'BUY' ? 'pos' : 'neg'}>{p.side}</Badge>
+                </td>
+                <td className="r">{open ? formatNumber(p.lots) : 0}</td>
+                <td className="r muted">{formatNumber(p.lotSize)}</td>
+                <td className="r">{open ? formatNumber(p.quantity) : 0}</td>
+                <td className="r mono">{formatPrice(p.entryPrice)}</td>
+                <td className="r">{open ? <FlashPrice value={p.ltp} /> : <span className="muted">—</span>}</td>
+                <td className="r">
+                  <PnlValue value={p.pnl} />
+                </td>
+                <td>{open ? <Badge tone="accent">Open</Badge> : <Badge>Closed</Badge>}</td>
+                <td className="muted">{open ? formatTime(p.openedUtc) : formatTime(p.closedUtc)}</td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>
   )
 }
 
+/* ------------------------------------------------------------ activity list */
+
+function ActivityList({ items }: { items: LiveActivity[] }) {
+  if (items.length === 0) return <p className="empty">No signals recorded for this run yet.</p>
+  return (
+    <ul className="activity">
+      {items.map((a, i) => (
+        <li key={`${a.atUtc}-${i}`} className="activity__item">
+          <span className="activity__time">{formatTime(a.atUtc)}</span>
+          <Badge tone={activityTone(a.type)}>{a.type}</Badge>
+          <span className="activity__text" title={a.groupId ? `${a.text} · group ${a.groupId}` : a.text}>
+            {a.text}
+          </span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/* ------------------------------------------------------------ runner output */
+
+function RunnerOutput({ strategyId, isActive }: { strategyId: number; isActive: boolean }) {
+  const logs = useStrategyLogs(strategyId, isActive)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const lines = Array.isArray(logs.data) ? logs.data : []
+
+  // Follow the tail as new lines arrive.
+  useEffect(() => {
+    const el = bodyRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [lines.length])
+
+  return (
+    <div className="console">
+      <div className="console__bar">
+        <span className="console__dot console__dot--r" />
+        <span className="console__dot console__dot--y" />
+        <span className="console__dot console__dot--g" />
+        <span className="console__title">Runner process output</span>
+      </div>
+      <div className={`console__body ${lines.length === 0 ? 'faint' : ''}`} ref={bodyRef}>
+        {!isActive
+          ? 'The runner is not running — output is only kept while the process is alive.'
+          : lines.length === 0
+            ? 'No output yet — the runner prints a [CONFIG] line at startup and a [STATUS] line every 10 s.'
+            : lines.map((line, i) => <div key={i}>{line}</div>)}
+      </div>
+    </div>
+  )
+}
+
+/* ---------------------------------------------------------------- run card */
+
+function Disclosure({
+  label,
+  open,
+  onToggle,
+  children,
+}: {
+  label: string
+  open: boolean
+  onToggle: () => void
+  children: ReactNode
+}) {
+  return (
+    <div className="run-card__section">
+      <button type="button" className="disclosure__btn" onClick={onToggle} aria-expanded={open}>
+        {open ? <IconChevronDown /> : <IconChevronRight />}
+        {label}
+      </button>
+      {open && <div className="disclosure__body">{children}</div>}
+    </div>
+  )
+}
+
+function RunCard({
+  strategy,
+  onDismiss,
+}: {
+  strategy: StrategyListItem
+  onDismiss: () => void
+}) {
+  const live = useStrategyLive(strategy.id, true)
+  const stop = useStopStrategy()
+  const [showActivity, setShowActivity] = useState(false)
+  const [showOutput, setShowOutput] = useState(false)
+
+  const view = live.data
+  const isActive = view ? view.isActive : strategy.isActive
+  const positions = view?.positions ?? []
+  const openCount = positions.filter((p) => p.status === 'Open').length
+  const underlying = view?.underlying ?? strategy.underlying
+  const stopReason = view?.stopReason ?? strategy.lastExit?.reason ?? null
+  const startedBy = view?.startedBy ?? strategy.startedBy
+  const startedUtc = view?.startedUtc ?? strategy.startedUtc
+  const stoppedUtc = view?.stoppedUtc ?? strategy.lastExit?.atUtc ?? null
+  const total = view?.pnl.total ?? 0
+
+  function confirmStop() {
+    const msg = `Square off ${openCount} open position${openCount === 1 ? '' : 's'} at the last price and stop ${strategy.name}?`
+    if (window.confirm(msg)) stop.mutate({ id: strategy.id })
+  }
+
+  return (
+    <section
+      id={`run-${strategy.id}`}
+      className={`run-card ${isActive ? 'run-card--live' : 'run-card--stopped'}`}
+      aria-label={`${strategy.name} run`}
+    >
+      <header className="run-card__head">
+        <span className="run-card__name">
+          {strategy.name}
+          <CategoryBadge category={strategy.category} />
+        </span>
+        {underlying && (
+          <span className="badge badge--accent" title={view?.spotSymbol ?? undefined}>
+            {underlying} <FlashPrice value={view?.spotLtp} bold />
+          </span>
+        )}
+        {isActive ? (
+          <Badge tone="live">running</Badge>
+        ) : (
+          <Badge tone="warn">Stopped{stopReason ? ` · ${stopReason}` : ''}</Badge>
+        )}
+        <span className="run-card__meta">
+          {startedBy ? `started by ${startedBy}` : 'started'} · {formatTime(startedUtc)}
+          {!isActive && stoppedUtc && <> · stopped {formatTime(stoppedUtc)}</>}
+          {view?.runId != null && <span className="faint">· run #{view.runId}</span>}
+        </span>
+        <div className="run-card__actions">
+          {isActive ? (
+            <button
+              type="button"
+              className="btn btn--danger btn--sm"
+              disabled={stop.isPending}
+              onClick={confirmStop}
+            >
+              <IconStop style={{ width: 13, height: 13 }} />
+              {stop.isPending ? 'Stopping…' : 'Stop'}
+            </button>
+          ) : (
+            <button type="button" className="btn btn--ghost btn--sm" onClick={onDismiss}>
+              Dismiss
+            </button>
+          )}
+        </div>
+      </header>
+
+      {stop.isError && (
+        <div style={{ marginBottom: 10 }}>
+          <InlineError error={stop.error} />
+        </div>
+      )}
+      {stop.isSuccess && stop.data && (
+        <p className="small-note" style={{ margin: '0 0 10px' }} role="status">
+          {stop.data.message}
+          {stop.data.flattened > 0 ? ` · squared off ${stop.data.flattened}` : ''}
+        </p>
+      )}
+
+      {!view && live.isPending && <Loading label="Loading run…" />}
+      {!view && live.isError && <InlineError error={live.error} />}
+
+      {view && (
+        <>
+          <div className="metric-strip">
+            <div className="metric">
+              <div className="metric__label">Total P&L</div>
+              <div className="metric__value metric__value--lg">
+                <PnlValue value={view.pnl.total} />
+              </div>
+              <div className="metric__sub">realized + unrealized</div>
+            </div>
+            <div className="metric">
+              <div className="metric__label">Realized</div>
+              <div className="metric__value">
+                <PnlValue value={view.pnl.realized} />
+              </div>
+            </div>
+            <div className="metric">
+              <div className="metric__label">Unrealized</div>
+              <div className="metric__value">
+                <PnlValue value={view.pnl.unrealized} />
+              </div>
+              <div className="metric__sub">
+                {openCount} open · {positions.length - openCount} closed
+              </div>
+            </div>
+            <div className="metric">
+              <div className="metric__label">Lots</div>
+              <div className="metric__value">{formatLots(view.lots, view.lotSize)}</div>
+              <div className="metric__sub">
+                {view.lotSize != null ? `qty ${formatNumber((view.lots ?? 0) * view.lotSize)}` : ''}
+                {view.lotSizeSource && view.lotSizeSource !== 'master' ? ` · lot size ${view.lotSizeSource}` : ''}
+              </div>
+            </div>
+            {view.stopLoss != null && view.stopLoss > 0 && (
+              <RiskMetric label="Stop-loss" limit={view.stopLoss} used={-Math.min(total, 0)} kind="stop" />
+            )}
+            {view.target != null && view.target > 0 && (
+              <RiskMetric label="Target" limit={view.target} used={Math.max(total, 0)} kind="target" />
+            )}
+          </div>
+
+          {positions.length > 0 ? (
+            <PositionsTable positions={positions} />
+          ) : isActive ? (
+            <div className="waiting" role="status">
+              <span className="pulse-dot" aria-hidden="true" />
+              <span>
+                Waiting for entry conditions
+                {view.underlying ? (
+                  <>
+                    {' '}
+                    — spot {view.underlying} {formatPrice(view.spotLtp)} · last tick{' '}
+                    {view.spotUpdatedUtc ? formatAge(view.spotUpdatedUtc) : 'not yet received'}
+                  </>
+                ) : null}
+              </span>
+            </div>
+          ) : (
+            <p className="empty">No positions were opened during this run.</p>
+          )}
+
+          <Disclosure
+            label={`Activity (${view.activity.length})`}
+            open={showActivity}
+            onToggle={() => setShowActivity((v) => !v)}
+          >
+            <ActivityList items={view.activity} />
+          </Disclosure>
+          <Disclosure label="Runner output" open={showOutput} onToggle={() => setShowOutput((v) => !v)}>
+            <RunnerOutput strategyId={strategy.id} isActive={isActive} />
+          </Disclosure>
+        </>
+      )}
+    </section>
+  )
+}
+
+/* -------------------------------------------------------------------- page */
+
 export function LiveRunnerPage() {
+  const strategies = useStrategies()
+  const qc = useQueryClient()
+  const [launch, setLaunch] = useState<StrategyListItem | null>(null)
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set<string>())
+  const [scrollTo, setScrollTo] = useState<number | null>(null)
+
+  // The list request failed and there is nothing cached: the page cannot know
+  // what is running, so it must say so rather than claim a flat book.
+  const listUnknown = strategies.isError && strategies.data === undefined
+
+  const list = useMemo(() => strategies.data ?? [], [strategies.data])
+  const running = useMemo(() => list.filter((s) => s.isActive), [list])
+  const stopped = useMemo(
+    () => list.filter((s) => !s.isActive && s.lastExit && !dismissed.has(exitKey(s))),
+    [list, dismissed],
+  )
+  const visible = useMemo(() => [...running, ...stopped], [running, stopped])
+  // Stopped cards stay in this list on purpose: the "Realized today" tile sums
+  // them, and their live query stops polling by itself once isActive is false.
+  const visibleIds = useMemo(() => visible.map((s) => s.id), [visible])
+
+  // A stopped card's live view does not poll, so when the list reports a
+  // strategy running again (restarted here or from another browser) its view
+  // must be refetched once to pick the new run up and resume polling.
+  const runningKey = useMemo(() => running.map((s) => `${s.id}:${s.runId ?? 0}`).join(','), [running])
+  const prevRunningKey = useRef<string | null>(null)
+  useEffect(() => {
+    if (prevRunningKey.current === runningKey) return
+    // First list load: the cards fetch on mount anyway, nothing to invalidate.
+    if (prevRunningKey.current !== null) {
+      const before = new Set(prevRunningKey.current.split(',').filter(Boolean))
+      for (const s of running) {
+        if (!before.has(`${s.id}:${s.runId ?? 0}`)) {
+          qc.invalidateQueries({ queryKey: ['strategy', 'live', s.id] })
+        }
+      }
+    }
+    prevRunningKey.current = runningKey
+  }, [runningKey, running, qc])
+
+  // Page totals share the cache with each card's own useStrategyLive.
+  const lives = useStrategyLives(visibleIds)
+  const views = lives.map((q) => q.data).filter((v): v is StrategyLiveView => !!v)
+  const activeViews = views.filter((v) => v.isActive)
+  const openPositions = activeViews.reduce(
+    (n, v) => n + v.positions.filter((p) => p.status === 'Open').length,
+    0,
+  )
+  const livePnl = activeViews.reduce((n, v) => n + v.pnl.total, 0)
+  const realizedToday = views
+    .filter((v) => isToday(v.startedUtc))
+    .reduce((n, v) => n + v.pnl.realized, 0)
+
+  // After a start, bring the new card into view once the list has caught up.
+  const startedCardVisible = scrollTo != null && running.some((s) => s.id === scrollTo)
+  useEffect(() => {
+    if (scrollTo == null || !startedCardVisible) return
+    const el = document.getElementById(`run-${scrollTo}`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      setScrollTo(null)
+    }
+  }, [scrollTo, startedCardVisible])
+
   return (
     <div className="page">
       <header className="page__header">
         <div>
-          <h1 className="page__title">Live Runner</h1>
+          <h1 className="page__title">Live runner</h1>
           <p className="page__subtitle">
-            Deploy and manage live running instances of your strategies.
+            Pick a strategy, choose the underlying, set optional stop-loss/target, start. Paper
+            execution on live ticks.
           </p>
         </div>
+        <ReadinessStrip />
       </header>
 
-      <Panel
-        title={
+      <div className="stat-grid">
+        {listUnknown ? (
           <>
-            <IconPlay /> Active Processes
+            <StatTile label="Running strategies" value="—" sub="strategy list unavailable" />
+            <StatTile label="Open positions" value="—" sub="strategy list unavailable" />
+            <StatTile label="Live P&L" value="—" sub="strategy list unavailable" />
+            <StatTile label="Realized today" value="—" sub="strategy list unavailable" />
           </>
-        }
-      >
-        <QueryBoundary query={useStrategies()}>
-          {() => <RunnerList />}
+        ) : (
+          <>
+            <StatTile
+              label="Running strategies"
+              value={running.length}
+              tone={running.length > 0 ? 'pos' : undefined}
+              sub={running.length > 0 ? running.map((s) => s.name).join(', ') : 'nothing running'}
+            />
+            <StatTile label="Open positions" value={openPositions} sub="across running strategies" />
+            <StatTile
+              label="Live P&L"
+              value={<PnlValue value={livePnl} />}
+              tone={livePnl > 0 ? 'pos' : livePnl < 0 ? 'neg' : undefined}
+              sub="realized + unrealized of running runs"
+            />
+            <StatTile
+              label="Realized today"
+              value={<PnlValue value={realizedToday} />}
+              tone={realizedToday > 0 ? 'pos' : realizedToday < 0 ? 'neg' : undefined}
+              sub="runs started today, incl. stopped ones shown below"
+            />
+          </>
+        )}
+      </div>
+
+      <section aria-labelledby="running-now">
+        <h2 className="section-title" id="running-now">
+          <IconPlay /> Running now
+        </h2>
+        {strategies.isPending ? (
+          <Loading />
+        ) : listUnknown ? (
+          <div className="card">
+            <p className="card__muted" style={{ margin: '0 0 8px' }}>
+              Could not load the strategy list, so it is unknown whether anything is running.
+              A runner started earlier keeps trading until the API is reachable again.
+            </p>
+            <InlineError error={strategies.error} />
+          </div>
+        ) : visible.length === 0 ? (
+          <div className="card card--dashed">
+            <p className="card__muted" style={{ margin: 0 }}>
+              Nothing is running. Start a strategy from the catalogue below — it will appear here with
+              its live positions and P&L.
+            </p>
+          </div>
+        ) : (
+          <div className="stack-list">
+            {visible.map((s) => (
+              <RunCard
+                key={s.id}
+                strategy={s}
+                onDismiss={() =>
+                  setDismissed((prev) => {
+                    const next = new Set(prev)
+                    next.add(exitKey(s))
+                    return next
+                  })
+                }
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section aria-labelledby="start-a-strategy">
+        <h2 className="section-title" id="start-a-strategy">
+          <IconLayers /> Start a strategy
+        </h2>
+        <QueryBoundary query={strategies} empty="No strategies found in the Python engine.">
+          {(items) => (
+            <div className="strategy-grid">
+              {items.map((s) => (
+                <StrategyCard key={s.id} strategy={s} onStart={setLaunch} />
+              ))}
+            </div>
+          )}
         </QueryBoundary>
-      </Panel>
+      </section>
+
+      {launch && (
+        <LaunchDialog
+          strategy={launch}
+          onClose={() => setLaunch(null)}
+          onStarted={() => setScrollTo(launch.id)}
+        />
+      )}
     </div>
   )
 }

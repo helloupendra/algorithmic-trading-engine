@@ -114,6 +114,10 @@ public static class DependencyInjection
 
         services.AddScoped<IDerivativesInstrumentService, DerivativesInstrumentService>();
 
+        // Lot sizes: master value per contract, else the configured LotSizes table.
+        services.AddSingleton(LotSizeOptions.FromConfiguration(configuration));
+        services.AddScoped<ILotSizeResolver, LotSizeResolver>();
+
         services.AddScoped<IPaperTradingService, PaperTradingService>();
 
         services.AddScoped<CreateSimulationSignalUseCase>();

@@ -56,6 +56,20 @@ public interface IPaperTradingService
         long simulationRunId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Squares off every open position of every run (global kill switch).
+    /// Delegates to <see cref="FlattenRunAsync"/> per run.
+    /// </summary>
     Task FlattenAllPositionsAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Squares off every open position of one run at the latest live quote
+    /// (falling back to the last mark price, then the entry price), recording a
+    /// CLOSE_GROUP signal per group whose metadata carries <paramref name="reason"/>.
+    /// Returns the number of positions closed.
+    /// </summary>
+    Task<int> FlattenRunAsync(
+        long simulationRunId,
+        string reason,
+        CancellationToken cancellationToken = default);
 }
