@@ -64,6 +64,7 @@ builder.Services.AddSwaggerGen(c =>
 
 builder.Services.AddSignalR();
 builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketHoursService>();
 
 
 builder.Services.Configure<JwtOptions>(
