@@ -5,6 +5,7 @@ import { useLiveFeedSignalR } from './lib/queries'
 import { AppLayout } from './components/AppLayout'
 import { RedirectIfAuthenticated, RequireAuth, RequireRole } from './components/RouteGuards'
 import { LoginPage } from './pages/LoginPage'
+import { LandingPage } from './pages/LandingPage'
 import { ForbiddenPage, NotFoundPage } from './pages/Placeholders'
 import { OverviewPage } from './pages/trader/OverviewPage'
 import { WatchlistPage } from './pages/trader/WatchlistPage'
@@ -64,9 +65,9 @@ export default function App() {
       <BrowserRouter>
         <AuthProvider>
           <Routes>
-            {/* Internal console — the root goes straight to sign-in, which
-                bounces authenticated users to their role's home. */}
-            <Route path="/" element={<Navigate to="/login" replace />} />
+            {/* Public homepage. Signing out lands here; "Open console" goes to
+                /login, which bounces authenticated users to their role's home. */}
+            <Route path="/" element={<LandingPage />} />
 
             <Route element={<RedirectIfAuthenticated />}>
               <Route path="/login" element={<LoginPage />} />

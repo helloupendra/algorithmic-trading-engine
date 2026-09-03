@@ -220,7 +220,9 @@ export function AppLayout() {
 
   async function handleSignOut() {
     await logout()
-    navigate('/login', { replace: true })
+    // Signing out returns to the public homepage; "Open console" there leads
+    // back to /login.
+    navigate('/', { replace: true })
   }
 
   return (

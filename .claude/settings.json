@@ -56,7 +56,25 @@
       "Bash(awk 'NR>1{print \"api pid\",$2}')",
       "Bash(awk '{print \"vite pid\",$1}')",
       "Bash(awk 'NR>1{print \"pid\",$2}')",
-      "Bash(curl -s http://localhost:5173/src/lib/api.ts)"
+      "Bash(curl -s http://localhost:5173/src/lib/api.ts)",
+      "Bash(curl -s -o /dev/null -w 'cdnjs three r128: %{http_code}\\\\n' https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js)",
+      "Bash(curl -s -o /dev/null -w 'vite /landing.html: http %{http_code} %{content_type}\\\\n' http://localhost:5173/landing.html)",
+      "Bash(python3 tools/list_strategies.py)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code} %{size_download}\\\\n\" http://localhost:5173/landing.html)",
+      "Read(//Users/upendra/Library/Caches/ms-playwright/**)",
+      "Bash(python3 -c \"import playwright; print\\('py-playwright ok'\\)\")",
+      "Bash(pkill -f \"headless=new.*landing.html\")",
+      "Bash(npx vite *)",
+      "Bash(npx oxlint *)",
+      "Bash(grep -n \"scroll-behavior\\\\|scroll-margin\\\\|^html\\\\|^body\\\\|^canvas\\\\|^\\\\*\\\\|^a \\\\|^a,\\\\|^a{\\\\|overflow\" src/styles.css)",
+      "Bash(npx eslint *)",
+      "Bash(sed -i '' \"s/waitUntil: 'networkidle2', timeout: 30000/waitUntil: 'domcontentloaded', timeout: 30000/\" shot.mjs)",
+      "Bash(node shot.mjs http://localhost:5173/ /private/tmp/claude-501/-Users-upendra-Documents-GitHub-algorithmic-trading-engine/ccd51798-fbed-4b88-b204-23f457185541/scratchpad/home-pp.png 1440 900)",
+      "Bash(awk '{print $5, $NF}')",
+      "Bash(grep -n \"className=\\\\\"lp\\\\|className={\\\\`lp\\\\|\\\\\"lp\\\\b\" src/pages/LandingPage.tsx)",
+      "Bash(grep -nE \"^\\\\s*\\(ul|li|\\\\.activity\\)[ ,{]\" src/styles.css)",
+      "Bash(python3 -c \"import PIL; print\\('PIL', PIL.__version__\\)\")",
+      "Bash(npm ls *)"
     ]
   }
 }
