@@ -13,7 +13,9 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from './api'
+import { useEffect } from 'react'
+import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr'
+import { api, API_BASE_URL } from './api'
 import type {
   BackfillHistoryResponse,
   BrokerSessionInfo,
@@ -60,8 +62,54 @@ export function useLatestQuotes() {
   return useQuery({
     queryKey: ['quotes', 'all'],
     queryFn: () => api.get<LiveQuote[]>('/api/LiveData/latest/all'),
-    refetchInterval: POLL_FAST,
+    refetchInterval: POLL_SLOW, // Relies on SignalR for fast updates
   })
+}
+
+export function useLiveFeedSignalR() {
+  const qc = useQueryClient()
+
+  useEffect(() => {
+    const connection = new HubConnectionBuilder()
+      .withUrl(`${API_BASE_URL}/hubs/livefeed`)
+      .configureLogging(LogLevel.Warning)
+      .withAutomaticReconnect()
+      .build()
+
+    connection.on('ReceiveTick', (tick: any) => {
+      qc.setQueryData(['quotes', 'all'], (old: LiveQuote[] | undefined) => {
+        if (!old) return old
+        // Avoid recreating array if tick symbol doesn't exist in quotes
+        const exists = old.some(q => q.symbol === tick.symbol);
+        if (!exists) return old;
+        
+        return old.map((q) => {
+          if (q.symbol === tick.symbol) {
+            return {
+              ...q,
+              lastTradedPrice: tick.lastTradedPrice ?? q.lastTradedPrice,
+              bidPrice: tick.bidPrice ?? q.bidPrice,
+              askPrice: tick.askPrice ?? q.askPrice,
+              volume: tick.volume ?? q.volume,
+              updatedUtc: tick.exchangeTimestampUtc ?? new Date().toISOString(),
+            }
+          }
+          return q
+        })
+      })
+    })
+
+    let isMounted = true
+
+    connection.start().catch((err) => {
+      if (isMounted) console.error(err)
+    })
+
+    return () => {
+      isMounted = false
+      connection.stop()
+    }
+  }, [qc])
 }
 
 export function useLiveBars(symbol: string | null, take = 500) {

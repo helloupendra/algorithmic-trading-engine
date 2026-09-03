@@ -2,6 +2,8 @@ using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Application.UseCases.LiveData;
 using AlgoTrading.Contracts.LiveData;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
+using AlgoTrading.Api.Hubs;
 
 namespace AlgoTrading.Api.Controllers;
 
@@ -29,7 +31,7 @@ public class LiveDataController : ControllerBase
     private readonly UpsertLiveTickUseCase _upsertLiveTickUseCase;
     private readonly GetRecentTicksUseCase _getRecentTicksUseCase;
     private readonly GetRecentBarsUseCase _getRecentBarsUseCase;
-
+    private readonly IHubContext<LiveFeedHub> _hubContext;
 
     public LiveDataController(
         GetWatchlistUseCase getWatchlistUseCase,
@@ -44,9 +46,11 @@ public class LiveDataController : ControllerBase
         GetStaleQuotesUseCase getStaleQuotesUseCase,
         UpsertLiveTickUseCase upsertLiveTickUseCase,
         GetRecentTicksUseCase getRecentTicksUseCase,
-        GetRecentBarsUseCase getRecentBarsUseCase)
+        GetRecentBarsUseCase getRecentBarsUseCase,
+        IHubContext<LiveFeedHub> hubContext)
     {
         _getWatchlistUseCase = getWatchlistUseCase;
+        _hubContext = hubContext;
         _upsertWatchlistItemUseCase = upsertWatchlistItemUseCase;
         _removeWatchlistItemUseCase = removeWatchlistItemUseCase;
         _getLatestQuoteUseCase = getLatestQuoteUseCase;
@@ -183,6 +187,7 @@ public class LiveDataController : ControllerBase
             return BadRequest(new { message = "Symbol is required." });
 
         await _upsertLiveTickUseCase.ExecuteAsync(request, cancellationToken);
+        await _hubContext.Clients.All.SendAsync("ReceiveTick", request, cancellationToken);
         return Ok(new { message = "Live tick appended successfully." });
     }
 

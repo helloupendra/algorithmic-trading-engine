@@ -426,6 +426,7 @@ if __name__ == "__main__":
                     warmup_bars = bars[-500:] if len(bars) > 500 else bars
                     print(f"[{args.underlying}] Feeding {len(warmup_bars)} bars into strategy warmup...")
                     
+                    cumulative_frames = []
                     for b in warmup_bars:
                         # Map BarData to BarFrame
                         frame = BarFrame(
@@ -438,6 +439,7 @@ if __name__ == "__main__":
                             close=b.close,
                             volume=b.volume
                         )
+                        cumulative_frames.append(frame)
                         
                         inp = StrategyInput(
                             mode="LivePaper",
@@ -446,7 +448,7 @@ if __name__ == "__main__":
                             spot_price=frame.close,
                             atm_strike=int(round(frame.close / 100) * 100),
                             contracts={},
-                            bars={req.resolution: {"index": [frame]}},
+                            bars={req.resolution: {"index": list(cumulative_frames)}},
                             metadata={"source": "warmup"}
                         )
                         strategy.on_bar(state, inp)
@@ -537,7 +539,7 @@ if __name__ == "__main__":
                                     low=float(b.get("low", 0.0)),
                                     close=float(b.get("close", 0.0)),
                                     volume=float(b.get("volumeDelta", 0.0))
-                                ) for b in raw_idx]
+                                ) for b in reversed(raw_idx)]
 
                         # 2. Fetch for atm_ce
                         elif sym_type == "atm_ce" and atm_ce:
@@ -552,7 +554,7 @@ if __name__ == "__main__":
                                     low=float(b.get("low", 0.0)),
                                     close=float(b.get("close", 0.0)),
                                     volume=float(b.get("volumeDelta", 0.0))
-                                ) for b in raw_ce]
+                                ) for b in reversed(raw_ce)]
 
                         # 3. Fetch for atm_pe
                         elif sym_type == "atm_pe" and atm_pe:
@@ -567,7 +569,7 @@ if __name__ == "__main__":
                                     low=float(b.get("low", 0.0)),
                                     close=float(b.get("close", 0.0)),
                                     volume=float(b.get("volumeDelta", 0.0))
-                                ) for b in raw_pe]
+                                ) for b in reversed(raw_pe)]
                         
                         
                 except Exception as ex:

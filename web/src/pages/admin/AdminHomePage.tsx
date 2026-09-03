@@ -49,8 +49,8 @@ export function AdminHomePage() {
         />
         <StatTile
           label="Live feed"
-          value={process.data?.isRunning ? 'Running' : 'Stopped'}
-          tone={process.data?.isRunning ? (healthy === feeds.length ? 'pos' : 'warn') : undefined}
+          value={(process.data?.isRunning || healthy > 0) ? 'Running' : 'Stopped'}
+          tone={(process.data?.isRunning || healthy > 0) ? (healthy === feeds.length && feeds.length > 0 ? 'pos' : 'warn') : undefined}
           sub={feeds.length > 0 ? `${healthy}/${feeds.length} sources healthy` : 'no heartbeat yet'}
           to="/admin/data/live"
         />
