@@ -21,12 +21,20 @@ import {
   useMarketSession,
   useStartStrategy,
 } from '../../lib/queries'
-import { formatInrSigned, formatInrWhole, formatNumber, pnlClass } from '../../lib/format'
+import {
+  formatDateTime,
+  formatInrSigned,
+  formatInrWhole,
+  formatNumber,
+  formatTime,
+  pnlClass,
+} from '../../lib/format'
 import { formatResolution } from '../../lib/symbols'
 import { Badge, InlineError, Loading } from '../../components/ui'
 import { IconChevronDown, IconChevronRight, IconPlay, IconX } from '../../components/icons'
 import type {
   FnoUnderlying,
+  LiveActivity,
   StartStrategyRequest,
   StartStrategyResponse,
   StrategyListItem,
@@ -178,12 +186,19 @@ export function ReadinessStrip() {
 export function StrategyCard({
   strategy,
   onStart,
+  actionLabel = 'Start…',
+  allowWhileActive = false,
 }: {
   strategy: StrategyListItem
   onStart: (strategy: StrategyListItem) => void
+  /** Button text; the Live runner starts, the Backtesting module replays. */
+  actionLabel?: string
+  /** A live run does not block a backtest of the same strategy. */
+  allowWhileActive?: boolean
 }) {
   const s = strategy
   const lots = Math.max(1, s.defaultLots || 1)
+  const blocked = s.isActive && !allowWhileActive
   return (
     <article className={`strategy-card ${s.isActive ? 'strategy-card--running' : ''}`}>
       <div className="strategy-card__head">
@@ -213,16 +228,16 @@ export function StrategyCard({
         </span>
         <button
           type="button"
-          className={`btn btn--sm ${s.isActive ? '' : 'btn--primary'}`}
-          disabled={s.isActive}
+          className={`btn btn--sm ${blocked ? '' : 'btn--primary'}`}
+          disabled={blocked}
           onClick={() => onStart(s)}
-          title={s.isActive ? 'Already running — stop it first' : undefined}
+          title={blocked ? 'Already running — stop it first' : undefined}
         >
-          {s.isActive ? (
+          {blocked ? (
             'Running'
           ) : (
             <>
-              <IconPlay style={{ width: 13, height: 13 }} /> Start…
+              <IconPlay style={{ width: 13, height: 13 }} /> {actionLabel}
             </>
           )}
         </button>
@@ -233,26 +248,33 @@ export function StrategyCard({
 
 /* ------------------------------------------------------- parameter editing */
 
-interface ParamRow {
+export interface ParamRow {
   key: string
   value: string
 }
 
-function parseParamDefaults(json: string): ParamRow[] {
+/**
+ * Parameter rows from a JSON object string. `omit` drops keys the dialog
+ * shows as dedicated fields (a backtest's parametersJson also carries lots,
+ * stop_loss, … which must not appear twice).
+ */
+export function parseParamDefaults(json: string, omit?: ReadonlySet<string>): ParamRow[] {
   try {
     const obj = JSON.parse(json || '{}') as Record<string, unknown>
     if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return []
-    return Object.entries(obj).map(([key, value]) => ({
-      key,
-      value: typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value),
-    }))
+    return Object.entries(obj)
+      .filter(([key]) => !omit || !omit.has(key))
+      .map(([key, value]) => ({
+        key,
+        value: typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value),
+      }))
   } catch {
     return []
   }
 }
 
 /** "70" -> 70, "true" -> true, anything else stays a string (as on DeployPage). */
-function coerceParam(value: string): unknown {
+export function coerceParam(value: string): unknown {
   const trimmed = value.trim()
   if (trimmed === 'true') return true
   if (trimmed === 'false') return false
@@ -260,7 +282,15 @@ function coerceParam(value: string): unknown {
   return trimmed
 }
 
-function ParamGrid({ rows, onChange }: { rows: ParamRow[]; onChange: (rows: ParamRow[]) => void }) {
+/** Non-empty rows as the `parameters` object the start endpoints accept. */
+export function paramsToObject(rows: ParamRow[]): Record<string, unknown> | null {
+  const entries = rows
+    .filter((p) => p.key.trim() !== '')
+    .map((p) => [p.key.trim(), coerceParam(p.value)] as const)
+  return entries.length > 0 ? Object.fromEntries(entries) : null
+}
+
+export function ParamGrid({ rows, onChange }: { rows: ParamRow[]; onChange: (rows: ParamRow[]) => void }) {
   return (
     <div>
       {rows.length === 0 && (
@@ -313,7 +343,7 @@ function ParamGrid({ rows, onChange }: { rows: ParamRow[]; onChange: (rows: Para
 
 /* ------------------------------------------------------------ launch dialog */
 
-function UnderlyingPicker({
+export function UnderlyingPicker({
   list,
   supported,
   value,
@@ -362,6 +392,150 @@ function UnderlyingPicker({
   )
 }
 
+/** Left column of the launch/backtest dialogs: what the strategy is. */
+export function StrategyAside({ strategy, titleId }: { strategy: StrategyListItem; titleId: string }) {
+  return (
+    <aside className="modal__aside">
+      <div>
+        <h2 className="modal__title" id={titleId}>
+          {strategy.name}
+        </h2>
+        <div className="chip-row" style={{ marginTop: 6 }}>
+          <CategoryBadge category={strategy.category} />
+          {strategy.instrumentKind && <Badge tone="neutral">{strategy.instrumentKind}</Badge>}
+        </div>
+      </div>
+      <p className="card__muted" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+        {strategy.description || 'No description provided by the strategy.'}
+      </p>
+      <dl className="detail-list">
+        <div>
+          <dt>Legs</dt>
+          <dd className="mono">{strategy.legsSummary || '—'}</dd>
+        </div>
+        <div>
+          <dt>Data needs</dt>
+          <dd>
+            {strategy.dataRequirements.length === 0
+              ? '—'
+              : strategy.dataRequirements
+                  .map((d) => `${d.symbolType} @ ${formatResolution(d.resolution)}`)
+                  .join(', ')}
+          </dd>
+        </div>
+        <div>
+          <dt>Supported underlyings</dt>
+          <dd className="mono">
+            {strategy.supportedUnderlyings.length === 0 ? '—' : strategy.supportedUnderlyings.join(', ')}
+          </dd>
+        </div>
+        <div>
+          <dt>Source</dt>
+          <dd className="mono">{strategy.sourceFile || '—'}</dd>
+        </div>
+      </dl>
+    </aside>
+  )
+}
+
+/** Escape closes the dialog; the card takes focus on mount. */
+export function useDialogChrome(onClose: () => void) {
+  const cardRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+  useEffect(() => {
+    cardRef.current?.focus()
+  }, [])
+  return cardRef
+}
+
+/* ------------------------------------------------ run-card building blocks */
+
+export function activityTone(type: string): 'pos' | 'neg' | 'warn' | 'neutral' | 'accent' {
+  const t = type.toUpperCase()
+  if (t === 'RUN_STOPPED' || t === 'SKIPPED' || t === 'SKIP') return 'warn'
+  if (t.startsWith('OPEN') || t === 'BUY') return 'pos'
+  if (t.startsWith('CLOSE') || t === 'SELL') return 'neg'
+  if (t.startsWith('ADJUST')) return 'accent'
+  return 'neutral'
+}
+
+/** Signals of a run, newest first. `showDate` for multi-day (backtest) runs. */
+export function ActivityList({ items, showDate }: { items: LiveActivity[]; showDate?: boolean }) {
+  if (items.length === 0) return <p className="empty">No signals recorded for this run yet.</p>
+  return (
+    <ul className={`activity ${showDate ? 'activity--dated' : ''}`}>
+      {items.map((a, i) => (
+        <li key={`${a.atUtc}-${i}`} className="activity__item">
+          <span className="activity__time">{showDate ? formatDateTime(a.atUtc) : formatTime(a.atUtc)}</span>
+          <Badge tone={activityTone(a.type)}>{a.type}</Badge>
+          <span className="activity__text" title={a.groupId ? `${a.text} · group ${a.groupId}` : a.text}>
+            {a.text}
+          </span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** Collapsible sub-section of a run card (activity, runner output, …). */
+export function Disclosure({
+  label,
+  open,
+  onToggle,
+  children,
+}: {
+  label: string
+  open: boolean
+  onToggle: () => void
+  children: ReactNode
+}) {
+  return (
+    <div className="run-card__section">
+      <button type="button" className="disclosure__btn" onClick={onToggle} aria-expanded={open}>
+        {open ? <IconChevronDown /> : <IconChevronRight />}
+        {label}
+      </button>
+      {open && <div className="disclosure__body">{children}</div>}
+    </div>
+  )
+}
+
+/** Terminal-styled log box that follows its tail as lines arrive. */
+export function ConsoleOutput({
+  lines,
+  placeholder,
+  title = 'Runner process output',
+}: {
+  lines: string[]
+  placeholder: string
+  title?: string
+}) {
+  const bodyRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = bodyRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [lines.length])
+  return (
+    <div className="console">
+      <div className="console__bar">
+        <span className="console__dot console__dot--r" />
+        <span className="console__dot console__dot--y" />
+        <span className="console__dot console__dot--g" />
+        <span className="console__title">{title}</span>
+      </div>
+      <div className={`console__body ${lines.length === 0 ? 'faint' : ''}`} ref={bodyRef}>
+        {lines.length === 0 ? placeholder : lines.map((line, i) => <div key={i}>{line}</div>)}
+      </div>
+    </div>
+  )
+}
+
 /**
  * Modal launcher. Closes on Escape, on backdrop click and on Cancel; on a
  * successful start it reports the response and closes.
@@ -378,7 +552,7 @@ export function LaunchDialog({
   const underlyings = useFnoUnderlyings()
   const start = useStartStrategy()
   const readiness = useReadiness()
-  const cardRef = useRef<HTMLDivElement>(null)
+  const cardRef = useDialogChrome(onClose)
 
   const supported = useMemo(
     () => new Set(strategy.supportedUnderlyings.map((u) => u.toUpperCase())),
@@ -404,18 +578,6 @@ export function LaunchDialog({
   useEffect(() => {
     if (underlying == null && firstSupported) setUnderlying(firstSupported.underlying)
   }, [underlying, firstSupported])
-
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
-
-  useEffect(() => {
-    cardRef.current?.focus()
-  }, [])
 
   const lotsNum = Number(lots)
   const units = chosen && Number.isInteger(lotsNum) && lotsNum > 0 ? lotsNum * chosen.lotSize : null
@@ -445,15 +607,12 @@ export function LaunchDialog({
       setValidation('Capital must be a positive amount.')
       return
     }
-    const entries = params
-      .filter((p) => p.key.trim() !== '')
-      .map((p) => [p.key.trim(), coerceParam(p.value)] as const)
     const body: StartStrategyRequest = {
       underlying: chosen.underlying,
       lots: lotsNum,
       stopLoss: sl,
       target: tg,
-      parameters: entries.length > 0 ? Object.fromEntries(entries) : null,
+      parameters: paramsToObject(params),
       initialCapital: cap,
     }
     start.mutate(
@@ -501,46 +660,7 @@ export function LaunchDialog({
         tabIndex={-1}
         ref={cardRef}
       >
-        <aside className="modal__aside">
-          <div>
-            <h2 className="modal__title" id="launch-title">
-              {strategy.name}
-            </h2>
-            <div className="chip-row" style={{ marginTop: 6 }}>
-              <CategoryBadge category={strategy.category} />
-              {strategy.instrumentKind && <Badge tone="neutral">{strategy.instrumentKind}</Badge>}
-            </div>
-          </div>
-          <p className="card__muted" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
-            {strategy.description || 'No description provided by the strategy.'}
-          </p>
-          <dl className="detail-list">
-            <div>
-              <dt>Legs</dt>
-              <dd className="mono">{strategy.legsSummary || '—'}</dd>
-            </div>
-            <div>
-              <dt>Data needs</dt>
-              <dd>
-                {strategy.dataRequirements.length === 0
-                  ? '—'
-                  : strategy.dataRequirements
-                      .map((d) => `${d.symbolType} @ ${formatResolution(d.resolution)}`)
-                      .join(', ')}
-              </dd>
-            </div>
-            <div>
-              <dt>Supported underlyings</dt>
-              <dd className="mono">
-                {strategy.supportedUnderlyings.length === 0 ? '—' : strategy.supportedUnderlyings.join(', ')}
-              </dd>
-            </div>
-            <div>
-              <dt>Source</dt>
-              <dd className="mono">{strategy.sourceFile || '—'}</dd>
-            </div>
-          </dl>
-        </aside>
+        <StrategyAside strategy={strategy} titleId="launch-title" />
 
         <div className="modal__body">
           <div className="modal__head">

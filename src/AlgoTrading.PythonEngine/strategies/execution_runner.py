@@ -36,6 +36,23 @@ from typing import List, Dict, Any, Optional
 from messaging.redis_subscriber import build_subscriber_from_env
 from strategies.base_strategy import StrategyInput, StrategySignal, OptionContract, BaseStrategy, BarFrame
 from strategies.registry import discover_strategies
+# Shared helpers live in importable modules (also used by the backtest engine);
+# they are re-exported here so existing `execution_runner.<name>` references work.
+from strategies.contract_selector import (  # noqa: F401
+    DEFAULT_STRIKE_STEP,
+    FALLBACK_STRIKE_STEPS,
+    fallback_strike_step,
+    format_strike,
+    map_contract,
+    round_to_step,
+    strike_step_from_chain,
+)
+from strategies.signal_utils import (  # noqa: F401
+    count_open_groups,
+    parse_optional_number,
+    signal_to_request,
+    stamp_signal_metadata,
+)
 
 import core.fyers_orders as fyers_orders
 
@@ -84,56 +101,6 @@ def round_to_100(price: float) -> int:
     return int(round(price / 100.0) * 100)
 
 
-# Strike step per underlying when the option chain cannot be read from the API.
-# Kept as floats end-to-end: stock options trade on 2.5 / 0.5 point grids, and
-# the API (decimal strikeStep) and the launch dialog report exactly that value,
-# so the runner must land on the same grid.
-FALLBACK_STRIKE_STEPS: Dict[str, float] = {
-    "NIFTY": 50.0,
-    "BANKNIFTY": 100.0,
-    "FINNIFTY": 50.0,
-    "MIDCPNIFTY": 25.0,
-    "SENSEX": 100.0,
-}
-DEFAULT_STRIKE_STEP = 50.0
-
-
-def fallback_strike_step(underlying: str) -> float:
-    return FALLBACK_STRIKE_STEPS.get((underlying or "").upper(), DEFAULT_STRIKE_STEP)
-
-
-def strike_step_from_chain(chain: List[Dict[str, Any]]) -> Optional[float]:
-    """
-    Smallest positive gap between consecutive distinct strikes of one expiry,
-    as a float so fractional grids survive (same rule as the C# underlyings
-    endpoint). Returns None when the chain has fewer than two usable strikes.
-    """
-    strikes = set()
-    for row in chain or []:
-        raw = row.get("strikePrice")
-        if raw is None:
-            continue
-        try:
-            value = float(raw)
-        except (TypeError, ValueError):
-            continue
-        if value > 0:
-            strikes.add(value)
-
-    ordered = sorted(strikes)
-    if len(ordered) < 2:
-        return None
-
-    gaps = [b - a for a, b in zip(ordered, ordered[1:]) if b - a > 0]
-    if not gaps:
-        return None
-    step = min(gaps)
-    if step <= 0:
-        return None
-    # Six decimals is far below any exchange tick; it only removes float noise.
-    return round(step, 6)
-
-
 def resolve_strike_step(api: PlatformApiClient, underlying: str, expiry_date: str) -> float:
     """Strike step derived from the option chain, else the per-underlying fallback."""
     try:
@@ -148,63 +115,6 @@ def resolve_strike_step(api: PlatformApiClient, underlying: str, expiry_date: st
     step = fallback_strike_step(underlying)
     print(f"[{underlying}] Using fallback strike step {format_strike(step)}")
     return step
-
-
-def round_to_step(price: float, step: float) -> float:
-    """
-    Nearest strike on the underlying's grid. Returns an int when the grid is
-    whole-point (57600, not 57600.0) so symbols and log lines stay readable,
-    and a float (102.5) on fractional grids.
-    """
-    step = float(step) if step and step > 0 else DEFAULT_STRIKE_STEP
-    strike = round(round(price / step) * step, 6)
-    if float(strike).is_integer():
-        return int(strike)
-    return strike
-
-
-def format_strike(value: float) -> str:
-    """102.5 stays 102.5; 57600.0 prints as 57600."""
-    return str(int(value)) if float(value).is_integer() else f"{value:g}"
-
-
-def parse_optional_number(value: Any) -> Optional[float]:
-    """Float for numeric-looking values, None for null/blank/garbage."""
-    if value is None:
-        return None
-    if isinstance(value, str) and not value.strip():
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def count_open_groups(state: Dict[str, Any]) -> int:
-    """
-    Best-effort count of open position groups from a strategy's state, using
-    the conventions the bundled strategies follow. Unknown layouts yield 0.
-    """
-    if not isinstance(state, dict):
-        return 0
-    for key in ("open_groups", "active_groups", "groups"):
-        value = state.get(key)
-        if isinstance(value, (list, dict, set, tuple)):
-            return len(value)
-    if state.get("current_group_id"):
-        return 1
-    if state.get("is_invested") and state.get("group_id"):
-        return 1
-    return 0
-
-
-def stamp_signal_metadata(sig: StrategySignal, inp: StrategyInput) -> None:
-    """Every published signal carries its reason and the market context it fired in."""
-    if sig.metadata is None:
-        sig.metadata = {}
-    sig.metadata["reason"] = sig.reason
-    sig.metadata["spot_price"] = inp.spot_price
-    sig.metadata["atm_strike"] = inp.atm_strike
 
 
 def install_signal_handlers() -> None:
@@ -223,18 +133,6 @@ def install_signal_handlers() -> None:
         except (ValueError, OSError):
             # Not the main thread / unsupported platform: keep the default behaviour.
             pass
-
-
-def map_contract(raw: Dict[str, Any]) -> OptionContract:
-    return OptionContract(
-        symbol=raw["symbol"],
-        underlying=raw.get("underlying", ""),
-        expiry_date=str(raw.get("expiryDate", "")),
-        strike_price=float(raw.get("strikePrice") or 0),
-        option_type=raw.get("optionType", ""),
-        instrument_type=raw.get("instrumentType", ""),
-        description=raw.get("description", ""),
-    )
 
 
 def print_signals(signals: List[StrategySignal]) -> None:
@@ -355,19 +253,6 @@ def enrich_signal_leg_prices(api: PlatformApiClient, sig: StrategySignal, expiry
     sig.legs = enriched_legs
     return sig
 
-
-def signal_to_request(simulation_run_id: int, sig: StrategySignal) -> Dict[str, Any]:
-    group_id = sig.metadata.get("group_id", "")
-
-    return {
-        "simulationRunId": simulation_run_id,
-        "strategyName": sig.strategy_name,
-        "signalType": sig.signal_type,
-        "timestampUtc": sig.timestamp_utc,
-        "groupId": group_id,
-        "metadataJson": json.dumps(sig.metadata),
-        "legs": sig.legs,
-    }
 
 def wait_for_contract_price(api: PlatformApiClient, symbol: str, retries: int = 10, delay_seconds: int = 1) -> Optional[float]:
     """

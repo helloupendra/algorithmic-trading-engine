@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Infrastructure.Config;
+using AlgoTrading.Infrastructure.Services;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -52,9 +53,9 @@ namespace AlgoTrading.Infrastructure.Brokers.Fyers
             string rangeFrom = new DateTimeOffset(fromUtc).ToUnixTimeSeconds().ToString();
             string rangeTo = new DateTimeOffset(toUtc).ToUnixTimeSeconds().ToString();
 
-            string fyersRes = resolution.EndsWith("m", StringComparison.OrdinalIgnoreCase)
-                ? resolution.Substring(0, resolution.Length - 1)
-                : resolution;
+            // FYERS takes the canonical codes ("1", "5", "15", "D"); any spelling
+            // the caller used ("5m", "1M") is normalised here.
+            string fyersRes = ResolutionCodes.ToCandle(resolution);
 
             var queryParams = new Dictionary<string, string?>
             {

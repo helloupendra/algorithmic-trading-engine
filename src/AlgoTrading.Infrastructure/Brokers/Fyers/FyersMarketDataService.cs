@@ -5,6 +5,7 @@ using AlgoTrading.Contracts.MarketData;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Config;
 using AlgoTrading.Infrastructure.Persistence;
+using AlgoTrading.Infrastructure.Services;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -202,6 +203,16 @@ public class FyersMarketDataService : IMarketDataService
         int updatedCount = 0;
         int skippedCount = 0;
 
+        // FYERS occasionally repeats a bar (the in-progress candle is sent twice
+        // around a range boundary). Two rows with the same timestamp in one
+        // AddRange would trip the (Symbol, Resolution, TimeStampUtc) unique
+        // index and roll the whole batch back, so keep the last copy of each.
+        entitiesToInsert = entitiesToInsert
+            .GroupBy(x => x.TimeStampUtc)
+            .Select(g => g.Last())
+            .OrderBy(x => x.TimeStampUtc)
+            .ToList();
+
         if(entitiesToInsert.Count > 0)
         {
             var timestamps = entitiesToInsert.Select(x => x.TimeStampUtc).ToList();
@@ -275,19 +286,13 @@ public class FyersMarketDataService : IMarketDataService
         return result;
     }
 
+    /// <summary>
+    /// Canonical candle code via <see cref="ResolutionCodes"/>: "5m"/"5"/"5M" → "5",
+    /// "1m" → "1", "1D" → "D". FYERS history accepts exactly these codes, and it is
+    /// what the candles table stores.
+    /// </summary>
     private static string NormalizeResolution(string resolution)
-    {
-        if (string.IsNullOrWhiteSpace(resolution))
-            return "D";
-
-        string value = resolution.Trim().ToUpperInvariant();
-
-        return value switch
-        {
-            "1D" => "D",
-            _ => value
-        };
-    }
+        => ResolutionCodes.ToCandle(resolution);
 
     public async Task<IReadOnlyList<CandleResponse>> GetStoredHistoryAsync(
         GetStoredCandlesRequest request,

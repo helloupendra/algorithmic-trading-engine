@@ -33,6 +33,7 @@ from strategies.base_strategy import BaseStrategy
 NON_STRATEGY_MODULES = frozenset({
     "strategies.execution_runner",
     "strategies.contract_selector",
+    "strategies.signal_utils",
 })
 
 StrategyFactory = Callable[..., BaseStrategy]

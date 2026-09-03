@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
+using AlgoTrading.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace AlgoTrading.Infrastructure.Persistence
@@ -28,17 +29,28 @@ namespace AlgoTrading.Infrastructure.Persistence
             if (candles == null || candles.Count == 0)
                 return result;
 
-            var entitiesToInsert = candles.Select(c => new Candle
-            {
-                Symbol = symbol,
-                Resolution = resolution,
-                TimeStampUtc = c.TimestampUtc,
-                Open = c.Open,
-                High = c.High,
-                Low = c.Low,
-                Close = c.Close,
-                Volume = (long)c.Volume
-            }).ToList();
+            // Stored under the canonical code so a "1m" option backfill and a "1"
+            // index sync land under the same key.
+            resolution = ResolutionCodes.ToCandle(resolution);
+
+            // Keep the last copy of any repeated timestamp: two entities with the
+            // same key in one AddRange violate the unique index and roll back
+            // the whole batch.
+            var entitiesToInsert = candles
+                .GroupBy(c => c.TimestampUtc)
+                .Select(g => g.Last())
+                .OrderBy(c => c.TimestampUtc)
+                .Select(c => new Candle
+                {
+                    Symbol = symbol,
+                    Resolution = resolution,
+                    TimeStampUtc = c.TimestampUtc,
+                    Open = c.Open,
+                    High = c.High,
+                    Low = c.Low,
+                    Close = c.Close,
+                    Volume = (long)c.Volume
+                }).ToList();
 
             var timestamps = entitiesToInsert.Select(x => x.TimeStampUtc).ToList();
 

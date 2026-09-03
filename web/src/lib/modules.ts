@@ -10,11 +10,13 @@ import {
   IconBell,
   IconBot,
   IconCandles,
+  IconClock,
   IconDatabase,
   IconFlask,
   IconLayers,
   IconPlay,
   IconPlug,
+  IconPlus,
   IconPulse,
   IconServer,
   IconShield,
@@ -62,11 +64,11 @@ export const MODULES: ModuleDef[] = [
   {
     key: 'backtesting',
     name: 'Backtesting',
-    description: 'Simulation runs, replays and performance reports.',
+    description: 'Replay any strategy over stored history: coverage-first, position-based results.',
     icon: IconFlask,
-    route: '/trader/strategies',
-    status: 'legacy',
-    adminOnly: false,
+    route: '/admin/backtesting',
+    status: 'ready',
+    adminOnly: true,
   },
   {
     key: 'risk',
@@ -162,6 +164,28 @@ export const STRATEGIES_SECTIONS = [
     route: '/admin/strategies/library',
     label: 'Library',
     icon: IconLayers,
+    end: false,
+  },
+] as const
+
+/** Sub-navigation of the Backtesting module. */
+export const BACKTESTING_SECTIONS = [
+  {
+    route: '/admin/backtesting',
+    label: 'Overview',
+    icon: IconFlask,
+    end: true,
+  },
+  {
+    route: '/admin/backtesting/new',
+    label: 'New backtest',
+    icon: IconPlus,
+    end: false,
+  },
+  {
+    route: '/admin/backtesting/runs',
+    label: 'Runs',
+    icon: IconClock,
     end: false,
   },
 ] as const

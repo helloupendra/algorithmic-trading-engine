@@ -3,8 +3,6 @@ using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
-using System.Diagnostics;
-using System.Runtime.InteropServices;
 using System.Text.Json;
 
 namespace AlgoTrading.Api.Services;
@@ -29,11 +27,7 @@ public sealed class StrategyRunControl
     public const string RunStatusStopping = "Stopping";
     public const string RunStatusStopped = "Stopped";
 
-    private static readonly TimeSpan GracefulExitTimeout = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan ForcedExitTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan MonitorSettleTimeout = TimeSpan.FromSeconds(2);
-
-    private const int SigTerm = 15;
 
     private readonly TradingDbContext _dbContext;
     private readonly IPaperTradingService _paperTradingService;
@@ -260,78 +254,16 @@ public sealed class StrategyRunControl
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// SIGTERM first (the runner's handler prints "[RUNNER] stopping: SIGTERM"
-    /// and releases its Redis lock in its finally block), wait for a graceful
-    /// exit, then SIGKILL the whole tree if it is still alive. Windows has no
-    /// SIGTERM, so it goes straight to Kill.
+    /// SIGTERM, graceful wait, then SIGKILL of the whole tree — shared with the
+    /// backtest control through <see cref="ProcessTerminator"/>.
     /// </summary>
-    private async Task StopProcessAsync(RunningStrategy entry)
-    {
-        var process = entry.Process;
-        try
-        {
-            if (process.HasExited) return;
-
-            if (!OperatingSystem.IsWindows() && TrySendSigterm(entry))
-            {
-                _registry.AppendLog(entry.StrategyId, "sent SIGTERM to the runner");
-                if (await WaitForExitAsync(process, GracefulExitTimeout))
-                {
-                    return;
-                }
-                _logger.LogWarning("Strategy {StrategyId} runner ignored SIGTERM for {Seconds}s; killing the process tree.",
-                    entry.StrategyId, GracefulExitTimeout.TotalSeconds);
-                _registry.AppendLog(entry.StrategyId, "runner did not exit on SIGTERM; killing");
-            }
-
-            if (process.HasExited) return;
-
-            // entireProcessTree: the runner may have spawned children that would
-            // otherwise keep trading after the parent dies.
-            process.Kill(entireProcessTree: true);
-            if (!await WaitForExitAsync(process, ForcedExitTimeout))
-            {
-                _logger.LogError("Strategy {StrategyId} runner pid {Pid} is still alive after SIGKILL.", entry.StrategyId, entry.ProcessId);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Error stopping strategy {StrategyId} process.", entry.StrategyId);
-        }
-    }
-
-    private bool TrySendSigterm(RunningStrategy entry)
-    {
-        int pid = entry.ProcessId;
-        if (pid <= 0)
-        {
-            try { pid = entry.Process.Id; } catch { return false; }
-        }
-
-        try
-        {
-            return SysKill(pid, SigTerm) == 0;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "kill(2) unavailable; falling back to Process.Kill for strategy {StrategyId}.", entry.StrategyId);
-            return false;
-        }
-    }
-
-    private static async Task<bool> WaitForExitAsync(Process process, TimeSpan timeout)
-    {
-        using var cts = new CancellationTokenSource(timeout);
-        try
-        {
-            await process.WaitForExitAsync(cts.Token);
-            return true;
-        }
-        catch (OperationCanceledException)
-        {
-            try { return process.HasExited; } catch { return false; }
-        }
-    }
+    private Task StopProcessAsync(RunningStrategy entry)
+        => ProcessTerminator.StopAsync(
+            entry.Process,
+            entry.ProcessId,
+            line => _registry.AppendLog(entry.StrategyId, line),
+            _logger,
+            $"strategy {entry.StrategyId}");
 
     /// <summary>
     /// Releases the Process (stdout/stderr readers, exit-event registration)
@@ -354,7 +286,4 @@ public sealed class StrategyRunControl
             _logger.LogDebug(ex, "Disposing the process of strategy {StrategyId} failed.", entry.StrategyId);
         }
     }
-
-    [DllImport("libc", EntryPoint = "kill", SetLastError = true)]
-    private static extern int SysKill(int pid, int signal);
 }

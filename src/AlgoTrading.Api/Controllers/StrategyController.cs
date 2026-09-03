@@ -42,6 +42,7 @@ public class StrategyController : ControllerBase
     private readonly PythonEngineLocator _engine;
     private readonly IPaperTradingService _paperTrading;
     private readonly ILotSizeResolver _lotSizeResolver;
+    private readonly PositionViewBuilder _positionViews;
     private readonly UpsertWatchlistItemUseCase _upsertWatchlistItem;
     private readonly StrategyRunnerOptions _options;
     private readonly ILogger<StrategyController> _logger;
@@ -54,6 +55,7 @@ public class StrategyController : ControllerBase
         PythonEngineLocator engine,
         IPaperTradingService paperTrading,
         ILotSizeResolver lotSizeResolver,
+        PositionViewBuilder positionViews,
         UpsertWatchlistItemUseCase upsertWatchlistItem,
         IOptions<StrategyRunnerOptions> options,
         ILogger<StrategyController> logger)
@@ -65,6 +67,7 @@ public class StrategyController : ControllerBase
         _engine = engine;
         _paperTrading = paperTrading;
         _lotSizeResolver = lotSizeResolver;
+        _positionViews = positionViews;
         _upsertWatchlistItem = upsertWatchlistItem;
         _options = options.Value;
         _logger = logger;
@@ -383,72 +386,14 @@ public class StrategyController : ControllerBase
         view.LotSize = underlyingLot.LotSize;
         view.LotSizeSource = underlyingLot.Source;
 
-        // Positions (marks open ones to market against the latest live quote).
+        // Positions (marks open ones to market against the latest live quote),
+        // decorated by the same builder the backtest results page uses.
         var positions = await _paperTrading.GetPaperPositionsAsync(run.Id, cancellationToken);
+        var built = await _positionViews.BuildAsync<LivePositionResponse>(positions, useLiveQuotes: true, view.SpotSymbol, cancellationToken);
 
-        var symbols = positions.Select(x => x.Symbol).Distinct(StringComparer.Ordinal).ToList();
-        var quoteSymbols = symbols.ToList();
-        if (!string.IsNullOrWhiteSpace(view.SpotSymbol)) quoteSymbols.Add(view.SpotSymbol);
-
-        var quotes = await _dbContext.LiveQuotesLatest.AsNoTracking()
-            .Where(x => quoteSymbols.Contains(x.Symbol))
-            .Select(x => new { x.Symbol, x.LastTradedPrice, x.UpdatedUtc })
-            .ToListAsync(cancellationToken);
-        var quoteBySymbol = quotes
-            .GroupBy(x => x.Symbol, StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
-
-        if (!string.IsNullOrWhiteSpace(view.SpotSymbol) && quoteBySymbol.TryGetValue(view.SpotSymbol, out var spotQuote))
-        {
-            view.SpotLtp = spotQuote.LastTradedPrice;
-            view.SpotUpdatedUtc = spotQuote.UpdatedUtc;
-        }
-
-        var instruments = symbols.Count == 0
-            ? new List<InstrumentLite>()
-            : await _dbContext.Instruments.AsNoTracking()
-                .Where(x => symbols.Contains(x.Symbol))
-                .Select(x => new InstrumentLite(x.Symbol, x.Underlying, x.StrikePrice, x.OptionType, x.ExpiryDate))
-                .ToListAsync(cancellationToken);
-        var instrumentBySymbol = instruments
-            .GroupBy(x => x.Symbol, StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
-
-        var lotSizes = await _lotSizeResolver.ResolveManyAsync(symbols, cancellationToken);
-
-        foreach (var pos in positions)
-        {
-            bool isOpen = string.Equals(pos.Status, "Open", StringComparison.OrdinalIgnoreCase);
-            int lotSize = lotSizes.TryGetValue(pos.Symbol, out var ls) ? ls.LotSize : 1;
-            instrumentBySymbol.TryGetValue(pos.Symbol, out var inst);
-            quoteBySymbol.TryGetValue(pos.Symbol, out var quote);
-
-            int lots = isOpen ? pos.Quantity : 0;
-
-            view.Positions.Add(new LivePositionResponse
-            {
-                Id = pos.Id,
-                GroupId = pos.GroupId,
-                Symbol = pos.Symbol,
-                Contract = BuildContract(pos.Symbol, inst),
-                Side = string.Equals(pos.Direction, "LONG", StringComparison.OrdinalIgnoreCase) ? "BUY" : "SELL",
-                Lots = lots,
-                LotSize = lotSize,
-                Quantity = lots * lotSize,
-                Status = isOpen ? "Open" : "Closed",
-                EntryPrice = pos.AveragePrice,
-                Ltp = isOpen ? (quote?.LastTradedPrice ?? pos.LastMarkPrice) : null,
-                LtpUpdatedUtc = isOpen ? quote?.UpdatedUtc : null,
-                Pnl = isOpen ? pos.UnrealizedPnl : pos.RealizedPnl,
-                OpenedUtc = pos.OpenedUtc,
-                ClosedUtc = pos.ClosedUtc
-            });
-        }
-
-        view.Positions = view.Positions
-            .OrderBy(x => x.Status == "Open" ? 0 : 1)
-            .ThenByDescending(x => x.OpenedUtc)
-            .ToList();
+        view.SpotLtp = built.SpotLtp;
+        view.SpotUpdatedUtc = built.SpotUpdatedUtc;
+        view.Positions = built.Positions;
 
         view.Pnl.Realized = positions.Sum(x => x.RealizedPnl);
         view.Pnl.Unrealized = positions
@@ -731,36 +676,6 @@ public class StrategyController : ControllerBase
         };
     }
 
-    private sealed record InstrumentLite(string Symbol, string Underlying, decimal? StrikePrice, string OptionType, DateOnly? ExpiryDate);
-
-    private static ContractInfo BuildContract(string symbol, InstrumentLite? inst)
-    {
-        var parsed = UnderlyingCatalog.ParseOptionSymbol(symbol);
-
-        var underlying = !string.IsNullOrWhiteSpace(inst?.Underlying)
-            ? inst!.Underlying.Trim().ToUpperInvariant()
-            : parsed?.Underlying ?? UnderlyingCatalog.InferUnderlying(symbol);
-
-        var strike = inst?.StrikePrice is > 0 ? inst.StrikePrice : parsed?.Strike;
-        var optionType = !string.IsNullOrWhiteSpace(inst?.OptionType)
-            ? inst!.OptionType.Trim().ToUpperInvariant()
-            : parsed?.OptionType ?? string.Empty;
-        var expiry = inst?.ExpiryDate ?? parsed?.Expiry;
-
-        bool looksLikeOption = strike.HasValue && (optionType == "CE" || optionType == "PE");
-
-        return new ContractInfo
-        {
-            Underlying = underlying,
-            Strike = strike,
-            OptionType = optionType,
-            ExpiryDate = expiry,
-            Label = looksLikeOption
-                ? UnderlyingCatalog.ContractLabel(underlying, strike, optionType, expiry)
-                : symbol
-        };
-    }
-
     private sealed record RunParams(int? Lots, decimal? StopLoss, decimal? Target, string? Underlying);
 
     /// <summary>
@@ -865,22 +780,5 @@ public class StrategyController : ControllerBase
 
     /// <summary>metadataJson.reason (any casing), or null.</summary>
     private static string? ReadMetadataReason(string? metadataJson)
-    {
-        if (string.IsNullOrWhiteSpace(metadataJson)) return null;
-        try
-        {
-            using var doc = JsonDocument.Parse(metadataJson);
-            if (doc.RootElement.ValueKind != JsonValueKind.Object) return null;
-            foreach (var prop in doc.RootElement.EnumerateObject())
-            {
-                if (!string.Equals(prop.Name, "reason", StringComparison.OrdinalIgnoreCase)) continue;
-                return prop.Value.ValueKind == JsonValueKind.String ? prop.Value.GetString() : prop.Value.GetRawText();
-            }
-        }
-        catch (JsonException)
-        {
-            // Free-form metadata from an older runner; fall through.
-        }
-        return null;
-    }
+        => SignalMetadata.ReadReason(metadataJson);
 }

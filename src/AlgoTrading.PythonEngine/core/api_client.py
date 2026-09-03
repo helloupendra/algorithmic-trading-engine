@@ -39,14 +39,22 @@ class ServiceCredentialsError(RuntimeError):
 
 
 class _TokenProvider:
-    """Fetches and caches the service account's access token, thread-safely."""
+    """
+    Fetches and caches an account's access token, thread-safely. Without
+    explicit credentials it signs in as the engine service account
+    (ENGINE_SERVICE_USERNAME / ENGINE_SERVICE_PASSWORD).
+    """
 
-    def __init__(self) -> None:
+    def __init__(self, username: Optional[str] = None, password: Optional[str] = None) -> None:
         self._token: Optional[str] = None
         self._lock = threading.Lock()
+        self._username = (username or "").strip() or None
+        self._password = password or None
 
-    @staticmethod
-    def _credentials() -> tuple[str, str]:
+    def _credentials(self) -> tuple[str, str]:
+        if self._username and self._password:
+            return self._username, self._password
+
         username = (os.getenv("ENGINE_SERVICE_USERNAME") or "").strip()
         password = os.getenv("ENGINE_SERVICE_PASSWORD") or ""
 
@@ -73,10 +81,12 @@ class _TokenProvider:
             )
 
             if response.status_code == 400 or response.status_code == 401:
-                raise ServiceCredentialsError(
-                    f"Service account '{username}' was rejected by the API. "
-                    "Check ENGINE_SERVICE_PASSWORD in .env matches the account."
+                hint = (
+                    "Check the username/password you passed."
+                    if self._username
+                    else "Check ENGINE_SERVICE_PASSWORD in .env matches the account."
                 )
+                raise ServiceCredentialsError(f"Account '{username}' was rejected by the API. {hint}")
             response.raise_for_status()
 
             token = response.json().get("accessToken")
@@ -95,7 +105,15 @@ _provider = _TokenProvider()
 
 
 class AuthenticatedSession(requests.Session):
-    """A requests.Session that keeps a valid bearer token attached."""
+    """
+    A requests.Session that keeps a valid bearer token attached. By default the
+    shared service-account provider is used; a session built with its own
+    credentials (see PlatformApiClient) carries its own provider.
+    """
+
+    def __init__(self, provider: Optional[_TokenProvider] = None) -> None:
+        super().__init__()
+        self._provider = provider or _provider
 
     def request(self, method: str, url: str, *args: Any, **kwargs: Any) -> requests.Response:  # type: ignore[override]
         # Never attach a token to the login call itself — that would recurse.
@@ -105,21 +123,27 @@ class AuthenticatedSession(requests.Session):
         kwargs.setdefault("verify", VERIFY_SSL)
 
         headers = dict(kwargs.pop("headers", None) or {})
-        headers["Authorization"] = f"Bearer {_provider.get()}"
+        headers["Authorization"] = f"Bearer {self._provider.get()}"
 
         response = super().request(method, url, *args, headers=headers, **kwargs)
 
         # Token expired or the API restarted with a new key: re-login once.
         if response.status_code == 401:
-            _provider.clear()
-            headers["Authorization"] = f"Bearer {_provider.get(force_refresh=True)}"
+            self._provider.clear()
+            headers["Authorization"] = f"Bearer {self._provider.get(force_refresh=True)}"
             response = super().request(method, url, *args, headers=headers, **kwargs)
 
         return response
 
 
-def build_session() -> AuthenticatedSession:
-    """A session that authenticates every request to the trading API."""
+def build_session(username: Optional[str] = None, password: Optional[str] = None) -> AuthenticatedSession:
+    """
+    A session that authenticates every request to the trading API — as the
+    engine service account, or as `username` when credentials are given (the
+    terminal tools sign in as an admin for the admin-only endpoints).
+    """
+    if username and password:
+        return AuthenticatedSession(_TokenProvider(username, password))
     return AuthenticatedSession()
 
 
@@ -143,10 +167,18 @@ def api_put(url: str, **kwargs: Any) -> requests.Response:
     return _shared.put(url, **kwargs)
 
 class PlatformApiClient:
-    def __init__(self, base_url: str, verify_ssl: bool = False):
+    """
+    Typed access to the endpoints the engine uses. Signs in as the engine
+    service account unless `username`/`password` are given — the backtest
+    terminal wrapper passes an admin's credentials because POST
+    /api/Backtest/runs is admin-only and the service account is a Trader.
+    """
+
+    def __init__(self, base_url: str, verify_ssl: bool = False,
+                 username: Optional[str] = None, password: Optional[str] = None):
         self.base_url = base_url.rstrip("/")
         self.verify_ssl = verify_ssl
-        self.http = build_session()
+        self.http = build_session(username, password)
 
     def get_latest_quote(self, symbol: str) -> dict[str, Any]:
         resp = self.http.get(
@@ -221,6 +253,16 @@ class PlatformApiClient:
         resp.raise_for_status()
         return resp.json()
 
+    def get_fno_underlyings(self) -> list[dict[str, Any]]:
+        """F&O inventory: [{underlying, exchange, spotSymbol, lotSize, lotSizeSource, strikeStep, nextExpiry, ...}]."""
+        resp = self.http.get(
+            f"{self.base_url}/api/Instruments/derivatives/underlyings",
+            verify=self.verify_ssl,
+            timeout=60,
+        )
+        resp.raise_for_status()
+        return resp.json() or []
+
     def get_exact_contract(
         self,
         underlying: str,
@@ -274,3 +316,166 @@ class PlatformApiClient:
         )
         resp.raise_for_status()
         return resp.json()
+
+    # --- Historical candles (backtesting) ---------------------------------
+
+    def get_local_history(self, symbol: str, resolution: str, from_date: str, to_date: str) -> list[dict[str, Any]]:
+        """
+        Stored candles for one symbol at a canonical resolution ("5", "D").
+        Dates are yyyy-MM-dd; to_date is inclusive. Rows carry
+        {symbol, resolution, timestampUtc, open, high, low, close, volume}.
+        """
+        resp = self.http.get(
+            f"{self.base_url}/api/MarketData/history/local",
+            params={"symbol": symbol, "resolution": resolution, "fromDate": from_date, "toDate": to_date},
+            verify=self.verify_ssl,
+            timeout=120,
+        )
+        resp.raise_for_status()
+        return resp.json() or []
+
+    def sync_history(self, symbol: str, resolution: str, from_date: str, to_date: str) -> list[dict[str, Any]]:
+        """Pull candles from FYERS into the local store and return them (needs a broker session)."""
+        resp = self.http.post(
+            f"{self.base_url}/api/MarketData/history/sync",
+            json={"symbol": symbol, "resolution": resolution, "fromDate": from_date, "toDate": to_date},
+            verify=self.verify_ssl,
+            timeout=180,
+        )
+        if resp.status_code >= 400:
+            # Surface the API's own reason ("FYERS history API failed. HTTP 422:
+            # Invalid symbol provided" for an expired contract, "No valid FYERS
+            # session" when the broker is not linked) instead of the bare
+            # "400 Client Error" that requests would raise, so callers can branch.
+            detail = ""
+            try:
+                payload = resp.json()
+                if isinstance(payload, dict):
+                    detail = str(payload.get("message") or payload.get("title") or "")
+            except ValueError:
+                detail = resp.text[:300]
+            raise RuntimeError(f"history sync HTTP {resp.status_code}: {detail or resp.reason}")
+        body = resp.json()
+        return body if isinstance(body, list) else []
+
+    def get_broker_session(self) -> dict[str, Any]:
+        """Broker session status ({isAuthenticated, ...}); raises when the API is unreachable."""
+        resp = self.http.get(
+            f"{self.base_url}/api/auth/session",
+            verify=self.verify_ssl,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json() or {}
+
+    # --- Offline-replay bookkeeping (backtest runner -> Simulator) --------
+
+    def post_equity_snapshots(self, run_id: int, items: list[dict[str, Any]]) -> Any:
+        """Bulk insert (<= 5000) of {snapshotUtc, realizedPnl, unrealizedPnl, usedCapital, openPositions, closedPositions}."""
+        resp = self.http.post(
+            f"{self.base_url}/api/Simulator/runs/{run_id}/equity-snapshots",
+            json=items,
+            verify=self.verify_ssl,
+            timeout=120,
+        )
+        resp.raise_for_status()
+        return _json_or_none(resp)
+
+    def post_marks(self, run_id: int, at_utc: str, marks: list[dict[str, Any]]) -> Any:
+        """Mark the run's open positions: {atUtc, marks: [{symbol, price}]}."""
+        resp = self.http.post(
+            f"{self.base_url}/api/Simulator/runs/{run_id}/marks",
+            json={"atUtc": at_utc, "marks": marks},
+            verify=self.verify_ssl,
+            timeout=60,
+        )
+        resp.raise_for_status()
+        return _json_or_none(resp)
+
+    def post_progress(self, run_id: int, progress: dict[str, Any]) -> Any:
+        """{percent, barsProcessed, totalBars, currentUtc, trades, message}; 404 when the run is not running."""
+        resp = self.http.post(
+            f"{self.base_url}/api/Simulator/runs/{run_id}/progress",
+            json=progress,
+            verify=self.verify_ssl,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return _json_or_none(resp)
+
+    def complete_run(self, run_id: int, status: str, summary: dict[str, Any], error: Optional[str] = None) -> Any:
+        """Finish an OfflineReplay run: status "Completed" | "Failed", optional error, summary object."""
+        payload: dict[str, Any] = {"status": status, "summary": summary}
+        if error:
+            payload["error"] = error
+        resp = self.http.post(
+            f"{self.base_url}/api/Simulator/runs/{run_id}/complete",
+            json=payload,
+            verify=self.verify_ssl,
+            timeout=60,
+        )
+        resp.raise_for_status()
+        return _json_or_none(resp)
+
+    # --- Backtest module (terminal wrapper) -------------------------------
+
+    def get_strategy_catalog(self) -> list[dict[str, Any]]:
+        resp = self.http.get(
+            f"{self.base_url}/api/Strategy",
+            verify=self.verify_ssl,
+            timeout=60,
+        )
+        resp.raise_for_status()
+        return resp.json() or []
+
+    def start_backtest(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """POST /api/Backtest/runs -> {runId, message}; raises with the API's message on 4xx."""
+        resp = self.http.post(
+            f"{self.base_url}/api/Backtest/runs",
+            json=payload,
+            verify=self.verify_ssl,
+            timeout=60,
+        )
+        if resp.status_code >= 400:
+            raise RuntimeError(f"{resp.status_code}: {_error_message(resp)}")
+        return resp.json()
+
+    def get_backtest_run(self, run_id: int) -> dict[str, Any]:
+        resp = self.http.get(
+            f"{self.base_url}/api/Backtest/runs/{run_id}",
+            verify=self.verify_ssl,
+            timeout=60,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_backtest_logs(self, run_id: int, take: int = 200) -> list[str]:
+        resp = self.http.get(
+            f"{self.base_url}/api/Backtest/runs/{run_id}/logs",
+            params={"take": take},
+            verify=self.verify_ssl,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json() or []
+
+
+def _json_or_none(resp: requests.Response) -> Any:
+    """Body as JSON when there is one (204 / empty bodies yield None)."""
+    if not resp.content:
+        return None
+    try:
+        return resp.json()
+    except ValueError:
+        return None
+
+
+def _error_message(resp: requests.Response) -> str:
+    """The API's {message} when present, else the raw body / status text."""
+    try:
+        body = resp.json()
+        if isinstance(body, dict):
+            return str(body.get("message") or body.get("title") or body)
+        return str(body)
+    except ValueError:
+        return resp.text.strip() or resp.reason or "request failed"

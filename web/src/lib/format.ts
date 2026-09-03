@@ -1,7 +1,12 @@
 /**
  * Shared display formatting. All prices are INR; all API timestamps are UTC
- * ISO strings and are rendered in the viewer's local time zone (IST for us).
+ * ISO strings and are rendered in IST (Asia/Kolkata) whatever the viewer's
+ * machine is set to — the market, the session bounds, the daily P&L buckets
+ * and the chart axes are all IST, so a browser in another zone must not show
+ * a different clock next to them.
  */
+
+const MARKET_TIME_ZONE = 'Asia/Kolkata'
 
 const inr = new Intl.NumberFormat('en-IN', {
   style: 'currency',
@@ -67,6 +72,7 @@ export function formatDateTime(iso: string | null | undefined): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return '—'
   return d.toLocaleString('en-IN', {
+    timeZone: MARKET_TIME_ZONE,
     day: '2-digit',
     month: 'short',
     hour: '2-digit',
@@ -80,7 +86,7 @@ export function formatTime(iso: string | null | undefined): string {
   if (!iso) return '—'
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return '—'
-  return d.toLocaleTimeString('en-IN', { hour12: false })
+  return d.toLocaleTimeString('en-IN', { timeZone: MARKET_TIME_ZONE, hour12: false })
 }
 
 /** "3m ago", "11d ago" — for freshness chips. */

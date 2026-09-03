@@ -48,6 +48,32 @@ export function formatResolution(resolution: string): string {
   return resolution
 }
 
+/* --- resolution codes ------------------------------------------------------ */
+
+/**
+ * Two spellings exist: the candle-table / API form ("1", "5", "15", "D") and
+ * the strategy-facing form ("1m", "5m", "15m", "1D"). Never compare resolution
+ * strings without going through one of these.
+ */
+export function toCandleResolution(resolution: string): string {
+  const r = resolution.trim().toLowerCase()
+  if (r === 'd' || r === '1d') return 'D'
+  const m = /^(\d+)m?$/.exec(r)
+  return m ? m[1] : resolution.trim()
+}
+
+export function toStrategyResolution(resolution: string): string {
+  const r = resolution.trim().toLowerCase()
+  if (r === 'd' || r === '1d') return '1D'
+  const m = /^(\d+)m?$/.exec(r)
+  return m ? `${m[1]}m` : resolution.trim()
+}
+
+/** Human label for either spelling: "5" -> "5m", "D" -> "1D". */
+export function resolutionLabel(resolution: string): string {
+  return toStrategyResolution(resolution)
+}
+
 /* --- option symbol parsing ------------------------------------------------- */
 
 export interface ParsedOptionSymbol {

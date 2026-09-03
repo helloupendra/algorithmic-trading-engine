@@ -1,5 +1,8 @@
 // src/AlgoTrading.Api/Controllers/SimulatorController.cs
+using AlgoTrading.Api.Services;
+using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Application.UseCases.Simulator;
+using AlgoTrading.Contracts.Backtest;
 using AlgoTrading.Contracts.Simulator;
 using Microsoft.AspNetCore.Mvc;
 
@@ -8,11 +11,17 @@ namespace AlgoTrading.Api.Controllers;
 /// <summary>
 /// Exposes endpoints to manage backtesting and paper trading simulation runs.
 /// Allows starting a run, injecting signals, and reviewing paper portfolios and orders.
+/// The runs/{id}/equity-snapshots, marks, progress and complete endpoints are
+/// the backtest runner's write path (spec §2.4).
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
 public class SimulatorController : ControllerBase
 {
+    private const int MaxEquitySnapshotBatch = 5000;
+
+    private readonly IPaperTradingService _paperTrading;
+    private readonly BacktestProcessRegistry _backtests;
     private readonly CreateSimulationRunUseCase _createSimulationRunUseCase;
     private readonly GetSimulationRunUseCase _getSimulationRunUseCase;
     private readonly GetSimulationRunsUseCase _getSimulationRunsUseCase;
@@ -28,6 +37,8 @@ public class SimulatorController : ControllerBase
     private readonly GetSimulationPerformanceUseCase _getSimulationPerformanceUseCase;
 
     public SimulatorController(
+        IPaperTradingService paperTrading,
+        BacktestProcessRegistry backtests,
         CreateSimulationRunUseCase createSimulationRunUseCase,
         GetSimulationRunUseCase getSimulationRunUseCase,
         GetSimulationRunsUseCase getSimulationRunsUseCase,
@@ -41,7 +52,8 @@ public class SimulatorController : ControllerBase
         GetSimulationEquityCurveUseCase getSimulationEquityCurveUseCase,
         GetSimulationPerformanceUseCase getSimulationPerformanceUseCase)
     {
-
+        _paperTrading = paperTrading;
+        _backtests = backtests;
         _createSimulationRunUseCase = createSimulationRunUseCase;
         _getSimulationRunUseCase = getSimulationRunUseCase;
         _getSimulationRunsUseCase = getSimulationRunsUseCase;
@@ -217,4 +229,94 @@ public class SimulatorController : ControllerBase
         }
     }
 
+    // ------------------------------------------------------------------
+    // Backtest runner write path (OfflineReplay runs)
+    // ------------------------------------------------------------------
+
+    /// <summary>Bulk equity points with HISTORICAL SnapshotUtc; OfflineReplay only; at most 5000 per call.</summary>
+    [HttpPost("runs/{id:long}/equity-snapshots")]
+    public async Task<IActionResult> AddEquitySnapshots(
+        long id,
+        [FromBody] List<EquitySnapshotBatchItem>? items,
+        CancellationToken cancellationToken)
+    {
+        if (items is null)
+            return BadRequest(new { message = "A JSON array of equity snapshots is required." });
+
+        if (items.Count > MaxEquitySnapshotBatch)
+            return BadRequest(new { message = $"At most {MaxEquitySnapshotBatch} equity snapshots per request." });
+
+        try
+        {
+            int inserted = await _paperTrading.AddEquitySnapshotsAsync(id, items, cancellationToken);
+            return Ok(new { inserted });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>Bar-close marks for the run's open positions (LastMarkPrice, UnrealizedPnl, UpdatedUtc = atUtc).</summary>
+    [HttpPost("runs/{id:long}/marks")]
+    public async Task<IActionResult> ApplyMarks(long id, [FromBody] RunMarksRequest? request, CancellationToken cancellationToken)
+    {
+        if (request is null || request.Marks is null)
+            return BadRequest(new { message = "atUtc and marks are required." });
+
+        try
+        {
+            int updated = await _paperTrading.ApplyMarksAsync(id, request, cancellationToken);
+            return Ok(new { updated });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>Runner progress; registry only, no DB write. 404 when the run is not in the registry.</summary>
+    [HttpPost("runs/{id:long}/progress")]
+    public IActionResult ReportProgress(long id, [FromBody] RunProgressRequest? request)
+    {
+        if (request is null)
+            return BadRequest(new { message = "A progress body is required." });
+
+        bool updated = _backtests.UpdateProgress(id, request.Percent, request.BarsProcessed, request.TotalBars,
+            request.CurrentUtc, request.Trades, request.Message);
+        if (!updated)
+            return NotFound(new { message = $"Backtest run {id} is not running." });
+
+        return Ok();
+    }
+
+    /// <summary>Final verdict from the runner: Status, CompletedUtc, LastError and the BACKTEST_SUMMARY signal.</summary>
+    [HttpPost("runs/{id:long}/complete")]
+    public async Task<IActionResult> CompleteRun(long id, [FromBody] CompleteRunRequest? request, CancellationToken cancellationToken)
+    {
+        if (request is null || string.IsNullOrWhiteSpace(request.Status))
+            return BadRequest(new { message = "status (\"Completed\" | \"Failed\") is required." });
+
+        try
+        {
+            await _paperTrading.CompleteRunAsync(id, request, cancellationToken);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+
+        bool completed = string.Equals(request.Status.Trim(), "Completed", StringComparison.OrdinalIgnoreCase);
+        _backtests.AppendLog(id, completed
+            ? "runner reported completion"
+            : $"runner reported failure: {request.Error}");
+        if (completed)
+        {
+            var current = _backtests.Get(id)?.Progress;
+            _backtests.UpdateProgress(id, 100m, current?.TotalBars ?? current?.BarsProcessed ?? 0, current?.TotalBars ?? 0,
+                current?.CurrentUtc, current?.Trades ?? 0, "Completed");
+        }
+
+        return Ok(new { message = completed ? $"Backtest run {id} completed." : $"Backtest run {id} marked failed." });
+    }
 }
