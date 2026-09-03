@@ -52,6 +52,12 @@ export const IconPulse = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 )
 
+export const IconActivity = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+  </Icon>
+)
+
 export const IconCandles = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p}>
     <path d="M7 4v3M7 15v4" />

@@ -20,7 +20,7 @@ import {
 } from '../../lib/queries'
 import { formatAge, formatDateTime, formatNumber, shortSymbol } from '../../lib/format'
 import { Badge, Panel, QueryBoundary, StatTile } from '../../components/ui'
-import { IconArrowRight, IconDatabase, IconPulse, IconWarning } from '../../components/icons'
+import { IconActivity, IconArrowRight, IconDatabase, IconPulse, IconWarning } from '../../components/icons'
 import {
   CATEGORY_ORDER,
   classifySymbol,
@@ -75,7 +75,12 @@ function NeedsAttention() {
     })
   }
 
-  if (process.data && !process.data.isRunning && marketOpen) {
+  const feeds = ingestors.data ?? []
+  const healthy = feeds.filter((f) => f.isHealthy).length
+  const unhealthy = feeds.filter((f) => !f.isHealthy)
+  const isRunning = process.data?.isRunning || healthy > 0
+
+  if (process.data && !isRunning && marketOpen) {
     items.push({
       text: 'Market is open but the live ingestor is not running — no ticks are being captured.',
       to: '/admin/data/live',
@@ -83,8 +88,7 @@ function NeedsAttention() {
     })
   }
 
-  const unhealthy = (ingestors.data ?? []).filter((s) => !s.isHealthy)
-  if (process.data?.isRunning && unhealthy.length > 0) {
+  if (isRunning && unhealthy.length > 0) {
     items.push({
       text: `${unhealthy.length} feed source${unhealthy.length > 1 ? 's' : ''} unhealthy: ${unhealthy
         .map((s) => `${s.sourceName} (${s.status})`)
@@ -205,6 +209,9 @@ function LivePipelinePanel() {
   const ingestors = useIngestorStatuses()
   const process = useIngestorProcessStatus()
 
+  const healthy = (ingestors.data ?? []).filter((f) => f.isHealthy).length
+  const isRunning = process.data?.isRunning || healthy > 0
+
   return (
     <Panel
       title={
@@ -220,9 +227,10 @@ function LivePipelinePanel() {
     >
       <div className="kv-grid" style={{ marginBottom: 12 }}>
         <div>
-          <span className="muted">Ingestor process</span>
-          <span className={process.data?.isRunning ? 'pos' : 'muted'}>
-            {process.data?.isRunning ? 'Running' : 'Stopped'}
+          <span className="muted">Ingestor</span>
+          <IconActivity />
+          <span className={isRunning ? 'pos' : 'muted'}>
+            {isRunning ? 'Running' : 'Stopped'}
           </span>
         </div>
       </div>
@@ -276,16 +284,17 @@ export function DataOverviewPage() {
   const session = useMarketSession()
 
   const feeds = ingestors.data ?? []
-  const healthy = feeds.filter((f) => f.isHealthy)
+  const healthy = feeds.filter((f) => f.isHealthy).length
+  const isRunning = process.data?.isRunning || healthy > 0
   const marketOpen = session.data?.isMarketOpen ?? false
 
   const covRows = coverage.data ?? []
   const totalBars = covRows.reduce((sum, r) => sum + r.barCount, 0)
   const coveredSymbols = new Set(covRows.map((r) => r.symbol)).size
 
-  const feedTone = !process.data?.isRunning
+  const feedTone = !isRunning
     ? undefined
-    : healthy.length === feeds.length && feeds.length > 0
+    : healthy === feeds.length && feeds.length > 0
       ? 'pos'
       : 'warn'
 
@@ -305,20 +314,20 @@ export function DataOverviewPage() {
 
       <div className="stat-grid">
         <StatTile
-          label="Live ingestor"
-          value={process.data?.isRunning ? 'Running' : 'Stopped'}
+          label="Live feeds"
+          value={isRunning ? 'Running' : 'Stopped'}
           tone={feedTone as 'pos' | 'warn' | undefined}
           sub={
             feeds.length > 0
-              ? `${healthy.length}/${feeds.length} sources healthy · beat ${formatAge(feeds[0]?.lastHeartbeatUtc)}`
+              ? `${healthy}/${feeds.length} sources healthy · beat ${formatAge(feeds[0]?.lastHeartbeatUtc)}`
               : 'no heartbeat recorded yet'
           }
           to="/admin/data/live"
         />
         <StatTile
-          label="Watchlist"
+          label="Database saving"
           value={formatNumber(watchlist.data?.length ?? 0)}
-          sub={`${formatNumber(quotes.data?.length ?? 0)} symbols with live quotes`}
+          sub={`${formatNumber(quotes.data?.length ?? 0)} symbols actively recording`}
           to="/admin/data/live"
         />
         <StatTile

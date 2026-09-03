@@ -31,6 +31,7 @@ import { formatAge, formatDateTime, formatPrice, shortSymbol } from '../../lib/f
 import { classifySymbol } from '../../lib/symbols'
 import { Badge, InlineError, Panel, QueryBoundary } from '../../components/ui'
 import {
+  IconDatabase,
   IconPlay,
   IconPlus,
   IconPulse,
@@ -85,6 +86,11 @@ function FeedControlButton() {
   const session = useMarketSession()
   const start = useStartIngestor()
   const stop = useStopIngestor()
+  const ingestors = useIngestorStatuses()
+
+  const healthyCount = (ingestors.data ?? []).filter((f) => f.isHealthy).length
+  const isExternal = !process.data?.isRunning && healthyCount > 0
+  const isRunning = process.data?.isRunning || healthyCount > 0
 
   function confirmStop() {
     const warning = session.data?.isMarketOpen
@@ -96,8 +102,13 @@ function FeedControlButton() {
   return (
     <div className="toolbar">
       {start.isError && <InlineError error={start.error} />}
-      {process.data?.isRunning ? (
-        <button className="btn btn--danger" disabled={stop.isPending} onClick={confirmStop}>
+      {isRunning ? (
+        <button 
+          className="btn btn--danger" 
+          disabled={stop.isPending || isExternal} 
+          onClick={confirmStop}
+          title={isExternal ? "Cannot stop an externally running feed from the console. Please stop it from your terminal." : undefined}
+        >
           <IconStop style={{ width: 14, height: 14 }} /> Stop live feed
         </button>
       ) : (
@@ -226,7 +237,7 @@ function AddSymbolForm() {
         <input
           className="field__input field__input--sm"
           style={{ flex: 1, minWidth: 180 }}
-          placeholder="Add symbol — search e.g. SBIN, NIFTY, CRUDEOIL…"
+          placeholder="Search and add symbol to save to database…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -270,7 +281,7 @@ function AddSymbolForm() {
                         add.mutate({ symbol: inst.symbol, dataType })
                         setQuery('')
                       }}
-                      title="Add to live watchlist"
+                      title="Add to database recording list"
                     >
                       <IconPlus style={{ width: 13, height: 13 }} /> Watch
                     </button>
@@ -343,7 +354,7 @@ function LiveWatchlistPanel() {
     const open = session.data?.isMarketOpen
     const msg = open
       ? `Market is OPEN. Removing ${symbol} stops its live tick capture immediately. Remove anyway?`
-      : `Remove ${symbol} from the live watchlist?`
+      : `Remove ${symbol} from the database recording list?`
     if (window.confirm(msg)) remove.mutate(id)
   }
 
@@ -351,7 +362,7 @@ function LiveWatchlistPanel() {
     <Panel
       title={
         <>
-          <IconPulse /> Live watchlist
+          <IconDatabase /> Database recording list
         </>
       }
       actions={
@@ -459,12 +470,16 @@ function LiveWatchlistPanel() {
 function DiagnosticsPanel() {
   const [open, setOpen] = useState(false)
   const statuses = useIngestorStatuses()
+  const process = useIngestorProcessStatus()
   const logs = useIngestorLogs(open)
 
   const feeds = statuses.data ?? []
   // Defensive: an API build without /api/Ingestor/logs answers with the SPA
   // fallback HTML (a string) — never crash on it.
   const logLines = Array.isArray(logs.data) ? logs.data : []
+  
+  const healthyCount = feeds.filter(f => f.isHealthy).length
+  const isExternal = !process.data?.isRunning && healthyCount > 0
 
   return (
     <Panel
@@ -506,7 +521,9 @@ function DiagnosticsPanel() {
             </div>
             <div className={`console__body ${logLines.length === 0 ? 'faint' : ''}`}>
               {logLines.length === 0
-                ? 'No process output yet — appears after the feed is started from this console (requires the updated API).'
+                ? isExternal 
+                  ? 'The ingestor is currently running via an external terminal. Logs are being written directly to that terminal.'
+                  : 'No process output yet — appears after the feed is started from this console (requires the updated API).'
                 : logLines.map((line, i) => <div key={i}>{line}</div>)}
             </div>
           </div>

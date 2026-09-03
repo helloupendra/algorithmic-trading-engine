@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider } from './lib/auth'
+import { useLiveFeedSignalR } from './lib/queries'
 import { AppLayout } from './components/AppLayout'
 import { RedirectIfAuthenticated, RequireAuth, RequireRole } from './components/RouteGuards'
 import { LoginPage } from './pages/LoginPage'
@@ -45,9 +46,15 @@ const queryClient = new QueryClient({
   },
 })
 
+function GlobalSignalR() {
+  useLiveFeedSignalR()
+  return null
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <GlobalSignalR />
       <BrowserRouter>
         <AuthProvider>
           <Routes>

@@ -18,6 +18,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Prometheus;
 using System.Text;
+using AlgoTrading.Api.Hubs;
 
 
 
@@ -61,6 +62,7 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
+builder.Services.AddSignalR();
 builder.Services.AddInfrastructure(builder.Configuration);
 
 
@@ -161,6 +163,8 @@ app.MapMetrics().AllowAnonymous();
 // SPA fallback: any non-API route serves the React app's index.html so
 // client-side routing works on hard refresh / deep links.
 app.MapFallbackToFile("index.html").AllowAnonymous();
+
+app.MapHub<LiveFeedHub>("/hubs/livefeed").AllowAnonymous();
 
 
 

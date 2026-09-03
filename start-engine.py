@@ -51,22 +51,6 @@ def main():
         processes.append(web_proc)
         threading.Thread(target=stream_output, args=(web_proc, "WEB", "32"), daemon=True).start()
 
-        # Wait for API to warm up before starting Ingestor
-        import time
-        print("\n\033[93mWaiting 8 seconds for .NET API to start before launching Ingestor...\033[0m\n")
-        time.sleep(8)
-
-        # Start Ingestor
-        ingestor_proc = subprocess.Popen(
-            [sys.executable, "src/AlgoTrading.PythonEngine/market_data/live/fyers_streamer.py"],
-            cwd=ROOT_DIR,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT
-        )
-        processes.append(ingestor_proc)
-        threading.Thread(target=stream_output, args=(ingestor_proc, "INGESTOR", "33"), daemon=True).start()
-
         print("\n\033[96mAll processes started. Press Ctrl+C to stop all.\033[0m\n")
 
         # Wait for any process to exit

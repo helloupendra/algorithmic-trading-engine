@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Globalization;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.LiveData;
 using AlgoTrading.Domain.Entities;
@@ -34,11 +36,57 @@ public class LiveDataService : ILiveDataService
     public async Task<IReadOnlyList<LiveWatchlistItem>> GetWatchlistAsync(
         CancellationToken cancellationToken = default)
     {
-        return await _dbContext.LiveWatchlistItems
-            .AsNoTracking()
+        var items = await _dbContext.LiveWatchlistItems
             .OrderByDescending(x => x.Priority)
             .ThenBy(x => x.Symbol)
             .ToListAsync(cancellationToken);
+
+        var expiredItems = new List<LiveWatchlistItem>();
+        var activeItems = new List<LiveWatchlistItem>();
+
+        foreach (var item in items)
+        {
+            if (IsExpired(item.Symbol))
+            {
+                expiredItems.Add(item);
+            }
+            else
+            {
+                activeItems.Add(item);
+            }
+        }
+
+        if (expiredItems.Any())
+        {
+            _dbContext.LiveWatchlistItems.RemoveRange(expiredItems);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        return activeItems;
+    }
+
+    private static bool IsExpired(string symbol)
+    {
+        // Example: NSE:BANKNIFTY26AUG57600CE or BANKNIFTY26AUG57600CE
+        var match = Regex.Match(symbol, @"(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)", RegexOptions.IgnoreCase);
+        if (!match.Success) return false; // Not a standard option/futures format
+
+        var yearStr = match.Groups[1].Value;
+        var monthStr = match.Groups[2].Value;
+
+        if (int.TryParse(yearStr, out int year) && DateTime.TryParseExact(monthStr, "MMM", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime parsedMonth))
+        {
+            year += 2000;
+            // A contract expires near the end of the month. To be safe, we consider it expired 
+            // if we are in the next month.
+            var expiryMonth = new DateTime(year, parsedMonth.Month, 1).AddMonths(1); 
+            if (DateTime.UtcNow >= expiryMonth)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public async Task<LiveWatchlistItem> UpsertWatchlistItemAsync(
@@ -234,9 +282,14 @@ public class LiveDataService : ILiveDataService
     {
         var threshold = DateTime.UtcNow.AddSeconds(-staleAfterSeconds);
 
+        var activeSymbols = await _dbContext.LiveWatchlistItems
+            .Where(x => x.IsActive)
+            .Select(x => x.Symbol)
+            .ToListAsync(cancellationToken);
+
         var rows = await _dbContext.LiveQuotesLatest
             .AsNoTracking()
-            .Where(x => x.UpdatedUtc < threshold)
+            .Where(x => x.UpdatedUtc < threshold && activeSymbols.Contains(x.Symbol))
             .OrderBy(x => x.Symbol)
             .ToListAsync(cancellationToken);
 
@@ -555,7 +608,7 @@ public class LiveDataService : ILiveDataService
         }
 
         var ageSeconds = (DateTime.UtcNow - row.LastHeartbeatUtc).TotalSeconds;
-        bool isHealthy = ageSeconds <= 60 &&
+        bool isHealthy = ageSeconds <= 15 &&
                          string.Equals(row.Status, "Running", StringComparison.OrdinalIgnoreCase);
 
         return new IngestorStatusResponse
