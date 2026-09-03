@@ -21,9 +21,11 @@ import { AdminHomePage } from './pages/admin/AdminHomePage'
 import { AdminOverviewPage } from './pages/admin/AdminOverviewPage'
 import { UsersPage } from './pages/admin/UsersPage'
 import { RiskPage } from './pages/admin/RiskPage'
-import { StrategyControlPage } from './pages/admin/StrategyControlPage'
 import { BrokerPage } from './pages/admin/BrokerPage'
 import { LiveAlertsPage } from './pages/admin/LiveAlertsPage'
+import { StrategiesOverviewPage } from './pages/strategies/StrategiesOverviewPage'
+import { LiveRunnerPage } from './pages/strategies/LiveRunnerPage'
+import { StrategyLibraryPage } from './pages/strategies/StrategyLibraryPage'
 import { DataOverviewPage } from './pages/data/DataOverviewPage'
 import { LiveFeedsPage } from './pages/data/LiveFeedsPage'
 import { HistoricalDataPage } from './pages/data/HistoricalDataPage'
@@ -95,7 +97,9 @@ export default function App() {
                   <Route path="/admin/system" element={<AdminOverviewPage />} />
                   <Route path="/admin/users" element={<UsersPage />} />
                   <Route path="/admin/risk" element={<RiskPage />} />
-                  <Route path="/admin/strategies" element={<StrategyControlPage />} />
+                  <Route path="/admin/strategies" element={<StrategiesOverviewPage />} />
+                  <Route path="/admin/strategies/live" element={<LiveRunnerPage />} />
+                  <Route path="/admin/strategies/library" element={<StrategyLibraryPage />} />
                   <Route path="/admin/live-alerts" element={<LiveAlertsPage />} />
                   <Route path="/admin/broker" element={<BrokerPage />} />
 

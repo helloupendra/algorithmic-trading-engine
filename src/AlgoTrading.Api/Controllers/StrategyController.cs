@@ -31,7 +31,10 @@ public class StrategyController : ControllerBase
     /// </summary>
     private static readonly ConcurrentDictionary<int, RunningStrategy> _activeProcesses = new();
 
-    private sealed record RunningStrategy(Process Process, string StartedBy, DateTime StartedUtc);
+    private sealed record RunningStrategy(Process Process, string StartedBy, DateTime StartedUtc)
+    {
+        public List<object> RecentSignals { get; } = new();
+    }
 
     public StrategyController(
         TradingDbContext dbContext,
@@ -62,14 +65,30 @@ public class StrategyController : ControllerBase
             var content = System.IO.File.ReadAllText(file);
             var lines = content.Split('\n');
             string? strategyName = null;
+            string? className = null;
             
             foreach (var line in lines)
             {
+                var trimmed = line.Trim();
                 if (line.StartsWith("class ") && line.Contains("(BaseStrategy)"))
                 {
                     var parts = line.Split(' ', '(');
-                    if (parts.Length > 1) { strategyName = parts[1].Trim(); break; }
+                    if (parts.Length > 1) { className = parts[1].Trim(); }
                 }
+                if (trimmed.StartsWith("name = \"") || trimmed.StartsWith("name = '"))
+                {
+                    var quote = trimmed.Contains("\"") ? '"' : '\'';
+                    var parts = trimmed.Split(quote);
+                    if (parts.Length >= 3)
+                    {
+                        strategyName = parts[1];
+                    }
+                }
+            }
+
+            if (string.IsNullOrEmpty(strategyName))
+            {
+                strategyName = className;
             }
 
             if (string.IsNullOrEmpty(strategyName))
@@ -234,6 +253,8 @@ public class StrategyController : ControllerBase
             processInfo.ArgumentList.Add(scriptPath);
             processInfo.ArgumentList.Add("--strategy");
             processInfo.ArgumentList.Add(strategyName);
+            processInfo.ArgumentList.Add("--strategy-id");
+            processInfo.ArgumentList.Add(id.ToString());
             processInfo.ArgumentList.Add("--user-id");
             processInfo.ArgumentList.Add(userId.ToString());
             if (runId.HasValue)
@@ -328,6 +349,34 @@ public class StrategyController : ControllerBase
         }
 
         return Ok(new { message = "Strategy stopped successfully." });
+    }
+
+    [HttpPost("{id}/signals")]
+    public IActionResult AddSignal(int id, [FromBody] object signal)
+    {
+        if (_activeProcesses.TryGetValue(id, out var running))
+        {
+            lock (running.RecentSignals)
+            {
+                running.RecentSignals.Insert(0, signal);
+                if (running.RecentSignals.Count > 100) running.RecentSignals.RemoveAt(100);
+            }
+            return Ok();
+        }
+        return NotFound($"Strategy {id} is not currently active.");
+    }
+
+    [HttpGet("{id}/signals")]
+    public IActionResult GetSignals(int id)
+    {
+        if (_activeProcesses.TryGetValue(id, out var running))
+        {
+            lock (running.RecentSignals)
+            {
+                return Ok(running.RecentSignals.ToList());
+            }
+        }
+        return Ok(new List<object>()); // return empty list if not running
     }
 
     /// <summary>
