@@ -224,3 +224,16 @@ export const IconSwitch = (p: SVGProps<SVGSVGElement>) => (
     <path d="M8 20l-4-4 4-4M4 16h13" />
   </Icon>
 )
+
+export const IconChevronDown = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M5.5 9l6.5 6.5L18.5 9" />
+  </Icon>
+)
+
+export const IconChevronUp = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M18.5 15.5l-6.5-6.5-6.5 6.5" />
+  </Icon>
+)
+

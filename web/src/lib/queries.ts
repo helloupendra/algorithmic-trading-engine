@@ -656,3 +656,12 @@ export function useStopAlerter() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['alerts', 'status'] }),
   })
 }
+
+export function useStrategySignals(strategyId: number, isRunning: boolean) {
+  return useQuery({
+    queryKey: ['strategy', 'signals', strategyId],
+    queryFn: () => api.get<any[]>(`/api/Strategy/${strategyId}/signals`),
+    enabled: isRunning,
+    refetchInterval: 1000,
+  })
+}

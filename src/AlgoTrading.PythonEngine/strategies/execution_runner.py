@@ -246,8 +246,9 @@ def wait_for_contract_price(api: PlatformApiClient, symbol: str, retries: int = 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run a specific strategy.")
-    parser.add_argument("--strategy", type=str, required=True, help="The strategy name to run (e.g., ExampleStraddle).")
-    parser.add_argument("--user-id", type=int, required=True, help="The User ID to associate with this simulation run.")
+    parser.add_argument("--strategy", type=str, required=True, help="Strategy name to run")
+    parser.add_argument("--strategy-id", type=int, required=True, help="Strategy ID to run")
+    parser.add_argument("--user-id", type=int, required=True, help="User ID running the strategy")
     parser.add_argument("--run-id", type=int, required=False, help="Optional: The SimulationRunId generated from the C# Backend API. If not provided, a new run will be created automatically.")
     parser.add_argument("--underlying", type=str, default="BANKNIFTY", help="The underlying instrument symbol (e.g., BANKNIFTY, NIFTY50, SENSEX).")
     parser.add_argument("--spot-symbol", type=str, default="NSE:NIFTYBANK-INDEX", help="The exact Fyers spot symbol for the underlying.")
@@ -636,12 +637,27 @@ if __name__ == "__main__":
                         print("ENRICHED SIGNAL LEGS:")
                         print(json.dumps(sig.legs, indent=2, default=str))
 
-                        payload = signal_to_request(run_id, sig)
-                        result = api.create_simulation_signal(payload)
-                        ORDERS_EMITTED.inc()
+                        # Always push signal to UI dynamically via Strategy endpoint
+                        try:
+                            api.http.post(f"{api.base_url}/api/Strategy/{args.strategy_id}/signals", json={
+                                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                                "signal_type": sig.signal_type,
+                                "legs": sig.legs,
+                                "metadata": sig.metadata
+                            })
+                        except Exception as e:
+                            print(f"WARN: Could not publish live signal to UI: {e}")
 
-                        print("PERSISTED SIGNAL:")
-                        print(json.dumps(result, indent=2, default=str))
+                        if run_id:
+                            payload = signal_to_request(run_id, sig)
+                            result = api.create_simulation_signal(payload)
+                            ORDERS_EMITTED.inc()
+
+                            print("PERSISTED SIGNAL:")
+                            print(json.dumps(result, indent=2, default=str))
+                        else:
+                            ORDERS_EMITTED.inc()
+                            print("LIVE ORDER EMITTED (No Run ID)")
 
                     # Persist state after loop iteration
                     loaded_state.strategy_data = state

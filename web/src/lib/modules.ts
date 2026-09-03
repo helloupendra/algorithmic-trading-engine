@@ -12,6 +12,8 @@ import {
   IconCandles,
   IconDatabase,
   IconFlask,
+  IconLayers,
+  IconPlay,
   IconPlug,
   IconPulse,
   IconServer,
@@ -54,7 +56,7 @@ export const MODULES: ModuleDef[] = [
     description: 'Deploy, monitor and control strategy runners.',
     icon: IconBot,
     route: '/admin/strategies',
-    status: 'legacy',
+    status: 'ready',
     adminOnly: true,
   },
   {
@@ -138,6 +140,28 @@ export const DATA_SECTIONS = [
     route: '/admin/data/instruments',
     label: 'Instruments & F&O',
     icon: IconServer,
+    end: false,
+  },
+] as const
+
+/** Sub-navigation of the Strategies module. */
+export const STRATEGIES_SECTIONS = [
+  {
+    route: '/admin/strategies',
+    label: 'Overview',
+    icon: IconBot,
+    end: true,
+  },
+  {
+    route: '/admin/strategies/live',
+    label: 'Live runner',
+    icon: IconPlay,
+    end: false,
+  },
+  {
+    route: '/admin/strategies/library',
+    label: 'Library',
+    icon: IconLayers,
     end: false,
   },
 ] as const

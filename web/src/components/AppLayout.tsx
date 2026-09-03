@@ -8,7 +8,7 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useBrokerSession, useIngestorStatuses, useMarketSession } from '../lib/queries'
-import { DATA_SECTIONS, MODULES } from '../lib/modules'
+import { DATA_SECTIONS, MODULES, STRATEGIES_SECTIONS } from '../lib/modules'
 import {
   IconArrowRight,
   IconCandles,
@@ -129,7 +129,7 @@ function NavItem({
 }
 
 function AdminNav() {
-  const legacyModules = MODULES.filter((m) => m.key !== 'data' && m.status !== 'planned')
+  const legacyModules = MODULES.filter((m) => m.key !== 'data' && m.key !== 'strategies' && m.status !== 'planned')
 
   return (
     <>
@@ -140,6 +140,13 @@ function AdminNav() {
       <div className="nav-group">
         <div className="nav-group__label">Data</div>
         {DATA_SECTIONS.map((s) => (
+          <NavItem key={s.route} to={s.route} label={s.label} icon={s.icon} end={s.end} />
+        ))}
+      </div>
+
+      <div className="nav-group">
+        <div className="nav-group__label">Strategies</div>
+        {STRATEGIES_SECTIONS.map((s) => (
           <NavItem key={s.route} to={s.route} label={s.label} icon={s.icon} end={s.end} />
         ))}
       </div>
@@ -177,6 +184,9 @@ const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]>
   ['/admin/data/historical', 'Data', 'Historical'],
   ['/admin/data/instruments', 'Data', 'Instruments & F&O'],
   ['/admin/data', 'Data', 'Overview'],
+  ['/admin/strategies/live', 'Strategies', 'Live runner'],
+  ['/admin/strategies/library', 'Strategies', 'Library'],
+  ['/admin/strategies', 'Strategies', 'Overview'],
   ['/admin/users', 'Modules', 'Users'],
   ['/admin/risk', 'Modules', 'Risk'],
   ['/admin/strategies', 'Modules', 'Strategies'],
