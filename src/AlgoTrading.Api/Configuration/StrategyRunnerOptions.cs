@@ -31,6 +31,13 @@ public class StrategyRunnerOptions
     public int MaxConcurrentProcesses { get; set; } = 10;
 
     /// <summary>
+    /// Hard ceiling on concurrently running backtest runner processes. A
+    /// backtest is CPU-bound and posts thousands of rows, so the default is
+    /// deliberately small.
+    /// </summary>
+    public int MaxConcurrentBacktests { get; set; } = 3;
+
+    /// <summary>
     /// How often the risk guard re-evaluates each running strategy's total P&amp;L
     /// against its stop-loss / target.
     /// </summary>

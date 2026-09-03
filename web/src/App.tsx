@@ -26,6 +26,10 @@ import { LiveAlertsPage } from './pages/admin/LiveAlertsPage'
 import { StrategiesOverviewPage } from './pages/strategies/StrategiesOverviewPage'
 import { LiveRunnerPage } from './pages/strategies/LiveRunnerPage'
 import { StrategyLibraryPage } from './pages/strategies/StrategyLibraryPage'
+import { BacktestOverviewPage } from './pages/backtesting/BacktestOverviewPage'
+import { NewBacktestPage } from './pages/backtesting/NewBacktestPage'
+import { BacktestRunsPage } from './pages/backtesting/BacktestRunsPage'
+import { BacktestRunPage } from './pages/backtesting/BacktestRunPage'
 import { DataOverviewPage } from './pages/data/DataOverviewPage'
 import { LiveFeedsPage } from './pages/data/LiveFeedsPage'
 import { HistoricalDataPage } from './pages/data/HistoricalDataPage'
@@ -100,6 +104,13 @@ export default function App() {
                   <Route path="/admin/strategies" element={<StrategiesOverviewPage />} />
                   <Route path="/admin/strategies/live" element={<LiveRunnerPage />} />
                   <Route path="/admin/strategies/library" element={<StrategyLibraryPage />} />
+
+                  {/* Backtesting module (v2). */}
+                  <Route path="/admin/backtesting" element={<BacktestOverviewPage />} />
+                  <Route path="/admin/backtesting/new" element={<NewBacktestPage />} />
+                  <Route path="/admin/backtesting/runs" element={<BacktestRunsPage />} />
+                  <Route path="/admin/backtesting/runs/:id" element={<BacktestRunPage />} />
+
                   <Route path="/admin/live-alerts" element={<LiveAlertsPage />} />
                   <Route path="/admin/broker" element={<BrokerPage />} />
 

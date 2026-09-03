@@ -1,0 +1,690 @@
+"""
+backtest/engine.py
+
+The replay loop: one catalog strategy, one underlying, one bar resolution,
+one IST date range, driven bar-by-bar through the same `BaseStrategy.on_bar`
+contract as the live runner.
+
+  - fills at the option candle close of the signal bar (see feed.option_close_at);
+  - a paper ledger in lots x lot size (backtest/ledger.py);
+  - rupee stop-loss / target on TOTAL P&L (realized + unrealized - charges),
+    identical to the live risk guard: the first breach flattens everything and
+    ends the run;
+  - an end-of-day square-off at `eod_square_off_ist` and an end-of-range
+    square-off;
+  - every fill, mark, equity point and the final summary are posted to the
+    Simulator with HISTORICAL timestamps so the run persists like a live one.
+
+Nothing fails silently: an entry the feed cannot price is skipped, logged
+with `[SKIP]` and listed in the summary's `skippedEntries`.
+"""
+
+from __future__ import annotations
+
+import sys
+import time
+import traceback
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+
+from core.resolutions import to_strategy_resolution
+from strategies.base_strategy import BarFrame, BaseStrategy, OptionContract, StrategyInput, StrategySignal
+from strategies.contract_selector import fallback_strike_step
+from strategies.signal_utils import signal_to_request, stamp_signal_metadata
+
+from backtest.contracts import ContractResolver
+from backtest.feed import HistoricalFeed
+from backtest.ledger import ApplyResult, PaperLedger
+from backtest.run_spec import BacktestRun, parse_parameters, parse_run_row
+from backtest.timeutil import compact_stamp, format_ist, in_session, iso_utc, ist_date, ist_time, parse_utc
+
+SNAPSHOT_BATCH = 500
+PROGRESS_INTERVAL_SECONDS = 2.0
+WARMUP_DAYS = 15
+MAX_LOGGED_SKIPS = 200
+
+ProgressCallback = Callable[[Dict[str, Any]], None]
+Logger = Callable[[str], None]
+
+
+def _money(value: float) -> str:
+    sign = "−" if value < 0 else "+"
+    return f"{sign}{abs(value):,.0f}"
+
+
+@dataclass
+class BacktestOutcome:
+    status: str                              # Completed | Failed
+    summary: Dict[str, Any]
+    error: Optional[str] = None
+    stop_reason: Optional[str] = None
+    ledger: Optional[PaperLedger] = None
+    equity_points: List[Dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class _DayState:
+    day: Optional[date] = None
+    squared_off: bool = False
+    last_t: Optional[datetime] = None
+
+
+class BacktestSession:
+    """One replay; `execute()` drives it end to end. See run_backtest for the entry point."""
+
+    def __init__(self, api: Any, run: BacktestRun, strategy: BaseStrategy, *,
+                 on_progress: Optional[ProgressCallback] = None, log: Logger = print,
+                 broker_linked: Optional[bool] = None, lot_size: Optional[int] = None,
+                 lot_size_source: str = "", warmup_days: int = WARMUP_DAYS,
+                 progress_interval: float = PROGRESS_INTERVAL_SECONDS,
+                 snapshot_batch: int = SNAPSHOT_BATCH) -> None:
+        self.api = api
+        self.run = run
+        self.strategy = strategy
+        self.on_progress = on_progress
+        self.log = log
+        self.warmup_days = warmup_days
+        self.progress_interval = progress_interval
+        self.snapshot_batch = max(1, min(int(snapshot_batch), 5000))
+
+        self.state: Dict[str, Any] = {}
+        self.lots = self._resolve_lots()
+        self.broker_linked = self._resolve_broker_linked(broker_linked)
+        self.lot_size, self.lot_size_source = self._resolve_lot_size(lot_size, lot_size_source)
+
+        self.feed = HistoricalFeed(api, run, broker_linked=self.broker_linked, warmup_days=warmup_days, log=log)
+        self.resolver = ContractResolver(api, run.underlying, log=log)
+        self.ledger = PaperLedger(self.lot_size, run.charges_per_lot)
+
+        self.requirements = list(self.strategy.get_data_requirements() or [])
+        required = [to_strategy_resolution(r.resolution) for r in self.requirements if r.resolution]
+        self.resolutions: List[str] = [run.resolution] + [r for r in dict.fromkeys(required) if r != run.resolution]
+        # Index resolutions the strategy cannot run without (a missing one fails the run).
+        self.index_resolutions: List[str] = [
+            to_strategy_resolution(r.resolution) for r in self.requirements
+            if r.resolution and r.symbol_type == "index"
+        ]
+        self.warms_up = any(r.symbol_type == "index" for r in self.requirements)
+
+        self.sessions: Set[date] = set()
+        self.bars_processed = 0
+        self.total_bars = 0
+        self.skipped_entries: List[Dict[str, Any]] = []
+        self.skipped_after_eod = 0
+        self.eod_square_offs = 0
+        self.stop_reason: Optional[str] = None
+        self.equity_points: List[Dict[str, Any]] = []
+        self._pending_snapshots: List[Dict[str, Any]] = []
+        self._last_marks: Dict[str, float] = {}
+        self._last_progress_at = 0.0
+        self._signals_posted = 0
+        self._ghost_counter = 0
+        self._day = _DayState()
+        # (group_id, logical leg symbol) -> broker symbol it was opened with, so a
+        # CLOSE_GROUP for "BANKNIFTY_PE_57600" finds the position even after the
+        # expiry has rolled over since the open.
+        self._opened_as: Dict[Tuple[str, str], str] = {}
+        self.data_notes: List[str] = []
+        self.warmup_bars_used = 0
+        self.step: float = fallback_strike_step(run.underlying)
+
+    # --- configuration ------------------------------------------------------
+
+    def _resolve_lots(self) -> int:
+        strategy_lots = getattr(self.strategy, "lots", None)
+        if isinstance(strategy_lots, int) and strategy_lots >= 1:
+            return strategy_lots
+        return self.run.lots
+
+    def _resolve_broker_linked(self, explicit: Optional[bool]) -> bool:
+        if explicit is not None:
+            return bool(explicit)
+        getter = getattr(self.api, "get_broker_session", None)
+        if getter is None:
+            return False
+        try:
+            session = getter() or {}
+            return bool(session.get("isAuthenticated"))
+        except Exception as ex:
+            self.log(f"[CONFIG] WARN: broker session unknown ({ex}); assuming not linked")
+            return False
+
+    def _resolve_lot_size(self, explicit: Optional[int], source: str) -> tuple:
+        if explicit is not None and int(explicit) >= 1:
+            return int(explicit), source or "given"
+        # The API freezes the lot size into the run at start ("lot_size") and
+        # books every fill with it, so the ledger must use the same number.
+        try:
+            frozen = int(self.run.params.get("lot_size") or 0)
+        except (TypeError, ValueError):
+            frozen = 0
+        if frozen >= 1:
+            return frozen, str(self.run.params.get("lot_size_source") or "run")
+        getter = getattr(self.api, "get_fno_underlyings", None)
+        if getter is not None:
+            try:
+                for row in getter() or []:
+                    if str(row.get("underlying") or "").upper() == self.run.underlying:
+                        size = int(row.get("lotSize") or 0)
+                        if size >= 1:
+                            return size, str(row.get("lotSizeSource") or "master")
+            except Exception as ex:
+                self.log(f"[CONFIG] WARN: could not read lot size for {self.run.underlying}: {ex}")
+        self.data_notes.append(
+            f"Lot size for {self.run.underlying} is unknown to the platform; P&L was computed with lot size 1."
+        )
+        return 1, "unknown"
+
+    # --- helpers ------------------------------------------------------------
+
+    def _note(self, text: str) -> None:
+        if text not in self.data_notes:
+            self.data_notes.append(text)
+
+    def _skip(self, t_iso: str, symbol: str, reason: str) -> None:
+        self.skipped_entries.append({"atUtc": t_iso, "symbol": symbol, "reason": reason})
+        if len(self.skipped_entries) <= MAX_LOGGED_SKIPS:
+            self.log(f"[SKIP] {format_ist(parse_utc(t_iso))} IST {symbol}: {reason}")
+
+    def _post_signal(self, sig: StrategySignal, inp_spot: float, inp_atm: Any, result: ApplyResult) -> None:
+        sig.legs = [
+            {"symbol": leg["symbol"], "side": leg["side"], "quantity": int(leg["quantity"]), "price": float(leg["price"])}
+            for leg in result.legs
+        ]
+        if sig.metadata is None:
+            sig.metadata = {}
+        sig.metadata["reason"] = sig.reason
+        sig.metadata["spot_price"] = inp_spot
+        sig.metadata["atm_strike"] = inp_atm
+        sig.metadata["group_id"] = result.group_id
+        self.api.create_simulation_signal(signal_to_request(self.run.run_id, sig))
+        self._signals_posted += 1
+        legs_text = ", ".join(f"{l['side']} {l['quantity']}x {l['symbol']} @ {l['price']:.2f}" for l in sig.legs)
+        realized = f" realized {_money(result.realized_delta)}" if result.closed else ""
+        self.log(f"[FILL] {format_ist(parse_utc(sig.timestamp_utc))} IST {sig.signal_type} {result.group_id}: {legs_text}{realized} - {sig.reason}")
+
+    def _flush_snapshots(self, force: bool = False) -> None:
+        while self._pending_snapshots and (force or len(self._pending_snapshots) >= self.snapshot_batch):
+            batch, self._pending_snapshots = self._pending_snapshots[:self.snapshot_batch], self._pending_snapshots[self.snapshot_batch:]
+            self.api.post_equity_snapshots(self.run.run_id, batch)
+
+    def _progress_payload(self, t_iso: str, message: str) -> Dict[str, Any]:
+        percent = 100.0 if self.total_bars == 0 else round(100.0 * self.bars_processed / self.total_bars, 1)
+        return {
+            "percent": min(100.0, percent),
+            "barsProcessed": self.bars_processed,
+            "totalBars": self.total_bars,
+            "currentUtc": t_iso,
+            "trades": self.ledger.trades,
+            "message": message,
+        }
+
+    def _report_progress(self, t_iso: str, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and now - self._last_progress_at < self.progress_interval:
+            return
+        self._last_progress_at = now
+        message = (
+            f"{format_ist(parse_utc(t_iso), '%d %b %H:%M')} IST · {len(self.ledger.open_positions())} open · "
+            f"P&L {_money(self.ledger.total_pnl())}"
+        )
+        payload = self._progress_payload(t_iso, message)
+        self.log(f"[PROGRESS] {payload['percent']:.1f}% bars={self.bars_processed}/{self.total_bars} trades={payload['trades']} {message}")
+        if self.on_progress is not None:
+            try:
+                self.on_progress(payload)
+            except Exception as ex:
+                self.log(f"[PROGRESS] WARN: could not report progress: {ex}")
+
+    # --- market context -----------------------------------------------------
+
+    def _build_input(self, bar: BarFrame, t: datetime, contracts: Dict[str, OptionContract],
+                     atm_strike: Any, source: str) -> StrategyInput:
+        bars: Dict[str, Dict[str, List[BarFrame]]] = {}
+        for resolution in self.resolutions:
+            bars[resolution] = {"index": self.feed.bars_upto(resolution, t)}
+        for req in self.requirements:
+            resolution = to_strategy_resolution(req.resolution) if req.resolution else self.run.resolution
+            kind = req.symbol_type
+            if kind == "index":
+                continue
+            symbol = None
+            if kind in ("atm_ce", "atm_pe"):
+                contract = contracts.get(kind)
+                symbol = contract.symbol if contract else None
+            elif kind:
+                symbol = kind
+            if symbol:
+                bars.setdefault(resolution, {})[kind] = self.feed.option_bars_upto(symbol, resolution, t)
+        return StrategyInput(
+            mode="OfflineReplay",
+            timestamp_utc=bar.timestamp_utc,
+            underlying=self.run.underlying,
+            spot_price=bar.close,
+            atm_strike=atm_strike,
+            contracts=contracts,
+            bars=bars,
+            metadata={"source": source},
+        )
+
+    # --- square-off / risk --------------------------------------------------
+
+    def _square_off(self, t: datetime, reason: str, spot: Optional[float] = None, atm: Any = None) -> int:
+        """Close every open position at the last known close of its contract at t."""
+        t_iso = iso_utc(t)
+        signals = self.ledger.flatten_all(lambda s: self.feed.option_close_at(s, t), t_iso, reason, self.run.strategy_name)
+        closed = 0
+        for sig in signals:
+            group_id = sig.metadata.get("group_id", "")
+            for leg in sig.legs:
+                if leg.get("price_source") != "candle":
+                    self.log(f"[SQUARE-OFF] {leg['symbol']}: no candle at {format_ist(t)} IST, using {leg['price_source']} {leg['price']:.2f}")
+            result = self.ledger.apply("CLOSE_GROUP", group_id, sig.legs, t_iso, reason)
+            if result.applied:
+                closed += len(result.closed)
+                self._post_signal(sig, spot, atm, result)
+        return closed
+
+    def _check_risk(self, t: datetime, spot: float, atm: Any) -> bool:
+        total = self.ledger.total_pnl()
+        if self.run.stop_loss is not None and total <= -self.run.stop_loss:
+            self.stop_reason = f"Stop loss hit: P&L {_money(total)} ≤ −{self.run.stop_loss:,.0f}"
+        elif self.run.target is not None and total >= self.run.target:
+            self.stop_reason = f"Target hit: P&L {_money(total)} ≥ +{self.run.target:,.0f}"
+        else:
+            return False
+        self.log(f"[STOP] {format_ist(t)} IST {self.stop_reason}")
+        self._square_off(t, self.stop_reason, spot, atm)
+        return True
+
+    def _mark(self, t: datetime) -> None:
+        symbols = self.ledger.open_symbols()
+        if not symbols:
+            return
+        prices: Dict[str, float] = {}
+        for symbol in symbols:
+            price = self.feed.option_close_at(symbol, t)
+            if price is not None:
+                prices[symbol] = price
+        applied = self.ledger.mark(prices, iso_utc(t))
+        if not applied:
+            return
+        marks = self.ledger.mark_prices()
+        if marks != self._last_marks:
+            self.api.post_marks(self.run.run_id, iso_utc(t), [{"symbol": s, "price": p} for s, p in marks.items()])
+            self._last_marks = dict(marks)
+
+    # --- signals ------------------------------------------------------------
+
+    def _ghost_to_open_group(self, sig: StrategySignal, t: datetime, contracts: Dict[str, OptionContract],
+                             expiry: Optional[str], atm: Any) -> Optional[StrategySignal]:
+        direction = sig.signal_type
+        key = "atm_ce" if direction == "BUY" else "atm_pe"
+        contract = contracts.get(key)
+        if contract is None:
+            side = key[-2:].upper()
+            self._skip(iso_utc(t), f"ATM {side}", f"ATM {self.resolver.missing_reason(expiry, atm, side)}")
+            return None
+        self._ghost_counter += 1
+        sig.signal_type = "OPEN_GROUP"
+        sig.metadata = dict(sig.metadata or {})
+        sig.metadata["group_id"] = f"GTC_{compact_stamp(t)}_{self._ghost_counter:03d}"
+        sig.metadata["direction"] = direction
+        sig.legs = [{"symbol": contract.symbol, "side": "BUY", "quantity": self.lots}]
+        return sig
+
+    def _open_symbol_for(self, group_id: str, symbol: str) -> Optional[str]:
+        """
+        The broker symbol a CLOSE leg refers to, taken from the group's open
+        book: a logical symbol maps to the contract it was opened with (the
+        expiry may have rolled over since), a broker symbol to itself.
+        """
+        if ":" in symbol:
+            return symbol if self.ledger.position(group_id, symbol) is not None else None
+        opened = self._opened_as.get((group_id, symbol.upper()))
+        if opened and self.ledger.position(group_id, opened) is not None:
+            return opened
+        return None
+
+    def _resolve_legs(self, sig: StrategySignal, expiry: Optional[str], t: datetime,
+                      group_id: str) -> Optional[List[Dict[str, Any]]]:
+        """
+        Logical -> broker symbols; None (after recording a skip) when an OPEN
+        leg cannot be resolved. CLOSE legs are matched against the group's
+        open positions first, then against the current expiry.
+        """
+        resolved: List[Dict[str, Any]] = []
+        for leg in sig.legs or []:
+            symbol = str(leg.get("symbol") or "")
+            real = self._open_symbol_for(group_id, symbol) if sig.signal_type == "CLOSE_GROUP" else None
+            if real is None:
+                real = self.resolver.resolve_logical(symbol, expiry) if expiry else (symbol if ":" in symbol else None)
+            if not real:
+                why = self.resolver.logical_missing_reason(symbol, expiry) if expiry else "no option expiry in the instrument master"
+                if sig.signal_type == "OPEN_GROUP":
+                    self._skip(iso_utc(t), symbol, why)
+                    return None
+                self.log(f"[IGNORE] close leg {symbol}: {why}")
+                self.ledger.ignored_legs += 1
+                continue
+            try:
+                quantity = int(leg.get("quantity") or 0)
+            except (TypeError, ValueError):
+                quantity = 0
+            resolved.append({
+                "symbol": real,
+                "side": str(leg.get("side") or "").upper(),
+                "quantity": quantity if quantity > 0 else self.lots,
+                "price": leg.get("price"),
+                "logical": symbol,
+            })
+        return resolved
+
+    def _handle_signal(self, sig: StrategySignal, t: datetime, inp: StrategyInput,
+                       contracts: Dict[str, OptionContract], expiry: Optional[str]) -> None:
+        t_iso = iso_utc(t)
+        if sig.signal_type in ("BUY", "SELL") and not sig.legs:
+            converted = self._ghost_to_open_group(sig, t, contracts, expiry, inp.atm_strike)
+            if converted is None:
+                return
+            sig = converted
+
+        if sig.signal_type not in ("OPEN_GROUP", "CLOSE_GROUP"):
+            self.log(f"[SKIP] {format_ist(t)} IST unsupported signal type {sig.signal_type!r} ignored")
+            return
+
+        sig.metadata = dict(sig.metadata or {})
+        group_id = str(sig.metadata.get("group_id") or "")
+        if not group_id:
+            group_id = f"{self.strategy.name}_{compact_stamp(t)}"
+            sig.metadata["group_id"] = group_id
+        sig.timestamp_utc = t_iso
+
+        if sig.signal_type == "OPEN_GROUP" and self._day.squared_off:
+            self.skipped_after_eod += 1
+            symbols = ", ".join(str(l.get("symbol")) for l in sig.legs) or group_id
+            self._skip(t_iso, symbols, f"entry after the EOD square-off ({self.run.eod_square_off_ist} IST)")
+            return
+
+        legs = self._resolve_legs(sig, expiry, t, group_id)
+        if legs is None:
+            return
+
+        if sig.signal_type == "OPEN_GROUP":
+            missing = []
+            for leg in legs:
+                price = self.feed.option_close_at(leg["symbol"], t)
+                if price is None:
+                    missing.append(leg["symbol"])
+                leg["price"] = price
+            if missing:
+                self._skip(t_iso, ", ".join(missing), f"no premium history for {', '.join(missing)}")
+                return
+        else:
+            for leg in legs:
+                price = self.feed.option_close_at(leg["symbol"], t)
+                if price is None:
+                    position = self.ledger.position(group_id, leg["symbol"])
+                    if position is not None:
+                        price = position.last_mark if position.last_mark is not None else position.avg_price
+                        self.log(f"[CLOSE] {leg['symbol']}: no candle at {format_ist(t)} IST, using last mark {price:.2f}")
+                leg["price"] = price
+
+        result = self.ledger.apply(sig.signal_type, group_id, legs, t_iso, sig.reason)
+        for leg, why in result.ignored:
+            self.log(f"[IGNORE] {format_ist(t)} IST {sig.signal_type} {group_id} {leg.get('side')} {leg.get('symbol')}: {why}")
+        if not result.applied:
+            if sig.signal_type == "OPEN_GROUP":
+                self._skip(t_iso, group_id, "no leg could be filled")
+            return
+        if sig.signal_type == "OPEN_GROUP":
+            filled = {leg["symbol"] for leg in result.legs}
+            for leg in legs:
+                if leg["symbol"] in filled and ":" not in leg["logical"]:
+                    self._opened_as[(group_id, leg["logical"].upper())] = leg["symbol"]
+        self._post_signal(sig, inp.spot_price, inp.atm_strike, result)
+
+    # --- main loop ----------------------------------------------------------
+
+    def _warm_up(self) -> None:
+        if not self.warms_up:
+            return
+        bars = [b for b in self.feed.warmup_bars(self.run.resolution_code)
+                if self.run.resolution_code == "D" or in_session(parse_utc(b.timestamp_utc))]
+        if not bars:
+            self.log(f"[WARMUP] no {self.run.resolution} index candles stored before {self.run.from_date.isoformat()}; strategy starts cold")
+            return
+        for bar in bars:
+            t = parse_utc(bar.timestamp_utc)
+            inp = self._build_input(bar, t, {}, self.resolver.atm(bar.close, self.step), "warmup")
+            self.strategy.on_bar(self.state, inp)
+        self.warmup_bars_used = len(bars)
+        self.log(f"[WARMUP] fed {len(bars)} {self.run.resolution} index candles before {self.run.from_date.isoformat()}")
+        self._note(f"Strategy warm-up used {len(bars)} {self.run.resolution} index candles stored before {self.run.from_date.isoformat()}.")
+
+    def _start_day(self, day: date, t: datetime) -> None:
+        previous = self._day
+        if previous.day is not None and previous.last_t is not None and self.ledger.has_open() \
+                and self.run.eod_square_off is not None and not previous.squared_off:
+            reason = f"End-of-day square-off {self.run.eod_square_off_ist} IST"
+            self.log(f"[EOD] {previous.day.isoformat()} ended with open positions before {self.run.eod_square_off_ist} IST; squaring off at the last close")
+            closed = self._square_off(previous.last_t, reason)
+            if closed:
+                self.eod_square_offs += 1
+        self._day = _DayState(day=day, squared_off=False, last_t=None)
+        self.sessions.add(day)
+
+    def _eod_check(self, t: datetime, spot: float, atm: Any) -> None:
+        eod = self.run.eod_square_off
+        if eod is None or self._day.squared_off or ist_time(t) < eod:
+            return
+        if self.ledger.has_open():
+            self.log(f"[EOD] {format_ist(t)} IST square-off")
+            closed = self._square_off(t, f"End-of-day square-off {self.run.eod_square_off_ist} IST", spot, atm)
+            if closed:
+                self.eod_square_offs += 1
+        self._day.squared_off = True
+
+    def execute(self) -> BacktestOutcome:
+        run = self.run
+        self.log(
+            f"[CONFIG] {run.describe()} lot_size={self.lot_size} ({self.lot_size_source}) "
+            f"strategy_lots={self.lots} broker_linked={'yes' if self.broker_linked else 'no'} "
+            f"resolutions={','.join(self.resolutions)} (SL/target on total P&L, enforced by the runner)"
+        )
+        self.state = self.strategy.initialize_state()
+        self.feed.load(self.resolutions)
+
+        driver = self.feed.driver_bars()
+        self.total_bars = len(driver)
+        if not driver:
+            message = (
+                f"No {run.underlying} {run.resolution} candles between {run.from_date.isoformat()} and "
+                f"{run.to_date.isoformat()} — backfill first"
+            )
+            self.log(f"[ERROR] {message}")
+            return self._finish("Failed", error=message)
+
+        self.log(f"[FEED] {self.total_bars} driver bars {format_ist(parse_utc(driver[0].timestamp_utc), '%d %b %Y %H:%M')}"
+                 f"..{format_ist(parse_utc(driver[-1].timestamp_utc), '%d %b %Y %H:%M')} IST")
+
+        # Every other resolution the strategy needs must be stored too; feeding
+        # it an empty series bar after bar would "complete" with zero trades
+        # and no explanation, which is exactly the silent failure the run must
+        # never produce.
+        for resolution in self.resolutions:
+            if resolution == run.resolution or len(self.feed.ensure_index(resolution)) > 0:
+                continue
+            message = (
+                f"{run.strategy_name} needs {resolution} index candles and none are stored for "
+                f"{run.spot_symbol} in {run.from_date.isoformat()}..{run.to_date.isoformat()} — backfill {resolution} first"
+            )
+            if resolution in self.index_resolutions:
+                self.log(f"[ERROR] {message}")
+                self._note(message)
+                return self._finish("Failed", error=message)
+            self.log(f"[FEED] WARN: {message}")
+            self._note(f"No {resolution} index candles stored for {run.spot_symbol} in range; bars[{resolution!r}]['index'] stayed empty.")
+
+        if self.resolver.expiries:
+            self.step = self.resolver.step_for(self.resolver.expiry_for(run.from_date))
+        else:
+            self.step = fallback_strike_step(run.underlying)
+            self._note(f"No option contracts for {run.underlying} in the instrument master; every entry was skipped.")
+
+        self._warm_up()
+        self._last_progress_at = 0.0
+
+        stopped = False
+        last_t: Optional[datetime] = None
+        last_bar: Optional[BarFrame] = None
+        for bar in driver:
+            t = parse_utc(bar.timestamp_utc)
+            day = ist_date(t)
+            if self._day.day != day:
+                self._start_day(day, t)
+
+            spot = bar.close
+            expiry = self.resolver.expiry_for(day) if self.resolver.expiries else None
+            atm = self.resolver.atm(spot, self.step)
+
+            self._eod_check(t, spot, atm)
+
+            # A day-rollover or EOD square-off books realized P&L (and exit
+            # charges) before the strategy sees this bar; if that pushed total
+            # P&L through the stop-loss / target the run ends here, exactly as
+            # the live guard would, instead of letting a new entry through.
+            stopped = self._check_risk(t, spot, atm)
+            if not stopped:
+                contracts = self.resolver.atm_contracts(expiry, atm) if expiry else {}
+                inp = self._build_input(bar, t, contracts, atm, "backtest")
+                signals = self.strategy.on_bar(self.state, inp) or []
+                for sig in signals:
+                    self._handle_signal(sig, t, inp, contracts, expiry)
+
+                self._mark(t)
+                stopped = self._check_risk(t, spot, atm)
+
+            self.bars_processed += 1
+            self._day.last_t = t
+            last_t, last_bar = t, bar
+            self.equity_points.append(self.ledger.snapshot(bar.timestamp_utc))
+            self._pending_snapshots.append(self.equity_points[-1])
+            self._flush_snapshots()
+            self._report_progress(bar.timestamp_utc, force=stopped)
+            if stopped:
+                break
+
+        if last_t is not None and self.ledger.has_open():
+            self._square_off(last_t, "End of backtest", last_bar.close if last_bar else None, None)
+            self.equity_points.append(self.ledger.snapshot(iso_utc(last_t)))
+            self._pending_snapshots.append(self.equity_points[-1])
+
+        self._flush_snapshots(force=True)
+        if last_t is not None:
+            self._report_progress(iso_utc(last_t), force=True)
+        return self._finish("Completed")
+
+    # --- completion ---------------------------------------------------------
+
+    def _summary(self) -> Dict[str, Any]:
+        notes = list(self.data_notes)
+        if self.resolver.lookups or self.feed.no_data or self.feed.synced:
+            notes.append(
+                "Option premiums come from FYERS history for contracts that still exist; "
+                "expired contracts have no history and were skipped."
+            )
+        # Skipped entries are reported per reason by the API's run view (it
+        # groups `skippedEntries`), and the lot-size note is added there too,
+        # so neither is repeated here.
+        if self.ledger.ignored_legs:
+            notes.append(f"{self.ledger.ignored_legs} close legs ignored: no matching open position.")
+        if self.resolver.failed_lookups:
+            notes.append(
+                f"{self.resolver.failed_lookups} contract lookup(s) failed with an API error and were retried on the next bar; "
+                "entries skipped at those bars are listed as 'contract lookup failed'."
+            )
+        if not self.broker_linked:
+            notes.append("Broker not linked: only contracts already stored could be priced.")
+        notes.extend(self.feed.sync_failures)
+        return {
+            "totalBars": self.total_bars,
+            "barsProcessed": self.bars_processed,
+            "sessions": len(self.sessions),
+            "trades": self.ledger.trades,
+            "skippedEntries": list(self.skipped_entries),
+            "eodSquareOffs": self.eod_square_offs,
+            "stopReason": self.stop_reason,
+            "dataNotes": notes,
+            "charges": round(self.ledger.charges, 4),
+            "realizedPnl": round(self.ledger.realized_pnl(), 4),
+            "signalsPosted": self._signals_posted,
+            "equityPoints": len(self.equity_points),
+            "lotSize": self.lot_size,
+            "lotSizeSource": self.lot_size_source,
+            "warmupBars": self.warmup_bars_used,
+            "syncedSymbols": list(self.feed.synced),
+        }
+
+    def _finish(self, status: str, error: Optional[str] = None) -> BacktestOutcome:
+        summary = self._summary()
+        self.log(
+            f"[SUMMARY] status={status} bars={self.bars_processed}/{self.total_bars} sessions={summary['sessions']} "
+            f"trades={summary['trades']} skipped={len(self.skipped_entries)} eod_square_offs={self.eod_square_offs} "
+            f"pnl={_money(self.ledger.total_pnl())} charges={self.ledger.charges:,.2f}"
+            f"{' stop=' + self.stop_reason if self.stop_reason else ''}{' error=' + error if error else ''}"
+        )
+        self.api.complete_run(self.run.run_id, status, summary, error)
+        return BacktestOutcome(status=status, summary=summary, error=error, stop_reason=self.stop_reason,
+                               ledger=self.ledger, equity_points=self.equity_points)
+
+    def fail(self, error: str) -> BacktestOutcome:
+        """Best-effort Failed completion after an unexpected exception."""
+        try:
+            self._flush_snapshots(force=True)
+        except Exception as ex:
+            self.log(f"[ERROR] could not flush equity snapshots: {ex}")
+        try:
+            return self._finish("Failed", error=error)
+        except Exception as ex:
+            self.log(f"[ERROR] could not mark run {self.run.run_id} failed: {ex}")
+            return BacktestOutcome(status="Failed", summary=self._summary(), error=error,
+                                   stop_reason=self.stop_reason, ledger=self.ledger, equity_points=self.equity_points)
+
+
+def run_backtest(api: Any, run_row: Dict[str, Any], strategy_factory: Callable[..., BaseStrategy],
+                 on_progress: Optional[ProgressCallback] = None, *, log: Logger = print,
+                 broker_linked: Optional[bool] = None, lot_size: Optional[int] = None,
+                 lot_size_source: str = "", warmup_days: int = WARMUP_DAYS,
+                 progress_interval: float = PROGRESS_INTERVAL_SECONDS,
+                 snapshot_batch: int = SNAPSHOT_BATCH) -> BacktestOutcome:
+    """
+    Replay `run_row` (a SimulationRun with Mode "OfflineReplay") with the
+    strategy built by `strategy_factory(params)`. Posts fills, marks, equity
+    snapshots, progress and the completion summary through `api`.
+
+    Returns the outcome; a `Failed` outcome carries the error text. SIGTERM
+    (SystemExit) is not swallowed: the API marks such runs Stopped itself.
+    """
+    params = parse_parameters(run_row.get("parametersJson"))
+    strategy = strategy_factory(params)
+    run = parse_run_row(run_row, default_lots=getattr(strategy, "default_lots", 1))
+    session = BacktestSession(
+        api, run, strategy, on_progress=on_progress, log=log, broker_linked=broker_linked,
+        lot_size=lot_size, lot_size_source=lot_size_source, warmup_days=warmup_days,
+        progress_interval=progress_interval, snapshot_batch=snapshot_batch,
+    )
+    try:
+        return session.execute()
+    except SystemExit:
+        try:
+            session._flush_snapshots(force=True)
+        except Exception:
+            pass
+        raise
+    except Exception as ex:
+        traceback.print_exc(file=sys.stderr)
+        error = f"{type(ex).__name__}: {ex}"
+        log(f"[ERROR] backtest failed: {error}")
+        return session.fail(error)

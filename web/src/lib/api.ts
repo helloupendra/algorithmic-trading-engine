@@ -170,6 +170,11 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
       ...rest,
       headers: finalHeaders,
       body: body === undefined ? undefined : JSON.stringify(body),
+      // Never let the browser answer an API call from its heuristic cache: an
+      // older API build once served the SPA's index.html (with Last-Modified)
+      // for an unknown /api route, and Chrome kept replaying that cached HTML
+      // for the same URL long after the API was upgraded.
+      cache: 'no-store',
     })
   }
 
@@ -194,7 +199,25 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
     throw new ApiError(response.status, errorMessage(response.status, parsed), parsed)
   }
 
+  // The API serves the SPA from wwwroot with an index.html fallback, so a
+  // route the running API build does not know answers 200 + HTML instead of
+  // 404. Surface that as an error rather than handing a page a string where it
+  // expects JSON (which crashes on the first `.filter`/`.length`).
+  if (isHtmlDocument(parsed)) {
+    throw new ApiError(
+      404,
+      'This endpoint is not available on the running API build. Restart the API to pick up the latest code.',
+      parsed,
+    )
+  }
+
   return parsed as T
+}
+
+function isHtmlDocument(value: unknown): boolean {
+  if (typeof value !== 'string') return false
+  const head = value.trimStart().slice(0, 15).toLowerCase()
+  return head.startsWith('<!doctype') || head.startsWith('<html')
 }
 
 export const api = {

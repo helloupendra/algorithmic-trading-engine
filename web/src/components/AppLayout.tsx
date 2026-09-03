@@ -8,7 +8,7 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useBrokerSession, useIngestorStatuses, useMarketSession } from '../lib/queries'
-import { DATA_SECTIONS, MODULES, STRATEGIES_SECTIONS } from '../lib/modules'
+import { BACKTESTING_SECTIONS, DATA_SECTIONS, MODULES, STRATEGIES_SECTIONS } from '../lib/modules'
 import {
   IconArrowRight,
   IconCandles,
@@ -129,7 +129,9 @@ function NavItem({
 }
 
 function AdminNav() {
-  const legacyModules = MODULES.filter((m) => m.key !== 'data' && m.key !== 'strategies' && m.status !== 'planned')
+  // Modules with their own nav group above are left out of the legacy list.
+  const grouped = new Set(['data', 'strategies', 'backtesting'])
+  const legacyModules = MODULES.filter((m) => !grouped.has(m.key) && m.status !== 'planned')
 
   return (
     <>
@@ -147,6 +149,13 @@ function AdminNav() {
       <div className="nav-group">
         <div className="nav-group__label">Strategies</div>
         {STRATEGIES_SECTIONS.map((s) => (
+          <NavItem key={s.route} to={s.route} label={s.label} icon={s.icon} end={s.end} />
+        ))}
+      </div>
+
+      <div className="nav-group">
+        <div className="nav-group__label">Backtesting</div>
+        {BACKTESTING_SECTIONS.map((s) => (
           <NavItem key={s.route} to={s.route} label={s.label} icon={s.icon} end={s.end} />
         ))}
       </div>
@@ -187,6 +196,10 @@ const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]>
   ['/admin/strategies/live', 'Strategies', 'Live runner'],
   ['/admin/strategies/library', 'Strategies', 'Library'],
   ['/admin/strategies', 'Strategies', 'Overview'],
+  ['/admin/backtesting/runs/', 'Backtesting', 'Run'],
+  ['/admin/backtesting/runs', 'Backtesting', 'Runs'],
+  ['/admin/backtesting/new', 'Backtesting', 'New backtest'],
+  ['/admin/backtesting', 'Backtesting', 'Overview'],
   ['/admin/users', 'Modules', 'Users'],
   ['/admin/risk', 'Modules', 'Risk'],
   ['/admin/strategies', 'Modules', 'Strategies'],

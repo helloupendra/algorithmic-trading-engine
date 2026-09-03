@@ -21,7 +21,7 @@ namespace AlgoTrading.Infrastructure.Services
         public SymbolUniverseService(
             TradingDbContext dbContext,
             IMarketDataService marketDataService)
-        { 
+        {
             _dbContext = dbContext;
             _marketDataService = marketDataService;
         }
@@ -30,10 +30,14 @@ namespace AlgoTrading.Infrastructure.Services
             BackfillHistoryRequest request,
             CancellationToken cancellationToken = default)
         {
+            // The candles table holds canonical codes ("5", "D"); every lookup and
+            // the sync state row use the same spelling the sync writes.
+            string resolution = ResolutionCodes.ToCandle(request.Resolution);
+
             var response = new BackfillHistoryResponse
             {
                 Symbol = request.Symbol,
-                Resolution = request.Resolution,
+                Resolution = resolution,
                 RequestedFromDate = request.FromDate,
                 RequestedToDate = request.ToDate,
             };
@@ -50,14 +54,7 @@ namespace AlgoTrading.Infrastructure.Services
                 return response;
             }
 
-            var localCandles = await _dbContext.Candles
-                .AsNoTracking()
-                .Where(x =>
-                    x.Symbol == request.Symbol &&
-                    x.Resolution == request.Resolution &&
-                    x.TimeStampUtc >= request.FromDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc) &&
-                    x.TimeStampUtc < request.ToDate.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc))
-                .CountAsync(cancellationToken);
+            var localCandles = await CountLocalCandlesAsync(request, resolution, cancellationToken);
 
             response.LocalCandlesAvailable = localCandles;
 
@@ -69,7 +66,7 @@ namespace AlgoTrading.Infrastructure.Services
                 var syncRequest = new SyncHistoryRequest
                 {
                     Symbol = request.Symbol,
-                    Resolution = request.Resolution,
+                    Resolution = resolution,
                     DateFormat = request.DateFormat,
                     FromDate = request.FromDate,
                     ToDate = request.ToDate,
@@ -82,14 +79,7 @@ namespace AlgoTrading.Infrastructure.Services
             }
 
 
-            response.LocalCandlesAvailable = await _dbContext.Candles
-                .AsNoTracking()
-                .Where(x =>
-                    x.Symbol == request.Symbol &&
-                    x.Resolution == request.Resolution &&
-                    x.TimeStampUtc >= request.FromDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc) &&
-                    x.TimeStampUtc < request.ToDate.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc))
-                .CountAsync(cancellationToken);
+            response.LocalCandlesAvailable = await CountLocalCandlesAsync(request, resolution, cancellationToken);
 
             response.FullCoverageAfterBackfill = response.LocalCandlesAvailable > 0;
             response.Message = response.FullCoverageAfterBackfill
@@ -99,24 +89,24 @@ namespace AlgoTrading.Infrastructure.Services
             var state = await _dbContext.SymbolSyncStates
                 .FirstOrDefaultAsync(x =>
                     x.Symbol == request.Symbol &&
-                    x.Resolution == request.Resolution, cancellationToken);
+                    x.Resolution == resolution, cancellationToken);
 
             if (state is null)
             {
                 state = new SymbolSyncState
                 {
                     Symbol = request.Symbol,
-                    Resolution = request.Resolution
+                    Resolution = resolution
                 };
                 _dbContext.SymbolSyncStates.Add(state);
             }
 
             var minTs = await _dbContext.Candles
-                .Where(x => x.Symbol == request.Symbol && x.Resolution == request.Resolution)
+                .Where(x => x.Symbol == request.Symbol && x.Resolution == resolution)
                 .MinAsync(x => (DateTime?)x.TimeStampUtc, cancellationToken);
 
             var maxTs = await _dbContext.Candles
-                .Where(x => x.Symbol == request.Symbol && x.Resolution == request.Resolution)
+                .Where(x => x.Symbol == request.Symbol && x.Resolution == resolution)
                 .MaxAsync(x => (DateTime?)x.TimeStampUtc, cancellationToken);
 
             state.EarliestLocalCandleUtc = minTs;
@@ -130,5 +120,15 @@ namespace AlgoTrading.Infrastructure.Services
 
             return response;
         }
+
+        private Task<int> CountLocalCandlesAsync(BackfillHistoryRequest request, string resolution, CancellationToken cancellationToken)
+            => _dbContext.Candles
+                .AsNoTracking()
+                .Where(x =>
+                    x.Symbol == request.Symbol &&
+                    x.Resolution == resolution &&
+                    x.TimeStampUtc >= request.FromDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc) &&
+                    x.TimeStampUtc < request.ToDate.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc))
+                .CountAsync(cancellationToken);
     }
 }

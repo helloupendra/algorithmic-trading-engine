@@ -1782,3 +1782,188 @@ a.pill:hover { border-color: var(--line-strong); }
   .pulse-dot { animation: none; }
   .progress__bar, .strategy-card, a.pill { transition: none; }
 }
+
+/* --- backtesting module ----------------------------------------------------- */
+
+/* Resolution choices: a segmented control whose buttons carry a second,
+   smaller line (sessions and span) and can wrap on narrow dialogs. */
+.seg--wrap { flex-wrap: wrap; }
+
+.seg__btn--meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 6px 12px;
+  text-align: left;
+  line-height: 1.3;
+}
+.seg__btn--meta small {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.seg__btn.is-active small { color: var(--text-2); }
+.seg__btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.seg__btn:disabled:hover { color: var(--text-2); }
+
+/* A choice that has no data but can be fetched: the option plus its button. */
+.seg__group {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 2px;
+}
+.seg__group .btn { align-self: center; }
+
+/* Compact modal without the strategy aside (backfill dialog). */
+.modal__card--sm { width: min(560px, 100%); }
+@media (min-width: 900px) {
+  .modal__card--sm { grid-template-columns: 1fr; }
+}
+
+/* Run progress (header of a running backtest). */
+.bt-progress {
+  display: grid;
+  gap: 6px;
+  background: var(--bg1);
+  border: 1px solid color-mix(in srgb, var(--live) 35%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+.bt-progress__row {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.bt-progress__pct { font-size: 15px; font-weight: 700; color: var(--text); }
+.progress--lg { height: 7px; margin-top: 0; }
+
+/* Coverage table on the overview: index × resolution rows. */
+.coverage-table td.coverage-table__none { color: var(--text-3); }
+.coverage-table__underlying { font-weight: 650; }
+
+/* Coverage chips on the New backtest page — what exists, before the picker. */
+.coverage-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.coverage-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--bg1);
+  font-size: 12px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.coverage-chip b { color: var(--text); font-family: var(--mono); font-weight: 650; }
+
+/* Charts with a crosshair readout above the plot. */
+.chart-wrap { display: grid; gap: 6px; }
+.chart-readout {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-height: 20px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.chart-readout b { color: var(--text); }
+.chart-readout__time { color: var(--text-3); }
+.chart-readout__key {
+  display: inline-block;
+  width: 14px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--brand);
+}
+
+/* Daily P&L bars (inline SVG). */
+.daily-pnl { width: 100%; }
+.daily-pnl svg { display: block; width: 100%; height: auto; overflow: visible; }
+.daily-pnl__readout {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-height: 20px;
+  margin-bottom: 6px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.daily-pnl__grid { stroke: var(--line-soft); stroke-width: 1; }
+.daily-pnl__zero { stroke: var(--line-strong); stroke-width: 1; }
+.daily-pnl__tick {
+  fill: var(--text-3);
+  font-family: var(--sans);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.daily-pnl__bar { transition: opacity 0.12s ease; }
+.daily-pnl__bar--pos { fill: var(--pos); }
+.daily-pnl__bar--neg { fill: var(--neg); }
+.daily-pnl__bar.is-hover { opacity: 0.8; }
+.daily-pnl__hit { fill: transparent; cursor: crosshair; outline: none; }
+.daily-pnl__hit:focus-visible { stroke: var(--brand); stroke-width: 1; }
+
+/* Activity rows of a multi-day run carry a date, so the time column is wider. */
+.activity--dated .activity__item { grid-template-columns: 128px auto minmax(0, 1fr); }
+
+/* Data notes (skipped entries, expired-contract caveats). */
+.data-notes {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+/* Metric grid on the run page (more tiles than a run card's strip). */
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+/* Runs table filters. */
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Failed-run alert with the last log lines. */
+.alert--stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.alert__lines {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .daily-pnl__bar { transition: none; }
+}

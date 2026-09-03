@@ -1,288 +1,287 @@
-import os
-import sys
-import math
-import pandas as pd
-import psycopg2
-from datetime import datetime, timezone, timedelta
+"""
+tools/run_backtest.py
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+Terminal front-end for the Backtesting module. Creates a run through the API
+(POST /api/Backtest/runs - the same path the web dialog uses, so the API
+validates coverage, spawns tools/backtest_runner.py and persists the results),
+tails GET /api/Backtest/runs/{id} until it finishes and prints the ledger as a
+text report.
 
-from core.data_engine import DataEngine
-from strategies.ghost_tangent_crossings import GhostTangentCrossingsStrategy
-from strategies.base_strategy import StrategyInput
+    python tools/run_backtest.py --strategy GhostTangentCrossings --underlying BANKNIFTY \
+        --resolution 5m --from 2026-08-19 --to 2026-09-02 --lots 1 --sl 5000 --target 8000
+
+Nothing is hard-coded here: symbols, lot sizes and expiries come from the
+platform, and the strategy is any catalog entry (see tools/list_strategies.py).
+
+Starting a run is admin-only (POST /api/Backtest/runs) and the engine service
+account is a Trader, so the wrapper signs in as an admin: pass --user/--password,
+or set BACKTEST_USERNAME / BACKTEST_PASSWORD (falling back to ADMIN_USERNAME /
+ADMIN_PASSWORD from the repo-root .env).
+"""
+
+from __future__ import annotations
 
 import argparse
+import json
+import os
+import sys
+import time
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
-def round_strike(price: float, step: int) -> int:
-    return int(round(price / step) * step)
+ENGINE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ENGINE_DIR not in sys.path:
+    sys.path.insert(0, ENGINE_DIR)
 
-def main():
-    parser = argparse.ArgumentParser(description="Backtest Strategy")
-    parser.add_argument("--underlying", type=str, default="BANKNIFTY", choices=["BANKNIFTY", "NIFTY", "SENSEX"])
-    parser.add_argument("--target-pts", type=float, default=20.0, help="Target in points (default: 20)")
-    parser.add_argument("--sl-pts", type=float, default=20.0, help="Stop loss in points (default: 20)")
-    args = parser.parse_args()
-    
-    underlying = args.underlying
-    
-    # Auto-save report
-    class Tee(object):
-        def __init__(self, name, mode):
-            self.file = open(name, mode, encoding='utf-8')
-            self.stdout = sys.stdout
-            sys.stdout = self
-        def __del__(self):
-            sys.stdout = self.stdout
-            self.file.close()
-        def write(self, data):
-            self.file.write(data)
-            self.stdout.write(data)
-        def flush(self):
-            self.file.flush()
-            self.stdout.flush()
-            
-    report_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backtest_reports"))
-    os.makedirs(report_dir, exist_ok=True)
-    report_filename = os.path.join(report_dir, f"GhostTangent_{underlying}_T{int(args.target_pts)}_SL{int(args.sl_pts)}.txt")
-    tee = Tee(report_filename, 'w')
-    
-    if underlying == "BANKNIFTY":
-        spot_symbol = "NSE:NIFTYBANK-INDEX"
-        lot_size = 15
-        strike_step = 100
-    elif underlying == "NIFTY":
-        spot_symbol = "NSE:NIFTY50-INDEX"
-        lot_size = 65
-        strike_step = 50
-    elif underlying == "SENSEX":
-        spot_symbol = "BSE:SENSEX-INDEX"
-        lot_size = 10
-        strike_step = 100
-    else:
-        raise ValueError(f"Unsupported underlying: {underlying}")
-        
-    print(f"Initializing Ghost Strategy Backtester for {underlying}...")
-    
-    # Connect to local database where historical option bars are stored
+from core.api_client import PlatformApiClient  # noqa: E402
+from core.config import API_BASE_URL, VERIFY_SSL  # noqa: E402
+from core.resolutions import to_candle_resolution, to_strategy_resolution  # noqa: E402
+from backtest.timeutil import format_ist, parse_utc  # noqa: E402
+
+FINISHED = {"Completed", "Failed", "Stopped"}
+LINE = "=" * 100
+RULE = "-" * 100
+
+
+def money(value: Optional[float]) -> str:
+    if value is None:
+        return "-"
+    sign = "-" if value < 0 else ("+" if value > 0 else "")
+    return f"{sign}Rs. {abs(value):,.2f}"
+
+
+def when(value: Optional[str], fmt: str = "%d %b %H:%M") -> str:
+    if not value:
+        return "-"
     try:
-        conn = psycopg2.connect("host=localhost port=5433 dbname=algotrading user=postgres password=admin@123")
-        print("Connected to Postgres database.")
-    except Exception as e:
-        print(f"Failed to connect to database: {e}")
-        return
+        return format_ist(parse_utc(value), fmt)
+    except ValueError:
+        return str(value)
 
-    # Load all historical option bars into a DataFrame for fast lookups
-    print("Loading historical option bars from database (this may take a few seconds)...")
-    exchange_prefix = "BSE" if underlying == "SENSEX" else "NSE"
-    query = f"""
-    SELECT "Symbol", "TimeStampUtc", "Open", "High", "Low", "Close"
-    FROM candles
-    WHERE "Symbol" LIKE '{exchange_prefix}:{underlying}%'
-    ORDER BY "TimeStampUtc" ASC
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Backtest a catalog strategy over stored history.")
+    parser.add_argument("--strategy", required=True, help="Catalog strategy name (tools/list_strategies.py)")
+    parser.add_argument("--underlying", required=True, help="e.g. BANKNIFTY, NIFTY, SENSEX")
+    parser.add_argument("--resolution", default="5m", help="Bar resolution: 1m, 5m, 15m or 1D (default 5m)")
+    parser.add_argument("--from", dest="from_date", required=True, help="First IST day, yyyy-MM-dd")
+    parser.add_argument("--to", dest="to_date", required=True, help="Last IST day, yyyy-MM-dd (inclusive)")
+    parser.add_argument("--lots", type=int, default=None, help="Lots per leg (default: the catalog default)")
+    parser.add_argument("--sl", type=float, default=None, help="Stop-loss in rupees on total P&L")
+    parser.add_argument("--target", type=float, default=None, help="Target in rupees on total P&L")
+    parser.add_argument("--eod", default="15:15", help="EOD square-off time IST, HH:MM; empty for none")
+    parser.add_argument("--charges", type=float, default=0.0, help="Flat charges per lot per fill (rupees)")
+    parser.add_argument("--capital", type=float, default=None, help="Initial capital (default 1,000,000)")
+    parser.add_argument("--params", default=None, help="Strategy parameter overrides as a JSON object")
+    parser.add_argument("--poll", type=float, default=2.0, help="Seconds between status polls (default 2)")
+    parser.add_argument("--json", action="store_true", help="Print the final run view as JSON instead of the report")
+    parser.add_argument("--user", default=None,
+                        help="Admin user name to sign in as (default: BACKTEST_USERNAME, then ADMIN_USERNAME from .env)")
+    parser.add_argument("--password", default=None,
+                        help="Password for --user (default: BACKTEST_PASSWORD, then ADMIN_PASSWORD from .env)")
+    return parser.parse_args()
+
+
+def resolve_credentials(args: argparse.Namespace) -> tuple[Optional[str], Optional[str]]:
     """
-    options_df = pd.read_sql_query(query, conn)
-    options_df['TimeStampUtc'] = pd.to_datetime(options_df['TimeStampUtc']).dt.tz_convert('UTC')
-    options_df.set_index(['TimeStampUtc', 'Symbol'], inplace=True)
-    print(f"Loaded {len(options_df)} historical option bars.")
+    The admin credentials the wrapper signs in with. None/None means "use the
+    engine service account", which cannot start runs (it is a Trader) but can
+    still tail one.
+    """
+    username = (args.user or os.getenv("BACKTEST_USERNAME") or os.getenv("ADMIN_USERNAME") or "").strip()
+    password = args.password or os.getenv("BACKTEST_PASSWORD") or os.getenv("ADMIN_PASSWORD") or ""
+    if username and password:
+        return username, password
+    return None, None
 
-    engine = DataEngine()
-    
-    # We will backtest over the last 5 days
-    end_date = datetime.now(timezone.utc)
-    start_date = end_date - timedelta(days=5)
-    
-    print(f"\nFetching 5-minute historical index bars for {underlying} from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}...")
-    
-    try:
-        index_bars = engine.get_historical_bars(
-            spot_symbol, 
-            "5", 
-            start_date.strftime("%Y-%m-%d"), 
-            end_date.strftime("%Y-%m-%d")
-        )
-        print(f"Downloaded {len(index_bars)} index bars for backtesting.")
-    except Exception as e:
-        print(f"Failed to download index bars: {e}")
-        return
 
-    # Strategy Initialization
-    strategy = GhostTangentCrossingsStrategy()
-    state = strategy.initialize_state()
+def resolve_strategy_id(api: PlatformApiClient, name: str) -> int:
+    catalog = api.get_strategy_catalog()
+    for entry in catalog:
+        if str(entry.get("name", "")).lower() == name.lower():
+            return int(entry["id"])
+    names = ", ".join(sorted(str(e.get("name")) for e in catalog))
+    raise SystemExit(f"Strategy '{name}' is not in the catalog. Available: {names}")
 
-    current_bars = []
-    trades = []
-    open_position = None
 
-    print("\nStarting Simulation Loop...")
-    
-    for bar in index_bars:
-        current_bars.append(bar)
-        
-        # 1. Evaluate open positions for exit
-        if open_position:
-            opt_sym = open_position['symbol']
-            try:
-                # Look up the close price of the option for this 5m candle
-                # Using bar.timestamp_start because Fyers aligns them
-                opt_row = options_df.loc[(bar.timestamp_start, opt_sym)]
-                current_opt_price = opt_row['Close']
-                
-                entry_price = open_position['entry_price']
-                returns = (current_opt_price - entry_price) / entry_price
-                
-                exit_reason = None
-                
-                profit = current_opt_price - entry_price
-                
-                # Check Target
-                if profit >= args.target_pts:
-                    exit_reason = f"Target Hit ({args.target_pts} pts)"
-                # Check Stop Loss
-                elif profit <= -args.sl_pts:
-                    exit_reason = f"Stop Loss Hit ({args.sl_pts} pts)"
-                # Check End of Day (15:15 IST = 09:45 UTC)
-                elif bar.timestamp_start.hour == 9 and bar.timestamp_start.minute >= 45:
-                    exit_reason = "End of Day Square-Off"
-
-                if exit_reason:
-                    open_position['exit_price'] = current_opt_price
-                    open_position['exit_time'] = bar.timestamp_start
-                    open_position['profit'] = profit
-                    open_position['profit_pct'] = returns * 100
-                    open_position['exit_reason'] = exit_reason
-                    trades.append(open_position)
-                    open_position = None
-                    
-            except KeyError:
-                # Missing option data for this specific minute, skip evaluation
-                pass
-                
-        # 2. Feed the index bar to the Ghost Strategy
-        inp = StrategyInput(
-            mode="Backtest",
-            underlying=underlying,
-            spot_price=bar.close,
-            timestamp_utc=bar.timestamp_start,
-            bars={"5m": {"index": current_bars}}
-        )
-        
-        signals = strategy.on_bar(state, inp)
-        
-        # 3. Process new signals
-        for sig in signals:
-            if open_position is None and not (bar.timestamp_start.hour == 9 and bar.timestamp_start.minute >= 45):
-                # We only take 1 position at a time and avoid EOD entries
-                is_buy = (sig.signal_type == "BUY")
-                
-                # Determine ATM strike
-                spot_price = bar.close
-                atm_strike = round_strike(spot_price, strike_step)
-                
-                opt_type = "CE" if is_buy else "PE"
-                
-                if underlying == "BANKNIFTY":
-                    expiry_str = "26SEP"
-                elif underlying == "NIFTY":
-                    expiry_str = "26908"
-                elif underlying == "SENSEX":
-                    expiry_str = "26903"
-                else:
-                    expiry_str = "26SEP"
-                
-                exchange = "BSE" if underlying == "SENSEX" else "NSE"
-                opt_sym = f"{exchange}:{underlying}{expiry_str}{atm_strike}{opt_type}"
-                
-                try:
-                    opt_row = options_df.loc[(bar.timestamp_start, opt_sym)]
-                    entry_price = opt_row['Close']
-                    
-                    open_position = {
-                        'entry_time': bar.timestamp_start,
-                        'signal_type': sig.signal_type,
-                        'symbol': opt_sym,
-                        'entry_price': entry_price,
-                        'spot_price': spot_price
-                    }
-                except KeyError:
-                    # No data for this option at this time
-                    pass
-
-    # Complete the simulation
-    if open_position:
-        print("\nSimulation ended with an open position. Closing at last traded price.")
-        opt_sym = open_position['symbol']
+def build_request(args: argparse.Namespace, strategy_id: int) -> Dict[str, Any]:
+    for label, value in (("--from", args.from_date), ("--to", args.to_date)):
         try:
-            # Find the last price for this option in our DB
-            opt_history = options_df.xs(opt_sym, level='Symbol')
-            if not opt_history.empty:
-                last_price = opt_history['Close'].iloc[-1]
-                last_time = opt_history.index[-1]
-                
-                entry_price = open_position['entry_price']
-                profit = last_price - entry_price
-                open_position['exit_price'] = last_price
-                open_position['exit_time'] = last_time
-                open_position['profit'] = profit
-                open_position['profit_pct'] = ((last_price - entry_price) / entry_price) * 100
-                open_position['exit_reason'] = "End of Backtest"
-                trades.append(open_position)
-        except KeyError:
-            pass
+            datetime.strptime(value, "%Y-%m-%d")
+        except ValueError:
+            raise SystemExit(f"{label} must be yyyy-MM-dd, got {value!r}")
 
-    # --- Print Report ---
-    print("\n" + "="*80)
-    print("BACKTEST REPORT: Ghost Tangent Crossings")
-    print("="*80)
-    
-    if not trades:
-        print("No trades were executed during this period.")
-        return
-        
-    wins = [t for t in trades if t['profit'] > 0]
-    losses = [t for t in trades if t['profit'] <= 0]
-    
-    total_profit_pts = sum(t['profit'] for t in trades)
-    win_rate = len(wins) / len(trades) * 100 if trades else 0
-    
-    total_rs = total_profit_pts * lot_size
-    
-    max_capital_used = 0
-    gross_profit_rs = 0
-    gross_loss_rs = 0
-    
-    # Print ledger
-    ist_offset = timedelta(hours=5, minutes=30)
-    for i, t in enumerate(trades, 1):
-        profit_rs = t['profit'] * lot_size
-        capital_req = t['entry_price'] * lot_size
-        max_capital_used = max(max_capital_used, capital_req)
-        
-        if profit_rs > 0:
-            gross_profit_rs += profit_rs
-        else:
-            gross_loss_rs += profit_rs
-            
-        profit_str = f"+Rs. {profit_rs:.2f}" if profit_rs > 0 else f"-Rs. {abs(profit_rs):.2f}"
-        
-        # Convert UTC to IST for display
-        entry_ist = t['entry_time'] + ist_offset
-        exit_ist = t['exit_time'] + ist_offset
-        
-        # Strategy returns BUY/SELL for index, but we always BUY options
-        action = "BUY "
-        
-        print(f"Trade {i:02d}: {entry_ist.strftime('%m-%d %H:%M')} | {action} {t['symbol']} | "
-              f"Entry: {t['entry_price']:.2f} | Exit: {t['exit_price']:.2f} ({exit_ist.strftime('%H:%M')}) | "
-              f"Cap: Rs.{capital_req:.2f} | PnL: {profit_str} ({t['profit_pct']:.1f}%) | {t['exit_reason']}")
-              
-    print("-" * 80)
-    print(f"Total Trades        : {len(trades)}")
-    print(f"Win Rate            : {win_rate:.1f}% ({len(wins)}W - {len(losses)}L)")
-    print(f"Max Capital Reqd    : Rs. {max_capital_used:.2f} (1 Lot)")
-    print(f"Gross Profit        : Rs. {gross_profit_rs:.2f}")
-    print(f"Gross Loss          : Rs. {gross_loss_rs:.2f}")
-    print(f"Net PnL             : Rs. {total_rs:.2f} ({total_profit_pts:.2f} points)")
-    print("=" * 80 + "\n")
+    payload: Dict[str, Any] = {
+        "strategyId": strategy_id,
+        "underlying": args.underlying.strip().upper(),
+        "resolution": to_candle_resolution(args.resolution),
+        "fromDate": args.from_date,
+        "toDate": args.to_date,
+        "eodSquareOffIst": args.eod.strip(),
+        "chargesPerLot": max(0.0, args.charges),
+    }
+    if args.lots is not None:
+        payload["lots"] = max(1, args.lots)
+    if args.sl is not None:
+        payload["stopLoss"] = args.sl
+    if args.target is not None:
+        payload["target"] = args.target
+    if args.capital is not None:
+        payload["initialCapital"] = args.capital
+    if args.params:
+        try:
+            overrides = json.loads(args.params)
+        except ValueError as ex:
+            raise SystemExit(f"--params must be a JSON object: {ex}")
+        if not isinstance(overrides, dict):
+            raise SystemExit("--params must be a JSON object")
+        payload["parameters"] = overrides
+    return payload
+
+
+def wait_for_run(api: PlatformApiClient, run_id: int, poll: float) -> Dict[str, Any]:
+    last_line = ""
+    while True:
+        view = api.get_backtest_run(run_id)
+        status = str(view.get("status") or "")
+        if status in FINISHED:
+            if last_line:
+                print()
+            return view
+        progress = view.get("progress") or {}
+        line = (
+            f"  {status:<8} {float(progress.get('percent') or 0):5.1f}%  "
+            f"bars {progress.get('barsProcessed') or 0}/{progress.get('totalBars') or 0}  "
+            f"trades {progress.get('trades') or 0}  {when(progress.get('currentUtc'))}"
+        )
+        if line != last_line:
+            print(f"\r{line:<100}", end="", flush=True)
+            last_line = line
+        time.sleep(max(0.5, poll))
+
+
+def contract_label(position: Dict[str, Any]) -> str:
+    contract = position.get("contract") or {}
+    return str(contract.get("label") or position.get("symbol") or "")
+
+
+def print_report(view: Dict[str, Any], logs: List[str]) -> None:
+    lot_size = view.get("lotSize") or 1
+    print("\n" + LINE)
+    print(f"BACKTEST REPORT: {view.get('strategyName')}  (run #{view.get('runId')})")
+    print(LINE)
+    print(f"Underlying   : {view.get('underlying')} ({view.get('spotSymbol')})  lot size {lot_size} ({view.get('lotSizeSource')})")
+    print(f"Range        : {view.get('fromDate')} -> {view.get('toDate')}  @ {to_strategy_resolution(str(view.get('resolution') or '5'))}")
+    print(f"Lots         : {view.get('lots')}   SL {money(view.get('stopLoss')) if view.get('stopLoss') else 'none'}   "
+          f"target {money(view.get('target')) if view.get('target') else 'none'}   "
+          f"EOD {view.get('eodSquareOffIst') or 'none'} IST   charges/lot {view.get('chargesPerLot') or 0}")
+    print(f"Status       : {view.get('status')}{'  - ' + str(view.get('stopReason')) if view.get('stopReason') else ''}")
+    if view.get("lastError"):
+        print(f"Error        : {view.get('lastError')}")
+
+    positions = view.get("positions") or []
+    print(RULE)
+    if not positions:
+        print("No positions were opened during this period.")
+    for i, pos in enumerate(positions, 1):
+        qty = pos.get("quantity")
+        if qty is None:
+            qty = (pos.get("lots") or 0) * (pos.get("lotSize") or lot_size)
+        exit_price = pos.get("exitPrice")
+        exit_text = f"{exit_price:.2f} ({when(pos.get('closedUtc'), '%H:%M')})" if exit_price is not None else "open"
+        print(
+            f"Trade {i:03d}: {when(pos.get('openedUtc'), '%m-%d %H:%M')} | {str(pos.get('side') or ''):<4} "
+            f"{pos.get('lots')}x{pos.get('lotSize') or lot_size} {contract_label(pos)} | "
+            f"Entry: {float(pos.get('entryPrice') or 0):.2f} | Exit: {exit_text} | "
+            f"PnL: {money(pos.get('pnl'))} | {pos.get('exitReason') or pos.get('status')}"
+        )
+
+    pnl = view.get("pnl") or {}
+    metrics = view.get("metrics") or {}
+    print(RULE)
+    print(f"Closed positions    : {metrics.get('closedPositions', len([p for p in positions if p.get('status') == 'Closed']))}")
+    if metrics:
+        print(f"Win rate            : {float(metrics.get('winRatePercent') or 0):.1f}% "
+              f"({metrics.get('winning', 0)}W - {metrics.get('losing', 0)}L)")
+        print(f"Gross profit / loss : {money(metrics.get('grossProfit'))} / {money(metrics.get('grossLoss'))}")
+        print(f"Profit factor       : {metrics.get('profitFactor')}")
+        print(f"Avg win / loss      : {money(metrics.get('averageWin'))} / {money(metrics.get('averageLoss'))}")
+        print(f"Largest win / loss  : {money(metrics.get('largestWin'))} / {money(metrics.get('largestLoss'))}")
+        print(f"Max drawdown        : {money(metrics.get('maxDrawdownAmount'))} ({float(metrics.get('maxDrawdownPercent') or 0):.2f}%)")
+        print(f"Profitable days     : {metrics.get('profitableDays', 0)} of {metrics.get('tradingDays', 0)}")
+    print(f"Realized / unreal.  : {money(pnl.get('realized'))} / {money(pnl.get('unrealized'))}")
+    print(f"Charges             : {money(pnl.get('charges'))}")
+    print(f"Net PnL             : {money(pnl.get('total'))} ({float(pnl.get('returnPercent') or 0):.2f}%)")
+
+    daily = view.get("daily") or []
+    if daily:
+        print(RULE)
+        print("Daily P&L (IST):")
+        for row in daily:
+            print(f"  {row.get('date')}  {money(row.get('pnl')):>18}  trades {row.get('trades', 0)}")
+
+    notes = view.get("dataNotes") or []
+    if notes:
+        print(RULE)
+        print("Data notes:")
+        for note in notes:
+            print(f"  - {note}")
+
+    if view.get("status") == "Failed" and logs:
+        print(RULE)
+        print("Last runner output:")
+        for line in logs[-20:]:
+            print(f"  {line}")
+    print(LINE + "\n")
+
+
+def main() -> int:
+    args = parse_args()
+    username, password = resolve_credentials(args)
+    if username is None:
+        print(
+            "No admin credentials given (--user/--password, BACKTEST_USERNAME/BACKTEST_PASSWORD or "
+            "ADMIN_USERNAME/ADMIN_PASSWORD in .env); signing in as the engine service account, "
+            "which is not allowed to start backtests.",
+            file=sys.stderr,
+        )
+    else:
+        print(f"Signing in as {username}")
+    api = PlatformApiClient(API_BASE_URL, verify_ssl=VERIFY_SSL, username=username, password=password)
+
+    strategy_id = resolve_strategy_id(api, args.strategy)
+    payload = build_request(args, strategy_id)
+    print(f"Starting backtest: {json.dumps(payload)}")
+    try:
+        started = api.start_backtest(payload)
+    except Exception as ex:
+        print(f"Could not start the backtest: {ex}", file=sys.stderr)
+        if str(ex).startswith("403"):
+            print("POST /api/Backtest/runs is admin-only: pass --user/--password for an admin account "
+                  "(or set ADMIN_USERNAME/ADMIN_PASSWORD in .env).", file=sys.stderr)
+        return 1
+    run_id = int(started["runId"])
+    print(f"Run #{run_id}: {started.get('message') or 'started'}")
+
+    try:
+        view = wait_for_run(api, run_id, args.poll)
+    except KeyboardInterrupt:
+        print(f"\nStill running as run #{run_id}; stop it from the Backtesting page or POST /api/Backtest/runs/{run_id}/stop")
+        return 130
+
+    if args.json:
+        print(json.dumps(view, indent=2, default=str))
+        return 0 if view.get("status") == "Completed" else 1
+
+    logs: List[str] = []
+    if view.get("status") == "Failed":
+        try:
+            logs = api.get_backtest_logs(run_id, take=50)
+        except Exception:
+            logs = []
+    print_report(view, logs)
+    return 0 if view.get("status") in ("Completed", "Stopped") else 1
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

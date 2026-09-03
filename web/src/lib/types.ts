@@ -386,6 +386,221 @@ export interface StrategyLiveView {
   runner: { processId: number; lastLogUtc: string | null } | null
 }
 
+// ---------- Backtesting ----------
+
+export type BacktestStatus = 'Pending' | 'Running' | 'Completed' | 'Failed' | 'Stopped'
+
+/** One row of GET /api/Backtest/coverage — what the index has at a resolution. */
+export interface BacktestCoverageResolution {
+  /** Canonical candle-table code: "1" | "5" | "15" | "D". */
+  resolution: string
+  /** Strategy-facing label: "1m" | "5m" | "15m" | "1D". */
+  label: string
+  /** Declared by the strategy's data requirements (or the driver resolution). */
+  required: boolean
+  barCount: number
+  firstUtc: string | null
+  lastUtc: string | null
+  /** Distinct IST trading days with at least one bar. */
+  sessions: number
+  source: 'backfill' | 'live' | 'none'
+  backfillable: boolean
+}
+
+export interface BacktestOptionCoverage {
+  symbols: number
+  firstUtc: string | null
+  lastUtc: string | null
+  expiries: string[]
+}
+
+export interface BacktestCoverageResponse {
+  underlying: string
+  spotSymbol: string
+  lotSize: number
+  lotSizeSource: 'master' | 'configured' | 'unknown'
+  resolutions: BacktestCoverageResolution[]
+  /** Strategy-facing codes ("5m") the catalog entry declares, plus the driver. */
+  requiredResolutions: string[]
+  optionCandles: BacktestOptionCoverage
+  /** FYERS session valid — a backfill can be attempted. */
+  brokerLinked: boolean
+  notes: string[]
+}
+
+export interface BacktestBackfillRequest {
+  underlying: string
+  /** Canonical codes, e.g. ["5", "1"]. */
+  resolutions: string[]
+  fromDate: string
+  toDate: string
+}
+
+export interface BacktestBackfillResolutionResult {
+  resolution: string
+  candlesFetched: number
+  chunks: number
+  skippedChunks: number
+}
+
+export interface BacktestBackfillResponse {
+  perResolution: BacktestBackfillResolutionResult[]
+  message: string
+}
+
+/** POST /api/Backtest/runs body. Dates are IST calendar days ("yyyy-MM-dd"). */
+export interface StartBacktestRequest {
+  strategyId: number
+  underlying: string
+  resolution: string
+  fromDate: string
+  toDate: string
+  lots?: number
+  stopLoss?: number | null
+  target?: number | null
+  /** "HH:MM" IST; empty string = no end-of-day square-off. */
+  eodSquareOffIst?: string
+  chargesPerLot?: number
+  parameters?: Record<string, unknown> | null
+  initialCapital?: number
+}
+
+export interface StartBacktestResponse {
+  runId: number
+  message: string
+}
+
+/** GET /api/Backtest/runs — one OfflineReplay run per row, newest first. */
+export interface BacktestRunSummary {
+  runId: number
+  strategyName: string
+  strategyId: number
+  underlying: string
+  spotSymbol: string
+  resolution: string
+  fromDate: string
+  toDate: string
+  lots: number
+  stopLoss: number | null
+  target: number | null
+  status: BacktestStatus
+  progressPercent: number
+  /** Realized P&L net of charges — the detail view's pnl.total for a finished run. */
+  netPnl: number
+  trades: number
+  winRatePercent: number
+  /** Why the replay ended early (SL/target trip, user stop, runner exit); null when it ran the whole range. */
+  stopReason: string | null
+  createdUtc: string
+  startedUtc: string | null
+  completedUtc: string | null
+  startedBy: string | null
+  lastError: string | null
+}
+
+export interface BacktestProgress {
+  percent: number
+  barsProcessed: number
+  totalBars: number
+  currentUtc: string | null
+  trades: number
+  message: string | null
+}
+
+export interface BacktestPnl {
+  realized: number
+  unrealized: number
+  total: number
+  charges: number
+  returnPercent: number
+}
+
+export interface BacktestMetrics {
+  closedPositions: number
+  winning: number
+  losing: number
+  winRatePercent: number
+  grossProfit: number
+  grossLoss: number
+  profitFactor: number
+  averageWin: number
+  averageLoss: number
+  expectancy: number
+  maxDrawdownPercent: number
+  maxDrawdownAmount: number
+  largestWin: number
+  largestLoss: number
+  tradingDays: number
+  profitableDays: number
+}
+
+export interface BacktestDailyPnl {
+  /** IST calendar day, "yyyy-MM-dd". */
+  date: string
+  pnl: number
+  trades: number
+}
+
+/** Same row as the live position, plus how and at what price it was closed. */
+export interface BacktestPosition {
+  id: number
+  groupId: string
+  symbol: string
+  contract: LiveContract | null
+  side: 'BUY' | 'SELL'
+  lots: number
+  lotSize: number
+  quantity: number
+  status: 'Open' | 'Closed'
+  entryPrice: number
+  exitPrice: number | null
+  pnl: number
+  openedUtc: string
+  closedUtc: string | null
+  exitReason: string | null
+}
+
+export interface BacktestEquityPoint {
+  atUtc: string
+  equity: number
+  realized: number
+  unrealized: number
+}
+
+/** GET /api/Backtest/runs/{id} — everything the results page shows. */
+export interface BacktestRunView {
+  runId: number
+  strategyId: number
+  strategyName: string
+  underlying: string
+  spotSymbol: string
+  resolution: string
+  fromDate: string
+  toDate: string
+  lots: number
+  lotSize: number
+  lotSizeSource: 'master' | 'configured' | 'unknown'
+  stopLoss: number | null
+  target: number | null
+  eodSquareOffIst: string | null
+  chargesPerLot: number
+  initialCapital: number
+  parametersJson: string
+  status: BacktestStatus
+  lastError: string | null
+  startedUtc: string | null
+  completedUtc: string | null
+  stopReason: string | null
+  progress: BacktestProgress | null
+  pnl: BacktestPnl
+  metrics: BacktestMetrics
+  daily: BacktestDailyPnl[]
+  positions: BacktestPosition[]
+  activity: LiveActivity[]
+  dataNotes: string[]
+  equityCurve: BacktestEquityPoint[]
+}
+
 // ---------- Risk / session / system ----------
 
 export interface KillSwitchState {

@@ -9,7 +9,6 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   useStopStrategy,
@@ -28,9 +27,18 @@ import {
 } from '../../lib/format'
 import { formatContract } from '../../lib/symbols'
 import { Badge, FlashPrice, InlineError, Loading, QueryBoundary, StatTile } from '../../components/ui'
-import { IconChevronDown, IconChevronRight, IconLayers, IconPlay, IconStop } from '../../components/icons'
-import type { LiveActivity, LivePosition, StrategyListItem, StrategyLiveView } from '../../lib/types'
-import { CategoryBadge, LaunchDialog, PnlValue, ReadinessStrip, StrategyCard } from './shared'
+import { IconLayers, IconPlay, IconStop } from '../../components/icons'
+import type { LivePosition, StrategyListItem, StrategyLiveView } from '../../lib/types'
+import {
+  ActivityList,
+  CategoryBadge,
+  ConsoleOutput,
+  Disclosure,
+  LaunchDialog,
+  PnlValue,
+  ReadinessStrip,
+  StrategyCard,
+} from './shared'
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -47,15 +55,6 @@ function isToday(iso: string | null | undefined): boolean {
     d.getMonth() === now.getMonth() &&
     d.getDate() === now.getDate()
   )
-}
-
-function activityTone(type: string): 'pos' | 'neg' | 'warn' | 'neutral' | 'accent' {
-  const t = type.toUpperCase()
-  if (t === 'RUN_STOPPED') return 'warn'
-  if (t.startsWith('OPEN') || t === 'BUY') return 'pos'
-  if (t.startsWith('CLOSE') || t === 'SELL') return 'neg'
-  if (t.startsWith('ADJUST')) return 'accent'
-  return 'neutral'
 }
 
 function contractLabel(p: LivePosition): string {
@@ -147,80 +146,24 @@ function PositionsTable({ positions }: { positions: LivePosition[] }) {
   )
 }
 
-/* ------------------------------------------------------------ activity list */
-
-function ActivityList({ items }: { items: LiveActivity[] }) {
-  if (items.length === 0) return <p className="empty">No signals recorded for this run yet.</p>
-  return (
-    <ul className="activity">
-      {items.map((a, i) => (
-        <li key={`${a.atUtc}-${i}`} className="activity__item">
-          <span className="activity__time">{formatTime(a.atUtc)}</span>
-          <Badge tone={activityTone(a.type)}>{a.type}</Badge>
-          <span className="activity__text" title={a.groupId ? `${a.text} · group ${a.groupId}` : a.text}>
-            {a.text}
-          </span>
-        </li>
-      ))}
-    </ul>
-  )
-}
-
 /* ------------------------------------------------------------ runner output */
 
 function RunnerOutput({ strategyId, isActive }: { strategyId: number; isActive: boolean }) {
   const logs = useStrategyLogs(strategyId, isActive)
-  const bodyRef = useRef<HTMLDivElement>(null)
-  const lines = Array.isArray(logs.data) ? logs.data : []
-
-  // Follow the tail as new lines arrive.
-  useEffect(() => {
-    const el = bodyRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [lines.length])
-
+  const lines = isActive && Array.isArray(logs.data) ? logs.data : []
   return (
-    <div className="console">
-      <div className="console__bar">
-        <span className="console__dot console__dot--r" />
-        <span className="console__dot console__dot--y" />
-        <span className="console__dot console__dot--g" />
-        <span className="console__title">Runner process output</span>
-      </div>
-      <div className={`console__body ${lines.length === 0 ? 'faint' : ''}`} ref={bodyRef}>
-        {!isActive
+    <ConsoleOutput
+      lines={lines}
+      placeholder={
+        !isActive
           ? 'The runner is not running — output is only kept while the process is alive.'
-          : lines.length === 0
-            ? 'No output yet — the runner prints a [CONFIG] line at startup and a [STATUS] line every 10 s.'
-            : lines.map((line, i) => <div key={i}>{line}</div>)}
-      </div>
-    </div>
+          : 'No output yet — the runner prints a [CONFIG] line at startup and a [STATUS] line every 10 s.'
+      }
+    />
   )
 }
 
 /* ---------------------------------------------------------------- run card */
-
-function Disclosure({
-  label,
-  open,
-  onToggle,
-  children,
-}: {
-  label: string
-  open: boolean
-  onToggle: () => void
-  children: ReactNode
-}) {
-  return (
-    <div className="run-card__section">
-      <button type="button" className="disclosure__btn" onClick={onToggle} aria-expanded={open}>
-        {open ? <IconChevronDown /> : <IconChevronRight />}
-        {label}
-      </button>
-      {open && <div className="disclosure__body">{children}</div>}
-    </div>
-  )
-}
 
 function RunCard({
   strategy,

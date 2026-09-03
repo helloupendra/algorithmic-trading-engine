@@ -12,12 +12,17 @@
  *  market is closed these queries simply keep returning the stored snapshot.
  */
 
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr'
 import { api, API_BASE_URL } from './api'
 import type {
   BackfillHistoryResponse,
+  BacktestBackfillRequest,
+  BacktestBackfillResponse,
+  BacktestCoverageResponse,
+  BacktestRunSummary,
+  BacktestRunView,
   BrokerSessionInfo,
   CandleDto,
   DerivativeExpiry,
@@ -39,6 +44,8 @@ import type {
   SimulationRun,
   SimulationSignal,
   StaleQuote,
+  StartBacktestRequest,
+  StartBacktestResponse,
   StartStrategyRequest,
   StartStrategyResponse,
   StopStrategyResponse,
@@ -465,6 +472,134 @@ export function useFnoUnderlyings() {
     queryKey: ['derivatives', 'underlyings'],
     queryFn: () => api.get<FnoUnderlying[]>('/api/Instruments/derivatives/underlyings'),
     staleTime: 5 * 60_000,
+  })
+}
+
+// ---------- Backtesting ----------
+
+const POLL_BACKTEST_VIEW = 2_000
+const POLL_BACKTEST_LIST_ACTIVE = 5_000
+const POLL_BACKTEST_LIST_IDLE = 30_000
+
+function isBacktestActive(status: string | undefined): boolean {
+  return status === 'Running' || status === 'Pending'
+}
+
+/**
+ * What the index has at each resolution for one underlying, plus what the
+ * strategy needs — the dialog builds its resolution choices from this. One
+ * answer per (underlying, strategy): the chosen driver resolution is not sent,
+ * the dialog marks it as required itself, so toggling resolutions never
+ * re-runs the coverage aggregate.
+ */
+export function useBacktestCoverage(underlying: string | null, strategyId: number | null) {
+  return useQuery({
+    queryKey: ['backtest', 'coverage', underlying, strategyId],
+    queryFn: () =>
+      api.get<BacktestCoverageResponse>(
+        `/api/Backtest/coverage?underlying=${encodeURIComponent(underlying!)}&strategyId=${strategyId}`,
+      ),
+    enabled: !!underlying && strategyId != null,
+    // Switching underlying keeps the last answer on screen instead of
+    // blanking the picker while the new one loads.
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+  })
+}
+
+/** Pull index candles from FYERS for a set of resolutions, in 30-day chunks. */
+export function useBacktestBackfill() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: BacktestBackfillRequest) =>
+      api.post<BacktestBackfillResponse>('/api/Backtest/backfill', input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['backtest', 'coverage'] })
+      qc.invalidateQueries({ queryKey: ['coverage'] })
+      qc.invalidateQueries({ queryKey: ['candles'] })
+    },
+  })
+}
+
+export function useStartBacktest() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: StartBacktestRequest) =>
+      api.post<StartBacktestResponse>('/api/Backtest/runs', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['backtest', 'runs'] }),
+  })
+}
+
+export function useStopBacktest() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => api.post<{ message: string }>(`/api/Backtest/runs/${id}/stop`),
+    onSuccess: (_data, id) => {
+      qc.invalidateQueries({ queryKey: ['backtest', 'runs'] })
+      qc.invalidateQueries({ queryKey: ['backtest', 'run', id] })
+    },
+  })
+}
+
+export function useDeleteBacktest() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => api.delete<null>(`/api/Backtest/runs/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['backtest', 'runs'] })
+    },
+    // The run query is dropped only after the caller's own onSuccess (which
+    // navigates away) has run, so a still-mounted run page does not re-create
+    // it and poll a deleted id.
+    onSettled: (_data, _error, id) => {
+      qc.removeQueries({ queryKey: ['backtest', 'run', id] })
+    },
+  })
+}
+
+/** All OfflineReplay runs, newest first; polls fast only while one is running. */
+export function useBacktestRuns() {
+  return useQuery({
+    queryKey: ['backtest', 'runs'],
+    queryFn: () => api.get<BacktestRunSummary[]>('/api/Backtest/runs'),
+    refetchInterval: (query: { state: { data?: BacktestRunSummary[] } }) =>
+      query.state.data?.some((r) => isBacktestActive(r.status))
+        ? POLL_BACKTEST_LIST_ACTIVE
+        : POLL_BACKTEST_LIST_IDLE,
+  })
+}
+
+/**
+ * The full results view of one run; polls every 2 s until it is finished.
+ * A run that cannot be loaded at all (404 for a deleted or mistyped id, an
+ * outage before the first answer) is not polled — the page shows the error
+ * and a reload retries; a transient error on a run already on screen keeps
+ * the poll going while that run is still active.
+ */
+export function useBacktestRun(id: number | null) {
+  return useQuery({
+    queryKey: ['backtest', 'run', id],
+    queryFn: () => api.get<BacktestRunView>(`/api/Backtest/runs/${id}`),
+    enabled: id != null,
+    refetchInterval: (query: { state: { data?: BacktestRunView; status: string } }) => {
+      const { data, status } = query.state
+      if (!data) return status === 'error' ? false : POLL_BACKTEST_VIEW
+      return isBacktestActive(data.status) ? POLL_BACKTEST_VIEW : false
+    },
+  })
+}
+
+/**
+ * Runner stdout/stderr: the live ring buffer while the process runs, its
+ * final snapshot for the most recently finished runs. Fetched while `enabled`;
+ * re-polled every 3 s only while `live` (a finished run's snapshot never changes).
+ */
+export function useBacktestLogs(id: number | null, enabled: boolean, live: boolean = enabled) {
+  return useQuery({
+    queryKey: ['backtest', 'logs', id],
+    queryFn: () => api.get<string[]>(`/api/Backtest/runs/${id}/logs?take=200`),
+    enabled: enabled && id != null,
+    refetchInterval: live ? POLL_RUNNER_LOGS : false,
   })
 }
 

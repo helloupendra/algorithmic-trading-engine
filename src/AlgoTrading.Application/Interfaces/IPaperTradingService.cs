@@ -1,4 +1,5 @@
 // src/AlgoTrading.Application/Interfaces/IPaperTradingService.cs
+using AlgoTrading.Contracts.Backtest;
 using AlgoTrading.Contracts.Simulator;
 
 namespace AlgoTrading.Application.Interfaces;
@@ -71,5 +72,36 @@ public interface IPaperTradingService
     Task<int> FlattenRunAsync(
         long simulationRunId,
         string reason,
+        CancellationToken cancellationToken = default);
+
+    // ---- OfflineReplay (backtest runner) hooks ----
+
+    /// <summary>
+    /// Bulk-inserts equity snapshots with the GIVEN historical SnapshotUtc.
+    /// OfflineReplay runs only. Returns the number inserted.
+    /// </summary>
+    Task<int> AddEquitySnapshotsAsync(
+        long simulationRunId,
+        IReadOnlyList<EquitySnapshotBatchItem> items,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sets LastMarkPrice and recomputes UnrealizedPnl (lots x lotSize) for the
+    /// run's open positions from bar-close prices, stamping UpdatedUtc = atUtc.
+    /// Returns the number of positions updated.
+    /// </summary>
+    Task<int> ApplyMarksAsync(
+        long simulationRunId,
+        RunMarksRequest request,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Closes an OfflineReplay run from the runner: Status (Completed | Failed),
+    /// CompletedUtc, LastError and a BACKTEST_SUMMARY signal carrying the
+    /// runner's summary object. A run already marked Stopped keeps that status.
+    /// </summary>
+    Task CompleteRunAsync(
+        long simulationRunId,
+        CompleteRunRequest request,
         CancellationToken cancellationToken = default);
 }

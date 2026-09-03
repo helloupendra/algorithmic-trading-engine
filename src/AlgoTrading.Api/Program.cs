@@ -74,6 +74,16 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.StrategyRunControl>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.StrategyRiskGuardService>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketHoursService>();
 
+// Backtesting: the backtest runner registry and its stop path, the coverage /
+// backfill service and the view builders shared with the live runner.
+builder.Services.AddSingleton<AlgoTrading.Api.Services.BacktestProcessRegistry>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.BacktestRunControl>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.BacktestDataService>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.PositionViewBuilder>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.BacktestRunViewBuilder>();
+// Runs left Running by a previous API process have no runner behind them any more.
+builder.Services.AddHostedService<AlgoTrading.Api.Services.BacktestStartupReconciler>();
+
 
 builder.Services.Configure<JwtOptions>(
     builder.Configuration.GetSection("Jwt"));
@@ -170,8 +180,10 @@ app.MapControllers();
 app.MapMetrics().AllowAnonymous();
 
 // SPA fallback: any non-API route serves the React app's index.html so
-// client-side routing works on hard refresh / deep links.
-app.MapFallbackToFile("index.html").AllowAnonymous();
+// client-side routing works on hard refresh / deep links. API and hub paths
+// are excluded on purpose: an unknown /api route must answer 404, never a
+// cacheable HTML document that a client then mistakes for JSON.
+app.MapFallbackToFile("{*path:regex(^(?!api(/|$)|hubs(/|$)|swagger(/|$)).*$)}", "index.html").AllowAnonymous();
 
 app.MapHub<LiveFeedHub>("/hubs/livefeed").AllowAnonymous();
 

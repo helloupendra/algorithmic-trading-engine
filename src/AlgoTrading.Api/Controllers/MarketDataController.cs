@@ -85,8 +85,19 @@ public class MarketDataController : ControllerBase
             return BadRequest(new { message = "Symbol is required." });
         }
 
-        var result = await _syncHistoryUseCase.ExecuteAsync(request, cancellationToken);
-        return Ok(result);
+        try
+        {
+            var result = await _syncHistoryUseCase.ExecuteAsync(request, cancellationToken);
+            return Ok(result);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Broker-side refusals (no session, FYERS "Invalid symbol" for an
+            // expired contract) are facts about the request, not server faults:
+            // answer 400 with the reason so callers can branch on it instead of
+            // parsing a stack trace.
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpGet("history/local")]

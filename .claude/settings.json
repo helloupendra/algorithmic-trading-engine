@@ -50,7 +50,13 @@
       "Bash(.venv/bin/python -c \"import ast; ast.parse\\(open\\('src/AlgoTrading.PythonEngine/market_data/live/fyers_streamer.py'\\).read\\(\\)\\); print\\('SYNTAX OK'\\)\")",
       "Bash(sed -i '' 's|data_ingestion/fyers_live_stream.py|market_data/live/fyers_streamer.py|g; s|data_ingestion/option_chain_tracker.py|market_data/options/chain_tracker.py|g; s|data_ingestion/historical_replayer.py|market_data/historical/db_replayer.py|g' docs/02_LOCAL_DEPLOYMENT_GUIDE.md)",
       "Bash(sed -i '' 's|`data_ingestion/historical_replayer.py`|`market_data/historical/db_replayer.py`|g' docs/01_ARCHITECTURE_OVERVIEW.md)",
-      "Bash(sed -i '' 's|ingestion in `data_ingestion/`|market data in `market_data/` \\(live/, options/, historical/\\)|' CONTRIBUTING.md)"
+      "Bash(sed -i '' 's|ingestion in `data_ingestion/`|market data in `market_data/` \\(live/, options/, historical/\\)|' CONTRIBUTING.md)",
+      "Bash(curl -s -o /dev/null -w 'delete run 29: http %{http_code}\\\\n' -X DELETE -H 'Authorization: Bearer __TRACKED_VAR__' http://localhost:5025/api/Backtest/runs/29)",
+      "Bash(awk 'NR>1{print \"api listener pid\",$2}')",
+      "Bash(awk 'NR>1{print \"api pid\",$2}')",
+      "Bash(awk '{print \"vite pid\",$1}')",
+      "Bash(awk 'NR>1{print \"pid\",$2}')",
+      "Bash(curl -s http://localhost:5173/src/lib/api.ts)"
     ]
   }
 }
