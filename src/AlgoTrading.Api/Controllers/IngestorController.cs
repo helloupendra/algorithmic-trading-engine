@@ -136,6 +136,15 @@ public class IngestorController : ControllerBase
     [HttpPost("stop")]
     public IActionResult StopIngestor()
     {
+        StopAll();
+        return Ok(new { message = "Ingestor stopped" });
+    }
+
+    /// <summary>
+    /// Gracefully stops the ingestor process if running. Can be called from BackgroundServices.
+    /// </summary>
+    public static void StopAll()
+    {
         if (_activeProcesses.TryGetValue("fyers", out var process))
         {
             try
@@ -151,7 +160,6 @@ public class IngestorController : ControllerBase
                 _activeProcesses.TryRemove("fyers", out _);
             }
         }
-        return Ok(new { message = "Ingestor stopped" });
     }
 
     [HttpGet("status")]

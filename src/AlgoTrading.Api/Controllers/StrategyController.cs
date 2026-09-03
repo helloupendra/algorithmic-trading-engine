@@ -351,6 +351,25 @@ public class StrategyController : ControllerBase
         return Ok(new { message = "Strategy stopped successfully." });
     }
 
+    /// <summary>
+    /// Gracefully stops all active strategy processes. Can be called from BackgroundServices.
+    /// </summary>
+    public static void StopAll()
+    {
+        foreach (var kvp in _activeProcesses)
+        {
+            try
+            {
+                if (!kvp.Value.Process.HasExited)
+                {
+                    kvp.Value.Process.Kill(entireProcessTree: true);
+                }
+            }
+            catch { }
+        }
+        _activeProcesses.Clear();
+    }
+
     [HttpPost("{id}/signals")]
     public IActionResult AddSignal(int id, [FromBody] object signal)
     {
