@@ -1,142 +1,97 @@
+// src/AlgoTrading.Api/Controllers/StrategyController.cs
 using AlgoTrading.Api.Configuration;
 using AlgoTrading.Api.Security;
+using AlgoTrading.Api.Services;
+using AlgoTrading.Application.Interfaces;
+using AlgoTrading.Application.UseCases.LiveData;
+using AlgoTrading.Contracts.LiveData;
+using AlgoTrading.Contracts.Strategies;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
+using AlgoTrading.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Runtime.InteropServices;
+using System.Globalization;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace AlgoTrading.Api.Controllers;
 
+/// <summary>
+/// The strategy catalog and the live paper runner: list strategies (with
+/// descriptions from the Python engine), start one on a chosen underlying with
+/// optional stop-loss / target, stop it (squaring off), and read its
+/// position-based live view, activity and runner output.
+/// </summary>
 [ApiController]
 [Route("api/[controller]")]
 public class StrategyController : ControllerBase
 {
+    private const string LivePaperMode = "LivePaper";
+    private const decimal DefaultInitialCapital = 1_000_000m;
+    private const int ActivityLimit = 60;
+
     private readonly TradingDbContext _dbContext;
+    private readonly StrategyCatalogService _catalog;
+    private readonly StrategyProcessRegistry _registry;
+    private readonly StrategyRunControl _runControl;
+    private readonly PythonEngineLocator _engine;
+    private readonly IPaperTradingService _paperTrading;
+    private readonly ILotSizeResolver _lotSizeResolver;
+    private readonly UpsertWatchlistItemUseCase _upsertWatchlistItem;
     private readonly StrategyRunnerOptions _options;
-    private readonly IWebHostEnvironment _environment;
     private readonly ILogger<StrategyController> _logger;
-
-    /// <summary>
-    /// Running strategy processes, keyed by strategy id.
-    ///
-    /// NOTE: this is in-process state. It is lost if the API restarts, which orphans
-    /// any running Python process — it keeps trading but can no longer be stopped
-    /// from here. Moving run state into the database is tracked as follow-up work;
-    /// until then, treat a restart as requiring a manual check for stray processes.
-    /// </summary>
-    private static readonly ConcurrentDictionary<int, RunningStrategy> _activeProcesses = new();
-
-    private sealed record RunningStrategy(Process Process, string StartedBy, DateTime StartedUtc)
-    {
-        public List<object> RecentSignals { get; } = new();
-    }
 
     public StrategyController(
         TradingDbContext dbContext,
+        StrategyCatalogService catalog,
+        StrategyProcessRegistry registry,
+        StrategyRunControl runControl,
+        PythonEngineLocator engine,
+        IPaperTradingService paperTrading,
+        ILotSizeResolver lotSizeResolver,
+        UpsertWatchlistItemUseCase upsertWatchlistItem,
         IOptions<StrategyRunnerOptions> options,
-        IWebHostEnvironment environment,
         ILogger<StrategyController> logger)
     {
         _dbContext = dbContext;
+        _catalog = catalog;
+        _registry = registry;
+        _runControl = runControl;
+        _engine = engine;
+        _paperTrading = paperTrading;
+        _lotSizeResolver = lotSizeResolver;
+        _upsertWatchlistItem = upsertWatchlistItem;
         _options = options.Value;
-        _environment = environment;
         _logger = logger;
     }
 
-    private List<StrategyDefinition> GetDiscoveredStrategies()
-    {
-        var engineDirectory = ResolveEngineDirectory();
-        var strategiesPath = Path.Combine(engineDirectory, "strategies");
-        var list = new List<StrategyDefinition>();
-        
-        if (!Directory.Exists(strategiesPath)) return list;
+    // ------------------------------------------------------------------
+    // Catalog
+    // ------------------------------------------------------------------
 
-        var excludeFiles = new HashSet<string> { "__init__.py", "base_strategy.py", "execution_runner.py", "logic_engine.py", "contract_selector.py", "price_resolver.py", "list_strategies.py" };
-        var pyFiles = Directory.GetFiles(strategiesPath, "*.py", SearchOption.AllDirectories)
-            .Where(f => !excludeFiles.Contains(Path.GetFileName(f))).ToList();
-
-        foreach (var file in pyFiles)
-        {
-            var content = System.IO.File.ReadAllText(file);
-            var lines = content.Split('\n');
-            string? strategyName = null;
-            string? className = null;
-            
-            foreach (var line in lines)
-            {
-                var trimmed = line.Trim();
-                if (line.StartsWith("class ") && line.Contains("(BaseStrategy)"))
-                {
-                    var parts = line.Split(' ', '(');
-                    if (parts.Length > 1) { className = parts[1].Trim(); }
-                }
-                if (trimmed.StartsWith("name = \"") || trimmed.StartsWith("name = '"))
-                {
-                    var quote = trimmed.Contains("\"") ? '"' : '\'';
-                    var parts = trimmed.Split(quote);
-                    if (parts.Length >= 3)
-                    {
-                        strategyName = parts[1];
-                    }
-                }
-            }
-
-            if (string.IsNullOrEmpty(strategyName))
-            {
-                strategyName = className;
-            }
-
-            if (string.IsNullOrEmpty(strategyName))
-            {
-                var nameParts = Path.GetFileNameWithoutExtension(file).Split('_');
-                strategyName = string.Join("", nameParts.Select(p => char.ToUpper(p[0]) + p.Substring(1)));
-            }
-
-            int stableId = Math.Abs(strategyName.GetHashCode());
-            if (stableId == 0) stableId = 1;
-
-            list.Add(new StrategyDefinition
-            {
-                Id = stableId,
-                Name = strategyName,
-                Description = $"Discovered from {Path.GetRelativePath(strategiesPath, file).Replace("\\", "/")}",
-                DefaultParametersJson = "{}",
-                CreatedUtc = System.IO.File.GetCreationTimeUtc(file)
-            });
-        }
-        return list;
-    }
-
+    /// <summary>Every strategy the engine can run, with its current run state. Readable by any signed-in user.</summary>
     [HttpGet]
-    public IActionResult GetAll()
+    public async Task<ActionResult<List<StrategyListItemResponse>>> GetAll(CancellationToken cancellationToken)
     {
-        var strategies = GetDiscoveredStrategies();
-        return Ok(strategies.Select(s =>
-        {
-            _activeProcesses.TryGetValue(s.Id, out var running);
-            return new
-            {
-                s.Id, s.Name, s.Description, s.DefaultParametersJson, s.CreatedUtc,
-                IsActive = running is not null, StartedBy = running?.StartedBy, StartedUtc = running?.StartedUtc
-            };
-        }).ToList());
+        var entries = await _catalog.GetAllAsync(cancellationToken);
+        return Ok(entries.Select(ToListItem).ToList());
     }
 
-    [HttpGet("{id}")]
-    public IActionResult GetById(int id)
+    [HttpGet("{id:int}")]
+    public async Task<ActionResult<StrategyListItemResponse>> GetById(int id, CancellationToken cancellationToken)
     {
-        var strategy = GetDiscoveredStrategies().FirstOrDefault(x => x.Id == id);
-        if (strategy == null) return NotFound();
-        return Ok(strategy);
+        var entry = await _catalog.FindAsync(id, cancellationToken);
+        if (entry is null) return NotFound(new { message = $"Strategy {id} not found." });
+        return Ok(ToListItem(entry));
     }
 
     /// <summary>
-    /// Registers a new strategy definition. Admin-only — the name here is passed to
+    /// Registers a strategy definition row. Admin-only — the name here is passed to
     /// the Python runner, so creating one determines what code can be launched.
     /// </summary>
     [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
@@ -148,12 +103,103 @@ public class StrategyController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = strategy.Id }, strategy);
     }
 
+    // ------------------------------------------------------------------
+    // Start / stop
+    // ------------------------------------------------------------------
+
     /// <summary>
-    /// Deploys a strategy against an existing simulation run (paper trading).
-    /// Unlike <c>start</c>, any signed-in trader may do this: the runner posts
-    /// signals into the Simulator, which fills them on paper only — no broker
-    /// order path exists here. The run carries the user's parametersJson, so
-    /// this is what the Deploy wizard calls.
+    /// Launches the Python execution runner on the chosen underlying. Admin-only:
+    /// it starts a process on the API host that can place (paper) orders.
+    /// </summary>
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    [HttpPost("{id:int}/start")]
+    public async Task<IActionResult> StartStrategy(int id, [FromBody] StartStrategyRequest? request, CancellationToken cancellationToken)
+    {
+        var strategy = await _catalog.FindAsync(id, cancellationToken);
+        if (strategy is null) return NotFound(new { message = $"Strategy {id} not found." });
+
+        if (!string.IsNullOrWhiteSpace(strategy.Error))
+            return BadRequest(new { message = $"{strategy.Name} cannot be started: {strategy.Error}" });
+
+        if (_registry.Contains(id))
+            return Conflict(new { message = $"{strategy.Name} is already running." });
+
+        if (_registry.Count >= _options.MaxConcurrentProcesses)
+            return StatusCode(StatusCodes.Status429TooManyRequests,
+                new { message = $"Concurrent strategy limit reached ({_options.MaxConcurrentProcesses})." });
+
+        if (request is null || string.IsNullOrWhiteSpace(request.Underlying))
+            return BadRequest(new { message = "underlying is required — pick the index or stock the strategy should trade." });
+
+        var underlying = request.Underlying.Trim().ToUpperInvariant();
+
+        int lots = request.Lots ?? Math.Max(1, strategy.DefaultLots);
+        if (lots < 1)
+            return BadRequest(new { message = "lots must be at least 1." });
+
+        if (request.StopLoss.HasValue && request.StopLoss.Value <= 0)
+            return BadRequest(new { message = "stopLoss must be a positive rupee amount, or omitted." });
+
+        if (request.Target.HasValue && request.Target.Value <= 0)
+            return BadRequest(new { message = "target must be a positive rupee amount, or omitted." });
+
+        decimal initialCapital = request.InitialCapital ?? DefaultInitialCapital;
+        if (initialCapital <= 0)
+            return BadRequest(new { message = "initialCapital must be positive." });
+
+        if (!await HasFutureOptionContractsAsync(underlying, cancellationToken))
+            return BadRequest(new { message = $"No option contracts loaded for {underlying} — import the F&O master first." });
+
+        if (strategy.SupportedUnderlyings.Count > 0
+            && !strategy.SupportedUnderlyings.Contains(underlying, StringComparer.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning("{Strategy} started on {Underlying}, which is not in its supported list ({Supported}).",
+                strategy.Name, underlying, string.Join(", ", strategy.SupportedUnderlyings));
+        }
+
+        var spotSymbol = UnderlyingCatalog.SpotSymbolFor(underlying);
+        var userId = User.GetRequiredUserId();
+        var startedBy = User.GetUserName() ?? "unknown";
+        var now = DateTime.UtcNow;
+
+        var run = new SimulationRun
+        {
+            UserId = userId,
+            Mode = LivePaperMode,
+            Symbol = spotSymbol,
+            Resolution = "1m",
+            ReplaySpeed = string.Empty,
+            Status = "Running",
+            StrategyName = strategy.Name,
+            ParametersJson = MergeParameters(strategy.DefaultParametersJson, request.Parameters, lots, request.StopLoss, request.Target, underlying),
+            InitialCapital = initialCapital,
+            CreatedUtc = now,
+            StartedUtc = now
+        };
+
+        await _dbContext.SimulationRuns.AddAsync(run, cancellationToken);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        await EnsureSpotOnWatchlistAsync(spotSymbol, cancellationToken);
+
+        var launch = new LaunchSpec(strategy, run.Id, userId, startedBy, underlying, spotSymbol, lots, request.StopLoss, request.Target);
+        var (error, running) = LaunchRunner(launch);
+        if (error is not null || running is null)
+        {
+            run.Status = "Failed";
+            run.LastError = "Runner failed to start.";
+            run.CompletedUtc = DateTime.UtcNow;
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            return error ?? StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to start the runner." });
+        }
+
+        return Ok(StartResponse($"Started {strategy.Name} on {underlying} (paper).", running));
+    }
+
+    /// <summary>
+    /// Deploys a strategy against an existing LivePaper run created by the trader
+    /// wizard (its parametersJson carries the wizard's configuration). Any signed-in
+    /// trader may do this: the runner only posts paper signals into the Simulator.
     /// </summary>
     public record DeployRequest(long RunId);
 
@@ -161,281 +207,680 @@ public class StrategyController : ControllerBase
     public async Task<IActionResult> Deploy(int id, [FromBody] DeployRequest request, CancellationToken cancellationToken)
     {
         var run = await _dbContext.SimulationRuns
-            .AsNoTracking()
             .FirstOrDefaultAsync(r => r.Id == request.RunId, cancellationToken);
         if (run is null)
-        {
-            return NotFound($"Simulation run {request.RunId} not found. Create it first via POST /api/Simulator/runs.");
-        }
-        if (!string.Equals(run.Mode, "LivePaper", StringComparison.OrdinalIgnoreCase))
-        {
-            return BadRequest("Only LivePaper runs can be deployed from the console for now — live mode arrives with the execution loop.");
-        }
+            return NotFound(new { message = $"Simulation run {request.RunId} not found. Create it first via POST /api/Simulator/runs." });
 
-        var strategy = await _dbContext.Strategies.FindAsync(new object[] { id }, cancellationToken);
-        if (strategy == null) return NotFound($"Strategy {id} not found");
+        if (!string.Equals(run.Mode, LivePaperMode, StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new { message = "Only LivePaper runs can be deployed from the console for now — live mode arrives with the execution loop." });
 
-        return LaunchRunner(strategy, request.RunId);
-    }
+        var strategy = await _catalog.FindAsync(id, cancellationToken);
+        if (strategy is null) return NotFound(new { message = $"Strategy {id} not found." });
 
-    /// <summary>
-    /// Launches the Python execution runner for a strategy. Admin-only: it starts a
-    /// process on the API host that can place orders.
-    /// </summary>
-    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
-    [HttpPost("{id}/start")]
-    public IActionResult StartStrategy(int id, CancellationToken cancellationToken)
-    {
-        var strategy = GetDiscoveredStrategies().FirstOrDefault(x => x.Id == id);
-        if (strategy == null) return NotFound($"Strategy {id} not found");
+        if (_registry.Contains(id))
+            return Conflict(new { message = $"{strategy.Name} is already running." });
 
-        return LaunchRunner(strategy, runId: null);
-    }
-
-    /// <summary>
-    /// Shared spawn path for start (admin, runner creates its own run) and
-    /// deploy (trader, runner attaches to an existing paper run whose
-    /// parametersJson carries the wizard's configuration).
-    /// </summary>
-    private IActionResult LaunchRunner(Domain.Entities.StrategyDefinition strategy, long? runId)
-    {
-        int id = strategy.Id;
-
-        if (_activeProcesses.ContainsKey(id))
-        {
-            return Conflict($"Strategy {id} is already running.");
-        }
-
-        if (_activeProcesses.Count >= _options.MaxConcurrentProcesses)
-        {
+        if (_registry.Count >= _options.MaxConcurrentProcesses)
             return StatusCode(StatusCodes.Status429TooManyRequests,
-                $"Concurrent strategy limit reached ({_options.MaxConcurrentProcesses}).");
-        }
+                new { message = $"Concurrent strategy limit reached ({_options.MaxConcurrentProcesses})." });
 
-        var engineDirectory = ResolveEngineDirectory();
-        var scriptPath = Path.Combine(engineDirectory, "strategies", "execution_runner.py");
+        var p = ParseRunParams(run.ParametersJson);
+        var underlying = p.Underlying
+                         ?? UnderlyingCatalog.UnderlyingForSpot(run.Symbol)
+                         ?? UnderlyingCatalog.InferUnderlying(run.Symbol);
+        if (string.IsNullOrWhiteSpace(underlying))
+            return BadRequest(new { message = $"Run {run.Id} has no usable symbol to derive an underlying from." });
 
-        if (!System.IO.File.Exists(scriptPath))
-        {
-            _logger.LogError("Strategy runner not found at {ScriptPath}", scriptPath);
-            return StatusCode(StatusCodes.Status500InternalServerError,
-                $"Strategy runner not found at '{scriptPath}'. Set StrategyRunner:EngineDirectory.");
-        }
+        var spotSymbol = string.IsNullOrWhiteSpace(run.Symbol) ? UnderlyingCatalog.SpotSymbolFor(underlying) : run.Symbol;
+        int lots = Math.Max(1, p.Lots ?? strategy.DefaultLots);
 
-        var python = ResolvePythonExecutable();
-
-        // The strategy name reaches a command line, so allow only characters that
-        // appear in a legitimate strategy identifier. This prevents a crafted
-        // definition name from injecting extra arguments.
-        var strategyName = new string(strategy.Name.Where(char.IsLetterOrDigit).ToArray());
-        if (string.IsNullOrEmpty(strategyName))
-        {
-            return BadRequest($"Strategy name '{strategy.Name}' contains no usable characters.");
-        }
+        // Same guard as Start: without option contracts the runner would only
+        // exit with "no expiries", which reads as a crash on the run card.
+        if (!await HasFutureOptionContractsAsync(underlying, cancellationToken))
+            return BadRequest(new { message = $"No option contracts loaded for {underlying} — import the F&O master first." });
 
         var userId = User.GetRequiredUserId();
         var startedBy = User.GetUserName() ?? "unknown";
 
-        try
+        await EnsureSpotOnWatchlistAsync(spotSymbol, cancellationToken);
+
+        var launch = new LaunchSpec(strategy, run.Id, userId, startedBy, underlying, spotSymbol, lots, p.StopLoss, p.Target);
+        var (error, running) = LaunchRunner(launch);
+        if (error is not null || running is null)
         {
-            var processInfo = new ProcessStartInfo
-            {
-                FileName = python,
-                WorkingDirectory = engineDirectory,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            // ArgumentList quotes each value for us, so paths containing spaces work
-            // on every platform without manual escaping.
-            processInfo.ArgumentList.Add(scriptPath);
-            processInfo.ArgumentList.Add("--strategy");
-            processInfo.ArgumentList.Add(strategyName);
-            processInfo.ArgumentList.Add("--strategy-id");
-            processInfo.ArgumentList.Add(id.ToString());
-            processInfo.ArgumentList.Add("--user-id");
-            processInfo.ArgumentList.Add(userId.ToString());
-            if (runId.HasValue)
-            {
-                processInfo.ArgumentList.Add("--run-id");
-                processInfo.ArgumentList.Add(runId.Value.ToString());
-            }
-
-            // The engine uses absolute package imports and resolves .env relative to
-            // its own location, so PYTHONPATH must point at the engine directory.
-            processInfo.Environment["PYTHONPATH"] = engineDirectory;
-
-            var process = Process.Start(processInfo);
-            if (process is null)
-            {
-                return StatusCode(StatusCodes.Status500InternalServerError, "Failed to start python process.");
-            }
-
-            _activeProcesses.TryAdd(id, new RunningStrategy(process, startedBy, DateTime.UtcNow));
-
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    var stdout = await process.StandardOutput.ReadToEndAsync();
-                    var stderr = await process.StandardError.ReadToEndAsync();
-                    await process.WaitForExitAsync();
-
-                    _logger.LogInformation(
-                        "Strategy {StrategyId} ({Name}) exited with code {ExitCode}.\nSTDOUT:\n{StdOut}\nSTDERR:\n{StdErr}",
-                        id, strategyName, process.ExitCode, stdout, stderr);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error while draining output for strategy {StrategyId}.", id);
-                }
-                finally
-                {
-                    _activeProcesses.TryRemove(id, out _);
-                }
-            });
-
-            return Ok(new
-            {
-                message = $"Started {strategyName}",
-                processId = process.Id,
-                runId,
-                userId,
-                startedBy
-            });
+            return error ?? StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to start the runner." });
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to start strategy {StrategyId}.", id);
-            return StatusCode(StatusCodes.Status500InternalServerError, ex.Message);
-        }
+
+        run.Status = "Running";
+        run.StartedUtc ??= DateTime.UtcNow;
+        run.CompletedUtc = null;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return Ok(StartResponse($"Deployed {strategy.Name} on run {run.Id}.", running));
     }
 
-    [HttpPost("{id}/stop")]
-    public IActionResult StopStrategy(int id)
+    /// <summary>
+    /// Stops a running strategy: squares off its open positions at the last mark
+    /// (unless flatten=false) and kills the runner. Admin, or the user who started it.
+    /// </summary>
+    [HttpPost("{id:int}/stop")]
+    public async Task<IActionResult> StopStrategy(
+        int id,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] StopStrategyRequest? request,
+        CancellationToken cancellationToken)
     {
-        if (!_activeProcesses.TryGetValue(id, out var running))
-        {
-            return BadRequest($"Strategy {id} is not currently running from the dashboard.");
-        }
+        var running = _registry.Get(id);
+        if (running is null)
+            return BadRequest(new { message = $"Strategy {id} is not currently running from the dashboard." });
 
-        // Admins can stop anything; a trader can stop only what they deployed.
-        bool isAdmin = User.IsInRole("Admin");
-        var userName = User.GetUserName();
-        if (!isAdmin && !string.Equals(running.StartedBy, userName, StringComparison.OrdinalIgnoreCase))
+        // Admins can stop anything; a trader can stop only what they started.
+        var userName = User.GetUserName() ?? "unknown";
+        if (!User.IsAdmin() && !string.Equals(running.StartedBy, userName, StringComparison.OrdinalIgnoreCase))
         {
             return Forbid();
         }
 
+        bool flatten = request?.Flatten ?? true;
+        var result = await _runControl.StopAsync(id, $"Stopped by {userName}", flatten, userName, cancellationToken);
+        if (!result.WasRunning)
+            return BadRequest(new { message = $"Strategy {id} is not currently running from the dashboard." });
+
+        return Ok(new
+        {
+            message = flatten
+                ? $"Stopped {running.Name}; squared off {result.Flattened} open position(s)."
+                : $"Stopped {running.Name}.",
+            flattened = result.Flattened
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // Live view, logs, signals
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Position-based live view of the strategy's current (or most recent) run.
+    /// </summary>
+    [HttpGet("{id:int}/live")]
+    public async Task<ActionResult<StrategyLiveViewResponse>> GetLive(int id, CancellationToken cancellationToken)
+    {
+        var strategy = await _catalog.FindAsync(id, cancellationToken);
+        if (strategy is null) return NotFound(new { message = $"Strategy {id} not found." });
+
+        var running = _registry.Get(id);
+        var lastExit = running is null ? _registry.GetLastExit(id) : null;
+
+        var view = new StrategyLiveViewResponse
+        {
+            StrategyId = id,
+            Name = strategy.Name,
+            IsActive = running is not null
+        };
+
+        SimulationRun? run;
+        long? knownRunId = running?.RunId ?? lastExit?.RunId;
+        if (knownRunId.HasValue)
+        {
+            run = await _dbContext.SimulationRuns.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Id == knownRunId.Value, cancellationToken);
+        }
+        else
+        {
+            // Survives an API restart: the latest LivePaper run of this strategy.
+            run = await _dbContext.SimulationRuns.AsNoTracking()
+                .Where(x => x.StrategyName == strategy.Name && x.Mode == LivePaperMode)
+                .OrderByDescending(x => x.CreatedUtc)
+                .ThenByDescending(x => x.Id)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        if (run is null)
+        {
+            return Ok(view);
+        }
+
+        var p = ParseRunParams(run.ParametersJson);
+
+        view.RunId = run.Id;
+        view.Underlying = running?.Underlying
+                          ?? lastExit?.Underlying
+                          ?? p.Underlying
+                          ?? UnderlyingCatalog.UnderlyingForSpot(run.Symbol)
+                          ?? UnderlyingCatalog.InferUnderlying(run.Symbol);
+        view.SpotSymbol = running?.SpotSymbol ?? lastExit?.SpotSymbol ?? run.Symbol;
+        view.Lots = running?.Lots ?? lastExit?.Lots ?? p.Lots;
+
+        if (running is not null)
+        {
+            view.StopLoss = running.StopLoss;
+            view.Target = running.Target;
+            view.StartedBy = running.StartedBy;
+            view.StartedUtc = running.StartedUtc;
+            view.Runner = new StrategyRunnerInfo { ProcessId = running.ProcessId, LastLogUtc = running.LastLogUtc };
+        }
+        else if (lastExit is not null)
+        {
+            view.StopLoss = lastExit.StopLoss;
+            view.Target = lastExit.Target;
+            view.StartedBy = lastExit.StartedBy;
+            view.StartedUtc = lastExit.StartedUtc;
+            view.StoppedUtc = lastExit.AtUtc;
+            view.StopReason = lastExit.Reason;
+        }
+        else
+        {
+            view.StopLoss = p.StopLoss;
+            view.Target = p.Target;
+            view.StartedBy = await _dbContext.AppUsers.AsNoTracking()
+                .Where(x => x.Id == run.UserId)
+                .Select(x => x.UserName)
+                .FirstOrDefaultAsync(cancellationToken);
+            view.StartedUtc = run.StartedUtc ?? run.CreatedUtc;
+            view.StoppedUtc = run.CompletedUtc;
+        }
+
+        var underlyingLot = await _lotSizeResolver.ResolveForUnderlyingAsync(view.Underlying ?? string.Empty, cancellationToken);
+        view.LotSize = underlyingLot.LotSize;
+        view.LotSizeSource = underlyingLot.Source;
+
+        // Positions (marks open ones to market against the latest live quote).
+        var positions = await _paperTrading.GetPaperPositionsAsync(run.Id, cancellationToken);
+
+        var symbols = positions.Select(x => x.Symbol).Distinct(StringComparer.Ordinal).ToList();
+        var quoteSymbols = symbols.ToList();
+        if (!string.IsNullOrWhiteSpace(view.SpotSymbol)) quoteSymbols.Add(view.SpotSymbol);
+
+        var quotes = await _dbContext.LiveQuotesLatest.AsNoTracking()
+            .Where(x => quoteSymbols.Contains(x.Symbol))
+            .Select(x => new { x.Symbol, x.LastTradedPrice, x.UpdatedUtc })
+            .ToListAsync(cancellationToken);
+        var quoteBySymbol = quotes
+            .GroupBy(x => x.Symbol, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+
+        if (!string.IsNullOrWhiteSpace(view.SpotSymbol) && quoteBySymbol.TryGetValue(view.SpotSymbol, out var spotQuote))
+        {
+            view.SpotLtp = spotQuote.LastTradedPrice;
+            view.SpotUpdatedUtc = spotQuote.UpdatedUtc;
+        }
+
+        var instruments = symbols.Count == 0
+            ? new List<InstrumentLite>()
+            : await _dbContext.Instruments.AsNoTracking()
+                .Where(x => symbols.Contains(x.Symbol))
+                .Select(x => new InstrumentLite(x.Symbol, x.Underlying, x.StrikePrice, x.OptionType, x.ExpiryDate))
+                .ToListAsync(cancellationToken);
+        var instrumentBySymbol = instruments
+            .GroupBy(x => x.Symbol, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+
+        var lotSizes = await _lotSizeResolver.ResolveManyAsync(symbols, cancellationToken);
+
+        foreach (var pos in positions)
+        {
+            bool isOpen = string.Equals(pos.Status, "Open", StringComparison.OrdinalIgnoreCase);
+            int lotSize = lotSizes.TryGetValue(pos.Symbol, out var ls) ? ls.LotSize : 1;
+            instrumentBySymbol.TryGetValue(pos.Symbol, out var inst);
+            quoteBySymbol.TryGetValue(pos.Symbol, out var quote);
+
+            int lots = isOpen ? pos.Quantity : 0;
+
+            view.Positions.Add(new LivePositionResponse
+            {
+                Id = pos.Id,
+                GroupId = pos.GroupId,
+                Symbol = pos.Symbol,
+                Contract = BuildContract(pos.Symbol, inst),
+                Side = string.Equals(pos.Direction, "LONG", StringComparison.OrdinalIgnoreCase) ? "BUY" : "SELL",
+                Lots = lots,
+                LotSize = lotSize,
+                Quantity = lots * lotSize,
+                Status = isOpen ? "Open" : "Closed",
+                EntryPrice = pos.AveragePrice,
+                Ltp = isOpen ? (quote?.LastTradedPrice ?? pos.LastMarkPrice) : null,
+                LtpUpdatedUtc = isOpen ? quote?.UpdatedUtc : null,
+                Pnl = isOpen ? pos.UnrealizedPnl : pos.RealizedPnl,
+                OpenedUtc = pos.OpenedUtc,
+                ClosedUtc = pos.ClosedUtc
+            });
+        }
+
+        view.Positions = view.Positions
+            .OrderBy(x => x.Status == "Open" ? 0 : 1)
+            .ThenByDescending(x => x.OpenedUtc)
+            .ToList();
+
+        view.Pnl.Realized = positions.Sum(x => x.RealizedPnl);
+        view.Pnl.Unrealized = positions
+            .Where(x => string.Equals(x.Status, "Open", StringComparison.OrdinalIgnoreCase))
+            .Sum(x => x.UnrealizedPnl);
+        view.Pnl.Total = view.Pnl.Realized + view.Pnl.Unrealized;
+
+        // Activity: the run's signals, newest first (RUN_STOPPED rows included).
+        var signals = await _dbContext.SimulationSignals.AsNoTracking()
+            .Where(x => x.SimulationRunId == run.Id)
+            .OrderByDescending(x => x.TimestampUtc)
+            .ThenByDescending(x => x.Id)
+            .Take(ActivityLimit)
+            .Select(x => new { x.TimestampUtc, x.SignalType, x.GroupId, x.MetadataJson })
+            .ToListAsync(cancellationToken);
+
+        foreach (var s in signals)
+        {
+            var reason = ReadMetadataReason(s.MetadataJson);
+            view.Activity.Add(new LiveActivityResponse
+            {
+                AtUtc = s.TimestampUtc,
+                Type = s.SignalType,
+                Text = string.IsNullOrWhiteSpace(reason) ? s.SignalType : reason,
+                GroupId = s.GroupId
+            });
+        }
+
+        if (view.StopReason is null && running is null)
+        {
+            var stopped = signals.FirstOrDefault(x => x.SignalType == StrategyRunControl.RunStoppedSignalType);
+            if (stopped is not null)
+            {
+                view.StopReason = ReadMetadataReason(stopped.MetadataJson) ?? StrategyRunControl.RunStoppedSignalType;
+                view.StoppedUtc ??= stopped.TimestampUtc;
+            }
+        }
+
+        return Ok(view);
+    }
+
+    /// <summary>Recent runner stdout/stderr (empty when not running).</summary>
+    [HttpGet("{id:int}/logs")]
+    public IActionResult GetLogs(int id, [FromQuery] int take = 200)
+    {
+        return Ok(_registry.GetLogs(id, take));
+    }
+
+    /// <summary>The runner pushes a copy of each signal here for the dashboard.</summary>
+    [HttpPost("{id:int}/signals")]
+    public IActionResult AddSignal(int id, [FromBody] object signal)
+    {
+        if (_registry.AddSignal(id, signal))
+        {
+            return Ok();
+        }
+        return NotFound(new { message = $"Strategy {id} is not currently active." });
+    }
+
+    [HttpGet("{id:int}/signals")]
+    public IActionResult GetSignals(int id)
+    {
+        return Ok(_registry.GetSignals(id));
+    }
+
+    // ------------------------------------------------------------------
+    // Launch plumbing
+    // ------------------------------------------------------------------
+
+    private sealed record LaunchSpec(
+        StrategyCatalogEntry Strategy,
+        long RunId,
+        long UserId,
+        string StartedBy,
+        string Underlying,
+        string SpotSymbol,
+        int Lots,
+        decimal? StopLoss,
+        decimal? Target);
+
+    /// <summary>
+    /// Spawns execution_runner.py and registers it. Returns an error result
+    /// instead of throwing so callers can roll back their run row.
+    /// </summary>
+    private (IActionResult? Error, RunningStrategy? Running) LaunchRunner(LaunchSpec spec)
+    {
+        int id = spec.Strategy.Id;
+        var engineDirectory = _engine.EngineDirectory;
+        var scriptPath = _engine.ScriptPath("strategies", "execution_runner.py");
+
+        if (!System.IO.File.Exists(scriptPath))
+        {
+            _logger.LogError("Strategy runner not found at {ScriptPath}", scriptPath);
+            return (StatusCode(StatusCodes.Status500InternalServerError,
+                new { message = $"Strategy runner not found at '{scriptPath}'. Set StrategyRunner:EngineDirectory." }), null);
+        }
+
+        // The strategy name reaches a command line, so allow only characters that
+        // appear in a legitimate strategy identifier.
+        var strategyName = new string(spec.Strategy.Name.Where(char.IsLetterOrDigit).ToArray());
+        if (string.IsNullOrEmpty(strategyName))
+        {
+            return (BadRequest(new { message = $"Strategy name '{spec.Strategy.Name}' contains no usable characters." }), null);
+        }
+
+        var processInfo = new ProcessStartInfo
+        {
+            FileName = _engine.PythonExecutable,
+            WorkingDirectory = engineDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        // ArgumentList quotes each value, so paths with spaces work on every platform.
+        processInfo.ArgumentList.Add(scriptPath);
+        processInfo.ArgumentList.Add("--strategy");
+        processInfo.ArgumentList.Add(strategyName);
+        processInfo.ArgumentList.Add("--strategy-id");
+        processInfo.ArgumentList.Add(id.ToString(CultureInfo.InvariantCulture));
+        processInfo.ArgumentList.Add("--user-id");
+        processInfo.ArgumentList.Add(spec.UserId.ToString(CultureInfo.InvariantCulture));
+        processInfo.ArgumentList.Add("--run-id");
+        processInfo.ArgumentList.Add(spec.RunId.ToString(CultureInfo.InvariantCulture));
+        processInfo.ArgumentList.Add("--underlying");
+        processInfo.ArgumentList.Add(spec.Underlying);
+        processInfo.ArgumentList.Add("--spot-symbol");
+        processInfo.ArgumentList.Add(spec.SpotSymbol);
+
+        // The engine uses absolute package imports and resolves .env relative to
+        // its own location, so PYTHONPATH must point at the engine directory.
+        processInfo.Environment["PYTHONPATH"] = engineDirectory;
+        // Line-buffered output so log lines arrive as they happen, not in 8KB blocks.
+        processInfo.Environment["PYTHONUNBUFFERED"] = "1";
+
+        lock (_registry.StartLock)
+        {
+            if (_registry.Contains(id))
+            {
+                return (Conflict(new { message = $"{spec.Strategy.Name} is already running." }), null);
+            }
+
+            if (_registry.Count >= _options.MaxConcurrentProcesses)
+            {
+                return (StatusCode(StatusCodes.Status429TooManyRequests,
+                    new { message = $"Concurrent strategy limit reached ({_options.MaxConcurrentProcesses})." }), null);
+            }
+
+            Process? process = null;
+            try
+            {
+                process = new Process { StartInfo = processInfo, EnableRaisingEvents = true };
+                if (!process.Start())
+                {
+                    process.Dispose();
+                    return (StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to start python process." }), null);
+                }
+
+                var running = new RunningStrategy(
+                    id, spec.Strategy.Name, process, spec.StartedBy, spec.UserId, DateTime.UtcNow,
+                    spec.RunId, spec.Underlying, spec.SpotSymbol, spec.Lots, spec.StopLoss, spec.Target);
+
+                if (!_registry.TryAdd(running))
+                {
+                    try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
+                    process.Dispose();
+                    return (Conflict(new { message = $"{spec.Strategy.Name} is already running." }), null);
+                }
+
+                _registry.ClearLastExit(id);
+
+                _logger.LogInformation(
+                    "Started strategy {StrategyId} ({Name}) pid {Pid} run {RunId} on {Underlying} ({Spot}) x{Lots} SL={StopLoss} T={Target} by {User}",
+                    id, spec.Strategy.Name, running.ProcessId, spec.RunId, spec.Underlying, spec.SpotSymbol, spec.Lots,
+                    spec.StopLoss, spec.Target, spec.StartedBy);
+
+                return (null, running);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to start strategy {StrategyId}.", id);
+                try { process?.Dispose(); } catch { /* ignore */ }
+                return (StatusCode(StatusCodes.Status500InternalServerError, new { message = ex.Message }), null);
+            }
+        }
+    }
+
+    /// <summary>True when the underlying has at least one unexpired CE/PE contract in the master.</summary>
+    private Task<bool> HasFutureOptionContractsAsync(string underlying, CancellationToken cancellationToken)
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        return _dbContext.Instruments
+            .AsNoTracking()
+            .AnyAsync(x => x.IsEnabled
+                        && x.Underlying == underlying
+                        && (x.OptionType == "CE" || x.OptionType == "PE")
+                        && x.ExpiryDate.HasValue
+                        && x.ExpiryDate >= today,
+                cancellationToken);
+    }
+
+    private static object StartResponse(string message, RunningStrategy running) => new
+    {
+        message,
+        processId = running.ProcessId,
+        runId = running.RunId,
+        underlying = running.Underlying,
+        spotSymbol = running.SpotSymbol,
+        lots = running.Lots,
+        stopLoss = running.StopLoss,
+        target = running.Target,
+        startedBy = running.StartedBy
+    };
+
+    /// <summary>
+    /// The runner reads spot ticks for the underlying from the live feed, so the
+    /// spot symbol must be on the watchlist. Failure here is not fatal — the
+    /// runner warns on its own when ticks never arrive.
+    /// </summary>
+    private async Task EnsureSpotOnWatchlistAsync(string spotSymbol, CancellationToken cancellationToken)
+    {
         try
         {
-            if (!running.Process.HasExited)
+            await _upsertWatchlistItem.ExecuteAsync(new UpsertWatchlistItemRequest
             {
-                // entireProcessTree: the runner may have spawned children that would
-                // otherwise keep trading after the parent dies.
-                running.Process.Kill(entireProcessTree: true);
-                running.Process.WaitForExit(5000);
-            }
+                Symbol = spotSymbol,
+                DataType = "symbolUpdate",
+                IsActive = true,
+                Priority = 100
+            }, cancellationToken);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Error stopping strategy {StrategyId}.", id);
+            _logger.LogWarning(ex, "Could not add {Symbol} to the live watchlist.", spotSymbol);
         }
-        finally
-        {
-            _activeProcesses.TryRemove(id, out _);
-        }
+    }
 
-        return Ok(new { message = "Strategy stopped successfully." });
+    // ------------------------------------------------------------------
+    // Mapping helpers
+    // ------------------------------------------------------------------
+
+    private StrategyListItemResponse ToListItem(StrategyCatalogEntry entry)
+    {
+        var running = _registry.Get(entry.Id);
+        var lastExit = running is null ? _registry.GetLastExit(entry.Id) : null;
+
+        return new StrategyListItemResponse
+        {
+            Id = entry.Id,
+            Name = entry.Name,
+            Description = entry.Description,
+            Category = entry.Category,
+            SupportedUnderlyings = entry.SupportedUnderlyings.ToList(),
+            InstrumentKind = entry.InstrumentKind,
+            LegsSummary = entry.LegsSummary,
+            DataRequirements = entry.DataRequirements.ToList(),
+            DefaultParametersJson = entry.DefaultParametersJson,
+            DefaultLots = entry.DefaultLots,
+            SourceFile = entry.SourceFile,
+            CreatedUtc = entry.CreatedUtc,
+
+            IsActive = running is not null,
+            StartedBy = running?.StartedBy,
+            StartedUtc = running?.StartedUtc,
+            RunId = running?.RunId,
+            Underlying = running?.Underlying,
+            SpotSymbol = running?.SpotSymbol,
+            Lots = running?.Lots,
+            StopLoss = running?.StopLoss,
+            Target = running?.Target,
+            ProcessId = running?.ProcessId,
+            LastExit = lastExit is null ? null : new StrategyLastExit
+            {
+                RunId = lastExit.RunId,
+                Reason = lastExit.Reason,
+                AtUtc = lastExit.AtUtc,
+                Underlying = lastExit.Underlying
+            }
+        };
+    }
+
+    private sealed record InstrumentLite(string Symbol, string Underlying, decimal? StrikePrice, string OptionType, DateOnly? ExpiryDate);
+
+    private static ContractInfo BuildContract(string symbol, InstrumentLite? inst)
+    {
+        var parsed = UnderlyingCatalog.ParseOptionSymbol(symbol);
+
+        var underlying = !string.IsNullOrWhiteSpace(inst?.Underlying)
+            ? inst!.Underlying.Trim().ToUpperInvariant()
+            : parsed?.Underlying ?? UnderlyingCatalog.InferUnderlying(symbol);
+
+        var strike = inst?.StrikePrice is > 0 ? inst.StrikePrice : parsed?.Strike;
+        var optionType = !string.IsNullOrWhiteSpace(inst?.OptionType)
+            ? inst!.OptionType.Trim().ToUpperInvariant()
+            : parsed?.OptionType ?? string.Empty;
+        var expiry = inst?.ExpiryDate ?? parsed?.Expiry;
+
+        bool looksLikeOption = strike.HasValue && (optionType == "CE" || optionType == "PE");
+
+        return new ContractInfo
+        {
+            Underlying = underlying,
+            Strike = strike,
+            OptionType = optionType,
+            ExpiryDate = expiry,
+            Label = looksLikeOption
+                ? UnderlyingCatalog.ContractLabel(underlying, strike, optionType, expiry)
+                : symbol
+        };
+    }
+
+    private sealed record RunParams(int? Lots, decimal? StopLoss, decimal? Target, string? Underlying);
+
+    /// <summary>
+    /// Reads lots / stop_loss / target / underlying back out of a run's
+    /// parametersJson (numbers may arrive as strings from the wizard).
+    /// </summary>
+    private static RunParams ParseRunParams(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return new RunParams(null, null, null, null);
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return new RunParams(null, null, null, null);
+            var root = doc.RootElement;
+
+            int? lots = ReadInt(root, "lots") ?? ReadInt(root, "quantity");
+            decimal? sl = ReadDecimal(root, "stop_loss") ?? ReadDecimal(root, "stopLoss");
+            decimal? target = ReadDecimal(root, "target");
+            string? underlying = null;
+            if (root.TryGetProperty("underlying", out var u) && u.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(u.GetString()))
+            {
+                underlying = u.GetString()!.Trim().ToUpperInvariant();
+            }
+
+            return new RunParams(
+                lots is > 0 ? lots : null,
+                sl is > 0 ? sl : null,
+                target is > 0 ? target : null,
+                underlying);
+        }
+        catch (JsonException)
+        {
+            return new RunParams(null, null, null, null);
+        }
+    }
+
+    private static int? ReadInt(JsonElement obj, string name)
+    {
+        if (!obj.TryGetProperty(name, out var el)) return null;
+        return el.ValueKind switch
+        {
+            JsonValueKind.Number when el.TryGetInt32(out var n) => n,
+            JsonValueKind.Number when el.TryGetDecimal(out var d) => (int)d,
+            JsonValueKind.String when int.TryParse(el.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var s) => s,
+            _ => null
+        };
+    }
+
+    private static decimal? ReadDecimal(JsonElement obj, string name)
+    {
+        if (!obj.TryGetProperty(name, out var el)) return null;
+        return el.ValueKind switch
+        {
+            JsonValueKind.Number when el.TryGetDecimal(out var d) => d,
+            JsonValueKind.String when decimal.TryParse(el.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var s) => s,
+            _ => null
+        };
     }
 
     /// <summary>
-    /// Gracefully stops all active strategy processes. Can be called from BackgroundServices.
+    /// defaults ⊕ overrides ⊕ { lots, stop_loss, target, underlying } as one JSON object.
     /// </summary>
-    public static void StopAll()
+    private static string MergeParameters(
+        string? defaultsJson,
+        Dictionary<string, JsonElement>? overrides,
+        int lots,
+        decimal? stopLoss,
+        decimal? target,
+        string underlying)
     {
-        foreach (var kvp in _activeProcesses)
+        JsonObject merged;
+        try
         {
-            try
-            {
-                if (!kvp.Value.Process.HasExited)
-                {
-                    kvp.Value.Process.Kill(entireProcessTree: true);
-                }
-            }
-            catch { }
+            merged = string.IsNullOrWhiteSpace(defaultsJson)
+                ? new JsonObject()
+                : JsonNode.Parse(defaultsJson) as JsonObject ?? new JsonObject();
         }
-        _activeProcesses.Clear();
-    }
-
-    [HttpPost("{id}/signals")]
-    public IActionResult AddSignal(int id, [FromBody] object signal)
-    {
-        if (_activeProcesses.TryGetValue(id, out var running))
+        catch (JsonException)
         {
-            lock (running.RecentSignals)
-            {
-                running.RecentSignals.Insert(0, signal);
-                if (running.RecentSignals.Count > 100) running.RecentSignals.RemoveAt(100);
-            }
-            return Ok();
+            merged = new JsonObject();
         }
-        return NotFound($"Strategy {id} is not currently active.");
-    }
 
-    [HttpGet("{id}/signals")]
-    public IActionResult GetSignals(int id)
-    {
-        if (_activeProcesses.TryGetValue(id, out var running))
+        if (overrides is not null)
         {
-            lock (running.RecentSignals)
+            foreach (var (key, value) in overrides)
             {
-                return Ok(running.RecentSignals.ToList());
+                if (string.IsNullOrWhiteSpace(key)) continue;
+                merged[key] = value.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null
+                    ? null
+                    : JsonNode.Parse(value.GetRawText());
             }
         }
-        return Ok(new List<object>()); // return empty list if not running
+
+        merged["lots"] = lots;
+        merged["stop_loss"] = stopLoss.HasValue ? JsonValue.Create(stopLoss.Value) : null;
+        merged["target"] = target.HasValue ? JsonValue.Create(target.Value) : null;
+        merged["underlying"] = underlying;
+
+        return merged.ToJsonString();
     }
 
-    /// <summary>
-    /// &lt;contentRoot&gt;/../AlgoTrading.PythonEngine unless configured otherwise.
-    /// </summary>
-    private string ResolveEngineDirectory()
+    /// <summary>metadataJson.reason (any casing), or null.</summary>
+    private static string? ReadMetadataReason(string? metadataJson)
     {
-        if (!string.IsNullOrWhiteSpace(_options.EngineDirectory))
+        if (string.IsNullOrWhiteSpace(metadataJson)) return null;
+        try
         {
-            return Path.GetFullPath(_options.EngineDirectory);
+            using var doc = JsonDocument.Parse(metadataJson);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return null;
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                if (!string.Equals(prop.Name, "reason", StringComparison.OrdinalIgnoreCase)) continue;
+                return prop.Value.ValueKind == JsonValueKind.String ? prop.Value.GetString() : prop.Value.GetRawText();
+            }
         }
-
-        return Path.GetFullPath(Path.Combine(
-            _environment.ContentRootPath, "..", "AlgoTrading.PythonEngine"));
-    }
-
-    /// <summary>
-    /// The repo-root virtualenv interpreter when it exists, else whatever "python3"
-    /// (or "python" on Windows) resolves to on PATH.
-    /// </summary>
-    private string ResolvePythonExecutable()
-    {
-        if (!string.IsNullOrWhiteSpace(_options.PythonExecutable))
+        catch (JsonException)
         {
-            return _options.PythonExecutable;
+            // Free-form metadata from an older runner; fall through.
         }
-
-        bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
-
-        // contentRoot is src/AlgoTrading.Api, so the repo root is two levels up.
-        var repoRoot = Path.GetFullPath(Path.Combine(_environment.ContentRootPath, "..", ".."));
-        var venvPython = isWindows
-            ? Path.Combine(repoRoot, ".venv", "Scripts", "python.exe")
-            : Path.Combine(repoRoot, ".venv", "bin", "python");
-
-        if (System.IO.File.Exists(venvPython))
-        {
-            return venvPython;
-        }
-
-        return isWindows ? "python" : "python3";
+        return null;
     }
 }

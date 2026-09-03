@@ -16,13 +16,22 @@ namespace AlgoTrading.Infrastructure.Services;
 /// </summary>
 public class PaperTradingService : IPaperTradingService
 {
+    private const string LivePaperMode = "LivePaper";
+    private const string RunStatusStopping = "Stopping";
+    private const string RunStatusStopped = "Stopped";
+
     private readonly TradingDbContext _dbContext;
     private readonly IRiskManagementService _riskManagementService;
+    private readonly ILotSizeResolver _lotSizeResolver;
 
-    public PaperTradingService(TradingDbContext dbContext, IRiskManagementService riskManagementService)
+    public PaperTradingService(
+        TradingDbContext dbContext,
+        IRiskManagementService riskManagementService,
+        ILotSizeResolver lotSizeResolver)
     {
         _dbContext = dbContext;
         _riskManagementService = riskManagementService;
+        _lotSizeResolver = lotSizeResolver;
     }
 
     // ---------------------------------------------------------------------
@@ -38,6 +47,17 @@ public class PaperTradingService : IPaperTradingService
 
         if (run is null)
             throw new InvalidOperationException($"Simulation run {request.SimulationRunId} was not found.");
+
+        // A live-paper run that is being (or has been) stopped no longer accepts
+        // signals: the runner may still be posting while the API squares off its
+        // positions, and a late OPEN/CLOSE_GROUP would open an ownerless or
+        // reversed position on a stopped run.
+        if (string.Equals(run.Mode, LivePaperMode, StringComparison.OrdinalIgnoreCase)
+            && (run.Status == RunStatusStopping || run.Status == RunStatusStopped))
+        {
+            throw new InvalidOperationException(
+                $"Simulation run {request.SimulationRunId} is {run.Status.ToLowerInvariant()}; the {request.SignalType} signal was rejected.");
+        }
 
         var signal = new SimulationSignal
         {
@@ -122,11 +142,13 @@ public class PaperTradingService : IPaperTradingService
                 .Where(x => symbols.Contains(x.Symbol))
                 .ToDictionaryAsync(x => x.Symbol, x => x.LastTradedPrice, cancellationToken);
 
+            var lotSizes = await _lotSizeResolver.ResolveManyAsync(symbols, cancellationToken);
+
             foreach (var pos in rows.Where(x => x.Status == "Open"))
             {
                 if (latestQuotes.TryGetValue(pos.Symbol, out var lastPrice) && lastPrice.HasValue)
                 {
-                    int lotSize = GetLotSizeHeuristic(pos.Symbol);
+                    int lotSize = LotSizeOf(lotSizes, pos.Symbol);
                     pos.LastMarkPrice = lastPrice.Value;
                     pos.UnrealizedPnl = CalculateUnrealizedPnl(
                         pos.Direction,
@@ -160,7 +182,11 @@ public class PaperTradingService : IPaperTradingService
         if (run is null)
             throw new InvalidOperationException($"Simulation run {simulationRunId} was not found.");
 
+        // Read-only path (the risk guard polls it every few seconds per run):
+        // the mark-to-market below is computed on the in-memory rows and never
+        // saved, so there is nothing for the change tracker to do.
         var positions = await _dbContext.PaperPositions
+            .AsNoTracking()
             .Where(x => x.SimulationRunId == simulationRunId)
             .ToListAsync(cancellationToken);
 
@@ -180,16 +206,18 @@ public class PaperTradingService : IPaperTradingService
             .Where(x => symbols.Contains(x.Symbol))
             .ToDictionaryAsync(x => x.Symbol, x => x.LastTradedPrice, cancellationToken);
 
+        var lotSizes = await _lotSizeResolver.ResolveManyAsync(
+            positions.Select(x => x.Symbol), cancellationToken);
+
         decimal usedCapital = 0m;
         decimal realizedPnl = 0m;
         decimal unrealizedPnl = 0m;
 
         foreach (var pos in positions)
         {
-            int lotSize = GetLotSizeHeuristic(pos.Symbol);
-            
-            // Re-calculate realized Pnl using LotSize just in case
-            // (Note: To be fully accurate we would also update RealizedPnl when closing the position)
+            int lotSize = LotSizeOf(lotSizes, pos.Symbol);
+
+            // RealizedPnl is already lot-size adjusted at close time.
             realizedPnl += pos.RealizedPnl;
 
             if (pos.Status == "Open")
@@ -232,11 +260,11 @@ public class PaperTradingService : IPaperTradingService
                 var open = g.Where(x => x.Status == "Open").ToList();
                 var closed = g.Where(x => x.Status == "Closed").ToList();
 
-                decimal groupUsed = open.Sum(x => 
+                decimal groupUsed = open.Sum(x =>
                 {
-                    int ls = GetLotSizeHeuristic(x.Symbol);
-                    return x.Direction == "SHORT" 
-                        ? GetMarginHeuristic(x.Symbol) * x.Quantity 
+                    int ls = LotSizeOf(lotSizes, x.Symbol);
+                    return x.Direction == "SHORT"
+                        ? GetMarginHeuristic(x.Symbol) * x.Quantity
                         : Math.Abs(x.AveragePrice * x.Quantity * ls);
                 });
                 decimal groupRealized = g.Sum(x => x.RealizedPnl);
@@ -322,13 +350,16 @@ public class PaperTradingService : IPaperTradingService
             .Where(x => symbols.Contains(x.Symbol))
             .ToDictionaryAsync(x => x.Symbol, x => x.LastTradedPrice, cancellationToken);
 
+        var lotSizes = await _lotSizeResolver.ResolveManyAsync(
+            positions.Select(x => x.Symbol), cancellationToken);
+
         decimal usedCapital = 0m;
         decimal realizedPnl = 0m;
         decimal unrealizedPnl = 0m;
 
         foreach (var pos in positions)
         {
-            int lotSize = GetLotSizeHeuristic(pos.Symbol);
+            int lotSize = LotSizeOf(lotSizes, pos.Symbol);
             realizedPnl += pos.RealizedPnl;
 
             if (pos.Status == "Open")
@@ -393,11 +424,11 @@ public class PaperTradingService : IPaperTradingService
                 var open = g.Where(x => x.Status == "Open").ToList();
                 var closed = g.Where(x => x.Status == "Closed").ToList();
 
-                decimal groupUsed = open.Sum(x => 
+                decimal groupUsed = open.Sum(x =>
                 {
-                    int ls = GetLotSizeHeuristic(x.Symbol);
-                    return x.Direction == "SHORT" 
-                        ? GetMarginHeuristic(x.Symbol) * x.Quantity 
+                    int ls = LotSizeOf(lotSizes, x.Symbol);
+                    return x.Direction == "SHORT"
+                        ? GetMarginHeuristic(x.Symbol) * x.Quantity
                         : Math.Abs(x.AveragePrice * x.Quantity * ls);
                 });
                 decimal groupRealized = g.Sum(x => x.RealizedPnl);
@@ -575,54 +606,112 @@ public class PaperTradingService : IPaperTradingService
 
     public async Task FlattenAllPositionsAsync(CancellationToken cancellationToken = default)
     {
-        var openPositions = await _dbContext.PaperPositions
+        var runIds = await _dbContext.PaperPositions
+            .AsNoTracking()
             .Where(x => x.Status == "Open")
+            .Select(x => x.SimulationRunId)
+            .Distinct()
             .ToListAsync(cancellationToken);
 
-        if (openPositions.Count == 0) return;
-
-        foreach (var pos in openPositions)
+        foreach (var runId in runIds)
         {
-            var closingSide = pos.Direction == "LONG" ? "SELL" : "BUY";
-            decimal fillPrice = pos.LastMarkPrice ?? pos.AveragePrice; // Heuristic fallback
+            await FlattenRunAsync(runId, "GLOBAL_KILL_SWITCH", cancellationToken);
+        }
+    }
 
+    public async Task<int> FlattenRunAsync(
+        long simulationRunId,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        var run = await _dbContext.SimulationRuns
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == simulationRunId, cancellationToken);
+
+        if (run is null)
+            throw new InvalidOperationException($"Simulation run {simulationRunId} was not found.");
+
+        var openPositions = await _dbContext.PaperPositions
+            .AsNoTracking()
+            .Where(x => x.SimulationRunId == simulationRunId && x.Status == "Open")
+            .OrderBy(x => x.Id)
+            .ToListAsync(cancellationToken);
+
+        if (openPositions.Count == 0) return 0;
+
+        var symbols = openPositions.Select(x => x.Symbol).Distinct().ToList();
+        var latestQuotes = await _dbContext.LiveQuotesLatest
+            .AsNoTracking()
+            .Where(x => symbols.Contains(x.Symbol))
+            .ToDictionaryAsync(x => x.Symbol, x => x.LastTradedPrice, cancellationToken);
+
+        var metadata = System.Text.Json.JsonSerializer.Serialize(new { reason, system = true });
+        int closed = 0;
+
+        // One CLOSE_GROUP signal per group, carrying a closing leg for each open
+        // position in that group — the same shape the runner emits when it exits
+        // a group itself, so the activity feed reads the same either way.
+        foreach (var group in openPositions.GroupBy(x => x.GroupId))
+        {
             var signal = new SimulationSignal
             {
-                SimulationRunId = pos.SimulationRunId,
-                StrategyName = "SYSTEM_RMS_FLATTEN",
-                SignalType = "EXIT",
+                SimulationRunId = simulationRunId,
+                StrategyName = run.StrategyName,
+                SignalType = "CLOSE_GROUP",
                 TimestampUtc = DateTime.UtcNow,
-                GroupId = pos.GroupId,
-                MetadataJson = "{\"Reason\": \"GLOBAL_KILL_SWITCH\"}",
+                GroupId = group.Key,
+                MetadataJson = metadata,
                 CreatedUtc = DateTime.UtcNow
             };
 
             await _dbContext.SimulationSignals.AddAsync(signal, cancellationToken);
             await _dbContext.SaveChangesAsync(cancellationToken);
 
-            var leg = new SimulationSignalLegRequest
+            foreach (var pos in group)
             {
-                Symbol = pos.Symbol,
-                Side = closingSide,
-                Quantity = pos.Quantity,
-                Price = fillPrice
-            };
+                decimal fillPrice =
+                    (latestQuotes.TryGetValue(pos.Symbol, out var ltp) && ltp.HasValue ? ltp : null)
+                    ?? pos.LastMarkPrice
+                    ?? pos.AveragePrice;
 
-            // Directly call internal helper bypassing risk evaluation 
-            // since this IS a risk management action.
-            await CreateOrderAndApplyPositionAsync(signal, leg, cancellationToken, bypassRiskCheck: true);
+                var leg = new SimulationSignalLegRequest
+                {
+                    Symbol = pos.Symbol,
+                    Side = pos.Direction == "LONG" ? "SELL" : "BUY",
+                    Quantity = pos.Quantity,
+                    Price = fillPrice
+                };
+
+                // This IS the risk action, so it bypasses the risk evaluation.
+                // Reduce-only: if another stopper closed this position between the
+                // snapshot above and now, the closing leg is skipped instead of
+                // opening a reverse position on a run that is being stopped.
+                bool closedLeg = await CreateOrderAndApplyPositionAsync(
+                    signal, leg, cancellationToken, bypassRiskCheck: true, reduceOnly: true);
+                if (closedLeg) closed++;
+            }
         }
+
+        return closed;
     }
 
     // ---------------------------------------------------------------------
     // INTERNAL ORDER / POSITION APPLICATION
     // ---------------------------------------------------------------------
 
-    private async Task CreateOrderAndApplyPositionAsync(
+    /// <summary>
+    /// Fills one leg as a paper order and applies it to the run's positions.
+    /// With <paramref name="reduceOnly"/> the leg may only shrink or close an
+    /// existing open position in its group: quantity is clamped to what is open
+    /// and, when nothing is open (already closed by a concurrent stop), the leg
+    /// is skipped and <c>false</c> is returned.
+    /// </summary>
+    private async Task<bool> CreateOrderAndApplyPositionAsync(
         SimulationSignal signal,
         SimulationSignalLegRequest leg,
         CancellationToken cancellationToken,
-        bool bypassRiskCheck = false)
+        bool bypassRiskCheck = false,
+        bool reduceOnly = false)
     {
         if (string.IsNullOrWhiteSpace(leg.Symbol))
             throw new InvalidOperationException("Paper leg symbol is required.");
@@ -636,6 +725,22 @@ public class PaperTradingService : IPaperTradingService
         string normalizedSide = leg.Side.Trim().ToUpperInvariant();
         if (normalizedSide != "BUY" && normalizedSide != "SELL")
             throw new InvalidOperationException("Paper leg side must be BUY or SELL.");
+
+        int quantity = leg.Quantity;
+        if (reduceOnly)
+        {
+            var open = await FindOpenPositionAsync(signal.SimulationRunId, signal.GroupId, leg.Symbol, cancellationToken);
+            if (open is null || !IsClosingSide(open.Direction, normalizedSide))
+            {
+                return false;
+            }
+
+            quantity = Math.Min(quantity, open.Quantity);
+            if (quantity <= 0)
+            {
+                return false;
+            }
+        }
 
         if (!bypassRiskCheck)
         {
@@ -658,7 +763,7 @@ public class PaperTradingService : IPaperTradingService
             GroupId = signal.GroupId,
             Symbol = leg.Symbol,
             Side = normalizedSide,
-            Quantity = leg.Quantity,
+            Quantity = quantity,
             OrderType = "MARKET_SIM",
             Status = "Filled",
             RequestedPrice = leg.Price,
@@ -670,24 +775,51 @@ public class PaperTradingService : IPaperTradingService
         await _dbContext.PaperOrders.AddAsync(order, cancellationToken);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        await ApplyPositionAsync(signal, order, cancellationToken);
+        bool applied = await ApplyPositionAsync(signal, order, cancellationToken, reduceOnly);
+        if (!applied)
+        {
+            // The position vanished between the lookup and the apply (closed by a
+            // concurrent stopper). A filled order that moved nothing would only
+            // confuse the order history, so drop it.
+            _dbContext.PaperOrders.Remove(order);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        return applied;
     }
 
-    private async Task ApplyPositionAsync(
-        SimulationSignal signal,
-        PaperOrder order,
-        CancellationToken cancellationToken)
-    {
-        var existing = await _dbContext.PaperPositions
+    private Task<PaperPosition?> FindOpenPositionAsync(long runId, string groupId, string symbol, CancellationToken cancellationToken)
+        => _dbContext.PaperPositions
             .FirstOrDefaultAsync(x =>
-                x.SimulationRunId == signal.SimulationRunId &&
-                x.GroupId == signal.GroupId &&
-                x.Symbol == order.Symbol &&
+                x.SimulationRunId == runId &&
+                x.GroupId == groupId &&
+                x.Symbol == symbol &&
                 x.Status == "Open",
                 cancellationToken);
 
+    private static bool IsClosingSide(string direction, string side)
+        => (direction == "LONG" && side == "SELL") || (direction == "SHORT" && side == "BUY");
+
+    /// <summary>
+    /// Applies a filled order to the run's open position for (group, symbol).
+    /// Returns <c>false</c> only in reduce-only mode when there is no open
+    /// position to reduce; otherwise a fresh position is opened.
+    /// </summary>
+    private async Task<bool> ApplyPositionAsync(
+        SimulationSignal signal,
+        PaperOrder order,
+        CancellationToken cancellationToken,
+        bool reduceOnly = false)
+    {
+        var existing = await FindOpenPositionAsync(signal.SimulationRunId, signal.GroupId, order.Symbol, cancellationToken);
+
         if (existing is null)
         {
+            if (reduceOnly)
+            {
+                return false;
+            }
+
             var direction = order.Side == "BUY" ? "LONG" : "SHORT";
 
             var pos = new PaperPosition
@@ -709,7 +841,7 @@ public class PaperTradingService : IPaperTradingService
 
             await _dbContext.PaperPositions.AddAsync(pos, cancellationToken);
             await _dbContext.SaveChangesAsync(cancellationToken);
-            return;
+            return true;
         }
 
         bool sameDirection =
@@ -718,6 +850,13 @@ public class PaperTradingService : IPaperTradingService
 
         if (sameDirection)
         {
+            if (reduceOnly)
+            {
+                // The open position flipped direction under us; adding to it is
+                // the opposite of squaring off.
+                return false;
+            }
+
             int newQty = existing.Quantity + order.Quantity;
             decimal oldNotional = existing.AveragePrice * existing.Quantity;
             decimal newNotional = (order.FillPrice ?? 0m) * order.Quantity;
@@ -728,14 +867,14 @@ public class PaperTradingService : IPaperTradingService
             existing.UpdatedUtc = DateTime.UtcNow;
 
             await _dbContext.SaveChangesAsync(cancellationToken);
-            return;
+            return true;
         }
 
         int closingQty = Math.Min(existing.Quantity, order.Quantity);
         decimal fillPrice = order.FillPrice ?? 0m;
 
-        int lotSize = GetLotSizeHeuristic(existing.Symbol);
-        
+        int lotSize = (await _lotSizeResolver.ResolveAsync(existing.Symbol, cancellationToken)).LotSize;
+
         decimal realized = CalculateRealizedPnl(
             existing.Direction,
             existing.AveragePrice,
@@ -757,8 +896,10 @@ public class PaperTradingService : IPaperTradingService
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
+        // Reduce-only legs never flip into a reverse position, even if the open
+        // quantity shrank between the clamp and this apply.
         int remainder = order.Quantity - closingQty;
-        if (remainder > 0)
+        if (remainder > 0 && !reduceOnly)
         {
             var reverseDirection = order.Side == "BUY" ? "LONG" : "SHORT";
 
@@ -782,6 +923,8 @@ public class PaperTradingService : IPaperTradingService
             await _dbContext.PaperPositions.AddAsync(newPos, cancellationToken);
             await _dbContext.SaveChangesAsync(cancellationToken);
         }
+
+        return true;
     }
 
     // ---------------------------------------------------------------------
@@ -802,18 +945,12 @@ public class PaperTradingService : IPaperTradingService
             : (avgPrice - markPrice) * qty * lotSize;
     }
 
-    private static int GetLotSizeHeuristic(string symbol)
-    {
-        if (string.IsNullOrWhiteSpace(symbol)) return 1;
-        var s = symbol.ToUpperInvariant();
-        if (s.Contains("BANKNIFTY")) return 15;
-        if (s.Contains("FINNIFTY")) return 40;
-        if (s.Contains("MIDCPNIFTY")) return 75;
-        if (s.Contains("NIFTY")) return 25;
-        if (s.Contains("SENSEX")) return 10;
-        if (s.Contains("BANKEX")) return 15;
-        return 1;
-    }
+    /// <summary>
+    /// Lot size from a batch resolved by <see cref="ILotSizeResolver.ResolveManyAsync"/>;
+    /// 1 when the symbol was not part of the batch.
+    /// </summary>
+    private static int LotSizeOf(IReadOnlyDictionary<string, LotSizeInfo> lotSizes, string symbol)
+        => lotSizes.TryGetValue(symbol, out var info) && info.LotSize > 0 ? info.LotSize : 1;
 
     private static decimal GetMarginHeuristic(string symbol)
     {

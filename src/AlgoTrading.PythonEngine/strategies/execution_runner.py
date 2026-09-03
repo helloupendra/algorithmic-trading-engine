@@ -1,8 +1,25 @@
+"""
+strategies/execution_runner.py
+
+Live paper-trading runner for one strategy. Launched by the API as
+
+    execution_runner.py --strategy NAME --strategy-id ID --user-id UID
+                        --run-id RID --underlying U --spot-symbol S
+
+It loads the run's parameters (lots, stop_loss, target, underlying, strategy
+params), warms the strategy up on historical index bars, then consumes live
+ticks from the Redis stream, hands the ATM contracts to the strategy and posts
+every OPEN_GROUP/CLOSE_GROUP signal to the Simulator (paper fills) and to the
+Strategy feed (UI). Stop-loss/target are enforced by the API's risk guard, not
+here; the runner only logs them.
+"""
+
 from __future__ import annotations
 
 import json
 import time
 import argparse
+import signal
 import sys
 import os
 
@@ -17,11 +34,8 @@ import urllib3
 from typing import List, Dict, Any, Optional
 
 from messaging.redis_subscriber import build_subscriber_from_env
-import pkgutil
-import inspect
-import importlib
-import strategies
 from strategies.base_strategy import StrategyInput, StrategySignal, OptionContract, BaseStrategy, BarFrame
+from strategies.registry import discover_strategies
 
 import core.fyers_orders as fyers_orders
 
@@ -30,20 +44,6 @@ try:
     from strategies.private_strategies import get_private_strategies
 except ImportError:
     def get_private_strategies(): return {}
-
-def discover_strategies() -> Dict[str, Any]:
-    discovered = {}
-    for info in pkgutil.walk_packages(strategies.__path__, strategies.__name__ + "."):
-        try:
-            module = importlib.import_module(info.name)
-            for name, obj in inspect.getmembers(module, inspect.isclass):
-                if issubclass(obj, BaseStrategy) and obj is not BaseStrategy:
-                    if obj.__module__ == info.name:
-                        strategy_name = getattr(obj, "name", obj.__name__)
-                        discovered[strategy_name] = lambda params=None, cls=obj: cls(params or {})
-        except Exception:
-            pass
-    return discovered
 
 
 from state_management.state_models import StrategyState
@@ -82,6 +82,147 @@ def build_redis_client() -> redis.Redis:
 
 def round_to_100(price: float) -> int:
     return int(round(price / 100.0) * 100)
+
+
+# Strike step per underlying when the option chain cannot be read from the API.
+# Kept as floats end-to-end: stock options trade on 2.5 / 0.5 point grids, and
+# the API (decimal strikeStep) and the launch dialog report exactly that value,
+# so the runner must land on the same grid.
+FALLBACK_STRIKE_STEPS: Dict[str, float] = {
+    "NIFTY": 50.0,
+    "BANKNIFTY": 100.0,
+    "FINNIFTY": 50.0,
+    "MIDCPNIFTY": 25.0,
+    "SENSEX": 100.0,
+}
+DEFAULT_STRIKE_STEP = 50.0
+
+
+def fallback_strike_step(underlying: str) -> float:
+    return FALLBACK_STRIKE_STEPS.get((underlying or "").upper(), DEFAULT_STRIKE_STEP)
+
+
+def strike_step_from_chain(chain: List[Dict[str, Any]]) -> Optional[float]:
+    """
+    Smallest positive gap between consecutive distinct strikes of one expiry,
+    as a float so fractional grids survive (same rule as the C# underlyings
+    endpoint). Returns None when the chain has fewer than two usable strikes.
+    """
+    strikes = set()
+    for row in chain or []:
+        raw = row.get("strikePrice")
+        if raw is None:
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            strikes.add(value)
+
+    ordered = sorted(strikes)
+    if len(ordered) < 2:
+        return None
+
+    gaps = [b - a for a, b in zip(ordered, ordered[1:]) if b - a > 0]
+    if not gaps:
+        return None
+    step = min(gaps)
+    if step <= 0:
+        return None
+    # Six decimals is far below any exchange tick; it only removes float noise.
+    return round(step, 6)
+
+
+def resolve_strike_step(api: PlatformApiClient, underlying: str, expiry_date: str) -> float:
+    """Strike step derived from the option chain, else the per-underlying fallback."""
+    try:
+        chain = api.get_option_chain(underlying, expiry_date)
+        step = strike_step_from_chain(chain)
+        if step:
+            print(f"[{underlying}] Strike step {format_strike(step)} derived from {len(chain)} contracts of expiry {expiry_date}")
+            return step
+        print(f"[{underlying}] WARN: option chain for {expiry_date} has too few strikes; using fallback step")
+    except Exception as ex:
+        print(f"[{underlying}] WARN: could not read option chain for strike step: {ex}")
+    step = fallback_strike_step(underlying)
+    print(f"[{underlying}] Using fallback strike step {format_strike(step)}")
+    return step
+
+
+def round_to_step(price: float, step: float) -> float:
+    """
+    Nearest strike on the underlying's grid. Returns an int when the grid is
+    whole-point (57600, not 57600.0) so symbols and log lines stay readable,
+    and a float (102.5) on fractional grids.
+    """
+    step = float(step) if step and step > 0 else DEFAULT_STRIKE_STEP
+    strike = round(round(price / step) * step, 6)
+    if float(strike).is_integer():
+        return int(strike)
+    return strike
+
+
+def format_strike(value: float) -> str:
+    """102.5 stays 102.5; 57600.0 prints as 57600."""
+    return str(int(value)) if float(value).is_integer() else f"{value:g}"
+
+
+def parse_optional_number(value: Any) -> Optional[float]:
+    """Float for numeric-looking values, None for null/blank/garbage."""
+    if value is None:
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def count_open_groups(state: Dict[str, Any]) -> int:
+    """
+    Best-effort count of open position groups from a strategy's state, using
+    the conventions the bundled strategies follow. Unknown layouts yield 0.
+    """
+    if not isinstance(state, dict):
+        return 0
+    for key in ("open_groups", "active_groups", "groups"):
+        value = state.get(key)
+        if isinstance(value, (list, dict, set, tuple)):
+            return len(value)
+    if state.get("current_group_id"):
+        return 1
+    if state.get("is_invested") and state.get("group_id"):
+        return 1
+    return 0
+
+
+def stamp_signal_metadata(sig: StrategySignal, inp: StrategyInput) -> None:
+    """Every published signal carries its reason and the market context it fired in."""
+    if sig.metadata is None:
+        sig.metadata = {}
+    sig.metadata["reason"] = sig.reason
+    sig.metadata["spot_price"] = inp.spot_price
+    sig.metadata["atm_strike"] = inp.atm_strike
+
+
+def install_signal_handlers() -> None:
+    """SIGTERM/SIGINT raise SystemExit so the `finally` block releases the Redis lock."""
+    def _handler(signum: int, _frame: Any) -> None:
+        try:
+            name = signal.Signals(signum).name
+        except ValueError:
+            name = str(signum)
+        print(f"[RUNNER] stopping: {name}", flush=True)
+        raise SystemExit(0)
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, _handler)
+        except (ValueError, OSError):
+            # Not the main thread / unsupported platform: keep the default behaviour.
+            pass
 
 
 def map_contract(raw: Dict[str, Any]) -> OptionContract:
@@ -181,7 +322,9 @@ def enrich_signal_leg_prices(api: PlatformApiClient, sig: StrategySignal, expiry
                 try:
                     underlying = parts[0]
                     option_type = parts[1]
-                    strike = int(parts[2])
+                    # Fractional strikes (102.5) are legitimate on stock grids.
+                    strike_value = float(parts[2])
+                    strike = int(strike_value) if strike_value.is_integer() else strike_value
                     exact_contract = api.get_exact_contract(underlying, expiry_date, strike, option_type)
                     if exact_contract and "symbol" in exact_contract:
                         symbol = exact_contract["symbol"]
@@ -255,6 +398,8 @@ if __name__ == "__main__":
     parser.add_argument("--metrics-port", type=int, default=8000, help="The port for the Prometheus metrics server.")
     args = parser.parse_args()
 
+    install_signal_handlers()
+
     api = PlatformApiClient(API_BASE_URL, verify_ssl=VERIFY_SSL)
 
     # Dynamically discover all BaseStrategy subclasses in the strategies folder
@@ -293,28 +438,61 @@ if __name__ == "__main__":
 
             raw = run_row.get("parametersJson") or "{}"
             run_params = json.loads(raw) if isinstance(raw, str) else (raw or {})
+            if not isinstance(run_params, dict):
+                run_params = {}
             if run_params:
                 print(f"Loaded {len(run_params)} parameter(s) from run {args.run_id}: {sorted(run_params.keys())}")
         except Exception as ex:
             print(f"WARNING: could not load parameters for run {args.run_id}: {ex}. Using strategy defaults.")
 
+    # The API writes the launch configuration into the run's parametersJson;
+    # it is authoritative over the symbol-derived guess and the CLI defaults.
+    run_underlying = str(run_params.get("underlying") or "").strip().upper()
+    if run_underlying:
+        args.underlying = run_underlying
+
     strategy = strategies_map[args.strategy](run_params)
     state = strategy.initialize_state()
 
+    run_lots = BaseStrategy.lots_from(run_params, getattr(strategy, "default_lots", 1))
+    strategy_lots = getattr(strategy, "lots", None)
+    if not isinstance(strategy_lots, int) or strategy_lots < 1:
+        strategy_lots = run_lots
+    run_stop_loss = parse_optional_number(run_params.get("stop_loss"))
+    run_target = parse_optional_number(run_params.get("target"))
+
+    print(
+        f"[CONFIG] strategy={args.strategy} run_id={args.run_id} underlying={args.underlying} "
+        f"spot_symbol={args.spot_symbol} lots={strategy_lots} "
+        f"stop_loss={run_stop_loss if run_stop_loss is not None else 'none'} "
+        f"target={run_target if run_target is not None else 'none'} "
+        f"(SL/target enforced by the API risk guard)",
+        flush=True,
+    )
+
     expiries = api.get_expiries(args.underlying)
     if not expiries:
-        print(f"[{args.underlying}] WARNING: No option expiries found for {args.underlying} in the database. Ensure NSE_FO/BSE_FO data is loaded.")
-        print(f"[{args.underlying}] Shutting down runner for {args.underlying}.")
-        sys.exit(0)
+        # Non-zero exit with the cause on stderr: the API records the last stderr
+        # line in the run's stop reason, so the card says why instead of
+        # "Runner exited (code 0)".
+        message = (
+            f"No option contracts loaded for {args.underlying} — import the F&O master "
+            f"(NSE_FO/BSE_FO) first."
+        )
+        print(f"[{args.underlying}] ERROR: {message}", flush=True)
+        print(message, file=sys.stderr, flush=True)
+        sys.exit(2)
 
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     valid_expiries = [x for x in expiries if str(x["expiryDate"]) >= today_str]
-    
+
     if not valid_expiries:
         raise RuntimeError(f"No future expiries found for {args.underlying}")
 
     expiry_date = str(valid_expiries[0]["expiryDate"])
     print(f"Using expiry: {expiry_date}")
+
+    strike_step = resolve_strike_step(api, args.underlying, expiry_date)
 
     run_id = args.run_id
     if run_id is None:
@@ -447,7 +625,7 @@ if __name__ == "__main__":
                             timestamp_utc=frame.timestamp_utc,
                             underlying=args.underlying,
                             spot_price=frame.close,
-                            atm_strike=int(round(frame.close / 100) * 100),
+                            atm_strike=round_to_step(frame.close, strike_step),
                             contracts={},
                             bars={req.resolution: {"index": list(cumulative_frames)}},
                             metadata={"source": "warmup"}
@@ -461,26 +639,76 @@ if __name__ == "__main__":
     print(f"[{args.underlying}] Listening for live ticks on Redis Stream...")
     subscriber = build_subscriber_from_env()
 
+    ticks_processed = 0
+    last_status_print = 0.0
+    last_tick_at: Optional[float] = None
+    last_spot_price: Optional[float] = None
+    last_atm_strike: Any = None
+    last_contract_count = 0
+
+    def print_status_if_due() -> None:
+        """
+        One [STATUS] line every 10 s regardless of whether ticks arrive, so the
+        UI can tell an idle runner (market closed, feed stopped) from a wedged
+        one. The trigger levels are Ghost-specific and shown only when present.
+        """
+        # Module-level names (this block runs under __main__, not inside a function).
+        global last_status_print
+        now_ts = time.time()
+        if now_ts - last_status_print <= 10:
+            return
+        last_status_print = now_ts
+
+        if last_spot_price is None:
+            status = (
+                f"[STATUS] {args.underlying} waiting for ticks on {args.spot_symbol} "
+                f"(no tick received yet) ticks={ticks_processed}"
+            )
+        else:
+            age = f"{now_ts - last_tick_at:.0f}s ago" if last_tick_at is not None else "unknown"
+            status = (
+                f"[STATUS] {args.underlying} spot={last_spot_price:.2f} atm={last_atm_strike} "
+                f"open_groups={count_open_groups(state)} ticks={ticks_processed} "
+                f"contracts={last_contract_count} last_tick={age}"
+            )
+        if isinstance(state, dict) and ("target_buy_trigger" in state or "target_sell_trigger" in state):
+            buy_t = state.get("target_buy_trigger")
+            sell_t = state.get("target_sell_trigger")
+            buy_str = f"{buy_t:.2f}" if buy_t else "waiting for pivot"
+            sell_str = f"{sell_t:.2f}" if sell_t else "waiting for pivot"
+            status += f" | triggers: BUY CE (up) {buy_str}, BUY PE (down) {sell_str}"
+        print(status, flush=True)
+
     try:
-        for tick in subscriber.listen_for_ticks(block_ms=1000):
+        for tick in subscriber.listen_for_ticks(block_ms=1000, yield_idle=True):
+            if tick is None:
+                # Empty read: nothing on the stream for block_ms.
+                print_status_if_due()
+                continue
+
             try:
                 if tick.get("symbol") != args.spot_symbol:
+                    print_status_if_due()
                     continue
 
                 spot_price = float(tick.get("lastTradedPrice", 0))
                 if spot_price <= 0:
+                    print_status_if_due()
                     continue
-                    
+
                 timestamp_utc = tick.get("exchangeTimestampUtc") or tick.get("receivedUtc") or datetime.now(timezone.utc).isoformat()
-                # Calculate dynamic ATM strike based on underlying
-                interval = 50 if args.underlying == "NIFTY" else 100
-                atm_strike = int(round(spot_price / interval) * interval)
+                # ATM strike on the underlying's real strike grid (from the option chain)
+                atm_strike = round_to_step(spot_price, strike_step)
 
                 if DEBUG_PRINT_MESSAGES:
                     print(f"INPUT PRICE: {spot_price} | ATM: {atm_strike}")
-            
+
                 # Record TICK_PROCESSED metric
                 TICK_PROCESSED.inc()
+                ticks_processed += 1
+                last_tick_at = time.time()
+                last_spot_price = spot_price
+                last_atm_strike = atm_strike
 
                 # Record REDIS_LAG metric
                 try:
@@ -511,6 +739,7 @@ if __name__ == "__main__":
                     contracts["atm_ce"] = map_contract(atm_ce)
                 if atm_pe:
                     contracts["atm_pe"] = map_contract(atm_pe)
+                last_contract_count = len(contracts)
 
                 # Make sure live ingestor will start tracking these contracts
                 ensure_contracts_tracked(api, contracts)
@@ -593,16 +822,8 @@ if __name__ == "__main__":
                 signals = strategy.on_bar(state, inp)
                 t_end = time.time()
                 STRATEGY_LOOP_DURATION.observe(t_end - t_start)
-                
-                # Print live status to terminal every 10 seconds for user visibility
-                now_ts = time.time()
-                if now_ts - state.get("last_status_print", 0) > 10:
-                    buy_t = state.get('target_buy_trigger')
-                    sell_t = state.get('target_sell_trigger')
-                    buy_str = f"{buy_t:.2f}" if buy_t else "Waiting for pivot"
-                    sell_str = f"{sell_t:.2f}" if sell_t else "Waiting for pivot"
-                    print(f"[{args.underlying} TICK] Spot: {spot_price:.2f} | Triggers -> BUY CE (Up): {buy_str} | BUY PE (Down): {sell_str}")
-                    state["last_status_print"] = now_ts
+
+                print_status_if_due()
 
                 print_signals(signals)
                 if DEBUG_PRINT_MESSAGES:
@@ -617,13 +838,13 @@ if __name__ == "__main__":
                             if target_contract and "symbol" in target_contract:
                                 exec_symbol = target_contract["symbol"]
                                 print(f"Selected Option Symbol for Paper: {exec_symbol}")
-                                
+
                                 # Morph the signal into OPEN_GROUP for the Simulator
                                 sig.signal_type = "OPEN_GROUP"
                                 sig.metadata["group_id"] = f"GTC_{int(time.time())}"
                                 sig.metadata["direction"] = direction
-                                sig.legs = [{"symbol": exec_symbol, "side": "BUY", "quantity": 15}]
-                                
+                                sig.legs = [{"symbol": exec_symbol, "side": "BUY", "quantity": strategy_lots}]
+
                             else:
                                 print(f"ERROR: Could not resolve contract for {direction}.")
                         except Exception as ex:
@@ -633,6 +854,7 @@ if __name__ == "__main__":
 
                     if sig.signal_type in {"OPEN_GROUP", "CLOSE_GROUP"}:
                         sig = enrich_signal_leg_prices(api, sig, expiry_date)
+                        stamp_signal_metadata(sig, inp)
 
                         print("ENRICHED SIGNAL LEGS:")
                         print(json.dumps(sig.legs, indent=2, default=str))
@@ -642,6 +864,7 @@ if __name__ == "__main__":
                             api.http.post(f"{api.base_url}/api/Strategy/{args.strategy_id}/signals", json={
                                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
                                 "signal_type": sig.signal_type,
+                                "reason": sig.reason,
                                 "legs": sig.legs,
                                 "metadata": sig.metadata
                             })
@@ -670,5 +893,8 @@ if __name__ == "__main__":
 
     finally:
         keepalive_running = False
-        state_store.release_lock(owner_id)
-        print("[STATE] Released strategy lock gracefully.")
+        try:
+            state_store.release_lock(owner_id)
+            print("[STATE] Released strategy lock gracefully.", flush=True)
+        except Exception as ex:
+            print(f"[STATE] WARN: could not release strategy lock: {ex}", flush=True)

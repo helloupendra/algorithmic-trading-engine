@@ -79,11 +79,17 @@ namespace AlgoTrading.Infrastructure.Services
 
                 totalRowsRead++;
 
+                // FYERS master columns (0-based): 1 description, 3 minimum lot size,
+                // 4 tick size, 5 ISIN, 9 full symbol, 13 underlying symbol,
+                // 15 strike (-1.0 when n/a), 16 option type (CE/PE/XX).
                 string description = GetField(fields, 1);
+                string lotSizeRaw = GetField(fields, 3);
                 string tickSizeRaw = GetField(fields, 4);
                 string isin = GetField(fields, 5);
                 string fullSymbol = GetField(fields, 9);
                 string shortSymbol = GetField(fields, 13);
+                string strikeRaw = GetField(fields, 15);
+                string optionTypeRaw = GetField(fields, 16);
 
                 if (string.IsNullOrWhiteSpace(fullSymbol))
                 {
@@ -105,6 +111,15 @@ namespace AlgoTrading.Infrastructure.Services
                     tickSize = parsedTick;
                 }
 
+                // Lot size straight from the master; anything non-positive is "unknown"
+                // and left null so the resolver falls back to the configured table.
+                int? lotSize = null;
+                if (decimal.TryParse(lotSizeRaw, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsedLot)
+                    && parsedLot > 0)
+                {
+                    lotSize = (int)Math.Round(parsedLot);
+                }
+
                 // Default values for non-derivative files
                 string underlying = string.Empty;
                 decimal? strikePrice = null;
@@ -115,11 +130,32 @@ namespace AlgoTrading.Infrastructure.Services
                 if (segmentFromFile == "FO" || segmentFromFile == "COM")
                 {
                     var parsed = ParseDerivativeFields(fullSymbol, description);
-                    underlying = parsed.underlying;
                     strikePrice = parsed.strike;
                     optionType = parsed.optionType;
 
-                    // ✅ Correct expiry extraction for FO rows:
+                    // Column 13 is the master's own underlying symbol and is
+                    // authoritative: the name-based parse cannot tell NIFTYNXT50 or
+                    // NIFTYFPI from NIFTY, and knows nothing about stock options
+                    // (NSE:RELIANCE26SEP1400CE). Fall back to the parse only when
+                    // the column is blank (older or hand-made masters).
+                    underlying = !string.IsNullOrWhiteSpace(shortSymbol)
+                        ? shortSymbol.Trim().ToUpperInvariant()
+                        : parsed.underlying;
+
+                    // Prefer the master's own strike / option type columns when present.
+                    if (decimal.TryParse(strikeRaw, NumberStyles.Any, CultureInfo.InvariantCulture, out var masterStrike)
+                        && masterStrike > 0)
+                    {
+                        strikePrice = masterStrike;
+                    }
+
+                    var masterOptionType = optionTypeRaw.Trim().ToUpperInvariant();
+                    if (masterOptionType == "CE" || masterOptionType == "PE")
+                    {
+                        optionType = masterOptionType;
+                    }
+
+                    // Expiry extraction for FO rows:
                     // Example description: "BANKNIFTY 30 Jun 26 28000 CE"
                     // -> ExpiryDate = 2026-06-30
                     expiryDate = TryExtractExpiryFromDescription(description);
@@ -138,6 +174,7 @@ namespace AlgoTrading.Infrastructure.Services
                         Description = description,
                         InstrumentType = instrumentType,
                         Isin = isin,
+                        LotSize = lotSize,
                         TickSize = tickSize,
                         ExpiryDate = expiryDate,
 
@@ -185,6 +222,12 @@ namespace AlgoTrading.Infrastructure.Services
                     if (existing.Isin != isin)
                     {
                         existing.Isin = isin;
+                        changed = true;
+                    }
+
+                    if (lotSize.HasValue && existing.LotSize != lotSize)
+                    {
+                        existing.LotSize = lotSize;
                         changed = true;
                     }
 
@@ -374,35 +417,37 @@ namespace AlgoTrading.Infrastructure.Services
                 }
             }
 
-            string underlying = string.Empty;
-
-            if (symbolPart.Contains("BANKNIFTY", StringComparison.OrdinalIgnoreCase))
-                underlying = "BANKNIFTY";
-            else if (symbolPart.Contains("FINNIFTY", StringComparison.OrdinalIgnoreCase))
-                underlying = "FINNIFTY";
-            else if (symbolPart.Contains("MIDCPNIFTY", StringComparison.OrdinalIgnoreCase))
-                underlying = "MIDCPNIFTY";
-            else if (symbolPart.Contains("NIFTY", StringComparison.OrdinalIgnoreCase))
-                underlying = "NIFTY";
-            else if (symbolPart.Contains("SENSEX", StringComparison.OrdinalIgnoreCase))
-                underlying = "SENSEX";
+            string underlying = ParseIndexUnderlying(symbolPart);
 
             // Fallback: description
             if (string.IsNullOrWhiteSpace(underlying) && !string.IsNullOrWhiteSpace(description))
             {
-                if (description.Contains("BANKNIFTY", StringComparison.OrdinalIgnoreCase))
-                    underlying = "BANKNIFTY";
-                else if (description.Contains("FINNIFTY", StringComparison.OrdinalIgnoreCase))
-                    underlying = "FINNIFTY";
-                else if (description.Contains("MIDCPNIFTY", StringComparison.OrdinalIgnoreCase))
-                    underlying = "MIDCPNIFTY";
-                else if (description.Contains("NIFTY", StringComparison.OrdinalIgnoreCase))
-                    underlying = "NIFTY";
-                else if (description.Contains("SENSEX", StringComparison.OrdinalIgnoreCase))
-                    underlying = "SENSEX";
+                underlying = ParseIndexUnderlying(description);
             }
 
             return (underlying, strike, optionType);
+        }
+
+        // Index names that embed another index name (NIFTYNXT50, BANKNIFTY...)
+        // must be tested before the shorter name, or every one of them collapses
+        // into NIFTY / SENSEX.
+        private static readonly string[] IndexNamesLongestFirst =
+        {
+            "NIFTYNXT50", "MIDCPNIFTY", "BANKNIFTY", "FINNIFTY", "NIFTYFPI", "BANKEX", "SENSEX", "NIFTY"
+        };
+
+        private static string ParseIndexUnderlying(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return string.Empty;
+
+            foreach (var name in IndexNamesLongestFirst)
+            {
+                if (text.Contains(name, StringComparison.OrdinalIgnoreCase))
+                    return name;
+            }
+
+            return string.Empty;
         }
 
         /// <summary>

@@ -12,10 +12,24 @@ class LogicEngine(BaseStrategy):
     Discovered automatically by execution_runner.py because it inherits from BaseStrategy.
     """
     name = "LogicEngine"
+    description = (
+        "Alert-only rule engine: watches the index against its 15-minute range, heavyweight stocks "
+        "(HDFC Bank, Reliance) for divergence and the order book for selling pressure, and sends Telegram "
+        "alerts instead of placing orders. It never opens a paper position. Needs live spot ticks, "
+        "15-minute bars and TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID in .env."
+    )
+    category = "Alerts"
+    legs_summary = "No legs (Telegram alerts only)"
+    default_lots = 1
+    default_params: Dict[str, Any] = {}
+    # Internal tooling, kept out of the strategy catalog (it also opens a Redis
+    # command channel when instantiated, which the runner allows but a catalog must not).
+    listed = False
 
     def __init__(self, params: Dict[str, Any] = None):
         super().__init__()
         self.params = params or {}
+        self.lots = self.lots_from(self.params, self.default_lots)
         
         # Initialize the API client for extra data fetching
         self.api = PlatformApiClient(API_BASE_URL, verify_ssl=False)

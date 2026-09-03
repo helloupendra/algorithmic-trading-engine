@@ -195,13 +195,41 @@ class PlatformApiClient:
         resp.raise_for_status()
         return resp.json()
 
+    def get_option_chain(
+        self,
+        underlying: str,
+        expiry: str,
+        from_strike: Optional[float] = None,
+        to_strike: Optional[float] = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Every CE/PE contract of one expiry (optionally bounded by strike).
+        Used once at startup to derive the underlying's strike step.
+        """
+        params: dict[str, Any] = {"underlying": underlying, "expiry": expiry}
+        if from_strike is not None:
+            params["fromStrike"] = from_strike
+        if to_strike is not None:
+            params["toStrike"] = to_strike
+
+        resp = self.http.get(
+            f"{self.base_url}/api/Instruments/derivatives/chain",
+            params=params,
+            verify=self.verify_ssl,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def get_exact_contract(
         self,
         underlying: str,
         expiry: str,
-        strike: int,
+        strike: float,
         option_type: str,
     ) -> dict[str, Any]:
+        # `strike` may be fractional (stock options on a 2.5-point grid); the API
+        # binds it as a decimal and matches it exactly.
         resp = self.http.get(
             f"{self.base_url}/api/Instruments/derivatives/contract",
             params={

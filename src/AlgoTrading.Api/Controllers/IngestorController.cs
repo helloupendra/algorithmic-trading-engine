@@ -1,11 +1,9 @@
-using AlgoTrading.Api.Configuration;
 using AlgoTrading.Api.Security;
+using AlgoTrading.Api.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Options;
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 
 namespace AlgoTrading.Api.Controllers;
 
@@ -14,8 +12,7 @@ namespace AlgoTrading.Api.Controllers;
 [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
 public class IngestorController : ControllerBase
 {
-    private readonly StrategyRunnerOptions _options;
-    private readonly IWebHostEnvironment _environment;
+    private readonly PythonEngineLocator _engine;
     private readonly ILogger<IngestorController> _logger;
 
     private static readonly ConcurrentDictionary<string, Process> _activeProcesses = new();
@@ -38,20 +35,18 @@ public class IngestorController : ControllerBase
     }
 
     public IngestorController(
-        IOptions<StrategyRunnerOptions> options,
-        IWebHostEnvironment environment,
+        PythonEngineLocator engine,
         ILogger<IngestorController> logger)
     {
-        _options = options.Value;
-        _environment = environment;
+        _engine = engine;
         _logger = logger;
     }
 
     [HttpPost("start")]
     public IActionResult StartIngestor()
     {
-        var engineDirectory = ResolveEngineDirectory();
-        var scriptPath = Path.Combine(engineDirectory, "market_data", "live", "fyers_streamer.py");
+        var engineDirectory = _engine.EngineDirectory;
+        var scriptPath = _engine.ScriptPath("market_data", "live", "fyers_streamer.py");
 
         if (!System.IO.File.Exists(scriptPath))
         {
@@ -69,7 +64,7 @@ public class IngestorController : ControllerBase
             {
                 var processInfo = new ProcessStartInfo
                 {
-                    FileName = ResolvePythonExecutable(),
+                    FileName = _engine.PythonExecutable,
                     WorkingDirectory = engineDirectory,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
@@ -175,22 +170,5 @@ public class IngestorController : ControllerBase
     {
         var lines = _recentLogs.ToArray();
         return Ok(lines.Skip(Math.Max(0, lines.Length - Math.Clamp(take, 1, LogBufferCapacity))));
-    }
-
-    private string ResolveEngineDirectory()
-    {
-        if (!string.IsNullOrWhiteSpace(_options.EngineDirectory)) return Path.GetFullPath(_options.EngineDirectory);
-        return Path.GetFullPath(Path.Combine(_environment.ContentRootPath, "..", "AlgoTrading.PythonEngine"));
-    }
-
-    private string ResolvePythonExecutable()
-    {
-        if (!string.IsNullOrWhiteSpace(_options.PythonExecutable)) return _options.PythonExecutable;
-        bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
-        var repoRoot = Path.GetFullPath(Path.Combine(_environment.ContentRootPath, "..", ".."));
-        var venvPython = isWindows
-            ? Path.Combine(repoRoot, ".venv", "Scripts", "python.exe")
-            : Path.Combine(repoRoot, ".venv", "bin", "python");
-        return System.IO.File.Exists(venvPython) ? venvPython : (isWindows ? "python" : "python3");
     }
 }

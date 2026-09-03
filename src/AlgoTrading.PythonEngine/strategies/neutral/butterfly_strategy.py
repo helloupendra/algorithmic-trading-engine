@@ -10,10 +10,21 @@ class IronButterflyStrategy(BaseStrategy):
     Buy OTM Call, Buy OTM Put (to cap the risk).
     """
     name = "IronButterfly"
+    description = (
+        "Four-leg, defined-risk neutral position: sells the ATM call and put (a short straddle) and buys "
+        "an OTM call and an OTM put as protective wings. Profits when the underlying pins near the centre "
+        "strike into expiry; the wings cap the loss on a large move. Note: the live runner currently "
+        "provides only ATM contracts, so this strategy will wait for entry until OTM contract selection ships."
+    )
+    category = "Neutral"
+    legs_summary = "Sell ATM CE + Sell ATM PE + Buy OTM CE + Buy OTM PE"
+    default_lots = 1
+    default_params: Dict[str, Any] = {}
 
     def __init__(self, params: Dict[str, Any] = None):
         self.params = params or {}
-        self.quantity = self.params.get("quantity", 15)
+        # Lots per leg; the platform multiplies by the contract's lot size.
+        self.lots = self.lots_from(self.params, self.default_lots)
 
     def initialize_state(self) -> Dict[str, Any]:
         return {
@@ -43,10 +54,10 @@ class IronButterflyStrategy(BaseStrategy):
                     reason=f"Opening Iron Butterfly. Center: {atm_ce.strike_price}, Wings: CE:{otm_ce.strike_price} PE:{otm_pe.strike_price}",
                     metadata={"group_id": group_id, "strategy_type": "Neutral"},
                     legs=[
-                        {"symbol": atm_ce.symbol, "side": "SELL", "quantity": self.quantity},
-                        {"symbol": atm_pe.symbol, "side": "SELL", "quantity": self.quantity},
-                        {"symbol": otm_ce.symbol, "side": "BUY", "quantity": self.quantity},
-                        {"symbol": otm_pe.symbol, "side": "BUY", "quantity": self.quantity}
+                        {"symbol": atm_ce.symbol, "side": "SELL", "quantity": self.lots},
+                        {"symbol": atm_pe.symbol, "side": "SELL", "quantity": self.lots},
+                        {"symbol": otm_ce.symbol, "side": "BUY", "quantity": self.lots},
+                        {"symbol": otm_pe.symbol, "side": "BUY", "quantity": self.lots}
                     ]
                 ))
                 
