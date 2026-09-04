@@ -44,6 +44,7 @@ public static class DependencyInjection
             options.UseNpgsql(configuration.GetConnectionString("TradingDb")));
 
         services.AddScoped<IRiskManagementService, RiskManagementService>();
+        services.AddSingleton<IRiskLimitsStore, RiskLimitsStore>();
 
         // Durable pids of the Python children (ingestor, runners), so a restarted
         // API can adopt or stop what the previous instance launched.

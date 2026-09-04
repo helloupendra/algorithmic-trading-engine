@@ -45,9 +45,12 @@ public class SystemSetting
 public static class SystemSettingKeys
 {
     /// <summary>
-    /// When "true", every order is rejected platform-wide.
-    /// </summary>
     public const string KillSwitchActive = "risk.killswitch.active";
+    
+    public const string MaxOrdersPerMinute = "risk.limits.maxOrdersPerMinute";
+    public const string MaxDailyLoss = "risk.limits.maxDailyLoss";
+    public const string MaxConcurrentRuns = "risk.limits.maxConcurrentRuns";
+    public const string MaxRunsPerUser = "risk.limits.maxRunsPerUser";
 
     /// <summary>
     /// OS process id of the live data ingestor (fyers_streamer). Written at

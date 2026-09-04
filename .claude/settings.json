@@ -76,7 +76,9 @@
       "Bash(python3 -c \"import PIL; print\\('PIL', PIL.__version__\\)\")",
       "Bash(npm ls *)",
       "Bash(awk 'NR>1{print \"  api pid\",$2}')",
-      "Bash(awk '{print \"  ingestor pid\",$1}')"
+      "Bash(awk '{print \"  ingestor pid\",$1}')",
+      "Bash(echo \"tsc exit=$?\")",
+      "Bash(.venv/bin/python -m unittest discover -s src/AlgoTrading.PythonEngine/tests)"
     ]
   }
 }

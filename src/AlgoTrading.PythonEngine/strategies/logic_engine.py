@@ -1,7 +1,7 @@
 import json
 from typing import Dict, Any, List
 from strategies.base_strategy import BaseStrategy, StrategyInput, StrategySignal
-from messaging.telegram_alerter import TelegramAlerter
+from strategies.base_strategy import BaseStrategy, StrategyInput, StrategySignal
 from core.api_client import PlatformApiClient
 from core.config import API_BASE_URL
 
@@ -34,8 +34,17 @@ class LogicEngine(BaseStrategy):
         # Initialize the API client for extra data fetching
         self.api = PlatformApiClient(API_BASE_URL, verify_ssl=False)
         
-        # Initialize our new Telegram Alerter
-        self.alerter = TelegramAlerter()
+        self.api = PlatformApiClient(API_BASE_URL, verify_ssl=False)
+        
+        import redis
+        import os
+        self.redis_client = redis.Redis(
+            host=os.getenv("REDIS_HOST", "localhost"),
+            port=int(os.getenv("REDIS_PORT", "6379")),
+            db=int(os.getenv("REDIS_DB", "0")),
+            password=os.getenv("REDIS_PASSWORD") or None,
+            decode_responses=True
+        )
         
         # Configure Heavyweights based on the index we are trading
         # If trading Sensex, heavyweights might be HDFC Bank & Reliance
@@ -145,27 +154,17 @@ class LogicEngine(BaseStrategy):
             support = 9900
             resistance = 10100
 
-        # 6. Send Telegram Alert
-        alert_msg = self.alerter.format_alert(
-            signal_type=f"E2E TEST: {instrument} BREAKOUT",
-            logic_reason=f"Spot at {spot_price}, ATM calculated at {atm_strike}",
-            action=f"Watch {option_symbol}",
-            premium=premium,
-            support=support,
-            resistance=atm_strike + 100
-        )
-        self.alerter.send_alert_async(alert_msg)
-        
-        # 7. Publish to Redis (for React Dashboard)
+        # 6. Publish AlertEvent to Redis
         alert_payload = {
-            "type": "E2E_ALERT",
-            "instrument": instrument,
-            "spot": spot_price,
-            "optionSymbol": option_symbol,
-            "premium": premium,
-            "timestampUtc": datetime.now(timezone.utc).isoformat()
+            "title": f"E2E TEST: {instrument} BREAKOUT",
+            "message": f"Spot at {spot_price}, ATM calculated at {atm_strike}. Watch {option_symbol}. Premium: ₹{premium}",
+            "source": "logic_engine",
+            "underlying": instrument,
+            "severity": "info",
+            "symbol": option_symbol,
+            "simulationRunId": None
         }
-        redis_client.publish("alerts:telegram", json.dumps(alert_payload))
+        redis_client.publish("alerts:new", json.dumps(alert_payload))
         print(f"E2E Test complete for {instrument} - Alert Published!")
 
     def initialize_state(self) -> Dict[str, Any]:
@@ -265,15 +264,16 @@ class LogicEngine(BaseStrategy):
                     pe_symbol = inp.contracts.get("atm_pe").symbol if "atm_pe" in inp.contracts else ""
                     premium = self._get_contract_ltp(pe_symbol)
 
-                    alert_msg = self.alerter.format_alert(
-                        signal_type=f"{index_symbol} BEAR TRAP",
-                        logic_reason=divergence_reason,
-                        action=f"Watch {inp.atm_strike} PE",
-                        premium=premium,
-                        support=inp.atm_strike - 200,
-                        resistance=inp.atm_strike + 100
-                    )
-                    self.alerter.send_alert_async(alert_msg)
+                    alert_payload = {
+                        "title": f"{index_symbol} BEAR TRAP",
+                        "message": f"Logic: {divergence_reason}. Action: Watch {inp.atm_strike} PE. Premium: ₹{premium}",
+                        "source": "logic_engine",
+                        "underlying": index_symbol,
+                        "severity": "info",
+                        "symbol": pe_symbol,
+                        "simulationRunId": getattr(inp, 'simulation_run_id', None)
+                    }
+                    self.redis_client.publish("alerts:new", json.dumps(alert_payload))
                     
                     signals.append(StrategySignal(
                         strategy_name=self.name,
@@ -293,15 +293,16 @@ class LogicEngine(BaseStrategy):
                 ce_symbol = inp.contracts.get("atm_ce").symbol if "atm_ce" in inp.contracts else ""
                 premium = self._get_contract_ltp(ce_symbol)
 
-                alert_msg = self.alerter.format_alert(
-                    signal_type=f"{index_symbol} BULLISH BREAKOUT",
-                    logic_reason=f"Price broke above VWAP at {equity_vwap}",
-                    action=f"Watch {inp.atm_strike} CE",
-                    premium=premium,
-                    support=inp.atm_strike - 10,
-                    resistance=inp.atm_strike + 20
-                )
-                self.alerter.send_alert_async(alert_msg)
+                alert_payload = {
+                    "title": f"{index_symbol} BULLISH BREAKOUT",
+                    "message": f"Logic: Price broke above VWAP at {equity_vwap}. Action: Watch {inp.atm_strike} CE. Premium: ₹{premium}",
+                    "source": "logic_engine",
+                    "underlying": index_symbol,
+                    "severity": "info",
+                    "symbol": ce_symbol,
+                    "simulationRunId": getattr(inp, 'simulation_run_id', None)
+                }
+                self.redis_client.publish("alerts:new", json.dumps(alert_payload))
                 
                 signals.append(StrategySignal(
                     strategy_name=self.name,
@@ -348,15 +349,16 @@ class LogicEngine(BaseStrategy):
         is_near_resistance = abs(spot - resistance_level) < 20
         
         if is_near_resistance and total_ask > (3 * total_bid) and total_bid > 0:
-            alert_msg = self.alerter.format_alert(
-                signal_type="HEAVY SELLING PRESSURE",
-                logic_reason=f"Total Ask > 3x Bid near resistance {resistance_level}",
-                action=f"Watch {inp.atm_strike} PE",
-                premium=150.0,  # Replace with actual PE LTP
-                support=inp.atm_strike - 200,
-                resistance=resistance_level
-            )
-            self.alerter.send_alert_async(alert_msg)
+            alert_payload = {
+                "title": "HEAVY SELLING PRESSURE",
+                "message": f"Logic: Total Ask > 3x Bid near resistance {resistance_level}. Action: Watch {inp.atm_strike} PE. Premium: 150.0",
+                "source": "logic_engine",
+                "underlying": index_symbol,
+                "severity": "warning",
+                "symbol": None,
+                "simulationRunId": getattr(inp, 'simulation_run_id', None)
+            }
+            self.redis_client.publish("alerts:new", json.dumps(alert_payload))
             
             signals.append(StrategySignal(
                 strategy_name=self.name,

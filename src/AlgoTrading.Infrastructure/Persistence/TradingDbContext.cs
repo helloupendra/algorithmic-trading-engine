@@ -48,4 +48,7 @@ public class TradingDbContext : DbContext
     public DbSet<UserRefreshToken> UserRefreshTokens => Set<UserRefreshToken>();
 
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
+
+    public DbSet<RiskEvent> RiskEvents => Set<RiskEvent>();
+    public DbSet<AlertEvent> AlertEvents => Set<AlertEvent>();
 }

@@ -17,7 +17,7 @@ namespace AlgoTrading.Infrastructure.Services;
 public class RiskManagementService : IRiskManagementService
 {
     private readonly TradingDbContext _dbContext;
-    private readonly RiskManagementSettings _settings;
+    private readonly IRiskLimitsStore _limitsStore;
 
     // Rate limiting is intentionally in-process: it is a per-instance burst guard,
     // and losing the window on restart fails safe (the counter restarts at zero).
@@ -31,18 +31,20 @@ public class RiskManagementService : IRiskManagementService
     private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(2);
     private static readonly SemaphoreSlim CacheLock = new(1, 1);
 
-    public RiskManagementService(TradingDbContext dbContext, IOptions<RiskManagementSettings> settings)
+    public RiskManagementService(TradingDbContext dbContext, IRiskLimitsStore limitsStore)
     {
         _dbContext = dbContext;
-        _settings = settings.Value;
+        _limitsStore = limitsStore;
     }
 
     public async Task EvaluateOrderAsync(long simulationRunId, string symbol, string side, int quantity, CancellationToken cancellationToken)
     {
+        var limits = _limitsStore.GetLimits();
+
         // 1. Check Kill Switch
         if (await IsKillSwitchActiveAsync(cancellationToken))
         {
-            throw new RiskViolationException("GLOBAL KILL SWITCH IS ACTIVE. ALL ORDERS REJECTED.");
+            await RejectOrderAsync(simulationRunId, symbol, "GLOBAL KILL SWITCH IS ACTIVE. ALL ORDERS REJECTED.", cancellationToken);
         }
 
         // 2. Check Rate Limits (Max Orders per Minute)
@@ -56,9 +58,9 @@ public class RiskManagementService : IRiskManagementService
             queue.TryDequeue(out _);
         }
 
-        if (queue.Count > _settings.MaxOrdersPerMinute)
+        if (queue.Count > limits.MaxOrdersPerMinute)
         {
-            throw new RiskViolationException($"RATE LIMIT EXCEEDED: More than {_settings.MaxOrdersPerMinute} orders placed in the last minute for run {simulationRunId}.");
+            await RejectOrderAsync(simulationRunId, symbol, $"RATE LIMIT EXCEEDED: More than {limits.MaxOrdersPerMinute} orders placed in the last minute for run {simulationRunId}.", cancellationToken);
         }
 
         // 3. Check Max Daily Loss
@@ -71,10 +73,26 @@ public class RiskManagementService : IRiskManagementService
         decimal totalUnrealized = positions.Where(x => x.Status == "Open").Sum(x => x.UnrealizedPnl);
         decimal currentPnl = totalRealized + totalUnrealized;
 
-        if (currentPnl < _settings.MaxDailyLoss)
+        if (currentPnl < limits.MaxDailyLoss)
         {
-            throw new RiskViolationException($"MAX DAILY LOSS EXCEEDED: Current PnL {currentPnl} is below the limit of {_settings.MaxDailyLoss}.");
+            await RejectOrderAsync(simulationRunId, symbol, $"MAX DAILY LOSS EXCEEDED: Current PnL {currentPnl} is below the limit of {limits.MaxDailyLoss}.", cancellationToken);
         }
+    }
+
+    private async Task RejectOrderAsync(long simulationRunId, string symbol, string reason, CancellationToken cancellationToken)
+    {
+        var riskEvent = new RiskEvent
+        {
+            OccurredUtc = DateTime.UtcNow,
+            Kind = "OrderRejected",
+            Reason = reason,
+            SimulationRunId = simulationRunId,
+            Symbol = symbol
+        };
+        _dbContext.RiskEvents.Add(riskEvent);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        
+        throw new RiskViolationException(reason);
     }
 
     public Task ActivateKillSwitchAsync(CancellationToken cancellationToken)
