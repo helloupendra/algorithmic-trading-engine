@@ -75,6 +75,9 @@ The web client polls the live view every 2 s while a run is active and stops pol
 
 ---
 
+### 7. Run history (per user)
+Every live run is a `SimulationRun` owned by the user who started it and is never deleted by the UI. `GET /api/Strategy/runs` lists runs (filters: user — admin only, strategy, underlying, status, IST date range, paging) with lots, lot size, risk rules, status, stop reason and who stopped it, duration, trades and net P&L; `GET /api/Strategy/runs/summary` gives the per-user rollup (runs, active, net P&L, last run). A trader only ever sees their own runs (the API answers 403 for another user's run id on every run-scoped route); admins see everyone. The console pages are Strategies › Run history (`/admin/strategies/history`), the run detail (`/admin/strategies/runs/{runId}`: positions, activity, orders ledger, runner output) and the trader's "My runs". Dismissing a stopped card on the Live runner only hides it from that list.
+
 ## Module Components
 
 ### Python

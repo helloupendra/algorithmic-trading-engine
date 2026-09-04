@@ -4,7 +4,9 @@ using AlgoTrading.Api.Security;
 using AlgoTrading.Api.Services;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Application.UseCases.LiveData;
+using AlgoTrading.Application.UseCases.Simulator;
 using AlgoTrading.Contracts.LiveData;
+using AlgoTrading.Contracts.Simulator;
 using AlgoTrading.Contracts.Strategies;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
@@ -41,6 +43,8 @@ public class StrategyController : ControllerBase
     private readonly IPaperTradingService _paperTrading;
     private readonly ILotSizeResolver _lotSizeResolver;
     private readonly PositionViewBuilder _positionViews;
+    private readonly LiveRunHistoryBuilder _history;
+    private readonly GetPaperOrdersUseCase _getPaperOrders;
     private readonly UpsertWatchlistItemUseCase _upsertWatchlistItem;
     private readonly StrategyRunnerOptions _options;
     private readonly ILogger<StrategyController> _logger;
@@ -54,6 +58,8 @@ public class StrategyController : ControllerBase
         IPaperTradingService paperTrading,
         ILotSizeResolver lotSizeResolver,
         PositionViewBuilder positionViews,
+        LiveRunHistoryBuilder history,
+        GetPaperOrdersUseCase getPaperOrders,
         UpsertWatchlistItemUseCase upsertWatchlistItem,
         IOptions<StrategyRunnerOptions> options,
         ILogger<StrategyController> logger)
@@ -66,6 +72,8 @@ public class StrategyController : ControllerBase
         _paperTrading = paperTrading;
         _lotSizeResolver = lotSizeResolver;
         _positionViews = positionViews;
+        _history = history;
+        _getPaperOrders = getPaperOrders;
         _upsertWatchlistItem = upsertWatchlistItem;
         _options = options.Value;
         _logger = logger;
@@ -523,13 +531,143 @@ public class StrategyController : ControllerBase
     }
 
     // ------------------------------------------------------------------
+    // Run history (per user)
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Every live run, newest first, attached to the user who started it —
+    /// stopped by stop-loss, target, market close, a manual stop, a runner exit
+    /// or an API restart, they all stay here. A trader always gets their own
+    /// runs (the userId filter is ignored); an admin gets everyone's, optionally
+    /// one user's. fromDate / toDate are IST calendar days (yyyy-MM-dd) on the
+    /// start time; status is Running | Stopped | Failed | Completed | any.
+    /// </summary>
+    [HttpGet("runs")]
+    public async Task<ActionResult<List<LiveRunSummaryResponse>>> ListRuns(
+        [FromQuery] long? userId,
+        [FromQuery] int? strategyId,
+        [FromQuery] string? underlying,
+        [FromQuery] string? status,
+        [FromQuery] string? fromDate,
+        [FromQuery] string? toDate,
+        [FromQuery] int take = LiveRunHistoryFilter.DefaultTake,
+        [FromQuery] int skip = 0,
+        CancellationToken cancellationToken = default)
+    {
+        if (!TryParseIstDate(fromDate, out var from))
+            return BadRequest(new { message = "fromDate must be an IST calendar day in yyyy-MM-dd form." });
+
+        if (!TryParseIstDate(toDate, out var to))
+            return BadRequest(new { message = "toDate must be an IST calendar day in yyyy-MM-dd form." });
+
+        if (from.HasValue && to.HasValue && from.Value > to.Value)
+            return BadRequest(new { message = "fromDate must not be after toDate." });
+
+        if (take < 1 || take > LiveRunHistoryFilter.MaxTake)
+            return BadRequest(new { message = $"take must be between 1 and {LiveRunHistoryFilter.MaxTake}." });
+
+        if (skip < 0)
+            return BadRequest(new { message = "skip must be zero or positive." });
+
+        // Ownership comes from the token, never from the query string: a trader
+        // sees only their own runs whatever userId they pass.
+        long? scopeUserId = User.IsAdmin() ? userId : User.GetRequiredUserId();
+
+        var filter = new LiveRunHistoryFilter(scopeUserId, strategyId, underlying, status, from, to, take, skip);
+        var rows = await _history.ListAsync(filter, cancellationToken);
+        return Ok(rows);
+    }
+
+    /// <summary>
+    /// Per-user rollup for the history page header: runs, active runs, net
+    /// P&amp;L and the newest start. Admins get every user; a trader gets one
+    /// row — their own.
+    /// </summary>
+    [HttpGet("runs/summary")]
+    public async Task<ActionResult<List<LiveRunUserSummaryResponse>>> GetRunsSummary(CancellationToken cancellationToken)
+    {
+        long? scopeUserId = User.IsAdmin() ? null : User.GetRequiredUserId();
+        var rows = await _history.SummarizeAsync(scopeUserId, cancellationToken);
+        return Ok(rows);
+    }
+
+    /// <summary>
+    /// The paper orders of one live run, newest first — the order ledger under
+    /// the detail page's position table. Admin, or the user who started the run.
+    /// </summary>
+    [HttpGet("runs/{runId:long}/orders")]
+    public async Task<ActionResult<IReadOnlyList<PaperOrderResponse>>> GetRunOrders(long runId, CancellationToken cancellationToken)
+    {
+        var run = await _dbContext.SimulationRuns.AsNoTracking()
+            .Where(x => x.Id == runId)
+            .Select(x => new { x.Id, x.Mode, x.UserId })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (run is null)
+            return NotFound(new { message = $"Strategy run {runId} not found." });
+
+        // Ownership first: a trader learns nothing (not even the mode) about a
+        // run they do not own.
+        if (!CanRead(run.UserId))
+            return Forbid();
+
+        if (!string.Equals(run.Mode, LivePaperMode, StringComparison.OrdinalIgnoreCase))
+            return NotFound(new { message = $"Run {runId} is a {run.Mode} run, not a live strategy run — see /api/Backtest/runs/{runId}." });
+
+        var orders = await _getPaperOrders.ExecuteAsync(runId, cancellationToken);
+        return Ok(orders);
+    }
+
+    /// <summary>Admins read any run; a trader only the runs they own (by user id).</summary>
+    private bool CanRead(long ownerUserId)
+        => User.IsAdmin() || User.GetUserId() == ownerUserId;
+
+    /// <summary>
+    /// Ownership check for the registry-backed routes (logs, signals) that have
+    /// no run row in hand: the registry entry while active, the run row
+    /// otherwise. An unknown run reads as not readable for a trader.
+    /// </summary>
+    private async Task<bool> CanReadRunAsync(long runId, CancellationToken cancellationToken)
+    {
+        if (User.IsAdmin()) return true;
+
+        var callerId = User.GetUserId();
+        if (callerId is null) return false;
+
+        var running = _registry.Get(runId);
+        if (running is not null) return running.UserId == callerId.Value;
+
+        var ownerId = await _dbContext.SimulationRuns.AsNoTracking()
+            .Where(x => x.Id == runId)
+            .Select(x => (long?)x.UserId)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return ownerId.HasValue && ownerId.Value == callerId.Value;
+    }
+
+    /// <summary>yyyy-MM-dd → IST calendar day; null/blank is "not given". False when malformed.</summary>
+    private static bool TryParseIstDate(string? text, out DateOnly? date)
+    {
+        date = null;
+        if (string.IsNullOrWhiteSpace(text)) return true;
+
+        if (DateOnly.TryParseExact(text.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+        {
+            date = parsed;
+            return true;
+        }
+
+        return false;
+    }
+
+    // ------------------------------------------------------------------
     // Live view, logs, signals
     // ------------------------------------------------------------------
 
     /// <summary>
     /// Position-based live view of one run, active or finished. Finished runs
     /// are built from the database (plus the remembered exit reason, when the
-    /// run ended since the API started).
+    /// run ended since the API started). Admin, or the user who started the
+    /// run (403 otherwise).
     /// </summary>
     [HttpGet("runs/{runId:long}/live")]
     public async Task<ActionResult<StrategyLiveViewResponse>> GetRunLive(long runId, CancellationToken cancellationToken)
@@ -541,6 +679,11 @@ public class StrategyController : ControllerBase
             .FirstOrDefaultAsync(x => x.Id == runId, cancellationToken);
         if (run is null)
             return NotFound(new { message = $"Strategy run {runId} not found." });
+
+        // Ownership first: a trader learns nothing (not even the mode) about a
+        // run they do not own.
+        if (!CanRead(run.UserId))
+            return Forbid();
 
         if (!string.Equals(run.Mode, LivePaperMode, StringComparison.OrdinalIgnoreCase))
             return NotFound(new { message = $"Run {runId} is a {run.Mode} run, not a live strategy run — see /api/Backtest/runs/{runId}." });
@@ -578,7 +721,8 @@ public class StrategyController : ControllerBase
     /// <summary>
     /// Legacy strategy-scoped live view: the most recently started active run
     /// of the strategy; with none active, its newest exit or the latest LivePaper
-    /// run of that strategy name.
+    /// run of that strategy name. Admin, or the user who started that run
+    /// (403 otherwise — the same rule as the run-scoped route).
     /// </summary>
     [HttpGet("{id:int}/live")]
     public async Task<ActionResult<StrategyLiveViewResponse>> GetLive(int id, CancellationToken cancellationToken)
@@ -588,6 +732,9 @@ public class StrategyController : ControllerBase
 
         var running = NewestActiveRun(id);
         var lastExit = running is null ? _registry.GetLastExit(id) : null;
+
+        if (running is not null && !CanRead(running.UserId))
+            return Forbid();
 
         var view = new StrategyLiveViewResponse
         {
@@ -617,6 +764,12 @@ public class StrategyController : ControllerBase
         {
             return Ok(view);
         }
+
+        // The resolved run belongs to whoever started it; a trader may only
+        // read their own (the registry check above covers the active case, this
+        // one the newest exit / latest row of the strategy).
+        if (!CanRead(run.UserId))
+            return Forbid();
 
         await FillLiveViewAsync(view, run, running, lastExit, cancellationToken);
         return Ok(view);
@@ -744,10 +897,16 @@ public class StrategyController : ControllerBase
         }
     }
 
-    /// <summary>Recent runner stdout/stderr of one run (retained for a while after it finishes).</summary>
+    /// <summary>
+    /// Recent runner stdout/stderr of one run (retained for a while after it
+    /// finishes). Admin, or the user who started the run.
+    /// </summary>
     [HttpGet("runs/{runId:long}/logs")]
-    public IActionResult GetRunLogs(long runId, [FromQuery] int take = 200)
+    public async Task<IActionResult> GetRunLogs(long runId, [FromQuery] int take = 200, CancellationToken cancellationToken = default)
     {
+        if (!await CanReadRunAsync(runId, cancellationToken))
+            return Forbid();
+
         return Ok(_registry.GetLogs(runId, take));
     }
 
@@ -756,10 +915,16 @@ public class StrategyController : ControllerBase
     /// (or of its newest exit when nothing is active).
     /// </summary>
     [HttpGet("{id:int}/logs")]
-    public IActionResult GetLogs(int id, [FromQuery] int take = 200)
+    public async Task<IActionResult> GetLogs(int id, [FromQuery] int take = 200, CancellationToken cancellationToken = default)
     {
         var runId = NewestActiveRun(id)?.RunId ?? _registry.GetLastExit(id)?.RunId;
-        return Ok(runId.HasValue ? _registry.GetLogs(runId.Value, take) : Array.Empty<string>());
+        if (!runId.HasValue)
+            return Ok(Array.Empty<string>());
+
+        if (!await CanReadRunAsync(runId.Value, cancellationToken))
+            return Forbid();
+
+        return Ok(_registry.GetLogs(runId.Value, take));
     }
 
     /// <summary>The runner pushes a copy of each signal here for the dashboard.</summary>
@@ -773,10 +938,13 @@ public class StrategyController : ControllerBase
         return NotFound(new { message = $"Strategy run {runId} is not currently active." });
     }
 
-    /// <summary>Recent signals of one active run, newest first.</summary>
+    /// <summary>Recent signals of one active run, newest first. Admin, or the user who started the run.</summary>
     [HttpGet("runs/{runId:long}/signals")]
-    public IActionResult GetRunSignals(long runId)
+    public async Task<IActionResult> GetRunSignals(long runId, CancellationToken cancellationToken)
     {
+        if (!await CanReadRunAsync(runId, cancellationToken))
+            return Forbid();
+
         return Ok(_registry.GetSignals(runId));
     }
 
@@ -792,12 +960,21 @@ public class StrategyController : ControllerBase
         return NotFound(new { message = $"Strategy {id} is not currently active." });
     }
 
-    /// <summary>Legacy: signals of the strategy's most recently started active run.</summary>
+    /// <summary>
+    /// Legacy: signals of the strategy's most recently started active run.
+    /// Admin, or the user who started that run (403 otherwise).
+    /// </summary>
     [HttpGet("{id:int}/signals")]
-    public IActionResult GetSignals(int id)
+    public async Task<IActionResult> GetSignals(int id, CancellationToken cancellationToken)
     {
         var running = NewestActiveRun(id);
-        return Ok(running is null ? Array.Empty<object>() : _registry.GetSignals(running.RunId));
+        if (running is null)
+            return Ok(Array.Empty<object>());
+
+        if (!await CanReadRunAsync(running.RunId, cancellationToken))
+            return Forbid();
+
+        return Ok(_registry.GetSignals(running.RunId));
     }
 
     /// <summary>The strategy's most recently started active run, for the legacy strategy-scoped routes.</summary>

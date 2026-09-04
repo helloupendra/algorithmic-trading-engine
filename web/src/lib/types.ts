@@ -516,6 +516,72 @@ export interface StrategyLiveView {
   } | null
 }
 
+// ---------- Live run history ----------
+
+/**
+ * SimulationRun.Status of a live run, copied verbatim by the API. "Stopping"
+ * is the window between a stop request and the row being closed (the API's
+ * Running filter includes it); "Pending" is a row created but not yet started.
+ */
+export type LiveRunStatus = 'Pending' | 'Running' | 'Stopping' | 'Stopped' | 'Failed' | 'Completed'
+
+/**
+ * GET /api/Strategy/runs — one live (paper) run per row, newest first. Every
+ * run a user ever started stays here whatever ended it: a stop-loss, the
+ * market close, a manual stop, a runner exit or an API restart. A trader gets
+ * their own rows only; an admin gets everyone's (filterable by `userId`).
+ */
+export interface LiveRunSummary {
+  runId: number
+  userId: number
+  /** Null when the user row no longer exists (deleted user; the run stays). */
+  userName: string | null
+  strategyId: number
+  strategyName: string
+  category: string | null
+  underlying: string
+  spotSymbol: string
+  lots: number
+  lotSize: number | null
+  risk: RiskRules | null
+  status: LiveRunStatus
+  /** The runner is alive in the registry right now. */
+  isActive: boolean
+  startedUtc: string | null
+  stoppedUtc: string | null
+  /** The RUN_STOPPED reason, e.g. "Stop loss hit: P&L −₹5,120 ≤ −₹5,000". */
+  stopReason: string | null
+  /** Who ended it: a user name, "runner", "api", "system" or "risk-guard". */
+  stoppedBy: string | null
+  durationSeconds: number | null
+  /** Σ realized P&L of every position of the run. */
+  netPnl: number
+  realizedPnl: number
+  /** Open positions at the last mark — only while the run is active, else 0. */
+  unrealizedPnl: number
+  /** Closed positions. */
+  trades: number
+  openPositions: number
+  groups: number
+  chargesPerLot?: number | null
+  /** Portfolio UsedCapital; null when unknown. */
+  capitalUsed?: number | null
+}
+
+/** GET /api/Strategy/runs/summary — per-user rollup for the history header. */
+export interface LiveRunUserSummary {
+  userId: number
+  /** Null when the user row no longer exists (deleted user; the runs stay). */
+  userName: string | null
+  runs: number
+  active: number
+  netPnl: number
+  lastRunUtc: string | null
+}
+
+/** GET /api/Strategy/runs/{runId}/orders — the run's paper order ledger, newest first. */
+export type PaperOrderRow = PaperOrder
+
 // ---------- Backtesting ----------
 
 export type BacktestStatus = 'Pending' | 'Running' | 'Completed' | 'Failed' | 'Stopped'

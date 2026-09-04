@@ -161,6 +161,12 @@ export const STRATEGIES_SECTIONS = [
     end: false,
   },
   {
+    route: '/admin/strategies/history',
+    label: 'Run history',
+    icon: IconClock,
+    end: false,
+  },
+  {
     route: '/admin/strategies/library',
     label: 'Library',
     icon: IconLayers,

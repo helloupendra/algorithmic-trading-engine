@@ -2099,6 +2099,102 @@ a.pill:hover { border-color: var(--line-strong); }
   flex-wrap: wrap;
 }
 
+/* Section title with a trailing link ("Running now … View history →"). */
+.section-title--row { flex-wrap: wrap; }
+.section-title__link {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  text-decoration: none;
+}
+.section-title__link:hover { color: var(--brand-hi); }
+
+/* Run history: per-user rollup strip (admin). */
+.rollup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rollup__chip {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  row-gap: 1px;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  padding: 7px 12px;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+.rollup__chip:hover { border-color: var(--line-strong); }
+.rollup__chip.is-active {
+  border-color: var(--brand-line);
+  background: var(--brand-soft);
+}
+
+.rollup__name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.rollup__name svg { width: 13px; height: 13px; color: var(--text-3); }
+
+.rollup__pnl {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  font-size: 13.5px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rollup__meta {
+  grid-column: 1;
+  font-size: 11.5px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.rollup__active { color: var(--live); font-weight: 600; margin-left: 4px; }
+
+/* Run history table: live rows, status cell with the short reason under it. */
+.row--live td:first-child { box-shadow: inset 2px 0 0 var(--live); }
+
+.status-cell { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 1px; }
+.status-cell .cell-sub { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.live-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  margin-right: 5px;
+  vertical-align: middle;
+  box-shadow: 0 0 0 0 var(--live-soft);
+  animation: pill-pulse 2.4s infinite;
+}
+
+.chip-row--compact { gap: 4px; }
+.chip-row--compact .badge { font-size: 10.5px; padding: 0 6px; }
+
+.field__input--date { min-width: 0; width: 138px; }
+
 /* Failed-run alert with the last log lines. */
 .alert--stack {
   flex-direction: column;
@@ -2118,4 +2214,5 @@ a.pill:hover { border-color: var(--line-strong); }
 
 @media (prefers-reduced-motion: reduce) {
   .daily-pnl__bar { transition: none; }
+  .live-dot { animation: none; }
 }
