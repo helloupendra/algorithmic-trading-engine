@@ -182,7 +182,18 @@ app.UseExceptionHandler(errorApp =>
         {
             context.Response.StatusCode = 500;
             context.Response.ContentType = "application/json";
-            await context.Response.WriteAsJsonAsync(new { error = "An unexpected error occurred." });
+            if (app.Environment.IsDevelopment())
+            {
+                await context.Response.WriteAsJsonAsync(new 
+                { 
+                    error = exceptionHandlerPathFeature.Error.Message,
+                    stackTrace = exceptionHandlerPathFeature.Error.StackTrace 
+                });
+            }
+            else
+            {
+                await context.Response.WriteAsJsonAsync(new { error = "An unexpected error occurred." });
+            }
         }
     });
 });

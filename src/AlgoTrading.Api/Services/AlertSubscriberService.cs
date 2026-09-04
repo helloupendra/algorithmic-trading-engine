@@ -114,5 +114,5 @@ public class AlertEventPayload
     public string? Underlying { get; set; }
     public string? Severity { get; set; }
     public string? Symbol { get; set; }
-    public int? SimulationRunId { get; set; }
+    public long? SimulationRunId { get; set; }
 }

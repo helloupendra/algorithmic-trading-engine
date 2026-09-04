@@ -76,7 +76,7 @@ export const MODULES: ModuleDef[] = [
     description: 'Kill switch and trading limits.',
     icon: IconShield,
     route: '/admin/risk',
-    status: 'legacy',
+    status: 'ready',
     adminOnly: true,
   },
   {
@@ -85,7 +85,7 @@ export const MODULES: ModuleDef[] = [
     description: 'Telegram alerter and market signals.',
     icon: IconBell,
     route: '/admin/live-alerts',
-    status: 'legacy',
+    status: 'ready',
     adminOnly: true,
   },
   {

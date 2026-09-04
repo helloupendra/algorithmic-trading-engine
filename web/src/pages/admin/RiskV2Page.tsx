@@ -1,15 +1,15 @@
 import { useState, useEffect } from 'react'
 import {
-  ShieldAlert,
-  Power,
-  Shield,
-  Activity,
-  AlertOctagon,
-  Clock,
-  User as UserIcon,
-  Save,
-  CheckCircle2
-} from 'lucide-react'
+  ExclamationTriangleIcon as ShieldAlert,
+  StopIcon as Power,
+  LockClosedIcon as Shield,
+  ActivityLogIcon as Activity,
+  ExclamationTriangleIcon as AlertOctagon,
+  ClockIcon as Clock,
+  PersonIcon as UserIcon,
+  UpdateIcon as Save,
+  CheckCircledIcon as CheckCircle2
+} from '@radix-ui/react-icons'
 import {
   useKillSwitch,
   useSetKillSwitch,

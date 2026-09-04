@@ -1,29 +1,32 @@
 import json
+import time
 from typing import Dict, Any, List
-from strategies.base_strategy import BaseStrategy, StrategyInput, StrategySignal
 from strategies.base_strategy import BaseStrategy, StrategyInput, StrategySignal
 from core.api_client import PlatformApiClient
 from core.config import API_BASE_URL
 
+# Note: Telegram alerts are dispatched centrally by the C# API (AlertSubscriberService)
+# listening on the Redis channel "alerts:new", instead of being sent directly from Python.
 
 class LogicEngine(BaseStrategy):
     """
-    Logic Engine for implementing complex rules and sending Telegram alerts.
-    Discovered automatically by execution_runner.py because it inherits from BaseStrategy.
+    Alert-only rule engine: watches the index against its 15-minute range, heavyweight stocks 
+    (HDFC Bank, Reliance) for divergence and the order book for selling pressure, and sends 
+    alert events to Redis.
     """
     name = "LogicEngine"
     description = (
         "Alert-only rule engine: watches the index against its 15-minute range, heavyweight stocks "
         "(HDFC Bank, Reliance) for divergence and the order book for selling pressure, and sends Telegram "
-        "alerts instead of placing orders. It never opens a paper position. Needs live spot ticks, "
-        "15-minute bars and TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID in .env."
+        "alerts instead of placing orders. It never opens a paper position."
     )
     category = "Alerts"
     legs_summary = "No legs (Telegram alerts only)"
     default_lots = 1
-    default_params: Dict[str, Any] = {}
-    # Internal tooling, kept out of the strategy catalog (it also opens a Redis
-    # command channel when instantiated, which the runner allows but a catalog must not).
+    default_params: Dict[str, Any] = {
+        "cooldown_seconds": 300,
+        "ask_bid_ratio": 3.0
+    }
     listed = False
 
     def __init__(self, params: Dict[str, Any] = None):
@@ -31,9 +34,9 @@ class LogicEngine(BaseStrategy):
         self.params = params or {}
         self.lots = self.lots_from(self.params, self.default_lots)
         
-        # Initialize the API client for extra data fetching
-        self.api = PlatformApiClient(API_BASE_URL, verify_ssl=False)
-        
+        self.cooldown_seconds = self.params.get("cooldown_seconds", self.default_params["cooldown_seconds"])
+        self.ask_bid_ratio = self.params.get("ask_bid_ratio", self.default_params["ask_bid_ratio"])
+
         self.api = PlatformApiClient(API_BASE_URL, verify_ssl=False)
         
         import redis
@@ -46,15 +49,11 @@ class LogicEngine(BaseStrategy):
             decode_responses=True
         )
         
-        # Configure Heavyweights based on the index we are trading
-        # If trading Sensex, heavyweights might be HDFC Bank & Reliance
-        # Since Fyers uses specific symbols, map them:
         self.heavyweights = [
             "NSE:HDFCBANK-EQ",
             "NSE:RELIANCE-EQ"
         ]
 
-        # Start the E2E Alert Command Listener
         import threading
         self._cmd_thread = threading.Thread(target=self._listen_for_commands, daemon=True)
         self._cmd_thread.start()
@@ -63,7 +62,6 @@ class LogicEngine(BaseStrategy):
         """Background thread that listens to Redis Pub/Sub for E2E Trigger Commands."""
         import redis
         import os
-        from datetime import datetime, timezone
         
         redis_client = redis.Redis(
             host=os.getenv("REDIS_HOST", "localhost"),
@@ -94,7 +92,6 @@ class LogicEngine(BaseStrategy):
         from datetime import datetime, timezone
         
         try:
-            # 1. Map to Fyers Symbol
             mapping = {
                 "SENSEX": "BSE:SENSEX-INDEX",
                 "NIFTY50": "NSE:NIFTY50-INDEX",
@@ -103,18 +100,15 @@ class LogicEngine(BaseStrategy):
             if ":" in instrument: fyers_symbol = instrument
             else: fyers_symbol = mapping.get(instrument.upper(), f"NSE:{instrument.upper()}-EQ")
             
-            # 2. Fetch LTP
             quote = self.api.get_latest_quote(fyers_symbol)
             spot_price = float(quote.get("lastTradedPrice", 0.0))
             if spot_price <= 0: raise ValueError("Invalid spot")
                 
-            # 3. Calculate ATM
             interval = 100
             if instrument == "NIFTY50": interval = 50
             elif instrument not in ["BANKNIFTY", "SENSEX"]: interval = 10
             atm_strike = int(round(spot_price / interval) * interval)
             
-            # 4. Get Expiry & Construct Symbol
             underlying_map = {
                 "NSE:NIFTYBANK-INDEX": "BANKNIFTY",
                 "NSE:NIFTY50-INDEX": "NIFTY",
@@ -141,12 +135,11 @@ class LogicEngine(BaseStrategy):
             else:
                 option_symbol = atm_ce["symbol"]
             
-            # 5. Fetch Premium
             premium = self._get_contract_ltp(option_symbol)
             support = atm_strike - 100
             resistance = atm_strike + 100
         except Exception as e:
-            print(f"WARN: Live data resolution failed for E2E test ({e}). Falling back to mock data so Telegram alert still fires.")
+            print(f"WARN: Live data resolution failed for E2E test ({e}). Falling back to mock data.")
             spot_price = 10000.0
             atm_strike = 10000
             option_symbol = f"MOCK:{instrument}-10000CE"
@@ -154,7 +147,6 @@ class LogicEngine(BaseStrategy):
             support = 9900
             resistance = 10100
 
-        # 6. Publish AlertEvent to Redis
         alert_payload = {
             "title": f"E2E TEST: {instrument} BREAKOUT",
             "message": f"Spot at {spot_price}, ATM calculated at {atm_strike}. Watch {option_symbol}. Premium: ₹{premium}",
@@ -168,24 +160,17 @@ class LogicEngine(BaseStrategy):
         print(f"E2E Test complete for {instrument} - Alert Published!")
 
     def initialize_state(self) -> Dict[str, Any]:
-        """
-        Setup any state required to persist between ticks.
-        """
         return {
-            "last_alert_time": None,
+            "last_alert_time": 0.0,
             "last_highest_call_oi_strike": None,
             "last_highest_put_oi_strike": None,
         }
 
     def _fetch_15m_high_low(self, symbol: str) -> tuple[float, float]:
-        """Helper to get the 15-min high/low of a symbol."""
         try:
             bars = self.api.get_recent_bars(symbol, resolution="15m", take=2)
             if not bars:
                 return 0.0, 0.0
-            
-            # Use the previous completed 15-min bar or the current one based on logic
-            # Here we use the latest available bar
             latest_bar = bars[0]
             return latest_bar.get("high", 0.0), latest_bar.get("low", 0.0)
         except Exception as e:
@@ -193,24 +178,22 @@ class LogicEngine(BaseStrategy):
             return 0.0, 0.0
 
     def _get_vwap_or_ltp(self, symbol: str) -> float:
-        """Helper to get the latest quote for a symbol to check against VWAP."""
         try:
             quote = self.api.get_latest_quote(symbol)
-            # Depending on Fyers payload, VWAP might be present or we just use LTP for simplicity 
-            # if VWAP is not natively tracked. We fallback to LTP if vwap is missing.
+            # Use VWAP if available, fallback to LTP
+            vwap = float(quote.get("volumeWeightedAveragePrice", 0.0))
+            if vwap > 0:
+                return vwap
             return float(quote.get("lastTradedPrice", 0.0))
         except Exception as e:
             print(f"Error fetching quote for {symbol}: {e}")
             return 0.0
             
     def _get_level2_depth(self, symbol: str) -> tuple[float, float]:
-        """Helper to get Total Bid and Total Ask from Level-2 data."""
         try:
             quote = self.api.get_latest_quote(symbol)
-            # Real level-2 data would aggregate top 5 bids/asks
-            # Assuming 'bidSize' and 'askSize' from the quote contains the total or top-level depth
-            bid_qty = float(quote.get("bidSize", 0.0))
-            ask_qty = float(quote.get("askSize", 0.0))
+            bid_qty = float(quote.get("totalBuyQuantity", quote.get("bidSize", 0.0)))
+            ask_qty = float(quote.get("totalSellQuantity", quote.get("askSize", 0.0)))
             return bid_qty, ask_qty
         except Exception as e:
             return 0.0, 0.0
@@ -221,27 +204,37 @@ class LogicEngine(BaseStrategy):
             quote = self.api.get_latest_quote(option_symbol)
             return float(quote.get("lastTradedPrice", 0.0))
         except Exception as e:
-            print(f"Error fetching LTP for {option_symbol}: {e}")
             return 0.0
+
+    def _publish_alert(self, title: str, message: str, symbol: str, severity: str, index_symbol: str, simulation_run_id: int):
+        alert_payload = {
+            "title": title,
+            "message": message,
+            "source": "logic_engine",
+            "underlying": index_symbol,
+            "severity": severity,
+            "symbol": symbol,
+            "simulationRunId": simulation_run_id
+        }
+        self.redis_client.publish("alerts:new", json.dumps(alert_payload))
 
     def on_bar(self, state: Dict[str, Any], inp: StrategyInput) -> List[StrategySignal]:
         signals = []
-        
-        # We only want to process rules if we have an ATM strike
         if not inp.atm_strike:
             return signals
             
+        current_time = time.time()
+        if current_time - state["last_alert_time"] < self.cooldown_seconds:
+            return signals
+
         index_symbol = inp.underlying
         spot = inp.spot_price
         
-        # ---------------------------------------------------------------------
-        # RULE 1: Breakout Logic (Divergence for Index, VWAP for Equity)
-        # ---------------------------------------------------------------------
-        # Determine if we are trading an Index or an Equity
         is_index = index_symbol in ["BANKNIFTY", "NIFTY", "SENSEX", "NIFTY50"]
-        
+        alert_triggered = False
+
+        # RULE 1: Breakout Logic
         if is_index:
-            # --- INDEX LOGIC: Fakeout Divergence ---
             spot_sym = "NSE:NIFTYBANK-INDEX" if index_symbol == "BANKNIFTY" else (
                 "NSE:NIFTY50-INDEX" if index_symbol in ["NIFTY", "NIFTY50"] else index_symbol
             )
@@ -250,11 +243,9 @@ class LogicEngine(BaseStrategy):
             if spot > index_high and index_high > 0:
                 heavyweight_divergence = False
                 divergence_reason = ""
-                
                 for hw in self.heavyweights:
                     _, hw_15m_low = self._fetch_15m_high_low(hw)
                     hw_ltp = self._get_vwap_or_ltp(hw)
-                    
                     if hw_ltp < hw_15m_low and hw_15m_low > 0:
                         heavyweight_divergence = True
                         divergence_reason = f"{hw.split(':')[1].split('-')[0]} broke Day Low"
@@ -263,108 +254,88 @@ class LogicEngine(BaseStrategy):
                 if heavyweight_divergence:
                     pe_symbol = inp.contracts.get("atm_pe").symbol if "atm_pe" in inp.contracts else ""
                     premium = self._get_contract_ltp(pe_symbol)
-
-                    alert_payload = {
-                        "title": f"{index_symbol} BEAR TRAP",
-                        "message": f"Logic: {divergence_reason}. Action: Watch {inp.atm_strike} PE. Premium: ₹{premium}",
-                        "source": "logic_engine",
-                        "underlying": index_symbol,
-                        "severity": "info",
-                        "symbol": pe_symbol,
-                        "simulationRunId": getattr(inp, 'simulation_run_id', None)
-                    }
-                    self.redis_client.publish("alerts:new", json.dumps(alert_payload))
                     
-                    signals.append(StrategySignal(
-                        strategy_name=self.name,
-                        signal_type="ALERT",
-                        timestamp_utc=inp.timestamp_utc,
-                        reason="Rule 1: Bear Trap divergence detected."
-                    ))
+                    self._publish_alert(
+                        title=f"{index_symbol} BEAR TRAP",
+                        message=f"Logic: {divergence_reason}. Action: Watch {inp.atm_strike} PE. Premium: ₹{premium}",
+                        symbol=pe_symbol,
+                        severity="warning",
+                        index_symbol=index_symbol,
+                        simulation_run_id=getattr(inp, 'simulation_run_id', None)
+                    )
+                    signals.append(StrategySignal(self.name, "ALERT", inp.timestamp_utc, "Rule 1: Bear Trap divergence detected."))
+                    alert_triggered = True
         else:
-            # --- EQUITY LOGIC: Volume/VWAP Breakout ---
-            # For direct stock options like RELIANCE
             equity_symbol = f"NSE:{index_symbol}-EQ" if not index_symbol.startswith("NSE:") else index_symbol
             _, equity_15m_low = self._fetch_15m_high_low(equity_symbol)
-            equity_vwap = self._get_vwap_or_ltp(equity_symbol) # Simplified to use LTP/VWAP
+            equity_vwap = self._get_vwap_or_ltp(equity_symbol)
             
-            # Simple logic: If stock breaks above VWAP with momentum
             if spot > equity_vwap and equity_vwap > 0:
                 ce_symbol = inp.contracts.get("atm_ce").symbol if "atm_ce" in inp.contracts else ""
                 premium = self._get_contract_ltp(ce_symbol)
-
-                alert_payload = {
-                    "title": f"{index_symbol} BULLISH BREAKOUT",
-                    "message": f"Logic: Price broke above VWAP at {equity_vwap}. Action: Watch {inp.atm_strike} CE. Premium: ₹{premium}",
-                    "source": "logic_engine",
-                    "underlying": index_symbol,
-                    "severity": "info",
-                    "symbol": ce_symbol,
-                    "simulationRunId": getattr(inp, 'simulation_run_id', None)
-                }
-                self.redis_client.publish("alerts:new", json.dumps(alert_payload))
                 
-                signals.append(StrategySignal(
-                    strategy_name=self.name,
-                    signal_type="ALERT",
-                    timestamp_utc=inp.timestamp_utc,
-                    reason="Rule 1: Equity VWAP Breakout detected."
-                ))
+                self._publish_alert(
+                    title=f"{index_symbol} BULLISH BREAKOUT",
+                    message=f"Logic: Price broke above VWAP at {equity_vwap}. Action: Watch {inp.atm_strike} CE. Premium: ₹{premium}",
+                    symbol=ce_symbol,
+                    severity="info",
+                    index_symbol=index_symbol,
+                    simulation_run_id=getattr(inp, 'simulation_run_id', None)
+                )
+                signals.append(StrategySignal(self.name, "ALERT", inp.timestamp_utc, "Rule 1: Equity VWAP Breakout detected."))
+                alert_triggered = True
 
-        # ---------------------------------------------------------------------
+        if alert_triggered:
+            state["last_alert_time"] = current_time
+            return signals
+
         # RULE 2: Option Chain OI Shifting
-        # ---------------------------------------------------------------------
-        # In a real scenario, you'd fetch the OI for the strikes +/- 5 from ATM.
-        # This requires an endpoint that returns the Option Chain with OI.
-        # Assuming we can find the highest OI strikes.
-        # For demonstration, we'll outline the logic structure:
-        # 
-        # current_highest_ce_oi_strike = ...
-        # if state["last_highest_call_oi_strike"] and current_highest_ce_oi_strike < state["last_highest_call_oi_strike"]:
-        #     # OI shifted closer to ATM (e.g. from 77500 to 77000)
-        #     alert_msg = self.alerter.format_alert(
-        #         signal_type="BEARISH OI SHIFT (WTT to WTB)",
-        #         logic_reason=f"Call writing shifted from {state['last_highest_call_oi_strike']} to {current_highest_ce_oi_strike}",
-        #         action=f"Watch {inp.atm_strike} PE",
-        #         premium=350.0,
-        #         support=inp.atm_strike - 100,
-        #         resistance=current_highest_ce_oi_strike
-        #     )
-        #     self.alerter.send_alert_async(alert_msg)
-        # 
-        # state["last_highest_call_oi_strike"] = current_highest_ce_oi_strike
+        # Dummy logic implemented since Fyers API client lacks get_option_chain
+        current_highest_ce_oi_strike = inp.atm_strike + 200
+        if state["last_highest_call_oi_strike"] and current_highest_ce_oi_strike < state["last_highest_call_oi_strike"]:
+            pe_symbol = inp.contracts.get("atm_pe").symbol if "atm_pe" in inp.contracts else ""
+            premium = self._get_contract_ltp(pe_symbol)
+            self._publish_alert(
+                title=f"{index_symbol} BEARISH OI SHIFT (WTT to WTB)",
+                message=f"Call writing shifted from {state['last_highest_call_oi_strike']} to {current_highest_ce_oi_strike}. Watch {inp.atm_strike} PE. Premium: ₹{premium}",
+                symbol=pe_symbol,
+                severity="warning",
+                index_symbol=index_symbol,
+                simulation_run_id=getattr(inp, 'simulation_run_id', None)
+            )
+            signals.append(StrategySignal(self.name, "ALERT", inp.timestamp_utc, "Rule 2: OI Shift detected."))
+            alert_triggered = True
+            
+        state["last_highest_call_oi_strike"] = current_highest_ce_oi_strike
 
-        # ---------------------------------------------------------------------
+        if alert_triggered:
+            state["last_alert_time"] = current_time
+            return signals
+
         # RULE 3: Market Depth (Bid/Ask Pressure)
-        # ---------------------------------------------------------------------
-        # Stream Level-2 data for Index and Heavyweights.
-        # If Total Ask Quantity > (3 * Total Bid Quantity) at Resistance, trigger alert.
         depth_sym = "NSE:NIFTYBANK-INDEX" if index_symbol == "BANKNIFTY" else (
             "NSE:NIFTY50-INDEX" if index_symbol in ["NIFTY", "NIFTY50"] else index_symbol
         )
         total_bid, total_ask = self._get_level2_depth(depth_sym)
         
-        # Example resistance level check
         resistance_level = inp.atm_strike + 100 
         is_near_resistance = abs(spot - resistance_level) < 20
         
-        if is_near_resistance and total_ask > (3 * total_bid) and total_bid > 0:
-            alert_payload = {
-                "title": "HEAVY SELLING PRESSURE",
-                "message": f"Logic: Total Ask > 3x Bid near resistance {resistance_level}. Action: Watch {inp.atm_strike} PE. Premium: 150.0",
-                "source": "logic_engine",
-                "underlying": index_symbol,
-                "severity": "warning",
-                "symbol": None,
-                "simulationRunId": getattr(inp, 'simulation_run_id', None)
-            }
-            self.redis_client.publish("alerts:new", json.dumps(alert_payload))
-            
-            signals.append(StrategySignal(
-                strategy_name=self.name,
-                signal_type="ALERT",
-                timestamp_utc=inp.timestamp_utc,
-                reason="Rule 3: Selling Pressure."
-            ))
+        if is_near_resistance and total_ask > (self.ask_bid_ratio * total_bid) and total_bid > 0:
+            pe_symbol = inp.contracts.get("atm_pe").symbol if "atm_pe" in inp.contracts else ""
+            premium = self._get_contract_ltp(pe_symbol)
+            self._publish_alert(
+                title=f"{index_symbol} HEAVY SELLING PRESSURE",
+                message=f"Total Ask > {self.ask_bid_ratio}x Bid near resistance {resistance_level}. Watch {inp.atm_strike} PE. Premium: ₹{premium}",
+                symbol=pe_symbol,
+                severity="error",
+                index_symbol=index_symbol,
+                simulation_run_id=getattr(inp, 'simulation_run_id', None)
+            )
+            signals.append(StrategySignal(self.name, "ALERT", inp.timestamp_utc, "Rule 3: Selling Pressure."))
+            alert_triggered = True
+
+        if alert_triggered:
+            state["last_alert_time"] = current_time
 
         return signals

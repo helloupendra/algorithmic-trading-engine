@@ -146,11 +146,27 @@ export interface SimulationRun {
   status: string
   strategyName: string
   parametersJson: string
+  initialCapital: number
   createdUtc: string
   startedUtc: string | null
   completedUtc: string | null
-  lastError: string
-  initialCapital: number
+  lastError: string | null
+}
+
+export interface RiskExposureResponse {
+  totalUnrealizedPnL: number
+  totalRealizedPnL: number
+  activeRunsCount: number
+  activeRuns: ActiveRunExposure[]
+}
+
+export interface ActiveRunExposure {
+  runId: number
+  strategyName: string
+  underlying: string
+  unrealizedPnL: number
+  realizedPnL: number
+  riskRules: RiskRules
 }
 
 export interface SimulationSignal {

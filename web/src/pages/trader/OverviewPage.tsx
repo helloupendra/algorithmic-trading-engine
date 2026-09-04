@@ -12,6 +12,7 @@ import {
   useLatestQuotes,
   useMarketSession,
   useSimulationRuns,
+  useRiskExposure,
   useWatchlist,
 } from '../../lib/queries'
 import {
@@ -33,6 +34,7 @@ export function OverviewPage() {
   const quotes = useLatestQuotes()
   const watchlist = useWatchlist()
   const runs = useSimulationRuns()
+  const exposure = useRiskExposure()
   const ingestors = useIngestorStatuses()
 
   const lastQuoteUtc = quotes.data?.reduce<string | null>(
@@ -79,9 +81,9 @@ export function OverviewPage() {
           sub={lastQuoteUtc ? `last quote ${formatAge(lastQuoteUtc)}` : undefined}
         />
         <StatTile
-          label="Simulation runs"
-          value={runs.data?.length ?? '…'}
-          sub={runs.data?.[0] && `latest #${runs.data[0].id} · ${runs.data[0].status}`}
+          label="Active strategy runs"
+          value={exposure.data?.activeRunsCount ?? '…'}
+          sub={`Unrealized: ${formatInrWhole(exposure.data?.totalUnrealizedPnL ?? 0)}`}
         />
         <StatTile
           label="Ingestor"

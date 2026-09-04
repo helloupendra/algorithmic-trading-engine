@@ -63,6 +63,7 @@ import type {
   StrategyLiveView,
   UpdateRunRiskRequest,
   UpdateRunRiskResponse,
+  RiskExposureResponse,
 } from './types'
 import type { MeResponse } from './api'
 
@@ -1107,5 +1108,13 @@ export function useStrategySignals(runId: number, isRunning: boolean) {
     queryFn: () => api.get<any[]>(`/api/Strategy/runs/${runId}/signals`),
     enabled: isRunning,
     refetchInterval: 1000,
+  })
+}
+
+export function useRiskExposure() {
+  return useQuery({
+    queryKey: ['risk', 'exposure'],
+    queryFn: () => api.get<RiskExposureResponse>('/api/Risk/exposure'),
+    refetchInterval: POLL_FAST,
   })
 }
