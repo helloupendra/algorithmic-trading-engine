@@ -4,6 +4,7 @@ using AlgoTrading.Api.Security;
 using AlgoTrading.Api.Services;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.Backtest;
+using AlgoTrading.Contracts.Strategies;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Services;
@@ -178,6 +179,12 @@ public class BacktestController : ControllerBase
         if (request.Target.HasValue && request.Target.Value <= 0)
             return BadRequest(new { message = "target must be a positive rupee amount, or omitted." });
 
+        if (!RiskRulesDto.TryValidate(request.Risk, out var riskError))
+            return BadRequest(new { message = $"risk: {riskError}" });
+
+        // The engine enforces every level during the replay; the API only stores them.
+        var risk = RunRiskRules.Resolve(request.Risk, request.StopLoss, request.Target);
+
         decimal chargesPerLot = request.ChargesPerLot ?? 0m;
         if (chargesPerLot < 0)
             return BadRequest(new { message = "chargesPerLot cannot be negative." });
@@ -252,7 +259,7 @@ public class BacktestController : ControllerBase
             Status = BacktestRunControl.RunStatusPending,
             StrategyName = strategy.Name,
             ParametersJson = BacktestRunParameters.Merge(
-                strategy.DefaultParametersJson, request.Parameters, lots, request.StopLoss, request.Target,
+                strategy.DefaultParametersJson, request.Parameters, lots, risk,
                 underlying, resolution, eod, chargesPerLot, lot.LotSize, lot.Source),
             InitialCapital = initialCapital,
             CreatedUtc = now
@@ -261,7 +268,7 @@ public class BacktestController : ControllerBase
         await _dbContext.SimulationRuns.AddAsync(run, cancellationToken);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        var (error, running, capReached) = LaunchRunner(strategy, run, userId, startedBy, underlying, spotSymbol, lots, request.StopLoss, request.Target);
+        var (error, running, capReached) = LaunchRunner(strategy, run, userId, startedBy, underlying, spotSymbol, lots, risk.OverallStopLoss, risk.OverallTarget);
         if (capReached)
         {
             // Lost the race for the last slot: nothing was launched, so the row
@@ -283,6 +290,9 @@ public class BacktestController : ControllerBase
         run.Status = BacktestRunControl.RunStatusRunning;
         run.StartedUtc = DateTime.UtcNow;
         await _dbContext.SaveChangesAsync(cancellationToken);
+
+        // Durable pid so a restarted API can adopt (or stop) this runner.
+        await _runControl.RecordRunnerPidAsync(run.Id, running.ProcessId, startedBy);
 
         return Ok(new
         {
@@ -431,6 +441,9 @@ public class BacktestController : ControllerBase
         processInfo.Environment["PYTHONPATH"] = engineDirectory;
         // Line-buffered output so log lines arrive as they happen, not in 8KB blocks.
         processInfo.Environment["PYTHONUNBUFFERED"] = "1";
+        // A redirected stdout takes the locale encoding on Windows (cp1252); the
+        // runner prints "→", "≤", "₹"... — force UTF-8 on the pipe everywhere.
+        processInfo.Environment["PYTHONIOENCODING"] = "utf-8";
 
         lock (_registry.StartLock)
         {

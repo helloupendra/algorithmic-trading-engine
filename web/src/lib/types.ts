@@ -75,6 +75,21 @@ export interface IngestorStatus {
   isHealthy: boolean
 }
 
+/**
+ * GET /api/Ingestor/status — whether a feed process is alive and how the API
+ * knows it. `managed`: spawned by this API instance (pipes attached);
+ * `adopted`: a pid persisted by an earlier API instance that is still alive
+ * (output not captured); `none`: no pid known — a healthy heartbeat with
+ * `none` means the feed was started outside the console. An API build from
+ * before supervision hardening answers with `isRunning` only.
+ */
+export interface IngestorProcessStatus {
+  isRunning: boolean
+  managed?: boolean
+  processId?: number | null
+  source?: 'managed' | 'adopted' | 'none'
+}
+
 export interface StaleQuote {
   symbol: string
   dataType: string
@@ -247,6 +262,60 @@ export interface PerformanceMetrics {
   expectancy: number
 }
 
+// ---------- Risk rules (live runs and backtests) ----------
+
+/** ₹ limits on the run's TOTAL P&L (realized + unrealized); a hit ends the run. */
+export interface OverallRisk {
+  stopLoss?: number | null
+  target?: number | null
+}
+
+/** ₹ limits per group (one OPEN_GROUP, e.g. a straddle pair); a hit closes that group only. */
+export interface GroupRisk {
+  stopLoss?: number | null
+  target?: number | null
+}
+
+/**
+ * Per-leg limits: premium points vs entry and/or % of entry premium; a hit
+ * closes that leg only. When both points and percent are set, whichever
+ * trips first wins.
+ */
+export interface LegRisk {
+  stopLossPoints?: number | null
+  targetPoints?: number | null
+  stopLossPercent?: number | null
+  targetPercent?: number | null
+}
+
+/**
+ * Risk rules at three levels, evaluated leg → group → overall on every guard
+ * sweep (live) or bar (backtest). Every field optional (null = not set); set
+ * values must be > 0. Persisted as `parametersJson.risk`; the legacy
+ * `stop_loss` / `target` keys mirror the overall values for older readers.
+ */
+export interface RiskRules {
+  overall?: OverallRisk | null
+  group?: GroupRisk | null
+  leg?: LegRisk | null
+}
+
+/** PATCH /api/Strategy/runs/{runId}/risk body — replaces the run's rules. */
+export type UpdateRunRiskRequest = RiskRules
+
+export interface UpdateRunRiskResponse {
+  runId: number
+  risk: RiskRules
+}
+
+/** One group of a run: its P&L and how many of its legs are still open. */
+export interface LiveRunGroup {
+  groupId: string
+  pnl: number
+  openLegs: number
+  closedLegs: number
+}
+
 // ---------- Strategies ----------
 
 export interface StrategyDataRequirement {
@@ -262,7 +331,29 @@ export interface StrategyLastExit {
   underlying: string | null
 }
 
-/** GET /api/Strategy — catalog entry decorated with its run state. */
+/**
+ * One live instance of a strategy. A strategy may run on several underlyings
+ * at once; every run-scoped route (stop, live, logs, signals) is keyed by runId.
+ */
+export interface StrategyActiveRun {
+  runId: number
+  underlying: string
+  spotSymbol: string
+  lots: number
+  stopLoss: number | null
+  target: number | null
+  startedBy: string
+  startedUtc: string
+  processId: number
+}
+
+/**
+ * GET /api/Strategy — catalog entry decorated with its run state.
+ *
+ * `activeRuns` (oldest first) and `recentExits` (newest first, ≤ 5) are the
+ * source of truth; the flat single-run fields mirror the FIRST active run
+ * (and `lastExit` the newest exit) for callers that predate multi-instance.
+ */
 export interface StrategyListItem {
   id: number
   name: string
@@ -287,6 +378,8 @@ export interface StrategyListItem {
   target: number | null
   processId: number | null
   lastExit: StrategyLastExit | null
+  activeRuns: StrategyActiveRun[]
+  recentExits: StrategyLastExit[]
 }
 
 /** GET /api/Instruments/derivatives/underlyings — what can actually be traded. */
@@ -305,8 +398,11 @@ export interface FnoUnderlying {
 export interface StartStrategyRequest {
   underlying: string
   lots?: number
+  /** Legacy overall stop-loss; mirrors `risk.overall.stopLoss` for older API builds. */
   stopLoss?: number | null
+  /** Legacy overall target; mirrors `risk.overall.target` for older API builds. */
   target?: number | null
+  risk?: RiskRules | null
   parameters?: Record<string, unknown> | null
   initialCapital?: number
 }
@@ -352,6 +448,14 @@ export interface LivePosition {
   pnl: number
   openedUtc: string
   closedUtc: string | null
+  /** entry × qty. Absent on an API build from before the risk-rules change. */
+  entryValue?: number | null
+  /** ltp × qty, open rows only. */
+  currentValue?: number | null
+  /** Signed premium points from entry (sign = profit). */
+  pnlPoints?: number | null
+  /** pnlPoints / entry × 100. */
+  pnlPercent?: number | null
 }
 
 export interface LiveActivity {
@@ -359,6 +463,12 @@ export interface LiveActivity {
   type: string
   text: string
   groupId: string
+  /**
+   * The signal's metadata, when the API forwards it (RISK_UPDATED rows carry
+   * `{ risk, by }` and are rendered from it). Older builds send `text` only.
+   */
+  metadata?: Record<string, unknown> | null
+  metadataJson?: string | null
 }
 
 /** GET /api/Strategy/{id}/live — the position-based view of one run. */
@@ -374,16 +484,36 @@ export interface StrategyLiveView {
   lots: number | null
   lotSize: number | null
   lotSizeSource: 'master' | 'configured' | 'unknown' | null
+  /** Overall stop-loss shorthand (= risk.overall.stopLoss). */
   stopLoss: number | null
+  /** Overall target shorthand (= risk.overall.target). */
   target: number | null
+  /** The three-level rules; absent on an older API build (use the shorthands). */
+  risk?: RiskRules | null
   startedBy: string | null
   startedUtc: string | null
   stoppedUtc: string | null
   stopReason: string | null
-  pnl: { realized: number; unrealized: number; total: number }
+  pnl: {
+    realized: number
+    unrealized: number
+    total: number
+    /** Portfolio UsedCapital. */
+    capitalUsed?: number | null
+    /** Σ entryValue of open BUY legs. */
+    premiumOutlay?: number | null
+    /** Σ entryValue of open SELL legs. */
+    premiumReceived?: number | null
+  }
+  groups?: LiveRunGroup[] | null
   positions: LivePosition[]
   activity: LiveActivity[]
-  runner: { processId: number; lastLogUtc: string | null } | null
+  runner: {
+    processId: number
+    lastLogUtc: string | null
+    /** The runner was adopted after an API restart: alive and controllable, output not captured. */
+    adopted?: boolean
+  } | null
 }
 
 // ---------- Backtesting ----------
@@ -456,8 +586,11 @@ export interface StartBacktestRequest {
   fromDate: string
   toDate: string
   lots?: number
+  /** Legacy overall stop-loss; mirrors `risk.overall.stopLoss` for older API builds. */
   stopLoss?: number | null
+  /** Legacy overall target; mirrors `risk.overall.target` for older API builds. */
   target?: number | null
+  risk?: RiskRules | null
   /** "HH:MM" IST; empty string = no end-of-day square-off. */
   eodSquareOffIst?: string
   chargesPerLot?: number
@@ -513,6 +646,10 @@ export interface BacktestPnl {
   total: number
   charges: number
   returnPercent: number
+  /** Max UsedCapital over the run's equity snapshots (0 when none); absent on older builds. */
+  capitalUsed?: number | null
+  premiumOutlay?: number | null
+  premiumReceived?: number | null
 }
 
 export interface BacktestMetrics {
@@ -558,6 +695,14 @@ export interface BacktestPosition {
   openedUtc: string
   closedUtc: string | null
   exitReason: string | null
+  /** entry × qty. Absent on an API build from before the risk-rules change. */
+  entryValue?: number | null
+  /** mark × qty, open rows only. */
+  currentValue?: number | null
+  /** Signed premium points from entry (sign = profit). */
+  pnlPoints?: number | null
+  /** pnlPoints / entry × 100. */
+  pnlPercent?: number | null
 }
 
 export interface BacktestEquityPoint {
@@ -580,8 +725,12 @@ export interface BacktestRunView {
   lots: number
   lotSize: number
   lotSizeSource: 'master' | 'configured' | 'unknown'
+  /** Overall stop-loss shorthand (= risk.overall.stopLoss). */
   stopLoss: number | null
+  /** Overall target shorthand (= risk.overall.target). */
   target: number | null
+  /** The three-level rules; absent on an older API build (use the shorthands). */
+  risk?: RiskRules | null
   eodSquareOffIst: string | null
   chargesPerLot: number
   initialCapital: number

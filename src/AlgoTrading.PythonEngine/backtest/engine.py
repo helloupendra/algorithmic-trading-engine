@@ -7,9 +7,12 @@ contract as the live runner.
 
   - fills at the option candle close of the signal bar (see feed.option_close_at);
   - a paper ledger in lots x lot size (backtest/ledger.py);
-  - rupee stop-loss / target on TOTAL P&L (realized + unrealized - charges),
-    identical to the live risk guard: the first breach flattens everything and
-    ends the run;
+  - risk rules at three levels, evaluated every bar after the marks in the
+    same order as the live risk guard (run_spec.RiskRules):
+      leg     premium points / % of entry per leg -> closes that leg only;
+      group   rupee P&L per group                 -> closes that group only;
+      overall rupee TOTAL P&L (realized + unrealized - charges) -> flattens
+              everything and ends the run;
   - an end-of-day square-off at `eod_square_off_ist` and an end-of-range
     square-off;
   - every fill, mark, equity point and the final summary are posted to the
@@ -35,8 +38,8 @@ from strategies.signal_utils import signal_to_request, stamp_signal_metadata
 
 from backtest.contracts import ContractResolver
 from backtest.feed import HistoricalFeed
-from backtest.ledger import ApplyResult, PaperLedger
-from backtest.run_spec import BacktestRun, parse_parameters, parse_run_row
+from backtest.ledger import ApplyResult, LedgerPosition, PaperLedger, pnl_percent, pnl_points
+from backtest.run_spec import BacktestRun, RiskRules, parse_parameters, parse_run_row
 from backtest.timeutil import compact_stamp, format_ist, in_session, iso_utc, ist_date, ist_time, parse_utc
 
 SNAPSHOT_BATCH = 500
@@ -47,10 +50,32 @@ MAX_LOGGED_SKIPS = 200
 ProgressCallback = Callable[[Dict[str, Any]], None]
 Logger = Callable[[str], None]
 
+# Summary keys of the risk-rule trip counters (leg/group closes; the overall
+# level ends the run and is reported as `stopReason`).
+RISK_COUNTERS = ("legStops", "legTargets", "groupStops", "groupTargets")
 
-def _money(value: float) -> str:
-    sign = "−" if value < 0 else "+"
+
+def _money(value: float, plus: bool = True) -> str:
+    """
+    "−1,240" / "+1,240" for log lines; with `plus=False` a positive amount has
+    no sign ("1,240"), which is the form the API's risk guard uses in its
+    CLOSE_GROUP / RUN_STOPPED reasons — the backtest must read the same.
+    """
+    sign = "−" if value < 0 else ("+" if plus else "")
     return f"{sign}{abs(value):,.0f}"
+
+
+def _signed(value: float, digits: int = 1, suffix: str = "") -> str:
+    """+6.2 pts / −21.4 pts with a typographic minus, like `_money`."""
+    sign = "−" if value < 0 else "+"
+    return f"{sign}{abs(value):,.{digits}f}{suffix}"
+
+
+def _leg_move(points: float, percent: Optional[float]) -> str:
+    text = _signed(points, 1, " pts")
+    if percent is not None:
+        text += f" ({_signed(percent, 1, '%')})"
+    return text
 
 
 @dataclass
@@ -128,6 +153,8 @@ class BacktestSession:
         self.data_notes: List[str] = []
         self.warmup_bars_used = 0
         self.step: float = fallback_strike_step(run.underlying)
+        self.risk: RiskRules = run.risk
+        self.risk_counts: Dict[str, int] = {key: 0 for key in RISK_COUNTERS}
 
     # --- configuration ------------------------------------------------------
 
@@ -270,33 +297,133 @@ class BacktestSession:
 
     # --- square-off / risk --------------------------------------------------
 
-    def _square_off(self, t: datetime, reason: str, spot: Optional[float] = None, atm: Any = None) -> int:
-        """Close every open position at the last known close of its contract at t."""
+    def _price_at(self, t: datetime) -> Callable[[str], Optional[float]]:
+        """Exit price lookup for bar t: the contract's candle close (the ledger falls back to the last mark)."""
+        return lambda symbol: self.feed.option_close_at(symbol, t)
+
+    def _apply_close_signals(self, signals: List[StrategySignal], t: datetime, spot: Optional[float],
+                             atm: Any, tag: str) -> int:
+        """
+        Fill and post reduce-only CLOSE_GROUP signals built by the ledger
+        (`flatten_all` / `close_positions`). Returns the number of positions
+        closed; legs priced off a fallback (no candle at t) are logged.
+        """
         t_iso = iso_utc(t)
-        signals = self.ledger.flatten_all(lambda s: self.feed.option_close_at(s, t), t_iso, reason, self.run.strategy_name)
         closed = 0
         for sig in signals:
             group_id = sig.metadata.get("group_id", "")
             for leg in sig.legs:
                 if leg.get("price_source") != "candle":
-                    self.log(f"[SQUARE-OFF] {leg['symbol']}: no candle at {format_ist(t)} IST, using {leg['price_source']} {leg['price']:.2f}")
-            result = self.ledger.apply("CLOSE_GROUP", group_id, sig.legs, t_iso, reason)
+                    self.log(f"[{tag}] {leg['symbol']}: no candle at {format_ist(t)} IST, using {leg['price_source']} {leg['price']:.2f}")
+            result = self.ledger.apply("CLOSE_GROUP", group_id, sig.legs, t_iso, sig.reason)
             if result.applied:
                 closed += len(result.closed)
                 self._post_signal(sig, spot, atm, result)
         return closed
 
-    def _check_risk(self, t: datetime, spot: float, atm: Any) -> bool:
+    def _square_off(self, t: datetime, reason: str, spot: Optional[float] = None, atm: Any = None) -> int:
+        """Close every open position at the last known close of its contract at t."""
+        signals = self.ledger.flatten_all(self._price_at(t), iso_utc(t), reason, self.run.strategy_name)
+        return self._apply_close_signals(signals, t, spot, atm, "SQUARE-OFF")
+
+    def _leg_trip(self, pos: LedgerPosition) -> Optional[Tuple[str, str]]:
+        """
+        (kind, reason) when the leg rules trip for this open position at its
+        last mark, else None. Adverse move = BUY: entry − mark, SELL: mark −
+        entry; stop-loss is checked before target, points before percent —
+        so when both a points and a percent rule are set, the one that trips
+        first (at the smaller move) is the one reported.
+        """
+        rules = self.risk.leg
+        if not rules.is_set or pos.last_mark is None:
+            return None
+        points = pnl_points(pos)
+        percent = pnl_percent(pos)
+        if points is None:
+            return None
+        adverse, adverse_pct = -points, (None if percent is None else -percent)
+        name = self.resolver.display_name(pos.symbol)
+        move = _leg_move(points, percent)
+
+        if rules.stop_loss_points is not None and adverse >= rules.stop_loss_points:
+            return "stop", f"Leg stop-loss hit: {name} {move} ≤ −{rules.stop_loss_points:g} pts"
+        if rules.stop_loss_percent is not None and adverse_pct is not None and adverse_pct >= rules.stop_loss_percent:
+            return "stop", f"Leg stop-loss hit: {name} {move} ≤ −{rules.stop_loss_percent:g}%"
+        # Reason strings match the API risk guard (StrategyRiskGuardService)
+        # character for character: thresholds carry no "+".
+        if rules.target_points is not None and points >= rules.target_points:
+            return "target", f"Leg target hit: {name} {move} ≥ {rules.target_points:g} pts"
+        if rules.target_percent is not None and percent is not None and percent >= rules.target_percent:
+            return "target", f"Leg target hit: {name} {move} ≥ {rules.target_percent:g}%"
+        return None
+
+    def _apply_leg_rules(self, t: datetime, spot: float, atm: Any) -> int:
+        """Level 1: close every open leg whose own SL/target tripped (that leg only)."""
+        if not self.risk.leg.is_set:
+            return 0
+        trips: List[Tuple[Tuple[str, str], str, str]] = []
+        for pos in self.ledger.open_positions():
+            trip = self._leg_trip(pos)
+            if trip is not None:
+                trips.append(((pos.group_id, pos.symbol), trip[0], trip[1]))
+        closed = 0
+        for key, kind, reason in trips:
+            self.log(f"[RISK] {format_ist(t)} IST {reason}")
+            signals = self.ledger.close_positions([key], self._price_at(t), iso_utc(t), reason,
+                                                  self.run.strategy_name, metadata={"risk_rule": "leg"})
+            count = self._apply_close_signals(signals, t, spot, atm, "RISK")
+            if count:
+                closed += count
+                self.risk_counts["legStops" if kind == "stop" else "legTargets"] += 1
+        return closed
+
+    def _apply_group_rules(self, t: datetime, spot: float, atm: Any) -> int:
+        """Level 2: close every open leg of a group whose P&L tripped (that group only)."""
+        rules = self.risk.group
+        if not rules.is_set:
+            return 0
+        trips: List[Tuple[str, str, str]] = []
+        for group_id in self.ledger.open_groups():
+            pnl = self.ledger.group_pnl(group_id)
+            if rules.stop_loss is not None and pnl <= -rules.stop_loss:
+                trips.append((group_id, "stop", f"Group stop-loss hit: {group_id} P&L {_money(pnl, plus=False)} ≤ −{rules.stop_loss:,.0f}"))
+            elif rules.target is not None and pnl >= rules.target:
+                trips.append((group_id, "target", f"Group target hit: {group_id} P&L {_money(pnl, plus=False)} ≥ {rules.target:,.0f}"))
+        closed = 0
+        for group_id, kind, reason in trips:
+            self.log(f"[RISK] {format_ist(t)} IST {reason}")
+            keys = [(group_id, pos.symbol) for pos in self.ledger.group_open_positions(group_id)]
+            signals = self.ledger.close_positions(keys, self._price_at(t), iso_utc(t), reason,
+                                                  self.run.strategy_name, metadata={"risk_rule": "group"})
+            count = self._apply_close_signals(signals, t, spot, atm, "RISK")
+            if count:
+                closed += count
+                self.risk_counts["groupStops" if kind == "stop" else "groupTargets"] += 1
+        return closed
+
+    def _check_overall(self, t: datetime, spot: float, atm: Any) -> bool:
+        """Level 3: total P&L through the overall SL/target flattens everything and ends the run."""
+        rules = self.risk.overall
         total = self.ledger.total_pnl()
-        if self.run.stop_loss is not None and total <= -self.run.stop_loss:
-            self.stop_reason = f"Stop loss hit: P&L {_money(total)} ≤ −{self.run.stop_loss:,.0f}"
-        elif self.run.target is not None and total >= self.run.target:
-            self.stop_reason = f"Target hit: P&L {_money(total)} ≥ +{self.run.target:,.0f}"
+        if rules.stop_loss is not None and total <= -rules.stop_loss:
+            self.stop_reason = f"Stop loss hit: P&L {_money(total, plus=False)} ≤ −{rules.stop_loss:,.0f}"
+        elif rules.target is not None and total >= rules.target:
+            self.stop_reason = f"Target hit: P&L {_money(total, plus=False)} ≥ {rules.target:,.0f}"
         else:
             return False
         self.log(f"[STOP] {format_ist(t)} IST {self.stop_reason}")
         self._square_off(t, self.stop_reason, spot, atm)
         return True
+
+    def _check_risk(self, t: datetime, spot: float, atm: Any) -> bool:
+        """
+        One risk sweep at bar t, in the guard's order: leg rules, then group
+        rules over what is still open, then the overall rule on the resulting
+        total. Returns True when the overall rule ended the run.
+        """
+        self._apply_leg_rules(t, spot, atm)
+        self._apply_group_rules(t, spot, atm)
+        return self._check_overall(t, spot, atm)
 
     def _mark(self, t: datetime) -> None:
         symbols = self.ledger.open_symbols()
@@ -491,7 +618,8 @@ class BacktestSession:
         self.log(
             f"[CONFIG] {run.describe()} lot_size={self.lot_size} ({self.lot_size_source}) "
             f"strategy_lots={self.lots} broker_linked={'yes' if self.broker_linked else 'no'} "
-            f"resolutions={','.join(self.resolutions)} (SL/target on total P&L, enforced by the runner)"
+            f"resolutions={','.join(self.resolutions)} "
+            f"(risk rules enforced by the engine every bar: leg → group → overall on total P&L)"
         )
         self.state = self.strategy.initialize_state()
         self.feed.load(self.resolutions)
@@ -588,6 +716,19 @@ class BacktestSession:
 
     # --- completion ---------------------------------------------------------
 
+    def _risk_note(self) -> Optional[str]:
+        """"Risk rules closed 2 legs (stop-loss), 1 group (target)." or None when nothing tripped."""
+        counts = self.risk_counts
+        parts: List[str] = []
+        for key, noun, kind in (("legStops", "leg", "stop-loss"), ("legTargets", "leg", "target"),
+                                ("groupStops", "group", "stop-loss"), ("groupTargets", "group", "target")):
+            n = counts[key]
+            if n:
+                parts.append(f"{n} {noun}{'s' if n != 1 else ''} ({kind})")
+        if not parts:
+            return None
+        return f"Risk rules closed {', '.join(parts)}; rules: {self.risk.describe()}."
+
     def _summary(self) -> Dict[str, Any]:
         notes = list(self.data_notes)
         if self.resolver.lookups or self.feed.no_data or self.feed.synced:
@@ -608,6 +749,9 @@ class BacktestSession:
         if not self.broker_linked:
             notes.append("Broker not linked: only contracts already stored could be priced.")
         notes.extend(self.feed.sync_failures)
+        risk_note = self._risk_note()
+        if risk_note:
+            notes.append(risk_note)
         return {
             "totalBars": self.total_bars,
             "barsProcessed": self.bars_processed,
@@ -617,6 +761,8 @@ class BacktestSession:
             "eodSquareOffs": self.eod_square_offs,
             "stopReason": self.stop_reason,
             "dataNotes": notes,
+            "risk": self.risk.to_dict(),
+            **{key: self.risk_counts[key] for key in RISK_COUNTERS},
             "charges": round(self.ledger.charges, 4),
             "realizedPnl": round(self.ledger.realized_pnl(), 4),
             "signalsPosted": self._signals_posted,
@@ -629,10 +775,12 @@ class BacktestSession:
 
     def _finish(self, status: str, error: Optional[str] = None) -> BacktestOutcome:
         summary = self._summary()
+        risk_text = " ".join(f"{key}={self.risk_counts[key]}" for key in RISK_COUNTERS if self.risk_counts[key])
         self.log(
             f"[SUMMARY] status={status} bars={self.bars_processed}/{self.total_bars} sessions={summary['sessions']} "
             f"trades={summary['trades']} skipped={len(self.skipped_entries)} eod_square_offs={self.eod_square_offs} "
             f"pnl={_money(self.ledger.total_pnl())} charges={self.ledger.charges:,.2f}"
+            f"{' ' + risk_text if risk_text else ''}"
             f"{' stop=' + self.stop_reason if self.stop_reason else ''}{' error=' + error if error else ''}"
         )
         self.api.complete_run(self.run.run_id, status, summary, error)

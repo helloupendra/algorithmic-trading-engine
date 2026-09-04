@@ -44,8 +44,11 @@ export function LoginPage() {
     setIsSubmitting(true)
     try {
       const me = await login(name, pass)
-      const from = (location.state as { from?: { pathname: string } } | null)?.from?.pathname
-      navigate(from ?? (me.role === 'Admin' ? '/admin' : '/trader'), { replace: true })
+      // RequireAuth stores the full Location; keep search and hash so deep links
+      // such as /trader/charts?symbol=NIFTY survive the sign-in detour.
+      const from = (location.state as { from?: { pathname: string; search?: string; hash?: string } } | null)?.from
+      const target = from ? `${from.pathname}${from.search ?? ''}${from.hash ?? ''}` : null
+      navigate(target ?? (me.role === 'Admin' ? '/admin' : '/trader'), { replace: true })
     } catch (err) {
       setError(
         err instanceof ApiError

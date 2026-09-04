@@ -2,6 +2,7 @@
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
+using AlgoTrading.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 
@@ -32,22 +33,27 @@ public sealed class BacktestRunControl
 
     private readonly TradingDbContext _dbContext;
     private readonly IPaperTradingService _paperTradingService;
+    private readonly IProcessSettingsStore _processSettings;
     private readonly BacktestProcessRegistry _registry;
     private readonly ILogger<BacktestRunControl> _logger;
 
     public BacktestRunControl(
         TradingDbContext dbContext,
         IPaperTradingService paperTradingService,
+        IProcessSettingsStore processSettings,
         BacktestProcessRegistry registry,
         ILogger<BacktestRunControl> logger)
     {
         _dbContext = dbContext;
         _paperTradingService = paperTradingService;
+        _processSettings = processSettings;
         _registry = registry;
         _logger = logger;
     }
 
     public sealed record StopResult(bool WasRunning, int Flattened);
+
+    public sealed record ReconcileResult(int Adopted, int Closed);
 
     public static bool IsOpenStatus(string? status) => status is RunStatusRunning or RunStatusPending;
 
@@ -104,19 +110,58 @@ public sealed class BacktestRunControl
     }
 
     /// <summary>
-    /// Closes every OfflineReplay run left Running/Pending with no process
-    /// behind it (there is none after a restart: the registry is in-memory).
-    /// Called once at startup; returns the number of runs closed.
+    /// Records a runner's pid durably so a restarted API can adopt or stop it.
+    /// Best effort: a failure is logged and never fails the start.
     /// </summary>
-    public async Task<int> FailOrphanedRunsAsync(string reason, CancellationToken cancellationToken = default)
+    public async Task RecordRunnerPidAsync(long runId, int processId, string? by)
+    {
+        if (processId <= 0) return;
+        try
+        {
+            await _processSettings.SetPidAsync(SystemSettingKeys.BacktestRunPid(runId), processId, by, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not persist the runner pid {Pid} of backtest run {RunId}.", processId, runId);
+        }
+    }
+
+    /// <summary>
+    /// Once at startup: every OfflineReplay run left Running/Pending with no
+    /// registry entry is either ADOPTED (its stored pid is alive and is a
+    /// backtest_runner for that run — the entry is rebuilt from the row and its
+    /// exit monitor attached) or squared off at last mark and marked Failed
+    /// with <paramref name="reason"/>, as before.
+    /// </summary>
+    public async Task<ReconcileResult> ReconcileOrphanedRunsAsync(string reason, CancellationToken cancellationToken = default)
     {
         var orphans = await _dbContext.SimulationRuns
             .Where(x => x.Mode == OfflineReplayMode && (x.Status == RunStatusRunning || x.Status == RunStatusPending))
+            .OrderBy(x => x.Id)
             .ToListAsync(cancellationToken);
+
+        int adopted = 0, closed = 0;
 
         foreach (var run in orphans)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (_registry.Contains(run.Id)) continue;
+
+            bool wasAdopted = false;
+            try
+            {
+                wasAdopted = await TryAdoptAsync(run, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Adoption of backtest run {RunId} failed; marking it Failed instead.", run.Id);
+            }
+
+            if (wasAdopted)
+            {
+                adopted++;
+                continue;
+            }
 
             try
             {
@@ -132,11 +177,69 @@ public sealed class BacktestRunControl
             }
 
             await RecordRunEndedAsync(run, run.StrategyName, RunStatusFailed, reason, by: "api", lastError: reason);
+            await ClearRunnerPidAsync(run.Id);
+            closed++;
             _logger.LogWarning("Backtest run {RunId} ({Strategy}) was {Status} with no runner process; marked Failed: {Reason}",
                 run.Id, run.StrategyName, run.Status, reason);
         }
 
-        return orphans.Count;
+        return new ReconcileResult(adopted, closed);
+    }
+
+    /// <summary>Adopts the run when its stored pid is a live backtest_runner for it.</summary>
+    private async Task<bool> TryAdoptAsync(SimulationRun run, CancellationToken cancellationToken)
+    {
+        var pid = await _processSettings.GetPidAsync(SystemSettingKeys.BacktestRunPid(run.Id), cancellationToken);
+        if (pid is null)
+        {
+            return false;
+        }
+
+        var process = ProcessProbe.TryGetAlive(pid.Value, ProcessProbe.BacktestRunnerMarker, run.Id, _logger);
+        if (process is null)
+        {
+            return false;
+        }
+
+        var p = BacktestRunParameters.Parse(run.ParametersJson);
+        var underlying = p.Underlying
+                         ?? UnderlyingCatalog.UnderlyingForSpot(run.Symbol)
+                         ?? UnderlyingCatalog.InferUnderlying(run.Symbol);
+
+        var startedBy = await _dbContext.AppUsers.AsNoTracking()
+            .Where(x => x.Id == run.UserId)
+            .Select(x => x.UserName)
+            .FirstOrDefaultAsync(cancellationToken) ?? "unknown";
+
+        var entry = new RunningBacktest(
+            run.Id,
+            StrategyCatalogService.StableId(run.StrategyName),
+            run.StrategyName,
+            process,
+            startedBy,
+            run.UserId,
+            run.StartedUtc ?? run.CreatedUtc,
+            underlying,
+            run.Symbol,
+            Math.Max(1, p.Lots ?? 1),
+            p.StopLoss,
+            p.Target,
+            ResolutionCodes.ToCandle(run.Resolution),
+            run.FromUtc ?? DateTime.MinValue,
+            run.ToUtc ?? DateTime.MinValue)
+        {
+            Adopted = true
+        };
+
+        if (!_registry.TryAdd(entry))
+        {
+            process.Dispose();
+            return false;
+        }
+
+        _logger.LogWarning("Adopted backtest run {RunId} ({Strategy} on {Underlying}) pid {Pid} after API restart — output not captured.",
+            run.Id, run.StrategyName, underlying, pid);
+        return true;
     }
 
     /// <summary>
@@ -165,6 +268,7 @@ public sealed class BacktestRunControl
         }
 
         await RecordRunEndedAsync(run, run.StrategyName, RunStatusStopped, $"{reason} (runner process was not found)", by, lastError: null);
+        await ClearRunnerPidAsync(runId);
         return new StopResult(true, flattened);
     }
 
@@ -222,11 +326,11 @@ public sealed class BacktestRunControl
             // signal it logged (external SIGTERM/SIGINT) or by a silent death.
             if (runnerAlreadyExited && finalStatus == RunStatusCompleted && runWasOpen)
             {
-                var signalled = entry.LastStdoutLine is not null
-                                && entry.LastStdoutLine.Contains(RunnerSignalMarker, StringComparison.Ordinal);
-                if (signalled)
+                if (entry.LastStdoutLine is { } lastStdoutLine
+                    && lastStdoutLine.IndexOf(RunnerSignalMarker, StringComparison.Ordinal) is var markerIndex
+                    && markerIndex >= 0)
                 {
-                    var signalName = entry.LastStdoutLine![(entry.LastStdoutLine.IndexOf(RunnerSignalMarker, StringComparison.Ordinal) + RunnerSignalMarker.Length)..].Trim();
+                    var signalName = lastStdoutLine[(markerIndex + RunnerSignalMarker.Length)..].Trim();
                     finalStatus = RunStatusStopped;
                     reason = $"Runner stopped by {(signalName.Length > 0 ? signalName : "a signal")} before completing the replay";
                 }
@@ -294,6 +398,7 @@ public sealed class BacktestRunControl
         finally
         {
             _registry.Remove(runId);
+            await ClearRunnerPidAsync(runId);
             await DisposeProcessAsync(entry, runnerAlreadyExited);
             entry.StopCompletion.TrySetResult(true);
         }
@@ -311,6 +416,19 @@ public sealed class BacktestRunControl
         catch (Exception ex)
         {
             _logger.LogError(ex, "Could not mark backtest run {RunId} failed after its close pipeline failed.", runId);
+        }
+    }
+
+    /// <summary>Drops the persisted runner pid of a run that is closed (best effort).</summary>
+    private async Task ClearRunnerPidAsync(long runId)
+    {
+        try
+        {
+            await _processSettings.DeleteAsync(SystemSettingKeys.BacktestRunPid(runId), CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not clear the stored runner pid of backtest run {RunId}.", runId);
         }
     }
 

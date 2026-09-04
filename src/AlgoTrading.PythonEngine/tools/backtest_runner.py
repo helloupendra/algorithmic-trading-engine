@@ -28,6 +28,12 @@ ENGINE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ENGINE_DIR not in sys.path:
     sys.path.insert(0, ENGINE_DIR)
 
+# Before anything prints: if the API that spawned us dies, stdout is a closed
+# pipe and print() would raise. Output then continues in
+# logs/engine/backtest-<run_id>-<pid>.log (renamed once the run id is parsed).
+from core.safe_output import install_safe_stdio  # noqa: E402
+install_safe_stdio(name="backtest")
+
 from core.api_client import PlatformApiClient  # noqa: E402
 from core.config import API_BASE_URL, VERIFY_SSL  # noqa: E402
 
@@ -68,6 +74,7 @@ def main() -> int:
     parser.add_argument("--run-id", type=int, required=True, help="SimulationRun id (Mode OfflineReplay)")
     args = parser.parse_args()
 
+    install_safe_stdio(name=f"backtest-{args.run_id}")
     install_signal_handlers()
     api = PlatformApiClient(API_BASE_URL, verify_ssl=VERIFY_SSL)
 
@@ -77,6 +84,18 @@ def main() -> int:
         message = f"Could not load run {args.run_id} from {API_BASE_URL}: {ex}"
         print(message, file=sys.stderr, flush=True)
         return 1
+
+    # Every progress report carries this process id so a restarted API can
+    # re-adopt (or stop) the runner; the first one goes out before the feed
+    # loads, which can take a while. Never fatal (older APIs ignore the field).
+    process_id = os.getpid()
+    try:
+        api.post_progress(args.run_id, {
+            "percent": 0.0, "barsProcessed": 0, "totalBars": 0, "currentUtc": None, "trades": 0,
+            "message": "Runner started; loading candles", "processId": process_id,
+        })
+    except Exception as ex:
+        log(f"[RUNNER] WARN: could not report pid {process_id} for run {args.run_id}: {ex}")
 
     strategy_name = str(run_row.get("strategyName") or "").strip()
     from strategies.registry import load_strategy_factories
@@ -90,7 +109,7 @@ def main() -> int:
     log(f"[RUNNER] run {args.run_id}: {strategy_name} ({run_row.get('mode')}) on {run_row.get('symbol')} @ {run_row.get('resolution')}")
 
     def on_progress(progress: dict) -> None:
-        api.post_progress(args.run_id, progress)
+        api.post_progress(args.run_id, {**progress, "processId": process_id})
 
     from backtest.engine import run_backtest
 

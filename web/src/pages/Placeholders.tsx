@@ -110,7 +110,7 @@ export function NotFoundPage() {
       <p className="page__subtitle">That route does not exist.</p>
       <Link
         className="btn btn--primary"
-        to={isAuthenticated ? (isAdmin ? '/admin' : '/trader') : '/login'}
+        to={isAuthenticated ? (isAdmin ? '/admin' : '/trader') : '/'}
       >
         Go home
       </Link>

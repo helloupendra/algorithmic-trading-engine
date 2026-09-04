@@ -12,6 +12,7 @@ import { Badge, Panel, QueryBoundary } from '../../components/ui'
 import { IconLayers } from '../../components/icons'
 import type { StrategyListItem } from '../../lib/types'
 import { CategoryBadge, LaunchDialog, StrategyCard } from './shared'
+import { activeUnderlyings } from '../../lib/strategyList'
 
 function compactJson(json: string): string {
   try {
@@ -27,7 +28,11 @@ function compactJson(json: string): string {
 export function StrategyLibraryPage() {
   const strategies = useStrategies()
   const navigate = useNavigate()
-  const [launch, setLaunch] = useState<StrategyListItem | null>(null)
+  const [launchId, setLaunchId] = useState<number | null>(null)
+  // Read the strategy from the polled list so the dialog's "already running"
+  // rows track runs started elsewhere while it is open.
+  const launch: StrategyListItem | null =
+    launchId != null ? (strategies.data?.find((s) => s.id === launchId) ?? null) : null
 
   return (
     <div className="page">
@@ -46,7 +51,7 @@ export function StrategyLibraryPage() {
           <>
             <div className="strategy-grid">
               {items.map((s) => (
-                <StrategyCard key={s.id} strategy={s} onStart={setLaunch} />
+                <StrategyCard key={s.id} strategy={s} onStart={(st) => setLaunchId(st.id)} />
               ))}
             </div>
 
@@ -71,37 +76,42 @@ export function StrategyLibraryPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map((s) => (
-                      <tr key={s.id}>
-                        <td>
-                          <b>{s.name}</b>{' '}
-                          {s.isActive && <Badge tone="pos">running</Badge>}
-                        </td>
-                        <td>
-                          <CategoryBadge category={s.category} />
-                        </td>
-                        <td className="mono muted">
-                          {s.supportedUnderlyings.length === 0 ? '—' : s.supportedUnderlyings.join(', ')}
-                        </td>
-                        <td className="muted" style={{ whiteSpace: 'normal', minWidth: 180 }}>
-                          {s.legsSummary || '—'}
-                        </td>
-                        <td className="muted">
-                          {s.dataRequirements.length === 0
-                            ? '—'
-                            : s.dataRequirements
-                                .map((d) => `${d.symbolType} @ ${formatResolution(d.resolution)}`)
-                                .join(', ')}
-                        </td>
-                        <td className="mono muted" style={{ fontSize: 11, whiteSpace: 'normal', minWidth: 200 }}>
-                          {compactJson(s.defaultParametersJson)}
-                          {s.defaultLots > 0 ? ` · lots=${s.defaultLots}` : ''}
-                        </td>
-                        <td className="mono muted" style={{ fontSize: 11 }}>
-                          {s.sourceFile || '—'}
-                        </td>
-                      </tr>
-                    ))}
+                    {items.map((s) => {
+                      const on = activeUnderlyings(s)
+                      return (
+                        <tr key={s.id}>
+                          <td>
+                            <b>{s.name}</b>{' '}
+                            {s.isActive && (
+                              <Badge tone="pos">running{on.length > 0 ? ` · ${on.join(', ')}` : ''}</Badge>
+                            )}
+                          </td>
+                          <td>
+                            <CategoryBadge category={s.category} />
+                          </td>
+                          <td className="mono muted">
+                            {s.supportedUnderlyings.length === 0 ? '—' : s.supportedUnderlyings.join(', ')}
+                          </td>
+                          <td className="muted" style={{ whiteSpace: 'normal', minWidth: 180 }}>
+                            {s.legsSummary || '—'}
+                          </td>
+                          <td className="muted">
+                            {s.dataRequirements.length === 0
+                              ? '—'
+                              : s.dataRequirements
+                                  .map((d) => `${d.symbolType} @ ${formatResolution(d.resolution)}`)
+                                  .join(', ')}
+                          </td>
+                          <td className="mono muted" style={{ fontSize: 11, whiteSpace: 'normal', minWidth: 200 }}>
+                            {compactJson(s.defaultParametersJson)}
+                            {s.defaultLots > 0 ? ` · lots=${s.defaultLots}` : ''}
+                          </td>
+                          <td className="mono muted" style={{ fontSize: 11 }}>
+                            {s.sourceFile || '—'}
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -113,7 +123,7 @@ export function StrategyLibraryPage() {
       {launch && (
         <LaunchDialog
           strategy={launch}
-          onClose={() => setLaunch(null)}
+          onClose={() => setLaunchId(null)}
           onStarted={() => navigate('/admin/strategies/live')}
         />
       )}

@@ -22,8 +22,9 @@ cp .env.example .env     # Windows: Copy-Item .env.example .env
 npm run dev
 ```
 
-Then open <http://localhost:5173>. The root `/` goes straight to sign-in
-(there is no public landing page); `/trader` and `/admin` require a session.
+Then open <http://localhost:5173>. The root `/` is the public homepage
+(`src/pages/LandingPage.tsx`); "Open console" leads to `/login`, and signing
+out returns to `/`. `/trader` and `/admin` require a session.
 
 ### Signing in as admin
 

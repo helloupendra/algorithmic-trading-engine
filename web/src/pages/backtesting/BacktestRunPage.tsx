@@ -25,10 +25,21 @@ import {
   formatPrice,
 } from '../../lib/format'
 import { formatContract, resolutionLabel } from '../../lib/symbols'
+import { positionValues } from '../../lib/positions'
+import { describeRiskRules, effectiveRisk, isRiskEmpty } from '../../lib/risk'
 import { Badge, InlineError, Loading, Panel, StatTile } from '../../components/ui'
 import { IconActivity, IconFlask, IconLayers, IconPlay, IconStop, IconTrash } from '../../components/icons'
 import type { BacktestPosition, BacktestRunView } from '../../lib/types'
-import { ActivityList, CategoryBadge, ConsoleOutput, Disclosure, PnlValue, formatDay } from '../strategies/shared'
+import {
+  ActivityList,
+  CategoryBadge,
+  ConsoleOutput,
+  Disclosure,
+  PnlValue,
+  PositionPnlCell,
+  PositionValueCell,
+  formatDay,
+} from '../strategies/shared'
 import { BacktestDialog } from './BacktestDialog'
 import { DailyPnlChart, EquityCurveChart } from './charts'
 import { BacktestStatusBadge, formatDayRange, isActiveStatus, runSpecLabel } from './shared'
@@ -52,6 +63,9 @@ function PositionsTable({ positions }: { positions: BacktestPosition[] }) {
             <th className="r">Qty</th>
             <th className="r">Entry</th>
             <th className="r">Exit</th>
+            <th className="r" title="Entry premium × quantity; open rows also show the value at the last mark">
+              Value
+            </th>
             <th className="r">P&L</th>
             <th>Exit reason</th>
             <th>Status</th>
@@ -62,6 +76,7 @@ function PositionsTable({ positions }: { positions: BacktestPosition[] }) {
         <tbody>
           {positions.map((p) => {
             const open = p.status === 'Open'
+            const values = positionValues({ ...p, mark: p.exitPrice })
             return (
               <tr key={p.id} className={open ? '' : 'pos-row--closed'}>
                 <td className="mono" title={`${p.symbol} · group ${p.groupId}`}>
@@ -75,9 +90,8 @@ function PositionsTable({ positions }: { positions: BacktestPosition[] }) {
                 <td className="r">{open ? formatNumber(p.quantity) : 0}</td>
                 <td className="r mono">{formatPrice(p.entryPrice)}</td>
                 <td className="r mono">{p.exitPrice != null ? formatPrice(p.exitPrice) : <span className="muted">—</span>}</td>
-                <td className="r">
-                  <PnlValue value={p.pnl} />
-                </td>
+                <PositionValueCell values={values} open={open} />
+                <PositionPnlCell pnl={p.pnl} values={values} />
                 <td className="muted" style={{ whiteSpace: 'normal', minWidth: 160 }} title={p.exitReason ?? undefined}>
                   {p.exitReason ?? (open ? '' : '—')}
                 </td>
@@ -175,6 +189,10 @@ export function BacktestRunPage() {
   const m = view?.metrics
   const openCount = view?.positions.filter((p) => p.status === 'Open').length ?? 0
   const pnlTone = (v: number | undefined) => (v == null || v === 0 ? undefined : v > 0 ? 'pos' : 'neg')
+  // The rules the replay ran under: the three-level object when the API sends
+  // it, else the overall shorthands of an older build / older run.
+  const risk = view ? effectiveRisk(view) : null
+  const riskLine = risk && !isRiskEmpty(risk) ? describeRiskRules(risk) : null
 
   return (
     <div className="page">
@@ -195,6 +213,7 @@ export function BacktestRunPage() {
             {view ? (
               <>
                 {runSpecLabel(view)}
+                {riskLine ? <span title="Risk rules of this run"> · {riskLine}</span> : ' · no risk rules'}
                 <span className="faint">
                   {' '}
                   · run #{view.runId}
@@ -311,6 +330,13 @@ export function BacktestRunPage() {
               value={m ? `${formatNumber(m.profitableDays)} / ${formatNumber(m.tradingDays)}` : '—'}
               sub="of sessions replayed · a day counts when its closed P&L is positive"
             />
+            {view.pnl.capitalUsed != null && (
+              <StatTile
+                label="Capital used"
+                value={formatInrWhole(view.pnl.capitalUsed)}
+                sub={`peak margin over the run · of ${formatInrWhole(view.initialCapital)}`}
+              />
+            )}
           </div>
 
           <div className="two-col">
@@ -440,7 +466,8 @@ export function BacktestRunPage() {
 
           <p className="small-note">
             Range {formatDayRange(view.fromDate, view.toDate)} in IST days · fills at the option candle
-            close of the signal bar · P&L = Δprice × lots × lot size · SL/target on total P&L.{' '}
+            close of the signal bar · P&L = Δprice × lots × lot size · risk rules checked every bar, leg
+            (closes that leg) → group (closes that group) → overall (ends the run).{' '}
             <Link to="/admin/backtesting/runs">All runs</Link>
           </p>
         </>
@@ -457,6 +484,7 @@ export function BacktestRunPage() {
             lots: view.lots,
             stopLoss: view.stopLoss,
             target: view.target,
+            risk: view.risk ?? null,
             eodSquareOffIst: view.eodSquareOffIst ?? '',
             chargesPerLot: view.chargesPerLot,
             initialCapital: view.initialCapital,

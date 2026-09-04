@@ -37,7 +37,9 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<MeResponse | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
+  // Only a stored token needs verifying; with none there is nothing to probe,
+  // so anonymous visitors never render a loading state.
+  const [isLoading, setIsLoading] = useState(() => !!tokenStore.access)
 
   // Restore the session on first load: a stored token may still be valid, and
   // /me is the authority on the current role (it may have changed server-side).

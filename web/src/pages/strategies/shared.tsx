@@ -30,7 +30,13 @@ import {
   pnlClass,
 } from '../../lib/format'
 import { formatResolution } from '../../lib/symbols'
+import { EMPTY_RISK_DRAFT, RISK_UPDATED_TYPE, activityText, parseRiskDraft } from '../../lib/risk'
+import type { RiskDraft, RiskDraftField } from '../../lib/risk'
+import { formatPnlMove } from '../../lib/positions'
+import type { PositionValues } from '../../lib/positions'
+import { activeUnderlyings } from '../../lib/strategyList'
 import { Badge, InlineError, Loading } from '../../components/ui'
+import { RiskRulesForm } from '../../components/RiskRulesForm'
 import { IconChevronDown, IconChevronRight, IconPlay, IconX } from '../../components/icons'
 import type {
   FnoUnderlying,
@@ -66,6 +72,32 @@ export function PnlValue({
 }) {
   return (
     <span className={`mono ${pnlClass(value)} ${className ?? ''}`}>{formatInrSigned(value)}</span>
+  )
+}
+
+/**
+ * "Value" cell of a position row: entry value, and for an open row a muted
+ * "now <current value>" second line.
+ */
+export function PositionValueCell({ values, open }: { values: PositionValues; open: boolean }) {
+  return (
+    <td className="r mono">
+      {values.entryValue != null ? formatInrWhole(values.entryValue) : <span className="muted">—</span>}
+      {open && values.currentValue != null && (
+        <span className="cell-sub">now {formatInrWhole(values.currentValue)}</span>
+      )}
+    </td>
+  )
+}
+
+/** "P&L" cell of a position row: signed rupees plus a muted "+6.2 pts · +0.7%" line. */
+export function PositionPnlCell({ pnl, values }: { pnl: number; values: PositionValues }) {
+  const move = formatPnlMove(values)
+  return (
+    <td className="r">
+      <PnlValue value={pnl} />
+      {move && <span className="cell-sub">{move}</span>}
+    </td>
   )
 }
 
@@ -193,19 +225,27 @@ export function StrategyCard({
   onStart: (strategy: StrategyListItem) => void
   /** Button text; the Live runner starts, the Backtesting module replays. */
   actionLabel?: string
-  /** A live run does not block a backtest of the same strategy. */
+  /**
+   * The action is not a live start (a backtest): keep `actionLabel` while the
+   * strategy runs instead of offering "another underlying".
+   */
   allowWhileActive?: boolean
 }) {
   const s = strategy
   const lots = Math.max(1, s.defaultLots || 1)
-  const blocked = s.isActive && !allowWhileActive
+  const on = activeUnderlyings(s)
+  // A live run never blocks the button: the same strategy may be started on a
+  // second underlying, and the launch dialog greys out the ones already taken.
+  const label = s.isActive && !allowWhileActive ? 'Start on another underlying…' : actionLabel
   return (
     <article className={`strategy-card ${s.isActive ? 'strategy-card--running' : ''}`}>
       <div className="strategy-card__head">
         <span className="strategy-card__name">{s.name}</span>
         <CategoryBadge category={s.category} />
         {s.isActive && (
-          <Badge tone="pos">running{s.underlying ? ` · ${s.underlying}` : ''}</Badge>
+          <Badge tone="pos">
+            running{on.length > 0 ? ` · ${on.join(', ')}` : ''}
+          </Badge>
         )}
       </div>
       <p className="strategy-card__desc" title={s.description || undefined}>
@@ -228,18 +268,15 @@ export function StrategyCard({
         </span>
         <button
           type="button"
-          className={`btn btn--sm ${blocked ? '' : 'btn--primary'}`}
-          disabled={blocked}
+          className="btn btn--sm btn--primary"
           onClick={() => onStart(s)}
-          title={blocked ? 'Already running — stop it first' : undefined}
+          title={
+            on.length > 0 && !allowWhileActive
+              ? `Already running on ${on.join(', ')} — pick a different underlying`
+              : undefined
+          }
         >
-          {blocked ? (
-            'Running'
-          ) : (
-            <>
-              <IconPlay style={{ width: 13, height: 13 }} /> {actionLabel}
-            </>
-          )}
+          <IconPlay style={{ width: 13, height: 13 }} /> {label}
         </button>
       </div>
     </article>
@@ -346,18 +383,23 @@ export function ParamGrid({ rows, onChange }: { rows: ParamRow[]; onChange: (row
 export function UnderlyingPicker({
   list,
   supported,
+  running,
   value,
   onChange,
 }: {
   list: FnoUnderlying[]
   supported: Set<string>
+  /** Upper-cased underlyings this strategy is already live on — not startable again. */
+  running?: ReadonlySet<string>
   value: string | null
   onChange: (underlying: string) => void
 }) {
   return (
     <div className="pick-list" role="radiogroup" aria-label="Underlying">
       {list.map((u) => {
-        const ok = supported.has(u.underlying.toUpperCase())
+        const key = u.underlying.toUpperCase()
+        const ok = supported.has(key)
+        const taken = ok && (running?.has(key) ?? false)
         const active = value === u.underlying
         return (
           <button
@@ -366,15 +408,25 @@ export function UnderlyingPicker({
             role="radio"
             aria-checked={active}
             className={`pick-row ${active ? 'is-active' : ''}`}
-            disabled={!ok}
+            disabled={!ok || taken}
             onClick={() => onChange(u.underlying)}
-            title={ok ? u.spotSymbol : 'Not supported by this strategy'}
+            title={
+              !ok
+                ? 'Not supported by this strategy'
+                : taken
+                  ? 'Already running on this underlying — stop that run first'
+                  : u.spotSymbol
+            }
           >
             <span className="pick-row__name">
               {u.underlying} <span className="faint" style={{ fontWeight: 500 }}>{u.exchange}</span>
             </span>
             <span className="pick-row__tag">
-              {ok ? `${formatNumber(u.optionContracts)} contracts` : 'not supported by this strategy'}
+              {!ok
+                ? 'not supported by this strategy'
+                : taken
+                  ? 'already running'
+                  : `${formatNumber(u.optionContracts)} contracts`}
             </span>
             <span className="pick-row__meta">
               <span>next expiry {formatDay(u.nextExpiry)}</span>
@@ -389,6 +441,33 @@ export function UnderlyingPicker({
         )
       })}
     </div>
+  )
+}
+
+/** Under the launch picker: why rows are greyed out, if any are. */
+function PickerHelp({
+  strategy,
+  anySupported,
+  anyStartable,
+}: {
+  strategy: StrategyListItem
+  anySupported: boolean
+  anyStartable: boolean
+}) {
+  const on = activeUnderlyings(strategy)
+  if (!anySupported) {
+    return (
+      <span className="field__help warn">None of the loaded underlyings is supported by this strategy.</span>
+    )
+  }
+  if (on.length === 0) return null
+  return (
+    <span className={`field__help ${anyStartable ? '' : 'warn'}`}>
+      {strategy.name} is already running on {on.join(', ')}
+      {anyStartable
+        ? ' — those rows are greyed out; pick another underlying.'
+        : ' — every supported underlying is taken; stop a run first.'}
+    </span>
   )
 }
 
@@ -459,10 +538,16 @@ export function useDialogChrome(onClose: () => void) {
 export function activityTone(type: string): 'pos' | 'neg' | 'warn' | 'neutral' | 'accent' {
   const t = type.toUpperCase()
   if (t === 'RUN_STOPPED' || t === 'SKIPPED' || t === 'SKIP') return 'warn'
+  if (t === RISK_UPDATED_TYPE) return 'accent'
   if (t.startsWith('OPEN') || t === 'BUY') return 'pos'
   if (t.startsWith('CLOSE') || t === 'SELL') return 'neg'
   if (t.startsWith('ADJUST')) return 'accent'
   return 'neutral'
+}
+
+/** Badge text of a signal type: RISK_UPDATED reads as "risk", the rest as-is. */
+function activityLabel(type: string): string {
+  return type.toUpperCase() === RISK_UPDATED_TYPE ? 'RISK' : type
 }
 
 /** Signals of a run, newest first. `showDate` for multi-day (backtest) runs. */
@@ -470,15 +555,21 @@ export function ActivityList({ items, showDate }: { items: LiveActivity[]; showD
   if (items.length === 0) return <p className="empty">No signals recorded for this run yet.</p>
   return (
     <ul className={`activity ${showDate ? 'activity--dated' : ''}`}>
-      {items.map((a, i) => (
-        <li key={`${a.atUtc}-${i}`} className="activity__item">
-          <span className="activity__time">{showDate ? formatDateTime(a.atUtc) : formatTime(a.atUtc)}</span>
-          <Badge tone={activityTone(a.type)}>{a.type}</Badge>
-          <span className="activity__text" title={a.groupId ? `${a.text} · group ${a.groupId}` : a.text}>
-            {a.text}
-          </span>
-        </li>
-      ))}
+      {items.map((a, i) => {
+        // RISK_UPDATED rows are rendered from their metadata ("Risk rules
+        // updated by admin: …"); the guard's leg/group CLOSE_GROUP reasons
+        // and every other row show the API's text as it came.
+        const text = activityText(a)
+        return (
+          <li key={`${a.atUtc}-${i}`} className="activity__item">
+            <span className="activity__time">{showDate ? formatDateTime(a.atUtc) : formatTime(a.atUtc)}</span>
+            <Badge tone={activityTone(a.type)}>{activityLabel(a.type)}</Badge>
+            <span className="activity__text" title={a.groupId ? `${text} · group ${a.groupId}` : text}>
+              {text}
+            </span>
+          </li>
+        )
+      })}
     </ul>
   )
 }
@@ -558,11 +649,19 @@ export function LaunchDialog({
     () => new Set(strategy.supportedUnderlyings.map((u) => u.toUpperCase())),
     [strategy.supportedUnderlyings],
   )
+  // Underlyings this strategy is already live on: the API answers 409 for
+  // them, so the rows are greyed out before the user gets that far.
+  const running = useMemo(
+    () => new Set(strategy.activeRuns.map((r) => r.underlying.toUpperCase())),
+    [strategy.activeRuns],
+  )
 
   const [underlying, setUnderlying] = useState<string | null>(null)
   const [lots, setLots] = useState(String(Math.max(1, strategy.defaultLots || 1)))
-  const [stopLoss, setStopLoss] = useState('')
-  const [target, setTarget] = useState('')
+  const [risk, setRisk] = useState<RiskDraft>(EMPTY_RISK_DRAFT)
+  const [riskField, setRiskField] = useState<RiskDraftField | null>(null)
+  // Bumped on every failed submit so the form re-focuses the same field on a repeat.
+  const [riskNonce, setRiskNonce] = useState(0)
   const [capital, setCapital] = useState(String(1_000_000))
   const [advanced, setAdvanced] = useState(false)
   const [params, setParams] = useState<ParamRow[]>(() =>
@@ -572,34 +671,45 @@ export function LaunchDialog({
 
   const list = underlyings.data ?? []
   const firstSupported = list.find((u) => supported.has(u.underlying.toUpperCase())) ?? null
+  const firstStartable =
+    list.find((u) => {
+      const key = u.underlying.toUpperCase()
+      return supported.has(key) && !running.has(key)
+    }) ?? null
   const chosen = list.find((u) => u.underlying === underlying) ?? null
+  const chosenTaken = chosen != null && running.has(chosen.underlying.toUpperCase())
 
-  // Default to the first supported underlying once the list is in.
+  // Default to the first supported underlying that is not already live once
+  // the list is in.
   useEffect(() => {
-    if (underlying == null && firstSupported) setUnderlying(firstSupported.underlying)
-  }, [underlying, firstSupported])
+    if (underlying == null && firstStartable) setUnderlying(firstStartable.underlying)
+  }, [underlying, firstStartable])
 
   const lotsNum = Number(lots)
   const units = chosen && Number.isInteger(lotsNum) && lotsNum > 0 ? lotsNum * chosen.lotSize : null
 
   function submit() {
     setValidation(null)
+    setRiskField(null)
     if (!chosen) {
       setValidation('Pick an underlying — the strategy must know what it trades.')
+      return
+    }
+    if (chosenTaken) {
+      setValidation(
+        `${strategy.name} is already running on ${chosen.underlying} — stop that run or pick another underlying.`,
+      )
       return
     }
     if (!Number.isInteger(lotsNum) || lotsNum < 1) {
       setValidation('Lots must be a whole number of at least 1.')
       return
     }
-    const sl = stopLoss.trim() === '' ? null : Number(stopLoss)
-    if (sl != null && !(sl > 0)) {
-      setValidation('Stop-loss must be a positive rupee amount, or left empty.')
-      return
-    }
-    const tg = target.trim() === '' ? null : Number(target)
-    if (tg != null && !(tg > 0)) {
-      setValidation('Target must be a positive rupee amount, or left empty.')
+    const parsed = parseRiskDraft(risk)
+    if (parsed.rules === null) {
+      setRiskField(parsed.field)
+      setRiskNonce((n) => n + 1)
+      setValidation(parsed.error)
       return
     }
     const cap = Number(capital)
@@ -607,11 +717,14 @@ export function LaunchDialog({
       setValidation('Capital must be a positive amount.')
       return
     }
+    // The legacy stopLoss/target fields mirror the overall level so an API
+    // build from before the three-level rules still applies them.
     const body: StartStrategyRequest = {
       underlying: chosen.underlying,
       lots: lotsNum,
-      stopLoss: sl,
-      target: tg,
+      stopLoss: parsed.rules.overall?.stopLoss ?? null,
+      target: parsed.rules.overall?.target ?? null,
+      risk: parsed.rules,
       parameters: paramsToObject(params),
       initialCapital: cap,
     }
@@ -643,7 +756,7 @@ export function LaunchDialog({
       </span>,
     )
 
-  const canStart = !!chosen && !start.isPending
+  const canStart = !!chosen && !chosenTaken && !start.isPending
 
   return (
     <div
@@ -694,14 +807,15 @@ export function LaunchDialog({
                 <UnderlyingPicker
                   list={list}
                   supported={supported}
+                  running={running}
                   value={underlying}
                   onChange={setUnderlying}
                 />
-                {!firstSupported && (
-                  <span className="field__help warn">
-                    None of the loaded underlyings is supported by this strategy.
-                  </span>
-                )}
+                <PickerHelp
+                  strategy={strategy}
+                  anySupported={!!firstSupported}
+                  anyStartable={!!firstStartable}
+                />
               </>
             ) : list.length === 0 ? (
               <div className="alert alert--warn" role="status">
@@ -715,14 +829,15 @@ export function LaunchDialog({
                 <UnderlyingPicker
                   list={list}
                   supported={supported}
+                  running={running}
                   value={underlying}
                   onChange={setUnderlying}
                 />
-                {!firstSupported && (
-                  <span className="field__help warn">
-                    None of the loaded underlyings is supported by this strategy.
-                  </span>
-                )}
+                <PickerHelp
+                  strategy={strategy}
+                  anySupported={!!firstSupported}
+                  anyStartable={!!firstStartable}
+                />
               </>
             )}
           </div>
@@ -748,40 +863,20 @@ export function LaunchDialog({
                   : 'whole lots of the chosen underlying'}
               </span>
             </div>
-            <div className="field">
-              <label className="field__label" htmlFor="launch-sl">
-                Stop-loss ₹
-              </label>
-              <input
-                id="launch-sl"
-                className="field__input"
-                type="number"
-                min={0}
-                step={100}
-                inputMode="decimal"
-                placeholder="none"
-                value={stopLoss}
-                onChange={(e) => setStopLoss(e.target.value)}
-              />
-              <span className="field__help">leave empty for none · applies to total P&L of this run</span>
-            </div>
-            <div className="field">
-              <label className="field__label" htmlFor="launch-target">
-                Target ₹
-              </label>
-              <input
-                id="launch-target"
-                className="field__input"
-                type="number"
-                min={0}
-                step={100}
-                inputMode="decimal"
-                placeholder="none"
-                value={target}
-                onChange={(e) => setTarget(e.target.value)}
-              />
-              <span className="field__help">leave empty for none · applies to total P&L of this run</span>
-            </div>
+          </div>
+
+          <div className="field">
+            <span className="field__label">Risk rules (all optional · editable while the run is live)</span>
+            <RiskRulesForm
+              value={risk}
+              onChange={(next) => {
+                setRisk(next)
+                setRiskField(null)
+              }}
+              idPrefix="launch-risk"
+              invalidField={riskField}
+              invalidNonce={riskNonce}
+            />
           </div>
 
           <div>

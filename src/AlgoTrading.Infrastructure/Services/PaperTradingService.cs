@@ -19,6 +19,12 @@ namespace AlgoTrading.Infrastructure.Services;
 /// the wall clock, skip the live risk gate (the runner enforces SL/target) and
 /// are never marked to market from LiveQuotesLatest: the runner keeps
 /// LastMarkPrice / UnrealizedPnl current through <see cref="ApplyMarksAsync"/>.
+///
+/// Every write to a run's positions (signal fills, guard closes, flatten,
+/// marks) is serialized per run through <see cref="SimulationRunLocks"/>:
+/// the writers come from different scopes (runner requests, the risk guard,
+/// the stop pipeline) and PaperPosition has no concurrency token.
+/// CLOSE_GROUP legs are reduce-only, as in the backtest ledger.
 /// </summary>
 public class PaperTradingService : IPaperTradingService
 {
@@ -61,6 +67,11 @@ public class PaperTradingService : IPaperTradingService
         CreateSimulationSignalRequest request,
         CancellationToken cancellationToken = default)
     {
+        // Serialized with the run's other position writers (guard closes, the
+        // stop's flatten): the status check, the lookups and the fills below
+        // must see one consistent state of the run's positions.
+        using var gate = await SimulationRunLocks.AcquireAsync(request.SimulationRunId, cancellationToken);
+
         var run = await _dbContext.SimulationRuns
             .FirstOrDefaultAsync(x => x.Id == request.SimulationRunId, cancellationToken);
 
@@ -99,13 +110,52 @@ public class PaperTradingService : IPaperTradingService
         if (request.Legs is not null && request.Legs.Count > 0)
         {
             DateTime? clock = replay ? timestampUtc : null;
+
+            // A CLOSE_GROUP (or any square-off / risk-rule signal) may only
+            // shrink or close what is open — exactly like the backtest ledger.
+            // The strategy builds its closing legs from its own state, so after
+            // the risk guard has already closed a leg the strategy's later
+            // CLOSE_GROUP for that leg must be skipped, not filled as a fresh
+            // reverse position.
+            bool reduceOnly = IsReduceOnlySignal(request.SignalType, signal.MetadataJson);
+
             foreach (var leg in request.Legs)
             {
-                await CreateOrderAndApplyPositionAsync(signal, leg, cancellationToken, bypassRiskCheck: replay, reduceOnly: false, atUtc: clock);
+                await CreateOrderAndApplyPositionAsync(signal, leg, cancellationToken, bypassRiskCheck: replay, reduceOnly: reduceOnly, atUtc: clock);
             }
         }
 
         return MapSignal(signal);
+    }
+
+    /// <summary>
+    /// True for signals whose legs only ever close positions: CLOSE_GROUP, and
+    /// anything whose metadata marks it as a square-off or a risk-rule action.
+    /// </summary>
+    internal static bool IsReduceOnlySignal(string? signalType, string? metadataJson)
+    {
+        if (string.Equals(signalType?.Trim(), "CLOSE_GROUP", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (string.IsNullOrWhiteSpace(metadataJson)) return false;
+
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(metadataJson);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return false;
+
+            if (doc.RootElement.TryGetProperty("square_off", out var squareOff)
+                && squareOff.ValueKind is System.Text.Json.JsonValueKind.True)
+                return true;
+
+            return doc.RootElement.TryGetProperty("risk_rule", out var riskRule)
+                   && riskRule.ValueKind == System.Text.Json.JsonValueKind.String
+                   && !string.IsNullOrWhiteSpace(riskRule.GetString());
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return false;
+        }
     }
 
     public async Task<IReadOnlyList<SimulationSignalResponse>> GetSignalsAsync(
@@ -146,6 +196,10 @@ public class PaperTradingService : IPaperTradingService
         long simulationRunId,
         CancellationToken cancellationToken = default)
     {
+        // The marks below are written back; under the run's gate so a leg
+        // closed concurrently is never re-marked as open by a stale snapshot.
+        using var gate = await SimulationRunLocks.AcquireAsync(simulationRunId, cancellationToken);
+
         var rows = await _dbContext.PaperPositions
             .Where(x => x.SimulationRunId == simulationRunId)
             .OrderByDescending(x => x.OpenedUtc)
@@ -456,14 +510,69 @@ public class PaperTradingService : IPaperTradingService
         if (run is null)
             throw new InvalidOperationException($"Simulation run {simulationRunId} was not found.");
 
+        // Snapshot and square-off under the run's gate: nothing else can fill
+        // or close a leg of this run between the two.
+        using var gate = await SimulationRunLocks.AcquireAsync(simulationRunId, cancellationToken);
+
         var openPositions = await _dbContext.PaperPositions
             .AsNoTracking()
             .Where(x => x.SimulationRunId == simulationRunId && x.Status == "Open")
             .OrderBy(x => x.Id)
             .ToListAsync(cancellationToken);
 
+        var metadata = System.Text.Json.JsonSerializer.Serialize(new { reason, system = true });
+        return await CloseOpenPositionsAsync(run, openPositions, metadata, cancellationToken);
+    }
+
+    public async Task<int> ClosePositionsAsync(
+        long simulationRunId,
+        IEnumerable<long> positionIds,
+        string reason,
+        string by,
+        CancellationToken cancellationToken = default)
+    {
+        var ids = positionIds.Distinct().ToList();
+        if (ids.Count == 0) return 0;
+
+        var run = await _dbContext.SimulationRuns
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == simulationRunId, cancellationToken);
+
+        if (run is null)
+            throw new InvalidOperationException($"Simulation run {simulationRunId} was not found.");
+
+        // Under the run's gate, so a runner's CLOSE_GROUP or another stopper
+        // cannot fill the same leg between this snapshot and the fills. Only
+        // what is still open: a leg another closer got to first is skipped
+        // here and again (reduce-only) at fill time.
+        using var gate = await SimulationRunLocks.AcquireAsync(simulationRunId, cancellationToken);
+
+        var openPositions = await _dbContext.PaperPositions
+            .AsNoTracking()
+            .Where(x => x.SimulationRunId == simulationRunId && x.Status == "Open" && ids.Contains(x.Id))
+            .OrderBy(x => x.Id)
+            .ToListAsync(cancellationToken);
+
+        var metadata = System.Text.Json.JsonSerializer.Serialize(new { reason, by, system = true });
+        return await CloseOpenPositionsAsync(run, openPositions, metadata, cancellationToken);
+    }
+
+    /// <summary>
+    /// The shared square-off path of <see cref="FlattenRunAsync"/> and
+    /// <see cref="ClosePositionsAsync"/>: one CLOSE_GROUP signal per group with
+    /// a reduce-only closing leg per open position at the latest live quote
+    /// (replays: the last stored mark), falling back to the last mark, then the
+    /// entry. Returns the number of positions actually closed.
+    /// </summary>
+    private async Task<int> CloseOpenPositionsAsync(
+        SimulationRun run,
+        List<PaperPosition> openPositions,
+        string metadata,
+        CancellationToken cancellationToken)
+    {
         if (openPositions.Count == 0) return 0;
 
+        long simulationRunId = run.Id;
         bool replay = IsReplay(run.Mode);
 
         // Live runs square off at the latest quote; replays at the last stored
@@ -477,7 +586,6 @@ public class PaperTradingService : IPaperTradingService
             ? openPositions.Max(x => x.UpdatedUtc)
             : DateTime.UtcNow;
 
-        var metadata = System.Text.Json.JsonSerializer.Serialize(new { reason, system = true });
         int closed = 0;
 
         // One CLOSE_GROUP signal per group, carrying a closing leg for each open
@@ -591,6 +699,8 @@ public class PaperTradingService : IPaperTradingService
             throw new InvalidOperationException($"Simulation run {simulationRunId} was not found.");
 
         if (request.Marks.Count == 0) return 0;
+
+        using var gate = await SimulationRunLocks.AcquireAsync(simulationRunId, cancellationToken);
 
         var prices = new Dictionary<string, decimal?>(StringComparer.Ordinal);
         foreach (var mark in request.Marks)
@@ -1095,9 +1205,18 @@ public class PaperTradingService : IPaperTradingService
     }
 
     private static decimal UsedCapitalOf(PaperPosition pos, IReadOnlyDictionary<string, LotSizeInfo> lotSizes)
-        => pos.Direction == "SHORT"
-            ? GetMarginHeuristic(pos.Symbol) * pos.Quantity
-            : Math.Abs(pos.AveragePrice * pos.Quantity * LotSizeOf(lotSizes, pos.Symbol));
+        => UsedCapitalOf(pos.Direction, pos.Symbol, pos.AveragePrice, pos.Quantity, LotSizeOf(lotSizes, pos.Symbol));
+
+    /// <summary>
+    /// Capital one open position ties up — the same formula the portfolio
+    /// summary's UsedCapital sums: premium paid (entry × lots × lot size) for a
+    /// LONG leg, a per-underlying margin heuristic per lot for a SHORT leg.
+    /// Shared with the position views so "capital used" reads the same everywhere.
+    /// </summary>
+    public static decimal UsedCapitalOf(string direction, string symbol, decimal averagePrice, int quantity, int lotSize)
+        => string.Equals(direction, "SHORT", StringComparison.OrdinalIgnoreCase)
+            ? GetMarginHeuristic(symbol) * quantity
+            : Math.Abs(averagePrice * quantity * Math.Max(1, lotSize));
 
     private static decimal CalculateRealizedPnl(string direction, decimal avgPrice, decimal exitPrice, int qty, int lotSize)
     {

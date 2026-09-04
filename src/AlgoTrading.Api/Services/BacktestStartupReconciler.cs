@@ -2,12 +2,13 @@
 namespace AlgoTrading.Api.Services;
 
 /// <summary>
-/// The backtest registry is in-memory, so every runner process is gone after
-/// an API restart while its SimulationRun row may still say Running. Such a
-/// row can never finish on its own (no runner will post /complete), keeps the
-/// UI polling and, without this, could neither be stopped nor deleted. At
-/// startup every OfflineReplay run left Running/Pending is squared off at its
-/// last mark and marked Failed with a clear LastError.
+/// The backtest registry is in-memory, so after an API restart a SimulationRun
+/// row may still say Running while its runner is either gone or still
+/// replaying on its own. At startup every OfflineReplay run left
+/// Running/Pending is reconciled: a runner whose stored pid is alive (and is
+/// the backtest_runner for that run) is ADOPTED into the registry — it keeps
+/// posting progress/marks/complete and can be stopped — and the rest are
+/// squared off at their last mark and marked Failed with a clear LastError.
 /// </summary>
 public sealed class BacktestStartupReconciler : IHostedService
 {
@@ -28,10 +29,14 @@ public sealed class BacktestStartupReconciler : IHostedService
         {
             using var scope = _scopeFactory.CreateScope();
             var control = scope.ServiceProvider.GetRequiredService<BacktestRunControl>();
-            int closed = await control.FailOrphanedRunsAsync(RestartReason, cancellationToken);
-            if (closed > 0)
+            var result = await control.ReconcileOrphanedRunsAsync(RestartReason, cancellationToken);
+            if (result.Adopted > 0)
             {
-                _logger.LogWarning("Closed {Count} orphaned backtest run(s) left Running by a previous API process.", closed);
+                _logger.LogWarning("Adopted {Count} backtest run(s) still replaying from a previous API process.", result.Adopted);
+            }
+            if (result.Closed > 0)
+            {
+                _logger.LogWarning("Closed {Count} orphaned backtest run(s) left Running by a previous API process.", result.Closed);
             }
         }
         catch (Exception ex)

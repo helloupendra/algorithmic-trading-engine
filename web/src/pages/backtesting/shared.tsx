@@ -139,6 +139,7 @@ export const RESERVED_PARAM_KEYS: ReadonlySet<string> = new Set([
   'lots',
   'stop_loss',
   'target',
+  'risk',
   'underlying',
   'resolution',
   'eod_square_off_ist',

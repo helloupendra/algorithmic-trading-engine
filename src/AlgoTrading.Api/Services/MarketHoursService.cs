@@ -1,7 +1,6 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using AlgoTrading.Api.Controllers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -19,14 +18,16 @@ namespace AlgoTrading.Api.Services
 
         private readonly ILogger<MarketHoursService> _logger;
         private readonly IServiceScopeFactory _scopeFactory;
+        private readonly IngestorSupervisor _ingestor;
         private readonly TimeZoneInfo _istZone;
         private bool _hasShutdownToday;
         private DateTime _lastShutdownDate;
 
-        public MarketHoursService(ILogger<MarketHoursService> logger, IServiceScopeFactory scopeFactory)
+        public MarketHoursService(ILogger<MarketHoursService> logger, IServiceScopeFactory scopeFactory, IngestorSupervisor ingestor)
         {
             _logger = logger;
             _scopeFactory = scopeFactory;
+            _ingestor = ingestor;
             try
             {
                 // Windows uses "India Standard Time", Linux/macOS uses "Asia/Kolkata"
@@ -66,8 +67,9 @@ namespace AlgoTrading.Api.Services
                         {
                             _logger.LogInformation("Market has closed (15:30 IST). Triggering auto-shutdown of heavy processes to save system load.");
 
-                            // Stop the data ingestor
-                            IngestorController.StopAll();
+                            // Stop the data ingestor (managed, or adopted after an API restart).
+                            var ingestorStop = await _ingestor.StopAsync(MarketClosedReason, stoppingToken);
+                            _logger.LogInformation("Market close: ingestor {Outcome}.", ingestorStop.Message);
 
                             // Stop all running strategies, squaring off their open positions.
                             using (var scope = _scopeFactory.CreateScope())

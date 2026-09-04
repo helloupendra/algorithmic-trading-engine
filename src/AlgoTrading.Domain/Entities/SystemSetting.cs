@@ -48,4 +48,20 @@ public static class SystemSettingKeys
     /// When "true", every order is rejected platform-wide.
     /// </summary>
     public const string KillSwitchActive = "risk.killswitch.active";
+
+    /// <summary>
+    /// OS process id of the live data ingestor (fyers_streamer). Written at
+    /// launch and confirmed by its heartbeat; deleted on a clean stop/exit.
+    /// </summary>
+    public const string IngestorPid = "ingestor.pid";
+
+    private const string StrategyRunPidPrefix = "strategyrun.";
+    private const string BacktestRunPidPrefix = "backtestrun.";
+    private const string PidSuffix = ".pid";
+
+    /// <summary>"strategyrun.&lt;runId&gt;.pid": the execution runner's process id for a LivePaper run.</summary>
+    public static string StrategyRunPid(long runId) => $"{StrategyRunPidPrefix}{runId}{PidSuffix}";
+
+    /// <summary>"backtestrun.&lt;runId&gt;.pid": the backtest runner's process id for an OfflineReplay run.</summary>
+    public static string BacktestRunPid(long runId) => $"{BacktestRunPidPrefix}{runId}{PidSuffix}";
 }

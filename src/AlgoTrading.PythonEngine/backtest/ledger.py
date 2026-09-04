@@ -11,7 +11,10 @@ Paper ledger for the replay. Mirrors the netting rules of the C# paper engine
     the position and books realized P&L, a remainder opens a reverse position
     (never for CLOSE_GROUP, which is reduce-only: legs with no open position
     or that would increase a position are ignored and counted);
-  - charges are a flat amount per lot per fill when `charges_per_lot` > 0.
+  - charges are a flat amount per lot per fill when `charges_per_lot` > 0;
+  - risk helpers for the engine: per-position entry/side/lots/avg and
+    `pnl_points` / `pnl_percent` (signed, profit positive), per-group P&L
+    (`group_pnl`) and reduce-only exits for chosen legs (`close_positions`).
 
 Pure Python, no I/O.
 """
@@ -19,7 +22,7 @@ Pure Python, no I/O.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from strategies.base_strategy import StrategySignal
 
@@ -59,6 +62,55 @@ class LedgerPosition:
         count = self.lots if lots is None else lots
         diff = (price - self.avg_price) if self.side == LONG else (self.avg_price - price)
         return diff * count * self.lot_size
+
+    @property
+    def entry_price(self) -> float:
+        """Average entry premium (alias of `avg_price`, the API's AveragePrice)."""
+        return self.avg_price
+
+    @property
+    def leg_side(self) -> str:
+        """The leg's order side as the strategy expressed it: BUY for LONG, SELL for SHORT."""
+        return "BUY" if self.side == LONG else "SELL"
+
+    @property
+    def entry_value(self) -> float:
+        """Entry premium x quantity (lots x lot size)."""
+        return abs(self.avg_price) * self.quantity
+
+    @property
+    def current_value(self) -> Optional[float]:
+        """Last mark x quantity; None until the position has been marked."""
+        return None if self.last_mark is None else abs(self.last_mark) * self.quantity
+
+    def pnl_points(self, mark: Optional[float] = None) -> Optional[float]:
+        """Signed premium points from entry (profit positive), see `pnl_points()`."""
+        return pnl_points(self, mark)
+
+    def pnl_percent(self, mark: Optional[float] = None) -> Optional[float]:
+        """Signed % of the entry premium (profit positive), see `pnl_percent()`."""
+        return pnl_percent(self, mark)
+
+
+def pnl_points(position: LedgerPosition, mark: Optional[float] = None) -> Optional[float]:
+    """
+    Premium points between `mark` (default: the position's last mark) and the
+    entry, signed so that profit is positive: LONG -> mark - entry, SHORT ->
+    entry - mark. None when no mark is known.
+    """
+    price = position.last_mark if mark is None else mark
+    if price is None:
+        return None
+    diff = float(price) - position.avg_price
+    return diff if position.side == LONG else -diff
+
+
+def pnl_percent(position: LedgerPosition, mark: Optional[float] = None) -> Optional[float]:
+    """`pnl_points` as a percentage of the entry premium; None without a mark or a zero entry."""
+    points = pnl_points(position, mark)
+    if points is None or position.avg_price == 0:
+        return None
+    return points / abs(position.avg_price) * 100.0
 
 
 @dataclass
@@ -134,6 +186,33 @@ class PaperLedger:
 
     def position(self, group_id: str, symbol: str) -> Optional[LedgerPosition]:
         return self._open.get((group_id, symbol))
+
+    def open_keys(self) -> List[Tuple[str, str]]:
+        """(group_id, symbol) of every open position, in opening order."""
+        return list(self._open.keys())
+
+    # --- groups -------------------------------------------------------------
+
+    def group_open_positions(self, group_id: str) -> List[LedgerPosition]:
+        """The open legs of one group."""
+        return [p for p in self._open.values() if p.group_id == group_id]
+
+    def group_positions(self, group_id: str) -> List[LedgerPosition]:
+        """Every position of one group, closed first, then open."""
+        return [p for p in self.closed if p.group_id == group_id] + self.group_open_positions(group_id)
+
+    def group_pnl(self, group_id: str) -> float:
+        """
+        The group's P&L as the group risk rule sees it: realized of every
+        position ever in the group + unrealized of its open legs (charges are
+        a run-level cost and stay out of the per-group number).
+        """
+        positions = self.group_positions(group_id)
+        return sum(p.realized for p in positions) + sum(p.unrealized for p in positions if p.status == "Open")
+
+    def group_pnls(self) -> Dict[str, float]:
+        """{group_id: group_pnl} for every group that still has an open leg."""
+        return {group_id: self.group_pnl(group_id) for group_id in self.open_groups()}
 
     def realized_pnl(self) -> float:
         return sum(p.realized for p in self.closed) + sum(p.realized for p in self._open.values())
@@ -303,16 +382,29 @@ class PaperLedger:
                 marks[pos.symbol] = pos.last_mark
         return marks
 
-    def flatten_all(self, price_lookup: Callable[[str], Optional[float]], t: str, reason: str,
-                    strategy_name: str = "") -> List[StrategySignal]:
+    def close_positions(self, keys: Iterable[Tuple[str, str]], price_lookup: Callable[[str], Optional[float]],
+                        t: str, reason: str, strategy_name: str = "",
+                        metadata: Optional[Dict[str, Any]] = None) -> List[StrategySignal]:
         """
-        One CLOSE_GROUP signal per open group, legs priced by `price_lookup`
-        (falling back to the position's last mark, then its entry) so an exit
-        is never dropped for want of a price. The signals are NOT applied;
-        feed them through `apply` like any other signal.
+        Reduce-only exits for the open positions named by `keys`
+        ((group_id, symbol) pairs; unknown or already-closed keys are skipped,
+        duplicates collapse): one CLOSE_GROUP signal per group, each leg
+        priced by `price_lookup` and falling back to the position's last
+        mark, then its entry, so an exit is never dropped for want of a
+        price. `metadata` is merged into every signal's metadata next to
+        `group_id`. The signals are NOT applied; feed them through `apply`
+        like any other signal.
         """
         by_group: Dict[str, List[LedgerPosition]] = {}
-        for pos in self._open.values():
+        seen: set = set()
+        for key in keys:
+            key = (str(key[0]), str(key[1]))
+            if key in seen:
+                continue
+            seen.add(key)
+            pos = self._open.get(key)
+            if pos is None:
+                continue
             by_group.setdefault(pos.group_id, []).append(pos)
 
         signals: List[StrategySignal] = []
@@ -332,15 +424,26 @@ class PaperLedger:
                     "price": float(price),
                     "price_source": source,
                 })
+            meta: Dict[str, Any] = {"group_id": group_id}
+            meta.update(metadata or {})
             signals.append(StrategySignal(
                 strategy_name=strategy_name,
                 signal_type="CLOSE_GROUP",
                 timestamp_utc=t,
                 reason=reason,
                 legs=legs,
-                metadata={"group_id": group_id, "square_off": True},
+                metadata=meta,
             ))
         return signals
+
+    def flatten_all(self, price_lookup: Callable[[str], Optional[float]], t: str, reason: str,
+                    strategy_name: str = "") -> List[StrategySignal]:
+        """
+        One CLOSE_GROUP signal per open group (see `close_positions`), tagged
+        `square_off`. The signals are NOT applied.
+        """
+        return self.close_positions(self.open_keys(), price_lookup, t, reason, strategy_name,
+                                    metadata={"square_off": True})
 
     # --- reporting ------------------------------------------------------------
 

@@ -21,8 +21,14 @@ public class StrategyLiveViewResponse
     public int? Lots { get; set; }
     public int? LotSize { get; set; }
     public string? LotSizeSource { get; set; }
+    /// <summary>Overall rupee stop-loss (the legacy shorthand for <see cref="Risk"/>.overall.stopLoss).</summary>
     public decimal? StopLoss { get; set; }
+
+    /// <summary>Overall rupee target (the legacy shorthand for <see cref="Risk"/>.overall.target).</summary>
     public decimal? Target { get; set; }
+
+    /// <summary>The run's risk rules at all three levels; every level present, unset values null.</summary>
+    public RiskRulesDto Risk { get; set; } = RiskRulesDto.Empty();
 
     public string? StartedBy { get; set; }
     public DateTime? StartedUtc { get; set; }
@@ -34,6 +40,9 @@ public class StrategyLiveViewResponse
     /// <summary>Open first, then newest first.</summary>
     public List<LivePositionResponse> Positions { get; set; } = new();
 
+    /// <summary>One row per position group (OPEN_GROUP), groups with open legs first.</summary>
+    public List<LiveGroupResponse> Groups { get; set; } = new();
+
     /// <summary>Newest first, at most 60 rows.</summary>
     public List<LiveActivityResponse> Activity { get; set; } = new();
 
@@ -41,12 +50,30 @@ public class StrategyLiveViewResponse
     public StrategyRunnerInfo? Runner { get; set; }
 }
 
-/// <summary>Realized + unrealized = total, in rupees.</summary>
+/// <summary>Realized + unrealized = total, in rupees, plus the capital the open legs tie up.</summary>
 public class StrategyPnlSummary
 {
     public decimal Realized { get; set; }
     public decimal Unrealized { get; set; }
     public decimal Total { get; set; }
+
+    /// <summary>Portfolio UsedCapital: premium paid on open BUY legs + margin heuristic on open SELL legs.</summary>
+    public decimal CapitalUsed { get; set; }
+
+    /// <summary>Σ entryValue of the open BUY legs (premium paid).</summary>
+    public decimal PremiumOutlay { get; set; }
+
+    /// <summary>Σ entryValue of the open SELL legs (premium received).</summary>
+    public decimal PremiumReceived { get; set; }
+}
+
+/// <summary>P&amp;L of one position group: realized of all its legs + unrealized of its open legs.</summary>
+public class LiveGroupResponse
+{
+    public string GroupId { get; set; } = string.Empty;
+    public decimal Pnl { get; set; }
+    public int OpenLegs { get; set; }
+    public int ClosedLegs { get; set; }
 }
 
 /// <summary>Process details of a live runner.</summary>
@@ -54,6 +81,9 @@ public class StrategyRunnerInfo
 {
     public int ProcessId { get; set; }
     public DateTime? LastLogUtc { get; set; }
+
+    /// <summary>True when the runner was adopted after an API restart (its output is not captured).</summary>
+    public bool Adopted { get; set; }
 }
 
 /// <summary>
@@ -85,6 +115,21 @@ public class LivePositionResponse
     /// <summary>Unrealized while open, realized once closed.</summary>
     public decimal Pnl { get; set; }
 
+    /// <summary>
+    /// entry × quantity (lots × lot size). For a closed row, the quantity that
+    /// was opened; null when that cannot be reconstructed from the run's orders.
+    /// </summary>
+    public decimal? EntryValue { get; set; }
+
+    /// <summary>ltp × quantity for open rows; null once closed or when no mark is known.</summary>
+    public decimal? CurrentValue { get; set; }
+
+    /// <summary>Signed premium points from entry (sign = profit): BUY ltp − entry, SELL entry − ltp.</summary>
+    public decimal? PnlPoints { get; set; }
+
+    /// <summary>pnlPoints / entry × 100.</summary>
+    public decimal? PnlPercent { get; set; }
+
     public DateTime OpenedUtc { get; set; }
     public DateTime? ClosedUtc { get; set; }
 }
@@ -111,4 +156,10 @@ public class LiveActivityResponse
 
     public string Text { get; set; } = string.Empty;
     public string GroupId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The signal's raw metadata for rows the client renders itself
+    /// (RISK_UPDATED carries <c>{ risk, by }</c>); null for every other row.
+    /// </summary>
+    public string? MetadataJson { get; set; }
 }

@@ -21,10 +21,26 @@ import { formatInrWhole } from '../../lib/format'
 import { Badge, InlineError, Panel, QueryBoundary } from '../../components/ui'
 import type { SimulationRun, StrategyListItem } from '../../lib/types'
 
+// `underlying` is what the API derives from the spot symbol (UnderlyingCatalog)
+// and what the registry keys a live run by — the same strategy may not run
+// twice on one underlying, so the picker needs it to grey out taken rows.
 const UNDERLYINGS = [
-  { symbol: 'NSE:NIFTYBANK-INDEX', label: 'Bank Nifty' },
-  { symbol: 'NSE:NIFTY50-INDEX', label: 'Nifty 50' },
+  { symbol: 'NSE:NIFTYBANK-INDEX', label: 'Bank Nifty', underlying: 'BANKNIFTY' },
+  { symbol: 'NSE:NIFTY50-INDEX', label: 'Nifty 50', underlying: 'NIFTY' },
 ]
+
+function underlyingFor(symbol: string): string | null {
+  return UNDERLYINGS.find((u) => u.symbol === symbol)?.underlying ?? null
+}
+
+/** Underlyings the strategy is live on right now, upper-cased like the registry keys them. */
+function takenUnderlyings(strategy: StrategyListItem | null): ReadonlySet<string> {
+  return new Set((strategy?.activeRuns ?? []).map((r) => r.underlying.toUpperCase()))
+}
+
+function alreadyRunningMessage(name: string, underlying: string): string {
+  return `${name} is already running on ${underlying} — stop that run or pick another underlying.`
+}
 
 interface ParamRow {
   key: string
@@ -71,9 +87,29 @@ export function DeployPage() {
   const [capital, setCapital] = useState(1_000_000)
   const [params, setParams] = useState<ParamRow[]>([])
 
-  // Re-seed the parameter grid whenever a different template is chosen.
+  // The card click captured one snapshot of the strategy; read its live runs
+  // from the polled list so a run started elsewhere greys its underlying out
+  // (and a stopped one frees it) while the wizard is open.
+  const current = useMemo(
+    () => (selected ? (strategies.data?.find((s) => s.id === selected.id) ?? selected) : null),
+    [strategies.data, selected],
+  )
+  const taken = useMemo(() => takenUnderlyings(current), [current])
+  const chosenUnderlying = underlyingFor(symbol)
+  const chosenTaken = chosenUnderlying != null && taken.has(chosenUnderlying)
+  const allTaken = UNDERLYINGS.every((u) => taken.has(u.underlying))
+
+  // Re-seed the parameter grid whenever a different template is chosen, and
+  // move the underlying off one the strategy is already running on.
   useEffect(() => {
-    if (selected) setParams(parseDefaults(selected.defaultParametersJson))
+    if (!selected) return
+    setParams(parseDefaults(selected.defaultParametersJson))
+    const busy = takenUnderlyings(selected)
+    setSymbol((chosen) => {
+      const chosenUnderlyingNow = underlyingFor(chosen)
+      if (chosenUnderlyingNow != null && !busy.has(chosenUnderlyingNow)) return chosen
+      return UNDERLYINGS.find((u) => !busy.has(u.underlying))?.symbol ?? chosen
+    })
   }, [selected])
 
   const parametersJson = useMemo(
@@ -88,16 +124,24 @@ export function DeployPage() {
 
   const deploy = useMutation({
     mutationFn: async () => {
+      const strategy = current!
+      // Refuse BEFORE creating the run: the deploy call would answer 409 for a
+      // taken underlying and the freshly created Pending row would be left
+      // behind in the run history with no runner and no way to close it.
+      const wanted = underlyingFor(symbol)
+      if (wanted != null && takenUnderlyings(strategy).has(wanted)) {
+        throw new Error(alreadyRunningMessage(strategy.name, wanted))
+      }
       const run = await api.post<SimulationRun>('/api/Simulator/runs', {
         userId: user!.id,
         mode: 'LivePaper',
         symbol,
         resolution: '1m',
-        strategyName: selected!.name,
+        strategyName: strategy.name,
         parametersJson,
         initialCapital: capital,
       })
-      await api.post(`/api/Strategy/${selected!.id}/deploy`, { runId: run.id })
+      await api.post(`/api/Strategy/${strategy.id}/deploy`, { runId: run.id })
       return run
     },
     onSuccess: (run) => navigate(`/trader/runs/${run.id}?deployed=1`),
@@ -134,12 +178,20 @@ export function DeployPage() {
                   type="button"
                   className={`deploy-card ${selected?.id === s.id ? 'is-selected' : ''}`}
                   onClick={() => setSelected(s)}
-                  disabled={s.isActive}
-                  title={s.isActive ? 'Already running — stop it first' : undefined}
+                  title={
+                    s.activeRuns.length > 0
+                      ? `Already running on ${s.activeRuns.map((r) => r.underlying).join(', ')} — deploy on a different underlying`
+                      : undefined
+                  }
                 >
                   <b className="mono">{s.name}</b>
                   <span>{s.description || 'No description'}</span>
-                  {s.isActive && <Badge tone="pos">running</Badge>}
+                  {s.isActive && (
+                    <Badge tone="pos">
+                      running
+                      {s.activeRuns.length > 0 ? ` · ${s.activeRuns.map((r) => r.underlying).join(', ')}` : ''}
+                    </Badge>
+                  )}
                 </button>
               ))}
             </div>
@@ -153,9 +205,9 @@ export function DeployPage() {
         )}
       </Panel>
 
-      {selected && (
+      {selected && current && (
         <>
-          <Panel title={`2 · Configure ${selected.name}`}>
+          <Panel title={`2 · Configure ${current.name}`}>
             <div className="form-row" style={{ marginBottom: 18 }}>
               <div className="field">
                 <label className="field__label" htmlFor="dp-underlying">Underlying</label>
@@ -164,11 +216,27 @@ export function DeployPage() {
                   className="field__input"
                   value={symbol}
                   onChange={(e) => setSymbol(e.target.value)}
+                  aria-invalid={chosenTaken || undefined}
                 >
-                  {UNDERLYINGS.map((u) => (
-                    <option key={u.symbol} value={u.symbol}>{u.label}</option>
-                  ))}
+                  {UNDERLYINGS.map((u) => {
+                    const busy = taken.has(u.underlying)
+                    return (
+                      <option key={u.symbol} value={u.symbol} disabled={busy}>
+                        {busy ? `${u.label} — already running` : u.label}
+                      </option>
+                    )
+                  })}
                 </select>
+                {allTaken ? (
+                  <p className="muted small-note" style={{ marginBottom: 0 }}>
+                    {current.name} is already running on every underlying offered here — stop a
+                    run first.
+                  </p>
+                ) : chosenTaken && chosenUnderlying ? (
+                  <p className="muted small-note" style={{ marginBottom: 0 }}>
+                    {alreadyRunningMessage(current.name, chosenUnderlying)}
+                  </p>
+                ) : null}
               </div>
               <div className="field">
                 <label className="field__label" htmlFor="dp-capital">
@@ -242,7 +310,7 @@ export function DeployPage() {
 
           <Panel title="3 · Review & deploy">
             <div className="kv-grid" style={{ marginBottom: 16 }}>
-              <div><span className="muted">Strategy</span><b className="mono">{selected.name}</b></div>
+              <div><span className="muted">Strategy</span><b className="mono">{current.name}</b></div>
               <div><span className="muted">Underlying</span><b className="mono">{symbol.replace('NSE:', '')}</b></div>
               <div><span className="muted">Capital</span><b>{formatInrWhole(capital)}</b></div>
               <div><span className="muted">Mode</span><b>Paper (LivePaper)</b></div>
@@ -258,7 +326,12 @@ export function DeployPage() {
               <button
                 type="button"
                 className="btn btn--primary"
-                disabled={deploy.isPending}
+                disabled={deploy.isPending || chosenTaken}
+                title={
+                  chosenTaken && chosenUnderlying
+                    ? alreadyRunningMessage(current.name, chosenUnderlying)
+                    : undefined
+                }
                 onClick={() => deploy.mutate()}
               >
                 {deploy.isPending ? 'Deploying…' : 'Deploy on paper'}

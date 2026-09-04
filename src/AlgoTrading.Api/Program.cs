@@ -66,13 +66,13 @@ builder.Services.AddSignalR();
 builder.Services.AddInfrastructure(builder.Configuration);
 
 // Strategy runner plumbing: where Python lives, the catalog it reports, the
-// registry of launched processes, the stop path and the stop-loss/target guard.
+// registry of launched processes and the stop path.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.PythonEngineLocator>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.StrategyCatalogService>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.StrategyProcessRegistry>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.StrategyRunControl>();
-builder.Services.AddHostedService<AlgoTrading.Api.Services.StrategyRiskGuardService>();
-builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketHoursService>();
+// The live data ingestor process: launch, durable pid, adoption after a restart.
+builder.Services.AddSingleton<AlgoTrading.Api.Services.IngestorSupervisor>();
 
 // Backtesting: the backtest runner registry and its stop path, the coverage /
 // backfill service and the view builders shared with the live runner.
@@ -81,8 +81,21 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.BacktestRunControl>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.BacktestDataService>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.PositionViewBuilder>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.BacktestRunViewBuilder>();
-// Runs left Running by a previous API process have no runner behind them any more.
+
+// Hosted services start sequentially in registration order, and an
+// IHostedService's StartAsync runs to completion before the next one starts.
+// The reconcilers therefore come FIRST: runs left Running by a previous API
+// process are adopted (by stored pid) or closed before the risk guard and the
+// market-close service take their first look at the registry. Registered the
+// other way round, a restart after 15:30 IST would let MarketHoursService
+// sweep an empty registry, mark today's shutdown done and leave the runners
+// adopted a moment later trading all evening.
 builder.Services.AddHostedService<AlgoTrading.Api.Services.BacktestStartupReconciler>();
+builder.Services.AddHostedService<AlgoTrading.Api.Services.LiveRunStartupReconciler>();
+// The three-level risk guard (leg → group → overall) over the registry.
+builder.Services.AddHostedService<AlgoTrading.Api.Services.StrategyRiskGuardService>();
+// Auto-shutdown of the ingestor and every running strategy at market close.
+builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketHoursService>();
 
 
 builder.Services.Configure<JwtOptions>(

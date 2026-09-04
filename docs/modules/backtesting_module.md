@@ -42,7 +42,7 @@ A backtest is persisted as a `SimulationRun` with mode `OfflineReplay`, and its 
 `POST /api/Backtest/runs` validates the request, creates the run (IST dates → UTC bounds, `parametersJson` = strategy defaults ⊕ overrides ⊕ `{lots, stop_loss, target, underlying, resolution, eod_square_off_ist, charges_per_lot}`) and spawns `tools/backtest_runner.py`. The runner:
 1. Logs a `[CONFIG]` line and warms the strategy up on index candles before the range (same as live).
 2. For each driver bar inside 09:15–15:30 IST: resolves expiry/ATM/contracts as of that date, calls `on_bar`, converts bare BUY/SELL signals into one-leg ATM option groups, prices legs at the option candle close of that bar (last known close the same day as fallback), applies the ledger, and posts the signal with its historical timestamp.
-3. After each bar: marks open positions, checks total P&L against stop-loss / target (the backtest ends when either trips, like the live risk guard), appends an equity point, and posts progress every two seconds.
+3. After each bar: marks open positions and applies the run's risk rules exactly as the live guard does — per-leg (premium points / % of entry, closes that leg), per-group (₹, closes that group), then overall (₹, ends the backtest) — appends an equity point, and posts progress every two seconds.
 4. Squares off at the EOD time and at the end of the range, then posts the equity curve and a summary (`BACKTEST_SUMMARY` signal: bars, sessions, trades, skipped entries, EOD square-offs, stop reason, data notes).
 
 ### 3. Reading results

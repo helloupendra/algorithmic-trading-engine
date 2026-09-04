@@ -262,7 +262,9 @@ public class LiveDataService : ILiveDataService
         if (row is null)
             return null;
 
-        return MapIngestorStatus(row);
+        var status = MapIngestorStatus(row);
+        status.ProcessId = await ReadIngestorPidAsync(cancellationToken);
+        return status;
     }
 
     public async Task<IReadOnlyList<IngestorStatusResponse>> GetAllIngestorStatusesAsync(
@@ -273,7 +275,26 @@ public class LiveDataService : ILiveDataService
             .OrderBy(x => x.SourceName)
             .ToListAsync(cancellationToken);
 
-        return rows.Select(MapIngestorStatus).ToList();
+        var statuses = rows.Select(MapIngestorStatus).ToList();
+        if (statuses.Count > 0)
+        {
+            // One ingestor process today; the stored pid applies to every source it reports.
+            var pid = await ReadIngestorPidAsync(cancellationToken);
+            foreach (var s in statuses) s.ProcessId = pid;
+        }
+        return statuses;
+    }
+
+    /// <summary>The ingestor pid recorded by its launch / heartbeat (system_settings), or null.</summary>
+    private async Task<int?> ReadIngestorPidAsync(CancellationToken cancellationToken)
+    {
+        var raw = await _dbContext.SystemSettings
+            .AsNoTracking()
+            .Where(x => x.Key == SystemSettingKeys.IngestorPid)
+            .Select(x => x.Value)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return int.TryParse(raw, out var pid) && pid > 0 ? pid : null;
     }
 
     public async Task<IReadOnlyList<StaleQuoteResponse>> GetStaleQuotesAsync(

@@ -48,6 +48,19 @@ public sealed record RunningBacktest(
     /// <summary>Captured at attach time so it stays readable after the process exits.</summary>
     public int ProcessId { get; internal set; }
 
+    /// <summary>
+    /// True when the process was found alive after an API restart and taken
+    /// over by pid: no stdout/stderr pipes, so its output is not captured.
+    /// </summary>
+    public bool Adopted { get; init; }
+
+    // The pid the runner itself last reported through /progress, so the
+    // durable record is written once, not on every progress post.
+    private int _confirmedPid;
+
+    /// <summary>True when <paramref name="pid"/> is newly confirmed (was not the last confirmed value).</summary>
+    internal bool ConfirmPid(int pid) => Interlocked.Exchange(ref _confirmedPid, pid) != pid;
+
     public DateTime? LastLogUtc { get; internal set; }
 
     /// <summary>Last stderr line, for the "Runner exited" reason.</summary>
@@ -97,6 +110,9 @@ public sealed record RunningBacktest(
 /// </summary>
 public sealed class BacktestProcessRegistry
 {
+    /// <summary>The single log line an adopted entry starts with.</summary>
+    public const string AdoptedLogLine = "adopted after API restart — output not captured";
+
     private readonly ConcurrentDictionary<long, RunningBacktest> _running = new();
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<BacktestProcessRegistry> _logger;
@@ -172,6 +188,15 @@ public sealed class BacktestProcessRegistry
             _logger.LogWarning(ex, "Could not read process id for backtest run {RunId}.", entry.RunId);
         }
 
+        if (entry.Adopted)
+        {
+            entry.ConfirmPid(entry.ProcessId);
+            Append(entry, $"{DateTime.UtcNow:HH:mm:ss} | {AdoptedLogLine} (pid {entry.ProcessId}, run {entry.RunId}, {entry.StrategyName} on {entry.Underlying} @{entry.Resolution} x{entry.Lots})");
+            entry.UpdateProgress(0m, 0, 0, null, 0, "Adopted after API restart; awaiting the runner's next progress report");
+            entry.ExitMonitor = Task.Run(() => MonitorExitAsync(entry));
+            return true;
+        }
+
         process.OutputDataReceived += (_, e) =>
         {
             if (e.Data is null) return;
@@ -241,6 +266,23 @@ public sealed class BacktestProcessRegistry
         return true;
     }
 
+    /// <summary>
+    /// The runner reported its own pid. True when it is newly confirmed for
+    /// this entry (the caller then persists it); false when already known or
+    /// the run is not in the registry.
+    /// </summary>
+    public bool ConfirmPid(long runId, int pid)
+    {
+        if (pid <= 0 || !_running.TryGetValue(runId, out var entry)) return false;
+        if (entry.ProcessId > 0 && entry.ProcessId != pid)
+        {
+            _logger.LogWarning("Backtest run {RunId}: runner reported pid {Reported} but the registry launched pid {Launched}; keeping the launched pid.",
+                runId, pid, entry.ProcessId);
+            return false;
+        }
+        return entry.ConfirmPid(pid);
+    }
+
     private static void Append(RunningBacktest entry, string line)
     {
         lock (entry.LogLock)
@@ -266,7 +308,18 @@ public sealed class BacktestProcessRegistry
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Exit monitor for backtest run {RunId} failed.", entry.RunId);
+            if (entry.Adopted)
+            {
+                // A non-child process reports no exit code on Unix. Treat it as a
+                // clean exit: an open row then reads "exited before reporting
+                // completion" (Failed), a completed one keeps its verdict.
+                _logger.LogDebug(ex, "Exit code of adopted backtest run {RunId} is not available; assuming 0.", entry.RunId);
+                exitCode = 0;
+            }
+            else
+            {
+                _logger.LogWarning(ex, "Exit monitor for backtest run {RunId} failed.", entry.RunId);
+            }
         }
 
         Append(entry, $"{DateTime.UtcNow:HH:mm:ss} | runner exited with code {exitCode}");

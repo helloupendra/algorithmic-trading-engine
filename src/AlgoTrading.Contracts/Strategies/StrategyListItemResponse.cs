@@ -42,7 +42,18 @@ public class StrategyListItemResponse
 
     // ---- run state (from the process registry) ----
 
+    /// <summary>Every active run of this strategy (one per underlying), oldest first.</summary>
+    public List<StrategyActiveRunResponse> ActiveRuns { get; set; } = new();
+
+    /// <summary>Runs of this strategy that ended since the API started, newest first (at most 5).</summary>
+    public List<StrategyLastExit> RecentExits { get; set; } = new();
+
+    /// <summary>True when at least one run is active (activeRuns is non-empty).</summary>
     public bool IsActive { get; set; }
+
+    // The legacy single-run fields below describe the FIRST (oldest) active run,
+    // so callers that predate multi-instance keep working.
+
     public string? StartedBy { get; set; }
     public DateTime? StartedUtc { get; set; }
     public long? RunId { get; set; }
@@ -53,6 +64,6 @@ public class StrategyListItemResponse
     public decimal? Target { get; set; }
     public int? ProcessId { get; set; }
 
-    /// <summary>Why the most recent run of this strategy ended, when it has ended since the API started.</summary>
+    /// <summary>The newest entry of <see cref="RecentExits"/>, kept for callers that predate multi-instance.</summary>
     public StrategyLastExit? LastExit { get; set; }
 }

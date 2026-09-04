@@ -51,35 +51,85 @@ function changePct(quote: LiveQuote | undefined): number | null {
 
 /* ------------------------------------------------------------ header bits */
 
-function FeedControlButton() {
+/**
+ * How the console relates to the feed process, from GET /api/Ingestor/status
+ * plus the heartbeats:
+ *  - managed:  spawned by this API instance — Stop works, output is captured;
+ *  - adopted:  a stored pid is alive but was not launched by this API
+ *              instance (an earlier instance spawned it, or it was started
+ *              from a terminal and reported its pid through its heartbeat) —
+ *              Stop works (the API kills that pid), output is not captured;
+ *  - external: no pid known but a heartbeat is healthy — a streamer build
+ *              that does not report its pid; it can only be stopped from
+ *              where it was started;
+ *  - stopped:  nothing alive.
+ * An API build from before supervision hardening answers with `isRunning`
+ * only, which reads as managed (true) or external/stopped (false).
+ */
+function useFeedProcess() {
   const process = useIngestorProcessStatus()
+  const ingestors = useIngestorStatuses()
+  const healthyCount = (ingestors.data ?? []).filter((f) => f.isHealthy).length
+  const status = process.data
+  const pidKnown = status?.isRunning ?? false
+  const source = status?.source ?? (pidKnown ? 'managed' : 'none')
+  const external = !pidKnown && source === 'none' && healthyCount > 0
+  const kind: 'managed' | 'adopted' | 'external' | 'stopped' = pidKnown
+    ? source === 'adopted'
+      ? 'adopted'
+      : 'managed'
+    : external
+      ? 'external'
+      : 'stopped'
+  return {
+    kind,
+    /** Stop is possible: the API holds a handle or a live pid. */
+    canStop: pidKnown,
+    isRunning: pidKnown || healthyCount > 0,
+    processId: status?.processId ?? null,
+    healthyCount,
+    loaded: process.data !== undefined,
+  }
+}
+
+function FeedControlButton() {
+  const feed = useFeedProcess()
   const session = useMarketSession()
   const start = useStartIngestor()
   const stop = useStopIngestor()
-  const ingestors = useIngestorStatuses()
-
-  const healthyCount = (ingestors.data ?? []).filter((f) => f.isHealthy).length
-  const isExternal = !process.data?.isRunning && healthyCount > 0
-  const isRunning = process.data?.isRunning || healthyCount > 0
 
   function confirmStop() {
+    const pid = feed.processId != null ? ` (pid ${feed.processId})` : ''
+    const adopted =
+      feed.kind === 'adopted'
+        ? ` This feed was not launched by this API instance${pid} — an earlier instance or a terminal started it; the API will kill that process.`
+        : ''
     const warning = session.data?.isMarketOpen
-      ? 'Market is OPEN. Stopping the ingestor halts tick capture for every running strategy. Stop anyway?'
-      : 'Stop the live ingestor process?'
+      ? `Market is OPEN. Stopping the ingestor halts tick capture for every running strategy.${adopted} Stop anyway?`
+      : `Stop the live ingestor process${pid}?${adopted}`
     if (window.confirm(warning)) stop.mutate()
   }
+
+  const stopTitle =
+    feed.kind === 'external'
+      ? 'The feed is running outside this console (no pid known) — stop it from the terminal that started it.'
+      : feed.kind === 'adopted'
+        ? `Not launched by this API instance${feed.processId != null ? ` (pid ${feed.processId})` : ''} — running outside this console, known by its pid; Stop kills that process.`
+        : undefined
 
   return (
     <div className="toolbar">
       {start.isError && <InlineError error={start.error} />}
-      {isRunning ? (
-        <button 
-          className="btn btn--danger" 
-          disabled={stop.isPending || isExternal} 
+      {stop.isError && <InlineError error={stop.error} />}
+      {feed.isRunning ? (
+        <button
+          className="btn btn--danger"
+          disabled={stop.isPending || !feed.canStop}
           onClick={confirmStop}
-          title={isExternal ? "Cannot stop an externally running feed from the console. Please stop it from your terminal." : undefined}
+          title={stopTitle}
         >
-          <IconStop style={{ width: 14, height: 14 }} /> Stop live feed
+          <IconStop style={{ width: 14, height: 14 }} />
+          {stop.isPending ? 'Stopping…' : feed.kind === 'adopted' ? 'Stop live feed (adopted)' : 'Stop live feed'}
         </button>
       ) : (
         <button
@@ -437,19 +487,54 @@ function LiveWatchlistPanel() {
 
 /* ------------------------------------------------------------- diagnostics */
 
+/** One line on how the console holds the feed process, for the diagnostics panel. */
+function processSummary(feed: ReturnType<typeof useFeedProcess>): { tone: 'pos' | 'warn' | 'neutral' | 'accent'; text: string } {
+  const pid = feed.processId != null ? ` · pid ${feed.processId}` : ''
+  switch (feed.kind) {
+    case 'managed':
+      return { tone: 'pos', text: `process managed by this API instance${pid} · output captured below` }
+    case 'adopted':
+      return {
+        tone: 'accent',
+        text: `not launched by this API instance — known by its pid${pid}, output not captured · Stop kills that process`,
+      }
+    case 'external':
+      return {
+        tone: 'warn',
+        text: 'heartbeat healthy but no pid known — the feed was started outside this console',
+      }
+    default:
+      return { tone: 'neutral', text: 'no feed process alive' }
+  }
+}
+
 function DiagnosticsPanel() {
   const [open, setOpen] = useState(false)
   const statuses = useIngestorStatuses()
-  const process = useIngestorProcessStatus()
+  const feed = useFeedProcess()
   const logs = useIngestorLogs(open)
 
   const feeds = statuses.data ?? []
   // Defensive: an API build without /api/Ingestor/logs answers with the SPA
   // fallback HTML (a string) — never crash on it.
   const logLines = Array.isArray(logs.data) ? logs.data : []
-  
-  const healthyCount = feeds.filter(f => f.isHealthy).length
-  const isExternal = !process.data?.isRunning && healthyCount > 0
+  const summary = processSummary(feed)
+
+  let emptyOutput: string
+  switch (feed.kind) {
+    case 'adopted':
+      emptyOutput =
+        'The ingestor was not launched by this API instance (an earlier instance or a terminal started it), so its output is not captured here. ' +
+        `It keeps writing to logs/engine/ingestor-${feed.processId ?? '<pid>'}.log on the API host.`
+      break
+    case 'external':
+      emptyOutput =
+        'The ingestor is running outside this console — its output goes to the terminal that started it.'
+      break
+    default:
+      emptyOutput =
+        'No process output yet — appears after the feed is started from this console (requires the updated API).'
+  }
 
   return (
     <Panel
@@ -460,6 +545,12 @@ function DiagnosticsPanel() {
         </button>
       }
     >
+      {feed.loaded && (
+        <p className="inline-form" style={{ margin: '0 0 8px', gap: 8, fontSize: 12.5 }}>
+          <Badge tone={summary.tone}>{feed.kind}</Badge>
+          <span className="muted">{summary.text}</span>
+        </p>
+      )}
       <div className="chip-row">
         {feeds.map((s) => (
           <span key={s.sourceName} className="inline-form" style={{ gap: 6 }}>
@@ -491,9 +582,7 @@ function DiagnosticsPanel() {
             </div>
             <div className={`console__body ${logLines.length === 0 ? 'faint' : ''}`}>
               {logLines.length === 0
-                ? isExternal 
-                  ? 'The ingestor is currently running via an external terminal. Logs are being written directly to that terminal.'
-                  : 'No process output yet — appears after the feed is started from this console (requires the updated API).'
+                ? emptyOutput
                 : logLines.map((line, i) => <div key={i}>{line}</div>)}
             </div>
           </div>
