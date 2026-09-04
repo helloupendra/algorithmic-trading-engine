@@ -190,10 +190,40 @@ class PlatformApiClient:
         resp.raise_for_status()
         return resp.json()
 
+    def get_all_latest_quotes(self) -> list[dict[str, Any]]:
+        """
+        Every symbol the ingestor has a quote for. Carries `openInterest` when
+        the feed provides it (it is null for symbols the broker sends without
+        OI), so callers must treat a missing value as "unknown", not zero.
+        """
+        resp = self.http.get(
+            f"{self.base_url}/api/LiveData/latest/all",
+            verify=self.verify_ssl,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def get_recent_bars(self, symbol: str, resolution: str = "1m", take: int = 1) -> list[dict[str, Any]]:
         resp = self.http.get(
             f"{self.base_url}/api/LiveData/bars",
             params={"symbol": symbol, "resolution": resolution, "take": take},
+            verify=self.verify_ssl,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_recent_ticks(self, symbol: str, take: int = 1) -> list[dict[str, Any]]:
+        """
+        Raw ticks, newest first. Unlike the latest-quote row these carry the
+        top-of-book fields (`bidPrice`, `askPrice`, `bidSize`, `askSize`), which
+        the broker sends for options but not for index symbols — they arrive as
+        null there.
+        """
+        resp = self.http.get(
+            f"{self.base_url}/api/LiveData/ticks",
+            params={"symbol": symbol, "take": take},
             verify=self.verify_ssl,
             timeout=30,
         )
