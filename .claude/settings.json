@@ -74,7 +74,9 @@
       "Bash(grep -n \"className=\\\\\"lp\\\\|className={\\\\`lp\\\\|\\\\\"lp\\\\b\" src/pages/LandingPage.tsx)",
       "Bash(grep -nE \"^\\\\s*\\(ul|li|\\\\.activity\\)[ ,{]\" src/styles.css)",
       "Bash(python3 -c \"import PIL; print\\('PIL', PIL.__version__\\)\")",
-      "Bash(npm ls *)"
+      "Bash(npm ls *)",
+      "Bash(awk 'NR>1{print \"  api pid\",$2}')",
+      "Bash(awk '{print \"  ingestor pid\",$1}')"
     ]
   }
 }
