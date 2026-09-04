@@ -27,6 +27,8 @@ import { LiveAlertsPage } from './pages/admin/LiveAlertsPage'
 import { StrategiesOverviewPage } from './pages/strategies/StrategiesOverviewPage'
 import { LiveRunnerPage } from './pages/strategies/LiveRunnerPage'
 import { StrategyLibraryPage } from './pages/strategies/StrategyLibraryPage'
+import { RunHistoryPage } from './pages/strategies/RunHistoryPage'
+import { LiveRunDetailPage } from './pages/strategies/LiveRunDetailPage'
 import { BacktestOverviewPage } from './pages/backtesting/BacktestOverviewPage'
 import { NewBacktestPage } from './pages/backtesting/NewBacktestPage'
 import { BacktestRunsPage } from './pages/backtesting/BacktestRunsPage'
@@ -87,6 +89,12 @@ export default function App() {
                 <Route path="/trader/strategies" element={<StrategiesPage />} />
                 <Route path="/trader/deploy" element={<DeployPage />} />
                 <Route path="/trader/runs/:id" element={<RunDetailPage />} />
+                {/* Live run history — own runs only (the API enforces it). */}
+                <Route path="/trader/strategies/history" element={<RunHistoryPage mode="trader" />} />
+                <Route
+                  path="/trader/strategies/runs/:runId"
+                  element={<LiveRunDetailPage basePath="/trader/strategies" />}
+                />
 
                 {/* Admin area — Admin role only. */}
                 <Route element={<RequireRole role="Admin" />}>
@@ -104,6 +112,11 @@ export default function App() {
                   <Route path="/admin/risk" element={<RiskPage />} />
                   <Route path="/admin/strategies" element={<StrategiesOverviewPage />} />
                   <Route path="/admin/strategies/live" element={<LiveRunnerPage />} />
+                  <Route path="/admin/strategies/history" element={<RunHistoryPage mode="admin" />} />
+                  <Route
+                    path="/admin/strategies/runs/:runId"
+                    element={<LiveRunDetailPage basePath="/admin/strategies" />}
+                  />
                   <Route path="/admin/strategies/library" element={<StrategyLibraryPage />} />
 
                   {/* Backtesting module (v2). */}

@@ -12,7 +12,8 @@
  *  market is closed these queries simply keep returning the stored snapshot.
  */
 
-import { keepPreviousData, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import type { InfiniteData } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr'
 import { api, API_BASE_URL } from './api'
@@ -34,11 +35,14 @@ import type {
   KillSwitchState,
   LiveBar,
   LiveQuote,
+  LiveRunSummary,
+  LiveRunUserSummary,
   LiveTick,
   LiveWatchlistItem,
   MarketSessionInfo,
   OptionChainItem,
   PaperOrder,
+  PaperOrderRow,
   PaperPosition,
   PerformanceMetrics,
   SimulationPortfolio,
@@ -528,6 +532,108 @@ export function useStrategyLogs(runId: number, live: boolean) {
     queryKey: ['strategy', 'logs', runId],
     queryFn: () => api.get<string[]>(`/api/Strategy/runs/${runId}/logs?take=200`),
     refetchInterval: live ? POLL_RUNNER_LOGS : false,
+  })
+}
+
+// ---------- Live run history ----------
+
+const POLL_RUN_HISTORY_ACTIVE = 10_000
+
+/** Query of GET /api/Strategy/runs; every field optional, dates are IST days ("yyyy-MM-dd"). */
+export interface LiveRunHistoryFilters {
+  /** Admin only — a trader always gets their own runs whatever is passed. */
+  userId?: number | null
+  strategyId?: number | null
+  underlying?: string | null
+  /** Running (includes Stopping) | Stopped | Failed | Completed | Pending; omitted or "any" = every status. */
+  status?: string | null
+  fromDate?: string | null
+  toDate?: string | null
+  /** Default 100, max 500. */
+  take?: number
+  skip?: number
+}
+
+function runHistoryQuery(filters: LiveRunHistoryFilters): string {
+  const q = new URLSearchParams()
+  if (filters.userId != null) q.set('userId', String(filters.userId))
+  if (filters.strategyId != null) q.set('strategyId', String(filters.strategyId))
+  if (filters.underlying) q.set('underlying', filters.underlying)
+  if (filters.status && filters.status !== 'any') q.set('status', filters.status)
+  if (filters.fromDate) q.set('fromDate', filters.fromDate)
+  if (filters.toDate) q.set('toDate', filters.toDate)
+  if (filters.take != null) q.set('take', String(filters.take))
+  if (filters.skip != null && filters.skip > 0) q.set('skip', String(filters.skip))
+  const s = q.toString()
+  return s ? `?${s}` : ''
+}
+
+/**
+ * Every live run matching the filters, newest first. A finished run never
+ * changes, so the list is polled (every 10 s) only while at least one row is
+ * still active — its status, P&L and duration are what move.
+ */
+export function useLiveRunHistory(filters: LiveRunHistoryFilters, enabled = true) {
+  const query = runHistoryQuery(filters)
+  return useQuery({
+    queryKey: ['strategy', 'history', query],
+    queryFn: () => api.get<LiveRunSummary[]>(`/api/Strategy/runs${query}`),
+    enabled,
+    // Changing a filter keeps the last list on screen instead of blanking the
+    // table while the new one loads.
+    placeholderData: keepPreviousData,
+    refetchInterval: (q: { state: { data?: LiveRunSummary[] } }) =>
+      q.state.data?.some((r) => r.isActive) ? POLL_RUN_HISTORY_ACTIVE : false,
+  })
+}
+
+/** Rows one history request carries at most (the API's cap). */
+export const RUN_HISTORY_PAGE = 500
+
+/**
+ * The same list, paged: page N is `skip = N × take`, newest first. The Run
+ * history page uses it so a range holding more runs than one request may
+ * carry (the API caps `take` at 500) still reaches its oldest runs through
+ * "Load older" — `hasNextPage` stays true while the last page came back full.
+ * Polls like `useLiveRunHistory` (every page) while any loaded row is active.
+ */
+export function useLiveRunHistoryPages(filters: Omit<LiveRunHistoryFilters, 'skip'>, enabled = true) {
+  const take = Math.min(Math.max(filters.take ?? RUN_HISTORY_PAGE, 1), RUN_HISTORY_PAGE)
+  const base: LiveRunHistoryFilters = { ...filters, take }
+  const key = runHistoryQuery(base)
+  return useInfiniteQuery({
+    queryKey: ['strategy', 'history', 'pages', key],
+    queryFn: ({ pageParam }) =>
+      api.get<LiveRunSummary[]>(`/api/Strategy/runs${runHistoryQuery({ ...base, skip: pageParam })}`),
+    initialPageParam: 0,
+    // Every earlier page was full (that is the only way a next page is asked
+    // for), so the next offset is simply pages × take.
+    getNextPageParam: (lastPage: LiveRunSummary[], pages: LiveRunSummary[][]) =>
+      lastPage.length >= take ? pages.length * take : undefined,
+    enabled,
+    placeholderData: keepPreviousData,
+    refetchInterval: (q: { state: { data?: InfiniteData<LiveRunSummary[]> } }) =>
+      q.state.data?.pages.some((page) => page.some((r) => r.isActive)) ? POLL_RUN_HISTORY_ACTIVE : false,
+  })
+}
+
+/** Per-user rollup (runs, active, net P&L, last run) — every user for an admin, own row for a trader. */
+export function useLiveRunUserSummary(enabled = true) {
+  return useQuery({
+    queryKey: ['strategy', 'history', 'summary'],
+    queryFn: () => api.get<LiveRunUserSummary[]>('/api/Strategy/runs/summary'),
+    enabled,
+    refetchInterval: POLL_SLOW,
+  })
+}
+
+/** Paper orders of one live run, newest first (fetched once; `live` re-polls while the run is active). */
+export function useLiveRunOrders(runId: number, live = false, enabled = true) {
+  return useQuery({
+    queryKey: ['strategy', 'orders', runId],
+    queryFn: () => api.get<PaperOrderRow[]>(`/api/Strategy/runs/${runId}/orders`),
+    enabled,
+    refetchInterval: live ? POLL_LIVE_VIEW : false,
   })
 }
 

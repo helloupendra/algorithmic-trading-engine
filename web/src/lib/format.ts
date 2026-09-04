@@ -89,6 +89,18 @@ export function formatTime(iso: string | null | undefined): string {
   return d.toLocaleTimeString('en-IN', { timeZone: MARKET_TIME_ZONE, hour12: false })
 }
 
+/** "1h 12m", "38m 05s", "12s" — a run's length from its seconds. */
+export function formatDuration(seconds: number | null | undefined): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return '—'
+  const s = Math.floor(seconds)
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = s % 60
+  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`
+  if (m > 0) return `${m}m ${String(sec).padStart(2, '0')}s`
+  return `${sec}s`
+}
+
 /** "3m ago", "11d ago" — for freshness chips. */
 export function formatAge(iso: string | null | undefined): string {
   if (!iso) return 'never'

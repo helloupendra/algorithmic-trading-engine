@@ -96,8 +96,9 @@ const TRADER_NAV = [
   { to: '/trader/option-chain', label: 'Option chain', icon: IconLayers },
   { to: '/trader/positions', label: 'Positions', icon: IconDatabase },
   { to: '/trader/orders', label: 'Orders', icon: IconClock },
-  { to: '/trader/strategies', label: 'Strategies', icon: IconFlask },
+  { to: '/trader/strategies', label: 'Strategies', icon: IconFlask, end: true },
   { to: '/trader/deploy', label: 'Deploy', icon: IconPlay },
+  { to: '/trader/strategies/history', label: 'My runs', icon: IconClock },
 ]
 
 function NavItem({
@@ -194,6 +195,8 @@ const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]>
   ['/admin/data/instruments', 'Data', 'Instruments & F&O'],
   ['/admin/data', 'Data', 'Overview'],
   ['/admin/strategies/live', 'Strategies', 'Live runner'],
+  ['/admin/strategies/history', 'Strategies', 'Run history'],
+  ['/admin/strategies/runs/', 'Strategies', 'Run'],
   ['/admin/strategies/library', 'Strategies', 'Library'],
   ['/admin/strategies', 'Strategies', 'Overview'],
   ['/admin/backtesting/runs/', 'Backtesting', 'Run'],
@@ -207,6 +210,8 @@ const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]>
   ['/admin/broker', 'Modules', 'Broker'],
   ['/admin/system', 'Modules', 'System'],
   ['/admin', null, 'Overview'],
+  ['/trader/strategies/history', 'Trading', 'My runs'],
+  ['/trader/strategies/runs/', 'Trading', 'Live run'],
   ['/trader', null, 'Trading'],
 ]
 
