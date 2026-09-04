@@ -50,6 +50,12 @@ namespace AlgoTrading.Contracts.LiveData
         /// Computed property indicating if the feed is active and healthy based on heartbeats.
         /// </summary>
         public bool IsHealthy { get; set; }
+
+        /// <summary>
+        /// The ingestor's OS process id as last recorded (heartbeat or launch),
+        /// or null when unknown.
+        /// </summary>
+        public int? ProcessId { get; set; }
     }
 
 }

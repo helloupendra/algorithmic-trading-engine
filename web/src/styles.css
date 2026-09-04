@@ -1537,6 +1537,158 @@ a.pill:hover { border-color: var(--line-strong); }
 /* Position rows: closed legs stay in the table, dimmed, with qty 0. */
 .pos-row--closed { opacity: 0.55; }
 
+/* Muted second line under a table cell's value ("now ₹12,300", "+6.2 pts · +0.7%"). */
+.cell-sub {
+  display: block;
+  margin-top: 1px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Risk rules form: one row per level (overall / group / leg), inputs on the right. */
+.risk-form {
+  display: grid;
+  gap: 8px;
+}
+
+.risk-form__row {
+  display: grid;
+  grid-template-columns: minmax(120px, 170px) minmax(0, 1fr);
+  gap: 6px 14px;
+  align-items: start;
+  padding: 8px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg1);
+}
+
+@media (max-width: 640px) {
+  .risk-form__row { grid-template-columns: 1fr; }
+}
+
+.risk-form__level {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.risk-form__name {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.risk-form__help {
+  font-size: 11.5px;
+  color: var(--text-3);
+  line-height: 1.4;
+}
+
+.risk-form__fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.risk-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.risk-form__field label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.risk-form__field .field__input {
+  padding: 5px 9px;
+  font-size: 12.5px;
+  width: 100%;
+}
+
+.risk-form__field .field__input[aria-invalid='true'] {
+  border-color: var(--neg);
+  box-shadow: 0 0 0 3px var(--neg-soft);
+}
+
+/* Risk section of a run card: chips + overall progress + inline editor. */
+.risk-section {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg1);
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+
+.risk-section__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.risk-section__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.risk-section__title svg { width: 13px; height: 13px; }
+
+.risk-section__chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.risk-section__actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.risk-section__bars {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.risk-section__bars .metric { background: var(--surface); }
+
+.risk-section__editor {
+  margin-top: 10px;
+  display: grid;
+  gap: 10px;
+}
+
+.risk-section__editor-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .waiting {
   display: flex;
   align-items: center;

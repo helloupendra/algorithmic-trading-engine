@@ -28,6 +28,7 @@ import type {
   DerivativeExpiry,
   EquitySnapshot,
   FnoUnderlying,
+  IngestorProcessStatus,
   IngestorStatus,
   Instrument,
   KillSwitchState,
@@ -49,8 +50,12 @@ import type {
   StartStrategyRequest,
   StartStrategyResponse,
   StopStrategyResponse,
+  StrategyActiveRun,
+  StrategyLastExit,
   StrategyListItem,
   StrategyLiveView,
+  UpdateRunRiskRequest,
+  UpdateRunRiskResponse,
 } from './types'
 import type { MeResponse } from './api'
 
@@ -156,10 +161,14 @@ export function useIngestorStatuses() {
   })
 }
 
+/**
+ * Whether a feed process is alive and how the API knows it (managed by this
+ * instance, adopted from a persisted pid after a restart, or no pid known).
+ */
 export function useIngestorProcessStatus() {
   return useQuery({
     queryKey: ['ingestor', 'process'],
-    queryFn: () => api.get<{ isRunning: boolean }>('/api/Ingestor/status'),
+    queryFn: () => api.get<IngestorProcessStatus>('/api/Ingestor/status'),
     refetchInterval: POLL_SLOW,
   })
 }
@@ -358,6 +367,34 @@ const POLL_LIVE_VIEW = 2_000
 const POLL_RUNNER_LOGS = 3_000
 
 /**
+ * An API build from before multi-instance answers with the flat single-run
+ * fields only. The run list is rebuilt from them so the Live runner still
+ * shows that one run (and its last exit) against such a backend.
+ */
+function legacyActiveRuns(s: Partial<StrategyListItem>): StrategyActiveRun[] {
+  if (Array.isArray(s.activeRuns)) return s.activeRuns
+  if (!s.isActive || s.runId == null || !s.underlying) return []
+  return [
+    {
+      runId: s.runId,
+      underlying: s.underlying,
+      spotSymbol: s.spotSymbol ?? '',
+      lots: s.lots ?? 0,
+      stopLoss: s.stopLoss ?? null,
+      target: s.target ?? null,
+      startedBy: s.startedBy ?? '',
+      startedUtc: s.startedUtc ?? '',
+      processId: s.processId ?? 0,
+    },
+  ]
+}
+
+function legacyRecentExits(s: Partial<StrategyListItem>): StrategyLastExit[] {
+  if (Array.isArray(s.recentExits)) return s.recentExits
+  return s.lastExit ? [s.lastExit] : []
+}
+
+/**
  * An API build older than the catalog rewrite answers without the array
  * fields; default them so a stale backend degrades to empty chips instead of
  * crashing every strategy page on `.length`.
@@ -365,6 +402,8 @@ const POLL_RUNNER_LOGS = 3_000
 function normalizeStrategy(s: Partial<StrategyListItem> & { id: number; name: string }): StrategyListItem {
   return {
     ...s,
+    activeRuns: legacyActiveRuns(s),
+    recentExits: legacyRecentExits(s),
     description: s.description ?? '',
     category: s.category ?? 'Other',
     supportedUnderlyings: s.supportedUnderlyings ?? [],
@@ -413,56 +452,82 @@ export function useStartStrategy() {
   })
 }
 
-/** Stop = square off every open position at the last mark and kill the runner. */
+/**
+ * Stop ONE run: square off every open position at the last mark and kill that
+ * runner. Run-scoped on purpose — the same strategy may be live on other
+ * underlyings, and those must keep trading.
+ */
 export function useStopStrategy() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, flatten = true }: { id: number; flatten?: boolean }) =>
-      api.post<StopStrategyResponse>(`/api/Strategy/${id}/stop`, { flatten }),
+    mutationFn: ({ runId, flatten = true }: { runId: number; flatten?: boolean }) =>
+      api.post<StopStrategyResponse>(`/api/Strategy/runs/${runId}/stop`, { flatten }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['strategies'] })
       qc.invalidateQueries({ queryKey: ['strategy', 'live'] })
+      // The retained snapshot carries the runner's final lines.
+      qc.invalidateQueries({ queryKey: ['strategy', 'logs'] })
     },
   })
 }
 
-function liveViewQuery(id: number, enabled: boolean) {
+/**
+ * Replace the risk rules of ONE running run. The guard picks the new rules up
+ * on its next sweep and the run's activity gains a RISK_UPDATED row, so the
+ * run's live view and the strategy list (which carries the overall
+ * shorthand) are both refreshed.
+ */
+export function useUpdateRunRisk() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ runId, risk }: { runId: number; risk: UpdateRunRiskRequest }) =>
+      api.patch<UpdateRunRiskResponse>(`/api/Strategy/runs/${runId}/risk`, risk),
+    onSuccess: (_data, { runId }) => {
+      qc.invalidateQueries({ queryKey: ['strategy', 'live', runId] })
+      qc.invalidateQueries({ queryKey: ['strategies'] })
+    },
+  })
+}
+
+function liveViewQuery(runId: number, enabled: boolean) {
   return {
-    queryKey: ['strategy', 'live', id] as const,
-    queryFn: () => api.get<StrategyLiveView>(`/api/Strategy/${id}/live`),
+    queryKey: ['strategy', 'live', runId] as const,
+    queryFn: () => api.get<StrategyLiveView>(`/api/Strategy/runs/${runId}/live`),
     enabled,
     // A finished run's view cannot change, so a stopped card is fetched once and
-    // then left alone (the server marks-to-market on every call). Polling
-    // resumes when the strategy is started again: the start mutation and the
-    // running-list watcher in LiveRunnerPage invalidate the key.
+    // then left alone (the server marks-to-market on every call). A run id is
+    // never reused, so a restart is simply a new key that polls from scratch.
     refetchInterval: (query: { state: { data?: StrategyLiveView } }) =>
       query.state.data && !query.state.data.isActive ? false : POLL_LIVE_VIEW,
   }
 }
 
-/** Position-based live view of one strategy's current (or last) run. */
-export function useStrategyLive(id: number, enabled: boolean) {
-  return useQuery(liveViewQuery(id, enabled))
+/** Position-based live view of one run (works for finished runs too). */
+export function useStrategyLive(runId: number, enabled: boolean) {
+  return useQuery(liveViewQuery(runId, enabled))
 }
 
 /**
- * Live views for a set of strategies at once (page-level totals). Shares the
- * cache key with useStrategyLive, so a RunCard and the stat row never double
- * fetch the same run.
+ * Live views for a set of runs at once (page-level totals). Shares the cache
+ * key with useStrategyLive, so a RunCard and the stat row never double fetch
+ * the same run.
  */
-export function useStrategyLives(ids: number[]) {
+export function useStrategyLives(runIds: number[]) {
   return useQueries({
-    queries: ids.map((id) => liveViewQuery(id, true)),
+    queries: runIds.map((runId) => liveViewQuery(runId, true)),
   })
 }
 
-/** Runner stdout/stderr ring buffer; empty when the process is not running. */
-export function useStrategyLogs(id: number, enabled: boolean) {
+/**
+ * Runner stdout/stderr ring buffer of one run. The API keeps a snapshot of the
+ * last lines after the process exits (bounded to the newest finished runs), so
+ * a stopped run is fetched once — only a live run keeps polling.
+ */
+export function useStrategyLogs(runId: number, live: boolean) {
   return useQuery({
-    queryKey: ['strategy', 'logs', id],
-    queryFn: () => api.get<string[]>(`/api/Strategy/${id}/logs?take=200`),
-    enabled,
-    refetchInterval: POLL_RUNNER_LOGS,
+    queryKey: ['strategy', 'logs', runId],
+    queryFn: () => api.get<string[]>(`/api/Strategy/runs/${runId}/logs?take=200`),
+    refetchInterval: live ? POLL_RUNNER_LOGS : false,
   })
 }
 
@@ -893,10 +958,11 @@ export function useStopAlerter() {
   })
 }
 
-export function useStrategySignals(strategyId: number, isRunning: boolean) {
+/** The runner's UI signal ring of one run (run-scoped, like logs and live). */
+export function useStrategySignals(runId: number, isRunning: boolean) {
   return useQuery({
-    queryKey: ['strategy', 'signals', strategyId],
-    queryFn: () => api.get<any[]>(`/api/Strategy/${strategyId}/signals`),
+    queryKey: ['strategy', 'signals', runId],
+    queryFn: () => api.get<any[]>(`/api/Strategy/runs/${runId}/signals`),
     enabled: isRunning,
     refetchInterval: 1000,
   })

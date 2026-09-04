@@ -12,6 +12,12 @@ import os
 # Add the parent directory to sys.path so that absolute-style imports work
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
+# Before anything prints: when the API that spawned us dies, stdout becomes a
+# closed pipe and a plain print() would raise BrokenPipeError inside every
+# thread. From then on output goes to logs/engine/ingestor-<pid>.log instead.
+from core.safe_output import install_safe_stdio
+install_safe_stdio(name="ingestor")
+
 import json
 import time
 import threading
@@ -40,6 +46,7 @@ from core.config import (
     FYERS_LOG_PATH,
 )
 
+from core.heartbeat import run_forever
 from messaging.redis_publisher import build_publisher_from_env, normalize_tick
 
 publisher = build_publisher_from_env()
@@ -208,7 +215,9 @@ def send_heartbeat():
             if last_watchlist_refresh_utc else None
         ),
         "currentSubscribedSymbols": sorted(list(subscribed_symbols)),
-        "lastError": last_error_message
+        "lastError": last_error_message,
+        # Lets the API find (and stop) this process again after it restarts.
+        "processId": os.getpid(),
     }
 
     url = f"{API_BASE_URL}/api/LiveData/heartbeat"
@@ -461,23 +470,38 @@ def redis_subscriber_loop():
         traceback.print_exc()
 
 
-def heartbeat_loop():
+def heartbeat_step():
+    """One heartbeat: renew the singleton lock, then report status to the API."""
+    publisher.client.expire("fyers:live:ingestor:lock", 15)
+    send_heartbeat()
+
+
+def _record_heartbeat_error(ex: BaseException) -> None:
+    global last_error_message
+    last_error_message = str(ex)
+    try:
+        traceback.print_exc()
+    except BaseException:
+        pass
+
+
+def heartbeat_loop(max_iterations=None):
     """
     Send heartbeat periodically so .NET API can show health/status.
+
+    This thread must never die: an unreachable API is retried on the next
+    beat, and a closed stdout (the API restarted) cannot kill it because
+    both the step and its error reporting are guarded — see core.heartbeat.
+    `max_iterations` bounds the loop for tests.
     """
-    global last_error_message
-
-    while True:
-        try:
-            # Renew the singleton lock to keep this instance alive
-            publisher.client.expire("fyers:live:ingestor:lock", 15)
-            send_heartbeat()
-        except Exception as ex:
-            last_error_message = str(ex)
-            print("ERROR IN HEARTBEAT LOOP:", ex)
-            traceback.print_exc()
-
-        time.sleep(HEARTBEAT_SECONDS)
+    return run_forever(
+        heartbeat_step,
+        HEARTBEAT_SECONDS,
+        log=print,
+        on_error=_record_heartbeat_error,
+        max_iterations=max_iterations,
+        label="heartbeat loop",
+    )
 
 
 def onopen():

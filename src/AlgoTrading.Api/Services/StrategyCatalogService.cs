@@ -256,6 +256,8 @@ public sealed class StrategyCatalogService
         psi.ArgumentList.Add(script);
         psi.Environment["PYTHONPATH"] = engineDir;
         psi.Environment["PYTHONUNBUFFERED"] = "1";
+        // UTF-8 on the pipe regardless of the host locale (Windows defaults to cp1252).
+        psi.Environment["PYTHONIOENCODING"] = "utf-8";
 
         using var process = new Process { StartInfo = psi };
         if (!process.Start())

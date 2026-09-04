@@ -32,7 +32,11 @@ declare global {
 
 let threeLoader: Promise<boolean> | null = null
 
-/** Injects the Three.js script once; resolves false when it cannot load. */
+/**
+ * Injects the Three.js script once; resolves false when it cannot load. A failed
+ * load is not memoised: the dead <script> is removed and the loader reset so the
+ * next mount of the page retries (the CDN may be reachable by then).
+ */
 function loadThree(): Promise<boolean> {
   if (window.THREE) return Promise.resolve(true)
   if (threeLoader) return threeLoader
@@ -41,8 +45,16 @@ function loadThree(): Promise<boolean> {
     script.src = THREE_CDN
     script.async = true
     script.crossOrigin = 'anonymous'
-    script.onload = () => resolve(!!window.THREE)
-    script.onerror = () => resolve(false)
+    const fail = () => {
+      script.remove()
+      threeLoader = null
+      resolve(false)
+    }
+    script.onload = () => {
+      if (window.THREE) resolve(true)
+      else fail()
+    }
+    script.onerror = fail
     document.head.appendChild(script)
   })
   return threeLoader
@@ -185,6 +197,8 @@ function buildScene(canvas: HTMLCanvasElement, reduceMotion: boolean, onLost: ()
   const target = { x: 0, y: 0 }
   let rafId = 0
   let disposed = false
+  // False while the hero is scrolled out of view; the loop parks until it returns.
+  let visible = true
   const start = performance.now()
 
   const restingY = () => (canvas.clientWidth < 900 ? -1.6 : 0.2)
@@ -209,7 +223,7 @@ function buildScene(canvas: HTMLCanvasElement, reduceMotion: boolean, onLost: ()
 
   function frame(now: number) {
     rafId = 0
-    if (disposed || document.hidden) return
+    if (disposed || document.hidden || !visible) return
     const t = (now - start) / 1000
 
     mouse.x += (target.x - mouse.x) * 0.05
@@ -256,33 +270,50 @@ function buildScene(canvas: HTMLCanvasElement, reduceMotion: boolean, onLost: ()
   const onVisibility = () => {
     if (!document.hidden) schedule()
   }
-  const onContextLost = (e: Event) => {
-    e.preventDefault()
+  // Park the loop while the hero is scrolled off-screen (rAF is not throttled
+  // for off-screen elements in a visible tab).
+  const observer =
+    'IntersectionObserver' in window
+      ? new IntersectionObserver((entries) => {
+          const entry = entries[entries.length - 1]
+          if (!entry) return
+          visible = entry.isIntersecting
+          if (visible) schedule()
+        })
+      : null
+  // The context is not restored (no preventDefault): tear everything down and
+  // let the page fall back to the CSS gradient instead of animating a hidden canvas.
+  const onContextLost = () => {
+    dispose()
     onLost()
+  }
+
+  function dispose() {
+    if (disposed) return
+    disposed = true
+    if (rafId) cancelAnimationFrame(rafId)
+    rafId = 0
+    observer?.disconnect()
+    window.removeEventListener('resize', onResize)
+    document.removeEventListener('visibilitychange', onVisibility)
+    canvas.removeEventListener('webglcontextlost', onContextLost)
+    window.removeEventListener('pointermove', onPointer)
+    bodyGeo.dispose(); wickGeo.dispose(); planeGeo.dispose(); ptsGeo.dispose()
+    matUp.dispose(); matDown.dispose(); matWick.dispose(); planeMat.dispose(); ptsMat.dispose()
+    renderer.dispose()
   }
 
   window.addEventListener('resize', onResize, { passive: true })
   document.addEventListener('visibilitychange', onVisibility)
   canvas.addEventListener('webglcontextlost', onContextLost)
   if (!reduceMotion) window.addEventListener('pointermove', onPointer, { passive: true })
+  observer?.observe(canvas)
 
   resize()
   if (reduceMotion) renderOnce()
   else schedule()
 
-  return {
-    dispose() {
-      disposed = true
-      if (rafId) cancelAnimationFrame(rafId)
-      window.removeEventListener('resize', onResize)
-      document.removeEventListener('visibilitychange', onVisibility)
-      canvas.removeEventListener('webglcontextlost', onContextLost)
-      window.removeEventListener('pointermove', onPointer)
-      bodyGeo.dispose(); wickGeo.dispose(); planeGeo.dispose(); ptsGeo.dispose()
-      matUp.dispose(); matDown.dispose(); matWick.dispose(); planeMat.dispose(); ptsMat.dispose()
-      renderer.dispose()
-    },
-  }
+  return { dispose }
 }
 
 function useHeroScene(canvasRef: RefObject<HTMLCanvasElement | null>, fallbackRef: RefObject<HTMLDivElement | null>) {
@@ -310,7 +341,11 @@ function useHeroScene(canvasRef: RefObject<HTMLCanvasElement | null>, fallbackRe
         showFallback()
         return
       }
-      handle = buildScene(canvas, prefersReducedMotion(), showFallback)
+      handle = buildScene(canvas, prefersReducedMotion(), () => {
+        // Context lost: the scene has already torn itself down; drop the handle.
+        handle = null
+        showFallback()
+      })
       if (!handle) {
         showFallback()
         return
@@ -407,9 +442,15 @@ const Mark = () => (
 /* ---------------------------------------------------------------- page */
 
 export function LandingPage() {
-  const { isAuthenticated, isAdmin } = useAuth()
+  const { isAuthenticated, isAdmin, isLoading } = useAuth()
+  // isLoading is only true while a stored token is being verified against /me
+  // (anonymous visitors never see it). During that probe the CTA already reads
+  // as the signed-in variant and points at /login, which bounces a valid session
+  // to its role home — so nothing visibly flips once the probe resolves.
+  const sessionLikely = isLoading || isAuthenticated
   const consoleHref = isAuthenticated ? (isAdmin ? '/admin' : '/trader') : '/login'
-  const consoleLabel = isAuthenticated ? 'Go to console' : 'Open the console'
+  const consoleLabel = sessionLikely ? 'Go to console' : 'Open the console'
+  const navLabel = sessionLikely ? 'Console' : 'Open console'
 
   const rootRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -439,7 +480,7 @@ export function LandingPage() {
             <a href="#backtest">Backtesting</a>
             <a href="#how">How it works</a>
             <a href="#principles">Principles</a>
-            <Link className="btn btn--primary btn--sm" to={consoleHref}>{isAuthenticated ? 'Console' : 'Open console'}</Link>
+            <Link className="btn btn--primary btn--sm" to={consoleHref}>{navLabel}</Link>
           </nav>
         </div>
       </header>

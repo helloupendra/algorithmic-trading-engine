@@ -317,6 +317,22 @@ class PlatformApiClient:
         resp.raise_for_status()
         return resp.json()
 
+    def register_runner(self, run_id: int, process_id: int, started_utc: str) -> Any:
+        """
+        POST /api/Strategy/runs/{runId}/runner {processId, startedUtc}: tell the
+        API which OS process runs this live run so it can re-adopt the runner
+        after a restart. 404 on an API that predates the route; the caller
+        treats every failure as non-fatal.
+        """
+        resp = self.http.post(
+            f"{self.base_url}/api/Strategy/runs/{run_id}/runner",
+            json={"processId": int(process_id), "startedUtc": started_utc},
+            verify=self.verify_ssl,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return _json_or_none(resp)
+
     # --- Historical candles (backtesting) ---------------------------------
 
     def get_local_history(self, symbol: str, resolution: str, from_date: str, to_date: str) -> list[dict[str, Any]]:

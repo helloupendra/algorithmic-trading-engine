@@ -45,6 +45,10 @@ public static class DependencyInjection
 
         services.AddScoped<IRiskManagementService, RiskManagementService>();
 
+        // Durable pids of the Python children (ingestor, runners), so a restarted
+        // API can adopt or stop what the previous instance launched.
+        services.AddScoped<IProcessSettingsStore, ProcessSettingsStore>();
+
         // Market intelligence (news RSS + day movers) — needs an HttpClient and
         // an in-memory cache so dashboard polling never hammers the sources.
         services.AddHttpClient(nameof(MarketIntelService));

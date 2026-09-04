@@ -1,4 +1,5 @@
 // src/AlgoTrading.Api/Services/BacktestRunParameters.cs
+using AlgoTrading.Contracts.Strategies;
 using AlgoTrading.Infrastructure.Services;
 using System.Globalization;
 using System.Text.Json;
@@ -8,12 +9,12 @@ namespace AlgoTrading.Api.Services;
 
 /// <summary>
 /// The run-level keys a backtest stores in SimulationRun.ParametersJson next to
-/// the strategy's own parameters (spec §2.1): lots, stop_loss, target,
-/// underlying, resolution (strategy form "5m"), eod_square_off_ist ("HH:MM",
-/// empty = none), charges_per_lot, plus lot_size / lot_size_source — the ONE
-/// lot size (current, per spec §1) the runner, the paper engine and the views
-/// all book with, frozen at start so every tier agrees. Numbers may arrive as
-/// strings.
+/// the strategy's own parameters (spec §2.1): lots, the risk rules (<c>risk</c>
+/// object + legacy stop_loss / target mirroring its overall level), underlying,
+/// resolution (strategy form "5m"), eod_square_off_ist ("HH:MM", empty = none),
+/// charges_per_lot, plus lot_size / lot_size_source — the ONE lot size
+/// (current, per spec §1) the runner, the paper engine and the views all book
+/// with, frozen at start so every tier agrees. Numbers may arrive as strings.
 /// </summary>
 public sealed record BacktestRunParameters(
     int? Lots,
@@ -24,13 +25,14 @@ public sealed record BacktestRunParameters(
     string? EodSquareOffIst,
     decimal? ChargesPerLot,
     int? LotSize,
-    string? LotSizeSource)
+    string? LotSizeSource,
+    RiskRulesDto Risk)
 {
     public const string DefaultEodSquareOffIst = "15:15";
     public const string LotSizeKey = "lot_size";
     public const string LotSizeSourceKey = "lot_size_source";
 
-    public static readonly BacktestRunParameters Empty = new(null, null, null, null, null, null, null, null, null);
+    public static BacktestRunParameters Empty => new(null, null, null, null, null, null, null, null, null, RiskRulesDto.Empty());
 
     public static BacktestRunParameters Parse(string? json)
     {
@@ -43,21 +45,21 @@ public sealed record BacktestRunParameters(
             var root = doc.RootElement;
 
             int? lots = ReadInt(root, "lots") ?? ReadInt(root, "quantity");
-            decimal? sl = ReadDecimal(root, "stop_loss") ?? ReadDecimal(root, "stopLoss");
-            decimal? target = ReadDecimal(root, "target");
             decimal? charges = ReadDecimal(root, "charges_per_lot") ?? ReadDecimal(root, "chargesPerLot");
             int? lotSize = ReadInt(root, LotSizeKey) ?? ReadInt(root, "lotSize");
+            var risk = RunRiskRules.ReadFrom(root);
 
             return new BacktestRunParameters(
                 lots is > 0 ? lots : null,
-                sl is > 0 ? sl : null,
-                target is > 0 ? target : null,
+                risk.OverallStopLoss,
+                risk.OverallTarget,
                 ReadUpper(root, "underlying"),
                 ReadText(root, "resolution"),
                 ReadText(root, "eod_square_off_ist") ?? ReadText(root, "eodSquareOffIst"),
                 charges is >= 0 ? charges : null,
                 lotSize is > 0 ? lotSize : null,
-                ReadText(root, LotSizeSourceKey) ?? ReadText(root, "lotSizeSource"));
+                ReadText(root, LotSizeSourceKey) ?? ReadText(root, "lotSizeSource"),
+                risk);
         }
         catch (JsonException)
         {
@@ -74,8 +76,7 @@ public sealed record BacktestRunParameters(
         string? defaultsJson,
         Dictionary<string, JsonElement>? overrides,
         int lots,
-        decimal? stopLoss,
-        decimal? target,
+        RiskRulesDto risk,
         string underlying,
         string resolution,
         string eodSquareOffIst,
@@ -107,14 +108,13 @@ public sealed record BacktestRunParameters(
         }
 
         merged["lots"] = lots;
-        merged["stop_loss"] = stopLoss.HasValue ? JsonValue.Create(stopLoss.Value) : null;
-        merged["target"] = target.HasValue ? JsonValue.Create(target.Value) : null;
         merged["underlying"] = underlying;
         merged["resolution"] = ResolutionCodes.ToStrategy(resolution);
         merged["eod_square_off_ist"] = eodSquareOffIst;
         merged["charges_per_lot"] = chargesPerLot;
         merged[LotSizeKey] = Math.Max(1, lotSize);
         merged[LotSizeSourceKey] = lotSizeSource;
+        RunRiskRules.WriteInto(merged, risk);
 
         return merged.ToJsonString();
     }

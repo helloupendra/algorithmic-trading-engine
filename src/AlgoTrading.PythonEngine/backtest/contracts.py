@@ -16,6 +16,7 @@ The API is duck-typed: it needs `get_expiries`, `get_option_chain` and
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -37,6 +38,21 @@ def _date_str(value: Union[date, str]) -> str:
     if isinstance(value, date):
         return value.isoformat()
     return str(value or "")[:10]
+
+
+# Monthly broker symbols: NSE:BANKNIFTY25SEP57500CE -> (BANKNIFTY, 57500, CE).
+# Weekly symbols encode the expiry as digits that run into the strike, so
+# they are only decoded through the resolver's contract cache.
+_MONTHLY_SYMBOL = re.compile(r"^(?:[A-Z]+:)?([A-Z&\-]+?)(\d{2}[A-Z]{3})(\d+(?:\.\d+)?)(CE|PE)$")
+
+
+def describe_option_symbol(symbol: str) -> Optional[str]:
+    """"NSE:BANKNIFTY25SEP57500CE" -> "BANKNIFTY 57500 CE"; None when the text is not decodable."""
+    match = _MONTHLY_SYMBOL.match((symbol or "").strip().upper())
+    if not match:
+        return None
+    underlying, _expiry, strike, option_type = match.groups()
+    return f"{underlying} {format_strike(float(strike))} {option_type}"
 
 
 class ContractResolver:
@@ -155,6 +171,20 @@ class ContractResolver:
             if error:
                 return f"contract lookup failed for {side} {format_strike(strike)} ({error})"
         return f"no {side} {format_strike(strike)} contract in the instrument master for expiry {expiry or 'n/a'}"
+
+    def display_name(self, symbol: str) -> str:
+        """
+        "NSE:BANKNIFTY25SEP57500CE" -> "BANKNIFTY 57500 CE" for a contract this
+        resolver has seen (the master knows its strike); otherwise a best
+        effort from the symbol text, and the symbol itself as the last resort.
+        """
+        text = (symbol or "").strip()
+        for contract in self._contracts.values():
+            if contract is not None and contract.symbol == text:
+                strike = format_strike(contract.strike_price) if contract.strike_price else ""
+                parts = [contract.underlying or self.underlying, strike, (contract.option_type or "").upper()]
+                return " ".join(p for p in parts if p)
+        return describe_option_symbol(text) or text
 
     def atm_contracts(self, expiry: str, atm_strike: Strike) -> Dict[str, OptionContract]:
         """{"atm_ce", "atm_pe"} for the strike, omitting sides the master lacks."""

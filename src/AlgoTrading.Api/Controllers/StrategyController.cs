@@ -16,8 +16,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using System.Diagnostics;
 using System.Globalization;
-using System.Text.Json;
-using System.Text.Json.Nodes;
 
 namespace AlgoTrading.Api.Controllers;
 
@@ -124,17 +122,19 @@ public class StrategyController : ControllerBase
         if (!string.IsNullOrWhiteSpace(strategy.Error))
             return BadRequest(new { message = $"{strategy.Name} cannot be started: {strategy.Error}" });
 
-        if (_registry.Contains(id))
-            return Conflict(new { message = $"{strategy.Name} is already running." });
-
-        if (_registry.Count >= _options.MaxConcurrentProcesses)
-            return StatusCode(StatusCodes.Status429TooManyRequests,
-                new { message = $"Concurrent strategy limit reached ({_options.MaxConcurrentProcesses})." });
-
         if (request is null || string.IsNullOrWhiteSpace(request.Underlying))
             return BadRequest(new { message = "underlying is required — pick the index or stock the strategy should trade." });
 
         var underlying = request.Underlying.Trim().ToUpperInvariant();
+
+        // The same strategy may run on several underlyings at once; only the
+        // same strategy on the SAME underlying is refused.
+        if (_registry.Find(id, underlying) is not null)
+            return Conflict(new { message = AlreadyRunningMessage(strategy.Name, underlying) });
+
+        if (_registry.Count >= _options.MaxConcurrentProcesses)
+            return StatusCode(StatusCodes.Status429TooManyRequests,
+                new { message = $"Concurrent strategy limit reached ({_options.MaxConcurrentProcesses})." });
 
         int lots = request.Lots ?? Math.Max(1, strategy.DefaultLots);
         if (lots < 1)
@@ -145,6 +145,11 @@ public class StrategyController : ControllerBase
 
         if (request.Target.HasValue && request.Target.Value <= 0)
             return BadRequest(new { message = "target must be a positive rupee amount, or omitted." });
+
+        if (!RiskRulesDto.TryValidate(request.Risk, out var riskError))
+            return BadRequest(new { message = $"risk: {riskError}" });
+
+        var risk = RunRiskRules.Resolve(request.Risk, request.StopLoss, request.Target);
 
         decimal initialCapital = request.InitialCapital ?? DefaultInitialCapital;
         if (initialCapital <= 0)
@@ -174,7 +179,7 @@ public class StrategyController : ControllerBase
             ReplaySpeed = string.Empty,
             Status = "Running",
             StrategyName = strategy.Name,
-            ParametersJson = MergeParameters(strategy.DefaultParametersJson, request.Parameters, lots, request.StopLoss, request.Target, underlying),
+            ParametersJson = LiveRunParameters.Merge(strategy.DefaultParametersJson, request.Parameters, lots, risk, underlying),
             InitialCapital = initialCapital,
             CreatedUtc = now,
             StartedUtc = now
@@ -185,7 +190,7 @@ public class StrategyController : ControllerBase
 
         await EnsureSpotOnWatchlistAsync(spotSymbol, cancellationToken);
 
-        var launch = new LaunchSpec(strategy, run.Id, userId, startedBy, underlying, spotSymbol, lots, request.StopLoss, request.Target);
+        var launch = new LaunchSpec(strategy, run.Id, userId, startedBy, underlying, spotSymbol, lots, risk);
         var (error, running) = LaunchRunner(launch);
         if (error is not null || running is null)
         {
@@ -195,6 +200,9 @@ public class StrategyController : ControllerBase
             await _dbContext.SaveChangesAsync(cancellationToken);
             return error ?? StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to start the runner." });
         }
+
+        // Durable pid so a restarted API can adopt (or stop) this runner.
+        await _runControl.RecordRunnerPidAsync(running.RunId, running.ProcessId, startedBy);
 
         return Ok(StartResponse($"Started {strategy.Name} on {underlying} (paper).", running));
     }
@@ -220,19 +228,24 @@ public class StrategyController : ControllerBase
         var strategy = await _catalog.FindAsync(id, cancellationToken);
         if (strategy is null) return NotFound(new { message = $"Strategy {id} not found." });
 
-        if (_registry.Contains(id))
-            return Conflict(new { message = $"{strategy.Name} is already running." });
+        if (_registry.Contains(run.Id))
+            return Conflict(new { message = $"Run {run.Id} already has a runner behind it." });
 
-        if (_registry.Count >= _options.MaxConcurrentProcesses)
-            return StatusCode(StatusCodes.Status429TooManyRequests,
-                new { message = $"Concurrent strategy limit reached ({_options.MaxConcurrentProcesses})." });
-
-        var p = ParseRunParams(run.ParametersJson);
+        var p = LiveRunParameters.Parse(run.ParametersJson);
         var underlying = p.Underlying
                          ?? UnderlyingCatalog.UnderlyingForSpot(run.Symbol)
                          ?? UnderlyingCatalog.InferUnderlying(run.Symbol);
         if (string.IsNullOrWhiteSpace(underlying))
             return BadRequest(new { message = $"Run {run.Id} has no usable symbol to derive an underlying from." });
+
+        underlying = underlying.Trim().ToUpperInvariant();
+
+        if (_registry.Find(id, underlying) is not null)
+            return Conflict(new { message = AlreadyRunningMessage(strategy.Name, underlying) });
+
+        if (_registry.Count >= _options.MaxConcurrentProcesses)
+            return StatusCode(StatusCodes.Status429TooManyRequests,
+                new { message = $"Concurrent strategy limit reached ({_options.MaxConcurrentProcesses})." });
 
         var spotSymbol = string.IsNullOrWhiteSpace(run.Symbol) ? UnderlyingCatalog.SpotSymbolFor(underlying) : run.Symbol;
         int lots = Math.Max(1, p.Lots ?? strategy.DefaultLots);
@@ -247,7 +260,7 @@ public class StrategyController : ControllerBase
 
         await EnsureSpotOnWatchlistAsync(spotSymbol, cancellationToken);
 
-        var launch = new LaunchSpec(strategy, run.Id, userId, startedBy, underlying, spotSymbol, lots, p.StopLoss, p.Target);
+        var launch = new LaunchSpec(strategy, run.Id, userId, startedBy, underlying, spotSymbol, lots, p.Risk);
         var (error, running) = LaunchRunner(launch);
         if (error is not null || running is null)
         {
@@ -259,12 +272,37 @@ public class StrategyController : ControllerBase
         run.CompletedUtc = null;
         await _dbContext.SaveChangesAsync(cancellationToken);
 
+        await _runControl.RecordRunnerPidAsync(running.RunId, running.ProcessId, startedBy);
+
         return Ok(StartResponse($"Deployed {strategy.Name} on run {run.Id}.", running));
     }
 
     /// <summary>
-    /// Stops a running strategy: squares off its open positions at the last mark
-    /// (unless flatten=false) and kills the runner. Admin, or the user who started it.
+    /// Stops one run of a strategy by run id: squares off its open positions at
+    /// the last mark (unless flatten=false) and kills the runner. Admin, or the
+    /// user who started it. A LivePaper run whose row is still Running/Stopping
+    /// with no runner behind it (API restart) is closed as Stopped without a
+    /// process to kill, so it never stays stuck.
+    /// </summary>
+    [HttpPost("runs/{runId:long}/stop")]
+    public async Task<IActionResult> StopRun(
+        long runId,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] StopStrategyRequest? request,
+        CancellationToken cancellationToken)
+    {
+        var running = _registry.Get(runId);
+        if (running is null)
+        {
+            return await StopOrphanRunAsync(runId, request, cancellationToken);
+        }
+
+        return await StopRunningAsync(running, request, cancellationToken);
+    }
+
+    /// <summary>
+    /// Legacy strategy-scoped stop: resolves to the single active run of the
+    /// strategy. With several instances running the caller must name the run
+    /// (POST /api/Strategy/runs/{runId}/stop).
     /// </summary>
     [HttpPost("{id:int}/stop")]
     public async Task<IActionResult> StopStrategy(
@@ -272,29 +310,216 @@ public class StrategyController : ControllerBase
         [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] StopStrategyRequest? request,
         CancellationToken cancellationToken)
     {
-        var running = _registry.Get(id);
-        if (running is null)
+        var runs = _registry.GetByStrategy(id);
+        if (runs.Count == 0)
             return BadRequest(new { message = $"Strategy {id} is not currently running from the dashboard." });
 
+        if (runs.Count > 1)
+        {
+            return BadRequest(new
+            {
+                message = $"{runs[0].Name} has {runs.Count} running instances ({string.Join(", ", runs.Select(x => x.Underlying))}) — use /api/Strategy/runs/{{runId}}/stop.",
+                runIds = runs.Select(x => x.RunId).ToList()
+            });
+        }
+
+        return await StopRunningAsync(runs[0], request, cancellationToken);
+    }
+
+    private async Task<IActionResult> StopRunningAsync(RunningStrategy running, StopStrategyRequest? request, CancellationToken cancellationToken)
+    {
         // Admins can stop anything; a trader can stop only what they started.
         var userName = User.GetUserName() ?? "unknown";
-        if (!User.IsAdmin() && !string.Equals(running.StartedBy, userName, StringComparison.OrdinalIgnoreCase))
+        if (!CanStop(running.StartedBy, running.UserId))
         {
             return Forbid();
         }
 
         bool flatten = request?.Flatten ?? true;
-        var result = await _runControl.StopAsync(id, $"Stopped by {userName}", flatten, userName, cancellationToken);
+        var result = await _runControl.StopAsync(running.RunId, $"Stopped by {userName}", flatten, userName, cancellationToken);
         if (!result.WasRunning)
-            return BadRequest(new { message = $"Strategy {id} is not currently running from the dashboard." });
+            return BadRequest(new { message = $"{running.Name} on {running.Underlying} (run {running.RunId}) is not currently running from the dashboard." });
 
         return Ok(new
         {
             message = flatten
-                ? $"Stopped {running.Name}; squared off {result.Flattened} open position(s)."
-                : $"Stopped {running.Name}.",
-            flattened = result.Flattened
+                ? $"Stopped {running.Name} on {running.Underlying}; squared off {result.Flattened} open position(s)."
+                : $"Stopped {running.Name} on {running.Underlying}.",
+            flattened = result.Flattened,
+            runId = running.RunId,
+            underlying = running.Underlying
         });
+    }
+
+    /// <summary>
+    /// The run is not in the registry: close its row if it is still open (the
+    /// API restarted under a live runner), otherwise report that nothing is running.
+    /// </summary>
+    private async Task<IActionResult> StopOrphanRunAsync(long runId, StopStrategyRequest? request, CancellationToken cancellationToken)
+    {
+        var run = await _dbContext.SimulationRuns.AsNoTracking()
+            .Where(x => x.Id == runId && x.Mode == LivePaperMode)
+            .Select(x => new { x.Id, x.Status, x.StrategyName, x.UserId })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (run is null)
+            return NotFound(new { message = $"Strategy run {runId} not found." });
+
+        if (!StrategyRunControl.IsOpenStatus(run.Status))
+            return BadRequest(new { message = $"{run.StrategyName} run {runId} is not currently running (status {run.Status})." });
+
+        var startedBy = await _dbContext.AppUsers.AsNoTracking()
+            .Where(x => x.Id == run.UserId)
+            .Select(x => x.UserName)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (!CanStop(startedBy, run.UserId))
+        {
+            return Forbid();
+        }
+
+        var userName = User.GetUserName() ?? "unknown";
+        bool flatten = request?.Flatten ?? true;
+        var result = await _runControl.StopOrphanAsync(runId, $"Stopped by {userName}", flatten, userName);
+        if (!result.WasRunning)
+            return BadRequest(new { message = $"{run.StrategyName} run {runId} is not currently running." });
+
+        return Ok(new
+        {
+            message = flatten
+                ? $"Closed {run.StrategyName} run {runId} (no runner process was found); squared off {result.Flattened} open position(s)."
+                : $"Closed {run.StrategyName} run {runId} (no runner process was found).",
+            flattened = result.Flattened,
+            runId
+        });
+    }
+
+    /// <summary>Admins can stop anything; a trader only what they started (by name or by user id).</summary>
+    private bool CanStop(string? startedBy, long ownerUserId)
+    {
+        if (User.IsAdmin()) return true;
+
+        var userName = User.GetUserName();
+        if (!string.IsNullOrWhiteSpace(userName) && string.Equals(startedBy, userName, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return User.GetUserId() == ownerUserId;
+    }
+
+    // ------------------------------------------------------------------
+    // Risk rules (editable while running) and runner registration
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Replaces the risk rules of a running run (all three levels). Admin, or
+    /// the user who started it. Takes effect on the guard's next sweep; the
+    /// run row's parametersJson is rewritten and a RISK_UPDATED signal records
+    /// who changed what. 404 when the run is not running.
+    /// </summary>
+    [HttpPatch("runs/{runId:long}/risk")]
+    public async Task<ActionResult<UpdateRunRiskResponse>> UpdateRunRisk(
+        long runId,
+        [FromBody] UpdateRunRiskRequest? request,
+        CancellationToken cancellationToken)
+    {
+        if (request is null)
+            return BadRequest(new { message = "A risk rules body is required ({ overall, group, leg })." });
+
+        if (!RiskRulesDto.TryValidate(request, out var riskError))
+            return BadRequest(new { message = riskError });
+
+        var running = _registry.Get(runId);
+        if (running is null)
+            return NotFound(new { message = $"Strategy run {runId} is not currently running." });
+
+        if (!CanStop(running.StartedBy, running.UserId))
+            return Forbid();
+
+        var rules = RunRiskRules.Sanitize(request);
+        var userName = User.GetUserName() ?? "unknown";
+
+        // Persist FIRST, then switch the guard over. The registry entry is
+        // what the guard enforces and what an adopted run is rebuilt from
+        // (ParametersJson); if the save failed after the registry had already
+        // been updated, the guard would enforce rules the row does not have
+        // and the client would be told the update failed.
+        var run = await _dbContext.SimulationRuns.FirstOrDefaultAsync(x => x.Id == runId, cancellationToken);
+        if (run is not null)
+        {
+            run.ParametersJson = RunRiskRules.Rewrite(run.ParametersJson, rules);
+        }
+
+        var now = DateTime.UtcNow;
+        await _dbContext.SimulationSignals.AddAsync(new SimulationSignal
+        {
+            SimulationRunId = runId,
+            StrategyName = running.Name,
+            SignalType = RunRiskRules.RiskUpdatedSignalType,
+            TimestampUtc = now,
+            GroupId = string.Empty,
+            MetadataJson = RunRiskRules.UpdatedMetadata(rules, userName),
+            CreatedUtc = now
+        }, cancellationToken);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        var updated = _registry.UpdateRisk(runId, rules);
+        if (updated is null)
+        {
+            // The run ended between the checks above and now; the rules are on
+            // the (closed) row, which is harmless, but there is nothing to guard.
+            _logger.LogInformation("Risk rules of run {RunId} were persisted but the run is no longer running.", runId);
+            return NotFound(new { message = $"Strategy run {runId} is not currently running." });
+        }
+
+        _registry.AppendLog(runId, $"risk rules updated by {userName}: {rules.Describe()}");
+        _logger.LogInformation("Risk rules of strategy {StrategyId} ({Name}) run {RunId} on {Underlying} updated by {User}: {Rules}",
+            running.StrategyId, running.Name, runId, running.Underlying, userName, rules.Describe());
+
+        return Ok(new UpdateRunRiskResponse { RunId = runId, Risk = updated.Risk });
+    }
+
+    /// <summary>
+    /// The execution runner confirms its own pid once it knows its run id. Any
+    /// signed-in user (the runner authenticates as the service account). The
+    /// API already recorded the pid at spawn time; a mismatch keeps the pid the
+    /// API launched. 404 when the run does not exist or is already closed.
+    /// </summary>
+    [HttpPost("runs/{runId:long}/runner")]
+    public async Task<ActionResult<RunnerRegistrationResponse>> RegisterRunner(
+        long runId,
+        [FromBody] RunnerRegistrationRequest? request,
+        CancellationToken cancellationToken)
+    {
+        if (request is null || request.ProcessId <= 0)
+            return BadRequest(new { message = "processId (positive) is required." });
+
+        var run = await _dbContext.SimulationRuns.AsNoTracking()
+            .Where(x => x.Id == runId && x.Mode == LivePaperMode)
+            .Select(x => new { x.Id, x.Status })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (run is null)
+            return NotFound(new { message = $"Strategy run {runId} not found." });
+
+        if (!StrategyRunControl.IsOpenStatus(run.Status))
+            return NotFound(new { message = $"Strategy run {runId} is not running (status {run.Status})." });
+
+        var running = _registry.Get(runId);
+        int pidOnRecord = request.ProcessId;
+        if (running is not null && running.ProcessId > 0 && running.ProcessId != request.ProcessId)
+        {
+            _logger.LogWarning("Strategy run {RunId}: runner reported pid {Reported} but the registry launched pid {Launched}; keeping the launched pid.",
+                runId, request.ProcessId, running.ProcessId);
+            pidOnRecord = running.ProcessId;
+        }
+
+        await _runControl.RecordRunnerPidAsync(runId, pidOnRecord, "runner");
+        if (running is not null)
+        {
+            _registry.AppendLog(runId, $"runner confirmed pid {request.ProcessId}" + (request.StartedUtc.HasValue ? $" (started {request.StartedUtc:HH:mm:ss}Z)" : string.Empty));
+        }
+
+        return Ok(new RunnerRegistrationResponse { RunId = runId, ProcessId = pidOnRecord, Managed = running is not null });
     }
 
     // ------------------------------------------------------------------
@@ -302,7 +527,58 @@ public class StrategyController : ControllerBase
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// Position-based live view of the strategy's current (or most recent) run.
+    /// Position-based live view of one run, active or finished. Finished runs
+    /// are built from the database (plus the remembered exit reason, when the
+    /// run ended since the API started).
+    /// </summary>
+    [HttpGet("runs/{runId:long}/live")]
+    public async Task<ActionResult<StrategyLiveViewResponse>> GetRunLive(long runId, CancellationToken cancellationToken)
+    {
+        var running = _registry.Get(runId);
+        var lastExit = running is null ? _registry.GetExitByRun(runId) : null;
+
+        var run = await _dbContext.SimulationRuns.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == runId, cancellationToken);
+        if (run is null)
+            return NotFound(new { message = $"Strategy run {runId} not found." });
+
+        if (!string.Equals(run.Mode, LivePaperMode, StringComparison.OrdinalIgnoreCase))
+            return NotFound(new { message = $"Run {runId} is a {run.Mode} run, not a live strategy run — see /api/Backtest/runs/{runId}." });
+
+        int strategyId;
+        string name;
+        if (running is not null)
+        {
+            strategyId = running.StrategyId;
+            name = running.Name;
+        }
+        else if (lastExit is not null)
+        {
+            strategyId = lastExit.StrategyId;
+            name = lastExit.Name;
+        }
+        else
+        {
+            var strategy = await _catalog.FindByNameAsync(run.StrategyName, cancellationToken);
+            strategyId = strategy?.Id ?? StrategyCatalogService.StableId(run.StrategyName);
+            name = strategy?.Name ?? run.StrategyName;
+        }
+
+        var view = new StrategyLiveViewResponse
+        {
+            StrategyId = strategyId,
+            Name = name,
+            IsActive = running is not null
+        };
+
+        await FillLiveViewAsync(view, run, running, lastExit, cancellationToken);
+        return Ok(view);
+    }
+
+    /// <summary>
+    /// Legacy strategy-scoped live view: the most recently started active run
+    /// of the strategy; with none active, its newest exit or the latest LivePaper
+    /// run of that strategy name.
     /// </summary>
     [HttpGet("{id:int}/live")]
     public async Task<ActionResult<StrategyLiveViewResponse>> GetLive(int id, CancellationToken cancellationToken)
@@ -310,7 +586,7 @@ public class StrategyController : ControllerBase
         var strategy = await _catalog.FindAsync(id, cancellationToken);
         if (strategy is null) return NotFound(new { message = $"Strategy {id} not found." });
 
-        var running = _registry.Get(id);
+        var running = NewestActiveRun(id);
         var lastExit = running is null ? _registry.GetLastExit(id) : null;
 
         var view = new StrategyLiveViewResponse
@@ -342,7 +618,25 @@ public class StrategyController : ControllerBase
             return Ok(view);
         }
 
-        var p = ParseRunParams(run.ParametersJson);
+        await FillLiveViewAsync(view, run, running, lastExit, cancellationToken);
+        return Ok(view);
+    }
+
+    /// <summary>
+    /// Fills run configuration, spot, P&amp;L, positions and activity of
+    /// <paramref name="run"/> into the view. <paramref name="running"/> is the
+    /// live registry entry (when active), <paramref name="lastExit"/> the
+    /// remembered exit (when it ended since the API started); otherwise
+    /// everything comes from the database.
+    /// </summary>
+    private async Task FillLiveViewAsync(
+        StrategyLiveViewResponse view,
+        SimulationRun run,
+        RunningStrategy? running,
+        LastExit? lastExit,
+        CancellationToken cancellationToken)
+    {
+        var p = LiveRunParameters.Parse(run.ParametersJson);
 
         view.RunId = run.Id;
         view.Underlying = running?.Underlying
@@ -355,16 +649,14 @@ public class StrategyController : ControllerBase
 
         if (running is not null)
         {
-            view.StopLoss = running.StopLoss;
-            view.Target = running.Target;
+            view.Risk = running.Risk;
             view.StartedBy = running.StartedBy;
             view.StartedUtc = running.StartedUtc;
-            view.Runner = new StrategyRunnerInfo { ProcessId = running.ProcessId, LastLogUtc = running.LastLogUtc };
+            view.Runner = new StrategyRunnerInfo { ProcessId = running.ProcessId, LastLogUtc = running.LastLogUtc, Adopted = running.Adopted };
         }
         else if (lastExit is not null)
         {
-            view.StopLoss = lastExit.StopLoss;
-            view.Target = lastExit.Target;
+            view.Risk = lastExit.Risk;
             view.StartedBy = lastExit.StartedBy;
             view.StartedUtc = lastExit.StartedUtc;
             view.StoppedUtc = lastExit.AtUtc;
@@ -372,8 +664,7 @@ public class StrategyController : ControllerBase
         }
         else
         {
-            view.StopLoss = p.StopLoss;
-            view.Target = p.Target;
+            view.Risk = p.Risk;
             view.StartedBy = await _dbContext.AppUsers.AsNoTracking()
                 .Where(x => x.Id == run.UserId)
                 .Select(x => x.UserName)
@@ -381,6 +672,9 @@ public class StrategyController : ControllerBase
             view.StartedUtc = run.StartedUtc ?? run.CreatedUtc;
             view.StoppedUtc = run.CompletedUtc;
         }
+
+        view.StopLoss = view.Risk.OverallStopLoss;
+        view.Target = view.Risk.OverallTarget;
 
         var underlyingLot = await _lotSizeResolver.ResolveForUnderlyingAsync(view.Underlying ?? string.Empty, cancellationToken);
         view.LotSize = underlyingLot.LotSize;
@@ -394,12 +688,16 @@ public class StrategyController : ControllerBase
         view.SpotLtp = built.SpotLtp;
         view.SpotUpdatedUtc = built.SpotUpdatedUtc;
         view.Positions = built.Positions;
+        view.Groups = built.Groups;
 
         view.Pnl.Realized = positions.Sum(x => x.RealizedPnl);
         view.Pnl.Unrealized = positions
             .Where(x => string.Equals(x.Status, "Open", StringComparison.OrdinalIgnoreCase))
             .Sum(x => x.UnrealizedPnl);
         view.Pnl.Total = view.Pnl.Realized + view.Pnl.Unrealized;
+        view.Pnl.CapitalUsed = built.CapitalUsed;
+        view.Pnl.PremiumOutlay = built.PremiumOutlay;
+        view.Pnl.PremiumReceived = built.PremiumReceived;
 
         // Activity: the run's signals, newest first (RUN_STOPPED rows included).
         var signals = await _dbContext.SimulationSignals.AsNoTracking()
@@ -412,13 +710,26 @@ public class StrategyController : ControllerBase
 
         foreach (var s in signals)
         {
-            var reason = ReadMetadataReason(s.MetadataJson);
+            string text;
+            if (s.SignalType == RunRiskRules.RiskUpdatedSignalType)
+            {
+                text = RunRiskRules.DescribeUpdate(s.MetadataJson);
+            }
+            else
+            {
+                var reason = ReadMetadataReason(s.MetadataJson);
+                text = string.IsNullOrWhiteSpace(reason) ? s.SignalType : reason;
+            }
+
             view.Activity.Add(new LiveActivityResponse
             {
                 AtUtc = s.TimestampUtc,
                 Type = s.SignalType,
-                Text = string.IsNullOrWhiteSpace(reason) ? s.SignalType : reason,
-                GroupId = s.GroupId
+                Text = text,
+                GroupId = s.GroupId,
+                // RISK_UPDATED rows render client-side from { risk, by } with the
+                // same formatter as the Risk chips; Text stays as the fallback.
+                MetadataJson = s.SignalType == RunRiskRules.RiskUpdatedSignalType ? s.MetadataJson : null
             });
         }
 
@@ -431,33 +742,73 @@ public class StrategyController : ControllerBase
                 view.StoppedUtc ??= stopped.TimestampUtc;
             }
         }
-
-        return Ok(view);
     }
 
-    /// <summary>Recent runner stdout/stderr (empty when not running).</summary>
+    /// <summary>Recent runner stdout/stderr of one run (retained for a while after it finishes).</summary>
+    [HttpGet("runs/{runId:long}/logs")]
+    public IActionResult GetRunLogs(long runId, [FromQuery] int take = 200)
+    {
+        return Ok(_registry.GetLogs(runId, take));
+    }
+
+    /// <summary>
+    /// Legacy: runner output of the strategy's most recently started active run
+    /// (or of its newest exit when nothing is active).
+    /// </summary>
     [HttpGet("{id:int}/logs")]
     public IActionResult GetLogs(int id, [FromQuery] int take = 200)
     {
-        return Ok(_registry.GetLogs(id, take));
+        var runId = NewestActiveRun(id)?.RunId ?? _registry.GetLastExit(id)?.RunId;
+        return Ok(runId.HasValue ? _registry.GetLogs(runId.Value, take) : Array.Empty<string>());
     }
 
     /// <summary>The runner pushes a copy of each signal here for the dashboard.</summary>
+    [HttpPost("runs/{runId:long}/signals")]
+    public IActionResult AddRunSignal(long runId, [FromBody] object signal)
+    {
+        if (_registry.AddSignal(runId, signal))
+        {
+            return Ok();
+        }
+        return NotFound(new { message = $"Strategy run {runId} is not currently active." });
+    }
+
+    /// <summary>Recent signals of one active run, newest first.</summary>
+    [HttpGet("runs/{runId:long}/signals")]
+    public IActionResult GetRunSignals(long runId)
+    {
+        return Ok(_registry.GetSignals(runId));
+    }
+
+    /// <summary>Legacy: posts into the strategy's most recently started active run.</summary>
     [HttpPost("{id:int}/signals")]
     public IActionResult AddSignal(int id, [FromBody] object signal)
     {
-        if (_registry.AddSignal(id, signal))
+        var running = NewestActiveRun(id);
+        if (running is not null && _registry.AddSignal(running.RunId, signal))
         {
             return Ok();
         }
         return NotFound(new { message = $"Strategy {id} is not currently active." });
     }
 
+    /// <summary>Legacy: signals of the strategy's most recently started active run.</summary>
     [HttpGet("{id:int}/signals")]
     public IActionResult GetSignals(int id)
     {
-        return Ok(_registry.GetSignals(id));
+        var running = NewestActiveRun(id);
+        return Ok(running is null ? Array.Empty<object>() : _registry.GetSignals(running.RunId));
     }
+
+    /// <summary>The strategy's most recently started active run, for the legacy strategy-scoped routes.</summary>
+    private RunningStrategy? NewestActiveRun(int strategyId)
+    {
+        var runs = _registry.GetByStrategy(strategyId);
+        return runs.Count == 0 ? null : runs[^1];
+    }
+
+    private static string AlreadyRunningMessage(string strategyName, string underlying)
+        => $"{strategyName} is already running on {underlying} — stop that run or pick another underlying.";
 
     // ------------------------------------------------------------------
     // Launch plumbing
@@ -471,8 +822,7 @@ public class StrategyController : ControllerBase
         string Underlying,
         string SpotSymbol,
         int Lots,
-        decimal? StopLoss,
-        decimal? Target);
+        RiskRulesDto Risk);
 
     /// <summary>
     /// Spawns execution_runner.py and registers it. Returns an error result
@@ -529,12 +879,20 @@ public class StrategyController : ControllerBase
         processInfo.Environment["PYTHONPATH"] = engineDirectory;
         // Line-buffered output so log lines arrive as they happen, not in 8KB blocks.
         processInfo.Environment["PYTHONUNBUFFERED"] = "1";
+        // A redirected stdout takes the locale encoding on Windows (cp1252), and
+        // the runner prints "→", "≤", "₹"... — force UTF-8 on the pipe everywhere.
+        processInfo.Environment["PYTHONIOENCODING"] = "utf-8";
 
         lock (_registry.StartLock)
         {
-            if (_registry.Contains(id))
+            if (_registry.Find(id, spec.Underlying) is not null)
             {
-                return (Conflict(new { message = $"{spec.Strategy.Name} is already running." }), null);
+                return (Conflict(new { message = AlreadyRunningMessage(spec.Strategy.Name, spec.Underlying) }), null);
+            }
+
+            if (_registry.Contains(spec.RunId))
+            {
+                return (Conflict(new { message = $"Run {spec.RunId} already has a runner behind it." }), null);
             }
 
             if (_registry.Count >= _options.MaxConcurrentProcesses)
@@ -555,21 +913,23 @@ public class StrategyController : ControllerBase
 
                 var running = new RunningStrategy(
                     id, spec.Strategy.Name, process, spec.StartedBy, spec.UserId, DateTime.UtcNow,
-                    spec.RunId, spec.Underlying, spec.SpotSymbol, spec.Lots, spec.StopLoss, spec.Target);
+                    spec.RunId, spec.Underlying, spec.SpotSymbol, spec.Lots, spec.Risk);
 
                 if (!_registry.TryAdd(running))
                 {
                     try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
                     process.Dispose();
-                    return (Conflict(new { message = $"{spec.Strategy.Name} is already running." }), null);
+                    return (Conflict(new { message = $"Run {spec.RunId} already has a runner behind it." }), null);
                 }
 
-                _registry.ClearLastExit(id);
+                // A redeployed run is active again; exits of other runs stay listed
+                // until the UI dismisses them.
+                _registry.ClearLastExit(id, spec.RunId);
 
                 _logger.LogInformation(
-                    "Started strategy {StrategyId} ({Name}) pid {Pid} run {RunId} on {Underlying} ({Spot}) x{Lots} SL={StopLoss} T={Target} by {User}",
+                    "Started strategy {StrategyId} ({Name}) pid {Pid} run {RunId} on {Underlying} ({Spot}) x{Lots} risk=[{Risk}] by {User}",
                     id, spec.Strategy.Name, running.ProcessId, spec.RunId, spec.Underlying, spec.SpotSymbol, spec.Lots,
-                    spec.StopLoss, spec.Target, spec.StartedBy);
+                    spec.Risk.Describe(), spec.StartedBy);
 
                 return (null, running);
             }
@@ -606,6 +966,7 @@ public class StrategyController : ControllerBase
         lots = running.Lots,
         stopLoss = running.StopLoss,
         target = running.Target,
+        risk = running.Risk,
         startedBy = running.StartedBy
     };
 
@@ -638,8 +999,13 @@ public class StrategyController : ControllerBase
 
     private StrategyListItemResponse ToListItem(StrategyCatalogEntry entry)
     {
-        var running = _registry.Get(entry.Id);
-        var lastExit = running is null ? _registry.GetLastExit(entry.Id) : null;
+        var activeRuns = _registry.GetByStrategy(entry.Id);
+        var recentExits = _registry.GetLastExits(entry.Id);
+
+        // Legacy single-run fields describe the first (oldest) active run; the
+        // legacy lastExit is the newest exit.
+        var running = activeRuns.Count > 0 ? activeRuns[0] : null;
+        var lastExit = recentExits.Count > 0 ? recentExits[0] : null;
 
         return new StrategyListItemResponse
         {
@@ -656,6 +1022,9 @@ public class StrategyController : ControllerBase
             SourceFile = entry.SourceFile,
             CreatedUtc = entry.CreatedUtc,
 
+            ActiveRuns = activeRuns.Select(ToActiveRun).ToList(),
+            RecentExits = recentExits.Select(ToLastExit).ToList(),
+
             IsActive = running is not null,
             StartedBy = running?.StartedBy,
             StartedUtc = running?.StartedUtc,
@@ -666,117 +1035,32 @@ public class StrategyController : ControllerBase
             StopLoss = running?.StopLoss,
             Target = running?.Target,
             ProcessId = running?.ProcessId,
-            LastExit = lastExit is null ? null : new StrategyLastExit
-            {
-                RunId = lastExit.RunId,
-                Reason = lastExit.Reason,
-                AtUtc = lastExit.AtUtc,
-                Underlying = lastExit.Underlying
-            }
+            LastExit = lastExit is null ? null : ToLastExit(lastExit)
         };
     }
 
-    private sealed record RunParams(int? Lots, decimal? StopLoss, decimal? Target, string? Underlying);
-
-    /// <summary>
-    /// Reads lots / stop_loss / target / underlying back out of a run's
-    /// parametersJson (numbers may arrive as strings from the wizard).
-    /// </summary>
-    private static RunParams ParseRunParams(string? json)
+    private static StrategyActiveRunResponse ToActiveRun(RunningStrategy running) => new()
     {
-        if (string.IsNullOrWhiteSpace(json)) return new RunParams(null, null, null, null);
+        RunId = running.RunId,
+        Underlying = running.Underlying,
+        SpotSymbol = running.SpotSymbol,
+        Lots = running.Lots,
+        StopLoss = running.StopLoss,
+        Target = running.Target,
+        Risk = running.Risk,
+        StartedBy = running.StartedBy,
+        StartedUtc = running.StartedUtc,
+        ProcessId = running.ProcessId,
+        Adopted = running.Adopted
+    };
 
-        try
-        {
-            using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.ValueKind != JsonValueKind.Object) return new RunParams(null, null, null, null);
-            var root = doc.RootElement;
-
-            int? lots = ReadInt(root, "lots") ?? ReadInt(root, "quantity");
-            decimal? sl = ReadDecimal(root, "stop_loss") ?? ReadDecimal(root, "stopLoss");
-            decimal? target = ReadDecimal(root, "target");
-            string? underlying = null;
-            if (root.TryGetProperty("underlying", out var u) && u.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(u.GetString()))
-            {
-                underlying = u.GetString()!.Trim().ToUpperInvariant();
-            }
-
-            return new RunParams(
-                lots is > 0 ? lots : null,
-                sl is > 0 ? sl : null,
-                target is > 0 ? target : null,
-                underlying);
-        }
-        catch (JsonException)
-        {
-            return new RunParams(null, null, null, null);
-        }
-    }
-
-    private static int? ReadInt(JsonElement obj, string name)
+    private static StrategyLastExit ToLastExit(LastExit exit) => new()
     {
-        if (!obj.TryGetProperty(name, out var el)) return null;
-        return el.ValueKind switch
-        {
-            JsonValueKind.Number when el.TryGetInt32(out var n) => n,
-            JsonValueKind.Number when el.TryGetDecimal(out var d) => (int)d,
-            JsonValueKind.String when int.TryParse(el.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var s) => s,
-            _ => null
-        };
-    }
-
-    private static decimal? ReadDecimal(JsonElement obj, string name)
-    {
-        if (!obj.TryGetProperty(name, out var el)) return null;
-        return el.ValueKind switch
-        {
-            JsonValueKind.Number when el.TryGetDecimal(out var d) => d,
-            JsonValueKind.String when decimal.TryParse(el.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var s) => s,
-            _ => null
-        };
-    }
-
-    /// <summary>
-    /// defaults ⊕ overrides ⊕ { lots, stop_loss, target, underlying } as one JSON object.
-    /// </summary>
-    private static string MergeParameters(
-        string? defaultsJson,
-        Dictionary<string, JsonElement>? overrides,
-        int lots,
-        decimal? stopLoss,
-        decimal? target,
-        string underlying)
-    {
-        JsonObject merged;
-        try
-        {
-            merged = string.IsNullOrWhiteSpace(defaultsJson)
-                ? new JsonObject()
-                : JsonNode.Parse(defaultsJson) as JsonObject ?? new JsonObject();
-        }
-        catch (JsonException)
-        {
-            merged = new JsonObject();
-        }
-
-        if (overrides is not null)
-        {
-            foreach (var (key, value) in overrides)
-            {
-                if (string.IsNullOrWhiteSpace(key)) continue;
-                merged[key] = value.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null
-                    ? null
-                    : JsonNode.Parse(value.GetRawText());
-            }
-        }
-
-        merged["lots"] = lots;
-        merged["stop_loss"] = stopLoss.HasValue ? JsonValue.Create(stopLoss.Value) : null;
-        merged["target"] = target.HasValue ? JsonValue.Create(target.Value) : null;
-        merged["underlying"] = underlying;
-
-        return merged.ToJsonString();
-    }
+        RunId = exit.RunId,
+        Reason = exit.Reason,
+        AtUtc = exit.AtUtc,
+        Underlying = exit.Underlying
+    };
 
     /// <summary>metadataJson.reason (any casing), or null.</summary>
     private static string? ReadMetadataReason(string? metadataJson)

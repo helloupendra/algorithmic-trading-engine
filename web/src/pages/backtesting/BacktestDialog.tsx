@@ -15,10 +15,14 @@ import { Link } from 'react-router-dom'
 import { useBacktestBackfill, useBacktestCoverage, useFnoUnderlyings, useStartBacktest } from '../../lib/queries'
 import { formatInrWhole, formatNumber } from '../../lib/format'
 import { resolutionLabel, resolutionRank, toCandleResolution } from '../../lib/symbols'
+import { parseRiskDraft, riskDraftFrom, riskFromLegacy } from '../../lib/risk'
+import type { RiskDraft, RiskDraftField } from '../../lib/risk'
 import { InlineError, Loading } from '../../components/ui'
+import { RiskRulesForm } from '../../components/RiskRulesForm'
 import { IconChevronDown, IconChevronRight, IconPlay, IconX } from '../../components/icons'
 import type {
   BacktestCoverageResolution,
+  RiskRules,
   StartBacktestRequest,
   StartBacktestResponse,
   StrategyListItem,
@@ -51,16 +55,21 @@ export interface BacktestDialogInitial {
   fromDate?: string
   toDate?: string
   lots?: number
+  /** Legacy overall stop-loss — used only when `risk` is absent. */
   stopLoss?: number | null
+  /** Legacy overall target — used only when `risk` is absent. */
   target?: number | null
+  risk?: RiskRules | null
   eodSquareOffIst?: string | null
   chargesPerLot?: number
   initialCapital?: number
   parametersJson?: string
 }
 
-function numOrEmpty(v: number | null | undefined): string {
-  return v == null ? '' : String(v)
+/** The rules an earlier run was under: the three-level object, else its overall shorthands. */
+function initialRiskDraft(initial: BacktestDialogInitial | undefined): RiskDraft {
+  if (!initial) return riskDraftFrom(null)
+  return riskDraftFrom(initial.risk ?? riskFromLegacy(initial.stopLoss, initial.target))
 }
 
 function clampDate(value: string, min: string | null, max: string | null): string {
@@ -112,8 +121,10 @@ export function BacktestDialog({
   const [toDate, setToDate] = useState(initial?.toDate ?? '')
   const [seededFor, setSeededFor] = useState<string | null>(null)
   const [lots, setLots] = useState(String(Math.max(1, initial?.lots ?? strategy.defaultLots ?? 1)))
-  const [stopLoss, setStopLoss] = useState(numOrEmpty(initial?.stopLoss))
-  const [target, setTarget] = useState(numOrEmpty(initial?.target))
+  const [risk, setRisk] = useState<RiskDraft>(() => initialRiskDraft(initial))
+  const [riskField, setRiskField] = useState<RiskDraftField | null>(null)
+  // Bumped on every failed submit so the form re-focuses the same field on a repeat.
+  const [riskNonce, setRiskNonce] = useState(0)
   const [eodNone, setEodNone] = useState(initial?.eodSquareOffIst === '')
   const [eodTime, setEodTime] = useState(initial?.eodSquareOffIst || DEFAULT_EOD)
   const [charges, setCharges] = useState(String(initial?.chargesPerLot ?? 0))
@@ -225,6 +236,7 @@ export function BacktestDialog({
 
   function submit() {
     setValidation(null)
+    setRiskField(null)
     if (!chosenUnderlying) {
       setValidation('Pick an underlying — the strategy must know what it trades.')
       return
@@ -257,14 +269,11 @@ export function BacktestDialog({
       setValidation('Lots must be a whole number of at least 1.')
       return
     }
-    const sl = stopLoss.trim() === '' ? null : Number(stopLoss)
-    if (sl != null && !(sl > 0)) {
-      setValidation('Stop-loss must be a positive rupee amount, or left empty.')
-      return
-    }
-    const tg = target.trim() === '' ? null : Number(target)
-    if (tg != null && !(tg > 0)) {
-      setValidation('Target must be a positive rupee amount, or left empty.')
+    const parsedRisk = parseRiskDraft(risk)
+    if (parsedRisk.rules === null) {
+      setRiskField(parsedRisk.field)
+      setRiskNonce((n) => n + 1)
+      setValidation(parsedRisk.error)
       return
     }
     if (!eodNone && !/^([01]\d|2[0-3]):[0-5]\d$/.test(eodTime)) {
@@ -288,8 +297,11 @@ export function BacktestDialog({
       fromDate,
       toDate,
       lots: lotsNum,
-      stopLoss: sl,
-      target: tg,
+      // The legacy fields mirror the overall level so an API build from
+      // before the three-level rules still applies them.
+      stopLoss: parsedRisk.rules.overall?.stopLoss ?? null,
+      target: parsedRisk.rules.overall?.target ?? null,
+      risk: parsedRisk.rules,
       eodSquareOffIst: eodNone ? '' : eodTime,
       chargesPerLot: chg,
       parameters: paramsToObject(params),
@@ -591,40 +603,6 @@ export function BacktestDialog({
               </span>
             </div>
             <div className="field">
-              <label className="field__label" htmlFor="bt-sl">
-                Stop-loss ₹
-              </label>
-              <input
-                id="bt-sl"
-                className="field__input"
-                type="number"
-                min={0}
-                step={100}
-                inputMode="decimal"
-                placeholder="none"
-                value={stopLoss}
-                onChange={(e) => setStopLoss(e.target.value)}
-              />
-              <span className="field__help">on total P&L · a hit ends the backtest</span>
-            </div>
-            <div className="field">
-              <label className="field__label" htmlFor="bt-target">
-                Target ₹
-              </label>
-              <input
-                id="bt-target"
-                className="field__input"
-                type="number"
-                min={0}
-                step={100}
-                inputMode="decimal"
-                placeholder="none"
-                value={target}
-                onChange={(e) => setTarget(e.target.value)}
-              />
-              <span className="field__help">on total P&L · a hit ends the backtest</span>
-            </div>
-            <div className="field">
               <label className="field__label" htmlFor="bt-eod">
                 EOD square-off (IST)
               </label>
@@ -641,6 +619,20 @@ export function BacktestDialog({
                 none — carry positions overnight
               </label>
             </div>
+          </div>
+
+          <div className="field">
+            <span className="field__label">Risk rules (all optional · evaluated every bar, leg → group → overall)</span>
+            <RiskRulesForm
+              value={risk}
+              onChange={(next) => {
+                setRisk(next)
+                setRiskField(null)
+              }}
+              idPrefix="bt-risk"
+              invalidField={riskField}
+              invalidNonce={riskNonce}
+            />
           </div>
 
           <div>

@@ -26,6 +26,13 @@ import os
 # Add the parent directory to sys.path so that absolute-style imports work
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+# Before anything prints: the API that spawned us may die (restart, crash);
+# then stdout is a closed pipe and a plain print() raises BrokenPipeError.
+# Output continues in logs/engine/runner-<run_id>-<pid>.log (renamed once the
+# run id is known below).
+from core.safe_output import install_safe_stdio
+install_safe_stdio(name="runner")
+
 import threading
 import redis
 import requests
@@ -48,11 +55,14 @@ from strategies.contract_selector import (  # noqa: F401
     strike_step_from_chain,
 )
 from strategies.signal_utils import (  # noqa: F401
+    UiSignalPublisher,
     count_open_groups,
     parse_optional_number,
     signal_to_request,
+    signal_to_ui_payload,
     stamp_signal_metadata,
 )
+from backtest.run_spec import parse_risk_rules
 
 import core.fyers_orders as fyers_orders
 
@@ -67,7 +77,9 @@ from state_management.state_models import StrategyState
 from state_management.state_store import StrategyStateStore
 
 from core.metrics import (
+    AUTO_METRICS_PORT_RANGE,
     start_metrics_server,
+    start_metrics_server_auto,
     REDIS_LAG,
     ORDERS_EMITTED,
     STRATEGY_LOOP_DURATION,
@@ -280,9 +292,17 @@ if __name__ == "__main__":
     parser.add_argument("--run-id", type=int, required=False, help="Optional: The SimulationRunId generated from the C# Backend API. If not provided, a new run will be created automatically.")
     parser.add_argument("--underlying", type=str, default="BANKNIFTY", help="The underlying instrument symbol (e.g., BANKNIFTY, NIFTY50, SENSEX).")
     parser.add_argument("--spot-symbol", type=str, default="NSE:NIFTYBANK-INDEX", help="The exact Fyers spot symbol for the underlying.")
-    parser.add_argument("--metrics-port", type=int, default=8000, help="The port for the Prometheus metrics server.")
+    parser.add_argument(
+        "--metrics-port", type=int, default=0,
+        help=(
+            "The port for the Prometheus metrics server. 0 (default) = auto: the first free port in "
+            f"{AUTO_METRICS_PORT_RANGE[0]}..{AUTO_METRICS_PORT_RANGE[1]}, so several runners can share a host."
+        ),
+    )
     args = parser.parse_args()
 
+    if args.run_id is not None:
+        install_safe_stdio(name=f"runner-{args.run_id}")
     install_signal_handlers()
 
     api = PlatformApiClient(API_BASE_URL, verify_ssl=VERIFY_SSL)
@@ -343,15 +363,19 @@ if __name__ == "__main__":
     strategy_lots = getattr(strategy, "lots", None)
     if not isinstance(strategy_lots, int) or strategy_lots < 1:
         strategy_lots = run_lots
-    run_stop_loss = parse_optional_number(run_params.get("stop_loss"))
-    run_target = parse_optional_number(run_params.get("target"))
+    # Risk rules (leg / group / overall) are read for the log only: the API's
+    # risk guard enforces them and they can be edited while the run is live.
+    run_risk = parse_risk_rules(run_params)
+    run_stop_loss, run_target = run_risk.stop_loss, run_risk.target
 
     print(
         f"[CONFIG] strategy={args.strategy} run_id={args.run_id} underlying={args.underlying} "
         f"spot_symbol={args.spot_symbol} lots={strategy_lots} "
         f"stop_loss={run_stop_loss if run_stop_loss is not None else 'none'} "
         f"target={run_target if run_target is not None else 'none'} "
-        f"(SL/target enforced by the API risk guard)",
+        f"risk={json.dumps(run_risk.to_dict(), separators=(',', ':'))} "
+        f"[{run_risk.describe()}] "
+        f"(risk rules enforced by the API risk guard: leg → group → overall)",
         flush=True,
     )
 
@@ -397,6 +421,17 @@ if __name__ == "__main__":
         except Exception as ex:
             print(f"Failed to create simulation run automatically: {ex}")
             sys.exit(1)
+        install_safe_stdio(name=f"runner-{run_id}")
+
+    # Tell the API which OS process runs this run, so a restarted API can
+    # re-adopt (and still stop) the runner. Best effort: an older API answers
+    # 404, and a failure here must never take the strategy down.
+    runner_started_utc = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    try:
+        api.register_runner(run_id, os.getpid(), runner_started_utc)
+        print(f"[RUNNER] registered pid {os.getpid()} for run {run_id}", flush=True)
+    except Exception as ex:
+        print(f"[RUNNER] WARN: could not register pid {os.getpid()} for run {run_id}: {ex}", flush=True)
 
     last_seen_updated_utc = None
 
@@ -406,11 +441,31 @@ if __name__ == "__main__":
     print(f"[{args.underlying}] SimulationRunId: {run_id}")
     print(f"[{args.underlying}] Strategy: {args.strategy}")
 
-    print(f"[{args.underlying}] Starting Prometheus metrics server on port {args.metrics_port}...")
+    # Metrics are optional: a port clash (several runners on one host) or a
+    # sandboxed socket must never take the strategy down with it.
+    metrics_port: Optional[int] = None
     try:
-        start_metrics_server(args.metrics_port)
+        if args.metrics_port and args.metrics_port > 0:
+            print(f"[{args.underlying}] Starting Prometheus metrics server on port {args.metrics_port}...")
+            metrics_port = start_metrics_server(args.metrics_port)
+        else:
+            print(
+                f"[{args.underlying}] Starting Prometheus metrics server on the first free port in "
+                f"{AUTO_METRICS_PORT_RANGE[0]}..{AUTO_METRICS_PORT_RANGE[1]}..."
+            )
+            metrics_port = start_metrics_server_auto()
+        print(f"[{args.underlying}] Prometheus metrics served on port {metrics_port}", flush=True)
     except Exception as e:
-        print(f"[{args.underlying}] Failed to start metrics server on port {args.metrics_port}: {e}. Continuing without metrics.")
+        wanted = args.metrics_port if args.metrics_port and args.metrics_port > 0 else "auto"
+        print(
+            f"[{args.underlying}] Failed to start metrics server (port {wanted}): {e}. "
+            f"Continuing without metrics.",
+            flush=True,
+        )
+
+    # Dashboard copy of every signal goes to the run-scoped feed; the
+    # publisher falls back to the strategy-scoped route on an older API.
+    ui_signals = UiSignalPublisher(api.http, api.base_url, run_id, args.strategy_id)
 
     redis_client = build_redis_client()
     owner_id = f"strategy-runner-{run_id}-{os.getpid()}"
@@ -744,15 +799,9 @@ if __name__ == "__main__":
                         print("ENRICHED SIGNAL LEGS:")
                         print(json.dumps(sig.legs, indent=2, default=str))
 
-                        # Always push signal to UI dynamically via Strategy endpoint
+                        # Always push signal to UI dynamically via the run-scoped Strategy feed
                         try:
-                            api.http.post(f"{api.base_url}/api/Strategy/{args.strategy_id}/signals", json={
-                                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-                                "signal_type": sig.signal_type,
-                                "reason": sig.reason,
-                                "legs": sig.legs,
-                                "metadata": sig.metadata
-                            })
+                            ui_signals.publish(signal_to_ui_payload(sig, datetime.now(timezone.utc).isoformat()))
                         except Exception as e:
                             print(f"WARN: Could not publish live signal to UI: {e}")
 

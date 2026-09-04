@@ -233,6 +233,7 @@ public sealed class BacktestRunViewBuilder
             LotSizeSource = lot.Source,
             StopLoss = running?.StopLoss ?? p.StopLoss,
             Target = running?.Target ?? p.Target,
+            Risk = p.Risk,
             EodSquareOffIst = p.EodSquareOffIst ?? BacktestRunParameters.DefaultEodSquareOffIst,
             ChargesPerLot = p.ChargesPerLot ?? 0m,
             InitialCapital = run.InitialCapital,
@@ -283,13 +284,23 @@ public sealed class BacktestRunViewBuilder
             .Sum(x => x.UnrealizedPnl);
         decimal total = realized + unrealized - charges;
 
+        // Capital used over a replay is the peak UsedCapital the runner
+        // reported in its equity snapshots; a finished replay has no open legs,
+        // so outlay / received are 0 by definition.
+        decimal capitalUsed = await _dbContext.SimulationEquitySnapshots.AsNoTracking()
+            .Where(x => x.SimulationRunId == run.Id)
+            .MaxAsync(x => (decimal?)x.UsedCapital, cancellationToken) ?? 0m;
+
         view.Pnl = new BacktestPnl
         {
             Realized = realized,
             Unrealized = unrealized,
             Charges = charges,
             Total = total,
-            ReturnPercent = run.InitialCapital > 0 ? Math.Round(total / run.InitialCapital * 100m, 4) : 0m
+            ReturnPercent = run.InitialCapital > 0 ? Math.Round(total / run.InitialCapital * 100m, 4) : 0m,
+            CapitalUsed = capitalUsed,
+            PremiumOutlay = 0m,
+            PremiumReceived = 0m
         };
 
         // Equity curve (historical SnapshotUtc, posted by the runner).

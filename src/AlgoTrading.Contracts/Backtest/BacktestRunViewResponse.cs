@@ -28,6 +28,9 @@ public class BacktestRunViewResponse
     public decimal? StopLoss { get; set; }
     public decimal? Target { get; set; }
 
+    /// <summary>The run's risk rules at all three levels (enforced by the backtest engine).</summary>
+    public RiskRulesDto Risk { get; set; } = RiskRulesDto.Empty();
+
     /// <summary>"HH:MM" IST, or empty when no end-of-day square-off.</summary>
     public string EodSquareOffIst { get; set; } = string.Empty;
     public decimal ChargesPerLot { get; set; }
@@ -83,6 +86,15 @@ public class BacktestPnl
     public decimal Total { get; set; }
     public decimal Charges { get; set; }
     public decimal ReturnPercent { get; set; }
+
+    /// <summary>Peak UsedCapital over the run's equity snapshots (0 when none).</summary>
+    public decimal CapitalUsed { get; set; }
+
+    /// <summary>Always 0 for a finished replay (no open legs); kept for shape parity with the live view.</summary>
+    public decimal PremiumOutlay { get; set; }
+
+    /// <summary>Always 0 for a finished replay; kept for shape parity with the live view.</summary>
+    public decimal PremiumReceived { get; set; }
 }
 
 /// <summary>Position-based performance metrics (a "trade" is a closed position).</summary>

@@ -275,9 +275,16 @@ public class SimulatorController : ControllerBase
         }
     }
 
-    /// <summary>Runner progress; registry only, no DB write. 404 when the run is not in the registry.</summary>
+    /// <summary>
+    /// Runner progress; registry only. 404 when the run is not in the registry.
+    /// A body that names the runner's processId confirms the pid on record
+    /// (persisted once, so a restarted API can adopt the runner).
+    /// </summary>
     [HttpPost("runs/{id:long}/progress")]
-    public IActionResult ReportProgress(long id, [FromBody] RunProgressRequest? request)
+    public async Task<IActionResult> ReportProgress(
+        long id,
+        [FromBody] RunProgressRequest? request,
+        [FromServices] BacktestRunControl runControl)
     {
         if (request is null)
             return BadRequest(new { message = "A progress body is required." });
@@ -286,6 +293,11 @@ public class SimulatorController : ControllerBase
             request.CurrentUtc, request.Trades, request.Message);
         if (!updated)
             return NotFound(new { message = $"Backtest run {id} is not running." });
+
+        if (request.ProcessId is > 0 && _backtests.ConfirmPid(id, request.ProcessId.Value))
+        {
+            await runControl.RecordRunnerPidAsync(id, request.ProcessId.Value, "runner");
+        }
 
         return Ok();
     }

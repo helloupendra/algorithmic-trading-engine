@@ -33,6 +33,13 @@ public class StartBacktestRequest
     /// <summary>Stop the backtest when total P&amp;L reaches this rupee amount.</summary>
     public decimal? Target { get; set; }
 
+    /// <summary>
+    /// Risk rules at three levels (overall / group / leg), enforced by the
+    /// backtest engine. When absent, the overall level is built from
+    /// <see cref="StopLoss"/> and <see cref="Target"/>.
+    /// </summary>
+    public AlgoTrading.Contracts.Strategies.RiskRulesDto? Risk { get; set; }
+
     /// <summary>End-of-day square-off time "HH:MM" IST. Default "15:15"; empty string = none.</summary>
     public string? EodSquareOffIst { get; set; }
 

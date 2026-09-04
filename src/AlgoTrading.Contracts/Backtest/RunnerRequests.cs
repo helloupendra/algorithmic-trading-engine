@@ -48,6 +48,9 @@ public class RunProgressRequest
     public DateTime? CurrentUtc { get; set; }
     public int Trades { get; set; }
     public string? Message { get; set; }
+
+    /// <summary>The runner's OS process id, so the API can adopt it after a restart. Optional.</summary>
+    public int? ProcessId { get; set; }
 }
 
 /// <summary>

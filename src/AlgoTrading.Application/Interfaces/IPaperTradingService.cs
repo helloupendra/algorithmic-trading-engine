@@ -74,6 +74,21 @@ public interface IPaperTradingService
         string reason,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Squares off a chosen subset of the run's open positions (by position id)
+    /// on the same fill path as <see cref="FlattenRunAsync"/>: one CLOSE_GROUP
+    /// signal per group carrying { reason, by }, reduce-only closing legs at
+    /// the latest live quote (falling back to the last mark, then the entry).
+    /// Ids that are unknown or already closed are skipped. Returns the number
+    /// of positions closed.
+    /// </summary>
+    Task<int> ClosePositionsAsync(
+        long simulationRunId,
+        IEnumerable<long> positionIds,
+        string reason,
+        string by,
+        CancellationToken cancellationToken = default);
+
     // ---- OfflineReplay (backtest runner) hooks ----
 
     /// <summary>

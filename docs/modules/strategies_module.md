@@ -45,16 +45,29 @@ The module runs strictly in **LivePaper** mode: real ticks, simulated fills thro
 - P&L = (exit − entry) × lots × lot size for longs, and the reverse for shorts. Open rows show unrealized P&L against the latest live quote; closed rows show realized P&L.
 - Lot sizes come from the FYERS master (`Instruments.LotSize`, populated by the importer) and fall back to `appsettings.json → LotSizes` (NIFTY 65, BANKNIFTY 30, FINNIFTY 60, MIDCPNIFTY 120, NIFTYNXT50 25, SENSEX 20, BANKEX 30 as of the September 2026 master). The live view reports `lotSizeSource` so the operator can tell which one was used.
 
-### 3. Stop-loss and target
-- Both are rupee amounts on the run's **total** P&L (realized + unrealized) and are enforced by the API, not the runner, so a wedged runner cannot skip its own stop.
-- On a trip the stop pipeline runs: the run is marked `Stopping` (further signals are rejected), the runner receives SIGTERM (falling back to a kill after 5 s), every open position is squared off at its last mark, and a `RUN_STOPPED` signal with the reason is persisted. The reason ("Stop loss hit: P&L −627 ≤ −100") is shown on the run card and survives an API restart.
-- The same pipeline serves the UI Stop button ("Stopped by <user>"), the 15:30 IST market-close service and a runner that exits on its own ("Runner exited (code N)").
+### 3. Risk rules: overall, per group, per leg
+Every run carries a `risk` object (all fields optional, set at start or changed while running with
+`PATCH /api/Strategy/runs/{runId}/risk`; each change is recorded as a `RISK_UPDATED` activity row):
+- **Overall** (₹ on the run's total P&L, realized + unrealized): a trip squares off every position and ends the run.
+- **Per group** (₹ on one `OPEN_GROUP`, e.g. a straddle pair: realized of the group + unrealized of its open legs): a trip closes that group only; the run continues.
+- **Per leg** (premium points and/or % of the entry premium; BUY legs lose when the premium falls, SELL legs when it rises; when both are set the first to trip wins): a trip closes that leg only.
 
-### 4. Live view
-`GET /api/Strategy/{id}/live` returns the current run (or the last one for that strategy) as:
-- header: underlying, spot LTP, lots, lot size, stop-loss, target, started by/at, stop reason;
-- `pnl`: realized, unrealized, total;
-- `positions[]`: contract label ("BANKNIFTY 57600 CE · 29 Sep"), side, lots, lot size, quantity, entry, LTP, P&L, status, opened/closed time — open rows first;
+The guard runs in the API every 3 seconds (`StrategyRiskGuardService`), not in the runner, so a wedged runner cannot skip its own stop. Each sweep marks the run to market, evaluates leg → group → overall, and closes through reduce-only `CLOSE_GROUP` signals at the last mark with the reason ("Leg stop-loss hit: BANKNIFTY 57500 CE −21.4 pts (−2.6%) ≤ −20 pts", "Group stop-loss hit: G1 P&L −1,240 ≤ −1,000"). A strategy's own later `CLOSE_GROUP` for an already-closed leg is reduce-only and ignored, so the guard can never leave a reverse position behind.
+
+An overall trip runs the stop pipeline: the run is marked `Stopping` (further signals are rejected), the runner receives SIGTERM (falling back to a kill after 5 s), every open position is squared off at its last mark, and a `RUN_STOPPED` signal with the reason is persisted. The same pipeline serves the UI Stop button ("Stopped by <user>"), the 15:30 IST market-close service and a runner that exits on its own ("Runner exited (code N)"). The backtest engine applies the same three levels bar by bar, so a rule behaves the same in replay and live.
+
+### 4. Several runs of one strategy
+Runs are keyed by run id, so the same strategy can run on several underlyings at once (Titli on BANKNIFTY and on NIFTY). Starting a strategy on an underlying it is already running on answers 409. Each run has its own card, stop, live view, logs and signal ring under `/api/Strategy/runs/{runId}/…`; the older strategy-scoped routes resolve to the single active run.
+
+### 5. Surviving an API restart
+The ingestor and every runner report their process id (heartbeat `processId`, `POST /api/Strategy/runs/{runId}/runner`), stored in `system_settings`. On startup the API adopts runners that are still alive (their cards come back, output is no longer captured) and closes the runs whose runner is gone; the ingestor's Stop button works for an adopted process too. Python processes write through a safe stdio wrapper: when the API's pipe closes their output moves to `logs/engine/*.log` instead of crashing the heartbeat or the runner.
+
+### 6. Live view
+`GET /api/Strategy/runs/{runId}/live` returns the run as:
+- header: underlying, spot LTP, lots, lot size, risk rules, started by/at, stop reason;
+- `pnl`: realized, unrealized, total, capital used, premium outlay (open BUY legs) and premium received (open SELL legs);
+- `positions[]`: contract label ("BANKNIFTY 57600 CE · 29 Sep"), side, lots, lot size, quantity, entry, value (entry × qty, and the current value while open), LTP, P&L with premium points and %, status, opened/closed time — open rows first;
+- `groups[]`: P&L and open/closed leg counts per group;
 - `activity[]`: every signal with the strategy's own reason text, newest first;
 - `runner`: process id and last log time. `GET /api/Strategy/{id}/logs` returns the drained process output.
 

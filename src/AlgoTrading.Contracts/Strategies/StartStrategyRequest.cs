@@ -21,6 +21,13 @@ public class StartStrategyRequest
     /// <summary>Stop when total P&amp;L reaches this amount. Positive rupees or null.</summary>
     public decimal? Target { get; set; }
 
+    /// <summary>
+    /// Risk rules at three levels (overall / group / leg). When absent, the
+    /// overall level is built from <see cref="StopLoss"/> and <see cref="Target"/>.
+    /// When present, its overall level wins over those legacy fields.
+    /// </summary>
+    public RiskRulesDto? Risk { get; set; }
+
     /// <summary>Overrides merged over the strategy's default parameters.</summary>
     public Dictionary<string, JsonElement>? Parameters { get; set; }
 

@@ -1,8 +1,12 @@
 /*
  * Public landing page ("/"). Every rule is scoped under .lp so the console's
  * vocabulary (.btn, .badge, .panel, .stat …) and this page's marketing styling
- * never fight: .lp .btn (0,2,0) always beats .btn (0,1,0), whatever the
- * injection order. Tokens come from styles.css.
+ * do not fight: .lp .btn (0,2,0) beats .btn (0,1,0) on specificity alone.
+ * Pseudo-class rules are a tie at equal specificity (e.g. .lp .btn:hover vs
+ * .btn:hover:not(:disabled), both (0,3,0)) and are then resolved by source
+ * order — this file is injected BEFORE styles.css — so every scoped :hover /
+ * :visited rule below sets every property it cares about and out-specifies the
+ * console rule where a tie would otherwise leak. Tokens come from styles.css.
  */
 
 .lp { font-size: 16px; line-height: 1.6; color: var(--text); background: var(--bg0); overflow-x: hidden; min-height: 100vh; }
@@ -22,19 +26,22 @@
 .lp .brand__mark svg { width: 17px; height: 17px; }
 .lp .brand small { display: block; font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--text-3); line-height: 1.1; }
 .lp .nav__links { display: flex; align-items: center; gap: 22px; margin-left: auto; font-size: 13.5px; font-weight: 550; }
-.lp .nav__links a { color: var(--text-2); }
+/* :visited out-specifies the console's a:not([class]):visited (0,2,1) so clicked section links stay grey. */
+.lp .nav__links a, .lp .nav__links a:visited { color: var(--text-2); white-space: nowrap; }
 .lp .nav__links a:hover { color: var(--text); text-decoration: none; }
 .lp .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 11px 18px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--surface2); color: var(--text); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: transform .16s ease, background .16s ease, border-color .16s ease, box-shadow .16s ease; }
-.lp .btn:hover { text-decoration: none; transform: translateY(-1px); border-color: #37485f; }
+.lp .btn:hover { text-decoration: none; transform: translateY(-1px); background: #1c2836; border-color: #37485f; }
 .lp .btn--primary { background: var(--brand); border-color: transparent; color: #fff; box-shadow: 0 12px 30px -12px var(--brand); }
-.lp .btn--primary:hover { background: var(--brand-hi); }
+.lp .btn--primary:hover { background: var(--brand-hi); border-color: transparent; }
 .lp .btn--ghost { background: transparent; border-color: transparent; color: var(--text-2); }
-.lp .btn--ghost:hover { color: var(--text); background: var(--surface2); }
+.lp .btn--ghost:hover { color: var(--text); background: var(--surface2); border-color: transparent; }
 .lp .btn--sm { padding: 7px 13px; font-size: 13px; }
-@media (max-width: 760px) { .lp .nav__links a:not(.btn) { display: none; } }
+/* Section links hide where the hero goes single-column; at 768px (iPad portrait) they no longer fit beside the brand and CTA. */
+@media (max-width: 900px) { .lp .nav__links a:not(.btn) { display: none; } }
 
 /* --- hero ----------------------------------------------------------------- */
-.lp .hero { position: relative; min-height: 100vh; min-height: 100svh; display: grid; align-items: center; padding: 120px 0 64px; overflow: hidden; isolation: isolate; }
+/* Bottom padding clears the absolutely positioned scroll hint (22px offset + ~54px tall) when the hero is content-driven. */
+.lp .hero { position: relative; min-height: 100vh; min-height: 100svh; display: grid; align-items: center; padding: 120px 0 96px; overflow: hidden; isolation: isolate; }
 .lp .hero__scene { position: absolute; inset: 0; z-index: -2; width: 100%; height: 100%; display: block; }
 .lp .hero__fallback { position: absolute; inset: 0; z-index: -2; background:
     radial-gradient(900px 520px at 78% 40%, rgba(79,125,255,.22) 0%, transparent 60%),
@@ -63,6 +70,8 @@
 @media (max-width: 900px) {
   .lp .hero__grid { grid-template-columns: 1fr; }
   .lp .hero__veil { background: linear-gradient(180deg, color-mix(in srgb, var(--bg0) 45%, transparent) 0%, color-mix(in srgb, var(--bg0) 75%, transparent) 50%, var(--bg0) 100%); }
+  /* The hero already exceeds one screen here; the hint would only crowd the stats. */
+  .lp .scroll-hint { display: none; }
 }
 
 /* --- sections ------------------------------------------------------------- */
@@ -75,8 +84,9 @@
 .lp .reveal.is-in { opacity: 1; transform: none; }
 
 /* --- pipeline (3D tilt cards) --------------------------------------------- */
-.lp .pipeline { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; perspective: 1400px; }
-.lp .pipeline > * { min-width: 0; }
+.lp .pipeline { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+/* perspective applies to an element's direct children; the .reveal wrapper is the parent of .tilt, so it must carry it. */
+.lp .pipeline > * { min-width: 0; perspective: 1400px; }
 .lp .tilt { position: relative; height: 100%; background: linear-gradient(160deg, var(--surface) 0%, var(--bg1) 100%); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px 22px 22px; transform-style: preserve-3d; transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease; will-change: transform; }
 .lp .tilt::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: radial-gradient(380px 200px at var(--mx, 50%) var(--my, 0%), rgba(112,150,255,.16), transparent 60%); opacity: 0; transition: opacity .25s ease; pointer-events: none; }
 .lp .tilt:hover { border-color: var(--brand-line); box-shadow: 0 30px 60px -30px rgba(79,125,255,.45); }
@@ -115,9 +125,10 @@
 .lp td { padding: 8px 12px; border-bottom: 1px solid var(--line-soft); font-variant-numeric: tabular-nums; }
 .lp tr:last-child td { border-bottom: 0; }
 .lp .r { text-align: right; }
-.lp .row--closed { opacity: .55; }
+.lp .row--closed { opacity: .7; } /* .55 drops badge/P&L text below 4.5:1 on bg1 */
 .lp .note { margin: 12px 0 0; font-size: 12.5px; color: var(--text-3); }
-.lp .activity { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; font-size: 13.5px; }
+/* Resets the console's .activity box (border, bg1, 260px scroll) which would otherwise cascade in. */
+.lp .activity { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; font-size: 13.5px; border: 0; border-radius: 0; background: transparent; max-height: none; overflow: visible; }
 .lp .bt-curve { height: 120px; margin: 4px 0 14px; }
 .lp .bt-curve svg { width: 100%; height: 100%; display: block; }
 .lp .daily { display: flex; gap: 4px; align-items: flex-end; height: 54px; margin-bottom: 6px; }
@@ -156,7 +167,7 @@
 .lp .final p { color: var(--text-2); max-width: 56ch; margin: 0 auto 28px; font-size: 17px; }
 .lp footer { padding: 26px 0 40px; color: var(--text-3); font-size: 13px; }
 .lp footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; align-items: center; }
-.lp footer a { color: var(--text-2); }
+.lp footer a, .lp footer a:visited { color: var(--text-2); }
 
 @media (prefers-reduced-motion: reduce) {
   .lp .reveal { opacity: 1; transform: none; transition: none; }

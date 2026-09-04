@@ -39,5 +39,11 @@ namespace AlgoTrading.Contracts.LiveData
         /// Any recent fatal exceptions encountered by the worker.
         /// </summary>
         public string LastError { get; set; } = string.Empty;
+
+        /// <summary>
+        /// The ingestor's OS process id, so the API can find and stop it after
+        /// an API restart. Optional; older ingestors do not send it.
+        /// </summary>
+        public int? ProcessId { get; set; }
     }
 }
