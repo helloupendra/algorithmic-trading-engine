@@ -20,7 +20,7 @@ import re
 from datetime import date
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
-from strategies.base_strategy import OptionContract
+from strategies.base_strategy import ContractRequirement, OptionContract
 from strategies.contract_selector import (
     Strike,
     fallback_strike_step,
@@ -28,7 +28,9 @@ from strategies.contract_selector import (
     map_contract,
     parse_logical_symbol,
     round_to_step,
+    strike_for_requirement,
     strike_step_from_chain,
+    strikes_for_requirements,
 )
 
 ContractKey = Tuple[str, Strike, str]
@@ -194,6 +196,41 @@ class ContractResolver:
             if found:
                 contracts[key] = found
         return contracts
+
+    def contracts_for(self, requirements: List[ContractRequirement], expiry: Optional[str], atm_strike: Strike,
+                      step: Optional[float] = None,
+                      params: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, OptionContract], List[Dict[str, Any]]]:
+        """
+        {requirement key -> contract} for every requirement the master can
+        satisfy at `expiry`, plus one
+        `{key, strike, optionType, optional, failed, reason}` entry per key it
+        cannot (worded by `missing_reason`). `failed` separates a transient
+        lookup error — which the next bar retries — from a strike the master
+        genuinely does not carry, so only the latter is a permanent data gap.
+
+        Without an expiry nothing can be resolved and every requirement is
+        reported as missing.
+        """
+        grid = float(step) if step and step > 0 else self.step
+        contracts: Dict[str, OptionContract] = {}
+        missing: List[Dict[str, Any]] = []
+        for req, strike in strikes_for_requirements(requirements or [], float(atm_strike), grid, params):
+            option_type = str(req.option_type or "").upper()
+            found = self.contract(expiry, strike, option_type) if expiry else None
+            if found is not None:
+                contracts[req.key] = found
+                continue
+            failed = bool(expiry) and self._key(expiry, strike, option_type) in self._failures
+            reason = (self.missing_reason(expiry, strike, option_type) if expiry
+                      else "no option expiry in the instrument master")
+            missing.append({"key": req.key, "strike": strike, "optionType": option_type,
+                            "optional": bool(req.optional), "failed": failed, "reason": reason})
+        return contracts, missing
+
+    def strike_for(self, req: ContractRequirement, atm_strike: Strike, step: Optional[float] = None,
+                   params: Optional[Dict[str, Any]] = None) -> Strike:
+        """The strike one requirement resolves to on this underlying's grid."""
+        return strike_for_requirement(req, float(atm_strike), float(step) if step else self.step, params)
 
     def resolve_logical(self, symbol: str, expiry: str) -> Optional[str]:
         """

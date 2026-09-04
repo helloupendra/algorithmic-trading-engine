@@ -6,6 +6,8 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Microsoft.Extensions.Options;
 using AlgoTrading.Api.Configuration;
+using AlgoTrading.Api.Security;
+using AlgoTrading.Api.Services;
 
 namespace AlgoTrading.Api.Controllers
 {
@@ -17,6 +19,7 @@ namespace AlgoTrading.Api.Controllers
         private readonly StrategyRunnerOptions _options;
         private readonly IWebHostEnvironment _environment;
         private readonly ILogger<AlertsController> _logger;
+        private readonly PythonEngineLocator _locator;
 
         private static readonly List<Process> _alerterProcesses = new();
         private static DateTime? _startedUtc;
@@ -28,12 +31,14 @@ namespace AlgoTrading.Api.Controllers
             IConnectionMultiplexer redis,
             IOptions<StrategyRunnerOptions> options,
             IWebHostEnvironment environment,
-            ILogger<AlertsController> logger)
+            ILogger<AlertsController> logger,
+            PythonEngineLocator locator)
         {
             _redis = redis;
             _options = options.Value;
             _environment = environment;
             _logger = logger;
+            _locator = locator;
         }
 
         private static void AppendLog(string message)
@@ -82,7 +87,7 @@ namespace AlgoTrading.Api.Controllers
                 _alerterLogs.Clear();
                 AppendLog("Starting Telegram Alerter (LogicEngine) for Core Indices...");
 
-                var engineDirectory = ResolveEngineDirectory();
+                var engineDirectory = _locator.EngineDirectory;
                 var scriptPath = Path.Combine(engineDirectory, "strategies", "execution_runner.py");
 
                 var targets = new[]
@@ -96,7 +101,7 @@ namespace AlgoTrading.Api.Controllers
                 {
                     var processInfo = new ProcessStartInfo
                     {
-                        FileName = "python",
+                        FileName = _locator.PythonExecutable,
                         UseShellExecute = false,
                         RedirectStandardOutput = true,
                         RedirectStandardError = true,
@@ -105,16 +110,16 @@ namespace AlgoTrading.Api.Controllers
                     };
 
                     processInfo.ArgumentList.Add(scriptPath);
-                    processInfo.ArgumentList.Add("--strategy");
+                    processInfo.ArgumentList.Add("--strategy-id");
                     processInfo.ArgumentList.Add("LogicEngine");
                     processInfo.ArgumentList.Add("--user-id");
-                    processInfo.ArgumentList.Add("1");
+                    processInfo.ArgumentList.Add(User.GetRequiredUserId().ToString());
                     processInfo.ArgumentList.Add("--underlying");
                     processInfo.ArgumentList.Add(target.Underlying);
                     processInfo.ArgumentList.Add("--spot-symbol");
                     processInfo.ArgumentList.Add(target.Spot);
                     processInfo.ArgumentList.Add("--metrics-port");
-                    processInfo.ArgumentList.Add(target.Port.ToString());
+                    processInfo.ArgumentList.Add("0");
                     
                     processInfo.Environment["PYTHONPATH"] = engineDirectory;
                     processInfo.Environment["PYTHONUNBUFFERED"] = "1";
@@ -237,37 +242,6 @@ namespace AlgoTrading.Api.Controllers
                 message = $"Successfully broadcasted E2E alert command for {request.Instrument} to the Python Engine.",
                 broadcastedPayload = payload
             });
-        }
-
-        private string ResolveEngineDirectory()
-        {
-            if (!string.IsNullOrWhiteSpace(_options.EngineDirectory))
-            {
-                return Path.GetFullPath(_options.EngineDirectory);
-            }
-
-            return Path.GetFullPath(Path.Combine(_environment.ContentRootPath, "..", "AlgoTrading.PythonEngine"));
-        }
-
-        private string ResolvePythonExecutable()
-        {
-            if (!string.IsNullOrWhiteSpace(_options.PythonExecutable))
-            {
-                return _options.PythonExecutable;
-            }
-
-            bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
-            var repoRoot = Path.GetFullPath(Path.Combine(_environment.ContentRootPath, "..", ".."));
-            var venvPython = isWindows
-                ? Path.Combine(repoRoot, ".venv", "Scripts", "python.exe")
-                : Path.Combine(repoRoot, ".venv", "bin", "python");
-
-            if (System.IO.File.Exists(venvPython))
-            {
-                return venvPython;
-            }
-
-            return isWindows ? "python" : "python3";
         }
     }
 

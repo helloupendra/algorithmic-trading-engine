@@ -34,6 +34,20 @@ import { EMPTY_RISK_DRAFT, RISK_UPDATED_TYPE, activityText, parseRiskDraft } fro
 import type { RiskDraft, RiskDraftField } from '../../lib/risk'
 import { formatPnlMove } from '../../lib/positions'
 import type { PositionValues } from '../../lib/positions'
+import {
+  contractRequirementSummary,
+  contractRequirementsOf,
+  describeRequirement,
+  describeRequirementDistance,
+  parseStrikeParams,
+  parseStrikeValue,
+  requirementLabel,
+  seedStrikeParams,
+  strikeParamKeys,
+  strikeParamLabel,
+  strikeParams,
+  strikeValueInvalid,
+} from '../../lib/contracts'
 import { activeUnderlyings } from '../../lib/strategyList'
 import { Badge, InlineError, Loading } from '../../components/ui'
 import { RiskRulesForm } from '../../components/RiskRulesForm'
@@ -43,6 +57,7 @@ import type {
   LiveActivity,
   StartStrategyRequest,
   StartStrategyResponse,
+  StrategyContractRequirement,
   StrategyListItem,
 } from '../../lib/types'
 
@@ -234,6 +249,7 @@ export function StrategyCard({
   const s = strategy
   const lots = Math.max(1, s.defaultLots || 1)
   const on = activeUnderlyings(s)
+  const requirements = contractRequirementsOf(s.contractRequirements)
   // A live run never blocks the button: the same strategy may be started on a
   // second underlying, and the launch dialog greys out the ones already taken.
   const label = s.isActive && !allowWhileActive ? 'Start on another underlying…' : actionLabel
@@ -261,6 +277,15 @@ export function StrategyCard({
         </div>
       )}
       {s.legsSummary && <div className="strategy-card__legs">{s.legsSummary}</div>}
+      {requirements.length > 0 && (
+        <div className="chip-row" aria-label="Contracts">
+          {requirements.map((r) => (
+            <span key={r.key} className="badge badge--neutral mono" title={describeRequirement(r)}>
+              {r.key}
+            </span>
+          ))}
+        </div>
+      )}
       <div className="strategy-card__foot">
         <span className="strategy-card__hint">
           default {lots} {lots === 1 ? 'lot' : 'lots'}
@@ -378,6 +403,136 @@ export function ParamGrid({ rows, onChange }: { rows: ParamRow[]; onChange: (row
   )
 }
 
+/**
+ * Free-form parameter rows merged with the strike-selection values (which win,
+ * being the dedicated fields for those keys). Null when nothing is set, which
+ * is what the start endpoints expect for "no parameters".
+ */
+export function mergeParams(
+  rows: ParamRow[],
+  strike: Record<string, number>,
+): Record<string, unknown> | null {
+  const merged = { ...(paramsToObject(rows) ?? {}), ...strike }
+  return Object.keys(merged).length > 0 ? merged : null
+}
+
+/* -------------------------------------------------------- strike selection */
+
+/**
+ * Everything a dialog needs to run the Strike selection section: the strategy's
+ * requirements, the parameters that move them, the text state seeded from the
+ * defaults, and the keys the free-form parameter grid must not repeat.
+ *
+ * `parametersJson` is the strategy's defaults, or an earlier run's parameters
+ * when the dialog is a "Run again".
+ */
+export function useStrikeSelection(strategy: StrategyListItem, parametersJson?: string) {
+  const requirements = useMemo(
+    () => contractRequirementsOf(strategy.contractRequirements),
+    [strategy.contractRequirements],
+  )
+  const params = useMemo(() => strikeParams(requirements), [requirements])
+  const seedJson = parametersJson ?? strategy.defaultParametersJson
+  // Seeded once: a poll that refreshes the catalogue entry must not overwrite
+  // what the user is typing.
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    seedStrikeParams(strikeParams(contractRequirementsOf(strategy.contractRequirements)), seedJson),
+  )
+  const omitKeys = useMemo(() => strikeParamKeys(requirements), [requirements])
+  return { requirements, params, values, setValues, omitKeys }
+}
+
+/**
+ * The strikes a run will trade: one line per contract the strategy asks for,
+ * and an input for each distance parameter it exposes. The lines are written
+ * against the chosen underlying's strike grid, so "+2 strikes" also reads as
+ * "+200 pts on BANKNIFTY" — the house rule is to show what a choice means
+ * before asking for it.
+ */
+export function StrikeSelection({
+  requirements,
+  underlying,
+  values,
+  onChange,
+  idPrefix,
+  invalidParam = null,
+  disabled = false,
+}: {
+  requirements: StrategyContractRequirement[]
+  /** The chosen underlying — its strikeStep turns steps into points. */
+  underlying: FnoUnderlying | null
+  values: Record<string, string>
+  onChange: (next: Record<string, string>) => void
+  idPrefix: string
+  /** The parameter a submit-time parse rejected. */
+  invalidParam?: string | null
+  disabled?: boolean
+}) {
+  const params = useMemo(() => strikeParams(requirements), [requirements])
+  const step = underlying && underlying.strikeStep > 0 ? underlying.strikeStep : null
+
+  return (
+    <div className="strike-sel">
+      <ul className="strike-sel__list">
+        {requirements.map((req) => (
+          <li key={req.key} className="strike-sel__item">
+            <span className="strike-sel__key mono">{req.key}</span>
+            <span className="strike-sel__what">{requirementLabel(req)}</span>
+            <span className="strike-sel__dist">
+              {describeRequirementDistance(req, values, underlying)}
+            </span>
+            {req.optional && (
+              <span className="faint" title="The strategy runs even when this contract cannot be resolved">
+                optional
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+      {params.length > 0 && (
+        <div className="strike-sel__params">
+          {params.map((p) => {
+            const id = `${idPrefix}-${p.name}`
+            const raw = values[p.name] ?? ''
+            const typed = parseStrikeValue(raw)
+            const set = typed != null && !Number.isNaN(typed) ? typed : null
+            const equivalent =
+              step != null && set != null && underlying
+                ? p.points
+                  ? `≈ ${formatNumber(Math.round((set / step) * 100) / 100)} strikes on ${underlying.underlying}`
+                  : `= ${formatNumber(set * step)} pts on ${underlying.underlying} (step ${formatNumber(step)})`
+                : null
+            return (
+              <div key={p.name} className="field">
+                <label className="field__label" htmlFor={id}>
+                  {strikeParamLabel(p.name)}
+                </label>
+                <input
+                  id={id}
+                  className="field__input"
+                  type="number"
+                  min={0}
+                  step={p.points ? 50 : 1}
+                  inputMode="decimal"
+                  placeholder="strategy default"
+                  value={raw}
+                  disabled={disabled}
+                  aria-invalid={invalidParam === p.name || strikeValueInvalid(raw) || undefined}
+                  onChange={(e) => onChange({ ...values, [p.name]: e.target.value })}
+                />
+                <span className="field__help">
+                  {p.points ? 'points' : 'strikes'} away from ATM · moves {p.keys.join(', ')}
+                  {equivalent ? ` · ${equivalent}` : ''}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ------------------------------------------------------------ launch dialog */
 
 export function UnderlyingPicker({
@@ -473,6 +628,7 @@ function PickerHelp({
 
 /** Left column of the launch/backtest dialogs: what the strategy is. */
 export function StrategyAside({ strategy, titleId }: { strategy: StrategyListItem; titleId: string }) {
+  const requirements = contractRequirementsOf(strategy.contractRequirements)
   return (
     <aside className="modal__aside">
       <div>
@@ -492,6 +648,14 @@ export function StrategyAside({ strategy, titleId }: { strategy: StrategyListIte
           <dt>Legs</dt>
           <dd className="mono">{strategy.legsSummary || '—'}</dd>
         </div>
+        {requirements.length > 0 && (
+          <div>
+            <dt>Contracts</dt>
+            <dd className="mono" style={{ whiteSpace: 'normal' }}>
+              {contractRequirementSummary(requirements)}
+            </dd>
+          </div>
+        )}
         <div>
           <dt>Data needs</dt>
           <dd>
@@ -664,8 +828,12 @@ export function LaunchDialog({
   const [riskNonce, setRiskNonce] = useState(0)
   const [capital, setCapital] = useState(String(1_000_000))
   const [advanced, setAdvanced] = useState(false)
+  // Strike distances get their own inputs, so they are kept out of the
+  // free-form parameter grid rather than editable in two places.
+  const strike = useStrikeSelection(strategy)
+  const [strikeField, setStrikeField] = useState<string | null>(null)
   const [params, setParams] = useState<ParamRow[]>(() =>
-    parseParamDefaults(strategy.defaultParametersJson),
+    parseParamDefaults(strategy.defaultParametersJson, strike.omitKeys),
   )
   const [validation, setValidation] = useState<string | null>(null)
 
@@ -691,6 +859,7 @@ export function LaunchDialog({
   function submit() {
     setValidation(null)
     setRiskField(null)
+    setStrikeField(null)
     if (!chosen) {
       setValidation('Pick an underlying — the strategy must know what it trades.')
       return
@@ -703,6 +872,12 @@ export function LaunchDialog({
     }
     if (!Number.isInteger(lotsNum) || lotsNum < 1) {
       setValidation('Lots must be a whole number of at least 1.')
+      return
+    }
+    const strikes = parseStrikeParams(strike.params, strike.values)
+    if (strikes.values === null) {
+      setStrikeField(strikes.param)
+      setValidation(strikes.error)
       return
     }
     const parsed = parseRiskDraft(risk)
@@ -725,7 +900,7 @@ export function LaunchDialog({
       stopLoss: parsed.rules.overall?.stopLoss ?? null,
       target: parsed.rules.overall?.target ?? null,
       risk: parsed.rules,
-      parameters: paramsToObject(params),
+      parameters: mergeParams(params, strikes.values),
       initialCapital: cap,
     }
     start.mutate(
@@ -864,6 +1039,25 @@ export function LaunchDialog({
               </span>
             </div>
           </div>
+
+          {strike.requirements.length > 0 && (
+            <div className="field">
+              <span className="field__label">
+                Strike selection{chosen ? ` (on the ${chosen.underlying} grid, step ${chosen.strikeStep})` : ''}
+              </span>
+              <StrikeSelection
+                requirements={strike.requirements}
+                underlying={chosen}
+                values={strike.values}
+                onChange={(next) => {
+                  strike.setValues(next)
+                  setStrikeField(null)
+                }}
+                idPrefix="launch-strike"
+                invalidParam={strikeField}
+              />
+            </div>
+          )}
 
           <div className="field">
             <span className="field__label">Risk rules (all optional · editable while the run is live)</span>

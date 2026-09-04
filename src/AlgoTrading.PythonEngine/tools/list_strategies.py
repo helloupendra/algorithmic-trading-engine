@@ -17,7 +17,9 @@ Usage:
 Entry schema (camelCase, one object per strategy name):
     name, className, sourceFile, description, category, supportedUnderlyings,
     instrumentKind, legsSummary, defaultLots, defaultParameters,
-    dataRequirements: [{symbolType, resolution}], createdUtc, [error]
+    dataRequirements: [{symbolType, resolution}],
+    contractRequirements: [{key, optionType, moneyness, steps, points, param, optional}],
+    createdUtc, [error]
 """
 
 from __future__ import annotations
@@ -52,6 +54,7 @@ def _error_entry(name: str, source_file: str, error: str) -> Dict[str, Any]:
         "defaultLots": 1,
         "defaultParameters": {},
         "dataRequirements": [],
+        "contractRequirements": [],
         "createdUtc": None,
         "error": error,
     }

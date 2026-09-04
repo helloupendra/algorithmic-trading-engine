@@ -1,5 +1,5 @@
 from typing import Dict, Any, List
-from strategies.base_strategy import BaseStrategy, StrategyInput, StrategySignal
+from strategies.base_strategy import BaseStrategy, ContractRequirement, StrategyInput, StrategySignal
 import uuid
 
 class IronButterflyStrategy(BaseStrategy):
@@ -13,13 +13,25 @@ class IronButterflyStrategy(BaseStrategy):
     description = (
         "Four-leg, defined-risk neutral position: sells the ATM call and put (a short straddle) and buys "
         "an OTM call and an OTM put as protective wings. Profits when the underlying pins near the centre "
-        "strike into expiry; the wings cap the loss on a large move. Note: the live runner currently "
-        "provides only ATM contracts, so this strategy will wait for entry until OTM contract selection ships."
+        "strike into expiry; the wings cap the loss on a large move. The wings sit `wing_offset_steps` "
+        "strikes away from the ATM strike on the underlying's own grid (4 by default)."
     )
     category = "Neutral"
     legs_summary = "Sell ATM CE + Sell ATM PE + Buy OTM CE + Buy OTM PE"
     default_lots = 1
-    default_params: Dict[str, Any] = {}
+    default_params: Dict[str, Any] = {"wing_offset_steps": 4}
+
+    @classmethod
+    def get_contract_requirements(cls, params: Dict[str, Any] = None) -> List[ContractRequirement]:
+        """The ATM body plus the two wings, `wing_offset_steps` strikes out on each side."""
+        return [
+            ContractRequirement(key="atm_ce", option_type="CE"),
+            ContractRequirement(key="atm_pe", option_type="PE"),
+            ContractRequirement(key="otm_ce", option_type="CE", moneyness="otm",
+                                steps=4, param="wing_offset_steps"),
+            ContractRequirement(key="otm_pe", option_type="PE", moneyness="otm",
+                                steps=4, param="wing_offset_steps"),
+        ]
 
     def __init__(self, params: Dict[str, Any] = None):
         self.params = params or {}

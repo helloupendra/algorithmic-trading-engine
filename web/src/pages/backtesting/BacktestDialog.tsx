@@ -30,12 +30,15 @@ import type {
 import {
   ParamGrid,
   StrategyAside,
+  StrikeSelection,
   UnderlyingPicker,
-  paramsToObject,
+  mergeParams,
   parseParamDefaults,
   useDialogChrome,
+  useStrikeSelection,
   type ParamRow,
 } from '../strategies/shared'
+import { parseStrikeParams } from '../../lib/contracts'
 import {
   addDays,
   countWeekdays,
@@ -130,8 +133,15 @@ export function BacktestDialog({
   const [charges, setCharges] = useState(String(initial?.chargesPerLot ?? 0))
   const [capital, setCapital] = useState(String(initial?.initialCapital ?? DEFAULT_CAPITAL))
   const [advanced, setAdvanced] = useState(false)
+  // Strike distances get their own inputs above; the free-form grid drops them
+  // along with the keys the API merges into every run's parametersJson.
+  const strike = useStrikeSelection(strategy, initial?.parametersJson)
+  const [strikeField, setStrikeField] = useState<string | null>(null)
   const [params, setParams] = useState<ParamRow[]>(() =>
-    parseParamDefaults(initial?.parametersJson ?? strategy.defaultParametersJson, RESERVED_PARAM_KEYS),
+    parseParamDefaults(
+      initial?.parametersJson ?? strategy.defaultParametersJson,
+      new Set([...RESERVED_PARAM_KEYS, ...strike.omitKeys]),
+    ),
   )
   const [backfilling, setBackfilling] = useState<string | null>(null)
   const [validation, setValidation] = useState<string | null>(null)
@@ -237,6 +247,7 @@ export function BacktestDialog({
   function submit() {
     setValidation(null)
     setRiskField(null)
+    setStrikeField(null)
     if (!chosenUnderlying) {
       setValidation('Pick an underlying — the strategy must know what it trades.')
       return
@@ -267,6 +278,12 @@ export function BacktestDialog({
     }
     if (!Number.isInteger(lotsNum) || lotsNum < 1) {
       setValidation('Lots must be a whole number of at least 1.')
+      return
+    }
+    const strikes = parseStrikeParams(strike.params, strike.values)
+    if (strikes.values === null) {
+      setStrikeField(strikes.param)
+      setValidation(strikes.error)
       return
     }
     const parsedRisk = parseRiskDraft(risk)
@@ -304,7 +321,7 @@ export function BacktestDialog({
       risk: parsedRisk.rules,
       eodSquareOffIst: eodNone ? '' : eodTime,
       chargesPerLot: chg,
-      parameters: paramsToObject(params),
+      parameters: mergeParams(params, strikes.values),
       initialCapital: cap,
     }
     start.mutate(body, {
@@ -620,6 +637,32 @@ export function BacktestDialog({
               </label>
             </div>
           </div>
+
+          {strike.requirements.length > 0 && (
+            <div className="field">
+              <span className="field__label">
+                Strike selection
+                {chosenUnderlying
+                  ? ` (on the ${chosenUnderlying.underlying} grid, step ${chosenUnderlying.strikeStep})`
+                  : ''}
+              </span>
+              <StrikeSelection
+                requirements={strike.requirements}
+                underlying={chosenUnderlying}
+                values={strike.values}
+                onChange={(next) => {
+                  strike.setValues(next)
+                  setStrikeField(null)
+                }}
+                idPrefix="bt-strike"
+                invalidParam={strikeField}
+              />
+              <span className="field__help">
+                A contract the stored history cannot price is a skipped entry, listed in the run's data
+                notes.
+              </span>
+            </div>
+          )}
 
           <div className="field">
             <span className="field__label">Risk rules (all optional · evaluated every bar, leg → group → overall)</span>

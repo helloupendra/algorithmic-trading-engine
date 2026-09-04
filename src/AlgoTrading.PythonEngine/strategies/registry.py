@@ -200,6 +200,16 @@ def describe_strategy(name: str, obj: Any, source_file: Optional[str] = None,
         requirements = []
         description = f"{description} (get_data_requirements failed: {ex})"
 
+    # Contract requirements are read with params={} so the catalog shows the
+    # declared defaults; the launch dialog then overrides them per run.
+    contract_requirements: List[Dict[str, Any]] = []
+    try:
+        for req in obj.get_contract_requirements({}) or []:
+            contract_requirements.append(_contract_requirement_entry(req))
+    except Exception as ex:
+        contract_requirements = []
+        description = f"{description} (get_contract_requirements failed: {ex})"
+
     return {
         "name": name,
         "className": cls.__name__,
@@ -212,8 +222,33 @@ def describe_strategy(name: str, obj: Any, source_file: Optional[str] = None,
         "defaultLots": BaseStrategy.lots_from({}, getattr(obj, "default_lots", 1)),
         "defaultParameters": default_params,
         "dataRequirements": requirements,
+        "contractRequirements": contract_requirements,
         "createdUtc": _file_mtime_iso(module_file),
         "listed": bool(getattr(obj, "listed", True)),
+    }
+
+
+def _optional_number(value: Any) -> Optional[float]:
+    """Float for a number, None for anything else (so JSON gets null, not 0)."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _contract_requirement_entry(req: Any) -> Dict[str, Any]:
+    """One ContractRequirement as the catalog's camelCase object."""
+    param = getattr(req, "param", None)
+    return {
+        "key": str(getattr(req, "key", "")),
+        "optionType": str(getattr(req, "option_type", "") or "").upper(),
+        "moneyness": str(getattr(req, "moneyness", "") or "atm").lower(),
+        "steps": _optional_number(getattr(req, "steps", 0.0)) or 0.0,
+        "points": _optional_number(getattr(req, "points", None)),
+        "param": str(param) if param else None,
+        "optional": bool(getattr(req, "optional", False)),
     }
 
 

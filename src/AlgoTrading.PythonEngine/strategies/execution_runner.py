@@ -8,10 +8,12 @@ Live paper-trading runner for one strategy. Launched by the API as
 
 It loads the run's parameters (lots, stop_loss, target, underlying, strategy
 params), warms the strategy up on historical index bars, then consumes live
-ticks from the Redis stream, hands the ATM contracts to the strategy and posts
-every OPEN_GROUP/CLOSE_GROUP signal to the Simulator (paper fills) and to the
-Strategy feed (UI). Stop-loss/target are enforced by the API's risk guard, not
-here; the runner only logs them.
+ticks from the Redis stream, resolves the contracts the strategy declared in
+`get_contract_requirements` (ATM/OTM/ITM, at the distances the run's parameters
+ask for), hands them to the strategy and posts every OPEN_GROUP/CLOSE_GROUP
+signal to the Simulator (paper fills) and to the Strategy feed (UI).
+Stop-loss/target are enforced by the API's risk guard, not here; the runner
+only logs them.
 """
 
 from __future__ import annotations
@@ -41,17 +43,28 @@ import urllib3
 from typing import List, Dict, Any, Optional
 
 from messaging.redis_subscriber import build_subscriber_from_env
-from strategies.base_strategy import StrategyInput, StrategySignal, OptionContract, BaseStrategy, BarFrame
+from strategies.base_strategy import (
+    StrategyInput,
+    StrategySignal,
+    ContractRequirement,
+    OptionContract,
+    BaseStrategy,
+    BarFrame,
+)
 from strategies.registry import discover_strategies
 # Shared helpers live in importable modules (also used by the backtest engine);
 # they are re-exported here so existing `execution_runner.<name>` references work.
 from strategies.contract_selector import (  # noqa: F401
     DEFAULT_STRIKE_STEP,
     FALLBACK_STRIKE_STEPS,
+    ExactContractCache,
+    contracts_for_requirements,
+    describe_requirement,
     fallback_strike_step,
     format_strike,
     map_contract,
     round_to_step,
+    strike_for_requirement,
     strike_step_from_chain,
 )
 from strategies.signal_utils import (  # noqa: F401
@@ -197,10 +210,55 @@ def safe_get_contract_price(api: PlatformApiClient, symbol: str) -> Optional[flo
     return None
 
 
+def resolve_contract_requirements(strategy: Any, params: Optional[Dict[str, Any]]) -> List[ContractRequirement]:
+    """
+    The contracts the strategy wants, or the ATM CE/PE default when the class
+    does not declare any. A broken override must not take the run down: it is
+    logged and the default is used.
+    """
+    try:
+        requirements = list(strategy.get_contract_requirements(params or {}) or [])
+    except Exception as ex:
+        print(f"[CONTRACT] WARN: get_contract_requirements failed ({ex}); falling back to ATM CE/PE", flush=True)
+        requirements = []
+    if not requirements:
+        requirements = list(BaseStrategy.get_contract_requirements(params or {}))
+    return requirements
+
+
+def bar_frames_from_rows(rows: Optional[List[Dict[str, Any]]], symbol: str, resolution: str) -> List[BarFrame]:
+    """Recent-bar rows (newest first, as the API returns them) -> oldest-first BarFrames."""
+    return [BarFrame(
+        symbol=row.get("symbol", symbol),
+        resolution=row.get("resolution", resolution),
+        timestamp_utc=str(row.get("barStartUtc", "")),
+        open=float(row.get("open", 0.0)),
+        high=float(row.get("high", 0.0)),
+        low=float(row.get("low", 0.0)),
+        close=float(row.get("close", 0.0)),
+        volume=float(row.get("volumeDelta", 0.0)),
+    ) for row in reversed(rows or [])]
+
+
+def bars_symbol_for(symbol_type: str, contracts: Dict[str, OptionContract], spot_symbol: str) -> Optional[str]:
+    """
+    The symbol a DataRequirement names: the index, one of the resolved
+    contract keys, or an exact broker symbol. None when the key exists in the
+    strategy's requirements but the master could not resolve it this tick.
+    """
+    kind = str(symbol_type or "")
+    if kind == "index":
+        return spot_symbol
+    contract = contracts.get(kind)
+    if contract is not None:
+        return contract.symbol
+    return kind if ":" in kind else None
+
+
 def ensure_contracts_tracked(api: PlatformApiClient, contracts: Dict[str, OptionContract]) -> None:
     """
-    Make sure CE/PE contracts are present in the live watchlist,
-    so the ingestor can subscribe and populate latest quotes.
+    Make sure every resolved contract (ATM, OTM and ITM alike) is present in
+    the live watchlist, so the ingestor can subscribe and populate latest quotes.
     """
     for _, contract in contracts.items():
         try:
@@ -402,6 +460,30 @@ if __name__ == "__main__":
     print(f"Using expiry: {expiry_date}")
 
     strike_step = resolve_strike_step(api, args.underlying, expiry_date)
+
+    # The contracts this strategy wants on every tick, at the distances the
+    # run's parameters ask for. Resolved once: the keys never change during a
+    # run, only the strikes they land on as the underlying moves.
+    contract_requirements = resolve_contract_requirements(strategy, run_params)
+    contract_cache = ExactContractCache(api, args.underlying, log=lambda line: print(line, flush=True))
+    missing_contracts_logged: set = set()
+    print(
+        f"[CONFIG] contracts (strike step {format_strike(strike_step)}, expiry {expiry_date}): "
+        + "; ".join(describe_requirement(req, strike_step, run_params) for req in contract_requirements),
+        flush=True,
+    )
+
+    def log_missing_contract(key: str, strike: Any, option_type: str) -> None:
+        """One line per (key, strike): a moving underlying must not spam the log."""
+        marker = (key, strike)
+        if marker in missing_contracts_logged:
+            return
+        missing_contracts_logged.add(marker)
+        print(
+            f"[CONTRACT] missing {key}: no {option_type} {format_strike(float(strike))} contract for "
+            f"expiry {expiry_date} in the instrument master; the strategy runs without it",
+            flush=True,
+        )
 
     run_id = args.run_id
     if run_id is None:
@@ -661,87 +743,40 @@ if __name__ == "__main__":
                     pass
 
 
-                atm_ce = api.get_exact_contract(
-                    underlying=args.underlying,
-                    expiry=expiry_date,
-                    strike=atm_strike,
-                    option_type="CE"
+                # Every contract the strategy declared (ATM, OTM, ITM), resolved
+                # on the underlying's real strike grid. A key the master lacks is
+                # simply absent — the strategy decides what to do without it.
+                contracts = contracts_for_requirements(
+                    contract_cache,
+                    contract_requirements,
+                    expiry_date,
+                    atm_strike,
+                    strike_step,
+                    run_params,
+                    on_missing=log_missing_contract,
                 )
-                atm_pe = api.get_exact_contract(
-                    underlying=args.underlying,
-                    expiry=expiry_date,
-                    strike=atm_strike,
-                    option_type="PE"
-                )
-
-                contracts = {}
-                if atm_ce:
-                    contracts["atm_ce"] = map_contract(atm_ce)
-                if atm_pe:
-                    contracts["atm_pe"] = map_contract(atm_pe)
                 last_contract_count = len(contracts)
+                atm_ce_contract = contracts.get("atm_ce")
+                atm_pe_contract = contracts.get("atm_pe")
 
-                # Make sure live ingestor will start tracking these contracts
+                # Make sure the live ingestor will start tracking every one of them
                 ensure_contracts_tracked(api, contracts)
 
                 try:
                     bars_dict: Dict[str, Dict[str, List[BarFrame]]] = {}
-                    
-                    reqs = strategy.get_data_requirements()
-                    
-                    for req in reqs:
+
+                    for req in strategy.get_data_requirements():
                         res = req.resolution
                         sym_type = req.symbol_type
-                        
-                        if res not in bars_dict:
-                            bars_dict[res] = {}
-                            
-                        # 1. Fetch for index
-                        if sym_type == "index":
-                            raw_idx = api.get_recent_bars(args.spot_symbol, resolution=res, take=500)
-                            if raw_idx:
-                                bars_dict[res]["index"] = [BarFrame(
-                                    symbol=b.get("symbol", args.spot_symbol),
-                                    resolution=b.get("resolution", res),
-                                    timestamp_utc=str(b.get("barStartUtc", "")),
-                                    open=float(b.get("open", 0.0)),
-                                    high=float(b.get("high", 0.0)),
-                                    low=float(b.get("low", 0.0)),
-                                    close=float(b.get("close", 0.0)),
-                                    volume=float(b.get("volumeDelta", 0.0))
-                                ) for b in reversed(raw_idx)]
+                        bars_dict.setdefault(res, {})
 
-                        # 2. Fetch for atm_ce
-                        elif sym_type == "atm_ce" and atm_ce:
-                            raw_ce = api.get_recent_bars(atm_ce["symbol"], resolution=res, take=500)
-                            if raw_ce:
-                                bars_dict[res]["atm_ce"] = [BarFrame(
-                                    symbol=b.get("symbol", atm_ce["symbol"]),
-                                    resolution=b.get("resolution", res),
-                                    timestamp_utc=str(b.get("barStartUtc", "")),
-                                    open=float(b.get("open", 0.0)),
-                                    high=float(b.get("high", 0.0)),
-                                    low=float(b.get("low", 0.0)),
-                                    close=float(b.get("close", 0.0)),
-                                    volume=float(b.get("volumeDelta", 0.0))
-                                ) for b in reversed(raw_ce)]
+                        symbol = bars_symbol_for(sym_type, contracts, args.spot_symbol)
+                        if not symbol:
+                            continue
+                        rows = api.get_recent_bars(symbol, resolution=res, take=500)
+                        if rows:
+                            bars_dict[res][sym_type] = bar_frames_from_rows(rows, symbol, res)
 
-                        # 3. Fetch for atm_pe
-                        elif sym_type == "atm_pe" and atm_pe:
-                            raw_pe = api.get_recent_bars(atm_pe["symbol"], resolution=res, take=500)
-                            if raw_pe:
-                                bars_dict[res]["atm_pe"] = [BarFrame(
-                                    symbol=b.get("symbol", atm_pe["symbol"]),
-                                    resolution=b.get("resolution", res),
-                                    timestamp_utc=str(b.get("barStartUtc", "")),
-                                    open=float(b.get("open", 0.0)),
-                                    high=float(b.get("high", 0.0)),
-                                    low=float(b.get("low", 0.0)),
-                                    close=float(b.get("close", 0.0)),
-                                    volume=float(b.get("volumeDelta", 0.0))
-                                ) for b in reversed(raw_pe)]
-                        
-                        
                 except Exception as ex:
                     print(f"WARN: Failed to fetch recent bars: {ex}")
                     bars_dict = {}
@@ -774,9 +809,10 @@ if __name__ == "__main__":
                         try:
                             print(f"Converting {sig.signal_type} to PAPER OPEN_GROUP Signal...")
                             direction = sig.signal_type
-                            target_contract = atm_ce if direction == "BUY" else atm_pe
-                            if target_contract and "symbol" in target_contract:
-                                exec_symbol = target_contract["symbol"]
+                            # Ghost always trades the ATM leg of the direction it called.
+                            target_contract = atm_ce_contract if direction == "BUY" else atm_pe_contract
+                            if target_contract is not None:
+                                exec_symbol = target_contract.symbol
                                 print(f"Selected Option Symbol for Paper: {exec_symbol}")
 
                                 # Morph the signal into OPEN_GROUP for the Simulator

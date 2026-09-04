@@ -1194,6 +1194,7 @@ public class StrategyController : ControllerBase
             InstrumentKind = entry.InstrumentKind,
             LegsSummary = entry.LegsSummary,
             DataRequirements = entry.DataRequirements.ToList(),
+            ContractRequirements = entry.ContractRequirements.ToList(),
             DefaultParametersJson = entry.DefaultParametersJson,
             DefaultLots = entry.DefaultLots,
             SourceFile = entry.SourceFile,

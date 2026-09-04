@@ -7,10 +7,10 @@ namespace AlgoTrading.Api.Services;
 
 /// <summary>
 /// The mutable, process-lifetime part of a registry entry: output ring buffer,
-/// recent signals, exit monitor and the stop claim. Kept in one object that a
-/// <c>with</c> copy of <see cref="RunningStrategy"/> shares by reference, so
-/// replacing the entry (e.g. new risk rules) never forks its logs or lets a
-/// second stopper claim the same run.
+/// recent signals, trailing-stop peaks, exit monitor and the stop claim. Kept
+/// in one object that a <c>with</c> copy of <see cref="RunningStrategy"/>
+/// shares by reference, so replacing the entry (e.g. new risk rules) never
+/// forks its logs or lets a second stopper claim the same run.
 /// </summary>
 internal sealed class RunSharedState
 {
@@ -18,6 +18,9 @@ internal sealed class RunSharedState
     public readonly Queue<string> Logs = new();
     public readonly object SignalLock = new();
     public readonly List<object> Signals = new();
+
+    /// <summary>Trailing-stop peaks of the run, its groups and its open legs. Never persisted.</summary>
+    public readonly RiskTrailState Trail = new();
 
     public readonly TaskCompletionSource<int> StopCompletion =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -71,6 +74,13 @@ public sealed record RunningStrategy(
     internal Queue<string> Logs => Shared.Logs;
     internal object SignalLock => Shared.SignalLock;
     internal List<object> Signals => Shared.Signals;
+
+    /// <summary>
+    /// Live trailing-stop peaks the risk guard keeps for this run. In memory
+    /// only: a run adopted after an API restart starts with empty peaks, so its
+    /// trails re-arm from the P&amp;L of the guard's next sweep.
+    /// </summary>
+    internal RiskTrailState Trail => Shared.Trail;
 
     /// <summary>Captured at attach time so it stays readable after the process exits.</summary>
     public int ProcessId
@@ -221,6 +231,12 @@ public sealed class StrategyProcessRegistry
         if (entry.Adopted)
         {
             Append(entry, $"{DateTime.UtcNow:HH:mm:ss} | {AdoptedLogLine} (pid {entry.ProcessId}, run {entry.RunId}, {entry.Underlying} x{entry.Lots})");
+            if (entry.Risk.HasAnyTrailingRule)
+            {
+                // The peaks lived in the previous API process; this entry starts
+                // with none, so say so rather than let the trail look continuous.
+                Append(entry, $"{DateTime.UtcNow:HH:mm:ss} | trailing stops re-arm from the current P&L (peaks were lost with the API restart)");
+            }
             entry.ExitMonitor = Task.Run(() => MonitorExitAsync(entry));
             return true;
         }
@@ -261,7 +277,10 @@ public sealed class StrategyProcessRegistry
     /// <summary>
     /// Replaces the run's risk rules atomically (a <c>with</c> copy that shares
     /// the entry's live state) so the next guard sweep enforces the new rules.
-    /// Returns the new entry, or null when the run is not running.
+    /// Changing any trailing value resets the trailing peaks, so every trail
+    /// re-arms from the P&amp;L of the next sweep instead of carrying a peak that
+    /// belonged to a different rule. Returns the new entry, or null when the run
+    /// is not running.
     /// </summary>
     public RunningStrategy? UpdateRisk(long runId, RiskRulesDto rules)
     {
@@ -272,9 +291,19 @@ public sealed class StrategyProcessRegistry
                 return null;
             }
 
+            bool trailChanged = !RiskRulesDto.SameTrailing(current.Risk, rules);
+
             var updated = current with { Risk = rules };
             if (_running.TryUpdate(runId, updated, current))
             {
+                if (trailChanged)
+                {
+                    updated.Trail.Reset();
+                    if (rules.HasAnyTrailingRule)
+                    {
+                        Append(updated, $"{DateTime.UtcNow:HH:mm:ss} | trailing stops re-arm from the current P&L (rules changed)");
+                    }
+                }
                 return updated;
             }
         }
