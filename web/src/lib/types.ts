@@ -875,6 +875,42 @@ export interface KillSwitchState {
   updatedUtc: string | null
 }
 
+export interface RiskLimits {
+  maxOrdersPerMinute: number
+  maxDailyLoss: number
+  maxConcurrentRuns: number
+  maxRunsPerUser: number
+  source: string
+  updatedBy: string | null
+  updatedUtc: string | null
+}
+
+export interface RiskEvent {
+  id: number
+  occurredUtc: string
+  kind: string
+  actorUserId: number | null
+  actorName: string | null
+  reason: string | null
+  detailsJson: string | null
+  simulationRunId: number | null
+  symbol: string | null
+}
+
+export interface AlertEvent {
+  id: number
+  occurredUtc: string
+  source: string
+  underlying: string
+  symbol: string | null
+  severity: string
+  title: string
+  message: string
+  metadataJson: string | null
+  deliveredToTelegram: boolean
+  simulationRunId: number | null
+}
+
 export interface MarketSessionInfo {
   exchange: string
   segment: string

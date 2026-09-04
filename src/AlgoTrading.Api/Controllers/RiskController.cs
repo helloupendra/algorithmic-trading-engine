@@ -62,4 +62,36 @@ public class RiskController : ControllerBase
         var state = await _riskManagementService.GetKillSwitchStateAsync(cancellationToken);
         return Ok(state);
     }
+
+    [HttpGet("limits")]
+    public IActionResult GetLimits([FromServices] IRiskLimitsStore limitsStore)
+    {
+        var limits = limitsStore.GetLimits();
+        return Ok(limits);
+    }
+
+    [HttpPost("limits")]
+    public async Task<IActionResult> UpdateLimits(
+        [FromBody] AlgoTrading.Contracts.Risk.RiskLimitsDto limits,
+        [FromServices] IRiskLimitsStore limitsStore,
+        CancellationToken cancellationToken)
+    {
+        await limitsStore.UpdateLimitsAsync(limits, User.GetUserName() ?? "system", cancellationToken);
+        return Ok(limitsStore.GetLimits());
+    }
+
+    [HttpGet("events")]
+    public async Task<IActionResult> GetRiskEvents(
+        [FromServices] AlgoTrading.Infrastructure.Persistence.TradingDbContext dbContext,
+        [FromQuery] int limit = 100,
+        CancellationToken cancellationToken = default)
+    {
+        var events = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync(
+            dbContext.RiskEvents
+                .OrderByDescending(x => x.OccurredUtc)
+                .Take(limit),
+            cancellationToken);
+
+        return Ok(events);
+    }
 }

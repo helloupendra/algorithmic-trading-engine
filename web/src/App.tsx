@@ -21,9 +21,9 @@ import { RunDetailPage } from './pages/trader/RunDetailPage'
 import { AdminHomePage } from './pages/admin/AdminHomePage'
 import { AdminOverviewPage } from './pages/admin/AdminOverviewPage'
 import { UsersPage } from './pages/admin/UsersPage'
-import { RiskPage } from './pages/admin/RiskPage'
+import { RiskV2Page } from './pages/admin/RiskV2Page'
 import { BrokerPage } from './pages/admin/BrokerPage'
-import { LiveAlertsPage } from './pages/admin/LiveAlertsPage'
+import { LiveAlertsV2Page } from './pages/admin/LiveAlertsV2Page'
 import { StrategiesOverviewPage } from './pages/strategies/StrategiesOverviewPage'
 import { LiveRunnerPage } from './pages/strategies/LiveRunnerPage'
 import { StrategyLibraryPage } from './pages/strategies/StrategyLibraryPage'
@@ -109,7 +109,7 @@ export default function App() {
                   {/* v1 modules, awaiting their rebuild. */}
                   <Route path="/admin/system" element={<AdminOverviewPage />} />
                   <Route path="/admin/users" element={<UsersPage />} />
-                  <Route path="/admin/risk" element={<RiskPage />} />
+                  <Route path="/admin/risk" element={<RiskV2Page />} />
                   <Route path="/admin/strategies" element={<StrategiesOverviewPage />} />
                   <Route path="/admin/strategies/live" element={<LiveRunnerPage />} />
                   <Route path="/admin/strategies/history" element={<RunHistoryPage mode="admin" />} />
@@ -125,7 +125,7 @@ export default function App() {
                   <Route path="/admin/backtesting/runs" element={<BacktestRunsPage />} />
                   <Route path="/admin/backtesting/runs/:id" element={<BacktestRunPage />} />
 
-                  <Route path="/admin/live-alerts" element={<LiveAlertsPage />} />
+                  <Route path="/admin/live-alerts" element={<LiveAlertsV2Page />} />
                   <Route path="/admin/broker" element={<BrokerPage />} />
 
                   {/* Old bookmarks from the v1 layout. */}

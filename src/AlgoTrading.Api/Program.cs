@@ -94,10 +94,12 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.BacktestRunViewBuilder>();
 // adopted a moment later trading all evening.
 builder.Services.AddHostedService<AlgoTrading.Api.Services.BacktestStartupReconciler>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.LiveRunStartupReconciler>();
-// The three-level risk guard (leg → group → overall) over the registry.
+// Register the background service that guards active runs against global kill-switches and rate limits
 builder.Services.AddHostedService<AlgoTrading.Api.Services.StrategyRiskGuardService>();
-// Auto-shutdown of the ingestor and every running strategy at market close.
+// Market Hours Service for automated halt/flatten at 3:15 PM
 builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketHoursService>();
+// Alert Subscriber Service for logic engine pub/sub
+builder.Services.AddHostedService<AlgoTrading.Api.Services.AlertSubscriberService>();
 
 
 builder.Services.Configure<JwtOptions>(
@@ -164,6 +166,26 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+app.UseExceptionHandler(errorApp =>
+{
+    errorApp.Run(async context =>
+    {
+        var exceptionHandlerPathFeature = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerPathFeature>();
+        if (exceptionHandlerPathFeature?.Error is AlgoTrading.Application.Exceptions.RiskViolationException riskEx)
+        {
+            context.Response.StatusCode = 409;
+            context.Response.ContentType = "application/json";
+            await context.Response.WriteAsJsonAsync(new { error = riskEx.Message });
+        }
+        else if (exceptionHandlerPathFeature?.Error != null)
+        {
+            context.Response.StatusCode = 500;
+            context.Response.ContentType = "application/json";
+            await context.Response.WriteAsJsonAsync(new { error = "An unexpected error occurred." });
+        }
+    });
+});
 
 if (app.Environment.IsDevelopment())
 {

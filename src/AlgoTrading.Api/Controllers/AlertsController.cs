@@ -243,6 +243,21 @@ namespace AlgoTrading.Api.Controllers
                 broadcastedPayload = payload
             });
         }
+
+        [HttpGet("events")]
+        public async Task<IActionResult> GetAlertEvents(
+            [FromServices] AlgoTrading.Infrastructure.Persistence.TradingDbContext dbContext,
+            [FromQuery] int limit = 100,
+            CancellationToken cancellationToken = default)
+        {
+            var events = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync(
+                dbContext.AlertEvents
+                    .OrderByDescending(x => x.OccurredUtc)
+                    .Take(limit),
+                cancellationToken);
+
+            return Ok(events);
+        }
     }
 
     public class E2ETestRequest

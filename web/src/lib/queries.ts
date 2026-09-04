@@ -45,6 +45,9 @@ import type {
   PaperOrderRow,
   PaperPosition,
   PerformanceMetrics,
+  RiskEvent,
+  RiskLimits,
+  AlertEvent,
   SimulationPortfolio,
   SimulationRun,
   SimulationSignal,
@@ -792,6 +795,39 @@ export function useSetKillSwitch() {
         `/api/Risk/killswitch/${input.activate ? 'activate' : 'deactivate'}?reason=${encodeURIComponent(input.reason)}`,
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['risk'] }),
+  })
+}
+
+export function useRiskLimits() {
+  return useQuery({
+    queryKey: ['risk', 'limits'],
+    queryFn: () => api.get<RiskLimits>('/api/Risk/limits'),
+    refetchInterval: POLL_FAST,
+  })
+}
+
+export function useUpdateRiskLimits() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (limits: Omit<RiskLimits, 'source' | 'updatedBy' | 'updatedUtc'>) =>
+      api.post<RiskLimits>('/api/Risk/limits', limits),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['risk', 'limits'] }),
+  })
+}
+
+export function useRiskEvents(limit = 100) {
+  return useQuery({
+    queryKey: ['risk', 'events', limit],
+    queryFn: () => api.get<RiskEvent[]>(`/api/Risk/events?limit=${limit}`),
+    refetchInterval: POLL_FAST,
+  })
+}
+
+export function useAlertEvents(limit = 100) {
+  return useQuery({
+    queryKey: ['alerts', 'events', limit],
+    queryFn: () => api.get<AlertEvent[]>(`/api/Alerts/events?limit=${limit}`),
+    refetchInterval: POLL_FAST,
   })
 }
 
