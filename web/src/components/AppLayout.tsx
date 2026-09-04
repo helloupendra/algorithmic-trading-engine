@@ -224,10 +224,12 @@ export function AppLayout() {
   const initials = (user?.userName ?? '?').slice(0, 2).toUpperCase()
 
   async function handleSignOut() {
-    await logout()
-    // Signing out returns to the public homepage; "Open console" there leads
-    // back to /login.
+    // Leave the guarded area FIRST, then drop the session. Clearing the user
+    // while an admin/trader route is still mounted makes RequireAuth render its
+    // own <Navigate to="/login">, which races the homepage navigation below and
+    // could win — landing the user on the sign-in page instead of "/".
     navigate('/', { replace: true })
+    await logout()
   }
 
   return (
