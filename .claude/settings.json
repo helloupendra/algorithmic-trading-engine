@@ -82,7 +82,14 @@
       "Bash(PYTHONPATH=. ../../.venv/bin/python strategies/execution_runner.py --strategy LogicEngine --strategy-id LogicEngine --user-id 2 --underlying BANKNIFTY --spot-symbol NSE:NIFTYBANK-INDEX --metrics-port 0)",
       "Bash(PYTHONPATH=. ../../.venv/bin/python strategies/execution_runner.py --strategy-id LogicEngine --user-id 2 --underlying BANKNIFTY --spot-symbol NSE:NIFTYBANK-INDEX --metrics-port 0)",
       "Bash(PYTHONPATH=. ../../.venv/bin/python strategies/execution_runner.py --strategy-id 123 --user-id 2)",
-      "Bash(../../.venv/bin/python -c ' *)"
+      "Bash(../../.venv/bin/python -c ' *)",
+      "Bash(grep -nB2 \"public class RiskController\\\\|public class AlertsController\" src/AlgoTrading.Api/Controllers/RiskController.cs src/AlgoTrading.Api/Controllers/AlertsController.cs)",
+      "Bash(PYTHONPATH=. ../../.venv/bin/python -m unittest tests.test_logic_engine -v)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(sorted\\(d.keys\\(\\)\\)\\)\")",
+      "Bash(curl -s -H 'Authorization: Bearer __TRACKED_VAR__' 'http://localhost:5025/api/LiveData/bars?symbol=NSE:HDFCBANK-EQ&resolution=1m&take=3')",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(' ',b['barStartUtc'],b['close'],'vol',b['volumeDelta']\\) for b in d[:3]] if d else print\\('none'\\)\")",
+      "Bash(.venv/bin/python -m py_compile src/AlgoTrading.PythonEngine/strategies/logic_engine.py src/AlgoTrading.PythonEngine/core/api_client.py)",
+      "Bash(sed -n '/RULE 3: order-book/,/return signals/p' src/AlgoTrading.PythonEngine/strategies/logic_engine.py)"
     ]
   }
 }

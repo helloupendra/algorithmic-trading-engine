@@ -1,5 +1,87 @@
 # Batch B review — fix list
 
+> **Round 2 is now DONE (2026-09-04 19:20) — fixed in the working tree, do not re-do it.**
+> R2.1, R2.2 and R2.3 below were implemented directly in `strategies/logic_engine.py` (plus two new read helpers in
+> `core/api_client.py`: `get_all_latest_quotes()` and `get_recent_ticks()`), and `tests/test_logic_engine.py` was
+> rewritten to cover all three rules including their silent/no-data paths. Python suite: 160 tests OK.
+> What each rule does now:
+> * **VWAP** — `_session_vwap(symbol)` builds the session VWAP from stored 1m bars
+>   (`Σ((h+l+c)/3 × volumeDelta) / Σ volumeDelta`, newest IST session only) and returns `(value, "vwap"|"ltp")`.
+>   The equity breakout only fires when the source is `"vwap"`, so `spot > spot` can no longer trigger it.
+>   Verified live: HDFCBANK → `(714.56, 'vwap')`, NIFTYBANK index → `(57480.25, 'ltp')` + one-time warning.
+> * **Order-book imbalance** — `_top_of_book(symbol)` reads `bidSize`/`askSize` from `/api/LiveData/ticks` for the
+>   **ATM CE contract** (index ticks carry no depth) and returns `None` when either is null; the rule is skipped in
+>   that case and the alert text says top-of-book, not total depth. Verified live: index → `None`,
+>   `NSE:BANKNIFTY26SEP57500CE` → `(30.0, 90.0)`.
+> * **OI shift** — `_highest_oi_strikes(underlying, atm)` resolves the real chain (`get_expiries` + `get_option_chain`,
+>   cached per expiry), reads `openInterest` from `/api/LiveData/latest/all`, and picks the highest-OI CE and PE strike
+>   within `strike_window` strikes of the ATM. `atm_strike + 200` is gone. Returns `(None, None, step)` when the feed
+>   has no OI — which is the case today, so the rule stays silent and warns once instead of firing on every ATM tick.
+> The remaining "minor" note (icon dependency) is still open. Everything above the checklist is historical context.
+>
+> **Round 2 (2026-09-04 18:00), after commit `093b054` "Fixes for Batch B Review".**
+> Almost everything below is now done — see the checklist at the end of this file. Three defects remain, all in
+> `strategies/logic_engine.py`, and they share one root cause: **the rules read fields that the platform's quote
+> endpoint does not return.** Verified live against the running API:
+>
+> ```
+> GET /api/LiveData/latest?symbol=NSE:NIFTYBANK-INDEX
+> keys → close, dataType, delta, gamma, high, impliedVolatility, lastTradedPrice, low, open,
+>        openInterest, symbol, theta, updatedUtc, vega, volume
+> ```
+>
+> **R2.1 — the VWAP rule still compares spot to itself.** `_get_vwap_or_ltp` (logic_engine.py:180-190) reads
+> `quote["volumeWeightedAveragePrice"]`, which does not exist in that response (nor anywhere in the C# contracts), so
+> `vwap` is always 0 and the function falls back to the LTP. Rule 1-equity therefore still tests `spot > spot`.
+> **Fix:** compute the session VWAP from stored 1-minute bars —
+> `GET /api/LiveData/bars?symbol=<sym>&resolution=1m&take=500`, keep today's session bars, then
+> `Σ((high+low+close)/3 × volumeDelta) / Σ volumeDelta`; fall back to LTP only when the volume sum is zero and say which
+> one was used in the alert text.
+>
+> **R2.2 — the order-book imbalance rule can never fire.** `_get_level2_depth` (logic_engine.py:192-198) reads
+> `totalBuyQuantity` / `totalSellQuantity`, falling back to `bidSize` / `askSize`. **None of those four fields exist in
+> the quote response**, so it always returns `(0.0, 0.0)` and `ask > ratio * bid` is `0 > 0` → false, forever.
+> **Fix:** either read the depth from the tick store (`GET /api/LiveData/ticks?symbol=&take=1` returns `bidSize` /
+> `askSize` — verify before relying on it) and skip the rule when they are null, or drop the rule until the ingestor
+> persists depth. Do not leave a rule that silently never fires.
+>
+> **R2.3 — the OI-shift rule is a dummy that will emit false alerts.** logic_engine.py:293-294:
+> ```python
+> # Dummy logic implemented since Fyers API client lacks get_option_chain
+> current_highest_ce_oi_strike = inp.atm_strike + 200
+> ```
+> The comment is wrong — `PlatformApiClient.get_option_chain(...)` exists (the backtest `ContractResolver` uses it) and
+> `GET /api/LiveData/latest/all` returns `openInterest` per symbol. Because the "highest OI strike" is just
+> `atm + 200`, the stored value moves with the ATM, so **every downward ATM tick fires a bogus "call writing shifted"
+> alert**. That is worse than the rule being absent.
+> **Fix:** resolve the chain for the current expiry (`get_option_chain`), read `openInterest` for those symbols from
+> `/api/LiveData/latest/all`, take the CE and PE strikes with the highest OI within `strike_window` strikes of the ATM,
+> and alert only when either shifts by ≥ `oi_shift_steps` strikes. If the OI data is missing (all zeros), skip the rule
+> and log it once — never fabricate a strike.
+>
+> **Also:** the Python suite was red after `093b054` — `tests/test_logic_engine.py:48` built a `StrategyInput` without
+> the required `mode` argument. I fixed that one line locally (uncommitted) and the suite is green again (149 tests).
+> Commit it or re-apply it.
+>
+> **Minor, unchanged:** the icon dependency was swapped (`lucide-react` → `@radix-ui/react-icons`) rather than removed;
+> the repo's convention is still inline SVGs in `web/src/components/icons.tsx`.
+>
+> ### Round-1 checklist — verified fixed in `093b054`
+> 1 ✅ alerter launch (`--strategy LogicEngine` + integer `--strategy-id` from `StrategyCatalogService.StableId`, now in
+> the new `AlertsSupervisor`) · 2 ✅ Telegram config wired (`appsettings.json` + `_gen_local_settings.py` maps
+> `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`) · 3 ✅ `GET /api/Risk/status` and `killswitch/status` are `[Authorize]`,
+> writes stay AdminOnly · 4 ✅ Alerts start/stop/test-e2e/logs are AdminOnly, status/events any authenticated ·
+> 5.1 ✅ `GET /api/Risk/exposure` · 5.2 ✅ `KillSwitchActivated` / `KillSwitchDeactivated` / `LimitsChanged` audit rows ·
+> 5.3 ✅ `MaxConcurrentRuns` enforced on start and deploy · 5.4 ✅ alerter pid persistence (`alerts.pid.<underlying>`) and
+> adoption via `ProcessProbe` · 5.6 ✅ per-underlying log buffers · 5.7 ✅ test-e2e writes an `alert_events` row ·
+> 6 ✅ event endpoints return DTOs with `AsNoTracking()` and `Math.Clamp(limit, 1, 500)`; limits validated server-side;
+> `SimulationRunId` is `long?`; the exception handler shows details in Development; `RejectOrderAsync` uses its own
+> scope; the dead v1 pages are deleted and `modules.ts` no longer says `legacy`.
+> Cooldown (`cooldown_seconds`) and configurable `default_params` also landed.
+
+---
+
+
 Review of commit `fee4af3` "Complete Phase 2 Batch B (Risk & Alerts v2)" (and the phase-1 hotfixes in `8d43dbf`),
 done on 2026-09-04 against the scope in `docs/roadmap/remaining-scope-risk-alerts-users-trader.md`.
 
