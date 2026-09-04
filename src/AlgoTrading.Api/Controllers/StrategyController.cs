@@ -122,7 +122,11 @@ public class StrategyController : ControllerBase
     /// </summary>
     [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
     [HttpPost("{id:int}/start")]
-    public async Task<IActionResult> StartStrategy(int id, [FromBody] StartStrategyRequest? request, CancellationToken cancellationToken)
+    public async Task<IActionResult> StartStrategy(
+        int id, 
+        [FromBody] StartStrategyRequest? request, 
+        [FromServices] AlgoTrading.Application.Interfaces.IRiskLimitsStore limitsStore,
+        CancellationToken cancellationToken)
     {
         var strategy = await _catalog.FindAsync(id, cancellationToken);
         if (strategy is null) return NotFound(new { message = $"Strategy {id} not found." });
@@ -140,9 +144,10 @@ public class StrategyController : ControllerBase
         if (_registry.Find(id, underlying) is not null)
             return Conflict(new { message = AlreadyRunningMessage(strategy.Name, underlying) });
 
-        if (_registry.Count >= _options.MaxConcurrentProcesses)
+        var riskLimits = limitsStore.GetLimits();
+        if (_registry.Count >= riskLimits.MaxConcurrentRuns)
             return StatusCode(StatusCodes.Status429TooManyRequests,
-                new { message = $"Concurrent strategy limit reached ({_options.MaxConcurrentProcesses})." });
+                new { message = $"Concurrent strategy limit reached ({riskLimits.MaxConcurrentRuns})." });
 
         int lots = request.Lots ?? Math.Max(1, strategy.DefaultLots);
         if (lots < 1)
@@ -223,7 +228,11 @@ public class StrategyController : ControllerBase
     public record DeployRequest(long RunId);
 
     [HttpPost("{id:int}/deploy")]
-    public async Task<IActionResult> Deploy(int id, [FromBody] DeployRequest request, CancellationToken cancellationToken)
+    public async Task<IActionResult> Deploy(
+        int id, 
+        [FromBody] DeployRequest request, 
+        [FromServices] AlgoTrading.Application.Interfaces.IRiskLimitsStore limitsStore,
+        CancellationToken cancellationToken)
     {
         var run = await _dbContext.SimulationRuns
             .FirstOrDefaultAsync(r => r.Id == request.RunId, cancellationToken);
@@ -251,9 +260,10 @@ public class StrategyController : ControllerBase
         if (_registry.Find(id, underlying) is not null)
             return Conflict(new { message = AlreadyRunningMessage(strategy.Name, underlying) });
 
-        if (_registry.Count >= _options.MaxConcurrentProcesses)
+        var riskLimits = limitsStore.GetLimits();
+        if (_registry.Count >= riskLimits.MaxConcurrentRuns)
             return StatusCode(StatusCodes.Status429TooManyRequests,
-                new { message = $"Concurrent strategy limit reached ({_options.MaxConcurrentProcesses})." });
+                new { message = $"Concurrent strategy limit reached ({riskLimits.MaxConcurrentRuns})." });
 
         var spotSymbol = string.IsNullOrWhiteSpace(run.Symbol) ? UnderlyingCatalog.SpotSymbolFor(underlying) : run.Symbol;
         int lots = Math.Max(1, p.Lots ?? strategy.DefaultLots);

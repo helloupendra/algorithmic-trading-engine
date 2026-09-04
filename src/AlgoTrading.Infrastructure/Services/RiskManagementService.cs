@@ -10,6 +10,7 @@ using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Config;
 using AlgoTrading.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 namespace AlgoTrading.Infrastructure.Services;
@@ -31,10 +32,13 @@ public class RiskManagementService : IRiskManagementService
     private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(2);
     private static readonly SemaphoreSlim CacheLock = new(1, 1);
 
-    public RiskManagementService(TradingDbContext dbContext, IRiskLimitsStore limitsStore)
+    private readonly IServiceScopeFactory _scopeFactory;
+
+    public RiskManagementService(TradingDbContext dbContext, IRiskLimitsStore limitsStore, IServiceScopeFactory scopeFactory)
     {
         _dbContext = dbContext;
         _limitsStore = limitsStore;
+        _scopeFactory = scopeFactory;
     }
 
     public async Task EvaluateOrderAsync(long simulationRunId, string symbol, string side, int quantity, CancellationToken cancellationToken)
@@ -81,6 +85,9 @@ public class RiskManagementService : IRiskManagementService
 
     private async Task RejectOrderAsync(long simulationRunId, string symbol, string reason, CancellationToken cancellationToken)
     {
+        using var scope = _scopeFactory.CreateScope();
+        var localDb = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
+        
         var riskEvent = new RiskEvent
         {
             OccurredUtc = DateTime.UtcNow,
@@ -89,8 +96,8 @@ public class RiskManagementService : IRiskManagementService
             SimulationRunId = simulationRunId,
             Symbol = symbol
         };
-        _dbContext.RiskEvents.Add(riskEvent);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        localDb.RiskEvents.Add(riskEvent);
+        await localDb.SaveChangesAsync(cancellationToken);
         
         throw new RiskViolationException(reason);
     }
@@ -169,8 +176,16 @@ public class RiskManagementService : IRiskManagementService
 
         setting.Value = active ? "true" : "false";
         setting.UpdatedBy = updatedBy;
-        setting.Reason = reason;
         setting.UpdatedUtc = DateTime.UtcNow;
+
+        var evt = new RiskEvent
+        {
+            OccurredUtc = DateTime.UtcNow,
+            Kind = active ? "KillSwitchActivated" : "KillSwitchDeactivated",
+            ActorName = updatedBy ?? "system",
+            Reason = reason
+        };
+        _dbContext.RiskEvents.Add(evt);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 

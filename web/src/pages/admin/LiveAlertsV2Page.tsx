@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Bell, PlayCircle, AlertTriangle, ShieldAlert, CheckCircle2, Info } from 'lucide-react'
+import { BellIcon, PlayIcon, ExclamationTriangleIcon, CrossCircledIcon, CheckCircledIcon, InfoCircledIcon } from '@radix-ui/react-icons'
 import { useAlertEvents } from '../../lib/queries'
 import { api } from '../../lib/api'
 
@@ -36,13 +36,13 @@ export function LiveAlertsV2Page() {
     switch (severity?.toLowerCase()) {
       case 'error':
       case 'critical':
-        return <ShieldAlert className="w-4 h-4 text-red-400" />
+        return <CrossCircledIcon className="w-4 h-4 text-red-400" />
       case 'warning':
-        return <AlertTriangle className="w-4 h-4 text-orange-400" />
+        return <ExclamationTriangleIcon className="w-4 h-4 text-orange-400" />
       case 'success':
-        return <CheckCircle2 className="w-4 h-4 text-green-400" />
+        return <CheckCircledIcon className="w-4 h-4 text-green-400" />
       default:
-        return <Info className="w-4 h-4 text-blue-400" />
+        return <InfoCircledIcon className="w-4 h-4 text-blue-400" />
     }
   }
 
@@ -63,9 +63,9 @@ export function LiveAlertsV2Page() {
   return (
     <div className="space-y-6 max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
       <div>
-        <h1 className="text-2xl font-bold text-gray-100 flex items-center gap-2">
-          <Bell className="w-6 h-6 text-blue-500" />
-          Live Alerts Console
+        <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+          <BellIcon className="w-6 h-6 text-blue-400" />
+          Live Alerts <span className="text-xs bg-blue-500/20 text-blue-400 px-2 py-1 rounded">V2</span>
         </h1>
         <p className="mt-1 text-sm text-gray-400">
           Real-time stream of system and strategy alerts, synchronized with Telegram dispatches.
@@ -78,7 +78,7 @@ export function LiveAlertsV2Page() {
           <div className="bg-[#1C2127] border border-gray-800 rounded-lg overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-800 bg-black/20">
               <h2 className="text-lg font-medium text-gray-100 flex items-center gap-2">
-                <PlayCircle className="w-5 h-5 text-gray-400" />
+                <PlayIcon className="w-5 h-5 text-gray-400" />
                 E2E Diagnostics
               </h2>
             </div>
@@ -123,7 +123,7 @@ export function LiveAlertsV2Page() {
           <div className="bg-[#1C2127] border border-gray-800 rounded-lg overflow-hidden flex flex-col h-[calc(100vh-12rem)] min-h-[500px]">
             <div className="px-6 py-4 border-b border-gray-800 bg-black/20 flex justify-between items-center shrink-0">
               <h2 className="text-lg font-medium text-gray-100 flex items-center gap-2">
-                <Bell className="w-5 h-5 text-gray-400" />
+                <BellIcon className="w-5 h-5 text-gray-400" />
                 Alerts Stream
               </h2>
               <span className="text-xs text-gray-500">
@@ -168,7 +168,7 @@ export function LiveAlertsV2Page() {
                         <div className="shrink-0 flex items-center">
                           {ev.deliveredToTelegram ? (
                             <span className="flex items-center gap-1 text-xs font-medium text-emerald-400 bg-emerald-400/10 px-2 py-1 rounded">
-                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <CheckCircledIcon className="w-3.5 h-3.5" />
                               Telegram
                             </span>
                           ) : (
@@ -183,7 +183,7 @@ export function LiveAlertsV2Page() {
                 </div>
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-gray-500 p-8 space-y-3">
-                  <Bell className="w-12 h-12 text-gray-800" />
+                  <BellIcon className="w-12 h-12 text-gray-800" />
                   <p>No alerts in the current stream.</p>
                 </div>
               )}

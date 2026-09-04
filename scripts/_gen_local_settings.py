@@ -155,6 +155,10 @@ def main() -> int:
                 env.get("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000")
             ),
         },
+        "Telegram": {
+            "BotToken": env.get("TELEGRAM_BOT_TOKEN", ""),
+            "ChatId": env.get("TELEGRAM_CHAT_ID", ""),
+        },
     }
 
     worker_settings = {

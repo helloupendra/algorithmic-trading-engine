@@ -1,13 +1,13 @@
 using Microsoft.AspNetCore.Mvc;
 using StackExchange.Redis;
 using System.Text.Json;
-using System.Threading.Tasks;
-using System.Diagnostics;
-using System.Runtime.InteropServices;
-using Microsoft.Extensions.Options;
-using AlgoTrading.Api.Configuration;
+using Microsoft.AspNetCore.Authorization;
 using AlgoTrading.Api.Security;
 using AlgoTrading.Api.Services;
+using AlgoTrading.Contracts.Alerts;
+using AlgoTrading.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+using AlgoTrading.Domain.Entities;
 
 namespace AlgoTrading.Api.Controllers
 {
@@ -16,208 +16,60 @@ namespace AlgoTrading.Api.Controllers
     public class AlertsController : ControllerBase
     {
         private readonly IConnectionMultiplexer _redis;
-        private readonly StrategyRunnerOptions _options;
-        private readonly IWebHostEnvironment _environment;
+        private readonly AlertsSupervisor _supervisor;
         private readonly ILogger<AlertsController> _logger;
-        private readonly PythonEngineLocator _locator;
-
-        private static readonly List<Process> _alerterProcesses = new();
-        private static DateTime? _startedUtc;
-        private static readonly object _processLock = new object();
-        private static readonly System.Collections.Concurrent.ConcurrentQueue<string> _alerterLogs = new();
-        private const int MaxLogs = 100;
 
         public AlertsController(
             IConnectionMultiplexer redis,
-            IOptions<StrategyRunnerOptions> options,
-            IWebHostEnvironment environment,
-            ILogger<AlertsController> logger,
-            PythonEngineLocator locator)
+            AlertsSupervisor supervisor,
+            ILogger<AlertsController> logger)
         {
             _redis = redis;
-            _options = options.Value;
-            _environment = environment;
+            _supervisor = supervisor;
             _logger = logger;
-            _locator = locator;
-        }
-
-        private static void AppendLog(string message)
-        {
-            _alerterLogs.Enqueue($"[{DateTime.UtcNow:HH:mm:ss}] {message}");
-            while (_alerterLogs.Count > MaxLogs)
-            {
-                _alerterLogs.TryDequeue(out _);
-            }
         }
 
         [HttpGet("logs")]
-        public IActionResult GetLogs()
+        [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+        public IActionResult GetLogs([FromQuery] string underlying = "BANKNIFTY")
         {
-            return Ok(_alerterLogs.ToArray());
+            return Ok(_supervisor.GetLogs(underlying, 100));
         }
 
         [HttpGet("status")]
-        public IActionResult GetStatus()
+        [Authorize]
+        public async Task<IActionResult> GetStatus(CancellationToken cancellationToken = default)
         {
-            lock (_processLock)
-            {
-                // Clean up exited processes
-                _alerterProcesses.RemoveAll(p => p.HasExited);
-                bool isRunning = _alerterProcesses.Count > 0;
-                
-                return Ok(new
-                {
-                    IsRunning = isRunning,
-                    StartedUtc = isRunning ? _startedUtc : null
-                });
-            }
+            var status = await _supervisor.GetStatusAsync(cancellationToken);
+            return Ok(status);
         }
 
         [HttpPost("start")]
-        public IActionResult StartAlerter()
+        [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+        public async Task<IActionResult> StartAlerter(CancellationToken cancellationToken = default)
         {
-            lock (_processLock)
-            {
-                _alerterProcesses.RemoveAll(p => p.HasExited);
-                if (_alerterProcesses.Count > 0)
-                {
-                    return Conflict(new { message = "Telegram Alerter is already running." });
-                }
-
-                _alerterLogs.Clear();
-                AppendLog("Starting Telegram Alerter (LogicEngine) for Core Indices...");
-
-                var engineDirectory = _locator.EngineDirectory;
-                var scriptPath = Path.Combine(engineDirectory, "strategies", "execution_runner.py");
-
-                var targets = new[]
-                {
-                    new { Underlying = "BANKNIFTY", Spot = "NSE:NIFTYBANK-INDEX", Port = 8000 },
-                    new { Underlying = "NIFTY", Spot = "NSE:NIFTY50-INDEX", Port = 8001 },
-                    new { Underlying = "SENSEX", Spot = "BSE:SENSEX-INDEX", Port = 8002 }
-                };
-
-                foreach (var target in targets)
-                {
-                    var processInfo = new ProcessStartInfo
-                    {
-                        FileName = _locator.PythonExecutable,
-                        UseShellExecute = false,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        CreateNoWindow = true,
-                        WorkingDirectory = engineDirectory
-                    };
-
-                    processInfo.ArgumentList.Add(scriptPath);
-                    processInfo.ArgumentList.Add("--strategy-id");
-                    processInfo.ArgumentList.Add("LogicEngine");
-                    processInfo.ArgumentList.Add("--user-id");
-                    processInfo.ArgumentList.Add(User.GetRequiredUserId().ToString());
-                    processInfo.ArgumentList.Add("--underlying");
-                    processInfo.ArgumentList.Add(target.Underlying);
-                    processInfo.ArgumentList.Add("--spot-symbol");
-                    processInfo.ArgumentList.Add(target.Spot);
-                    processInfo.ArgumentList.Add("--metrics-port");
-                    processInfo.ArgumentList.Add("0");
-                    
-                    processInfo.Environment["PYTHONPATH"] = engineDirectory;
-                    processInfo.Environment["PYTHONUNBUFFERED"] = "1";
-
-                    var process = Process.Start(processInfo);
-                    if (process is null)
-                    {
-                        _logger.LogError("Failed to start process for {Underlying}.", target.Underlying);
-                        AppendLog($"Failed to start process for {target.Underlying}");
-                        continue;
-                    }
-
-                    _alerterProcesses.Add(process);
-
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            var tasks = new[]
-                            {
-                                Task.Run(async () =>
-                                {
-                                    while (!process.StandardOutput.EndOfStream)
-                                    {
-                                        var line = await process.StandardOutput.ReadLineAsync();
-                                        if (line != null) 
-                                        {
-                                            _logger.LogInformation("[{Underlying}] {Line}", target.Underlying, line);
-                                            AppendLog($"[{target.Underlying}] {line}");
-                                        }
-                                    }
-                                }),
-                                Task.Run(async () =>
-                                {
-                                    while (!process.StandardError.EndOfStream)
-                                    {
-                                        var line = await process.StandardError.ReadLineAsync();
-                                        if (line != null) 
-                                        {
-                                            _logger.LogError("[{Underlying}] {Line}", target.Underlying, line);
-                                            AppendLog($"[{target.Underlying}] ERROR: {line}");
-                                        }
-                                    }
-                                })
-                            };
-
-                            await Task.WhenAll(tasks);
-                            await process.WaitForExitAsync();
-
-                            _logger.LogInformation("{Underlying} exited with code {ExitCode}.", target.Underlying, process.ExitCode);
-                            AppendLog($"[{target.Underlying}] Process exited with code {process.ExitCode}");
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "Error while draining output for {Underlying}.", target.Underlying);
-                            AppendLog($"[{target.Underlying}] Exception in runner: {ex.Message}");
-                        }
-                    });
-                }
-
-                _startedUtc = DateTime.UtcNow;
-                return Ok(new { message = "Started 3 Telegram Alerter background processes." });
-            }
+            var outcome = await _supervisor.StartAsync(User.GetRequiredUserId(), cancellationToken);
+            return StatusCode(outcome.StatusCode, new { message = outcome.Message, failedTargets = outcome.FailedTargets });
         }
 
         [HttpPost("stop")]
-        public IActionResult StopAlerter()
+        [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+        public async Task<IActionResult> StopAlerter(CancellationToken cancellationToken = default)
         {
-            lock (_processLock)
+            var outcome = await _supervisor.StopAsync("API stop requested", cancellationToken);
+            if (!outcome.WasRunning)
             {
-                _alerterProcesses.RemoveAll(p => p.HasExited);
-                if (_alerterProcesses.Count == 0)
-                {
-                    return BadRequest(new { message = "Telegram Alerter is not running." });
-                }
-
-                foreach (var process in _alerterProcesses)
-                {
-                    try
-                    {
-                        process.Kill(entireProcessTree: true);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Error killing alerter process.");
-                    }
-                }
-                
-                _alerterProcesses.Clear();
-                _startedUtc = null;
-                AppendLog("Stopped all Telegram Alerter processes.");
-                
-                return Ok(new { message = "Stopped all Telegram Alerter background processes." });
+                return BadRequest(new { message = outcome.Message });
             }
+            return Ok(new { message = outcome.Message });
         }
 
         [HttpPost("test-e2e")]
-        public async Task<IActionResult> TriggerE2ETest([FromBody] E2ETestRequest request)
+        [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+        public async Task<IActionResult> TriggerE2ETest(
+            [FromBody] E2ETestRequest request,
+            [FromServices] TradingDbContext dbContext,
+            CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(request.Instrument))
             {
@@ -233,8 +85,22 @@ namespace AlgoTrading.Api.Controllers
             };
 
             string jsonPayload = JsonSerializer.Serialize(payload);
-            
             await pub.PublishAsync("cmd:python_engine", jsonPayload);
+
+            // Item 5.7: POST /api/Alerts/test-e2e writes an alert_events row.
+            var alert = new AlertEvent
+            {
+                OccurredUtc = DateTime.UtcNow,
+                Source = "test-e2e",
+                Underlying = request.Instrument,
+                Severity = "info",
+                Title = "E2E Test Triggered",
+                Message = $"API initiated an E2E test for {request.Instrument}.",
+                MetadataJson = jsonPayload,
+                DeliveredToTelegram = false
+            };
+            dbContext.AlertEvents.Add(alert);
+            await dbContext.SaveChangesAsync(cancellationToken);
 
             return Ok(new
             {
@@ -245,16 +111,33 @@ namespace AlgoTrading.Api.Controllers
         }
 
         [HttpGet("events")]
+        [Authorize]
         public async Task<IActionResult> GetAlertEvents(
-            [FromServices] AlgoTrading.Infrastructure.Persistence.TradingDbContext dbContext,
+            [FromServices] TradingDbContext dbContext,
             [FromQuery] int limit = 100,
             CancellationToken cancellationToken = default)
         {
-            var events = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync(
-                dbContext.AlertEvents
-                    .OrderByDescending(x => x.OccurredUtc)
-                    .Take(limit),
-                cancellationToken);
+            limit = Math.Clamp(limit, 1, 500);
+
+            var events = await dbContext.AlertEvents
+                .AsNoTracking()
+                .OrderByDescending(x => x.OccurredUtc)
+                .Take(limit)
+                .Select(x => new AlertEventDto
+                {
+                    Id = x.Id,
+                    OccurredUtc = x.OccurredUtc,
+                    Source = x.Source,
+                    Underlying = x.Underlying,
+                    Symbol = x.Symbol,
+                    Severity = x.Severity,
+                    Title = x.Title,
+                    Message = x.Message,
+                    MetadataJson = x.MetadataJson,
+                    DeliveredToTelegram = x.DeliveredToTelegram,
+                    SimulationRunId = x.SimulationRunId
+                })
+                .ToListAsync(cancellationToken);
 
             return Ok(events);
         }

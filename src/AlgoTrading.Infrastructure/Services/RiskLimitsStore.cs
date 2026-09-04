@@ -114,6 +114,18 @@ public class RiskLimitsStore : IRiskLimitsStore
 
     public async Task UpdateLimitsAsync(RiskLimitsDto newLimits, string updatedBy, CancellationToken cancellationToken)
     {
+        if (newLimits.MaxOrdersPerMinute < 1 || newLimits.MaxOrdersPerMinute > 10000)
+            throw new ArgumentOutOfRangeException(nameof(newLimits.MaxOrdersPerMinute), "Must be between 1 and 10000.");
+            
+        if (newLimits.MaxDailyLoss > 0)
+            throw new ArgumentOutOfRangeException(nameof(newLimits.MaxDailyLoss), "Must be <= 0 (negative).");
+            
+        if (newLimits.MaxConcurrentRuns < 1 || newLimits.MaxConcurrentRuns > 50)
+            throw new ArgumentOutOfRangeException(nameof(newLimits.MaxConcurrentRuns), "Must be between 1 and 50.");
+            
+        if (newLimits.MaxRunsPerUser < 1 || newLimits.MaxRunsPerUser > 50)
+            throw new ArgumentOutOfRangeException(nameof(newLimits.MaxRunsPerUser), "Must be between 1 and 50.");
+
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
 
@@ -121,6 +133,16 @@ public class RiskLimitsStore : IRiskLimitsStore
         await UpsertSetting(dbContext, SystemSettingKeys.MaxDailyLoss, newLimits.MaxDailyLoss.ToString(), updatedBy, cancellationToken);
         await UpsertSetting(dbContext, SystemSettingKeys.MaxConcurrentRuns, newLimits.MaxConcurrentRuns.ToString(), updatedBy, cancellationToken);
         await UpsertSetting(dbContext, SystemSettingKeys.MaxRunsPerUser, newLimits.MaxRunsPerUser.ToString(), updatedBy, cancellationToken);
+
+        var evt = new RiskEvent
+        {
+            OccurredUtc = DateTime.UtcNow,
+            Kind = "LimitsChanged",
+            ActorName = updatedBy,
+            Reason = "Admin update",
+            DetailsJson = System.Text.Json.JsonSerializer.Serialize(newLimits)
+        };
+        dbContext.RiskEvents.Add(evt);
 
         await dbContext.SaveChangesAsync(cancellationToken);
 

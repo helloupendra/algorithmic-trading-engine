@@ -16,7 +16,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useMutation } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { useAuth } from '../../lib/auth'
-import { useBrokerSession, useIngestorStatuses, useKillSwitch, useStrategies } from '../../lib/queries'
+import { useBrokerSession, useIngestorStatuses, useKillSwitch, useStrategies, useRiskExposure, useRiskLimits } from '../../lib/queries'
 import { formatInrWhole } from '../../lib/format'
 import { Badge, InlineError, Panel, QueryBoundary } from '../../components/ui'
 import type { SimulationRun, StrategyListItem } from '../../lib/types'
@@ -73,6 +73,8 @@ export function DeployPage() {
   const broker = useBrokerSession()
   const ingestors = useIngestorStatuses()
   const killSwitch = useKillSwitch()
+  const exposure = useRiskExposure()
+  const riskLimits = useRiskLimits()
 
   const blockers: { text: string; to: string }[] = []
   if (broker.data && !broker.data.isAuthenticated)
@@ -81,6 +83,8 @@ export function DeployPage() {
     blockers.push({ text: 'Live ingestor is not running — the strategy will get no ticks', to: '/admin/ingestion' })
   if (killSwitch.data?.isActive)
     blockers.push({ text: 'Kill switch is ACTIVE — trading is halted', to: '/admin/risk' })
+  if (exposure.data && riskLimits.data && exposure.data.activeRunsCount >= riskLimits.data.maxConcurrentRuns)
+    blockers.push({ text: `Max concurrent runs limit reached (${exposure.data.activeRunsCount}/${riskLimits.data.maxConcurrentRuns})`, to: '/trader/overview' })
 
   const [selected, setSelected] = useState<StrategyListItem | null>(null)
   const [symbol, setSymbol] = useState(UNDERLYINGS[0].symbol)
