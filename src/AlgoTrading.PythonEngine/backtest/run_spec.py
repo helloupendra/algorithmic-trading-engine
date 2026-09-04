@@ -52,52 +52,105 @@ def _money_text(value: Optional[float]) -> str:
     return "—" if value is None else f"₹{value:,.0f}"
 
 
+def _pts_pct(points: Optional[float], percent: Optional[float]) -> str:
+    """"20 pts / 5%" for the describe() lines; "—" when neither is set."""
+    parts: List[str] = []
+    if points is not None:
+        parts.append(f"{points:g} pts")
+    if percent is not None:
+        parts.append(f"{percent:g}%")
+    return " / ".join(parts) if parts else "—"
+
+
 @dataclass(frozen=True)
 class OverallRisk:
-    """Rupee stop-loss / target on the run's TOTAL P&L; a trip ends the run."""
+    """
+    Rupee stop-loss / target / trailing stop on the run's TOTAL P&L; a trip
+    ends the run.
+
+    The trail arms when total P&L first reaches `trail_trigger` (or, without a
+    trigger, as soon as it goes positive); from then on the run's best P&L is
+    tracked and the run is flattened when P&L falls to `peak - trail_stop_loss`
+    or below.
+    """
     stop_loss: Optional[float] = None
     target: Optional[float] = None
+    trail_stop_loss: Optional[float] = None
+    trail_trigger: Optional[float] = None
 
     @property
     def is_set(self) -> bool:
-        return self.stop_loss is not None or self.target is not None
+        return any(v is not None for v in (self.stop_loss, self.target,
+                                           self.trail_stop_loss, self.trail_trigger))
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"stopLoss": self.stop_loss, "target": self.target}
+        return {"stopLoss": self.stop_loss, "target": self.target,
+                "trailStopLoss": self.trail_stop_loss, "trailTrigger": self.trail_trigger}
 
     def describe(self) -> str:
-        return f"overall SL {_money_text(self.stop_loss)} · target {_money_text(self.target)}"
+        text = f"overall SL {_money_text(self.stop_loss)} · target {_money_text(self.target)}"
+        if self.trail_stop_loss is not None:
+            text += f" · trail {_money_text(self.trail_stop_loss)}"
+            if self.trail_trigger is not None:
+                text += f" from {_money_text(self.trail_trigger)}"
+        return text
 
 
 @dataclass(frozen=True)
 class GroupRisk:
-    """Rupee stop-loss / target per group (one OPEN_GROUP); a trip closes that group only."""
+    """
+    Rupee stop-loss / target / trailing stop per group (one OPEN_GROUP); a trip
+    closes that group only. The trail works exactly as `OverallRisk`'s, on the
+    group's own P&L.
+    """
     stop_loss: Optional[float] = None
     target: Optional[float] = None
+    trail_stop_loss: Optional[float] = None
+    trail_trigger: Optional[float] = None
 
     @property
     def is_set(self) -> bool:
-        return self.stop_loss is not None or self.target is not None
+        return any(v is not None for v in (self.stop_loss, self.target,
+                                           self.trail_stop_loss, self.trail_trigger))
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"stopLoss": self.stop_loss, "target": self.target}
+        return {"stopLoss": self.stop_loss, "target": self.target,
+                "trailStopLoss": self.trail_stop_loss, "trailTrigger": self.trail_trigger}
 
     def describe(self) -> str:
-        return f"group SL {_money_text(self.stop_loss)} · target {_money_text(self.target)}"
+        text = f"group SL {_money_text(self.stop_loss)} · target {_money_text(self.target)}"
+        if self.trail_stop_loss is not None:
+            text += f" · trail {_money_text(self.trail_stop_loss)}"
+            if self.trail_trigger is not None:
+                text += f" from {_money_text(self.trail_trigger)}"
+        return text
 
 
 @dataclass(frozen=True)
 class LegRisk:
-    """Premium points / percent of entry premium per leg; a trip closes that leg only."""
+    """
+    Premium points / percent of entry premium per leg; a trip closes that leg
+    only.
+
+    The trailing stop is tracked per leg and, when both are set, separately in
+    points and in percent: each metric arms at its own trigger (or as soon as
+    the leg is in profit), keeps its own peak and trips on its own give-back.
+    """
     stop_loss_points: Optional[float] = None
     target_points: Optional[float] = None
     stop_loss_percent: Optional[float] = None
     target_percent: Optional[float] = None
+    trail_stop_loss_points: Optional[float] = None
+    trail_stop_loss_percent: Optional[float] = None
+    trail_trigger_points: Optional[float] = None
+    trail_trigger_percent: Optional[float] = None
 
     @property
     def is_set(self) -> bool:
         return any(v is not None for v in (self.stop_loss_points, self.target_points,
-                                           self.stop_loss_percent, self.target_percent))
+                                           self.stop_loss_percent, self.target_percent,
+                                           self.trail_stop_loss_points, self.trail_stop_loss_percent,
+                                           self.trail_trigger_points, self.trail_trigger_percent))
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -105,20 +158,22 @@ class LegRisk:
             "targetPoints": self.target_points,
             "stopLossPercent": self.stop_loss_percent,
             "targetPercent": self.target_percent,
+            "trailStopLossPoints": self.trail_stop_loss_points,
+            "trailStopLossPercent": self.trail_stop_loss_percent,
+            "trailTriggerPoints": self.trail_trigger_points,
+            "trailTriggerPercent": self.trail_trigger_percent,
         }
 
     def describe(self) -> str:
-        def pts_pct(points: Optional[float], percent: Optional[float]) -> str:
-            parts: List[str] = []
-            if points is not None:
-                parts.append(f"{points:g} pts")
-            if percent is not None:
-                parts.append(f"{percent:g}%")
-            return " / ".join(parts) if parts else "—"
-        return (
-            f"leg SL {pts_pct(self.stop_loss_points, self.stop_loss_percent)} · "
-            f"target {pts_pct(self.target_points, self.target_percent)}"
+        text = (
+            f"leg SL {_pts_pct(self.stop_loss_points, self.stop_loss_percent)} · "
+            f"target {_pts_pct(self.target_points, self.target_percent)}"
         )
+        if self.trail_stop_loss_points is not None or self.trail_stop_loss_percent is not None:
+            text += f" · trail {_pts_pct(self.trail_stop_loss_points, self.trail_stop_loss_percent)}"
+            if self.trail_trigger_points is not None or self.trail_trigger_percent is not None:
+                text += f" from {_pts_pct(self.trail_trigger_points, self.trail_trigger_percent)}"
+        return text
 
 
 @dataclass(frozen=True)
@@ -126,6 +181,7 @@ class RiskRules:
     """
     The three risk levels, evaluated in this order on every sweep:
     leg (closes that leg) → group (closes that group) → overall (ends the run).
+    Within one level the order is fixed stop-loss → trailing stop → target.
     """
     overall: OverallRisk = OverallRisk()
     group: GroupRisk = GroupRisk()
@@ -192,16 +248,24 @@ class RiskRules:
             overall=OverallRisk(
                 stop_loss=_positive(_pick(overall, "stopLoss", "stop_loss")),
                 target=_positive(_pick(overall, "target")),
+                trail_stop_loss=_positive(_pick(overall, "trailStopLoss", "trail_stop_loss")),
+                trail_trigger=_positive(_pick(overall, "trailTrigger", "trail_trigger")),
             ),
             group=GroupRisk(
                 stop_loss=_positive(_pick(group, "stopLoss", "stop_loss")),
                 target=_positive(_pick(group, "target")),
+                trail_stop_loss=_positive(_pick(group, "trailStopLoss", "trail_stop_loss")),
+                trail_trigger=_positive(_pick(group, "trailTrigger", "trail_trigger")),
             ),
             leg=LegRisk(
                 stop_loss_points=_positive(_pick(leg, "stopLossPoints", "stop_loss_points")),
                 target_points=_positive(_pick(leg, "targetPoints", "target_points")),
                 stop_loss_percent=_positive(_pick(leg, "stopLossPercent", "stop_loss_percent")),
                 target_percent=_positive(_pick(leg, "targetPercent", "target_percent")),
+                trail_stop_loss_points=_positive(_pick(leg, "trailStopLossPoints", "trail_stop_loss_points")),
+                trail_stop_loss_percent=_positive(_pick(leg, "trailStopLossPercent", "trail_stop_loss_percent")),
+                trail_trigger_points=_positive(_pick(leg, "trailTriggerPoints", "trail_trigger_points")),
+                trail_trigger_percent=_positive(_pick(leg, "trailTriggerPercent", "trail_trigger_percent")),
             ),
         )
 

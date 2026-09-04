@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from strategies.base_strategy import OptionContract
+from strategies.base_strategy import ContractRequirement, OptionContract
 
 # Strike step per underlying when the option chain cannot be read from the API.
 # Kept as floats end-to-end: stock options trade on 2.5 / 0.5 point grids, and
@@ -127,6 +127,93 @@ def parse_logical_symbol(symbol: str) -> Optional[Tuple[str, str, Strike]]:
     return underlying.upper(), option_type, strike
 
 
+# --- contract requirements (ATM / OTM / ITM) --------------------------------
+
+def _as_number(value: Any) -> Optional[float]:
+    """Float when `value` is a finite number (or its text), else None."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number or number in (float("inf"), float("-inf")):
+        return None
+    return number
+
+
+def requirement_distance(req: ContractRequirement, step: float, params: Optional[Dict[str, Any]] = None) -> float:
+    """
+    How far from the ATM strike `req` sits, in points on the underlying's grid.
+
+    The run parameter named by `req.param` wins when it is set and > 0: a name
+    ending in `_points` is read as absolute points, any other name as a number
+    of strikes (multiplied by `step`). Otherwise `req.points` is used when set,
+    else `req.steps * step`.
+    """
+    grid = float(step) if step and step > 0 else DEFAULT_STRIKE_STEP
+    if req.param:
+        override = _as_number((params or {}).get(req.param))
+        if override is not None and override > 0:
+            return override if req.param.endswith("_points") else override * grid
+    if req.points is not None:
+        points = _as_number(req.points)
+        if points is not None:
+            return max(0.0, points)
+    steps = _as_number(req.steps) or 0.0
+    return max(0.0, steps) * grid
+
+
+def strike_for_requirement(req: ContractRequirement, atm: float, step: float,
+                           params: Optional[Dict[str, Any]] = None) -> Strike:
+    """
+    The strike `req` resolves to for an ATM strike of `atm`.
+
+    CE: OTM is above the ATM strike, ITM below it; PE is the mirror image. An
+    "atm" requirement ignores the distance entirely. The result is snapped back
+    onto the underlying's grid with `round_to_step`, so fractional grids (2.5)
+    keep landing on real strikes.
+    """
+    moneyness = str(req.moneyness or "atm").strip().lower()
+    option_type = str(req.option_type or "CE").strip().upper()
+    centre = float(atm)
+    if moneyness not in ("otm", "itm"):
+        return round_to_step(centre, step)
+    distance = requirement_distance(req, step, params)
+    away = distance if moneyness == "otm" else -distance
+    if option_type == "PE":
+        away = -away
+    return round_to_step(centre + away, step)
+
+
+def describe_requirement(req: ContractRequirement, step: float, params: Optional[Dict[str, Any]] = None) -> str:
+    """
+    One human-readable line for the [CONFIG] log and the catalog, e.g.
+    "otm_ce: OTM CE +2 strikes (+200 pts)" or "atm_ce: ATM CE".
+    """
+    moneyness = str(req.moneyness or "atm").strip().lower()
+    option_type = str(req.option_type or "CE").strip().upper()
+    head = f"{req.key}: {moneyness.upper()} {option_type}"
+    if moneyness not in ("otm", "itm"):
+        return head + (" (optional)" if req.optional else "")
+    grid = float(step) if step and step > 0 else DEFAULT_STRIKE_STEP
+    distance = requirement_distance(req, grid, params)
+    sign = "+" if (moneyness == "otm") == (option_type != "PE") else "-"
+    strikes = distance / grid if grid else 0.0
+    text = f"{head} {sign}{format_strike(round(strikes, 4))} strikes ({sign}{format_strike(round(distance, 4))} pts)"
+    if req.param:
+        text += f" [param {req.param}]"
+    if req.optional:
+        text += " (optional)"
+    return text
+
+
+def strikes_for_requirements(requirements: List[ContractRequirement], atm: float, step: float,
+                             params: Optional[Dict[str, Any]] = None) -> List[Tuple[ContractRequirement, Strike]]:
+    """(requirement, strike) for every requirement, in declaration order."""
+    return [(req, strike_for_requirement(req, atm, step, params)) for req in requirements or []]
+
+
 def build_atm_contracts(api_client, underlying: str, expiry_date: str, atm_strike: Strike) -> Dict[str, OptionContract]:
     """
     Fetches the exact CE and PE contracts for a given At-The-Money (ATM) strike from the platform API.
@@ -149,3 +236,62 @@ def build_atm_contracts(api_client, underlying: str, expiry_date: str, atm_strik
         "atm_ce": map_contract(atm_ce_raw),
         "atm_pe": map_contract(atm_pe_raw),
     }
+
+
+class ExactContractCache:
+    """
+    Process-lifetime cache of `get_exact_contract` answers, keyed by
+    (expiry, strike, option type).
+
+    Definite answers (a contract, or a definite "the master does not have it")
+    are cached; a lookup that raised is NOT, so the next tick retries instead of
+    turning a transient API error into a permanent hole in the strategy's view.
+    """
+
+    def __init__(self, api_client: Any, underlying: str, log: Any = print) -> None:
+        self.api = api_client
+        self.underlying = (underlying or "").strip().upper()
+        self.log = log
+        self._answers: Dict[Tuple[str, Strike, str], Optional[Dict[str, Any]]] = {}
+        self.lookups = 0
+        self.failed_lookups = 0
+
+    def get(self, expiry: str, strike: Strike, option_type: str) -> Optional[Dict[str, Any]]:
+        key = (str(expiry), strike, str(option_type).upper())
+        if key in self._answers:
+            return self._answers[key]
+        self.lookups += 1
+        try:
+            raw = self.api.get_exact_contract(
+                underlying=self.underlying, expiry=key[0], strike=key[1], option_type=key[2]
+            )
+        except Exception as ex:
+            self.failed_lookups += 1
+            self.log(f"[CONTRACT] WARN: lookup failed for {key[0]} {format_strike(float(key[1]))} {key[2]}: {ex} (will retry)")
+            return None
+        answer = raw if raw and raw.get("symbol") else None
+        self._answers[key] = answer
+        return answer
+
+
+def contracts_for_requirements(cache: ExactContractCache, requirements: List[ContractRequirement],
+                               expiry_date: str, atm_strike: float, step: float,
+                               params: Optional[Dict[str, Any]] = None,
+                               on_missing: Any = None) -> Dict[str, OptionContract]:
+    """
+    {requirement key -> OptionContract} for every requirement the instrument
+    master can satisfy at `expiry_date`.
+
+    A key the master lacks is left out (the strategy sees the absence) and
+    reported once through `on_missing(key, strike, option_type)` so the caller
+    can log it without repeating the line on every tick.
+    """
+    contracts: Dict[str, OptionContract] = {}
+    for req, strike in strikes_for_requirements(requirements, atm_strike, step, params):
+        raw = cache.get(expiry_date, strike, req.option_type)
+        if not raw:
+            if on_missing is not None:
+                on_missing(req.key, strike, str(req.option_type).upper())
+            continue
+        contracts[req.key] = map_contract(raw)
+    return contracts

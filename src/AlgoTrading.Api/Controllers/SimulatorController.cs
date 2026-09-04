@@ -1,4 +1,5 @@
 // src/AlgoTrading.Api/Controllers/SimulatorController.cs
+using AlgoTrading.Api.Security;
 using AlgoTrading.Api.Services;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Application.UseCases.Simulator;
@@ -76,6 +77,8 @@ public class SimulatorController : ControllerBase
         CancellationToken cancellationToken)
 
     {
+        request.UserId = User.GetRequiredUserId();
+
         if (string.IsNullOrWhiteSpace(request.Mode))
             return BadRequest(new { message = "Mode is required." });
 
@@ -109,20 +112,35 @@ public class SimulatorController : ControllerBase
         if (result is null)
             return NotFound(new { message = "Simulation run not found." });
 
+        if (!User.IsInRole("Admin") && result.UserId != User.GetRequiredUserId())
+            return Forbid();
+
         return Ok(result);
     }
 
     [HttpGet("runs")]
     public async Task<IActionResult> GetRuns([FromQuery] long? userId, CancellationToken cancellationToken)
     {
+        if (!User.IsInRole("Admin"))
+        {
+            userId = User.GetRequiredUserId();
+        }
         var result = await _getSimulationRunsUseCase.ExecuteAsync(userId, cancellationToken);
         return Ok(result);
     }
 
+    private async Task<bool> IsRunOwnedByCallerAsync(long runId, CancellationToken ct)
+    {
+        if (User.IsInRole("Admin")) return true;
+        var run = await _getSimulationRunUseCase.ExecuteAsync(runId, ct);
+        return run != null && run.UserId == User.GetRequiredUserId();
+    }
 
     [HttpPost("runs/{id:long}/start")]
     public async Task<IActionResult> StartRun(long id, CancellationToken cancellationToken)
     {
+        if (!await IsRunOwnedByCallerAsync(id, cancellationToken))
+            return Forbid();
         try
         {
             var result = await _startSimulationRunUseCase.ExecuteAsync(id, cancellationToken);
@@ -162,6 +180,9 @@ public class SimulatorController : ControllerBase
     [HttpGet("runs/{id:long}/signals")]
     public async Task<IActionResult> GetSignals(long id, CancellationToken cancellationToken)
     {
+        if (!await IsRunOwnedByCallerAsync(id, cancellationToken))
+            return Forbid();
+
         var result = await _getSimulationSignalsUseCase.ExecuteAsync(id, cancellationToken);
         return Ok(result);
     }
@@ -169,6 +190,9 @@ public class SimulatorController : ControllerBase
     [HttpGet("runs/{id:long}/orders")]
     public async Task<IActionResult> GetPaperOrders(long id, CancellationToken cancellationToken)
     {
+        if (!await IsRunOwnedByCallerAsync(id, cancellationToken))
+            return Forbid();
+
         var result = await _getPaperOrdersUseCase.ExecuteAsync(id, cancellationToken);
         return Ok(result);
     }
@@ -176,6 +200,9 @@ public class SimulatorController : ControllerBase
     [HttpGet("runs/{id:long}/positions")]
     public async Task<IActionResult> GetPaperPositions(long id, CancellationToken cancellationToken)
     {
+        if (!await IsRunOwnedByCallerAsync(id, cancellationToken))
+            return Forbid();
+
         var result = await _getPaperPositionsUseCase.ExecuteAsync(id, cancellationToken);
         return Ok(result);
     }
@@ -183,6 +210,9 @@ public class SimulatorController : ControllerBase
     [HttpGet("runs/{id:long}/portfolio")]
     public async Task<IActionResult> GetPortfolio(long id, CancellationToken cancellationToken)
     {
+        if (!await IsRunOwnedByCallerAsync(id, cancellationToken))
+            return Forbid();
+
         try
         {
             var result = await _getSimulationPortfolioUseCase.ExecuteAsync(id, cancellationToken);
@@ -211,6 +241,9 @@ public class SimulatorController : ControllerBase
     [HttpGet("runs/{id:long}/equity-curve")]
     public async Task<IActionResult> GetEquityCurve(long id, CancellationToken cancellationToken)
     {
+        if (!await IsRunOwnedByCallerAsync(id, cancellationToken))
+            return Forbid();
+
         var result = await _getSimulationEquityCurveUseCase.ExecuteAsync(id, cancellationToken);
         return Ok(result);
     }
@@ -218,6 +251,9 @@ public class SimulatorController : ControllerBase
     [HttpGet("runs/{id:long}/performance")]
     public async Task<IActionResult> GetPerformance(long id, CancellationToken cancellationToken)
     {
+        if (!await IsRunOwnedByCallerAsync(id, cancellationToken))
+            return Forbid();
+
         try
         {
             var result = await _getSimulationPerformanceUseCase.ExecuteAsync(id, cancellationToken);

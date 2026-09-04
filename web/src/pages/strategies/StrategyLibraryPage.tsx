@@ -7,6 +7,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStrategies } from '../../lib/queries'
+import { contractRequirementSummary, contractRequirementsOf } from '../../lib/contracts'
 import { formatResolution } from '../../lib/symbols'
 import { Badge, Panel, QueryBoundary } from '../../components/ui'
 import { IconLayers } from '../../components/icons'
@@ -70,6 +71,9 @@ export function StrategyLibraryPage() {
                       <th>Category</th>
                       <th>Underlyings</th>
                       <th>Legs</th>
+                      <th title="Contract keys the strategy reads, with their distance from ATM">
+                        Contracts
+                      </th>
                       <th>Data needs</th>
                       <th>Default params</th>
                       <th>Source</th>
@@ -94,6 +98,9 @@ export function StrategyLibraryPage() {
                           </td>
                           <td className="muted" style={{ whiteSpace: 'normal', minWidth: 180 }}>
                             {s.legsSummary || '—'}
+                          </td>
+                          <td className="mono muted" style={{ fontSize: 11, whiteSpace: 'normal', minWidth: 170 }}>
+                            {contractRequirementSummary(contractRequirementsOf(s.contractRequirements)) || '—'}
                           </td>
                           <td className="muted">
                             {s.dataRequirements.length === 0

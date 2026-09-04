@@ -178,6 +178,23 @@ public static class RunRiskRules
         r.Leg.TargetPoints = Positive(r.Leg.TargetPoints);
         r.Leg.StopLossPercent = Positive(r.Leg.StopLossPercent);
         r.Leg.TargetPercent = Positive(r.Leg.TargetPercent);
+
+        r.Overall.TrailStopLoss = Positive(r.Overall.TrailStopLoss);
+        r.Overall.TrailTrigger = Positive(r.Overall.TrailTrigger);
+        r.Group.TrailStopLoss = Positive(r.Group.TrailStopLoss);
+        r.Group.TrailTrigger = Positive(r.Group.TrailTrigger);
+        r.Leg.TrailStopLossPoints = Positive(r.Leg.TrailStopLossPoints);
+        r.Leg.TrailStopLossPercent = Positive(r.Leg.TrailStopLossPercent);
+        r.Leg.TrailTriggerPoints = Positive(r.Leg.TrailTriggerPoints);
+        r.Leg.TrailTriggerPercent = Positive(r.Leg.TrailTriggerPercent);
+
+        // A trigger without a trail distance arms nothing; drop it so the
+        // persisted rules say exactly what is enforced.
+        if (r.Overall.TrailStopLoss is null) r.Overall.TrailTrigger = null;
+        if (r.Group.TrailStopLoss is null) r.Group.TrailTrigger = null;
+        if (r.Leg.TrailStopLossPoints is null) r.Leg.TrailTriggerPoints = null;
+        if (r.Leg.TrailStopLossPercent is null) r.Leg.TrailTriggerPercent = null;
+
         return r;
     }
 

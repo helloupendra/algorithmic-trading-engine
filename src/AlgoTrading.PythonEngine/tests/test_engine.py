@@ -767,7 +767,8 @@ class RiskRuleTests(EngineRunner, unittest.TestCase):
         self.assertEqual(outcome.summary["barsProcessed"], 5)
         self.assertFalse(outcome.ledger.has_open())
         self.assertCounts(outcome.summary)
-        self.assertEqual(outcome.summary["risk"]["overall"], {"stopLoss": 500.0, "target": None})
+        self.assertEqual(outcome.summary["risk"]["overall"],
+                         {"stopLoss": 500.0, "target": None, "trailStopLoss": None, "trailTrigger": None})
 
     def test_risk_object_wins_over_legacy_keys(self):
         # Legacy stop_loss=100 would stop at bar 1; the risk object's 500 is authoritative (bar 4).

@@ -30,6 +30,13 @@ public class StrategyListItemResponse
 
     public List<StrategyDataRequirement> DataRequirements { get; set; } = new();
 
+    /// <summary>
+    /// The option contracts the strategy asks for (ATM/OTM/ITM per leg) and the
+    /// run parameters that move them. Empty when the catalog fell back to its
+    /// regex scan, which cannot read them.
+    /// </summary>
+    public List<StrategyContractRequirement> ContractRequirements { get; set; } = new();
+
     /// <summary>JSON object string of the strategy's default parameters.</summary>
     public string DefaultParametersJson { get; set; } = "{}";
 

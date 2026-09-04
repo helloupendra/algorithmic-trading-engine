@@ -1,5 +1,5 @@
 from typing import Dict, Any, List
-from strategies.base_strategy import BaseStrategy, StrategyInput, StrategySignal
+from strategies.base_strategy import BaseStrategy, ContractRequirement, StrategyInput, StrategySignal
 import uuid
 
 class BullCallSpreadStrategy(BaseStrategy):
@@ -13,13 +13,22 @@ class BullCallSpreadStrategy(BaseStrategy):
     description = (
         "Buys the ATM call and sells an OTM call of the same expiry, a debit spread for a moderate rise. "
         "Profits as the underlying climbs towards the short strike, with both the maximum gain and the "
-        "maximum loss fixed at entry. Note: the live runner currently provides only ATM contracts, so this "
-        "strategy will wait for entry until OTM contract selection ships."
+        "maximum loss fixed at entry. The short call sits `otm_offset_steps` strikes above the ATM strike "
+        "on the underlying's own grid (2 by default)."
     )
     category = "Bullish"
     legs_summary = "Buy ATM CE + Sell OTM CE"
     default_lots = 1
-    default_params: Dict[str, Any] = {}
+    default_params: Dict[str, Any] = {"otm_offset_steps": 2}
+
+    @classmethod
+    def get_contract_requirements(cls, params: Dict[str, Any] = None) -> List[ContractRequirement]:
+        """The ATM call to buy and the OTM call, `otm_offset_steps` strikes above it, to sell."""
+        return [
+            ContractRequirement(key="atm_ce", option_type="CE"),
+            ContractRequirement(key="otm_ce", option_type="CE", moneyness="otm",
+                                steps=2, param="otm_offset_steps"),
+        ]
 
     def __init__(self, params: Dict[str, Any] = None):
         self.params = params or {}

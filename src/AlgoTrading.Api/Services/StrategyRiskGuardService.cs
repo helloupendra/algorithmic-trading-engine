@@ -14,8 +14,13 @@ namespace AlgoTrading.Api.Services;
 /// guard works even when the Python runner is wedged. Every sweep, per run:
 /// leg rules (close that leg only) → group rules (close every open leg of
 /// that group; the run keeps going) → overall rules (flatten everything and
-/// end the run). A position is never closed twice in one sweep; every trip is
+/// end the run). Within each level the order is fixed stop-loss → trailing
+/// stop → target. A position is never closed twice in one sweep; every trip is
 /// logged; a failure on one run never skips the next.
+///
+/// Trailing peaks live on the run's registry entry (<see cref="RiskTrailState"/>)
+/// and are never persisted, so an adopted run and a run whose rules were just
+/// changed re-arm their trails from the P&amp;L of the next sweep.
 /// </summary>
 public sealed class StrategyRiskGuardService : BackgroundService
 {
@@ -116,10 +121,17 @@ public sealed class StrategyRiskGuardService : BackgroundService
 
         var rules = current.Risk;
         long runId = current.RunId;
+        var trail = current.Trail;
 
         // a. Marks open positions to market from the latest live quotes.
         var positions = await paperTrading.GetPaperPositionsAsync(runId, cancellationToken);
         var open = positions.Where(IsOpen).ToList();
+
+        // Peaks of legs that have since closed (and of groups with no open leg
+        // left) are dead weight, and a recycled position id must never inherit one.
+        trail.Prune(
+            open.Select(x => x.Id).ToHashSet(),
+            open.Select(x => x.GroupId ?? string.Empty).ToHashSet(StringComparer.Ordinal));
 
         var closedThisSweep = new HashSet<long>();
 
@@ -128,7 +140,7 @@ public sealed class StrategyRiskGuardService : BackgroundService
         {
             foreach (var pos in open)
             {
-                var reason = EvaluateLeg(pos, leg);
+                var reason = EvaluateLeg(pos, leg, trail);
                 if (reason is null) continue;
 
                 closedThisSweep.Add(pos.Id);
@@ -147,7 +159,7 @@ public sealed class StrategyRiskGuardService : BackgroundService
                 if (openLegs.Count == 0) continue;
 
                 decimal groupPnl = g.Sum(x => x.RealizedPnl) + openLegs.Sum(x => x.UnrealizedPnl);
-                var reason = EvaluateGroup(g.Key, groupPnl, group);
+                var reason = EvaluateGroup(g.Key, groupPnl, group, trail);
                 if (reason is null) continue;
 
                 var ids = openLegs.Select(x => x.Id).Where(id => !closedThisSweep.Contains(id)).ToList();
@@ -169,16 +181,7 @@ public sealed class StrategyRiskGuardService : BackgroundService
             var summary = await paperTrading.GetPortfolioSummaryAsync(runId, cancellationToken);
             decimal totalPnl = summary.RealizedPnl + summary.UnrealizedPnl;
 
-            string? reason = null;
-            if (overall.StopLoss.HasValue && totalPnl <= -overall.StopLoss.Value)
-            {
-                reason = $"Stop loss hit: P&L {Money(totalPnl)} ≤ −{Money(overall.StopLoss.Value)}";
-            }
-            else if (overall.Target.HasValue && totalPnl >= overall.Target.Value)
-            {
-                reason = $"Target hit: P&L {Money(totalPnl)} ≥ {Money(overall.Target.Value)}";
-            }
-
+            var reason = EvaluateOverall(totalPnl, overall, trail);
             if (reason is null) return;
 
             _logger.LogWarning("Risk guard tripping strategy {StrategyId} ({Name}) run {RunId} on {Underlying}: {Reason}",
@@ -190,10 +193,13 @@ public sealed class StrategyRiskGuardService : BackgroundService
 
     /// <summary>
     /// Leg rule for one open position. Adverse move = BUY: entry − ltp, SELL:
-    /// ltp − entry; percent of entry. Checked SL points, SL percent, target
-    /// points, target percent — whichever trips first wins. Null when nothing trips.
+    /// ltp − entry; percent of entry. Checked in the level's fixed → trailing →
+    /// target order: SL points, SL percent, trailing points, trailing percent,
+    /// target points, target percent — whichever trips first wins. The leg's two
+    /// trailing tracks are advanced first, so the peaks stay current whatever
+    /// trips. Null when nothing trips.
     /// </summary>
-    internal static string? EvaluateLeg(PaperPositionResponse pos, LegRiskDto leg)
+    internal static string? EvaluateLeg(PaperPositionResponse pos, LegRiskDto leg, RiskTrailState trail)
     {
         if (pos.AveragePrice <= 0 || pos.LastMarkPrice is not > 0) return null;
 
@@ -207,6 +213,10 @@ public sealed class StrategyRiskGuardService : BackgroundService
         decimal pnlPct = -adversePct;
         var label = ContractLabel(pos.Symbol);
 
+        var tracks = leg.HasTrailingRule
+            ? trail.ObserveLeg(pos.Id, pnlPoints, pnlPct, leg.TrailTriggerPoints, leg.TrailTriggerPercent)
+            : default;
+
         if (leg.StopLossPoints.HasValue && adverse >= leg.StopLossPoints.Value)
         {
             return $"Leg stop-loss hit: {label} {Signed(pnlPoints)} pts ({Signed(pnlPct)}%) ≤ −{Number(leg.StopLossPoints.Value)} pts";
@@ -215,6 +225,22 @@ public sealed class StrategyRiskGuardService : BackgroundService
         if (leg.StopLossPercent.HasValue && adversePct >= leg.StopLossPercent.Value)
         {
             return $"Leg stop-loss hit: {label} {Signed(pnlPoints)} pts ({Signed(pnlPct)}%) ≤ −{Number(leg.StopLossPercent.Value)}%";
+        }
+
+        if (leg.TrailStopLossPoints is { } trailPoints
+            && tracks.Points.Armed
+            && pnlPoints <= tracks.Points.Peak - trailPoints)
+        {
+            return $"Leg trailing stop hit: {label} {Signed(pnlPoints)} pts fell {Drop(tracks.Points.Peak, pnlPoints)} pts "
+                 + $"from peak {Signed(tracks.Points.Peak)} pts (trail {Number(trailPoints)} pts)";
+        }
+
+        if (leg.TrailStopLossPercent is { } trailPercent
+            && tracks.Percent.Armed
+            && pnlPct <= tracks.Percent.Peak - trailPercent)
+        {
+            return $"Leg trailing stop hit: {label} {Signed(pnlPct)}% fell {Drop(tracks.Percent.Peak, pnlPct)}% "
+                 + $"from peak {Signed(tracks.Percent.Peak)}% (trail {Number(trailPercent)}%)";
         }
 
         if (leg.TargetPoints.HasValue && pnlPoints >= leg.TargetPoints.Value)
@@ -230,19 +256,62 @@ public sealed class StrategyRiskGuardService : BackgroundService
         return null;
     }
 
-    /// <summary>Group rule on the group's realized + open unrealized P&amp;L. Null when nothing trips.</summary>
-    internal static string? EvaluateGroup(string groupId, decimal groupPnl, GroupRiskDto group)
+    /// <summary>
+    /// Group rule on the group's realized + open unrealized P&amp;L, in the
+    /// fixed → trailing → target order. Null when nothing trips.
+    /// </summary>
+    internal static string? EvaluateGroup(string groupId, decimal groupPnl, GroupRiskDto group, RiskTrailState trail)
     {
         var name = string.IsNullOrWhiteSpace(groupId) ? "(no group)" : groupId;
+
+        var track = group.HasTrailingRule
+            ? trail.ObserveGroup(groupId ?? string.Empty, groupPnl, group.TrailTrigger)
+            : TrailTrack.Idle;
 
         if (group.StopLoss.HasValue && groupPnl <= -group.StopLoss.Value)
         {
             return $"Group stop-loss hit: {name} P&L {Money(groupPnl)} ≤ −{Money(group.StopLoss.Value)}";
         }
 
+        if (group.TrailStopLoss is { } trailStop && track.Armed && groupPnl <= track.Peak - trailStop)
+        {
+            return $"Group trailing stop hit: {name} P&L {Rupees(groupPnl)} fell {Rupees(track.Peak - groupPnl)} "
+                 + $"from peak {Rupees(track.Peak)} (trail {Rupees(trailStop)})";
+        }
+
         if (group.Target.HasValue && groupPnl >= group.Target.Value)
         {
             return $"Group target hit: {name} P&L {Money(groupPnl)} ≥ {Money(group.Target.Value)}";
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Overall rule on the run's total P&amp;L (realized + unrealized), in the
+    /// fixed → trailing → target order. A trip flattens the run. Null when
+    /// nothing trips.
+    /// </summary>
+    internal static string? EvaluateOverall(decimal totalPnl, OverallRiskDto overall, RiskTrailState trail)
+    {
+        var track = overall.HasTrailingRule
+            ? trail.ObserveOverall(totalPnl, overall.TrailTrigger)
+            : TrailTrack.Idle;
+
+        if (overall.StopLoss.HasValue && totalPnl <= -overall.StopLoss.Value)
+        {
+            return $"Stop loss hit: P&L {Money(totalPnl)} ≤ −{Money(overall.StopLoss.Value)}";
+        }
+
+        if (overall.TrailStopLoss is { } trailStop && track.Armed && totalPnl <= track.Peak - trailStop)
+        {
+            return $"Trailing stop hit: P&L {Rupees(totalPnl)} fell {Rupees(track.Peak - totalPnl)} "
+                 + $"from peak {Rupees(track.Peak)} (trail {Rupees(trailStop)})";
+        }
+
+        if (overall.Target.HasValue && totalPnl >= overall.Target.Value)
+        {
+            return $"Target hit: P&L {Money(totalPnl)} ≥ {Money(overall.Target.Value)}";
         }
 
         return null;
@@ -295,9 +364,17 @@ public sealed class StrategyRiskGuardService : BackgroundService
     private static string Money(decimal value)
         => (value < 0 ? "−" : string.Empty) + Math.Abs(value).ToString("#,##0", CultureInfo.InvariantCulture);
 
+    /// <summary>"₹5,000" / "−₹1,240": rupees with the sign in front of the symbol, no decimals.</summary>
+    private static string Rupees(decimal value)
+        => (value < 0 ? "−₹" : "₹") + Math.Abs(value).ToString("#,##0", CultureInfo.InvariantCulture);
+
     /// <summary>"+6.2" / "−21.4": one decimal with an explicit sign.</summary>
     private static string Signed(decimal value)
         => (value < 0 ? "−" : "+") + Math.Abs(value).ToString("0.0", CultureInfo.InvariantCulture);
+
+    /// <summary>"13.8": how far a value has fallen from its peak, unsigned, one decimal.</summary>
+    private static string Drop(decimal peak, decimal value)
+        => Math.Abs(peak - value).ToString("0.0", CultureInfo.InvariantCulture);
 
     private static string Number(decimal value)
         => value.ToString("0.##", CultureInfo.InvariantCulture);

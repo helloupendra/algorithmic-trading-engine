@@ -264,28 +264,48 @@ export interface PerformanceMetrics {
 
 // ---------- Risk rules (live runs and backtests) ----------
 
-/** ₹ limits on the run's TOTAL P&L (realized + unrealized); a hit ends the run. */
+/**
+ * ₹ limits on the run's TOTAL P&L (realized + unrealized); a hit ends the run.
+ *
+ * `trailStopLoss` is a give-back from the best total P&L the run ever showed:
+ * it arms once profit reaches `trailTrigger` (or as soon as profit is above
+ * zero when no trigger is set), then trips at `peak − trailStopLoss`.
+ */
 export interface OverallRisk {
   stopLoss?: number | null
   target?: number | null
+  trailStopLoss?: number | null
+  trailTrigger?: number | null
 }
 
-/** ₹ limits per group (one OPEN_GROUP, e.g. a straddle pair); a hit closes that group only. */
+/**
+ * ₹ limits per group (one OPEN_GROUP, e.g. a straddle pair); a hit closes that
+ * group only. Trailing works exactly as at the overall level, per group.
+ */
 export interface GroupRisk {
   stopLoss?: number | null
   target?: number | null
+  trailStopLoss?: number | null
+  trailTrigger?: number | null
 }
 
 /**
  * Per-leg limits: premium points vs entry and/or % of entry premium; a hit
  * closes that leg only. When both points and percent are set, whichever
  * trips first wins.
+ *
+ * The trailing pair works the same way per leg, points and percent tracked
+ * separately, each against its own peak favourable premium move.
  */
 export interface LegRisk {
   stopLossPoints?: number | null
   targetPoints?: number | null
   stopLossPercent?: number | null
   targetPercent?: number | null
+  trailStopLossPoints?: number | null
+  trailStopLossPercent?: number | null
+  trailTriggerPoints?: number | null
+  trailTriggerPercent?: number | null
 }
 
 /**
@@ -319,8 +339,32 @@ export interface LiveRunGroup {
 // ---------- Strategies ----------
 
 export interface StrategyDataRequirement {
+  /**
+   * "index" or any contract-requirement key the strategy declares
+   * ("atm_ce", "otm_pe", "wing_ce", …).
+   */
   symbolType: string
   resolution: string
+}
+
+/**
+ * One option contract a strategy asks the runner to resolve for it, from
+ * `get_contract_requirements()`. `key` is what the strategy reads out of
+ * `inp.contracts`; the strike is `steps` strikes (or `points` points, which
+ * wins when set) away from ATM on the underlying's grid, in the direction
+ * `moneyness` implies for `optionType`. `param` names a run parameter that
+ * overrides that distance — as points when the name ends with `_points`,
+ * otherwise as strike steps.
+ */
+export interface StrategyContractRequirement {
+  key: string
+  optionType: 'CE' | 'PE' | string
+  moneyness: 'atm' | 'otm' | 'itm' | string
+  steps: number
+  points: number | null
+  param: string | null
+  /** A missing contract is not an error — the strategy copes with its absence. */
+  optional: boolean
 }
 
 /** Why and when the last run of a strategy ended (survives API restarts). */
@@ -363,6 +407,12 @@ export interface StrategyListItem {
   instrumentKind: string
   legsSummary: string
   dataRequirements: StrategyDataRequirement[]
+  /**
+   * The contracts the strategy trades. Absent on an API build from before
+   * contract requirements shipped, and empty for a strategy the catalog could
+   * only read with its regex fallback — treat both as "ATM CE + ATM PE".
+   */
+  contractRequirements?: StrategyContractRequirement[] | null
   defaultParametersJson: string
   defaultLots: number
   sourceFile: string

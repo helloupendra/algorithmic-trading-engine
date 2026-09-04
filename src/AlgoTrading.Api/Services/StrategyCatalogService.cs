@@ -25,6 +25,13 @@ public sealed class StrategyCatalogEntry
     public int DefaultLots { get; set; } = 1;
     public string DefaultParametersJson { get; set; } = "{}";
     public List<StrategyDataRequirement> DataRequirements { get; set; } = new();
+
+    /// <summary>
+    /// Contracts the strategy asks the runner to resolve (ATM/OTM/ITM per leg).
+    /// Empty for a regex-fallback entry: the scan cannot read them.
+    /// </summary>
+    public List<StrategyContractRequirement> ContractRequirements { get; set; } = new();
+
     public DateTime CreatedUtc { get; set; }
 
     /// <summary>Set when the Python side could not load this strategy.</summary>
@@ -357,6 +364,29 @@ public sealed class StrategyCatalogService
                 }
             }
 
+            if (item.TryGetProperty("contractRequirements", out var cr) && cr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var req in cr.EnumerateArray())
+                {
+                    if (req.ValueKind != JsonValueKind.Object) continue;
+
+                    var key = GetString(req, "key")?.Trim();
+                    if (string.IsNullOrWhiteSpace(key)) continue;
+
+                    var param = GetString(req, "param")?.Trim();
+                    entry.ContractRequirements.Add(new StrategyContractRequirement
+                    {
+                        Key = key,
+                        OptionType = (GetString(req, "optionType") ?? string.Empty).Trim().ToUpperInvariant(),
+                        Moneyness = NormalizeMoneyness(GetString(req, "moneyness")),
+                        Steps = GetDecimal(req, "steps") ?? 0m,
+                        Points = GetDecimal(req, "points"),
+                        Param = string.IsNullOrWhiteSpace(param) ? null : param,
+                        Optional = GetBool(req, "optional") ?? false
+                    });
+                }
+            }
+
             var created = GetString(item, "createdUtc");
             entry.CreatedUtc = DateTime.TryParse(created, CultureInfo.InvariantCulture,
                 DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var dt)
@@ -395,6 +425,34 @@ public sealed class StrategyCatalogService
             JsonValueKind.False => "false",
             _ => null
         };
+    }
+
+    private static decimal? GetDecimal(JsonElement obj, string property)
+    {
+        if (!obj.TryGetProperty(property, out var el)) return null;
+        if (el.ValueKind == JsonValueKind.Number && el.TryGetDecimal(out var n)) return n;
+        if (el.ValueKind == JsonValueKind.String
+            && decimal.TryParse(el.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var s)) return s;
+        return null;
+    }
+
+    private static bool? GetBool(JsonElement obj, string property)
+    {
+        if (!obj.TryGetProperty(property, out var el)) return null;
+        return el.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.String when bool.TryParse(el.GetString(), out var b) => b,
+            _ => null
+        };
+    }
+
+    /// <summary>"atm" / "otm" / "itm"; anything else (or nothing) means ATM.</summary>
+    private static string NormalizeMoneyness(string? value)
+    {
+        var text = value?.Trim().ToLowerInvariant();
+        return text is "otm" or "itm" or "atm" ? text : "atm";
     }
 
     private static int? GetInt(JsonElement obj, string property)
@@ -511,6 +569,9 @@ public sealed class StrategyCatalogService
             LegsSummary = string.Empty,
             DefaultLots = 1,
             DefaultParametersJson = "{}",
+            // The scan reads names, not classes: it cannot tell which contracts
+            // the strategy asks for, so it reports none rather than guessing ATM.
+            ContractRequirements = new List<StrategyContractRequirement>(),
             CreatedUtc = createdUtc
         };
 }

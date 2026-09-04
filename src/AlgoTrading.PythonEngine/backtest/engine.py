@@ -13,6 +13,8 @@ contract as the live runner.
       group   rupee P&L per group                 -> closes that group only;
       overall rupee TOTAL P&L (realized + unrealized - charges) -> flattens
               everything and ends the run;
+    within a level the order is fixed stop-loss -> trailing stop -> target;
+    trailing peaks live in `backtest/trailing.py` for the length of the session;
   - an end-of-day square-off at `eod_square_off_ist` and an end-of-range
     square-off;
   - every fill, mark, equity point and the final summary are posted to the
@@ -33,7 +35,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from core.resolutions import to_strategy_resolution
 from strategies.base_strategy import BarFrame, BaseStrategy, OptionContract, StrategyInput, StrategySignal
-from strategies.contract_selector import fallback_strike_step
+from strategies.contract_selector import describe_requirement, fallback_strike_step, format_strike
 from strategies.signal_utils import signal_to_request, stamp_signal_metadata
 
 from backtest.contracts import ContractResolver
@@ -41,6 +43,7 @@ from backtest.feed import HistoricalFeed
 from backtest.ledger import ApplyResult, LedgerPosition, PaperLedger, pnl_percent, pnl_points
 from backtest.run_spec import BacktestRun, RiskRules, parse_parameters, parse_run_row
 from backtest.timeutil import compact_stamp, format_ist, in_session, iso_utc, ist_date, ist_time, parse_utc
+from backtest.trailing import TrailLevels
 
 SNAPSHOT_BATCH = 500
 PROGRESS_INTERVAL_SECONDS = 2.0
@@ -51,8 +54,13 @@ ProgressCallback = Callable[[Dict[str, Any]], None]
 Logger = Callable[[str], None]
 
 # Summary keys of the risk-rule trip counters (leg/group closes; the overall
-# level ends the run and is reported as `stopReason`).
-RISK_COUNTERS = ("legStops", "legTargets", "groupStops", "groupTargets")
+# level ends the run and is reported as `stopReason` plus `overallTrailStop`).
+RISK_COUNTERS = ("legStops", "legTargets", "legTrailStops",
+                 "groupStops", "groupTargets", "groupTrailStops")
+
+# kind returned by a level's trip check -> its counter.
+LEG_COUNTERS = {"stop": "legStops", "target": "legTargets", "trail": "legTrailStops"}
+GROUP_COUNTERS = {"stop": "groupStops", "target": "groupTargets", "trail": "groupTrailStops"}
 
 
 def _money(value: float, plus: bool = True) -> str:
@@ -69,6 +77,21 @@ def _signed(value: float, digits: int = 1, suffix: str = "") -> str:
     """+6.2 pts / −21.4 pts with a typographic minus, like `_money`."""
     sign = "−" if value < 0 else "+"
     return f"{sign}{abs(value):,.{digits}f}{suffix}"
+
+
+def _rupees(value: float) -> str:
+    """
+    "₹3,200" / "₹−1,800": the money form the trailing reasons use at the
+    overall and group levels (the fixed rules keep their older `_money` form,
+    which the live guard already emits character for character).
+    """
+    sign = "−" if value < 0 else ""
+    return f"₹{sign}{abs(value):,.0f}"
+
+
+def _amount(value: float, digits: int = 1, suffix: str = "") -> str:
+    """An unsigned give-back ("13.8 pts"), as the trailing reasons word it."""
+    return f"{abs(value):,.{digits}f}{suffix}"
 
 
 def _leg_move(points: float, percent: Optional[float]) -> str:
@@ -123,6 +146,13 @@ class BacktestSession:
         self.ledger = PaperLedger(self.lot_size, run.charges_per_lot)
 
         self.requirements = list(self.strategy.get_data_requirements() or [])
+        # The option contracts the strategy wants each bar (ATM / OTM / ITM),
+        # resolved once: only the strikes they land on move with the underlying.
+        self.contract_requirements = list(self.strategy.get_contract_requirements(run.params) or [])
+        self.contract_keys = {req.key for req in self.contract_requirements}
+        # (key, strike) already reported as missing, so a moving underlying does
+        # not add the same skip line on every bar.
+        self._missing_contracts: Set[Tuple[str, Any]] = set()
         required = [to_strategy_resolution(r.resolution) for r in self.requirements if r.resolution]
         self.resolutions: List[str] = [run.resolution] + [r for r in dict.fromkeys(required) if r != run.resolution]
         # Index resolutions the strategy cannot run without (a missing one fails the run).
@@ -155,6 +185,10 @@ class BacktestSession:
         self.step: float = fallback_strike_step(run.underlying)
         self.risk: RiskRules = run.risk
         self.risk_counts: Dict[str, int] = {key: 0 for key in RISK_COUNTERS}
+        # Trailing peaks for the three levels; a replay has neither an API
+        # restart nor a live rule change, so they last the whole session.
+        self.trails = TrailLevels()
+        self.overall_trail_stop = False
 
     # --- configuration ------------------------------------------------------
 
@@ -266,6 +300,35 @@ class BacktestSession:
 
     # --- market context -----------------------------------------------------
 
+    def _resolve_contracts(self, expiry: Optional[str], atm: Any, t: datetime) -> Dict[str, OptionContract]:
+        """
+        The contracts the strategy declared, for this bar's ATM strike.
+
+        A key the instrument master cannot satisfy is left out — the strategy
+        sees the absence and simply does not enter — and recorded once per
+        (key, strike) as a skipped entry, so a strangle that never traded says
+        which strikes were missing instead of completing with zero trades and
+        no explanation. `optional` requirements are not reported, and neither is
+        a lookup the next bar will retry (the resolver logs and counts those).
+        """
+        contracts, missing = self.resolver.contracts_for(
+            self.contract_requirements, expiry, atm, self.step, self.run.params
+        )
+        for gap in missing:
+            if gap["optional"] or gap["failed"]:
+                continue
+            marker = (gap["key"], gap["strike"])
+            if marker in self._missing_contracts:
+                continue
+            self._missing_contracts.add(marker)
+            label = f"{gap['key']} {format_strike(float(gap['strike']))} {gap['optionType']}"
+            self._skip(iso_utc(t), label, gap["reason"])
+            self._note(
+                f"{self.run.strategy_name} needs {gap['key']} ({gap['optionType']} "
+                f"{format_strike(float(gap['strike']))}): {gap['reason']}."
+            )
+        return contracts
+
     def _build_input(self, bar: BarFrame, t: datetime, contracts: Dict[str, OptionContract],
                      atm_strike: Any, source: str) -> StrategyInput:
         bars: Dict[str, Dict[str, List[BarFrame]]] = {}
@@ -276,11 +339,13 @@ class BacktestSession:
             kind = req.symbol_type
             if kind == "index":
                 continue
+            # A requirement key resolves to the contract handed to the strategy
+            # this bar; anything else is taken as an exact broker symbol.
             symbol = None
-            if kind in ("atm_ce", "atm_pe"):
-                contract = contracts.get(kind)
-                symbol = contract.symbol if contract else None
-            elif kind:
+            contract = contracts.get(kind)
+            if contract is not None:
+                symbol = contract.symbol
+            elif kind and kind not in self.contract_keys:
                 symbol = kind
             if symbol:
                 bars.setdefault(resolution, {})[kind] = self.feed.option_bars_upto(symbol, resolution, t)
@@ -330,9 +395,13 @@ class BacktestSession:
         """
         (kind, reason) when the leg rules trip for this open position at its
         last mark, else None. Adverse move = BUY: entry − mark, SELL: mark −
-        entry; stop-loss is checked before target, points before percent —
-        so when both a points and a percent rule are set, the one that trips
-        first (at the smaller move) is the one reported.
+        entry; the order is fixed stop-loss, then the trailing stop, then the
+        target, and within each points before percent — so when both a points
+        and a percent rule are set, the one that trips first (at the smaller
+        move) is the one reported.
+
+        The trailing peaks are updated here even when nothing trips: this is
+        the one place that sees every open leg on every sweep.
         """
         rules = self.risk.leg
         if not rules.is_set or pos.last_mark is None:
@@ -349,6 +418,26 @@ class BacktestSession:
             return "stop", f"Leg stop-loss hit: {name} {move} ≤ −{rules.stop_loss_points:g} pts"
         if rules.stop_loss_percent is not None and adverse_pct is not None and adverse_pct >= rules.stop_loss_percent:
             return "stop", f"Leg stop-loss hit: {name} {move} ≤ −{rules.stop_loss_percent:g}%"
+
+        # Trailing stops: points and percent keep separate peaks, each against
+        # its own trail and its own (optional) arming trigger.
+        key = (pos.group_id, pos.symbol)
+        trip = self.trails.leg_points.evaluate(key, points, rules.trail_stop_loss_points, rules.trail_trigger_points)
+        if trip is not None:
+            return "trail", (
+                f"Leg trailing stop hit: {name} {_signed(points, 1, ' pts')} fell "
+                f"{_amount(trip.drawdown, 1, ' pts')} from peak {_signed(trip.peak, 1, ' pts')} "
+                f"(trail {rules.trail_stop_loss_points:g} pts)"
+            )
+        trip = self.trails.leg_percent.evaluate(key, percent, rules.trail_stop_loss_percent,
+                                                rules.trail_trigger_percent)
+        if trip is not None:
+            return "trail", (
+                f"Leg trailing stop hit: {name} {_signed(trip.value, 1, '%')} fell "
+                f"{_amount(trip.drawdown, 1, '%')} from peak {_signed(trip.peak, 1, '%')} "
+                f"(trail {rules.trail_stop_loss_percent:g}%)"
+            )
+
         # Reason strings match the API risk guard (StrategyRiskGuardService)
         # character for character: thresholds carry no "+".
         if rules.target_points is not None and points >= rules.target_points:
@@ -374,8 +463,24 @@ class BacktestSession:
             count = self._apply_close_signals(signals, t, spot, atm, "RISK")
             if count:
                 closed += count
-                self.risk_counts["legStops" if kind == "stop" else "legTargets"] += 1
+                self.risk_counts[LEG_COUNTERS[kind]] += 1
         return closed
+
+    def _group_trip(self, group_id: str, pnl: float) -> Optional[Tuple[str, str]]:
+        """(kind, reason) when the group rules trip at `pnl`: stop-loss, then trailing stop, then target."""
+        rules = self.risk.group
+        if rules.stop_loss is not None and pnl <= -rules.stop_loss:
+            return "stop", f"Group stop-loss hit: {group_id} P&L {_money(pnl, plus=False)} ≤ −{rules.stop_loss:,.0f}"
+        trip = self.trails.group.evaluate(group_id, pnl, rules.trail_stop_loss, rules.trail_trigger)
+        if trip is not None:
+            return "trail", (
+                f"Group trailing stop hit: {group_id} P&L {_rupees(trip.value)} fell "
+                f"{_rupees(trip.drawdown)} from peak {_rupees(trip.peak)} "
+                f"(trail {_rupees(trip.trail)})"
+            )
+        if rules.target is not None and pnl >= rules.target:
+            return "target", f"Group target hit: {group_id} P&L {_money(pnl, plus=False)} ≥ {rules.target:,.0f}"
+        return None
 
     def _apply_group_rules(self, t: datetime, spot: float, atm: Any) -> int:
         """Level 2: close every open leg of a group whose P&L tripped (that group only)."""
@@ -384,11 +489,9 @@ class BacktestSession:
             return 0
         trips: List[Tuple[str, str, str]] = []
         for group_id in self.ledger.open_groups():
-            pnl = self.ledger.group_pnl(group_id)
-            if rules.stop_loss is not None and pnl <= -rules.stop_loss:
-                trips.append((group_id, "stop", f"Group stop-loss hit: {group_id} P&L {_money(pnl, plus=False)} ≤ −{rules.stop_loss:,.0f}"))
-            elif rules.target is not None and pnl >= rules.target:
-                trips.append((group_id, "target", f"Group target hit: {group_id} P&L {_money(pnl, plus=False)} ≥ {rules.target:,.0f}"))
+            trip = self._group_trip(group_id, self.ledger.group_pnl(group_id))
+            if trip is not None:
+                trips.append((group_id, trip[0], trip[1]))
         closed = 0
         for group_id, kind, reason in trips:
             self.log(f"[RISK] {format_ist(t)} IST {reason}")
@@ -398,15 +501,26 @@ class BacktestSession:
             count = self._apply_close_signals(signals, t, spot, atm, "RISK")
             if count:
                 closed += count
-                self.risk_counts["groupStops" if kind == "stop" else "groupTargets"] += 1
+                self.risk_counts[GROUP_COUNTERS[kind]] += 1
         return closed
 
     def _check_overall(self, t: datetime, spot: float, atm: Any) -> bool:
-        """Level 3: total P&L through the overall SL/target flattens everything and ends the run."""
+        """
+        Level 3: total P&L through the overall stop-loss, trailing stop or
+        target flattens everything and ends the run.
+        """
         rules = self.risk.overall
         total = self.ledger.total_pnl()
+        trip = None
         if rules.stop_loss is not None and total <= -rules.stop_loss:
             self.stop_reason = f"Stop loss hit: P&L {_money(total, plus=False)} ≤ −{rules.stop_loss:,.0f}"
+        elif (trip := self.trails.overall.evaluate(TrailLevels.RUN, total, rules.trail_stop_loss,
+                                                   rules.trail_trigger)) is not None:
+            self.overall_trail_stop = True
+            self.stop_reason = (
+                f"Trailing stop hit: P&L {_rupees(trip.value)} fell {_rupees(trip.drawdown)} "
+                f"from peak {_rupees(trip.peak)} (trail {_rupees(trip.trail)})"
+            )
         elif rules.target is not None and total >= rules.target:
             self.stop_reason = f"Target hit: P&L {_money(total, plus=False)} ≥ {rules.target:,.0f}"
         else:
@@ -420,7 +534,13 @@ class BacktestSession:
         One risk sweep at bar t, in the guard's order: leg rules, then group
         rules over what is still open, then the overall rule on the resulting
         total. Returns True when the overall rule ended the run.
+
+        Peaks of legs and groups that are gone are dropped first, so a group id
+        the strategy reuses starts a fresh trail instead of inheriting the
+        previous position's best.
         """
+        self.trails.prune_legs(self.ledger.open_keys())
+        self.trails.prune_groups(self.ledger.open_groups())
         self._apply_leg_rules(t, spot, atm)
         self._apply_group_rules(t, spot, atm)
         return self._check_overall(t, spot, atm)
@@ -661,6 +781,12 @@ class BacktestSession:
             self.step = fallback_strike_step(run.underlying)
             self._note(f"No option contracts for {run.underlying} in the instrument master; every entry was skipped.")
 
+        self.log(
+            f"[CONFIG] contracts (strike step {format_strike(self.step)}): "
+            + ("; ".join(describe_requirement(req, self.step, run.params) for req in self.contract_requirements)
+               or "none declared")
+        )
+
         self._warm_up()
         self._last_progress_at = 0.0
 
@@ -685,7 +811,7 @@ class BacktestSession:
             # the live guard would, instead of letting a new entry through.
             stopped = self._check_risk(t, spot, atm)
             if not stopped:
-                contracts = self.resolver.atm_contracts(expiry, atm) if expiry else {}
+                contracts = self._resolve_contracts(expiry, atm, t)
                 inp = self._build_input(bar, t, contracts, atm, "backtest")
                 signals = self.strategy.on_bar(self.state, inp) or []
                 for sig in signals:
@@ -717,17 +843,28 @@ class BacktestSession:
     # --- completion ---------------------------------------------------------
 
     def _risk_note(self) -> Optional[str]:
-        """"Risk rules closed 2 legs (stop-loss), 1 group (target)." or None when nothing tripped."""
+        """
+        "Risk rules closed 2 legs (stop-loss), 1 group (trailing stop)." — or
+        None when no rule tripped all run.
+        """
         counts = self.risk_counts
         parts: List[str] = []
-        for key, noun, kind in (("legStops", "leg", "stop-loss"), ("legTargets", "leg", "target"),
-                                ("groupStops", "group", "stop-loss"), ("groupTargets", "group", "target")):
+        for key, noun, kind in (("legStops", "leg", "stop-loss"), ("legTrailStops", "leg", "trailing stop"),
+                                ("legTargets", "leg", "target"),
+                                ("groupStops", "group", "stop-loss"), ("groupTrailStops", "group", "trailing stop"),
+                                ("groupTargets", "group", "target")):
             n = counts[key]
             if n:
                 parts.append(f"{n} {noun}{'s' if n != 1 else ''} ({kind})")
-        if not parts:
+        if not parts and not self.overall_trail_stop:
             return None
-        return f"Risk rules closed {', '.join(parts)}; rules: {self.risk.describe()}."
+        if parts:
+            text = f"Risk rules closed {', '.join(parts)}"
+            if self.overall_trail_stop:
+                text += " and ended the run on the overall trailing stop"
+        else:
+            text = "Risk rules ended the run on the overall trailing stop"
+        return f"{text}; rules: {self.risk.describe()}."
 
     def _summary(self) -> Dict[str, Any]:
         notes = list(self.data_notes)
@@ -763,6 +900,7 @@ class BacktestSession:
             "dataNotes": notes,
             "risk": self.risk.to_dict(),
             **{key: self.risk_counts[key] for key in RISK_COUNTERS},
+            "overallTrailStop": self.overall_trail_stop,
             "charges": round(self.ledger.charges, 4),
             "realizedPnl": round(self.ledger.realized_pnl(), 4),
             "signalsPosted": self._signals_posted,

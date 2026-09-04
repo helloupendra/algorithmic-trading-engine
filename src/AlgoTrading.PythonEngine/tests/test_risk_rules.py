@@ -60,8 +60,13 @@ class RiskRulesParsingTests(unittest.TestCase):
         rules = parse_risk_rules({"risk": {"group": {"target": 1500}, "leg": {"targetPercent": 30}}})
         payload = rules.to_dict()
         self.assertEqual(set(payload), {"overall", "group", "leg"})
-        self.assertEqual(payload["group"], {"stopLoss": None, "target": 1500.0})
+        self.assertEqual(payload["group"], {"stopLoss": None, "target": 1500.0,
+                                            "trailStopLoss": None, "trailTrigger": None})
         self.assertEqual(payload["leg"]["targetPercent"], 30.0)
+        self.assertEqual(set(payload["leg"]), {
+            "stopLossPoints", "targetPoints", "stopLossPercent", "targetPercent",
+            "trailStopLossPoints", "trailStopLossPercent", "trailTriggerPoints", "trailTriggerPercent",
+        })
         self.assertEqual(RiskRules.from_object(payload), rules)
 
     def test_describe_lists_only_set_levels(self) -> None:

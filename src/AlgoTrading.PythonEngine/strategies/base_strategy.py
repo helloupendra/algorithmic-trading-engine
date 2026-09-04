@@ -30,11 +30,36 @@ DEFAULT_SUPPORTED_UNDERLYINGS: List[str] = ["NIFTY", "BANKNIFTY", "FINNIFTY", "M
 class DataRequirement:
     """
     Defines a data dependency for a strategy.
-    symbol_type can be 'index', 'atm_ce', 'atm_pe', or an exact symbol string.
+
+    symbol_type can be 'index', ANY key the strategy declares in
+    `get_contract_requirements` ('atm_ce', 'otm_pe', 'wing_ce', ...), or an
+    exact broker symbol string. The runner and the backtest resolve the key
+    against the same contracts map they hand to `on_bar`, so a strategy can ask
+    for bars of a leg it does not trade at the money.
     resolution can be '1m', '5m', '15m', '1D', etc.
     """
     symbol_type: str
     resolution: str
+
+
+@dataclass
+class ContractRequirement:
+    """
+    One option contract the strategy wants on every evaluation, expressed
+    relative to the ATM strike so it survives a moving underlying.
+
+    The runner (live) and the replay (backtest) resolve every requirement into
+    `StrategyInput.contracts[key]` before calling `on_bar`, using the
+    underlying's real strike grid (see
+    `strategies/contract_selector.strike_for_requirement`).
+    """
+    key: str                        # what the strategy reads: "atm_ce", "otm_ce", "wing_pe", ...
+    option_type: str                # "CE" | "PE"
+    moneyness: str = "atm"          # "atm" | "otm" | "itm"
+    steps: float = 0.0              # strikes away from ATM on the underlying's grid
+    points: Optional[float] = None  # absolute points away from ATM; wins over `steps` when set
+    param: Optional[str] = None     # run-parameter name that overrides steps (or points when it ends with "_points")
+    optional: bool = False          # when True a missing contract is not an error (the strategy handles absence)
 
 @dataclass
 class OptionContract:
@@ -174,6 +199,24 @@ class BaseStrategy:
         By default, returns an empty list (meaning it only needs raw ticks).
         """
         return []
+
+    @classmethod
+    def get_contract_requirements(cls, params: Optional[Dict[str, Any]] = None) -> List[ContractRequirement]:
+        """
+        The option contracts the strategy wants in `StrategyInput.contracts`.
+
+        The default is today's behaviour for every strategy that does not
+        override it: the ATM call and the ATM put. Strategies that trade OTM or
+        ITM legs override this and read the keys they declared.
+
+        `params` are the run's parameters, so a requirement's distance can be
+        derived from them (the resolvers also apply `ContractRequirement.param`
+        automatically); a catalog listing calls it with `{}`.
+        """
+        return [
+            ContractRequirement(key="atm_ce", option_type="CE"),
+            ContractRequirement(key="atm_pe", option_type="PE"),
+        ]
 
     def on_bar(self, state: Dict[str, Any], inp: StrategyInput) -> List[StrategySignal]:
         """

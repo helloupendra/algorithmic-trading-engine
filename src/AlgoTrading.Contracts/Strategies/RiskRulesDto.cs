@@ -11,8 +11,15 @@ namespace AlgoTrading.Contracts.Strategies;
 /// positive. Evaluated leg → group → overall on every sweep:
 /// a leg rule closes that leg only, a group rule closes every open leg of that
 /// group (the run keeps going), an overall rule flattens everything and ends
-/// the run. Stored as <c>parametersJson.risk</c> (camelCase) next to the
+/// the run. Within a level the order is fixed stop-loss → trailing stop →
+/// target. Stored as <c>parametersJson.risk</c> (camelCase) next to the
 /// legacy <c>stop_loss</c> / <c>target</c> keys, which mirror the overall level.
+///
+/// Trailing rules are stateful: the trail arms when the subject's favourable
+/// P&amp;L first reaches its trigger (or, with no trigger, as soon as it turns
+/// positive), then tracks the running maximum and trips when the value falls
+/// to <c>peak − trail</c> or below. The peaks live in the API process only, so
+/// trailing re-arms from the current P&amp;L after an API restart or a rule change.
 /// </summary>
 public class RiskRulesDto
 {
@@ -38,6 +45,11 @@ public class RiskRulesDto
     [JsonIgnore]
     public decimal? OverallTarget => Overall?.Target;
 
+    /// <summary>True when at least one trailing rule at any level is set.</summary>
+    [JsonIgnore]
+    public bool HasAnyTrailingRule
+        => (Overall?.HasTrailingRule ?? false) || (Group?.HasTrailingRule ?? false) || (Leg?.HasTrailingRule ?? false);
+
     /// <summary>Rules with only the overall level, built from the legacy stopLoss / target fields.</summary>
     public static RiskRulesDto FromLegacy(decimal? stopLoss, decimal? target) => new()
     {
@@ -59,16 +71,46 @@ public class RiskRulesDto
     /// </summary>
     public static RiskRulesDto Normalize(RiskRulesDto? rules) => new()
     {
-        Overall = new OverallRiskDto { StopLoss = rules?.Overall?.StopLoss, Target = rules?.Overall?.Target },
-        Group = new GroupRiskDto { StopLoss = rules?.Group?.StopLoss, Target = rules?.Group?.Target },
+        Overall = new OverallRiskDto
+        {
+            StopLoss = rules?.Overall?.StopLoss,
+            Target = rules?.Overall?.Target,
+            TrailStopLoss = rules?.Overall?.TrailStopLoss,
+            TrailTrigger = rules?.Overall?.TrailTrigger
+        },
+        Group = new GroupRiskDto
+        {
+            StopLoss = rules?.Group?.StopLoss,
+            Target = rules?.Group?.Target,
+            TrailStopLoss = rules?.Group?.TrailStopLoss,
+            TrailTrigger = rules?.Group?.TrailTrigger
+        },
         Leg = new LegRiskDto
         {
             StopLossPoints = rules?.Leg?.StopLossPoints,
             TargetPoints = rules?.Leg?.TargetPoints,
             StopLossPercent = rules?.Leg?.StopLossPercent,
-            TargetPercent = rules?.Leg?.TargetPercent
+            TargetPercent = rules?.Leg?.TargetPercent,
+            TrailStopLossPoints = rules?.Leg?.TrailStopLossPoints,
+            TrailStopLossPercent = rules?.Leg?.TrailStopLossPercent,
+            TrailTriggerPoints = rules?.Leg?.TrailTriggerPoints,
+            TrailTriggerPercent = rules?.Leg?.TrailTriggerPercent
         }
     };
+
+    /// <summary>
+    /// True when both rule sets carry exactly the same trailing values (a
+    /// change to any of them re-arms the peaks the guard is tracking).
+    /// </summary>
+    public static bool SameTrailing(RiskRulesDto? a, RiskRulesDto? b)
+        => a?.Overall?.TrailStopLoss == b?.Overall?.TrailStopLoss
+        && a?.Overall?.TrailTrigger == b?.Overall?.TrailTrigger
+        && a?.Group?.TrailStopLoss == b?.Group?.TrailStopLoss
+        && a?.Group?.TrailTrigger == b?.Group?.TrailTrigger
+        && a?.Leg?.TrailStopLossPoints == b?.Leg?.TrailStopLossPoints
+        && a?.Leg?.TrailStopLossPercent == b?.Leg?.TrailStopLossPercent
+        && a?.Leg?.TrailTriggerPoints == b?.Leg?.TrailTriggerPoints
+        && a?.Leg?.TrailTriggerPercent == b?.Leg?.TrailTriggerPercent;
 
     /// <summary>
     /// Every set value must be greater than zero. Returns false with a message
@@ -88,7 +130,15 @@ public class RiskRulesDto
             ("leg.stopLossPoints", rules.Leg?.StopLossPoints),
             ("leg.targetPoints", rules.Leg?.TargetPoints),
             ("leg.stopLossPercent", rules.Leg?.StopLossPercent),
-            ("leg.targetPercent", rules.Leg?.TargetPercent)
+            ("leg.targetPercent", rules.Leg?.TargetPercent),
+            ("overall.trailStopLoss", rules.Overall?.TrailStopLoss),
+            ("overall.trailTrigger", rules.Overall?.TrailTrigger),
+            ("group.trailStopLoss", rules.Group?.TrailStopLoss),
+            ("group.trailTrigger", rules.Group?.TrailTrigger),
+            ("leg.trailStopLossPoints", rules.Leg?.TrailStopLossPoints),
+            ("leg.trailStopLossPercent", rules.Leg?.TrailStopLossPercent),
+            ("leg.trailTriggerPoints", rules.Leg?.TrailTriggerPoints),
+            ("leg.trailTriggerPercent", rules.Leg?.TrailTriggerPercent)
         };
 
         foreach (var (name, value) in checks)
@@ -120,6 +170,11 @@ public class RiskRulesDto
         Add(parts, "group target", Money(Group?.Target));
         Add(parts, "leg SL", Join(Points(Leg?.StopLossPoints), Percent(Leg?.StopLossPercent)));
         Add(parts, "leg target", Join(Points(Leg?.TargetPoints), Percent(Leg?.TargetPercent)));
+        Add(parts, "overall trail", Trail(Money(Overall?.TrailStopLoss), Money(Overall?.TrailTrigger)));
+        Add(parts, "group trail", Trail(Money(Group?.TrailStopLoss), Money(Group?.TrailTrigger)));
+        Add(parts, "leg trail", Trail(
+            Join(Points(Leg?.TrailStopLossPoints), Percent(Leg?.TrailStopLossPercent)),
+            Join(Points(Leg?.TrailTriggerPoints), Percent(Leg?.TrailTriggerPercent))));
 
         return parts.Count == 0 ? "no risk rules" : string.Join(", ", parts);
     }
@@ -131,6 +186,10 @@ public class RiskRulesDto
 
     private static string? Join(string? a, string? b)
         => a is null ? b : b is null ? a : $"{a} / {b}";
+
+    /// <summary>"10 pts arms at 20 pts", or null when no trail is set at that level.</summary>
+    private static string? Trail(string? trail, string? trigger)
+        => trail is null ? null : trigger is null ? trail : $"{trail} arms at {trigger}";
 
     private static string? Money(decimal? value)
         => value.HasValue ? "₹" + IndianGrouping(value.Value) : null;
@@ -187,8 +246,18 @@ public class OverallRiskDto
     /// <summary>End the run when total P&amp;L reaches this amount.</summary>
     public decimal? Target { get; set; }
 
+    /// <summary>Rupees the run may give back from its best total P&amp;L before it is ended.</summary>
+    public decimal? TrailStopLoss { get; set; }
+
+    /// <summary>Profit (₹) at which the trail arms; unset arms it as soon as total P&amp;L turns positive.</summary>
+    public decimal? TrailTrigger { get; set; }
+
     [JsonIgnore]
-    public bool HasAnyRule => StopLoss.HasValue || Target.HasValue;
+    public bool HasAnyRule => StopLoss.HasValue || Target.HasValue || HasTrailingRule;
+
+    /// <summary>True when a trail distance is set (a trigger alone trails nothing).</summary>
+    [JsonIgnore]
+    public bool HasTrailingRule => TrailStopLoss.HasValue;
 }
 
 /// <summary>Rupee thresholds per group (realized of the group + unrealized of its open legs). Trips close that group only.</summary>
@@ -197,8 +266,18 @@ public class GroupRiskDto
     public decimal? StopLoss { get; set; }
     public decimal? Target { get; set; }
 
+    /// <summary>Rupees the group may give back from its best P&amp;L before it is closed.</summary>
+    public decimal? TrailStopLoss { get; set; }
+
+    /// <summary>Profit (₹) at which the group's trail arms; unset arms it as soon as its P&amp;L turns positive.</summary>
+    public decimal? TrailTrigger { get; set; }
+
     [JsonIgnore]
-    public bool HasAnyRule => StopLoss.HasValue || Target.HasValue;
+    public bool HasAnyRule => StopLoss.HasValue || Target.HasValue || HasTrailingRule;
+
+    /// <summary>True when a trail distance is set (a trigger alone trails nothing).</summary>
+    [JsonIgnore]
+    public bool HasTrailingRule => TrailStopLoss.HasValue;
 }
 
 /// <summary>
@@ -214,9 +293,26 @@ public class LegRiskDto
     public decimal? StopLossPercent { get; set; }
     public decimal? TargetPercent { get; set; }
 
+    /// <summary>Premium points the leg may give back from its best P&amp;L before it is closed.</summary>
+    public decimal? TrailStopLossPoints { get; set; }
+
+    /// <summary>Percent of entry the leg may give back from its best P&amp;L before it is closed.</summary>
+    public decimal? TrailStopLossPercent { get; set; }
+
+    /// <summary>Profit in points at which the points trail arms; unset arms it as soon as the leg is in profit.</summary>
+    public decimal? TrailTriggerPoints { get; set; }
+
+    /// <summary>Profit in percent at which the percent trail arms; unset arms it as soon as the leg is in profit.</summary>
+    public decimal? TrailTriggerPercent { get; set; }
+
     [JsonIgnore]
     public bool HasAnyRule
-        => StopLossPoints.HasValue || TargetPoints.HasValue || StopLossPercent.HasValue || TargetPercent.HasValue;
+        => StopLossPoints.HasValue || TargetPoints.HasValue || StopLossPercent.HasValue || TargetPercent.HasValue
+        || HasTrailingRule;
+
+    /// <summary>True when a trail distance is set (a trigger alone trails nothing).</summary>
+    [JsonIgnore]
+    public bool HasTrailingRule => TrailStopLossPoints.HasValue || TrailStopLossPercent.HasValue;
 }
 
 /// <summary>Body of PATCH /api/Strategy/runs/{runId}/risk: the full replacement rule set.</summary>

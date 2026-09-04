@@ -1547,6 +1547,59 @@ a.pill:hover { border-color: var(--line-strong); }
   font-variant-numeric: tabular-nums;
 }
 
+/* Strike selection: what each contract key resolves to, plus its distance inputs. */
+.strike-sel {
+  display: grid;
+  gap: 10px;
+}
+
+.strike-sel__list {
+  list-style: none;
+  margin: 0;
+  padding: 8px 10px;
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg1);
+}
+
+.strike-sel__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.strike-sel__key {
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.strike-sel__what {
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--text-2);
+}
+
+.strike-sel__dist {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.strike-sel__params {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.strike-sel__params .field__input[aria-invalid='true'] {
+  border-color: var(--neg);
+  box-shadow: 0 0 0 3px var(--neg-soft);
+}
+
 /* Risk rules form: one row per level (overall / group / leg), inputs on the right. */
 .risk-form {
   display: grid;
@@ -1590,11 +1643,43 @@ a.pill:hover { border-color: var(--line-strong); }
   line-height: 1.4;
 }
 
+.risk-form__stack {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
 .risk-form__fields {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
   gap: 8px;
   min-width: 0;
+}
+
+/* "Trailing" sub-row: the give-back pair of the same level. */
+.risk-form__trail {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 7px 9px 8px;
+  border: 1px dashed var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.risk-form__trail-name {
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.risk-form__note {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-3);
 }
 
 .risk-form__field {
