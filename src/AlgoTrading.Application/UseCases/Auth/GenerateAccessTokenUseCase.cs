@@ -1,32 +1,32 @@
-using System;
-using System.Collections.Generic;
-using System.Text;
-using AlgoTrading.Application.Interfaces;
-using Newtonsoft.Json.Linq;
+using AlgoTrading.Application.Providers;
 
 namespace AlgoTrading.Application.UseCases.Auth
 {
     /// <summary>
-    /// Use case for exchanging an authorization code for a broker access token.
+    /// Use case for exchanging an authorization code for a broker session.
     /// </summary>
     public class GenerateAccessTokenUseCase
     {
-        private readonly IBrokerAuthService _brokerAuthService;
+        private readonly IProviderRouter _router;
 
-        /// <summary>
-        /// Initializes a new instance of <see cref="GenerateAccessTokenUseCase"/>.
-        /// </summary>
-        public GenerateAccessTokenUseCase(IBrokerAuthService brokerAuthService)
+        public GenerateAccessTokenUseCase(IProviderRouter router)
         {
-            _brokerAuthService = brokerAuthService;
+            _router = router;
         }
 
         /// <summary>
-        /// Executes the token generation workflow using the provided auth code.
+        /// Exchanges the callback's auth code with the broker bound to an account
+        /// — the shared platform account when <paramref name="brokerAccountId"/>
+        /// is null.
         /// </summary>
-        public Task<JObject> ExecuteAsync(string authcode, CancellationToken cancellationToken = default)
+        public async Task<BrokerTokenResult> ExecuteAsync(
+            string authCode,
+            long? brokerAccountId = null,
+            CancellationToken cancellationToken = default)
         {
-            return _brokerAuthService.GenerateAccessTokenAsync(authcode, cancellationToken);
+            var broker = await _router.ResolveBrokerAsync(brokerAccountId, cancellationToken);
+
+            return await broker.ExchangeAuthCodeAsync(authCode, cancellationToken);
         }
     }
 }

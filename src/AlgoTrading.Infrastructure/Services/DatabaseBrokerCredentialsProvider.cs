@@ -1,10 +1,9 @@
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Domain.Entities;
-using AlgoTrading.Infrastructure.Config;
 using AlgoTrading.Infrastructure.Persistence;
+using AlgoTrading.Infrastructure.Providers;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 
 namespace AlgoTrading.Infrastructure.Services;
 
@@ -15,27 +14,38 @@ namespace AlgoTrading.Infrastructure.Services;
 /// </summary>
 public class DatabaseBrokerCredentialsProvider : IBrokerCredentialsProvider
 {
-    private const string Fyers = "FYERS";
-
     private readonly TradingDbContext _dbContext;
     private readonly IDataProtector _protector;
-    private readonly FyersSettings _fallback;
+    private readonly ProviderCredentialFallbacks _fallbacks;
 
     public DatabaseBrokerCredentialsProvider(
         TradingDbContext dbContext,
         IDataProtectionProvider dataProtectionProvider,
-        IOptions<FyersSettings> fallback)
+        ProviderCredentialFallbacks fallbacks)
     {
         _dbContext = dbContext;
         _protector = dataProtectionProvider.CreateProtector("BrokerConfig.SecretKey.v1");
-        _fallback = fallback.Value;
+        _fallbacks = fallbacks;
     }
 
-    public async Task<BrokerCredentials> GetFyersAsync(CancellationToken cancellationToken = default)
+    /// <summary>
+    /// The broker_configs rows predate provider keys and hold the broker name in
+    /// upper case ("FYERS"), so that is the stored form of a provider key.
+    /// </summary>
+    private static string ToBrokerName(string providerKey) => providerKey.Trim().ToUpperInvariant();
+
+    public async Task<BrokerCredentials> GetAsync(
+        string providerKey,
+        long? brokerAccountId = null,
+        CancellationToken cancellationToken = default)
     {
+        string brokerName = ToBrokerName(providerKey);
+
         var row = await _dbContext.BrokerConfigs
             .AsNoTracking()
-            .FirstOrDefaultAsync(x => x.BrokerName == Fyers, cancellationToken);
+            .FirstOrDefaultAsync(
+                x => x.BrokerName == brokerName && x.BrokerAccountId == brokerAccountId,
+                cancellationToken);
 
         if (row is not null)
         {
@@ -48,34 +58,35 @@ public class DatabaseBrokerCredentialsProvider : IBrokerCredentialsProvider
                 row.UpdatedUtc);
         }
 
-        bool hasFallback =
-            !string.IsNullOrWhiteSpace(_fallback.ClientId) &&
-            !string.IsNullOrWhiteSpace(_fallback.SecretKey);
-
-        return new BrokerCredentials(
-            _fallback.ClientId,
-            _fallback.SecretKey,
-            _fallback.RedirectUri,
-            hasFallback ? "config" : "none",
-            null,
-            null);
+        return _fallbacks.Find(providerKey);
     }
 
-    public async Task SaveFyersAsync(
+    public async Task SaveAsync(
+        string providerKey,
         string clientId,
         string secretKey,
         string redirectUri,
         string updatedBy,
+        long? brokerAccountId = null,
         CancellationToken cancellationToken = default)
     {
+        string brokerName = ToBrokerName(providerKey);
+
         var row = await _dbContext.BrokerConfigs
-            .FirstOrDefaultAsync(x => x.BrokerName == Fyers, cancellationToken);
+            .FirstOrDefaultAsync(
+                x => x.BrokerName == brokerName && x.BrokerAccountId == brokerAccountId,
+                cancellationToken);
 
         var now = DateTime.UtcNow;
 
         if (row is null)
         {
-            row = new BrokerConfig { BrokerName = Fyers, CreatedUtc = now };
+            row = new BrokerConfig
+            {
+                BrokerName = brokerName,
+                BrokerAccountId = brokerAccountId,
+                CreatedUtc = now,
+            };
             _dbContext.BrokerConfigs.Add(row);
         }
 

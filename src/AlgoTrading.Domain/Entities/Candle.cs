@@ -54,5 +54,12 @@ public class Candle
     /// The total volume of shares or contracts traded during this timeframe.
     /// </summary>
     public long Volume { get; set; }
+
+    /// <summary>
+    /// Which connector produced this row, e.g. "fyers". Data lineage: without it
+    /// a second vendor cannot run beside the first, a suspicious print cannot be
+    /// attributed, and a failover leaves no trail.
+    /// </summary>
+    public string SourceKey { get; set; } = string.Empty;
 }
 

@@ -10,8 +10,15 @@ public class BrokerConfig
 {
     public long Id { get; set; }
 
-    /// <summary>Broker identifier, e.g. "FYERS". One row per broker.</summary>
+    /// <summary>Broker identifier, e.g. "FYERS". One row per broker per account.</summary>
     public string BrokerName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The <see cref="BrokerAccount"/> these credentials belong to. Null means the
+    /// shared platform account. Each trader creating their own vendor app means
+    /// their own client id and secret, so the column exists from the start.
+    /// </summary>
+    public long? BrokerAccountId { get; set; }
 
     /// <summary>The broker app's client id (e.g. FYERS "APPID-100").</summary>
     public string ClientId { get; set; } = string.Empty;

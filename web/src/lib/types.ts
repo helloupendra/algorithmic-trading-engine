@@ -967,7 +967,7 @@ export interface BackfillHistoryResponse {
   fullCoverageAfterBackfill: boolean
   missingSlicesFetched: string[]
   /** Note: the API property really is spelled this way. */
-  candelsFetchedFromFyers: number
+  candlesFetched: number
   localCandlesAvailable: number
   message: string
 }

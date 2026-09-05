@@ -85,6 +85,12 @@ namespace AlgoTrading.Contracts.LiveData
         /// Vega.
         /// </summary>
         public decimal? Vega { get; set; }
+
+        /// <summary>
+        /// Which connector produced this quote, e.g. "fyers". Optional; see
+        /// <see cref="UpsertLiveTickRequest.SourceKey"/>.
+        /// </summary>
+        public string? SourceKey { get; set; }
     }
 
 }

@@ -11,19 +11,32 @@ public record BrokerCredentials(
     DateTime? UpdatedUtc);
 
 /// <summary>
-/// Resolves the broker app credentials the platform should use: the row the
-/// admin saved from the console wins; server configuration is the fallback so
+/// Resolves the app credentials the platform should use for a provider: the row
+/// the admin saved from the console wins; server configuration is the fallback so
 /// existing .env-based installs keep working unchanged.
 /// </summary>
 public interface IBrokerCredentialsProvider
 {
-    Task<BrokerCredentials> GetFyersAsync(CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Credentials for one provider.
+    /// </summary>
+    /// <param name="providerKey">Provider key, e.g. "fyers".</param>
+    /// <param name="brokerAccountId">
+    /// The account these credentials belong to; null is the shared platform
+    /// account, which is how the installation runs today.
+    /// </param>
+    Task<BrokerCredentials> GetAsync(
+        string providerKey,
+        long? brokerAccountId = null,
+        CancellationToken cancellationToken = default);
 
-    /// <summary>Saves (or replaces) the credentials for a broker.</summary>
-    Task SaveFyersAsync(
+    /// <summary>Saves (or replaces) the credentials for a provider and account.</summary>
+    Task SaveAsync(
+        string providerKey,
         string clientId,
         string secretKey,
         string redirectUri,
         string updatedBy,
+        long? brokerAccountId = null,
         CancellationToken cancellationToken = default);
 }

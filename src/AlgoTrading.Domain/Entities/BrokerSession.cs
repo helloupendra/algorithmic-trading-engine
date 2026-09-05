@@ -18,7 +18,13 @@ namespace AlgoTrading.Domain.Entities
         /// <summary>
         /// The name of the broker (e.g., "FYERS"). Used if the system scales to support multiple brokers.
         /// </summary>
-        public string BrokerName { get; set; } = "FYERS";
+        public string BrokerName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// The <see cref="BrokerAccount"/> this session belongs to. Null means the
+        /// shared platform account, which is how the installation runs today.
+        /// </summary>
+        public long? BrokerAccountId { get; set; }
 
         /// <summary>
         /// The short-lived access token used in Authorization headers.

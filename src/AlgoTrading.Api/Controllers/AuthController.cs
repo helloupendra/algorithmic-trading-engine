@@ -1,8 +1,7 @@
 using AlgoTrading.Application.Interfaces;
+using AlgoTrading.Application.Providers;
 using AlgoTrading.Application.UseCases.Auth;
 using Microsoft.AspNetCore.Mvc;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 using AlgoTrading.Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Configuration;
@@ -16,30 +15,27 @@ namespace AlgoTrading.Api.Controllers;
     [Route("api/[controller]")]
     public class AuthController : ControllerBase
     {
-    private readonly StartBrokerAuthUseCase _startBrokerAuthUseCase;
     private readonly GenerateAccessTokenUseCase _generateAccessTokenUseCase;
     private readonly IBrokerSessionStore _brokerSessionStore;
-    private readonly IBrokerAuthService _brokerAuthService;
+    private readonly IProviderRouter _providerRouter;
     private readonly string _frontendBaseUrl;
 
     public AuthController(
-        StartBrokerAuthUseCase startBrokerAuthUseCase,
         GenerateAccessTokenUseCase generateAccessTokenUseCase,
         IBrokerSessionStore brokerSessionStore,
-        IBrokerAuthService brokerAuthService,
+        IProviderRouter providerRouter,
         IConfiguration configuration)
     {
-        _startBrokerAuthUseCase = startBrokerAuthUseCase;
         _generateAccessTokenUseCase = generateAccessTokenUseCase;
         _brokerSessionStore = brokerSessionStore;
-        _brokerAuthService = brokerAuthService;
+        _providerRouter = providerRouter;
         _frontendBaseUrl = configuration["Frontend:BaseUrl"]?.TrimEnd('/')
                            ?? "http://localhost:5173";
     }
 
     /// <summary>
-    /// The FYERS hosted-login URL for the web console. The frontend sends the
-    /// browser here; FYERS redirects back to our callback, which saves the
+    /// The broker's hosted-login URL for the web console. The frontend sends the
+    /// browser here; the broker redirects back to our callback, which saves the
     /// token and returns the browser to the console.
     /// </summary>
     [HttpGet("url")]
@@ -47,7 +43,8 @@ namespace AlgoTrading.Api.Controllers;
     {
         try
         {
-            return Ok(new { authUrl = await _brokerAuthService.GetAuthUrlAsync("webui", cancellationToken) });
+            var broker = await _providerRouter.ResolveBrokerAsync(cancellationToken: cancellationToken);
+            return Ok(new { authUrl = await broker.GetAuthUrlAsync("webui", cancellationToken) });
         }
         catch (InvalidOperationException ex)
         {
@@ -56,7 +53,7 @@ namespace AlgoTrading.Api.Controllers;
     }
 
     /// <summary>
-    /// The saved FYERS app credentials (secret never returned). Lets each
+    /// The saved broker app credentials (secret never returned). Lets each
     /// installation configure its own broker app from the console instead of
     /// editing configuration files.
     /// </summary>
@@ -66,11 +63,15 @@ namespace AlgoTrading.Api.Controllers;
         [FromServices] IBrokerCredentialsProvider credentialsProvider,
         CancellationToken cancellationToken)
     {
-        var creds = await credentialsProvider.GetFyersAsync(cancellationToken);
+        var broker = await _providerRouter.ResolveBrokerAsync(cancellationToken: cancellationToken);
+        var creds = await credentialsProvider.GetAsync(
+            broker.Descriptor.Key,
+            cancellationToken: cancellationToken);
 
         return Ok(new
         {
-            broker = "FYERS",
+            broker = broker.Descriptor.DisplayName,
+            providerKey = broker.Descriptor.Key,
             clientId = creds.ClientId,
             redirectUri = creds.RedirectUri,
             hasSecret = !string.IsNullOrWhiteSpace(creds.SecretKey),
@@ -83,7 +84,7 @@ namespace AlgoTrading.Api.Controllers;
 
     public record SaveBrokerConfigRequest(string ClientId, string SecretKey, string RedirectUri);
 
-    /// <summary>Saves the FYERS app credentials for this installation.</summary>
+    /// <summary>Saves the broker app credentials for this installation.</summary>
     [Authorize(Policy = "AdminOnly")]
     [HttpPut("broker-config")]
     public async Task<IActionResult> SaveBrokerConfig(
@@ -103,14 +104,17 @@ namespace AlgoTrading.Api.Controllers;
             return BadRequest(new { message = "redirectUri must be an absolute URL." });
         }
 
-        await credentialsProvider.SaveFyersAsync(
+        var broker = await _providerRouter.ResolveBrokerAsync(cancellationToken: cancellationToken);
+
+        await credentialsProvider.SaveAsync(
+            broker.Descriptor.Key,
             request.ClientId,
             request.SecretKey,
             request.RedirectUri,
             User.Identity?.Name ?? "admin",
-            cancellationToken);
+            cancellationToken: cancellationToken);
 
-        return Ok(new { message = "FYERS app credentials saved. You can connect now." });
+        return Ok(new { message = $"{broker.Descriptor.DisplayName} app credentials saved. You can connect now." });
     }
 
     /// <summary>
@@ -130,15 +134,27 @@ namespace AlgoTrading.Api.Controllers;
         return Redirect(url);
     }
 
+    /// <summary>
+    /// Sends the caller's browser straight to the broker's hosted login. The
+    /// previous implementation asked the vendor SDK to open a browser on the
+    /// <em>server</em>, which does nothing for an operator sitting at the console.
+    /// </summary>
     [HttpGet("start")]
     public async Task<IActionResult> Start(CancellationToken cancellationToken)
     {
-        await _startBrokerAuthUseCase.ExecuteAsync(cancellationToken);
-
-        return Ok(new
+        try
         {
-            message = "FYERS auth flow started. Complete login in browser. Access token response will be printed in terminal after callback."
-        });
+            var broker = await _providerRouter.ResolveBrokerAsync(cancellationToken: cancellationToken);
+            string authUrl = await broker.GetAuthUrlAsync("start", cancellationToken);
+
+            return IsBrowserNavigation()
+                ? Redirect(authUrl)
+                : Ok(new { authUrl, message = "Open this URL to complete the broker login." });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [AllowAnonymous]
@@ -150,18 +166,23 @@ namespace AlgoTrading.Api.Controllers;
         [FromQuery] int? code,
         CancellationToken cancellationToken)
     {
+        var broker = await _providerRouter.ResolveBrokerAsync(cancellationToken: cancellationToken);
+        string brokerName = broker.Descriptor.DisplayName;
+
         if (string.IsNullOrWhiteSpace(authCode))
         {
-            string reason = $"FYERS redirected back without an auth_code (s={status}, code={code}).";
+            string reason = $"{brokerName} redirected back without an auth_code (s={status}, code={code}).";
             return IsBrowserNavigation()
                 ? FrontendRedirect(connected: false, reason)
                 : BadRequest(new { message = reason, state, status, code });
         }
 
-        JObject tokenResponse;
+        BrokerTokenResult tokenResult;
         try
         {
-            tokenResponse = await _generateAccessTokenUseCase.ExecuteAsync(authCode, cancellationToken);
+            tokenResult = await _generateAccessTokenUseCase.ExecuteAsync(
+                authCode,
+                cancellationToken: cancellationToken);
         }
         catch (Exception ex)
         {
@@ -170,22 +191,21 @@ namespace AlgoTrading.Api.Controllers;
                 : StatusCode(502, new { message = $"Token exchange failed: {ex.Message}" });
         }
 
-        string accessToken = tokenResponse["TOKEN"]?.ToString() ?? string.Empty;
-        string refreshToken = tokenResponse["refresh_token"]?.ToString() ?? string.Empty;
-
-        if (string.IsNullOrWhiteSpace(accessToken))
+        if (!tokenResult.Succeeded)
         {
-            string reason = tokenResponse["message"]?.ToString() ?? "FYERS returned no access token.";
+            string reason = tokenResult.ErrorMessage ?? $"{brokerName} returned no access token.";
             return IsBrowserNavigation()
                 ? FrontendRedirect(connected: false, reason)
                 : StatusCode(502, new { message = reason });
         }
 
+        string accessToken = tokenResult.AccessToken;
+
         var session = new BrokerSession
-        { 
-            BrokerName = "FYERS",
+        {
+            BrokerName = brokerName,
             AccessToken = accessToken,
-            RefreshToken = refreshToken,
+            RefreshToken = tokenResult.RefreshToken,
             CreatedUtc = DateTime.UtcNow
         };
 
@@ -193,7 +213,7 @@ namespace AlgoTrading.Api.Controllers;
 
         // Never print the token itself — a masked confirmation is enough.
         Console.WriteLine(
-            $"FYERS token saved ({accessToken[..Math.Min(6, accessToken.Length)]}… , {accessToken.Length} chars).");
+            $"{brokerName} token saved ({accessToken[..Math.Min(6, accessToken.Length)]}… , {accessToken.Length} chars).");
 
         return IsBrowserNavigation()
             ? FrontendRedirect(connected: true)
@@ -207,9 +227,11 @@ namespace AlgoTrading.Api.Controllers;
 
         if (session is null)
         {
+            var broker = await _providerRouter.ResolveBrokerAsync(cancellationToken: cancellationToken);
+
             return Ok(new
             {
-                broker = "FYERS",
+                broker = broker.Descriptor.DisplayName,
                 isAuthenticated = false,
                 accessToken = string.Empty,
                 refreshToken = string.Empty

@@ -94,6 +94,9 @@ namespace AlgoTrading.Domain.Entities
         /// The timestamp of the last quote update for this symbol.
         /// </summary>
         public DateTime UpdatedUtc { get; set; } = DateTime.UtcNow;
+
+        /// <summary>Which connector produced this quote, e.g. "fyers".</summary>
+        public string SourceKey { get; set; } = string.Empty;
     }
 
 }

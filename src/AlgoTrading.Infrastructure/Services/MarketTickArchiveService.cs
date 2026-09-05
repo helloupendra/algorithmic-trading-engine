@@ -46,6 +46,7 @@ public class MarketTickArchiveService : IMarketTickArchiveService
 
             Volume = request.Volume,
             RawPayload = request.RawPayload ?? string.Empty,
+            SourceKey = request.SourceKey ?? string.Empty,
 
             ReceivedUtc = DateTime.UtcNow
         };

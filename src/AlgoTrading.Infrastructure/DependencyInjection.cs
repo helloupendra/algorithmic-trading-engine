@@ -5,9 +5,11 @@ using AlgoTrading.Application.UseCases.LiveData;
 using AlgoTrading.Application.UseCases.MarketData;
 using AlgoTrading.Application.UseCases.Simulator;
 using AlgoTrading.Contracts.MarketData;
-using AlgoTrading.Infrastructure.Brokers.Fyers;
+using AlgoTrading.Application.Providers;
 using AlgoTrading.Infrastructure.Config;
 using AlgoTrading.Infrastructure.Persistence;
+using AlgoTrading.Infrastructure.Providers;
+using AlgoTrading.Infrastructure.Providers.Fyers;
 using AlgoTrading.Infrastructure.Services;
 using AlgoTrading.Infrastructure.Session;
 using Microsoft.EntityFrameworkCore;
@@ -34,9 +36,6 @@ public static class DependencyInjection
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        services.Configure<FyersSettings>(
-            configuration.GetSection("Fyers"));
-
         services.Configure<RiskManagementSettings>(
             configuration.GetSection("RiskManagement"));
 
@@ -55,11 +54,25 @@ public static class DependencyInjection
         services.AddHttpClient(nameof(MarketIntelService));
         services.AddMemoryCache();
         services.AddScoped<IMarketIntelService, MarketIntelService>();
-        services.AddScoped<IBrokerAuthService, FyersAuthService>();
-        services.AddScoped<IBrokerCredentialsProvider, DatabaseBrokerCredentialsProvider>();
-        services.AddScoped<IMarketDataService, FyersMarketDataService>();
 
-        services.AddScoped<StartBrokerAuthUseCase>();
+        // ---- Connectors -------------------------------------------------
+        // Every vendor registers itself; this composition root never names one.
+        // Which connector actually serves a job is a row in provider_bindings,
+        // read at runtime by the router — not a compile-time binding.
+        var providerCatalog = new ProviderCatalog();
+        var credentialFallbacks = new ProviderCredentialFallbacks();
+        services.AddSingleton(credentialFallbacks);
+        services.AddSingleton<IProviderCatalog>(providerCatalog);
+
+        services.AddFyersProvider(configuration, providerCatalog, credentialFallbacks);
+
+        services.AddScoped<IProviderRegistry, ProviderRegistry>();
+        services.AddScoped<IProviderRouter, ProviderRouter>();
+        services.AddScoped<ISymbolMapper, SymbolMapper>();
+
+        services.AddScoped<IBrokerCredentialsProvider, DatabaseBrokerCredentialsProvider>();
+        services.AddScoped<IMarketDataService, MarketDataService>();
+
         services.AddScoped<GenerateAccessTokenUseCase>();
         services.AddScoped<SyncHistoryUseCase>();
         services.AddScoped<GetStoredCandlesUseCase>();
@@ -136,7 +149,6 @@ public static class DependencyInjection
         services.AddScoped<GetSimulationPerformanceUseCase>();
 
         services.AddScoped<IExpiryResolverService, ExpiryResolverService>();
-        services.AddScoped<IFyersHistoryClient, FyersHistoryClient>();
         services.AddScoped<IHistoricalCandleStore, HistoricalCandleStore>();
         services.AddScoped<IOptionHistoryBackfillService, OptionHistoryBackfillService>();
 
