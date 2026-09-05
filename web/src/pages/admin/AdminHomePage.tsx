@@ -72,7 +72,7 @@ export function AdminHomePage() {
           value={ksActive ? 'ACTIVE' : 'Off'}
           tone={ksActive ? 'neg' : undefined}
           sub={ksActive ? 'all trading halted' : 'trading allowed'}
-          to="/admin/risk"
+          to="/admin/system/risk"
         />
       </div>
 

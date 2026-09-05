@@ -16,10 +16,16 @@ public class RiskController : ControllerBase
     private readonly IRiskManagementService _riskManagementService;
     private readonly IPaperTradingService _paperTradingService;
 
-    public RiskController(IRiskManagementService riskManagementService, IPaperTradingService paperTradingService)
+    private readonly ISystemNotifier _notifier;
+
+    public RiskController(
+        IRiskManagementService riskManagementService,
+        IPaperTradingService paperTradingService,
+        ISystemNotifier notifier)
     {
         _riskManagementService = riskManagementService;
         _paperTradingService = paperTradingService;
+        _notifier = notifier;
     }
 
     [HttpPost("killswitch/activate")]
@@ -33,6 +39,14 @@ public class RiskController : ControllerBase
 
         await _paperTradingService.FlattenAllPositionsAsync(cancellationToken);
 
+        await _notifier.NotifyAsync(
+            NotificationCategory.Risk,
+            NotificationSeverity.Error,
+            "Kill switch ACTIVATED",
+            $"All strategies paused and every open position flattened. By {User.GetUserName() ?? "admin"}"
+                + (string.IsNullOrWhiteSpace(reason) ? "." : $" — {reason}."),
+            cancellationToken: cancellationToken);
+
         return Ok(new { message = "GLOBAL KILL SWITCH ACTIVATED. ALL STRATEGIES PAUSED. ALL POSITIONS FLATTENED." });
     }
 
@@ -44,6 +58,14 @@ public class RiskController : ControllerBase
     {
         await _riskManagementService.DeactivateKillSwitchAsync(
             User.GetUserName(), reason, cancellationToken);
+
+        await _notifier.NotifyAsync(
+            NotificationCategory.Risk,
+            NotificationSeverity.Warning,
+            "Kill switch released",
+            $"Trading resumed. By {User.GetUserName() ?? "admin"}"
+                + (string.IsNullOrWhiteSpace(reason) ? "." : $" — {reason}."),
+            cancellationToken: cancellationToken);
 
         return Ok(new { message = "GLOBAL KILL SWITCH DEACTIVATED. TRADING RESUMED." });
     }

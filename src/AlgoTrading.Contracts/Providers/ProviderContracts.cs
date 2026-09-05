@@ -129,3 +129,42 @@ public class ProviderTestResponse
     public int? BarsReturned { get; set; }
     public int ElapsedMs { get; set; }
 }
+
+/// <summary>A file-based data vendor an operator added from the console.</summary>
+public class DataVendorResponse
+{
+    public long Id { get; set; }
+    public string Key { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+
+    /// <summary>Currently always "CsvFiles".</summary>
+    public string Kind { get; set; } = string.Empty;
+
+    public string Directory { get; set; } = string.Empty;
+
+    /// <summary>The folder as the server actually resolves it — not the raw setting.</summary>
+    public string ResolvedDirectory { get; set; } = string.Empty;
+
+    /// <summary>False when the folder does not exist on the API host.</summary>
+    public bool DirectoryExists { get; set; }
+
+    /// <summary>How many *.csv files are sitting in it.</summary>
+    public int FileCount { get; set; }
+
+    public bool IsEnabled { get; set; }
+    public string Notes { get; set; } = string.Empty;
+    public string CreatedBy { get; set; } = string.Empty;
+    public DateTime CreatedUtc { get; set; }
+    public DateTime UpdatedUtc { get; set; }
+}
+
+public class SaveDataVendorRequest
+{
+    /// <summary>Lowercase, letters/digits/dashes. Immutable once rows carry it.</summary>
+    public string Key { get; set; } = string.Empty;
+
+    public string DisplayName { get; set; } = string.Empty;
+    public string Directory { get; set; } = string.Empty;
+    public string Notes { get; set; } = string.Empty;
+    public bool IsEnabled { get; set; } = true;
+}

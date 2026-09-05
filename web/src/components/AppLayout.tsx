@@ -8,7 +8,13 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useBrokerSession, useIngestorStatuses, useMarketSession } from '../lib/queries'
-import { BACKTESTING_SECTIONS, DATA_SECTIONS, MODULES, STRATEGIES_SECTIONS } from '../lib/modules'
+import {
+  BACKTESTING_SECTIONS,
+  DATA_SECTIONS,
+  MODULES,
+  STRATEGIES_SECTIONS,
+  SYSTEM_SECTIONS,
+} from '../lib/modules'
 import {
   IconArrowRight,
   IconCandles,
@@ -132,7 +138,7 @@ function NavItem({
 function AdminNav() {
   // Modules with their own nav group above are listed there, not here. The rest
   // keep MODULES order, which puts the finished ones first.
-  const grouped = new Set(['data', 'strategies', 'backtesting'])
+  const grouped = new Set(['data', 'strategies', 'backtesting', 'system'])
   const moduleLinks = MODULES.filter((m) => !grouped.has(m.key) && m.status !== 'planned')
 
   return (
@@ -158,6 +164,13 @@ function AdminNav() {
       <div className="nav-group">
         <div className="nav-group__label">Backtesting</div>
         {BACKTESTING_SECTIONS.map((s) => (
+          <NavItem key={s.route} to={s.route} label={s.label} icon={s.icon} end={s.end} />
+        ))}
+      </div>
+
+      <div className="nav-group">
+        <div className="nav-group__label">System</div>
+        {SYSTEM_SECTIONS.map((s) => (
           <NavItem key={s.route} to={s.route} label={s.label} icon={s.icon} end={s.end} />
         ))}
       </div>
@@ -205,11 +218,11 @@ const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]>
   ['/admin/backtesting/new', 'Backtesting', 'New backtest'],
   ['/admin/backtesting', 'Backtesting', 'Overview'],
   ['/admin/users', 'Modules', 'Users'],
-  ['/admin/risk', 'Modules', 'Risk'],
+  ['/admin/system/risk', 'System', 'Risk & kill switch'],
   ['/admin/strategies', 'Modules', 'Strategies'],
-  ['/admin/live-alerts', 'Modules', 'Alerts'],
+  ['/admin/system/alerts', 'System', 'Alerts'],
   ['/admin/broker', 'Modules', 'Connectors'],
-  ['/admin/system', 'Modules', 'System'],
+  ['/admin/system', 'System', 'Overview'],
   ['/admin', null, 'Overview'],
   ['/trader/strategies/history', 'Trading', 'My runs'],
   ['/trader/strategies/runs/', 'Trading', 'Live run'],

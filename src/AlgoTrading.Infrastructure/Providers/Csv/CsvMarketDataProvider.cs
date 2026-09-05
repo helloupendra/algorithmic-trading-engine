@@ -2,7 +2,6 @@ using System.Globalization;
 using AlgoTrading.Application.Providers;
 using AlgoTrading.Infrastructure.Services;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace AlgoTrading.Infrastructure.Providers.Csv;
 
@@ -17,18 +16,24 @@ namespace AlgoTrading.Infrastructure.Providers.Csv;
 /// </remarks>
 public class CsvMarketDataProvider : IMarketDataProvider
 {
-    private readonly CsvProviderSettings _settings;
-    private readonly ILogger<CsvMarketDataProvider> _logger;
+    private readonly string _directory;
+    private readonly ILogger _logger;
 
+    /// <summary>
+    /// Built per vendor rather than resolved from DI: each file-based vendor an
+    /// operator adds is its own connector, with its own key and its own folder.
+    /// </summary>
     public CsvMarketDataProvider(
-        IOptions<CsvProviderSettings> settings,
-        ILogger<CsvMarketDataProvider> logger)
+        ProviderDescriptor descriptor,
+        string directory,
+        ILogger logger)
     {
-        _settings = settings.Value;
+        Descriptor = descriptor;
+        _directory = directory;
         _logger = logger;
     }
 
-    public ProviderDescriptor Descriptor => CsvProvider.Descriptor;
+    public ProviderDescriptor Descriptor { get; }
 
     /// <summary>
     /// "NSE:NIFTYBANK-INDEX" + "15" → "NSE_NIFTYBANK-INDEX__15.csv". Only the
@@ -61,14 +66,14 @@ public class CsvMarketDataProvider : IMarketDataProvider
         // the repository root, so a relative one in the error message sends the
         // operator to the wrong folder.
         string path = Path.GetFullPath(
-            Path.Combine(_settings.Directory, FileNameFor(canonicalSymbol, storedResolution)));
+            Path.Combine(_directory, FileNameFor(canonicalSymbol, storedResolution)));
 
         if (!File.Exists(path))
         {
             // No file is this connector's way of saying "I do not carry that
             // symbol" — the same meaning a vendor gives an unknown symbol.
             throw new ProviderSymbolRejectedException(
-                CsvProvider.Key,
+                Descriptor.Key,
                 canonicalSymbol,
                 $"no file at {path}");
         }

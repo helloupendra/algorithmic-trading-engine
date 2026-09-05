@@ -109,7 +109,8 @@
       "Bash(ps -eo pid,command)",
       "Bash(pkill -f \"remote-debugging-port=9222\")",
       "Bash(lsof -nP -iTCP:5173 -sTCP:LISTEN)",
-      "Bash(python3 -c \"import json;json.load\\(open\\('src/AlgoTrading.Api/appsettings.json'\\)\\);print\\('appsettings valid json'\\)\")"
+      "Bash(python3 -c \"import json;json.load\\(open\\('src/AlgoTrading.Api/appsettings.json'\\)\\);print\\('appsettings valid json'\\)\")",
+      "Bash(git mv *)"
     ],
     "additionalDirectories": [
       "/Users/upendra/Documents/GitHub/algorithmic-trading-engine/src/AlgoTrading.Infrastructure/Persistence/Migrations"

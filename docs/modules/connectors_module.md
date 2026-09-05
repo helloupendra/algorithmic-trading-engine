@@ -58,15 +58,30 @@ timed out may already have accepted the order.
 | Key | Kind | Login | Serves | Rank |
 | --- | --- | --- | --- | --- |
 | `fyers` | Data + Broker | daily OAuth | history, live ticks, quotes, option chain, depth, greeks | 0 |
-| `csv` | Data vendor | none | history from files on disk | 50 |
+| *(your vendors)* | Data vendor | none | history from files on disk | 50 |
 | `replay` | Data vendor | none | history from this platform's own `candles` table | 100 |
+
+## Adding a data vendor without writing code
+
+The Connectors page has **Add data vendor**: give it a name, a permanent key and a folder on the API
+host, and it becomes a connector like any other — listed, testable, routable, and stamping its key
+into the `SourceKey` of every candle it produces.
+
+This is the honest half of "add a vendor from the console". A vendor's **live API** cannot be
+configured into existence: every one has its own auth, paging, rate limits and symbol grammar, and a
+form that pretended otherwise would produce a connector that fails in ways nobody can diagnose.
+Files are genuinely uniform, so files are what this supports, and the page says so.
+
+Rows live in `data_vendors`. The key may not collide with a shipped adapter — two sources sharing a
+key would make lineage meaningless — and it cannot be changed afterwards, because candles already
+carry it. Removing a vendor also drops its routing bindings; the candles it wrote keep its key.
 
 **`replay`** exists so the platform can run with no vendor at all — a backtest or a coverage check works
 when the broker token has expired, which is the failure that costs the most time on a trading morning.
 It is also the only real proof the provider seam works, since it is a second implementation with nothing
 in common with FYERS.
 
-**`csv`** reads `timestamp,open,high,low,close,volume` (header required, column order free; timestamps as
+**File-based vendors** read `timestamp,open,high,low,close,volume` (header required, column order free; timestamps as
 ISO-8601 or epoch seconds, naive values read as UTC) from
 `<Providers:Csv:Directory>/<symbol>__<resolution>.csv` — e.g. `NSE_NIFTYBANK-INDEX__15.csv`. A missing
 file is reported as a rejected symbol, with the **absolute** path it looked at, because the API's working

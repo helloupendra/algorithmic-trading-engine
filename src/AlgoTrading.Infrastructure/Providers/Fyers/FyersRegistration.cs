@@ -13,7 +13,7 @@ public static class FyersRegistration
     public static IServiceCollection AddFyersProvider(
         this IServiceCollection services,
         IConfiguration configuration,
-        ProviderCatalog catalog,
+        ProviderCatalogSeed catalog,
         ProviderCredentialFallbacks credentialFallbacks)
     {
         var section = configuration.GetSection("Fyers");

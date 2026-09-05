@@ -8,11 +8,19 @@
  * The route stays /admin/broker because the OAuth callback redirects into it.
  */
 
+import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { useIngestorStatuses, useProviderBindings, useProviders } from '../../lib/queries'
+import {
+  useCreateDataVendor,
+  useDataVendors,
+  useDeleteDataVendor,
+  useIngestorStatuses,
+  useProviderBindings,
+  useProviders,
+} from '../../lib/queries'
 import type { Provider } from '../../lib/types'
 import { formatAge } from '../../lib/format'
-import { Badge, EmptyState, Panel, QueryBoundary } from '../../components/ui'
+import { Badge, EmptyState, InlineError, Panel, QueryBoundary } from '../../components/ui'
 import { capabilitySummary, isReady, kindLabel, needsCredentials } from '../../lib/providers'
 
 function StatusBadge({ provider }: { provider: Provider }) {
@@ -75,6 +83,161 @@ function ConnectorCard({ provider }: { provider: Provider }) {
     </Link>
   ) : (
     <div className="module-card connector-card module-card--off">{body}</div>
+  )
+}
+
+function DataVendorPanel() {
+  const vendors = useDataVendors()
+  const create = useCreateDataVendor()
+  const remove = useDeleteDataVendor()
+  const [open, setOpen] = useState(false)
+  const [form, setForm] = useState({ key: '', displayName: '', directory: '', notes: '' })
+
+  return (
+    <Panel
+      title="Data vendors you added"
+      actions={
+        <button type="button" className="btn btn--primary btn--sm" onClick={() => setOpen((o) => !o)}>
+          {open ? 'Cancel' : 'Add data vendor'}
+        </button>
+      }
+    >
+      <p className="muted" style={{ maxWidth: '78ch' }}>
+        Point the platform at a folder of OHLCV files and it becomes a data source like any other —
+        listed above, testable, and routable. One file per symbol and resolution, named{' '}
+        <code>NSE_NIFTYBANK-INDEX__15.csv</code>, with a{' '}
+        <code>timestamp,open,high,low,close,volume</code> header. Timestamps may be ISO-8601 or epoch
+        seconds; anything without a zone is read as UTC.
+      </p>
+      <p className="small-note muted">
+        A vendor's <b>live API</b> still needs an adapter — every one has its own auth, paging and
+        symbol grammar, and a form cannot invent that. Files are the part that genuinely works with no
+        code, so that is what this adds.
+      </p>
+
+      {open && (
+        <>
+          {create.isError && <InlineError error={create.error} />}
+          <form
+            className="form-row"
+            onSubmit={(e) => {
+              e.preventDefault()
+              create.mutate(
+                { ...form, isEnabled: true },
+                {
+                  onSuccess: () => {
+                    setForm({ key: '', displayName: '', directory: '', notes: '' })
+                    setOpen(false)
+                  },
+                },
+              )
+            }}
+          >
+            <div className="field">
+              <label className="field__label" htmlFor="dv-name">Vendor name</label>
+              <input
+                id="dv-name"
+                className="field__input"
+                required
+                placeholder="TrueData exports"
+                value={form.displayName}
+                onChange={(e) => setForm({ ...form, displayName: e.target.value })}
+              />
+            </div>
+            <div className="field">
+              <label className="field__label" htmlFor="dv-key">Key (permanent)</label>
+              <input
+                id="dv-key"
+                className="field__input mono"
+                required
+                pattern="[a-z0-9][a-z0-9-]{1,31}"
+                title="2-32 characters: lowercase letters, digits or dashes"
+                placeholder="truedata"
+                value={form.key}
+                onChange={(e) => setForm({ ...form, key: e.target.value.toLowerCase() })}
+              />
+            </div>
+            <div className="field">
+              <label className="field__label" htmlFor="dv-dir">Folder on the API host</label>
+              <input
+                id="dv-dir"
+                className="field__input"
+                required
+                placeholder="/data/truedata"
+                value={form.directory}
+                onChange={(e) => setForm({ ...form, directory: e.target.value })}
+              />
+            </div>
+            <div className="field">
+              <label className="field__label" htmlFor="dv-notes">Notes (optional)</label>
+              <input
+                id="dv-notes"
+                className="field__input"
+                value={form.notes}
+                onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              />
+            </div>
+            <button className="btn btn--primary" disabled={create.isPending}>
+              {create.isPending ? 'Adding…' : 'Add vendor'}
+            </button>
+          </form>
+          <p className="small-note muted">
+            The key is written into the <code>SourceKey</code> of every candle this vendor produces, so
+            it cannot be changed later.
+          </p>
+        </>
+      )}
+
+      {remove.isError && <InlineError error={remove.error} />}
+
+      <QueryBoundary query={vendors} empty="No vendors added yet.">
+        {(list) => (
+          <div className="tablewrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Vendor</th>
+                  <th>Key</th>
+                  <th>Folder</th>
+                  <th>Files</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {list.map((v) => (
+                  <tr key={v.id}>
+                    <td>
+                      {v.displayName}
+                      {v.notes && <div className="small-note muted">{v.notes}</div>}
+                    </td>
+                    <td className="mono">{v.key}</td>
+                    <td className="mono" style={{ wordBreak: 'break-all' }}>
+                      {v.resolvedDirectory}
+                      {!v.directoryExists && (
+                        <div className="small-note">
+                          <Badge tone="warn">folder not found on the API host</Badge>
+                        </div>
+                      )}
+                    </td>
+                    <td>{v.directoryExists ? v.fileCount : '—'}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--sm"
+                        disabled={remove.isPending}
+                        onClick={() => remove.mutate(v.id)}
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </QueryBoundary>
+    </Panel>
   )
 }
 
@@ -226,6 +389,8 @@ export function BrokerPage() {
           )
         }}
       </QueryBoundary>
+
+      <DataVendorPanel />
 
       <RoutingPanel />
 

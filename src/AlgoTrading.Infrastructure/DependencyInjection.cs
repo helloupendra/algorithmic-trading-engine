@@ -9,7 +9,6 @@ using AlgoTrading.Application.Providers;
 using AlgoTrading.Infrastructure.Config;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Providers;
-using AlgoTrading.Infrastructure.Providers.Csv;
 using AlgoTrading.Infrastructure.Providers.Fyers;
 using AlgoTrading.Infrastructure.Providers.Replay;
 using AlgoTrading.Infrastructure.Services;
@@ -61,14 +60,16 @@ public static class DependencyInjection
         // Every vendor registers itself; this composition root never names one.
         // Which connector actually serves a job is a row in provider_bindings,
         // read at runtime by the router — not a compile-time binding.
-        var providerCatalog = new ProviderCatalog();
+        // The shipped adapters are fixed at build time; vendors an operator adds
+        // live in data_vendors and are merged in per request by ProviderCatalog.
+        var catalogSeed = new ProviderCatalogSeed();
         var credentialFallbacks = new ProviderCredentialFallbacks();
         services.AddSingleton(credentialFallbacks);
-        services.AddSingleton<IProviderCatalog>(providerCatalog);
+        services.AddSingleton(catalogSeed);
+        services.AddScoped<IProviderCatalog, ProviderCatalog>();
 
-        services.AddFyersProvider(configuration, providerCatalog, credentialFallbacks);
-        services.AddReplayProvider(providerCatalog);
-        services.AddCsvProvider(configuration, providerCatalog);
+        services.AddFyersProvider(configuration, catalogSeed, credentialFallbacks);
+        services.AddReplayProvider(catalogSeed);
 
         services.AddScoped<IProviderRegistry, ProviderRegistry>();
         services.AddScoped<IProviderRouter, ProviderRouter>();
@@ -179,6 +180,10 @@ public static class DependencyInjection
             return StackExchange.Redis.ConnectionMultiplexer.Connect(connStr);
         });
         services.AddScoped<IRedisPublisherService, RedisPublisherService>();
+
+        // One way for the platform to tell its operator something happened, on the
+        // same path the strategy alerter already uses.
+        services.AddScoped<ISystemNotifier, RedisSystemNotifier>();
 
         return services;
     }

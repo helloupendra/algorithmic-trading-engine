@@ -396,6 +396,163 @@ public class ProvidersController : ControllerBase
         return Ok(response);
     }
 
+    // ---- Data vendors an operator adds -------------------------------
+    // A vendor's live API cannot be configured into existence, but a folder of
+    // files can: this is the part of "add a vendor" that genuinely works with no
+    // code, and the console says exactly that.
+
+    private static readonly System.Text.RegularExpressions.Regex KeyPattern =
+        new("^[a-z0-9][a-z0-9-]{1,31}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>Every file-based vendor added from the console.</summary>
+    [HttpGet("vendors")]
+    public async Task<ActionResult<IReadOnlyList<DataVendorResponse>>> GetVendors(
+        CancellationToken cancellationToken)
+    {
+        var rows = await _dbContext.DataVendors
+            .AsNoTracking()
+            .OrderBy(x => x.DisplayName)
+            .ToListAsync(cancellationToken);
+
+        return Ok(rows.Select(MapVendor).ToList());
+    }
+
+    /// <summary>Adds a file-based vendor. Its key becomes the SourceKey of its rows.</summary>
+    [HttpPost("vendors")]
+    public async Task<IActionResult> CreateVendor(
+        [FromBody] SaveDataVendorRequest request,
+        CancellationToken cancellationToken)
+    {
+        string key = (request.Key ?? string.Empty).Trim().ToLowerInvariant();
+
+        if (!KeyPattern.IsMatch(key))
+        {
+            return BadRequest(new
+            {
+                message = "Key must be 2-32 characters of lowercase letters, digits or dashes, starting with a letter or digit.",
+            });
+        }
+
+        if (string.IsNullOrWhiteSpace(request.DisplayName) || string.IsNullOrWhiteSpace(request.Directory))
+        {
+            return BadRequest(new { message = "displayName and directory are required." });
+        }
+
+        // A vendor may not shadow a shipped adapter: its key is written into every
+        // row it produces, and two sources sharing a key make lineage meaningless.
+        if (_catalog.Find(key) is not null)
+        {
+            return BadRequest(new { message = $"'{key}' is already taken by another connector." });
+        }
+
+        var now = DateTime.UtcNow;
+
+        _dbContext.DataVendors.Add(new DataVendor
+        {
+            Key = key,
+            DisplayName = request.DisplayName.Trim(),
+            Kind = DataVendorKind.CsvFiles,
+            Directory = request.Directory.Trim(),
+            Notes = (request.Notes ?? string.Empty).Trim(),
+            IsEnabled = request.IsEnabled,
+            CreatedBy = User.Identity?.Name ?? "admin",
+            CreatedUtc = now,
+            UpdatedUtc = now,
+        });
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation("Data vendor '{Key}' added by {User}.", key, User.Identity?.Name ?? "admin");
+
+        return Ok(new { message = $"{request.DisplayName.Trim()} added. Test it to confirm the platform can read its files." });
+    }
+
+    /// <summary>Updates a vendor. The key is immutable — rows already carry it.</summary>
+    [HttpPut("vendors/{id:long}")]
+    public async Task<IActionResult> UpdateVendor(
+        long id,
+        [FromBody] SaveDataVendorRequest request,
+        CancellationToken cancellationToken)
+    {
+        var row = await _dbContext.DataVendors.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+        if (row is null)
+        {
+            return NotFound(new { message = $"No data vendor with id {id}." });
+        }
+
+        if (string.IsNullOrWhiteSpace(request.DisplayName) || string.IsNullOrWhiteSpace(request.Directory))
+        {
+            return BadRequest(new { message = "displayName and directory are required." });
+        }
+
+        row.DisplayName = request.DisplayName.Trim();
+        row.Directory = request.Directory.Trim();
+        row.Notes = (request.Notes ?? string.Empty).Trim();
+        row.IsEnabled = request.IsEnabled;
+        row.UpdatedUtc = DateTime.UtcNow;
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return Ok(new { message = $"{row.DisplayName} updated." });
+    }
+
+    /// <summary>Removes a vendor. Rows it already wrote keep its key as their source.</summary>
+    [HttpDelete("vendors/{id:long}")]
+    public async Task<IActionResult> DeleteVendor(long id, CancellationToken cancellationToken)
+    {
+        var row = await _dbContext.DataVendors.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+        if (row is null)
+        {
+            return NotFound(new { message = $"No data vendor with id {id}." });
+        }
+
+        // Its bindings would otherwise point at a connector that no longer exists.
+        var bindings = await _dbContext.ProviderBindings
+            .Where(x => x.ProviderKey == row.Key)
+            .ToListAsync(cancellationToken);
+
+        _dbContext.ProviderBindings.RemoveRange(bindings);
+        _dbContext.DataVendors.Remove(row);
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Data vendor '{Key}' removed by {User}; {Bindings} binding(s) dropped with it.",
+            row.Key, User.Identity?.Name ?? "admin", bindings.Count);
+
+        return Ok(new
+        {
+            message = $"{row.DisplayName} removed. Candles it already wrote keep '{row.Key}' as their source.",
+        });
+    }
+
+    private static DataVendorResponse MapVendor(DataVendor vendor)
+    {
+        // Resolve the folder the way the reader will: the API's working directory
+        // is not the repository root, so a relative path means something specific.
+        string resolved = Path.GetFullPath(vendor.Directory);
+        bool exists = Directory.Exists(resolved);
+
+        return new DataVendorResponse
+        {
+            Id = vendor.Id,
+            Key = vendor.Key,
+            DisplayName = vendor.DisplayName,
+            Kind = vendor.Kind.ToString(),
+            Directory = vendor.Directory,
+            ResolvedDirectory = resolved,
+            DirectoryExists = exists,
+            FileCount = exists ? Directory.GetFiles(resolved, "*.csv").Length : 0,
+            IsEnabled = vendor.IsEnabled,
+            Notes = vendor.Notes,
+            CreatedBy = vendor.CreatedBy,
+            CreatedUtc = vendor.CreatedUtc,
+            UpdatedUtc = vendor.UpdatedUtc,
+        };
+    }
+
     private static ProviderCapabilitiesResponse Map(ProviderCapabilities capabilities) => new()
     {
         History = capabilities.History,

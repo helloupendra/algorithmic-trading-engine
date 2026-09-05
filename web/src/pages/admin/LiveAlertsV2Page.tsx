@@ -1,196 +1,349 @@
-import { useState } from 'react'
-import { BellIcon, PlayIcon, ExclamationTriangleIcon, CrossCircledIcon, CheckCircledIcon, InfoCircledIcon } from '@radix-ui/react-icons'
-import { useAlertEvents } from '../../lib/queries'
-import { api } from '../../lib/api'
+/**
+ * Alerts — the platform's one notification channel.
+ *
+ * Everything the platform wants to tell its operator takes the same path:
+ * Redis `alerts:new` → Telegram (when configured) → the `alert_events` table.
+ * That means the stream below is a complete history, not a selection, and an
+ * event is never delivered without also being recorded.
+ *
+ * Lives under the System module, because "is the platform behaving" is one
+ * question, not three.
+ */
 
-function classNames(...classes: (string | undefined | null | false)[]) {
-  return classes.filter(Boolean).join(' ')
+import { useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { api } from '../../lib/api'
+import { useAlertEvents } from '../../lib/queries'
+import { formatDateTime } from '../../lib/format'
+import { Badge, EmptyState, InlineError, Panel, QueryBoundary } from '../../components/ui'
+
+interface AlerterProcess {
+  underlying: string
+  processId: number | null
+  source: string
+  startedUtc: string | null
+}
+
+interface AlerterStatus {
+  isRunning: boolean
+  managed: boolean
+  processes: AlerterProcess[]
+  telegramConfigured: boolean
+}
+
+/** What the platform sends without anyone asking it to. */
+const WHAT_GETS_SENT: { label: string; detail: string }[] = [
+  { label: 'Strategy run started', detail: 'name, underlying, lots and who started it' },
+  { label: 'Strategy run stopped', detail: 'who stopped it and how many positions were squared off' },
+  { label: 'Kill switch', detail: 'activated or released, with the reason' },
+  { label: 'Strategy signals', detail: 'from the alerter process below, per underlying' },
+]
+
+function severityTone(severity: string): 'pos' | 'neg' | 'warn' | 'accent' | 'neutral' {
+  switch (severity?.toLowerCase()) {
+    case 'error':
+    case 'critical':
+      return 'neg'
+    case 'warning':
+      return 'warn'
+    case 'success':
+      return 'pos'
+    case 'info':
+      return 'accent'
+    default:
+      return 'neutral'
+  }
+}
+
+function useAlerterStatus() {
+  return useQuery({
+    queryKey: ['alerts', 'status'],
+    queryFn: () => api.get<AlerterStatus>('/api/Alerts/status'),
+    refetchInterval: 15_000,
+  })
+}
+
+function DeliveryPanel({ status }: { status: AlerterStatus }) {
+  return (
+    <Panel title="Telegram delivery">
+      <div className="broker-state">
+        <div>
+          <div className={`killswitch__state ${status.telegramConfigured ? 'pos' : 'warn'}`}>
+            {status.telegramConfigured ? 'Configured' : 'Not configured'}
+          </div>
+          <p className="muted" style={{ maxWidth: '78ch' }}>
+            {status.telegramConfigured ? (
+              <>
+                A bot token and chat id are set on the server, so everything below is delivered to your
+                Telegram as it happens — and recorded here either way.
+              </>
+            ) : (
+              <>
+                No bot token or chat id on the server, so nothing reaches Telegram. Events are still
+                recorded in the stream below. Set <code>Telegram:BotToken</code> and{' '}
+                <code>Telegram:ChatId</code> in the API configuration to turn delivery on.
+              </>
+            )}
+          </p>
+        </div>
+      </div>
+
+      <div className="tablewrap" style={{ marginTop: 12 }}>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Sent automatically</th>
+              <th>What the message carries</th>
+            </tr>
+          </thead>
+          <tbody>
+            {WHAT_GETS_SENT.map((row) => (
+              <tr key={row.label}>
+                <td>{row.label}</td>
+                <td className="muted">{row.detail}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="small-note muted">
+        Delivery never blocks the thing it reports on: if Telegram or Redis is down, the run still
+        starts and the failure is logged rather than raised.
+      </p>
+    </Panel>
+  )
+}
+
+function AlerterPanel({ status }: { status: AlerterStatus }) {
+  const qc = useQueryClient()
+  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const control = useMutation({
+    mutationFn: (action: 'start' | 'stop') =>
+      api.post<{ message: string }>(`/api/Alerts/${action}`),
+    onSuccess: (res) => {
+      setNotice({ ok: true, text: res.message })
+      qc.invalidateQueries({ queryKey: ['alerts'] })
+    },
+    onError: (err: unknown) => {
+      const message =
+        (err as { body?: { message?: string }; message?: string })?.body?.message ??
+        (err as { message?: string })?.message ??
+        'Failed'
+      setNotice({ ok: false, text: message })
+    },
+  })
+
+  const test = useMutation({
+    mutationFn: (instrument: string) =>
+      api.post<{ message: string }>('/api/Alerts/test-e2e', { instrument }),
+    onSuccess: (res) => {
+      setNotice({ ok: true, text: res.message })
+      // The alert travels Redis → subscriber → database; give it a moment.
+      setTimeout(() => qc.invalidateQueries({ queryKey: ['alerts', 'events'] }), 1500)
+    },
+    onError: (err: unknown) => {
+      const message =
+        (err as { body?: { message?: string }; message?: string })?.body?.message ??
+        (err as { message?: string })?.message ??
+        'Failed'
+      setNotice({ ok: false, text: message })
+    },
+  })
+
+  return (
+    <Panel
+      title={
+        <span className="chip-row">
+          Signal alerter
+          <Badge tone={status.isRunning ? 'pos' : 'warn'}>
+            {status.isRunning ? 'running' : 'stopped'}
+          </Badge>
+        </span>
+      }
+      actions={
+        <div className="chip-row">
+          <button
+            type="button"
+            className="btn btn--primary btn--sm"
+            disabled={control.isPending || status.isRunning}
+            onClick={() => control.mutate('start')}
+          >
+            Start
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            disabled={control.isPending || !status.isRunning}
+            onClick={() => control.mutate('stop')}
+          >
+            Stop
+          </button>
+        </div>
+      }
+    >
+      <p className="muted" style={{ maxWidth: '78ch' }}>
+        The Python process that watches the market and raises strategy signals. It is separate from the
+        automatic events above, which the platform sends whether or not this is running.
+      </p>
+
+      <div className="tablewrap">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Underlying</th>
+              <th>Process</th>
+              <th>Owner</th>
+            </tr>
+          </thead>
+          <tbody>
+            {status.processes.length === 0 ? (
+              <tr>
+                <td colSpan={3} className="muted">
+                  No alerter targets configured.
+                </td>
+              </tr>
+            ) : (
+              status.processes.map((p) => (
+                <tr key={p.underlying}>
+                  <td>{p.underlying}</td>
+                  <td className="mono">{p.processId ?? <span className="muted">—</span>}</td>
+                  <td>
+                    {p.source === 'none' ? (
+                      <Badge tone="warn">not running</Badge>
+                    ) : (
+                      <Badge tone="pos">{p.source}</Badge>
+                    )}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <h3 className="section-title connector-section">End-to-end test</h3>
+      <p className="muted" style={{ maxWidth: '78ch' }}>
+        Sends a mock signal along the whole path — Redis → the API subscriber → Telegram and the
+        database — so a silent pipeline is caught here rather than during a trade.
+      </p>
+      <div className="chip-row">
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          disabled={test.isPending}
+          onClick={() => test.mutate('BANKNIFTY')}
+        >
+          {test.isPending ? 'Sending…' : 'Test with BANKNIFTY'}
+        </button>
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          disabled={test.isPending}
+          onClick={() => test.mutate('RELIANCE')}
+        >
+          Test with RELIANCE
+        </button>
+      </div>
+
+      {notice && (
+        <div className={`alert ${notice.ok ? 'alert--success' : 'alert--error'}`} role="status">
+          {notice.text}
+        </div>
+      )}
+    </Panel>
+  )
 }
 
 export function LiveAlertsV2Page() {
-  const { data: events, refetch } = useAlertEvents(100)
-  const [isTesting, setIsTesting] = useState(false)
-  const [testResult, setTestResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
-
-  const handleTestAlert = async (instrument: string) => {
-    try {
-      setIsTesting(true)
-      setTestResult(null)
-      const res = await api.post<{ status: string; message: string }>('/api/Alerts/test-e2e', {
-        instrument
-      })
-      setTestResult({ type: 'success', message: res.message })
-      // Give the backend a second to process the redis message and write to DB
-      setTimeout(() => refetch(), 1500)
-    } catch (err: any) {
-      setTestResult({ 
-        type: 'error', 
-        message: err?.body?.message || err.message || 'Failed to trigger test alert' 
-      })
-    } finally {
-      setIsTesting(false)
-    }
-  }
-
-  const getSeverityIcon = (severity: string) => {
-    switch (severity?.toLowerCase()) {
-      case 'error':
-      case 'critical':
-        return <CrossCircledIcon className="w-4 h-4 text-red-400" />
-      case 'warning':
-        return <ExclamationTriangleIcon className="w-4 h-4 text-orange-400" />
-      case 'success':
-        return <CheckCircledIcon className="w-4 h-4 text-green-400" />
-      default:
-        return <InfoCircledIcon className="w-4 h-4 text-blue-400" />
-    }
-  }
-
-  const getSeverityClass = (severity: string) => {
-    switch (severity?.toLowerCase()) {
-      case 'error':
-      case 'critical':
-        return 'bg-red-500/10 text-red-400 border border-red-500/20'
-      case 'warning':
-        return 'bg-orange-500/10 text-orange-400 border border-orange-500/20'
-      case 'success':
-        return 'bg-green-500/10 text-green-400 border border-green-500/20'
-      default:
-        return 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
-    }
-  }
+  const status = useAlerterStatus()
+  const events = useAlertEvents(100)
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
-      <div>
-        <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-          <BellIcon className="w-6 h-6 text-blue-400" />
-          Live Alerts <span className="text-xs bg-blue-500/20 text-blue-400 px-2 py-1 rounded">V2</span>
-        </h1>
-        <p className="mt-1 text-sm text-gray-400">
-          Real-time stream of system and strategy alerts, synchronized with Telegram dispatches.
+    <div className="page">
+      <header className="page__header">
+        <h1 className="page__title">Alerts</h1>
+        <p className="page__subtitle">
+          One channel for everything the platform needs to tell you — run starts and stops, the kill
+          switch, and strategy signals — delivered to Telegram and recorded here.
         </p>
-      </div>
+      </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        {/* Test Controls */}
-        <div className="lg:col-span-1 space-y-6">
-          <div className="bg-[#1C2127] border border-gray-800 rounded-lg overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-800 bg-black/20">
-              <h2 className="text-lg font-medium text-gray-100 flex items-center gap-2">
-                <PlayIcon className="w-5 h-5 text-gray-400" />
-                E2E Diagnostics
-              </h2>
-            </div>
-            <div className="p-6 space-y-4">
-              <p className="text-sm text-gray-400">
-                Trigger a mock signal to verify the complete pipeline: Python LogicEngine → Redis Pub/Sub → API Background Service → Telegram API & PostgreSQL.
-              </p>
-              
-              <div className="space-y-3">
-                <button
-                  onClick={() => handleTestAlert('BANKNIFTY')}
-                  disabled={isTesting}
-                  className="w-full flex justify-center items-center py-2 px-4 border border-gray-700 rounded-md shadow-sm text-sm font-medium text-gray-300 bg-gray-800 hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 focus:ring-offset-[#1C2127] disabled:opacity-50"
-                >
-                  Test BankNifty Alert
-                </button>
-                <button
-                  onClick={() => handleTestAlert('RELIANCE')}
-                  disabled={isTesting}
-                  className="w-full flex justify-center items-center py-2 px-4 border border-gray-700 rounded-md shadow-sm text-sm font-medium text-gray-300 bg-gray-800 hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 focus:ring-offset-[#1C2127] disabled:opacity-50"
-                >
-                  Test Reliance Alert
-                </button>
-              </div>
+      <QueryBoundary query={status}>
+        {(s) => (
+          <>
+            <DeliveryPanel status={s} />
+            <AlerterPanel status={s} />
+          </>
+        )}
+      </QueryBoundary>
 
-              {testResult && (
-                <div className={classNames(
-                  "p-3 rounded-md text-sm border",
-                  testResult.type === 'success' 
-                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" 
-                    : "bg-red-500/10 text-red-400 border-red-500/20"
-                )}>
-                  {testResult.message}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Alerts Stream */}
-        <div className="lg:col-span-3">
-          <div className="bg-[#1C2127] border border-gray-800 rounded-lg overflow-hidden flex flex-col h-[calc(100vh-12rem)] min-h-[500px]">
-            <div className="px-6 py-4 border-b border-gray-800 bg-black/20 flex justify-between items-center shrink-0">
-              <h2 className="text-lg font-medium text-gray-100 flex items-center gap-2">
-                <BellIcon className="w-5 h-5 text-gray-400" />
-                Alerts Stream
-              </h2>
-              <span className="text-xs text-gray-500">
-                Showing last {events?.length || 0} events
-              </span>
-            </div>
-            
-            <div className="overflow-y-auto flex-1">
-              {events && events.length > 0 ? (
-                <div className="divide-y divide-gray-800">
-                  {events.map((ev) => (
-                    <div key={ev.id} className="p-4 sm:px-6 hover:bg-gray-800/30 transition-colors">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex-1 space-y-1">
-                          <div className="flex items-center gap-3">
-                            <span className={classNames(
-                              "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium",
-                              getSeverityClass(ev.severity)
-                            )}>
-                              {getSeverityIcon(ev.severity)}
-                              {ev.severity.toUpperCase()}
-                            </span>
-                            <span className="text-sm font-medium text-gray-200">
-                              {ev.title}
-                            </span>
-                            {ev.underlying && (
-                              <span className="text-xs font-mono text-gray-500">
-                                [{ev.underlying}]
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-sm text-gray-400 break-words whitespace-pre-line">
-                            {ev.message}
-                          </p>
-                          <div className="flex items-center gap-4 text-xs text-gray-500 pt-2">
-                            <span>{new Date(ev.occurredUtc).toLocaleString()}</span>
-                            <span>Source: <span className="font-medium text-gray-400">{ev.source}</span></span>
-                            {ev.symbol && <span>Symbol: <span className="font-mono text-gray-400">{ev.symbol}</span></span>}
-                            {ev.simulationRunId && <span>Run: <span className="text-gray-400">#{ev.simulationRunId}</span></span>}
-                          </div>
-                        </div>
-                        <div className="shrink-0 flex items-center">
-                          {ev.deliveredToTelegram ? (
-                            <span className="flex items-center gap-1 text-xs font-medium text-emerald-400 bg-emerald-400/10 px-2 py-1 rounded">
-                              <CheckCircledIcon className="w-3.5 h-3.5" />
-                              Telegram
-                            </span>
-                          ) : (
-                            <span className="flex items-center gap-1 text-xs font-medium text-gray-500 bg-gray-800 px-2 py-1 rounded">
-                              Local Only
-                            </span>
-                          )}
-                        </div>
+      <Panel
+        title="Event stream"
+        actions={
+          <span className="muted small-note">
+            {events.data?.length ?? 0} most recent
+          </span>
+        }
+      >
+        {events.isError && <InlineError error={events.error} />}
+        {events.data && events.data.length === 0 ? (
+          <EmptyState>
+            Nothing yet. Start a strategy run, toggle the kill switch, or use the end-to-end test above
+            and it will appear here.
+          </EmptyState>
+        ) : (
+          <div className="tablewrap tablewrap--tall">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Severity</th>
+                  <th>Event</th>
+                  <th>Source</th>
+                  <th>Telegram</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(events.data ?? []).map((ev) => (
+                  <tr key={ev.id}>
+                    <td className="mono">{formatDateTime(ev.occurredUtc)}</td>
+                    <td>
+                      <Badge tone={severityTone(ev.severity)}>{ev.severity}</Badge>
+                    </td>
+                    <td>
+                      <div>{ev.title}</div>
+                      <div className="small-note muted" style={{ whiteSpace: 'pre-line' }}>
+                        {ev.message}
                       </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center text-gray-500 p-8 space-y-3">
-                  <BellIcon className="w-12 h-12 text-gray-800" />
-                  <p>No alerts in the current stream.</p>
-                </div>
-              )}
-            </div>
+                      {(ev.symbol || ev.simulationRunId) && (
+                        <div className="small-note muted mono">
+                          {ev.symbol}
+                          {ev.symbol && ev.simulationRunId ? ' · ' : ''}
+                          {ev.simulationRunId ? `run #${ev.simulationRunId}` : ''}
+                        </div>
+                      )}
+                    </td>
+                    <td className="mono">
+                      {ev.source}
+                      {ev.underlying && ev.underlying !== 'UNKNOWN' && (
+                        <div className="small-note muted">{ev.underlying}</div>
+                      )}
+                    </td>
+                    <td>
+                      {ev.deliveredToTelegram ? (
+                        <Badge tone="pos">delivered</Badge>
+                      ) : (
+                        <Badge tone="neutral">recorded only</Badge>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </div>
-      </div>
+        )}
+      </Panel>
     </div>
   )
 }

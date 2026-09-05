@@ -65,4 +65,5 @@ public class TradingDbContext : DbContext
     public DbSet<BrokerAccount> BrokerAccounts => Set<BrokerAccount>();
     public DbSet<ProviderBinding> ProviderBindings => Set<ProviderBinding>();
     public DbSet<InstrumentVendorSymbol> InstrumentVendorSymbols => Set<InstrumentVendorSymbol>();
+    public DbSet<DataVendor> DataVendors => Set<DataVendor>();
 }
