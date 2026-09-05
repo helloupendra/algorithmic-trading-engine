@@ -63,6 +63,18 @@ public sealed record ProviderCapabilities
     /// </summary>
     public bool UsesCanonicalSymbols { get; init; }
 
+    /// <summary>
+    /// True when the provider reads data the platform has already stored, rather
+    /// than fetching it from outside.
+    /// </summary>
+    /// <remarks>
+    /// The sync path must read from such a provider but never write its bars back:
+    /// they came out of the same table they would go into, so persisting them is at
+    /// best a no-op and at worst re-stamps genuine rows with the wrong source,
+    /// destroying the lineage those rows exist to record.
+    /// </remarks>
+    public bool ServesFromPlatformStore { get; init; }
+
     /// <summary>Websocket subscription ceiling, null when the vendor does not publish one.</summary>
     public int? MaxStreamSymbols { get; init; }
 
@@ -100,4 +112,17 @@ public sealed record ProviderDescriptor(
     string DisplayName,
     ProviderKind Kind,
     ProviderAuthKind Auth,
-    ProviderCapabilities Capabilities);
+    ProviderCapabilities Capabilities)
+{
+    /// <summary>
+    /// Tie-break used <em>only</em> when nothing is configured in
+    /// <c>provider_bindings</c>: lower wins.
+    /// </summary>
+    /// <remarks>
+    /// Without it the automatic chain would fall back to alphabetical order, and
+    /// simply installing an offline connector like "csv" would silently take
+    /// history away from the live vendor. Live vendors rank first; sources that
+    /// can only return what the platform already has rank last.
+    /// </remarks>
+    public int FallbackRank { get; init; }
+}

@@ -67,9 +67,13 @@ public class ProviderRouter : IProviderRouter
             return chain;
         }
 
+        // Nothing configured: fall back to everything that claims the capability,
+        // ordered by FallbackRank so a live vendor always outranks an offline one.
         return _registry.DataProviderKeys
             .Select(_registry.GetDataProvider)
             .Where(x => x.Descriptor.Capabilities.Supports(capability))
+            .OrderBy(x => x.Descriptor.FallbackRank)
+            .ThenBy(x => x.Descriptor.Key, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 

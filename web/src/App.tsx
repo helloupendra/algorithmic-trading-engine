@@ -23,6 +23,7 @@ import { AdminOverviewPage } from './pages/admin/AdminOverviewPage'
 import { UsersPage } from './pages/admin/UsersPage'
 import { RiskV2Page } from './pages/admin/RiskV2Page'
 import { BrokerPage } from './pages/admin/BrokerPage'
+import { ConnectorDetailPage } from './pages/admin/ConnectorDetailPage'
 import { LiveAlertsV2Page } from './pages/admin/LiveAlertsV2Page'
 import { StrategiesOverviewPage } from './pages/strategies/StrategiesOverviewPage'
 import { LiveRunnerPage } from './pages/strategies/LiveRunnerPage'
@@ -127,6 +128,7 @@ export default function App() {
 
                   <Route path="/admin/live-alerts" element={<LiveAlertsV2Page />} />
                   <Route path="/admin/broker" element={<BrokerPage />} />
+                  <Route path="/admin/broker/:providerKey" element={<ConnectorDetailPage />} />
 
                   {/* Old bookmarks from the v1 layout. */}
                   <Route path="/admin/ingestion" element={<Navigate to="/admin/data/live" replace />} />

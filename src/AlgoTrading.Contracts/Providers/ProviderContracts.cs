@@ -59,6 +59,22 @@ public class ProviderResponse
     public bool IsDataProvider { get; set; }
     public bool IsBroker { get; set; }
 
+    /// <summary>
+    /// False for a vendor on the roadmap that has no adapter in this build: it is
+    /// listed so the directory is honest about what exists, but it cannot be
+    /// configured or connected.
+    /// </summary>
+    public bool IsInstalled { get; set; } = true;
+
+    /// <summary>Why an uninstalled connector is on the list. Empty for installed ones.</summary>
+    public string PlannedNote { get; set; } = string.Empty;
+
+    /// <summary>
+    /// True once credentials have been saved for this connector — what an operator
+    /// means by "I added this broker".
+    /// </summary>
+    public bool IsConfigured { get; set; }
+
     public ProviderCapabilitiesResponse Capabilities { get; set; } = new();
     public ProviderCredentialsResponse Credentials { get; set; } = new();
     public ProviderSessionResponse Session { get; set; } = new();

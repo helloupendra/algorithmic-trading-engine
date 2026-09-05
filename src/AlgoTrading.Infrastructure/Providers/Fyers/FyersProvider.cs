@@ -48,5 +48,9 @@ public static class FyersProvider
             HistoryMaxDaysPerCall = 100,
             Resolutions = new[] { "1", "2", "3", "5", "10", "15", "20", "30", "60", "120", "240", "D" },
             Segments = new[] { "CM", "FO", "CD", "MCX" },
-        });
+        })
+    {
+        // A live vendor: first choice whenever nothing is configured.
+        FallbackRank = 0,
+    };
 }

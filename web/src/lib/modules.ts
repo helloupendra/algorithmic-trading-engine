@@ -71,6 +71,15 @@ export const MODULES: ModuleDef[] = [
     adminOnly: true,
   },
   {
+    key: 'broker',
+    name: 'Connectors',
+    description: 'Data vendors and brokers: credentials, sessions, routing.',
+    icon: IconPlug,
+    route: '/admin/broker',
+    status: 'ready',
+    adminOnly: true,
+  },
+  {
     key: 'risk',
     name: 'Risk',
     description: 'Kill switch and trading limits.',
@@ -95,15 +104,6 @@ export const MODULES: ModuleDef[] = [
     icon: IconUsers,
     route: '/admin/users',
     status: 'legacy',
-    adminOnly: true,
-  },
-  {
-    key: 'broker',
-    name: 'Connectors',
-    description: 'Data vendors and brokers: credentials, sessions, routing.',
-    icon: IconPlug,
-    route: '/admin/broker',
-    status: 'ready',
     adminOnly: true,
   },
   {
