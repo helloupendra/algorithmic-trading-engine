@@ -82,10 +82,10 @@ export const MODULES: ModuleDef[] = [
   {
     key: 'users',
     name: 'Users',
-    description: 'Accounts, roles and, soon, per-trader module access.',
+    description: 'Accounts, roles, module grants, strategy packages and invitations.',
     icon: IconUsers,
     route: '/admin/users',
-    status: 'legacy',
+    status: 'ready',
     adminOnly: true,
   },
   {
@@ -125,6 +125,14 @@ export const DATA_SECTIONS = [
     route: '/admin/data/instruments',
     label: 'Instruments & F&O',
     icon: IconServer,
+    end: false,
+  },
+  {
+    // Where the data comes from, so it sits with the data rather than under a
+    // generic "modules" heading that says nothing.
+    route: '/admin/broker',
+    label: 'Connectors',
+    icon: IconPlug,
     end: false,
   },
 ] as const
@@ -180,12 +188,16 @@ export const BACKTESTING_SECTIONS = [
 ] as const
 
 /**
- * Sub-navigation of the System module. Risk and Alerts used to be separate
- * modules; an operator dealing with "is the platform behaving" wants health, the
- * kill switch and the alerter in one place, not three menu entries.
+ * Sub-navigation of the System module. Risk, Alerts and Users used to be
+ * separate entries under a generic "Modules" heading. An operator asking "is the
+ * platform behaving, and who may use it" wants those in one place — and a
+ * heading that says "modules" says nothing, since every entry in the sidebar is
+ * one.
  */
 export const SYSTEM_SECTIONS = [
   { route: '/admin/system', label: 'Overview', icon: IconServer, end: true },
   { route: '/admin/system/risk', label: 'Risk & kill switch', icon: IconShield },
   { route: '/admin/system/alerts', label: 'Alerts', icon: IconBell },
+  { route: '/admin/system/logs', label: 'Activity log', icon: IconClock },
+  { route: '/admin/users', label: 'Users & access', icon: IconUsers },
 ]

@@ -1,14 +1,18 @@
 /**
- * Sign-in, v2 design. Logic is unchanged — username/password to the API, with
- * dev-only one-click logins sourced from web/.env.local (never shipped in a
- * production build).
+ * Sign-in. One composition, not two panes: the shared live candlestick tape runs
+ * full-bleed behind the whole viewport and the card floats on it, so the page
+ * reads as the same product as the homepage. A vignette under the card does the
+ * contrast work. Logic is unchanged: username/password to the API, with dev-only
+ * one-click logins sourced from web/.env.local (never shipped in a production
+ * build).
  */
 
 import { useState, type FormEvent } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { ApiError } from '../lib/api'
 import { IconLogo } from '../components/icons'
+import { MarketCanvas } from '../components/MarketScene'
 
 const DEV_LOGINS = import.meta.env.DEV
   ? (
@@ -67,14 +71,17 @@ export function LoginPage() {
 
   return (
     <div className="login">
-      <div>
+      <MarketCanvas variant="ambient" canvasClass="login__scene" fallbackClass="login__scene-fallback" />
+      <div className="login__veil" aria-hidden="true" />
+
+      <div className="login__pane">
         <div className="login__card">
-          <div className="login__brand">
+          <Link className="login__brand" to="/">
             <span className="shell__brand-mark" aria-hidden="true">
               <IconLogo />
             </span>
             AlgoTrading Console
-          </div>
+          </Link>
 
           <h1 className="login__title">Sign in</h1>
           <p className="login__sub">Live data, strategies and risk — one console.</p>

@@ -1,3 +1,4 @@
+using AlgoTrading.Api.Services;
 // src/AlgoTrading.Api/Controllers/RiskController.cs
 using AlgoTrading.Api.Security;
 using AlgoTrading.Application.Interfaces;
@@ -39,6 +40,11 @@ public class RiskController : ControllerBase
 
         await _paperTradingService.FlattenAllPositionsAsync(cancellationToken);
 
+        HttpContext.Describe(
+            "Pulled the kill switch — every strategy paused and all positions flattened"
+                + (string.IsNullOrWhiteSpace(reason) ? "." : $": {reason}"),
+            "killswitch");
+
         await _notifier.NotifyAsync(
             NotificationCategory.Risk,
             NotificationSeverity.Error,
@@ -58,6 +64,11 @@ public class RiskController : ControllerBase
     {
         await _riskManagementService.DeactivateKillSwitchAsync(
             User.GetUserName(), reason, cancellationToken);
+
+        HttpContext.Describe(
+            "Released the kill switch — trading resumed"
+                + (string.IsNullOrWhiteSpace(reason) ? "." : $": {reason}"),
+            "killswitch");
 
         await _notifier.NotifyAsync(
             NotificationCategory.Risk,

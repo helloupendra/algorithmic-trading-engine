@@ -186,6 +186,7 @@ public static class DependencyInjection
         services.AddScoped<ISystemNotifier, RedisSystemNotifier>();
 
         // Accounts, module grants and the grant check every guarded endpoint asks.
+        services.AddScoped<ITokenValidityService, TokenValidityService>();
         services.AddScoped<IUserAdminService, UserAdminService>();
         services.AddScoped<IStrategyAccessService, StrategyAccessService>();
 

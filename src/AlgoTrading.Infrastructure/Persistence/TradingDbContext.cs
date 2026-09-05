@@ -59,6 +59,8 @@ public class TradingDbContext : DbContext
     public DbSet<StrategyPackageItem> StrategyPackageItems => Set<StrategyPackageItem>();
     public DbSet<UserStrategyGrant> UserStrategyGrants => Set<UserStrategyGrant>();
     public DbSet<UserWatchlistItem> UserWatchlistItems => Set<UserWatchlistItem>();
+    public DbSet<UserInvite> UserInvites => Set<UserInvite>();
+    public DbSet<ActivityLogEntry> ActivityLog => Set<ActivityLogEntry>();
 
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
 

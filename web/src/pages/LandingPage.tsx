@@ -1,12 +1,12 @@
 /**
- * Public homepage ("/"). Marketing surface for the console: a Three.js hero
- * (candlestick ribbon + tick field), the four modules as 3D tilt cards, a
- * position-based live sample, an honest backtest sample, and the principles.
+ * Public homepage ("/"). Marketing surface for the console: the shared live 3D
+ * candlestick tape as a hero (see components/MarketScene), the four modules as
+ * 3D tilt cards, a position-based live sample, an honest backtest sample, and
+ * the principles.
  *
- * Three.js is loaded on demand from cdnjs (UMD r128) so the console bundle
- * does not carry it; when the script or WebGL is unavailable the hero keeps a
- * CSS gradient. Sample numbers are real figures from the console (see the
- * strategies/backtesting module docs), not decoration.
+ * Sample numbers are real figures from the console (see the strategies and
+ * backtesting module docs), not decoration. Strategy code names stay out of the
+ * public page — samples are labelled by what the strategy does.
  */
 
 import {
@@ -19,347 +19,9 @@ import {
 } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
+import { MarketCanvas } from '../components/MarketScene'
+import { prefersReducedMotion } from '../lib/motion'
 import './landing.css'
-
-const THREE_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js'
-
-declare global {
-  interface Window {
-    // Loaded at runtime from the CDN; typed loosely on purpose (no bundled dependency).
-    THREE?: any
-  }
-}
-
-let threeLoader: Promise<boolean> | null = null
-
-/**
- * Injects the Three.js script once; resolves false when it cannot load. A failed
- * load is not memoised: the dead <script> is removed and the loader reset so the
- * next mount of the page retries (the CDN may be reachable by then).
- */
-function loadThree(): Promise<boolean> {
-  if (window.THREE) return Promise.resolve(true)
-  if (threeLoader) return threeLoader
-  threeLoader = new Promise<boolean>((resolve) => {
-    const script = document.createElement('script')
-    script.src = THREE_CDN
-    script.async = true
-    script.crossOrigin = 'anonymous'
-    const fail = () => {
-      script.remove()
-      threeLoader = null
-      resolve(false)
-    }
-    script.onload = () => {
-      if (window.THREE) resolve(true)
-      else fail()
-    }
-    script.onerror = fail
-    document.head.appendChild(script)
-  })
-  return threeLoader
-}
-
-function prefersReducedMotion(): boolean {
-  return typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
-}
-
-function webglAvailable(): boolean {
-  try {
-    const probe = document.createElement('canvas')
-    const gl = probe.getContext('webgl') || probe.getContext('experimental-webgl')
-    if (!gl) return false
-    const lose = (gl as WebGLRenderingContext).getExtension('WEBGL_lose_context')
-    lose?.loseContext()
-    return true
-  } catch {
-    return false
-  }
-}
-
-/** Deterministic PRNG so every visit renders the same ribbon. */
-function mulberry32(seed: number) {
-  let a = seed | 0
-  return () => {
-    a = (a + 0x6d2b79f5) | 0
-    let t = Math.imul(a ^ (a >>> 15), 1 | a)
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
-}
-
-/* ------------------------------------------------------------- hero scene */
-
-interface SceneHandle {
-  dispose: () => void
-}
-
-function buildScene(canvas: HTMLCanvasElement, reduceMotion: boolean, onLost: () => void): SceneHandle | null {
-  const THREE = window.THREE
-  if (!THREE) return null
-
-  let renderer: any
-  try {
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' })
-  } catch {
-    return null
-  }
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
-  renderer.setClearColor(0x000000, 0)
-
-  const scene = new THREE.Scene()
-  scene.fog = new THREE.FogExp2(0x070b11, 0.04)
-
-  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100)
-  camera.position.set(3.2, 1.6, 15)
-  const camTarget = new THREE.Vector3(2.2, 0.4, 0)
-
-  scene.add(new THREE.AmbientLight(0x4f7dff, 0.55))
-  const key = new THREE.DirectionalLight(0xffffff, 0.9)
-  key.position.set(6, 10, 8)
-  scene.add(key)
-  const rim = new THREE.PointLight(0x2bd4bd, 1.4, 40)
-  rim.position.set(-8, 4, 6)
-  scene.add(rim)
-
-  const rand = mulberry32(57600)
-
-  // Candlestick ribbon: a seeded random walk, coloured like the console.
-  const group = new THREE.Group()
-  const COUNT = 120
-  const SPACING = 0.24
-  const SCALE = 0.85
-  const bodyGeo = new THREE.BoxGeometry(0.13, 1, 0.13)
-  const wickGeo = new THREE.BoxGeometry(0.028, 1, 0.028)
-  const matUp = new THREE.MeshStandardMaterial({ color: 0x31c48d, emissive: 0x0f6b4a, emissiveIntensity: 0.55, roughness: 0.35, metalness: 0.25 })
-  const matDown = new THREE.MeshStandardMaterial({ color: 0xf4635e, emissive: 0x7a2420, emissiveIntensity: 0.5, roughness: 0.35, metalness: 0.25 })
-  const matWick = new THREE.MeshStandardMaterial({ color: 0x91a0b4, roughness: 0.6, metalness: 0.1, transparent: true, opacity: 0.8 })
-
-  let price = 0
-  const candles: { o: number; c: number; h: number; l: number }[] = []
-  for (let i = 0; i < COUNT; i++) {
-    const drift = Math.sin(i / 17) * 0.08
-    const open = price
-    const close = open + (rand() - 0.47) * 0.9 + drift
-    candles.push({ o: open, c: close, h: Math.max(open, close) + rand() * 0.45, l: Math.min(open, close) - rand() * 0.45 })
-    price = close
-  }
-  const mean = candles.reduce((s, k) => s + k.c, 0) / COUNT
-  const bodies: { mesh: any; base: number; idx: number }[] = []
-  candles.forEach((k, idx) => {
-    const x = (idx - COUNT / 2) * SPACING
-    const up = k.c >= k.o
-    const body = new THREE.Mesh(bodyGeo, up ? matUp : matDown)
-    const mid = ((k.o + k.c) / 2 - mean) * SCALE
-    body.position.set(x, mid, 0)
-    body.scale.y = Math.max(Math.abs(k.c - k.o), 0.06) * SCALE
-    const wick = new THREE.Mesh(wickGeo, matWick)
-    wick.position.set(x, ((k.h + k.l) / 2 - mean) * SCALE, 0)
-    wick.scale.y = Math.max(k.h - k.l, 0.08) * SCALE
-    group.add(wick)
-    group.add(body)
-    bodies.push({ mesh: body, base: mid, idx })
-  })
-
-  const planeGeo = new THREE.PlaneGeometry(COUNT * SPACING + 4, 7, 40, 14)
-  const planeMat = new THREE.MeshBasicMaterial({ color: 0x4f7dff, wireframe: true, transparent: true, opacity: 0.07 })
-  const plane = new THREE.Mesh(planeGeo, planeMat)
-  plane.position.set(0, 0, -1.2)
-  group.add(plane)
-  group.rotation.set(-0.28, 0.42, 0.04)
-  group.position.set(2.6, 0.2, 0)
-  scene.add(group)
-
-  // Tick field: additive points drifting in a slow wave behind the ribbon.
-  const P = 2600
-  const positions = new Float32Array(P * 3)
-  const colors = new Float32Array(P * 3)
-  const cBrand = new THREE.Color(0x4f7dff)
-  const cLive = new THREE.Color(0x2bd4bd)
-  for (let p = 0; p < P; p++) {
-    positions[p * 3] = (rand() - 0.5) * 64
-    positions[p * 3 + 1] = (rand() - 0.5) * 30
-    positions[p * 3 + 2] = -5 - rand() * 14
-    const c = rand() < 0.35 ? cLive : cBrand
-    colors[p * 3] = c.r
-    colors[p * 3 + 1] = c.g
-    colors[p * 3 + 2] = c.b
-  }
-  const basePositions = positions.slice()
-  const ptsGeo = new THREE.BufferGeometry()
-  ptsGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  ptsGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3))
-  const ptsMat = new THREE.PointsMaterial({ size: 0.12, vertexColors: true, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true })
-  const points = new THREE.Points(ptsGeo, ptsMat)
-  scene.add(points)
-
-  const mouse = { x: 0, y: 0 }
-  const target = { x: 0, y: 0 }
-  let rafId = 0
-  let disposed = false
-  // False while the hero is scrolled out of view; the loop parks until it returns.
-  let visible = true
-  const start = performance.now()
-
-  const restingY = () => (canvas.clientWidth < 900 ? -1.6 : 0.2)
-
-  function resize() {
-    const w = canvas.clientWidth
-    const h = canvas.clientHeight
-    if (!w || !h) return
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
-    renderer.setSize(w, h, false)
-    camera.aspect = w / h
-    camera.fov = w < 760 ? 62 : 50
-    camera.updateProjectionMatrix()
-    group.position.x = w < 900 ? 0.6 : 2.6
-    group.position.y = restingY()
-  }
-
-  function renderOnce() {
-    camera.lookAt(camTarget)
-    renderer.render(scene, camera)
-  }
-
-  function frame(now: number) {
-    rafId = 0
-    if (disposed || document.hidden || !visible) return
-    const t = (now - start) / 1000
-
-    mouse.x += (target.x - mouse.x) * 0.05
-    mouse.y += (target.y - mouse.y) * 0.05
-
-    group.rotation.y = 0.42 + Math.sin(t * 0.18) * 0.08 + mouse.x * 0.25
-    group.rotation.x = -0.28 + mouse.y * 0.12
-    group.position.y += (restingY() + Math.sin(t * 0.5) * 0.06 - group.position.y) * 0.05
-
-    for (let b = 0; b < bodies.length; b++) {
-      const item = bodies[b]
-      item.mesh.position.y = item.base + Math.sin(t * 0.9 + item.idx * 0.22) * 0.05
-    }
-
-    const arr = ptsGeo.attributes.position.array as Float32Array
-    for (let q = 0; q < P; q++) {
-      const bx = basePositions[q * 3]
-      const by = basePositions[q * 3 + 1]
-      arr[q * 3 + 1] = by + Math.sin(t * 0.35 + bx * 0.35) * 0.35
-      arr[q * 3] = bx + Math.cos(t * 0.12 + by * 0.2) * 0.15
-    }
-    ptsGeo.attributes.position.needsUpdate = true
-    points.rotation.z = Math.sin(t * 0.05) * 0.02
-
-    camera.position.x = 3.2 + mouse.x * 0.8
-    camera.position.y = 1.6 - mouse.y * 0.6
-    renderOnce()
-    schedule()
-  }
-
-  function schedule() {
-    if (disposed || reduceMotion || rafId) return
-    rafId = requestAnimationFrame(frame)
-  }
-
-  const onResize = () => {
-    resize()
-    if (reduceMotion) renderOnce()
-  }
-  const onPointer = (e: PointerEvent) => {
-    target.x = e.clientX / window.innerWidth - 0.5
-    target.y = e.clientY / window.innerHeight - 0.5
-  }
-  const onVisibility = () => {
-    if (!document.hidden) schedule()
-  }
-  // Park the loop while the hero is scrolled off-screen (rAF is not throttled
-  // for off-screen elements in a visible tab).
-  const observer =
-    'IntersectionObserver' in window
-      ? new IntersectionObserver((entries) => {
-          const entry = entries[entries.length - 1]
-          if (!entry) return
-          visible = entry.isIntersecting
-          if (visible) schedule()
-        })
-      : null
-  // The context is not restored (no preventDefault): tear everything down and
-  // let the page fall back to the CSS gradient instead of animating a hidden canvas.
-  const onContextLost = () => {
-    dispose()
-    onLost()
-  }
-
-  function dispose() {
-    if (disposed) return
-    disposed = true
-    if (rafId) cancelAnimationFrame(rafId)
-    rafId = 0
-    observer?.disconnect()
-    window.removeEventListener('resize', onResize)
-    document.removeEventListener('visibilitychange', onVisibility)
-    canvas.removeEventListener('webglcontextlost', onContextLost)
-    window.removeEventListener('pointermove', onPointer)
-    bodyGeo.dispose(); wickGeo.dispose(); planeGeo.dispose(); ptsGeo.dispose()
-    matUp.dispose(); matDown.dispose(); matWick.dispose(); planeMat.dispose(); ptsMat.dispose()
-    renderer.dispose()
-  }
-
-  window.addEventListener('resize', onResize, { passive: true })
-  document.addEventListener('visibilitychange', onVisibility)
-  canvas.addEventListener('webglcontextlost', onContextLost)
-  if (!reduceMotion) window.addEventListener('pointermove', onPointer, { passive: true })
-  observer?.observe(canvas)
-
-  resize()
-  if (reduceMotion) renderOnce()
-  else schedule()
-
-  return { dispose }
-}
-
-function useHeroScene(canvasRef: RefObject<HTMLCanvasElement | null>, fallbackRef: RefObject<HTMLDivElement | null>) {
-  useEffect(() => {
-    const canvas = canvasRef.current
-    const fallback = fallbackRef.current
-    if (!canvas || !fallback) return
-
-    let handle: SceneHandle | null = null
-    let cancelled = false
-
-    const showFallback = () => {
-      canvas.style.display = 'none'
-      fallback.style.display = ''
-    }
-
-    if (!webglAvailable()) {
-      showFallback()
-      return
-    }
-
-    void loadThree().then((ok) => {
-      if (cancelled) return
-      if (!ok) {
-        showFallback()
-        return
-      }
-      handle = buildScene(canvas, prefersReducedMotion(), () => {
-        // Context lost: the scene has already torn itself down; drop the handle.
-        handle = null
-        showFallback()
-      })
-      if (!handle) {
-        showFallback()
-        return
-      }
-      fallback.style.display = 'none'
-    })
-
-    return () => {
-      cancelled = true
-      handle?.dispose()
-      handle = null
-    }
-  }, [canvasRef, fallbackRef])
-}
 
 /* ------------------------------------------------------- small behaviours */
 
@@ -453,9 +115,6 @@ export function LandingPage() {
   const navLabel = sessionLikely ? 'Console' : 'Open console'
 
   const rootRef = useRef<HTMLDivElement | null>(null)
-  const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const fallbackRef = useRef<HTMLDivElement | null>(null)
-  useHeroScene(canvasRef, fallbackRef)
   useReveal(rootRef)
 
   useEffect(() => {
@@ -488,8 +147,7 @@ export function LandingPage() {
       <main id="top">
         {/* ------------------------------------------------------- hero */}
         <section className="hero" aria-labelledby="hero-title">
-          <div className="hero__fallback" ref={fallbackRef} aria-hidden="true" />
-          <canvas className="hero__scene" ref={canvasRef} aria-hidden="true" />
+          <MarketCanvas variant="hero" canvasClass="hero__scene" fallbackClass="hero__fallback" />
           <div className="hero__veil" aria-hidden="true" />
 
           <div className="wrap hero__grid">
@@ -598,7 +256,7 @@ export function LandingPage() {
                 <div className="panel__head">
                   <h3 className="panel__title">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 12h3l2-6 4 12 2-6h5" /></svg>
-                    Titli · BANKNIFTY <span className="badge badge--live">Running · paper</span>
+                    ATM Straddle · BANKNIFTY <span className="badge badge--live">Running · paper</span>
                   </h3>
                   <span className="muted mono" style={{ fontSize: 12 }}>2 lots × 30 · SL ₹5,000 · Target ₹8,000</span>
                 </div>
@@ -631,9 +289,9 @@ export function LandingPage() {
                   <span className="faint" style={{ fontSize: 12 }}>reasons, in the strategy's own words</span>
                 </div>
                 <ul className="activity">
-                  <li><span className="mono faint">10:47:12</span> <span className="badge badge--pos">OPEN_GROUP</span> Initial Titli short straddle at ATM 57500</li>
+                  <li><span className="mono faint">10:47:12</span> <span className="badge badge--pos">OPEN_GROUP</span> Initial short straddle at ATM 57500</li>
                   <li><span className="mono faint">11:02:40</span> <span className="badge badge--neutral">CLOSE_GROUP</span> Closing previous group because ATM shifted from 57500 to 57600</li>
-                  <li><span className="mono faint">11:02:40</span> <span className="badge badge--pos">OPEN_GROUP</span> Opening new Titli short straddle at ATM 57600</li>
+                  <li><span className="mono faint">11:02:40</span> <span className="badge badge--pos">OPEN_GROUP</span> Opening new short straddle at ATM 57600</li>
                 </ul>
                 <p className="note">When a run ends — stop-loss, target, market close, or you — the reason is persisted with it, so the card still says <i>why</i> after an API restart. Runner output is one click away.</p>
               </div>
@@ -647,7 +305,7 @@ export function LandingPage() {
             <div className="section__head reveal">
               <p className="kicker">Backtesting, coverage-first</p>
               <h2 id="bt-title">A losing backtest, shown honestly.</h2>
-              <p>A real run from the console: GhostTangentCrossings on BANKNIFTY 5-minute candles, 12 sessions, one lot. The 13 entries on seven expired contracts the broker no longer serves history for are listed as skipped — not quietly filled at a made-up price.</p>
+              <p>A real run from the console: a tangent-crossing strategy on BANKNIFTY 5-minute candles, 12 sessions, one lot. The 13 entries on seven expired contracts the broker no longer serves history for are listed as skipped — not quietly filled at a made-up price.</p>
             </div>
 
             <div className="showcase">
@@ -655,7 +313,7 @@ export function LandingPage() {
                 <div className="panel__head">
                   <h3 className="panel__title">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3l-5-9V3" /></svg>
-                    Ghost · BANKNIFTY · 5m · 19 Aug → 3 Sep <span className="badge badge--neutral">Completed</span>
+                    Tangent Crossings · BANKNIFTY · 5m · 19 Aug → 3 Sep <span className="badge badge--neutral">Completed</span>
                   </h3>
                 </div>
                 <div className="metrics">

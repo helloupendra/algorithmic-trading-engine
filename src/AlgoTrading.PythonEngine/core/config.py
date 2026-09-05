@@ -51,6 +51,12 @@ WATCHLIST_REFRESH_SECONDS = 5
 
 # Heartbeat settings
 SOURCE_NAME = "python-live-ingestor"
+
+# Which connector this ingestor speaks for. It is written into the SourceKey of
+# every tick, quote and bar it produces, so the platform can say which source a
+# price came from — and so two feeds could one day run side by side without their
+# data becoming indistinguishable. It must match a provider key the API knows.
+DATA_PROVIDER_KEY = os.getenv("DATA_PROVIDER_KEY", "fyers").strip() or "fyers"
 HEARTBEAT_SECONDS = 15
 
 

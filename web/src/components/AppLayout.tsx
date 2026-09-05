@@ -11,7 +11,6 @@ import { useBrokerSession, useIngestorStatuses, useMarketSession } from '../lib/
 import {
   BACKTESTING_SECTIONS,
   DATA_SECTIONS,
-  MODULES,
   STRATEGIES_SECTIONS,
   SYSTEM_SECTIONS,
 } from '../lib/modules'
@@ -28,7 +27,6 @@ import {
   IconPlay,
   IconPulse,
   IconSignOut,
-  IconSwitch,
 } from './icons'
 
 function StatusPill({
@@ -143,10 +141,9 @@ function NavItem({
 }
 
 function AdminNav() {
-  // Modules with their own nav group above are listed there, not here. The rest
-  // keep MODULES order, which puts the finished ones first.
-  const grouped = new Set(['data', 'strategies', 'backtesting', 'system'])
-  const moduleLinks = MODULES.filter((m) => !grouped.has(m.key) && m.status !== 'planned')
+  // Every module now lives inside the group it belongs to — Connectors with the
+  // data it supplies, Users with the rest of platform administration. A generic
+  // "Modules" heading said nothing: every entry in this sidebar is one.
 
   return (
     <>
@@ -182,18 +179,6 @@ function AdminNav() {
         ))}
       </div>
 
-      <div className="nav-group">
-        <div className="nav-group__label">Modules</div>
-        {moduleLinks.map((m) => (
-          <NavItem
-            key={m.key}
-            to={m.route}
-            label={m.name}
-            icon={m.icon}
-            badge={m.status === 'legacy' ? 'v1' : undefined}
-          />
-        ))}
-      </div>
     </>
   )
 }
@@ -224,11 +209,12 @@ const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]>
   ['/admin/backtesting/runs', 'Backtesting', 'Runs'],
   ['/admin/backtesting/new', 'Backtesting', 'New backtest'],
   ['/admin/backtesting', 'Backtesting', 'Overview'],
-  ['/admin/users', 'Modules', 'Users'],
+  ['/admin/users/packages', 'System', 'Strategy packages'],
+  ['/admin/users', 'System', 'Users & access'],
   ['/admin/system/risk', 'System', 'Risk & kill switch'],
-  ['/admin/strategies', 'Modules', 'Strategies'],
   ['/admin/system/alerts', 'System', 'Alerts'],
-  ['/admin/broker', 'Modules', 'Connectors'],
+  ['/admin/system/logs', 'System', 'Activity log'],
+  ['/admin/broker', 'Data', 'Connectors'],
   ['/admin/system', 'System', 'Overview'],
   ['/admin', null, 'Overview'],
   ['/trader/strategies/history', 'Trading', 'My runs'],
@@ -267,12 +253,6 @@ export function AppLayout() {
         </div>
 
         <nav aria-label="Main">{isAdmin ? <AdminNav /> : <TraderNav />}</nav>
-
-        {isAdmin && (
-          <div className="nav-group">
-            <NavItem to="/trader" label="Trader view" icon={IconSwitch} />
-          </div>
-        )}
 
         <div className="shell__user">
           <span className="shell__avatar" aria-hidden="true">

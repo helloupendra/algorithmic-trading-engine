@@ -46,9 +46,11 @@
 .lp .hero__fallback { position: absolute; inset: 0; z-index: -2; background:
     radial-gradient(900px 520px at 78% 40%, rgba(79,125,255,.22) 0%, transparent 60%),
     radial-gradient(700px 460px at 18% 90%, rgba(43,212,189,.14) 0%, transparent 60%), var(--bg0); }
+/* The scene's own envelope keeps the left column dark, so the veil only has to
+   seat the type and close the bottom edge into the page — not hide the render. */
 .lp .hero__veil { position: absolute; inset: 0; z-index: -1; pointer-events: none; background:
-    linear-gradient(90deg, color-mix(in srgb, var(--bg0) 88%, transparent) 0%, color-mix(in srgb, var(--bg0) 55%, transparent) 46%, transparent 72%),
-    linear-gradient(180deg, transparent 55%, var(--bg0) 100%); }
+    linear-gradient(90deg, color-mix(in srgb, var(--bg0) 72%, transparent) 0%, color-mix(in srgb, var(--bg0) 30%, transparent) 40%, transparent 62%),
+    linear-gradient(180deg, transparent 62%, var(--bg0) 100%); }
 .lp .hero__grid { display: grid; grid-template-columns: minmax(0, 640px) 1fr; gap: 32px; }
 .lp .hero__grid > div { min-width: 0; }
 .lp .eyebrow { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 8px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--live) 35%, transparent); background: var(--live-soft); color: var(--live); font-size: 12.5px; font-weight: 600; letter-spacing: .02em; }
@@ -69,7 +71,9 @@
 @keyframes lp-drop { 0% { transform: scaleY(0); transform-origin: top; } 50% { transform: scaleY(1); transform-origin: top; } 51% { transform-origin: bottom; } 100% { transform: scaleY(0); transform-origin: bottom; } }
 @media (max-width: 900px) {
   .lp .hero__grid { grid-template-columns: 1fr; }
-  .lp .hero__veil { background: linear-gradient(180deg, color-mix(in srgb, var(--bg0) 45%, transparent) 0%, color-mix(in srgb, var(--bg0) 75%, transparent) 50%, var(--bg0) 100%); }
+  /* Single column: the copy sits on the top half, so the veil is heaviest there
+     and lifts toward the bottom — a solid bg0 stop would paint over the tape. */
+  .lp .hero__veil { background: linear-gradient(180deg, color-mix(in srgb, var(--bg0) 78%, transparent) 0%, color-mix(in srgb, var(--bg0) 80%, transparent) 42%, color-mix(in srgb, var(--bg0) 35%, transparent) 100%); }
   /* The hero already exceeds one screen here; the hint would only crowd the stats. */
   .lp .scroll-hint { display: none; }
 }

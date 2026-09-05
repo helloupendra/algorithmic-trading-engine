@@ -1303,3 +1303,145 @@ export function useResetMyWatchlist() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['watchlist', 'me'] }),
   })
 }
+
+// ---------- Strategy packages (admin) ----------
+
+export function useStrategyPackages() {
+  return useQuery({
+    queryKey: ['packages', 'list'],
+    queryFn: () => api.get<import('./types').StrategyPackage[]>('/api/StrategyPackages'),
+  })
+}
+
+export function useStrategyCatalogNames() {
+  return useQuery({
+    queryKey: ['packages', 'catalog'],
+    queryFn: () =>
+      api.get<import('./types').StrategyCatalogName[]>('/api/StrategyPackages/catalog'),
+    staleTime: 60_000,
+  })
+}
+
+export function useCreateStrategyPackage() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: import('./types').SaveStrategyPackageInput) =>
+      api.post<import('./types').StrategyPackage>('/api/StrategyPackages', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['packages'] }),
+  })
+}
+
+export function useUpdateStrategyPackage() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...input }: { id: number } & import('./types').SaveStrategyPackageInput) =>
+      api.put<import('./types').StrategyPackage>(`/api/StrategyPackages/${id}`, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['packages'] }),
+  })
+}
+
+export function useSetPackageStrategies() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, strategyNames }: { id: number; strategyNames: string[] }) =>
+      api.put<import('./types').StrategyPackage>(`/api/StrategyPackages/${id}/strategies`, {
+        strategyNames,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['packages'] }),
+  })
+}
+
+export function useDeleteStrategyPackage() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => api.delete<{ message: string }>(`/api/StrategyPackages/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['packages'] })
+      qc.invalidateQueries({ queryKey: ['users'] })
+    },
+  })
+}
+
+export function useSetUserStrategyGrants() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, strategyNames }: { id: number; strategyNames: string[] }) =>
+      api.put<{ message: string }>(`/api/Users/${id}/strategy-grants`, { strategyNames }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  })
+}
+
+// ---------- Invites ----------
+
+export function useInvites() {
+  return useQuery({
+    queryKey: ['invites'],
+    queryFn: () => api.get<import('./types').UserInvite[]>('/api/Invites'),
+  })
+}
+
+export function useCreateInvite() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: {
+      email: string
+      suggestedUserName?: string
+      moduleKeys: string[]
+      strategyPackageId: number | null
+      validDays: number
+    }) => api.post<import('./types').CreatedInvite>('/api/Invites', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invites'] }),
+  })
+}
+
+export function useRevokeInvite() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => api.post<{ message: string }>(`/api/Invites/${id}/revoke`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invites'] }),
+  })
+}
+
+// ---------- Activity log (admin) ----------
+
+export interface ActivityLogFilters {
+  userId?: number | null
+  module?: string
+  action?: string
+  succeeded?: boolean
+  search?: string
+  limit?: number
+}
+
+export function useActivityLog(filters: ActivityLogFilters) {
+  const params = new URLSearchParams()
+  if (filters.userId != null) params.set('userId', String(filters.userId))
+  if (filters.module) params.set('module', filters.module)
+  if (filters.action) params.set('action', filters.action)
+  if (filters.succeeded != null) params.set('succeeded', String(filters.succeeded))
+  if (filters.search) params.set('search', filters.search)
+  params.set('limit', String(filters.limit ?? 200))
+
+  return useQuery({
+    queryKey: ['activity', 'log', params.toString()],
+    queryFn: () => api.get<import('./types').ActivityLogPage>(`/api/ActivityLog?${params}`),
+    refetchInterval: 15_000,
+  })
+}
+
+export function useActivityFacets() {
+  return useQuery({
+    queryKey: ['activity', 'facets'],
+    queryFn: () => api.get<import('./types').ActivityLogFacets>('/api/ActivityLog/facets'),
+    refetchInterval: 30_000,
+  })
+}
+
+export function useActivityUserSummary(userId: number | null) {
+  return useQuery({
+    queryKey: ['activity', 'user', userId],
+    queryFn: () =>
+      api.get<import('./types').ActivityUserSummary>(`/api/ActivityLog/users/${userId}/summary`),
+    enabled: userId != null,
+  })
+}

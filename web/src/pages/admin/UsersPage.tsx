@@ -7,12 +7,19 @@
  */
 
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   usePlatformModules,
   useRegisterUser,
   useResetUserPassword,
   useRevokeUserSessions,
+  useCreateInvite,
+  useInvites,
+  useRevokeInvite,
   useSetUserGrants,
+  useSetUserStrategyGrants,
+  useStrategyCatalogNames,
+  useStrategyPackages,
   useUpdateUser,
   useUserAccounts,
   useUserRoles,
@@ -143,6 +150,8 @@ function AccountRow({
                   </div>
                 </>
               )}
+
+              {!isService && !isAdmin && <StrategyAccessSection user={user} onError={onError} />}
 
               <h3 className="section-title connector-section">Account</h3>
               <div className="form-row">
@@ -284,6 +293,121 @@ function AccountRow({
   )
 }
 
+/**
+ * What this trader may actually run: their package, plus any one-off extras.
+ *
+ * The module grant above decides whether they can reach the Strategies module at
+ * all; this decides which strategies exist for them once they are in it.
+ */
+function StrategyAccessSection({
+  user,
+  onError,
+}: {
+  user: UserAdmin
+  onError: (e: unknown) => void
+}) {
+  const packages = useStrategyPackages()
+  const catalog = useStrategyCatalogNames()
+  const update = useUpdateUser()
+  const setStrategyGrants = useSetUserStrategyGrants()
+
+  const pkg = (packages.data ?? []).find((p) => p.id === user.strategyPackageId)
+  const inPackage = new Set(pkg?.strategies ?? [])
+
+  return (
+    <>
+      <h3 className="section-title connector-section">Strategies</h3>
+      <div className="form-row">
+        <div className="field">
+          <label className="field__label" htmlFor={`pkg-${user.id}`}>
+            Package
+          </label>
+          <select
+            id={`pkg-${user.id}`}
+            className="field__input"
+            value={user.strategyPackageId ?? ''}
+            disabled={update.isPending}
+            onChange={(e) =>
+              update.mutate(
+                {
+                  id: user.id,
+                  strategyPackageId: e.target.value === '' ? -1 : Number(e.target.value),
+                },
+                { onError },
+              )
+            }
+          >
+            <option value="">No package — can run nothing</option>
+            {(packages.data ?? []).map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+                {p.isEnabled ? '' : ' (disabled)'}
+              </option>
+            ))}
+          </select>
+          <span className="small-note muted">
+            <Link to="/admin/users/packages">Manage packages →</Link>
+          </span>
+        </div>
+        {pkg && (
+          <div className="field">
+            <label className="field__label">What it allows</label>
+            <span className="small-note muted">
+              {pkg.includesAllStrategies
+                ? 'Every strategy in the catalog'
+                : `${pkg.strategies.length} strategies`}
+              {pkg.maxLotsPerRun != null && ` · max ${pkg.maxLotsPerRun} lot(s) per run`}
+              {pkg.maxConcurrentRuns != null && ` · max ${pkg.maxConcurrentRuns} run(s)`}
+              {pkg.allowedUnderlyings.length > 0 && ` · ${pkg.allowedUnderlyings.join(', ')}`}
+              {pkg.allowLiveMode ? ' · live allowed' : ' · paper only'}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {!pkg?.includesAllStrategies && (
+        <>
+          <p className="small-note muted">
+            Extras on top of the package — for the one strategy you do not want to add to everyone
+            else's plan.
+          </p>
+          <div className="grant-grid">
+            {(catalog.data ?? [])
+              .filter((entry) => !inPackage.has(entry.name))
+              .map((entry) => {
+                const held = user.strategyGrants.includes(entry.name)
+                return (
+                  <label key={entry.name} className="grant">
+                    <span className="grant__head">
+                      <input
+                        type="checkbox"
+                        checked={held}
+                        disabled={setStrategyGrants.isPending}
+                        onChange={() =>
+                          setStrategyGrants.mutate(
+                            {
+                              id: user.id,
+                              strategyNames: held
+                                ? user.strategyGrants.filter((s) => s !== entry.name)
+                                : [...user.strategyGrants, entry.name],
+                            },
+                            { onError },
+                          )
+                        }
+                      />
+                      {entry.name}
+                    </span>
+                    <span className="grant__desc">{entry.category}</span>
+                  </label>
+                )
+              })}
+          </div>
+        </>
+      )}
+    </>
+  )
+}
+
 function CreateAccountPanel({ onError }: { onError: (e: unknown) => void }) {
   const register = useRegisterUser()
   const [form, setForm] = useState({ userName: '', email: '', password: '' })
@@ -357,6 +481,246 @@ function CreateAccountPanel({ onError }: { onError: (e: unknown) => void }) {
   )
 }
 
+/**
+ * Invitations — an admin decides who may join; the person sets their own
+ * password, so it never passes through the admin or a chat message.
+ */
+function InvitesPanel({ onError }: { onError: (e: unknown) => void }) {
+  const invites = useInvites()
+  const modules = usePlatformModules()
+  const packages = useStrategyPackages()
+  const create = useCreateInvite()
+  const revoke = useRevokeInvite()
+
+  const [open, setOpen] = useState(false)
+  const [form, setForm] = useState({
+    email: '',
+    suggestedUserName: '',
+    moduleKeys: [] as string[],
+    strategyPackageId: null as number | null,
+    validDays: 7,
+  })
+  const [link, setLink] = useState<string | null>(null)
+
+  return (
+    <Panel
+      title="Invitations"
+      actions={
+        <button type="button" className="btn btn--primary btn--sm" onClick={() => setOpen((o) => !o)}>
+          {open ? 'Cancel' : 'Invite someone'}
+        </button>
+      }
+    >
+      <p className="muted" style={{ maxWidth: '78ch' }}>
+        Signing up is not open. You choose who may join; they choose their own password. Anything you
+        tick here is what their account starts with — leave it all off and they can sign in and do
+        nothing until you decide otherwise.
+      </p>
+
+      {link && (
+        <div className="alert alert--success" role="status">
+          <div>
+            Send this link to them. <b>It is shown only once</b> — the token is not recoverable.
+          </div>
+          <code style={{ wordBreak: 'break-all', display: 'block', marginTop: 6 }}>{link}</code>
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() => {
+              navigator.clipboard?.writeText(link)
+            }}
+          >
+            Copy
+          </button>
+          <button type="button" className="btn btn--ghost btn--sm" onClick={() => setLink(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {open && (
+        <>
+          {create.isError && <InlineError error={create.error} />}
+          <form
+            className="edit-grid"
+            onSubmit={(e) => {
+              e.preventDefault()
+              create.mutate(form, {
+                onSuccess: (created) => {
+                  setLink(created.link)
+                  setForm({
+                    email: '',
+                    suggestedUserName: '',
+                    moduleKeys: [],
+                    strategyPackageId: null,
+                    validDays: 7,
+                  })
+                  setOpen(false)
+                },
+                onError,
+              })
+            }}
+          >
+            <div className="field">
+              <label className="field__label" htmlFor="inv-email">
+                Email
+              </label>
+              <input
+                id="inv-email"
+                className="field__input"
+                type="email"
+                required
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+              />
+            </div>
+            <div className="field">
+              <label className="field__label" htmlFor="inv-username">
+                Suggested username
+              </label>
+              <input
+                id="inv-username"
+                className="field__input"
+                placeholder="from the email if blank"
+                value={form.suggestedUserName}
+                onChange={(e) => setForm({ ...form, suggestedUserName: e.target.value })}
+              />
+            </div>
+            <div className="field">
+              <label className="field__label" htmlFor="inv-days">
+                Valid for (days)
+              </label>
+              <input
+                id="inv-days"
+                className="field__input"
+                type="number"
+                min={1}
+                max={90}
+                value={form.validDays}
+                onChange={(e) => setForm({ ...form, validDays: Number(e.target.value) || 7 })}
+              />
+            </div>
+            <div className="field">
+              <label className="field__label" htmlFor="inv-package">
+                Strategy package
+              </label>
+              <select
+                id="inv-package"
+                className="field__input"
+                value={form.strategyPackageId ?? ''}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    strategyPackageId: e.target.value === '' ? null : Number(e.target.value),
+                  })
+                }
+              >
+                <option value="">None — can run nothing</option>
+                {(packages.data ?? []).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="edit-grid__actions">
+              <div className="grant-grid" style={{ marginBottom: 10 }}>
+                {(modules.data ?? []).map((m) => {
+                  const held = form.moduleKeys.includes(m.key)
+                  return (
+                    <label key={m.key} className="grant">
+                      <span className="grant__head">
+                        <input
+                          type="checkbox"
+                          checked={held}
+                          onChange={() =>
+                            setForm({
+                              ...form,
+                              moduleKeys: held
+                                ? form.moduleKeys.filter((k) => k !== m.key)
+                                : [...form.moduleKeys, m.key],
+                            })
+                          }
+                        />
+                        {m.name}
+                      </span>
+                      <span className="grant__desc">{m.description}</span>
+                    </label>
+                  )
+                })}
+              </div>
+              <button className="btn btn--primary" disabled={create.isPending}>
+                {create.isPending ? 'Creating…' : 'Create invitation'}
+              </button>
+            </div>
+          </form>
+        </>
+      )}
+
+      {revoke.isError && <InlineError error={revoke.error} />}
+
+      <QueryBoundary query={invites} empty="No invitations yet.">
+        {(list) =>
+          list.length === 0 ? (
+            <EmptyState>No invitations yet.</EmptyState>
+          ) : (
+            <div className="tablewrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Email</th>
+                    <th>Status</th>
+                    <th>Starts with</th>
+                    <th>Invited by</th>
+                    <th>Expires</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {list.map((inv) => (
+                    <tr key={inv.id}>
+                      <td>
+                        {inv.email}
+                        <div className="small-note muted mono">{inv.suggestedUserName}</div>
+                      </td>
+                      <td>
+                        {inv.status === 'pending' ? (
+                          <Badge tone="accent">pending</Badge>
+                        ) : inv.status === 'accepted' ? (
+                          <Badge tone="pos">accepted</Badge>
+                        ) : (
+                          <Badge tone="neutral">{inv.status}</Badge>
+                        )}
+                      </td>
+                      <td className="mono">
+                        {inv.moduleKeys.length > 0 ? inv.moduleKeys.join(', ') : '—'}
+                      </td>
+                      <td>{inv.createdBy}</td>
+                      <td>{formatAge(inv.expiresUtc)}</td>
+                      <td>
+                        {inv.status === 'pending' && (
+                          <button
+                            type="button"
+                            className="btn btn--ghost btn--sm"
+                            disabled={revoke.isPending}
+                            onClick={() => revoke.mutate(inv.id, { onError })}
+                          >
+                            Revoke
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        }
+      </QueryBoundary>
+    </Panel>
+  )
+}
+
 export function UsersPage() {
   const accounts = useUserAccounts()
   const modules = usePlatformModules()
@@ -414,6 +778,8 @@ export function UsersPage() {
           rather than deleted, so the runs and orders they made keep their owner.
         </p>
       </Panel>
+
+      <InvitesPanel onError={setError} />
 
       <CreateAccountPanel onError={setError} />
 

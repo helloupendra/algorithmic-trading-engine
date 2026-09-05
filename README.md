@@ -4,8 +4,9 @@ A polyglot, event-driven algorithmic trading platform for Indian equity and
 derivatives markets. A .NET 10 backend owns persistence, risk and broker
 integration; a Python engine owns live ingestion and strategy execution; Redis
 Streams carry ticks between them; TimescaleDB stores the time series; and a
-React **web console** operates the whole thing — live feeds, historical data,
-instruments and F&O chains from the browser.
+React **web console** operates the whole thing from the browser — live feeds and
+historical data, strategy runs and backtests, risk and alerts, the data vendors
+and brokers it connects to, and who on the team may do what.
 
 > **Trading involves financial risk.** This software is provided for research
 > and educational use. Run it in paper/simulation mode until you have validated
@@ -13,8 +14,34 @@ instruments and F&O chains from the browser.
 
 ---
 
+## The console
+
+Everything below is driven from the browser — there is no separate admin tool.
+
+**Live feeds** — the broker websocket, the symbols it is subscribed to, and the
+last quote stored for each. The age of every quote is shown next to it, so stale
+data looks stale instead of looking like a price.
+
+![Live feeds: index tickers and the database recording list](docs/image/console-live-feeds.png)
+
+**Backtesting** — coverage first. Before offering a backtest the console says
+exactly what history it holds per index and resolution, where it came from
+(`live` bars the ingestor recorded, or a `backfill`), and what is missing. A
+backtest you cannot run is better than one that quietly replays a gap.
+
+![Backtesting: stored history per index and resolution, with its source](docs/image/console-backtesting.png)
+
+**Run history** — every live run, attached to the user who started it, with
+quantity expressed as **lots × lot size** rather than a bare share count.
+Nothing is dismissed: a run that stopped for any reason is still here.
+
+![Run history: runs per user with net P&L and lots × lot size](docs/image/console-run-history.png)
+
+---
+
 ## Contents
 
+- [The console](#the-console)
 - [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
 - [Quick start](#quick-start)
@@ -65,16 +92,21 @@ instruments and F&O chains from the browser.
 
 | Component | Stack | Responsibility |
 |---|---|---|
-| `AlgoTrading.Api` | .NET 10 | REST API, auth, instruments, expiry resolution, simulation, risk; serves the built web console from `wwwroot` |
+| `AlgoTrading.Api` | .NET 10 | REST API, auth and access control, instruments, expiry resolution, simulation, risk, and the connector registry that decides which vendor serves which job; serves the built web console from `wwwroot` |
 | `AlgoTrading.Worker.MarketData` | .NET 10 | Drains the Redis tick stream into TimescaleDB in batches |
 | `AlgoTrading.Worker.Strategy` | .NET 10 | Strategy host (placeholder — live strategies run in the Python engine) |
 | `AlgoTrading.Backtester` | .NET 10 | Placeholder — backtesting currently runs via the Python CLI tools |
 | `AlgoTrading.PythonEngine` | Python 3.10+ | Live FYERS ingestion, option-chain tracking, strategy execution |
-| `web/` | React 19 + Vite + TypeScript | Web console (v2 design system): admin modules — Data first — plus the trader screens |
+| `web/` | React 19 + Vite + TypeScript | Web console (v2 design system): the admin modules plus the trader screens |
 
 The .NET solution follows a clean-architecture split: `Domain` → `Application`
 → `Infrastructure` → `Api`/`Worker.*`, with `Contracts` holding the DTOs shared
 across boundaries.
+
+FYERS is one **connector**, not the platform's wiring: data vendors and brokers
+sit behind `IMarketDataProvider` and `IBrokerProvider`, each declaring what it can
+actually deliver, and every stored price records which connector produced it. See
+[docs/modules/connectors_module.md](docs/modules/connectors_module.md).
 
 ---
 
@@ -313,12 +345,25 @@ design system — admin experience first. Current state:
 
 | Module | Status | What it does |
 |---|---|---|
-| **Data** | **v2 — complete** | *Overview* (coverage matrix, pipeline health, needs-attention), *Live feeds* (start/stop the ingestor, index tickers, one merged live watchlist with quotes, diagnostics + process logs, tick/bar inspector), *Historical* (coverage-first candle browser with chart + FYERS backfill incl. ATM±N option chains), *Instruments & F&O* (master search, expiries, CE/PE chain ladder) |
-| Strategies, Backtesting, Risk, Alerts, Users, Broker, System | v1 | Functional screens from the previous design, tagged `v1` in the sidebar; each will be rebuilt in turn |
-| Trader screens | v1 | Rebuild queued after the admin modules; per-trader module access will then be granted from Users |
+| **Data** | **v2** | *Overview* (coverage matrix, pipeline health, needs-attention), *Live feeds* (start/stop the ingestor, index tickers, the subscription list with quotes, diagnostics + process logs, tick/bar inspector), *Historical* (coverage-first candle browser with chart + backfill incl. ATM±N option chains), *Instruments & F&O* (master search, expiries, CE/PE chain ladder) |
+| **Strategies** | **v2** | Live runner (mandatory underlying, lots × lot size, three-level risk rules editable while running), run history per user, strategy library |
+| **Backtesting** | **v2** | Coverage-first launcher, replay over stored history on the same `on_bar` contract as the live runner, position-based results with skipped entries listed honestly |
+| **Connectors** | **v2** | Data vendors and brokers: capability matrix, credentials, sessions, a probe that fetches real bars, and the routing table that decides which source serves which job |
+| **Users** | **v2** | Accounts, server-enforced module grants, strategy packages with limits, invitations, sessions |
+| **System** | v1 overview + v2 sections | *Overview* is still the v1 page; *Risk & kill switch*, *Alerts* and *Activity log* underneath it are rebuilt |
+| **Activity log** | **v2** | Who did what, across every module: click an account to see where they have been, filter to refusals only ([notes](docs/modules/activity_log.md)) |
+| Trader screens | v1 | Rebuild queued. What a trader sees is already narrowed by module grants and their strategy package |
 
-The module registry lives in `web/src/lib/modules.ts` — the sidebar, the admin
-home grid and (later) per-trader module grants all read from it.
+Navigation lives in `web/src/lib/modules.ts`. There is no generic "Modules"
+heading: every entry sits with the thing it belongs to — **Connectors** under
+*Data*, because it is where the data comes from; **Users & access** under
+*System*, alongside the kill switch and the alerter, because that is one question
+an operator asks, not three.
+
+**Access control is enforced on the server, not in the menu.** A trader without a
+module grant gets `403` from the matching endpoints whether they use the console
+or `curl`; a trader outside their strategy package is refused at deploy time with
+the reason. Hiding a nav entry is not access control — anyone can type a URL.
 
 ### Service endpoints
 
@@ -625,6 +670,19 @@ rm -rf .venv data/instruments/*.csv
 | [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) | Current build status and roadmap |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development workflow and conventions |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting and security practices |
+
+### Module notes
+
+| Document | Contents |
+|---|---|
+| [docs/modules/connectors_module.md](docs/modules/connectors_module.md) | Data vendors and brokers: the provider seam, capability matrix, routing and failover rules |
+| [docs/modules/users_module.md](docs/modules/users_module.md) | Roles, server-enforced module grants, session control and invitations |
+| [docs/modules/strategy_packages.md](docs/modules/strategy_packages.md) | What a trader may run and the ceilings that come with it |
+| [docs/modules/strategies_module.md](docs/modules/strategies_module.md) | Live runner: lots × lot size, risk levels, multi-instance runs |
+| [docs/modules/backtesting_module.md](docs/modules/backtesting_module.md) | Replay engine and the coverage-first launcher |
+| [docs/modules/activity_log.md](docs/modules/activity_log.md) | Who did what, across every module — what is recorded, what deliberately is not |
+| [docs/roadmap/broker-and-data-provider-module.md](docs/roadmap/broker-and-data-provider-module.md) | Multi-vendor architecture: decisions taken, phases delivered, what is left |
+| [docs/android-app-prompt.md](docs/android-app-prompt.md) | A ready-to-paste prompt for generating an Android companion app against this API |
 
 ---
 

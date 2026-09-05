@@ -291,7 +291,14 @@ public class AuthService : IAuthService
             new Claim(ClaimTypes.Role, role),
             // Duplicated under the short name so non-.NET consumers (the web client)
             // can read the role straight off the decoded token payload.
-            new Claim("role", role)
+            new Claim("role", role),
+
+            // When this token was issued, so a later cutoff on the account can
+            // refuse it without waiting for it to expire.
+            new Claim(
+                JwtRegisteredClaimNames.Iat,
+                DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(),
+                ClaimValueTypes.Integer64)
         };
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtOptions.SecretKey));

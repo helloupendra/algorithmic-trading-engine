@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.IdentityModel.Tokens.Jwt;
 using AlgoTrading.Api.Security;
+using AlgoTrading.Api.Services;
 
 namespace AlgoTrading.Api.Controllers
 {
@@ -31,6 +32,12 @@ namespace AlgoTrading.Api.Controllers
             try
             {
                 var result = await _authService.RegisterAsync(request, cancellationToken);
+
+                HttpContext.Describe(
+                    $"Created the account {result.User.UserName} ({result.User.Role}).",
+                    "user",
+                    result.User.Id.ToString());
+
                 return Ok(result);
             }
             catch (InvalidOperationException ex)
@@ -45,13 +52,28 @@ namespace AlgoTrading.Api.Controllers
             [FromBody] LoginRequest request,
             CancellationToken cancellationToken)
         {
+            // A sign-in carries no token yet, so the activity log cannot name the
+            // caller from the request itself. Both outcomes name them here: who
+            // got in, and — the row that matters more — which name was tried and
+            // refused. The submitted username is not a secret; the password is
+            // never touched.
+            string attempted = request.UserNameOrEmail?.Trim() ?? string.Empty;
+
             try
             {
                 var result = await _authService.LoginAsync(request, cancellationToken);
+
+                HttpContext.AttributeTo(result.User.Id, result.User.UserName, result.User.Role);
+                HttpContext.Describe(
+                    $"{result.User.UserName} signed in ({result.User.Role}).",
+                    "user",
+                    result.User.Id.ToString());
+
                 return Ok(result);
             }
             catch (InvalidOperationException ex)
             {
+                HttpContext.Describe($"Failed sign-in for \"{attempted}\".", "user", attempted);
                 return BadRequest(new { message = ex.Message });
             }
         }
@@ -65,10 +87,20 @@ namespace AlgoTrading.Api.Controllers
             try
             {
                 var result = await _authService.RefreshAsync(request, cancellationToken);
+
+                HttpContext.AttributeTo(result.User.Id, result.User.UserName, result.User.Role);
+                HttpContext.Describe(
+                    $"{result.User.UserName} refreshed their session.",
+                    "user",
+                    result.User.Id.ToString());
+
                 return Ok(result);
             }
             catch (InvalidOperationException ex)
             {
+                // A refused refresh is how a revoked session shows up: the token
+                // was cut off and something still tried to come back on it.
+                HttpContext.Describe("A refresh token was refused.");
                 return BadRequest(new { message = ex.Message });
             }
         }

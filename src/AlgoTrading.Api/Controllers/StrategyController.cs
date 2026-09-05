@@ -330,6 +330,19 @@ public class StrategyController : ControllerBase
         var (error, running) = LaunchRunner(launch);
         if (error is not null || running is null)
         {
+            // Same closing as Start: a run whose runner never came up must say so.
+            // Left Pending it becomes a row nobody can explain later, and the
+            // trader has no reason on screen for why nothing happened.
+            run.Status = "Failed";
+            run.LastError = "Runner failed to start.";
+            run.CompletedUtc = DateTime.UtcNow;
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+            HttpContext.Describe(
+                $"Deploy of {strategy.Name} on {underlying} failed — run #{run.Id} could not start its runner.",
+                "run",
+                run.Id.ToString());
+
             return error ?? StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to start the runner." });
         }
 
@@ -339,6 +352,11 @@ public class StrategyController : ControllerBase
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         await _runControl.RecordRunnerPidAsync(running.RunId, running.ProcessId, startedBy);
+
+        HttpContext.Describe(
+            $"Deployed {strategy.Name} on {underlying} — run #{run.Id}, {lots} lot(s).",
+            "run",
+            run.Id.ToString());
 
         await _notifier.NotifyAsync(
             NotificationCategory.StrategyRun,
@@ -415,6 +433,12 @@ public class StrategyController : ControllerBase
         var result = await _runControl.StopAsync(running.RunId, $"Stopped by {userName}", flatten, userName, cancellationToken);
         if (!result.WasRunning)
             return BadRequest(new { message = $"{running.Name} on {running.Underlying} (run {running.RunId}) is not currently running from the dashboard." });
+
+        HttpContext.Describe(
+            $"Stopped {running.Name} on {running.Underlying} — run #{running.RunId}, "
+                + (flatten ? $"squared off {result.Flattened} position(s)." : "positions left open."),
+            "run",
+            running.RunId.ToString());
 
         await _notifier.NotifyAsync(
             NotificationCategory.StrategyRun,
