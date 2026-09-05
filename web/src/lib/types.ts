@@ -1086,3 +1086,29 @@ export interface ProviderTestResult {
   barsReturned: number | null
   elapsedMs: number
 }
+
+/** A file-based data vendor an operator added from the console. */
+export interface DataVendor {
+  id: number
+  key: string
+  displayName: string
+  kind: string
+  directory: string
+  /** The folder as the server resolves it — the API host's working directory is not the repo root. */
+  resolvedDirectory: string
+  directoryExists: boolean
+  fileCount: number
+  isEnabled: boolean
+  notes: string
+  createdBy: string
+  createdUtc: string
+  updatedUtc: string
+}
+
+export interface SaveDataVendorInput {
+  key: string
+  displayName: string
+  directory: string
+  notes: string
+  isEnabled: boolean
+}

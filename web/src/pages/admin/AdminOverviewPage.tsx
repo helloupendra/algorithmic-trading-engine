@@ -74,7 +74,7 @@ export function AdminOverviewPage() {
           label="Kill switch"
           value={killSwitch.data ? (killSwitch.data.isActive ? 'ACTIVE' : 'Off') : '…'}
           tone={killSwitch.data?.isActive ? 'neg' : 'pos'}
-          to="/admin/risk"
+          to="/admin/system/risk"
           sub="manage →"
         />
         <StatTile
@@ -136,7 +136,7 @@ export function AdminOverviewPage() {
             done={killSwitch.data ? !killSwitch.data.isActive : false}
             label="Kill switch off"
             hint={killSwitch.data?.isActive ? 'Trading is halted' : 'Trading enabled'}
-            to="/admin/risk"
+            to="/admin/system/risk"
           />
           <ChecklistItem
             done={!!session.data?.isMarketOpen}
@@ -154,7 +154,7 @@ export function AdminOverviewPage() {
       <Panel title="Quick actions">
         <div className="chip-row">
           <Link className="btn btn--sm" to="/admin/broker">Connect FYERS →</Link>
-          <Link className="btn btn--sm" to="/admin/risk">Kill switch →</Link>
+          <Link className="btn btn--sm" to="/admin/system/risk">Kill switch →</Link>
           <Link className="btn btn--sm" to="/admin/ingestion">Ingestion &amp; backfill →</Link>
           <Link className="btn btn--sm" to="/admin/strategies">Start a strategy →</Link>
           <Link className="btn btn--sm" to="/admin/users">Manage users →</Link>

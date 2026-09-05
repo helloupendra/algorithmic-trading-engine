@@ -38,6 +38,7 @@ public class StrategyController : ControllerBase
     private readonly TradingDbContext _dbContext;
     private readonly StrategyCatalogService _catalog;
     private readonly StrategyProcessRegistry _registry;
+    private readonly ISystemNotifier _notifier;
     private readonly StrategyRunControl _runControl;
     private readonly PythonEngineLocator _engine;
     private readonly IPaperTradingService _paperTrading;
@@ -61,6 +62,7 @@ public class StrategyController : ControllerBase
         LiveRunHistoryBuilder history,
         GetPaperOrdersUseCase getPaperOrders,
         UpsertWatchlistItemUseCase upsertWatchlistItem,
+        ISystemNotifier notifier,
         IOptions<StrategyRunnerOptions> options,
         ILogger<StrategyController> logger)
     {
@@ -75,6 +77,7 @@ public class StrategyController : ControllerBase
         _history = history;
         _getPaperOrders = getPaperOrders;
         _upsertWatchlistItem = upsertWatchlistItem;
+        _notifier = notifier;
         _options = options.Value;
         _logger = logger;
     }
@@ -292,6 +295,16 @@ public class StrategyController : ControllerBase
 
         await _runControl.RecordRunnerPidAsync(running.RunId, running.ProcessId, startedBy);
 
+        await _notifier.NotifyAsync(
+            NotificationCategory.StrategyRun,
+            NotificationSeverity.Success,
+            $"{strategy.Name} started on {underlying}",
+            $"Run #{run.Id} · {lots} lot(s) · started by {startedBy}.",
+            underlying: underlying,
+            symbol: spotSymbol,
+            simulationRunId: run.Id,
+            cancellationToken: cancellationToken);
+
         return Ok(StartResponse($"Deployed {strategy.Name} on run {run.Id}.", running));
     }
 
@@ -357,6 +370,17 @@ public class StrategyController : ControllerBase
         var result = await _runControl.StopAsync(running.RunId, $"Stopped by {userName}", flatten, userName, cancellationToken);
         if (!result.WasRunning)
             return BadRequest(new { message = $"{running.Name} on {running.Underlying} (run {running.RunId}) is not currently running from the dashboard." });
+
+        await _notifier.NotifyAsync(
+            NotificationCategory.StrategyRun,
+            NotificationSeverity.Warning,
+            $"{running.Name} stopped on {running.Underlying}",
+            flatten
+                ? $"Run #{running.RunId} stopped by {userName}; squared off {result.Flattened} open position(s)."
+                : $"Run #{running.RunId} stopped by {userName}; positions left open.",
+            underlying: running.Underlying,
+            simulationRunId: running.RunId,
+            cancellationToken: cancellationToken);
 
         return Ok(new
         {

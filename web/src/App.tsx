@@ -110,7 +110,8 @@ export default function App() {
                   {/* v1 modules, awaiting their rebuild. */}
                   <Route path="/admin/system" element={<AdminOverviewPage />} />
                   <Route path="/admin/users" element={<UsersPage />} />
-                  <Route path="/admin/risk" element={<RiskV2Page />} />
+                  <Route path="/admin/system/risk" element={<RiskV2Page />} />
+                  <Route path="/admin/risk" element={<Navigate to="/admin/system/risk" replace />} />
                   <Route path="/admin/strategies" element={<StrategiesOverviewPage />} />
                   <Route path="/admin/strategies/live" element={<LiveRunnerPage />} />
                   <Route path="/admin/strategies/history" element={<RunHistoryPage mode="admin" />} />
@@ -126,7 +127,8 @@ export default function App() {
                   <Route path="/admin/backtesting/runs" element={<BacktestRunsPage />} />
                   <Route path="/admin/backtesting/runs/:id" element={<BacktestRunPage />} />
 
-                  <Route path="/admin/live-alerts" element={<LiveAlertsV2Page />} />
+                  <Route path="/admin/system/alerts" element={<LiveAlertsV2Page />} />
+                  <Route path="/admin/live-alerts" element={<Navigate to="/admin/system/alerts" replace />} />
                   <Route path="/admin/broker" element={<BrokerPage />} />
                   <Route path="/admin/broker/:providerKey" element={<ConnectorDetailPage />} />
 

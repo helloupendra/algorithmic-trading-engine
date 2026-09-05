@@ -8,7 +8,7 @@ public static class ReplayRegistration
 {
     public static IServiceCollection AddReplayProvider(
         this IServiceCollection services,
-        ProviderCatalog catalog)
+        ProviderCatalogSeed catalog)
     {
         catalog.Add(ReplayProvider.Descriptor);
         services.AddScoped<IMarketDataProvider, ReplayMarketDataProvider>();

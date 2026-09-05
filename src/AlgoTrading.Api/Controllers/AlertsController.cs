@@ -38,10 +38,26 @@ namespace AlgoTrading.Api.Controllers
 
         [HttpGet("status")]
         [Authorize]
-        public async Task<IActionResult> GetStatus(CancellationToken cancellationToken = default)
+        public async Task<IActionResult> GetStatus(
+            [FromServices] IConfiguration configuration,
+            CancellationToken cancellationToken = default)
         {
             var status = await _supervisor.GetStatusAsync(cancellationToken);
-            return Ok(status);
+
+            // Whether Telegram will actually receive anything is the first thing an
+            // operator needs to know on this page; the secrets themselves never leave
+            // the server.
+            bool telegramConfigured =
+                !string.IsNullOrWhiteSpace(configuration["Telegram:BotToken"]) &&
+                !string.IsNullOrWhiteSpace(configuration["Telegram:ChatId"]);
+
+            return Ok(new
+            {
+                status.IsRunning,
+                status.Managed,
+                status.Processes,
+                TelegramConfigured = telegramConfigured,
+            });
         }
 
         [HttpPost("start")]

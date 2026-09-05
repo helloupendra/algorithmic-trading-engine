@@ -1182,3 +1182,29 @@ export function useSaveProviderBinding() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['providers'] }),
   })
 }
+
+// ---------- Data vendors added from the console ----------
+
+export function useDataVendors() {
+  return useQuery({
+    queryKey: ['providers', 'vendors'],
+    queryFn: () => api.get<import('./types').DataVendor[]>('/api/Providers/vendors'),
+  })
+}
+
+export function useCreateDataVendor() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: import('./types').SaveDataVendorInput) =>
+      api.post<{ message: string }>('/api/Providers/vendors', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['providers'] }),
+  })
+}
+
+export function useDeleteDataVendor() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => api.delete<{ message: string }>(`/api/Providers/vendors/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['providers'] }),
+  })
+}

@@ -82,7 +82,7 @@ export function DeployPage() {
   if (ingestors.data && (!ingestors.data.length || !ingestors.data.every((s) => s.isHealthy)))
     blockers.push({ text: 'Live ingestor is not running — the strategy will get no ticks', to: '/admin/ingestion' })
   if (killSwitch.data?.isActive)
-    blockers.push({ text: 'Kill switch is ACTIVE — trading is halted', to: '/admin/risk' })
+    blockers.push({ text: 'Kill switch is ACTIVE — trading is halted', to: '/admin/system/risk' })
   if (exposure.data && riskLimits.data && exposure.data.activeRunsCount >= riskLimits.data.maxConcurrentRuns)
     blockers.push({ text: `Max concurrent runs limit reached (${exposure.data.activeRunsCount}/${riskLimits.data.maxConcurrentRuns})`, to: '/trader/overview' })
 

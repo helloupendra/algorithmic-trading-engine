@@ -75,6 +75,9 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.StrategyRunControl>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.LiveRunHistoryBuilder>();
 // The live data ingestor process: launch, durable pid, adoption after a restart.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.IngestorSupervisor>();
+// The signal alerter process, same shape. It was never registered, so every call
+// to /api/Alerts/status, start and stop answered 500.
+builder.Services.AddSingleton<AlgoTrading.Api.Services.AlertsSupervisor>();
 
 // Backtesting: the backtest runner registry and its stop path, the coverage /
 // backfill service and the view builders shared with the live runner.

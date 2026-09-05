@@ -80,24 +80,6 @@ export const MODULES: ModuleDef[] = [
     adminOnly: true,
   },
   {
-    key: 'risk',
-    name: 'Risk',
-    description: 'Kill switch and trading limits.',
-    icon: IconShield,
-    route: '/admin/risk',
-    status: 'ready',
-    adminOnly: true,
-  },
-  {
-    key: 'alerts',
-    name: 'Alerts',
-    description: 'Telegram alerter and market signals.',
-    icon: IconBell,
-    route: '/admin/live-alerts',
-    status: 'ready',
-    adminOnly: true,
-  },
-  {
     key: 'users',
     name: 'Users',
     description: 'Accounts, roles and, soon, per-trader module access.',
@@ -109,12 +91,13 @@ export const MODULES: ModuleDef[] = [
   {
     key: 'system',
     name: 'System',
-    description: 'Service health and go-live checklist.',
+    description:
+      'Everything operational in one place: service health, the kill switch and trading limits, and the alerter.',
     icon: IconServer,
     route: '/admin/system',
     status: 'legacy',
     adminOnly: true,
-    /* old AdminOverviewPage — remounted at /admin/system in v2 */
+    /* Risk and Alerts live under this module as sections — see SYSTEM_SECTIONS. */
   },
 ]
 
@@ -195,3 +178,14 @@ export const BACKTESTING_SECTIONS = [
     end: false,
   },
 ] as const
+
+/**
+ * Sub-navigation of the System module. Risk and Alerts used to be separate
+ * modules; an operator dealing with "is the platform behaving" wants health, the
+ * kill switch and the alerter in one place, not three menu entries.
+ */
+export const SYSTEM_SECTIONS = [
+  { route: '/admin/system', label: 'Overview', icon: IconServer, end: true },
+  { route: '/admin/system/risk', label: 'Risk & kill switch', icon: IconShield },
+  { route: '/admin/system/alerts', label: 'Alerts', icon: IconBell },
+]
