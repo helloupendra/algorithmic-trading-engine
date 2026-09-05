@@ -266,6 +266,11 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
+                    b.Property<string>("ProviderKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
                     b.Property<string>("RefreshToken")
                         .HasColumnType("text");
 
@@ -275,6 +280,8 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("BrokerName");
+
+                    b.HasIndex("ProviderKey", "IsActive");
 
                     b.ToTable("broker_sessions", (string)null);
                 });

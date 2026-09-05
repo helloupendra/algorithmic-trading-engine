@@ -37,10 +37,30 @@ public class DatabaseBrokerSessionStore : IBrokerSessionStore
             .OrderByDescending(x => x.UpdatedUtc)
             .FirstOrDefaultAsync(cancellationToken);
 
+        return Reveal(session);
+    }
+
+    public async Task<BrokerSession?> GetForProviderAsync(
+        string providerKey,
+        CancellationToken cancellationToken = default)
+    {
+        var session = await _dbContext.BrokerSessions
+            .AsNoTracking()
+            .Where(x => x.IsActive && x.ProviderKey == providerKey)
+            .OrderByDescending(x => x.UpdatedUtc)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return Reveal(session);
+    }
+
+    /// <summary>
+    /// Callers (token exchange, the data providers, the Python ingestor via
+    /// /api/Auth/session) always see plaintext; storage is what's protected.
+    /// </summary>
+    private BrokerSession? Reveal(BrokerSession? session)
+    {
         if (session is null) return null;
 
-        // Callers (token exchange, history client, the Python ingestor via
-        // /api/Auth/session) always see plaintext; storage is what's protected.
         session.AccessToken = Unprotect(session.AccessToken);
         session.RefreshToken = Unprotect(session.RefreshToken);
         return session;
@@ -55,7 +75,7 @@ public class DatabaseBrokerSessionStore : IBrokerSessionStore
 
         var existing = await _dbContext.BrokerSessions
             .OrderByDescending(x => x.UpdatedUtc)
-            .FirstOrDefaultAsync(x => x.BrokerName == session.BrokerName, cancellationToken);
+            .FirstOrDefaultAsync(x => x.ProviderKey == session.ProviderKey, cancellationToken);
 
         if (existing is null)
         {
@@ -78,10 +98,10 @@ public class DatabaseBrokerSessionStore : IBrokerSessionStore
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task ClearAsync(CancellationToken cancellationToken = default)
+    public async Task ClearAsync(string? providerKey = null, CancellationToken cancellationToken = default)
     {
         var activeSessions = await _dbContext.BrokerSessions
-            .Where(x => x.IsActive)
+            .Where(x => x.IsActive && (providerKey == null || x.ProviderKey == providerKey))
             .ToListAsync(cancellationToken);
 
         foreach (var session in activeSessions)

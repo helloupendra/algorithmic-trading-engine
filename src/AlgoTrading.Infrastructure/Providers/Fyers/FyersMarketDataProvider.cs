@@ -51,7 +51,7 @@ public class FyersMarketDataProvider : IMarketDataProvider
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var session = await _brokerSessionStore.GetCurrentAsync(cancellationToken);
+        var session = await _brokerSessionStore.GetForProviderAsync(FyersProvider.Key, cancellationToken);
 
         if (session is null || !session.IsAuthenticated || string.IsNullOrWhiteSpace(session.AccessToken))
         {
