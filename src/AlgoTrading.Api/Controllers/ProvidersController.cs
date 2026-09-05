@@ -5,6 +5,7 @@ using AlgoTrading.Application.Providers;
 using AlgoTrading.Contracts.Providers;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
+using AlgoTrading.Infrastructure.Providers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -110,6 +111,26 @@ public class ProvidersController : ControllerBase
                 ServingCapabilities = serving.TryGetValue(descriptor.Key, out var caps)
                     ? caps
                     : Array.Empty<string>(),
+                IsInstalled = true,
+                IsConfigured = credentials.Source != "none",
+            });
+        }
+
+        // Vendors on the roadmap with no adapter yet. Listed so the directory is a
+        // directory, and marked plainly so nobody hunts for a form that cannot exist.
+        foreach (var planned in PlannedConnectors.All)
+        {
+            if (_catalog.Find(planned.Key) is not null) continue;
+
+            result.Add(new ProviderResponse
+            {
+                Key = planned.Key,
+                DisplayName = planned.DisplayName,
+                Kind = planned.Kind.ToString(),
+                Auth = ProviderAuthKind.None.ToString(),
+                IsInstalled = false,
+                IsConfigured = false,
+                PlannedNote = planned.Note,
             });
         }
 

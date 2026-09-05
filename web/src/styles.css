@@ -2303,10 +2303,44 @@ a.pill:hover { border-color: var(--line-strong); }
 }
 
 /* --- connectors module ---------------------------------------------------- */
-/* Section headings inside a connector card need air: the capability matrix and
-   the note above them run right into the heading otherwise. */
-.section-title.connector-section {
-  margin-top: 20px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line-soft);
+/* Directory cards: a vendor mark, the name with its status, and one line of
+   what it can do. Built on .module-card so hover and spacing stay identical to
+   the rest of the console. */
+.connector-card__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.connector-card__mark {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 9px;
+  background: var(--brand-soft);
+  color: var(--brand-hi);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.connector-card__kind {
+  display: block;
+  color: var(--text-3);
+  font-size: 11.5px;
+  margin-top: 2px;
+}
+
+.connector-card .module-card__desc {
+  margin-top: 2px;
+}
+
+/* A long vendor name and its status badge must not fight over one line. */
+.connector-card .module-card__name {
+  flex-wrap: wrap;
+  align-items: baseline;
+  row-gap: 4px;
 }

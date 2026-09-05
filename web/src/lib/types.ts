@@ -1058,6 +1058,12 @@ export interface Provider {
   auth: 'None' | 'ApiKey' | 'OAuthDaily'
   isDataProvider: boolean
   isBroker: boolean
+  /** False for a roadmap vendor with no adapter in this build. */
+  isInstalled: boolean
+  /** Why an uninstalled connector is listed. Empty for installed ones. */
+  plannedNote: string
+  /** True once credentials are saved — what "I added this broker" means. */
+  isConfigured: boolean
   capabilities: ProviderCapabilities
   credentials: ProviderCredentials
   session: ProviderSession

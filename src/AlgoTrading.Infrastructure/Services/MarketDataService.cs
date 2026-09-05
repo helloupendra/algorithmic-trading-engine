@@ -61,22 +61,37 @@ public class MarketDataService : IMarketDataService
             toUtc,
             cancellationToken);
 
-        var upsert = await _candleStore.UpsertAsync(
-            request.Symbol,
-            resolution,
-            bars,
-            provider.Descriptor.Key,
-            cancellationToken);
+        if (provider.Descriptor.Capabilities.ServesFromPlatformStore)
+        {
+            // These bars came out of the very table an upsert would write them
+            // into. Persisting them would re-stamp genuine rows with this
+            // connector's key and destroy the lineage they exist to record.
+            _logger.LogInformation(
+                "History sync for {Symbol} ({Resolution}) read {Fetched} bars from {Source}; not persisted — that connector serves the platform's own store.",
+                request.Symbol,
+                resolution,
+                bars.Count,
+                provider.Descriptor.Key);
+        }
+        else
+        {
+            var upsert = await _candleStore.UpsertAsync(
+                request.Symbol,
+                resolution,
+                bars,
+                provider.Descriptor.Key,
+                cancellationToken);
 
-        _logger.LogInformation(
-            "History sync for {Symbol} ({Resolution}) from {Source} -> fetched {Fetched}, inserted {Inserted}, updated {Updated}, skipped {Skipped}.",
-            request.Symbol,
-            resolution,
-            provider.Descriptor.Key,
-            bars.Count,
-            upsert.Inserted,
-            upsert.Updated,
-            upsert.Skipped);
+            _logger.LogInformation(
+                "History sync for {Symbol} ({Resolution}) from {Source} -> fetched {Fetched}, inserted {Inserted}, updated {Updated}, skipped {Skipped}.",
+                request.Symbol,
+                resolution,
+                provider.Descriptor.Key,
+                bars.Count,
+                upsert.Inserted,
+                upsert.Updated,
+                upsert.Skipped);
+        }
 
         return bars
             .Select(x => new CandleResponse

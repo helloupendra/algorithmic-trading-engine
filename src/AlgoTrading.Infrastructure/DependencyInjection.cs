@@ -9,7 +9,9 @@ using AlgoTrading.Application.Providers;
 using AlgoTrading.Infrastructure.Config;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Providers;
+using AlgoTrading.Infrastructure.Providers.Csv;
 using AlgoTrading.Infrastructure.Providers.Fyers;
+using AlgoTrading.Infrastructure.Providers.Replay;
 using AlgoTrading.Infrastructure.Services;
 using AlgoTrading.Infrastructure.Session;
 using Microsoft.EntityFrameworkCore;
@@ -65,6 +67,8 @@ public static class DependencyInjection
         services.AddSingleton<IProviderCatalog>(providerCatalog);
 
         services.AddFyersProvider(configuration, providerCatalog, credentialFallbacks);
+        services.AddReplayProvider(providerCatalog);
+        services.AddCsvProvider(configuration, providerCatalog);
 
         services.AddScoped<IProviderRegistry, ProviderRegistry>();
         services.AddScoped<IProviderRouter, ProviderRouter>();

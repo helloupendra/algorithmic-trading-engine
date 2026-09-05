@@ -130,9 +130,10 @@ function NavItem({
 }
 
 function AdminNav() {
-  // Modules with their own nav group above are left out of the legacy list.
+  // Modules with their own nav group above are listed there, not here. The rest
+  // keep MODULES order, which puts the finished ones first.
   const grouped = new Set(['data', 'strategies', 'backtesting'])
-  const legacyModules = MODULES.filter((m) => !grouped.has(m.key) && m.status !== 'planned')
+  const moduleLinks = MODULES.filter((m) => !grouped.has(m.key) && m.status !== 'planned')
 
   return (
     <>
@@ -163,7 +164,7 @@ function AdminNav() {
 
       <div className="nav-group">
         <div className="nav-group__label">Modules</div>
-        {legacyModules.map((m) => (
+        {moduleLinks.map((m) => (
           <NavItem
             key={m.key}
             to={m.route}

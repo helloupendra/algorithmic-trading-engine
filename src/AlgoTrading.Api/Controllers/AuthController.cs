@@ -124,9 +124,15 @@ namespace AlgoTrading.Api.Controllers;
     private bool IsBrowserNavigation()
         => Request.Headers.Accept.ToString().Contains("text/html", StringComparison.OrdinalIgnoreCase);
 
-    private IActionResult FrontendRedirect(bool connected, string? reason = null)
+    private IActionResult FrontendRedirect(bool connected, string? reason = null, string? providerKey = null)
     {
-        string url = $"{_frontendBaseUrl}/admin/broker?connected={(connected ? 1 : 0)}";
+        // Back to the connector's own page when we know which one it was, so the
+        // operator lands where they pressed Connect.
+        string path = string.IsNullOrWhiteSpace(providerKey)
+            ? "/admin/broker"
+            : $"/admin/broker/{providerKey}";
+
+        string url = $"{_frontendBaseUrl}{path}?connected={(connected ? 1 : 0)}";
         if (!string.IsNullOrWhiteSpace(reason))
         {
             url += $"&reason={Uri.EscapeDataString(reason)}";
@@ -173,7 +179,7 @@ namespace AlgoTrading.Api.Controllers;
         {
             string reason = $"{brokerName} redirected back without an auth_code (s={status}, code={code}).";
             return IsBrowserNavigation()
-                ? FrontendRedirect(connected: false, reason)
+                ? FrontendRedirect(connected: false, reason, broker.Descriptor.Key)
                 : BadRequest(new { message = reason, state, status, code });
         }
 
@@ -187,7 +193,7 @@ namespace AlgoTrading.Api.Controllers;
         catch (Exception ex)
         {
             return IsBrowserNavigation()
-                ? FrontendRedirect(connected: false, $"Token exchange failed: {ex.Message}")
+                ? FrontendRedirect(connected: false, $"Token exchange failed: {ex.Message}", broker.Descriptor.Key)
                 : StatusCode(502, new { message = $"Token exchange failed: {ex.Message}" });
         }
 
@@ -195,7 +201,7 @@ namespace AlgoTrading.Api.Controllers;
         {
             string reason = tokenResult.ErrorMessage ?? $"{brokerName} returned no access token.";
             return IsBrowserNavigation()
-                ? FrontendRedirect(connected: false, reason)
+                ? FrontendRedirect(connected: false, reason, broker.Descriptor.Key)
                 : StatusCode(502, new { message = reason });
         }
 
@@ -217,7 +223,7 @@ namespace AlgoTrading.Api.Controllers;
             $"{brokerName} token saved ({accessToken[..Math.Min(6, accessToken.Length)]}… , {accessToken.Length} chars).");
 
         return IsBrowserNavigation()
-            ? FrontendRedirect(connected: true)
+            ? FrontendRedirect(connected: true, null, broker.Descriptor.Key)
             : Ok(new { message = "Access token generated and saved.", isAuthenticated = session.IsAuthenticated, state, status, code });
     }
 

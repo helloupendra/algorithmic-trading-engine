@@ -1,289 +1,80 @@
 /**
- * Connectors — every data vendor and broker this build ships.
+ * Connectors — the directory of data vendors and brokers.
  *
- * One card per connector: what it can actually deliver, whose credentials it
- * uses, whether it is connected, and a probe that fetches real bars so "saved"
- * and "working" are never confused. Below them, the routing table that decides
- * which connector serves which job.
+ * Three groups, in the order an operator cares about them: the ones already
+ * added, the ones this build can add, and the ones still on the roadmap. Each
+ * card opens its own page for credentials, session and the connection probe.
  *
- * The route stays /admin/broker because the OAuth callback redirects here.
+ * The route stays /admin/broker because the OAuth callback redirects into it.
  */
 
-import { useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { useMutation } from '@tanstack/react-query'
-import { api } from '../../lib/api'
-import {
-  useDisconnectProvider,
-  useIngestorStatuses,
-  useProviderBindings,
-  useProviders,
-  useSaveProviderCredentials,
-  useTestProvider,
-} from '../../lib/queries'
-import type { Provider, ProviderTestResult } from '../../lib/types'
-import { formatAge, formatDateTime } from '../../lib/format'
-import { Badge, InlineError, Panel, QueryBoundary } from '../../components/ui'
-
-/** The capability flags, in the order an operator thinks about them. */
-const CAPABILITY_LABELS: { key: keyof Provider['capabilities']; label: string }[] = [
-  { key: 'history', label: 'History' },
-  { key: 'liveTicks', label: 'Live ticks' },
-  { key: 'quotes', label: 'Quotes' },
-  { key: 'optionChain', label: 'Option chain' },
-  { key: 'depth', label: 'Bid/ask depth' },
-  { key: 'openInterest', label: 'Open interest' },
-  { key: 'greeks', label: 'Greeks' },
-  { key: 'orders', label: 'Orders' },
-]
-
-function KindBadge({ kind }: { kind: Provider['kind'] }) {
-  const label = kind === 'Both' ? 'Data + Broker' : kind === 'Data' ? 'Data vendor' : 'Broker'
-  return <Badge tone="accent">{label}</Badge>
-}
+import { Link, useSearchParams } from 'react-router-dom'
+import { useIngestorStatuses, useProviderBindings, useProviders } from '../../lib/queries'
+import type { Provider } from '../../lib/types'
+import { formatAge } from '../../lib/format'
+import { Badge, EmptyState, Panel, QueryBoundary } from '../../components/ui'
+import { capabilitySummary, isReady, kindLabel, needsCredentials } from '../../lib/providers'
 
 function StatusBadge({ provider }: { provider: Provider }) {
-  if (provider.auth === 'None') return <Badge tone="pos">No login needed</Badge>
-  if (!provider.session.isConnected) return <Badge tone="warn">Not connected</Badge>
-  if (provider.session.needsReconnect) return <Badge tone="warn">Token stale — reconnect</Badge>
-  return <Badge tone="pos">Connected</Badge>
-}
-
-function CredentialsSourceBadge({ source, updatedBy }: { source: string; updatedBy: string | null }) {
-  if (source === 'database') return <Badge tone="pos">saved by {updatedBy ?? 'admin'}</Badge>
-  if (source === 'config') return <Badge tone="accent">server configuration (.env)</Badge>
-  return <Badge tone="warn">not configured</Badge>
+  if (!provider.isInstalled) return <Badge tone="neutral">adapter not installed</Badge>
+  if (!needsCredentials(provider)) return <Badge tone="pos">ready · no login</Badge>
+  if (!provider.isConfigured) return <Badge tone="warn">credentials needed</Badge>
+  if (!provider.session.isConnected) return <Badge tone="warn">not connected</Badge>
+  if (provider.session.needsReconnect) return <Badge tone="warn">reconnect due</Badge>
+  return <Badge tone="pos">connected</Badge>
 }
 
 function ConnectorCard({ provider }: { provider: Provider }) {
-  const saveCredentials = useSaveProviderCredentials()
-  const disconnect = useDisconnectProvider()
-  const test = useTestProvider()
-  const [connectError, setConnectError] = useState<unknown>(null)
-  const [result, setResult] = useState<ProviderTestResult | null>(null)
-
-  const [form, setForm] = useState({ clientId: '', secretKey: '', redirectUri: '' })
-
-  // Pre-fill from whatever the server already knows; the secret is never
-  // returned, so that field always starts empty.
-  useEffect(() => {
-    setForm((f) => ({
-      clientId: f.clientId || provider.credentials.clientId,
-      secretKey: f.secretKey,
-      redirectUri: f.redirectUri || provider.credentials.redirectUri || provider.suggestedRedirectUri,
-    }))
-  }, [provider])
-
-  const connect = useMutation({
-    mutationFn: () => api.get<{ authUrl: string }>(`/api/Providers/${provider.key}/auth-url`),
-    onSuccess: ({ authUrl }) => {
-      // Leave the SPA: vendor hosted login → API callback → back to this page.
-      window.location.assign(authUrl)
-    },
-    onError: setConnectError,
-  })
-
-  const credentialsMissing = provider.credentials.source === 'none'
-  const needsLogin = provider.auth !== 'None'
-
-  return (
-    <Panel
-      title={
-        <span className="chip-row">
-          {provider.displayName}
-          <span className="mono muted">{provider.key}</span>
-          <KindBadge kind={provider.kind} />
-          <StatusBadge provider={provider} />
+  const body = (
+    <>
+      <span className="connector-card__head">
+        <span className="connector-card__mark" aria-hidden="true">
+          {provider.displayName.slice(0, 2).toUpperCase()}
         </span>
-      }
-    >
-      <div className="tablewrap">
-        <table className="table">
-          <thead>
-            <tr>
-              {CAPABILITY_LABELS.map((c) => (
-                <th key={c.key}>{c.label}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              {CAPABILITY_LABELS.map((c) => (
-                <td key={c.key}>
-                  {provider.capabilities[c.key] ? (
-                    <Badge tone="pos">yes</Badge>
-                  ) : (
-                    <span className="muted">—</span>
-                  )}
-                </td>
-              ))}
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <p className="small-note muted">
-        Declared by the connector itself, so a strategy that needs open interest can be told before
-        it runs instead of finding nulls at runtime.
-        {provider.capabilities.maxStreamSymbols != null && (
-          <> Streams up to {provider.capabilities.maxStreamSymbols} symbols.</>
-        )}
-        {provider.capabilities.segments.length > 0 && (
-          <> Segments: {provider.capabilities.segments.join(', ')}.</>
-        )}
-        {provider.servingCapabilities.length > 0 && (
-          <> Currently serving: <b>{provider.servingCapabilities.join(', ')}</b>.</>
-        )}
-      </p>
+        <span>
+          <span className="module-card__name">
+            {provider.displayName}
+            <StatusBadge provider={provider} />
+          </span>
+          <span className="connector-card__kind">
+            {kindLabel(provider.kind)} · <span className="mono">{provider.key}</span>
+          </span>
+        </span>
+      </span>
 
-      {needsLogin && (
+      {provider.isInstalled ? (
         <>
-          <h3 className="section-title connector-section">App credentials</h3>
-          <p className="muted" style={{ maxWidth: '78ch' }}>
-            Each installation uses its <b>own</b> {provider.displayName} app. Register the redirect URL{' '}
-            <code>{provider.suggestedRedirectUri}</code> with the vendor, then save the app id and
-            secret here — stored encrypted in this installation's database, never in the repository.
-          </p>
+          <p className="module-card__desc">{capabilitySummary(provider)}</p>
           <p className="small-note muted">
-            Current source:{' '}
-            <CredentialsSourceBadge
-              source={provider.credentials.source}
-              updatedBy={provider.credentials.updatedBy}
-            />
-          </p>
-          {saveCredentials.isError && <InlineError error={saveCredentials.error} />}
-          <form
-            className="form-row"
-            onSubmit={(e) => {
-              e.preventDefault()
-              saveCredentials.mutate(
-                { providerKey: provider.key, ...form },
-                { onSuccess: () => setForm((f) => ({ ...f, secretKey: '' })) },
-              )
-            }}
-          >
-            <div className="field">
-              <label className="field__label" htmlFor={`${provider.key}-client`}>
-                App id (client id)
-              </label>
-              <input
-                id={`${provider.key}-client`}
-                className="field__input"
-                required
-                value={form.clientId}
-                onChange={(e) => setForm({ ...form, clientId: e.target.value })}
-              />
-            </div>
-            <div className="field">
-              <label className="field__label" htmlFor={`${provider.key}-secret`}>
-                Secret key
-              </label>
-              <input
-                id={`${provider.key}-secret`}
-                className="field__input"
-                type="password"
-                required
-                placeholder={provider.credentials.hasSecret ? 'saved — re-enter to change' : ''}
-                value={form.secretKey}
-                onChange={(e) => setForm({ ...form, secretKey: e.target.value })}
-                autoComplete="new-password"
-              />
-            </div>
-            <div className="field">
-              <label className="field__label" htmlFor={`${provider.key}-redirect`}>
-                Redirect URL (register with the vendor)
-              </label>
-              <input
-                id={`${provider.key}-redirect`}
-                className="field__input"
-                required
-                value={form.redirectUri}
-                onChange={(e) => setForm({ ...form, redirectUri: e.target.value })}
-              />
-            </div>
-            <button className="btn btn--primary" disabled={saveCredentials.isPending}>
-              {saveCredentials.isPending ? 'Saving…' : 'Save credentials'}
-            </button>
-          </form>
-        </>
-      )}
-
-      <h3 className="section-title connector-section">Session</h3>
-      {connectError != null && <InlineError error={connectError} />}
-      {disconnect.isError && <InlineError error={disconnect.error} />}
-      <div className="broker-state">
-        <div>
-          <div className={`killswitch__state ${provider.session.isConnected && !provider.session.needsReconnect ? 'pos' : 'warn'}`}>
-            {!needsLogin
-              ? 'Always available'
-              : provider.session.isConnected
-                ? provider.session.needsReconnect
-                  ? 'Token is from a previous day'
-                  : 'Connected'
-                : 'Not connected'}
-          </div>
-          <p className="muted">
-            {!needsLogin ? (
-              <>This connector needs no login — it reads what the platform already has.</>
-            ) : provider.session.isConnected ? (
+            {!needsCredentials(provider) ? (
+              <>No credentials needed</>
+            ) : provider.isConfigured ? (
               <>
-                Token saved {formatAge(provider.session.connectedUtc)} (
-                {formatDateTime(provider.session.connectedUtc)}).
-                {provider.auth === 'OAuthDaily' && ' Tokens expire daily — reconnect each trading morning.'}
+                Credentials {provider.credentials.source === 'config' ? 'from .env' : 'saved'}
+                {provider.session.isConnected && (
+                  <> · token {formatAge(provider.session.connectedUtc)}</>
+                )}
               </>
             ) : (
-              <>No usable token. Connect to authorise this platform against your account.</>
+              <>No credentials yet — open to add them.</>
+            )}
+            {provider.servingCapabilities.length > 0 && (
+              <> · serving {provider.servingCapabilities.join(', ')}</>
             )}
           </p>
-        </div>
-        <div className="broker-state__actions">
-          {needsLogin && provider.isBroker && (
-            <button
-              type="button"
-              className="btn btn--primary"
-              disabled={connect.isPending || credentialsMissing}
-              title={credentialsMissing ? 'Save the app credentials above first' : undefined}
-              onClick={() => {
-                setConnectError(null)
-                connect.mutate()
-              }}
-            >
-              {connect.isPending
-                ? 'Redirecting…'
-                : provider.session.isConnected
-                  ? `Reconnect ${provider.displayName}`
-                  : `Connect ${provider.displayName}`}
-            </button>
-          )}
-          <button
-            type="button"
-            className="btn btn--ghost"
-            disabled={test.isPending}
-            onClick={() => {
-              setResult(null)
-              test.mutate(provider.key, { onSuccess: setResult })
-            }}
-          >
-            {test.isPending ? 'Testing…' : 'Test connection'}
-          </button>
-          {needsLogin && provider.session.isConnected && (
-            <button
-              type="button"
-              className="btn btn--ghost"
-              disabled={disconnect.isPending}
-              onClick={() => disconnect.mutate(provider.key)}
-            >
-              Disconnect
-            </button>
-          )}
-        </div>
-      </div>
-      {test.isError && <InlineError error={test.error} />}
-      {result && (
-        <div className={`alert ${result.ok ? 'alert--success' : 'alert--error'}`} role="status">
-          <b>{result.probe}</b> — {result.message} <span className="muted">({result.elapsedMs} ms)</span>
-        </div>
+        </>
+      ) : (
+        <p className="module-card__desc">{provider.plannedNote}</p>
       )}
-    </Panel>
+    </>
+  )
+
+  return provider.isInstalled ? (
+    <Link to={`/admin/broker/${provider.key}`} className="module-card connector-card">
+      {body}
+    </Link>
+  ) : (
+    <div className="module-card connector-card module-card--off">{body}</div>
   )
 }
 
@@ -308,7 +99,11 @@ function RoutingPanel() {
                   <tr key={row.capability}>
                     <td>{row.capability}</td>
                     <td className="mono">
-                      {row.providerKeys.length > 0 ? row.providerKeys.join('  →  ') : <span className="muted">nothing available</span>}
+                      {row.providerKeys.length > 0 ? (
+                        row.providerKeys.join('  →  ')
+                      ) : (
+                        <span className="muted">nothing available</span>
+                      )}
                     </td>
                     <td>
                       {row.isFallback ? (
@@ -325,11 +120,11 @@ function RoutingPanel() {
         )}
       </QueryBoundary>
       <p className="small-note muted">
-        With one connector registered there is nothing to choose, so every row reads{' '}
-        <i>automatic</i>: the platform uses whichever connector claims the capability. Once a second
-        connector ships, a chain can be pinned per capability and the rest of it becomes the failover
-        order. Order routing never fails over on its own — a broker that timed out may already have
-        accepted the order.
+        With one connector installed there is nothing to choose, so every row reads <i>automatic</i>:
+        the platform uses whichever connector claims the capability. Once a second connector ships, a
+        chain can be pinned per capability and the rest of it becomes the failover order. Order
+        routing never fails over on its own — a broker that timed out may already have accepted the
+        order.
       </p>
     </Panel>
   )
@@ -343,32 +138,24 @@ export function BrokerPage() {
   const connected = searchParams.get('connected')
   const reason = searchParams.get('reason')
 
-  function dismissBanner() {
-    setSearchParams({}, { replace: true })
-  }
-
-  const summary = useMemo(() => {
-    const list = providers.data ?? []
-    const needingLogin = list.filter((p) => p.auth !== 'None')
-    const live = needingLogin.filter((p) => p.session.isConnected && !p.session.needsReconnect)
-    return { total: list.length, needingLogin: needingLogin.length, live: live.length }
-  }, [providers.data])
-
   return (
     <div className="page">
       <header className="page__header">
         <h1 className="page__title">Connectors</h1>
         <p className="page__subtitle">
-          Data vendors and brokers. {summary.total} registered
-          {summary.needingLogin > 0 && <> · {summary.live}/{summary.needingLogin} logged in</>}.
-          Credentials, sessions and routing are all configured from here.
+          Every data vendor and broker the platform can talk to. Open one to add its credentials,
+          connect it and test that real data comes back.
         </p>
       </header>
 
       {connected === '1' && (
         <div className="alert alert--success" role="status">
-          Connected — the token is saved. You can start the ingestor now.
-          <button type="button" className="btn btn--ghost btn--sm" onClick={dismissBanner}>
+          Connected — the token is saved.
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() => setSearchParams({}, { replace: true })}
+          >
             Dismiss
           </button>
         </div>
@@ -376,41 +163,78 @@ export function BrokerPage() {
       {connected === '0' && (
         <div className="alert alert--error" role="alert">
           Connection failed{reason ? `: ${reason}` : '.'}
-          <button type="button" className="btn btn--ghost btn--sm" onClick={dismissBanner}>
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() => setSearchParams({}, { replace: true })}
+          >
             Dismiss
           </button>
         </div>
       )}
 
       <QueryBoundary query={providers} empty="This build ships no connectors.">
-        {(list) => (
-          <>
-            {list.map((provider) => (
-              <ConnectorCard key={provider.key} provider={provider} />
-            ))}
-          </>
-        )}
+        {(list) => {
+          const active = list.filter(isReady)
+          const available = list.filter((p) => p.isInstalled && !isReady(p))
+          const planned = list.filter((p) => !p.isInstalled)
+
+          return (
+            <>
+              <Panel title={`Active (${active.length})`}>
+                {active.length === 0 ? (
+                  <EmptyState>
+                    Nothing usable yet. Pick one from “Available to add” below and save its
+                    credentials.
+                  </EmptyState>
+                ) : (
+                  <div className="module-grid">
+                    {active.map((p) => (
+                      <ConnectorCard key={p.key} provider={p} />
+                    ))}
+                  </div>
+                )}
+              </Panel>
+
+              {available.length > 0 && (
+                <Panel title={`Available to add (${available.length})`}>
+                  <div className="module-grid">
+                    {available.map((p) => (
+                      <ConnectorCard key={p.key} provider={p} />
+                    ))}
+                  </div>
+                </Panel>
+              )}
+
+              {planned.length > 0 && (
+                <Panel title={`Planned (${planned.length})`}>
+                  <p className="muted" style={{ maxWidth: '78ch' }}>
+                    These have no adapter in this build, so there is nothing to configure yet. A
+                    connector is code, not a configuration row: a new vendor needs an adapter that
+                    speaks its API, declares what it can deliver, and maps its symbols to the
+                    platform's. Once one ships it joins the list above and everything on this page
+                    works for it unchanged.
+                  </p>
+                  <div className="module-grid">
+                    {planned.map((p) => (
+                      <ConnectorCard key={p.key} provider={p} />
+                    ))}
+                  </div>
+                </Panel>
+              )}
+            </>
+          )
+        }}
       </QueryBoundary>
 
       <RoutingPanel />
-
-      <Panel title="Adding another vendor">
-        <p className="muted" style={{ maxWidth: '78ch' }}>
-          A connector is code, not a configuration row: a new vendor needs an adapter that speaks its
-          API, declares what it can deliver, and translates its symbols to the platform's. Once that
-          adapter ships it appears on this page like the ones above — credentials, connect, test and
-          routing all work without any further change. The foundation for that is in place; the next
-          adapters planned are a replay source over this platform's own stored candles, a CSV source,
-          and then Dhan.
-        </p>
-      </Panel>
 
       <Panel title="After connecting — start the data">
         <ol className="broker-steps">
           <li>
             <b>Start the Python ingestor</b> on the API host:
-            <code>cd src/AlgoTrading.PythonEngine &amp;&amp; python algo.py</code> → live stream.
-            It reads the watchlist from the API and begins pushing ticks.
+            <code>cd src/AlgoTrading.PythonEngine &amp;&amp; python algo.py</code> → live stream. It
+            reads the watchlist from the API and begins pushing ticks.
           </li>
           <li>
             <b>Watch it come alive</b> — the ingestor heartbeat below should turn healthy within a
