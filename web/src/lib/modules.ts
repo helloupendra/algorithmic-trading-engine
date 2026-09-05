@@ -99,11 +99,11 @@ export const MODULES: ModuleDef[] = [
   },
   {
     key: 'broker',
-    name: 'Broker',
-    description: 'FYERS credentials and session.',
+    name: 'Connectors',
+    description: 'Data vendors and brokers: credentials, sessions, routing.',
     icon: IconPlug,
     route: '/admin/broker',
-    status: 'legacy',
+    status: 'ready',
     adminOnly: true,
   },
   {

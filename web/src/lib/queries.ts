@@ -1118,3 +1118,67 @@ export function useRiskExposure() {
     refetchInterval: POLL_FAST,
   })
 }
+
+// ---------- Connectors (data vendors and brokers) ----------
+
+export function useProviders() {
+  return useQuery({
+    queryKey: ['providers', 'list'],
+    queryFn: () => api.get<import('./types').Provider[]>('/api/Providers'),
+    refetchInterval: 60_000,
+  })
+}
+
+export function useProviderBindings() {
+  return useQuery({
+    queryKey: ['providers', 'bindings'],
+    queryFn: () => api.get<import('./types').ProviderBinding[]>('/api/Providers/bindings'),
+  })
+}
+
+export function useSaveProviderCredentials() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      providerKey,
+      ...body
+    }: {
+      providerKey: string
+      clientId: string
+      secretKey: string
+      redirectUri: string
+    }) => api.put<{ message: string }>(`/api/Providers/${providerKey}/credentials`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['providers'] })
+      qc.invalidateQueries({ queryKey: ['broker'] })
+    },
+  })
+}
+
+export function useDisconnectProvider() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (providerKey: string) =>
+      api.post<{ message: string }>(`/api/Providers/${providerKey}/disconnect`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['providers'] })
+      qc.invalidateQueries({ queryKey: ['broker'] })
+    },
+  })
+}
+
+export function useTestProvider() {
+  return useMutation({
+    mutationFn: (providerKey: string) =>
+      api.post<import('./types').ProviderTestResult>(`/api/Providers/${providerKey}/test`),
+  })
+}
+
+export function useSaveProviderBinding() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { capability: string; providerKeys: string[] }) =>
+      api.put<{ message: string }>('/api/Providers/bindings', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['providers'] }),
+  })
+}

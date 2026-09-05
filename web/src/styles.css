@@ -2301,3 +2301,12 @@ a.pill:hover { border-color: var(--line-strong); }
   .daily-pnl__bar { transition: none; }
   .live-dot { animation: none; }
 }
+
+/* --- connectors module ---------------------------------------------------- */
+/* Section headings inside a connector card need air: the capability matrix and
+   the note above them run right into the heading otherwise. */
+.section-title.connector-section {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
+}

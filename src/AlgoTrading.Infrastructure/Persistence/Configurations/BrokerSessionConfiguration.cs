@@ -23,6 +23,10 @@ public class BrokerSessionConfiguration : IEntityTypeConfiguration<BrokerSession
             .IsRequired()
             .HasMaxLength(50);
 
+        builder.Property(x => x.ProviderKey)
+            .IsRequired()
+            .HasMaxLength(32);
+
         builder.Property(x => x.AccessToken)
             .IsRequired();
 
@@ -39,6 +43,7 @@ public class BrokerSessionConfiguration : IEntityTypeConfiguration<BrokerSession
             .IsRequired();
 
         builder.HasIndex(x => x.BrokerName);
+        builder.HasIndex(x => new { x.ProviderKey, x.IsActive });
     }
 }
 

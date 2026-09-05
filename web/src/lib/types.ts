@@ -1015,3 +1015,68 @@ export interface EquityGroup {
   isEnabled: boolean
   memberCount: number
 }
+
+// ---------- Connectors (data vendors and brokers) ----------
+
+export interface ProviderCapabilities {
+  history: boolean
+  liveTicks: boolean
+  quotes: boolean
+  optionChain: boolean
+  orders: boolean
+  depth: boolean
+  openInterest: boolean
+  greeks: boolean
+  maxStreamSymbols: number | null
+  historyMaxDaysPerCall: number | null
+  requestsPerMinute: number | null
+  resolutions: string[]
+  segments: string[]
+}
+
+export interface ProviderCredentials {
+  /** "database" | "config" | "none" — the secret itself is never returned. */
+  source: string
+  clientId: string
+  redirectUri: string
+  hasSecret: boolean
+  updatedBy: string | null
+  updatedUtc: string | null
+}
+
+export interface ProviderSession {
+  isConnected: boolean
+  connectedUtc: string | null
+  ageSeconds: number | null
+  needsReconnect: boolean
+}
+
+export interface Provider {
+  key: string
+  displayName: string
+  kind: 'Data' | 'Execution' | 'Both'
+  auth: 'None' | 'ApiKey' | 'OAuthDaily'
+  isDataProvider: boolean
+  isBroker: boolean
+  capabilities: ProviderCapabilities
+  credentials: ProviderCredentials
+  session: ProviderSession
+  suggestedRedirectUri: string
+  servingCapabilities: string[]
+}
+
+export interface ProviderBinding {
+  capability: string
+  providerKeys: string[]
+  /** True when nothing is configured and the platform is falling back. */
+  isFallback: boolean
+}
+
+export interface ProviderTestResult {
+  providerKey: string
+  ok: boolean
+  probe: string
+  message: string
+  barsReturned: number | null
+  elapsedMs: number
+}

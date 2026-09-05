@@ -1,64 +1,344 @@
 /**
- * FYERS broker connection, driven entirely from the console:
+ * Connectors — every data vendor and broker this build ships.
  *
- *   Connect → we fetch the hosted-login URL from the API and send the browser
- *   to FYERS → FYERS redirects to the API callback, which saves the token and
- *   bounces the browser straight back here with ?connected=1|0.
+ * One card per connector: what it can actually deliver, whose credentials it
+ * uses, whether it is connected, and a probe that fetches real bars so "saved"
+ * and "working" are never confused. Below them, the routing table that decides
+ * which connector serves which job.
  *
- * Tokens expire daily, so this is the first stop of every trading morning.
+ * The route stays /admin/broker because the OAuth callback redirects here.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import {
-  useBrokerConfig,
-  useBrokerSession,
+  useDisconnectProvider,
   useIngestorStatuses,
-  useSaveBrokerConfig,
+  useProviderBindings,
+  useProviders,
+  useSaveProviderCredentials,
+  useTestProvider,
 } from '../../lib/queries'
+import type { Provider, ProviderTestResult } from '../../lib/types'
 import { formatAge, formatDateTime } from '../../lib/format'
 import { Badge, InlineError, Panel, QueryBoundary } from '../../components/ui'
 
-export function BrokerPage() {
-  const [searchParams, setSearchParams] = useSearchParams()
-  const session = useBrokerSession()
-  const config = useBrokerConfig()
-  const saveConfig = useSaveBrokerConfig()
-  const ingestors = useIngestorStatuses()
-  const qc = useQueryClient()
+/** The capability flags, in the order an operator thinks about them. */
+const CAPABILITY_LABELS: { key: keyof Provider['capabilities']; label: string }[] = [
+  { key: 'history', label: 'History' },
+  { key: 'liveTicks', label: 'Live ticks' },
+  { key: 'quotes', label: 'Quotes' },
+  { key: 'optionChain', label: 'Option chain' },
+  { key: 'depth', label: 'Bid/ask depth' },
+  { key: 'openInterest', label: 'Open interest' },
+  { key: 'greeks', label: 'Greeks' },
+  { key: 'orders', label: 'Orders' },
+]
 
+function KindBadge({ kind }: { kind: Provider['kind'] }) {
+  const label = kind === 'Both' ? 'Data + Broker' : kind === 'Data' ? 'Data vendor' : 'Broker'
+  return <Badge tone="accent">{label}</Badge>
+}
+
+function StatusBadge({ provider }: { provider: Provider }) {
+  if (provider.auth === 'None') return <Badge tone="pos">No login needed</Badge>
+  if (!provider.session.isConnected) return <Badge tone="warn">Not connected</Badge>
+  if (provider.session.needsReconnect) return <Badge tone="warn">Token stale — reconnect</Badge>
+  return <Badge tone="pos">Connected</Badge>
+}
+
+function CredentialsSourceBadge({ source, updatedBy }: { source: string; updatedBy: string | null }) {
+  if (source === 'database') return <Badge tone="pos">saved by {updatedBy ?? 'admin'}</Badge>
+  if (source === 'config') return <Badge tone="accent">server configuration (.env)</Badge>
+  return <Badge tone="warn">not configured</Badge>
+}
+
+function ConnectorCard({ provider }: { provider: Provider }) {
+  const saveCredentials = useSaveProviderCredentials()
+  const disconnect = useDisconnectProvider()
+  const test = useTestProvider()
   const [connectError, setConnectError] = useState<unknown>(null)
+  const [result, setResult] = useState<ProviderTestResult | null>(null)
+
   const [form, setForm] = useState({ clientId: '', secretKey: '', redirectUri: '' })
 
-  // Pre-fill the form from whatever the server already knows (config or DB);
-  // the secret is never returned, so that field always starts empty.
-  const cfg = config.data
+  // Pre-fill from whatever the server already knows; the secret is never
+  // returned, so that field always starts empty.
   useEffect(() => {
-    if (!cfg) return
     setForm((f) => ({
-      clientId: f.clientId || cfg.clientId,
+      clientId: f.clientId || provider.credentials.clientId,
       secretKey: f.secretKey,
-      redirectUri: f.redirectUri || cfg.redirectUri || cfg.suggestedRedirectUri,
+      redirectUri: f.redirectUri || provider.credentials.redirectUri || provider.suggestedRedirectUri,
     }))
-  }, [cfg])
-
-  const credsMissing = cfg?.source === 'none'
+  }, [provider])
 
   const connect = useMutation({
-    mutationFn: () => api.get<{ authUrl: string }>('/api/Auth/url'),
+    mutationFn: () => api.get<{ authUrl: string }>(`/api/Providers/${provider.key}/auth-url`),
     onSuccess: ({ authUrl }) => {
-      // Leave the SPA: FYERS hosted login → API callback → back to this page.
+      // Leave the SPA: vendor hosted login → API callback → back to this page.
       window.location.assign(authUrl)
     },
     onError: setConnectError,
   })
 
-  const disconnect = useMutation({
-    mutationFn: () => api.post<{ message: string }>('/api/Auth/logout'),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['broker'] }),
-  })
+  const credentialsMissing = provider.credentials.source === 'none'
+  const needsLogin = provider.auth !== 'None'
+
+  return (
+    <Panel
+      title={
+        <span className="chip-row">
+          {provider.displayName}
+          <span className="mono muted">{provider.key}</span>
+          <KindBadge kind={provider.kind} />
+          <StatusBadge provider={provider} />
+        </span>
+      }
+    >
+      <div className="tablewrap">
+        <table className="table">
+          <thead>
+            <tr>
+              {CAPABILITY_LABELS.map((c) => (
+                <th key={c.key}>{c.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              {CAPABILITY_LABELS.map((c) => (
+                <td key={c.key}>
+                  {provider.capabilities[c.key] ? (
+                    <Badge tone="pos">yes</Badge>
+                  ) : (
+                    <span className="muted">—</span>
+                  )}
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p className="small-note muted">
+        Declared by the connector itself, so a strategy that needs open interest can be told before
+        it runs instead of finding nulls at runtime.
+        {provider.capabilities.maxStreamSymbols != null && (
+          <> Streams up to {provider.capabilities.maxStreamSymbols} symbols.</>
+        )}
+        {provider.capabilities.segments.length > 0 && (
+          <> Segments: {provider.capabilities.segments.join(', ')}.</>
+        )}
+        {provider.servingCapabilities.length > 0 && (
+          <> Currently serving: <b>{provider.servingCapabilities.join(', ')}</b>.</>
+        )}
+      </p>
+
+      {needsLogin && (
+        <>
+          <h3 className="section-title connector-section">App credentials</h3>
+          <p className="muted" style={{ maxWidth: '78ch' }}>
+            Each installation uses its <b>own</b> {provider.displayName} app. Register the redirect URL{' '}
+            <code>{provider.suggestedRedirectUri}</code> with the vendor, then save the app id and
+            secret here — stored encrypted in this installation's database, never in the repository.
+          </p>
+          <p className="small-note muted">
+            Current source:{' '}
+            <CredentialsSourceBadge
+              source={provider.credentials.source}
+              updatedBy={provider.credentials.updatedBy}
+            />
+          </p>
+          {saveCredentials.isError && <InlineError error={saveCredentials.error} />}
+          <form
+            className="form-row"
+            onSubmit={(e) => {
+              e.preventDefault()
+              saveCredentials.mutate(
+                { providerKey: provider.key, ...form },
+                { onSuccess: () => setForm((f) => ({ ...f, secretKey: '' })) },
+              )
+            }}
+          >
+            <div className="field">
+              <label className="field__label" htmlFor={`${provider.key}-client`}>
+                App id (client id)
+              </label>
+              <input
+                id={`${provider.key}-client`}
+                className="field__input"
+                required
+                value={form.clientId}
+                onChange={(e) => setForm({ ...form, clientId: e.target.value })}
+              />
+            </div>
+            <div className="field">
+              <label className="field__label" htmlFor={`${provider.key}-secret`}>
+                Secret key
+              </label>
+              <input
+                id={`${provider.key}-secret`}
+                className="field__input"
+                type="password"
+                required
+                placeholder={provider.credentials.hasSecret ? 'saved — re-enter to change' : ''}
+                value={form.secretKey}
+                onChange={(e) => setForm({ ...form, secretKey: e.target.value })}
+                autoComplete="new-password"
+              />
+            </div>
+            <div className="field">
+              <label className="field__label" htmlFor={`${provider.key}-redirect`}>
+                Redirect URL (register with the vendor)
+              </label>
+              <input
+                id={`${provider.key}-redirect`}
+                className="field__input"
+                required
+                value={form.redirectUri}
+                onChange={(e) => setForm({ ...form, redirectUri: e.target.value })}
+              />
+            </div>
+            <button className="btn btn--primary" disabled={saveCredentials.isPending}>
+              {saveCredentials.isPending ? 'Saving…' : 'Save credentials'}
+            </button>
+          </form>
+        </>
+      )}
+
+      <h3 className="section-title connector-section">Session</h3>
+      {connectError != null && <InlineError error={connectError} />}
+      {disconnect.isError && <InlineError error={disconnect.error} />}
+      <div className="broker-state">
+        <div>
+          <div className={`killswitch__state ${provider.session.isConnected && !provider.session.needsReconnect ? 'pos' : 'warn'}`}>
+            {!needsLogin
+              ? 'Always available'
+              : provider.session.isConnected
+                ? provider.session.needsReconnect
+                  ? 'Token is from a previous day'
+                  : 'Connected'
+                : 'Not connected'}
+          </div>
+          <p className="muted">
+            {!needsLogin ? (
+              <>This connector needs no login — it reads what the platform already has.</>
+            ) : provider.session.isConnected ? (
+              <>
+                Token saved {formatAge(provider.session.connectedUtc)} (
+                {formatDateTime(provider.session.connectedUtc)}).
+                {provider.auth === 'OAuthDaily' && ' Tokens expire daily — reconnect each trading morning.'}
+              </>
+            ) : (
+              <>No usable token. Connect to authorise this platform against your account.</>
+            )}
+          </p>
+        </div>
+        <div className="broker-state__actions">
+          {needsLogin && provider.isBroker && (
+            <button
+              type="button"
+              className="btn btn--primary"
+              disabled={connect.isPending || credentialsMissing}
+              title={credentialsMissing ? 'Save the app credentials above first' : undefined}
+              onClick={() => {
+                setConnectError(null)
+                connect.mutate()
+              }}
+            >
+              {connect.isPending
+                ? 'Redirecting…'
+                : provider.session.isConnected
+                  ? `Reconnect ${provider.displayName}`
+                  : `Connect ${provider.displayName}`}
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn btn--ghost"
+            disabled={test.isPending}
+            onClick={() => {
+              setResult(null)
+              test.mutate(provider.key, { onSuccess: setResult })
+            }}
+          >
+            {test.isPending ? 'Testing…' : 'Test connection'}
+          </button>
+          {needsLogin && provider.session.isConnected && (
+            <button
+              type="button"
+              className="btn btn--ghost"
+              disabled={disconnect.isPending}
+              onClick={() => disconnect.mutate(provider.key)}
+            >
+              Disconnect
+            </button>
+          )}
+        </div>
+      </div>
+      {test.isError && <InlineError error={test.error} />}
+      {result && (
+        <div className={`alert ${result.ok ? 'alert--success' : 'alert--error'}`} role="status">
+          <b>{result.probe}</b> — {result.message} <span className="muted">({result.elapsedMs} ms)</span>
+        </div>
+      )}
+    </Panel>
+  )
+}
+
+function RoutingPanel() {
+  const bindings = useProviderBindings()
+
+  return (
+    <Panel title="Routing — who serves what">
+      <QueryBoundary query={bindings} empty="No capabilities are registered.">
+        {(rows) => (
+          <div className="tablewrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Capability</th>
+                  <th>Connector chain</th>
+                  <th>Source of this decision</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.capability}>
+                    <td>{row.capability}</td>
+                    <td className="mono">
+                      {row.providerKeys.length > 0 ? row.providerKeys.join('  →  ') : <span className="muted">nothing available</span>}
+                    </td>
+                    <td>
+                      {row.isFallback ? (
+                        <Badge tone="neutral">automatic</Badge>
+                      ) : (
+                        <Badge tone="accent">configured</Badge>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </QueryBoundary>
+      <p className="small-note muted">
+        With one connector registered there is nothing to choose, so every row reads{' '}
+        <i>automatic</i>: the platform uses whichever connector claims the capability. Once a second
+        connector ships, a chain can be pinned per capability and the rest of it becomes the failover
+        order. Order routing never fails over on its own — a broker that timed out may already have
+        accepted the order.
+      </p>
+    </Panel>
+  )
+}
+
+export function BrokerPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const providers = useProviders()
+  const ingestors = useIngestorStatuses()
 
   const connected = searchParams.get('connected')
   const reason = searchParams.get('reason')
@@ -67,19 +347,27 @@ export function BrokerPage() {
     setSearchParams({}, { replace: true })
   }
 
+  const summary = useMemo(() => {
+    const list = providers.data ?? []
+    const needingLogin = list.filter((p) => p.auth !== 'None')
+    const live = needingLogin.filter((p) => p.session.isConnected && !p.session.needsReconnect)
+    return { total: list.length, needingLogin: needingLogin.length, live: live.length }
+  }, [providers.data])
+
   return (
     <div className="page">
       <header className="page__header">
-        <h1 className="page__title">Broker connection</h1>
+        <h1 className="page__title">Connectors</h1>
         <p className="page__subtitle">
-          FYERS OAuth session for market data and (later) order placement. Tokens expire
-          daily around the market's morning cutoff — reconnect each trading day.
+          Data vendors and brokers. {summary.total} registered
+          {summary.needingLogin > 0 && <> · {summary.live}/{summary.needingLogin} logged in</>}.
+          Credentials, sessions and routing are all configured from here.
         </p>
       </header>
 
       {connected === '1' && (
         <div className="alert alert--success" role="status">
-          FYERS connected — the token is saved. You can start the ingestor now.
+          Connected — the token is saved. You can start the ingestor now.
           <button type="button" className="btn btn--ghost btn--sm" onClick={dismissBanner}>
             Dismiss
           </button>
@@ -87,134 +375,33 @@ export function BrokerPage() {
       )}
       {connected === '0' && (
         <div className="alert alert--error" role="alert">
-          FYERS connection failed{reason ? `: ${reason}` : '.'}
+          Connection failed{reason ? `: ${reason}` : '.'}
           <button type="button" className="btn btn--ghost btn--sm" onClick={dismissBanner}>
             Dismiss
           </button>
         </div>
       )}
-      {connectError != null && <InlineError error={connectError} />}
-      {disconnect.isError && <InlineError error={disconnect.error} />}
 
-      <Panel title="FYERS app credentials">
+      <QueryBoundary query={providers} empty="This build ships no connectors.">
+        {(list) => (
+          <>
+            {list.map((provider) => (
+              <ConnectorCard key={provider.key} provider={provider} />
+            ))}
+          </>
+        )}
+      </QueryBoundary>
+
+      <RoutingPanel />
+
+      <Panel title="Adding another vendor">
         <p className="muted" style={{ maxWidth: '78ch' }}>
-          Each installation uses its <b>own</b> FYERS app. Create one at{' '}
-          <a href="https://myapi.fyers.in" target="_blank" rel="noreferrer noopener">myapi.fyers.in</a>{' '}
-          with the redirect URL below, then save the App ID and secret here — they are stored
-          encrypted in this installation's database, never in the repository.
-        </p>
-        {config.data && (
-          <p className="small-note muted">
-            Current source:{' '}
-            <Badge tone={config.data.source === 'database' ? 'pos' : config.data.source === 'config' ? 'accent' : 'warn'}>
-              {config.data.source === 'database'
-                ? `saved in database by ${config.data.updatedBy ?? 'admin'}`
-                : config.data.source === 'config'
-                  ? 'server configuration (.env fallback)'
-                  : 'not configured'}
-            </Badge>
-          </p>
-        )}
-        {saveConfig.isError && <InlineError error={saveConfig.error} />}
-        {saveConfig.isSuccess && (
-          <div className="alert alert--success" role="status">Credentials saved — you can connect now.</div>
-        )}
-        <form
-          className="form-row"
-          onSubmit={(e) => {
-            e.preventDefault()
-            saveConfig.mutate(form, { onSuccess: () => setForm((f) => ({ ...f, secretKey: '' })) })
-          }}
-        >
-          <div className="field">
-            <label className="field__label" htmlFor="bc-client">App ID (client id)</label>
-            <input
-              id="bc-client"
-              className="field__input"
-              required
-              placeholder="XXXXXXXXXX-100"
-              value={form.clientId}
-              onChange={(e) => setForm({ ...form, clientId: e.target.value })}
-            />
-          </div>
-          <div className="field">
-            <label className="field__label" htmlFor="bc-secret">Secret key</label>
-            <input
-              id="bc-secret"
-              className="field__input"
-              type="password"
-              required
-              placeholder={config.data?.hasSecret ? 'saved — re-enter to change' : 'from myapi.fyers.in'}
-              value={form.secretKey}
-              onChange={(e) => setForm({ ...form, secretKey: e.target.value })}
-              autoComplete="new-password"
-            />
-          </div>
-          <div className="field">
-            <label className="field__label" htmlFor="bc-redirect">Redirect URL (register this with FYERS)</label>
-            <input
-              id="bc-redirect"
-              className="field__input"
-              required
-              value={form.redirectUri}
-              onChange={(e) => setForm({ ...form, redirectUri: e.target.value })}
-            />
-          </div>
-          <button className="btn btn--primary" disabled={saveConfig.isPending}>
-            {saveConfig.isPending ? 'Saving…' : 'Save credentials'}
-          </button>
-        </form>
-      </Panel>
-
-      <Panel title="Session">
-        <QueryBoundary query={session}>
-          {(s) => (
-            <div className="broker-state">
-              <div>
-                <div className={`killswitch__state ${s.isAuthenticated ? 'pos' : 'warn'}`}>
-                  {s.isAuthenticated ? 'Connected' : 'Not connected'}
-                </div>
-                <p className="muted">
-                  {s.isAuthenticated
-                    ? `Token saved ${formatAge(s.updatedUtc ?? s.createdUtc)} (${formatDateTime(s.updatedUtc ?? s.createdUtc)}). FYERS tokens expire daily — reconnect tomorrow morning.`
-                    : 'No usable FYERS token. Connect to authorize this platform against your FYERS account.'}
-                </p>
-              </div>
-              <div className="broker-state__actions">
-                <button
-                  type="button"
-                  className="btn btn--primary"
-                  disabled={connect.isPending || credsMissing}
-                  title={credsMissing ? 'Save your FYERS app credentials above first' : undefined}
-                  onClick={() => {
-                    setConnectError(null)
-                    connect.mutate()
-                  }}
-                >
-                  {connect.isPending
-                    ? 'Redirecting to FYERS…'
-                    : s.isAuthenticated
-                      ? 'Reconnect FYERS'
-                      : 'Connect FYERS'}
-                </button>
-                {s.isAuthenticated && (
-                  <button
-                    type="button"
-                    className="btn btn--ghost"
-                    disabled={disconnect.isPending}
-                    onClick={() => disconnect.mutate()}
-                  >
-                    Disconnect
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-        </QueryBoundary>
-        <p className="muted small-note">
-          Connect opens FYERS's own login page — this platform never sees your FYERS
-          password, only the OAuth token FYERS issues. The callback URL registered with
-          FYERS must match the API's <code>Fyers:RedirectUri</code>.
+          A connector is code, not a configuration row: a new vendor needs an adapter that speaks its
+          API, declares what it can deliver, and translates its symbols to the platform's. Once that
+          adapter ships it appears on this page like the ones above — credentials, connect, test and
+          routing all work without any further change. The foundation for that is in place; the next
+          adapters planned are a replay source over this platform's own stored candles, a CSV source,
+          and then Dhan.
         </p>
       </Panel>
 
@@ -226,12 +413,12 @@ export function BrokerPage() {
             It reads the watchlist from the API and begins pushing ticks.
           </li>
           <li>
-            <b>Watch it come alive</b> — the ingestor heartbeat below should turn healthy
-            within a minute, and Watchlist quotes start updating.
+            <b>Watch it come alive</b> — the ingestor heartbeat below should turn healthy within a
+            minute, and Watchlist quotes start updating.
           </li>
           <li>
-            <b>Optional:</b> run a daily-candle backfill under Data ingestion to fill
-            historical charts.
+            <b>Optional:</b> run a daily-candle backfill under Data ingestion to fill historical
+            charts.
           </li>
         </ol>
         <QueryBoundary query={ingestors} empty="No ingestor heartbeat recorded yet.">

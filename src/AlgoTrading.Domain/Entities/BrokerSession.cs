@@ -16,9 +16,17 @@ namespace AlgoTrading.Domain.Entities
         public long Id { get; set; }
 
         /// <summary>
-        /// The name of the broker (e.g., "FYERS"). Used if the system scales to support multiple brokers.
+        /// Operator-facing broker name (e.g. "FYERS"). Display only — routing and
+        /// lookups go through <see cref="ProviderKey"/>.
         /// </summary>
         public string BrokerName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// The connector this session belongs to, e.g. "fyers". Each broker keeps
+        /// its own session: connecting a second broker must never silently
+        /// invalidate the first one's token.
+        /// </summary>
+        public string ProviderKey { get; set; } = string.Empty;
 
         /// <summary>
         /// The <see cref="BrokerAccount"/> this session belongs to. Null means the

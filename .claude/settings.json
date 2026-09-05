@@ -103,7 +103,11 @@
       "Bash(pkill -f \"dotnet run --project src/AlgoTrading.Api\")",
       "Bash(PYTHONPATH=. ../../.venv/bin/python -c ' *)",
       "Read(//Users/upendra/.claude/projects/-Users-upendra-Documents-GitHub-algorithmic-trading-engine/memory/**)",
-      "Bash(printf '%s\\\\n' '- [Broker & data provider module]\\(broker-provider-module.md\\) — 2026-09-05 multi-vendor architecture; 4 owner decisions, P0/P1 foundation shipped, built in-house')"
+      "Bash(printf '%s\\\\n' '- [Broker & data provider module]\\(broker-provider-module.md\\) — 2026-09-05 multi-vendor architecture; 4 owner decisions, P0/P1 foundation shipped, built in-house')",
+      "Bash(lsof -nP -iTCP -sTCP:LISTEN)",
+      "Bash(curl -s --max-time 3 http://127.0.0.1:9222/json/version)",
+      "Bash(ps -eo pid,command)",
+      "Bash(pkill -f \"remote-debugging-port=9222\")"
     ],
     "additionalDirectories": [
       "/Users/upendra/Documents/GitHub/algorithmic-trading-engine/src/AlgoTrading.Infrastructure/Persistence/Migrations"

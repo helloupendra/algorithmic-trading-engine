@@ -204,6 +204,7 @@ namespace AlgoTrading.Api.Controllers;
         var session = new BrokerSession
         {
             BrokerName = brokerName,
+            ProviderKey = broker.Descriptor.Key,
             AccessToken = accessToken,
             RefreshToken = tokenResult.RefreshToken,
             CreatedUtc = DateTime.UtcNow
@@ -252,7 +253,7 @@ namespace AlgoTrading.Api.Controllers;
     [HttpPost("logout")]
     public async Task<IActionResult> Logout(CancellationToken cancellationToken)
     {
-        await _brokerSessionStore.ClearAsync(cancellationToken);
+        await _brokerSessionStore.ClearAsync(cancellationToken: cancellationToken);
 
         return Ok(new
         {

@@ -207,7 +207,7 @@ const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]>
   ['/admin/risk', 'Modules', 'Risk'],
   ['/admin/strategies', 'Modules', 'Strategies'],
   ['/admin/live-alerts', 'Modules', 'Alerts'],
-  ['/admin/broker', 'Modules', 'Broker'],
+  ['/admin/broker', 'Modules', 'Connectors'],
   ['/admin/system', 'Modules', 'System'],
   ['/admin', null, 'Overview'],
   ['/trader/strategies/history', 'Trading', 'My runs'],
