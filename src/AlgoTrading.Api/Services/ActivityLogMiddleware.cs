@@ -78,6 +78,10 @@ public class ActivityLogMiddleware
         "/api/livedata/latest/upsert",
         "/api/livedata/heartbeat",
         "/api/simulator/runs/marks",
+        // SignalR's handshake. Every open console page posts one, and posts
+        // another whenever the socket reconnects — a browser left open all
+        // session writes hundreds of rows that record nothing anyone did.
+        "/hubs/",
         "/metrics",
         "/health",
     };

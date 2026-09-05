@@ -1,7 +1,14 @@
 /**
- * Inline SVG icon set — 24px viewBox, 1.7px stroke, sized by the parent via
- * CSS (`svg { width/height }`). No icon-font or package dependency; each icon
- * is a plain component so tree-shaking keeps only what a page uses.
+ * Inline SVG icon set — 24px viewBox, 1.7px stroke. No icon-font or package
+ * dependency; each icon is a plain component so tree-shaking keeps only what a
+ * page uses.
+ *
+ * Size comes from the parent's CSS (`.panel__title svg { width: 15px }` and the
+ * like). The 16px width/height here are only a floor for an icon used somewhere
+ * that has no such rule: a presentation attribute loses to any CSS selector, so
+ * every existing rule still wins. Without it an unsized icon stretches to fill
+ * whatever box it lands in, which is a startling way to find out you forgot a
+ * rule.
  */
 
 import type { ReactNode, SVGProps } from 'react'
@@ -10,6 +17,8 @@ function Icon({ children, ...props }: SVGProps<SVGSVGElement> & { children: Reac
   return (
     <svg
       viewBox="0 0 24 24"
+      width="16"
+      height="16"
       fill="none"
       stroke="currentColor"
       strokeWidth="1.7"

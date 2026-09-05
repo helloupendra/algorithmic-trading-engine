@@ -1,10 +1,10 @@
 /**
- * Sign-in. One composition, not two panes: the shared live candlestick tape runs
- * full-bleed behind the whole viewport and the card floats on it, so the page
- * reads as the same product as the homepage. A vignette under the card does the
- * contrast work. Logic is unchanged: username/password to the API, with dev-only
- * one-click logins sourced from web/.env.local (never shipped in a production
- * build).
+ * Sign-in. One composition: a quiet market tape along the foot of the page, a
+ * soft brand glow behind the card, and nothing else competing with the form.
+ * The card carries the contrast; the backdrop only has to say what this is.
+ *
+ * Logic is unchanged: username/password to the API, with dev-only one-click
+ * logins sourced from web/.env.local (never shipped in a production build).
  */
 
 import { useState, type FormEvent } from 'react'
@@ -12,7 +12,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { ApiError } from '../lib/api'
 import { IconLogo } from '../components/icons'
-import { MarketCanvas } from '../components/MarketScene'
+import { LoginBackdrop } from '../components/LoginBackdrop'
 
 const DEV_LOGINS = import.meta.env.DEV
   ? (
@@ -71,8 +71,7 @@ export function LoginPage() {
 
   return (
     <div className="login">
-      <MarketCanvas variant="ambient" canvasClass="login__scene" fallbackClass="login__scene-fallback" />
-      <div className="login__veil" aria-hidden="true" />
+      <LoginBackdrop />
 
       <div className="login__pane">
         <div className="login__card">

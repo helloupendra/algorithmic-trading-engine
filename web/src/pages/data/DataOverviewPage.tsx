@@ -20,7 +20,7 @@ import {
 } from '../../lib/queries'
 import { formatAge, formatDateTime, formatNumber, shortSymbol } from '../../lib/format'
 import { Badge, Panel, QueryBoundary, StatTile } from '../../components/ui'
-import { IconActivity, IconArrowRight, IconDatabase, IconPulse, IconWarning } from '../../components/icons'
+import { IconArrowRight, IconDatabase, IconPulse, IconWarning } from '../../components/icons'
 import {
   CATEGORY_ORDER,
   classifySymbol,
@@ -228,7 +228,6 @@ function LivePipelinePanel() {
       <div className="kv-grid" style={{ marginBottom: 12 }}>
         <div>
           <span className="muted">Ingestor</span>
-          <IconActivity />
           <span className={isRunning ? 'pos' : 'muted'}>
             {isRunning ? 'Running' : 'Stopped'}
           </span>
