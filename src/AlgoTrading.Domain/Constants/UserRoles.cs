@@ -22,9 +22,18 @@ public static class UserRoles
     public const string Trader = "Trader";
 
     /// <summary>
+    /// A machine account — the Python engine's API user, and anything else that
+    /// is not a person. It logs in and calls the API, but it is not a trader: it
+    /// gets no capital, no module grants, and never appears in the traders list.
+    /// Without this, a service account sitting in the Trader role is
+    /// indistinguishable from a human with a trader's rights.
+    /// </summary>
+    public const string Service = "Service";
+
+    /// <summary>
     /// Every role, for validation and for seeding the admin panel's role picker.
     /// </summary>
-    public static readonly string[] All = { Admin, Trader };
+    public static readonly string[] All = { Admin, Trader, Service };
 
     /// <summary>
     /// Returns the canonical casing for <paramref name="role"/>, or null when it is

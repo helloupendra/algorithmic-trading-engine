@@ -1,19 +1,21 @@
 /**
- * Trader overview: one screen that answers "what state is the platform in and
- * what happened in my runs?". Everything on it is stored data — when the
- * market is closed it shows the last saved session with honest freshness tags.
+ * Trader overview: one screen that answers "can I trade, what am I running, and
+ * can I trust these numbers?".
+ *
+ * Deliberately not on it: broker link state and ingestor heartbeats. Those are
+ * the operator's job and a trader can do nothing about either. What a trader
+ * does need from the feed — whether the prices are fresh — is said as data age,
+ * next to the data.
  */
 
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../lib/auth'
 import {
-  useIngestorStatuses,
   useKillSwitch,
   useLatestQuotes,
   useMarketSession,
   useSimulationRuns,
-  useRiskExposure,
-  useWatchlist,
+  useStrategies,
 } from '../../lib/queries'
 import {
   formatAge,
@@ -32,14 +34,21 @@ export function OverviewPage() {
   const session = useMarketSession()
   const killSwitch = useKillSwitch()
   const quotes = useLatestQuotes()
-  const watchlist = useWatchlist()
   const runs = useSimulationRuns()
-  const exposure = useRiskExposure()
-  const ingestors = useIngestorStatuses()
+  const strategies = useStrategies()
 
   const lastQuoteUtc = quotes.data?.reduce<string | null>(
     (max, q) => (max == null || q.updatedUtc > max ? q.updatedUtc : max),
     null,
+  )
+
+  // "Can I trust these prices?" is the only feed question a trader needs, and it
+  // is answered by the age of the data itself rather than by a process's health.
+  const quotesAreStale =
+    lastQuoteUtc != null && Date.now() - new Date(lastQuoteUtc).getTime() > 5 * 60 * 1000
+
+  const myLiveRuns = (runs.data ?? []).filter(
+    (r) => r.status === 'Running' || r.status === 'Stopping',
   )
 
   return (
@@ -52,12 +61,18 @@ export function OverviewPage() {
         </p>
       </header>
 
+      {killSwitch.data?.isActive && (
+        <div className="alert alert--error" role="alert">
+          <b>Trading is halted platform-wide.</b> An admin pulled the kill switch
+          {killSwitch.data.reason ? ` — “${killSwitch.data.reason}”` : '.'} New runs will be refused
+          until it is released.
+        </div>
+      )}
+
       <div className="stat-grid">
         <StatTile
           label="Market (NSE cash)"
-          value={
-            session.data ? (session.data.isMarketOpen ? 'OPEN' : 'CLOSED') : '…'
-          }
+          value={session.data ? (session.data.isMarketOpen ? 'OPEN' : 'CLOSED') : '…'}
           tone={session.data?.isMarketOpen ? 'pos' : undefined}
           sub={
             session.data &&
@@ -67,42 +82,28 @@ export function OverviewPage() {
           }
         />
         <StatTile
-          label="Kill switch"
-          value={killSwitch.data ? (killSwitch.data.isActive ? 'ACTIVE' : 'Off') : '…'}
-          tone={killSwitch.data?.isActive ? 'neg' : 'pos'}
-          sub={
-            killSwitch.data?.updatedUtc &&
-            `${killSwitch.data.updatedBy ?? ''} · ${formatAge(killSwitch.data.updatedUtc)}`
-          }
+          label="My capital"
+          value={formatInrWhole(user?.totalCapital ?? 0)}
+          sub="allocated to this account"
         />
         <StatTile
-          label="Watchlist symbols"
-          value={watchlist.data?.length ?? '…'}
-          sub={lastQuoteUtc ? `last quote ${formatAge(lastQuoteUtc)}` : undefined}
+          label="My live runs"
+          value={myLiveRuns.length}
+          tone={myLiveRuns.length > 0 ? 'accent' : undefined}
+          sub={myLiveRuns.length > 0 ? 'open right now' : 'nothing running'}
+          to="/trader/strategies"
         />
         <StatTile
-          label="Active strategy runs"
-          value={exposure.data?.activeRunsCount ?? '…'}
-          sub={`Unrealized: ${formatInrWhole(exposure.data?.totalUnrealizedPnL ?? 0)}`}
+          label="Strategies I can run"
+          value={strategies.data?.length ?? '…'}
+          sub="from my package"
+          to="/trader/strategies"
         />
         <StatTile
-          label="Ingestor"
-          value={
-            ingestors.data?.length
-              ? ingestors.data.every((s) => s.isHealthy)
-                ? 'Healthy'
-                : 'Stale'
-              : '…'
-          }
-          tone={
-            ingestors.data?.length && !ingestors.data.every((s) => s.isHealthy)
-              ? 'warn'
-              : undefined
-          }
-          sub={
-            ingestors.data?.[0] &&
-            `heartbeat ${formatAge(ingestors.data[0].lastHeartbeatUtc)}`
-          }
+          label="Price data"
+          value={lastQuoteUtc ? formatAge(lastQuoteUtc) : 'none'}
+          tone={quotesAreStale ? 'warn' : undefined}
+          sub={quotesAreStale ? 'stale — treat prices with care' : 'last saved quote'}
         />
       </div>
 

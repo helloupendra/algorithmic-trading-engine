@@ -223,7 +223,9 @@ public class AdminBootstrapper
             {
                 UserName = userName,
                 Email = $"{userName}@localhost",
-                Role = UserRoles.Trader,
+                // A machine account, not a trader: no capital, no grants, and it
+                // never appears in the traders list.
+                Role = UserRoles.Service,
                 IsActive = true,
                 CreatedUtc = DateTime.UtcNow,
                 UpdatedUtc = DateTime.UtcNow

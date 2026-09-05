@@ -185,6 +185,10 @@ public static class DependencyInjection
         // same path the strategy alerter already uses.
         services.AddScoped<ISystemNotifier, RedisSystemNotifier>();
 
+        // Accounts, module grants and the grant check every guarded endpoint asks.
+        services.AddScoped<IUserAdminService, UserAdminService>();
+        services.AddScoped<IStrategyAccessService, StrategyAccessService>();
+
         return services;
     }
 }

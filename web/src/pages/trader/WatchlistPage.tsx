@@ -1,130 +1,143 @@
 /**
- * Watchlist: the symbols the ingestor subscribes to, joined with the last
- * quote saved for each. Selecting a row opens the stored 1-minute bars and
- * recent ticks for that symbol — the data captured in the last live session.
+ * The trader's own watchlist.
+ *
+ * Removing a row here removes it from *this trader's* list only. The live feed
+ * keeps carrying the symbol — another trader or a running strategy may still
+ * need it, and quietly unsubscribing the feed would starve them of data.
  */
 
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import {
-  useAddWatchlistSymbol,
-  useLatestQuotes,
-  useLiveBars,
-  useRecentTicks,
-  useRemoveWatchlistSymbol,
-  useWatchlist,
+  useAddToMyWatchlist,
+  useMyWatchlist,
+  useRemoveFromMyWatchlist,
+  useResetMyWatchlist,
 } from '../../lib/queries'
-import {
-  formatAge,
-  formatPrice,
-  formatTime,
-  pnlClass,
-  quoteChange,
-  shortSymbol,
-} from '../../lib/format'
-import { Badge, InlineError, Panel, QueryBoundary } from '../../components/ui'
-import { BarChart } from '../../components/charts'
+import type { MyWatchlistItem } from '../../lib/types'
+import { formatAge, formatPrice, pnlClass } from '../../lib/format'
+import { Badge, EmptyState, InlineError, Panel, QueryBoundary } from '../../components/ui'
+
+function change(item: MyWatchlistItem): { text: string; cls: string } {
+  if (item.lastTradedPrice == null || item.close == null || item.close === 0) {
+    return { text: '—', cls: 'muted' }
+  }
+
+  const diff = item.lastTradedPrice - item.close
+  const pct = (diff / item.close) * 100
+
+  return {
+    text: `${diff >= 0 ? '+' : ''}${formatPrice(diff)} (${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)`,
+    cls: pnlClass(diff),
+  }
+}
 
 export function WatchlistPage() {
-  const watchlist = useWatchlist()
-  const quotes = useLatestQuotes()
-  const addSymbol = useAddWatchlistSymbol()
-  const removeSymbol = useRemoveWatchlistSymbol()
-
-  const [selected, setSelected] = useState<string | null>(null)
-  const [newSymbol, setNewSymbol] = useState('')
-
-  const bars = useLiveBars(selected)
-  const ticks = useRecentTicks(selected, 30)
-
-  const quoteBySymbol = useMemo(() => {
-    const map = new Map(quotes.data?.map((q) => [q.symbol, q]))
-    return map
-  }, [quotes.data])
-
-  function handleAdd(event: React.FormEvent) {
-    event.preventDefault()
-    const symbol = newSymbol.trim().toUpperCase()
-    if (!symbol) return
-    addSymbol.mutate(
-      { symbol, dataType: 'symbolUpdate' },
-      { onSuccess: () => setNewSymbol('') },
-    )
-  }
+  const watchlist = useMyWatchlist()
+  const add = useAddToMyWatchlist()
+  const remove = useRemoveFromMyWatchlist()
+  const reset = useResetMyWatchlist()
+  const [symbol, setSymbol] = useState('')
 
   return (
     <div className="page">
       <header className="page__header">
         <h1 className="page__title">Watchlist</h1>
         <p className="page__subtitle">
-          Symbols the live ingestor subscribes to, with the last saved quote for each.
+          Your own list of symbols, with the last saved quote for each. It starts with the three
+          indices and is yours to change.
         </p>
       </header>
+
+      {add.isError && <InlineError error={add.error} />}
+      {remove.isError && <InlineError error={remove.error} />}
+      {(add.isSuccess || remove.isSuccess || reset.isSuccess) && (
+        <div className="alert alert--success" role="status">
+          {add.data?.message ?? remove.data?.message ?? reset.data?.message}
+        </div>
+      )}
 
       <Panel
         title="Symbols"
         actions={
-          <form className="inline-form" onSubmit={handleAdd}>
+          <form
+            className="chip-row"
+            onSubmit={(e) => {
+              e.preventDefault()
+              add.mutate(symbol.trim(), { onSuccess: () => setSymbol('') })
+            }}
+          >
             <input
-              className="field__input field__input--sm"
+              className="field__input mono"
               placeholder="NSE:SBIN-EQ"
-              value={newSymbol}
-              onChange={(e) => setNewSymbol(e.target.value)}
+              value={symbol}
+              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
               aria-label="Symbol to add"
             />
-            <button className="btn btn--primary btn--sm" disabled={addSymbol.isPending}>
-              Add
+            <button className="btn btn--primary btn--sm" disabled={add.isPending || !symbol.trim()}>
+              {add.isPending ? 'Adding…' : 'Add'}
+            </button>
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              disabled={reset.isPending}
+              onClick={() => reset.mutate()}
+              title="Put the three default indices back"
+            >
+              Reset
             </button>
           </form>
         }
       >
-        {addSymbol.isError && <InlineError error={addSymbol.error} />}
-        <QueryBoundary query={watchlist} empty="Watchlist is empty — add a symbol above.">
-          {(items) => (
-            <div className="tablewrap">
-              <table className="table table--hover">
-                <thead>
-                  <tr>
-                    <th>Symbol</th>
-                    <th>Type</th>
-                    <th className="r">Priority</th>
-                    <th className="r">LTP</th>
-                    <th className="r">Change</th>
-                    <th className="r">Quote age</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...items]
-                    .sort((a, b) => b.priority - a.priority || a.symbol.localeCompare(b.symbol))
-                    .map((item) => {
-                      const quote = quoteBySymbol.get(item.symbol)
-                      const chg = quote ? quoteChange(quote.lastTradedPrice, quote.close) : null
-                      const isSelected = selected === item.symbol
+        <QueryBoundary query={watchlist}>
+          {(list) =>
+            list.length === 0 ? (
+              <EmptyState>Your watchlist is empty. Add a symbol, or reset to the defaults.</EmptyState>
+            ) : (
+              <div className="tablewrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Symbol</th>
+                      <th className="r">LTP</th>
+                      <th className="r">Change</th>
+                      <th className="r">Open</th>
+                      <th className="r">High</th>
+                      <th className="r">Low</th>
+                      <th>Quote age</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {list.map((item) => {
+                      const ch = change(item)
                       return (
-                        <tr
-                          key={item.id}
-                          className={isSelected ? 'row--selected' : ''}
-                          onClick={() => setSelected(item.symbol)}
-                        >
+                        <tr key={item.symbol}>
                           <td className="mono">
-                            {shortSymbol(item.symbol)}{' '}
-                            {!item.isActive && <Badge tone="warn">paused</Badge>}
+                            {item.symbol}
+                            {!item.isSubscribed && (
+                              <div className="small-note">
+                                <Badge tone="warn">feed not subscribed</Badge>
+                              </div>
+                            )}
                           </td>
-                          <td className="muted">{item.dataType}</td>
-                          <td className="r mono">{item.priority}</td>
-                          <td className="r mono">{formatPrice(quote?.lastTradedPrice)}</td>
-                          <td className={`r mono ${pnlClass(chg?.abs)}`}>
-                            {chg ? `${chg.pct.toFixed(2)}%` : '—'}
+                          <td className="r">{formatPrice(item.lastTradedPrice)}</td>
+                          <td className={`r ${ch.cls}`}>{ch.text}</td>
+                          <td className="r">{formatPrice(item.open)}</td>
+                          <td className="r">{formatPrice(item.high)}</td>
+                          <td className="r">{formatPrice(item.low)}</td>
+                          <td>
+                            {item.updatedUtc ? (
+                              formatAge(item.updatedUtc)
+                            ) : (
+                              <span className="muted">no quote</span>
+                            )}
                           </td>
-                          <td className="r muted">{quote ? formatAge(quote.updatedUtc) : 'no quote'}</td>
-                          <td className="r">
+                          <td>
                             <button
                               type="button"
                               className="btn btn--ghost btn--sm"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                removeSymbol.mutate(item.id)
-                              }}
+                              disabled={remove.isPending}
+                              onClick={() => remove.mutate(item.symbol)}
                             >
                               Remove
                             </button>
@@ -132,60 +145,18 @@ export function WatchlistPage() {
                         </tr>
                       )
                     })}
-                </tbody>
-              </table>
-            </div>
-          )}
+                  </tbody>
+                </table>
+              </div>
+            )
+          }
         </QueryBoundary>
+        <p className="small-note muted">
+          Removing takes the symbol off <b>your</b> list only — the live feed keeps carrying it,
+          because another trader or a running strategy may depend on it. Adding a new symbol also
+          asks the feed to subscribe, so quotes start arriving on its next refresh.
+        </p>
       </Panel>
-
-      {selected && (
-        <>
-          <Panel title={`${shortSymbol(selected)} · stored 1-minute bars`}>
-            <QueryBoundary
-              query={bars}
-              empty="No bars stored for this symbol — it was never subscribed during a live session."
-            >
-              {(data) => <BarChart bars={data} />}
-            </QueryBoundary>
-          </Panel>
-
-          <Panel title="Recent ticks">
-            <QueryBoundary query={ticks} empty="No ticks stored for this symbol.">
-              {(data) => (
-                <div className="tablewrap">
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>Received</th>
-                        <th className="r">LTP</th>
-                        <th className="r">Bid</th>
-                        <th className="r">Ask</th>
-                        <th className="r">Bid size</th>
-                        <th className="r">Ask size</th>
-                        <th className="r">Volume</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.map((t, i) => (
-                        <tr key={`${t.receivedUtc}-${i}`}>
-                          <td className="mono muted">{formatTime(t.receivedUtc)}</td>
-                          <td className="r mono">{formatPrice(t.lastTradedPrice)}</td>
-                          <td className="r mono">{formatPrice(t.bidPrice)}</td>
-                          <td className="r mono">{formatPrice(t.askPrice)}</td>
-                          <td className="r mono">{t.bidSize ?? '—'}</td>
-                          <td className="r mono">{t.askSize ?? '—'}</td>
-                          <td className="r mono">{t.volume?.toLocaleString('en-IN') ?? '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </QueryBoundary>
-          </Panel>
-        </>
-      )}
     </div>
   )
 }

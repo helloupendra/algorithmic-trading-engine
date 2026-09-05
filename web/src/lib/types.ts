@@ -1112,3 +1112,51 @@ export interface SaveDataVendorInput {
   notes: string
   isEnabled: boolean
 }
+
+// ---------- Users v2 ----------
+
+export interface PlatformModuleInfo {
+  key: string
+  name: string
+  description: string
+}
+
+export interface UserAdmin {
+  id: number
+  userName: string
+  email: string
+  /** "Admin" | "Trader" | "Service" */
+  role: string
+  isActive: boolean
+  totalCapital: number
+  /** Null means the platform-wide limit applies. */
+  maxConcurrentRuns: number | null
+  /** Module keys held. Empty for admins, who have all of them. */
+  moduleGrants: string[]
+  activeSessions: number
+  createdUtc: string
+  lastLoginUtc: string | null
+}
+
+export interface UpdateUserInput {
+  role?: string
+  isActive?: boolean
+  totalCapital?: number
+  /** -1 clears the override. */
+  maxConcurrentRuns?: number
+}
+
+/** A row on the signed-in trader's own watchlist. */
+export interface MyWatchlistItem {
+  symbol: string
+  sortOrder: number
+  /** False when the live feed is not subscribed, so the quote will never refresh. */
+  isSubscribed: boolean
+  lastTradedPrice: number | null
+  open: number | null
+  high: number | null
+  low: number | null
+  close: number | null
+  volume: number | null
+  updatedUtc: string | null
+}

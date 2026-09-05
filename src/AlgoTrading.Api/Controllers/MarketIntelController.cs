@@ -1,3 +1,5 @@
+using AlgoTrading.Domain.Constants;
+using AlgoTrading.Api.Security;
 using AlgoTrading.Application.Interfaces;
 using Microsoft.AspNetCore.Mvc;
 
@@ -9,6 +11,7 @@ namespace AlgoTrading.Api.Controllers;
 /// here is informational market data — it is not investment advice, and the
 /// movers are a mechanical sort by day change, not a recommendation.
 /// </summary>
+[RequireModule(PlatformModules.MarketData)]
 [ApiController]
 [Route("api/[controller]")]
 public class MarketIntelController : ControllerBase

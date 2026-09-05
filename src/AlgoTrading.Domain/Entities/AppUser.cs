@@ -22,6 +22,26 @@ namespace AlgoTrading.Domain.Entities
 
         public bool IsActive { get; set; } = true;
 
+        /// <summary>
+        /// How many live runs this trader may hold open at once. Null means the
+        /// platform-wide limit applies; a number overrides it for this account
+        /// alone, which is how one trader is given more rope than another.
+        /// </summary>
+        public int? MaxConcurrentRuns { get; set; }
+
+        /// <summary>The modules this account may use. Empty means it can do nothing.</summary>
+        public ICollection<UserModuleGrant> ModuleGrants { get; set; } = new List<UserModuleGrant>();
+
+        /// <summary>
+        /// The strategy package this trader holds. Null means none, which means no
+        /// strategies — deny by default, same as module grants.
+        /// </summary>
+        public long? StrategyPackageId { get; set; }
+        public StrategyPackage? StrategyPackage { get; set; }
+
+        /// <summary>Extra strategies granted to this trader beyond their package.</summary>
+        public ICollection<UserStrategyGrant> StrategyGrants { get; set; } = new List<UserStrategyGrant>();
+
         public DateTime CreatedUtc { get; set; } = DateTime.UtcNow;
         public DateTime UpdatedUtc { get; set; } = DateTime.UtcNow;
 

@@ -3,6 +3,7 @@ using System;
 using AlgoTrading.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace AlgoTrading.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(TradingDbContext))]
-    partial class TradingDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260905184852_UserModuleGrants")]
+    partial class UserModuleGrants
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -117,9 +120,6 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(50)")
                         .HasDefaultValue("Trader");
 
-                    b.Property<long?>("StrategyPackageId")
-                        .HasColumnType("bigint");
-
                     b.Property<decimal>("TotalCapital")
                         .HasColumnType("numeric");
 
@@ -135,8 +135,6 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("Email")
                         .IsUnique();
-
-                    b.HasIndex("StrategyPackageId");
 
                     b.HasIndex("UserName")
                         .IsUnique();
@@ -1489,92 +1487,6 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.ToTable("strategies", (string)null);
                 });
 
-            modelBuilder.Entity("AlgoTrading.Domain.Entities.StrategyPackage", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
-
-                    b.Property<bool>("AllowLiveMode")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("AllowedUnderlyingsCsv")
-                        .IsRequired()
-                        .HasMaxLength(300)
-                        .HasColumnType("character varying(300)");
-
-                    b.Property<string>("CreatedBy")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Description")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<bool>("IncludesAllStrategies")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("IsEnabled")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Key")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<int?>("MaxConcurrentRuns")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("MaxLotsPerRun")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<DateTime>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Key")
-                        .IsUnique();
-
-                    b.ToTable("strategy_packages", (string)null);
-                });
-
-            modelBuilder.Entity("AlgoTrading.Domain.Entities.StrategyPackageItem", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
-
-                    b.Property<string>("StrategyName")
-                        .IsRequired()
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)");
-
-                    b.Property<long>("StrategyPackageId")
-                        .HasColumnType("bigint");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("StrategyPackageId", "StrategyName")
-                        .IsUnique();
-
-                    b.ToTable("strategy_package_items", (string)null);
-                });
-
             modelBuilder.Entity("AlgoTrading.Domain.Entities.SymbolSyncState", b =>
                 {
                     b.Property<long>("Id")
@@ -1733,78 +1645,6 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.ToTable("user_refresh_tokens", (string)null);
                 });
 
-            modelBuilder.Entity("AlgoTrading.Domain.Entities.UserStrategyGrant", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
-
-                    b.Property<string>("GrantedBy")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<DateTime>("GrantedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("StrategyName")
-                        .IsRequired()
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)");
-
-                    b.Property<long>("UserId")
-                        .HasColumnType("bigint");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("UserId", "StrategyName")
-                        .IsUnique();
-
-                    b.ToTable("user_strategy_grants", (string)null);
-                });
-
-            modelBuilder.Entity("AlgoTrading.Domain.Entities.UserWatchlistItem", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("SortOrder")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Symbol")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<long>("UserId")
-                        .HasColumnType("bigint");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("UserId", "Symbol")
-                        .IsUnique();
-
-                    b.ToTable("user_watchlist_items", (string)null);
-                });
-
-            modelBuilder.Entity("AlgoTrading.Domain.Entities.AppUser", b =>
-                {
-                    b.HasOne("AlgoTrading.Domain.Entities.StrategyPackage", "StrategyPackage")
-                        .WithMany()
-                        .HasForeignKey("StrategyPackageId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("StrategyPackage");
-                });
-
             modelBuilder.Entity("AlgoTrading.Domain.Entities.EquityGroupMember", b =>
                 {
                     b.HasOne("AlgoTrading.Domain.Entities.EquityGroup", "EquityGroup")
@@ -1814,17 +1654,6 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("EquityGroup");
-                });
-
-            modelBuilder.Entity("AlgoTrading.Domain.Entities.StrategyPackageItem", b =>
-                {
-                    b.HasOne("AlgoTrading.Domain.Entities.StrategyPackage", "Package")
-                        .WithMany("Items")
-                        .HasForeignKey("StrategyPackageId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Package");
                 });
 
             modelBuilder.Entity("AlgoTrading.Domain.Entities.UserModuleGrant", b =>
@@ -1849,45 +1678,16 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("AlgoTrading.Domain.Entities.UserStrategyGrant", b =>
-                {
-                    b.HasOne("AlgoTrading.Domain.Entities.AppUser", "User")
-                        .WithMany("StrategyGrants")
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("AlgoTrading.Domain.Entities.UserWatchlistItem", b =>
-                {
-                    b.HasOne("AlgoTrading.Domain.Entities.AppUser", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("User");
-                });
-
             modelBuilder.Entity("AlgoTrading.Domain.Entities.AppUser", b =>
                 {
                     b.Navigation("ModuleGrants");
 
                     b.Navigation("RefreshTokens");
-
-                    b.Navigation("StrategyGrants");
                 });
 
             modelBuilder.Entity("AlgoTrading.Domain.Entities.EquityGroup", b =>
                 {
                     b.Navigation("Members");
-                });
-
-            modelBuilder.Entity("AlgoTrading.Domain.Entities.StrategyPackage", b =>
-                {
-                    b.Navigation("Items");
                 });
 #pragma warning restore 612, 618
         }

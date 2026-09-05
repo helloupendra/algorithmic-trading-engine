@@ -1,3 +1,5 @@
+using AlgoTrading.Domain.Constants;
+using AlgoTrading.Api.Security;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Application.UseCases.Instruments;
 using AlgoTrading.Contracts.Instruments;
@@ -13,6 +15,8 @@ namespace AlgoTrading.Api.Controllers;
 /// <summary>
 /// Exposes endpoints to search the instrument universe, import CSV masters, and resolve derivative expiries and chains.
 /// </summary>
+// Option chains and instrument search are market views.
+[RequireModule(PlatformModules.MarketData)]
 [ApiController]
 [Route("api/[controller]")]
 public class InstrumentsController : ControllerBase

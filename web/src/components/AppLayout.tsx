@@ -50,6 +50,7 @@ function StatusPill({
 
 /** Market open/closed, broker connected, ingestor heartbeat — the pulse row. */
 function TopbarStatus() {
+  const { isAdmin } = useAuth()
   const session = useMarketSession()
   const broker = useBrokerSession()
   const ingestors = useIngestorStatuses()
@@ -57,6 +58,12 @@ function TopbarStatus() {
   const market = session.data
   const feeds = ingestors.data ?? []
   const healthyFeeds = feeds.filter((f) => f.isHealthy).length
+
+  // Broker links and ingestor heartbeats are the operator's job. A trader can do
+  // nothing about either, and a red pill they cannot act on is just noise. What
+  // a trader needs to know about the feed — whether the numbers are fresh — is
+  // said on their own pages, next to the numbers.
+  const showOperatorPills = isAdmin
 
   return (
     <div className="topbar__status">
@@ -71,14 +78,14 @@ function TopbarStatus() {
           }
         />
       )}
-      {broker.data && (
+      {showOperatorPills && broker.data && (
         <StatusPill
           tone={broker.data.isAuthenticated ? 'pos' : 'neg'}
           label={broker.data.isAuthenticated ? 'FYERS linked' : 'FYERS not linked'}
           title="Broker session"
         />
       )}
-      {feeds.length > 0 && (
+      {showOperatorPills && feeds.length > 0 && (
         <StatusPill
           tone={healthyFeeds === feeds.length ? 'live' : 'warn'}
           label={

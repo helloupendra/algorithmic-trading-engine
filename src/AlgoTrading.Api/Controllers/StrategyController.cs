@@ -1,3 +1,4 @@
+using AlgoTrading.Domain.Constants;
 // src/AlgoTrading.Api/Controllers/StrategyController.cs
 using AlgoTrading.Api.Configuration;
 using AlgoTrading.Api.Security;
@@ -27,6 +28,9 @@ namespace AlgoTrading.Api.Controllers;
 /// optional stop-loss / target, stop it (squaring off), and read its
 /// position-based live view, activity and runner output.
 /// </summary>
+// A trader reaches every live-run endpoint here; the grant is checked on the
+// endpoint, not merely hidden in the console's navigation.
+[RequireModule(PlatformModules.Strategies)]
 [ApiController]
 [Route("api/[controller]")]
 public class StrategyController : ControllerBase
@@ -39,6 +43,7 @@ public class StrategyController : ControllerBase
     private readonly StrategyCatalogService _catalog;
     private readonly StrategyProcessRegistry _registry;
     private readonly ISystemNotifier _notifier;
+    private readonly IStrategyAccessService _strategyAccess;
     private readonly StrategyRunControl _runControl;
     private readonly PythonEngineLocator _engine;
     private readonly IPaperTradingService _paperTrading;
@@ -63,6 +68,7 @@ public class StrategyController : ControllerBase
         GetPaperOrdersUseCase getPaperOrders,
         UpsertWatchlistItemUseCase upsertWatchlistItem,
         ISystemNotifier notifier,
+        IStrategyAccessService strategyAccess,
         IOptions<StrategyRunnerOptions> options,
         ILogger<StrategyController> logger)
     {
@@ -78,6 +84,7 @@ public class StrategyController : ControllerBase
         _getPaperOrders = getPaperOrders;
         _upsertWatchlistItem = upsertWatchlistItem;
         _notifier = notifier;
+        _strategyAccess = strategyAccess;
         _options = options.Value;
         _logger = logger;
     }
@@ -86,11 +93,27 @@ public class StrategyController : ControllerBase
     // Catalog
     // ------------------------------------------------------------------
 
-    /// <summary>Every strategy the engine can run, with its current run state. Readable by any signed-in user.</summary>
+    /// <summary>
+    /// The strategies the caller may run. An admin sees the whole catalog; a
+    /// trader sees exactly what their package and overrides allow.
+    /// </summary>
+    /// <remarks>
+    /// Filtering here is a courtesy, so a trader is not shown buttons that would
+    /// be refused. The check that actually stops a deploy lives on the deploy
+    /// endpoint.
+    /// </remarks>
     [HttpGet]
     public async Task<ActionResult<List<StrategyListItemResponse>>> GetAll(CancellationToken cancellationToken)
     {
         var entries = await _catalog.GetAllAsync(cancellationToken);
+
+        var access = await _strategyAccess.GetAccessAsync(User.GetRequiredUserId(), cancellationToken);
+
+        if (!access.IsUnrestricted)
+        {
+            entries = entries.Where(x => access.AllowsStrategy(x.Name)).ToList();
+        }
+
         return Ok(entries.Select(ToListItem).ToList());
     }
 
@@ -278,6 +301,28 @@ public class StrategyController : ControllerBase
 
         var userId = User.GetRequiredUserId();
         var startedBy = User.GetUserName() ?? "unknown";
+
+        // What this trader may run. Filtering the strategy list is a courtesy;
+        // this check is what actually stops anything, so it happens on the last
+        // step before a runner is launched.
+        int openRuns = await _dbContext.SimulationRuns
+            .CountAsync(
+                x => x.UserId == userId && (x.Status == "Running" || x.Status == "Stopping"),
+                cancellationToken);
+
+        var decision = await _strategyAccess.CanDeployAsync(
+            userId,
+            strategy.Name,
+            underlying,
+            lots,
+            run.Mode,
+            openRuns,
+            cancellationToken);
+
+        if (!decision.Allowed)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = decision.Reason });
+        }
 
         await EnsureSpotOnWatchlistAsync(spotSymbol, cancellationToken);
 

@@ -1,3 +1,4 @@
+using AlgoTrading.Domain.Constants;
 // src/AlgoTrading.Api/Controllers/BacktestController.cs
 using AlgoTrading.Api.Configuration;
 using AlgoTrading.Api.Security;
@@ -24,6 +25,7 @@ namespace AlgoTrading.Api.Controllers;
 /// stop, delete and backfill are admin-only because they launch processes on
 /// the API host and call the broker.
 /// </summary>
+[RequireModule(PlatformModules.Backtesting)]
 [ApiController]
 [Route("api/[controller]")]
 public class BacktestController : ControllerBase

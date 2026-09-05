@@ -3,6 +3,7 @@ using System;
 using AlgoTrading.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace AlgoTrading.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(TradingDbContext))]
-    partial class TradingDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260905191738_StrategyPackages")]
+    partial class StrategyPackages
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1765,36 +1768,6 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.ToTable("user_strategy_grants", (string)null);
                 });
 
-            modelBuilder.Entity("AlgoTrading.Domain.Entities.UserWatchlistItem", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("SortOrder")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Symbol")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<long>("UserId")
-                        .HasColumnType("bigint");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("UserId", "Symbol")
-                        .IsUnique();
-
-                    b.ToTable("user_watchlist_items", (string)null);
-                });
-
             modelBuilder.Entity("AlgoTrading.Domain.Entities.AppUser", b =>
                 {
                     b.HasOne("AlgoTrading.Domain.Entities.StrategyPackage", "StrategyPackage")
@@ -1853,17 +1826,6 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                 {
                     b.HasOne("AlgoTrading.Domain.Entities.AppUser", "User")
                         .WithMany("StrategyGrants")
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("AlgoTrading.Domain.Entities.UserWatchlistItem", b =>
-                {
-                    b.HasOne("AlgoTrading.Domain.Entities.AppUser", "User")
-                        .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
