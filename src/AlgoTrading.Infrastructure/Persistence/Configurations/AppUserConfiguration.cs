@@ -36,6 +36,12 @@ namespace AlgoTrading.Infrastructure.Persistence.Configurations
             builder.HasIndex(x => x.UserName).IsUnique();
             builder.HasIndex(x => x.Email).IsUnique();
 
+            // A deleted package must not leave traders pointing at nothing; they
+            // simply fall back to holding no strategies.
+            builder.HasOne(x => x.StrategyPackage)
+                .WithMany()
+                .HasForeignKey(x => x.StrategyPackageId)
+                .OnDelete(DeleteBehavior.SetNull);
         }
     }
 }

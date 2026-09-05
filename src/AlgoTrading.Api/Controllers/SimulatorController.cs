@@ -1,3 +1,4 @@
+using AlgoTrading.Domain.Constants;
 // src/AlgoTrading.Api/Controllers/SimulatorController.cs
 using AlgoTrading.Api.Security;
 using AlgoTrading.Api.Services;
@@ -15,6 +16,9 @@ namespace AlgoTrading.Api.Controllers;
 /// The runs/{id}/equity-snapshots, marks, progress and complete endpoints are
 /// the backtest runner's write path (spec §2.4).
 /// </summary>
+// Simulation runs are how a strategy run is created, so they belong to the
+// same grant.
+[RequireModule(PlatformModules.Strategies)]
 [ApiController]
 [Route("api/[controller]")]
 public class SimulatorController : ControllerBase

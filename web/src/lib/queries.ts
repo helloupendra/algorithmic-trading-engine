@@ -1208,3 +1208,98 @@ export function useDeleteDataVendor() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['providers'] }),
   })
 }
+
+// ---------- Users v2 (admin) ----------
+
+export function useUserAccounts() {
+  return useQuery({
+    queryKey: ['users', 'accounts'],
+    queryFn: () => api.get<import('./types').UserAdmin[]>('/api/Users'),
+  })
+}
+
+export function usePlatformModules() {
+  return useQuery({
+    queryKey: ['users', 'modules'],
+    queryFn: () => api.get<import('./types').PlatformModuleInfo[]>('/api/Users/modules'),
+    staleTime: Infinity,
+  })
+}
+
+export function useUserRoles() {
+  return useQuery({
+    queryKey: ['users', 'roles'],
+    queryFn: () => api.get<string[]>('/api/Users/roles'),
+    staleTime: Infinity,
+  })
+}
+
+export function useUpdateUser() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...input }: { id: number } & import('./types').UpdateUserInput) =>
+      api.patch<import('./types').UserAdmin>(`/api/Users/${id}`, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  })
+}
+
+export function useSetUserGrants() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, moduleKeys }: { id: number; moduleKeys: string[] }) =>
+      api.put<import('./types').UserAdmin>(`/api/Users/${id}/grants`, { moduleKeys }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  })
+}
+
+export function useResetUserPassword() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, newPassword }: { id: number; newPassword: string }) =>
+      api.post<{ message: string }>(`/api/Users/${id}/password`, { newPassword }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  })
+}
+
+export function useRevokeUserSessions() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => api.post<{ message: string }>(`/api/Users/${id}/revoke-sessions`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  })
+}
+
+// ---------- The signed-in trader's own watchlist ----------
+
+export function useMyWatchlist() {
+  return useQuery({
+    queryKey: ['watchlist', 'me'],
+    queryFn: () => api.get<import('./types').MyWatchlistItem[]>('/api/Watchlist/me'),
+    refetchInterval: POLL_FAST,
+  })
+}
+
+export function useAddToMyWatchlist() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (symbol: string) => api.post<{ message: string }>('/api/Watchlist/me', { symbol }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['watchlist', 'me'] }),
+  })
+}
+
+export function useRemoveFromMyWatchlist() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (symbol: string) =>
+      api.delete<{ message: string }>(`/api/Watchlist/me/${encodeURIComponent(symbol)}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['watchlist', 'me'] }),
+  })
+}
+
+export function useResetMyWatchlist() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.post<{ message: string }>('/api/Watchlist/me/reset'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['watchlist', 'me'] }),
+  })
+}
