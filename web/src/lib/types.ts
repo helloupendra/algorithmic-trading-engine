@@ -1133,6 +1133,11 @@ export interface UserAdmin {
   maxConcurrentRuns: number | null
   /** Module keys held. Empty for admins, who have all of them. */
   moduleGrants: string[]
+  /** The strategy package this trader is on. Null means none — they can run nothing. */
+  strategyPackageId: number | null
+  strategyPackageName: string | null
+  /** Extra strategies granted on top of the package. */
+  strategyGrants: string[]
   activeSessions: number
   createdUtc: string
   lastLoginUtc: string | null
@@ -1144,6 +1149,8 @@ export interface UpdateUserInput {
   totalCapital?: number
   /** -1 clears the override. */
   maxConcurrentRuns?: number
+  /** -1 removes the package. */
+  strategyPackageId?: number
 }
 
 /** A row on the signed-in trader's own watchlist. */
@@ -1159,4 +1166,122 @@ export interface MyWatchlistItem {
   close: number | null
   volume: number | null
   updatedUtc: string | null
+}
+
+// ---------- Strategy packages ----------
+
+export interface StrategyCatalogName {
+  name: string
+  category: string
+  description: string
+  supportedUnderlyings: string[]
+}
+
+export interface StrategyPackage {
+  id: number
+  key: string
+  name: string
+  description: string
+  isEnabled: boolean
+  /** Covers the whole catalog, including strategies written later. */
+  includesAllStrategies: boolean
+  maxLotsPerRun: number | null
+  maxConcurrentRuns: number | null
+  allowedUnderlyings: string[]
+  allowLiveMode: boolean
+  strategies: string[]
+  holderCount: number
+  createdBy: string
+  updatedUtc: string
+}
+
+export interface SaveStrategyPackageInput {
+  key: string
+  name: string
+  description: string
+  isEnabled: boolean
+  includesAllStrategies: boolean
+  maxLotsPerRun: number | null
+  maxConcurrentRuns: number | null
+  allowedUnderlyings: string[]
+  allowLiveMode: boolean
+}
+
+// ---------- Invites ----------
+
+export interface UserInvite {
+  id: number
+  email: string
+  suggestedUserName: string
+  moduleKeys: string[]
+  strategyPackageId: number | null
+  createdBy: string
+  createdUtc: string
+  expiresUtc: string
+  acceptedUtc: string | null
+  revokedUtc: string | null
+  /** "pending" | "accepted" | "revoked" | "expired" */
+  status: string
+}
+
+export interface CreatedInvite {
+  id: number
+  email: string
+  expiresUtc: string
+  /** Shown once. The token is not recoverable afterwards. */
+  link: string
+  message: string
+}
+
+export interface InvitePreview {
+  email: string
+  suggestedUserName: string
+  expiresUtc: string
+}
+
+// ---------- Activity log ----------
+
+export interface ActivityLogEntry {
+  id: number
+  occurredUtc: string
+  userId: number | null
+  userName: string
+  role: string
+  module: string
+  action: string
+  method: string
+  path: string
+  statusCode: number
+  durationMs: number
+  succeeded: boolean
+  targetType: string | null
+  targetId: string | null
+  /** A sentence written by the endpoint itself, when the path alone says too little. */
+  summary: string | null
+  ipAddress: string | null
+}
+
+export interface ActivityLogPage {
+  total: number
+  rows: ActivityLogEntry[]
+}
+
+export interface ActivityLogFacets {
+  modules: { module: string; count: number }[]
+  actions: { action: string; count: number }[]
+  users: {
+    userId: number | null
+    userName: string
+    count: number
+    failures: number
+    lastUtc: string
+  }[]
+}
+
+export interface ActivityUserSummary {
+  total: number
+  failures: number
+  firstUtc: string | null
+  lastUtc: string | null
+  byModule: { module: string; count: number; failures: number; lastUtc: string }[]
 }

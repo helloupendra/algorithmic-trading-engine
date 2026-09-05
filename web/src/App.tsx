@@ -5,6 +5,7 @@ import { useLiveFeedSignalR } from './lib/queries'
 import { AppLayout } from './components/AppLayout'
 import { RedirectIfAuthenticated, RequireAuth, RequireRole } from './components/RouteGuards'
 import { LoginPage } from './pages/LoginPage'
+import { AcceptInvitePage } from './pages/AcceptInvitePage'
 import { LandingPage } from './pages/LandingPage'
 import { ForbiddenPage, NotFoundPage } from './pages/Placeholders'
 import { OverviewPage } from './pages/trader/OverviewPage'
@@ -21,10 +22,12 @@ import { RunDetailPage } from './pages/trader/RunDetailPage'
 import { AdminHomePage } from './pages/admin/AdminHomePage'
 import { AdminOverviewPage } from './pages/admin/AdminOverviewPage'
 import { UsersPage } from './pages/admin/UsersPage'
+import { StrategyPackagesPage } from './pages/admin/StrategyPackagesPage'
 import { RiskV2Page } from './pages/admin/RiskV2Page'
 import { BrokerPage } from './pages/admin/BrokerPage'
 import { ConnectorDetailPage } from './pages/admin/ConnectorDetailPage'
 import { LiveAlertsV2Page } from './pages/admin/LiveAlertsV2Page'
+import { ActivityLogPage } from './pages/admin/ActivityLogPage'
 import { StrategiesOverviewPage } from './pages/strategies/StrategiesOverviewPage'
 import { LiveRunnerPage } from './pages/strategies/LiveRunnerPage'
 import { StrategyLibraryPage } from './pages/strategies/StrategyLibraryPage'
@@ -74,6 +77,9 @@ export default function App() {
 
             <Route element={<RedirectIfAuthenticated />}>
               <Route path="/login" element={<LoginPage />} />
+              {/* Someone already signed in is bounced to their own home rather
+                  than being allowed to accept an invite over their session. */}
+              <Route path="/invite/:token" element={<AcceptInvitePage />} />
             </Route>
 
             <Route element={<RequireAuth />}>
@@ -110,6 +116,7 @@ export default function App() {
                   {/* v1 modules, awaiting their rebuild. */}
                   <Route path="/admin/system" element={<AdminOverviewPage />} />
                   <Route path="/admin/users" element={<UsersPage />} />
+                  <Route path="/admin/users/packages" element={<StrategyPackagesPage />} />
                   <Route path="/admin/system/risk" element={<RiskV2Page />} />
                   <Route path="/admin/risk" element={<Navigate to="/admin/system/risk" replace />} />
                   <Route path="/admin/strategies" element={<StrategiesOverviewPage />} />
@@ -128,6 +135,7 @@ export default function App() {
                   <Route path="/admin/backtesting/runs/:id" element={<BacktestRunPage />} />
 
                   <Route path="/admin/system/alerts" element={<LiveAlertsV2Page />} />
+                  <Route path="/admin/system/logs" element={<ActivityLogPage />} />
                   <Route path="/admin/live-alerts" element={<Navigate to="/admin/system/alerts" replace />} />
                   <Route path="/admin/broker" element={<BrokerPage />} />
                   <Route path="/admin/broker/:providerKey" element={<ConnectorDetailPage />} />

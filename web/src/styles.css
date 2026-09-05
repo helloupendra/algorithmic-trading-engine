@@ -1089,24 +1089,63 @@ a.module-card:hover {
 }
 
 /* --- login ----------------------------------------------------------------- */
+/* One composition: the tape runs full-bleed behind everything and the card
+   floats on it. The vignette, not a second pane, does the contrast work. */
 .login {
+  position: relative;
   min-height: 100vh;
-  display: grid;
-  place-items: center;
-  padding: 24px;
+  min-height: 100svh;
+  overflow: hidden;
+  isolation: isolate;
+  background: var(--bg0);
+}
+.login__scene,
+.login__scene-fallback {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.login__scene-fallback {
   background:
-    radial-gradient(900px 480px at 15% -10%, rgba(79, 125, 255, 0.13) 0%, transparent 60%),
-    radial-gradient(700px 420px at 90% 110%, rgba(43, 212, 189, 0.08) 0%, transparent 60%),
+    radial-gradient(820px 520px at 50% 45%, rgba(79, 125, 255, 0.18) 0%, transparent 62%),
+    radial-gradient(620px 420px at 20% 95%, rgba(43, 212, 189, 0.1) 0%, transparent 62%),
     var(--bg0);
 }
+.login__veil {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(620px 460px at 50% 44%, var(--bg0) 0%, color-mix(in srgb, var(--bg0) 70%, transparent) 55%, transparent 78%),
+    linear-gradient(180deg, var(--bg0) 0%, color-mix(in srgb, var(--bg0) 40%, transparent) 22%, transparent 60%, color-mix(in srgb, var(--bg0) 75%, transparent) 100%);
+}
 
+/* Flex, not grid: the card and the risk note are one centred stack, not two
+   rows that would split the height between them. */
+.login__pane {
+  position: relative;
+  min-height: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+/* Glass, so the tape stays legible behind the card instead of being boxed out. */
 .login__card {
   width: min(400px, 100%);
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  backdrop-filter: blur(18px) saturate(1.2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  border: 1px solid var(--line-strong);
   border-radius: 16px;
   padding: 32px 30px 26px;
-  box-shadow: var(--shadow-2);
+  box-shadow: 0 40px 90px -40px rgb(0 0 0 / 0.9), inset 0 1px 0 rgb(255 255 255 / 0.04);
 }
 
 .login__brand {
@@ -1116,7 +1155,11 @@ a.module-card:hover {
   font-weight: 700;
   font-size: 15px;
   margin-bottom: 24px;
+  color: var(--text);
+  text-decoration: none;
 }
+.login__brand:hover { color: var(--text); text-decoration: none; }
+
 
 .login__title {
   margin: 0 0 4px;
@@ -2383,4 +2426,39 @@ a.pill:hover { border-color: var(--line-strong); }
   line-height: 1.5;
   white-space: normal;
   overflow-wrap: anywhere;
+}
+
+/* --- strategy packages ---------------------------------------------------- */
+/* .form-row aligns to the baseline, which collides once fields carry help text
+   of different lengths. The package editor has seven of them, so it gets its own
+   grid that aligns to the top and lets the action sit on its own line. */
+.edit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px 16px;
+  align-items: start;
+}
+
+.edit-grid__actions {
+  grid-column: 1 / -1;
+}
+
+/* Grid children default to min-width:auto, so a long help note overflows its
+   column and lands on top of the next one instead of wrapping. */
+.edit-grid > * {
+  min-width: 0;
+}
+
+.edit-grid .small-note {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Strategy descriptions run long; three lines is enough to recognise one, and
+   keeps the picker scannable instead of a wall of prose. */
+.grant__desc--clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }

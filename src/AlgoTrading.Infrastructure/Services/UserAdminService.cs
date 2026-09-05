@@ -16,15 +16,18 @@ public class UserAdminService : IUserAdminService
 {
     private readonly TradingDbContext _dbContext;
     private readonly PasswordHasher<AppUser> _passwordHasher;
+    private readonly ITokenValidityService _tokenValidity;
     private readonly ILogger<UserAdminService> _logger;
 
     public UserAdminService(
         TradingDbContext dbContext,
         PasswordHasher<AppUser> passwordHasher,
+        ITokenValidityService tokenValidity,
         ILogger<UserAdminService> logger)
     {
         _dbContext = dbContext;
         _passwordHasher = passwordHasher;
+        _tokenValidity = tokenValidity;
         _logger = logger;
     }
 
@@ -293,6 +296,10 @@ public class UserAdminService : IUserAdminService
         {
             await _dbContext.SaveChangesAsync(cancellationToken);
         }
+
+        // Refresh tokens are only half of it: without this the access token the
+        // account already holds keeps working until it expires.
+        await _tokenValidity.InvalidateExistingTokensAsync(userId, cancellationToken);
 
         return live.Count;
     }

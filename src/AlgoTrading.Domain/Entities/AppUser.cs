@@ -33,6 +33,24 @@ namespace AlgoTrading.Domain.Entities
         public ICollection<UserModuleGrant> ModuleGrants { get; set; } = new List<UserModuleGrant>();
 
         /// <summary>
+        /// Access tokens issued before this instant are refused, whatever their
+        /// expiry says.
+        /// </summary>
+        /// <remarks>
+        /// Revoking refresh tokens stops an account renewing, but the access token
+        /// already in someone's hands keeps working until it expires — an hour of
+        /// access after being disabled. This cutoff closes that: disabling an
+        /// account, resetting its password or signing it out sets it to now, and
+        /// every existing token becomes invalid immediately.
+        /// <para>
+        /// A cutoff rather than a denylist of token ids: it needs one nullable
+        /// column instead of a table that grows forever, and "everything before
+        /// now" is exactly what those three actions mean.
+        /// </para>
+        /// </remarks>
+        public DateTime? TokensValidFromUtc { get; set; }
+
+        /// <summary>
         /// The strategy package this trader holds. Null means none, which means no
         /// strategies — deny by default, same as module grants.
         /// </summary>

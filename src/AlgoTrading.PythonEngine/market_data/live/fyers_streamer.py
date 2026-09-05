@@ -41,6 +41,7 @@ from core.config import (
     DEBUG_PRINT_MESSAGES,
     WATCHLIST_REFRESH_SECONDS,
     SOURCE_NAME,
+    DATA_PROVIDER_KEY,
     HEARTBEAT_SECONDS,
     require_app_id,
     FYERS_LOG_PATH,
@@ -270,6 +271,10 @@ def map_message_to_payload(message: dict) -> dict | None:
     payload = {
         "symbol": symbol,
         "dataType": "symbolUpdate",
+        # Say who produced this. Without it the API has to guess from the single
+        # connector that claims a live feed, which stops being true the moment a
+        # second one exists.
+        "sourceKey": DATA_PROVIDER_KEY,
         "exchangeTimestampUtc": exchange_ts,
         "lastTradedPrice": message.get("ltp"),
         "bidPrice": message.get("bid_price"),

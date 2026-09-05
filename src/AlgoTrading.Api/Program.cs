@@ -1,3 +1,4 @@
+using System.IdentityModel.Tokens.Jwt;
 /// <summary>
 /// Application entry point. Configures services, routing, Swagger UI, and the DI container.
 /// </summary>
@@ -137,6 +138,46 @@ builder.Services
             ValidateLifetime = true,
             ClockSkew = TimeSpan.FromMinutes(1)
         };
+
+        // A valid signature and an unexpired lifetime are not enough. Disabling an
+        // account, resetting its password or signing it out sets a cutoff, and any
+        // token issued before it is refused here — otherwise the token already in
+        // someone's hands would keep working for up to its full hour.
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = async context =>
+            {
+                var principal = context.Principal;
+                long? userId = principal?.GetUserId();
+
+                if (userId is null)
+                {
+                    context.Fail("The token carries no usable account id.");
+                    return;
+                }
+
+                // `iat` is seconds since the epoch; a token without one predates
+                // this check and is treated as issued at the epoch, so any cutoff
+                // refuses it.
+                var issuedAtClaim = principal!.FindFirst(JwtRegisteredClaimNames.Iat)?.Value;
+                DateTime issuedAtUtc = long.TryParse(issuedAtClaim, out long seconds)
+                    ? DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime
+                    : DateTime.UnixEpoch;
+
+                var validity = context.HttpContext.RequestServices
+                    .GetRequiredService<ITokenValidityService>();
+
+                bool acceptable = await validity.IsTokenAcceptableAsync(
+                    userId.Value,
+                    issuedAtUtc,
+                    context.HttpContext.RequestAborted);
+
+                if (!acceptable)
+                {
+                    context.Fail("This session has been ended. Sign in again.");
+                }
+            },
+        };
     });
 
 // Deny by default. Any endpoint without explicit authorization metadata requires a
@@ -223,6 +264,11 @@ app.UseCors(CorsPolicies.WebClient);
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// After authentication, so every entry knows who made the request; before the
+// endpoints, so it sees the status they return. Reads are skipped and bodies are
+// never stored — see ActivityLogMiddleware.
+app.UseMiddleware<AlgoTrading.Api.Services.ActivityLogMiddleware>();
 
 app.MapControllers();
 

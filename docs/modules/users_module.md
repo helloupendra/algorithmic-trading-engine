@@ -52,12 +52,44 @@ passes only with a grant, and a **disabled account never passes**.
 
 Accounts are **disabled, not deleted**: the runs and orders they made keep their owner.
 
-## Known gap
+## Ending a session actually ends it
 
-Disabling revokes refresh tokens, and every module-gated endpoint refuses the account immediately.
-An **access token already issued** still works on endpoints that carry no module gate until it
-expires — the JWT lifetime is 60 minutes. Closing that needs a token denylist or a much shorter
-access-token lifetime; it is a deliberate open item, not an oversight.
+`AppUser.TokensValidFromUtc` is a per-account cutoff: **access tokens issued before it are refused**,
+whatever their expiry says. Disabling an account, resetting its password or signing it out sets it to
+now, so an existing token stops working immediately rather than lasting out its hour.
+
+A cutoff rather than a denylist of token ids: one nullable column instead of a table that grows
+forever, and "everything before now" is exactly what those three actions mean. Tokens carry an `iat`
+claim, and the JWT bearer handler compares it on every request through
+`ITokenValidityService`.
+
+The comparison is at second resolution — `iat` is written to whole seconds — and a token issued *in*
+the cutoff second is refused. The cost is one extra sign-in; the alternative, a second of slack, is a
+window an automated caller could sit inside.
+
+The answer is cached for 30 seconds and the entry is dropped the moment this process sets a cutoff,
+so a single API sees the change at once. The TTL only bounds staleness if the platform is ever run as
+more than one instance.
+
+## Invitations
+
+Signing up is not open. An admin creates an invitation; the person sets **their own password**, so it
+never passes through the admin or a chat message.
+
+* `POST /api/Invites` — admin only. Returns the link **once**; only the token's SHA-256 is stored, so
+  a database dump cannot hand anyone a working invite.
+* `GET /api/Invites/{token}` and `POST /api/Invites/{token}/accept` — anonymous, because the person
+  has no account yet. Both answer the same message for expired, used, revoked and never-existed, so
+  the endpoint cannot be used to probe for valid tokens.
+* An invite works **once** and expires (7 days by default, 90 maximum).
+* `POST /api/Invites/{id}/revoke` cancels an unused one.
+
+The admin chooses what the account starts with — module grants and a strategy package, both optional.
+**What makes this safe is not the invite but what it creates:** leave both empty and the account can
+sign in and do nothing. Verified: a new account with the `strategies` module but no package sees
+zero strategies.
+
+Console: the **Invitations** panel on `/admin/users`. The public page is `/invite/{token}`.
 
 ## API
 
