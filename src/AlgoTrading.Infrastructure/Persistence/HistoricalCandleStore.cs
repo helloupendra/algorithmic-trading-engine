@@ -3,8 +3,8 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AlgoTrading.Application.Interfaces;
+using AlgoTrading.Application.Providers;
 using AlgoTrading.Domain.Entities;
-using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 
@@ -17,12 +17,13 @@ namespace AlgoTrading.Infrastructure.Persistence
         public HistoricalCandleStore(TradingDbContext dbContext)
         {
             _dbContext = dbContext;
-        }                        
+        }
 
         public async Task<CandleUpsertResult> UpsertAsync(
             string symbol,
             string resolution,
-            IReadOnlyList<HistoryCandleBar> candles,
+            IReadOnlyList<ProviderHistoryBar> candles,
+            string sourceKey,
             CancellationToken cancellationToken = default)
         {
             var result = new CandleUpsertResult();
@@ -35,7 +36,8 @@ namespace AlgoTrading.Infrastructure.Persistence
 
             // Keep the last copy of any repeated timestamp: two entities with the
             // same key in one AddRange violate the unique index and roll back
-            // the whole batch.
+            // the whole batch. (FYERS repeats the in-progress bar around a range
+            // boundary, so this is not hypothetical.)
             var entitiesToInsert = candles
                 .GroupBy(c => c.TimestampUtc)
                 .Select(g => g.Last())
@@ -49,7 +51,8 @@ namespace AlgoTrading.Infrastructure.Persistence
                     High = c.High,
                     Low = c.Low,
                     Close = c.Close,
-                    Volume = (long)c.Volume
+                    Volume = (long)c.Volume,
+                    SourceKey = sourceKey,
                 }).ToList();
 
             var timestamps = entitiesToInsert.Select(x => x.TimeStampUtc).ToList();
@@ -79,7 +82,8 @@ namespace AlgoTrading.Infrastructure.Persistence
                         existing.High != incoming.High ||
                         existing.Low != incoming.Low ||
                         existing.Close != incoming.Close ||
-                        existing.Volume != incoming.Volume;
+                        existing.Volume != incoming.Volume ||
+                        existing.SourceKey != incoming.SourceKey;
 
                     if (changed)
                     {
@@ -88,6 +92,10 @@ namespace AlgoTrading.Infrastructure.Persistence
                         existing.Low = incoming.Low;
                         existing.Close = incoming.Close;
                         existing.Volume = incoming.Volume;
+
+                        // Whoever last wrote the row owns it: a value that changed
+                        // after a failover must not still name the old source.
+                        existing.SourceKey = incoming.SourceKey;
 
                         result.Updated++;
                     }

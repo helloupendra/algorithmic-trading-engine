@@ -49,7 +49,7 @@ namespace AlgoTrading.Contracts.MarketData
         /// <summary>
         /// Total number of candles actually downloaded from the broker API.
         /// </summary>
-        public int CandelsFetchedFromFyers { get; set; }
+        public int CandlesFetched { get; set; }
 
         /// <summary>
         /// Total number of candles now available locally for this symbol/resolution.

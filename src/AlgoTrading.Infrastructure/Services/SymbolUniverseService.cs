@@ -74,7 +74,7 @@ namespace AlgoTrading.Infrastructure.Services
                 };
 
                 var fetched = await _marketDataService.SyncHistoryAsync(syncRequest, cancellationToken);
-                response.CandelsFetchedFromFyers = fetched.Count;
+                response.CandlesFetched = fetched.Count;
                 response.MissingSlicesFetched.Add($"{request.FromDate:yyyy-MM-dd} -> {request.ToDate:yyyy-MM-dd}");
             }
 

@@ -1,8 +1,10 @@
 ﻿// src/AlgoTrading.Infrastructure/Services/OptionHistoryBackfillService.cs
 using AlgoTrading.Application.Interfaces;
+using AlgoTrading.Application.Providers;
 using AlgoTrading.Contracts.Options;
 using AlgoTrading.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace AlgoTrading.Infrastructure.Services;
 
@@ -10,19 +12,22 @@ public class OptionHistoryBackfillService : IOptionHistoryBackfillService
 {
     private readonly TradingDbContext _dbContext;
     private readonly IExpiryResolverService _expiryResolverService;
-    private readonly IFyersHistoryClient _fyersHistoryClient;
+    private readonly IProviderRouter _providerRouter;
     private readonly IHistoricalCandleStore _historicalCandleStore;
+    private readonly ILogger<OptionHistoryBackfillService> _logger;
 
     public OptionHistoryBackfillService(
         TradingDbContext dbContext,
         IExpiryResolverService expiryResolverService,
-        IFyersHistoryClient fyersHistoryClient,
-        IHistoricalCandleStore historicalCandleStore)
+        IProviderRouter providerRouter,
+        IHistoricalCandleStore historicalCandleStore,
+        ILogger<OptionHistoryBackfillService> logger)
     {
         _dbContext = dbContext;
         _expiryResolverService = expiryResolverService;
-        _fyersHistoryClient = fyersHistoryClient;
+        _providerRouter = providerRouter;
         _historicalCandleStore = historicalCandleStore;
+        _logger = logger;
     }
 
     public async Task<BackfillOptionHistoryResponse> BackfillAsync(
@@ -79,6 +84,11 @@ public class OptionHistoryBackfillService : IOptionHistoryBackfillService
         int totalFetchedContracts = 0;
         var symbolList = new List<string>();
 
+        var provider = await _providerRouter.ResolveDataAsync(
+            ProviderCapability.History,
+            segment: "FO",
+            cancellationToken: cancellationToken);
+
         foreach (var contract in contracts)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -89,12 +99,25 @@ public class OptionHistoryBackfillService : IOptionHistoryBackfillService
 
             foreach (var chunk in chunks)
             {
-                var bars = await _fyersHistoryClient.GetHistoryAsync(
-                    contract.Symbol,
-                    request.Resolution,
-                    chunk.FromUtc,
-                    chunk.ToUtc,
-                    cancellationToken);
+                IReadOnlyList<ProviderHistoryBar> bars;
+
+                try
+                {
+                    bars = await provider.GetHistoryAsync(
+                        contract.Symbol,
+                        request.Resolution,
+                        chunk.FromUtc,
+                        chunk.ToUtc,
+                        cancellationToken);
+                }
+                catch (ProviderSymbolRejectedException ex)
+                {
+                    // Expired contracts have no history at the vendor. One refused
+                    // contract must not abort a backfill of a hundred others.
+                    _logger.LogInformation(
+                        "Skipping {Symbol}: {Reason}", contract.Symbol, ex.Reason);
+                    break;
+                }
 
                 if (bars.Count == 0)
                     continue;
@@ -103,6 +126,7 @@ public class OptionHistoryBackfillService : IOptionHistoryBackfillService
                     contract.Symbol,
                     request.Resolution,
                     bars,
+                    provider.Descriptor.Key,
                     cancellationToken);
 
                 totalInserted += upsertResult.Inserted;

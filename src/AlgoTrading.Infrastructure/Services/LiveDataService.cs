@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Globalization;
 using AlgoTrading.Application.Interfaces;
+using AlgoTrading.Application.Providers;
 using AlgoTrading.Contracts.LiveData;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
@@ -26,11 +27,46 @@ public class LiveDataService : ILiveDataService
 
     private readonly TradingDbContext _dbContext;
     private readonly IMarketTickArchiveQueue _marketTickArchiveQueue;
+    private readonly IProviderCatalog _providerCatalog;
 
-    public LiveDataService(TradingDbContext dbContext, IMarketTickArchiveQueue marketTickArchiveQueue)
+    /// <summary>Lazily resolved once; the catalog is static metadata, not a query.</summary>
+    private string? _defaultSourceKey;
+
+    public LiveDataService(
+        TradingDbContext dbContext,
+        IMarketTickArchiveQueue marketTickArchiveQueue,
+        IProviderCatalog providerCatalog)
     {
         _dbContext = dbContext;
         _marketTickArchiveQueue = marketTickArchiveQueue;
+        _providerCatalog = providerCatalog;
+    }
+
+    /// <summary>
+    /// Data lineage for the live feed. The ingestor is the authority; until it
+    /// says (the phase that makes the Python feed provider-aware), the API stamps
+    /// the single connector that claims a live feed. With more than one candidate
+    /// it stamps nothing — an unattributed row is honest, a guessed one is not.
+    /// </summary>
+    private string ResolveSourceKey(string? requested)
+    {
+        if (!string.IsNullOrWhiteSpace(requested))
+        {
+            return requested.Trim();
+        }
+
+        if (_defaultSourceKey is null)
+        {
+            var candidates = _providerCatalog.Descriptors
+                .Where(x => x.Capabilities.LiveTicks)
+                .Select(x => x.Key)
+                .Take(2)
+                .ToList();
+
+            _defaultSourceKey = candidates.Count == 1 ? candidates[0] : string.Empty;
+        }
+
+        return _defaultSourceKey;
     }
      
     public async Task<IReadOnlyList<LiveWatchlistItem>> GetWatchlistAsync(
@@ -165,6 +201,8 @@ public class LiveDataService : ILiveDataService
         UpsertLiveQuoteRequest request,
         CancellationToken cancellationToken = default)
     {
+        string sourceKey = ResolveSourceKey(request.SourceKey);
+
         var existing = await _dbContext.LiveQuotesLatest
             .FirstOrDefaultAsync(x => x.Symbol == request.Symbol, cancellationToken);
 
@@ -173,6 +211,7 @@ public class LiveDataService : ILiveDataService
             existing = new LiveQuoteLatest
             {
                 Symbol = request.Symbol,
+                SourceKey = sourceKey,
                 DataType = request.DataType,
                 LastTradedPrice = request.LastTradedPrice,
                 Open = request.Open,
@@ -208,6 +247,7 @@ public class LiveDataService : ILiveDataService
             existing.Gamma = request.Gamma;
             existing.Theta = request.Theta;
             existing.Vega = request.Vega;
+            existing.SourceKey = sourceKey;
             existing.UpdatedUtc = DateTime.UtcNow;
         }
 
@@ -335,6 +375,7 @@ public class LiveDataService : ILiveDataService
         try
         {
             var nowUtc = DateTime.UtcNow;
+            string sourceKey = ResolveSourceKey(request.SourceKey);
 
             if (request.ExchangeTimestampUtc.HasValue)
             {
@@ -374,7 +415,8 @@ public class LiveDataService : ILiveDataService
             Low = request.Low,
             PrevClose = request.PrevClose,
             Volume = request.Volume,
-            RawPayload = request.RawPayload
+            RawPayload = request.RawPayload,
+            SourceKey = sourceKey
         };
 
         await _dbContext.LiveTicks.AddAsync(tick, cancellationToken);
@@ -390,7 +432,8 @@ public class LiveDataService : ILiveDataService
             Low = request.Low,
             Close = request.PrevClose,
             Volume = request.Volume,
-            RawPayload = request.RawPayload
+            RawPayload = request.RawPayload,
+            SourceKey = sourceKey
         }, cancellationToken);
 
         if (request.Symbol == "NSE:NIFTYBANK-INDEX")
@@ -411,7 +454,8 @@ public class LiveDataService : ILiveDataService
                     Low = request.Low,
                     PrevClose = request.PrevClose,
                     Volume = request.Volume,
-                    RawPayload = request.RawPayload
+                    RawPayload = request.RawPayload,
+                    SourceKey = sourceKey
                 },
                 cancellationToken);
         }
@@ -448,7 +492,8 @@ public class LiveDataService : ILiveDataService
                     Close = request.LastTradedPrice.Value,
                     VolumeDelta = volumeDelta,
                     TickCount = 1,
-                    UpdatedUtc = nowUtc
+                    UpdatedUtc = nowUtc,
+                    SourceKey = sourceKey
                 };
 
                 await _dbContext.LiveBars.AddAsync(existingBar, cancellationToken);
@@ -467,6 +512,7 @@ public class LiveDataService : ILiveDataService
                 existingBar.VolumeDelta += volumeDelta;
                 existingBar.TickCount += 1;
                 existingBar.UpdatedUtc = nowUtc;
+                existingBar.SourceKey = sourceKey;
             }
         }
 

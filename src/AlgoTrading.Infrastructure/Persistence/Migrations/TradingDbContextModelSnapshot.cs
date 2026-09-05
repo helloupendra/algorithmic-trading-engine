@@ -136,6 +136,56 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.ToTable("app_user", (string)null);
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.BrokerAccount", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Label")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("ProviderKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long?>("UserId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProviderKey")
+                        .IsUnique()
+                        .HasDatabaseName("ix_broker_accounts_shared_provider")
+                        .HasFilter("\"UserId\" IS NULL");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("ProviderKey", "UserId")
+                        .IsUnique();
+
+                    b.ToTable("broker_accounts", (string)null);
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.BrokerConfig", b =>
                 {
                     b.Property<long>("Id")
@@ -143,6 +193,9 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint");
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<long?>("BrokerAccountId")
+                        .HasColumnType("bigint");
 
                     b.Property<string>("BrokerName")
                         .IsRequired()
@@ -177,6 +230,11 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("BrokerName")
+                        .IsUnique()
+                        .HasDatabaseName("ix_broker_configs_shared_broker")
+                        .HasFilter("\"BrokerAccountId\" IS NULL");
+
+                    b.HasIndex("BrokerName", "BrokerAccountId")
                         .IsUnique();
 
                     b.ToTable("broker_configs", (string)null);
@@ -193,6 +251,9 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.Property<string>("AccessToken")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<long?>("BrokerAccountId")
+                        .HasColumnType("bigint");
 
                     b.Property<string>("BrokerName")
                         .IsRequired()
@@ -242,6 +303,11 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
+
+                    b.Property<string>("SourceKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
 
                     b.Property<string>("Symbol")
                         .IsRequired()
@@ -503,6 +569,49 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.ToTable("instruments", (string)null);
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.InstrumentVendorSymbol", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("CanonicalSymbol")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long?>("InstrumentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ProviderKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("VendorSymbol")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProviderKey", "CanonicalSymbol")
+                        .IsUnique();
+
+                    b.HasIndex("ProviderKey", "VendorSymbol")
+                        .IsUnique();
+
+                    b.ToTable("instrument_vendor_symbols", (string)null);
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.LiveBar", b =>
                 {
                     b.Property<long>("Id")
@@ -530,6 +639,11 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
+
+                    b.Property<string>("SourceKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
 
                     b.Property<string>("Symbol")
                         .IsRequired()
@@ -640,6 +754,11 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("SourceKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
                     b.Property<string>("Symbol")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -714,6 +833,11 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
 
                     b.Property<DateTime>("ReceivedUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("SourceKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
 
                     b.Property<string>("Symbol")
                         .IsRequired()
@@ -817,6 +941,11 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.Property<string>("RawPayload")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<string>("SourceKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
 
                     b.Property<string>("Symbol")
                         .IsRequired()
@@ -976,6 +1105,55 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.HasIndex("Status");
 
                     b.ToTable("paper_positions", (string)null);
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.ProviderBinding", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Capability")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("Priority")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ProviderKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("Segment")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("UpdatedBy")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Capability", "Priority");
+
+                    b.HasIndex("Capability", "Segment", "ProviderKey")
+                        .IsUnique();
+
+                    b.ToTable("provider_bindings", (string)null);
                 });
 
             modelBuilder.Entity("AlgoTrading.Domain.Entities.RiskEvent", b =>

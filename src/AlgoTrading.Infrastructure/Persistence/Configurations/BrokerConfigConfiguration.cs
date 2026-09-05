@@ -19,8 +19,15 @@ public class BrokerConfigConfiguration : IEntityTypeConfiguration<BrokerConfig>
             .IsRequired()
             .HasMaxLength(50);
 
-        // One credential set per broker per installation.
-        builder.HasIndex(x => x.BrokerName).IsUnique();
+        // One credential set per broker per account. The shared platform account
+        // (BrokerAccountId null) is guarded separately, because Postgres treats
+        // NULLs as distinct inside a unique index.
+        builder.HasIndex(x => new { x.BrokerName, x.BrokerAccountId }).IsUnique();
+
+        builder.HasIndex(x => x.BrokerName)
+            .IsUnique()
+            .HasFilter("\"BrokerAccountId\" IS NULL")
+            .HasDatabaseName("ix_broker_configs_shared_broker");
 
         builder.Property(x => x.ClientId)
             .IsRequired()

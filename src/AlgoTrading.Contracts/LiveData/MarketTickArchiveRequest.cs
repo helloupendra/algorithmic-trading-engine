@@ -23,4 +23,7 @@ public class MarketTickArchiveRequest
     public decimal? Volume { get; set; }
 
     public string RawPayload { get; set; } = string.Empty;
+
+    /// <summary>Which connector produced this tick, e.g. "fyers".</summary>
+    public string SourceKey { get; set; } = string.Empty;
 }

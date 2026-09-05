@@ -78,6 +78,13 @@ namespace AlgoTrading.Contracts.LiveData
         /// Original broker JSON payload.
         /// </summary>
         public string RawPayload { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Which connector produced this tick, e.g. "fyers". Optional: when the
+        /// ingestor does not say, the API stamps the only connector that claims
+        /// a live feed, and leaves it blank rather than guess when several do.
+        /// </summary>
+        public string? SourceKey { get; set; }
     }
 
 }

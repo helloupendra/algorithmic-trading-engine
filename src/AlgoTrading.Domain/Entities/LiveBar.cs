@@ -62,4 +62,7 @@ public class LiveBar
     /// The timestamp of the last tick that updated this bar.
     /// </summary>
     public DateTime UpdatedUtc { get; set; } = DateTime.UtcNow;
+
+    /// <summary>Which connector's ticks this bar was aggregated from, e.g. "fyers".</summary>
+    public string SourceKey { get; set; } = string.Empty;
 }

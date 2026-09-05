@@ -90,5 +90,11 @@ namespace AlgoTrading.Domain.Entities
         /// </summary>
         public string RawPayload { get; set; } = string.Empty;
 
+        /// <summary>
+        /// Which connector produced this tick, e.g. "fyers". Data lineage: without
+        /// it a second feed cannot run beside the first and a suspicious print
+        /// cannot be attributed to a source.
+        /// </summary>
+        public string SourceKey { get; set; } = string.Empty;
     }
 }

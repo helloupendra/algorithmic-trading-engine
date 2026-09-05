@@ -331,7 +331,7 @@ function BackfillPanel({ selected }: { selected: CoverageRow | null }) {
       {result && (
         <div className={`alert ${result.fullCoverageAfterBackfill ? 'alert--success' : 'alert--error'}`} style={{ marginTop: 10 }}>
           <span>
-            {result.message} — fetched {formatNumber(result.candelsFetchedFromFyers)} candles,{' '}
+            {result.message} — fetched {formatNumber(result.candlesFetched)} candles,{' '}
             {formatNumber(result.localCandlesAvailable)} now stored locally
             {result.missingSlicesFetched.length > 0 &&
               ` (${result.missingSlicesFetched.length} missing slice${result.missingSlicesFetched.length > 1 ? 's' : ''} filled)`}

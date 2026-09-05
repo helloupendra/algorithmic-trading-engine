@@ -26,5 +26,8 @@ public class MarketTick
 
     public string RawPayload { get; set; } = string.Empty;
 
+    /// <summary>Which connector produced this tick, e.g. "fyers".</summary>
+    public string SourceKey { get; set; } = string.Empty;
+
     public DateTime ReceivedUtc { get; set; } = DateTime.UtcNow;
 }

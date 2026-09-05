@@ -244,7 +244,7 @@ public sealed class BacktestDataService
     {
         if (!await IsBrokerLinkedAsync(cancellationToken))
         {
-            throw new InvalidOperationException("No valid FYERS session — link the broker (Data → Broker) before backfilling.");
+            throw new InvalidOperationException("No valid broker session — link the broker (Data → Broker) before backfilling.");
         }
 
         underlying = underlying.Trim().ToUpperInvariant();
