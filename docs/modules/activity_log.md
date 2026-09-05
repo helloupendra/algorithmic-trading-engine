@@ -29,6 +29,9 @@ the token — there isn't one yet. The endpoint names the actor itself:
 * **The engine's high-frequency posts** (`ticks/upsert`, `latest/upsert`,
   `heartbeat`). The ingestor writes a tick per symbol per second; logging those
   would produce millions of rows and teach everyone to ignore the log.
+* **SignalR's handshake** (`/hubs/…/negotiate`). Every open console page posts
+  one, and another on every reconnect. A browser left open for a session writes
+  hundreds of rows that record nothing anyone did.
 
 ## Why it is automatic
 

@@ -1,7 +1,6 @@
 /**
  * Admin home — the console front door. One card per module (from the module
- * registry) plus the live health strip. Modules marked v1 still run on the old
- * pages; they get rebuilt one by one, Data first.
+ * registry) plus the live health strip.
  */
 
 import { Link } from 'react-router-dom'
@@ -87,8 +86,9 @@ export function AdminHomePage() {
               </span>
               <span className="module-card__name">
                 {m.name}
-                {m.status === 'ready' && <Badge tone="accent">v2</Badge>}
-                {m.status === 'legacy' && <Badge tone="neutral">v1</Badge>}
+                {/* Only a module that cannot be opened yet needs a tag. Which
+                    design generation a working module was built on is our
+                    business, not something to label the front door with. */}
                 {m.status === 'planned' && <Badge tone="neutral">soon</Badge>}
               </span>
               <p className="module-card__desc">{m.description}</p>
@@ -105,12 +105,6 @@ export function AdminHomePage() {
           )
         })}
       </div>
-
-      <p className="small-note">
-        Modules tagged v1 still use the previous screens; each will be rebuilt on the v2 design —
-        Data is first. Per-trader module access will live under Users once the trader console is
-        rebuilt.
-      </p>
     </div>
   )
 }

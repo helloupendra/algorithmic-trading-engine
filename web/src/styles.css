@@ -1089,39 +1089,55 @@ a.module-card:hover {
 }
 
 /* --- login ----------------------------------------------------------------- */
-/* One composition: the tape runs full-bleed behind everything and the card
-   floats on it. The vignette, not a second pane, does the contrast work. */
+/* One composition: a market tape along the foot, a soft brand glow behind the
+   card, nothing else. The gradients are the design — the canvas only adds the
+   tape on top of them, so the page still looks finished if it never starts. */
 .login {
   position: relative;
   min-height: 100vh;
   min-height: 100svh;
   overflow: hidden;
   isolation: isolate;
-  background: var(--bg0);
-}
-.login__scene,
-.login__scene-fallback {
-  position: absolute;
-  inset: 0;
-  z-index: -2;
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-.login__scene-fallback {
   background:
-    radial-gradient(820px 520px at 50% 45%, rgba(79, 125, 255, 0.18) 0%, transparent 62%),
-    radial-gradient(620px 420px at 20% 95%, rgba(43, 212, 189, 0.1) 0%, transparent 62%),
-    var(--bg0);
+    /* the glow the card sits in */
+    radial-gradient(760px 560px at 50% 38%, rgba(79, 125, 255, 0.16) 0%, transparent 70%),
+    /* a cooler counterweight low and left, so the field is not symmetrical */
+    radial-gradient(900px 500px at 12% 108%, rgba(43, 212, 189, 0.09) 0%, transparent 68%),
+    /* the page floor, lifted very slightly toward the horizon */
+    linear-gradient(180deg, #060910 0%, var(--bg0) 46%, #090e16 100%);
 }
-.login__veil {
+
+/* The tape. Bottom-anchored and clipped to its own band: the canvas fades its
+   own edges, so nothing here needs to mask it. */
+.login__tape {
   position: absolute;
   inset: 0;
   z-index: -1;
+  width: 100%;
+  height: 100%;
+  display: block;
   pointer-events: none;
-  background:
-    radial-gradient(620px 460px at 50% 44%, var(--bg0) 0%, color-mix(in srgb, var(--bg0) 70%, transparent) 55%, transparent 78%),
-    linear-gradient(180deg, var(--bg0) 0%, color-mix(in srgb, var(--bg0) 40%, transparent) 22%, transparent 60%, color-mix(in srgb, var(--bg0) 75%, transparent) 100%);
+}
+
+/* A single hairline horizon under the tape — it gives the composition a floor
+   without drawing a grid, which is what made the old scene read as scenery. */
+.login::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  z-index: -1;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--line) 22%,
+    color-mix(in srgb, var(--brand) 40%, var(--line)) 50%,
+    var(--line) 78%,
+    transparent 100%
+  );
+  opacity: 0.7;
 }
 
 /* Flex, not grid: the card and the risk note are one centred stack, not two
@@ -1136,16 +1152,32 @@ a.module-card:hover {
   padding: 24px;
 }
 
-/* Glass, so the tape stays legible behind the card instead of being boxed out. */
+/* Glass, so the tape stays legible behind the card instead of being boxed out.
+   The lit top edge is what separates it from the glow rather than a hard
+   border all the way round. */
 .login__card {
+  position: relative;
   width: min(400px, 100%);
-  background: color-mix(in srgb, var(--surface) 82%, transparent);
-  backdrop-filter: blur(18px) saturate(1.2);
-  -webkit-backdrop-filter: blur(18px) saturate(1.2);
-  border: 1px solid var(--line-strong);
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  backdrop-filter: blur(20px) saturate(1.25);
+  -webkit-backdrop-filter: blur(20px) saturate(1.25);
+  border: 1px solid var(--line);
   border-radius: 16px;
   padding: 32px 30px 26px;
-  box-shadow: 0 40px 90px -40px rgb(0 0 0 / 0.9), inset 0 1px 0 rgb(255 255 255 / 0.04);
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 0.05) inset,
+    0 30px 70px -30px rgb(0 0 0 / 0.85),
+    0 0 0 1px rgb(0 0 0 / 0.3);
+}
+.login__card::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 14%;
+  right: 14%;
+  height: 1px;
+  border-radius: 1px;
+  background: linear-gradient(90deg, transparent, var(--brand-line), transparent);
 }
 
 .login__brand {
@@ -1231,11 +1263,14 @@ a.module-card:hover {
 .login__dev-btn b { font-size: 12.5px; }
 .login__dev-btn span { color: var(--text-3); font-size: 11px; font-family: var(--mono); }
 
+/* The tape passes behind this line. A soft halo on the glyphs keeps it crisp
+   without stamping a visible plate over the composition. */
 .login__foot {
   color: var(--text-3);
   font-size: 12px;
   margin: 22px 0 0;
   text-align: center;
+  text-shadow: 0 0 14px var(--bg0), 0 1px 3px var(--bg0);
 }
 
 /* --- go-live checklist ----------------------------------------------------- */
