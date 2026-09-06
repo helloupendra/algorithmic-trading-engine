@@ -14,6 +14,28 @@ public class OptionChainSnapshotRow
     public decimal? AskPrice { get; set; }
     public long? Volume { get; set; }
     public long? OpenInterest { get; set; }
+
+    /// <summary>
+    /// The previous day's closing open interest, as the broker reports it.
+    /// </summary>
+    /// <remarks>
+    /// The market's own baseline for "OI change" — and one the broker computes,
+    /// so it survives a poller that started late or restarted mid-session, which
+    /// a session-first-snapshot baseline does not.
+    /// </remarks>
+    public long? PreviousDayOpenInterest { get; set; }
+
+    /// <summary>
+    /// The day's move in the option's price, as the broker reports it.
+    /// </summary>
+    /// <remarks>
+    /// Measured from the previous close — the same basis as
+    /// <see cref="PreviousDayOpenInterest"/>. Taking both from the broker is
+    /// what lets the build-up reading work from the poller's first round rather
+    /// than waiting for a session of snapshots to compare against.
+    /// </remarks>
+    public decimal? PriceChange { get; set; }
+
     public string? SourceKey { get; set; }
 }
 

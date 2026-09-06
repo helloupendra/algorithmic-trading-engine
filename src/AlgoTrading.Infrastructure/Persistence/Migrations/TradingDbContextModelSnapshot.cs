@@ -1171,6 +1171,9 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .HasMaxLength(2)
                         .HasColumnType("character varying(2)");
 
+                    b.Property<decimal?>("PriceChange")
+                        .HasColumnType("numeric");
+
                     b.Property<string>("SourceKey")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -1766,6 +1769,10 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
 
                     b.Property<DateTime?>("EarliestLocalCandleUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("KnownEmptyDatesCsv")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<string>("LastError")
                         .IsRequired()

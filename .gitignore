@@ -13,11 +13,10 @@ secrets.json
 # ---------------------------------------------------------------------------
 # Private / personal — local only, never published
 # ---------------------------------------------------------------------------
-# Personal strategy scripts. These stay on the developer's machine; the logic
-# they contain is already implemented inside src/AlgoTrading.PythonEngine.
+# Research notes, broker exports and scratch material. The strategies
+# themselves are published — see src/AlgoTrading.PythonEngine/strategies/.
 reference/
 private/
-src/AlgoTrading.PythonEngine/strategies/fulcrum/
 
 # ---------------------------------------------------------------------------
 # Generated data — re-fetched by scripts/setup.*, never committed
@@ -148,7 +147,6 @@ fyersDataSocket.log
 ehthumbs.db
 Thumbs.db
 desktop.ini
-src/AlgoTrading.PythonEngine/strategies/private_strategies.py
 src/AlgoTrading.Api/wwwroot/
 TradingMasterclass-Report/
 docs/roadmap/

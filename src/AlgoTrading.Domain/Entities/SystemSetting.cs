@@ -58,6 +58,9 @@ public static class SystemSettingKeys
     /// </summary>
     public const string IngestorPid = "ingestor.pid";
 
+    /// <summary>The option-chain poller — the only source of open interest.</summary>
+    public const string ChainPollerPid = "chain-poller.pid";
+
     private const string StrategyRunPidPrefix = "strategyrun.";
     private const string BacktestRunPidPrefix = "backtestrun.";
     private const string PidSuffix = ".pid";

@@ -57,6 +57,27 @@ namespace AlgoTrading.Contracts.MarketData
         public int LocalCandlesAvailable { get; set; }
 
         /// <summary>
+        /// Trading days in the requested range that are still not fully
+        /// covered after the backfill, as "yyyy-MM-dd (missing|partial)".
+        /// </summary>
+        /// <remarks>
+        /// A caller that only reads <see cref="FullCoverageAfterBackfill"/>
+        /// learns that something is wrong; this says what, so a backtest can
+        /// name the days it cannot account for instead of quietly skipping
+        /// them.
+        /// </remarks>
+        public List<string> RemainingGaps { get; set; } = new();
+
+        /// <summary>
+        /// Trading days expected in the requested range, and how many of them
+        /// are fully covered.
+        /// </summary>
+        public int TradingDaysExpected { get; set; }
+
+        /// <summary>See <see cref="TradingDaysExpected"/>.</summary>
+        public int TradingDaysCovered { get; set; }
+
+        /// <summary>
         /// General status or debug message.
         /// </summary>
         public string Message { get; set; } = string.Empty;
