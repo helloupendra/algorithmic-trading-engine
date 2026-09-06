@@ -3,6 +3,8 @@ using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Application.UseCases.Equities;
 using AlgoTrading.Contracts.Equities;
 using AlgoTrading.Infrastructure.Services;
+using AlgoTrading.Api.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace AlgoTrading.Api.Controllers;
@@ -56,6 +58,7 @@ public class EquitiesController : ControllerBase
         }
     }
 
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
     [HttpPost("groups")]
     public async Task<IActionResult> CreateGroup(
         [FromBody] CreateEquityGroupRequest request,
@@ -78,6 +81,7 @@ public class EquitiesController : ControllerBase
         }
     }
 
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
     [HttpPost("groups/{name}/members")]
     public async Task<IActionResult> AddGroupMember(
         [FromRoute] string name,

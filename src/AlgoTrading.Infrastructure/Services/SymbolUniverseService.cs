@@ -70,6 +70,11 @@ namespace AlgoTrading.Infrastructure.Services
             // held against a full session for one.
             var policy = HistoryCoverage.PolicyFor(request.Symbol);
 
+            // Today counts only once its session has closed. Asking the broker
+            // for a session that has not happened is not an empty answer — FYERS
+            // returns "Something went wrong", which reads like a bad symbol.
+            var lastCompleted = LastCompletedSession();
+
             var barsByDate = await BarsByDateAsync(request, resolution, cancellationToken);
             response.LocalCandlesAvailable = barsByDate.Values.Sum();
 
@@ -78,7 +83,7 @@ namespace AlgoTrading.Infrastructure.Services
             // one day out of twenty as fully covered, so it was never completed
             // and every backtest over it crossed the hole in silence.
             var gaps = HistoryCoverage.FindGaps(
-                request.FromDate, request.ToDate, resolution, barsByDate, knownEmpty, policy);
+                request.FromDate, request.ToDate, resolution, barsByDate, knownEmpty, policy, lastCompleted);
 
             foreach (var gap in gaps)
             {
@@ -106,17 +111,17 @@ namespace AlgoTrading.Infrastructure.Services
                 // broker can fill — a market holiday, or a contract that had
                 // not begun trading. Recording it is what lets coverage ever
                 // reach "complete".
-                foreach (var day in HistoryCoverage.ExpectedTradingDays(request.FromDate, request.ToDate))
+                foreach (var day in HistoryCoverage.ExpectedTradingDays(request.FromDate, request.ToDate, lastCompleted))
                 {
                     if (!barsByDate.ContainsKey(day)) knownEmpty.Add(day);
                 }
             }
 
             var remaining = HistoryCoverage.FindGaps(
-                request.FromDate, request.ToDate, resolution, barsByDate, knownEmpty, policy);
+                request.FromDate, request.ToDate, resolution, barsByDate, knownEmpty, policy, lastCompleted);
 
             var expectedDays = HistoryCoverage
-                .ExpectedTradingDays(request.FromDate, request.ToDate)
+                .ExpectedTradingDays(request.FromDate, request.ToDate, lastCompleted)
                 .Where(d => !knownEmpty.Contains(d))
                 .ToList();
 
@@ -183,6 +188,36 @@ namespace AlgoTrading.Infrastructure.Services
                 .ToListAsync(cancellationToken);
 
             return rows.ToDictionary(r => DateOnly.FromDateTime(r.Date), r => r.Count);
+        }
+
+        /// <summary>
+        /// The last day whose trading session has finished, in IST.
+        /// </summary>
+        /// <remarks>
+        /// Before 15:30 IST today's session is still running (or has not begun),
+        /// so the newest day that can be complete is yesterday.
+        /// </remarks>
+        private static DateOnly LastCompletedSession()
+        {
+            var ist = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, IndiaTimeZone);
+            var today = DateOnly.FromDateTime(ist.Date);
+            return ist.TimeOfDay >= new TimeSpan(15, 30, 0) ? today : today.AddDays(-1);
+        }
+
+        private static readonly TimeZoneInfo IndiaTimeZone = ResolveIndiaTimeZone();
+
+        private static TimeZoneInfo ResolveIndiaTimeZone()
+        {
+            foreach (var id in new[] { "Asia/Kolkata", "India Standard Time" })
+            {
+                try { return TimeZoneInfo.FindSystemTimeZoneById(id); }
+                catch (TimeZoneNotFoundException) { }
+                catch (InvalidTimeZoneException) { }
+            }
+            // Fixed offset rather than a throw: IST has no daylight saving, so
+            // the fallback is exact, and a missing tz database must not stop a
+            // backfill.
+            return TimeZoneInfo.CreateCustomTimeZone("IST", TimeSpan.FromMinutes(330), "IST", "IST");
         }
 
         private static HashSet<DateOnly> ParseDates(string? csv)

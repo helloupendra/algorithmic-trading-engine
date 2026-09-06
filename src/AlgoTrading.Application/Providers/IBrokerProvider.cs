@@ -41,4 +41,18 @@ public interface IBrokerProvider
 
     /// <summary>Exchanges the callback's auth code for a usable session.</summary>
     Task<BrokerTokenResult> ExchangeAuthCodeAsync(string authCode, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Renews an expired access token from the refresh token issued with it.
+    /// </summary>
+    /// <remarks>
+    /// A broker whose tokens expire daily otherwise needs a person at the
+    /// keyboard before the market opens, which makes every unattended morning
+    /// a failed one. Returns a failed result — never throws — when the broker
+    /// declines: a refresh token has its own, longer expiry, and the honest
+    /// answer then is "sign in again", not a crash.
+    /// </remarks>
+    Task<BrokerTokenResult> RefreshAccessTokenAsync(
+        string refreshToken,
+        CancellationToken cancellationToken = default);
 }

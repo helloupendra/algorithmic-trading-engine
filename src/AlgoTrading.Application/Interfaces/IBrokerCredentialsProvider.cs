@@ -5,6 +5,8 @@ public record BrokerCredentials(
     string ClientId,
     string SecretKey,
     string RedirectUri,
+    /// <summary>The broker's trading PIN, when saved; needed to refresh an expired token.</summary>
+    string? TradingPin,
     /// <summary>"database" when saved from the console, "config" when from appsettings, "none" when absent.</summary>
     string Source,
     string? UpdatedBy,
@@ -37,6 +39,12 @@ public interface IBrokerCredentialsProvider
         string secretKey,
         string redirectUri,
         string updatedBy,
+        /// <summary>
+        /// The broker's trading PIN, needed to refresh an expired token
+        /// unattended. Null leaves whatever is stored untouched, so saving the
+        /// app credentials again never silently clears it.
+        /// </summary>
+        string? tradingPin = null,
         long? brokerAccountId = null,
         CancellationToken cancellationToken = default);
 }

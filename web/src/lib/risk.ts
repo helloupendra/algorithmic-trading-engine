@@ -13,7 +13,7 @@
  */
 
 import { formatInrWhole } from './format'
-import type { GroupRisk, LegRisk, LiveActivity, OverallRisk, RiskRules } from './types'
+import type { GroupRisk, LegRisk, LiveActivity, OverallRisk, RiskRules, RiskScope } from './types'
 
 /* -------------------------------------------------------------------- draft */
 
@@ -35,11 +35,18 @@ export interface RiskDraft {
   legTrailStopLossPercent: string
   legTrailTriggerPoints: string
   legTrailTriggerPercent: string
+  /**
+   * Whether the overall rule is measured per trading day or across the whole
+   * run. Not a number, so it is never a parse failure — see RiskScope.
+   */
+  overallScope: RiskScope
 }
 
-export type RiskDraftField = keyof RiskDraft
+/** The numeric fields: the only ones a parse can reject. */
+export type RiskDraftField = Exclude<keyof RiskDraft, 'overallScope'>
 
 export const EMPTY_RISK_DRAFT: RiskDraft = {
+  overallScope: 'day',
   overallStopLoss: '',
   overallTarget: '',
   overallTrailStopLoss: '',
@@ -65,6 +72,7 @@ function text(v: number | null | undefined): string {
 /** Draft from stored rules (a run's view, a backtest's "Run again"). */
 export function riskDraftFrom(rules: RiskRules | null | undefined): RiskDraft {
   return {
+    overallScope: rules?.overall?.scope === 'run' ? 'run' : 'day',
     overallStopLoss: text(rules?.overall?.stopLoss),
     overallTarget: text(rules?.overall?.target),
     overallTrailStopLoss: text(rules?.overall?.trailStopLoss),
@@ -124,7 +132,13 @@ export function normalizeRisk(rules: RiskRules | null | undefined): RiskRules {
   if (overallTg != null) overall.target = overallTg
   if (overallTrail != null) overall.trailStopLoss = overallTrail
   if (overallTrigger != null) overall.trailTrigger = overallTrigger
-  if (Object.keys(overall).length > 0) out.overall = overall
+  if (Object.keys(overall).length > 0) {
+    // Carried only alongside a rule it can scope. On its own it would make an
+    // otherwise empty overall block look set, and every run would claim to
+    // have an overall rule it does not have.
+    overall.scope = rules?.overall?.scope === 'run' ? 'run' : 'day'
+    out.overall = overall
+  }
 
   const group: GroupRisk = {}
   const groupSl = positive(rules?.group?.stopLoss)
@@ -242,7 +256,14 @@ export type RiskDraftResult =
  */
 export function parseRiskDraft(draft: RiskDraft): RiskDraftResult {
   const values: Partial<Record<RiskDraftField, number | null>> = {}
-  for (const key of Object.keys(draft) as RiskDraftField[]) {
+  // Driven by FIELD_LABELS rather than by the draft's own keys. The draft also
+  // carries `overallScope`, which is a choice and not a number: walking every
+  // key ran 'day' through the number parser and reported "undefined must be
+  // undefined". `Object.keys` is typed `string[]`, so the cast that used to sit
+  // here asserted something untrue and the compiler could not object. This
+  // record is `Record<RiskDraftField, string>`, so its keys ARE exactly the
+  // numeric fields, and a future non-numeric field cannot leak in again.
+  for (const key of Object.keys(FIELD_LABELS) as RiskDraftField[]) {
     const n = parseRiskField(draft[key])
     if (n != null && Number.isNaN(n)) {
       return {
@@ -264,6 +285,7 @@ export function parseRiskDraft(draft: RiskDraft): RiskDraftResult {
   }
   const rules = normalizeRisk({
     overall: {
+      scope: draft.overallScope === 'run' ? 'run' : 'day',
       stopLoss: values.overallStopLoss,
       target: values.overallTarget,
       trailStopLoss: values.overallTrailStopLoss,

@@ -117,6 +117,15 @@ class _DayState:
     squared_off: bool = False
     last_t: Optional[datetime] = None
 
+    #: Total P&L as this session opened. Under a per-day overall rule the
+    #: target and stop are measured from here, so yesterday's profit does not
+    #: put today over the line before it has traded.
+    start_pnl: float = 0.0
+
+    #: This day reached its overall target or stop. Trading is done until
+    #: tomorrow; the run itself continues.
+    risk_stopped: bool = False
+
 
 class BacktestSession:
     """One replay; `execute()` drives it end to end. See run_backtest for the entry point."""
@@ -168,6 +177,8 @@ class BacktestSession:
         self.skipped_entries: List[Dict[str, Any]] = []
         self.skipped_after_eod = 0
         self.eod_square_offs = 0
+        #: Days closed early by a per-day overall rule.
+        self.day_risk_stops = 0
         self.stop_reason: Optional[str] = None
         self.equity_points: List[Dict[str, Any]] = []
         self._pending_snapshots: List[Dict[str, Any]] = []
@@ -508,25 +519,62 @@ class BacktestSession:
 
     def _check_overall(self, t: datetime, spot: float, atm: Any) -> bool:
         """
-        Level 3: total P&L through the overall stop-loss, trailing stop or
-        target flattens everything and ends the run.
+        Level 3: the overall stop-loss, trailing stop or target flattens
+        everything.
+
+        What it ends depends on `overall.scope`. Under `day` the measure is
+        this session's own P&L and a trip closes the day: positions are squared
+        off, no further entry is taken today, and tomorrow opens flat and
+        measured from zero. Under `run` the measure is cumulative and a trip
+        ends the replay, leaving the rest of the range unvisited.
+
+        Returns True only when the RUN is over, so a per-day stop reports
+        False and the replay carries on to the next session.
         """
         rules = self.risk.overall
+        per_day = rules.per_day
+
+        # This day is already done. Without this the rule re-trips on every
+        # remaining bar of the session — squaring off nothing, but counting a
+        # stop each time and burying the log.
+        if per_day and self._day.risk_stopped:
+            return False
+
         total = self.ledger.total_pnl()
+        # Under a per-day rule the day's own P&L is what the numbers refer to.
+        measured = total - self._day.start_pnl if per_day else total
         trip = None
-        if rules.stop_loss is not None and total <= -rules.stop_loss:
-            self.stop_reason = f"Stop loss hit: P&L {_money(total, plus=False)} ≤ −{rules.stop_loss:,.0f}"
-        elif (trip := self.trails.overall.evaluate(TrailLevels.RUN, total, rules.trail_stop_loss,
+        # Only the per-day rule needs saying: "day P&L −600" explains why a
+        # run showing +9,000 overall just closed a session. On the run rule the
+        # word adds nothing and would only churn every stored reason.
+        scope_text = "day " if per_day else ""
+        reason: Optional[str] = None
+
+        if rules.stop_loss is not None and measured <= -rules.stop_loss:
+            reason = f"Stop loss hit: {scope_text}P&L {_money(measured, plus=False)} ≤ −{rules.stop_loss:,.0f}"
+        elif (trip := self.trails.overall.evaluate(TrailLevels.RUN, measured, rules.trail_stop_loss,
                                                    rules.trail_trigger)) is not None:
             self.overall_trail_stop = True
-            self.stop_reason = (
-                f"Trailing stop hit: P&L {_rupees(trip.value)} fell {_rupees(trip.drawdown)} "
+            reason = (
+                f"Trailing stop hit: {scope_text}P&L {_rupees(trip.value)} fell {_rupees(trip.drawdown)} "
                 f"from peak {_rupees(trip.peak)} (trail {_rupees(trip.trail)})"
             )
-        elif rules.target is not None and total >= rules.target:
-            self.stop_reason = f"Target hit: P&L {_money(total, plus=False)} ≥ {rules.target:,.0f}"
+        elif rules.target is not None and measured >= rules.target:
+            reason = f"Target hit: {scope_text}P&L {_money(measured, plus=False)} ≥ {rules.target:,.0f}"
         else:
             return False
+
+        if per_day:
+            self.log(f"[STOP] {format_ist(t)} IST {reason} — done for {self._day.day}; the run continues")
+            self._square_off(t, reason, spot, atm)
+            # Reuses the flag the EOD square-off sets, which already turns away
+            # new entries for the rest of the session.
+            self._day.squared_off = True
+            self._day.risk_stopped = True
+            self.day_risk_stops += 1
+            return False
+
+        self.stop_reason = reason
         self.log(f"[STOP] {format_ist(t)} IST {self.stop_reason}")
         self._square_off(t, self.stop_reason, spot, atm)
         return True
@@ -721,7 +769,13 @@ class BacktestSession:
             closed = self._square_off(previous.last_t, reason)
             if closed:
                 self.eod_square_offs += 1
-        self._day = _DayState(day=day, squared_off=False, last_t=None)
+        # Today is measured from what the run has banked so far, and the trail
+        # starts again: a peak carried over from a previous session would arm
+        # against a high this day never reached.
+        self._day = _DayState(day=day, squared_off=False, last_t=None,
+                              start_pnl=self.ledger.total_pnl())
+        if self.risk.overall.per_day:
+            self.trails.overall.reset(TrailLevels.RUN)
         self.sessions.add(day)
 
     def _eod_check(self, t: datetime, spot: float, atm: Any) -> None:
@@ -888,6 +942,13 @@ class BacktestSession:
         if not self.broker_linked:
             notes.append("Broker not linked: only contracts already stored could be priced.")
         notes.extend(self.feed.sync_failures)
+        if self.day_risk_stops:
+            # Without this the summary looks like the strategy simply stopped
+            # trading on those afternoons.
+            notes.append(
+                f"{self.day_risk_stops} session(s) closed early by the overall rule and "
+                "resumed the next morning; the rule is measured per day."
+            )
         risk_note = self._risk_note()
         if risk_note:
             notes.append(risk_note)
@@ -898,6 +959,7 @@ class BacktestSession:
             "trades": self.ledger.trades,
             "skippedEntries": list(self.skipped_entries),
             "eodSquareOffs": self.eod_square_offs,
+            "dayRiskStops": self.day_risk_stops,
             "stopReason": self.stop_reason,
             "dataNotes": notes,
             "risk": self.risk.to_dict(),

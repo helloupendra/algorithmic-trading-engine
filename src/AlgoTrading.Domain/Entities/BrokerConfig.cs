@@ -29,6 +29,19 @@ public class BrokerConfig
     /// <summary>OAuth redirect URI registered with the broker app.</summary>
     public string RedirectUri { get; set; } = string.Empty;
 
+    /// <summary>
+    /// The broker's trading PIN, encrypted, or empty when not saved.
+    /// </summary>
+    /// <remarks>
+    /// FYERS access tokens expire daily and its refresh call requires the PIN.
+    /// Stored only so the platform can renew its own token without a person at
+    /// the keyboard every morning; it is never used to place an order, because
+    /// this platform places none — the only run modes are LivePaper and
+    /// OfflineReplay. Encrypted at rest beside the app secret, and optional:
+    /// leave it unset and the morning login stays manual.
+    /// </remarks>
+    public string TradingPinEncrypted { get; set; } = string.Empty;
+
     public string UpdatedBy { get; set; } = string.Empty;
 
     public DateTime CreatedUtc { get; set; }

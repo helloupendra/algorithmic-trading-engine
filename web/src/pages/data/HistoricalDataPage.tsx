@@ -17,6 +17,16 @@ import {
 import { formatDateTime, formatNumber, formatPrice, shortSymbol } from '../../lib/format'
 import { Badge, InlineError, Panel, QueryBoundary } from '../../components/ui'
 import { CandleChart } from '../../components/CandleChart'
+import { SymbolCombobox } from '../../components/SymbolCombobox'
+import {
+  EARLIEST_HISTORY,
+  RESOLUTIONS,
+  earliestFor,
+  fallbackResolution,
+  limitHint,
+  maxDaysFor,
+  rejectionFor,
+} from '../../lib/fyersLimits'
 import { IconCandles, IconDownload, IconLayers } from '../../components/icons'
 import {
   CATEGORY_ORDER,
@@ -239,6 +249,8 @@ function BackfillPanel({ selected }: { selected: CoverageRow | null }) {
   const [fromDate, setFromDate] = useState(isoDate(new Date(Date.now() - 30 * 24 * 3600 * 1000)))
   const [toDate, setToDate] = useState(isoDate(new Date()))
   const [seeded, setSeeded] = useState<string | null>(null)
+  /** The resolution a range change moved away from, so the form can say so. */
+  const [autoSwitchedFrom, setAutoSwitchedFrom] = useState<string | null>(null)
 
   // Prefill from the selected coverage row: continue where its data ends.
   // Coverage resolutions come in several spellings ('1m' from live bars,
@@ -259,6 +271,27 @@ function BackfillPanel({ selected }: { selected: CoverageRow | null }) {
     setToDate(isoDate(new Date()))
   }
 
+  // What the broker will refuse, worked out before the request rather than
+  // after: FYERS rejects an over-long window outright, so an unchecked form
+  // produces a failed backfill and nothing on screen to explain it.
+  let rejection = rejectionFor(resolution, fromDate, toDate)
+  const suggestion = rejection ? fallbackResolution(fromDate, toDate) : null
+
+  // Widening the range past what minute candles can serve moves the resolution
+  // rather than leaving a dead button: the dates are the deliberate choice, and
+  // the resolution is what has to give. Said out loud, because a control that
+  // changes itself in silence is worse than one that refuses.
+  //
+  // Guarded like the seeding above (this file's own idiom): after the switch
+  // the new resolution is valid, so `rejection` is null and this cannot loop.
+  if (rejection && suggestion && suggestion !== resolution) {
+    setResolution(suggestion)
+    setAutoSwitchedFrom(resolution)
+    rejection = null
+  } else if (autoSwitchedFrom && !rejection && resolution !== suggestion && autoSwitchedFrom === resolution) {
+    setAutoSwitchedFrom(null)
+  }
+
   const result = backfill.data
 
   return (
@@ -270,27 +303,29 @@ function BackfillPanel({ selected }: { selected: CoverageRow | null }) {
       }
     >
       <div className="form-row">
-        <label className="field">
-          <span className="field__label">Symbol</span>
-          <input
-            className="field__input"
-            value={symbol}
-            onChange={(e) => setSymbol(e.target.value)}
-            placeholder="NSE:SBIN-EQ"
-          />
-        </label>
+        <div className="field">
+          <label className="field__label" htmlFor="backfill-symbol">Symbol</label>
+          <SymbolCombobox id="backfill-symbol" value={symbol} onChange={setSymbol} />
+        </div>
         <label className="field">
           <span className="field__label">Resolution</span>
           <select
             className="field__input"
             value={resolution}
-            onChange={(e) => setResolution(e.target.value)}
+            onChange={(e) => {
+              setResolution(e.target.value)
+              setAutoSwitchedFrom(null)
+            }}
           >
-            <option value="D">1 day</option>
-            <option value="1">1 minute</option>
-            <option value="5">5 minutes</option>
-            <option value="15">15 minutes</option>
-            <option value="60">60 minutes</option>
+            {RESOLUTIONS.map((r) => {
+              const why = rejectionFor(r.value, fromDate, toDate)
+              return (
+                <option key={r.value} value={r.value} disabled={why !== null}>
+                  {r.label}
+                  {why ? ` — ${r.maxDays} days max` : ''}
+                </option>
+              )
+            })}
           </select>
         </label>
         <label className="field">
@@ -298,8 +333,11 @@ function BackfillPanel({ selected }: { selected: CoverageRow | null }) {
           <input
             className="field__input"
             type="date"
+            min={earliestFor(resolution, toDate)}
+            max={toDate || undefined}
             value={fromDate}
             onChange={(e) => setFromDate(e.target.value)}
+            title={`Earliest FYERS holds is ${EARLIEST_HISTORY}; this resolution reaches back to ${earliestFor(resolution, toDate)}`}
           />
         </label>
         <label className="field">
@@ -307,13 +345,15 @@ function BackfillPanel({ selected }: { selected: CoverageRow | null }) {
           <input
             className="field__input"
             type="date"
+            min={fromDate || EARLIEST_HISTORY}
             value={toDate}
             onChange={(e) => setToDate(e.target.value)}
           />
         </label>
         <button
           className="btn btn--primary"
-          disabled={!symbol.trim() || backfill.isPending}
+          disabled={!symbol.trim() || backfill.isPending || rejection !== null}
+          title={rejection ?? undefined}
           onClick={() =>
             backfill.mutate({ symbol: symbol.trim(), resolution, fromDate, toDate })
           }
@@ -340,10 +380,25 @@ function BackfillPanel({ selected }: { selected: CoverageRow | null }) {
         </div>
       )}
 
-      <p className="small-note">
-        Backfill is gap-aware: it only fetches slices the local store is missing. Requires a linked
-        FYERS session.
-      </p>
+      {autoSwitchedFrom && !rejection ? (
+        <p className="small-note small-note--warn">
+          {RESOLUTIONS.find((r) => r.value === autoSwitchedFrom)?.label} only reaches back{' '}
+          {maxDaysFor(autoSwitchedFrom)} days, so this range switched to{' '}
+          {RESOLUTIONS.find((r) => r.value === resolution)?.label}. Shorten the range to go finer.
+        </p>
+      ) : rejection ? (
+        <p className="small-note small-note--warn">
+          {RESOLUTIONS.find((r) => r.value === resolution)?.label}: {rejection}.{' '}
+          {suggestion
+            ? `Use ${RESOLUTIONS.find((r) => r.value === suggestion)?.label}, or shorten the range.`
+            : `No resolution covers this range in one request — shorten it.`}
+        </p>
+      ) : (
+        <p className="small-note">
+          {limitHint(resolution, toDate)} · backfill is gap-aware: it only fetches slices the local
+          store is missing. Requires a linked FYERS session.
+        </p>
+      )}
     </Panel>
   )
 }
@@ -361,6 +416,10 @@ function OptionsBackfillPanel() {
   const [resolution, setResolution] = useState('1')
   const [fromDate, setFromDate] = useState(isoDate(new Date(Date.now() - 7 * 24 * 3600 * 1000)))
   const [toDate, setToDate] = useState(isoDate(new Date()))
+
+  // The chain fetch is one history request per contract, so the same
+  // per-request window applies here as on the single-symbol panel.
+  const chainRejection = rejectionFor(resolution, fromDate, toDate)
 
   return (
     <Panel
@@ -414,10 +473,15 @@ function OptionsBackfillPanel() {
             value={resolution}
             onChange={(e) => setResolution(e.target.value)}
           >
-            <option value="1">1 minute</option>
-            <option value="5">5 minutes</option>
-            <option value="15">15 minutes</option>
-            <option value="D">1 day</option>
+            {RESOLUTIONS.map((r) => {
+              const why = rejectionFor(r.value, fromDate, toDate)
+              return (
+                <option key={r.value} value={r.value} disabled={why !== null}>
+                  {r.label}
+                  {why ? ` — ${r.maxDays} days max` : ''}
+                </option>
+              )
+            })}
           </select>
         </label>
         <label className="field">
@@ -425,8 +489,11 @@ function OptionsBackfillPanel() {
           <input
             className="field__input"
             type="date"
+            min={earliestFor(resolution, toDate)}
+            max={toDate || undefined}
             value={fromDate}
             onChange={(e) => setFromDate(e.target.value)}
+            title={`Earliest FYERS holds is ${EARLIEST_HISTORY}; this resolution reaches back to ${earliestFor(resolution, toDate)}`}
           />
         </label>
         <label className="field">
@@ -434,13 +501,15 @@ function OptionsBackfillPanel() {
           <input
             className="field__input"
             type="date"
+            min={fromDate || EARLIEST_HISTORY}
             value={toDate}
             onChange={(e) => setToDate(e.target.value)}
           />
         </label>
         <button
           className="btn"
-          disabled={!underlying.trim() || mutate.isPending}
+          disabled={!underlying.trim() || mutate.isPending || chainRejection !== null}
+          title={chainRejection ?? undefined}
           onClick={() =>
             mutate.mutate({
               exchange,
@@ -468,6 +537,12 @@ function OptionsBackfillPanel() {
         <div className="alert alert--success" style={{ marginTop: 10 }}>
           <span>Chain backfill finished — check the coverage list for the new option symbols.</span>
         </div>
+      )}
+
+      {chainRejection && (
+        <p className="small-note small-note--warn">
+          {RESOLUTIONS.find((r) => r.value === resolution)?.label}: {chainRejection}.
+        </p>
       )}
 
       <p className="small-note">

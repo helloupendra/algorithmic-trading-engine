@@ -13,7 +13,7 @@ public sealed class ProviderCredentialFallbacks
     private readonly Dictionary<string, BrokerCredentials> _byProvider =
         new(StringComparer.OrdinalIgnoreCase);
 
-    public void Add(string providerKey, string clientId, string secretKey, string redirectUri)
+    public void Add(string providerKey, string clientId, string secretKey, string redirectUri, string? tradingPin = null)
     {
         bool configured =
             !string.IsNullOrWhiteSpace(clientId) &&
@@ -23,6 +23,7 @@ public sealed class ProviderCredentialFallbacks
             clientId ?? string.Empty,
             secretKey ?? string.Empty,
             redirectUri ?? string.Empty,
+            string.IsNullOrWhiteSpace(tradingPin) ? null : tradingPin,
             configured ? "config" : "none",
             null,
             null);
@@ -32,5 +33,5 @@ public sealed class ProviderCredentialFallbacks
     public BrokerCredentials Find(string providerKey)
         => _byProvider.TryGetValue(providerKey, out var credentials)
             ? credentials
-            : new BrokerCredentials(string.Empty, string.Empty, string.Empty, "none", null, null);
+            : new BrokerCredentials(string.Empty, string.Empty, string.Empty, null, "none", null, null);
 }

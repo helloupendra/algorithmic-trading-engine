@@ -856,6 +856,63 @@ select.field__input { appearance: auto; }
   margin-bottom: 0;
 }
 
+/* A constraint the form is currently up against — the broker's range limit,
+   or a resolution the range moved away from. Warn rather than error: nothing
+   is wrong, something is simply not available at these dates. */
+.small-note--warn { color: var(--warn); }
+
+/* ---- symbol combobox ------------------------------------------------- */
+
+.combo { position: relative; }
+
+.combo__list {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 264px;
+  overflow-y: auto;
+  background: var(--surface2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+}
+
+.combo__item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  padding: 6px 8px;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  color: inherit;
+}
+
+.combo__item.is-active { background: var(--surface); }
+.combo__item b { font-size: 12.5px; font-family: var(--mono); }
+.combo__item span {
+  font-size: 11px;
+  color: var(--text-3);
+  /* Descriptions run long; one line keeps the list scannable. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.combo__empty {
+  padding: 8px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
 .empty {
   color: var(--text-3);
   padding: 16px 4px;
@@ -942,8 +999,12 @@ a.module-card:hover {
 .cov-list {
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - 260px);
-  min-height: 280px;
+  /* Capped rather than filling the viewport. The two backfill panels sit below
+     this one, and a list that grows to the full window height pushes them off
+     the fold on a large screen — the browser is for picking a range, not for
+     reading all of them, and it scrolls. */
+  max-height: min(44vh, 420px);
+  min-height: 220px;
   overflow-y: auto;
   border: 1px solid var(--line-soft);
   border-radius: var(--radius-sm);
@@ -1216,52 +1277,6 @@ a.module-card:hover {
   line-height: 1.5;
 }
 
-.login__dev { margin-top: 20px; }
-
-.login__dev-label {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  color: var(--text-3);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  margin-bottom: 10px;
-}
-.login__dev-label::before,
-.login__dev-label::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: var(--line);
-}
-
-.login__dev-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 9px;
-}
-
-.login__dev-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  padding: 9px 13px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  border: 1px solid var(--line);
-  background: var(--bg1);
-  color: var(--text);
-  font-family: inherit;
-  text-align: left;
-  transition: border-color 0.14s ease;
-}
-.login__dev-btn:hover:not(:disabled) { border-color: var(--brand-line); }
-.login__dev-btn:disabled { opacity: 0.5; cursor: default; }
-.login__dev-btn b { font-size: 12.5px; }
-.login__dev-btn span { color: var(--text-3); font-size: 11px; font-family: var(--mono); }
 
 /* The tape passes behind this line. A soft halo on the glyphs keeps it crisp
    without stamping a visible plate over the composition. */

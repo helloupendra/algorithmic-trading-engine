@@ -209,6 +209,17 @@ def risk(overall: Optional[Dict[str, Any]] = None, group: Optional[Dict[str, Any
     return {"overall": overall or {}, "group": group or {}, "leg": leg or {}}
 
 
+def whole_run(**overall: Any) -> Dict[str, Any]:
+    """
+    An overall rule measured across the whole replay rather than per day.
+
+    The default is per day, because a target that ends a month-long backtest on
+    its first good afternoon answers a question nobody asked. Tests that are
+    specifically about ending the RUN say so with this.
+    """
+    return risk(overall={**overall, "scope": "run"})
+
+
 def quiet(_: str) -> None:
     pass
 
@@ -334,7 +345,7 @@ class EngineSmokeTests(EngineRunner, unittest.TestCase):
 
     def test_stop_loss_trips_on_total_pnl(self):
         api = make_api(lambda i: 200.0 - 5.0 * i)      # -150 per bar per lot
-        outcome, _ = self.run_engine(api, {0: open_ce(1)}, run_row(DAY1, DAY1, stop_loss=500))
+        outcome, _ = self.run_engine(api, {0: open_ce(1)}, run_row(DAY1, DAY1, risk=whole_run(stopLoss=500)))
 
         self.assertEqual(outcome.status, "Completed")
         self.assertTrue(outcome.stop_reason.startswith("Stop loss hit"), outcome.stop_reason)
@@ -348,7 +359,7 @@ class EngineSmokeTests(EngineRunner, unittest.TestCase):
 
     def test_target_trips_on_total_pnl(self):
         api = make_api(lambda i: 100.0 + 10.0 * i)     # +300 per bar per lot
-        outcome, _ = self.run_engine(api, {0: open_ce(1)}, run_row(DAY1, DAY1, target=1000))
+        outcome, _ = self.run_engine(api, {0: open_ce(1)}, run_row(DAY1, DAY1, risk=whole_run(target=1000)))
         self.assertTrue(outcome.stop_reason.startswith("Target hit"), outcome.stop_reason)
         self.assertEqual(outcome.summary["barsProcessed"], 5)       # bar 4: +1200 >= 1000
         self.assertAlmostEqual(outcome.ledger.realized_pnl(), 1200.0)
@@ -363,7 +374,7 @@ class EngineSmokeTests(EngineRunner, unittest.TestCase):
 
         # With a 500 stop the exit charges push total P&L through the stop right after the square-off.
         api = make_api(lambda i: 100.0)
-        outcome, _ = self.run_engine(api, {0: open_ce(1)}, run_row(DAY1, DAY1, charges_per_lot=300, stop_loss=500))
+        outcome, _ = self.run_engine(api, {0: open_ce(1)}, run_row(DAY1, DAY1, charges_per_lot=300, risk=whole_run(stopLoss=500)))
         self.assertTrue(outcome.stop_reason.startswith("Stop loss hit"))
         self.assertEqual(outcome.summary["barsProcessed"], 73)     # stopped on the 15:15 bar
 
@@ -546,7 +557,7 @@ class EngineSmokeTests(EngineRunner, unittest.TestCase):
         candles[(PE, "5")] = option_rows(PE, [DAY1, DAY2], lambda i: 80.0)
         api = FakeApi(candles)
         outcome, strategy = self.run_engine(api, {0: open_ce(1), 58: open_ce(1, "g2")},
-                                            run_row(DAY1, DAY2, charges_per_lot=30, stop_loss=500))
+                                            run_row(DAY1, DAY2, charges_per_lot=30, risk=whole_run(stopLoss=500)))
 
         self.assertTrue(outcome.stop_reason.startswith("Stop loss hit"), outcome.stop_reason)
         self.assertEqual([s["signalType"] for s in api.signals], ["OPEN_GROUP", "CLOSE_GROUP"])
@@ -559,6 +570,124 @@ class EngineSmokeTests(EngineRunner, unittest.TestCase):
 STRADDLE_BUY = [("atm_ce", "BUY", 1), ("atm_pe", "BUY", 1)]
 CE_NAME = f"{UNDERLYING} 57600 CE"
 PE_NAME = f"{UNDERLYING} 57600 PE"
+
+
+class PerDayOverallRiskTests(EngineRunner, unittest.TestCase):
+    """
+    The overall rule is measured per trading day by default.
+
+    Measured across the whole replay instead, the first day to reach the target
+    ends the backtest and every later day goes unvisited — so a month-long test
+    of a strategy with a target only ever tells you about one afternoon. Live,
+    a run IS a day: it starts in the morning and squares off at the close. The
+    replay matches that, and `scope: "run"` is there for the times the older
+    meaning is what is wanted.
+    """
+
+    # Day 1 climbs 1 point a bar from 100, so a long lot is +1,020 by bar 34.
+    # Day 2 sits flat at 100 and never reaches the target on its own.
+    @staticmethod
+    def _two_days(day2=lambda i: 100.0):
+        candles = {(SPOT, "5"): index_rows([DAY1, DAY2])}
+        candles[(CE, "5")] = option_rows(CE, [DAY1], lambda i: 100.0 + i) \
+            + option_rows(CE, [DAY2], day2)
+        candles[(PE, "5")] = option_rows(PE, [DAY1, DAY2], lambda i: 80.0)
+        return FakeApi(candles)
+
+    def test_hitting_the_target_closes_the_day_and_not_the_backtest(self):
+        api = self._two_days()
+        outcome, _ = self.run_engine(api, {0: open_ce(1), 75: open_ce(1, "g2")},
+                                     run_row(DAY1, DAY2, risk=risk(overall={"target": 1000})))
+
+        self.assertIsNone(outcome.stop_reason, "the run ended instead of the day")
+        self.assertEqual(outcome.summary["sessions"], 2, "day 2 was never replayed")
+        self.assertEqual(outcome.summary["dayRiskStops"], 1)
+        self.assertEqual(outcome.status, "Completed")
+
+    def test_the_next_day_still_trades(self):
+        api = self._two_days()
+        outcome, _ = self.run_engine(api, {0: open_ce(1), 75: open_ce(1, "g2")},
+                                     run_row(DAY1, DAY2, risk=risk(overall={"target": 1000})))
+
+        groups = [s["groupId"] for s in api.signals if s["signalType"] == "OPEN_GROUP"]
+        self.assertIn("g2", groups, "no entry was taken on day 2")
+
+    def test_yesterdays_profit_does_not_count_towards_todays_target(self):
+        # Day 1 banks +1,020. Measured cumulatively, day 2 is already past a
+        # 1,000 target before it has traded a single bar, and would close on
+        # its opening bar every time.
+        api = self._two_days()
+        outcome, _ = self.run_engine(api, {0: open_ce(1), 75: open_ce(1, "g2")},
+                                     run_row(DAY1, DAY2, risk=risk(overall={"target": 1000})))
+
+        self.assertEqual(outcome.summary["dayRiskStops"], 1, "day 2 tripped on day 1's profit")
+
+    def test_a_second_day_that_earns_it_stops_on_its_own_merit(self):
+        api = self._two_days(day2=lambda i: 100.0 + i)
+        outcome, _ = self.run_engine(api, {0: open_ce(1), 75: open_ce(1, "g2")},
+                                     run_row(DAY1, DAY2, risk=risk(overall={"target": 1000})))
+
+        self.assertEqual(outcome.summary["dayRiskStops"], 2)
+        self.assertIsNone(outcome.stop_reason)
+
+    def test_no_further_entry_is_taken_after_the_day_closes(self):
+        # Bar 50 is on day 1, after the bar-34 trip.
+        api = self._two_days()
+        outcome, _ = self.run_engine(
+            api, {0: open_ce(1), 50: open_ce(1, "late"), 75: open_ce(1, "g2")},
+            run_row(DAY1, DAY2, risk=risk(overall={"target": 1000})))
+
+        groups = [s["groupId"] for s in api.signals if s["signalType"] == "OPEN_GROUP"]
+        self.assertNotIn("late", groups, "traded again on a day already closed by its target")
+        self.assertIn("g2", groups)
+
+    def test_the_reason_names_the_day_so_the_log_is_readable(self):
+        api = self._two_days()
+        lines = []
+        self.run_engine(api, {0: open_ce(1), 75: open_ce(1, "g2")},
+                        run_row(DAY1, DAY2, risk=risk(overall={"target": 1000})),
+                        log=lines.append)
+
+        stops = [l for l in lines if "[STOP]" in l]
+        self.assertEqual(len(stops), 1, stops)
+        self.assertIn("day P&L", stops[0])
+        self.assertIn("the run continues", stops[0])
+
+    def test_the_summary_says_the_sessions_were_cut_short(self):
+        # Otherwise it reads as though the strategy simply stopped trading.
+        api = self._two_days()
+        outcome, _ = self.run_engine(api, {0: open_ce(1), 75: open_ce(1, "g2")},
+                                     run_row(DAY1, DAY2, risk=risk(overall={"target": 1000})))
+
+        self.assertTrue(any("closed early by the overall rule" in n for n in outcome.summary["dataNotes"]),
+                        outcome.summary["dataNotes"])
+
+    def test_run_scope_still_ends_the_whole_backtest(self):
+        # The older meaning is still reachable, and still means what it did.
+        api = self._two_days()
+        outcome, _ = self.run_engine(api, {0: open_ce(1), 75: open_ce(1, "g2")},
+                                     run_row(DAY1, DAY2, risk=whole_run(target=1000)))
+
+        self.assertIsNotNone(outcome.stop_reason)
+        self.assertTrue(outcome.stop_reason.startswith("Target hit"), outcome.stop_reason)
+        self.assertEqual(outcome.summary["sessions"], 1, "day 2 should never have been replayed")
+        self.assertEqual(outcome.summary["dayRiskStops"], 0)
+
+    def test_a_stop_loss_is_per_day_too(self):
+        # Falling 100 -> 60 is -1,200 on a lot: past a 1,000 stop on day 1,
+        # and day 2 must still get its turn.
+        candles = {(SPOT, "5"): index_rows([DAY1, DAY2])}
+        candles[(CE, "5")] = option_rows(CE, [DAY1], lambda i: 100.0 - i) \
+            + option_rows(CE, [DAY2], lambda i: 100.0)
+        candles[(PE, "5")] = option_rows(PE, [DAY1, DAY2], lambda i: 80.0)
+        api = FakeApi(candles)
+
+        outcome, _ = self.run_engine(api, {0: open_ce(1), 75: open_ce(1, "g2")},
+                                     run_row(DAY1, DAY2, risk=risk(overall={"stopLoss": 1000})))
+
+        self.assertIsNone(outcome.stop_reason)
+        self.assertEqual(outcome.summary["sessions"], 2)
+        self.assertEqual(outcome.summary["dayRiskStops"], 1)
 
 
 class RiskRuleTests(EngineRunner, unittest.TestCase):
@@ -761,20 +890,20 @@ class RiskRuleTests(EngineRunner, unittest.TestCase):
 
     def test_overall_from_the_risk_object_still_ends_the_run(self):
         api = make_api(lambda i: 200.0 - 5.0 * i)
-        row = run_row(DAY1, DAY1, risk=risk(overall={"stopLoss": 500}))
+        row = run_row(DAY1, DAY1, risk=whole_run(stopLoss=500))
         outcome, _ = self.run_engine(api, {0: open_ce(1)}, row)
         self.assertEqual(outcome.stop_reason, "Stop loss hit: P&L −600 ≤ −500")
         self.assertEqual(outcome.summary["barsProcessed"], 5)
         self.assertFalse(outcome.ledger.has_open())
         self.assertCounts(outcome.summary)
         self.assertEqual(outcome.summary["risk"]["overall"],
-                         {"stopLoss": 500.0, "target": None, "trailStopLoss": None, "trailTrigger": None})
+                         {"stopLoss": 500.0, "target": None, "trailStopLoss": None, "trailTrigger": None, "scope": "run"})
 
     def test_risk_object_wins_over_legacy_keys(self):
         # Legacy stop_loss=100 would stop at bar 1; the risk object's 500 is authoritative (bar 4).
         api = make_api(lambda i: 200.0 - 5.0 * i)
         outcome, _ = self.run_engine(api, {0: open_ce(1)},
-                                     run_row(DAY1, DAY1, stop_loss=100, risk=risk(overall={"stopLoss": 500})))
+                                     run_row(DAY1, DAY1, stop_loss=100, risk=whole_run(stopLoss=500)))
         self.assertEqual(outcome.summary["barsProcessed"], 5)
 
     def test_all_three_levels_trip_on_one_bar_in_order(self):
@@ -784,7 +913,7 @@ class RiskRuleTests(EngineRunner, unittest.TestCase):
         logs: List[str] = []
         outcome, strategy = self.run_engine(
             api, {0: open_legs(STRADDLE_BUY), 5: open_ce(1, "never")},
-            run_row(DAY1, DAY1, risk=risk(overall={"stopLoss": 500}, group={"stopLoss": 500}, leg={"stopLossPoints": 20})),
+            run_row(DAY1, DAY1, risk=risk(overall={"stopLoss": 500, "scope": "run"}, group={"stopLoss": 500}, leg={"stopLossPoints": 20})),
             log=logs.append,
         )
         self.assertEqual([s["signalType"] for s in api.signals], ["OPEN_GROUP", "CLOSE_GROUP", "CLOSE_GROUP"])
@@ -804,7 +933,7 @@ class RiskRuleTests(EngineRunner, unittest.TestCase):
         self.assertIn("Leg stop-loss hit", risk_lines[0])
         self.assertIn("Group stop-loss hit", risk_lines[1])
         config = [line for line in logs if line.startswith("[CONFIG]")][0]
-        self.assertIn("risk=[overall SL ₹500 · target —; group SL ₹500 · target —; leg SL 20 pts · target —]", config)
+        self.assertIn("risk=[overall SL ₹500 · target — · whole run; group SL ₹500 · target —; leg SL 20 pts · target —]", config)
 
     def test_no_rules_means_no_risk_closes(self):
         api = make_api(lambda i: 100.0 - 5.0 * i, pe_price=lambda i: 80.0)

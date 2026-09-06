@@ -53,6 +53,8 @@ public class DatabaseBrokerCredentialsProvider : IBrokerCredentialsProvider
                 row.ClientId,
                 _protector.Unprotect(row.SecretKeyEncrypted),
                 row.RedirectUri,
+                // Empty means "never saved"; unprotecting an empty string would throw.
+                string.IsNullOrEmpty(row.TradingPinEncrypted) ? null : _protector.Unprotect(row.TradingPinEncrypted),
                 "database",
                 row.UpdatedBy,
                 row.UpdatedUtc);
@@ -67,6 +69,7 @@ public class DatabaseBrokerCredentialsProvider : IBrokerCredentialsProvider
         string secretKey,
         string redirectUri,
         string updatedBy,
+        string? tradingPin = null,
         long? brokerAccountId = null,
         CancellationToken cancellationToken = default)
     {
@@ -93,6 +96,17 @@ public class DatabaseBrokerCredentialsProvider : IBrokerCredentialsProvider
         row.ClientId = clientId.Trim();
         row.SecretKeyEncrypted = _protector.Protect(secretKey.Trim());
         row.RedirectUri = redirectUri.Trim();
+
+        // Null means "leave it as it was": re-saving the app credentials from
+        // the console must not silently wipe the PIN and break the next
+        // unattended morning.
+        if (tradingPin is not null)
+        {
+            row.TradingPinEncrypted = string.IsNullOrWhiteSpace(tradingPin)
+                ? string.Empty
+                : _protector.Protect(tradingPin.Trim());
+        }
+
         row.UpdatedBy = updatedBy;
         row.UpdatedUtc = now;
 

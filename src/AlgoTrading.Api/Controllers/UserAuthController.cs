@@ -46,6 +46,12 @@ namespace AlgoTrading.Api.Controllers
             }
         }
 
+        /// <summary>
+        /// Anonymous by necessity: this is where a caller obtains the token that
+        /// every other endpoint requires. Failures are recorded to the activity
+        /// log with the attempted username, which is not a secret; the password
+        /// is never touched.
+        /// </summary>
         [AllowAnonymous]
         [HttpPost("login")]
         public async Task<IActionResult> Login(
@@ -78,6 +84,11 @@ namespace AlgoTrading.Api.Controllers
             }
         }
 
+        /// <summary>
+        /// Anonymous by necessity: the caller's access token has expired, which
+        /// is the whole reason for the call. The refresh token in the body is
+        /// itself the credential, and is verified against the stored session.
+        /// </summary>
         [AllowAnonymous]
         [HttpPost("refresh")]
         public async Task<IActionResult> Refresh(
