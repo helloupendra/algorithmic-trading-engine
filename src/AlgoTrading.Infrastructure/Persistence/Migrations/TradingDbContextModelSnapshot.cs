@@ -1122,6 +1122,101 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.ToTable("market_ticks", (string)null);
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.OptionChainSnapshot", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<decimal?>("AskPrice")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<decimal?>("BidPrice")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<DateTime>("CapturedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal?>("Delta")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<DateOnly>("ExpiryDate")
+                        .HasColumnType("date");
+
+                    b.Property<decimal?>("Gamma")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<decimal?>("ImpliedVolatility")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<decimal?>("LastTradedPrice")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<long?>("OpenInterest")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("OpenInterestAtOpen")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("OptionType")
+                        .IsRequired()
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)");
+
+                    b.Property<string>("SourceKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<decimal>("SpotPrice")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<decimal>("StrikePrice")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<string>("Symbol")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<decimal?>("Theta")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<string>("Underlying")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<decimal?>("Vega")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<long?>("Volume")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Symbol", "CapturedUtc")
+                        .IsUnique()
+                        .HasDatabaseName("ux_chain_symbol_time");
+
+                    b.HasIndex("Underlying", "ExpiryDate", "CapturedUtc")
+                        .HasDatabaseName("ix_chain_underlying_expiry_time");
+
+                    b.ToTable("option_chain_snapshots", (string)null);
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.PaperOrder", b =>
                 {
                     b.Property<long>("Id")

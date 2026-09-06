@@ -403,6 +403,23 @@ class PlatformApiClient:
         resp.raise_for_status()
         return _json_or_none(resp)
 
+    def post_option_chain_snapshots(self, rows: list[dict[str, Any]]) -> Any:
+        """
+        POST /api/OptionChain/snapshots: one row per strike, per poll.
+
+        Sent as a batch because a chain is forty-odd strikes that all share a
+        capture time — writing them one at a time would make the row set look
+        smeared across seconds it was never true for.
+        """
+        resp = self.http.post(
+            f"{self.base_url}/api/OptionChain/snapshots",
+            json={"rows": rows},
+            verify=self.verify_ssl,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return _json_or_none(resp)
+
     # --- Historical candles (backtesting) ---------------------------------
 
     def get_local_history(self, symbol: str, resolution: str, from_date: str, to_date: str) -> list[dict[str, Any]]:

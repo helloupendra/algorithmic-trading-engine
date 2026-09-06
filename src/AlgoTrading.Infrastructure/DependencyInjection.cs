@@ -153,6 +153,8 @@ public static class DependencyInjection
 
         services.AddSingleton<MarketTickArchiveQueue>();
         services.AddSingleton<IMarketTickArchiveQueue>(sp => sp.GetRequiredService<MarketTickArchiveQueue>());
+        services.AddScoped<OptionChainService>();
+
         services.AddHostedService<MarketTickBatchWriterService>();
 
         // Raw ticks are a debugging aid, not the record — and nothing was ever

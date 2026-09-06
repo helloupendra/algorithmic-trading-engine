@@ -9,6 +9,7 @@ import type { ComponentType, SVGProps } from 'react'
 import {
   IconBell,
   IconBot,
+  IconActivity,
   IconCandles,
   IconClock,
   IconDatabase,
@@ -113,6 +114,18 @@ export const DATA_SECTIONS = [
     route: '/admin/data/live',
     label: 'Live feeds',
     icon: IconPulse,
+    end: false,
+  },
+  {
+    route: '/admin/data/chain',
+    label: 'Option chain',
+    icon: IconLayers,
+    end: false,
+  },
+  {
+    route: '/admin/data/open-interest',
+    label: 'Open interest',
+    icon: IconActivity,
     end: false,
   },
   {

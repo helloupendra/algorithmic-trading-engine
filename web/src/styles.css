@@ -2497,3 +2497,155 @@ a.pill:hover { border-color: var(--line-strong); }
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+
+/* --- option chain ----------------------------------------------------------- */
+/* Dense by design. A chain is read by shape before it is read by number, so the
+   bars carry the meaning and the digits are the detail underneath them. */
+.oc-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--line-soft);
+}
+.oc-head-item {
+  flex: 1 1 120px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  background: var(--surface);
+}
+.oc-head-item--wide { flex: 2 1 220px; }
+.oc-head-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.oc-head-value {
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.oc-table { font-size: 12px; }
+.oc-table th { white-space: nowrap; }
+
+.oc-side {
+  text-align: center;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.oc-side--call { color: var(--neg); }
+.oc-side--put { color: var(--pos); }
+
+/* The strike column is the spine: everything else is read outward from it. */
+.oc-strike-head { text-align: center; background: var(--bg1); }
+.oc-strike {
+  text-align: center;
+  background: var(--bg1);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.oc-strike b { display: block; font-size: 12.5px; }
+.oc-pcr { display: block; font-size: 10px; color: var(--text-3); }
+
+.oc-row--atm { background: var(--brand-soft); }
+.oc-row--atm .oc-strike { background: color-mix(in srgb, var(--brand) 22%, var(--bg1)); }
+
+/* Each cell is a bar with a number on top. position: relative on the cell and
+   absolute on the bar keeps the digits on the baseline whatever the bar does. */
+.oc-cell {
+  position: relative;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.oc-cell--right { text-align: right; }
+.oc-cell--left { text-align: left; }
+
+.oc-bar {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  border-radius: 2px;
+  opacity: 0.28;
+}
+.oc-bar--right { right: 0; }
+.oc-bar--left { left: 0; }
+.oc-bar--call { background: var(--neg); }
+.oc-bar--put { background: var(--pos); }
+
+.oc-value { position: relative; }
+/* Struck through the tone, not coloured over it: which side the number belongs
+   to still matters, so the bar keeps its call/put colour and only dims. */
+.oc-bar--negative { opacity: 0.14; }
+.oc-value--negative { color: var(--warn); }
+.oc-ltp { font-weight: 600; }
+
+.oc-analysis {
+  font-size: 10.5px;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+/* Opening a position reads stronger than closing one, because that is the part
+   that tells you where new money is going. */
+.oc-build-long { color: var(--pos); font-weight: 600; }
+.oc-build-short { color: var(--neg); font-weight: 600; }
+.oc-build-cover { color: var(--text-2); }
+.oc-build-unwind { color: var(--text-2); }
+
+
+/* --- open interest series --------------------------------------------------- */
+.oi-strikes {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 6px 2px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.oi-strike {
+  flex: 0 0 auto;
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg1);
+  color: var(--text-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease;
+}
+.oi-strike:hover { border-color: var(--brand-line); color: var(--text); }
+.oi-strike--atm { color: var(--text); border-color: var(--line-strong); }
+.oi-strike--on {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+  font-weight: 600;
+}
+
+.oi-chart { width: 100%; height: auto; display: block; overflow: visible; }
+.oi-grid { stroke: var(--line-soft); stroke-width: 1; }
+/* The zero line is the reading on a change chart, so it is drawn, not implied. */
+.oi-zero { stroke: var(--text-3); stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.7; }
+.oi-line { fill: none; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
+.oi-axis { fill: var(--text-3); font-size: 10px; font-family: var(--mono); }
+.oi-axis--zero { fill: var(--text-2); }
+
+.oi-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-2);
+}
+.oi-swatch { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
