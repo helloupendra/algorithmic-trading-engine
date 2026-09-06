@@ -18,6 +18,20 @@ and brokers it connects to, and who on the team may do what.
 
 Everything below is driven from the browser — there is no separate admin tool.
 
+Two people see two different consoles. An **admin** operates the platform: the
+data feeding it, who may use it, and the switch that stops everything. A
+**trader** sees only their own trading. That split is enforced by the API, not
+by hiding menu items — a trader calling an admin endpoint directly is refused.
+
+### The admin console
+
+**Front door** — the health of everything that has to be true before a strategy
+can run, then the modules themselves. A number that is wrong here is a run that
+should not be started.
+
+![Admin overview: market, feed, broker, watchlist and kill-switch state above the module grid](docs/image/console-admin-home.png)
+
+
 **Live feeds** — the broker websocket, the symbols it is subscribed to, and the
 last quote stored for each. The age of every quote is shown next to it, so stale
 data looks stale instead of looking like a price.
@@ -36,6 +50,61 @@ quantity expressed as **lots × lot size** rather than a bare share count.
 Nothing is dismissed: a run that stopped for any reason is still here.
 
 ![Run history: runs per user with net P&L and lots × lot size](docs/image/console-run-history.png)
+
+**Live runner** — pick a strategy, choose the underlying, set risk rules per leg,
+per group or over the whole run, and start it. Quantity is **lots**; the platform
+multiplies by the contract's lot size, which differs per underlying (30 for
+BANKNIFTY, 65 for NIFTY) and is read from the instrument master rather than
+assumed.
+
+![Live runner: running runs, then the strategy catalogue with supported underlyings](docs/image/console-live-runner.png)
+
+**Connectors** — data vendors and brokers as first-class things rather than
+hard-wired code. Each declares what it can actually deliver, and the routing
+table decides which source serves which job.
+
+![Connectors: FYERS, replay and planned vendors with their capabilities and sessions](docs/image/console-connectors.png)
+
+**Users & access** — accounts, roles, and per-module grants. A grant is checked
+by the API on every request, so removing one takes effect immediately rather
+than on the next sign-in.
+
+![Users and access: accounts with roles, module grants and strategy packages](docs/image/console-users.png)
+
+**Activity log** — who did what, across every module, including admins. Click an
+account to narrow the whole page to them. Refusals are recorded too: a 403 is
+often the more interesting row. Reads and request bodies are deliberately not
+recorded — the first would bury the signal, the second would leak credentials.
+
+![Activity log: accounts on the left, the action stream below](docs/image/console-activity-log.png)
+
+### The trader console
+
+**Overview** — what this account can actually do: its capital, its live runs, how
+many strategies its package allows, and how old the price data is. The age is
+shown because a stale price that looks fresh is worse than no price.
+
+![Trader overview: capital, live runs, package allowance and last saved quotes](docs/image/console-trader-home.png)
+
+**Strategies** — the catalogue a trader may run, which is their package's list
+and not the whole library. Each entry says what it trades and why, in words
+rather than in code names.
+
+![Trader strategies: the definitions this account's package allows](docs/image/console-trader-strategies.png)
+
+**Watchlist** — per trader, not global. Removing a symbol here removes it from
+this account's list; it does not stop the platform recording it for everyone
+else. Every account starts with SENSEX, BANKNIFTY and NIFTY 50 and builds from
+there.
+
+![Trader watchlist: this account's symbols with live quotes](docs/image/console-trader-watchlist.png)
+
+**My runs** — every run this account started, however it ended. A run stopped by
+a stop-loss, by the market closing, by hand or by an API restart is all still
+here, with the reason it stopped, because the ones that went wrong are the ones
+worth reading.
+
+![Trader run history: this account's runs with the reason each one stopped](docs/image/console-trader-runs.png)
 
 ---
 
