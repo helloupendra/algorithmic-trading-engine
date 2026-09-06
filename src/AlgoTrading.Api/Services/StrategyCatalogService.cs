@@ -527,7 +527,7 @@ public sealed class StrategyCatalogService
             list.Add(FallbackEntry(strategyName, className, relative, File.GetLastWriteTimeUtc(file)));
         }
 
-        // Private factories (Titli variants) are registered under their own names.
+        // Private factories (Fulcrum variants) are registered under their own names.
         var privateFile = Path.Combine(strategiesPath, "private_strategies.py");
         if (File.Exists(privateFile))
         {

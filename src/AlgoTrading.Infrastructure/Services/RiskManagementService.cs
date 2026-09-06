@@ -41,20 +41,54 @@ public class RiskManagementService : IRiskManagementService
         _scopeFactory = scopeFactory;
     }
 
-    public async Task EvaluateOrderAsync(long simulationRunId, string symbol, string side, int quantity, CancellationToken cancellationToken)
+    /// <summary>
+    /// Decides whether one leg may be filled.
+    /// </summary>
+    /// <param name="isClosing">
+    /// True when this leg only reduces or closes an existing position.
+    /// </param>
+    /// <remarks>
+    /// Every gate here exists to stop a run taking on MORE risk. None of them
+    /// has any business stopping it from getting flat, and until now all three
+    /// did: <c>side</c> was accepted and never read, so a strategy's own
+    /// CLOSE_GROUP went through the same checks as an entry. A run that crossed
+    /// the daily-loss line could not close the position that had crossed it —
+    /// the loss limit locked the trader into the loss it was meant to stop.
+    /// <para>
+    /// So a closing leg is always allowed. That includes under the kill switch:
+    /// halting trading means "open nothing more", and flattening is the outcome
+    /// the switch exists to reach, not something to block on the way there.
+    /// </para>
+    /// <para>
+    /// <paramref name="quantity"/> is recorded in the rejection reason but not
+    /// gated on — there is no position-size limit in <c>RiskLimitsDto</c> yet.
+    /// It is named here so nobody reads this signature and assumes size is
+    /// being enforced.
+    /// </para>
+    /// </remarks>
+    public async Task EvaluateOrderAsync(
+        long simulationRunId,
+        string symbol,
+        string side,
+        int quantity,
+        bool isClosing,
+        CancellationToken cancellationToken)
     {
+        // Getting flat is never refused. Checked before anything else so a
+        // closing leg cannot be caught by a gate added later either.
+        if (isClosing) return;
+
         var limits = _limitsStore.GetLimits();
 
         // 1. Check Kill Switch
         if (await IsKillSwitchActiveAsync(cancellationToken))
         {
-            await RejectOrderAsync(simulationRunId, symbol, "GLOBAL KILL SWITCH IS ACTIVE. ALL ORDERS REJECTED.", cancellationToken);
+            await RejectOrderAsync(simulationRunId, symbol, "GLOBAL KILL SWITCH IS ACTIVE. NEW POSITIONS REJECTED (exits are always allowed).", cancellationToken);
         }
 
         // 2. Check Rate Limits (Max Orders per Minute)
         var queue = _orderTimestamps.GetOrAdd(simulationRunId, _ => new ConcurrentQueue<DateTime>());
         var now = DateTime.UtcNow;
-        queue.Enqueue(now);
 
         // Clean up old timestamps outside the 1-minute sliding window
         while (queue.TryPeek(out var oldest) && (now - oldest).TotalMinutes > 1)
@@ -62,15 +96,20 @@ public class RiskManagementService : IRiskManagementService
             queue.TryDequeue(out _);
         }
 
-        if (queue.Count > limits.MaxOrdersPerMinute)
+        // Counted BEFORE this order, and this order is only recorded once it has
+        // passed. Enqueueing first made the counter include its own rejections,
+        // so a run that hit the limit pushed itself further past it on every
+        // retry and could never come back under the line.
+        if (queue.Count >= limits.MaxOrdersPerMinute)
         {
-            await RejectOrderAsync(simulationRunId, symbol, $"RATE LIMIT EXCEEDED: More than {limits.MaxOrdersPerMinute} orders placed in the last minute for run {simulationRunId}.", cancellationToken);
+            await RejectOrderAsync(simulationRunId, symbol, $"RATE LIMIT EXCEEDED: More than {limits.MaxOrdersPerMinute} orders placed in the last minute for run {simulationRunId} (leg {side} {quantity}).", cancellationToken);
         }
 
         // 3. Check Max Daily Loss
         var positions = await _dbContext.PaperPositions
             .AsNoTracking()
             .Where(x => x.SimulationRunId == simulationRunId)
+            .Select(x => new { x.RealizedPnl, x.UnrealizedPnl, x.Status })
             .ToListAsync(cancellationToken);
 
         decimal totalRealized = positions.Sum(x => x.RealizedPnl);
@@ -79,8 +118,11 @@ public class RiskManagementService : IRiskManagementService
 
         if (currentPnl < limits.MaxDailyLoss)
         {
-            await RejectOrderAsync(simulationRunId, symbol, $"MAX DAILY LOSS EXCEEDED: Current PnL {currentPnl} is below the limit of {limits.MaxDailyLoss}.", cancellationToken);
+            await RejectOrderAsync(simulationRunId, symbol, $"MAX DAILY LOSS EXCEEDED: Current PnL {currentPnl} is below the limit of {limits.MaxDailyLoss}. Exits remain allowed.", cancellationToken);
         }
+
+        // Accepted: only now does it count toward the next order's rate window.
+        queue.Enqueue(now);
     }
 
     private async Task RejectOrderAsync(long simulationRunId, string symbol, string reason, CancellationToken cancellationToken)

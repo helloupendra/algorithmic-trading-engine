@@ -882,6 +882,9 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.Property<decimal?>("Delta")
                         .HasColumnType("numeric");
 
+                    b.Property<DateTime?>("ExchangeTimestampUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<decimal?>("Gamma")
                         .HasColumnType("numeric");
 

@@ -16,6 +16,7 @@
     <PackageReference Include="fyerscsharpsdk" Version="1.0.0" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="11.0.0-preview.4.26230.115" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="11.0.0-preview.4.26230.115" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.4" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.6.0" />
     <PackageReference Include="Swashbuckle.AspNetCore.SwaggerGen" Version="10.2.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
@@ -27,6 +28,17 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+  </ItemGroup>
+
+  <!--
+    Without these this project could reference nothing under src/, which is why
+    it held three placeholder assertions and no real coverage.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="../../src/AlgoTrading.Domain/AlgoTrading.Domain.csproj" />
+    <ProjectReference Include="../../src/AlgoTrading.Contracts/AlgoTrading.Contracts.csproj" />
+    <ProjectReference Include="../../src/AlgoTrading.Application/AlgoTrading.Application.csproj" />
+    <ProjectReference Include="../../src/AlgoTrading.Infrastructure/AlgoTrading.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

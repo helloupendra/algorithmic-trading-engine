@@ -46,6 +46,13 @@ DEFAULT_DATA_TYPE = "SymbolUpdate"
 # --- Diagnostics -----------------------------------------------------------
 DEBUG_PRINT_MESSAGES = _flag("DEBUG_PRINT_MESSAGES", "False")
 
+# Fabricated ticks for symbols the broker feed does not carry (continuous
+# futures, anything not in FYERS format). They are written to the SAME tables as
+# real prices and the only thing that marks them is an empty rawPayload, so a
+# strategy cannot tell them apart. Off unless someone deliberately asks for it:
+# invented prices reaching a live table is a worse failure than an empty chart.
+ENABLE_MOCK_TICKS = _flag("ENABLE_MOCK_TICKS", "False")
+
 # Refresh active watchlist every N seconds
 WATCHLIST_REFRESH_SECONDS = 5
 

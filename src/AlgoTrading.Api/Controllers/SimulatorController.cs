@@ -133,9 +133,19 @@ public class SimulatorController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>
+    /// Whether the caller may act on this run.
+    /// </summary>
+    /// <remarks>
+    /// Admins may act on anything. So may the engine's Service account: the
+    /// runner books every fill for a run it did not "own" — it signs in as
+    /// itself, not as the trader who started the strategy — so gating it by
+    /// ownership would break every paper trade on the platform.
+    /// Everyone else may only touch their own runs.
+    /// </remarks>
     private async Task<bool> IsRunOwnedByCallerAsync(long runId, CancellationToken ct)
     {
-        if (User.IsInRole("Admin")) return true;
+        if (User.IsInRole(UserRoles.Admin) || User.IsInRole(UserRoles.Service)) return true;
         var run = await _getSimulationRunUseCase.ExecuteAsync(runId, ct);
         return run != null && run.UserId == User.GetRequiredUserId();
     }
@@ -169,6 +179,13 @@ public class SimulatorController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(request.SignalType))
             return BadRequest(new { message = "SignalType is required." });
+
+        // Same test the GETs on this controller already apply. Without it these
+        // three write endpoints took a run id out of the request body and booked
+        // orders, positions and marks into it for anyone signed in — while
+        // reading the very same run needed ownership.
+        if (!await IsRunOwnedByCallerAsync(request.SimulationRunId, cancellationToken))
+            return Forbid();
 
         try
         {
@@ -286,6 +303,13 @@ public class SimulatorController : ControllerBase
         if (items.Count > MaxEquitySnapshotBatch)
             return BadRequest(new { message = $"At most {MaxEquitySnapshotBatch} equity snapshots per request." });
 
+        // Same test the GETs on this controller already apply. Without it these
+        // three write endpoints took a run id out of the request body and booked
+        // orders, positions and marks into it for anyone signed in — while
+        // reading the very same run needed ownership.
+        if (!await IsRunOwnedByCallerAsync(id, cancellationToken))
+            return Forbid();
+
         try
         {
             int inserted = await _paperTrading.AddEquitySnapshotsAsync(id, items, cancellationToken);
@@ -303,6 +327,13 @@ public class SimulatorController : ControllerBase
     {
         if (request is null || request.Marks is null)
             return BadRequest(new { message = "atUtc and marks are required." });
+
+        // Same test the GETs on this controller already apply. Without it these
+        // three write endpoints took a run id out of the request body and booked
+        // orders, positions and marks into it for anyone signed in — while
+        // reading the very same run needed ownership.
+        if (!await IsRunOwnedByCallerAsync(id, cancellationToken))
+            return Forbid();
 
         try
         {

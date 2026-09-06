@@ -100,15 +100,6 @@ public static class DependencyInjection
         services.AddScoped<GetAllLatestQuotesUseCase>();
         services.AddScoped<UpsertLiveQuoteUseCase>();
 
-        services.AddScoped<ILiveDataService, LiveDataService>();
-
-        services.AddScoped<GetWatchlistUseCase>();
-        services.AddScoped<UpsertWatchlistItemUseCase>();
-        services.AddScoped<RemoveWatchlistItemUseCase>();
-        services.AddScoped<GetLatestQuoteUseCase>();
-        services.AddScoped<GetAllLatestQuotesUseCase>();
-        services.AddScoped<UpsertLiveQuoteUseCase>();
-
         services.AddScoped<UpsertHeartbeatUseCase>();
         services.AddScoped<GetIngestorStatusUseCase>();
         services.AddScoped<GetAllIngestorStatusesUseCase>();
@@ -163,6 +154,17 @@ public static class DependencyInjection
         services.AddSingleton<MarketTickArchiveQueue>();
         services.AddSingleton<IMarketTickArchiveQueue>(sp => sp.GetRequiredService<MarketTickArchiveQueue>());
         services.AddHostedService<MarketTickBatchWriterService>();
+
+        // Raw ticks are a debugging aid, not the record — and nothing was ever
+        // deleting them. A full disk stops ingestion, the API and every runner
+        // at once, so the cheapest table gets a ceiling.
+        services.AddSingleton(sp =>
+        {
+            var options = new TickRetentionOptions();
+            sp.GetService<IConfiguration>()?.GetSection(TickRetentionOptions.SectionName).Bind(options);
+            return options;
+        });
+        services.AddHostedService<TickRetentionService>();
 
         services.AddScoped<IEquityGroupService, EquityGroupService>();
 

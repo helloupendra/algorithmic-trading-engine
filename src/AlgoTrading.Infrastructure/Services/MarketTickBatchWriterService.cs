@@ -27,6 +27,34 @@ public class MarketTickBatchWriterService : BackgroundService
         _logger = logger;
     }
 
+    /// <summary>
+    /// Flushes one batch, and survives it failing.
+    /// </summary>
+    /// <remarks>
+    /// The buffer is cleared either way. Keeping a batch that will not write
+    /// means the next flush retries the same rows, fails the same way and grows
+    /// without bound — the writer would stay alive and still stop archiving,
+    /// which is the worst of both.
+    /// </remarks>
+    private async Task FlushGuardedAsync(List<MarketTick> buffer, CancellationToken stoppingToken)
+    {
+        try
+        {
+            await FlushBatchAsync(buffer, stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Dropping a batch of {Count} archive ticks after repeated write failures. " +
+                "The writer stays up; live ticks are unaffected.", buffer.Count);
+            buffer.Clear();
+        }
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var buffer = new List<MarketTick>(BatchSize * 2);
@@ -40,21 +68,31 @@ public class MarketTickBatchWriterService : BackgroundService
             {
                 await timer.WaitForNextTickAsync(stoppingToken);
 
-                // Drain queue
+                // Drain queue.
+                //
+                // Every flush is guarded individually. FlushBatchAsync rethrows
+                // once its retries are spent, and that exception used to escape
+                // both this loop and the `while` above it, into the outer catch
+                // — where BackgroundService simply logs and never restarts the
+                // service. One bad batch killed the archive writer for the rest
+                // of the process's life, and because the queue blocks when full,
+                // a dead writer then throttled the live tick path that feeds it.
+                // Losing one batch of archive rows is the cheap failure; losing
+                // the writer is not.
                 while (_queue.Reader.TryRead(out var item))
                 {
                     buffer.Add(Map(item));
 
                     if (buffer.Count >= BatchSize)
                     {
-                        await FlushBatchAsync(buffer, stoppingToken);
+                        await FlushGuardedAsync(buffer, stoppingToken);
                     }
                 }
 
                 // Periodic flush of partial batch
                 if (buffer.Count > 0)
                 {
-                    await FlushBatchAsync(buffer, stoppingToken);
+                    await FlushGuardedAsync(buffer, stoppingToken);
                 }
             }
         }

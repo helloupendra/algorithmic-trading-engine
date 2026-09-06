@@ -87,6 +87,17 @@ namespace AlgoTrading.Contracts.LiveData
         public decimal? Vega { get; set; }
 
         /// <summary>
+        /// When the exchange stamped this quote, if the feed says.
+        /// </summary>
+        /// <remarks>
+        /// Used to keep an older tick from overwriting a newer one: several
+        /// threads write quotes concurrently and the per-symbol lock orders
+        /// access, not arrival. Null when the feed sends no stamp — then there
+        /// is no order to preserve.
+        /// </remarks>
+        public DateTime? ExchangeTimestampUtc { get; set; }
+
+        /// <summary>
         /// Which connector produced this quote, e.g. "fyers". Optional; see
         /// <see cref="UpsertLiveTickRequest.SourceKey"/>.
         /// </summary>

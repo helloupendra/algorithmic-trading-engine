@@ -1,6 +1,7 @@
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Application.Providers;
 using AlgoTrading.Application.UseCases.Auth;
+using AlgoTrading.Domain.Constants;
 using Microsoft.AspNetCore.Mvc;
 using AlgoTrading.Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
@@ -227,9 +228,29 @@ namespace AlgoTrading.Api.Controllers;
             : Ok(new { message = "Access token generated and saved.", isAuthenticated = session.IsAuthenticated, state, status, code });
     }
 
+    /// <summary>
+    /// The broker connection's state, and — only for those who need them — its
+    /// tokens.
+    /// </summary>
+    /// <remarks>
+    /// The tokens are the keys to the owner's real brokerage account: with them
+    /// anyone can place orders on it directly, outside this platform entirely.
+    /// They are encrypted at rest, and this endpoint used to hand them to any
+    /// signed-in account, which undid that completely — a Trader could read them
+    /// with one request.
+    /// <para>
+    /// The engine genuinely needs them: the ingestor opens the FYERS websocket
+    /// with the access token and signs in as the Service account to get it. So
+    /// the rule is by role, not by removing the field — Admin and Service see
+    /// the tokens, everyone else sees whether the broker is connected, which is
+    /// all any screen ever needed.
+    /// </para>
+    /// </remarks>
     [HttpGet("session")]
     public async Task<IActionResult> GetSession(CancellationToken cancellationToken)
     {
+        bool mayReadTokens = User.IsInRole(UserRoles.Admin) || User.IsInRole(UserRoles.Service);
+
         var session = await _brokerSessionStore.GetCurrentAsync(cancellationToken);
 
         if (session is null)
@@ -240,6 +261,21 @@ namespace AlgoTrading.Api.Controllers;
             {
                 broker = broker.Descriptor.DisplayName,
                 isAuthenticated = false,
+                accessToken = string.Empty,
+                refreshToken = string.Empty
+            });
+        }
+
+        if (!mayReadTokens)
+        {
+            return Ok(new
+            {
+                broker = session.BrokerName,
+                isAuthenticated = session.IsAuthenticated,
+                createdUtc = session.CreatedUtc,
+                updatedUtc = session.UpdatedUtc,
+                // Shaped the same way on purpose: a caller that only checks
+                // whether the broker is linked keeps working unchanged.
                 accessToken = string.Empty,
                 refreshToken = string.Empty
             });

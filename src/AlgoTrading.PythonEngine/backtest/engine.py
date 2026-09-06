@@ -355,6 +355,8 @@ class BacktestSession:
             underlying=self.run.underlying,
             spot_price=bar.close,
             atm_strike=atm_strike,
+            strike_step=self.step,
+            lot_size=self.lot_size,
             contracts=contracts,
             bars=bars,
             metadata={"source": source},

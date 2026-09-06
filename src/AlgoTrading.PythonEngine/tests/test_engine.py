@@ -423,14 +423,14 @@ class EngineSmokeTests(EngineRunner, unittest.TestCase):
         self.assertEqual(outcome.summary["trades"], 1)      # closed by the EOD square-off
 
     def test_logical_symbols_are_resolved(self):
-        def titli_open(inp, strategy):
+        def fulcrum_open(inp, strategy):
             return [StrategySignal(strategy_name="Scripted", signal_type="OPEN_GROUP", timestamp_utc=inp.timestamp_utc,
-                                   reason="Titli", legs=[{"symbol": f"{UNDERLYING}_CE_57600", "side": "SELL", "quantity": 1, "price": None},
+                                   reason="Fulcrum", legs=[{"symbol": f"{UNDERLYING}_CE_57600", "side": "SELL", "quantity": 1, "price": None},
                                                          {"symbol": f"{UNDERLYING}_PE_57600", "side": "SELL", "quantity": 1, "price": None}],
                                    metadata={"group_id": "T1"})]
 
         api = make_api(lambda i: 100.0)
-        outcome, _ = self.run_engine(api, {0: titli_open}, run_row(DAY1, DAY1))
+        outcome, _ = self.run_engine(api, {0: fulcrum_open}, run_row(DAY1, DAY1))
         legs = api.signals[0]["legs"]
         self.assertEqual({l["symbol"] for l in legs}, {CE, PE})
         self.assertEqual(outcome.summary["trades"], 2)
@@ -509,18 +509,18 @@ class EngineSmokeTests(EngineRunner, unittest.TestCase):
         candles[(sep_ce, "5")] = option_rows(sep_ce, [expiry_day, next_day], lambda i: 250.0)
         api = FakeApi(candles)
 
-        def titli_open(inp, strategy):
+        def fulcrum_open(inp, strategy):
             return [StrategySignal(strategy_name="Scripted", signal_type="OPEN_GROUP", timestamp_utc=inp.timestamp_utc,
-                                   reason="Titli", legs=[{"symbol": f"{UNDERLYING}_CE_57600", "side": "SELL", "quantity": 1}],
+                                   reason="Fulcrum", legs=[{"symbol": f"{UNDERLYING}_CE_57600", "side": "SELL", "quantity": 1}],
                                    metadata={"group_id": "T1"})]
 
-        def titli_close(inp, strategy):
+        def fulcrum_close(inp, strategy):
             return [StrategySignal(strategy_name="Scripted", signal_type="CLOSE_GROUP", timestamp_utc=inp.timestamp_utc,
-                                   reason="Titli exit", legs=[{"symbol": f"{UNDERLYING}_CE_57600", "side": "BUY", "quantity": 1}],
+                                   reason="Fulcrum exit", legs=[{"symbol": f"{UNDERLYING}_CE_57600", "side": "BUY", "quantity": 1}],
                                    metadata={"group_id": "T1"})]
 
         # Bar 74 is the last bar of the expiry day; bar 75 is the first of the next day.
-        outcome, _ = self.run_engine(api, {74: titli_open, 76: titli_close},
+        outcome, _ = self.run_engine(api, {74: fulcrum_open, 76: fulcrum_close},
                                      run_row(expiry_day, next_day, eod_square_off_ist=""))
 
         self.assertEqual(outcome.status, "Completed")
@@ -531,7 +531,7 @@ class EngineSmokeTests(EngineRunner, unittest.TestCase):
         self.assertEqual(close_sig["legs"][0]["price"], 90.0)
         self.assertEqual(close_sig["timestampUtc"], iso_utc(bar_start(next_day, 9, 20)))
         self.assertEqual(outcome.ledger.ignored_legs, 0)
-        self.assertEqual(outcome.ledger.closed[0].exit_reason, "Titli exit")
+        self.assertEqual(outcome.ledger.closed[0].exit_reason, "Fulcrum exit")
         self.assertAlmostEqual(outcome.ledger.realized_pnl(), 10.0 * LOT_SIZE)  # short 100 -> 90
         self.assertFalse(outcome.ledger.has_open())
 

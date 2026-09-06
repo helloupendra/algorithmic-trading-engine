@@ -17,7 +17,7 @@ secrets.json
 # they contain is already implemented inside src/AlgoTrading.PythonEngine.
 reference/
 private/
-src/AlgoTrading.PythonEngine/strategies/titli/
+src/AlgoTrading.PythonEngine/strategies/fulcrum/
 
 # ---------------------------------------------------------------------------
 # Generated data — re-fetched by scripts/setup.*, never committed
