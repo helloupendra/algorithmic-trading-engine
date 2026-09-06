@@ -119,6 +119,12 @@ public class PaperTradingService : IPaperTradingService
             // reverse position.
             bool reduceOnly = IsReduceOnlySignal(request.SignalType, signal.MetadataJson);
 
+            // Every leg gets a real price before ANY of them fills. Done inside
+            // the loop instead, a group could half-fill — leg one booked, leg
+            // two rejected — and a one-legged "straddle" is a worse position to
+            // wake up to than no position at all.
+            await ResolveLegPricesAsync(request.Legs, signal, reduceOnly, cancellationToken);
+
             foreach (var leg in request.Legs)
             {
                 await CreateOrderAndApplyPositionAsync(signal, leg, cancellationToken, bypassRiskCheck: replay, reduceOnly: reduceOnly, atUtc: clock);
@@ -126,6 +132,80 @@ public class PaperTradingService : IPaperTradingService
         }
 
         return MapSignal(signal);
+    }
+
+    /// <summary>
+    /// Gives every leg a real price, or refuses the whole signal.
+    /// </summary>
+    /// <remarks>
+    /// A leg can arrive without one: the runner asks the platform for the
+    /// contract's latest quote and gives up after a timeout, which is exactly
+    /// what happens when a strike was subscribed moments earlier. Filled at the
+    /// zero that a null used to become, a sold straddle books no premium and the
+    /// run's entire P&amp;L is fiction — silently, since the order still says
+    /// "Filled".
+    /// <para>
+    /// A closing leg may fall back the way the square-off path already does
+    /// (live quote, then the position's last mark, then what it was opened at) —
+    /// closing at a stale price is worth it to get flat. An opening leg has no
+    /// such history, so there is nothing honest to fall back to and the signal is
+    /// refused. The runner logs the refusal and keeps running; the strategy can
+    /// enter on the next tick, by which time the quote has almost certainly
+    /// arrived.
+    /// </para>
+    /// </remarks>
+    private async Task ResolveLegPricesAsync(
+        List<SimulationSignalLegRequest> legs,
+        SimulationSignal signal,
+        bool reduceOnly,
+        CancellationToken cancellationToken)
+    {
+        var missing = legs
+            .Where(x => x.Price is null or <= 0m && !string.IsNullOrWhiteSpace(x.Symbol))
+            .ToList();
+
+        if (missing.Count == 0) return;
+
+        var symbols = missing.Select(x => x.Symbol).Distinct(StringComparer.Ordinal).ToList();
+        var quotes = await LoadLiveQuotesAsync(symbols, cancellationToken);
+
+        // Only a closing leg may look to the position it is closing.
+        Dictionary<string, PaperPosition> openBySymbol = reduceOnly
+            ? await _dbContext.PaperPositions
+                .Where(x => x.SimulationRunId == signal.SimulationRunId
+                            && x.GroupId == signal.GroupId
+                            && x.Status == "Open"
+                            && symbols.Contains(x.Symbol))
+                .ToDictionaryAsync(x => x.Symbol, StringComparer.Ordinal, cancellationToken)
+            : new Dictionary<string, PaperPosition>(StringComparer.Ordinal);
+
+        var unpriced = new List<string>();
+
+        foreach (var leg in missing)
+        {
+            decimal? price = quotes.TryGetValue(leg.Symbol, out var quoted) && quoted > 0m ? quoted : null;
+
+            if (price is null && openBySymbol.TryGetValue(leg.Symbol, out var open))
+            {
+                price = open.LastMarkPrice > 0m ? open.LastMarkPrice : open.AveragePrice;
+            }
+
+            if (price is null or <= 0m)
+            {
+                unpriced.Add(leg.Symbol);
+                continue;
+            }
+
+            leg.Price = price;
+        }
+
+        if (unpriced.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"No price is available for {string.Join(", ", unpriced)}; the {signal.SignalType} signal was rejected "
+                + "rather than filled at zero. The contract has no live quote yet — check that the ingestor is running "
+                + "and subscribed to it.");
+        }
     }
 
     /// <summary>
@@ -838,7 +918,16 @@ public class PaperTradingService : IPaperTradingService
                 cancellationToken);
         }
 
-        decimal fillPrice = leg.Price ?? 0m;
+        // Symbol, side and quantity all fail loudly above; price used to be the
+        // one that did not, becoming a zero that reached FillPrice, AveragePrice,
+        // the notional and the run's P&L without ever looking wrong. Callers
+        // resolve prices before filling anything (see ResolveLegPricesAsync), so
+        // this should be unreachable — which is the point of asserting it.
+        if (leg.Price is null or <= 0m)
+            throw new InvalidOperationException(
+                $"Paper leg price for {leg.Symbol} must be greater than zero; refusing to fill at {leg.Price?.ToString() ?? "null"}.");
+
+        decimal fillPrice = leg.Price.Value;
         DateTime clock = atUtc ?? DateTime.UtcNow;
 
         var order = new PaperOrder
