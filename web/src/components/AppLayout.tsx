@@ -197,6 +197,8 @@ function TraderNav() {
 /** Section title for the topbar, from the deepest matching route. */
 const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]> = [
   ['/admin/data/live', 'Data', 'Live feeds'],
+  ['/admin/data/chain', 'Data', 'Option chain'],
+  ['/admin/data/open-interest', 'Data', 'Open interest'],
   ['/admin/data/historical', 'Data', 'Historical'],
   ['/admin/data/instruments', 'Data', 'Instruments & F&O'],
   ['/admin/data', 'Data', 'Overview'],

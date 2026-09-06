@@ -37,6 +37,9 @@ public class TradingDbContext : DbContext
     public DbSet<LiveIngestorStatus> LiveIngestorStatuses => Set<LiveIngestorStatus>();
     public DbSet<LiveTick> LiveTicks => Set<LiveTick>();
     public DbSet<LiveBar> LiveBars => Set<LiveBar>();
+
+    /// <summary>Per-strike option chain history — the only place open interest is recorded.</summary>
+    public DbSet<OptionChainSnapshot> OptionChainSnapshots => Set<OptionChainSnapshot>();
     public DbSet<SimulationRun> SimulationRuns => Set<SimulationRun>();
 
     public DbSet<SimulationSignal> SimulationSignals => Set<SimulationSignal>();

@@ -41,6 +41,8 @@ import type {
   LiveWatchlistItem,
   MarketSessionInfo,
   OptionChainItem,
+  OptionChain,
+  OptionChainSeries,
   PaperOrder,
   PaperOrderRow,
   PaperPosition,
@@ -1453,5 +1455,62 @@ export function useActivityUserSummary(userId: number | null) {
     queryFn: () =>
       api.get<import('./types').ActivityUserSummary>(`/api/ActivityLog/users/${userId}/summary`),
     enabled: userId != null,
+  })
+}
+
+
+// --- option chain ------------------------------------------------------------
+
+/**
+ * The priced strike ladder — LTP, volume, open interest and everything derived.
+ *
+ * Distinct from `useOptionChain` above, which returns the instrument master's
+ * contract DEFINITIONS and no prices at all.
+ *
+ * `asOfUtc` is the replay clock; omit it and the newest capture comes back,
+ * which is what the live screen wants.
+ */
+export function useLiveOptionChain(underlying: string, expiry?: string, asOfUtc?: string) {
+  return useQuery({
+    queryKey: ['optionChain', underlying, expiry ?? null, asOfUtc ?? null],
+    queryFn: () => {
+      const params = new URLSearchParams({ underlying })
+      if (expiry) params.set('expiry', expiry)
+      if (asOfUtc) params.set('asOfUtc', asOfUtc)
+      return api.get<OptionChain>(`/api/OptionChain?${params}`)
+    },
+    enabled: Boolean(underlying),
+    // A replayed chain never changes; only the live one is worth re-asking for.
+    refetchInterval: asOfUtc ? false : POLL_FAST,
+    placeholderData: keepPreviousData,
+  })
+}
+
+/** One strike through the session — the OI-change curves. */
+export function useOptionChainSeries(
+  underlying: string,
+  strike: number | null,
+  expiry?: string,
+  toUtc?: string,
+) {
+  return useQuery({
+    queryKey: ['optionChainSeries', underlying, strike, expiry ?? null, toUtc ?? null],
+    queryFn: () => {
+      const params = new URLSearchParams({ underlying, strike: String(strike) })
+      if (expiry) params.set('expiry', expiry)
+      if (toUtc) params.set('toUtc', toUtc)
+      return api.get<OptionChainSeries>(`/api/OptionChain/series?${params}`)
+    },
+    enabled: Boolean(underlying) && strike != null && strike > 0,
+    refetchInterval: toUtc ? false : POLL_SLOW,
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useOptionChainExpiries(underlying: string) {
+  return useQuery({
+    queryKey: ['optionChainExpiries', underlying],
+    queryFn: () => api.get<string[]>(`/api/OptionChain/expiries?underlying=${encodeURIComponent(underlying)}`),
+    enabled: Boolean(underlying),
   })
 }

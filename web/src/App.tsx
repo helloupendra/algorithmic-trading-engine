@@ -38,6 +38,8 @@ import { NewBacktestPage } from './pages/backtesting/NewBacktestPage'
 import { BacktestRunsPage } from './pages/backtesting/BacktestRunsPage'
 import { BacktestRunPage } from './pages/backtesting/BacktestRunPage'
 import { DataOverviewPage } from './pages/data/DataOverviewPage'
+import { AdvancedOptionChainPage } from './pages/data/AdvancedOptionChainPage'
+import { OptionInterestPage } from './pages/data/OptionInterestPage'
 import { LiveFeedsPage } from './pages/data/LiveFeedsPage'
 import { HistoricalDataPage } from './pages/data/HistoricalDataPage'
 import { InstrumentsFnoPage } from './pages/data/InstrumentsFnoPage'
@@ -110,6 +112,8 @@ export default function App() {
                   {/* Data module (v2). */}
                   <Route path="/admin/data" element={<DataOverviewPage />} />
                   <Route path="/admin/data/live" element={<LiveFeedsPage />} />
+                  <Route path="/admin/data/chain" element={<AdvancedOptionChainPage />} />
+                  <Route path="/admin/data/open-interest" element={<OptionInterestPage />} />
                   <Route path="/admin/data/historical" element={<HistoricalDataPage />} />
                   <Route path="/admin/data/instruments" element={<InstrumentsFnoPage />} />
 

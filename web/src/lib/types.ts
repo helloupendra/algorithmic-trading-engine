@@ -1285,3 +1285,79 @@ export interface ActivityUserSummary {
   lastUtc: string | null
   byModule: { module: string; count: number; failures: number; lastUtc: string }[]
 }
+
+
+// --- option chain ------------------------------------------------------------
+
+/** One side of one strike, with everything derived already applied. */
+export interface OptionChainLeg {
+  symbol: string
+  lastTradedPrice: number | null
+  priceChange: number | null
+  priceChangePercent: number | null
+  bidPrice: number | null
+  askPrice: number | null
+  volume: number | null
+  openInterest: number | null
+  /** Change against the session's first snapshot, not the previous poll. */
+  openInterestChange: number | null
+  openInterestChangePercent: number | null
+  impliedVolatility: number | null
+  delta: number | null
+  /** "LongBuildUp" | "ShortBuildUp" | "ShortCovering" | "LongUnwinding" | "Neutral" */
+  buildUp: string
+}
+
+export interface OptionChainStrike {
+  strikePrice: number
+  isAtTheMoney: boolean
+  call: OptionChainLeg | null
+  put: OptionChainLeg | null
+  putCallRatio: number | null
+  putCallRatioOfChange: number | null
+}
+
+export interface OptionChain {
+  underlying: string
+  expiryDate: string
+  /** The moment this chain describes — now, or the replay clock. */
+  asOfUtc: string
+  spotPrice: number
+  atTheMoneyStrike: number | null
+  maxPainStrike: number | null
+  putCallRatio: number | null
+  totalCallOpenInterest: number
+  totalPutOpenInterest: number
+  heaviestCallStrike: number | null
+  heaviestPutStrike: number | null
+  strikes: OptionChainStrike[]
+  /**
+   * No open interest exists for the period asked for. Open interest is only
+   * recorded while the chain poller runs, and it cannot be backfilled — so a
+   * replay of an earlier session has prices and volume and nothing else.
+   */
+  openInterestUnavailable: boolean
+}
+
+export interface OptionChainSeriesPoint {
+  capturedUtc: string
+  spotPrice: number
+  callLastTradedPrice: number | null
+  putLastTradedPrice: number | null
+  callOpenInterest: number | null
+  putOpenInterest: number | null
+  callOpenInterestChange: number | null
+  putOpenInterestChange: number | null
+  /** Put minus call OI change. */
+  openInterestChangeDifference: number | null
+  callVolume: number | null
+  putVolume: number | null
+}
+
+export interface OptionChainSeries {
+  underlying: string
+  expiryDate: string
+  strikePrice: number
+  points: OptionChainSeriesPoint[]
+  openInterestUnavailable: boolean
+}
