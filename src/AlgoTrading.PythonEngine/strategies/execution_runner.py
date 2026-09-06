@@ -39,6 +39,7 @@ import threading
 import redis
 import requests
 from core.api_client import build_session, PlatformApiClient
+from core.feed_watchdog import assess_feed
 import urllib3
 from typing import List, Dict, Any, Optional
 
@@ -668,6 +669,72 @@ if __name__ == "__main__":
     last_atm_strike: Any = None
     last_contract_count = 0
 
+    # --- feed watchdog -----------------------------------------------------
+    # The runner watches its own input, because nothing upstream can: a Redis
+    # stream that stops carrying ticks looks exactly like a market with nothing
+    # to say. The decision itself lives in core/feed_watchdog.py, where it can
+    # be tested; this only supplies the clock, market hours and the reporting.
+    FEED_CHECK_SECONDS = 15
+
+    listen_started_at = time.time()
+    feed_stalled = False
+    last_feed_check = 0.0
+    last_stall_report = 0.0
+    market_open_cache: dict[str, Any] = {"value": None, "checked_at": 0.0}
+
+    def market_is_open() -> Optional[bool]:
+        """Cached for a minute; None means the question could not be asked."""
+        now_ts = time.time()
+        if market_open_cache["value"] is not None and now_ts - market_open_cache["checked_at"] < 60:
+            return market_open_cache["value"]
+        answer = api.is_market_open()
+        if answer is not None:
+            market_open_cache["value"] = answer
+            market_open_cache["checked_at"] = now_ts
+        return answer
+
+    def report_feed(is_stalled: bool, silent_for: int) -> None:
+        """Never fatal: losing the warning must not take the strategy with it."""
+        if args.run_id is None:
+            return
+        try:
+            api.report_feed_health(args.run_id, is_stalled, silent_for, args.underlying)
+        except Exception as ex:
+            print(f"[{args.underlying}] WARN: could not report feed health: {ex}", flush=True)
+
+    def check_feed_if_due() -> None:
+        global last_feed_check, feed_stalled, last_stall_report
+
+        now_ts = time.time()
+        if now_ts - last_feed_check < FEED_CHECK_SECONDS:
+            return
+        last_feed_check = now_ts
+
+        verdict = assess_feed(
+            now=now_ts,
+            last_tick_at=last_tick_at,
+            listening_since=listen_started_at,
+            currently_stalled=feed_stalled,
+            last_report_at=last_stall_report,
+            market_open=market_is_open(),
+        )
+
+        if not verdict.should_report:
+            return
+
+        feed_stalled = verdict.is_stalled
+        last_stall_report = now_ts
+
+        if verdict.action == "recovered":
+            print(f"[{args.underlying}] FEED RECOVERED after {verdict.silent_seconds}s.", flush=True)
+        elif verdict.action == "stalled":
+            print(f"[{args.underlying}] FEED STALLED — no ticks for {verdict.silent_seconds}s "
+                  "while the market is open.", flush=True)
+        else:
+            print(f"[{args.underlying}] FEED STILL STALLED — {verdict.silent_seconds}s.", flush=True)
+
+        report_feed(verdict.is_stalled, verdict.silent_seconds)
+
     def print_status_if_due() -> None:
         """
         One [STATUS] line every 10 s regardless of whether ticks arrive, so the
@@ -701,21 +768,30 @@ if __name__ == "__main__":
             status += f" | triggers: BUY CE (up) {buy_str}, BUY PE (down) {sell_str}"
         print(status, flush=True)
 
+    def housekeeping() -> None:
+        """
+        The per-loop chores, on every path through the tick loop — idle reads
+        and processed ticks alike. The watchdog has to see both: an idle read is
+        how a stall looks, and a processed tick is how recovery does.
+        """
+        print_status_if_due()
+        check_feed_if_due()
+
     try:
         for tick in subscriber.listen_for_ticks(block_ms=1000, yield_idle=True):
             if tick is None:
                 # Empty read: nothing on the stream for block_ms.
-                print_status_if_due()
+                housekeeping()
                 continue
 
             try:
                 if tick.get("symbol") != args.spot_symbol:
-                    print_status_if_due()
+                    housekeeping()
                     continue
 
                 spot_price = float(tick.get("lastTradedPrice", 0))
                 if spot_price <= 0:
-                    print_status_if_due()
+                    housekeeping()
                     continue
 
                 timestamp_utc = tick.get("exchangeTimestampUtc") or tick.get("receivedUtc") or datetime.now(timezone.utc).isoformat()
@@ -798,7 +874,7 @@ if __name__ == "__main__":
                 t_end = time.time()
                 STRATEGY_LOOP_DURATION.observe(t_end - t_start)
 
-                print_status_if_due()
+                housekeeping()
 
                 print_signals(signals)
                 if DEBUG_PRINT_MESSAGES:

@@ -633,6 +633,81 @@ public class StrategyController : ControllerBase
         return Ok(new RunnerRegistrationResponse { RunId = runId, ProcessId = pidOnRecord, Managed = running is not null });
     }
 
+    /// <summary>
+    /// The runner reports that its tick feed has gone dry, or come back.
+    /// </summary>
+    /// <remarks>
+    /// A frozen feed is the dangerous failure: the runner keeps waiting, the
+    /// process looks healthy, and the strategy is blind to a market that is
+    /// still moving. Only the runner can see it — the API has no view of what
+    /// arrives on a Redis stream — so the runner says so and this turns it into
+    /// an alert that reaches Telegram.
+    /// <para>
+    /// It never stops the run. Squaring off positions because ticks stopped
+    /// would be a bigger decision than this endpoint should make on its own,
+    /// and the operator now has what they need to make it.
+    /// </para>
+    /// </remarks>
+    [HttpPost("runs/{runId:long}/feed")]
+    public async Task<IActionResult> ReportFeedHealth(
+        long runId,
+        [FromBody] RunnerFeedHealthRequest? request,
+        CancellationToken cancellationToken)
+    {
+        if (request is null)
+            return BadRequest(new { message = "A body is required." });
+
+        var run = await _dbContext.SimulationRuns.AsNoTracking()
+            .Where(x => x.Id == runId && x.Mode == LivePaperMode)
+            .Select(x => new { x.Id, x.Status, x.StrategyName, x.Symbol })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (run is null)
+            return NotFound(new { message = $"Strategy run {runId} not found." });
+
+        if (!StrategyRunControl.IsOpenStatus(run.Status))
+            return NotFound(new { message = $"Strategy run {runId} is not running (status {run.Status})." });
+
+        string underlying = request.Underlying ?? string.Empty;
+        int seconds = Math.Max(0, request.SilentSeconds);
+
+        if (request.IsStalled)
+        {
+            _registry.AppendLog(runId, $"FEED STALLED — no ticks for {seconds}s");
+
+            await _notifier.NotifyAsync(
+                NotificationCategory.StrategyRun,
+                NotificationSeverity.Warning,
+                $"Feed stalled — {run.StrategyName} on {underlying}",
+                $"Run #{runId} has had no ticks for {seconds}s while the market is open. "
+                + "The strategy is still running but is not seeing prices.",
+                underlying: underlying,
+                symbol: run.Symbol,
+                simulationRunId: runId,
+                cancellationToken: cancellationToken);
+
+            HttpContext.Describe($"Reported a stalled feed on run #{runId} — {seconds}s without ticks.", "run", runId.ToString());
+        }
+        else
+        {
+            _registry.AppendLog(runId, $"feed recovered after {seconds}s");
+
+            await _notifier.NotifyAsync(
+                NotificationCategory.StrategyRun,
+                NotificationSeverity.Success,
+                $"Feed recovered — {run.StrategyName} on {underlying}",
+                $"Run #{runId} is receiving ticks again after {seconds}s.",
+                underlying: underlying,
+                symbol: run.Symbol,
+                simulationRunId: runId,
+                cancellationToken: cancellationToken);
+
+            HttpContext.Describe($"Reported feed recovery on run #{runId} after {seconds}s.", "run", runId.ToString());
+        }
+
+        return Ok(new { runId, acknowledged = true });
+    }
+
     // ------------------------------------------------------------------
     // Run history (per user)
     // ------------------------------------------------------------------

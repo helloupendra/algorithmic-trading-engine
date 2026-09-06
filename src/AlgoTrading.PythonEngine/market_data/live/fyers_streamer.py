@@ -88,6 +88,25 @@ DISCONNECT_RESTART_SECONDS = 20
 # and nothing has arrived for this long.
 STALL_AFTER_SECONDS = 120
 
+# Symbols added to the watchlist are subscribed on the LIVE socket rather than
+# by tearing the connection down and rebuilding it. A rolling straddle rolls its
+# ATM strike several times a day; rebuilding for each roll blacked out every
+# other symbol too, and those ticks were never gap-filled.
+#
+# The old full restart survives as the fallback. If the SDK's incremental
+# subscribe turns out not to work on this connection, NONE of a batch of newly
+# added symbols will tick — one quiet strike proves nothing, a whole silent
+# batch does — and the connection is rebuilt exactly as before. The window is
+# generous because a far-OTM strike can legitimately be quiet for a while.
+SUBSCRIBE_PROOF_SECONDS = 90
+
+# Symbols subscribed on the live socket that have yet to prove they are getting
+# data: {symbol: (subscribed_at_walltime, monotonic deadline)}. The wall time is
+# what makes the proof honest — last_real_tick keeps a symbol's last tick
+# forever, so a symbol removed and later re-added would otherwise be confirmed
+# by data that arrived before this subscribe.
+pending_subscriptions = {}
+
 # Cached market-session answer from the API (checked at most once a minute).
 _market_open_cache = {"value": None, "checked_at": 0.0}
 
@@ -402,28 +421,46 @@ def subscribe_symbols(symbols):
 
 def unsubscribe_symbols(symbols):
     """
-    Unsubscribe removed symbols if SDK supports it.
+    Unsubscribe removed symbols if the SDK supports it.
+
+    Returns True when they are genuinely off the wire. A False answer is not a
+    problem worth restarting the socket for: a symbol nobody reads costs a
+    little bandwidth and nothing else, whereas a rebuild costs every other
+    symbol its ticks.
     """
     if not symbols:
-        return
+        return True
 
     print("UNSUBSCRIBING SYMBOLS:", symbols)
 
-    if hasattr(fyers, "unsubscribe"):
+    if not hasattr(fyers, "unsubscribe"):
+        print("NOTE: unsubscribe() not in this FYERS SDK — leaving these symbols on the wire.")
+        return False
+
+    try:
+        fyers.unsubscribe(symbols=symbols, data_type=DEFAULT_DATA_TYPE)
+        return True
+    except TypeError:
         try:
-            fyers.unsubscribe(symbols=symbols, data_type=DEFAULT_DATA_TYPE)
-        except TypeError:
-            try:
-                fyers.unsubscribe(symbols=symbols)
-            except Exception as ex:
-                print("UNSUBSCRIBE FAILED:", ex)
-    else:
-        print("WARNING: unsubscribe() not found in current FYERS SDK. Restart may be required for symbol removal.")
+            fyers.unsubscribe(symbols=symbols)
+            return True
+        except Exception as ex:
+            print("UNSUBSCRIBE FAILED:", ex)
+            return False
+    except Exception as ex:
+        print("UNSUBSCRIBE FAILED:", ex)
+        return False
 
 
 def sync_watchlist(force_subscribe=False):
     """
-    Fetch active watchlist from DB and adjust subscriptions dynamically.
+    Fetch the active watchlist and adjust subscriptions on the LIVE socket.
+
+    Only a fresh connection subscribes the whole list. After that the difference
+    is applied in place — added symbols are subscribed, removed ones dropped if
+    the SDK allows it — so an intraday ATM roll costs nothing to the symbols it
+    did not touch. ``subscribed_symbols`` stays the truth about what is on the
+    wire, since the heartbeat and the stall detector both read it.
     """
     global subscribed_symbols
     global last_watchlist_refresh_utc
@@ -432,17 +469,33 @@ def sync_watchlist(force_subscribe=False):
     try:
         desired_symbols = set(get_active_watchlist())
 
-        if subscribed_symbols and desired_symbols != subscribed_symbols:
-            print("WATCHLIST CHANGED!")
-            print("FLAGGING CONNECTION RESTART TO AVOID FYERS BUG...")
-            global restart_required
-            restart_required = True
+        if force_subscribe or not subscribed_symbols:
+            subscribe_symbols(sorted(desired_symbols))
+            subscribed_symbols = set(desired_symbols)
+            # A fresh socket is proved by the feed as a whole, not per symbol:
+            # the disconnect watchdog and the stall detector already cover it.
+            pending_subscriptions.clear()
+        else:
+            added = desired_symbols - subscribed_symbols
+            removed = subscribed_symbols - desired_symbols
 
-        if not subscribed_symbols or force_subscribe:
-            # First run, just subscribe
-            subscribe_symbols(list(desired_symbols))
+            if added:
+                print("WATCHLIST CHANGED — subscribing on the live socket:", sorted(added))
+                subscribe_symbols(sorted(added))
+                subscribed_symbols = subscribed_symbols | added
+                marker = (time.time(), time.monotonic() + SUBSCRIBE_PROOF_SECONDS)
+                for symbol in added:
+                    pending_subscriptions[symbol] = marker
 
-        subscribed_symbols = desired_symbols
+            if removed:
+                if unsubscribe_symbols(sorted(removed)):
+                    subscribed_symbols = subscribed_symbols - removed
+                else:
+                    print("NOTE: still subscribed to", sorted(removed),
+                          "— harmless, and cheaper than rebuilding the connection.")
+                for symbol in removed:
+                    pending_subscriptions.pop(symbol, None)
+
         last_watchlist_refresh_utc = datetime.now(timezone.utc)
 
         print("CURRENT SUBSCRIBED SYMBOLS:", sorted(subscribed_symbols))
@@ -452,6 +505,53 @@ def sync_watchlist(force_subscribe=False):
         last_error_message = str(ex)
         print("ERROR SYNCING WATCHLIST:", ex)
         traceback.print_exc()
+
+
+def check_pending_subscriptions():
+    """
+    The fallback to the old behaviour: rebuild the connection when a batch of
+    newly added symbols is still silent past its deadline.
+
+    Any one of them ticking proves incremental subscribe works, so the whole
+    batch is cleared. Only a wholly silent batch — during market hours, on a
+    connected socket — is evidence that the subscribe did not take, and that is
+    the case the full restart exists for.
+    """
+    global restart_required
+
+    if not pending_subscriptions or not socket_connected:
+        return
+
+    now = time.monotonic()
+    pending = list(pending_subscriptions.items())
+
+    # Any one of them proves the batch. This is a separate pass on purpose: a
+    # single quiet symbol must not shadow a live one just by sorting earlier.
+    for symbol, (subscribed_at, _) in pending:
+        if last_real_tick.get(symbol, 0) > subscribed_at:
+            print(f"SUBSCRIBE CONFIRMED: {symbol} is sending data.")
+            pending_subscriptions.clear()
+            return
+
+    # Still waiting while any of them has time left.
+    if any(now < deadline for _, (_, deadline) in pending):
+        return
+
+    # Nothing arrived, and the market has to be open for silence to mean
+    # anything. Outside market hours the symbols simply are not trading.
+    if is_market_open() is not True:
+        extended = now + SUBSCRIBE_PROOF_SECONDS
+        for symbol, (subscribed_at, _) in list(pending_subscriptions.items()):
+            pending_subscriptions[symbol] = (subscribed_at, extended)
+        return
+
+    print(
+        "SUBSCRIBE UNCONFIRMED: no data for any of",
+        sorted(pending_subscriptions),
+        f"in {SUBSCRIBE_PROOF_SECONDS}s of open market — rebuilding the connection.",
+    )
+    pending_subscriptions.clear()
+    restart_required = True
 
 
 def redis_subscriber_loop():
@@ -670,6 +770,12 @@ def main():
             connect_started = time.monotonic()
             while not restart_required:
                 time.sleep(1)
+
+                # A watchlist change no longer rebuilds the connection; it
+                # subscribes in place. This is the guard that catches the case
+                # where that did not take.
+                check_pending_subscriptions()
+
                 if not socket_connected:
                     # Down since the last close — or, if it never opened at
                     # all (e.g. dead token at connect), since connect().

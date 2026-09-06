@@ -363,6 +363,46 @@ class PlatformApiClient:
         resp.raise_for_status()
         return _json_or_none(resp)
 
+    def is_market_open(self, exchange: str = "NSE", segment: str = "CM") -> Optional[bool]:
+        """
+        GET /api/MarketSession/check. Returns None when the answer is
+        unavailable, so a caller never mistakes "could not ask" for "closed" —
+        silence outside market hours is normal, silence during them is not.
+        """
+        try:
+            resp = self.http.get(
+                f"{self.base_url}/api/MarketSession/check",
+                params={"exchange": exchange, "segment": segment},
+                verify=self.verify_ssl,
+                timeout=10,
+            )
+            resp.raise_for_status()
+            return bool(resp.json().get("isMarketOpen"))
+        except Exception:
+            return None
+
+    def report_feed_health(self, run_id: int, is_stalled: bool, silent_seconds: int,
+                           underlying: Optional[str] = None) -> Any:
+        """
+        POST /api/Strategy/runs/{runId}/feed {isStalled, silentSeconds,
+        underlying}: the runner is the only thing that can see its tick feed go
+        dry, so it says so and the API raises the alert. 404 on an API that
+        predates the route; the caller treats every failure as non-fatal —
+        losing the warning must never take the strategy down with it.
+        """
+        resp = self.http.post(
+            f"{self.base_url}/api/Strategy/runs/{run_id}/feed",
+            json={
+                "isStalled": bool(is_stalled),
+                "silentSeconds": int(silent_seconds),
+                "underlying": underlying,
+            },
+            verify=self.verify_ssl,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return _json_or_none(resp)
+
     # --- Historical candles (backtesting) ---------------------------------
 
     def get_local_history(self, symbol: str, resolution: str, from_date: str, to_date: str) -> list[dict[str, Any]]:
