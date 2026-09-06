@@ -310,6 +310,10 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("TradingPinEncrypted")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("UpdatedBy")
                         .IsRequired()
                         .HasMaxLength(100)

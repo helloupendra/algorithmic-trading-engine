@@ -280,18 +280,30 @@ export interface PerformanceMetrics {
 
 // ---------- Risk rules (live runs and backtests) ----------
 
+/** What an overall rule measures over. See {@link OverallRisk.scope}. */
+export type RiskScope = 'day' | 'run'
+
 /**
- * ₹ limits on the run's TOTAL P&L (realized + unrealized); a hit ends the run.
+ * ₹ limits on TOTAL P&L (realized + unrealized).
  *
- * `trailStopLoss` is a give-back from the best total P&L the run ever showed:
- * it arms once profit reaches `trailTrigger` (or as soon as profit is above
- * zero when no trigger is set), then trips at `peak − trailStopLoss`.
+ * `scope` decides what "total" means, and it changes what a backtest tells
+ * you. Under `day` (the default) each session is measured from its own opening
+ * P&L: a hit squares off and stops trading for that day, and the next morning
+ * starts again from zero — the same thing as running the strategy live every
+ * day. Under `run` the measure is cumulative and the first hit ends the whole
+ * backtest, so a month-long test only ever reports on its first good
+ * afternoon. Live runs are one session, so the two agree there.
+ *
+ * `trailStopLoss` is a give-back from the best P&L seen within that same
+ * scope: it arms once profit reaches `trailTrigger` (or as soon as profit is
+ * above zero when no trigger is set), then trips at `peak − trailStopLoss`.
  */
 export interface OverallRisk {
   stopLoss?: number | null
   target?: number | null
   trailStopLoss?: number | null
   trailTrigger?: number | null
+  scope?: RiskScope | null
 }
 
 /**

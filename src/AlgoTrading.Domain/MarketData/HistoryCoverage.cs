@@ -140,8 +140,26 @@ public static class HistoryCoverage
     /// asking the broker; a holiday looks exactly like a missing day until it
     /// has been asked for once and come back empty.
     /// </summary>
-    public static IEnumerable<DateOnly> ExpectedTradingDays(DateOnly from, DateOnly to)
+    /// <param name="lastCompletedSession">
+    /// The most recent day whose session has finished. Days after it are not
+    /// expected to hold anything yet, so they are neither reported as gaps nor
+    /// requested from the broker. Null means "no limit" — for a range that
+    /// ends in the past.
+    /// </param>
+    /// <remarks>
+    /// Without this bound the range "…to today" asks the broker for a session
+    /// that has not happened. FYERS answers that with "Something went wrong.
+    /// Please contact support", which reads like a broken symbol and is not
+    /// one — the same call for the same symbol succeeds the moment the end
+    /// date is a day that has actually traded.
+    /// </remarks>
+    public static IEnumerable<DateOnly> ExpectedTradingDays(
+        DateOnly from,
+        DateOnly to,
+        DateOnly? lastCompletedSession = null)
     {
+        if (lastCompletedSession is { } last && to > last) to = last;
+
         for (var day = from; day <= to; day = day.AddDays(1))
         {
             if (day.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) continue;
@@ -165,14 +183,15 @@ public static class HistoryCoverage
         string? resolution,
         IReadOnlyDictionary<DateOnly, int> barsByDate,
         ISet<DateOnly>? knownEmptyDates = null,
-        CoveragePolicy policy = CoveragePolicy.Continuous)
+        CoveragePolicy policy = CoveragePolicy.Continuous,
+        DateOnly? lastCompletedSession = null)
     {
         var gaps = new List<CoverageGap>();
         if (to < from) return gaps;
 
         int? expected = ExpectedBarsPerDay(resolution);
 
-        foreach (var day in ExpectedTradingDays(from, to))
+        foreach (var day in ExpectedTradingDays(from, to, lastCompletedSession))
         {
             if (knownEmptyDates is not null && knownEmptyDates.Contains(day)) continue;
 
@@ -206,8 +225,9 @@ public static class HistoryCoverage
         string? resolution,
         IReadOnlyDictionary<DateOnly, int> barsByDate,
         ISet<DateOnly>? knownEmptyDates = null,
-        CoveragePolicy policy = CoveragePolicy.Continuous)
-        => FindGaps(from, to, resolution, barsByDate, knownEmptyDates, policy).Count == 0;
+        CoveragePolicy policy = CoveragePolicy.Continuous,
+        DateOnly? lastCompletedSession = null)
+        => FindGaps(from, to, resolution, barsByDate, knownEmptyDates, policy, lastCompletedSession).Count == 0;
 
     private static DateOnly NextTradingDay(DateOnly day)
     {

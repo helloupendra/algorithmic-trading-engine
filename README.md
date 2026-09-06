@@ -610,6 +610,12 @@ docker exec -i algotrading_db psql -U postgres -d algotrading \
 
 # .NET tests
 dotnet test AlgoTrading.slnx
+
+# Python engine tests (strategies, backtest replay, risk rules, feeds)
+.venv/bin/python -m unittest discover -s src/AlgoTrading.PythonEngine/tests
+
+# Web: types, bundle, unit tests and lint
+cd web && npx tsc -b && npx vite build && npm test && npx oxlint src
 ```
 
 ---

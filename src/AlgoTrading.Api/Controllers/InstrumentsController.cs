@@ -6,6 +6,8 @@ using AlgoTrading.Contracts.Instruments;
 using AlgoTrading.Contracts.Strategies;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Services;
+using Microsoft.AspNetCore.Authorization;
+using AlgoTrading.Domain.Instruments;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
@@ -62,28 +64,41 @@ public class InstrumentsController : ControllerBase
         if (string.IsNullOrWhiteSpace(query))
             return BadRequest(new { message = "query is required" });
 
+        // Upper-cased on both sides: PostgreSQL's LIKE is case-sensitive, so
+        // "banknifty" used to return nothing at all while "BANKNIFTY" returned
+        // fifty rows.
+        string q = query.Trim().ToUpperInvariant();
+
+        // "BANKNIFTY" is what every strategy calls it; the instrument is listed
+        // as NSE:NIFTYBANK-INDEX, which no substring of the query can reach.
+        string? alias = UnderlyingCatalog.IsIndex(q) ? UnderlyingCatalog.SpotSymbolFor(q) : null;
+
         var dbQuery = _dbContext.Instruments
             .AsNoTracking()
-            .Where(x => x.Symbol.Contains(query) || x.Description.Contains(query));
+            .Where(x =>
+                x.Symbol.ToUpper().Contains(q) ||
+                x.Description.ToUpper().Contains(q) ||
+                (alias != null && x.Symbol == alias));
 
         if (!string.IsNullOrEmpty(type))
         {
             if (type == "EQ") dbQuery = dbQuery.Where(x => x.InstrumentType == "EQ" || x.InstrumentType == null);
             else if (type == "FUT") dbQuery = dbQuery.Where(x => x.InstrumentType != null && x.InstrumentType.Contains("FUT"));
-            else if (type == "OPT") dbQuery = dbQuery.Where(x => (x.InstrumentType != null && (x.InstrumentType.Contains("OPT") || x.InstrumentType == "CE" || x.InstrumentType == "PE")) || x.OptionType != null);
+            // OptionType defaults to "" and is never null in the table, so the old
+            // `!= null` here matched every instrument in the master — the Options
+            // filter returned bonds, funds and indices alike.
+            else if (type == "OPT") dbQuery = dbQuery.Where(x => (x.InstrumentType != null && (x.InstrumentType.Contains("OPT") || x.InstrumentType == "CE" || x.InstrumentType == "PE")) || (x.OptionType != null && x.OptionType != ""));
             else if (type == "INDEX") dbQuery = dbQuery.Where(x => (x.InstrumentType != null && x.InstrumentType.Contains("INDEX")) || (x.Segment != null && x.Segment.Contains("INDEX")));
-            
-            dbQuery = dbQuery.OrderBy(x => x.Symbol);
-        }
-        else
-        {
-            // For "All types", prioritize base instruments (Futures, Stocks) over Options so they aren't pushed out of the top 50
-            dbQuery = dbQuery
-                .OrderBy(x => (x.InstrumentType != null && (x.InstrumentType.Contains("OPT") || x.InstrumentType == "CE" || x.InstrumentType == "PE")) || x.OptionType != null ? 1 : 0)
-                .ThenBy(x => x.Symbol);
         }
 
+        // Ordered by how well each row answers the query, and only then cut to
+        // fifty. Cutting first — which is what alphabetical order amounted to —
+        // dropped NSE:TCS-EQ off the end of a page of bonds.
         var rows = await dbQuery
+            .OrderBy(InstrumentSearchRanking.RankBy(q, alias))
+            .ThenBy(InstrumentSearchRanking.KindRank())
+            .ThenBy(x => x.Symbol.Length)
+            .ThenBy(x => x.Symbol)
             .Take(50)
             .ToListAsync(cancellationToken);
 
@@ -96,6 +111,7 @@ public class InstrumentsController : ControllerBase
     /// Admin-only: it reads an arbitrary server-side file and rewrites the
     /// instrument universe every strategy resolves contracts against.
     /// </summary>
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
     [HttpPost("import-local")]
     public async Task<IActionResult> ImportLocal(
         [FromQuery] string? filePath,

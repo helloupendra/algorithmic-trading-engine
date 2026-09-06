@@ -252,7 +252,7 @@ class GroupAndOverallTrailingTests(EngineRunner, unittest.TestCase):
         api = make_api(series([100.0, 110.0, 120.0, 118.0, 110.0]), pe_price=lambda i: 80.0)
         outcome, strategy = self.run_engine(
             api, {0: open_ce(1), 6: open_ce(1, "never")},
-            run_row(DAY1, DAY1, risk=risk(overall={"trailStopLoss": 300, "trailTrigger": 500})))
+            run_row(DAY1, DAY1, risk=risk(overall={"trailStopLoss": 300, "trailTrigger": 500, "scope": "run"})))
 
         self.assertEqual(outcome.status, "Completed")
         self.assertEqual(outcome.stop_reason,
@@ -281,7 +281,7 @@ class GroupAndOverallTrailingTests(EngineRunner, unittest.TestCase):
         api = make_api(series([100.0, 110.0, 120.0, 80.0]), pe_price=lambda i: 80.0)
         outcome, _ = self.run_engine(
             api, {0: open_ce(1)},
-            run_row(DAY1, DAY1, risk=risk(overall={"stopLoss": 500, "trailStopLoss": 300})))
+            run_row(DAY1, DAY1, risk=risk(overall={"stopLoss": 500, "trailStopLoss": 300, "scope": "run"})))
         self.assertEqual(outcome.stop_reason, "Stop loss hit: P&L −600 ≤ −500")
         self.assertFalse(outcome.summary["overallTrailStop"])
 
@@ -292,7 +292,7 @@ class GroupAndOverallTrailingTests(EngineRunner, unittest.TestCase):
         logs: List[str] = []
         outcome, _ = self.run_engine(
             api, {0: open_legs(STRADDLE_BUY)},
-            run_row(DAY1, DAY1, risk=risk(overall={"trailStopLoss": 300}, group={"trailStopLoss": 300},
+            run_row(DAY1, DAY1, risk=risk(overall={"trailStopLoss": 300, "scope": "run"}, group={"trailStopLoss": 300},
                                           leg={"trailStopLossPoints": 10})),
             log=logs.append)
         closes = close_signals(api)

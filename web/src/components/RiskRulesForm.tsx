@@ -37,18 +37,21 @@ interface LevelSpec {
   fields: FieldSpec[]
   /** The trailing pair of the same level, shown as its own sub-row. */
   trailing: { help: string; fields: FieldSpec[] }
+  /** Whether this level offers the per-day / whole-run choice. */
+  scope?: boolean
 }
 
 const LEVELS: LevelSpec[] = [
   {
     name: 'Overall',
-    help: 'on total P&L of the run (realized + unrealized) · a hit squares off everything and ends the run',
+    help: 'on total P&L (realized + unrealized) · a hit squares off everything',
+    scope: true,
     fields: [
-      { key: 'overallStopLoss', label: 'Stop-loss ₹', step: 100, inputMode: 'decimal', title: 'Rupees of total loss that end the run' },
-      { key: 'overallTarget', label: 'Target ₹', step: 100, inputMode: 'decimal', title: 'Rupees of total profit that end the run' },
+      { key: 'overallStopLoss', label: 'Stop-loss ₹', step: 100, inputMode: 'decimal', title: 'Rupees of total loss that square everything off' },
+      { key: 'overallTarget', label: 'Target ₹', step: 100, inputMode: 'decimal', title: 'Rupees of total profit that square everything off' },
     ],
     trailing: {
-      help: 'arms at the trigger profit (or any profit, when blank), then ends the run once total P&L gives back the trail amount from its best',
+      help: 'arms at the trigger profit (or any profit, when blank), then squares off once total P&L gives back the trail amount from its best',
       fields: [
         { key: 'overallTrailStopLoss', label: 'Trail ₹', step: 100, inputMode: 'decimal', title: 'Rupees given back from the best total P&L that end the run' },
         { key: 'overallTrailTrigger', label: 'Arms at ₹', step: 100, inputMode: 'decimal', title: 'Total profit at which the trail starts watching; blank = as soon as the run is in profit' },
@@ -175,6 +178,33 @@ export function RiskRulesForm({
             <span className="risk-form__help">{level.help}</span>
           </div>
           <div className="risk-form__stack">
+            {level.scope && (
+              <div className="risk-form__fields">
+                <div className="risk-form__field">
+                  <label htmlFor={`${idPrefix}-overallScope`}>Measured over</label>
+                  <select
+                    id={`${idPrefix}-overallScope`}
+                    className="field__input"
+                    value={value.overallScope}
+                    disabled={disabled}
+                    title="Whether the stop-loss, target and trail above are measured per trading day or across the whole run"
+                    onChange={(e) =>
+                      onChange({ ...value, overallScope: e.target.value === 'run' ? 'run' : 'day' })
+                    }
+                  >
+                    <option value="day">Each day on its own</option>
+                    <option value="run">The whole run</option>
+                  </select>
+                </div>
+              </div>
+            )}
+            {level.scope && (
+              <span className="risk-form__help">
+                {value.overallScope === 'run'
+                  ? 'The first day to hit a limit ends the backtest — the rest of the date range is never replayed.'
+                  : 'A hit closes that day and the next one starts again from zero, as running it live every morning would.'}
+              </span>
+            )}
             <div className="risk-form__fields">{level.fields.map(renderField)}</div>
             <div className="risk-form__trail" role="group" aria-label={`${level.name} trailing`}>
               <span className="risk-form__trail-name">Trailing</span>

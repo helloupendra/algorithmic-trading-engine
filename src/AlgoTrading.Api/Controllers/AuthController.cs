@@ -2,6 +2,8 @@ using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Application.Providers;
 using AlgoTrading.Application.UseCases.Auth;
 using AlgoTrading.Domain.Constants;
+using AlgoTrading.Api.Security;
+using AlgoTrading.Api.Services;
 using Microsoft.AspNetCore.Mvc;
 using AlgoTrading.Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
@@ -58,7 +60,7 @@ namespace AlgoTrading.Api.Controllers;
     /// installation configure its own broker app from the console instead of
     /// editing configuration files.
     /// </summary>
-    [Authorize(Policy = "AdminOnly")]
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
     [HttpGet("broker-config")]
     public async Task<IActionResult> GetBrokerConfig(
         [FromServices] IBrokerCredentialsProvider credentialsProvider,
@@ -76,6 +78,8 @@ namespace AlgoTrading.Api.Controllers;
             clientId = creds.ClientId,
             redirectUri = creds.RedirectUri,
             hasSecret = !string.IsNullOrWhiteSpace(creds.SecretKey),
+            // Whether it is set, never the value.
+            hasTradingPin = !string.IsNullOrWhiteSpace(creds.TradingPin),
             source = creds.Source,
             updatedBy = creds.UpdatedBy,
             updatedUtc = creds.UpdatedUtc,
@@ -83,10 +87,63 @@ namespace AlgoTrading.Api.Controllers;
         });
     }
 
-    public record SaveBrokerConfigRequest(string ClientId, string SecretKey, string RedirectUri);
+    /// <param name="TradingPin">
+    /// Optional. Needed only to refresh an expired token without a person at
+    /// the keyboard; omit it and nothing stored changes, send "" to clear it.
+    /// </param>
+    public record SaveBrokerConfigRequest(string ClientId, string SecretKey, string RedirectUri, string? TradingPin = null);
+
+    /// <summary>
+    /// Renews the stored access token from its refresh token.
+    /// </summary>
+    /// <remarks>
+    /// FYERS tokens expire daily, so without this the first thing every trading
+    /// morning needs is a person signing in — which makes an unattended start
+    /// impossible. Safe to call when the token is still good: the broker simply
+    /// issues another one.
+    /// </remarks>
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    [HttpPost("refresh-token")]
+    public async Task<IActionResult> RefreshToken(CancellationToken cancellationToken = default)
+    {
+        var broker = await _providerRouter.ResolveBrokerAsync(cancellationToken: cancellationToken);
+        var session = await _brokerSessionStore.GetForProviderAsync(broker.Descriptor.Key, cancellationToken);
+
+        if (session is null || string.IsNullOrWhiteSpace(session.RefreshToken))
+        {
+            return BadRequest(new
+            {
+                connected = false,
+                message = $"No {broker.Descriptor.Key} session to refresh. Sign in once so a refresh token is stored.",
+            });
+        }
+
+        var result = await broker.RefreshAccessTokenAsync(session.RefreshToken, cancellationToken);
+
+        if (!result.Succeeded || string.IsNullOrWhiteSpace(result.AccessToken))
+        {
+            // A refresh token has its own, longer expiry. When it is gone the
+            // only honest answer is "sign in again", and the caller — often an
+            // unattended script — needs to be able to say so.
+            return StatusCode(502, new { connected = false, message = result.ErrorMessage ?? "The broker declined the refresh." });
+        }
+
+        await _brokerSessionStore.SaveAsync(new BrokerSession
+        {
+            BrokerName = session.BrokerName,
+            ProviderKey = broker.Descriptor.Key,
+            AccessToken = result.AccessToken,
+            RefreshToken = result.RefreshToken,
+            CreatedUtc = DateTime.UtcNow,
+        }, cancellationToken);
+
+        HttpContext.Describe($"Refreshed the {broker.Descriptor.Key} access token.", "broker", broker.Descriptor.Key);
+
+        return Ok(new { connected = true, message = $"{broker.Descriptor.Key} access token renewed." });
+    }
 
     /// <summary>Saves the broker app credentials for this installation.</summary>
-    [Authorize(Policy = "AdminOnly")]
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
     [HttpPut("broker-config")]
     public async Task<IActionResult> SaveBrokerConfig(
         [FromBody] SaveBrokerConfigRequest request,
@@ -113,6 +170,7 @@ namespace AlgoTrading.Api.Controllers;
             request.SecretKey,
             request.RedirectUri,
             User.Identity?.Name ?? "admin",
+            request.TradingPin,
             cancellationToken: cancellationToken);
 
         return Ok(new { message = $"{broker.Descriptor.DisplayName} app credentials saved. You can connect now." });
@@ -164,6 +222,11 @@ namespace AlgoTrading.Api.Controllers;
         }
     }
 
+    /// <summary>
+    /// Anonymous by necessity: the broker's OAuth redirect lands here in the
+    /// user's browser and carries no bearer token of ours. The `state` value
+    /// is what ties the callback back to the request that started it.
+    /// </summary>
     [AllowAnonymous]
     [HttpGet("callback")]
     public async Task<IActionResult> Callback(

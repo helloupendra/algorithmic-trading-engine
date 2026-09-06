@@ -157,6 +157,57 @@ public class HistoryCoverageTests
         Assert.Equal(D("2026-09-04"), gaps[1].From);
     }
 
+    // --- sessions that have not happened yet -------------------------------
+
+    [Fact]
+    public void A_session_that_has_not_happened_is_not_a_gap()
+    {
+        // Asking the broker for today's candles at 2am is not an empty answer:
+        // FYERS replies "Something went wrong. Please contact support", which
+        // reads like a broken symbol. The same call succeeds the moment the end
+        // date is a day that actually traded.
+        var bars = Bars(("2026-09-03", 75), ("2026-09-04", 75));
+        var gaps = HistoryCoverage.FindGaps(
+            D("2026-09-03"), D("2026-09-07"), "5", bars,
+            knownEmptyDates: null,
+            policy: CoveragePolicy.Continuous,
+            lastCompletedSession: D("2026-09-04"));
+
+        Assert.Empty(gaps);
+    }
+
+    [Fact]
+    public void Days_after_the_last_completed_session_are_not_expected()
+    {
+        var days = HistoryCoverage
+            .ExpectedTradingDays(D("2026-09-03"), D("2026-09-10"), D("2026-09-04"))
+            .ToList();
+
+        Assert.Equal(new[] { D("2026-09-03"), D("2026-09-04") }, days);
+    }
+
+    [Fact]
+    public void Without_a_bound_every_weekday_is_still_expected()
+    {
+        // A range that ends in the past needs no clamp.
+        Assert.Equal(2, HistoryCoverage.ExpectedTradingDays(D("2026-09-03"), D("2026-09-04")).Count());
+    }
+
+    [Fact]
+    public void A_gap_before_the_bound_is_still_found()
+    {
+        // The clamp must not become an excuse to stop looking.
+        var gaps = HistoryCoverage.FindGaps(
+            D("2026-09-01"), D("2026-09-07"), "5", Bars(("2026-09-01", 75)),
+            knownEmptyDates: null,
+            policy: CoveragePolicy.Continuous,
+            lastCompletedSession: D("2026-09-04"));
+
+        var gap = Assert.Single(gaps);
+        Assert.Equal(D("2026-09-02"), gap.From);
+        Assert.Equal(D("2026-09-04"), gap.To);
+    }
+
     // --- holidays ---------------------------------------------------------
 
     [Fact]
@@ -287,4 +338,85 @@ public class FyersNoDataTests
     [InlineData("ok", 200)]
     public void A_real_failure_is_not_mistaken_for_an_empty_window(string status, int code)
         => Assert.False(AlgoTrading.Infrastructure.Providers.Fyers.FyersMarketDataProvider.IsNoData(status, code));
+}
+
+/// <summary>
+/// What an overall risk rule is measured over.
+/// </summary>
+/// <remarks>
+/// Measured across a whole backtest, the first day to reach the target ends the
+/// replay and every later day goes unvisited — so a month-long test of a
+/// strategy with a target only ever reports on one afternoon. Per day is the
+/// default because that is what running the strategy live every morning does.
+/// </remarks>
+public class RiskScopeTests
+{
+    [Theory]
+    [InlineData(null, "day")]
+    [InlineData("", "day")]
+    [InlineData("day", "day")]
+    [InlineData("DAY", "day")]
+    [InlineData("nonsense", "day")]
+    [InlineData("run", "run")]
+    [InlineData("  Run ", "run")]
+    public void Anything_but_run_is_measured_per_day(string? raw, string expected)
+        => Assert.Equal(expected, AlgoTrading.Contracts.Strategies.RiskScopes.Normalize(raw));
+
+    [Fact]
+    public void Rules_with_no_scope_come_back_per_day()
+    {
+        var rules = AlgoTrading.Contracts.Strategies.RiskRulesDto.Normalize(
+            new AlgoTrading.Contracts.Strategies.RiskRulesDto
+            {
+                Overall = new AlgoTrading.Contracts.Strategies.OverallRiskDto { Target = 3000m },
+            });
+
+        Assert.True(rules.Overall!.PerDay);
+        Assert.Equal("day", rules.Overall.Scope);
+    }
+
+    [Fact]
+    public void An_explicit_run_scope_survives_normalisation()
+    {
+        var rules = AlgoTrading.Contracts.Strategies.RiskRulesDto.Normalize(
+            new AlgoTrading.Contracts.Strategies.RiskRulesDto
+            {
+                Overall = new AlgoTrading.Contracts.Strategies.OverallRiskDto
+                {
+                    Target = 3000m,
+                    Scope = "run",
+                },
+            });
+
+        Assert.False(rules.Overall!.PerDay);
+    }
+
+    [Fact]
+    public void The_description_tells_two_otherwise_identical_runs_apart()
+    {
+        // Same numbers, different experiment. The run history has to say which.
+        var perDay = new AlgoTrading.Contracts.Strategies.RiskRulesDto
+        {
+            Overall = new AlgoTrading.Contracts.Strategies.OverallRiskDto { Target = 3000m },
+        };
+        var wholeRun = new AlgoTrading.Contracts.Strategies.RiskRulesDto
+        {
+            Overall = new AlgoTrading.Contracts.Strategies.OverallRiskDto { Target = 3000m, Scope = "run" },
+        };
+
+        Assert.Contains("per day", perDay.Describe());
+        Assert.Contains("whole run", wholeRun.Describe());
+        Assert.NotEqual(perDay.Describe(), wholeRun.Describe());
+    }
+
+    [Fact]
+    public void With_no_overall_rule_the_scope_is_not_mentioned()
+    {
+        var legOnly = new AlgoTrading.Contracts.Strategies.RiskRulesDto
+        {
+            Leg = new AlgoTrading.Contracts.Strategies.LegRiskDto { StopLossPoints = 20m },
+        };
+
+        Assert.DoesNotContain("per day", legOnly.Describe());
+    }
 }

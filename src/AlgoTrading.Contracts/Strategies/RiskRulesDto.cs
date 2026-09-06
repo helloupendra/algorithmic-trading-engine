@@ -21,6 +21,20 @@ namespace AlgoTrading.Contracts.Strategies;
 /// to <c>peak − trail</c> or below. The peaks live in the API process only, so
 /// trailing re-arms from the current P&amp;L after an API restart or a rule change.
 /// </summary>
+/// <summary>What an overall risk rule is measured over.</summary>
+public static class RiskScopes
+{
+    /// <summary>Each trading day on its own. The default.</summary>
+    public const string Day = "day";
+
+    /// <summary>The whole backtest, cumulatively. The first trip ends it.</summary>
+    public const string Run = "run";
+
+    /// <summary>Either constant, defaulting to <see cref="Day"/> for anything else.</summary>
+    public static string Normalize(string? value)
+        => string.Equals(value?.Trim(), Run, StringComparison.OrdinalIgnoreCase) ? Run : Day;
+}
+
 public class RiskRulesDto
 {
     /// <summary>Rupee stop-loss / target on the run's TOTAL P&amp;L (realized + unrealized).</summary>
@@ -76,7 +90,8 @@ public class RiskRulesDto
             StopLoss = rules?.Overall?.StopLoss,
             Target = rules?.Overall?.Target,
             TrailStopLoss = rules?.Overall?.TrailStopLoss,
-            TrailTrigger = rules?.Overall?.TrailTrigger
+            TrailTrigger = rules?.Overall?.TrailTrigger,
+            Scope = RiskScopes.Normalize(rules?.Overall?.Scope)
         },
         Group = new GroupRiskDto
         {
@@ -176,7 +191,17 @@ public class RiskRulesDto
             Join(Points(Leg?.TrailStopLossPoints), Percent(Leg?.TrailStopLossPercent)),
             Join(Points(Leg?.TrailTriggerPoints), Percent(Leg?.TrailTriggerPercent))));
 
-        return parts.Count == 0 ? "no risk rules" : string.Join(", ", parts);
+        if (parts.Count == 0) return "no risk rules";
+
+        // Say which, and only when an overall rule exists to be measured. Two
+        // runs with the same numbers and different scopes are different
+        // experiments, and the run history has to tell them apart.
+        if (Overall?.HasAnyRule == true)
+        {
+            parts.Add(Overall.PerDay ? "measured per day" : "measured over the whole run");
+        }
+
+        return string.Join(", ", parts);
     }
 
     private static void Add(List<string> parts, string label, string? value)
@@ -251,6 +276,26 @@ public class OverallRiskDto
 
     /// <summary>Profit (₹) at which the trail arms; unset arms it as soon as total P&amp;L turns positive.</summary>
     public decimal? TrailTrigger { get; set; }
+
+    /// <summary>
+    /// What "total P&amp;L" is measured over: <c>"day"</c> (the default) or
+    /// <c>"run"</c>.
+    /// </summary>
+    /// <remarks>
+    /// Under <c>day</c> each session is measured from its own opening P&amp;L: a
+    /// trip squares off and stops trading for that day, and the next morning
+    /// starts again from zero — the same shape as running the strategy live
+    /// every day. Under <c>run</c> the measure is cumulative across a backtest
+    /// and the first trip ends it, leaving the rest of the date range never
+    /// replayed; a month-long test with a target then only ever reports on its
+    /// first good afternoon.
+    /// <para>Live runs are a single session, so the two agree there.</para>
+    /// </remarks>
+    public string? Scope { get; set; }
+
+    /// <summary>True when this rule is measured per trading day.</summary>
+    [JsonIgnore]
+    public bool PerDay => !string.Equals(Scope, RiskScopes.Run, StringComparison.OrdinalIgnoreCase);
 
     [JsonIgnore]
     public bool HasAnyRule => StopLoss.HasValue || Target.HasValue || HasTrailingRule;

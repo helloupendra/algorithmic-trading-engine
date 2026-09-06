@@ -149,4 +149,6 @@ Thumbs.db
 desktop.ini
 src/AlgoTrading.Api/wwwroot/
 TradingMasterclass-Report/
+# AI trader blueprint report + research notes (private, offline HTML) — never published.
+ai-trader/
 docs/roadmap/

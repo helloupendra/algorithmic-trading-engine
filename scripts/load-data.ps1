@@ -137,6 +137,7 @@ function Import-InstrumentCsv {
 
 Import-InstrumentCsv 'Cash Market'       'data/instruments/NSE_CM.csv'
 Import-InstrumentCsv 'NSE Futures & Options' 'data/instruments/NSE_FO.csv'
+Import-InstrumentCsv 'BSE Cash Market' 'data/instruments/BSE_CM.csv'
 Import-InstrumentCsv 'BSE Futures & Options' 'data/instruments/BSE_FO.csv'
 Import-InstrumentCsv 'Commodities'       'data/instruments/MCX_COM.csv'
 

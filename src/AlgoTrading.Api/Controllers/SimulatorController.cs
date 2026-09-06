@@ -116,7 +116,7 @@ public class SimulatorController : ControllerBase
         if (result is null)
             return NotFound(new { message = "Simulation run not found." });
 
-        if (!User.IsInRole("Admin") && result.UserId != User.GetRequiredUserId())
+        if (!CallerMaySeeAnyRun() && result.UserId != User.GetRequiredUserId())
             return Forbid();
 
         return Ok(result);
@@ -125,13 +125,28 @@ public class SimulatorController : ControllerBase
     [HttpGet("runs")]
     public async Task<IActionResult> GetRuns([FromQuery] long? userId, CancellationToken cancellationToken)
     {
-        if (!User.IsInRole("Admin"))
+        if (!CallerMaySeeAnyRun())
         {
             userId = User.GetRequiredUserId();
         }
         var result = await _getSimulationRunsUseCase.ExecuteAsync(userId, cancellationToken);
         return Ok(result);
     }
+
+    /// <summary>
+    /// Whether the caller may read runs other than their own.
+    /// </summary>
+    /// <remarks>
+    /// Admins, and the engine's Service account. The runner signs in as itself
+    /// rather than as the trader who started the run, so an ownership test
+    /// leaves it unable to read the very run it was launched to execute — it
+    /// could book the fills and never load the instructions. This rule lived
+    /// correctly in <see cref="IsRunOwnedByCallerAsync"/> and was copied into
+    /// the read endpoints without the Service half, which is how a backtest
+    /// failed with "403 Forbidden" on its own run.
+    /// </remarks>
+    private bool CallerMaySeeAnyRun()
+        => User.IsInRole(UserRoles.Admin) || User.IsInRole(UserRoles.Service);
 
     /// <summary>
     /// Whether the caller may act on this run.
@@ -145,7 +160,7 @@ public class SimulatorController : ControllerBase
     /// </remarks>
     private async Task<bool> IsRunOwnedByCallerAsync(long runId, CancellationToken ct)
     {
-        if (User.IsInRole(UserRoles.Admin) || User.IsInRole(UserRoles.Service)) return true;
+        if (CallerMaySeeAnyRun()) return true;
         var run = await _getSimulationRunUseCase.ExecuteAsync(runId, ct);
         return run != null && run.UserId == User.GetRequiredUserId();
     }

@@ -168,6 +168,10 @@ fetch() {
 }
 fetch "https://public.fyers.in/sym_details/NSE_CM.csv" "data/instruments/NSE_CM.csv"
 fetch "https://public.fyers.in/sym_details/NSE_FO.csv" "data/instruments/NSE_FO.csv"
+# BSE_CM carries BSE:SENSEX-INDEX and BSE:BANKEX-INDEX. Without it the SENSEX
+# options in BSE_FO have no underlying to price against, and a SENSEX strategy
+# cannot resolve a single contract.
+fetch "https://public.fyers.in/sym_details/BSE_CM.csv" "data/instruments/BSE_CM.csv"
 fetch "https://public.fyers.in/sym_details/BSE_FO.csv" "data/instruments/BSE_FO.csv"
 fetch "https://public.fyers.in/sym_details/MCX_COM.csv" "data/instruments/MCX_COM.csv"
 

@@ -3,8 +3,8 @@
  * soft brand glow behind the card, and nothing else competing with the form.
  * The card carries the contrast; the backdrop only has to say what this is.
  *
- * Logic is unchanged: username/password to the API, with dev-only one-click
- * logins sourced from web/.env.local (never shipped in a production build).
+ * Username and password only. There is no public sign-up and no shortcut:
+ * accounts are issued by an administrator.
  */
 
 import { useState, type FormEvent } from 'react'
@@ -13,25 +13,6 @@ import { useAuth } from '../lib/auth'
 import { ApiError } from '../lib/api'
 import { IconLogo } from '../components/icons'
 import { LoginBackdrop } from '../components/LoginBackdrop'
-
-const DEV_LOGINS = import.meta.env.DEV
-  ? (
-      [
-        {
-          label: 'Admin',
-          hint: 'full access — users, kill switch, ingestion',
-          user: import.meta.env.VITE_DEV_ADMIN_USER as string | undefined,
-          pass: import.meta.env.VITE_DEV_ADMIN_PASS as string | undefined,
-        },
-        {
-          label: 'Trader',
-          hint: 'trading screens only — no admin area',
-          user: import.meta.env.VITE_DEV_TRADER_USER as string | undefined,
-          pass: import.meta.env.VITE_DEV_TRADER_PASS as string | undefined,
-        },
-      ] as const
-    ).filter((l) => l.user && l.pass)
-  : []
 
 export function LoginPage() {
   const { login } = useAuth()
@@ -126,27 +107,6 @@ export function LoginPage() {
           <p className="login__hint">
             Accounts are issued by an administrator — there is no public sign-up.
           </p>
-
-          {DEV_LOGINS.length > 0 && (
-            <div className="login__dev">
-              <div className="login__dev-label">Dev quick sign-in</div>
-              <div className="login__dev-row">
-                {DEV_LOGINS.map((l) => (
-                  <button
-                    key={l.label}
-                    type="button"
-                    className="login__dev-btn"
-                    disabled={isSubmitting}
-                    title={l.hint}
-                    onClick={() => void signIn(l.user!, l.pass!)}
-                  >
-                    <b>{l.label}</b>
-                    <span>{l.user}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
 
         <p className="login__foot">

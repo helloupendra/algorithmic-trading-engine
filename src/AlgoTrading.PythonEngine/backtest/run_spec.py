@@ -62,30 +62,62 @@ def _pts_pct(points: Optional[float], percent: Optional[float]) -> str:
     return " / ".join(parts) if parts else "—"
 
 
+#: The overall rule measures each trading day on its own: hitting the target
+#: squares off and stops trading for that day, and the next session starts
+#: fresh. This is what a live run does — a run is one day — and it is what
+#: makes a target meaningful across a date range.
+SCOPE_DAY = "day"
+
+#: The overall rule measures the whole replay: the first day to reach the
+#: target ends the backtest and the remaining days are never replayed. Useful
+#: for "how long until I make X", misleading for "how does this strategy do
+#: over a month".
+SCOPE_RUN = "run"
+
+
+def _scope(raw: Any) -> str:
+    return SCOPE_RUN if str(raw or "").strip().lower() == SCOPE_RUN else SCOPE_DAY
+
+
 @dataclass(frozen=True)
 class OverallRisk:
     """
-    Rupee stop-loss / target / trailing stop on the run's TOTAL P&L; a trip
-    ends the run.
+    Rupee stop-loss / target / trailing stop on total P&L.
 
-    The trail arms when total P&L first reaches `trail_trigger` (or, without a
-    trigger, as soon as it goes positive); from then on the run's best P&L is
-    tracked and the run is flattened when P&L falls to `peak - trail_stop_loss`
-    or below.
+    `scope` decides what "total" means, and it is the difference between a
+    backtest that answers a useful question and one that stops on its first
+    good day. Under `day` (the default) each session is measured from its own
+    opening P&L: a trip squares off and sits out the rest of that day, and the
+    next day starts again from zero — exactly as running the strategy live
+    every morning would. Under `run` the measure is cumulative across the whole
+    replay and the first trip ends it.
+
+    The trail arms when P&L first reaches `trail_trigger` (or, without a
+    trigger, as soon as it goes positive); from then on the best P&L is tracked
+    and everything is flattened when P&L falls to `peak - trail_stop_loss` or
+    below. Under `day` scope the peak resets each morning too — a trail carried
+    over from a previous session would arm against a high that this day never
+    reached.
     """
     stop_loss: Optional[float] = None
     target: Optional[float] = None
     trail_stop_loss: Optional[float] = None
     trail_trigger: Optional[float] = None
+    scope: str = SCOPE_DAY
 
     @property
     def is_set(self) -> bool:
         return any(v is not None for v in (self.stop_loss, self.target,
                                            self.trail_stop_loss, self.trail_trigger))
 
+    @property
+    def per_day(self) -> bool:
+        return self.scope != SCOPE_RUN
+
     def to_dict(self) -> Dict[str, Any]:
         return {"stopLoss": self.stop_loss, "target": self.target,
-                "trailStopLoss": self.trail_stop_loss, "trailTrigger": self.trail_trigger}
+                "trailStopLoss": self.trail_stop_loss, "trailTrigger": self.trail_trigger,
+                "scope": self.scope}
 
     def describe(self) -> str:
         text = f"overall SL {_money_text(self.stop_loss)} · target {_money_text(self.target)}"
@@ -93,6 +125,7 @@ class OverallRisk:
             text += f" · trail {_money_text(self.trail_stop_loss)}"
             if self.trail_trigger is not None:
                 text += f" from {_money_text(self.trail_trigger)}"
+        text += " · per day" if self.per_day else " · whole run"
         return text
 
 
@@ -250,6 +283,7 @@ class RiskRules:
                 target=_positive(_pick(overall, "target")),
                 trail_stop_loss=_positive(_pick(overall, "trailStopLoss", "trail_stop_loss")),
                 trail_trigger=_positive(_pick(overall, "trailTrigger", "trail_trigger")),
+                scope=_scope(_pick(overall, "scope")),
             ),
             group=GroupRisk(
                 stop_loss=_positive(_pick(group, "stopLoss", "stop_loss")),
