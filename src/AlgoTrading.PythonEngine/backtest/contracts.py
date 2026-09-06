@@ -3,7 +3,7 @@ backtest/contracts.py
 
 Option-contract resolution for the replay: expiries as-of a bar date, the
 strike grid, ATM strikes and exact contracts (cached per run), plus the
-Titli-style logical leg symbols ("BANKNIFTY_PE_50300") that the strategies
+Fulcrum-style logical leg symbols ("BANKNIFTY_PE_50300") that the strategies
 emit instead of broker symbols.
 
 Only answers are cached. A lookup that fails (API error, timeout) is retried

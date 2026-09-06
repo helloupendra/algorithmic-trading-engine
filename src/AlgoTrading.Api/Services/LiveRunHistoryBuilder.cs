@@ -524,10 +524,10 @@ public sealed class LiveRunHistoryBuilder
         foreach (var pos in open)
         {
             int lotSize = lotSizes.TryGetValue(pos.Symbol, out var info) && info.LotSize > 0 ? info.LotSize : 1;
-            bool isLong = string.Equals(pos.Direction, "LONG", StringComparison.OrdinalIgnoreCase);
-
+            // The same function the fills use. Written out by hand here, this
+            // was the second copy of the number that says how much a run made.
             decimal unrealized = ltpBySymbol.TryGetValue(pos.Symbol, out var ltp)
-                ? (isLong ? ltp - pos.AveragePrice : pos.AveragePrice - ltp) * pos.Quantity * lotSize
+                ? PaperPnl.Unrealized(pos.Direction, pos.AveragePrice, ltp, pos.Quantity, lotSize)
                 : pos.UnrealizedPnl;
 
             decimal used = PaperTradingService.UsedCapitalOf(pos.Direction, pos.Symbol, pos.AveragePrice, pos.Quantity, lotSize);

@@ -30,7 +30,20 @@ class RedisTickSubscriber:
             password=password,
             decode_responses=decode_responses,
         )
-        # Start reading only new messages from the exact moment we connect
+        # Only messages that arrive from this moment on.
+        #
+        # This is deliberate, and it is NOT the obvious bug it looks like. A
+        # restarted runner does skip every tick published while it was down —
+        # but replaying them would be worse than missing them. The strategy
+        # reacts to each tick as if it were now: catching up on ten minutes of
+        # stale prices would have it compute a stale ATM, resolve strikes around
+        # a spot that has since moved, and open a position at the wrong strike
+        # using current prices. A missed entry costs an opportunity; a
+        # wrong-strike entry costs money.
+        #
+        # Making catch-up safe needs a staleness guard in the tick loop first,
+        # so the runner can tell a replayed tick from a live one. Until then the
+        # gap is reported (see the restart log below) rather than closed.
         self.last_id = "$"
 
     def ping(self) -> bool:
@@ -53,6 +66,12 @@ class RedisTickSubscriber:
         going while the market is closed or the feed is stopped instead of
         blocking silently inside this loop.
         """
+        # Say where we started. The gap between a runner dying and restarting is
+        # invisible otherwise, and silence is the only part of the skip that
+        # costs nothing to fix.
+        print(f"[RedisTickSubscriber] reading {self.stream_name} from {self.last_id} "
+              f"(ticks published before now are not replayed)", flush=True)
+
         while True:
             try:
                 # XREAD format: {stream_name: last_id}

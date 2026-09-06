@@ -16,7 +16,7 @@ import { keepPreviousData, useInfiniteQuery, useMutation, useQueries, useQuery, 
 import type { InfiniteData } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr'
-import { api, API_BASE_URL } from './api'
+import { api, API_BASE_URL, tokenStore } from './api'
 import type {
   BackfillHistoryResponse,
   BacktestBackfillRequest,
@@ -95,8 +95,18 @@ export function useLiveFeedSignalR() {
   const qc = useQueryClient()
 
   useEffect(() => {
+    // Nothing to subscribe to while signed out. The component that calls this
+    // is mounted above the router, so it also runs on the public landing and
+    // login pages — where it would otherwise open a socket, fail to authorize,
+    // and retry forever.
+    if (!tokenStore.access) return
+
     const connection = new HubConnectionBuilder()
-      .withUrl(`${API_BASE_URL}/hubs/livefeed`)
+      // The hub is authorized now — it carries live market data the platform
+      // pays a broker for, and used to accept anyone with the URL.
+      .withUrl(`${API_BASE_URL}/hubs/livefeed`, {
+        accessTokenFactory: () => tokenStore.access ?? '',
+      })
       .configureLogging(LogLevel.Warning)
       .withAutomaticReconnect()
       .build()

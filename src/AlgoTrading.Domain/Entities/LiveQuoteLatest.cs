@@ -95,6 +95,20 @@ namespace AlgoTrading.Domain.Entities
         /// </summary>
         public DateTime UpdatedUtc { get; set; } = DateTime.UtcNow;
 
+        /// <summary>
+        /// When the EXCHANGE stamped the quote this row holds, when it said.
+        /// </summary>
+        /// <remarks>
+        /// Stored so a later tick can be compared against this one before it
+        /// overwrites it. Several threads write quotes concurrently and the
+        /// per-symbol lock orders access, not arrival — so during a backlog an
+        /// older tick could win the lock after a newer one and leave the stale
+        /// price on record, with <see cref="UpdatedUtc"/> saying it was fresh.
+        /// Null for a feed that sends no exchange stamp, in which case order
+        /// cannot be established and last-writer-wins stands.
+        /// </remarks>
+        public DateTime? ExchangeTimestampUtc { get; set; }
+
         /// <summary>Which connector produced this quote, e.g. "fyers".</summary>
         public string SourceKey { get; set; } = string.Empty;
     }

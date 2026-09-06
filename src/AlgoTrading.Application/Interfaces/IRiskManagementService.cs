@@ -19,7 +19,12 @@ public class KillSwitchState
 
 public interface IRiskManagementService
 {
-    Task EvaluateOrderAsync(long simulationRunId, string symbol, string side, int quantity, CancellationToken cancellationToken);
+    /// <summary>
+    /// Decides whether one leg may be filled. A closing leg (<paramref name="isClosing"/>)
+    /// is always allowed: every gate exists to stop a run taking on MORE risk,
+    /// and none of them should stop it getting flat.
+    /// </summary>
+    Task EvaluateOrderAsync(long simulationRunId, string symbol, string side, int quantity, bool isClosing, CancellationToken cancellationToken);
 
     Task ActivateKillSwitchAsync(CancellationToken cancellationToken);
 

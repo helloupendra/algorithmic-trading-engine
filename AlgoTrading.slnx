@@ -2,7 +2,6 @@
   <Folder Name="/src/">
     <Project Path="src/AlgoTrading.Api/AlgoTrading.Api.csproj" />
     <Project Path="src/AlgoTrading.Application/AlgoTrading.Application.csproj" />
-    <Project Path="src/AlgoTrading.Backtester/AlgoTrading.Backtester.csproj" />
     <Project Path="src/AlgoTrading.Contracts/AlgoTrading.Contracts.csproj" />
     <Project Path="src/AlgoTrading.Domain/AlgoTrading.Domain.csproj" />
     <Project Path="src/AlgoTrading.Infrastructure/AlgoTrading.Infrastructure.csproj" />

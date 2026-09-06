@@ -21,7 +21,7 @@ We use the TimescaleDB extension for PostgreSQL to handle hyper-scale time-serie
 - Essential for high-fidelity backtesting.
 
 ### C. The Python Strategy Engine (`src/AlgoTrading.PythonEngine`)
-This is where the actual quantitative strategies live (e.g. The `Titli` Multi-Straddle Strategy).
+This is where the actual quantitative strategies live (e.g. The `Fulcrum` Multi-Straddle Strategy).
 - **Execution Runner:** Listens to Redis for real-time (or replayed) market ticks.
 - **State Management:** Uses Redis to store "Strategy State" (Entry Prices, Active Legs, Unrealized PnL). This means if the Python script crashes, it can instantly restart and pick up exactly where it left off without losing track of open trades!
 - **Option Chain Tracker:** A specialized script that watches the Spot index movement and tells the C# Watchlist to dynamically subscribe to At-The-Money (ATM) Option contracts in real-time.

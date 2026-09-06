@@ -11,7 +11,7 @@ export function activeUnderlyings(s: StrategyListItem): string[] {
   return s.activeRuns.map((r) => r.underlying)
 }
 
-/** "Titli · BANKNIFTY, NIFTY" — one line per running strategy for tiles and lists. */
+/** "Fulcrum · BANKNIFTY, NIFTY" — one line per running strategy for tiles and lists. */
 export function runningSummary(s: StrategyListItem): string {
   const on = activeUnderlyings(s)
   return on.length > 0 ? `${s.name} · ${on.join(', ')}` : s.name

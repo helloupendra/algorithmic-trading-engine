@@ -106,7 +106,7 @@ def map_contract(raw: Dict[str, Any]) -> OptionContract:
 
 def parse_logical_symbol(symbol: str) -> Optional[Tuple[str, str, Strike]]:
     """
-    Decode the Titli-style logical leg symbol "BANKNIFTY_PE_50300" into
+    Decode the Fulcrum-style logical leg symbol "BANKNIFTY_PE_50300" into
     (underlying, option_type, strike). Real broker symbols ("NSE:BANKNIFTY...")
     and anything else return None.
     """

@@ -39,6 +39,7 @@ from core.config import (
     VERIFY_SSL,
     DEFAULT_DATA_TYPE,
     DEBUG_PRINT_MESSAGES,
+    ENABLE_MOCK_TICKS,
     WATCHLIST_REFRESH_SECONDS,
     SOURCE_NAME,
     DATA_PROVIDER_KEY,
@@ -48,6 +49,7 @@ from core.config import (
 )
 
 from core.heartbeat import run_forever
+from core.option_symbol import parse_option_symbol, years_to_expiry
 from messaging.redis_publisher import build_publisher_from_env, normalize_tick
 
 publisher = build_publisher_from_env()
@@ -162,9 +164,42 @@ def get_active_watchlist():
 
 
 import concurrent.futures
-tick_executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+
+# Posting ticks to the API happens off the websocket thread, so a slow API
+# cannot stall the socket. The queue in front of those threads is the part that
+# needs a ceiling.
+TICK_WORKERS = 5
+
+#: How many posts may be waiting before we start dropping them.
+#:
+#: ThreadPoolExecutor's own work queue is UNBOUNDED. When the API slowed on
+#: 2026-09-04 the submissions piled up inside this process — invisibly, since
+#: nothing measured the depth — and the feed drifted to 31 minutes behind
+#: without a single log line saying so. A bounded queue turns that into a
+#: visible, bounded loss: the newest prices keep flowing and the backlog is
+#: reported rather than silently accumulated.
+TICK_QUEUE_LIMIT = 2000
+
+#: How often to say something when we are shedding.
+TICK_DROP_LOG_EVERY = 500
+
+tick_executor = concurrent.futures.ThreadPoolExecutor(max_workers=TICK_WORKERS)
+_tick_inflight = 0
+_tick_inflight_lock = threading.Lock()
+_ticks_dropped = 0
+
+
+def tick_queue_depth() -> int:
+    """Posts submitted and not yet finished. Reported in the heartbeat."""
+    return _tick_inflight
+
+
+def ticks_dropped_total() -> int:
+    return _ticks_dropped
+
 
 def _do_upsert_tick(payload: dict):
+    global _tick_inflight
     url = f"{API_BASE_URL}/api/LiveData/ticks/upsert"
     try:
         response = http.post(url, json=payload, verify=VERIFY_SSL, timeout=10)
@@ -172,9 +207,32 @@ def _do_upsert_tick(payload: dict):
             print("TICK UPSERT FAILED:", response.status_code, response.text)
     except Exception as e:
         print("TICK UPSERT HTTP ERROR:", e)
+    finally:
+        with _tick_inflight_lock:
+            _tick_inflight -= 1
+
 
 def upsert_tick(payload: dict):
-    # Offload to background thread to prevent blocking the WebSocket loop
+    """
+    Queue one tick for the API, and refuse to queue without limit.
+
+    Dropping the NEWEST tick when saturated is deliberate: the backlog already
+    holds older prices for the same symbols, and the alternative — an unbounded
+    queue — spends memory to deliver prices that are minutes stale by the time
+    they land, which is worse than not delivering them.
+    """
+    global _tick_inflight, _ticks_dropped
+
+    with _tick_inflight_lock:
+        if _tick_inflight >= TICK_QUEUE_LIMIT:
+            _ticks_dropped += 1
+            if _ticks_dropped % TICK_DROP_LOG_EVERY == 1:
+                print(f"TICK BACKLOG: {_tick_inflight} posts in flight, dropping. "
+                      f"{_ticks_dropped} dropped so far — the API is not keeping up.",
+                      flush=True)
+            return
+        _tick_inflight += 1
+
     tick_executor.submit(_do_upsert_tick, payload)
 
 
@@ -235,6 +293,10 @@ def send_heartbeat():
             if last_watchlist_refresh_utc else None
         ),
         "currentSubscribedSymbols": sorted(list(subscribed_symbols)),
+        # Backlog, made visible. The 31-minute drift of 2026-09-04 accumulated
+        # entirely inside this process with nothing reporting it.
+        "queueDepth": tick_queue_depth(),
+        "ticksDropped": ticks_dropped_total(),
         "lastError": last_error_message,
         # Lets the API find (and stop) this process again after it restarts.
         "processId": os.getpid(),
@@ -261,7 +323,27 @@ def handle_live_tick(raw_msg: dict):
     publisher.publish_tick(normalized)
 
 
-latest_spots = {"NIFTY": 24000.0, "BANKNIFTY": 51000.0}
+# Spot per underlying, filled from the index ticks as they arrive.
+#
+# Deliberately EMPTY at start. It used to be seeded with two made-up prices, so
+# before the first index tick every option was priced against a number nobody
+# had observed — and anything that was not NIFTY or BANKNIFTY was priced against
+# BANKNIFTY's 51,000 forever. A missing spot now means no greeks, which is the
+# honest answer until the index reports.
+latest_spots: dict[str, float] = {}
+
+#: The spot instrument each underlying is quoted by. Mirrors the API's
+#: UnderlyingCatalog; without SENSEX and the rest here their options could never
+#: be priced at all.
+UNDERLYING_BY_SPOT_SYMBOL = {
+    "NSE:NIFTY50-INDEX": "NIFTY",
+    "NSE:NIFTYBANK-INDEX": "BANKNIFTY",
+    "NSE:FINNIFTY-INDEX": "FINNIFTY",
+    "NSE:MIDCPNIFTY-INDEX": "MIDCPNIFTY",
+    "NSE:NIFTYNXT50-INDEX": "NIFTYNXT50",
+    "BSE:SENSEX-INDEX": "SENSEX",
+    "BSE:BANKEX-INDEX": "BANKEX",
+}
 
 def map_message_to_payload(message: dict) -> dict | None:
     symbol = message.get("symbol")
@@ -272,20 +354,32 @@ def map_message_to_payload(message: dict) -> dict | None:
     
     # Track spot prices for indices
     if ltp:
-        if symbol == "NSE:NIFTY50-INDEX":
-            latest_spots["NIFTY"] = ltp
-        elif symbol == "NSE:NIFTYBANK-INDEX":
-            latest_spots["BANKNIFTY"] = ltp
+        underlying = UNDERLYING_BY_SPOT_SYMBOL.get(symbol)
+        if underlying:
+            latest_spots[underlying] = ltp
 
+    # When the exchange stamped this, from whichever field the message carries.
+    #
+    # Index messages (FYERS type "if") have no `last_traded_time` — an index does
+    # not trade — so reading only that field left every index tick unstamped. In
+    # production that was 0 of 122,686 NIFTY50 ticks and 0 of 112,696 BANKNIFTY,
+    # while every option symbol was stamped 100% of the time. The indices are the
+    # symbols the strategies actually run on, so the pipeline's only latency
+    # instrument was blind for exactly the ones that mattered — the 31-minute
+    # backlog of 2026-09-04 was invisible in the data it wrote.
     exchange_ts = None
-    if message.get("last_traded_time"):
+    for field in ("last_traded_time", "exch_feed_time", "feed_time", "timestamp"):
+        raw = message.get(field)
+        if not raw:
+            continue
         try:
             exchange_ts = datetime.fromtimestamp(
-                int(message["last_traded_time"]),
+                int(raw),
                 tz=timezone.utc
             ).isoformat().replace("+00:00", "Z")
-        except Exception:
-            exchange_ts = None
+            break
+        except (TypeError, ValueError, OSError, OverflowError):
+            continue
 
     payload = {
         "symbol": symbol,
@@ -309,40 +403,40 @@ def map_message_to_payload(message: dict) -> dict | None:
         "rawPayload": json.dumps(message)
     }
 
-    # Calculate Greeks if it is an Option
-    if payload["lastTradedPrice"] and (symbol.endswith("CE") or symbol.endswith("PE")):
-        m = re.search(r'NSE:([A-Z]+).*?(\d+)(CE|PE)$', symbol)
-        if m:
-            index_name = m.group(1)
-            strike = float(m.group(2))
-            opt_type = m.group(3)
-            
-            spot = latest_spots.get("NIFTY", 24000.0) if "NIFTY" in index_name and "BANK" not in index_name else latest_spots.get("BANKNIFTY", 51000.0)
-            
-            # Approximate days to expiry (7 days for demo) - in production this would fetch real TTE
-            from core.greeks_calculator import calculate_greeks
-            tte_years = 7.0 / 365.0
-            
-            greeks = calculate_greeks(
-                spot=spot, 
-                strike=strike, 
-                tte_years=tte_years, 
-                option_type=opt_type, 
-                option_price=payload["lastTradedPrice"]
-            )
-            
-            if greeks:
-                payload["impliedVolatility"] = greeks.iv
-                payload["delta"] = greeks.delta
-                payload["gamma"] = greeks.gamma
-                payload["theta"] = greeks.theta
-                payload["vega"] = greeks.vega
-            else:
-                payload["impliedVolatility"] = None
-                payload["delta"] = None
-                payload["gamma"] = None
-                payload["theta"] = None
-                payload["vega"] = None
+    # Implied volatility and greeks, when this is an option we can actually price.
+    #
+    # All three inputs used to be wrong. The symbol was matched with a regex
+    # anchored to "NSE:", so every BSE contract (SENSEX, BANKEX) silently got
+    # nothing. The spot came from a two-entry dict with hardcoded fallbacks, so
+    # anything that was not NIFTY or BANKNIFTY was priced against 51,000. And
+    # the time to expiry was a flat seven days "for demo" — the same option at
+    # the same price implies 20% vol over seven days, 38% over two and 110% on
+    # expiry morning, so the one number that decides whether an option is dear
+    # or cheap was being computed against a date the contract does not have.
+    if payload["lastTradedPrice"]:
+        contract = parse_option_symbol(symbol)
+        if contract:
+            spot = latest_spots.get(contract.underlying)
+            tte_years = years_to_expiry(contract.expiry)
+
+            # No invented spot, and nothing priced after the bell. Missing greeks
+            # are honest; wrong ones are read as fact by whatever comes next.
+            greeks = None
+            if spot and spot > 0 and tte_years > 0:
+                from core.greeks_calculator import calculate_greeks
+                greeks = calculate_greeks(
+                    spot=spot,
+                    strike=contract.strike,
+                    tte_years=tte_years,
+                    option_type=contract.kind,
+                    option_price=payload["lastTradedPrice"],
+                )
+
+            payload["impliedVolatility"] = greeks.iv if greeks else None
+            payload["delta"] = greeks.delta if greeks else None
+            payload["gamma"] = greeks.gamma if greeks else None
+            payload["theta"] = greeks.theta if greeks else None
+            payload["vega"] = greeks.vega if greeks else None
 
     return payload
 
@@ -637,13 +731,32 @@ mock_prices = {}
 mock_open_prices = {}
 last_real_tick = {}
 
+def should_mock_symbol(symbol: str) -> bool:
+    """
+    Whether this symbol gets a fabricated price.
+
+    Only symbols the broker feed cannot carry: anything not in FYERS
+    "EXCHANGE:NAME" form, and continuous futures like "MCX:GOLD-FUT" that name
+    no contract month. A real, dated option or index symbol must never match —
+    fabricating a price for one would put an invented number in the same table
+    as the real ones, indistinguishable to every strategy reading it.
+
+    The flag is checked here as well as at the thread start: two locks on the
+    same door, so a future caller cannot reach the fabrication by another route.
+    """
+    if not ENABLE_MOCK_TICKS:
+        return False
+    if ":" not in symbol:
+        return True
+    return "-FUT" in symbol and not any(char.isdigit() for char in symbol)
+
+
 def mock_tick_loop():
     while True:
         try:
             for sym in list(subscribed_symbols):
                 # Mock continuous futures, or symbols that don't look like valid Fyers formats
-                needs_mocking = (":" not in sym) or ("-FUT" in sym and not any(char.isdigit() for char in sym))
-                if needs_mocking:
+                if should_mock_symbol(sym):
                     if sym not in mock_prices:
                         if "GOLD" in sym:
                             mock_prices[sym] = 153122.0
@@ -726,8 +839,15 @@ def main():
         heartbeat_thread = threading.Thread(target=heartbeat_loop, daemon=True)
         heartbeat_thread.start()
         
-        mock_thread = threading.Thread(target=mock_tick_loop, daemon=True)
-        mock_thread.start()
+        # Off by default. Read once at import, so an ingestor already running
+        # keeps whatever it started with until it is restarted.
+        if ENABLE_MOCK_TICKS:
+            print("WARNING: ENABLE_MOCK_TICKS is on — fabricated prices will be "
+                  "written to the live tables for symbols the feed does not carry.")
+            mock_thread = threading.Thread(target=mock_tick_loop, daemon=True)
+            mock_thread.start()
+        else:
+            print("Mock ticks disabled (ENABLE_MOCK_TICKS=False); only real feed data is stored.")
         
         threads_started = True
 

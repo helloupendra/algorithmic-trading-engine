@@ -105,7 +105,19 @@ class StrategyInput:
     spot_price: float
 
     # Optional — the strategy can compute the ATM strike itself, or the platform can provide it.
-    atm_strike: Optional[int] = None
+    # Not necessarily whole: stock grids are genuinely fractional (a 2.5 grid
+    # gives 102.5), and int() there would name a contract that does not exist.
+    atm_strike: Optional[float] = None
+
+    # The underlying's real strike interval, from the option chain (100 for
+    # BANKNIFTY, 50 for NIFTY, 2.5 for some stocks). Supplied so a strategy never
+    # has to assume one: every hardcoded 100 in this codebase was BANKNIFTY's,
+    # and silently wrong on everything else.
+    strike_step: Optional[float] = None
+
+    # Contract multiplier for the underlying, from the instrument master. Leg
+    # quantities are LOTS; this is what the platform multiplies them by.
+    lot_size: Optional[int] = None
 
     # Contextual contracts (e.g., the current ATM CE and PE) provided by the runner.
     contracts: Dict[str, OptionContract] = field(default_factory=dict)

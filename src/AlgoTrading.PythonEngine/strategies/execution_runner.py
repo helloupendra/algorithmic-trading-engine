@@ -40,8 +40,10 @@ import redis
 import requests
 from core.api_client import build_session, PlatformApiClient
 from core.feed_watchdog import assess_feed
+from core.tick_age import tick_age_seconds
+from core.leg_pricing import DEFAULT_WAIT_SECONDS, resolve_leg_prices
 import urllib3
-from typing import List, Dict, Any, Optional
+from typing import Callable, List, Dict, Any, Optional
 
 from messaging.redis_subscriber import build_subscriber_from_env
 from strategies.base_strategy import (
@@ -82,9 +84,10 @@ import core.fyers_orders as fyers_orders
 
 try:
     # pyrefly: ignore [missing-import]
-    from strategies.private_strategies import get_private_strategies
+    from strategies.private_strategies import canonical_strategy_name, get_private_strategies
 except ImportError:
     def get_private_strategies(): return {}
+    def canonical_strategy_name(name): return name
 
 
 from state_management.state_models import StrategyState
@@ -108,6 +111,10 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from core.config import API_BASE_URL, DEBUG_PRINT_MESSAGES
 VERIFY_SSL = False
+
+# Total wait for ALL legs of one signal. It is time the strategy spends blind,
+# so it is bounded well under the feed watchdog's 90s stall threshold.
+SIGNAL_PRICE_WAIT_SECONDS = float(os.getenv("SIGNAL_PRICE_WAIT_SECONDS", DEFAULT_WAIT_SECONDS))
 
 
 def build_redis_client() -> redis.Redis:
@@ -141,6 +148,27 @@ def resolve_strike_step(api: PlatformApiClient, underlying: str, expiry_date: st
     step = fallback_strike_step(underlying)
     print(f"[{underlying}] Using fallback strike step {format_strike(step)}")
     return step
+
+
+def resolve_lot_size(api: PlatformApiClient, underlying: str) -> Optional[int]:
+    """
+    The underlying's contract multiplier, from the instrument master.
+
+    Leg quantities are LOTS; the platform multiplies by this when it fills. The
+    strategy does not need it to trade — it is passed through so a strategy can
+    reason about position size (notional, per-lot risk) without inventing a
+    number for the one underlying its author happened to test on.
+    """
+    key = (underlying or "").strip().upper()
+    try:
+        for row in api.get_fno_underlyings():
+            if (row.get("underlying") or "").strip().upper() == key:
+                lot = row.get("lotSize")
+                if lot and int(lot) > 0:
+                    return int(lot)
+    except Exception as ex:
+        print(f"[{underlying}] WARN: could not read the lot size from the master: {ex}")
+    return None
 
 
 def install_signal_handlers() -> None:
@@ -256,91 +284,138 @@ def bars_symbol_for(symbol_type: str, contracts: Dict[str, OptionContract], spot
     return kind if ":" in kind else None
 
 
+#: Symbols this runner has already asked the ingestor to track.
+#:
+#: Without it `ensure_contracts_tracked` re-POSTed every resolved contract on
+#: EVERY tick — a blocking HTTP round trip per contract per tick, to say a thing
+#: the API already knew. At a few ticks a second with six contracts that is
+#: thousands of pointless requests a minute, all of them inside the loop the
+#: strategy is trying to react in.
+_tracked_symbols: set = set()
+
+
 def ensure_contracts_tracked(api: PlatformApiClient, contracts: Dict[str, OptionContract]) -> None:
     """
     Make sure every resolved contract (ATM, OTM and ITM alike) is present in
     the live watchlist, so the ingestor can subscribe and populate latest quotes.
+
+    Each symbol is announced once. The watchlist is a set on the far side, so
+    saying it again changes nothing — and an ATM roll still announces the new
+    strikes immediately, because those symbols have not been seen before.
     """
-    for _, contract in contracts.items():
+    pending = {k: c for k, c in contracts.items() if c.symbol not in _tracked_symbols}
+    if not pending:
+        return
+
+    for _, contract in pending.items():
         try:
             api.upsert_watchlist(contract.symbol, priority=80)
+            _tracked_symbols.add(contract.symbol)
         except requests.exceptions.HTTPError as ex:
             if ex.response is not None and ex.response.status_code == 500:
-                pass # Suppress harmless 500 error for paper trades
+                # Harmless for paper trades, and the symbol IS tracked.
+                _tracked_symbols.add(contract.symbol)
             else:
+                # Not recorded, so the next tick tries again.
                 print(f"WARN: failed to ensure watchlist for {contract.symbol}: {ex}")
         except Exception as ex:
             print(f"WARN: failed to ensure watchlist for {contract.symbol}: {ex}")
 
 
-def enrich_signal_leg_prices(api: PlatformApiClient, sig: StrategySignal, expiry_date: str) -> StrategySignal:
+def resolve_leg_symbol(api: PlatformApiClient, symbol: str, expiry_date: str) -> str:
     """
-    Fill each signal leg with the real latest option price from the platform.
-    Wait briefly for ingestor to populate if needed.
-    """
-    enriched_legs = []
+    A strategy's logical symbol ("BANKNIFTY_PE_50300") as the broker's real one.
 
+    Anything that is already a broker symbol is returned untouched, and a lookup
+    that fails returns the input rather than raising: the leg then goes on with
+    a symbol nothing can price, and the API refuses the group — which is the
+    honest outcome, and a louder one than a runner that dies mid-signal.
+    """
+    if not symbol or "_" not in symbol or "NSE:" in symbol:
+        return symbol
+
+    parts = symbol.split("_")
+    if len(parts) != 3:
+        return symbol
+
+    try:
+        underlying, option_type = parts[0], parts[1]
+        # Fractional strikes (102.5) are legitimate on stock grids.
+        strike_value = float(parts[2])
+        strike = int(strike_value) if strike_value.is_integer() else strike_value
+        exact = api.get_exact_contract(underlying, expiry_date, strike, option_type)
+        if exact and "symbol" in exact:
+            return exact["symbol"]
+    except Exception as ex:
+        print(f"WARN: Could not resolve exact contract for logical symbol {symbol}: {ex}")
+
+    return symbol
+
+
+def enrich_signal_leg_prices(
+    api: PlatformApiClient,
+    sig: StrategySignal,
+    expiry_date: str,
+    on_poll: Optional[Callable[[], None]] = None,
+) -> StrategySignal:
+    """
+    Give every leg a live price, subscribing them all before waiting for any.
+
+    This runs inside the tick loop, so its cost is time the strategy spends blind
+    to the market. It used to poll ONE symbol at a time for up to 35 seconds
+    each: a four-leg roll could block for over two minutes, a sixteen-leg one for
+    nine — and each leg's wait only began after the one before it had given up,
+    so the last leg was subscribed minutes after the first.
+
+    Now every leg is resolved and subscribed first, and then a single budget
+    covers all of them together against one bulk quote call per round. A closing
+    signal waits not at all: its symbols have been subscribed since the position
+    was opened, the API has a documented fallback for closing legs, and getting
+    flat must never queue behind an entry.
+
+    A leg that stays unpriced is sent unpriced. Inventing a number here would
+    defeat the API's refusal of unpriced opening groups, which is the thing
+    standing between a missed trade and a fabricated one.
+    """
+    legs = []
     for leg in sig.legs:
-        symbol = leg.get("symbol", "")
-        leg_price = leg.get("price")
-
-        # Resolve logical symbols (e.g. BANKNIFTY_PE_50300) to real broker symbols (e.g. NSE:BANKNIFTY...)
-        if symbol and "_" in symbol and "NSE:" not in symbol:
-            parts = symbol.split("_")
-            if len(parts) == 3:
-                try:
-                    underlying = parts[0]
-                    option_type = parts[1]
-                    # Fractional strikes (102.5) are legitimate on stock grids.
-                    strike_value = float(parts[2])
-                    strike = int(strike_value) if strike_value.is_integer() else strike_value
-                    exact_contract = api.get_exact_contract(underlying, expiry_date, strike, option_type)
-                    if exact_contract and "symbol" in exact_contract:
-                        symbol = exact_contract["symbol"]
-                except Exception as ex:
-                    print(f"WARN: Could not resolve exact contract for logical symbol {symbol}: {ex}")
-
-        if symbol:
-            # Tell the Live Data Ingestor to subscribe to this exact symbol
-            try:
-                api.upsert_watchlist(symbol)
-            except requests.exceptions.HTTPError as ex:
-                if ex.response is not None and ex.response.status_code == 500:
-                    pass
-            except Exception as ex:
-                pass
-
-        if leg_price is None and symbol:
-            # Wait up to 35 seconds so the ingestor has time to refresh its watchlist (every 5-30s)
-            leg_price = wait_for_contract_price(api, symbol, retries=35, delay_seconds=1)
-
-        enriched_legs.append({
-            "symbol": symbol,
+        legs.append({
+            "symbol": resolve_leg_symbol(api, leg.get("symbol", ""), expiry_date),
             "side": leg.get("side", ""),
             "quantity": int(leg.get("quantity", 0)),
-            "price": leg_price,
+            "price": leg.get("price"),
         })
 
-    sig.legs = enriched_legs
-    return sig
-
-
-def wait_for_contract_price(api: PlatformApiClient, symbol: str, retries: int = 10, delay_seconds: int = 1) -> Optional[float]:
-    """
-    Wait for the live ingestor to populate latest quote for a symbol.
-    """
-    for attempt in range(1, retries + 1):
+    # Subscribe everything before waiting for anything.
+    for symbol in {x["symbol"] for x in legs if x["symbol"]}:
         try:
-            quote = api.get_latest_quote(symbol)
-            ltp = quote.get("lastTradedPrice")
-            if ltp is not None:
-                return float(ltp)
-        except Exception as ex:
-            print(f"WARN: waiting for live quote for {symbol}, attempt {attempt}/{retries}: {ex}")
+            api.upsert_watchlist(symbol)
+        except Exception:
+            # Already tracked, or the API refused it — either way the wait below
+            # is what decides whether a price actually turns up.
+            pass
 
-        time.sleep(delay_seconds)
+    closing = (sig.signal_type or "").upper() == "CLOSE_GROUP"
+    budget = 0.0 if closing else SIGNAL_PRICE_WAIT_SECONDS
 
-    return None
+    def fetch_quotes():
+        return {row["symbol"]: row for row in api.get_all_latest_quotes() if row.get("symbol")}
+
+    missing = resolve_leg_prices(
+        legs,
+        fetch_quotes=fetch_quotes,
+        now=time.time,
+        sleep=time.sleep,
+        budget_seconds=budget,
+        on_poll=on_poll,
+    )
+
+    if missing:
+        print(f"WARN: no live price for {', '.join(missing)} after {budget:.0f}s; "
+              f"sending the {sig.signal_type} unpriced — the API decides.", flush=True)
+
+    sig.legs = legs
+    return sig
 
 
 if __name__ == "__main__":
@@ -371,6 +446,9 @@ if __name__ == "__main__":
     
     # Update with any explicit overrides/parameterized instances from private_strategies.py
     strategies_map.update(get_private_strategies())
+
+    # A run launched before the family was renamed still carries its old name.
+    args.strategy = canonical_strategy_name(args.strategy)
 
     if args.strategy not in strategies_map:
         print(f"ERROR: Strategy '{args.strategy}' not found. Available strategies: {list(strategies_map.keys())}")
@@ -461,6 +539,9 @@ if __name__ == "__main__":
     print(f"Using expiry: {expiry_date}")
 
     strike_step = resolve_strike_step(api, args.underlying, expiry_date)
+    lot_size = resolve_lot_size(api, args.underlying)
+    print(f"[{args.underlying}] Lot size {lot_size if lot_size else 'unknown'} "
+          f"(leg quantities are lots; the platform multiplies by this).")
 
     # The contracts this strategy wants on every tick, at the distances the
     # run's parameters ask for. Resolved once: the keys never change during a
@@ -559,6 +640,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     loaded_state = state_store.load()
+    recovered_state = loaded_state is not None
     if loaded_state is None:
         print(f"[STATE] Fresh strategy state initialized for run {run_id}")
         loaded_state = StrategyState(
@@ -602,12 +684,30 @@ if __name__ == "__main__":
     except Exception as ex:
         print(f"[{args.underlying}] WARN: Could not upsert spot symbol {args.spot_symbol}: {ex}")
 
-    print(f"[{args.underlying}] Executing Phase 1: Strategy Warmup...")
+    # Warmup replays historical bars through on_bar to rebuild whatever the
+    # strategy derives from them. On a FRESH run that is exactly right.
+    #
+    # On a recovered one it is destructive: the state already holds everything
+    # those bars produced, and feeding them again pushes counters forward a
+    # second time. Ghost advances bar_index per distinct bar, so a mid-session
+    # restart could hand the strategy an index hundreds of bars beyond reality
+    # and leave it waiting for a trigger the rest of the day — silently, because
+    # a strategy that never fires looks exactly like a quiet market.
+    #
+    # Note this is the ONLY safe place to fix it. Saving state on every tick
+    # instead would make every restart recover a large index, turning a rare
+    # failure into a certain one.
+    if recovered_state:
+        print(f"[{args.underlying}] Skipping warmup: state was recovered and already "
+              f"reflects those bars. Replaying them would double-count.", flush=True)
+    else:
+        print(f"[{args.underlying}] Executing Phase 1: Strategy Warmup...")
     try:
         from core.data_engine import DataEngine
         engine = DataEngine()
         
-        reqs = strategy.get_data_requirements()
+        # Nothing to replay onto a state that already contains it.
+        reqs = [] if recovered_state else strategy.get_data_requirements()
         for req in reqs:
             if req.symbol_type == "index":
                 print(f"[{args.underlying}] Fetching historical warmup data ({req.resolution}m) for {args.spot_symbol}...")
@@ -649,13 +749,16 @@ if __name__ == "__main__":
                             underlying=args.underlying,
                             spot_price=frame.close,
                             atm_strike=round_to_step(frame.close, strike_step),
+                            strike_step=strike_step,
+                            lot_size=lot_size,
                             contracts={},
                             bars={req.resolution: {"index": list(cumulative_frames)}},
                             metadata={"source": "warmup"}
                         )
                         strategy.on_bar(state, inp)
                         
-        print(f"[{args.underlying}] Warmup complete. State initialized.")
+        if not recovered_state:
+            print(f"[{args.underlying}] Warmup complete. State initialized.")
     except Exception as ex:
         print(f"[{args.underlying}] WARN: Warmup failed: {ex}")
 
@@ -808,15 +911,16 @@ if __name__ == "__main__":
                 last_spot_price = spot_price
                 last_atm_strike = atm_strike
 
-                # Record REDIS_LAG metric
-                try:
-                    dt_format = "%Y-%m-%dT%H:%M:%S.%fZ" if "." in timestamp_utc else "%Y-%m-%dT%H:%M:%SZ"
-                    dt_obj = datetime.strptime(timestamp_utc, dt_format).replace(tzinfo=timezone.utc)
-                    lag = time.time() - dt_obj.timestamp()
-                    if lag >= 0:
-                        REDIS_LAG.set(lag)
-                except Exception as e:
-                    pass
+                # How far behind the feed is running. The old inline parse
+                # expected a literal "Z" and every real tick spells the offset
+                # out as "+00:00", so it raised on every tick into a bare
+                # `except: pass` and this gauge was never once set.
+                lag = tick_age_seconds(timestamp_utc, time.time())
+                if lag is not None:
+                    REDIS_LAG.set(lag)
+                    if lag > 30 and ticks_processed % 200 == 0:
+                        print(f"[{args.underlying}] WARN: ticks are {lag:.0f}s behind the exchange.",
+                              flush=True)
 
 
                 # Every contract the strategy declared (ATM, OTM, ITM), resolved
@@ -863,6 +967,8 @@ if __name__ == "__main__":
                     underlying=args.underlying,
                     spot_price=spot_price,
                     atm_strike=atm_strike,
+                    strike_step=strike_step,
+                    lot_size=lot_size,
                     contracts=contracts,
                     bars=bars_dict,
                     metadata={"source": "live-api", "tick": tick},
@@ -905,7 +1011,7 @@ if __name__ == "__main__":
                             traceback.print_exc()
 
                     if sig.signal_type in {"OPEN_GROUP", "CLOSE_GROUP"}:
-                        sig = enrich_signal_leg_prices(api, sig, expiry_date)
+                        sig = enrich_signal_leg_prices(api, sig, expiry_date, on_poll=housekeeping)
                         stamp_signal_metadata(sig, inp)
 
                         print("ENRICHED SIGNAL LEGS:")
@@ -919,7 +1025,21 @@ if __name__ == "__main__":
 
                         if run_id:
                             payload = signal_to_request(run_id, sig)
-                            result = api.create_simulation_signal(payload)
+                            try:
+                                result = api.create_simulation_signal(payload)
+                            except requests.exceptions.HTTPError as ex:
+                                # A refusal matters more than it looks. The
+                                # strategy already recorded this group as open in
+                                # its own state inside on_bar, so it will not
+                                # re-emit until its strikes next change — the
+                                # position it thinks it holds does not exist.
+                                # Say so loudly rather than letting a stack trace
+                                # scroll past.
+                                body = ex.response.text if ex.response is not None else str(ex)
+                                print(f"SIGNAL REFUSED by the API: {body}", flush=True)
+                                print(f"  {sig.signal_type} {sig.metadata.get('group_id', '')} was NOT booked. "
+                                      f"The strategy still believes this group is open.", flush=True)
+                                raise
                             ORDERS_EMITTED.inc()
 
                             print("PERSISTED SIGNAL:")

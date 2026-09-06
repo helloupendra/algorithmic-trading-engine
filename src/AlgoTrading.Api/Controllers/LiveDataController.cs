@@ -187,7 +187,19 @@ public class LiveDataController : ControllerBase
             return BadRequest(new { message = "Symbol is required." });
 
         await _upsertLiveTickUseCase.ExecuteAsync(request, cancellationToken);
-        await _hubContext.Clients.All.SendAsync("ReceiveTick", request, cancellationToken);
+
+        // Not awaited, and not the whole request.
+        //
+        // Awaited, every open browser tab sat in the ingest path: a slow or
+        // stalled SignalR client applied back pressure straight to the tick
+        // write, so watching the dashboard could slow down the feed the
+        // strategies trade on. The broadcast is a convenience for a screen —
+        // it must never be able to delay storing a price.
+        //
+        // Only the fields a screen renders are sent. `RawPayload` is the
+        // broker's complete message and has no business on a websocket.
+        _ = BroadcastTickAsync(request);
+
         return Ok(new { message = "Live tick appended successfully." });
     }
 
@@ -256,4 +268,31 @@ public class LiveDataController : ControllerBase
         }
     }
 
+
+    /// <summary>
+    /// Pushes a trimmed tick to the console, and never lets that failing matter.
+    /// </summary>
+    private async Task BroadcastTickAsync(UpsertLiveTickRequest request)
+    {
+        try
+        {
+            await _hubContext.Clients.All.SendAsync("ReceiveTick", new
+            {
+                symbol = request.Symbol,
+                lastTradedPrice = request.LastTradedPrice,
+                bidPrice = request.BidPrice,
+                askPrice = request.AskPrice,
+                volume = request.Volume,
+                openInterest = request.OpenInterest,
+                impliedVolatility = request.ImpliedVolatility,
+                exchangeTimestampUtc = request.ExchangeTimestampUtc,
+            });
+        }
+        catch
+        {
+            // Deliberately swallowed. The tick is already stored; a browser
+            // that could not be reached is not a data problem, and letting it
+            // surface here would only add noise to every session.
+        }
+    }
 }

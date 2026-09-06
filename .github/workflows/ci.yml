@@ -57,6 +57,13 @@ jobs:
       - name: Byte-compile the engine
         run: python -m compileall -q src/AlgoTrading.PythonEngine scripts
 
+      # The suite that actually covers the risk rules, the ledger, the strike
+      # arithmetic and the feed watchdog. CI byte-compiled the engine and stopped
+      # there, so it was green whatever those tests said.
+      - name: Run the engine test suite
+        working-directory: src/AlgoTrading.PythonEngine
+        run: python -m unittest discover -s tests -t tests -v
+
       - name: Verify the settings generator
         run: |
           cp .env.example .env

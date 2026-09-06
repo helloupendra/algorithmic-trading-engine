@@ -153,7 +153,7 @@ python src/AlgoTrading.PythonEngine/market_data/options/chain_tracker.py
 
 # Strategy execution
 python src/AlgoTrading.PythonEngine/strategies/execution_runner.py \
-    --strategy Titli --user-id 1
+    --strategy Fulcrum --user-id 1
 
 # Live PnL / position dashboard
 python src/AlgoTrading.PythonEngine/tools/strategy_live_terminal_dashboard_v2.py \
@@ -170,6 +170,8 @@ Ticks published to Redis are only written to TimescaleDB while the market-data
 worker is running:
 
 ```bash
+# Optional: the API already hosts the batched tick writer.
+# Run this only to move that drain out of process.
 dotnet run --project src/AlgoTrading.Worker.MarketData
 ```
 

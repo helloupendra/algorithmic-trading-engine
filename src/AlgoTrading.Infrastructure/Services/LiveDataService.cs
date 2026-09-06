@@ -226,6 +226,7 @@ public class LiveDataService : ILiveDataService
                 Gamma = request.Gamma,
                 Theta = request.Theta,
                 Vega = request.Vega,
+                ExchangeTimestampUtc = request.ExchangeTimestampUtc?.ToUniversalTime(),
                 UpdatedUtc = DateTime.UtcNow
             };
 
@@ -233,6 +234,26 @@ public class LiveDataService : ILiveDataService
         }
         else
         {
+            // Refuse to go backwards in time.
+            //
+            // The per-symbol lock a few lines up serialises writers; it does not
+            // order them. Five executor threads feed this, so during a backlog a
+            // tick that left the exchange first can arrive second, win the lock
+            // and overwrite a newer price — leaving a stale quote on record with
+            // UpdatedUtc claiming it is current. A strategy then prices a leg
+            // off it and nothing anywhere looks wrong.
+            //
+            // Only enforced when both sides carry an exchange stamp. Without one
+            // there is no order to preserve and last-writer-wins is all there is.
+            var incomingExchangeUtc = request.ExchangeTimestampUtc?.ToUniversalTime();
+            if (incomingExchangeUtc is not null
+                && existing.ExchangeTimestampUtc is not null
+                && incomingExchangeUtc < existing.ExchangeTimestampUtc)
+            {
+                return;
+            }
+
+            existing.ExchangeTimestampUtc = incomingExchangeUtc ?? existing.ExchangeTimestampUtc;
             existing.DataType = request.DataType;
             existing.LastTradedPrice = request.LastTradedPrice;
             existing.Open = request.Open;
@@ -433,10 +454,25 @@ public class LiveDataService : ILiveDataService
             Close = request.PrevClose,
             Volume = request.Volume,
             RawPayload = request.RawPayload,
+            // Carried through rather than dropped. The snapshot is what every
+            // strategy and screen reads; a quote without its greeks is the
+            // reason IV read null everywhere while it was being computed fine.
+            OpenInterest = request.OpenInterest,
+            ImpliedVolatility = request.ImpliedVolatility,
+            Delta = request.Delta,
+            Gamma = request.Gamma,
+            Theta = request.Theta,
+            Vega = request.Vega,
+            // Lets the snapshot refuse an out-of-order tick.
+            ExchangeTimestampUtc = request.ExchangeTimestampUtc,
             SourceKey = sourceKey
         }, cancellationToken);
 
-        if (request.Symbol == "NSE:NIFTYBANK-INDEX")
+        // Every symbol goes through the batched archive writer, not just one.
+        // The batching machinery (250 rows / 500ms) was built and then gated to
+        // NSE:NIFTYBANK-INDEX, so eighteen other symbols each took a synchronous
+        // single-row insert instead — the good path served one symbol and the
+        // rest took the slow one.
         {
             await _marketTickArchiveQueue.EnqueueAsync(
                 new MarketTickArchiveRequest
@@ -463,12 +499,28 @@ public class LiveDataService : ILiveDataService
         // 3) Upsert 1-minute bar
         if (request.LastTradedPrice.HasValue)
         {
+            // Bucketed by the EXCHANGE's clock, not ours.
+            //
+            // This used to floor `nowUtc` — the moment the API happened to
+            // receive the tick. While the pipeline keeps up the two agree to
+            // within a second and nobody notices. When it falls behind they do
+            // not: on 2026-09-04 the feed drifted to 31 minutes late, and every
+            // one of those ticks was filed under the minute it arrived. The
+            // prices were real and the timestamps were invented, so a strategy
+            // reading the 1m series saw half an hour of the session compressed
+            // into the wrong candles. The same method already reads this field
+            // eighty lines above to measure the delay it was then ignoring.
+            //
+            // Falls back to arrival time when the feed omits an exchange stamp,
+            // which is no worse than before.
+            var barClockUtc = request.ExchangeTimestampUtc?.ToUniversalTime() ?? nowUtc;
+
             var barStartUtc = new DateTime(
-                nowUtc.Year,
-                nowUtc.Month,
-                nowUtc.Day,
-                nowUtc.Hour,
-                nowUtc.Minute,
+                barClockUtc.Year,
+                barClockUtc.Month,
+                barClockUtc.Day,
+                barClockUtc.Hour,
+                barClockUtc.Minute,
                 0,
                 DateTimeKind.Utc);
 

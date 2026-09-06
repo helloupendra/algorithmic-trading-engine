@@ -36,8 +36,8 @@ Allows trading to resume.
 The Python Engine uses **Redis** to persist its exact internal state so that it is fault-tolerant to crashes, power outages, and manual restarts.
 
 ### How it works:
-1. When you run `execution_runner.py --strategy Titli --user-id 1 --run-id 50`, it checks Redis for the key `strategy:state:50`.
-2. If the key exists, it overrides the `Titli` strategy's internal variables (`st0`, `st1`, `current_group_id`, etc.) with the snapshot from Redis.
+1. When you run `execution_runner.py --strategy Fulcrum --user-id 1 --run-id 50`, it checks Redis for the key `strategy:state:50`.
+2. If the key exists, it overrides the `Fulcrum` strategy's internal variables (`st0`, `st1`, `current_group_id`, etc.) with the snapshot from Redis.
 3. If the key does not exist, it starts fresh.
 4. During execution, it acquires a **Distributed Lock** (`strategy:lock:50`). If you accidentally spin up two terminal windows with the same `--run-id`, the second one will immediately crash with an error to prevent duplicate orders.
 5. At the end of every 1-second market tick, the Python engine saves the entire strategy dictionary back into Redis.

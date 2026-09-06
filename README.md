@@ -95,7 +95,6 @@ Nothing is dismissed: a run that stopped for any reason is still here.
 | `AlgoTrading.Api` | .NET 10 | REST API, auth and access control, instruments, expiry resolution, simulation, risk, and the connector registry that decides which vendor serves which job; serves the built web console from `wwwroot` |
 | `AlgoTrading.Worker.MarketData` | .NET 10 | Drains the Redis tick stream into TimescaleDB in batches |
 | `AlgoTrading.Worker.Strategy` | .NET 10 | Strategy host (placeholder — live strategies run in the Python engine) |
-| `AlgoTrading.Backtester` | .NET 10 | Placeholder — backtesting currently runs via the Python CLI tools |
 | `AlgoTrading.PythonEngine` | Python 3.10+ | Live FYERS ingestion, option-chain tracking, strategy execution |
 | `web/` | React 19 + Vite + TypeScript | Web console (v2 design system): the admin modules plus the trader screens |
 
@@ -268,9 +267,13 @@ Each of these wants its own terminal.
 |---|---|---|
 | 1 | Infrastructure | `docker compose up -d` |
 | 2 | API | `dotnet run --project src/AlgoTrading.Api` |
-| 3 | Tick writer | `dotnet run --project src/AlgoTrading.Worker.MarketData` |
-| 4 | Web console (dev) | `cd web && npm run dev` → <http://localhost:5173> |
-| 5 | Python engine (optional CLI) | `python src/AlgoTrading.PythonEngine/algo.py` |
+| 3 | Web console (dev) | `cd web && npm run dev` → <http://localhost:5173> |
+| 4 | Python engine (optional CLI) | `python src/AlgoTrading.PythonEngine/algo.py` |
+
+`AlgoTrading.Worker.MarketData` is **not** a step: the API hosts the batched tick
+writer itself (`MarketTickBatchWriterService`), which is why `scripts/go-live.sh`
+starts only the API. The worker project remains as a way to run that drain out of
+process if the API ever needs relieving of it.
 
 Day-to-day operation is designed to happen **from the web console**: sign in as
 admin, connect FYERS under *Broker*, then use the **Data module** —
@@ -402,7 +405,6 @@ algorithmic-trading-engine/
 │   ├── AlgoTrading.Api/             REST API (:5025), serves web console from wwwroot
 │   ├── AlgoTrading.Worker.MarketData/  Redis -> TimescaleDB tick writer
 │   ├── AlgoTrading.Worker.Strategy/    Strategy host (placeholder)
-│   ├── AlgoTrading.Backtester/         Placeholder (backtests run via Python tools)
 │   └── AlgoTrading.PythonEngine/
 │       ├── algo.py                  Interactive control centre
 │       ├── core/                    Config, API client, metrics
@@ -411,7 +413,7 @@ algorithmic-trading-engine/
 │       │   ├── options/             ATM option-chain tracker
 │       │   └── historical/          FYERS downloader, DB replayer
 │       ├── messaging/               Redis stream publisher/subscriber
-│       ├── strategies/              Base strategy, runner, Ghost, LogicEngine, Titli
+│       ├── strategies/              Base strategy, runner, Ghost, LogicEngine, Fulcrum
 │       ├── state_management/        Strategy state persistence and recovery
 │       └── tools/                   Monitors, dashboards, backfill CLIs
 │
@@ -643,8 +645,9 @@ Work down the chain:
    diagnostics*, or `GET /api/Ingestor/logs`.
 5. Confirm ticks are reaching Redis:
    `docker exec -it algotrading_redis redis-cli XLEN market:ticks`
-6. Confirm `AlgoTrading.Worker.MarketData` is running — nothing reaches the
-   `market_ticks` archive without it.
+6. Confirm the archive is filling: `SELECT count(*) FROM market_ticks;`. The API
+   writes it in batches from a hosted service — a separate worker process is not
+   required, and `go-live.sh` does not start one.
 </details>
 
 <details>

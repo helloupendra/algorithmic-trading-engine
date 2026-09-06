@@ -125,9 +125,30 @@ public class PaperTradingService : IPaperTradingService
             // wake up to than no position at all.
             await ResolveLegPricesAsync(request.Legs, signal, reduceOnly, cancellationToken);
 
-            foreach (var leg in request.Legs)
+            // All the legs commit together or none of them do.
+            //
+            // Each leg used to SaveChanges on its own, so a group that failed
+            // half way — a risk refusal, a lost connection, an unpriceable
+            // strike — left the legs before it filled and the legs after it
+            // absent. A one-legged "straddle" is naked risk that nobody chose,
+            // and it survives in the database looking like a real position.
+            //
+            // Cheap to hold: the legs of one signal are a handful of rows, and
+            // the per-run lock above already serialises every other writer.
+            await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+            try
             {
-                await CreateOrderAndApplyPositionAsync(signal, leg, cancellationToken, bypassRiskCheck: replay, reduceOnly: reduceOnly, atUtc: clock);
+                foreach (var leg in request.Legs)
+                {
+                    await CreateOrderAndApplyPositionAsync(signal, leg, cancellationToken, bypassRiskCheck: replay, reduceOnly: reduceOnly, atUtc: clock);
+                }
+
+                await transaction.CommitAsync(cancellationToken);
+            }
+            catch
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+                throw;
             }
         }
 
@@ -915,6 +936,9 @@ public class PaperTradingService : IPaperTradingService
                 leg.Symbol,
                 normalizedSide,
                 leg.Quantity,
+                // reduceOnly IS the closing signal: the leg has already been
+                // matched against an open position above and clamped to it.
+                isClosing: reduceOnly,
                 cancellationToken);
         }
 
@@ -1307,19 +1331,13 @@ public class PaperTradingService : IPaperTradingService
             ? GetMarginHeuristic(symbol) * quantity
             : Math.Abs(averagePrice * quantity * Math.Max(1, lotSize));
 
+    // The arithmetic itself lives in PaperPnl, where it can be tested without a
+    // database and where the run history can reach it instead of writing its own.
     private static decimal CalculateRealizedPnl(string direction, decimal avgPrice, decimal exitPrice, int qty, int lotSize)
-    {
-        return direction == "LONG"
-            ? (exitPrice - avgPrice) * qty * lotSize
-            : (avgPrice - exitPrice) * qty * lotSize;
-    }
+        => PaperPnl.Realized(direction, avgPrice, exitPrice, qty, lotSize);
 
     private static decimal CalculateUnrealizedPnl(string direction, decimal avgPrice, decimal markPrice, int qty, int lotSize)
-    {
-        return direction == "LONG"
-            ? (markPrice - avgPrice) * qty * lotSize
-            : (avgPrice - markPrice) * qty * lotSize;
-    }
+        => PaperPnl.Unrealized(direction, avgPrice, markPrice, qty, lotSize);
 
     /// <summary>
     /// Lot size from a batch resolved by <see cref="ILotSizeResolver.ResolveManyAsync"/>;

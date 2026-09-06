@@ -77,6 +77,28 @@ namespace AlgoTrading.Contracts.LiveData
         /// <summary>
         /// Original broker JSON payload.
         /// </summary>
+        public long? OpenInterest { get; set; }
+
+        /// <summary>
+        /// Implied volatility and greeks, when the producer computed them.
+        /// </summary>
+        /// <remarks>
+        /// These were missing from this DTO entirely. The ingestor computed
+        /// them, put them in the tick payload and posted it — and model binding
+        /// dropped every one without a word, because a property that does not
+        /// exist is not an error. That is why every stored quote had a null IV
+        /// while the calculator upstream was working perfectly.
+        /// </remarks>
+        public decimal? ImpliedVolatility { get; set; }
+
+        public decimal? Delta { get; set; }
+
+        public decimal? Gamma { get; set; }
+
+        public decimal? Theta { get; set; }
+
+        public decimal? Vega { get; set; }
+
         public string RawPayload { get; set; } = string.Empty;
 
         /// <summary>

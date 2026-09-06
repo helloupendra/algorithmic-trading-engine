@@ -57,7 +57,7 @@ before a runner is launched it checks strategy membership, underlying, lots, mod
 and the open-run count, and answers **403 with the reason**:
 
 ```
-Titli is not in your package (Starter). Ask an admin to add it.
+Fulcrum is not in your package (Starter). Ask an admin to add it.
 Your package allows BANKNIFTY, not NIFTY.
 Your package allows at most 2 lot(s) per run; this run asks for 9.
 Your package is paper-trading only. Ask an admin before running with real money.
