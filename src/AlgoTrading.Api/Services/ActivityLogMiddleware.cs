@@ -199,7 +199,8 @@ public class ActivityLogMiddleware
             lower.StartsWith("/api/backfill", StringComparison.Ordinal) ||
             lower.StartsWith("/api/equities", StringComparison.Ordinal) ||
             lower.StartsWith("/api/watchlist", StringComparison.Ordinal) ||
-            lower.StartsWith("/api/ingestor", StringComparison.Ordinal)) return "data";
+            lower.StartsWith("/api/ingestor", StringComparison.Ordinal) ||
+            lower.StartsWith("/api/optionchain", StringComparison.Ordinal)) return "data";
         if (lower.StartsWith("/api/providers", StringComparison.Ordinal) ||
             lower.StartsWith("/api/auth", StringComparison.Ordinal)) return "connectors";
         if (lower.StartsWith("/api/risk", StringComparison.Ordinal)) return "risk";

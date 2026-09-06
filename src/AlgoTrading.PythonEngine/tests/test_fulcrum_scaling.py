@@ -261,6 +261,24 @@ class CatalogueTextTests(unittest.TestCase):
         self.assertIn("BUY variant", VARIANTS["FulcrumBuy"]().description)
         self.assertIn("SELL variant", VARIANTS["Fulcrum"]().description)
 
+    def test_a_buy_variants_prose_does_not_open_by_saying_it_sells(self):
+        """
+        `description` is a class attribute too. Appending "this is the BUY
+        variant" to a paragraph that opens "Sells short straddles…" contradicts
+        itself inside two sentences, on the card someone reads before pressing
+        Start.
+        """
+        for name in BUY_VARIANTS:
+            text = VARIANTS[name]().description
+            opening = text.split(" This is the BUY variant")[0]
+            self.assertNotIn("Sells", opening, f"{name}: {opening[:90]}")
+            self.assertNotIn("short straddle", opening, f"{name}: {opening[:90]}")
+
+    def test_a_buy_variants_prose_does_not_promise_wings(self):
+        for name in BUY_VARIANTS:
+            opening = VARIANTS[name]().description.split(" This is the BUY variant")[0]
+            self.assertNotIn("wings", opening.lower(), f"{name}: {opening[:120]}")
+
 
 class LegacyNameTests(unittest.TestCase):
     """
