@@ -171,7 +171,12 @@
       "Bash(python3 /private/tmp/claude-501/-Users-upendra-Documents-GitHub-algorithmic-trading-engine/ccd51798-fbed-4b88-b204-23f457185541/scratchpad/shot_auth.py /admin/data /private/tmp/claude-501/-Users-upendra-Documents-GitHub-algorithmic-trading-engine/ccd51798-fbed-4b88-b204-23f457185541/scratchpad/data-overview.png 1440 1400 6)",
       "Bash(python3 /private/tmp/claude-501/-Users-upendra-Documents-GitHub-algorithmic-trading-engine/ccd51798-fbed-4b88-b204-23f457185541/scratchpad/shot_auth.py /admin/system/logs /private/tmp/claude-501/-Users-upendra-Documents-GitHub-algorithmic-trading-engine/ccd51798-fbed-4b88-b204-23f457185541/scratchpad/logs.png 1440 1000 6)",
       "Bash(python3 /private/tmp/claude-501/-Users-upendra-Documents-GitHub-algorithmic-trading-engine/ccd51798-fbed-4b88-b204-23f457185541/scratchpad/shot_auth.py /admin/strategies/live /private/tmp/claude-501/-Users-upendra-Documents-GitHub-algorithmic-trading-engine/ccd51798-fbed-4b88-b204-23f457185541/scratchpad/live.png 1440 1000 6)",
-      "Bash(python3 /private/tmp/claude-501/-Users-upendra-Documents-GitHub-algorithmic-trading-engine/ccd51798-fbed-4b88-b204-23f457185541/scratchpad/shot_auth.py /admin/system/logs /private/tmp/claude-501/-Users-upendra-Documents-GitHub-algorithmic-trading-engine/ccd51798-fbed-4b88-b204-23f457185541/scratchpad/logs2.png 1440 1000 8)"
+      "Bash(python3 /private/tmp/claude-501/-Users-upendra-Documents-GitHub-algorithmic-trading-engine/ccd51798-fbed-4b88-b204-23f457185541/scratchpad/shot_auth.py /admin/system/logs /private/tmp/claude-501/-Users-upendra-Documents-GitHub-algorithmic-trading-engine/ccd51798-fbed-4b88-b204-23f457185541/scratchpad/logs2.png 1440 1000 8)",
+      "Bash(grep -rn \"xread\\\\|XREAD\\\\|'\\\\\\\\$'\\\\|\\\\\"\\\\\\\\$\\\\\"\" --include=\"*.py\" execution/ strategies/)",
+      "Bash(grep -n \"xread\\\\|last_id\\\\|'\\\\\\\\$'\\\\|watchdog\\\\|stale\\\\|last_tick\" messaging/redis_subscriber.py)",
+      "Bash(.venv/bin/python -m py_compile src/AlgoTrading.PythonEngine/market_data/live/fyers_streamer.py)",
+      "Bash(.venv/bin/python -m unittest discover -s src/AlgoTrading.PythonEngine/tests -p \"test_watchlist_sync.py\")",
+      "Bash(.venv/bin/python -m py_compile src/AlgoTrading.PythonEngine/strategies/execution_runner.py src/AlgoTrading.PythonEngine/core/api_client.py)"
     ],
     "additionalDirectories": [
       "/Users/upendra/Documents/GitHub/algorithmic-trading-engine/src/AlgoTrading.Infrastructure/Persistence/Migrations"
