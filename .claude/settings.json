@@ -176,7 +176,13 @@
       "Bash(grep -n \"xread\\\\|last_id\\\\|'\\\\\\\\$'\\\\|watchdog\\\\|stale\\\\|last_tick\" messaging/redis_subscriber.py)",
       "Bash(.venv/bin/python -m py_compile src/AlgoTrading.PythonEngine/market_data/live/fyers_streamer.py)",
       "Bash(.venv/bin/python -m unittest discover -s src/AlgoTrading.PythonEngine/tests -p \"test_watchlist_sync.py\")",
-      "Bash(.venv/bin/python -m py_compile src/AlgoTrading.PythonEngine/strategies/execution_runner.py src/AlgoTrading.PythonEngine/core/api_client.py)"
+      "Bash(.venv/bin/python -m py_compile src/AlgoTrading.PythonEngine/strategies/execution_runner.py src/AlgoTrading.PythonEngine/core/api_client.py)",
+      "Bash(redis-cli XLEN market:ticks)",
+      "Bash(redis-cli XINFO STREAM market:ticks)",
+      "Bash(awk '{print $1, $2}' ingestor-94106.log)",
+      "Bash(python3 -m unittest discover -s tests -t tests -q)",
+      "Bash(python3 -m unittest discover -s tests -t tests)",
+      "Bash(./.venv/bin/python --version)"
     ],
     "additionalDirectories": [
       "/Users/upendra/Documents/GitHub/algorithmic-trading-engine/src/AlgoTrading.Infrastructure/Persistence/Migrations"
