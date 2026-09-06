@@ -88,24 +88,65 @@ public class FyersMarketDataProvider : IMarketDataProvider
 
         var httpClient = _httpClientFactory.CreateClient(FyersProvider.Key);
 
-        using var response = await httpClient.SendAsync(request, cancellationToken);
-        string json = await response.Content.ReadAsStringAsync(cancellationToken);
+        // FYERS caps history requests per second, and a chain backfill is
+        // hundreds of contracts. A refusal there says "ask again shortly", not
+        // "this data does not exist" — so it is waited out rather than raised,
+        // which would abandon a sweep partway through and leave the gap the
+        // sweep existed to fill.
+        HttpResponseMessage? response = null;
+        string json = string.Empty;
 
-        if (!response.IsSuccessStatusCode)
+        try
         {
-            ThrowClassified(vendorSymbol, response.StatusCode, ExtractMessage(json) ?? json);
+            for (int attempt = 0; ; attempt++)
+            {
+                response?.Dispose();
+
+                using var attemptRequest = CloneRequest(request);
+                response = await httpClient.SendAsync(attemptRequest, cancellationToken);
+                json = await response.Content.ReadAsStringAsync(cancellationToken);
+
+                if (response.StatusCode != HttpStatusCode.TooManyRequests ||
+                    attempt >= RateLimitRetries)
+                {
+                    break;
+                }
+
+                var wait = RetryDelay(response, attempt);
+                _logger.LogDebug(
+                    "FYERS rate-limited history for {Symbol}; waiting {Delay} before retry {Attempt}.",
+                    vendorSymbol, wait, attempt + 1);
+                await Task.Delay(wait, cancellationToken);
+            }
+
+            if (!response!.IsSuccessStatusCode)
+            {
+                ThrowClassified(vendorSymbol, response.StatusCode, ExtractMessage(json) ?? json);
+            }
+
+            using JsonDocument doc = JsonDocument.Parse(json);
+            JsonElement root = doc.RootElement;
+
+            string status = root.TryGetProperty("s", out var statusProp)
+                ? statusProp.GetString() ?? string.Empty
+                : string.Empty;
+
+            int code = root.TryGetProperty("code", out var codeProp) && codeProp.ValueKind == JsonValueKind.Number
+                ? codeProp.GetInt32()
+                : 0;
+
+            // "No candles in this window" is an answer, not a failure. FYERS says it
+            // with s="no_data" and code=200, and it is the ordinary reply for a
+            // strike that has not traded, or a range before the contract listed.
+            // Raising it aborts a backfill that is working exactly as intended:
+            // sweeping a chain of strikes, most of which are quiet.
+            if (IsNoData(status, code))
+            {
+            _logger.LogDebug(
+                "FYERS history for {Symbol} ({Resolution}) {From:o}..{To:o} holds no candles.",
+                vendorSymbol, vendorResolution, fromUtc, toUtc);
+            return Array.Empty<ProviderHistoryBar>();
         }
-
-        using JsonDocument doc = JsonDocument.Parse(json);
-        JsonElement root = doc.RootElement;
-
-        string status = root.TryGetProperty("s", out var statusProp)
-            ? statusProp.GetString() ?? string.Empty
-            : string.Empty;
-
-        int code = root.TryGetProperty("code", out var codeProp) && codeProp.ValueKind == JsonValueKind.Number
-            ? codeProp.GetInt32()
-            : 0;
 
         if (!string.Equals(status, "ok", StringComparison.OrdinalIgnoreCase) || code != 200)
         {
@@ -139,11 +180,74 @@ public class FyersMarketDataProvider : IMarketDataProvider
             });
         }
 
-        _logger.LogDebug(
-            "FYERS history for {Symbol} ({Resolution}) {From:o}..{To:o} returned {Count} bars.",
-            vendorSymbol, vendorResolution, fromUtc, toUtc, bars.Count);
+            _logger.LogDebug(
+                "FYERS history for {Symbol} ({Resolution}) {From:o}..{To:o} returned {Count} bars.",
+                vendorSymbol, vendorResolution, fromUtc, toUtc, bars.Count);
 
-        return bars;
+            return bars;
+        }
+        finally
+        {
+            response?.Dispose();
+        }
+    }
+
+    /// <summary>How many times a rate-limited history call is retried.</summary>
+    private const int RateLimitRetries = 5;
+
+    /// <summary>
+    /// How long to wait before retrying a rate-limited call: the broker's own
+    /// Retry-After when it sends one, otherwise a doubling back-off.
+    /// </summary>
+    private static TimeSpan RetryDelay(HttpResponseMessage response, int attempt)
+    {
+        var after = response.Headers.RetryAfter;
+        if (after?.Delta is { } delta && delta > TimeSpan.Zero) return delta;
+        if (after?.Date is { } date)
+        {
+            var until = date - DateTimeOffset.UtcNow;
+            if (until > TimeSpan.Zero) return until;
+        }
+
+        return TimeSpan.FromMilliseconds(500 * Math.Pow(2, attempt));
+    }
+
+    /// <summary>
+    /// A fresh copy of the request. An HttpRequestMessage cannot be sent twice,
+    /// so a retry needs its own.
+    /// </summary>
+    private static HttpRequestMessage CloneRequest(HttpRequestMessage source)
+    {
+        var clone = new HttpRequestMessage(source.Method, source.RequestUri);
+        foreach (var header in source.Headers)
+        {
+            clone.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
+        return clone;
+    }
+
+    /// <summary>
+    /// Whether the broker answered "there is nothing in that window".
+    /// </summary>
+    /// <remarks>
+    /// The transport succeeded and the request was valid; the range simply
+    /// holds no trades. Treated as an empty result so a chain sweep does not
+    /// stop at its first quiet strike.
+    /// </remarks>
+    internal static bool IsNoData(string status, int code)
+    {
+        // The observed reply is {"candles":[],"message":"","s":"no_data"} — with
+        // no "code" field at all, so requiring code==200 here never matched and
+        // every quiet strike was raised as a failure. The status alone is
+        // definitive: an auth or argument failure comes back as s="error".
+        if (status.Equals("no_data", StringComparison.OrdinalIgnoreCase) ||
+            status.Equals("nodata", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        // A 200 with no status at all is the same answer, less clearly put.
+        return status.Length == 0 && code is 200 or 0;
     }
 
     /// <summary>

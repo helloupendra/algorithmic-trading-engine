@@ -36,4 +36,8 @@
 		<FrameworkReference Include="Microsoft.AspNetCore.App" />
 	</ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="AlgoTrading.UnitTests" />
+  </ItemGroup>
+
 </Project>

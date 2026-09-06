@@ -6,7 +6,7 @@ offline catalog tool (`tools/list_strategies.py`).
 
 Discovery walks the `strategies` package, imports every module and collects
 the concrete `BaseStrategy` subclasses defined in it, keyed by their `name`
-attribute. Private, parameterised factories from `private_strategies.py` are
+attribute. Parameterised factories from `variants.py` are
 layered on top so both callers see exactly the same map.
 
 Importing this module (and running discovery) must stay side-effect free: no
@@ -140,11 +140,11 @@ def discover_strategies() -> Dict[str, StrategyFactory]:
 def get_private_strategy_factories() -> Dict[str, StrategyFactory]:
     """Private/parameterised factories, or an empty map when the module is absent."""
     try:
-        from strategies.private_strategies import get_private_strategies
+        from strategies.variants import get_parameterised_strategies
     except ImportError:
         return {}
     try:
-        return dict(get_private_strategies())
+        return dict(get_parameterised_strategies())
     except Exception:
         return {}
 

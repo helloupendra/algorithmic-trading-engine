@@ -77,12 +77,15 @@ public class OptionChainService
                 CapturedUtc = capturedUtc,
                 SpotPrice = row.SpotPrice,
                 LastTradedPrice = row.LastTradedPrice,
+                PriceChange = row.PriceChange,
                 BidPrice = row.BidPrice,
                 AskPrice = row.AskPrice,
                 Volume = row.Volume,
                 OpenInterest = row.OpenInterest,
-                // First sighting today: this reading IS the open.
-                OpenInterestAtOpen = atOpen ?? row.OpenInterest,
+                // The broker's previous-day close is the market's own baseline
+                // and does not depend on when this poller started. Only when it
+                // is absent does the session's first reading stand in.
+                OpenInterestAtOpen = row.PreviousDayOpenInterest ?? atOpen ?? row.OpenInterest,
                 SourceKey = string.IsNullOrWhiteSpace(row.SourceKey) ? "fyers" : row.SourceKey!,
             });
         }
@@ -241,7 +244,19 @@ public class OptionChainService
             Delta = row.Delta,
         };
 
-        if (row.LastTradedPrice is not null && priceAtOpen is not null)
+        // The broker's own day-change when it sent one: it is measured from the
+        // previous close, like the open-interest baseline, and it is right from
+        // the poller's first round. Falling back to "since our first snapshot"
+        // only when it is absent.
+        if (row.PriceChange is not null)
+        {
+            leg.PriceChange = row.PriceChange;
+            decimal? previousClose = row.LastTradedPrice - row.PriceChange;
+            leg.PriceChangePercent = previousClose > 0
+                ? row.PriceChange / previousClose * 100m
+                : null;
+        }
+        else if (row.LastTradedPrice is not null && priceAtOpen is not null)
         {
             leg.PriceChange = row.LastTradedPrice - priceAtOpen;
             leg.PriceChangePercent = priceAtOpen > 0
@@ -325,6 +340,21 @@ public class OptionChainService
                 ? row.OpenInterest - row.OpenInterestAtOpen
                 : null;
     }
+
+    /// <summary>
+    /// When the chain was last captured, for any underlying.
+    /// </summary>
+    /// <remarks>
+    /// Reported next to the poller's process status because the two are not the
+    /// same thing: a poller that started but cannot reach the broker is up,
+    /// healthy-looking, and recording nothing.
+    /// </remarks>
+    public async Task<DateTime?> GetLastCaptureUtcAsync(CancellationToken cancellationToken = default)
+        => await _dbContext.OptionChainSnapshots
+            .AsNoTracking()
+            .OrderByDescending(x => x.CapturedUtc)
+            .Select(x => (DateTime?)x.CapturedUtc)
+            .FirstOrDefaultAsync(cancellationToken);
 
     /// <summary>Which expiries have been captured for an underlying.</summary>
     public Task<List<DateOnly>> GetExpiriesAsync(string underlying, CancellationToken cancellationToken = default)

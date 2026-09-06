@@ -165,7 +165,7 @@ worth reading.
 | `AlgoTrading.Worker.MarketData` | .NET 10 | Drains the Redis tick stream into TimescaleDB in batches |
 | `AlgoTrading.Worker.Strategy` | .NET 10 | Strategy host (placeholder — live strategies run in the Python engine) |
 | `AlgoTrading.PythonEngine` | Python 3.10+ | Live FYERS ingestion, option-chain tracking, strategy execution |
-| `web/` | React 19 + Vite + TypeScript | Web console (v2 design system): the admin modules plus the trader screens |
+| `web/` | React 19 + Vite + TypeScript | Web console: the admin modules plus the trader screens |
 
 The .NET solution follows a clean-architecture split: `Domain` → `Application`
 → `Infrastructure` → `Api`/`Worker.*`, with `Contracts` holding the DTOs shared
@@ -412,19 +412,18 @@ live bars.
 
 ### The web console
 
-The console (in `web/`) is being rebuilt module by module on a single "v2"
-design system — admin experience first. Current state:
+The console lives in `web/`. What each module does:
 
-| Module | Status | What it does |
-|---|---|---|
-| **Data** | **v2** | *Overview* (coverage matrix, pipeline health, needs-attention), *Live feeds* (start/stop the ingestor, index tickers, the subscription list with quotes, diagnostics + process logs, tick/bar inspector), *Historical* (coverage-first candle browser with chart + backfill incl. ATM±N option chains), *Instruments & F&O* (master search, expiries, CE/PE chain ladder) |
-| **Strategies** | **v2** | Live runner (mandatory underlying, lots × lot size, three-level risk rules editable while running), run history per user, strategy library |
-| **Backtesting** | **v2** | Coverage-first launcher, replay over stored history on the same `on_bar` contract as the live runner, position-based results with skipped entries listed honestly |
-| **Connectors** | **v2** | Data vendors and brokers: capability matrix, credentials, sessions, a probe that fetches real bars, and the routing table that decides which source serves which job |
-| **Users** | **v2** | Accounts, server-enforced module grants, strategy packages with limits, invitations, sessions |
-| **System** | v1 overview + v2 sections | *Overview* is still the v1 page; *Risk & kill switch*, *Alerts* and *Activity log* underneath it are rebuilt |
-| **Activity log** | **v2** | Who did what, across every module: click an account to see where they have been, filter to refusals only ([notes](docs/modules/activity_log.md)) |
-| Trader screens | v1 | Rebuild queued. What a trader sees is already narrowed by module grants and their strategy package |
+| Module | What it does |
+|---|---|
+| **Data** | *Overview* (coverage matrix, pipeline health, needs-attention), *Live feeds* (start/stop the ingestor, index tickers, the subscription list with quotes, diagnostics + process logs, tick/bar inspector), *Option chain* and *Open interest* (the priced strike ladder and its intraday OI curves), *Historical* (coverage-first candle browser with chart + backfill incl. ATM±N option chains), *Instruments & F&O* (master search, expiries, CE/PE chain ladder) |
+| **Strategies** | Live runner (mandatory underlying, lots × lot size, three-level risk rules editable while running), run history per user, strategy library |
+| **Backtesting** | Coverage-first launcher, replay over stored history on the same `on_bar` contract as the live runner, position-based results with skipped entries listed honestly |
+| **Connectors** | Data vendors and brokers: capability matrix, credentials, sessions, a probe that fetches real bars, and the routing table that decides which source serves which job |
+| **Users** | Accounts, server-enforced module grants, strategy packages with limits, invitations, sessions |
+| **System** | Service health, the kill switch and trading limits, and the alerter |
+| **Activity log** | Who did what, across every module: click an account to see where they have been, filter to refusals only ([notes](docs/modules/activity_log.md)) |
+| **Trader screens** | What a trader sees, already narrowed by their module grants and strategy package |
 
 Navigation lives in `web/src/lib/modules.ts`. There is no generic "Modules"
 heading: every entry sits with the thing it belongs to — **Connectors** under
@@ -486,14 +485,14 @@ algorithmic-trading-engine/
 │       ├── state_management/        Strategy state persistence and recovery
 │       └── tools/                   Monitors, dashboards, backfill CLIs
 │
-├── web/                         React web console (v2 design system)
+├── web/                         React web console
 │   └── src/
 │       ├── lib/                 api client, query hooks, module registry, symbols
 │       ├── components/          shell, icons, charts, shared UI primitives
 │       └── pages/
 │           ├── data/            Data module: overview, live feeds, historical, F&O
-│           ├── admin/           admin home + v1 modules awaiting their rebuild
-│           └── trader/          trader screens (v1, rebuild queued)
+│           ├── admin/           admin modules
+│           └── trader/          trader screens
 │
 ├── tests/                       Unit, integration and backtest projects
 ├── database/
@@ -752,6 +751,7 @@ rm -rf .venv data/instruments/*.csv
 | [docs/modules/strategy_packages.md](docs/modules/strategy_packages.md) | What a trader may run and the ceilings that come with it |
 | [docs/modules/strategies_module.md](docs/modules/strategies_module.md) | Live runner: lots × lot size, risk levels, multi-instance runs |
 | [docs/modules/backtesting_module.md](docs/modules/backtesting_module.md) | Replay engine and the coverage-first launcher |
+| [docs/modules/option_chain.md](docs/modules/option_chain.md) | The option chain and its open-interest history: where OI comes from, and why a session missed cannot be recovered |
 | [docs/modules/activity_log.md](docs/modules/activity_log.md) | Who did what, across every module — what is recorded, what deliberately is not |
 | [docs/roadmap/broker-and-data-provider-module.md](docs/roadmap/broker-and-data-provider-module.md) | Multi-vendor architecture: decisions taken, phases delivered, what is left |
 | [docs/android-app-prompt.md](docs/android-app-prompt.md) | A ready-to-paste prompt for generating an Android companion app against this API |

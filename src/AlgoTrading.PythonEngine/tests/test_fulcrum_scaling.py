@@ -11,14 +11,15 @@ Two properties are pinned here. First, BANKNIFTY still does exactly what it did
 different grid makes the *same decision* at the equivalent distance.
 """
 
+import pathlib
 import unittest
 
 import _bootstrap  # noqa: F401
 
 from strategies.base_strategy import OptionContract, StrategyInput
-from strategies.private_strategies import get_private_strategies
+from strategies.variants import get_parameterised_strategies
 
-VARIANTS = get_private_strategies()
+VARIANTS = get_parameterised_strategies()
 
 # Variants that name explicit strikes in their legs. "Fulcrum" trades only the
 # ATM contracts the platform hands it, so it has no strikes of its own to check.
@@ -274,70 +275,71 @@ class CatalogueTextTests(unittest.TestCase):
             self.assertNotIn("Sells", opening, f"{name}: {opening[:90]}")
             self.assertNotIn("short straddle", opening, f"{name}: {opening[:90]}")
 
+    def test_a_buy_variant_never_claims_to_profit_from_decay(self):
+        """
+        The seller's paragraph says it profits from premium decay. On a buy
+        variant that is not merely imprecise — it names the thing that is
+        costing the position money as the thing earning it, on the button
+        someone is about to press.
+        """
+        for name in BUY_VARIANTS:
+            text = VARIANTS[name]().description.lower()
+            self.assertNotIn("profits from premium decay", text, name)
+            self.assertNotIn("profits from decay", text, name)
+
+    def test_a_buy_variant_does_not_advertise_the_sellers_roll(self):
+        # Rolling on every ATM change takes a long straddle off at one strike
+        # step — the defect the buy-side exit exists to correct.
+        for name in BUY_VARIANTS:
+            strategy = VARIANTS[name]()
+            self.assertNotIn("rolled on every atm change", strategy.legs_summary.lower(), name)
+            self.assertNotIn("whenever the atm strike moves", strategy.description.lower(), name)
+
+    def test_a_buy_variant_does_not_describe_a_breakout_as_its_loss(self):
+        """
+        A breakout is what a long straddle is PAID for. Describing it as the
+        cost — inherited from the seller's paragraph — inverts the one thing
+        someone reads before deploying it.
+        """
+        for name in BUY_VARIANTS:
+            text = VARIANTS[name]().description.lower()
+            self.assertNotIn("collects more premium", text, name)
+            self.assertNotIn("bigger loss on a breakout", text, name)
+
+    def test_no_variants_prose_is_left_with_dangling_punctuation(self):
+        # Wing clauses are removed from mid-sentence for the unhedged variants.
+        for name, factory in VARIANTS.items():
+            text = factory().description
+            for broken in (" —.", " ,", "  ", "and ."):
+                self.assertNotIn(broken, text, f"{name}: {text[:160]}")
+
+    def test_a_sell_variant_still_says_it_profits_from_decay(self):
+        # The correction must not have reached the seller, for whom it is true.
+        self.assertIn("profits from premium decay", VARIANTS["Fulcrum"]().description.lower())
+
     def test_a_buy_variants_prose_does_not_promise_wings(self):
         for name in BUY_VARIANTS:
             opening = VARIANTS[name]().description.split(" This is the BUY variant")[0]
             self.assertNotIn("wings", opening.lower(), f"{name}: {opening[:120]}")
 
 
-class LegacyNameTests(unittest.TestCase):
+class NamingTests(unittest.TestCase):
     """
-    The family was renamed from its old name. Runs recorded before that still
-    carry it, and the platform launches a run BY name — so an old name has to
-    keep resolving or that history becomes unopenable.
+    The family was renamed. Every name the platform writes down — a catalogue
+    entry, a signal's strategy_name, a group id — outlives the code that
+    produced it: these go into the database and are read back for months.
+
+    Asserted positively, as "everything is the current name", rather than by
+    listing what the old one was. Naming it here would put the retired string
+    straight back into the repository, which is the thing the rename existed to
+    remove. A local pre-commit hook blocks it at the boundary instead.
     """
-
-    def test_every_old_name_resolves_to_a_strategy_that_exists(self):
-        """
-        Checked against the FULL factory map, which is what the runner looks up
-        in — the auto-discovered base classes live there too, not only in the
-        parameterised registry.
-        """
-        from strategies.private_strategies import LEGACY_NAMES, canonical_strategy_name
-        from strategies.registry import load_strategy_factories
-
-        launchable = load_strategy_factories()
-        for old in LEGACY_NAMES:
-            current = canonical_strategy_name(old)
-            self.assertIn(current, launchable, f"{old} resolves to {current}, which is missing")
-
-    def test_a_current_name_passes_through_unchanged(self):
-        from strategies.private_strategies import canonical_strategy_name
-
-        for name in VARIANTS:
-            self.assertEqual(canonical_strategy_name(name), name)
-
-    def test_an_unknown_name_is_left_alone_rather_than_guessed_at(self):
-        from strategies.private_strategies import canonical_strategy_name
-
-        self.assertEqual(canonical_strategy_name("GhostTangentCrossings"), "GhostTangentCrossings")
-        self.assertEqual(canonical_strategy_name(""), "")
 
     def test_the_catalogue_advertises_only_current_names(self):
-        """
-        A retired name must resolve, not reappear as a second card. Merged into
-        the factory map, every strategy would show on screen twice under two
-        names.
-
-        Asserted as a positive — every advertised name belongs to this family —
-        rather than by naming the retired one, which would only put that string
-        back into the repository.
-        """
-        from strategies.private_strategies import LEGACY_NAMES
-
         for name in VARIANTS:
             self.assertTrue(name.startswith("Fulcrum"), f"unexpected catalogue entry: {name}")
-            self.assertNotIn(name, LEGACY_NAMES, f"{name} is a retired name")
 
     def test_signals_carry_the_current_name_and_group_prefix(self):
-        """
-        Signals and group ids are written to the database and read back for
-        months, so a stale name in them outlives the code that produced it.
-        """
-        from strategies.private_strategies import LEGACY_NAMES
-
-        retired_prefixes = {n[:6].upper() for n in LEGACY_NAMES}
-
         for name in SELL_VARIANTS + BUY_VARIANTS:
             for sig in one_bar(name, "BANKNIFTY", 57342.0, 100.0):
                 self.assertTrue(
@@ -347,7 +349,34 @@ class LegacyNameTests(unittest.TestCase):
                 group_id = sig.metadata.get("group_id", "")
                 if group_id:
                     self.assertTrue(group_id.startswith("FULCRUM"), group_id)
-                    self.assertNotIn(group_id[:6].upper(), retired_prefixes)
+
+    def test_no_source_file_in_the_package_carries_a_retired_name(self):
+        """
+        The retired name is read from the local pre-commit hook rather than
+        written here, so the repository never contains it. Skipped where the
+        hook is not installed (a fresh clone), because there is then nothing to
+        check against.
+        """
+        import re
+
+        hook = pathlib.Path(__file__).resolve().parents[3] / ".git" / "hooks" / "pre-commit"
+        if not hook.exists():
+            self.skipTest("no local pre-commit hook to read retired names from")
+
+        retired = re.findall(r"RETIRED_NAMES=\((.*?)\)", hook.read_text(), re.S)
+        if not retired:
+            self.skipTest("hook lists no retired names")
+        names = [n.strip().strip('"\'') for n in retired[0].split() if n.strip()]
+
+        package = pathlib.Path(__file__).resolve().parents[1]
+        offenders = []
+        for path in package.rglob("*.py"):
+            if "__pycache__" in path.parts:
+                continue
+            body = path.read_text(errors="ignore").lower()
+            offenders += [f"{path.name}: {n}" for n in names if n.lower() in body]
+
+        self.assertEqual(offenders, [], f"retired name still present: {offenders}")
 
 
 if __name__ == "__main__":

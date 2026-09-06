@@ -51,6 +51,18 @@ namespace AlgoTrading.Domain.Entities
         public string LastError { get; set; } = string.Empty;
 
         /// <summary>
+        /// Dates already requested that the broker answered with nothing, as
+        /// "yyyy-MM-dd" separated by commas.
+        /// </summary>
+        /// <remarks>
+        /// A market holiday is indistinguishable from a missing trading day
+        /// until it has been asked for once. Without remembering the answer,
+        /// every holiday in the range is re-requested on every single run, and
+        /// coverage can never report itself complete.
+        /// </remarks>
+        public string KnownEmptyDatesCsv { get; set; } = string.Empty;
+
+        /// <summary>
         /// When this record was last updated.
         /// </summary>
         public DateTime UpdatedUtc { get; set; } = DateTime.UtcNow;

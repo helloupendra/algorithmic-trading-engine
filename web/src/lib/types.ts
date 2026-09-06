@@ -1361,3 +1361,19 @@ export interface OptionChainSeries {
   points: OptionChainSeriesPoint[]
   openInterestUnavailable: boolean
 }
+
+
+/** The chain poller's process, and whether it is actually recording. */
+export interface ChainPollerStatus {
+  isRunning: boolean
+  managed: boolean
+  processId: number | null
+  /** "managed" | "adopted" | "none" */
+  source: string
+  /**
+   * When the chain was last written. Reported next to the process status
+   * because they are not the same thing: a poller that started but cannot reach
+   * the broker is up, healthy-looking, and recording nothing.
+   */
+  lastCapturedUtc: string | null
+}

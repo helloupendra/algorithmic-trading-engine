@@ -41,6 +41,7 @@ import type {
   LiveWatchlistItem,
   MarketSessionInfo,
   OptionChainItem,
+  ChainPollerStatus,
   OptionChain,
   OptionChainSeries,
   PaperOrder,
@@ -1512,5 +1513,44 @@ export function useOptionChainExpiries(underlying: string) {
     queryKey: ['optionChainExpiries', underlying],
     queryFn: () => api.get<string[]>(`/api/OptionChain/expiries?underlying=${encodeURIComponent(underlying)}`),
     enabled: Boolean(underlying),
+  })
+}
+
+
+// --- option chain poller -----------------------------------------------------
+//
+// Open interest enters the platform through this process and nowhere else, and
+// it cannot be backfilled — so it needs to be as easy to start as the ingestor,
+// and as obvious when it is not running.
+
+export function useChainPollerStatus() {
+  return useQuery({
+    queryKey: ['chainPoller', 'status'],
+    queryFn: () => api.get<ChainPollerStatus>('/api/OptionChain/poller/status'),
+    refetchInterval: POLL_SLOW,
+  })
+}
+
+export function useStartChainPoller() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.post<{ message: string }>('/api/OptionChain/poller/start'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['chainPoller'] }),
+  })
+}
+
+export function useStopChainPoller() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.post<{ message: string }>('/api/OptionChain/poller/stop'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['chainPoller'] }),
+  })
+}
+
+export function useChainPollerLogs(take = 200) {
+  return useQuery({
+    queryKey: ['chainPoller', 'logs', take],
+    queryFn: () => api.get<string[]>(`/api/OptionChain/poller/logs?take=${take}`),
+    refetchInterval: POLL_SLOW,
   })
 }

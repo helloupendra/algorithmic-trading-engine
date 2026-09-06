@@ -1,5 +1,6 @@
 using AlgoTrading.Api.Security;
 using AlgoTrading.Contracts.OptionChain;
+using AlgoTrading.Api.Services;
 using AlgoTrading.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -22,8 +23,13 @@ namespace AlgoTrading.Api.Controllers;
 public class OptionChainController : ControllerBase
 {
     private readonly OptionChainService _chain;
+    private readonly ChainPollerSupervisor _poller;
 
-    public OptionChainController(OptionChainService chain) => _chain = chain;
+    public OptionChainController(OptionChainService chain, ChainPollerSupervisor poller)
+    {
+        _chain = chain;
+        _poller = poller;
+    }
 
     /// <summary>
     /// The strike ladder for one underlying and expiry.
@@ -98,4 +104,83 @@ public class OptionChainController : ControllerBase
         int stored = await _chain.StoreAsync(request.Rows, cancellationToken);
         return Ok(new { stored });
     }
+
+    // ------------------------------------------------------------------
+    // The poller
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Launches option_chain_poller.py.
+    /// </summary>
+    /// <remarks>
+    /// Worth starting alongside the ingestor, every session. Open interest
+    /// enters the platform through this process and nowhere else, and it cannot
+    /// be backfilled — a session where this was not running has no OI at all,
+    /// for good, including in any backtest of that day.
+    /// </remarks>
+    [HttpPost("poller/start")]
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    public async Task<IActionResult> StartPoller(CancellationToken cancellationToken)
+    {
+        var outcome = await _poller.StartAsync(cancellationToken);
+
+        HttpContext.Describe(outcome.Started
+            ? $"Started the option chain poller (pid {outcome.ProcessId})."
+            : $"Could not start the option chain poller: {outcome.Message}");
+
+        if (!outcome.Started)
+            return StatusCode(outcome.StatusCode, new { message = outcome.Message, processId = outcome.ProcessId });
+
+        return Ok(new { message = outcome.Message, processId = outcome.ProcessId });
+    }
+
+    [HttpPost("poller/stop")]
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    public async Task<IActionResult> StopPoller(CancellationToken cancellationToken)
+    {
+        var userName = User.GetUserName() ?? "unknown";
+        var outcome = await _poller.StopAsync($"Stopped by {userName}", cancellationToken);
+
+        HttpContext.Describe(outcome.WasRunning
+            ? $"Stopped the option chain poller (pid {outcome.ProcessId}). No open interest is being recorded."
+            : "Stopped the option chain poller — it was not running.");
+
+        return Ok(new
+        {
+            message = outcome.Message,
+            wasRunning = outcome.WasRunning,
+            processId = outcome.ProcessId,
+            source = outcome.Source,
+        });
+    }
+
+    /// <summary>
+    /// { isRunning, managed, processId, source, lastCapturedUtc } — source is
+    /// "managed", "adopted" (alive from a previous API instance) or "none".
+    /// </summary>
+    [HttpGet("poller/status")]
+    public async Task<IActionResult> GetPollerStatus(CancellationToken cancellationToken)
+    {
+        var status = await _poller.GetStatusAsync(cancellationToken);
+
+        // The process being up is not the same as it working. A poller that
+        // started but cannot reach the broker looks identical from the outside,
+        // so the last capture time is reported next to it.
+        var lastCaptured = await _chain.GetLastCaptureUtcAsync(cancellationToken);
+
+        return Ok(new
+        {
+            isRunning = status.IsRunning,
+            managed = status.Managed,
+            processId = status.ProcessId,
+            source = status.Source,
+            lastCapturedUtc = lastCaptured,
+        });
+    }
+
+    /// <summary>Recent stdout/stderr — where the broker's real field names are logged on first run.</summary>
+    [HttpGet("poller/logs")]
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    public IActionResult GetPollerLogs([FromQuery] int take = 200)
+        => Ok(_poller.GetLogs(take));
 }

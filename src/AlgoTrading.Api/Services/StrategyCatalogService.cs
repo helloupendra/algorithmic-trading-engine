@@ -54,7 +54,7 @@ public sealed class StrategyCatalogService
     {
         "__init__.py", "base_strategy.py", "execution_runner.py", "logic_engine.py",
         "contract_selector.py", "price_resolver.py", "list_strategies.py", "registry.py",
-        "private_strategies.py"
+        "variants.py"
     };
 
     private readonly PythonEngineLocator _locator;
@@ -469,7 +469,7 @@ public sealed class StrategyCatalogService
 
     /// <summary>
     /// Scans strategies/**/*.py for BaseStrategy subclasses and their <c>name</c>
-    /// attribute, plus the factory names in private_strategies.py, so the list
+    /// attribute, plus the factory names in variants.py, so the list
     /// still matches what execution_runner can launch.
     /// </summary>
     private IReadOnlyList<StrategyCatalogEntry> ScanFallback(string engineDir)
@@ -528,7 +528,7 @@ public sealed class StrategyCatalogService
         }
 
         // Private factories (Fulcrum variants) are registered under their own names.
-        var privateFile = Path.Combine(strategiesPath, "private_strategies.py");
+        var privateFile = Path.Combine(strategiesPath, "variants.py");
         if (File.Exists(privateFile))
         {
             try
@@ -539,12 +539,12 @@ public sealed class StrategyCatalogService
                 {
                     var name = m.Groups["name"].Value;
                     if (list.Any(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase))) continue;
-                    list.Add(FallbackEntry(name, m.Groups["cls"].Value, "private_strategies.py", stamp));
+                    list.Add(FallbackEntry(name, m.Groups["cls"].Value, "variants.py", stamp));
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Fallback scan could not read private_strategies.py.");
+                _logger.LogWarning(ex, "Fallback scan could not read variants.py.");
             }
         }
 

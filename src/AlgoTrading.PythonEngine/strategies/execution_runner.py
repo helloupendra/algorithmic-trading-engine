@@ -84,10 +84,9 @@ import core.fyers_orders as fyers_orders
 
 try:
     # pyrefly: ignore [missing-import]
-    from strategies.private_strategies import canonical_strategy_name, get_private_strategies
+    from strategies.variants import get_parameterised_strategies
 except ImportError:
-    def get_private_strategies(): return {}
-    def canonical_strategy_name(name): return name
+    def get_parameterised_strategies(): return {}
 
 
 from state_management.state_models import StrategyState
@@ -444,11 +443,8 @@ if __name__ == "__main__":
     # Dynamically discover all BaseStrategy subclasses in the strategies folder
     strategies_map = discover_strategies()
     
-    # Update with any explicit overrides/parameterized instances from private_strategies.py
-    strategies_map.update(get_private_strategies())
-
-    # A run launched before the family was renamed still carries its old name.
-    args.strategy = canonical_strategy_name(args.strategy)
+    # Explicit overrides and parameterised instances from variants.py.
+    strategies_map.update(get_parameterised_strategies())
 
     if args.strategy not in strategies_map:
         print(f"ERROR: Strategy '{args.strategy}' not found. Available strategies: {list(strategies_map.keys())}")

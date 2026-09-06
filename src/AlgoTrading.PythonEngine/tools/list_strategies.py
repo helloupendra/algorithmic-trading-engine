@@ -91,7 +91,7 @@ def build_catalog(include_hidden: bool) -> List[Dict[str, Any]]:
             entries[name] = describe_strategy(name, instance, None, factory_defaults)
         except Exception as ex:
             print(f"[list_strategies] {name}: {ex}", file=sys.stderr)
-            entries[name] = _error_entry(name, "private_strategies.py", traceback.format_exc().strip())
+            entries[name] = _error_entry(name, "variants.py", traceback.format_exc().strip())
 
     # 3. Modules that failed to import: surface them so a broken file is visible
     #    in the catalog instead of silently disappearing.

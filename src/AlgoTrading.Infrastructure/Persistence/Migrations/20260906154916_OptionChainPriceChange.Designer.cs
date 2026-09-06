@@ -3,6 +3,7 @@ using System;
 using AlgoTrading.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace AlgoTrading.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(TradingDbContext))]
-    partial class TradingDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260906154916_OptionChainPriceChange")]
+    partial class OptionChainPriceChange
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1769,10 +1772,6 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
 
                     b.Property<DateTime?>("EarliestLocalCandleUtc")
                         .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("KnownEmptyDatesCsv")
-                        .IsRequired()
-                        .HasColumnType("text");
 
                     b.Property<string>("LastError")
                         .IsRequired()

@@ -11,7 +11,7 @@ The module runs strictly in **LivePaper** mode: real ticks, simulated fills thro
 
 ## Architecture Stack
 1. **Python engine (`src/AlgoTrading.PythonEngine`)**
-   - `strategies/registry.py` discovers every `BaseStrategy` subclass plus the parameterised factories in `strategies/private_strategies.py`.
+   - `strategies/registry.py` discovers every `BaseStrategy` subclass plus the parameterised factories in `strategies/variants.py`.
    - `tools/list_strategies.py` prints the catalog as one JSON array (name, description, category, supported underlyings, legs summary, default lots and parameters, data requirements, source file). The API shells out to it.
    - `strategies/execution_runner.py` is the per-run process: loads the run's parameters, resolves the nearest expiry and the strike step from the option chain, warms the strategy up on history, then consumes ticks from the Redis stream and posts signals to the Simulator.
 2. **.NET API (`src/AlgoTrading.Api`)**

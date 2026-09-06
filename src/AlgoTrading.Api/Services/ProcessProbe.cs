@@ -13,6 +13,7 @@ namespace AlgoTrading.Api.Services;
 public static class ProcessProbe
 {
     public const string IngestorMarker = "fyers_streamer";
+    public const string ChainPollerMarker = "option_chain_poller";
     public const string StrategyRunnerMarker = "execution_runner";
     public const string BacktestRunnerMarker = "backtest_runner";
 

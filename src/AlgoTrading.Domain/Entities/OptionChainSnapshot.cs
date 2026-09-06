@@ -52,6 +52,9 @@ public class OptionChainSnapshot
     public decimal SpotPrice { get; set; }
 
     public decimal? LastTradedPrice { get; set; }
+
+    /// <summary>The day's move in this option's price, from the previous close.</summary>
+    public decimal? PriceChange { get; set; }
     public decimal? BidPrice { get; set; }
     public decimal? AskPrice { get; set; }
 
@@ -62,12 +65,18 @@ public class OptionChainSnapshot
     public long? OpenInterest { get; set; }
 
     /// <summary>
-    /// Open interest at the session's first snapshot for this contract.
+    /// The baseline open interest that change is measured against.
     /// </summary>
     /// <remarks>
-    /// Stored rather than recomputed: "OI change" means change since the day
-    /// opened, and finding the day's first row for every strike on every read
-    /// would turn a cheap query into a scan. Written once per contract per day.
+    /// The broker's previous-day close when it reports one, which is what the
+    /// market means by "OI change"; otherwise this contract's first reading of
+    /// the session, as a fallback.
+    /// <para>
+    /// Preferring the broker's figure matters for a poller that started late or
+    /// restarted mid-morning: a session-first baseline would then measure change
+    /// from 11:00 and quietly understate the day, while the previous close is
+    /// the same number however long the poller has been up.
+    /// </para>
     /// </remarks>
     public long? OpenInterestAtOpen { get; set; }
 

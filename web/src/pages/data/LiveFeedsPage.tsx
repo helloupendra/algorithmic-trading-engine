@@ -25,11 +25,15 @@ import {
   useStaleQuotes,
   useStartIngestor,
   useStopIngestor,
+  useChainPollerStatus,
+  useChainPollerLogs,
+  useStartChainPoller,
+  useStopChainPoller,
   useWatchlist,
 } from '../../lib/queries'
 import { formatAge, formatDateTime, formatPrice, shortSymbol } from '../../lib/format'
 import { classifySymbol } from '../../lib/symbols'
-import { Badge, FlashPrice, InlineError, Panel, QueryBoundary } from '../../components/ui'
+import { Badge, EmptyState, FlashPrice, InlineError, Panel, QueryBoundary } from '../../components/ui'
 import {
   IconDatabase,
   IconPlay,
@@ -142,6 +146,116 @@ function FeedControlButton() {
         </button>
       )}
     </div>
+  )
+}
+
+/* ------------------------------------------------- option chain poller */
+
+/**
+ * The chain poller's control.
+ *
+ * Kept beside the feed's because they are started together and for the same
+ * session — but it is a separate process with a separate failure, and the one
+ * thing that must be obvious is when it is NOT running. Open interest enters
+ * the platform through this and nowhere else: the broker's tick feed does not
+ * carry it. A session where this was stopped has prices and volume and no OI at
+ * all, permanently, including in any backtest of that day.
+ *
+ * The last capture time sits next to the process state on purpose. A poller
+ * that started but cannot reach the broker — an expired daily token is the
+ * usual reason — is up, looks healthy, and is recording nothing.
+ */
+function ChainPollerPanel() {
+  const status = useChainPollerStatus()
+  const logs = useChainPollerLogs(40)
+  const start = useStartChainPoller()
+  const stop = useStopChainPoller()
+
+  const running = status.data?.isRunning ?? false
+  const captured = status.data?.lastCapturedUtc ?? null
+  const captureAge = captured ? (Date.now() - new Date(captured).getTime()) / 1000 : null
+
+  // Running but not writing is the state worth shouting about.
+  const stalled = running && (captured === null || (captureAge != null && captureAge > 120))
+
+  return (
+    <Panel
+      title="Option chain poller"
+      actions={
+        <div className="toolbar">
+          {start.isError && <InlineError error={start.error} />}
+          {stop.isError && <InlineError error={stop.error} />}
+          {running ? (
+            <button
+              className="btn btn--danger"
+              disabled={stop.isPending}
+              onClick={() => {
+                if (window.confirm('Stop the chain poller? No open interest will be recorded while it is off, and it cannot be filled in afterwards.'))
+                  stop.mutate()
+              }}
+            >
+              <IconStop style={{ width: 14, height: 14 }} />
+              {stop.isPending ? 'Stopping…' : 'Stop poller'}
+            </button>
+          ) : (
+            <button className="btn btn--pos" disabled={start.isPending} onClick={() => start.mutate()}>
+              <IconPlay style={{ width: 14, height: 14 }} />
+              {start.isPending ? 'Starting…' : 'Start poller'}
+            </button>
+          )}
+        </div>
+      }
+    >
+      <div className="kv-grid" style={{ marginBottom: 10 }}>
+        <div>
+          <span className="muted">Process</span>
+          <span className={running ? 'pos' : 'muted'}>
+            {running
+              ? status.data?.source === 'adopted'
+                ? `Running (adopted, pid ${status.data?.processId})`
+                : `Running (pid ${status.data?.processId})`
+              : 'Stopped'}
+          </span>
+        </div>
+        <div>
+          <span className="muted">Last chain stored</span>
+          <span className={stalled ? 'warn' : undefined}>
+            {captured ? formatAge(captured) : 'never'}
+          </span>
+        </div>
+      </div>
+
+      {!running && (
+        <p className="small-note warn">
+          No open interest is being recorded. The broker's tick feed does not carry it, so nothing
+          else fills this in — and a session missed here stays missing, in the chain, the OI curves
+          and any backtest of that day.
+        </p>
+      )}
+
+      {stalled && (
+        <p className="small-note warn">
+          The process is up but nothing has been stored. Check the log below — an expired daily
+          broker token is the usual reason, and it answers with a 401.
+        </p>
+      )}
+
+      <QueryBoundary query={logs}>
+        {(lines) =>
+          lines.length === 0 ? (
+            <EmptyState>No output yet.</EmptyState>
+          ) : (
+            <div className="console">
+              <div className="console__body">
+                {lines.map((line, i) => (
+                  <div key={i}>{line}</div>
+                ))}
+              </div>
+            </div>
+          )
+        }
+      </QueryBoundary>
+    </Panel>
   )
 }
 
@@ -720,7 +834,8 @@ export function LiveFeedsPage() {
         <div>
           <h1 className="page__title">Live feeds</h1>
           <p className="page__subtitle">
-            Broker websocket → watchlist subscriptions → live quotes, ticks and bars.
+            Broker websocket → watchlist subscriptions → live quotes, ticks and bars, and the
+            chain poller that records open interest alongside them.
           </p>
         </div>
         <FeedControlButton />
@@ -729,6 +844,7 @@ export function LiveFeedsPage() {
       <IndexTickerRow />
       <StalePanel />
       <LiveWatchlistPanel />
+      <ChainPollerPanel />
       <DiagnosticsPanel />
       <InspectorPanel />
     </div>
