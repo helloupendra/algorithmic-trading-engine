@@ -4,6 +4,7 @@ using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using System.IdentityModel.Tokens.Jwt;
 using AlgoTrading.Api.Security;
 using AlgoTrading.Api.Services;
@@ -53,6 +54,7 @@ namespace AlgoTrading.Api.Controllers
         /// is never touched.
         /// </summary>
         [AllowAnonymous]
+        [EnableRateLimiting(RateLimitPolicies.SignIn)]
         [HttpPost("login")]
         public async Task<IActionResult> Login(
             [FromBody] LoginRequest request,
@@ -90,6 +92,7 @@ namespace AlgoTrading.Api.Controllers
         /// itself the credential, and is verified against the stored session.
         /// </summary>
         [AllowAnonymous]
+        [EnableRateLimiting(RateLimitPolicies.SignIn)]
         [HttpPost("refresh")]
         public async Task<IActionResult> Refresh(
             [FromBody] RefreshTokenRequest request,

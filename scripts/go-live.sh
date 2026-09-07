@@ -40,5 +40,14 @@ for _ in $(seq 1 60); do
   sleep 2
 done
 
+# A named tunnel (scripts/install-tunnel.sh) already routes the domain here
+# and runs as its own service; opening a quick tunnel beside it would only
+# print a second, throwaway URL.
+if launchctl list 2>/dev/null | grep -q com.algotrading.tunnel; then
+  echo "==> Named tunnel is running; the console is on its domain. Ctrl+C stops the API."
+  wait "$API_PID"
+  exit 0
+fi
+
 echo "==> Opening Cloudflare tunnel (public URL appears below)..."
 cloudflared tunnel --url http://localhost:5025

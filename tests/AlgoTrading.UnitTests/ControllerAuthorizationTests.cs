@@ -141,6 +141,24 @@ public class ControllerAuthorizationTests
     }
 
     [Fact]
+    public void Every_anonymous_password_endpoint_is_rate_limited()
+    {
+        // On a public domain the sign-in endpoint is the one that gets guessed
+        // at. An [AllowAnonymous] action that accepts a password without
+        // [EnableRateLimiting] is an open invitation.
+        string body = File.ReadAllText(
+            Path.Combine(ControllersDirectory().FullName, "UserAuthController.cs"));
+
+        foreach (var route in new[] { "\"login\"", "\"refresh\"" })
+        {
+            int at = body.IndexOf($"[HttpPost({route})]", StringComparison.Ordinal);
+            Assert.True(at > 0, $"no HttpPost({route}) found");
+            string preceding = body[Math.Max(0, at - 400)..at];
+            Assert.Contains("[EnableRateLimiting(RateLimitPolicies.SignIn)]", preceding);
+        }
+    }
+
+    [Fact]
     public void The_run_visibility_rule_exists_in_one_place_only()
     {
         // The Service account could book fills for a run but not read it: the
