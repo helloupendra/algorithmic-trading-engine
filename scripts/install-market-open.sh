@@ -7,6 +7,13 @@
 # StartCalendarInterval runs the job at the next wake when the Mac slept
 # through its time.
 #
+# The script is opened IN Terminal.app rather than run by /bin/bash directly.
+# macOS privacy protection (TCC) refuses a launchd-spawned bash any file under
+# ~/Documents — "Operation not permitted" — which is exactly how the first
+# scheduled morning silently did nothing. Terminal already holds that
+# permission, so handing it the script works without touching System Settings,
+# and leaves the run's output in a window for whoever wakes up to it.
+#
 # Usage:
 #   ./scripts/install-market-open.sh            # install, weekdays 09:05
 #   ./scripts/install-market-open.sh --at 8 55  # a different hour/minute
@@ -44,7 +51,9 @@ mkdir -p "$HOME/Library/LaunchAgents" "$REPO_ROOT/logs"
   printf '<plist version="1.0">\n<dict>\n'
   printf '  <key>Label</key><string>%s</string>\n' "$LABEL"
   printf '  <key>ProgramArguments</key>\n  <array>\n'
-  printf '    <string>/bin/bash</string>\n'
+  printf '    <string>/usr/bin/open</string>\n'
+  printf '    <string>-a</string>\n'
+  printf '    <string>Terminal</string>\n'
   printf '    <string>%s/scripts/market-open.sh</string>\n' "$REPO_ROOT"
   printf '  </array>\n'
   printf '  <key>WorkingDirectory</key><string>%s</string>\n' "$REPO_ROOT"

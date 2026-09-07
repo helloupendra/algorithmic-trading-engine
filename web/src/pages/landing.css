@@ -42,17 +42,16 @@
 /* --- hero ----------------------------------------------------------------- */
 /* Bottom padding clears the absolutely positioned scroll hint (22px offset + ~54px tall) when the hero is content-driven. */
 .lp .hero { position: relative; min-height: 100vh; min-height: 100svh; display: grid; align-items: center; padding: 120px 0 96px; overflow: hidden; isolation: isolate; }
+/* The ledger's wrapper (components/ChainScene): SVG twin, GL canvas and labels, full-bleed behind the copy. */
 .lp .hero__scene { position: absolute; inset: 0; z-index: -2; width: 100%; height: 100%; display: block; }
-.lp .hero__fallback { position: absolute; inset: 0; z-index: -2; background:
-    radial-gradient(900px 520px at 78% 40%, rgba(79,125,255,.22) 0%, transparent 60%),
-    radial-gradient(700px 460px at 18% 90%, rgba(43,212,189,.14) 0%, transparent 60%), var(--bg0); }
-/* The scene's own envelope keeps the left column dark, so the veil only has to
-   seat the type and close the bottom edge into the page — not hide the render. */
-.lp .hero__veil { position: absolute; inset: 0; z-index: -1; pointer-events: none; background:
-    linear-gradient(90deg, color-mix(in srgb, var(--bg0) 72%, transparent) 0%, color-mix(in srgb, var(--bg0) 30%, transparent) 40%, transparent 62%),
-    linear-gradient(180deg, transparent 62%, var(--bg0) 100%); }
+/* Nothing of the object sits under the copy, so the veil only closes the bottom
+   edge into the modules section — late enough to leave the caption and the
+   contact shadow alone. */
+.lp .hero__veil { position: absolute; inset: 0; z-index: -1; pointer-events: none; background: linear-gradient(180deg, transparent 84%, var(--bg0) 100%); }
 .lp .hero__grid { display: grid; grid-template-columns: minmax(0, 640px) 1fr; gap: 32px; }
 .lp .hero__grid > div { min-width: 0; }
+/* The right column: empty in the DOM, it is the rect the ledger lays itself out against. */
+.lp .hero__stage { min-width: 0; }
 .lp .eyebrow { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 8px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--live) 35%, transparent); background: var(--live-soft); color: var(--live); font-size: 12.5px; font-weight: 600; letter-spacing: .02em; }
 .lp .eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 0 rgba(43,212,189,.5); animation: lp-pulse 2.4s infinite; }
 @keyframes lp-pulse { 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
@@ -71,9 +70,12 @@
 @keyframes lp-drop { 0% { transform: scaleY(0); transform-origin: top; } 50% { transform: scaleY(1); transform-origin: top; } 51% { transform-origin: bottom; } 100% { transform: scaleY(0); transform-origin: bottom; } }
 @media (max-width: 900px) {
   .lp .hero__grid { grid-template-columns: 1fr; }
-  /* Single column: the copy sits on the top half, so the veil is heaviest there
-     and lifts toward the bottom — a solid bg0 stop would paint over the tape. */
-  .lp .hero__veil { background: linear-gradient(180deg, color-mix(in srgb, var(--bg0) 78%, transparent) 0%, color-mix(in srgb, var(--bg0) 80%, transparent) 42%, color-mix(in srgb, var(--bg0) 35%, transparent) 100%); }
+  /* Single column: the ledger gets its own row under the stats. The object
+     fits itself to this row, labels and caption included (lib/chainView
+     fitToStage); the margin keeps its side labels clear of the stat labels,
+     which are the same size and case. */
+  .lp .hero__stage { height: 340px; margin-top: 28px; }
+  .lp .hero__veil { background: linear-gradient(180deg, transparent 88%, var(--bg0) 100%); }
   /* The hero already exceeds one screen here; the hint would only crowd the stats. */
   .lp .scroll-hint { display: none; }
 }
