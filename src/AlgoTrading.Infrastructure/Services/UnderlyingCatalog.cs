@@ -33,6 +33,30 @@ public static class UnderlyingCatalog
     private static readonly Dictionary<string, string> UnderlyingBySpot =
         SpotByUnderlying.ToDictionary(x => x.Value, x => x.Key.ToUpperInvariant(), StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// MCX commodity underlyings, which behave unlike every index above them.
+    /// </summary>
+    /// <remarks>
+    /// An index has a spot quote that exists all day and never expires, so one
+    /// static symbol describes it forever. A commodity has no spot at all on
+    /// this feed: its price IS a futures contract, and that contract is replaced
+    /// every month. So there is deliberately no entry for these in
+    /// SpotByUnderlying - asking for a fixed symbol would only ever return one
+    /// that is right until the next expiry. Callers resolve the live contract
+    /// through IDerivativesInstrumentService.GetNearestFutureSymbolAsync.
+    /// </remarks>
+    public static readonly IReadOnlyList<string> CommodityUnderlyings = new[]
+    {
+        "CRUDEOIL", "CRUDEOILM", "NATURALGAS", "NATGASMINI",
+        "GOLD", "GOLDM", "SILVER", "SILVERM"
+    };
+
+    private static readonly HashSet<string> CommoditySet =
+        new(CommodityUnderlyings, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>True when this underlying trades on MCX and prices off a future.</summary>
+    public static bool IsCommodity(string underlying) => CommoditySet.Contains(Normalize(underlying));
+
     private static readonly Dictionary<string, decimal> FallbackStrikeSteps = new(StringComparer.OrdinalIgnoreCase)
     {
         ["NIFTY"] = 50m,
@@ -69,7 +93,15 @@ public static class UnderlyingCatalog
     public static string SpotSymbolFor(string underlying)
     {
         var key = Normalize(underlying);
-        return SpotByUnderlying.TryGetValue(key, out var spot) ? spot : $"NSE:{key}-EQ";
+        if (SpotByUnderlying.TryGetValue(key, out var spot)) return spot;
+
+        // A commodity has no spot symbol to give. Returning NSE:CRUDEOIL-EQ - an
+        // equity that does not exist - would look like an answer and then quietly
+        // price every run at nothing. Empty is the honest reply; the caller is
+        // expected to resolve the near-month future instead.
+        if (CommoditySet.Contains(key)) return string.Empty;
+
+        return $"NSE:{key}-EQ";
     }
 
     /// <summary>

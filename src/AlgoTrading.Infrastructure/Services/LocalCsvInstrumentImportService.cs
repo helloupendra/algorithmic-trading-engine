@@ -113,8 +113,19 @@ namespace AlgoTrading.Infrastructure.Services
 
                 // Lot size straight from the master; anything non-positive is "unknown"
                 // and left null so the resolver falls back to the configured table.
+                //
+                // Except on the commodity master, which does not carry one. Every
+                // row of MCX_COM.csv holds 1 in this column - all 15,335 of them,
+                // across contracts whose real lots differ by two orders of
+                // magnitude (crude 100 barrels, crude mini 10, natural gas 1250).
+                // Importing that 1 is worse than importing nothing: a present-but-
+                // wrong value outranks the configured table in the resolver, so a
+                // one-lot crude trade would size itself at 1 barrel instead of 100
+                // and every P&L on the run would be a hundredth of the truth.
                 int? lotSize = null;
-                if (decimal.TryParse(lotSizeRaw, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsedLot)
+                bool masterCarriesLotSize = segmentFromFile != "COM";
+                if (masterCarriesLotSize
+                    && decimal.TryParse(lotSizeRaw, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsedLot)
                     && parsedLot > 0)
                 {
                     lotSize = (int)Math.Round(parsedLot);
@@ -228,6 +239,19 @@ namespace AlgoTrading.Infrastructure.Services
                     if (lotSize.HasValue && existing.LotSize != lotSize)
                     {
                         existing.LotSize = lotSize;
+                        changed = true;
+                    }
+                    else if (!masterCarriesLotSize && existing.LotSize.HasValue)
+                    {
+                        // Retract a value this importer should never have written.
+                        // The guard above only ever sets a lot size, so once a bad
+                        // one is in the table no amount of re-importing removes it -
+                        // which is how every MCX row kept a lot size of 1 after the
+                        // commodity master turned out not to carry one at all.
+                        // Narrow on purpose: only a segment known not to carry lot
+                        // sizes may clear, so a partial equity master cannot wipe
+                        // good values.
+                        existing.LotSize = null;
                         changed = true;
                     }
 

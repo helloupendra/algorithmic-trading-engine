@@ -14,6 +14,19 @@ namespace AlgoTrading.Application.Interfaces
         /// <summary>
         /// Retrieves all available expiry dates for a given underlying asset.
         /// </summary>
+        /// <summary>
+        /// The nearest futures contract of this underlying that has not expired,
+        /// e.g. "MCX:CRUDEOIL26SEPFUT". Null when the master holds none.
+        /// </summary>
+        /// <remarks>
+        /// This is what stands in for a spot price on MCX, where no spot quote
+        /// exists. It is resolved rather than configured because the answer
+        /// changes every month.
+        /// </remarks>
+        Task<string?> GetNearestFutureSymbolAsync(
+            string underlying,
+            CancellationToken cancellationToken = default);
+
         Task<IReadOnlyList<DerivativeExpiryResponse>> GetExpiriesAsync(
             string underlying,
             CancellationToken cancellationToken = default);
