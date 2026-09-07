@@ -21,6 +21,8 @@ import type { LiveRunHistoryFilters } from '../../lib/queries'
 import { formatDateTime, formatDuration, formatInrSigned, formatLots, formatNumber } from '../../lib/format'
 import { riskChips } from '../../lib/risk'
 import { runDurationSeconds, runNetPnl, runStatusTone, runUserLabel, shortStopReason } from '../../lib/runHistory'
+import { DateField } from '../../components/DateField'
+import { isoToDmy } from '../../lib/dates'
 import { Badge, InlineError, Loading, Panel, StatTile } from '../../components/ui'
 import { IconClock, IconPlay, IconUsers } from '../../components/icons'
 import type { LiveRunSummary, LiveRunUserSummary } from '../../lib/types'
@@ -224,7 +226,7 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
     query !== '' ||
     fromDate !== defaultFromDate ||
     toDate !== defaultToDate
-  const rangeLabel = fromDate && toDate ? `${fromDate} → ${toDate}` : fromDate ? `from ${fromDate}` : toDate ? `to ${toDate}` : 'all time'
+  const rangeLabel = fromDate && toDate ? `${isoToDmy(fromDate)} → ${isoToDmy(toDate)}` : fromDate ? `from ${isoToDmy(fromDate)}` : toDate ? `to ${isoToDmy(toDate)}` : 'all time'
 
   return (
     <div className="page">
@@ -342,22 +344,20 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
                 </option>
               ))}
             </select>
-            <input
+            <DateField
               className="field__input field__input--sm field__input--date"
-              type="date"
               value={fromDate}
               max={toDate || undefined}
-              onChange={(e) => setFromDate(e.target.value)}
+              onChange={setFromDate}
               aria-label="Started on or after (IST day)"
               title="Started on or after (IST day)"
             />
             <span className="faint">→</span>
-            <input
+            <DateField
               className="field__input field__input--sm field__input--date"
-              type="date"
               value={toDate}
               min={fromDate || undefined}
-              onChange={(e) => setToDate(e.target.value)}
+              onChange={setToDate}
               aria-label="Started on or before (IST day)"
               title="Started on or before (IST day)"
             />

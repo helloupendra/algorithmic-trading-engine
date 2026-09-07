@@ -126,49 +126,60 @@ write_status() {
 }
 
 # --- deploy ---------------------------------------------------------------------
+# Two ways a commit reaches this machine: pulled from GitHub, or made right here
+# and pushed (the owner commits on this Mac). Both must be built, so the desk
+# remembers the commit it last built (deployed_sha) and builds whatever HEAD
+# has moved past it — the pull is only the first half.
+deployed_sha="$(git rev-parse HEAD 2>/dev/null || echo '')"
+
 deploy_if_behind() {
   git fetch origin --quiet 2>>"$LOG" || { warn "git fetch failed; leaving everything alone"; return; }
   local local_sha remote_sha
   local_sha="$(git rev-parse HEAD)"; remote_sha="$(git rev-parse origin/main)"
-  [ "$local_sha" != "$remote_sha" ] || return 0
-
-  say "origin/main moved: $(git rev-parse --short "$local_sha") -> $(git rev-parse --short "$remote_sha")"
   local started; started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  local from_short to_short; from_short="$(git rev-parse --short "$local_sha")"; to_short="$(git rev-parse --short "$remote_sha")"
+  local from_short to_short; from_short="$(git rev-parse --short "$deployed_sha")"; to_short="$(git rev-parse --short "$remote_sha")"
   record() {  # outcome summary [step ...]  — writes the record the Deployments page shows
     local outcome="$1" summary="$2"; shift 2
     local args=(--outcome "$outcome" --summary "$summary" --from "$from_short" --to "$to_short" --started "$started")
     for st in "$@"; do args+=(--step "$st"); done
     if [ -n "${changed:-}" ]; then args+=(--files "$(printf '%s\n' "$changed" | wc -l | tr -d ' ')"); fi
-    while IFS= read -r line; do [ -n "$line" ] && args+=(--commit "$line"); done < <(git log --oneline "$local_sha..$remote_sha" 2>/dev/null | head -20)
+    while IFS= read -r line; do [ -n "$line" ] && args+=(--commit "$line"); done < <(git log --oneline "$deployed_sha..$to_short" 2>/dev/null | head -20)
     python3 scripts/lib/deploy-record.py "${args[@]}" >>"$LOG" 2>&1 || true
   }
 
-  # Refuse to destroy local work. A dirty tree here means someone is editing
-  # on this machine; the deploy waits for them to commit or stash.
-  if [ -n "$(git status --porcelain)" ]; then
-    warn "working tree has uncommitted changes — NOT pulling. Commit or stash them and the next check will deploy."
-    last_deploy_note="blocked by uncommitted local changes at $(date '+%H:%M')"
-    record skipped "Uncommitted changes on this machine" "Pulled from GitHub|skipped|$(git status --porcelain | wc -l | tr -d ' ') uncommitted file(s) on this machine"
-    return
-  fi
-  if ! git merge-base --is-ancestor "$local_sha" "$remote_sha"; then
-    warn "local HEAD is not an ancestor of origin/main (diverged) — NOT pulling. Resolve by hand."
-    last_deploy_note="blocked: local history diverged at $(date '+%H:%M')"
-    record failed "Not a fast-forward — the branches have diverged" "Pulled from GitHub|failed|Not a fast-forward - resolve by hand"
-    return
+  if [ "$local_sha" != "$remote_sha" ]; then
+    say "origin/main moved: $(git rev-parse --short "$local_sha") -> $to_short"
+    # Refuse to destroy local work. A dirty tree here means someone is editing
+    # on this machine; the deploy waits for them to commit or stash.
+    if [ -n "$(git status --porcelain)" ]; then
+      warn "working tree has uncommitted changes — NOT pulling. Commit or stash them and the next check will deploy."
+      last_deploy_note="blocked by uncommitted local changes at $(date '+%H:%M')"
+      record skipped "Uncommitted changes on this machine" "Pulled from GitHub|skipped|$(git status --porcelain | wc -l | tr -d ' ') uncommitted file(s) on this machine"
+      return
+    fi
+    if ! git merge-base --is-ancestor "$local_sha" "$remote_sha"; then
+      warn "local HEAD is not an ancestor of origin/main (diverged) — NOT pulling. Resolve by hand."
+      last_deploy_note="blocked: local history diverged at $(date '+%H:%M')"
+      record failed "Not a fast-forward — the branches have diverged" "Pulled from GitHub|failed|Not a fast-forward - resolve by hand"
+      return
+    fi
+    git pull --ff-only --quiet origin main >>"$LOG" 2>&1 || { warn "git pull failed (see desk.log)"; record failed "git pull failed" "Pulled from GitHub|failed|see logs/desk.log"; return; }
   fi
 
-  git pull --ff-only --quiet origin main >>"$LOG" 2>&1 || { warn "git pull failed (see desk.log)"; record failed "git pull failed" "Pulled from GitHub|failed|see logs/desk.log"; return; }
-  local changed; changed="$(git diff --name-only "$local_sha" "$remote_sha")"
-  last_commit="$(git rev-parse --short HEAD)"
-  say "pulled to $last_commit: $(printf '%s\n' "$changed" | wc -l | tr -d ' ') file(s)"
+  local head; head="$(git rev-parse HEAD)"
+  [ "$head" != "$deployed_sha" ] || return 0
+  to_short="$(git rev-parse --short "$head")"
+  local changed; changed="$(git diff --name-only "$deployed_sha" "$head")"
+  local how="pulled"; [ "$local_sha" = "$head" ] && how="committed here"
+  say "building $from_short -> $to_short ($how): $(printf '%s\n' "$changed" | wc -l | tr -d ' ') file(s)"
 
   local web_changed api_changed engine_changed
   web_changed="$(printf '%s\n' "$changed" | grep -c '^web/' || true)"
   api_changed="$(printf '%s\n' "$changed" | grep -cE '^src/AlgoTrading\.(Api|Application|Domain|Infrastructure|Contracts)/|^tests/' || true)"
   engine_changed="$(printf '%s\n' "$changed" | grep -c '^src/AlgoTrading.PythonEngine/' || true)"
-  local notes=() steps=("Pulled from GitHub|ok|$(git log --oneline "$local_sha..$remote_sha" | wc -l | tr -d ' ') commit(s), $(printf '%s\n' "$changed" | wc -l | tr -d ' ') file(s)")
+  local notes=() steps=()
+  if [ "$how" = "pulled" ]; then steps+=("Pulled from GitHub|ok|$(git log --oneline "$deployed_sha..$head" | wc -l | tr -d ' ') commit(s), $(printf '%s\n' "$changed" | wc -l | tr -d ' ') file(s)")
+  else steps+=("Committed on this machine|ok|$(git log --oneline "$deployed_sha..$head" | wc -l | tr -d ' ') commit(s), $(printf '%s\n' "$changed" | wc -l | tr -d ' ') file(s) - nothing to pull"); fi
 
   if [ "$web_changed" -gt 0 ]; then
     if ( cd web && npm ci --silent >>"$LOG" 2>&1 || true ) && web_build; then notes+=("console rebuilt"); steps+=("Console rebuilt|ok|New bundle is being served - no restart needed"); else notes+=("console build FAILED"); steps+=("Console rebuilt|failed|Build failed - the old bundle is still being served"); fi
@@ -197,10 +208,14 @@ deploy_if_behind() {
   fi
 
   [ ${#notes[@]} -gt 0 ] || notes+=("nothing to rebuild (docs/scripts only)")
+  last_commit="$to_short"
   last_deploy_note="$last_commit at $(date '+%H:%M') — $(IFS='; '; echo "${notes[*]}")"
   say "deploy: $last_deploy_note"
   local outcome=ok; case "$last_deploy_note" in *FAILED*) outcome=failed;; esac
   record "$outcome" "$(IFS='; '; echo "${notes[*]}")" "${steps[@]}"
+  # One attempt per commit, pass or fail — a broken build is not retried every
+  # two minutes; the next commit gets its own attempt.
+  deployed_sha="$head"
   osascript -e "display notification \"$last_deploy_note\" with title \"AlgoTrading deploy\"" 2>/dev/null || true
 }
 

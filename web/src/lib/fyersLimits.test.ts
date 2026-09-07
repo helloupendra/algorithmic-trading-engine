@@ -73,7 +73,7 @@ describe('rejectionFor', () => {
   })
 
   it('refuses history older than the broker holds', () => {
-    expect(rejectionFor('D', '2017-07-02', '2017-08-01')).toContain(EARLIEST_HISTORY)
+    expect(rejectionFor('D', '2017-07-02', '2017-08-01')).toContain('03/07/2017')
   })
 
   it('allows the earliest date itself', () => {
@@ -119,14 +119,14 @@ describe('fallbackResolution', () => {
 })
 
 describe('limitHint', () => {
-  it('names a date someone can actually type', () => {
-    expect(limitHint('1', '2026-09-04')).toBe('up to 100 days per request — from 2026-05-28')
+  it('names a date someone can actually type, in the order they type it', () => {
+    expect(limitHint('1', '2026-09-04')).toBe('up to 100 days per request — from 28/05/2026')
   })
 
   it('never points before the broker has any history', () => {
     // 100 days back from August 2017 lands in April, where there is nothing.
     expect(earliestFor('1', '2017-08-01')).toBe(EARLIEST_HISTORY)
-    expect(limitHint('1', '2017-08-01')).toContain(EARLIEST_HISTORY)
+    expect(limitHint('1', '2017-08-01')).toContain('03/07/2017')
   })
 
   it('leaves a reachable window alone', () => {

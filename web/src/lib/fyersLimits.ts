@@ -8,7 +8,10 @@
  * form can grey out what cannot be fetched instead of finding out afterwards.
  */
 
+import { isoToDmy } from './dates'
+
 /** A resolution the backfill form offers. */
+
 export interface ResolutionOption {
   /** The code the API takes: "1", "5", "15", "60", "D". */
   value: string
@@ -59,7 +62,7 @@ export function dateMinusDays(to: string, days: number): string {
 export function rejectionFor(resolution: string, from: string, to: string): string | null {
   if (!from || !to) return null
   if (to < from) return 'the end date is before the start date'
-  if (from < EARLIEST_HISTORY) return `FYERS holds nothing before ${EARLIEST_HISTORY}`
+  if (from < EARLIEST_HISTORY) return `FYERS holds nothing before ${isoToDmy(EARLIEST_HISTORY)}`
 
   const span = spanDays(from, to)
   const max = maxDaysFor(resolution)
@@ -100,5 +103,5 @@ export function earliestFor(resolution: string, to: string): string {
  * A sentence for the form: what this resolution can currently cover.
  */
 export function limitHint(resolution: string, to: string): string {
-  return `up to ${maxDaysFor(resolution)} days per request — from ${earliestFor(resolution, to)}`
+  return `up to ${maxDaysFor(resolution)} days per request — from ${isoToDmy(earliestFor(resolution, to))}`
 }
