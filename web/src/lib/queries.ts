@@ -114,28 +114,44 @@ export function useLiveFeedSignalR() {
       .withAutomaticReconnect()
       .build()
 
-    connection.on('ReceiveTick', (tick: any) => {
+    // Applies a whole delivery in one cache write.
+    //
+    // The ingestor posts ticks in batches now, so the hub sends "ReceiveTicks"
+    // with an array. Folding the array in here rather than looping the single
+    // handler means one render per delivery instead of one per price, which is
+    // what keeps a busy open-bell burst from thrashing the tree.
+    const applyTicks = (ticks: any[]) => {
+      if (!ticks.length) return
       qc.setQueryData(['quotes', 'all'], (old: LiveQuote[] | undefined) => {
         if (!old) return old
-        // Avoid recreating array if tick symbol doesn't exist in quotes
-        const exists = old.some(q => q.symbol === tick.symbol);
-        if (!exists) return old;
-        
+
+        const bySymbol = new Map<string, any>()
+        // Last one wins: within a batch the newest price for a symbol is the
+        // one worth rendering.
+        for (const tick of ticks) {
+          if (tick?.symbol) bySymbol.set(tick.symbol, tick)
+        }
+        if (!old.some((q) => bySymbol.has(q.symbol))) return old
+
         return old.map((q) => {
-          if (q.symbol === tick.symbol) {
-            return {
-              ...q,
-              lastTradedPrice: tick.lastTradedPrice ?? q.lastTradedPrice,
-              bidPrice: tick.bidPrice ?? q.bidPrice,
-              askPrice: tick.askPrice ?? q.askPrice,
-              volume: tick.volume ?? q.volume,
-              updatedUtc: tick.exchangeTimestampUtc ?? new Date().toISOString(),
-            }
+          const tick = bySymbol.get(q.symbol)
+          if (!tick) return q
+          return {
+            ...q,
+            lastTradedPrice: tick.lastTradedPrice ?? q.lastTradedPrice,
+            bidPrice: tick.bidPrice ?? q.bidPrice,
+            askPrice: tick.askPrice ?? q.askPrice,
+            volume: tick.volume ?? q.volume,
+            updatedUtc: tick.exchangeTimestampUtc ?? new Date().toISOString(),
           }
-          return q
         })
       })
-    })
+    }
+
+    // Both shapes are handled: the batch endpoint sends the plural, and the
+    // single-tick endpoint is still there for anything that posts one at a time.
+    connection.on('ReceiveTicks', (ticks: any[]) => applyTicks(ticks ?? []))
+    connection.on('ReceiveTick', (tick: any) => applyTicks(tick ? [tick] : []))
 
     let isMounted = true
 
@@ -384,7 +400,11 @@ export function useRefreshPortfolio() {
 
 // ---------- Strategies ----------
 
-const POLL_LIVE_VIEW = 2_000
+// Halved once the tick write path stopped being the bottleneck (a tick cost
+// ~30ms to store and now costs ~2ms), so the run view can be asked for a
+// fresh mark twice as often without crowding the run's lock. The LTP column
+// itself no longer waits for this — it re-prices off the live quote cache.
+const POLL_LIVE_VIEW = 1_000
 const POLL_RUNNER_LOGS = 3_000
 
 /**

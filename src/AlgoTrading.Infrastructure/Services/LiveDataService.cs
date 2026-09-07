@@ -576,6 +576,283 @@ public class LiveDataService : ILiveDataService
         }
     }
 
+    /// <summary>
+    /// Stores many ticks with a fixed number of database round-trips instead of
+    /// a fixed number per tick.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="AppendLiveTickAsync"/> costs five round-trips for one price:
+    /// it reads <c>live_quotes_latest</c> for the volume delta, reads it a second
+    /// time inside <see cref="UpsertLatestQuoteAsync"/>, saves there, reads the
+    /// current 1-minute bar, and saves again. Measured on 2026-09-07 that is
+    /// ~30ms per tick, and this feed produces 39 a second across 26 symbols — so
+    /// the writer sat level with the feed and any extra load (seven live runs
+    /// polling and a risk sweep every three seconds) tipped it into a backlog
+    /// that never drained. The console showed it as "36s ago"; the database
+    /// showed the gap between exchange stamp and stored row growing from 0.9s to
+    /// over a minute within five minutes of the open.
+    ///
+    /// Concurrency was not the answer: posting the same hundred ticks spread over
+    /// a hundred symbols took the same time as a hundred ticks on one symbol, so
+    /// the per-symbol lock was never the constraint — the per-tick work was.
+    ///
+    /// This reads every quote the batch touches in one query, every bar it
+    /// touches in a second, applies all of it in memory, and saves once. A batch
+    /// of fifty costs three round-trips rather than two hundred and fifty.
+    ///
+    /// Locks are taken for every symbol in the batch up front, in sorted order so
+    /// two overlapping batches cannot deadlock, and held until the save: the
+    /// single-tick path stages its work under the same lock, and releasing early
+    /// would let two writers both find no bar for a minute and both insert one.
+    /// </remarks>
+    public async Task AppendLiveTicksAsync(
+        IReadOnlyList<UpsertLiveTickRequest> requests,
+        CancellationToken cancellationToken = default)
+    {
+        var batch = requests.Where(r => !string.IsNullOrWhiteSpace(r.Symbol)).ToList();
+        if (batch.Count == 0) return;
+
+        // Sorted: a consistent acquisition order is what makes overlapping
+        // batches safe to hold several locks at once.
+        var symbols = batch.Select(r => r.Symbol!).Distinct().OrderBy(s => s, StringComparer.Ordinal).ToList();
+        var held = new List<SemaphoreSlim>(symbols.Count);
+
+        try
+        {
+            foreach (var symbol in symbols)
+            {
+                var gate = _symbolLocks.GetOrAdd(symbol, _ => new SemaphoreSlim(1, 1));
+                await gate.WaitAsync(cancellationToken);
+                held.Add(gate);
+            }
+
+            var nowUtc = DateTime.UtcNow;
+
+            foreach (var request in batch)
+            {
+                if (request.ExchangeTimestampUtc.HasValue)
+                {
+                    var latency = (nowUtc - request.ExchangeTimestampUtc.Value).TotalSeconds;
+                    if (latency > 0) TickProcessingLatency.Observe(latency);
+                }
+            }
+
+            var quotes = await _dbContext.LiveQuotesLatest
+                .Where(x => symbols.Contains(x.Symbol))
+                .ToListAsync(cancellationToken);
+            var quoteBySymbol = quotes.ToDictionary(x => x.Symbol, StringComparer.Ordinal);
+
+            // Bar identity is (symbol, minute). EF cannot translate a tuple
+            // contains, so both sides are filtered server-side and the exact
+            // pairs are matched here.
+            var minutes = batch
+                .Where(r => r.LastTradedPrice.HasValue)
+                .Select(r => FloorToMinute(r.ExchangeTimestampUtc?.ToUniversalTime() ?? nowUtc))
+                .Distinct()
+                .ToList();
+
+            var bars = minutes.Count == 0
+                ? new List<LiveBar>()
+                : await _dbContext.LiveBars
+                    .Where(x => x.Resolution == "1m"
+                        && symbols.Contains(x.Symbol)
+                        && minutes.Contains(x.BarStartUtc))
+                    .ToListAsync(cancellationToken);
+
+            var barByKey = bars.ToDictionary(x => (x.Symbol, x.BarStartUtc));
+
+            foreach (var request in batch)
+            {
+                string symbol = request.Symbol!;
+                string sourceKey = ResolveSourceKey(request.SourceKey);
+                quoteBySymbol.TryGetValue(symbol, out var latest);
+
+                long volumeDelta = 0;
+                if (request.Volume.HasValue && latest?.Volume.HasValue == true)
+                {
+                    var diff = request.Volume.Value - latest.Volume.Value;
+                    if (diff > 0) volumeDelta = diff;
+                }
+
+                _dbContext.LiveTicks.Add(new LiveTick
+                {
+                    Symbol = symbol,
+                    DataType = request.DataType,
+                    ReceivedUtc = nowUtc,
+                    ExchangeTimestampUtc = request.ExchangeTimestampUtc,
+                    LastTradedPrice = request.LastTradedPrice,
+                    BidPrice = request.BidPrice,
+                    AskPrice = request.AskPrice,
+                    BidSize = request.BidSize,
+                    AskSize = request.AskSize,
+                    Open = request.Open,
+                    High = request.High,
+                    Low = request.Low,
+                    PrevClose = request.PrevClose,
+                    Volume = request.Volume,
+                    RawPayload = request.RawPayload,
+                    SourceKey = sourceKey
+                });
+
+                ApplyLatestQuote(request, latest, sourceKey, quoteBySymbol);
+
+                await _marketTickArchiveQueue.EnqueueAsync(
+                    new MarketTickArchiveRequest
+                    {
+                        Symbol = symbol,
+                        DataType = request.DataType,
+                        ExchangeTimestampUtc = request.ExchangeTimestampUtc,
+                        LastTradedPrice = request.LastTradedPrice,
+                        BidPrice = request.BidPrice,
+                        AskPrice = request.AskPrice,
+                        BidSize = request.BidSize,
+                        AskSize = request.AskSize,
+                        Open = request.Open,
+                        High = request.High,
+                        Low = request.Low,
+                        PrevClose = request.PrevClose,
+                        Volume = request.Volume,
+                        RawPayload = request.RawPayload,
+                        SourceKey = sourceKey
+                    },
+                    cancellationToken);
+
+                if (request.LastTradedPrice.HasValue)
+                {
+                    ApplyBar(request, sourceKey, nowUtc, volumeDelta, barByKey);
+                }
+            }
+
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+        finally
+        {
+            for (int i = held.Count - 1; i >= 0; i--)
+            {
+                held[i].Release();
+            }
+        }
+    }
+
+    private static DateTime FloorToMinute(DateTime moment) =>
+        new(moment.Year, moment.Month, moment.Day, moment.Hour, moment.Minute, 0, DateTimeKind.Utc);
+
+    /// <summary>
+    /// The in-memory twin of <see cref="UpsertLatestQuoteAsync"/>, including its
+    /// refusal to move a snapshot backwards in time.
+    /// </summary>
+    private void ApplyLatestQuote(
+        UpsertLiveTickRequest request,
+        LiveQuoteLatest? existing,
+        string sourceKey,
+        Dictionary<string, LiveQuoteLatest> quoteBySymbol)
+    {
+        var incomingExchangeUtc = request.ExchangeTimestampUtc?.ToUniversalTime();
+
+        if (existing is null)
+        {
+            var created = new LiveQuoteLatest
+            {
+                Symbol = request.Symbol!,
+                SourceKey = sourceKey,
+                DataType = request.DataType,
+                LastTradedPrice = request.LastTradedPrice,
+                Open = request.Open,
+                High = request.High,
+                Low = request.Low,
+                Close = request.PrevClose,
+                Volume = request.Volume,
+                RawPayload = request.RawPayload,
+                OpenInterest = request.OpenInterest,
+                ImpliedVolatility = request.ImpliedVolatility,
+                Delta = request.Delta,
+                Gamma = request.Gamma,
+                Theta = request.Theta,
+                Vega = request.Vega,
+                ExchangeTimestampUtc = incomingExchangeUtc,
+                UpdatedUtc = DateTime.UtcNow
+            };
+
+            _dbContext.LiveQuotesLatest.Add(created);
+            // So a later tick for this symbol in the same batch updates this row
+            // instead of adding a second one.
+            quoteBySymbol[request.Symbol!] = created;
+            return;
+        }
+
+        if (incomingExchangeUtc is not null
+            && existing.ExchangeTimestampUtc is not null
+            && incomingExchangeUtc < existing.ExchangeTimestampUtc)
+        {
+            return;
+        }
+
+        existing.ExchangeTimestampUtc = incomingExchangeUtc ?? existing.ExchangeTimestampUtc;
+        existing.DataType = request.DataType;
+        existing.LastTradedPrice = request.LastTradedPrice;
+        existing.Open = request.Open;
+        existing.High = request.High;
+        existing.Low = request.Low;
+        existing.Close = request.PrevClose;
+        existing.Volume = request.Volume;
+        existing.RawPayload = request.RawPayload;
+        existing.OpenInterest = request.OpenInterest;
+        existing.ImpliedVolatility = request.ImpliedVolatility;
+        existing.Delta = request.Delta;
+        existing.Gamma = request.Gamma;
+        existing.Theta = request.Theta;
+        existing.Vega = request.Vega;
+        existing.SourceKey = sourceKey;
+        existing.UpdatedUtc = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// The in-memory twin of the 1-minute bar upsert, bucketed by the exchange's
+    /// clock for the same reason the single-tick path is.
+    /// </summary>
+    private void ApplyBar(
+        UpsertLiveTickRequest request,
+        string sourceKey,
+        DateTime nowUtc,
+        long volumeDelta,
+        Dictionary<(string, DateTime), LiveBar> barByKey)
+    {
+        var barClockUtc = request.ExchangeTimestampUtc?.ToUniversalTime() ?? nowUtc;
+        var barStartUtc = FloorToMinute(barClockUtc);
+        var key = (request.Symbol!, barStartUtc);
+        var ltp = request.LastTradedPrice!.Value;
+
+        if (!barByKey.TryGetValue(key, out var bar))
+        {
+            bar = new LiveBar
+            {
+                Symbol = request.Symbol!,
+                Resolution = "1m",
+                BarStartUtc = barStartUtc,
+                Open = ltp,
+                High = ltp,
+                Low = ltp,
+                Close = ltp,
+                VolumeDelta = volumeDelta,
+                TickCount = 1,
+                UpdatedUtc = nowUtc,
+                SourceKey = sourceKey
+            };
+
+            _dbContext.LiveBars.Add(bar);
+            barByKey[key] = bar;
+            return;
+        }
+
+        if (ltp > bar.High) bar.High = ltp;
+        if (ltp < bar.Low) bar.Low = ltp;
+        bar.Close = ltp;
+        bar.VolumeDelta += volumeDelta;
+        bar.TickCount += 1;
+        bar.UpdatedUtc = nowUtc;
+        bar.SourceKey = sourceKey;
+    }
+
     public async Task<IReadOnlyList<LiveTickResponse>> GetRecentTicksAsync(
         string symbol,
         int take,

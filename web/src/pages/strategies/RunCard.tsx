@@ -11,7 +11,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { useStopStrategy, useStrategyLive, useStrategyLogs, useUpdateRunRisk } from '../../lib/queries'
+import { useLatestQuotes, useStopStrategy, useStrategyLive, useStrategyLogs, useUpdateRunRisk } from '../../lib/queries'
 import { formatAge, formatInrWhole, formatLots, formatNumber, formatPrice, formatTime } from '../../lib/format'
 import { formatContract } from '../../lib/symbols'
 import { positionValues } from '../../lib/positions'
@@ -22,6 +22,7 @@ import { RiskRulesForm } from '../../components/RiskRulesForm'
 import { IconShield, IconStop } from '../../components/icons'
 import type {
   LivePosition,
+  LiveQuote,
   RiskRules,
   StrategyActiveRun,
   StrategyLastExit,
@@ -265,7 +266,44 @@ function RiskSection({
 
 /* ---------------------------------------------------------- positions table */
 
+/**
+ * Re-prices an open leg from the live quote feed.
+ *
+ * The row arrives on this page's 1-second poll of the run, which reaches the
+ * paper-trading service and marks the legs under the run's lock. The quote
+ * cache, by contrast, is pushed over SignalR as ticks land, so it is typically
+ * a couple of hundred milliseconds old. Reading the mark from there is what
+ * makes the LTP column move at the speed of the feed instead of the poll,
+ * without asking the run for anything more often.
+ *
+ * The whole row is recomputed from that mark, not just the price: an LTP that
+ * moves while the value and P&L beside it sit a second behind reads as a bug,
+ * and on a trading screen a row that disagrees with itself is worse than one
+ * that is uniformly a moment old. The arithmetic is the server's own —
+ * BUY earns (mark − entry), SELL earns (entry − mark), times quantity.
+ */
+function repriced(p: LivePosition, quote: LiveQuote | undefined): LivePosition {
+  const mark = quote?.lastTradedPrice
+  if (p.status !== 'Open' || mark == null || mark === p.ltp) return p
+
+  const points = p.side === 'BUY' ? mark - p.entryPrice : p.entryPrice - mark
+  return {
+    ...p,
+    ltp: mark,
+    pnl: points * p.quantity,
+    // Cleared so positionValues() derives these from the new mark rather than
+    // reusing the ones computed against the old one.
+    currentValue: null,
+    pnlPoints: null,
+    pnlPercent: null,
+  }
+}
+
 function PositionsTable({ positions }: { positions: LivePosition[] }) {
+  const { data: quotes } = useLatestQuotes()
+  const bySymbol = new Map((quotes ?? []).map((q) => [q.symbol, q]))
+  positions = positions.map((p) => repriced(p, bySymbol.get(p.symbol)))
+
   return (
     <div className="tablewrap">
       <table className="table">
