@@ -14,6 +14,7 @@ import {
   IconClock,
   IconDatabase,
   IconFlask,
+  IconGlobe,
   IconLayers,
   IconPlay,
   IconPlug,
@@ -114,6 +115,14 @@ export const DATA_SECTIONS = [
     route: '/admin/data/live',
     label: 'Live feeds',
     icon: IconPulse,
+    end: false,
+  },
+  {
+    // Commodities sit with the rest of the live market data rather than in a
+    // module of their own: it is the same feed, a different exchange.
+    route: '/admin/data/commodity',
+    label: 'Commodity',
+    icon: IconGlobe,
     end: false,
   },
   {
