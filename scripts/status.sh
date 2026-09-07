@@ -26,9 +26,10 @@ if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
     age="(last loop ${secs}s ago)"
     [ "$secs" -gt 120 ] && age="${age} ${Y}— stale, the loop may be stuck${N}"
   fi
-  ok "desk supervisor" "running, pid $(cat "$PIDFILE") $age"
+  host="in the background"; [ "$(ps -o tty= -p "$(cat "$PIDFILE")" 2>/dev/null | tr -d ' ')" != "??" ] && host="in a Terminal window"
+  ok "desk supervisor" "running $host, pid $(cat "$PIDFILE") $age"
 else
-  bad "desk supervisor" "NOT running — start: ./scripts/desk.sh  (or log out/in)"
+  bad "desk supervisor" "NOT running — start: ./scripts/desk.sh --headless  (or wait ≤10 min for the keepalive)"
 fi
 
 # --- services -----------------------------------------------------------------
@@ -76,5 +77,10 @@ if [ -f logs/desk.status ]; then
   printf "  ${D}commit           %s${N}\n" "$(grep '^commit=' logs/desk.status | cut -d= -f2-)"
   printf "  ${D}last deploy      %s${N}\n" "$(grep '^last_deploy=' logs/desk.status | cut -d= -f2-)"
   printf "  ${D}market-open ran  %s${N}\n" "$(grep '^market_open_ran_on=' logs/desk.status | cut -d= -f2-)"
+fi
+# --- what the desk did last -------------------------------------------------------
+if [ -f logs/desk.log ]; then
+  printf "\n  ${D}desk.log, last lines (tail -f logs/desk.log to follow):${N}\n"
+  grep -vE '^\s|^ Container|Warning\(s\)|Error\(s\)|Time Elapsed|^$' logs/desk.log | tail -8 | sed 's/^/    /'
 fi
 printf "\n  ${D}logs: logs/desk.log · logs/market-open-$(date +%F).log · logs/tunnel.log · logs/api.log${N}\n\n"

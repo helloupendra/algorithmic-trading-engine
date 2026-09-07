@@ -11,7 +11,13 @@ API="${API_BASE_URL:-http://localhost:5025}"
 LOG="${LOG:-$REPO_ROOT/logs/desk.log}"
 mkdir -p "$REPO_ROOT/logs"
 
-say()  { printf '%s  %s\n' "$(date '+%H:%M:%S')" "$1" | tee -a "$LOG"; }
+# Every line goes to the log; it is echoed to the screen too unless
+# DESK_LOG_ONLY is set (the headless desk's stdout IS the log, and a tee
+# there would write each line twice).
+say() {
+  if [ -n "${DESK_LOG_ONLY:-}" ]; then printf '%s  %s\n' "$(date '+%H:%M:%S')" "$1" >>"$LOG"
+  else printf '%s  %s\n' "$(date '+%H:%M:%S')" "$1" | tee -a "$LOG"; fi
+}
 warn() { say "WARN: $1"; }
 
 # --- environment the API and its daemons run with --------------------------
@@ -47,6 +53,9 @@ api_start() {
   if api_healthy; then say "API already healthy"; return 0; fi
   api_stop
   say "starting the API (Production, $API, chain: $CHAIN_UNDERLYINGS)"
+  # One log per API lifetime. Left to append forever, api.log reached 2 GB in
+  # two days (EF Core was logging every SQL statement; see appsettings.json).
+  [ -f "$REPO_ROOT/logs/api.log" ] && mv -f "$REPO_ROOT/logs/api.log" "$REPO_ROOT/logs/api.log.prev"
   ( cd "$REPO_ROOT" && nohup dotnet run --project src/AlgoTrading.Api --no-launch-profile >>"$REPO_ROOT/logs/api.log" 2>&1 & )
   for _ in $(seq 1 60); do sleep 2; api_healthy && { say "  API up"; return 0; }; done
   warn "the API did not come up within two minutes (see logs/api.log)"
