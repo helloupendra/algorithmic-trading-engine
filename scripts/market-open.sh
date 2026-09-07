@@ -14,13 +14,16 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 REPO_ROOT="$PWD"
+LOG="$REPO_ROOT/logs/market-open-$(date +%F).log"
+. scripts/lib/desk-common.sh
 
 DRY_RUN=0
 [ "${1:-}" = "--dry-run" ] && DRY_RUN=1
 
-API="${API_BASE_URL:-http://localhost:5025}"
-# Space-separated: one live run is started per underlying.
+# Space-separated: one live run is started per underlying. The chain poller
+# covers the same set (CHAIN_UNDERLYINGS, set for the API by the library).
 UNDERLYINGS="${MARKET_OPEN_UNDERLYINGS:-BANKNIFTY NIFTY SENSEX}"
+export CHAIN_UNDERLYINGS="$(printf '%s' "$UNDERLYINGS" | tr ' ' ',')"
 STRATEGY="${MARKET_OPEN_STRATEGY:-GhostTangentCrossings}"
 LOTS="${MARKET_OPEN_LOTS:-2}"
 # Clock time (HHMM, IST) to stop waiting for the morning FYERS sign-in.
@@ -38,10 +41,6 @@ if [ -z "$CONSOLE" ]; then
   if curl -sf -o /dev/null http://localhost:5173 2>/dev/null; then CONSOLE=http://localhost:5173; else CONSOLE="$API"; fi
 fi
 
-mkdir -p logs
-LOG="$REPO_ROOT/logs/market-open-$(date +%F).log"
-
-say() { printf '%s  %s\n' "$(date '+%H:%M:%S')" "$1" | tee -a "$LOG"; }
 fail() { say "FAILED: $1"; say "--- stopping here; nothing further was started ---"; exit 1; }
 
 say "=== market-open: $(date '+%A %d %B %Y') ==="
@@ -55,10 +54,7 @@ if [ "$DOW" -ge 6 ]; then
 fi
 
 # --- 1. credentials ----------------------------------------------------------
-if [ ! -f .env ]; then fail ".env is missing; cannot sign in to the API."; fi
-set -a; . ./.env; set +a
-: "${ADMIN_USERNAME:?ADMIN_USERNAME is not set in .env}"
-: "${ADMIN_PASSWORD:?ADMIN_PASSWORD is not set in .env}"
+load_env || fail ".env is missing or has no ADMIN_USERNAME / ADMIN_PASSWORD."
 
 # --- 2. infrastructure -------------------------------------------------------
 say "starting infra (TimescaleDB, Redis) ..."
@@ -67,29 +63,12 @@ docker compose up -d --wait timescaledb redis >>"$LOG" 2>&1 \
 say "  infra up"
 
 # --- 3. the API --------------------------------------------------------------
-# The chain poller is spawned by the API and reads this from the environment it
-# inherits, so it has to be set before the API starts — which is why the API is
-# restarted rather than reused. At 09:05 that costs a few seconds.
-export CHAIN_UNDERLYINGS="$(printf '%s' "$UNDERLYINGS" | tr ' ' ',')"
+# Restarted rather than reused, so today's CHAIN_UNDERLYINGS reach the poller
+# it spawns and today's console bundle is what the domain serves.
+web_build || true
+api_restart || fail "the API did not come up."
 
-if curl -sf -o /dev/null "$API/health"; then
-  say "API is already running — restarting it so the poller covers $CHAIN_UNDERLYINGS"
-  pkill -f "AlgoTrading.Api" 2>/dev/null || true
-  sleep 4
-fi
-
-say "starting the API ..."
-nohup dotnet run --project src/AlgoTrading.Api >>logs/api.log 2>&1 &
-for _ in $(seq 1 60); do
-  sleep 2
-  curl -sf -o /dev/null "$API/health" && break
-done
-curl -sf -o /dev/null "$API/health" || fail "the API did not come up within two minutes."
-say "  API up"
-
-TOKEN="$(curl -fsS -X POST "$API/api/UserAuth/login" -H 'Content-Type: application/json' \
-  -d "{\"userNameOrEmail\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}" \
-  | grep -o '"accessToken":"[^"]*' | grep -o '[^"]*$')"
+TOKEN="$(admin_token)" || true
 [ -n "$TOKEN" ] || fail "could not sign in to the API as $ADMIN_USERNAME."
 AUTH="Authorization: Bearer $TOKEN"
 

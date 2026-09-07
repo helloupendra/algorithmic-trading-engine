@@ -1,3 +1,7 @@
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.HttpOverrides;
+using System.Threading.RateLimiting;
+using System.Net;
 using System.IdentityModel.Tokens.Jwt;
 /// <summary>
 /// Application entry point. Configures services, routing, Swagger UI, and the DI container.
@@ -185,6 +189,36 @@ builder.Services
 // valid token, so a newly added controller is protected the moment it is written
 // rather than the moment someone remembers to add [Authorize]. Public endpoints
 // (login, register, broker OAuth callback, metrics) opt out with [AllowAnonymous].
+// Behind the Cloudflare tunnel every request arrives from localhost; the real
+// client is in X-Forwarded-For, which cloudflared sets. Without this a per-IP
+// limit below would count the whole internet as one caller, and the audit log
+// would record 127.0.0.1 for everyone. Only loopback is trusted to set it.
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.KnownProxies.Add(IPAddress.Loopback);
+    options.KnownProxies.Add(IPAddress.IPv6Loopback);
+});
+
+// Sign-in is the one anonymous endpoint that accepts a password, and on a
+// public domain it will be guessed at. Ten attempts a minute per address is
+// generous for a person and useless for a script; the same window covers
+// refresh so a stolen refresh token cannot be replayed in bulk.
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy(RateLimitPolicies.SignIn, context =>
+        RateLimitPartition.GetSlidingWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new SlidingWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                SegmentsPerWindow = 6,
+                QueueLimit = 0,
+            }));
+});
+
 builder.Services.AddAuthorizationBuilder()
     .SetFallbackPolicy(new AuthorizationPolicyBuilder()
         .RequireAuthenticatedUser()
@@ -261,8 +295,10 @@ app.UseStaticFiles();
 app.UseRouting();
 app.UseHttpMetrics();
 
+app.UseForwardedHeaders();
 app.UseCors(CorsPolicies.WebClient);
 
+app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 

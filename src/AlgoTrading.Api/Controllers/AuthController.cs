@@ -21,7 +21,7 @@ namespace AlgoTrading.Api.Controllers;
     private readonly GenerateAccessTokenUseCase _generateAccessTokenUseCase;
     private readonly IBrokerSessionStore _brokerSessionStore;
     private readonly IProviderRouter _providerRouter;
-    private readonly string _frontendBaseUrl;
+    private readonly string? _frontendBaseUrl;
 
     public AuthController(
         GenerateAccessTokenUseCase generateAccessTokenUseCase,
@@ -32,8 +32,14 @@ namespace AlgoTrading.Api.Controllers;
         _generateAccessTokenUseCase = generateAccessTokenUseCase;
         _brokerSessionStore = brokerSessionStore;
         _providerRouter = providerRouter;
-        _frontendBaseUrl = configuration["Frontend:BaseUrl"]?.TrimEnd('/')
-                           ?? "http://localhost:5173";
+        // An explicit override only. Unset, the redirect goes back to the
+        // origin the request came in on (see FrontendRedirect): the API serves
+        // the console itself, so that is always a page that exists — on the
+        // domain when the broker callback arrives through the tunnel, on
+        // localhost in development. A fixed localhost:5173 default sent a
+        // phone signing in at 06:00 to a dev server that was not there.
+        string? configured = configuration["Frontend:BaseUrl"]?.Trim().TrimEnd('/');
+        _frontendBaseUrl = string.IsNullOrEmpty(configured) ? null : configured;
     }
 
     /// <summary>
@@ -191,7 +197,8 @@ namespace AlgoTrading.Api.Controllers;
             ? "/admin/broker"
             : $"/admin/broker/{providerKey}";
 
-        string url = $"{_frontendBaseUrl}{path}?connected={(connected ? 1 : 0)}";
+        string origin = _frontendBaseUrl ?? $"{Request.Scheme}://{Request.Host}";
+        string url = $"{origin}{path}?connected={(connected ? 1 : 0)}";
         if (!string.IsNullOrWhiteSpace(reason))
         {
             url += $"&reason={Uri.EscapeDataString(reason)}";

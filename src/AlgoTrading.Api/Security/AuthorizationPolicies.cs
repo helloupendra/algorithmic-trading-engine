@@ -14,6 +14,15 @@ public static class AuthorizationPolicies
 }
 
 /// <summary>
+/// Named rate-limit policies.
+/// </summary>
+public static class RateLimitPolicies
+{
+    /// <summary>Sign-in and token refresh: a sliding window per client address.</summary>
+    public const string SignIn = "SignIn";
+}
+
+/// <summary>
 /// Named CORS policies.
 /// </summary>
 public static class CorsPolicies
