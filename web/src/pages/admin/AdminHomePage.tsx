@@ -19,6 +19,7 @@ import { Badge, StatTile } from '../../components/ui'
 export function AdminHomePage() {
   const { user } = useAuth()
   const session = useMarketSession()
+  const mcxSession = useMarketSession('MCX', 'COM')
   const broker = useBrokerSession()
   const process = useIngestorProcessStatus()
   const ingestors = useIngestorStatuses()
@@ -28,7 +29,17 @@ export function AdminHomePage() {
   const feeds = ingestors.data ?? []
   const healthy = feeds.filter((f) => f.isHealthy).length
   const marketOpen = session.data?.isMarketOpen ?? false
+  const mcxOpen = mcxSession.data?.isMarketOpen ?? false
   const ksActive = killSwitch.data?.isActive ?? false
+
+  // Only the hour is worth showing here; the exact close is in the chip's title
+  // on the topbar. MCX ends at 23:55 IST in summer and 23:30 in winter.
+  const mcxCloseLabel = mcxSession.data
+    ? new Date(mcxSession.data.sessionCloseUtc).toLocaleTimeString('en-IN', {
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    : null
 
   return (
     <div className="page">
@@ -41,10 +52,20 @@ export function AdminHomePage() {
 
       <div className="stat-grid">
         <StatTile
-          label="Market"
+          label="Equity market"
           value={marketOpen ? 'Open' : 'Closed'}
           tone={marketOpen ? 'pos' : undefined}
           sub="NSE cash session"
+        />
+        {/* Its own tile rather than a second line on the equity one: after 15:30
+            the two disagree for eight hours, which is exactly the stretch when
+            reading one and assuming the other is how you misjudge the desk. */}
+        <StatTile
+          label="Commodity market"
+          value={mcxOpen ? 'Open' : 'Closed'}
+          tone={mcxOpen ? 'pos' : undefined}
+          sub={mcxOpen && mcxCloseLabel ? `MCX until ${mcxCloseLabel}` : 'MCX session'}
+          to="/admin/data/commodity"
         />
         <StatTile
           label="Live feed"

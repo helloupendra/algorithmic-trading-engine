@@ -119,9 +119,12 @@ class WatcherTransitionTests(unittest.TestCase):
         self.watcher.baseline()
 
     def titles(self):
-        found = [e["title"] for e in self.publisher.events]
+        """Titles seen so far. Does not clear: several tests assert on the
+        full event objects afterwards."""
+        return [e["title"] for e in self.publisher.events]
+
+    def clear(self):
         self.publisher.events.clear()
-        return found
 
     def test_baseline_alerts_on_nothing(self):
         # A run already live when the notifier starts must not raise a start
@@ -134,15 +137,22 @@ class WatcherTransitionTests(unittest.TestCase):
         self.assertEqual(self.titles(), [])
         self.assertEqual(self.watcher.detail_calls, before)
 
-    def test_position_opened(self):
+    def test_opening_two_legs_sends_one_message(self):
+        """
+        The point of the consolidated alert: a strategy entering a straddle is
+        one decision and must read as one message, not one per leg.
+        """
         before = self.watcher.detail_calls
-        self.api.runs = [make_run(1, True, 2, 0)]
-        self.api.live = {1: {"positions": [make_leg(1), make_leg(2)]}}
+        self.api.runs = [make_run(1, True, 3, 0)]
+        self.api.live = {1: {"positions": [make_leg(1), make_leg(2), make_leg(3)]}}
         self.watcher.tick()
 
-        titles = self.titles()
-        self.assertEqual(len(titles), 1)
-        self.assertTrue(titles[0].startswith("Position opened"), titles[0])
+        events = self.publisher.events
+        self.assertEqual(len(events), 1, [e["title"] for e in events])
+        self.assertIn("2 legs opened", events[0]["title"])
+        # Both new legs are named in the body.
+        self.assertIn("57102", events[0]["message"])
+        self.assertIn("57103", events[0]["message"])
         # A counter move costs exactly one gated read, not one per tick.
         self.assertEqual(self.watcher.detail_calls, before + 1)
 
@@ -151,16 +161,41 @@ class WatcherTransitionTests(unittest.TestCase):
         self.api.live = {1: {"positions": [make_leg(1, status="Closed", pnl=250.0)]}}
         self.watcher.tick()
 
-        titles = self.titles()
-        self.assertEqual(len(titles), 1)
-        self.assertTrue(titles[0].startswith("Position closed"), titles[0])
-        self.assertIn("250", titles[0])
+        events = self.publisher.events
+        self.assertEqual(len(events), 1)
+        self.assertIn("1 leg closed", events[0]["title"])
+        self.assertIn("250", events[0]["message"])
+
+    def test_a_roll_is_one_message_not_two(self):
+        """
+        Closing two legs and opening two others in the same tick is an
+        adjustment. Reported separately it looks like four unrelated events.
+        """
+        self.api.runs = [make_run(1, True, 2, 1)]
+        self.api.live = {
+            1: {
+                "positions": [
+                    make_leg(1, status="Closed", pnl=120.0),
+                    make_leg(7),
+                    make_leg(8),
+                ]
+            }
+        }
+        self.watcher.tick()
+
+        events = self.publisher.events
+        self.assertEqual(len(events), 1, [e["title"] for e in events])
+        self.assertIn("rolled", events[0]["title"])
+        self.assertIn("Closed", events[0]["message"])
+        self.assertIn("Opened", events[0]["message"])
 
     def test_a_leg_that_vanishes_is_still_reported(self):
         self.api.runs = [make_run(1, True, 0, 1)]
         self.api.live = {1: {"positions": []}}
         self.watcher.tick()
-        self.assertTrue(any(t.startswith("Position closed") for t in self.titles()))
+        events = self.publisher.events
+        self.assertEqual(len(events), 1)
+        self.assertIn("closed", events[0]["title"])
 
     def test_run_started_and_stopped(self):
         self.api.runs = [make_run(1, True, 1, 0), make_run(2, True, 0, 0)]

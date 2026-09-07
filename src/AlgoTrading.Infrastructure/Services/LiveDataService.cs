@@ -986,7 +986,8 @@ public class LiveDataService : ILiveDataService
             Gamma = row.Gamma,
             Theta = row.Theta,
             Vega = row.Vega,
-            UpdatedUtc = row.UpdatedUtc
+            UpdatedUtc = row.UpdatedUtc,
+            ExchangeTimestampUtc = row.ExchangeTimestampUtc
         };
     }
 

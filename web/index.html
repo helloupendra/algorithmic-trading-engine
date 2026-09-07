@@ -5,7 +5,14 @@
     <!-- The brand mark, not an emoji: a 90px glyph in a 100px box rendered as a
          clipped blob in the tab. -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover lets the layout reach under the notch and the home
+         indicator, which is what makes env(safe-area-inset-*) return anything
+         other than zero on an iPhone. The CSS pads those edges back. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- The console is dark; without this iOS paints white behind rubber-band
+         scrolling and around the status bar. -->
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#070b11" />
     <title>AlgoTrading</title>
   </head>
   <body>

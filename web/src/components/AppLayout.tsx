@@ -5,6 +5,7 @@
  * module registry and the user's role.
  */
 
+import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useBrokerSession, useIngestorStatuses, useMarketSession } from '../lib/queries'
@@ -17,6 +18,8 @@ import {
 import {
   IconArrowRight,
   IconCandles,
+  IconChevronDown,
+  IconChevronRight,
   IconClock,
   IconDashboard,
   IconDatabase,
@@ -24,9 +27,11 @@ import {
   IconGlobe,
   IconLayers,
   IconLogo,
+  IconMenu,
   IconPlay,
   IconPulse,
   IconSignOut,
+  IconX,
 } from './icons'
 
 function StatusPill({
@@ -50,10 +55,12 @@ function StatusPill({
 function TopbarStatus() {
   const { isAdmin } = useAuth()
   const session = useMarketSession()
+  const mcxSession = useMarketSession('MCX', 'COM')
   const broker = useBrokerSession()
   const ingestors = useIngestorStatuses()
 
   const market = session.data
+  const mcx = mcxSession.data
   const feeds = ingestors.data ?? []
   const healthyFeeds = feeds.filter((f) => f.isHealthy).length
 
@@ -73,6 +80,20 @@ function TopbarStatus() {
             market.isMarketOpen
               ? 'Market session is live'
               : `Next open: ${new Date(market.nextMarketOpenUtc).toLocaleString('en-IN')}`
+          }
+        />
+      )}
+      {/* MCX keeps trading for eight hours after NSE stops, so one "market"
+          chip could never be right for both. Its close follows New York's
+          daylight saving: 23:55 IST in summer, 23:30 in winter. */}
+      {mcx && (
+        <StatusPill
+          tone={mcx.isMarketOpen ? 'pos' : 'idle'}
+          label={mcx.isMarketOpen ? 'MCX open' : 'MCX closed'}
+          title={
+            mcx.isMarketOpen
+              ? `Commodity session is live until ${new Date(mcx.sessionCloseUtc).toLocaleTimeString('en-IN')}`
+              : `Next open: ${new Date(mcx.nextMarketOpenUtc).toLocaleString('en-IN')}`
           }
         />
       )}
@@ -140,6 +161,86 @@ function NavItem({
   )
 }
 
+/**
+ * A collapsible sidebar group.
+ *
+ * The admin nav is four groups of five or six links each. Fully expanded that
+ * is twenty-odd rows, which on a laptop pushes System below the fold and on a
+ * phone filled the entire drawer - so the groups fold, and only the one you are
+ * working in needs to be open.
+ *
+ * Open state is remembered per group, because a nav that re-collapses on every
+ * navigation is worse than one that never folded at all. Walking into a group
+ * from elsewhere opens it; nothing ever closes a group behind your back.
+ */
+function NavGroup({
+  label,
+  sections,
+}: {
+  label: string
+  sections: ReadonlyArray<{
+    route: string
+    label: string
+    icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
+    end?: boolean
+  }>
+}) {
+  const location = useLocation()
+  const storageKey = `algotrading.nav.${label.toLowerCase()}`
+  const holdsCurrentRoute = sections.some((x) => location.pathname.startsWith(x.route))
+
+  const [open, setOpen] = useState(() => {
+    try {
+      const saved = localStorage.getItem(storageKey)
+      if (saved !== null) return saved === '1'
+    } catch {
+      // Private mode, or storage disabled. Fall through to the route.
+    }
+    return holdsCurrentRoute
+  })
+
+  // Navigating into a group reveals it. Deliberately one-way: this must not
+  // close a group the operator opened to look at something.
+  useEffect(() => {
+    if (holdsCurrentRoute) setOpen(true)
+  }, [holdsCurrentRoute])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey, open ? '1' : '0')
+    } catch {
+      // Remembering is a convenience, not a requirement.
+    }
+  }, [open, storageKey])
+
+  const groupId = `nav-group-${label.toLowerCase()}`
+
+  return (
+    <div className="nav-group">
+      <button
+        type="button"
+        className="nav-group__toggle"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls={groupId}
+      >
+        <span className="nav-group__label">{label}</span>
+        {/* A dot when the group is folded away but holds the current page, so a
+            collapsed sidebar still says where you are. */}
+        {!open && holdsCurrentRoute && <span className="nav-group__dot" aria-hidden="true" />}
+        <span className="nav-group__chevron" aria-hidden="true">
+          {open ? <IconChevronDown /> : <IconChevronRight />}
+        </span>
+      </button>
+      <div id={groupId} className="nav-group__items" hidden={!open}>
+        {sections.map((x) => (
+          <NavItem key={x.route} to={x.route} label={x.label} icon={x.icon} end={x.end} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function AdminNav() {
   // Every module now lives inside the group it belongs to — Connectors with the
   // data it supplies, Users with the rest of platform administration. A generic
@@ -151,33 +252,10 @@ function AdminNav() {
         <NavItem to="/admin" label="Overview" icon={IconDashboard} end />
       </div>
 
-      <div className="nav-group">
-        <div className="nav-group__label">Data</div>
-        {DATA_SECTIONS.map((s) => (
-          <NavItem key={s.route} to={s.route} label={s.label} icon={s.icon} end={s.end} />
-        ))}
-      </div>
-
-      <div className="nav-group">
-        <div className="nav-group__label">Strategies</div>
-        {STRATEGIES_SECTIONS.map((s) => (
-          <NavItem key={s.route} to={s.route} label={s.label} icon={s.icon} end={s.end} />
-        ))}
-      </div>
-
-      <div className="nav-group">
-        <div className="nav-group__label">Backtesting</div>
-        {BACKTESTING_SECTIONS.map((s) => (
-          <NavItem key={s.route} to={s.route} label={s.label} icon={s.icon} end={s.end} />
-        ))}
-      </div>
-
-      <div className="nav-group">
-        <div className="nav-group__label">System</div>
-        {SYSTEM_SECTIONS.map((s) => (
-          <NavItem key={s.route} to={s.route} label={s.label} icon={s.icon} end={s.end} />
-        ))}
-      </div>
+      <NavGroup label="Data" sections={DATA_SECTIONS} />
+      <NavGroup label="Strategies" sections={STRATEGIES_SECTIONS} />
+      <NavGroup label="Backtesting" sections={BACKTESTING_SECTIONS} />
+      <NavGroup label="System" sections={SYSTEM_SECTIONS} />
 
     </>
   )
@@ -230,6 +308,28 @@ export function AppLayout() {
   const navigate = useNavigate()
   const location = useLocation()
 
+  // The sidebar is a drawer below 760px. It used to simply stack above the
+  // content there, which meant every page on a phone opened on twenty nav links
+  // with the actual screen somewhere past the fold.
+  const [navOpen, setNavOpen] = useState(false)
+
+  // Tapping a link should navigate AND get out of the way.
+  useEffect(() => { setNavOpen(false) }, [location.pathname])
+
+  // A drawer that traps the page behind it must also stop it scrolling, or the
+  // content slides around under the overlay while the drawer stays put.
+  useEffect(() => {
+    if (!navOpen) return
+    const previous = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setNavOpen(false) }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      document.body.style.overflow = previous
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [navOpen])
+
   const match = ROUTE_TITLES.find(([prefix]) => location.pathname.startsWith(prefix))
   const initials = (user?.userName ?? '?').slice(0, 2).toUpperCase()
 
@@ -243,8 +343,16 @@ export function AppLayout() {
   }
 
   return (
-    <div className="shell">
-      <aside className="shell__sidebar">
+    <div className={`shell ${navOpen ? 'shell--nav-open' : ''}`}>
+      {/* Only rendered while open, so it cannot swallow taps when closed. */}
+      {navOpen && (
+        <div
+          className="shell__scrim"
+          onClick={() => setNavOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+      <aside className="shell__sidebar" id="main-nav">
         <div className="shell__brand">
           <span className="shell__brand-mark" aria-hidden="true">
             <IconLogo />
@@ -281,6 +389,16 @@ export function AppLayout() {
 
       <div className="shell__body">
         <header className="topbar">
+          <button
+            type="button"
+            className="topbar__nav-toggle"
+            onClick={() => setNavOpen((v) => !v)}
+            aria-label={navOpen ? 'Close navigation' : 'Open navigation'}
+            aria-expanded={navOpen}
+            aria-controls="main-nav"
+          >
+            {navOpen ? <IconX /> : <IconMenu />}
+          </button>
           <span className="topbar__title">
             {match?.[1] && <span className="topbar__crumb">{match[1]} / </span>}
             {match?.[2] ?? 'Console'}

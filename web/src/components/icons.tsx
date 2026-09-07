@@ -252,3 +252,10 @@ export const IconX = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 )
 
+
+/** Hamburger — opens the navigation drawer on narrow screens. */
+export const IconMenu = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M4 7h16M4 12h16M4 17h16" />
+  </Icon>
+)

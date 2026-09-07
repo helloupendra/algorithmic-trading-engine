@@ -142,7 +142,13 @@ export function useLiveFeedSignalR() {
             bidPrice: tick.bidPrice ?? q.bidPrice,
             askPrice: tick.askPrice ?? q.askPrice,
             volume: tick.volume ?? q.volume,
-            updatedUtc: tick.exchangeTimestampUtc ?? new Date().toISOString(),
+            // Arrival time, to match what the REST snapshot puts here. This
+            // used to be assigned the tick's EXCHANGE stamp, so the field meant
+            // "when we got it" after a poll and "when it last traded" after a
+            // push - and a quiet contract's age jumped between 1s and minutes
+            // depending on which had landed last.
+            updatedUtc: new Date().toISOString(),
+            exchangeTimestampUtc: tick.exchangeTimestampUtc ?? q.exchangeTimestampUtc,
           }
         })
       })

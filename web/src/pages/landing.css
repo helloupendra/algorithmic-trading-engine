@@ -27,8 +27,13 @@
 .lp .brand small { display: block; font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--text-3); line-height: 1.1; }
 .lp .nav__links { display: flex; align-items: center; gap: 22px; margin-left: auto; font-size: 13.5px; font-weight: 550; }
 /* :visited out-specifies the console's a:not([class]):visited (0,2,1) so clicked section links stay grey. */
-.lp .nav__links a, .lp .nav__links a:visited { color: var(--text-2); white-space: nowrap; }
-.lp .nav__links a:hover { color: var(--text); text-decoration: none; }
+/* :not(.btn) because the CTA is an <a> in here too: `.lp .nav__links a` is
+   (0,2,1) and beat `.lp .btn--primary` (0,2,0), so the button took the muted
+   section-link grey instead of its white — blue-grey text on a blue fill, which
+   is roughly the one combination that button must never have. The :hover rule
+   below did the same thing to :hover. */
+.lp .nav__links a:not(.btn), .lp .nav__links a:not(.btn):visited { color: var(--text-2); white-space: nowrap; }
+.lp .nav__links a:not(.btn):hover { color: var(--text); text-decoration: none; }
 .lp .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 11px 18px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--surface2); color: var(--text); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: transform .16s ease, background .16s ease, border-color .16s ease, box-shadow .16s ease; }
 .lp .btn:hover { text-decoration: none; transform: translateY(-1px); background: #1c2836; border-color: #37485f; }
 .lp .btn--primary { background: var(--brand); border-color: transparent; color: #fff; box-shadow: 0 12px 30px -12px var(--brand); }

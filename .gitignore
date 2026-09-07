@@ -152,3 +152,8 @@ TradingMasterclass-Report/
 # AI trader blueprint report + research notes (private, offline HTML) — never published.
 ai-trader/
 docs/roadmap/
+
+# Which symbols this machine parked at the equity close (scripts/session_watchlist.py).
+# Runtime state of one box, not of the project: pushing it would let one
+# machine's parked list overwrite another's.
+data/session-watchlist-state.json
