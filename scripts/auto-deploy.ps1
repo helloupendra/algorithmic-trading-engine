@@ -98,6 +98,81 @@ function Send-Alert {
     }
 }
 
+<#
+    Writes what this run actually did, as structured JSON the console can render.
+
+    The Telegram message is prose for a phone; this is the record. It exists
+    because "did the machine take my push, and is it live?" is a question with
+    four separate answers - pulled, console rebuilt, API restarted, engine left
+    alone - and a paragraph cannot be read at a glance while something is wrong.
+
+    Newest first, capped: this is an operations feed, not an archive.
+#>
+$DeployHistoryFile = Join-Path $RepoRoot 'data\deploy-history.json'
+$script:Steps = New-Object System.Collections.Generic.List[object]
+$script:StartedUtc = (Get-Date).ToUniversalTime().ToString('o')
+
+function Add-Step {
+    param(
+        [string]$Name,
+        [ValidateSet('ok', 'skipped', 'failed')][string]$Status,
+        [string]$Detail
+    )
+    $script:Steps.Add([ordered]@{
+        name   = $Name
+        status = $Status
+        detail = $Detail
+        atUtc  = (Get-Date).ToUniversalTime().ToString('o')
+    })
+}
+
+function Write-DeployRecord {
+    param(
+        [ValidateSet('applied', 'skipped', 'failed')][string]$Outcome,
+        [string]$FromCommit = '',
+        [string]$ToCommit = '',
+        [string[]]$Commits = @(),
+        [int]$FilesChanged = 0,
+        [string]$Summary = ''
+    )
+
+    $record = [ordered]@{
+        startedUtc   = $script:StartedUtc
+        finishedUtc  = (Get-Date).ToUniversalTime().ToString('o')
+        outcome      = $Outcome
+        summary      = $Summary
+        fromCommit   = $FromCommit
+        toCommit     = $ToCommit
+        commits      = @($Commits)
+        filesChanged = $FilesChanged
+        # .ToArray(), not @(...): wrapping a List[object] of ordered
+        # hashtables in @() makes the enclosing [ordered] cast throw
+        # "Argument types do not match" on PowerShell 5.1.
+        steps        = $script:Steps.ToArray()
+        machine      = $env:COMPUTERNAME
+    }
+
+    try {
+        $history = @()
+        if (Test-Path $DeployHistoryFile) {
+            $existing = Get-Content $DeployHistoryFile -Raw -EA Stop | ConvertFrom-Json
+            if ($existing) { $history = @($existing) }
+        }
+        # Newest first, and bounded - an unbounded file on a two-minute schedule
+        # is a slow leak nobody notices until it is large.
+        $history = @($record) + $history | Select-Object -First 40
+        $dir = Split-Path -Parent $DeployHistoryFile
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force $dir | Out-Null }
+        # -InputObject, not the pipeline: piping a one-element array sends a
+        # single object down it, and the file then holds a bare object where the
+        # reader expects a list.
+        ConvertTo-Json -InputObject $history -Depth 6 |
+            Set-Content -Path $DeployHistoryFile -Encoding utf8
+    } catch {
+        Write-Log "  (could not write the deploy record: $($_.Exception.Message))" 'Yellow'
+    }
+}
+
 # --------------------------------------------------------------- install ----
 if ($Uninstall) {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -EA SilentlyContinue
@@ -187,7 +262,9 @@ $dirty = git status --porcelain
 if ($dirty) {
     $n = ($dirty | Measure-Object -Line).Lines
     Write-Log "SKIPPED - $n uncommitted file(s) here. Commit or stash them first." 'Yellow'
+Add-Step 'Pulled from GitHub' 'skipped' "$n uncommitted file(s) on this machine"
     Send-Alert 'Deploy skipped' "This machine has $n uncommitted change(s), so the pull was not attempted.`norigin/main is at $($remote.Substring(0,7))." 'warning'
+Write-DeployRecord -Outcome 'skipped' -ToCommit $remote.Substring(0,7) -Summary 'Uncommitted changes on this machine'
     exit 0
 }
 
@@ -195,7 +272,9 @@ $ahead = git rev-list origin/main..HEAD
 if ($ahead) {
     $n = ($ahead | Measure-Object -Line).Lines
     Write-Log "SKIPPED - $n local commit(s) are not on origin. Push them first." 'Yellow'
+Add-Step 'Pulled from GitHub' 'skipped' "$n local commit(s) are not on origin"
     Send-Alert 'Deploy skipped' "This machine has $n commit(s) that are not on origin/main, so it was not fast-forwarded." 'warning'
+Write-DeployRecord -Outcome 'skipped' -ToCommit $remote.Substring(0,7) -Summary 'Local commits are not pushed yet'
     exit 0
 }
 
@@ -210,7 +289,9 @@ $before = $local
 git merge --ff-only origin/main --quiet
 if ($LASTEXITCODE -ne 0) {
     Write-Log "SKIPPED - not a fast-forward; the branches have diverged." 'Red'
+Add-Step 'Pulled from GitHub' 'failed' 'Not a fast-forward - the branches have diverged'
     Send-Alert 'Deploy skipped' 'origin/main and this machine have diverged, so no merge was attempted. Resolve it by hand.' 'error'
+Write-DeployRecord -Outcome 'skipped' -ToCommit $remote.Substring(0,7) -Summary 'Branches have diverged - resolve by hand'
     exit 0
 }
 $after = (git rev-parse HEAD).Trim()
@@ -218,6 +299,7 @@ $changed = git diff --name-only $before $after
 $subjects = git log --oneline "$before..$after"
 
 Write-Log "Fast-forwarded to $($after.Substring(0,7)) - $(($changed | Measure-Object -Line).Lines) file(s) changed." 'Green'
+Add-Step 'Pulled from GitHub' 'ok' "$($before.Substring(0,7)) -> $($after.Substring(0,7)), $(($changed | Measure-Object -Line).Lines) file(s)"
 
 $webChanged = @($changed | Where-Object { $_ -like 'web/*' }).Count -gt 0
 $apiChanged = @($changed | Where-Object { $_ -like 'src/*' -and $_ -like '*.cs' }).Count -gt 0
@@ -248,30 +330,33 @@ $deferred = New-Object System.Collections.Generic.List[string]
 if ($webChanged) {
     Write-Log "  web/ changed - rebuilding the console (no restart needed)." 'Cyan'
     & (Join-Path $PSScriptRoot 'deploy.ps1') -Web
-    if ($LASTEXITCODE -eq 0) { $done.Add('console rebuilt') }
-    else { $deferred.Add('console build FAILED - the old bundle is still being served') }
+    if ($LASTEXITCODE -eq 0) { $done.Add('console rebuilt'); Add-Step 'Console rebuilt' 'ok' 'New bundle is being served - no restart needed' }
+    else { $deferred.Add('console build FAILED'); Add-Step 'Console rebuilt' 'failed' 'Build failed - the old bundle is still being served' }
 }
 
 if ($apiChanged) {
     if ($liveRuns -eq 0) {
         Write-Log "  src/**.cs changed and nothing is running - rebuilding and restarting the API." 'Cyan'
         & (Join-Path $PSScriptRoot 'deploy.ps1') -Api
-        if ($LASTEXITCODE -eq 0) { $done.Add('API rebuilt and restarted') }
-        else { $deferred.Add('API build FAILED') }
+        if ($LASTEXITCODE -eq 0) { $done.Add('API rebuilt and restarted'); Add-Step 'API rebuilt and restarted' 'ok' 'Backend is live on the new build' }
+        else { $deferred.Add('API build FAILED'); Add-Step 'API rebuilt and restarted' 'failed' 'Build failed - see logs/api-stdout.log' }
     } else {
         $who = if ($liveRuns -lt 0) { 'the API could not be reached' } else { "$liveRuns run(s) are live" }
         Write-Log "  src/**.cs changed but $who - NOT restarting." 'Yellow'
         $deferred.Add("API changes are pulled but NOT built or restarted ($who). Run: .\scripts\deploy.ps1 -Api")
+        Add-Step 'API restart' 'skipped' $who
     }
 }
 
 if ($engineChanged) {
     # Restarting the engine would kill whatever it is running mid-position.
     $deferred.Add('Python engine changed - restart the ingestor/runner yourself when the desk is quiet')
+    Add-Step 'Python engine' 'skipped' 'Changed - restart the ingestor/runner when the desk is quiet'
 }
 
 if (-not $webChanged -and -not $apiChanged -and -not $engineChanged) {
     $done.Add('nothing that runs here changed (docs or config only)')
+    Add-Step 'Nothing to rebuild' 'ok' 'Only docs or config changed'
 }
 
 # --- say what happened ------------------------------------------------------
@@ -283,4 +368,11 @@ if ($deferred.Count) { $lines += ''; $lines += 'Needs you:'; $deferred | ForEach
 $severity = 'success'
 if ($deferred.Count) { $severity = 'warning' }
 Send-Alert 'Deploy' ($lines -join "`n") $severity
+$outcome = 'applied'
+if ($deferred.Count) { $outcome = 'failed' }
+$summary = 'Pulled and live'
+if ($deferred.Count) { $summary = 'Pulled, but something still needs you' }
+Write-DeployRecord -Outcome $outcome -FromCommit $before.Substring(0,7) `
+    -ToCommit $after.Substring(0,7) -Commits @($subjects) `
+    -FilesChanged (($changed | Measure-Object -Line).Lines) -Summary $summary
 Write-Log "Done." 'Green'

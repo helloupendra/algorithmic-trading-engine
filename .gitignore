@@ -157,3 +157,7 @@ docs/roadmap/
 # Runtime state of one box, not of the project: pushing it would let one
 # machine's parked list overwrite another's.
 data/session-watchlist-state.json
+
+# What this machine did with the last pushes (scripts/auto-deploy.ps1).
+# One box's operational record; pushing it would mix machines' histories.
+data/deploy-history.json

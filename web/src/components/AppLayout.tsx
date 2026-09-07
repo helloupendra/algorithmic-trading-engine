@@ -295,6 +295,7 @@ const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]>
   ['/admin/system/risk', 'System', 'Risk & kill switch'],
   ['/admin/system/alerts', 'System', 'Alerts'],
   ['/admin/system/logs', 'System', 'Activity log'],
+  ['/admin/system/deployments', 'System', 'Deployments'],
   ['/admin/broker', 'Data', 'Connectors'],
   ['/admin/system', 'System', 'Overview'],
   ['/admin', null, 'Overview'],
