@@ -28,6 +28,7 @@ import { BrokerPage } from './pages/admin/BrokerPage'
 import { ConnectorDetailPage } from './pages/admin/ConnectorDetailPage'
 import { LiveAlertsV2Page } from './pages/admin/LiveAlertsV2Page'
 import { ActivityLogPage } from './pages/admin/ActivityLogPage'
+import { DeploymentsPage } from './pages/admin/DeploymentsPage'
 import { StrategiesOverviewPage } from './pages/strategies/StrategiesOverviewPage'
 import { LiveRunnerPage } from './pages/strategies/LiveRunnerPage'
 import { StrategyLibraryPage } from './pages/strategies/StrategyLibraryPage'
@@ -142,6 +143,7 @@ export default function App() {
 
                   <Route path="/admin/system/alerts" element={<LiveAlertsV2Page />} />
                   <Route path="/admin/system/logs" element={<ActivityLogPage />} />
+                  <Route path="/admin/system/deployments" element={<DeploymentsPage />} />
                   <Route path="/admin/live-alerts" element={<Navigate to="/admin/system/alerts" replace />} />
                   <Route path="/admin/broker" element={<BrokerPage />} />
                   <Route path="/admin/broker/:providerKey" element={<ConnectorDetailPage />} />
