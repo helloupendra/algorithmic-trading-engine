@@ -71,6 +71,23 @@ function nearMonth(rows: Instrument[] | undefined, root: string): Instrument | n
   return candidates[0] ?? null
 }
 
+/**
+ * How old the PRICE is, not how old our copy of it is.
+ *
+ * These differ on anything that trades in bursts: measured on 2026-09-07, MCX
+ * gold futures had been written 1s earlier and last traded 211s earlier, while
+ * gold mini had traded 4s earlier. Reading the write time would say every
+ * contract is a second old, which is true and useless; reading the exchange
+ * stamp says a quiet contract has not printed in three minutes, which is the
+ * thing a desk needs to know before trusting the number.
+ *
+ * Falls back to the write time when the vendor sends no stamp.
+ */
+function priceAgeSource(quote: LiveQuote | undefined): string | undefined {
+  if (!quote) return undefined
+  return quote.exchangeTimestampUtc ?? quote.updatedUtc
+}
+
 function changePct(quote: LiveQuote | undefined): number | null {
   if (!quote || quote.lastTradedPrice == null || quote.close == null || quote.close === 0)
     return null
@@ -181,7 +198,9 @@ export function CommodityPage() {
                         <span className={chg == null ? 'muted' : chg >= 0 ? 'pos' : 'neg'}>
                           {chg == null ? '' : `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`}
                         </span>{' '}
-                        <span className="faint">· {formatAge(r.quote.updatedUtc)}</span>
+                        <span className="faint" title="Time since this contract last traded">
+                          · {formatAge(priceAgeSource(r.quote))}
+                        </span>
                       </>
                     ) : !r.contract ? (
                       <span className="faint">no live contract</span>
@@ -231,7 +250,7 @@ export function CommodityPage() {
                     <th className="r">Low</th>
                     <th className="r">Prev close</th>
                     <th className="r">Volume</th>
-                    <th>Feed</th>
+                    <th title="Time since this contract last traded">Last trade</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -265,7 +284,7 @@ export function CommodityPage() {
                           {!r.contract ? (
                             <Badge>none</Badge>
                           ) : q ? (
-                            <span className="faint">{formatAge(q.updatedUtc)}</span>
+                            <span className="faint">{formatAge(priceAgeSource(q))}</span>
                           ) : r.isWatched ? (
                             <Badge tone="accent">subscribed</Badge>
                           ) : (
@@ -279,8 +298,10 @@ export function CommodityPage() {
               </table>
             </div>
             <p className="faint" style={{ fontSize: 12, marginTop: 10 }}>
-              MCX trades to 23:30 IST, well past the equity close. A quote that stops ageing
-              is the feed stopping, not the exchange — the ingestor is on{' '}
+              MCX trades late into the evening, well past the equity close. "Last trade" is
+              the exchange's own clock, so a quiet contract can read minutes old while the
+              feed is perfectly healthy — the full-size gold and silver futures print far
+              less often than their minis. Feed health is the chip in the topbar and{' '}
               <a href="/admin/data/live">Live feeds</a>.
             </p>
           </Panel>

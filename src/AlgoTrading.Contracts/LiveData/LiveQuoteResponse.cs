@@ -82,9 +82,25 @@ namespace AlgoTrading.Contracts.LiveData
         public decimal? Vega { get; set; }
 
         /// <summary>
-        /// Timestamp of the last received quote.
+        /// When this row was written by the API. Feed health, not price age.
         /// </summary>
         public DateTime UpdatedUtc { get; set; }
+
+        /// <summary>
+        /// When the exchange says this price was made - i.e. the last trade.
+        /// </summary>
+        /// <remarks>
+        /// Carried because the two answer different questions and a screen that
+        /// shows one while meaning the other misleads. On a quiet contract the
+        /// gap is large and real: MCX gold futures wrote at 1s and last traded
+        /// 211s earlier on 2026-09-07, while gold mini traded 4s earlier. A
+        /// dashboard reading "211s" off the exchange stamp is telling the truth
+        /// about the price; the same number read as feed lag is a false alarm.
+        ///
+        /// Null when the vendor sends no stamp, in which case the arrival time
+        /// is the only answer there is.
+        /// </remarks>
+        public DateTime? ExchangeTimestampUtc { get; set; }
     }
 
 }

@@ -28,7 +28,17 @@ export interface LiveQuote {
   low: number | null
   close: number | null
   volume: number | null
+  /** When the API wrote the row. Feed health, not price age. */
   updatedUtc: string
+  /**
+   * When the exchange says the price was made - the last trade.
+   *
+   * Not the same question as updatedUtc, and on a quiet contract not the same
+   * answer: MCX gold futures was written 1s ago and last traded 211s ago while
+   * gold mini traded 4s ago. Screens showing "how old is this price" must read
+   * this one; "is the feed alive" reads updatedUtc.
+   */
+  exchangeTimestampUtc?: string | null
   /** Patched in from SignalR ticks; the REST snapshot does not carry them. */
   bidPrice?: number | null
   askPrice?: number | null

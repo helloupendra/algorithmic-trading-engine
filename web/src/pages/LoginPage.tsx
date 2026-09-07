@@ -39,10 +39,17 @@ export function LoginPage() {
       const target = from ? `${from.pathname}${from.search ?? ''}${from.hash ?? ''}` : null
       navigate(target ?? (me.role === 'Admin' ? '/admin' : '/trader'), { replace: true })
     } catch (err) {
+      // An ApiError carries a message the server chose to show a user ("wrong
+      // password"). Anything else is the request never completing - a dropped
+      // connection, a tunnel blip, the server restarting - and the operator on
+      // a phone can do nothing with a port number. Name the port only where a
+      // developer would see it.
       setError(
         err instanceof ApiError
           ? err.message
-          : 'Could not reach the API. Is it running on port 5025?',
+          : import.meta.env.DEV
+            ? 'Could not reach the API. Is it running on port 5025?'
+            : "Couldn't reach the server. Check your connection and try again.",
       )
     } finally {
       setIsSubmitting(false)

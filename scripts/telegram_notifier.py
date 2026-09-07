@@ -603,12 +603,24 @@ class Watcher:
 
     # -- positions ----------------------------------------------------------- #
     def _diff_positions(self, run_id: int, run: dict[str, Any]) -> None:
+        """
+        Collect everything that moved on this run in this tick, then send ONE
+        message about it.
+
+        A strategy does not open one leg, it opens a position: FulcrumBuy enters
+        a straddle, an adjustment closes two legs and opens two more. Reporting
+        each leg separately put three or four messages in the group for a single
+        decision, in arrival order, with nothing tying them together - which is
+        exactly the moment the desk most needs to see one thing.
+        """
         live = self._fetch_live(run_id)
         if live is None:
             return
 
         known = self._positions.setdefault(run_id, {})
         seen: dict[int, str] = {}
+        opened: list[dict[str, Any]] = []
+        closed: list[dict[str, Any]] = []
 
         for position in live.get("positions") or []:
             pid = position.get("id")
@@ -620,93 +632,132 @@ class Watcher:
             previous = known.get(pid)
 
             if previous is None:
-                self._alert_position_opened(run, position)
+                # A leg already closed the first time we see it was opened and
+                # closed between two polls; report it as the close it is.
+                if status.lower() == "open":
+                    opened.append(position)
+                else:
+                    closed.append(position)
             elif previous != status and status.lower() != "open":
-                self._alert_position_closed(run, position)
+                closed.append(position)
 
         # A leg that vanished from the payload entirely counts as closed, but we
         # have no closing numbers for it, so say only what is true.
-        for pid, previous in known.items():
-            if pid not in seen and previous.lower() == "open":
-                self._alert_position_vanished(run, pid)
+        vanished = [
+            pid for pid, previous in known.items()
+            if pid not in seen and previous.lower() == "open"
+        ]
 
         self._positions[run_id] = seen
+
+        if opened or closed or vanished:
+            self._alert_position_change(run, live, opened, closed, vanished)
 
     @staticmethod
     def _contract(position: dict[str, Any]) -> str:
         contract = position.get("contract") or {}
         return str(contract.get("label") or position.get("symbol") or "?")
 
-    def _alert_position_opened(self, run: dict[str, Any], position: dict[str, Any]) -> None:
-        label = self._contract(position)
+    @staticmethod
+    def _leg_line(position: dict[str, Any], closing: bool) -> list[str]:
+        """One leg, as two lines: what it is, then what it cost or made."""
         side = str(position.get("side") or "?").upper()
-        icon = "🟢" if side == "BUY" else "🔴"
+        label = Watcher._contract(position)
+        qty = qty_line(position.get("lots"), position.get("lotSize"), position.get("quantity"))
 
-        lines = [
-            f"{icon} <b>Position opened</b> — {esc(side)} <b>{esc(label)}</b>",
-            "",
-            f"Strategy: {esc(run.get('strategyName', '?'))} · {esc(run.get('underlying', '?'))}",
-            f"Quantity: {esc(qty_line(position.get('lots'), position.get('lotSize'), position.get('quantity')))}",
-            f"Entry:    <b>{esc(position.get('entryPrice'))}</b>",
-            f"LTP:      {esc(position.get('ltp'))}",
-            f"Value:    {esc(plain(position.get('entryValue')))}",
-            f"Opened:   {esc(ist(position.get('openedUtc')))}",
-            f"Run:      #{run.get('runId')}",
+        head = f"  <b>{esc(side)}</b> {esc(label)}"
+        if closing:
+            pnl = float(position.get("pnl") or 0)
+            body = (
+                f"     {esc(qty)} · {esc(position.get('entryPrice'))} -> "
+                f"<b>{esc(position.get('ltp'))}</b> · {esc(money(pnl))}"
+            )
+        else:
+            body = (
+                f"     {esc(qty)} @ <b>{esc(position.get('entryPrice'))}</b>"
+                f" · LTP {esc(position.get('ltp'))}"
+            )
+        return [head, body]
+
+    def _alert_position_change(
+        self,
+        run: dict[str, Any],
+        live: dict[str, Any],
+        opened: list[dict[str, Any]],
+        closed: list[dict[str, Any]],
+        vanished: list[int],
+    ) -> None:
+        """
+        Everything one run did in one tick, as a single message.
+
+        Opens and closes share a message on purpose: an adjustment IS a close and
+        an open, and splitting it hides the very thing worth seeing - that the
+        strategy rolled, and at what.
+        """
+        name = run.get("strategyName", "?")
+        underlying = run.get("underlying", "?")
+        pnl = live.get("pnl") or {}
+        realized_now = sum(float(p.get("pnl") or 0) for p in closed)
+
+        # The headline names the shape of the move, so the first line alone says
+        # what happened without reading the legs.
+        if opened and closed:
+            icon = "🔁"
+            what = f"rolled - {len(closed)} out, {len(opened)} in"
+        elif opened:
+            icon = "🟢"
+            what = f"{len(opened)} leg{'s' if len(opened) != 1 else ''} opened"
+        else:
+            total = len(closed) + len(vanished)
+            icon = "✅" if realized_now > 0 else ("🔻" if realized_now < 0 else "⚪")
+            what = f"{total} leg{'s' if total != 1 else ''} closed"
+
+        lines = [f"{icon} <b>{esc(name)}</b> · {esc(underlying)} - {esc(what)}", ""]
+
+        if closed:
+            lines.append("<b>Closed</b>")
+            for position in closed:
+                lines += self._leg_line(position, closing=True)
+            if len(closed) > 1:
+                lines.append(f"     <b>= {esc(money(realized_now))}</b>")
+            lines.append("")
+
+        if vanished:
+            ids = ", ".join(f"#{v}" for v in vanished)
+            lines.append(f"<b>Closed</b> (no closing price recorded): {esc(ids)}")
+            lines.append("")
+
+        if opened:
+            lines.append("<b>Opened</b>")
+            for position in opened:
+                lines += self._leg_line(position, closing=False)
+            lines.append("")
+
+        open_legs = sum(
+            1 for p in (live.get("positions") or [])
+            if str(p.get("status") or "").lower() == "open"
+        )
+        lines += [
+            f"Run P&amp;L: <b>{esc(money(pnl.get('total')))}</b>"
+            f"  (realized {esc(money(pnl.get('realized')))})",
+            f"Open now:  {open_legs}   ·   spot {esc(live.get('spotLtp'))}",
+            f"Run #{run.get('runId')} · {esc(ist(datetime.now(timezone.utc).isoformat()))}",
         ]
 
+        severity = "info"
+        if closed and not opened:
+            severity = "success" if realized_now > 0 else ("warning" if realized_now < 0 else "info")
+
         self._publisher.publish(
-            title=f"Position opened · {side} {label}",
-            message="\n".join(lines),
+            title=f"{name} · {underlying} · {what}",
+            message=chr(10).join(lines),
             source="strategyrun",
-            severity="info",
-            underlying=run.get("underlying"),
-            symbol=position.get("symbol"),
+            severity=severity,
+            underlying=underlying,
+            symbol=run.get("spotSymbol"),
             run_id=run.get("runId"),
         )
 
-    def _alert_position_closed(self, run: dict[str, Any], position: dict[str, Any]) -> None:
-        label = self._contract(position)
-        side = str(position.get("side") or "?").upper()
-        pnl = float(position.get("pnl") or 0)
-        icon = "✅" if pnl > 0 else ("🔻" if pnl < 0 else "⚪")
-
-        lines = [
-            f"{icon} <b>Position closed</b> — {esc(side)} <b>{esc(label)}</b>",
-            "",
-            f"Strategy: {esc(run.get('strategyName', '?'))} · {esc(run.get('underlying', '?'))}",
-            f"Quantity: {esc(qty_line(position.get('lots'), position.get('lotSize'), position.get('quantity')))}",
-            f"Entry:    {esc(position.get('entryPrice'))}",
-            f"Exit:     <b>{esc(position.get('ltp'))}</b>",
-            f"P&amp;L:      <b>{esc(money(pnl))}</b>"
-            f"   ({esc(position.get('pnlPoints'))} pts · {esc(position.get('pnlPercent'))}%)",
-            f"Closed:   {esc(ist(position.get('closedUtc') or position.get('ltpUpdatedUtc')))}",
-            f"Run:      #{run.get('runId')}",
-        ]
-
-        self._publisher.publish(
-            title=f"Position closed · {side} {label} · {money(pnl)}",
-            message="\n".join(lines),
-            source="strategyrun",
-            severity="success" if pnl > 0 else ("warning" if pnl < 0 else "info"),
-            underlying=run.get("underlying"),
-            symbol=position.get("symbol"),
-            run_id=run.get("runId"),
-        )
-
-    def _alert_position_vanished(self, run: dict[str, Any], position_id: int) -> None:
-        self._publisher.publish(
-            title="Position closed",
-            message=(
-                f"⚪ <b>Position closed</b> — leg #{position_id} is no longer on the run.\n\n"
-                f"Strategy: {esc(run.get('strategyName', '?'))} · {esc(run.get('underlying', '?'))}\n"
-                f"Run:      #{run.get('runId')}\n\n"
-                "<i>The leg left the book between polls, so no closing price is available.</i>"
-            ),
-            source="strategyrun",
-            severity="info",
-            underlying=run.get("underlying"),
-            run_id=run.get("runId"),
-        )
 
     # -- market data --------------------------------------------------------- #
     def _diff_ingestor(self) -> None:

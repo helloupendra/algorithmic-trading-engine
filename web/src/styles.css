@@ -412,12 +412,64 @@ select.field__input { appearance: auto; }
 
 .nav-group__label {
   font-size: 10.5px;
-  font-weight: 650;
-  letter-spacing: 0.09em;
+  font-weight: 700;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--text-3);
-  padding: 0 10px 6px;
+  /* These are the four signposts of the sidebar. At --text-3 they were fainter
+     than the links they head, which inverts the hierarchy. */
+  color: #8d9cb2;
 }
+
+/* The group heading is a control now, so it has to look and behave like one:
+   full width, comfortable target, and a chevron that says which way it goes. */
+.nav-group__toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.nav-group__toggle:hover { background: var(--bg2); }
+.nav-group__toggle:hover .nav-group__label { color: var(--text-2); }
+
+.nav-group__toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.nav-group__chevron {
+  margin-left: auto;
+  display: inline-flex;
+  color: var(--text-3);
+}
+
+.nav-group__chevron svg { width: 13px; height: 13px; }
+
+/* Says "the page you are on lives in here" while the group is folded. */
+.nav-group__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.nav-group__items {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-top: 2px;
+}
+
+/* The [hidden] attribute is only `display: none` in the UA stylesheet, and any
+   author `display` beats it - so the flex rule above kept every collapsed group
+   on screen while telling screen readers it was hidden. */
+.nav-group__items[hidden] { display: none; }
 
 .nav-link {
   display: flex;
@@ -425,7 +477,10 @@ select.field__input { appearance: auto; }
   gap: 10px;
   padding: 7px 10px;
   border-radius: var(--radius-sm);
-  color: var(--text-2);
+  /* A step brighter than the general muted token. The sidebar is read at a
+     glance twenty times an hour, and --text-2 is tuned for body copy sitting on
+     a lighter panel, not for 13px labels on the darkest surface in the app. */
+  color: #aab7c9;
   text-decoration: none;
   font-size: 13px;
   font-weight: 500;
@@ -458,11 +513,29 @@ select.field__input { appearance: auto; }
   width: 16px;
   height: 16px;
   flex: none;
-  color: var(--text-3);
+  /* Was --text-3: one step DIMMER than the label beside it, which is the same
+     thing every disabled control in this app does. An icon quieter than its own
+     text reads as switched off. It follows the link now, so hover and active
+     carry it along for free. */
+  color: inherit;
+  opacity: 0.92;
 }
-.nav-link:hover .nav-link__icon,
-.nav-link--active .nav-link__icon { color: currentColor; }
-.nav-link__icon svg { width: 16px; height: 16px; display: block; }
+.nav-link:hover .nav-link__icon { opacity: 1; }
+.nav-link__icon svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+  /* The set is drawn at 1.7 for 24px. Held at 16px that lands under a physical
+     pixel on a 1x screen and goes grey and furry; 1.9 puts it back on one. */
+  stroke-width: 1.9;
+}
+
+/* The active row already has the brand tint and the left bar; giving its icon
+   the same accent is what makes the whole row read as one object. */
+.nav-link--active .nav-link__icon {
+  color: var(--brand-hi);
+  opacity: 1;
+}
 
 .nav-link--disabled {
   opacity: 0.55;
@@ -554,6 +627,46 @@ select.field__input { appearance: auto; }
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* On a 393px topbar the health chips wrapped onto a second row and doubled the
+   bar's height. They scroll sideways instead - still all there, still one row.
+   Anchored to the START, not the end: the list begins with the two session
+   chips, and "is the market open" is the thing you glance at. Ending-anchored
+   scrolled exactly that off the left edge. */
+@media (max-width: 760px) {
+  .topbar__status {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    justify-content: flex-start;
+    /* Whatever is left after the toggle and a shrunken title. */
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 6px;
+  }
+
+  .topbar__status::-webkit-scrollbar { display: none; }
+  .topbar__status > * { flex: 0 0 auto; }
+
+  /* The title yields first: the page name is also the highlighted row in the
+     drawer and the heading two lines below, so it is the least load-bearing
+     thing in this bar. */
+  .topbar__title {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Four chips on a phone: tighter, but still legible and still tappable. */
+  .topbar__status .badge,
+  .topbar__status > span {
+    font-size: 11px;
+    padding: 3px 8px;
+  }
 }
 
 .shell__main {
@@ -1463,18 +1576,111 @@ a.checklist__item:hover { background: var(--brand-soft); }
 }
 
 /* --- responsive --------------------------------------------------------------- */
+/* The nav toggle only exists on narrow screens; the media query below shows it. */
+.topbar__nav-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  /* 44px is Apple's minimum comfortable target; anything less is a mis-tap. */
+  width: 44px;
+  height: 44px;
+  margin-left: -10px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.topbar__nav-toggle:active { background: var(--bg2); }
+.topbar__nav-toggle svg { width: 20px; height: 20px; }
+
+.shell__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
 @media (max-width: 760px) {
+  /* One column, and the sidebar leaves the flow entirely: stacking it above the
+     content is what put twenty nav links between the phone and every screen. */
   .shell { grid-template-columns: 1fr; }
 
   .shell__sidebar {
-    position: static;
-    height: auto;
-    border-right: none;
-    border-bottom: 1px solid var(--line-soft);
+    position: fixed;
+    z-index: 50;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(82vw, 300px);
+    height: 100dvh;
+    border-right: 1px solid var(--line-soft);
+    transform: translateX(-100%);
+    transition: transform 180ms ease;
+    /* The notch and the home indicator both eat into this edge. */
+    padding-top: max(14px, env(safe-area-inset-top));
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+    padding-left: max(10px, env(safe-area-inset-left));
+    overscroll-behavior: contain;
   }
 
-  .shell__main { padding: 16px 14px 32px; }
-  .topbar { padding: 0 14px; }
+  .shell--nav-open .shell__sidebar { transform: translateX(0); }
+
+  .topbar__nav-toggle { display: inline-flex; }
+
+  .topbar {
+    padding: 0 12px;
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+
+  /* The three health chips are the first thing to overflow a 393px topbar, and
+     they matter more than the crumb does - so the crumb goes, not them. */
+  .topbar__crumb { display: none; }
+  .topbar__status { gap: 6px; }
+
+  .shell__main {
+    padding: 14px 12px 40px;
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+    padding-bottom: max(40px, env(safe-area-inset-bottom));
+  }
+
+  /* A page header is a title beside an action button on a desktop and a stack
+     on a phone; side by side it squeezes the title to two characters. */
+  .page__header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .page__title { font-size: 20px; }
+  .page__subtitle { font-size: 12.5px; }
+
+  /* Tables already scroll inside .tablewrap; this just stops the scroll from
+     rubber-banding the whole page on iOS. */
+  .tablewrap {
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* One card per row reads better than two cramped ones. */
+  .stat-grid { grid-template-columns: 1fr !important; }
+
+  /* Buttons and inputs are touch targets first on a phone. */
+  .btn { min-height: 40px; }
+  .btn--sm { min-height: 32px; }
+  .field__input, select, input[type='date'] { min-height: 40px; font-size: 16px; }
+}
+
+/* Wider than a phone but narrower than a laptop: keep the drawer, it is still
+   better than a sidebar eating a third of the width. */
+@media (min-width: 761px) and (max-width: 980px) {
+  .shell { grid-template-columns: 200px 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

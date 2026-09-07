@@ -1,12 +1,12 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    AlgoTrading — push local changes to the running instance.
+    AlgoTrading - push local changes to the running instance.
 
 .DESCRIPTION
     The console is served by the API out of src/AlgoTrading.Api/wwwroot, and the
     Cloudflare tunnel points at the API. So "going live" is not a deploy to a
-    server — it is rebuilding into wwwroot, and restarting the API only when the
+    server - it is rebuilding into wwwroot, and restarting the API only when the
     backend itself changed.
 
     Which switch you need depends on what you edited:
@@ -16,7 +16,7 @@
       both              -> -All
 
     The public URL does NOT change here. It belongs to the cloudflared process,
-    not to the API — restarting the API leaves the tunnel connected and it
+    not to the API - restarting the API leaves the tunnel connected and it
     resumes as soon as the API answers again. Only stopping cloudflared itself
     (or rebooting) gets you a new *.trycloudflare.com address, because a quick
     tunnel is assigned a fresh random hostname every time it starts.
