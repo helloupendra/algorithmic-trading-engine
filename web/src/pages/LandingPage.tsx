@@ -1,12 +1,15 @@
 /**
- * Public homepage ("/"). Marketing surface for the console: the shared live 3D
- * candlestick tape as a hero (see components/MarketScene), the four modules as
- * 3D tilt cards, a position-based live sample, an honest backtest sample, and
- * the principles.
+ * Public homepage ("/"). Marketing surface for the console: the strike ledger
+ * as a hero (see components/ChainScene — the option-chain poller's ring buffer
+ * as one small lit object: strike × side × poll round, money-first polling,
+ * carry-forward with null-never-zero, discrete rounds), the four modules as 3D
+ * tilt cards, a position-based live sample, an honest backtest sample, and the
+ * principles.
  *
  * Sample numbers are real figures from the console (see the strategies and
- * backtesting module docs), not decoration. Strategy code names stay out of the
- * public page — samples are labelled by what the strategy does.
+ * backtesting module docs), not decoration; the hero's chain is synthetic and
+ * prints no number at all. Strategy code names stay out of the public page —
+ * samples are labelled by what the strategy does.
  */
 
 import {
@@ -19,7 +22,7 @@ import {
 } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
-import { MarketCanvas } from '../components/MarketScene'
+import { ChainCanvas } from '../components/ChainScene'
 import { prefersReducedMotion } from '../lib/motion'
 import './landing.css'
 
@@ -116,6 +119,8 @@ export function LandingPage() {
 
   const rootRef = useRef<HTMLDivElement | null>(null)
   useReveal(rootRef)
+  // The right grid column; the ledger lays itself out against its rect.
+  const stageRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     const previous = document.title
@@ -147,7 +152,6 @@ export function LandingPage() {
       <main id="top">
         {/* ------------------------------------------------------- hero */}
         <section className="hero" aria-labelledby="hero-title">
-          <MarketCanvas variant="hero" canvasClass="hero__scene" fallbackClass="hero__fallback" />
           <div className="hero__veil" aria-hidden="true" />
 
           <div className="wrap hero__grid">
@@ -172,9 +176,14 @@ export function LandingPage() {
                 <div className="stat"><div className="stat__v live">1 m</div><div className="stat__l">Live bar resolution</div></div>
               </div>
             </div>
+            <div className="hero__stage" ref={stageRef} aria-hidden="true" />
           </div>
 
           <div className="scroll-hint" aria-hidden="true">scroll<span /></div>
+          {/* Mounted after the stage it lays out against: refs attach in tree
+              order, and the ledger measures the stage in a layout effect. Paint
+              order is set by z-index, not by position in the DOM. */}
+          <ChainCanvas variant="hero" anchorRef={stageRef} className="hero__scene" />
         </section>
 
         {/* ---------------------------------------------------- modules */}

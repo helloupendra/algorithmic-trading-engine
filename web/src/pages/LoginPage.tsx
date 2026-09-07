@@ -1,18 +1,20 @@
 /**
- * Sign-in. One composition: a quiet market tape along the foot of the page, a
- * soft brand glow behind the card, and nothing else competing with the form.
- * The card carries the contrast; the backdrop only has to say what this is.
+ * Sign-in. One composition: the strike ledger as a low shelf along the foot of
+ * the page (see components/ChainScene — the option-chain poller's ring buffer,
+ * quieter here and never moving under the pointer), a soft brand glow behind
+ * the card, and nothing else competing with the form. The card carries the
+ * contrast; the backdrop only has to say what this is.
  *
  * Username and password only. There is no public sign-up and no shortcut:
  * accounts are issued by an administrator.
  */
 
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { ApiError } from '../lib/api'
 import { IconLogo } from '../components/icons'
-import { LoginBackdrop } from '../components/LoginBackdrop'
+import { ChainCanvas } from '../components/ChainScene'
 
 export function LoginPage() {
   const { login } = useAuth()
@@ -23,6 +25,8 @@ export function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  // The risk note; the shelf keeps its call tips below it.
+  const footRef = useRef<HTMLParagraphElement | null>(null)
 
   async function signIn(name: string, pass: string) {
     setError(null)
@@ -52,8 +56,6 @@ export function LoginPage() {
 
   return (
     <div className="login">
-      <LoginBackdrop />
-
       <div className="login__pane">
         <div className="login__card">
           <Link className="login__brand" to="/">
@@ -109,10 +111,14 @@ export function LoginPage() {
           </p>
         </div>
 
-        <p className="login__foot">
+        <p className="login__foot" ref={footRef}>
           Trading involves financial risk. Validate every strategy on paper first.
         </p>
       </div>
+
+      {/* After the pane: the shelf measures the risk note in a layout effect,
+          and refs attach in tree order. z-index puts it behind the card. */}
+      <ChainCanvas variant="login" anchorRef={footRef} className="login__scene" />
     </div>
   )
 }
