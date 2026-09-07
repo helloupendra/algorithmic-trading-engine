@@ -2203,11 +2203,19 @@ a.pill:hover { border-color: var(--line-strong); }
   background: color-mix(in srgb, var(--bg0) 72%, transparent);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
+  /* The overlay scrolls too. If the card is ever taller than what is visible
+     (keyboard up, a browser whose toolbar shrinks the viewport after layout)
+     the bottom of it — the Start button — must still be reachable. */
+  overflow-y: auto;
 }
 
 .modal__card {
   width: min(920px, 100%);
+  /* dvh, not vh: on phones 100vh is the viewport with the browser toolbar
+     hidden, so a card sized from it ran under the toolbar and the Start
+     button at its foot could not be reached or tapped. */
   max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
   overflow-y: auto;
   background: var(--surface);
   border: 1px solid var(--line);
@@ -2262,6 +2270,21 @@ a.pill:hover { border-color: var(--line-strong); }
   justify-content: flex-end;
   gap: 10px;
   flex-wrap: wrap;
+  /* Stays in view while the (long) form above it scrolls inside the card. */
+  position: sticky;
+  bottom: 0;
+  background: var(--surface);
+  padding-bottom: 20px;
+  margin-bottom: -20px;
+}
+
+@media (max-width: 899px) {
+  .modal {
+    padding: 10px;
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+    align-items: flex-start;
+  }
+  .modal__card { max-height: calc(100dvh - 20px); }
 }
 
 .detail-list {
@@ -2479,11 +2502,18 @@ a.pill:hover { border-color: var(--line-strong); }
 /* Data notes (skipped entries, expired-contract caveats). */
 .data-notes {
   margin: 0;
-  padding-left: 18px;
+  padding: 8px 12px 8px 28px;
   display: grid;
   gap: 4px;
   font-size: 12.5px;
   color: var(--text-2);
+  /* One note per skipped entry: a long replay records hundreds. Boxed and
+     capped like the activity list, so opening it never swallows the page. */
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg1);
 }
 
 /* Metric grid on the run page (more tiles than a run card's strip). */

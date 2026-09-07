@@ -9,12 +9,21 @@
 #   - writes logs/desk.status every loop so scripts/status.sh can answer
 #     "is it running?" without guessing.
 #
-# Why one loop in a Terminal window rather than a set of launchd services:
-# macOS privacy protection refuses a launchd-spawned bash, git or dotnet any
-# file under ~/Documents, where this repo lives — the first scheduled morning
-# failed exactly that way. Terminal holds the permission, so everything that
-# touches the repo runs under it. launchd's only job (install-desk.sh) is to
-# open this script in Terminal at login and reopen it if it is gone.
+# Why it is born in a Terminal window and not as a launchd service: macOS
+# privacy protection refuses a launchd-spawned bash, git or dotnet any file
+# under ~/Documents, where this repo lives — the first scheduled morning failed
+# exactly that way. Terminal holds the permission and passes it to everything
+# it starts, so launchd's only job (install-desk.sh) is to open the launcher in
+# Terminal. The launcher runs this script with --headless: the loop detaches
+# into the background with its output in logs/desk.log, and the window that
+# was opened for it closes itself a second later. No window stays open, and
+# nothing here is meant to be read on a screen — read the log.
+#
+# The permission is fixed when the process is created and stays with it:
+# verified 2026-09-08 that the detached loop kept reading and fetching the
+# repo after Terminal.app was quit. Should a future macOS take it away, the
+# loop notices — it can no longer read the repo — exits, and the keepalive
+# reopens it through Terminal within ten minutes.
 #
 # Deploy policy (mirrors scripts/auto-deploy.ps1 on the Windows box, with one
 # difference the owner asked for): the API IS restarted while runs are live.
@@ -22,7 +31,10 @@
 # with the new API; the Python engine, however, keeps the code it started with
 # until a run is restarted by hand — a live run is never killed by a deploy.
 #
-# Usage: ./scripts/desk.sh      (Ctrl+C stops the loop; the API keeps running)
+# Usage: ./scripts/desk.sh             here, in this window; Ctrl+C stops it
+#        ./scripts/desk.sh --headless  in the background; watch logs/desk.log
+#        ./scripts/desk.sh --stop      stop the background loop (API stays up)
+#        (--daemon is the detached copy; the launcher and --headless use it)
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -38,15 +50,57 @@ HEALTH_EVERY=30          # seconds between health checks
 DEPLOY_EVERY=120         # seconds between git checks
 OPEN_AT="${MARKET_OPEN_AT:-0845}"   # HHMM, weekdays
 
+desk_pid() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null && cat "$PIDFILE"; }
+
+# Starts a command in the background in its own session: no controlling
+# terminal, so Terminal does not count it as "a running process" when it
+# decides whether a window may close, and closing that window cannot signal
+# it. The subshell execs straight into it — a plain `f … &` would leave a copy
+# of this script sitting there as the command's parent until it exits.
+spawn_detached() { ( exec python3 -c 'import os,sys; os.setsid(); os.execv(sys.argv[1], sys.argv[1:])' "$@" ) & }
+
+# Closes the Terminal window this shell is running in, after this shell has
+# exited — so the window holds no process and Terminal closes it without asking.
+close_own_window() {
+  local tty_dev win
+  tty_dev="$(tty 2>/dev/null)" || return 0
+  win="$(osascript -e "tell application \"Terminal\" to id of first window whose tty is \"$tty_dev\"" 2>/dev/null)" || return 0
+  [ -n "$win" ] || return 0
+  spawn_detached /bin/bash -c "sleep 1; osascript -e 'tell application \"Terminal\" to close window id $win' >/dev/null 2>&1" </dev/null >/dev/null 2>&1
+}
+
+case "${1:-}" in
+  --headless)
+    if pid="$(desk_pid)"; then
+      echo "desk is already running in the background (pid $pid) — logs/desk.log"
+    else
+      spawn_detached /bin/bash "$REPO_ROOT/scripts/desk.sh" --daemon </dev/null >>"$LOG" 2>&1
+      sleep 1
+      echo "desk started in the background — log: logs/desk.log, status: scripts/status.sh, stop: scripts/desk.sh --stop"
+    fi
+    # Only the launcher sets this: a window opened just for the desk closes
+    # itself; a window the owner typed into is left alone.
+    [ "${DESK_CLOSE_WINDOW:-}" = "1" ] && close_own_window
+    exit 0;;
+  --stop)
+    if pid="$(desk_pid)"; then kill "$pid" && echo "desk (pid $pid) stopped; the API keeps running"; else echo "desk is not running"; fi
+    exit 0;;
+  --daemon)
+    # stdout is already the log: say() must not tee into it a second time.
+    export DESK_LOG_ONLY=1;;
+  "") ;;
+  *) echo "usage: scripts/desk.sh [--headless | --stop]"; exit 2;;
+esac
+
 # One desk at a time. A second copy would double every restart and deploy.
-if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-  echo "desk is already running (pid $(cat "$PIDFILE")). Use scripts/status.sh to look at it."
+if pid="$(desk_pid)"; then
+  echo "desk is already running (pid $pid). Use scripts/status.sh to look at it."
   exit 0
 fi
 echo $$ > "$PIDFILE"
 trap 'rm -f "$PIDFILE"; say "desk stopped (the API is left running)"; exit 0' INT TERM
 
-say "=== desk started (pid $$) — API $API, chain $CHAIN_UNDERLYINGS, open at $OPEN_AT ==="
+say "=== desk started (pid $$, $( [ -n "${DESK_LOG_ONLY:-}" ] && echo background || echo 'this window' )) — API $API, chain $CHAIN_UNDERLYINGS, open at $OPEN_AT ==="
 
 # --- infra once ---------------------------------------------------------------
 say "infra ..."
@@ -154,6 +208,14 @@ deploy_if_behind() {
 while true; do
   now=$(date +%s)
 
+  # 0. can this process still read the repo? (see the header on macOS privacy
+  #    protection). Exit and let the keepalive start a fresh copy through
+  #    Terminal rather than fail every step.
+  if ! cat "$REPO_ROOT/.git/HEAD" >/dev/null 2>&1; then
+    warn "lost permission to read the repo (Terminal.app quit?) — exiting; the keepalive reopens the desk within 10 min"
+    rm -f "$PIDFILE"; exit 3
+  fi
+
   # 1. health
   if api_healthy; then
     fails=0
@@ -177,7 +239,9 @@ while true; do
   today="$(date +%F)"; dow="$(date +%u)"; hhmm="$(date +%H%M)"
   if [ "$dow" -le 5 ] && [ "$hhmm" -ge "$OPEN_AT" ] && [ "$hhmm" -lt 1500 ] && [ "$opened_on" != "$today" ]; then
     say "=== $OPEN_AT — running market-open.sh ==="
-    ./scripts/market-open.sh >>"$LOG" 2>&1 || warn "market-open.sh exited non-zero (see logs/market-open-$today.log)"
+    # market-open keeps its own dated log; its lines are mirrored here through
+    # stdout, so the log-only flag is lifted for it.
+    DESK_LOG_ONLY= ./scripts/market-open.sh >>"$LOG" 2>&1 || warn "market-open.sh exited non-zero (see logs/market-open-$today.log)"
     opened_on="$today"
   fi
 

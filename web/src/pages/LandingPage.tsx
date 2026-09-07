@@ -106,6 +106,33 @@ const Mark = () => (
 
 /* ---------------------------------------------------------------- page */
 
+/**
+ * Where the code and its author live. Three placements, one definition: the
+ * nav mark (the convention for an open-source product page), the final call
+ * to action (where a reviewer decides whether to open the repository), and
+ * the footer attribution (where "who built this" belongs on a product page,
+ * rather than beside the product's own navigation).
+ */
+const GITHUB_URL = 'https://github.com/helloupendra/algorithmic-trading-engine'
+const LINKEDIN_URL = 'https://www.linkedin.com/in/upendrasingh12/'
+const AUTHOR = 'Upendra Singh'
+
+function GitHubMark() {
+  return (
+    <svg viewBox="0 0 16 16" width="18" height="18" fill="currentColor" aria-hidden="true">
+      <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
+    </svg>
+  )
+}
+
+function LinkedInMark() {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">
+      <path d="M13.63 13.63h-2.37V9.92c0-.89-.02-2.02-1.23-2.02-1.23 0-1.42.96-1.42 1.96v3.77H6.24V6h2.28v1.04h.03c.32-.6 1.09-1.23 2.25-1.23 2.4 0 2.85 1.58 2.85 3.64v4.18zM3.56 4.96a1.37 1.37 0 1 1 0-2.75 1.37 1.37 0 0 1 0 2.75zM4.75 13.63H2.37V6h2.38v7.63zM14.82 0H1.18C.53 0 0 .52 0 1.15v13.7C0 15.48.53 16 1.18 16h13.64c.65 0 1.18-.52 1.18-1.15V1.15C16 .52 15.47 0 14.82 0z" />
+    </svg>
+  )
+}
+
 export function LandingPage() {
   const { isAuthenticated, isAdmin, isLoading } = useAuth()
   // isLoading is only true while a stored token is being verified against /me
@@ -144,6 +171,9 @@ export function LandingPage() {
             <a href="#backtest">Backtesting</a>
             <a href="#how">How it works</a>
             <a href="#principles">Principles</a>
+            <a className="nav__icon" href={GITHUB_URL} target="_blank" rel="noopener noreferrer" aria-label="Source on GitHub" title="Source on GitHub">
+              <GitHubMark />
+            </a>
             <Link className="btn btn--primary btn--sm" to={consoleHref}>{navLabel}</Link>
           </nav>
         </div>
@@ -411,7 +441,8 @@ export function LandingPage() {
             <p>Sign in, start the live feed, and run your first strategy on paper today. Backtest it over stored history tonight.</p>
             <div className="cta" style={{ justifyContent: 'center' }}>
               <Link className="btn btn--primary" to={consoleHref}>{consoleLabel}</Link>
-              <a className="btn" href="#modules">See the modules</a>
+              <a className="btn" href={GITHUB_URL} target="_blank" rel="noopener noreferrer"><GitHubMark /> Read the source</a>
+              <a className="btn btn--ghost" href="#modules">See the modules</a>
             </div>
           </div>
         </section>
@@ -420,7 +451,12 @@ export function LandingPage() {
       <footer>
         <div className="wrap">
           <span>AlgoTrading Console · open source · paper execution on live ticks</span>
-          <span><a href="#top">Back to top ↑</a></span>
+          <span className="footer__author">
+            Built by {AUTHOR}
+            <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" aria-label="GitHub"><GitHubMark /> GitHub</a>
+            <a href={LINKEDIN_URL} target="_blank" rel="noopener noreferrer" aria-label="LinkedIn"><LinkedInMark /> LinkedIn</a>
+            <a href="#top">Back to top ↑</a>
+          </span>
         </div>
       </footer>
     </div>
