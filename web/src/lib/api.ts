@@ -13,8 +13,31 @@
  * need matching cookie auth on the API.
  */
 
+/**
+ * Where the API lives, from the point of view of whoever loaded this bundle.
+ *
+ * Empty in a production build, which makes every call relative - and relative is
+ * the only answer that is right for a build the API itself serves out of
+ * wwwroot, whether that is reached on localhost, a LAN address or a Cloudflare
+ * tunnel. It used to fall back to the absolute localhost URL in every build, so
+ * a phone opening the tunnel asked ITSELF for the API and the browser refused
+ * the loopback request outright:
+ *
+ *   POST http://localhost:5025/api/UserAuth/login
+ *   blocked by CORS: Permission was denied for this request to access the
+ *   `loopback` address space
+ *
+ * The absolute default is kept for `vite dev`, where the console runs on :5173
+ * and the API really is somewhere else. An explicit VITE_API_BASE_URL still
+ * wins over both.
+ *
+ * Note for anyone tempted to set that variable to "" in a build script: on
+ * PowerShell `$env:X = ''` DELETES the variable rather than emptying it, so the
+ * fallback silently applied and shipped a broken bundle. Hence a default that
+ * needs no variable at all.
+ */
 export const API_BASE_URL: string =
-  import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5025'
+  import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.DEV ? 'http://localhost:5025' : '')
 
 const ACCESS_TOKEN_KEY = 'algotrading.accessToken'
 const REFRESH_TOKEN_KEY = 'algotrading.refreshToken'

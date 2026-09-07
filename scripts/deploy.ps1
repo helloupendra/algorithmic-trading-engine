@@ -85,10 +85,12 @@ function Wait-ForApi {
 if ($Web) {
     Write-Host "==> Building the web client..." -ForegroundColor Cyan
 
-    # Empty on purpose: it makes the bundle call the API on relative paths, so
-    # the same build works on localhost and through the tunnel without knowing
-    # either hostname.
-    $env:VITE_API_BASE_URL = ''
+    # No VITE_API_BASE_URL here on purpose. Setting it to '' looked like the
+    # way to ask for relative URLs, but PowerShell DELETES an environment
+    # variable assigned an empty string, so vite never saw it and the bundle
+    # fell back to the absolute http://localhost:5025 - which a phone resolves
+    # to itself. The default now lives in web/src/lib/api.ts, where a
+    # production build is relative without anyone having to remember this.
     Push-Location "$RepoRoot\web"
     try {
         npm run build
@@ -103,9 +105,20 @@ if ($Web) {
     New-Item -ItemType Directory -Force -Path $wwwroot | Out-Null
     Copy-Item -Recurse -Force "$RepoRoot\web\dist\*" $wwwroot
 
-    $bundle = Get-ChildItem "$wwwroot\assets" -Filter 'index-*.js' |
-        Select-Object -First 1 -ExpandProperty Name
-    Write-Host "    wwwroot now holds $bundle" -ForegroundColor Green
+    $bundleFile = Get-ChildItem "$wwwroot\assets" -Filter 'index-*.js' | Select-Object -First 1
+    Write-Host "    wwwroot now holds $($bundleFile.Name)" -ForegroundColor Green
+
+    # A bundle that names localhost is a bundle that only works on this
+    # machine. That shipped undetected for hours because nothing checked, and
+    # the symptom only shows on a different device - so the check lives here,
+    # where it cannot be forgotten.
+    if (Select-String -Path $bundleFile.FullName -Pattern 'localhost:5025' -SimpleMatch -Quiet) {
+        Write-Host "    REFUSING THIS BUILD: the bundle contains an absolute localhost:5025 URL." -ForegroundColor Red
+        Write-Host "    It would work here and fail on every phone and remote browser." -ForegroundColor Red
+        Write-Host "    Check VITE_API_BASE_URL and the default in web/src/lib/api.ts." -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "    Bundle uses relative API paths - safe behind the tunnel." -ForegroundColor Green
     Write-Host "    No restart needed - refresh the browser (Ctrl+Shift+R)." -ForegroundColor Green
 }
 
