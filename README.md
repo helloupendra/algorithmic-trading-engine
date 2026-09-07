@@ -45,11 +45,18 @@ backtest you cannot run is better than one that quietly replays a gap.
 
 ![Backtesting: stored history per index and resolution, with its source](docs/image/console-backtesting.png)
 
+**Strategies** — what is running right now, across every underlying, with the
+open positions and live P&L of each run. The same strategy on three indices is
+three independent runs: each is counted, priced and stopped on its own.
+
+![Strategies: runs live across NIFTY, BANKNIFTY and SENSEX, each with its own open positions and P&L](docs/image/console-strategies-live.png)
+
 **Run history** — every live run, attached to the user who started it, with
 quantity expressed as **lots × lot size** rather than a bare share count.
-Nothing is dismissed: a run that stopped for any reason is still here.
+Nothing is dismissed: a run that stopped for any reason is still here, and the
+ones still going are counted apart from it as live.
 
-![Run history: runs per user with net P&L and lots × lot size](docs/image/console-run-history.png)
+![Run history: runs per user, the live ones still counting, with net P&L and lots × lot size](docs/image/console-run-history.png)
 
 **Live runner** — pick a strategy, choose the underlying, set risk rules per leg,
 per group or over the whole run, and start it. Quantity is **lots**; the platform
@@ -57,7 +64,26 @@ multiplies by the contract's lot size, which differs per underlying (30 for
 BANKNIFTY, 65 for NIFTY) and is read from the instrument master rather than
 assumed.
 
-![Live runner: running runs, then the strategy catalogue with supported underlyings](docs/image/console-live-runner.png)
+![Live runner: running runs with their risk rules, open legs and live P&L, above the strategy catalogue](docs/image/console-live-runner.png)
+
+**A live run** — one run in full: the legs it holds, what it paid for them, what
+they are worth on the current tick, and how far it has travelled towards its
+stop-loss or target. Entry sits next to LTP, so the P&L is arithmetic a reader
+can check rather than a number to be trusted.
+
+![A live run: a BullCallSpread on BANKNIFTY with both legs open, entry against LTP, and progress towards target](docs/image/console-live-run-detail.png)
+
+**Positions** — the run's paper position book, marked to the last stored tick.
+Equity, capital in use and what is still free sit above it, so what a run is
+costing is visible while it runs rather than once it has stopped.
+
+![Positions: a run's paper position book, average price against mark, with equity and capital in use](docs/image/console-live-positions.png)
+
+**Orders** — every paper order the run placed, the price it asked for against
+the price it filled at, and below them the strategy signals that produced them.
+A fill is traceable back to the decision that caused it.
+
+![Orders: paper orders with requested against fill price, above the signals that produced them](docs/image/console-live-orders.png)
 
 **Connectors** — data vendors and brokers as first-class things rather than
 hard-wired code. Each declares what it can actually deliver, and the routing
