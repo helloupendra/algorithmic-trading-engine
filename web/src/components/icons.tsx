@@ -199,6 +199,13 @@ export const IconChevronRight = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 )
 
+export const IconCalendar = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <rect x="3.5" y="5" width="17" height="15.5" rx="2" />
+    <path d="M3.5 9.5h17M8 3v4M16 3v4" />
+  </Icon>
+)
+
 export const IconClock = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p}>
     <circle cx="12" cy="12" r="8.5" />

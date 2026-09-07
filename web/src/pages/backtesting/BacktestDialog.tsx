@@ -17,6 +17,7 @@ import { formatInrWhole, formatNumber } from '../../lib/format'
 import { resolutionLabel, resolutionRank, toCandleResolution } from '../../lib/symbols'
 import { parseRiskDraft, riskDraftFrom, riskFromLegacy } from '../../lib/risk'
 import type { RiskDraft, RiskDraftField } from '../../lib/risk'
+import { DateField } from '../../components/DateField'
 import { InlineError, Loading } from '../../components/ui'
 import { RiskRulesForm } from '../../components/RiskRulesForm'
 import { IconChevronDown, IconChevronRight, IconPlay, IconX } from '../../components/icons'
@@ -542,28 +543,26 @@ export function BacktestDialog({
               <label className="field__label" htmlFor="bt-from">
                 From (IST day)
               </label>
-              <input
+              <DateField
                 id="bt-from"
                 className="field__input"
-                type="date"
                 min={minDate ?? undefined}
                 max={maxDate ?? today}
                 value={fromDate}
-                onChange={(e) => setFromDate(e.target.value)}
+                onChange={setFromDate}
               />
             </div>
             <div className="field">
               <label className="field__label" htmlFor="bt-to">
                 To (IST day)
               </label>
-              <input
+              <DateField
                 id="bt-to"
                 className="field__input"
-                type="date"
                 min={minDate ?? undefined}
                 max={maxDate ?? today}
                 value={toDate}
-                onChange={(e) => setToDate(e.target.value)}
+                onChange={setToDate}
               />
             </div>
             <div className="field">

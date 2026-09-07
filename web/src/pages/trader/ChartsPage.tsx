@@ -18,10 +18,11 @@ import {
 } from '../../lib/queries'
 import { useAuth } from '../../lib/auth'
 import { formatDateTime, formatNumber, formatPrice, pnlClass } from '../../lib/format'
+import { DateField } from '../../components/DateField'
 import { Badge, InlineError, Loading, Panel, StatTile } from '../../components/ui'
 import { PriceChart, type PriceCandle } from '../../components/charts'
 
-/** yyyy-MM-dd in UTC, for <input type="date"> bounds and API params. */
+/** yyyy-MM-dd in UTC, for DateField bounds and API params. */
 function toDateInput(iso: string): string {
   return iso.slice(0, 10)
 }
@@ -199,26 +200,24 @@ export function ChartsPage() {
               <label className="muted small-note" style={{ marginTop: 0 }} htmlFor="ch-from">
                 From
               </label>
-              <input
+              <DateField
                 id="ch-from"
-                type="date"
                 className="field__input field__input--sm"
                 value={fromDate}
                 min={toDateInput(selected.fromUtc)}
                 max={toDateInput(selected.toUtc)}
-                onChange={(e) => setFromDate(e.target.value)}
+                onChange={setFromDate}
               />
               <label className="muted small-note" style={{ marginTop: 0 }} htmlFor="ch-to">
                 To
               </label>
-              <input
+              <DateField
                 id="ch-to"
-                type="date"
                 className="field__input field__input--sm"
                 value={toDate}
                 min={toDateInput(selected.fromUtc)}
                 max={toDateInput(selected.toUtc)}
-                onChange={(e) => setToDate(e.target.value)}
+                onChange={setToDate}
               />
               <button
                 type="button"

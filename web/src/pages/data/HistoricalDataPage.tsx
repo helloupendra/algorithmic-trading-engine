@@ -15,6 +15,8 @@ import {
   type CoverageRow,
 } from '../../lib/queries'
 import { formatDateTime, formatNumber, formatPrice, shortSymbol } from '../../lib/format'
+import { DateField } from '../../components/DateField'
+import { isoToDmy } from '../../lib/dates'
 import { Badge, InlineError, Panel, QueryBoundary } from '../../components/ui'
 import { CandleChart } from '../../components/CandleChart'
 import { SymbolCombobox } from '../../components/SymbolCombobox'
@@ -330,24 +332,22 @@ function BackfillPanel({ selected }: { selected: CoverageRow | null }) {
         </label>
         <label className="field">
           <span className="field__label">From</span>
-          <input
+          <DateField
             className="field__input"
-            type="date"
             min={earliestFor(resolution, toDate)}
             max={toDate || undefined}
             value={fromDate}
-            onChange={(e) => setFromDate(e.target.value)}
-            title={`Earliest FYERS holds is ${EARLIEST_HISTORY}; this resolution reaches back to ${earliestFor(resolution, toDate)}`}
+            onChange={setFromDate}
+            title={`Earliest FYERS holds is ${isoToDmy(EARLIEST_HISTORY)}; this resolution reaches back to ${isoToDmy(earliestFor(resolution, toDate))}`}
           />
         </label>
         <label className="field">
           <span className="field__label">To</span>
-          <input
+          <DateField
             className="field__input"
-            type="date"
             min={fromDate || EARLIEST_HISTORY}
             value={toDate}
-            onChange={(e) => setToDate(e.target.value)}
+            onChange={setToDate}
           />
         </label>
         <button
@@ -486,24 +486,22 @@ function OptionsBackfillPanel() {
         </label>
         <label className="field">
           <span className="field__label">From</span>
-          <input
+          <DateField
             className="field__input"
-            type="date"
             min={earliestFor(resolution, toDate)}
             max={toDate || undefined}
             value={fromDate}
-            onChange={(e) => setFromDate(e.target.value)}
-            title={`Earliest FYERS holds is ${EARLIEST_HISTORY}; this resolution reaches back to ${earliestFor(resolution, toDate)}`}
+            onChange={setFromDate}
+            title={`Earliest FYERS holds is ${isoToDmy(EARLIEST_HISTORY)}; this resolution reaches back to ${isoToDmy(earliestFor(resolution, toDate))}`}
           />
         </label>
         <label className="field">
           <span className="field__label">To</span>
-          <input
+          <DateField
             className="field__input"
-            type="date"
             min={fromDate || EARLIEST_HISTORY}
             value={toDate}
-            onChange={(e) => setToDate(e.target.value)}
+            onChange={setToDate}
           />
         </label>
         <button

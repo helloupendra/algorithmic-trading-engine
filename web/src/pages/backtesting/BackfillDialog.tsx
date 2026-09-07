@@ -9,6 +9,7 @@ import { Link } from 'react-router-dom'
 import { useBacktestBackfill } from '../../lib/queries'
 import { formatNumber } from '../../lib/format'
 import { resolutionLabel } from '../../lib/symbols'
+import { DateField } from '../../components/DateField'
 import { InlineError } from '../../components/ui'
 import { IconDownload, IconX } from '../../components/icons'
 import { useDialogChrome } from '../strategies/shared'
@@ -109,26 +110,24 @@ export function BackfillDialog({
               <label className="field__label" htmlFor="bf-from">
                 From
               </label>
-              <input
+              <DateField
                 id="bf-from"
                 className="field__input"
-                type="date"
                 max={today}
                 value={fromDate}
-                onChange={(e) => setFromDate(e.target.value)}
+                onChange={setFromDate}
               />
             </div>
             <div className="field">
               <label className="field__label" htmlFor="bf-to">
                 To
               </label>
-              <input
+              <DateField
                 id="bf-to"
                 className="field__input"
-                type="date"
                 max={today}
                 value={toDate}
-                onChange={(e) => setToDate(e.target.value)}
+                onChange={setToDate}
               />
             </div>
           </div>

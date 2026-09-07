@@ -2627,6 +2627,24 @@ a.pill:hover { border-color: var(--line-strong); }
 
 .field__input--date { min-width: 0; width: 138px; }
 
+/* dd/mm/yyyy date field (components/DateField.tsx): the text input is the
+   control, the native input is kept off-screen for its picker only. */
+.datefield { position: relative; display: inline-flex; align-items: center; min-width: 0; }
+.datefield > .field__input { padding-right: 34px; font-variant-numeric: tabular-nums; }
+/* Full-width in a form column; the small toolbar variant keeps its own width. */
+.datefield > .field__input:not(.field__input--sm) { width: 100%; }
+.datefield > .field__input[aria-invalid='true'] { border-color: var(--neg); }
+.datefield__native { position: absolute; right: 0; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.datefield__btn {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px;
+  background: transparent; color: var(--text-3); cursor: pointer;
+}
+.datefield__btn:hover { color: var(--text); background: var(--surface2); }
+.datefield__btn svg { width: 15px; height: 15px; }
+.datefield--disabled .datefield__btn { cursor: default; opacity: .5; }
+
 /* Failed-run alert with the last log lines. */
 .alert--stack {
   flex-direction: column;

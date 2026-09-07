@@ -74,7 +74,7 @@ fi
 # --- deploy + market open ----------------------------------------------------------
 if [ -f logs/desk.status ]; then
   printf "\n"
-  printf "  ${D}commit           %s${N}\n" "$(grep '^commit=' logs/desk.status | cut -d= -f2-)"
+  printf "  ${D}live commit      %s${N}\n" "$(grep '^commit=' logs/desk.status | cut -d= -f2-)"
   printf "  ${D}last deploy      %s${N}\n" "$(grep '^last_deploy=' logs/desk.status | cut -d= -f2-)"
   printf "  ${D}market-open ran  %s${N}\n" "$(grep '^market_open_ran_on=' logs/desk.status | cut -d= -f2-)"
 fi
