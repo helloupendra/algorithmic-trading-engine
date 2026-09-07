@@ -639,6 +639,7 @@ def sync_watchlist(force_subscribe=False):
     global last_error_message
 
     try:
+        before = set(subscribed_symbols)
         desired_symbols = set(get_active_watchlist())
 
         if force_subscribe or not subscribed_symbols:
@@ -670,7 +671,11 @@ def sync_watchlist(force_subscribe=False):
 
         last_watchlist_refresh_utc = datetime.now(timezone.utc)
 
-        print("CURRENT SUBSCRIBED SYMBOLS:", sorted(subscribed_symbols))
+        # Only speak when something moved. This now runs on a timer as well as
+        # on the Redis signal, and a line every few seconds saying nothing
+        # changed would bury the lines that matter.
+        if force_subscribe or subscribed_symbols != before:
+            print("CURRENT SUBSCRIBED SYMBOLS:", sorted(subscribed_symbols))
         last_error_message = ""
 
     except Exception as ex:
@@ -728,23 +733,62 @@ def check_pending_subscriptions():
 
 def redis_subscriber_loop():
     """
-    Listens to Redis Pub/Sub for watchlist updates and triggers sync.
+    Keeps subscriptions in step with the watchlist: instantly on the Redis
+    signal, and on a timer regardless.
+
+    Both halves are here because either alone has failed. The signal was once
+    the ONLY trigger, and `for message in pubsub.listen()` ends WITHOUT raising
+    when the connection is reset - so the thread returned, nothing was logged,
+    and the ingestor went permanently deaf to watchlist changes while every
+    other sign of life (heartbeat, ticks, status) stayed green. A strategy that
+    rolls its strike then asks for a symbol nobody ever subscribes, gets no
+    quote, and cannot open a position it believes it has opened.
+
+    So: the connection is rebuilt whenever the inner loop ends, however it
+    ended, and a reconcile every WATCHLIST_REFRESH_SECONDS means a missed
+    signal costs seconds rather than the rest of the session.
     """
     global last_error_message
 
-    try:
-        pubsub = publisher.client.pubsub()
-        pubsub.subscribe("watchlist_updates")
-        print("STARTED REDIS SUBSCRIBER FOR WATCHLIST UPDATES")
+    backoff = 1.0
+    while True:
+        pubsub = None
+        try:
+            pubsub = publisher.client.pubsub()
+            pubsub.subscribe("watchlist_updates")
+            print("STARTED REDIS SUBSCRIBER FOR WATCHLIST UPDATES", flush=True)
+            backoff = 1.0
+            last_reconcile = 0.0
 
-        for message in pubsub.listen():
-            if message['type'] == 'message':
-                print("Received watchlist update signal from Redis!")
-                sync_watchlist()
-    except Exception as ex:
-        last_error_message = str(ex)
-        print("ERROR IN REDIS SUBSCRIBER:", ex)
-        traceback.print_exc()
+            while True:
+                # A timeout rather than listen(): the loop has to wake up on its
+                # own to run the periodic reconcile, and a returning get_message
+                # is also how a dead connection surfaces as an exception here.
+                message = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+
+                if message is not None and message.get("type") == "message":
+                    print("Received watchlist update signal from Redis!", flush=True)
+                    sync_watchlist()
+                    last_reconcile = time.monotonic()
+                elif time.monotonic() - last_reconcile >= WATCHLIST_REFRESH_SECONDS:
+                    # Quiet unless it finds something the signal did not deliver.
+                    sync_watchlist()
+                    last_reconcile = time.monotonic()
+
+        except Exception as ex:
+            last_error_message = str(ex)
+            print("ERROR IN REDIS SUBSCRIBER:", ex, flush=True)
+            traceback.print_exc()
+        finally:
+            try:
+                if pubsub is not None:
+                    pubsub.close()
+            except Exception:
+                pass
+
+        print(f"REDIS SUBSCRIBER DROPPED — reconnecting in {backoff:.0f}s.", flush=True)
+        time.sleep(backoff)
+        backoff = min(backoff * 2, 30.0)
 
 
 def heartbeat_step():
