@@ -155,7 +155,7 @@ export function CommodityPage() {
           <p className="page__subtitle">
             MCX near-month futures — gold, silver, crude and natural gas, with the mini
             contracts beside the full-size ones. The contract rolls with the expiry; the age
-            beside each price is how long ago the feed last moved it.
+            beside each price is how long ago that contract last traded.
           </p>
         </div>
         {unwatched.length > 0 && (
