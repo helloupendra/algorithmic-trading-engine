@@ -85,6 +85,19 @@ public interface ILiveDataService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Appends many raw ticks at once, in a fixed number of database round-trips
+    /// rather than a fixed number per tick.
+    /// </summary>
+    /// <remarks>
+    /// This is the path the live ingestor uses. Storing a tick one at a time cost
+    /// five round-trips each, which left the writer level with the feed and prone
+    /// to a backlog it could never drain. Same result per tick, far less of it.
+    /// </remarks>
+    Task AppendLiveTicksAsync(
+        IReadOnlyList<UpsertLiveTickRequest> requests,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Retrieves the most recent ticks for a symbol, used to build real-time views.
     /// </summary>
     Task<IReadOnlyList<LiveTickResponse>> GetRecentTicksAsync(

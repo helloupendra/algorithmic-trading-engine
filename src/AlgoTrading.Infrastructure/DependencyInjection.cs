@@ -106,6 +106,7 @@ public static class DependencyInjection
         services.AddScoped<GetStaleQuotesUseCase>();
 
         services.AddScoped<UpsertLiveTickUseCase>();
+        services.AddScoped<UpsertLiveTicksUseCase>();
         services.AddScoped<GetRecentTicksUseCase>();
         services.AddScoped<GetRecentBarsUseCase>();
 

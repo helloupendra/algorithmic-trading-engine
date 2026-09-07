@@ -29,6 +29,7 @@ public class LiveDataController : ControllerBase
 
 
     private readonly UpsertLiveTickUseCase _upsertLiveTickUseCase;
+    private readonly UpsertLiveTicksUseCase _upsertLiveTicksUseCase;
     private readonly GetRecentTicksUseCase _getRecentTicksUseCase;
     private readonly GetRecentBarsUseCase _getRecentBarsUseCase;
     private readonly IHubContext<LiveFeedHub> _hubContext;
@@ -45,6 +46,7 @@ public class LiveDataController : ControllerBase
         GetAllIngestorStatusesUseCase getAllIngestorStatusesUseCase,
         GetStaleQuotesUseCase getStaleQuotesUseCase,
         UpsertLiveTickUseCase upsertLiveTickUseCase,
+        UpsertLiveTicksUseCase upsertLiveTicksUseCase,
         GetRecentTicksUseCase getRecentTicksUseCase,
         GetRecentBarsUseCase getRecentBarsUseCase,
         IHubContext<LiveFeedHub> hubContext)
@@ -63,6 +65,7 @@ public class LiveDataController : ControllerBase
         _getStaleQuotesUseCase = getStaleQuotesUseCase;
 
         _upsertLiveTickUseCase = upsertLiveTickUseCase;
+        _upsertLiveTicksUseCase = upsertLiveTicksUseCase;
         _getRecentTicksUseCase = getRecentTicksUseCase;
         _getRecentBarsUseCase = getRecentBarsUseCase;
     }
@@ -203,6 +206,58 @@ public class LiveDataController : ControllerBase
         return Ok(new { message = "Live tick appended successfully." });
     }
 
+    /// <summary>The most ticks one batch may carry.</summary>
+    /// <remarks>
+    /// Sized so a flush at the ingestor's interval fits comfortably even during
+    /// an open-bell burst, while still bounding the work one request can ask for.
+    /// </remarks>
+    private const int MaxTickBatch = 500;
+
+    /// <summary>
+    /// Appends many ticks in one request.
+    /// </summary>
+    /// <remarks>
+    /// The single-tick endpoint above costs a full HTTP request, model binding,
+    /// DI scope and auth pass per price. At the ~39 ticks/second this feed
+    /// actually produces across its symbols, the ingestor's five poster threads
+    /// were finishing roughly 38 of those a second — level with arrivals, so the
+    /// queue drifted instead of draining. Measured on 2026-09-07, a tick took
+    /// 0.9s to land at 13:35 IST and 60s by 13:40, and once the ingestor's
+    /// bounded queue saturates it drops the newest prices outright.
+    ///
+    /// Batching removes that overhead from the per-tick path: the database work
+    /// is unchanged, but it is no longer paid for one HTTP round-trip at a time.
+    ///
+    /// Each tick is stored independently — one bad row is reported, not fatal —
+    /// because losing a whole flush over a single malformed symbol would be a
+    /// worse failure than the one it guards against.
+    /// </remarks>
+    [HttpPost("ticks/upsert-batch")]
+    public async Task<IActionResult> UpsertTickBatch(
+        [FromBody] List<UpsertLiveTickRequest> requests,
+        CancellationToken cancellationToken)
+    {
+        if (requests is null || requests.Count == 0)
+            return BadRequest(new { message = "At least one tick is required." });
+
+        if (requests.Count > MaxTickBatch)
+            return BadRequest(new { message = $"At most {MaxTickBatch} ticks per batch; got {requests.Count}." });
+
+        var usable = requests.Where(r => !string.IsNullOrWhiteSpace(r.Symbol)).ToList();
+        int skipped = requests.Count - usable.Count;
+
+        if (usable.Count > 0)
+        {
+            await _upsertLiveTicksUseCase.ExecuteAsync(usable, cancellationToken);
+        }
+
+        // Same reasoning as the single-tick path: a screen must never be able to
+        // apply back pressure to the feed the strategies trade on.
+        _ = BroadcastTickBatchAsync(usable);
+
+        return Ok(new { stored = usable.Count, skipped });
+    }
+
     [HttpGet("ticks")]
     public async Task<IActionResult> GetRecentTicks(
         [FromQuery] string symbol,
@@ -293,6 +348,47 @@ public class LiveDataController : ControllerBase
             // Deliberately swallowed. The tick is already stored; a browser
             // that could not be reached is not a data problem, and letting it
             // surface here would only add noise to every session.
+        }
+    }
+
+    /// <summary>
+    /// Pushes a whole flush to the console as one message.
+    /// </summary>
+    /// <remarks>
+    /// One send per batch rather than one per tick: the console applies each
+    /// price into the same cache either way, and a batch of forty individual
+    /// SignalR frames costs forty round-trips to every open tab for no extra
+    /// information. Sent under "ReceiveTicks" — plural — so an older client
+    /// that only knows "ReceiveTick" keeps working off its poll instead of
+    /// mis-reading an array as a single quote.
+    /// </remarks>
+    private async Task BroadcastTickBatchAsync(IReadOnlyList<UpsertLiveTickRequest> requests)
+    {
+        try
+        {
+            var payload = requests
+                .Where(r => !string.IsNullOrWhiteSpace(r.Symbol))
+                .Select(r => new
+                {
+                    symbol = r.Symbol,
+                    lastTradedPrice = r.LastTradedPrice,
+                    bidPrice = r.BidPrice,
+                    askPrice = r.AskPrice,
+                    volume = r.Volume,
+                    openInterest = r.OpenInterest,
+                    impliedVolatility = r.ImpliedVolatility,
+                    exchangeTimestampUtc = r.ExchangeTimestampUtc,
+                })
+                .ToList();
+
+            if (payload.Count == 0)
+                return;
+
+            await _hubContext.Clients.All.SendAsync("ReceiveTicks", payload);
+        }
+        catch
+        {
+            // As above: an unreachable browser is not a data problem.
         }
     }
 }

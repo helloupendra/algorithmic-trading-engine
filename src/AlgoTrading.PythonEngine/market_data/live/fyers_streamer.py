@@ -163,77 +163,155 @@ def get_active_watchlist():
     return sorted(set(symbols))
 
 
-import concurrent.futures
+import collections
 
 # Posting ticks to the API happens off the websocket thread, so a slow API
-# cannot stall the socket. The queue in front of those threads is the part that
-# needs a ceiling.
-TICK_WORKERS = 5
+# cannot stall the socket. What goes in front of it is a buffer that is flushed
+# in BATCHES, not a pool posting one price at a time.
+#
+# Why batching. One HTTP POST per tick makes every price pay for a request, model
+# binding, a DI scope and an auth pass. Measured on 2026-09-07 this feed produced
+# 39 ticks/second across 26 symbols, and five poster threads were clearing about
+# the same number — level with arrivals, so the queue drifted rather than drained.
+# In `live_ticks`, the gap between the exchange stamp and the row landing grew
+# from 0.9s at 13:35 IST to 60s by 13:40 and sat between 20s and 80s for the rest
+# of the session. Once the old bounded queue saturated it discarded the newest
+# prices outright, which is how a spike can be missed entirely: run #30's target
+# needed 127.38 and the highest price ever stored for its leg was 126.55.
+#
+# One request carrying forty ticks costs one of each of those overheads instead
+# of forty. The database work per tick is unchanged; it is simply no longer
+# serialised behind a round-trip each.
 
-#: How many posts may be waiting before we start dropping them.
+#: How long a tick may sit waiting for company. This is the latency the batching
+#: itself adds, so it is deliberately far inside the "under a second" the desk
+#: asked for.
+TICK_FLUSH_INTERVAL = 0.15
+
+#: Flush early once this many are waiting, so a burst does not wait out the timer.
+#: Must not exceed the API's MaxTickBatch (500).
 #:
-#: ThreadPoolExecutor's own work queue is UNBOUNDED. When the API slowed on
-#: 2026-09-04 the submissions piled up inside this process — invisibly, since
-#: nothing measured the depth — and the feed drifted to 31 minutes behind
-#: without a single log line saying so. A bounded queue turns that into a
-#: visible, bounded loss: the newest prices keep flowing and the backlog is
-#: reported rather than silently accumulated.
-TICK_QUEUE_LIMIT = 2000
+#: Kept small on purpose. Measured on 2026-09-07 against an idle API, one tick
+#: costs ~25ms to store and a batch of 100 costs ~2.6s — i.e. 26ms per tick, so
+#: batching buys nothing per tick; the cost is the per-tick database work, not
+#: the HTTP request around it. A big batch therefore just makes one post block
+#: for seconds while prices queue behind it.
+TICK_BATCH_MAX = 50
+
+#: How many posts may be in flight at once.
+#:
+#: This is what actually sets throughput: ~25ms per tick means one poster clears
+#: about 40 ticks/second, and this feed produces 39 across its 26 symbols — dead
+#: level, so any extra load tips it into a backlog that never drains. That is
+#: what the console showed as "36s ago" while runs were live and the API was
+#: also serving their polls and risk sweeps.
+TICK_FLUSH_WORKERS = 6
+
+#: The ceiling on unsent ticks. At 39/s this is over two minutes of feed, so it
+#: is only reached if the API is genuinely unavailable rather than merely slow.
+TICK_BUFFER_LIMIT = 5000
 
 #: How often to say something when we are shedding.
 TICK_DROP_LOG_EVERY = 500
 
-tick_executor = concurrent.futures.ThreadPoolExecutor(max_workers=TICK_WORKERS)
-_tick_inflight = 0
-_tick_inflight_lock = threading.Lock()
+_tick_buffer: "collections.deque[dict]" = collections.deque()
+_tick_lock = threading.Lock()
 _ticks_dropped = 0
+_flusher_started = False
 
 
 def tick_queue_depth() -> int:
-    """Posts submitted and not yet finished. Reported in the heartbeat."""
-    return _tick_inflight
+    """Ticks buffered and not yet posted. Reported in the heartbeat."""
+    with _tick_lock:
+        return len(_tick_buffer)
 
 
 def ticks_dropped_total() -> int:
     return _ticks_dropped
 
 
-def _do_upsert_tick(payload: dict):
-    global _tick_inflight
-    url = f"{API_BASE_URL}/api/LiveData/ticks/upsert"
-    try:
-        response = http.post(url, json=payload, verify=VERIFY_SSL, timeout=10)
-        if response.status_code >= 400:
-            print("TICK UPSERT FAILED:", response.status_code, response.text)
-    except Exception as e:
-        print("TICK UPSERT HTTP ERROR:", e)
-    finally:
-        with _tick_inflight_lock:
-            _tick_inflight -= 1
-
-
 def upsert_tick(payload: dict):
     """
-    Queue one tick for the API, and refuse to queue without limit.
+    Buffer one tick for the next flush, and refuse to buffer without limit.
 
-    Dropping the NEWEST tick when saturated is deliberate: the backlog already
-    holds older prices for the same symbols, and the alternative — an unbounded
-    queue — spends memory to deliver prices that are minutes stale by the time
-    they land, which is worse than not delivering them.
+    When the buffer is full the OLDEST tick is discarded, not the newest. The
+    previous code dropped the newest because its backlog was an unbounded pool
+    queue whose contents were still worth sending. A short flush window inverts
+    that: what is waiting here is at most a couple of minutes of prices, and if
+    any of it has to go, the stale end is the part worth losing — the desk needs
+    the current price, not a complete history of a stall.
     """
-    global _tick_inflight, _ticks_dropped
+    global _ticks_dropped
 
-    with _tick_inflight_lock:
-        if _tick_inflight >= TICK_QUEUE_LIMIT:
+    with _tick_lock:
+        if len(_tick_buffer) >= TICK_BUFFER_LIMIT:
+            _tick_buffer.popleft()
             _ticks_dropped += 1
             if _ticks_dropped % TICK_DROP_LOG_EVERY == 1:
-                print(f"TICK BACKLOG: {_tick_inflight} posts in flight, dropping. "
+                print(f"TICK BACKLOG: {len(_tick_buffer)} buffered, shedding the oldest. "
                       f"{_ticks_dropped} dropped so far — the API is not keeping up.",
                       flush=True)
-            return
-        _tick_inflight += 1
+        _tick_buffer.append(payload)
 
-    tick_executor.submit(_do_upsert_tick, payload)
+
+def _drain(limit: int) -> list[dict]:
+    with _tick_lock:
+        count = min(limit, len(_tick_buffer))
+        return [_tick_buffer.popleft() for _ in range(count)]
+
+
+def _post_batch(batch: list[dict]) -> None:
+    url = f"{API_BASE_URL}/api/LiveData/ticks/upsert-batch"
+    try:
+        response = http.post(url, json=batch, verify=VERIFY_SSL, timeout=30)
+        if response.status_code >= 400:
+            print("TICK BATCH FAILED:", response.status_code, response.text[:300], flush=True)
+    except Exception as e:
+        print("TICK BATCH HTTP ERROR:", e, flush=True)
+
+
+def tick_flush_loop(stop_event: threading.Event | None = None) -> None:
+    """
+    Post whatever has accumulated, forever.
+
+    Posting synchronously here is what keeps this self-correcting: while a slow
+    request is in flight the buffer keeps filling, so the next batch is simply
+    larger and the cost per tick falls exactly when the pressure rises.
+    """
+    while stop_event is None or not stop_event.is_set():
+        batch = _drain(TICK_BATCH_MAX)
+        if batch:
+            _post_batch(batch)
+            # A full batch means more is already waiting; go straight round again
+            # instead of sleeping on a queue that is behind.
+            if len(batch) >= TICK_BATCH_MAX:
+                continue
+        if stop_event is not None:
+            stop_event.wait(TICK_FLUSH_INTERVAL)
+        else:
+            time.sleep(TICK_FLUSH_INTERVAL)
+
+
+def start_tick_flusher() -> None:
+    """
+    Start the flushers once, whoever asks.
+
+    Several of them, not one: storing a tick costs about 25ms, so a single
+    poster tops out near 40 ticks/second — the exact rate this feed produces.
+    Posting concurrently is what provides the headroom, and the batching only
+    reduces the number of requests needed to use it.
+    """
+    global _flusher_started
+    with _tick_lock:
+        if _flusher_started:
+            return
+        _flusher_started = True
+    for index in range(TICK_FLUSH_WORKERS):
+        threading.Thread(
+            target=tick_flush_loop, name=f"tick-flusher-{index}", daemon=True
+        ).start()
+    print(f"TICK FLUSHERS started — {TICK_FLUSH_WORKERS} posters, batches of up to "
+          f"{TICK_BATCH_MAX} every {TICK_FLUSH_INTERVAL * 1000:.0f}ms.", flush=True)
 
 
 def is_market_open() -> bool | None:
@@ -833,6 +911,9 @@ def main():
 
     # Start background threads ONLY ONCE
     if not threads_started:
+        # Before anything can produce a tick: nothing is posted until this is up.
+        start_tick_flusher()
+
         watchlist_thread = threading.Thread(target=redis_subscriber_loop, daemon=True)
         watchlist_thread.start()
 
