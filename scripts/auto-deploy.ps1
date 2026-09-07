@@ -122,7 +122,17 @@ if ($Install) {
     $elevated = (New-Object Security.Principal.WindowsPrincipal($identity)).IsInRole(
         [Security.Principal.WindowsBuiltInRole]::Administrator)
 
-    $command = "`"$((Get-Command powershell.exe).Source)`" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+    # Through wscript.exe and a VBS shim, not powershell.exe directly: a task
+    # that runs powershell flashes a console window on screen every time it
+    # fires, which on a two-minute schedule is a black rectangle blinking at the
+    # operator all day. -WindowStyle Hidden does not fix it - the window is
+    # created and then hidden. wscript has no console to begin with.
+    $shim = Join-Path $PSScriptRoot 'run-hidden.vbs'
+    if (-not (Test-Path $shim)) {
+        Write-Log "FAILED: $shim is missing." 'Red'
+        exit 1
+    }
+    $command = "wscript.exe `"$shim`" `"$PSCommandPath`""
 
     $output = & schtasks /Create /F /TN $TaskName /TR $command /SC MINUTE /MO $IntervalMinutes 2>&1
     $created = $LASTEXITCODE -eq 0
