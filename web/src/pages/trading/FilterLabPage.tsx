@@ -132,14 +132,14 @@ export function FilterLabPage() {
       </header>
 
       <Panel title="Setup">
-        <div className="form-row">
-          <div className="field">
+        <div className="lab-grid">
+          <div className="field lab-grid__wide">
             <label className="field__label" htmlFor="lab-symbol">Instrument</label>
             <SymbolCombobox id="lab-symbol" value={symbol} onChange={setSymbol} />
             <p className="field__help">Index, future, option — anything with bars.</p>
           </div>
 
-          <div className="field">
+          <div className="field lab-grid__wide">
             <label className="field__label" htmlFor="lab-res">Timeframe</label>
             <select
               id="lab-res"
@@ -151,19 +151,16 @@ export function FilterLabPage() {
               <option value="5m">5m</option>
               <option value="15m">15m</option>
             </select>
+            <p className="field__help">Aggregated on read, as everywhere else.</p>
           </div>
+
+          {/* From and To as pairs, so a date always sits beside its own time. */}
+          <div className="lab-grid__legend">Window · every closed candle inside it is judged</div>
 
           <div className="field">
             <label className="field__label" htmlFor="lab-from-date">From date</label>
             <input id="lab-from-date" className="field__input" type="date"
                    value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
-            <p className="field__help">Stored candles go back about two months.</p>
-          </div>
-
-          <div className="field">
-            <label className="field__label" htmlFor="lab-to-date">To date</label>
-            <input id="lab-to-date" className="field__input" type="date"
-                   value={toDate} onChange={(e) => setToDate(e.target.value)} />
           </div>
 
           <div className="field">
@@ -173,11 +170,20 @@ export function FilterLabPage() {
           </div>
 
           <div className="field">
+            <label className="field__label" htmlFor="lab-to-date">To date</label>
+            <input id="lab-to-date" className="field__input" type="date"
+                   value={toDate} onChange={(e) => setToDate(e.target.value)} />
+          </div>
+
+          <div className="field">
             <label className="field__label" htmlFor="lab-to-time">To time (IST)</label>
             <input id="lab-to-time" className="field__input" type="time"
                    value={toTime} onChange={(e) => setToTime(e.target.value)} />
-            <p className="field__help">Every closed candle in the window is judged.</p>
           </div>
+
+          <p className="field__help lab-grid__legend" style={{ textTransform: 'none', letterSpacing: 0 }}>
+            Stored candles reach back about two months; today falls back to the live table.
+          </p>
         </div>
 
         <div className="field" style={{ marginTop: 12 }}>

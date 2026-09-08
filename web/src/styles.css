@@ -1674,7 +1674,7 @@ a.checklist__item:hover { background: var(--brand-soft); }
   /* Buttons and inputs are touch targets first on a phone. */
   .btn { min-height: 40px; }
   .btn--sm { min-height: 32px; }
-  .field__input, select, input[type='date'] { min-height: 40px; font-size: 16px; }
+  .field__input, select, input[type='date'], input[type='time'] { min-height: 40px; font-size: 16px; }
 }
 
 /* Wider than a phone but narrower than a laptop: keep the drawer, it is still
@@ -3039,4 +3039,50 @@ a.pill:hover { border-color: var(--line-strong); }
 @media (max-width: 640px) {
   .manual-price__ltp { font-size: 27px; }
   .manual-price__meta { gap: 10px; }
+}
+
+
+/* --------------------------------------------------------------- filter lab */
+/*
+ * The lab's setup grid.
+ *
+ * Not .form-row: that aligns its children on their BOTTOM edge, which is right
+ * when every field is the same height and wrong here, where some carry a line
+ * of help text and some do not - the fields staggered into three different
+ * vertical positions. These align on their tops and keep a fixed column count
+ * per breakpoint, so the window fields read as one row of four.
+ */
+.lab-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+/* The instrument box needs the room; a symbol is long. */
+.lab-grid__wide { grid-column: span 2; }
+
+.lab-grid .field__input,
+.lab-grid select {
+  width: 100%;
+  /* Without this a date/time input refuses to shrink and overflows the cell. */
+  min-width: 0;
+}
+
+.lab-grid__legend {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: 4px 0 -4px;
+}
+
+@media (max-width: 1100px) {
+  .lab-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 620px) {
+  .lab-grid { grid-template-columns: 1fr; }
+  .lab-grid__wide { grid-column: auto; }
 }
