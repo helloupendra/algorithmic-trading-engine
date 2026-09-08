@@ -85,9 +85,9 @@ function PositionsTable({ positions }: { positions: BacktestPosition[] }) {
                 <td>
                   <Badge tone={p.side === 'BUY' ? 'pos' : 'neg'}>{p.side}</Badge>
                 </td>
-                <td className="r">{open ? formatNumber(p.lots) : 0}</td>
+                <td className="r">{formatNumber(p.lots)}</td>
                 <td className="r muted">{formatNumber(p.lotSize)}</td>
-                <td className="r">{open ? formatNumber(p.quantity) : 0}</td>
+                <td className="r">{formatNumber(p.quantity)}</td>
                 <td className="r mono">{formatPrice(p.entryPrice)}</td>
                 <td className="r mono">{p.exitPrice != null ? formatPrice(p.exitPrice) : <span className="muted">—</span>}</td>
                 <PositionValueCell values={values} open={open} />

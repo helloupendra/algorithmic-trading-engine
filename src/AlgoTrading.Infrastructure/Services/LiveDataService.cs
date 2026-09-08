@@ -497,7 +497,13 @@ public class LiveDataService : ILiveDataService
         }
 
         // 3) Upsert 1-minute bar
-        if (request.LastTradedPrice.HasValue)
+        //
+        // Not for a tick the exchange stamped at midnight. Before its first
+        // trade of the day BSE replays the previous close with a date-only
+        // stamp (00:00:00 IST); filed by that clock it became a one-price bar at
+        // midnight on nine SENSEX contracts every session (2026-09-08). The tick
+        // itself is kept above — the price is real, the minute is not.
+        if (request.LastTradedPrice.HasValue && !IsDateOnlyStamp(request.ExchangeTimestampUtc))
         {
             // Bucketed by the EXCHANGE's clock, not ours.
             //
@@ -1032,4 +1038,7 @@ public class LiveDataService : ILiveDataService
             IsHealthy = isHealthy
         };
     }
+
+    private static bool IsDateOnlyStamp(DateTime? exchangeUtc)
+        => exchangeUtc.HasValue && IstTime.IsMidnightIst(exchangeUtc.Value.ToUniversalTime());
 }

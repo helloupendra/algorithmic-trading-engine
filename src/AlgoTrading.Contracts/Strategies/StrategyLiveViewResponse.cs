@@ -99,6 +99,10 @@ public class LivePositionResponse
     /// <summary>"BUY" (long) or "SELL" (short).</summary>
     public string Side { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Lots held while open; for a closed row, the lots that were opened
+    /// (replayed from the run's fills; 0 when nothing can be replayed).
+    /// </summary>
     public int Lots { get; set; }
     public int LotSize { get; set; }
 
@@ -109,6 +113,10 @@ public class LivePositionResponse
     public string Status { get; set; } = string.Empty;
 
     public decimal EntryPrice { get; set; }
+
+    /// <summary>Fill price of the closing order; null while open.</summary>
+    public decimal? ExitPrice { get; set; }
+
     public decimal? Ltp { get; set; }
     public DateTime? LtpUpdatedUtc { get; set; }
 

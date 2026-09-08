@@ -84,6 +84,8 @@ builder.Services.AddSingleton<AlgoTrading.Api.Services.ChainPollerSupervisor>();
 // The signal alerter process, same shape. It was never registered, so every call
 // to /api/Alerts/status, start and stop answered 500.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AlertsSupervisor>();
+builder.Services.AddHttpClient(nameof(AlgoTrading.Api.Services.InstrumentMasterService));
+builder.Services.AddSingleton<AlgoTrading.Api.Services.InstrumentMasterService>();
 // The Telegram notifier, same shape. Started with the API rather than by hand:
 // it used to be a sidecar, and the day nobody remembered to start it the
 // platform ran all day without a single alert and looked perfectly healthy.

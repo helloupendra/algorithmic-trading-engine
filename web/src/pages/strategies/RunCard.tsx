@@ -353,7 +353,8 @@ function PositionsTable({
             <th className="r">Lots</th>
             <th className="r">Lot size</th>
             <th className="r">Qty</th>
-            <th className="r">Entry</th>
+            <th className="r" title="Entry premium and the time the position was opened (IST)">Entry</th>
+            <th className="r" title="Closing fill and the time the position was closed (IST)">Exit</th>
             <th className="r">LTP</th>
             <th className="r" title="Entry premium × quantity; open rows also show the value at the last price">
               Value
@@ -363,7 +364,6 @@ function PositionsTable({
               SL / Target
             </th>
             <th>Status</th>
-            <th>Time</th>
             {canClose && <th aria-label="Actions" />}
           </tr>
         </thead>
@@ -379,10 +379,23 @@ function PositionsTable({
                 <td>
                   <Badge tone={p.side === 'BUY' ? 'pos' : 'neg'}>{p.side}</Badge>
                 </td>
-                <td className="r">{open ? formatNumber(p.lots) : 0}</td>
+                <td className="r">{formatNumber(p.lots)}</td>
                 <td className="r muted">{formatNumber(p.lotSize)}</td>
-                <td className="r">{open ? formatNumber(p.quantity) : 0}</td>
-                <td className="r mono">{formatPrice(p.entryPrice)}</td>
+                <td className="r">{formatNumber(p.quantity)}</td>
+                <td className="r mono">
+                  {formatPrice(p.entryPrice)}
+                  <span className="cell-sub">{formatTime(p.openedUtc)}</span>
+                </td>
+                <td className="r mono">
+                  {open || p.exitPrice == null ? (
+                    <span className="muted">—</span>
+                  ) : (
+                    <>
+                      {formatPrice(p.exitPrice)}
+                      <span className="cell-sub">{formatTime(p.closedUtc)}</span>
+                    </>
+                  )}
+                </td>
                 <td className="r">{open ? <FlashPrice value={p.ltp} /> : <span className="muted">—</span>}</td>
                 <PositionValueCell values={values} open={open} />
                 <PositionPnlCell pnl={p.pnl} values={values} />
@@ -398,7 +411,6 @@ function PositionsTable({
                   )}
                 </td>
                 <td>{open ? <Badge tone="accent">Open</Badge> : <Badge>Closed</Badge>}</td>
-                <td className="muted">{open ? formatTime(p.openedUtc) : formatTime(p.closedUtc)}</td>
                 {canClose && (
                   <td className="r">
                     {open && (

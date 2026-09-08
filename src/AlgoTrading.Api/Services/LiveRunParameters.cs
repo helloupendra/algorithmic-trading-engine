@@ -50,6 +50,27 @@ public sealed record LiveRunParameters(int? Lots, string? Underlying, RiskRulesD
     }
 
     /// <summary>
+    /// The run's <c>role</c> ("alerts" for an alerter run; see AlertsSupervisor),
+    /// or null when the parameters carry none — every trading run.
+    /// </summary>
+    public static string? ReadRole(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return null;
+            return doc.RootElement.TryGetProperty("role", out var r) && r.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(r.GetString())
+                ? r.GetString()!.Trim().ToLowerInvariant()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// defaults ⊕ overrides ⊕ { lots, underlying, risk, stop_loss, target } as one JSON object.
     /// </summary>
     public static string Merge(

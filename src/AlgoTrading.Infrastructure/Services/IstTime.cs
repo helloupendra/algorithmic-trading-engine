@@ -19,6 +19,14 @@ public static class IstTime
 
     public static readonly TimeZoneInfo Zone = ResolveZone();
 
+    /// <summary>
+    /// True when the instant is exactly midnight IST — a date with no time.
+    /// BSE stamps its pre-open replay of the previous close this way; such a
+    /// stamp says which day, not which minute, and must not bucket a bar.
+    /// </summary>
+    public static bool IsMidnightIst(DateTime utc)
+        => ToIst(utc).TimeOfDay == TimeSpan.Zero;
+
     public static DateTime ToIst(DateTime utc)
         => TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc, DateTimeKind.Utc), Zone);
 

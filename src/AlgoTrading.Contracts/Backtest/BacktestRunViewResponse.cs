@@ -133,9 +133,6 @@ public class BacktestDailyPnl
 /// </summary>
 public class BacktestPosition : LivePositionResponse
 {
-    /// <summary>Fill price of the closing order; null while open.</summary>
-    public decimal? ExitPrice { get; set; }
-
     /// <summary>Reason carried by the CLOSE_GROUP signal that closed the position, if any.</summary>
     public string? ExitReason { get; set; }
 }

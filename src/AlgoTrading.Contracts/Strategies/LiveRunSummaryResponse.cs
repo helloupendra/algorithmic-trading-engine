@@ -29,6 +29,12 @@ public class LiveRunSummaryResponse
 
     public int Lots { get; set; }
 
+    /// <summary>
+    /// "alerts" for a LogicEngine alerter run (Telegram alerts only, never a
+    /// position — lots do not apply); null for a trading run.
+    /// </summary>
+    public string? Role { get; set; }
+
     /// <summary>Lot size of the underlying today (the run's positions carry their own).</summary>
     public int LotSize { get; set; }
 

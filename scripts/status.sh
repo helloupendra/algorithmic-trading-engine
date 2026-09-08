@@ -83,4 +83,4 @@ if [ -f logs/desk.log ]; then
   printf "\n  ${D}desk.log, last lines (tail -f logs/desk.log to follow):${N}\n"
   grep -vE '^\s|^ Container|Warning\(s\)|Error\(s\)|Time Elapsed|^$' logs/desk.log | tail -8 | sed 's/^/    /'
 fi
-printf "\n  ${D}logs: logs/desk.log · logs/market-open-$(date +%F).log · logs/tunnel.log · logs/api.log${N}\n\n"
+printf "\n  ${D}logs: logs/desk.log · logs/market-open-$(date +%F).log · logs/tunnel.log · logs/api.log (earlier runs: logs/api-until-*.log)${N}\n\n"
