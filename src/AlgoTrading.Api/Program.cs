@@ -84,6 +84,10 @@ builder.Services.AddSingleton<AlgoTrading.Api.Services.ChainPollerSupervisor>();
 // The signal alerter process, same shape. It was never registered, so every call
 // to /api/Alerts/status, start and stop answered 500.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AlertsSupervisor>();
+// The Telegram notifier, same shape. Started with the API rather than by hand:
+// it used to be a sidecar, and the day nobody remembered to start it the
+// platform ran all day without a single alert and looked perfectly healthy.
+builder.Services.AddSingleton<AlgoTrading.Api.Services.NotifierSupervisor>();
 
 // Backtesting: the backtest runner registry and its stop path, the coverage /
 // backfill service and the view builders shared with the live runner.
@@ -109,6 +113,8 @@ builder.Services.AddHostedService<AlgoTrading.Api.Services.StrategyRiskGuardServ
 builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketHoursService>();
 // Alert Subscriber Service for logic engine pub/sub
 builder.Services.AddHostedService<AlgoTrading.Api.Services.AlertSubscriberService>();
+// Keeps the Telegram notifier running for as long as the API does.
+builder.Services.AddHostedService<AlgoTrading.Api.Services.NotifierStartupService>();
 
 
 builder.Services.Configure<JwtOptions>(

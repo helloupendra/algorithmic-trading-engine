@@ -544,6 +544,9 @@ export interface LivePosition {
   pnlPoints?: number | null
   /** pnlPoints / entry × 100. */
   pnlPercent?: number | null
+  /** This position's own stop / target, from the order that opened it. */
+  stopLossPrice: number | null
+  targetPrice: number | null
 }
 
 export interface LiveActivity {

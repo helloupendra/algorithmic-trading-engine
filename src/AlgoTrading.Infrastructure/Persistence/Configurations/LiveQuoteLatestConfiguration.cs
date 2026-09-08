@@ -25,6 +25,12 @@ public class LiveQuoteLatestConfiguration : IEntityTypeConfiguration<LiveQuoteLa
     builder.Property(x => x.LastTradedPrice)
         .HasColumnType("numeric(18,6)");
 
+    builder.Property(x => x.BidPrice)
+        .HasColumnType("numeric(18,6)");
+
+    builder.Property(x => x.AskPrice)
+        .HasColumnType("numeric(18,6)");
+
     builder.Property(x => x.Open)
         .HasColumnType("numeric(18,6)");
 

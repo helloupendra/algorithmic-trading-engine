@@ -1,9 +1,11 @@
-// src/AlgoTrading.Api/Services/StrategyRiskGuardService.cs
+﻿// src/AlgoTrading.Api/Services/StrategyRiskGuardService.cs
 using AlgoTrading.Api.Configuration;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.Simulator;
 using AlgoTrading.Contracts.Strategies;
+using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Services;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using System.Globalization;
 
@@ -105,6 +107,73 @@ public sealed class StrategyRiskGuardService : BackgroundService
                 _logger.LogError(ex, "Risk guard check failed for strategy {StrategyId} run {RunId}.", entry.StrategyId, entry.RunId);
             }
         }
+
+        await CheckOwnLevelsAsync(guarded.Select(x => x.RunId).ToHashSet(), cancellationToken);
+    }
+
+    /// <summary>
+    /// Positions carrying their OWN stop / target, in runs the loop above did
+    /// not already cover.
+    /// </summary>
+    /// <remarks>
+    /// Two runs fall through that loop, and both can hold a position with its
+    /// own levels:
+    ///
+    ///   - the manual book, which has no runner and therefore no registry entry
+    ///     at all. Its per-order stops would never have fired: the order was
+    ///     placed, the level was stored, the price went through it, and nothing
+    ///     looked.
+    ///   - a strategy run started with no run-level risk rules, which the loop
+    ///     skips on `Risk.HasAnyRule`.
+    ///
+    /// One indexed query finds them: open positions that actually carry a level.
+    /// Nothing here touches group, overall or trailing rules - those are
+    /// properties of a run, and a run without them has not asked for them.
+    /// </remarks>
+    private async Task CheckOwnLevelsAsync(HashSet<long> alreadySwept, CancellationToken cancellationToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
+
+        var runIds = await dbContext.PaperPositions
+            .AsNoTracking()
+            .Where(x => x.Status == "Open" && (x.StopLossPrice != null || x.TargetPrice != null))
+            .Select(x => x.SimulationRunId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        var pending = runIds.Where(id => !alreadySwept.Contains(id)).ToList();
+        if (pending.Count == 0) return;
+
+        var paperTrading = scope.ServiceProvider.GetRequiredService<IPaperTradingService>();
+
+        foreach (var runId in pending)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                var positions = await paperTrading.GetPaperPositionsAsync(runId, cancellationToken);
+
+                foreach (var pos in positions.Where(IsOpen))
+                {
+                    if (pos.StopLossPrice is null && pos.TargetPrice is null) continue;
+
+                    var reason = EvaluateOwnLevels(pos);
+                    if (reason is null) continue;
+
+                    _logger.LogWarning("Risk guard closing position {PositionId} of run {RunId}: {Reason}",
+                        pos.Id, runId, reason);
+
+                    await paperTrading.ClosePositionsAsync(
+                        runId, new[] { pos.Id }, reason, "risk-guard", CancellationToken.None);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Own-level risk check failed for run {RunId}.", runId);
+            }
+        }
     }
 
     /// <summary>One run, one sweep: leg → group → overall.</summary>
@@ -134,6 +203,28 @@ public sealed class StrategyRiskGuardService : BackgroundService
             open.Select(x => x.GroupId ?? string.Empty).ToHashSet(StringComparer.Ordinal));
 
         var closedThisSweep = new HashSet<long>();
+
+        // b0. A position's OWN stop / target, set when the order was placed.
+        //
+        // These come first and apply whatever the run's rules say, because they
+        // are the more specific instruction: the run's leg rules are one setting
+        // shared by every position, which cannot be right for a book held by
+        // hand where a share at 703 and an option at 2.90 sit side by side.
+        foreach (var pos in open)
+        {
+            if (pos.StopLossPrice is null && pos.TargetPrice is null) continue;
+
+            var reason = EvaluateOwnLevels(pos);
+            if (reason is null) continue;
+
+            closedThisSweep.Add(pos.Id);
+            await CloseAsync(current, paperTrading, new[] { pos.Id }, reason, cancellationToken);
+        }
+
+        if (closedThisSweep.Count > 0)
+        {
+            open = open.Where(x => !closedThisSweep.Contains(x.Id)).ToList();
+        }
 
         // b. Leg rules → one close per tripped leg, each with its own reason.
         if (rules.Leg is { HasAnyRule: true } leg && open.Count > 0)
@@ -199,6 +290,41 @@ public sealed class StrategyRiskGuardService : BackgroundService
     /// trailing tracks are advanced first, so the peaks stay current whatever
     /// trips. Null when nothing trips.
     /// </summary>
+    /// <summary>
+    /// The position's own stop / target, compared against its last mark.
+    /// </summary>
+    /// <remarks>
+    /// Direction decides which side trips: a long is stopped BELOW its stop and
+    /// takes profit ABOVE its target; a short is the mirror. Getting this the
+    /// wrong way round would close every position the instant it was opened.
+    /// </remarks>
+    internal static string? EvaluateOwnLevels(PaperPositionResponse pos)
+    {
+        if (pos.LastMarkPrice is not { } mark || mark <= 0) return null;
+
+        // A position's Direction is "LONG"/"SHORT" — the ORDER's side is
+        // BUY/SELL. Reading it as BUY made every long look like a short, so the
+        // stop tripped the instant the position opened: the very failure the
+        // remark above warns about, caught by the first live test.
+        bool isLong = string.Equals(pos.Direction, "LONG", StringComparison.OrdinalIgnoreCase);
+
+        if (pos.StopLossPrice is { } stop)
+        {
+            bool tripped = isLong ? mark <= stop : mark >= stop;
+            if (tripped)
+                return $"Stop-loss on {pos.Symbol}: {mark:0.##} reached its {stop:0.##} stop";
+        }
+
+        if (pos.TargetPrice is { } target)
+        {
+            bool tripped = isLong ? mark >= target : mark <= target;
+            if (tripped)
+                return $"Target on {pos.Symbol}: {mark:0.##} reached its {target:0.##} target";
+        }
+
+        return null;
+    }
+
     internal static string? EvaluateLeg(PaperPositionResponse pos, LegRiskDto leg, RiskTrailState trail)
     {
         if (pos.AveragePrice <= 0 || pos.LastMarkPrice is not > 0) return null;

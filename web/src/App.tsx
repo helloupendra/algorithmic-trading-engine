@@ -30,6 +30,8 @@ import { LiveAlertsV2Page } from './pages/admin/LiveAlertsV2Page'
 import { ActivityLogPage } from './pages/admin/ActivityLogPage'
 import { DeploymentsPage } from './pages/admin/DeploymentsPage'
 import { StrategiesOverviewPage } from './pages/strategies/StrategiesOverviewPage'
+import { ManualOrderPage } from './pages/trading/ManualOrderPage'
+import { FilterLabPage } from './pages/trading/FilterLabPage'
 import { LiveRunnerPage } from './pages/strategies/LiveRunnerPage'
 import { StrategyLibraryPage } from './pages/strategies/StrategyLibraryPage'
 import { RunHistoryPage } from './pages/strategies/RunHistoryPage'
@@ -97,6 +99,8 @@ export default function App() {
                 <Route path="/trader/option-chain" element={<OptionChainPage />} />
                 <Route path="/trader/positions" element={<PositionsPage />} />
                 <Route path="/trader/orders" element={<OrdersPage />} />
+                <Route path="/trader/trading" element={<ManualOrderPage />} />
+                <Route path="/trader/trading/lab" element={<FilterLabPage />} />
                 <Route path="/trader/strategies" element={<StrategiesPage />} />
                 <Route path="/trader/deploy" element={<DeployPage />} />
                 <Route path="/trader/runs/:id" element={<RunDetailPage />} />
@@ -126,6 +130,9 @@ export default function App() {
                   <Route path="/admin/users/packages" element={<StrategyPackagesPage />} />
                   <Route path="/admin/system/risk" element={<RiskV2Page />} />
                   <Route path="/admin/risk" element={<Navigate to="/admin/system/risk" replace />} />
+                  {/* Trading module: orders placed by hand, in any segment. */}
+                  <Route path="/admin/trading" element={<ManualOrderPage />} />
+                  <Route path="/admin/trading/lab" element={<FilterLabPage />} />
                   <Route path="/admin/strategies" element={<StrategiesOverviewPage />} />
                   <Route path="/admin/strategies/live" element={<LiveRunnerPage />} />
                   <Route path="/admin/strategies/history" element={<RunHistoryPage mode="admin" />} />

@@ -1,4 +1,4 @@
-using AlgoTrading.Domain.Constants;
+﻿using AlgoTrading.Domain.Constants;
 using AlgoTrading.Api.Security;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Application.UseCases.Instruments;
@@ -59,7 +59,11 @@ public class InstrumentsController : ControllerBase
 
 
     [HttpGet("search")]
-    public async Task<IActionResult> Search([FromQuery] string query, [FromQuery] string? type, CancellationToken cancellationToken)
+    public async Task<IActionResult> Search(
+        [FromQuery] string query,
+        [FromQuery] string? type,
+        [FromQuery] bool includeExpired,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(query))
             return BadRequest(new { message = "query is required" });
@@ -79,6 +83,17 @@ public class InstrumentsController : ControllerBase
                 x.Symbol.ToUpper().Contains(q) ||
                 x.Description.ToUpper().Contains(q) ||
                 (alias != null && x.Symbol == alias));
+
+        // Expired contracts stay in the master - a backfill still needs them -
+        // but they must not be offered to anything trading TODAY. The manual
+        // ticket showed a SENSEX put that expired five days earlier, waited for
+        // a tick that could never come, and explained the blank prices as "add
+        // it to the watchlist". 802 F&O rows were in that state.
+        if (!includeExpired)
+        {
+            var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(5.5));
+            dbQuery = dbQuery.Where(x => x.ExpiryDate == null || x.ExpiryDate >= today);
+        }
 
         if (!string.IsNullOrEmpty(type))
         {

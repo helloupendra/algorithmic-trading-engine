@@ -16,6 +16,7 @@ public static class ProcessProbe
     public const string ChainPollerMarker = "option_chain_poller";
     public const string StrategyRunnerMarker = "execution_runner";
     public const string BacktestRunnerMarker = "backtest_runner";
+    public const string NotifierMarker = "telegram_notifier";
 
     private static readonly TimeSpan PsTimeout = TimeSpan.FromSeconds(5);
 

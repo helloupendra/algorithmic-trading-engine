@@ -3,6 +3,7 @@ using System;
 using AlgoTrading.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace AlgoTrading.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(TradingDbContext))]
-    partial class TradingDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260908074713_AddQuoteBidAsk")]
+    partial class AddQuoteBidAsk
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1350,9 +1353,6 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
-                    b.Property<decimal?>("StopLossPrice")
-                        .HasColumnType("numeric(18,6)");
-
                     b.Property<string>("StrategyName")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -1362,9 +1362,6 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
-
-                    b.Property<decimal?>("TargetPrice")
-                        .HasColumnType("numeric(18,6)");
 
                     b.Property<decimal>("UnrealizedPnl")
                         .HasColumnType("numeric(18,6)");

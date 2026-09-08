@@ -55,6 +55,7 @@ from strategies.base_strategy import (
     BarFrame,
 )
 from strategies.registry import discover_strategies
+from strategies import signal_filters
 # Shared helpers live in importable modules (also used by the backtest engine);
 # they are re-exported here so existing `execution_runner.<name>` references work.
 from strategies.contract_selector import (  # noqa: F401
@@ -98,6 +99,7 @@ from core.metrics import (
     start_metrics_server_auto,
     REDIS_LAG,
     ORDERS_EMITTED,
+    SIGNALS_FILTERED,
     STRATEGY_LOOP_DURATION,
     TICK_PROCESSED
 )
@@ -542,6 +544,13 @@ if __name__ == "__main__":
     # The contracts this strategy wants on every tick, at the distances the
     # run's parameters ask for. Resolved once: the keys never change during a
     # run, only the strikes they land on as the underlying moves.
+    # Market-context rules for THIS run, applied to whatever the strategy
+    # emits. Configured per run, so the same strategy can be tried with and
+    # without them and the difference measured.
+    filter_config = signal_filters.parse_filters(run_params)
+    if filter_config is not None:
+        print(f"[CONFIG] signal filters active: {filter_config}", flush=True)
+
     contract_requirements = resolve_contract_requirements(strategy, run_params)
     contract_cache = ExactContractCache(api, args.underlying, log=lambda line: print(line, flush=True))
     missing_contracts_logged: set = set()
@@ -1007,6 +1016,16 @@ if __name__ == "__main__":
                             traceback.print_exc()
 
                     if sig.signal_type in {"OPEN_GROUP", "CLOSE_GROUP"}:
+                        # The live loop is always handed a bar that is still
+                        # forming, so the gate judges the one before it.
+                        verdict = signal_filters.evaluate(
+                            filter_config, sig, inp, newest_bar_is_forming=True)
+                        if verdict.blocked:
+                            print(f"[FILTER] {sig.signal_type} blocked by {verdict.blocked_by}: "
+                                  f"{verdict.reason} | {verdict.details}", flush=True)
+                            SIGNALS_FILTERED.inc()
+                            continue
+
                         sig = enrich_signal_leg_prices(api, sig, expiry_date, on_poll=housekeeping)
                         stamp_signal_metadata(sig, inp)
 

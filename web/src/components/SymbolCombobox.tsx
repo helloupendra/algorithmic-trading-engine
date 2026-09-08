@@ -21,18 +21,21 @@ export function SymbolCombobox({
   id,
   placeholder = 'NSE:SBIN-EQ',
   disabled = false,
+  includeExpired = false,
 }: {
   value: string
   onChange: (symbol: string) => void
   id: string
   placeholder?: string
   disabled?: boolean
+  /** Offer contracts whose expiry has passed. Only historical work wants them. */
+  includeExpired?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [highlight, setHighlight] = useState(0)
   const boxRef = useRef<HTMLDivElement>(null)
 
-  const search = useInstrumentSearch(value)
+  const search = useInstrumentSearch(value, undefined, includeExpired)
   const results = (search.data ?? []).slice(0, 8)
 
   // A click anywhere else is a dismissal; without this the list stays open

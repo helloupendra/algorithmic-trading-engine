@@ -1,4 +1,5 @@
-// src/AlgoTrading.Api/Services/StrategyRunControl.cs
+﻿// src/AlgoTrading.Api/Services/StrategyRunControl.cs
+using AlgoTrading.Api.Controllers;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
@@ -195,8 +196,16 @@ public sealed class StrategyRunControl
     /// </summary>
     public async Task<ReconcileResult> ReconcileOrphanedRunsAsync(CancellationToken cancellationToken = default)
     {
+        // A manual book is Running with no runner BY DESIGN — it is a container
+        // for orders placed by hand, not a process. Left in this sweep it looks
+        // exactly like an orphan, so every API restart closed the operator's
+        // book and squared off the positions in it: a restart silently
+        // liquidated hand-placed trades and the console then reported that
+        // nothing had ever been traded by hand.
         var orphans = await _dbContext.SimulationRuns.AsNoTracking()
-            .Where(x => x.Mode == LivePaperMode && (x.Status == RunStatusRunning || x.Status == RunStatusStopping))
+            .Where(x => x.Mode == LivePaperMode
+                        && (x.Status == RunStatusRunning || x.Status == RunStatusStopping)
+                        && x.StrategyName != ManualOrdersController.BookStrategyName)
             .OrderBy(x => x.Id)
             .ToListAsync(cancellationToken);
 

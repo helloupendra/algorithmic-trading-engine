@@ -335,12 +335,31 @@ export function parseParamDefaults(json: string, omit?: ReadonlySet<string>): Pa
   }
 }
 
-/** "70" -> 70, "true" -> true, anything else stays a string (as on DeployPage). */
+/**
+ * "70" -> 70, "true" -> true, `{...}`/`[...]` -> the parsed JSON, anything else
+ * stays a string (as on DeployPage).
+ *
+ * The JSON case exists because some parameters are structured — the run's
+ * market-context `filters` object above all. The row above already renders an
+ * object back as JSON text, so without parsing it here a value survived one
+ * round trip and then went to the API as a STRING, where the engine looked for
+ * an object, found text, and silently applied no filters at all. Silently is
+ * the problem: the run started, traded, and nothing said the rules were absent.
+ */
 export function coerceParam(value: string): unknown {
   const trimmed = value.trim()
   if (trimmed === 'true') return true
   if (trimmed === 'false') return false
   if (trimmed !== '' && !Number.isNaN(Number(trimmed))) return Number(trimmed)
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      return JSON.parse(trimmed)
+    } catch {
+      // Half-typed JSON is still text; the engine rejects what it cannot read
+      // rather than this dropping the value on the floor.
+      return trimmed
+    }
+  }
   return trimmed
 }
 

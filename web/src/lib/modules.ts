@@ -7,6 +7,7 @@
 
 import type { ComponentType, SVGProps } from 'react'
 import {
+  IconArrowRight,
   IconBell,
   IconBot,
   IconActivity,
@@ -156,6 +157,27 @@ export const DATA_SECTIONS = [
     route: '/admin/broker',
     label: 'Connectors',
     icon: IconPlug,
+    end: false,
+  },
+] as const
+
+/**
+ * Sub-navigation of the Trading module: orders the operator places by hand.
+ *
+ * Its own group rather than a page under Strategies, because it is the one
+ * place in the console where a trade does not come from a strategy at all.
+ */
+export const TRADING_SECTIONS = [
+  {
+    route: '/admin/trading',
+    label: 'Manual order',
+    icon: IconArrowRight,
+    end: true,
+  },
+  {
+    route: '/admin/trading/lab',
+    label: 'Filter lab',
+    icon: IconFlask,
     end: false,
   },
 ] as const

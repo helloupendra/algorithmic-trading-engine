@@ -8,11 +8,17 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
-import { useBrokerSession, useIngestorStatuses, useMarketSession } from '../lib/queries'
+import {
+  useBackendStatus,
+  useBrokerSession,
+  useIngestorStatuses,
+  useMarketSession,
+} from '../lib/queries'
 import {
   BACKTESTING_SECTIONS,
   DATA_SECTIONS,
   STRATEGIES_SECTIONS,
+  TRADING_SECTIONS,
   SYSTEM_SECTIONS,
 } from '../lib/modules'
 import {
@@ -33,6 +39,16 @@ import {
   IconSignOut,
   IconX,
 } from './icons'
+
+/** "2h 14m", "6m", "48s" — short enough for a chip. */
+function formatUptime(seconds: number): string {
+  if (seconds < 60) return `${Math.max(0, Math.round(seconds))}s`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`
+}
 
 function StatusPill({
   tone,
@@ -57,6 +73,7 @@ function TopbarStatus() {
   const session = useMarketSession()
   const mcxSession = useMarketSession('MCX', 'COM')
   const broker = useBrokerSession()
+  const backend = useBackendStatus()
   const ingestors = useIngestorStatuses()
 
   const market = session.data
@@ -72,6 +89,27 @@ function TopbarStatus() {
 
   return (
     <div className="topbar__status">
+      {/* First in the row on purpose: when the backend is down every other chip
+          is stale, and this is the one that explains why. */}
+      {backend.isDown ? (
+        <StatusPill tone="neg" label="Backend down" title="The API is not answering — it may be restarting." />
+      ) : backend.restartedAt ? (
+        <StatusPill
+          tone="warn"
+          label={`Backend restarted ${new Date(backend.restartedAt).toLocaleTimeString('en-IN')}`}
+          title="A new backend process is running. Refresh if a page looks stale."
+        />
+      ) : (
+        backend.data && (
+          <StatusPill
+            tone="pos"
+            label={`Backend up ${formatUptime(backend.data.uptimeSeconds)}`}
+            title={`Started ${new Date(backend.data.startedUtc).toLocaleString('en-IN')}${
+              backend.data.environment ? ` · ${backend.data.environment}` : ''
+            }`}
+          />
+        )
+      )}
       {market && (
         <StatusPill
           tone={market.isMarketOpen ? 'pos' : 'idle'}
@@ -128,6 +166,8 @@ const TRADER_NAV = [
   { to: '/trader/option-chain', label: 'Option chain', icon: IconLayers },
   { to: '/trader/positions', label: 'Positions', icon: IconDatabase },
   { to: '/trader/orders', label: 'Orders', icon: IconClock },
+  { to: '/trader/trading', label: 'Manual order', icon: IconArrowRight },
+  { to: '/trader/trading/lab', label: 'Filter lab', icon: IconFlask },
   { to: '/trader/strategies', label: 'Strategies', icon: IconFlask, end: true },
   { to: '/trader/deploy', label: 'Deploy', icon: IconPlay },
   { to: '/trader/strategies/history', label: 'My runs', icon: IconClock },
@@ -253,6 +293,7 @@ function AdminNav() {
       </div>
 
       <NavGroup label="Data" sections={DATA_SECTIONS} />
+      <NavGroup label="Trading" sections={TRADING_SECTIONS} />
       <NavGroup label="Strategies" sections={STRATEGIES_SECTIONS} />
       <NavGroup label="Backtesting" sections={BACKTESTING_SECTIONS} />
       <NavGroup label="System" sections={SYSTEM_SECTIONS} />

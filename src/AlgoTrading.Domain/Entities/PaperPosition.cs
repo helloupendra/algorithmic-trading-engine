@@ -1,4 +1,4 @@
-// src/AlgoTrading.Domain/Entities/PaperPosition.cs
+﻿// src/AlgoTrading.Domain/Entities/PaperPosition.cs
 namespace AlgoTrading.Domain.Entities;
 
 /// <summary>
@@ -81,5 +81,23 @@ public class PaperPosition
     /// <summary>
     /// When this record was last modified in the database.
     /// </summary>
+
+    /// <summary>
+    /// Price levels that belong to THIS position, set when the order was placed.
+    /// </summary>
+    /// <remarks>
+    /// A run's leg rules are one setting shared by every position in it, which
+    /// is fine for a strategy trading one instrument and wrong for a book held
+    /// by hand: "stop 9 points" is 1.3% on a share at 703 and 310% on an option
+    /// at 2.90. A hand-placed order carries its own stop and target, in PRICE,
+    /// because that is what the trader decided at the moment they placed it.
+    ///
+    /// Null means "no rule of its own" - the run's leg rules still apply.
+    /// </remarks>
+    public decimal? StopLossPrice { get; set; }
+
+    /// <inheritdoc cref="StopLossPrice"/>
+    public decimal? TargetPrice { get; set; }
+
     public DateTime UpdatedUtc { get; set; } = DateTime.UtcNow;
 }

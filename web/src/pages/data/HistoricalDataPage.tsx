@@ -307,7 +307,8 @@ function BackfillPanel({ selected }: { selected: CoverageRow | null }) {
       <div className="form-row">
         <div className="field">
           <label className="field__label" htmlFor="backfill-symbol">Symbol</label>
-          <SymbolCombobox id="backfill-symbol" value={symbol} onChange={setSymbol} />
+          <SymbolCombobox
+              includeExpired id="backfill-symbol" value={symbol} onChange={setSymbol} />
         </div>
         <label className="field">
           <span className="field__label">Resolution</span>

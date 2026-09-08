@@ -31,6 +31,32 @@ namespace AlgoTrading.Domain.Entities
         public decimal? LastTradedPrice { get; set; }
 
         /// <summary>
+        /// Best bid and ask, and the quantity on offer at each.
+        /// </summary>
+        /// <remarks>
+        /// The feed has always carried these and the tick request has always
+        /// had the fields; there was simply nowhere to put them, so they were
+        /// parsed and dropped on every tick. They matter to anything that has
+        /// to name a price it could actually get: the last trade can be minutes
+        /// old and on the wrong side of a wide spread, which is exactly the
+        /// case a manual order ticket has to get right.
+        ///
+        /// Absent for an index (nothing quotes one) and for an illiquid strike
+        /// with an empty book, so every reader must handle null rather than
+        /// assume a two-sided market.
+        /// </remarks>
+        public decimal? BidPrice { get; set; }
+
+        /// <inheritdoc cref="BidPrice"/>
+        public decimal? AskPrice { get; set; }
+
+        /// <inheritdoc cref="BidPrice"/>
+        public long? BidSize { get; set; }
+
+        /// <inheritdoc cref="BidPrice"/>
+        public long? AskSize { get; set; }
+
+        /// <summary>
         /// The daily opening price.
         /// </summary>
         public decimal? Open { get; set; }

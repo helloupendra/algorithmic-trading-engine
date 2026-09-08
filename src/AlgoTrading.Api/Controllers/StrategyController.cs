@@ -527,6 +527,101 @@ public class StrategyController : ControllerBase
     }
 
     /// <summary>Admins can stop anything; a trader only what they started (by name or by user id).</summary>
+    /// <summary>Body of POST /api/Strategy/runs/{runId}/positions/close.</summary>
+    /// <param name="PositionIds">The open positions to square off. At least one.</param>
+    /// <param name="Reason">Optional note recorded against the closing signal.</param>
+    public sealed record ClosePositionsRequest(List<long>? PositionIds, string? Reason);
+
+    /// <summary>
+    /// Squares off SOME of a run's open positions and leaves the run trading.
+    /// </summary>
+    /// <remarks>
+    /// Stopping the run was the only way to get out of a position by hand, and
+    /// it is all-or-nothing: it flattens every leg and kills the runner. A
+    /// strategy that holds several positions needs the smaller instrument —
+    /// close this one, keep the rest, keep trading.
+    ///
+    /// The squaring-off itself is not new. The risk guard has always closed
+    /// individual legs through <see cref="IPaperTradingService.ClosePositionsAsync"/>,
+    /// which fills reduce-only under the run's own lock and writes one
+    /// CLOSE_GROUP per group, so a manual close and a stop-loss produce exactly
+    /// the same rows. Only a way to ask for it was missing.
+    ///
+    /// Ids that are not open, or belong to another run, are reported rather than
+    /// closed — a stale console tab must not square off somebody else's leg.
+    /// Admin, or the user who started the run.
+    /// </remarks>
+    [HttpPost("runs/{runId:long}/positions/close")]
+    public async Task<IActionResult> ClosePositions(
+        long runId,
+        [FromBody] ClosePositionsRequest? request,
+        CancellationToken cancellationToken)
+    {
+        var requested = request?.PositionIds?.Distinct().ToList() ?? new List<long>();
+        if (requested.Count == 0)
+            return BadRequest(new { message = "positionIds is required - name at least one open position to square off." });
+
+        var run = await _dbContext.SimulationRuns
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == runId, cancellationToken);
+
+        if (run is null)
+            return NotFound(new { message = $"Strategy run {runId} not found." });
+
+        var startedBy = await _dbContext.AppUsers.AsNoTracking()
+            .Where(x => x.Id == run.UserId)
+            .Select(x => x.UserName)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (!CanStop(startedBy, run.UserId))
+            return Forbid();
+
+        // Scoped to this run and to Open on purpose: the id alone is a global
+        // key, and trusting it would let one run close another's position.
+        var closable = await _dbContext.PaperPositions
+            .AsNoTracking()
+            .Where(x => x.SimulationRunId == runId && x.Status == "Open" && requested.Contains(x.Id))
+            .Select(x => x.Id)
+            .ToListAsync(cancellationToken);
+
+        var skipped = requested.Except(closable).ToList();
+
+        if (closable.Count == 0)
+        {
+            return BadRequest(new
+            {
+                message = "None of those positions are open on this run - the console may be showing a stale view.",
+                skipped
+            });
+        }
+
+        var userName = User.GetUserName() ?? "unknown";
+        var reason = string.IsNullOrWhiteSpace(request?.Reason)
+            ? $"Squared off by {userName}"
+            : request!.Reason!.Trim();
+
+        int closed = await _paperTrading.ClosePositionsAsync(runId, closable, reason, userName, cancellationToken);
+
+        _logger.LogInformation(
+            "Run {RunId} ({Strategy}): {Closed} position(s) squared off by hand ({By}); {Skipped} skipped.",
+            runId, run.StrategyName, closed, userName, skipped.Count);
+
+        return Ok(new
+        {
+            message = closed == 1
+                ? $"Squared off 1 position on {run.StrategyName} run {runId}; the run is still trading."
+                : $"Squared off {closed} positions on {run.StrategyName} run {runId}; the run is still trading.",
+            runId,
+            closed,
+            skipped
+        });
+    }
+
+    /// <summary>True for a manual book that is still open — Running, with no runner by design.</summary>
+    private static bool IsOpenManualBook(SimulationRun run)
+        => run.StrategyName == ManualOrdersController.BookStrategyName
+           && StrategyRunControl.IsOpenStatus(run.Status);
+
     private bool CanStop(string? startedBy, long ownerUserId)
     {
         if (User.IsAdmin()) return true;
@@ -910,7 +1005,11 @@ public class StrategyController : ControllerBase
         {
             StrategyId = strategyId,
             Name = name,
-            IsActive = running is not null
+            // A manual book is open while its row says Running; it has no runner
+            // process to ask about, so the registry would always call it dead
+            // and the console would paint an open book, holding open positions,
+            // as Stopped.
+            IsActive = running is not null || IsOpenManualBook(run)
         };
 
         await FillLiveViewAsync(view, run, running, lastExit, cancellationToken);

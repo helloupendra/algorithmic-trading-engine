@@ -1,4 +1,4 @@
-// src/AlgoTrading.Infrastructure/Persistence/Configurations/PaperPositionConfiguration.cs
+﻿// src/AlgoTrading.Infrastructure/Persistence/Configurations/PaperPositionConfiguration.cs
 using AlgoTrading.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -25,6 +25,8 @@ public class PaperPositionConfiguration : IEntityTypeConfiguration<PaperPosition
 
         builder.Property(x => x.AveragePrice).HasColumnType("numeric(18,6)");
         builder.Property(x => x.LastMarkPrice).HasColumnType("numeric(18,6)");
+        builder.Property(x => x.StopLossPrice).HasColumnType("numeric(18,6)");
+        builder.Property(x => x.TargetPrice).HasColumnType("numeric(18,6)");
         builder.Property(x => x.RealizedPnl).HasColumnType("numeric(18,6)");
         builder.Property(x => x.UnrealizedPnl).HasColumnType("numeric(18,6)");
 

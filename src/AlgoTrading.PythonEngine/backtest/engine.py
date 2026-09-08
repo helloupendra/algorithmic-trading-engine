@@ -37,6 +37,7 @@ from core.resolutions import to_strategy_resolution
 from strategies.base_strategy import BarFrame, BaseStrategy, OptionContract, StrategyInput, StrategySignal
 from strategies.contract_selector import describe_requirement, fallback_strike_step, format_strike
 from strategies.signal_utils import signal_to_request, stamp_signal_metadata
+from strategies import signal_filters
 
 from backtest.contracts import ContractResolver
 from backtest.feed import HistoricalFeed
@@ -155,6 +156,11 @@ class BacktestSession:
         self.ledger = PaperLedger(self.lot_size, run.charges_per_lot)
 
         self.requirements = list(self.strategy.get_data_requirements() or [])
+        # The same market-context gate the live runner uses, so a filter can be
+        # measured here before it is trusted there.
+        self.filter_config = signal_filters.parse_filters(run.params)
+        self.filtered_count = 0
+        self.filtered_by: Dict[str, int] = {}
         # The option contracts the strategy wants each bar (ATM / OTM / ITM),
         # resolved once: only the strikes they land on move with the underlying.
         self.contract_requirements = list(self.strategy.get_contract_requirements(run.params) or [])
@@ -691,6 +697,17 @@ class BacktestSession:
             self.log(f"[SKIP] {format_ist(t)} IST unsupported signal type {sig.signal_type!r} ignored")
             return
 
+        # The replay is handed bars only up to the moment being replayed, so
+        # the newest one has closed - unlike live, where it is still forming.
+        verdict = signal_filters.evaluate(
+            self.filter_config, sig, inp, newest_bar_is_forming=False)
+        if verdict.blocked:
+            self.filtered_count += 1
+            self.filtered_by[verdict.blocked_by] = self.filtered_by.get(verdict.blocked_by, 0) + 1
+            self.log(f"[FILTER] {format_ist(t)} IST {sig.signal_type} blocked by "
+                     f"{verdict.blocked_by}: {verdict.reason}")
+            return
+
         sig.metadata = dict(sig.metadata or {})
         group_id = str(sig.metadata.get("group_id") or "")
         if not group_id:
@@ -985,6 +1002,15 @@ class BacktestSession:
             f"{' ' + risk_text if risk_text else ''}"
             f"{' stop=' + self.stop_reason if self.stop_reason else ''}{' error=' + error if error else ''}"
         )
+        # What the filters cost, in the only terms that matter: how many
+        # entries they refused, and which rule refused them. Without this the
+        # honest question - "did the filter help, or did it just trade less?" -
+        # has no data behind it.
+        if self.filtered_count:
+            breakdown = ", ".join(f"{rule}={count}"
+                                  for rule, count in sorted(self.filtered_by.items(),
+                                                            key=lambda kv: -kv[1]))
+            self.log(f"[FILTERS] blocked {self.filtered_count} opening signal(s): {breakdown}")
         self.api.complete_run(self.run.run_id, status, summary, error)
         return BacktestOutcome(status=status, summary=summary, error=error, stop_reason=self.stop_reason,
                                ledger=self.ledger, equity_points=self.equity_points)

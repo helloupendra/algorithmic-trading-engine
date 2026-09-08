@@ -14,7 +14,7 @@
 
 import { keepPreviousData, useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { InfiniteData } from '@tanstack/react-query'
-import { useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr'
 import { api, API_BASE_URL, tokenStore } from './api'
 import type {
@@ -267,14 +267,259 @@ export function useRemoveWatchlistSymbol() {
   })
 }
 
+// ---------- Strategy lab ----------
+
+export interface LabIndicators {
+  barIst: string | null
+  open: number; high: number; low: number; close: number; volume: number
+  sessionBars: number
+  vwap: number | null
+  ema: number | null
+  emaPeriod: number
+  sma20: number | null
+  rsi14: number | null
+  atr14: number | null
+  atrPercent: number | null
+  volumeZScore: number | null
+  patterns: string[]
+}
+
+export interface LabVerdict {
+  allowed: boolean
+  blockedBy: string | null
+  reason: string
+  details: Record<string, unknown>
+}
+
+export interface LabSideVerdict {
+  allowed: boolean
+  blockedBy: string | null
+  reason: string
+}
+
+export interface LabTimelineRow {
+  barIst: string | null
+  close: number
+  /** The same candle judged for a call and for a put. */
+  bullish: LabSideVerdict
+  bearish: LabSideVerdict
+}
+
+export interface LabSideTally {
+  allowed: number
+  blocked: number
+  blockedBy: Record<string, number>
+}
+
+export interface LabResult {
+  symbol: string
+  resolution: string
+  barCount: number
+  closedBarCount: number
+  filtersConfigured: boolean
+  /** Where the bars came from — stored candles for a window, or the live table. */
+  source: string
+  indicators: LabIndicators
+  verdicts: { bullish: LabVerdict; bearish: LabVerdict }
+  timeline: LabTimelineRow[]
+  summary: {
+    evaluated: number
+    bullish: LabSideTally
+    bearish: LabSideTally
+  }
+  error?: string
+}
+
+/**
+ * Runs the real indicators and the real gate over real bars.
+ *
+ * A mutation, not a query: it is an experiment the operator asks for, and it
+ * should run when they press the button rather than on a poll they cannot see.
+ */
+export function useEvaluateFilters() {
+  return useMutation({
+    mutationFn: (body: {
+      symbol: string
+      resolution: string
+      fromDate?: string
+      toDate?: string
+      fromTime?: string
+      toTime?: string
+      bars?: number
+      filters: unknown
+    }) =>
+      api.post<LabResult>('/api/StrategyLab/evaluate', body),
+  })
+}
+
+// ---------- Backend process ----------
+
+export interface BackendStatus {
+  startedUtc: string
+  uptimeSeconds: number
+  version: string | null
+  environment: string | null
+}
+
+/**
+ * Whether the backend is up, and whether it is the SAME backend as a moment ago.
+ *
+ * A rebuild takes the API down for a few seconds and every polling page turns
+ * red with "Failed to fetch", which reads as a fault rather than a restart.
+ * Watching the process start time turns that into something the console can
+ * state: it went away, it came back, and it is a new process.
+ */
+export function useBackendStatus() {
+  const query = useQuery({
+    queryKey: ['backend', 'status'],
+    queryFn: () => api.get<BackendStatus>('/api/Backend/status'),
+    refetchInterval: 5_000,
+    // The outage is the thing being measured, so a failed poll must not stop
+    // the polling, and the last good answer stays on screen meanwhile.
+    retry: false,
+    placeholderData: (previous) => previous,
+  })
+
+  const firstSeen = useRef<string | null>(null)
+  const [restartedAt, setRestartedAt] = useState<string | null>(null)
+
+  useEffect(() => {
+    const started = query.data?.startedUtc
+    if (!started) return
+    if (firstSeen.current === null) {
+      firstSeen.current = started
+      return
+    }
+    if (firstSeen.current !== started) {
+      firstSeen.current = started
+      setRestartedAt(new Date().toISOString())
+    }
+  }, [query.data?.startedUtc])
+
+  return {
+    ...query,
+    /** Set the moment a NEW process was first seen; null until one is. */
+    restartedAt,
+    acknowledgeRestart: () => setRestartedAt(null),
+    isDown: query.isError,
+  }
+}
+
+// ---------- Manual orders ----------
+
+/** One instrument's live two-sided price and the rules its segment imposes. */
+export interface ManualInstrument {
+  symbol: string
+  exchange: string
+  segment: string
+  segmentLabel: string
+  instrumentType: string
+  underlying: string | null
+  strikePrice: number | null
+  expiryDate: string | null
+  tickSize: number | null
+  lotSize: number
+  lotSizeSource: string
+  /** "lots" for a derivative, "shares" for equity — the word the form should use. */
+  quantityUnit: 'lots' | 'shares'
+  ltp: number | null
+  bid: number | null
+  ask: number | null
+  bidSize: number | null
+  askSize: number | null
+  open: number | null
+  high: number | null
+  low: number | null
+  prevClose: number | null
+  volume: number | null
+  change: number | null
+  changePercent: number | null
+  quoteUpdatedUtc: string | null
+  /** This lookup just put the symbol on the feed; the first tick is seconds away. */
+  subscribing: boolean
+  /** The calendar has retired this contract; it will never quote again. */
+  expired: boolean
+  /** What a market order would pay right now. */
+  buyAt: number | null
+  sellAt: number | null
+  tradable: boolean
+}
+
+export interface ManualOrderResponse {
+  message: string
+  runId: number
+  groupId: string
+  symbol: string
+  side: string
+  quantity: number
+  lotSize: number
+  filledQuantity: number
+  price: number
+  priceBasis: string
+  signalId: number
+}
+
+/**
+ * The ticket's live half. Polled fast: the operator is reading a bid and an ask
+ * they are about to hit, and a price a few seconds stale is the one thing this
+ * screen must not show.
+ */
+export function useManualInstrument(symbol: string) {
+  const trimmed = symbol.trim()
+  return useQuery({
+    queryKey: ['manual', 'instrument', trimmed],
+    queryFn: () => api.get<ManualInstrument>(`/api/ManualOrders/instrument?symbol=${encodeURIComponent(trimmed)}`),
+    // Only once the box holds something shaped like a broker symbol. Firing on
+    // every keystroke asked the API about "M", "MC", "MCX:C"... and each 404
+    // painted "not in the instrument master" under a field still being typed in.
+    enabled: /^[A-Za-z]+:.{3,}$/.test(trimmed),
+    refetchInterval: 2_000,
+    // Keep the last good reading on screen while the next one is in flight,
+    // so the prices do not blink out between polls.
+    placeholderData: (previous) => previous,
+    retry: false,
+  })
+}
+
+/** The caller's manual book, or null before their first order. */
+export function useManualBook() {
+  return useQuery({
+    queryKey: ['manual', 'book'],
+    queryFn: () => api.get<{ runId: number | null; status?: string; startedUtc?: string }>('/api/ManualOrders/book'),
+    refetchInterval: POLL_SLOW,
+  })
+}
+
+export function usePlaceManualOrder() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      symbol: string
+      side: 'BUY' | 'SELL'
+      quantity: number
+      limitPrice?: number | null
+      stopLossPrice?: number | null
+      targetPrice?: number | null
+    }) =>
+      api.post<ManualOrderResponse>('/api/ManualOrders', body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['manual', 'book'] })
+      qc.invalidateQueries({ queryKey: ['strategy', 'live'] })
+    },
+  })
+}
+
 // ---------- Instruments & derivatives ----------
 
-export function useInstrumentSearch(query: string, type?: string) {
+export function useInstrumentSearch(query: string, type?: string, includeExpired = false) {
   return useQuery({
-    queryKey: ['instruments', 'search', query, type],
+    queryKey: ['instruments', 'search', query, type, includeExpired],
     queryFn: () => {
       let url = `/api/Instruments/search?query=${encodeURIComponent(query)}`
       if (type) url += `&type=${type}`
+      // Expired contracts are hidden unless a caller genuinely works with the
+      // past (a historical backfill does; a trading ticket never does).
+      if (includeExpired) url += '&includeExpired=true'
       return api.get<Instrument[]>(url)
     },
     enabled: query.trim().length >= 2,
@@ -514,6 +759,36 @@ export function useStopStrategy() {
       qc.invalidateQueries({ queryKey: ['strategy', 'live'] })
       // The retained snapshot carries the runner's final lines.
       qc.invalidateQueries({ queryKey: ['strategy', 'logs'] })
+    },
+  })
+}
+
+export interface ClosePositionsResponse {
+  message: string
+  runId: number
+  closed: number
+  skipped: number[]
+}
+
+/**
+ * Square off SOME of a run's open positions and leave it trading.
+ *
+ * Stopping is all-or-nothing; this is the smaller instrument, for a run holding
+ * several positions where only one has gone wrong. The fills are the same ones
+ * the risk guard makes when a leg stop trips, so the run's ledger and activity
+ * read identically either way.
+ */
+export function useClosePositions() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ runId, positionIds }: { runId: number; positionIds: number[] }) =>
+      api.post<ClosePositionsResponse>(`/api/Strategy/runs/${runId}/positions/close`, {
+        positionIds,
+      }),
+    onSuccess: () => {
+      // The run keeps running, so only its position-level views change.
+      qc.invalidateQueries({ queryKey: ['strategy', 'live'] })
+      qc.invalidateQueries({ queryKey: ['strategies'] })
     },
   })
 }

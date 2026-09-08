@@ -297,6 +297,26 @@ namespace AlgoTrading.Infrastructure.Services
                 }
             }
 
+            // Retire what the calendar has retired.
+            //
+            // Nothing ever disabled an expired contract, so every month's dead
+            // options stayed enabled for good: 802 F&O rows were still on offer,
+            // and the manual ticket happily let one pick a SENSEX put that had
+            // expired five days earlier, then waited for a tick that could never
+            // arrive. They are DISABLED rather than deleted because a backtest
+            // over a past date still has to resolve those symbols, and their
+            // historical candles would be orphaned by a delete.
+            var todayIst = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(5.5));
+            var expired = await _dbContext.Instruments
+                .Where(x => x.IsEnabled && x.ExpiryDate != null && x.ExpiryDate < todayIst)
+                .ToListAsync(cancellationToken);
+
+            foreach (var contract in expired)
+            {
+                contract.IsEnabled = false;
+                contract.UpdatedUtc = DateTime.UtcNow;
+            }
+
             await _dbContext.SaveChangesAsync(cancellationToken);
 
             return new ImportInstrumentsResponse
@@ -305,7 +325,9 @@ namespace AlgoTrading.Infrastructure.Services
                 Inserted = inserted,
                 Updated = updated,
                 Skipped = skipped,
-                Message = "Instrument import completed successfully."
+                Message = expired.Count > 0
+                    ? $"Instrument import completed successfully. Retired {expired.Count} expired contract(s)."
+                    : "Instrument import completed successfully."
             };
         }
 
