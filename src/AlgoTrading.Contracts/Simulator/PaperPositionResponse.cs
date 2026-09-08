@@ -1,4 +1,4 @@
-// src/AlgoTrading.Contracts/Simulator/PaperPositionResponse.cs
+﻿// src/AlgoTrading.Contracts/Simulator/PaperPositionResponse.cs
 namespace AlgoTrading.Contracts.Simulator;
 
 /// <summary>
@@ -79,5 +79,11 @@ public class PaperPositionResponse
     /// <summary>
     /// Timestamp of last PnL update.
     /// </summary>
+    /// <summary>This position's own stop / target price, when it was given one.</summary>
+    public decimal? StopLossPrice { get; set; }
+
+    /// <inheritdoc cref="StopLossPrice"/>
+    public decimal? TargetPrice { get; set; }
+
     public DateTime UpdatedUtc { get; set; }
 }

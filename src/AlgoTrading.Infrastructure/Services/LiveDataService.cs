@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Globalization;
 using AlgoTrading.Application.Interfaces;
@@ -757,6 +757,10 @@ public class LiveDataService : ILiveDataService
                 SourceKey = sourceKey,
                 DataType = request.DataType,
                 LastTradedPrice = request.LastTradedPrice,
+                BidPrice = request.BidPrice,
+                AskPrice = request.AskPrice,
+                BidSize = request.BidSize,
+                AskSize = request.AskSize,
                 Open = request.Open,
                 High = request.High,
                 Low = request.Low,
@@ -790,6 +794,10 @@ public class LiveDataService : ILiveDataService
         existing.ExchangeTimestampUtc = incomingExchangeUtc ?? existing.ExchangeTimestampUtc;
         existing.DataType = request.DataType;
         existing.LastTradedPrice = request.LastTradedPrice;
+        existing.BidPrice = request.BidPrice;
+        existing.AskPrice = request.AskPrice;
+        existing.BidSize = request.BidSize;
+        existing.AskSize = request.AskSize;
         existing.Open = request.Open;
         existing.High = request.High;
         existing.Low = request.Low;
@@ -975,6 +983,10 @@ public class LiveDataService : ILiveDataService
             Symbol = row.Symbol,
             DataType = row.DataType,
             LastTradedPrice = row.LastTradedPrice,
+            BidPrice = row.BidPrice,
+            AskPrice = row.AskPrice,
+            BidSize = row.BidSize,
+            AskSize = row.AskSize,
             Open = row.Open,
             High = row.High,
             Low = row.Low,

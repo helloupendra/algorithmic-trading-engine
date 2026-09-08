@@ -1,4 +1,5 @@
-// src/AlgoTrading.Api/Services/LiveRunHistoryBuilder.cs
+﻿// src/AlgoTrading.Api/Services/LiveRunHistoryBuilder.cs
+using AlgoTrading.Api.Controllers;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.Strategies;
 using AlgoTrading.Domain.Entities;
@@ -239,7 +240,14 @@ public sealed class LiveRunHistoryBuilder
             stops.TryGetValue(run.Id, out var stop);
             catalogByName.TryGetValue(run.StrategyName, out var entry);
 
-            bool isActive = running is not null;
+            // A strategy run is live when its runner process is. The manual
+            // book has no runner and never will — it is a container for orders
+            // placed by hand — so asking the registry about it always answers
+            // "not running", and the console painted an open book, with open
+            // positions in it, as Stopped. Its own status is the truth there.
+            bool isActive = running is not null
+                || (run.StrategyName == ManualOrdersController.BookStrategyName
+                    && run.Status == "Running");
             var startedUtc = running?.StartedUtc ?? run.StartedUtc ?? run.CreatedUtc;
             DateTime? stoppedUtc = isActive ? null : run.CompletedUtc ?? stop?.AtUtc ?? exit?.AtUtc;
 

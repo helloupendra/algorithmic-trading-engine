@@ -11,7 +11,14 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { useLatestQuotes, useStopStrategy, useStrategyLive, useStrategyLogs, useUpdateRunRisk } from '../../lib/queries'
+import {
+  useClosePositions,
+  useLatestQuotes,
+  useStopStrategy,
+  useStrategyLive,
+  useStrategyLogs,
+  useUpdateRunRisk,
+} from '../../lib/queries'
 import { formatAge, formatInrWhole, formatLots, formatNumber, formatPrice, formatTime } from '../../lib/format'
 import { formatContract } from '../../lib/symbols'
 import { positionValues } from '../../lib/positions'
@@ -299,13 +306,45 @@ function repriced(p: LivePosition, quote: LiveQuote | undefined): LivePosition {
   }
 }
 
-function PositionsTable({ positions }: { positions: LivePosition[] }) {
+function PositionsTable({
+  positions,
+  runId,
+  canClose,
+}: {
+  positions: LivePosition[]
+  runId: number
+  /**
+   * Whether the viewer may square off. NOT tied to the run being live: a run
+   * stopped with flatten=false still holds open positions somebody has to be
+   * able to close, and the manual book has no runner process at all, so it
+   * reports isActive=false while its positions are genuinely open.
+   */
+  canClose: boolean
+}) {
   const { data: quotes } = useLatestQuotes()
   const bySymbol = new Map((quotes ?? []).map((q) => [q.symbol, q]))
   positions = positions.map((p) => repriced(p, bySymbol.get(p.symbol)))
 
+  const close = useClosePositions()
+  // Which row was asked for, so only that row shows "Closing…" while several
+  // are squared off one after another.
+  const [closingId, setClosingId] = useState<number | null>(null)
+
+  function confirmClose(p: LivePosition) {
+    const msg =
+      `Square off ${contractLabel(p)} at the last price?\n\n` +
+      `This closes only this position — the run keeps trading and may open another.`
+    if (!window.confirm(msg)) return
+    setClosingId(p.id)
+    close.mutate(
+      { runId, positionIds: [p.id] },
+      { onSettled: () => setClosingId(null) },
+    )
+  }
+
   return (
     <div className="tablewrap">
+      {close.isError && <InlineError error={close.error} />}
       <table className="table">
         <thead>
           <tr>
@@ -320,8 +359,12 @@ function PositionsTable({ positions }: { positions: LivePosition[] }) {
               Value
             </th>
             <th className="r">P&L</th>
+            <th className="r" title="Stop-loss and target set on this position when it was opened">
+              SL / Target
+            </th>
             <th>Status</th>
             <th>Time</th>
+            {canClose && <th aria-label="Actions" />}
           </tr>
         </thead>
         <tbody>
@@ -343,8 +386,34 @@ function PositionsTable({ positions }: { positions: LivePosition[] }) {
                 <td className="r">{open ? <FlashPrice value={p.ltp} /> : <span className="muted">—</span>}</td>
                 <PositionValueCell values={values} open={open} />
                 <PositionPnlCell pnl={p.pnl} values={values} />
+                <td className="r mono" style={{ whiteSpace: 'nowrap' }}>
+                  {p.stopLossPrice == null && p.targetPrice == null ? (
+                    <span className="faint">—</span>
+                  ) : (
+                    <>
+                      <span className="neg">{p.stopLossPrice == null ? '—' : formatPrice(p.stopLossPrice)}</span>
+                      <span className="faint"> / </span>
+                      <span className="pos">{p.targetPrice == null ? '—' : formatPrice(p.targetPrice)}</span>
+                    </>
+                  )}
+                </td>
                 <td>{open ? <Badge tone="accent">Open</Badge> : <Badge>Closed</Badge>}</td>
                 <td className="muted">{open ? formatTime(p.openedUtc) : formatTime(p.closedUtc)}</td>
+                {canClose && (
+                  <td className="r">
+                    {open && (
+                      <button
+                        type="button"
+                        className="btn btn--sm btn--danger"
+                        onClick={() => confirmClose(p)}
+                        disabled={close.isPending}
+                        title="Square off this position at the last price and leave the run trading"
+                      >
+                        {closingId === p.id ? 'Closing…' : 'Square off'}
+                      </button>
+                    )}
+                  </td>
+                )}
               </tr>
             )
           })}
@@ -408,6 +477,13 @@ export interface RunCardProps {
    * run). The API enforces the same rule; this only hides what would 403.
    */
   canControl?: boolean
+  /**
+   * Whether "Stop" is offered. False for the manual book: there is no runner to
+   * stop there, so the button would only ever mean "square off everything I am
+   * holding and close the book" - a whole-book liquidation one click away from
+   * the per-position Square off next to it.
+   */
+  allowStop?: boolean
   /** Offered on a finished card; when absent there is no Dismiss button (the history detail). */
   onDismiss?: () => void
   dismissTitle?: string
@@ -421,6 +497,7 @@ export function RunCard({
   run,
   exit,
   canControl = true,
+  allowStop = true,
   onDismiss,
   dismissTitle,
   children,
@@ -488,7 +565,7 @@ export function RunCard({
         </span>
         <div className="run-card__actions">
           {isActive ? (
-            canControl && (
+            canControl && allowStop && (
               <button
                 type="button"
                 className="btn btn--danger btn--sm"
@@ -571,7 +648,7 @@ export function RunCard({
           <RiskSection runId={runId} view={view} isActive={isActive} canEdit={canControl} />
 
           {positions.length > 0 ? (
-            <PositionsTable positions={positions} />
+            <PositionsTable positions={positions} runId={runId} canClose={canControl} />
           ) : isActive ? (
             <div className="waiting" role="status">
               <span className="pulse-dot" aria-hidden="true" />

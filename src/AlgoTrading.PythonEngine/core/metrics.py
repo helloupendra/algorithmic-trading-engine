@@ -16,6 +16,7 @@ from prometheus_client import start_http_server, Gauge, Counter, Histogram
 # Metrics definitions
 REDIS_LAG = Gauge('algotrading_redis_lag_seconds', 'Time difference between tick timestamp and processing time')
 ORDERS_EMITTED = Counter('algotrading_orders_emitted_total', 'Total number of orders emitted by the strategy')
+SIGNALS_FILTERED = Counter("algotrading_signals_filtered_total", "Opening signals blocked by the run market-context filters")
 STRATEGY_LOOP_DURATION = Histogram('algotrading_strategy_loop_duration_seconds', 'Time spent in a single strategy loop')
 TICK_PROCESSED = Counter('algotrading_ticks_processed_total', 'Total market ticks processed')
 

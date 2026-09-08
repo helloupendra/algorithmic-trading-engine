@@ -1,4 +1,4 @@
-// src/AlgoTrading.Infrastructure/Services/PaperTradingService.cs
+﻿// src/AlgoTrading.Infrastructure/Services/PaperTradingService.cs
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.Backtest;
 using AlgoTrading.Contracts.Simulator;
@@ -1413,6 +1413,8 @@ public class PaperTradingService : IPaperTradingService
             Status = row.Status,
             OpenedUtc = row.OpenedUtc,
             ClosedUtc = row.ClosedUtc,
+            StopLossPrice = row.StopLossPrice,
+            TargetPrice = row.TargetPrice,
             UpdatedUtc = row.UpdatedUtc
         };
     }

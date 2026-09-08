@@ -22,6 +22,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
+from strategies import indicators
 from strategies.base_strategy import (
     BaseStrategy,
     ContractRequirement,
@@ -113,57 +114,17 @@ class CrudeMomentumStrategy(BaseStrategy):
         }
 
     # ---------------------------------------------------------------- maths --
+    # Delegated to strategies/indicators so a filter, a backtest and this
+    # strategy cannot drift into three different definitions of the same word.
 
-    @staticmethod
-    def _parse_utc(timestamp: str) -> Optional[datetime]:
-        """
-        Bar timestamps reach us from two places - warmup writes an explicit 'Z',
-        the live path passes the API's JSON through untouched - so neither the
-        suffix nor the presence of an offset can be assumed.
-        """
-        text = str(timestamp or "").strip()
-        if not text:
-            return None
-        if text.endswith(("Z", "z")):
-            text = text[:-1] + "+00:00"
-        try:
-            parsed = datetime.fromisoformat(text)
-        except ValueError:
-            return None
-        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
+    _parse_utc = staticmethod(indicators.parse_utc)
+    _ema = staticmethod(indicators.ema)
+    _vwap = staticmethod(indicators.vwap)
 
     @classmethod
-    def _session_date(cls, bar: Any) -> Optional[str]:
+    def _session_date(cls, bar):
         """The IST calendar date of a bar, which is its MCX session."""
-        moment = cls._parse_utc(getattr(bar, "timestamp_utc", ""))
-        return moment.astimezone(IST).strftime("%Y-%m-%d") if moment else None
-
-    @staticmethod
-    def _ema(closes: List[float], period: int) -> Optional[float]:
-        """EMA at the last close, seeded with the SMA of the first `period` closes."""
-        if len(closes) < period:
-            return None
-        multiplier = 2.0 / (period + 1.0)
-        value = sum(closes[:period]) / float(period)
-        for close in closes[period:]:
-            value = close * multiplier + value * (1.0 - multiplier)
-        return value
-
-    @staticmethod
-    def _vwap(bars: List[Any]) -> Optional[float]:
-        """Volume-weighted average of the typical price over the bars given."""
-        volume_sum = 0.0
-        weighted_sum = 0.0
-        for bar in bars:
-            volume = float(getattr(bar, "volume", 0.0) or 0.0)
-            if volume <= 0:
-                continue
-            typical = (float(bar.high) + float(bar.low) + float(bar.close)) / 3.0
-            weighted_sum += typical * volume
-            volume_sum += volume
-        if volume_sum <= 0:
-            return None
-        return weighted_sum / volume_sum
+        return indicators.session_date(bar)
 
     # ----------------------------------------------------------------- loop --
 

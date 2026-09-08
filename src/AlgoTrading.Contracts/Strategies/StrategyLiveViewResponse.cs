@@ -1,4 +1,4 @@
-// src/AlgoTrading.Contracts/Strategies/StrategyLiveViewResponse.cs
+﻿// src/AlgoTrading.Contracts/Strategies/StrategyLiveViewResponse.cs
 namespace AlgoTrading.Contracts.Strategies;
 
 /// <summary>
@@ -125,6 +125,15 @@ public class LivePositionResponse
     public decimal? CurrentValue { get; set; }
 
     /// <summary>Signed premium points from entry (sign = profit): BUY ltp − entry, SELL entry − ltp.</summary>
+    /// <summary>
+    /// This position's own stop / target, when the order that opened it carried
+    /// them. Null means the run's rules are the only thing watching it.
+    /// </summary>
+    public decimal? StopLossPrice { get; set; }
+
+    /// <inheritdoc cref="StopLossPrice"/>
+    public decimal? TargetPrice { get; set; }
+
     public decimal? PnlPoints { get; set; }
 
     /// <summary>pnlPoints / entry × 100.</summary>

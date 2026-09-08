@@ -71,11 +71,16 @@ public abstract class PythonDaemonSupervisor
     /// before anything is killed, so a recycled pid cannot be mistaken for ours.
     /// </param>
     /// <param name="PidSettingKey">Where the pid is recorded so it survives an API restart.</param>
+    /// <param name="Args">
+    /// Arguments passed after the script path. Each is quoted individually by
+    /// ArgumentList, so a value with spaces needs no escaping here.
+    /// </param>
     public sealed record DaemonDescriptor(
         string Name,
         string[] ScriptParts,
         string ProcessMarker,
-        string PidSettingKey);
+        string PidSettingKey,
+        string[]? Args = null);
 
     /// <summary>Capitalised for the start of a sentence.</summary>
     private string Sentence => char.ToUpperInvariant(_daemon.Name[0]) + _daemon.Name[1..];
@@ -183,6 +188,10 @@ public abstract class PythonDaemonSupervisor
             };
 
             processInfo.ArgumentList.Add(scriptPath);
+            foreach (var argument in _daemon.Args ?? Array.Empty<string>())
+            {
+                processInfo.ArgumentList.Add(argument);
+            }
             processInfo.Environment["PYTHONPATH"] = engineDirectory;
             // Line-buffered output so log lines arrive as they happen instead of in 8KB blocks.
             processInfo.Environment["PYTHONUNBUFFERED"] = "1";

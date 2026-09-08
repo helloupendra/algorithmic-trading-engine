@@ -27,6 +27,23 @@ namespace AlgoTrading.Contracts.LiveData
         public decimal? LastTradedPrice { get; set; }
 
         /// <summary>
+        /// Best bid / ask and the size resting at each, when the instrument has
+        /// a two-sided market. Null for an index, and for a strike nobody is
+        /// quoting — a caller that needs a tradable price must fall back to the
+        /// last trade rather than assume these are present.
+        /// </summary>
+        public decimal? BidPrice { get; set; }
+
+        /// <inheritdoc cref="BidPrice"/>
+        public decimal? AskPrice { get; set; }
+
+        /// <inheritdoc cref="BidPrice"/>
+        public long? BidSize { get; set; }
+
+        /// <inheritdoc cref="BidPrice"/>
+        public long? AskSize { get; set; }
+
+        /// <summary>
         /// Daily open.
         /// </summary>
         public decimal? Open { get; set; }

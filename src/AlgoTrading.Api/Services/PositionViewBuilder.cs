@@ -1,4 +1,4 @@
-// src/AlgoTrading.Api/Services/PositionViewBuilder.cs
+﻿// src/AlgoTrading.Api/Services/PositionViewBuilder.cs
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.Simulator;
 using AlgoTrading.Contracts.Strategies;
@@ -181,6 +181,8 @@ public sealed class PositionViewBuilder
                 CurrentValue = currentValue,
                 PnlPoints = pnlPoints.HasValue ? Math.Round(pnlPoints.Value, 2) : null,
                 PnlPercent = pnlPercent,
+                StopLossPrice = pos.StopLossPrice,
+                TargetPrice = pos.TargetPrice,
                 OpenedUtc = pos.OpenedUtc,
                 ClosedUtc = pos.ClosedUtc
             });

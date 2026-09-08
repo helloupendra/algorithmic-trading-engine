@@ -875,6 +875,18 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
 
+                    b.Property<decimal?>("AskPrice")
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<long?>("AskSize")
+                        .HasColumnType("bigint");
+
+                    b.Property<decimal?>("BidPrice")
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<long?>("BidSize")
+                        .HasColumnType("bigint");
+
                     b.Property<decimal?>("Close")
                         .HasColumnType("numeric(18,6)");
 
@@ -1338,6 +1350,9 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
+                    b.Property<decimal?>("StopLossPrice")
+                        .HasColumnType("numeric(18,6)");
+
                     b.Property<string>("StrategyName")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -1347,6 +1362,9 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
+
+                    b.Property<decimal?>("TargetPrice")
+                        .HasColumnType("numeric(18,6)");
 
                     b.Property<decimal>("UnrealizedPnl")
                         .HasColumnType("numeric(18,6)");

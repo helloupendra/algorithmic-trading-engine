@@ -61,6 +61,9 @@ public static class SystemSettingKeys
     /// <summary>The option-chain poller — the only source of open interest.</summary>
     public const string ChainPollerPid = "chain-poller.pid";
 
+    /// <summary>The Telegram notifier — the sidecar that turns run activity into alerts.</summary>
+    public const string NotifierPid = "notifier.pid";
+
     private const string StrategyRunPidPrefix = "strategyrun.";
     private const string BacktestRunPidPrefix = "backtestrun.";
     private const string PidSuffix = ".pid";
