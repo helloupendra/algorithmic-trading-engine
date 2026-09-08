@@ -456,7 +456,7 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
                           <td className="mono" title={run.spotSymbol || undefined}>
                             {run.underlying}
                           </td>
-                          <td className="r">{formatLots(run.lots, run.lotSize)}</td>
+                          <td className="r">{run.role === 'alerts' ? <span className="muted">alerts only</span> : formatLots(run.lots, run.lotSize)}</td>
                           <td>
                             <RiskChips run={run} />
                           </td>

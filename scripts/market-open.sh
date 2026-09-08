@@ -26,6 +26,16 @@ UNDERLYINGS="${MARKET_OPEN_UNDERLYINGS:-BANKNIFTY NIFTY SENSEX}"
 export CHAIN_UNDERLYINGS="$(printf '%s' "$UNDERLYINGS" | tr ' ' ',')"
 STRATEGY="${MARKET_OPEN_STRATEGY:-GhostTangentCrossings}"
 LOTS="${MARKET_OPEN_LOTS:-2}"
+# Risk rules every run is deployed with. Per leg, in premium points from its
+# own entry: the risk guard closes that leg alone once it has made
+# LEG_TARGET_PTS (and, if set, once it has lost LEG_STOP_PTS). Nothing at the
+# day level unless DAY_TARGET / DAY_STOP_LOSS (rupees on the day's total P&L)
+# are given. The owner's brief for Ghost (2026-09-09): "target = entry + 20
+# points, leave the stop-loss empty". Rules can still be edited on a live run.
+LEG_TARGET_PTS="${MARKET_OPEN_LEG_TARGET_PTS:-20}"
+LEG_STOP_PTS="${MARKET_OPEN_LEG_STOP_PTS:-}"
+DAY_TARGET="${MARKET_OPEN_DAY_TARGET:-}"
+DAY_STOP_LOSS="${MARKET_OPEN_DAY_STOP_LOSS:-}"
 # Clock time (HHMM, IST) to stop waiting for the morning FYERS sign-in.
 #
 # Late in the session rather than a short window: FYERS expires its token at
@@ -183,6 +193,24 @@ RUNNING="$(curl -fsS "$API/api/Strategy/runs?status=Running" -H "$AUTH" 2>/dev/n
 # losing SENSEX should not cost the BANKNIFTY session too.
 STARTED=0
 SKIPPED=0
+# The rules as the API's RiskRulesDto (camelCase; leg rules in premium
+# points, day rules in rupees with scope "day"), and a sentence for the log.
+RISK_JSON="$(LEG_TARGET_PTS="$LEG_TARGET_PTS" LEG_STOP_PTS="$LEG_STOP_PTS" DAY_TARGET="$DAY_TARGET" DAY_STOP_LOSS="$DAY_STOP_LOSS" python3 - <<'PYEOF'
+import json, os
+def num(k):
+    v = os.environ.get(k, "").strip()
+    return float(v) if v else None
+leg = {k: v for k, v in {"targetPoints": num("LEG_TARGET_PTS"), "stopLossPoints": num("LEG_STOP_PTS")}.items() if v}
+day = {k: v for k, v in {"target": num("DAY_TARGET"), "stopLoss": num("DAY_STOP_LOSS")}.items() if v}
+risk = {}
+if leg: risk["leg"] = leg
+if day: risk["overall"] = {**day, "scope": "day"}
+print(json.dumps(risk))
+PYEOF
+)"
+RISK_TEXT="leg target ${LEG_TARGET_PTS:-none} pts / leg SL ${LEG_STOP_PTS:-none}${DAY_TARGET:+, day target ₹$DAY_TARGET}${DAY_STOP_LOSS:+, day SL ₹$DAY_STOP_LOSS}"
+say "risk rules for every run: $RISK_TEXT  ($RISK_JSON)"
+
 for U in $UNDERLYINGS; do
   if printf '%s' "$RUNNING" | grep -q "\"underlying\":\"$U\""; then
     say "$U already has a running $STRATEGY — leaving it alone"
@@ -190,9 +218,9 @@ for U in $UNDERLYINGS; do
     continue
   fi
 
-  say "deploying $STRATEGY (id $SID) on $U, $LOTS lot(s) — paper"
+  say "deploying $STRATEGY (id $SID) on $U, $LOTS lot(s), $RISK_TEXT — paper"
   RUN="$(curl -sS -X POST "$API/api/Strategy/$SID/start" -H "$AUTH" -H 'Content-Type: application/json' \
-    -d "{\"underlying\":\"$U\",\"lots\":$LOTS}")"
+    -d "{\"underlying\":\"$U\",\"lots\":$LOTS,\"risk\":$RISK_JSON}")"
   say "  $(printf '%s' "$RUN" | head -c 220)"
   case "$RUN" in *'"runId"'*) STARTED=$((STARTED + 1)) ;; esac
   sleep 2

@@ -1,14 +1,32 @@
 // src/AlgoTrading.Api/Services/AlertsSupervisor.cs
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Domain.Entities;
+using AlgoTrading.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 
 namespace AlgoTrading.Api.Services;
 
+/// <summary>
+/// Runs the LogicEngine alerter — one execution_runner per chain underlying,
+/// Telegram alerts only, never a position.
+/// </summary>
+/// <remarks>
+/// The supervisor owns the run row each alerter reports into. It used to let
+/// the runner create its own run, which stayed Pending forever: the runner's
+/// pid registration was refused (a Pending run is not "open"), nothing ever
+/// closed the row, and the three processes outlived the session until the
+/// next reboot. Now the row is created Running here, the runner is given its
+/// id, and the row is closed by whatever ends the process — a Stop, an exit,
+/// or the 15:30 market close.
+/// </remarks>
 public sealed class AlertsSupervisor
 {
     public const string SourceManaged = "managed";
+    public const string StrategyName = "LogicEngine";
+    /// <summary>What the history page shows instead of lots for an alerter run.</summary>
+    public const string RoleAlerts = "alerts";
     public const string SourceAdopted = "adopted";
     public const string SourceNone = "none";
 
@@ -24,6 +42,11 @@ public sealed class AlertsSupervisor
     private readonly ConcurrentDictionary<string, int> _managedPids = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly ConcurrentDictionary<string, ConcurrentQueue<string>> _recentLogs = new(StringComparer.OrdinalIgnoreCase);
+    // The run row each managed alerter reports into (underlying -> run id).
+    private readonly ConcurrentDictionary<string, long> _runIds = new(StringComparer.OrdinalIgnoreCase);
+    // One close at a time: a Stop and the exit it causes reach CloseRunAsync
+    // within the same millisecond, and both would find the run still open.
+    private readonly SemaphoreSlim _closeGate = new(1, 1);
 
     public AlertsSupervisor(PythonEngineLocator engine, IServiceScopeFactory scopeFactory, ILogger<AlertsSupervisor> logger)
     {
@@ -110,6 +133,18 @@ public sealed class AlertsSupervisor
                     continue; // Already running
                 }
 
+                long runId;
+                try
+                {
+                    runId = CreateRunRowAsync(userId, underlying, target.Spot).GetAwaiter().GetResult();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Could not create the run row for alerter {Underlying}.", underlying);
+                    failedTargets.Add(underlying);
+                    continue;
+                }
+
                 var processInfo = new ProcessStartInfo
                 {
                     FileName = _engine.PythonExecutable,
@@ -127,6 +162,8 @@ public sealed class AlertsSupervisor
                 processInfo.ArgumentList.Add(StrategyCatalogService.StableId("LogicEngine").ToString());
                 processInfo.ArgumentList.Add("--user-id");
                 processInfo.ArgumentList.Add(userId.ToString());
+                processInfo.ArgumentList.Add("--run-id");
+                processInfo.ArgumentList.Add(runId.ToString());
                 processInfo.ArgumentList.Add("--underlying");
                 processInfo.ArgumentList.Add(underlying);
                 processInfo.ArgumentList.Add("--spot-symbol");
@@ -157,6 +194,7 @@ public sealed class AlertsSupervisor
                     {
                         process.Dispose();
                         failedTargets.Add(underlying);
+                        CloseRunAsync(underlying, runId, "Alerter process did not start", "api").GetAwaiter().GetResult();
                         continue;
                     }
 
@@ -166,6 +204,7 @@ public sealed class AlertsSupervisor
 
                     _managed[underlying] = process;
                     _managedPids[underlying] = pid;
+                    _runIds[underlying] = runId;
                     anyStarted = true;
 
                     _ = Task.Run(() => MonitorExitAsync(underlying, process, pid));
@@ -177,6 +216,7 @@ public sealed class AlertsSupervisor
                     _logger.LogError(ex, "Failed to start alerter for {Underlying}.", underlying);
                     failedTargets.Add(underlying);
                     try { process.Dispose(); } catch { }
+                    CloseRunAsync(underlying, runId, $"Alerter failed to start: {ex.Message}", "api").GetAwaiter().GetResult();
                 }
             }
         }
@@ -225,6 +265,7 @@ public sealed class AlertsSupervisor
                     await ClearStoredPidAsync(underlying, managedPid, cancellationToken);
                 }
             }
+            await CloseRunAsync(underlying, null, reason, "api");
 
             var stored = await ReadStoredPidAsync(underlying, cancellationToken);
             if (stored is not null)
@@ -291,6 +332,67 @@ public sealed class AlertsSupervisor
             }
             await ClearStoredPidAsync(underlying, pid, CancellationToken.None);
             try { process.Dispose(); } catch { }
+            await CloseRunAsync(underlying, null, "Alerter process exited", "alerter");
+        }
+    }
+
+    // --- the run row -------------------------------------------------------
+
+    private async Task<long> CreateRunRowAsync(long userId, string underlying, string spotSymbol)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
+        var now = DateTime.UtcNow;
+        var run = new SimulationRun
+        {
+            UserId = userId,
+            Mode = StrategyRunControl.LivePaperMode,
+            Symbol = spotSymbol,
+            Resolution = "1m",
+            StrategyName = StrategyName,
+            Status = StrategyRunControl.RunStatusRunning,
+            ParametersJson = System.Text.Json.JsonSerializer.Serialize(new { underlying, role = RoleAlerts }),
+            InitialCapital = 0m,
+            CreatedUtc = now,
+            StartedUtc = now,
+        };
+        db.SimulationRuns.Add(run);
+        await db.SaveChangesAsync();
+        return run.Id;
+    }
+
+    /// <summary>
+    /// Marks the alerter's run Stopped. With no id on hand (an adopted process,
+    /// or a Stop after an API restart) the open LogicEngine run for the target
+    /// is looked up; there is at most one per underlying.
+    /// </summary>
+    private async Task CloseRunAsync(string underlying, long? runId, string reason, string by)
+    {
+        await _closeGate.WaitAsync();
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
+            var control = scope.ServiceProvider.GetRequiredService<StrategyRunControl>();
+            if (runId is null && _runIds.TryRemove(underlying, out var known)) runId = known;
+            // Only a run that is still open is closed: a Stop and the exit it
+            // causes both arrive here, and the second must not write a second
+            // RUN_STOPPED.
+            var open = await db.SimulationRuns.AsNoTracking()
+                .Where(x => x.Mode == StrategyRunControl.LivePaperMode && x.StrategyName == StrategyName
+                            && (x.Status == StrategyRunControl.RunStatusRunning || x.Status == "Pending")
+                            && (runId != null ? x.Id == runId.Value : x.ParametersJson.Contains($"\"underlying\":\"{underlying}\"")))
+                .Select(x => x.Id).ToListAsync();
+            foreach (var id in open)
+                await control.RecordRunStoppedAsync(id, StrategyName, reason, by, lastError: null, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not close the alerter run for {Underlying}.", underlying);
+        }
+        finally
+        {
+            _closeGate.Release();
         }
     }
 

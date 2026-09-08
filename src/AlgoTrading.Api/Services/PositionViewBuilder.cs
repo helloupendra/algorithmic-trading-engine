@@ -126,16 +126,17 @@ public sealed class PositionViewBuilder
             }
 
             bool isBuy = string.Equals(pos.Direction, "LONG", StringComparison.OrdinalIgnoreCase);
-            int lots = isOpen ? pos.Quantity : 0;
-            int quantity = lots * lotSize;
 
-            // Value of a closed row: the quantity that was opened (replayed from
-            // the run's fills), so the column still reads for finished legs.
+            // Size of a closed row: the quantity that was opened (replayed from
+            // the run's fills), so lots, quantity and value still read for
+            // finished legs — a closed leg that traded 2 lots is not "0 lots".
             // Unknown (nothing to replay) reads as null, never as ₹0.
             int? valuedLots = isOpen
                 ? pos.Quantity
                 : openedLots.TryGetValue(pos.Id, out var replayed) && replayed > 0 ? replayed : null;
             int? valuedQuantity = valuedLots.HasValue ? valuedLots.Value * lotSize : null;
+            int lots = valuedLots ?? 0;
+            int quantity = lots * lotSize;
 
             decimal? entryValue = valuedQuantity.HasValue ? pos.AveragePrice * valuedQuantity.Value : null;
             decimal? currentValue = isOpen && ltp.HasValue ? ltp.Value * quantity : null;
@@ -174,6 +175,9 @@ public sealed class PositionViewBuilder
                 Quantity = quantity,
                 Status = isOpen ? "Open" : "Closed",
                 EntryPrice = pos.AveragePrice,
+                // The closing fill: PaperTradingService writes it as the last
+                // mark when it closes the row, so it is the price the leg left at.
+                ExitPrice = isOpen ? null : pos.LastMarkPrice,
                 Ltp = ltp,
                 LtpUpdatedUtc = ltpUpdatedUtc,
                 Pnl = isOpen ? pos.UnrealizedPnl : pos.RealizedPnl,

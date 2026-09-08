@@ -102,10 +102,9 @@ trap 'rm -f "$PIDFILE"; say "desk stopped (the API is left running)"; exit 0' IN
 
 say "=== desk started (pid $$, $( [ -n "${DESK_LOG_ONLY:-}" ] && echo background || echo 'this window' )) — API $API, chain $CHAIN_UNDERLYINGS, open at $OPEN_AT ==="
 
-# --- infra once ---------------------------------------------------------------
+# --- infra, then the API --------------------------------------------------------
 say "infra ..."
-docker compose up -d --wait timescaledb redis >>"$LOG" 2>&1 && say "  infra up" || warn "docker compose failed — is Docker Desktop running?"
-
+infra_up || true
 api_start || true
 
 fails=0
@@ -238,7 +237,10 @@ while true; do
     fails=$((fails + 1))
     warn "API health check failed ($fails/3)"
     if [ "$fails" -ge 3 ]; then
-      say "API is down — restarting"
+      # The database first: an API restarted against a stopped Docker just
+      # dies again, two minutes at a time.
+      say "API is down — checking infra, then restarting"
+      infra_up || true
       api_restart || true
       fails=0
     fi

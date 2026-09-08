@@ -20,6 +20,7 @@ import {
 } from '../../lib/queries'
 import { formatAge, formatDateTime, formatNumber, shortSymbol } from '../../lib/format'
 import { Badge, Panel, QueryBoundary, StatTile } from '../../components/ui'
+import { SymbolMastersPanel } from './SymbolMastersPanel'
 import { IconArrowRight, IconDatabase, IconPulse, IconWarning } from '../../components/icons'
 import {
   CATEGORY_ORDER,
@@ -414,6 +415,8 @@ export function DataOverviewPage() {
         <LivePipelinePanel />
         <RecentlyUpdated rows={covRows} />
       </div>
+
+      <SymbolMastersPanel />
     </div>
   )
 }

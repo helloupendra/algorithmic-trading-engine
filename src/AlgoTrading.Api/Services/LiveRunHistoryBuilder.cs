@@ -289,6 +289,7 @@ public sealed class LiveRunHistoryBuilder
                 Underlying = underlying,
                 SpotSymbol = running?.SpotSymbol ?? exit?.SpotSymbol ?? run.Symbol,
                 Lots = running?.Lots ?? exit?.Lots ?? p.Lots ?? 0,
+                Role = LiveRunParameters.ReadRole(run.ParametersJson),
                 LotSize = lotSize,
                 Risk = running?.Risk ?? exit?.Risk ?? p.Risk,
                 Status = run.Status,

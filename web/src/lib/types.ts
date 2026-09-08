@@ -526,11 +526,14 @@ export interface LivePosition {
   symbol: string
   contract: LiveContract | null
   side: 'BUY' | 'SELL'
+  /** Held while open; for a closed row, the lots that were opened (0 when unknown). */
   lots: number
   lotSize: number
   quantity: number
   status: 'Open' | 'Closed'
   entryPrice: number
+  /** Fill price of the closing order; null while open. */
+  exitPrice: number | null
   ltp: number | null
   ltpUpdatedUtc: string | null
   pnl: number
@@ -633,6 +636,8 @@ export interface LiveRunSummary {
   underlying: string
   spotSymbol: string
   lots: number
+  /** 'alerts' for a LogicEngine alerter run (alerts only, no positions); null for a trading run. */
+  role: string | null
   lotSize: number | null
   risk: RiskRules | null
   status: LiveRunStatus
@@ -1401,4 +1406,52 @@ export interface ChainPollerStatus {
    * the broker is up, healthy-looking, and recording nothing.
    */
   lastCapturedUtc: string | null
+}
+
+/** One FYERS symbol master (NSE_CM, NSE_FO, BSE_CM, BSE_FO, MCX_COM) as GET /api/Instruments/masters reports it. */
+export interface InstrumentMasterStatus {
+  name: string
+  exchange: string
+  segment: string
+  label: string
+  url: string
+  filePresent: boolean
+  fileBytes: number | null
+  fileModifiedUtc: string | null
+  /** Instruments in the database for this exchange + segment, expired included. */
+  rowsInDb: number
+  /** Of those, contracts that have not expired (cash rows never expire). */
+  activeRowsInDb: number
+  lastRefresh: InstrumentMasterRefreshResult | null
+}
+
+export interface InstrumentMasterRefreshResult {
+  name: string
+  startedUtc: string
+  finishedUtc: string | null
+  ok: boolean
+  error: string | null
+  downloadedBytes: number | null
+  totalRowsRead: number
+  inserted: number
+  updated: number
+  skipped: number
+  message: string | null
+  by: string | null
+}
+
+export interface InstrumentMasterJob {
+  isRunning: boolean
+  startedUtc: string | null
+  finishedUtc: string | null
+  /** Master being downloaded or imported right now. */
+  current: string | null
+  startedBy: string | null
+  results: InstrumentMasterRefreshResult[]
+}
+
+export interface InstrumentMastersResponse {
+  directory: string
+  masters: InstrumentMasterStatus[]
+  job: InstrumentMasterJob
 }

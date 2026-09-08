@@ -22,6 +22,7 @@ import type {
   BacktestBackfillRequest,
   BacktestBackfillResponse,
   BacktestCoverageResponse,
+  InstrumentMastersResponse,
   BacktestRunSummary,
   BacktestRunView,
   BrokerSessionInfo,
@@ -1853,5 +1854,34 @@ export function useChainPollerLogs(take = 200) {
     queryKey: ['chainPoller', 'logs', take],
     queryFn: () => api.get<string[]>(`/api/OptionChain/poller/logs?take=${take}`),
     refetchInterval: POLL_SLOW,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Symbol masters (Data module)
+// ---------------------------------------------------------------------------
+
+/**
+ * The FYERS symbol masters and the refresh job. Polls every 3 s while a
+ * refresh runs so the page follows it master by master; the job is
+ * server-side and survives the tab being closed.
+ */
+export function useInstrumentMasters() {
+  return useQuery({
+    queryKey: ['instruments', 'masters'],
+    queryFn: () => api.get<InstrumentMastersResponse>('/api/Instruments/masters'),
+    refetchInterval: (query) => (query.state.data?.job.isRunning ? 3_000 : false),
+    staleTime: 10_000,
+  })
+}
+
+/** Download the latest masters from FYERS and import them (admin). 409 when one is already running. */
+export function useRefreshInstrumentMasters() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.post<{ message: string }>('/api/Instruments/masters/refresh', {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['instruments'] })
+    },
   })
 }

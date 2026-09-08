@@ -19,15 +19,19 @@ namespace AlgoTrading.Api.Services
         private readonly ILogger<MarketHoursService> _logger;
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly IngestorSupervisor _ingestor;
+        private readonly ChainPollerSupervisor _poller;
+        private readonly AlertsSupervisor _alerts;
         private readonly TimeZoneInfo _istZone;
         private bool _hasShutdownToday;
         private DateTime _lastShutdownDate;
 
-        public MarketHoursService(ILogger<MarketHoursService> logger, IServiceScopeFactory scopeFactory, IngestorSupervisor ingestor)
+        public MarketHoursService(ILogger<MarketHoursService> logger, IServiceScopeFactory scopeFactory, IngestorSupervisor ingestor, ChainPollerSupervisor poller, AlertsSupervisor alerts)
         {
             _logger = logger;
             _scopeFactory = scopeFactory;
             _ingestor = ingestor;
+            _poller = poller;
+            _alerts = alerts;
             try
             {
                 // Windows uses "India Standard Time", Linux/macOS uses "Asia/Kolkata"
@@ -71,6 +75,13 @@ namespace AlgoTrading.Api.Services
                             var ingestorStop = await _ingestor.StopAsync(MarketClosedReason, stoppingToken);
                             _logger.LogInformation("Market close: ingestor {Outcome}.", ingestorStop.Message);
 
+                            // The chain poller too. Nothing in a chain moves after the close,
+                            // and left running it spent the evening of 2026-09-08 storing the
+                            // same numbers every five seconds until FYERS answered 429
+                            // ("request limit reached") — a quota the next morning needs.
+                            var pollerStop = await _poller.StopAsync(MarketClosedReason, stoppingToken);
+                            _logger.LogInformation("Market close: chain poller {Outcome}.", pollerStop.Message);
+
                             // Stop all running strategies, squaring off their open positions.
                             using (var scope = _scopeFactory.CreateScope())
                             {
@@ -78,6 +89,11 @@ namespace AlgoTrading.Api.Services
                                 var stopped = await control.StopAllAsync(MarketClosedReason, flatten: true, by: "market-hours", stoppingToken);
                                 _logger.LogInformation("Market close: stopped {Count} strategy run(s).", stopped);
                             }
+
+                            // The alerter too: it watches the same closed market, and left
+                            // running it sat "waiting for ticks" until the next reboot.
+                            var alerterStop = await _alerts.StopAsync(MarketClosedReason, stoppingToken);
+                            _logger.LogInformation("Market close: alerter {Outcome}.", alerterStop.WasRunning ? "stopped" : "was not running");
 
                             _hasShutdownToday = true;
                             _lastShutdownDate = nowIst.Date;

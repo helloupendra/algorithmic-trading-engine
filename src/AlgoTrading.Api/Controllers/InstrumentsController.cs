@@ -1,5 +1,6 @@
 ﻿using AlgoTrading.Domain.Constants;
 using AlgoTrading.Api.Security;
+using AlgoTrading.Api.Services;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Application.UseCases.Instruments;
 using AlgoTrading.Contracts.Instruments;
@@ -23,7 +24,7 @@ namespace AlgoTrading.Api.Controllers;
 [Route("api/[controller]")]
 public class InstrumentsController : ControllerBase
 {
-    private const string FnoUnderlyingsCacheKey = "instruments:fno-underlyings";
+    private const string FnoUnderlyingsCacheKey = InstrumentMasterService.FnoUnderlyingsCacheKey;
     private static readonly TimeSpan FnoUnderlyingsCacheTtl = TimeSpan.FromMinutes(5);
 
     private readonly TradingDbContext _dbContext;
@@ -112,6 +113,9 @@ public class InstrumentsController : ControllerBase
         var rows = await dbQuery
             .OrderBy(InstrumentSearchRanking.RankBy(q, alias))
             .ThenBy(InstrumentSearchRanking.KindRank())
+            // Nearest expiry first among a name's contracts: "crudeoil" used to
+            // list DEC, NOV, OCT and only then the SEP future that trades today.
+            .ThenBy(x => x.ExpiryDate)
             .ThenBy(x => x.Symbol.Length)
             .ThenBy(x => x.Symbol)
             .Take(50)
@@ -148,6 +152,33 @@ public class InstrumentsController : ControllerBase
         return Ok(result);
     }
 
+
+    /// <summary>
+    /// The FYERS symbol masters: file on this host, rows in the database per
+    /// exchange and segment, last refresh, and whether a refresh is running.
+    /// </summary>
+    [HttpGet("masters")]
+    public Task<InstrumentMastersResponse> GetMasters([FromServices] InstrumentMasterService masters, CancellationToken cancellationToken)
+        => masters.GetStatusAsync(cancellationToken);
+
+    /// <summary>
+    /// Downloads the latest masters from FYERS and imports them, in the
+    /// background (the page polls GET masters). Admin-only: it rewrites the
+    /// instrument universe every strategy resolves contracts against.
+    /// 202 when started, 409 when a refresh is already running.
+    /// </summary>
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    [HttpPost("masters/refresh")]
+    public IActionResult RefreshMasters([FromServices] InstrumentMasterService masters, [FromQuery] string? only)
+    {
+        var names = string.IsNullOrWhiteSpace(only)
+            ? null
+            : only.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var by = User.Identity?.Name ?? "admin";
+        if (!masters.TryStart(by, names))
+            return Conflict(new { message = "A masters refresh is already running." });
+        return Accepted(new { message = "Refresh started.", masters = names ?? InstrumentMasterService.Known.Select(k => k.Name).ToArray() });
+    }
 
     /// <summary>
     /// Every underlying with at least one unexpired option contract, with the

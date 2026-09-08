@@ -35,6 +35,21 @@ export ASPNETCORE_URLS="$API"
 
 api_healthy() { curl -sf -o /dev/null --max-time 4 "$API/health"; }
 
+# --- the database and Redis -------------------------------------------------
+# Docker Desktop is an app: after a reboot it is only running if it is a login
+# item, and the first morning after a shutdown found it closed — no database,
+# so the API died on every start and the domain showed 502. Start it if the
+# daemon is not answering, then bring the containers up.
+infra_up() {
+  if ! docker info >/dev/null 2>&1; then
+    say "Docker daemon is not running — starting Docker Desktop"
+    open -g -a Docker 2>/dev/null || { warn "could not open Docker Desktop"; return 1; }
+    local i; for i in $(seq 1 40); do sleep 3; docker info >/dev/null 2>&1 && break; done
+    docker info >/dev/null 2>&1 || { warn "Docker daemon did not come up in two minutes"; return 1; }
+  fi
+  ( cd "$REPO_ROOT" && docker compose up -d --wait timescaledb redis >>"$LOG" 2>&1 ) && say "  infra up" || { warn "docker compose failed (see desk.log)"; return 1; }
+}
+
 api_pids() { pgrep -f "AlgoTrading.Api" 2>/dev/null || true; }
 
 api_stop() {
@@ -53,9 +68,14 @@ api_start() {
   if api_healthy; then say "API already healthy"; return 0; fi
   api_stop
   say "starting the API (Production, $API, chain: $CHAIN_UNDERLYINGS)"
-  # One log per API lifetime. Left to append forever, api.log reached 2 GB in
-  # two days (EF Core was logging every SQL statement; see appsettings.json).
-  [ -f "$REPO_ROOT/logs/api.log" ] && mv -f "$REPO_ROOT/logs/api.log" "$REPO_ROOT/logs/api.log.prev"
+  # One log per API lifetime, kept under the time it ended, seven deep. Left
+  # to append forever, api.log reached 2 GB in two days (EF Core was logging
+  # every SQL statement; see appsettings.json); kept as a single .prev, the
+  # market-hours log of 2026-09-08 was gone by the evening's second restart.
+  if [ -s "$REPO_ROOT/logs/api.log" ]; then
+    mv -f "$REPO_ROOT/logs/api.log" "$REPO_ROOT/logs/api-until-$(date '+%Y%m%d-%H%M%S').log"
+    ls -t "$REPO_ROOT"/logs/api-until-*.log 2>/dev/null | tail -n +8 | xargs rm -f 2>/dev/null || true
+  fi
   ( cd "$REPO_ROOT" && nohup dotnet run --project src/AlgoTrading.Api --no-launch-profile >>"$REPO_ROOT/logs/api.log" 2>&1 & )
   for _ in $(seq 1 60); do sleep 2; api_healthy && { say "  API up"; return 0; }; done
   warn "the API did not come up within two minutes (see logs/api.log)"
