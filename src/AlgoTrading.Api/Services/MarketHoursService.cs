@@ -1,3 +1,6 @@
+using Microsoft.EntityFrameworkCore;
+using AlgoTrading.Infrastructure.Persistence;
+using AlgoTrading.Application.Interfaces;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
@@ -21,17 +24,22 @@ namespace AlgoTrading.Api.Services
         private readonly IngestorSupervisor _ingestor;
         private readonly ChainPollerSupervisor _poller;
         private readonly AlertsSupervisor _alerts;
+        private readonly IMarketSessionService _marketSession;
         private readonly TimeZoneInfo _istZone;
         private bool _hasShutdownToday;
         private DateTime _lastShutdownDate;
+        // Set at 15:30 when the ingestor is left running for MCX; cleared at the MCX close.
+        private bool _mcxFeedKeptOpen;
+        public const string McxClosedReason = "MCX closed";
 
-        public MarketHoursService(ILogger<MarketHoursService> logger, IServiceScopeFactory scopeFactory, IngestorSupervisor ingestor, ChainPollerSupervisor poller, AlertsSupervisor alerts)
+        public MarketHoursService(ILogger<MarketHoursService> logger, IServiceScopeFactory scopeFactory, IngestorSupervisor ingestor, ChainPollerSupervisor poller, AlertsSupervisor alerts, IMarketSessionService marketSession)
         {
             _logger = logger;
             _scopeFactory = scopeFactory;
             _ingestor = ingestor;
             _poller = poller;
             _alerts = alerts;
+            _marketSession = marketSession;
             try
             {
                 // Windows uses "India Standard Time", Linux/macOS uses "Asia/Kolkata"
@@ -71,9 +79,22 @@ namespace AlgoTrading.Api.Services
                         {
                             _logger.LogInformation("Market has closed (15:30 IST). Triggering auto-shutdown of heavy processes to save system load.");
 
-                            // Stop the data ingestor (managed, or adopted after an API restart).
-                            var ingestorStop = await _ingestor.StopAsync(MarketClosedReason, stoppingToken);
-                            _logger.LogInformation("Market close: ingestor {Outcome}.", ingestorStop.Message);
+                            // Stop the data ingestor (managed, or adopted after an API restart) —
+                            // unless the commodity session is still on and the list carries
+                            // MCX symbols: MCX trades until 23:30, and stopping the feed at the
+                            // equity close left the Commodity page frozen at 15:30 on the first
+                            // evening on the server. The ingestor is then stopped at the MCX
+                            // close instead (below), so the morning starts a fresh one.
+                            if (await McxStillWantsTheFeedAsync(nowUtc, stoppingToken))
+                            {
+                                _mcxFeedKeptOpen = true;
+                                _logger.LogInformation("Market close: ingestor kept running for the MCX session (MCX symbols on the recording list).");
+                            }
+                            else
+                            {
+                                var ingestorStop = await _ingestor.StopAsync(MarketClosedReason, stoppingToken);
+                                _logger.LogInformation("Market close: ingestor {Outcome}.", ingestorStop.Message);
+                            }
 
                             // The chain poller too. Nothing in a chain moves after the close,
                             // and left running it spent the evening of 2026-09-08 storing the
@@ -101,6 +122,17 @@ namespace AlgoTrading.Api.Services
                             _logger.LogInformation("Auto-shutdown completed successfully.");
                         }
                     }
+
+                    // The MCX close: the feed that stayed up for commodities is stopped
+                    // once that session ends, so no ingestor lives through the night on a
+                    // token that expires at 06:00 — market-open would otherwise find it
+                    // "already running" and leave it deaf all day.
+                    if (_mcxFeedKeptOpen && !_marketSession.IsMarketOpen(nowUtc, "MCX", "COM"))
+                    {
+                        var ingestorStop = await _ingestor.StopAsync(McxClosedReason, stoppingToken);
+                        _logger.LogInformation("MCX close: ingestor {Outcome}.", ingestorStop.Message);
+                        _mcxFeedKeptOpen = false;
+                    }
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -124,5 +156,20 @@ namespace AlgoTrading.Api.Services
 
             _logger.LogInformation("MarketHoursService is stopping.");
         }
+
+        /// <summary>
+        /// True when the commodity session is open and the recording list holds
+        /// an active MCX symbol — the one case the equity close must not take
+        /// the tick feed down with it.
+        /// </summary>
+        private async Task<bool> McxStillWantsTheFeedAsync(DateTime nowUtc, CancellationToken cancellationToken)
+        {
+            if (!_marketSession.IsMarketOpen(nowUtc, "MCX", "COM")) return false;
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
+            return await db.LiveWatchlistItems.AsNoTracking()
+                .AnyAsync(x => x.IsActive && x.Symbol.StartsWith("MCX:"), cancellationToken);
+        }
+
     }
 }
