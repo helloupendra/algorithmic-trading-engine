@@ -79,6 +79,10 @@ public class StrategySpecsController : ControllerBase
         try
         {
             markdown = await System.IO.File.ReadAllTextAsync(file, cancellationToken);
+            // HTML comments carry the author's verification SQL and notes for
+            // reviewers; a reader of the page is not one, and the renderer
+            // would print them as text.
+            markdown = System.Text.RegularExpressions.Regex.Replace(markdown, @"<!--[\s\S]*?-->", string.Empty);
         }
         catch (IOException ex)
         {
