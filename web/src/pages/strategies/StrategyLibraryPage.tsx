@@ -55,7 +55,7 @@ export function StrategyLibraryPage() {
           <h1 className="page__title">Strategy library</h1>
           <p className="page__subtitle">
             Every strategy the Python engine discovers, with what it trades, which underlyings it
-            supports and the data it needs. Pick a row for how it works: the rule as maths, the
+            supports and the data it needs. “How it works” opens a strategy's specification: the rule as maths, the
             exits, and a worked example from a real run.
           </p>
         </div>
@@ -82,6 +82,7 @@ export function StrategyLibraryPage() {
                   <thead>
                     <tr>
                       <th>Name</th>
+                      <th aria-label="Specification" />
                       <th>Category</th>
                       <th>Underlyings</th>
                       <th>Legs</th>
@@ -91,7 +92,6 @@ export function StrategyLibraryPage() {
                       <th>Data needs</th>
                       <th>Default params</th>
                       <th>Source</th>
-                      <th title="The strategy's specification: rule, exits, worked example">Spec</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -106,6 +106,11 @@ export function StrategyLibraryPage() {
                             {s.isActive && (
                               <Badge tone="pos">running{on.length > 0 ? ` · ${on.join(', ')}` : ''}</Badge>
                             )}
+                          </td>
+                          <td style={{ whiteSpace: 'nowrap' }}>
+                            <Link className="btn btn--sm" to={`/admin/strategies/library/${s.id}`}>
+                              How it works <IconArrowRight style={{ width: 12, height: 12 }} />
+                            </Link>
                           </td>
                           <td>
                             <CategoryBadge category={s.category} />
@@ -132,11 +137,6 @@ export function StrategyLibraryPage() {
                           </td>
                           <td className="mono muted" style={{ fontSize: 11 }}>
                             {s.sourceFile || '—'}
-                          </td>
-                          <td>
-                            <Link className="btn btn--sm" to={`/admin/strategies/library/${s.id}`}>
-                              How it works <IconArrowRight style={{ width: 12, height: 12 }} />
-                            </Link>
                           </td>
                         </tr>
                       )

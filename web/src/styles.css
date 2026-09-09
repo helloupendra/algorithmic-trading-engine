@@ -151,6 +151,9 @@ code {
 .mono { font-family: var(--mono); font-size: 0.94em; }
 
 /* --- buttons -------------------------------------------------------------- */
+/* A router Link styled as a button must not read as a link. */
+a.btn, a.btn:hover, a.btn:visited { text-decoration: none; }
+
 .btn {
   display: inline-flex;
   align-items: center;

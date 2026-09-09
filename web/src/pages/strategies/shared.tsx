@@ -51,7 +51,7 @@ import {
 import { activeUnderlyings } from '../../lib/strategyList'
 import { Badge, InlineError, Loading } from '../../components/ui'
 import { RiskRulesForm } from '../../components/RiskRulesForm'
-import { IconChevronDown, IconChevronRight, IconPlay, IconX } from '../../components/icons'
+import { IconArrowRight, IconChevronDown, IconChevronRight, IconPlay, IconX } from '../../components/icons'
 import type {
   FnoUnderlying,
   LiveActivity,
@@ -235,9 +235,12 @@ export function StrategyCard({
   onStart,
   actionLabel = 'Start…',
   allowWhileActive = false,
+  showSpecLink = true,
 }: {
   strategy: StrategyListItem
   onStart: (strategy: StrategyListItem) => void
+  /** The "How it works" link to the strategy's spec page; every card shows it unless told not to. */
+  showSpecLink?: boolean
   /** Button text; the Live runner starts, the Backtesting module replays. */
   actionLabel?: string
   /**
@@ -303,6 +306,15 @@ export function StrategyCard({
         >
           <IconPlay style={{ width: 13, height: 13 }} /> {label}
         </button>
+        {showSpecLink && (
+          <Link
+            className="btn btn--sm"
+            to={`/admin/strategies/library/${s.id}`}
+            title="Entry, exits, data it needs and a worked example — the strategy's specification"
+          >
+            How it works <IconArrowRight style={{ width: 12, height: 12 }} />
+          </Link>
+        )}
       </div>
     </article>
   )
