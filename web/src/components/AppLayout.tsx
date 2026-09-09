@@ -412,8 +412,8 @@ export function AppLayout() {
           <span className="shell__brand-mark" aria-hidden="true">
             <IconLogo />
           </span>
-          <span>
-            AlgoTrading
+          <span className="shell__brand-word">
+            open<b>fno</b>
             <small>Console</small>
           </span>
         </div>

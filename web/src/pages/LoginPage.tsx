@@ -69,7 +69,7 @@ export function LoginPage() {
             <span className="shell__brand-mark" aria-hidden="true">
               <IconLogo />
             </span>
-            AlgoTrading Console
+            OpenFNO Console
           </Link>
 
           <h1 className="login__title">Sign in</h1>
