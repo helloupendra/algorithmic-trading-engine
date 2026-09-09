@@ -335,6 +335,7 @@ const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]>
   ['/admin/strategies/live', 'Strategies', 'Live runner'],
   ['/admin/strategies/history', 'Strategies', 'Run history'],
   ['/admin/strategies/runs/', 'Strategies', 'Run'],
+  ['/admin/strategies/library/', 'Strategies', 'How it works'],
   ['/admin/strategies/library', 'Strategies', 'Library'],
   ['/admin/strategies', 'Strategies', 'Overview'],
   ['/admin/backtesting/runs/', 'Backtesting', 'Run'],

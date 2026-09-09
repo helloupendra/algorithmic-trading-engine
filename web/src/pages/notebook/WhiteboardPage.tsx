@@ -395,7 +395,7 @@ function InsertToolbar({ onInsert, disabled }: { onInsert: (card: CardSpec) => v
     onInsert({
       title: strategy.name,
       subtitle: `${strategy.category} · tap to open the Strategy library`,
-      link: `/admin/strategies/library?strategy=${strategy.id}`,
+      link: `/admin/strategies/library/${strategy.id}`,
       fill: FILL_STRATEGY,
     })
   }

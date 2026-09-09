@@ -34,6 +34,7 @@ import { ManualOrderPage } from './pages/trading/ManualOrderPage'
 import { FilterLabPage } from './pages/trading/FilterLabPage'
 import { LiveRunnerPage } from './pages/strategies/LiveRunnerPage'
 import { StrategyLibraryPage } from './pages/strategies/StrategyLibraryPage'
+import { StrategySpecPage } from './pages/strategies/StrategySpecPage'
 import { RunHistoryPage } from './pages/strategies/RunHistoryPage'
 import { LiveRunDetailPage } from './pages/strategies/LiveRunDetailPage'
 import { BacktestOverviewPage } from './pages/backtesting/BacktestOverviewPage'
@@ -143,6 +144,7 @@ export default function App() {
                     element={<LiveRunDetailPage basePath="/admin/strategies" />}
                   />
                   <Route path="/admin/strategies/library" element={<StrategyLibraryPage />} />
+                  <Route path="/admin/strategies/library/:id" element={<StrategySpecPage />} />
 
                   {/* Backtesting module (v2). */}
                   <Route path="/admin/backtesting" element={<BacktestOverviewPage />} />
