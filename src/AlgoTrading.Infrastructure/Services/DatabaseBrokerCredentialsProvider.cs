@@ -1,9 +1,11 @@
+using System.Security.Cryptography;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Providers;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace AlgoTrading.Infrastructure.Services;
 
@@ -17,15 +19,18 @@ public class DatabaseBrokerCredentialsProvider : IBrokerCredentialsProvider
     private readonly TradingDbContext _dbContext;
     private readonly IDataProtector _protector;
     private readonly ProviderCredentialFallbacks _fallbacks;
+    private readonly ILogger<DatabaseBrokerCredentialsProvider> _logger;
 
     public DatabaseBrokerCredentialsProvider(
         TradingDbContext dbContext,
         IDataProtectionProvider dataProtectionProvider,
-        ProviderCredentialFallbacks fallbacks)
+        ProviderCredentialFallbacks fallbacks,
+        ILogger<DatabaseBrokerCredentialsProvider> logger)
     {
         _dbContext = dbContext;
         _protector = dataProtectionProvider.CreateProtector("BrokerConfig.SecretKey.v1");
         _fallbacks = fallbacks;
+        _logger = logger;
     }
 
     /// <summary>
@@ -49,15 +54,30 @@ public class DatabaseBrokerCredentialsProvider : IBrokerCredentialsProvider
 
         if (row is not null)
         {
-            return new BrokerCredentials(
-                row.ClientId,
-                _protector.Unprotect(row.SecretKeyEncrypted),
-                row.RedirectUri,
-                // Empty means "never saved"; unprotecting an empty string would throw.
-                string.IsNullOrEmpty(row.TradingPinEncrypted) ? null : _protector.Unprotect(row.TradingPinEncrypted),
-                "database",
-                row.UpdatedBy,
-                row.UpdatedUtc);
+            try
+            {
+                return new BrokerCredentials(
+                    row.ClientId,
+                    _protector.Unprotect(row.SecretKeyEncrypted),
+                    row.RedirectUri,
+                    // Empty means "never saved"; unprotecting an empty string would throw.
+                    string.IsNullOrEmpty(row.TradingPinEncrypted) ? null : _protector.Unprotect(row.TradingPinEncrypted),
+                    "database",
+                    row.UpdatedBy,
+                    row.UpdatedUtc);
+            }
+            catch (CryptographicException ex)
+            {
+                // Encrypted under another key ring or application name (a row
+                // restored from another machine). The row exists but is
+                // unreadable here: the connector shows as not configured and
+                // the owner enters the credentials again, instead of every
+                // provider page failing with a 500.
+                _logger.LogWarning(ex,
+                    "Broker credentials for {Provider} cannot be decrypted on this machine; re-enter them on the Connectors page.",
+                    providerKey);
+                return _fallbacks.Find(providerKey);
+            }
         }
 
         return _fallbacks.Find(providerKey);

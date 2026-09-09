@@ -23,6 +23,8 @@ import type {
   BacktestBackfillResponse,
   BacktestCoverageResponse,
   InstrumentMastersResponse,
+  PruneWatchlistResponse,
+  StaleWatchlistResponse,
   BacktestRunSummary,
   BacktestRunView,
   BrokerSessionInfo,
@@ -265,6 +267,27 @@ export function useRemoveWatchlistSymbol() {
   return useMutation({
     mutationFn: (id: number) => api.delete<{ message: string }>(`/api/LiveData/watchlist/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['watchlist'] }),
+  })
+}
+
+/** Rows the feed can no longer serve, with the reason each — what "Remove stale" would take out. */
+export function useStaleWatchlist() {
+  return useQuery({
+    queryKey: ['watchlist', 'stale'],
+    queryFn: () => api.get<StaleWatchlistResponse>('/api/LiveData/watchlist/stale'),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  })
+}
+
+/** Remove every stale row (or only the ids given) in one call; the ingestor resubscribes. */
+export function usePruneWatchlist() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (ids?: number[]) => api.post<PruneWatchlistResponse>('/api/LiveData/watchlist/prune', { ids: ids ?? [] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['watchlist'] })
+    },
   })
 }
 

@@ -2,7 +2,13 @@ namespace AlgoTrading.Domain.Constants;
 
 /// <summary>One thing a trader can be allowed to do.</summary>
 /// <param name="Key">Stable id stored in <c>user_module_grants</c>; never change it.</param>
-public sealed record PlatformModule(string Key, string Name, string Description);
+/// <param name="AdminOnly">
+/// The console has no trader screens for it yet, only admin ones. The grant is
+/// accepted and enforced like any other — the endpoints are real — but the
+/// Users page does not offer it, because a tick that opens nothing a trader
+/// can reach would be a lie.
+/// </param>
+public sealed record PlatformModule(string Key, string Name, string Description, bool AdminOnly = false);
 
 /// <summary>
 /// The grantable modules, as the server knows them.
@@ -26,6 +32,9 @@ public static class PlatformModules
     /// <summary>Charts, option chain, watchlist, movers and news — read-only market views.</summary>
     public const string MarketData = "market-data";
 
+    /// <summary>Whiteboards: an infinite canvas for notes, with cards that link back into the console.</summary>
+    public const string Notebook = "notebook";
+
     public static readonly IReadOnlyList<PlatformModule> All = new[]
     {
         new PlatformModule(
@@ -40,6 +49,11 @@ public static class PlatformModules
             MarketData,
             "Market data",
             "Charts, option chain, watchlist, movers and news. Read-only."),
+        new PlatformModule(
+            Notebook,
+            "Notebook",
+            "Whiteboards: an infinite canvas for notes, with symbol, strategy and run cards that link back into the console.",
+            AdminOnly: true),
     };
 
     public static bool IsKnown(string? key)

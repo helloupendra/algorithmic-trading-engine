@@ -964,6 +964,9 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
 
+                    b.Property<DateTime>("ReceivedUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<decimal?>("AskPrice")
                         .HasColumnType("numeric(18,6)");
 
@@ -1003,9 +1006,6 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<DateTime>("ReceivedUtc")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<string>("SourceKey")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -1019,7 +1019,7 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.Property<long?>("Volume")
                         .HasColumnType("bigint");
 
-                    b.HasKey("Id");
+                    b.HasKey("Id", "ReceivedUtc");
 
                     b.HasIndex("Symbol", "ReceivedUtc");
 
@@ -2066,6 +2066,46 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.ToTable("user_watchlist_items", (string)null);
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.Whiteboard", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<long>("OwnerUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("SceneJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OwnerUserId");
+
+                    b.ToTable("whiteboards", (string)null);
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.AppUser", b =>
                 {
                     b.HasOne("AlgoTrading.Domain.Entities.StrategyPackage", "StrategyPackage")
@@ -2140,6 +2180,15 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.Whiteboard", b =>
+                {
+                    b.HasOne("AlgoTrading.Domain.Entities.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("AlgoTrading.Domain.Entities.AppUser", b =>

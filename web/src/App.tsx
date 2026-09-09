@@ -47,6 +47,8 @@ import { LiveFeedsPage } from './pages/data/LiveFeedsPage'
 import { CommodityPage } from './pages/data/CommodityPage'
 import { HistoricalDataPage } from './pages/data/HistoricalDataPage'
 import { InstrumentsFnoPage } from './pages/data/InstrumentsFnoPage'
+import { NotebookPage } from './pages/notebook/NotebookPage'
+import { WhiteboardPage } from './pages/notebook/WhiteboardPage'
 import './styles.css'
 
 const queryClient = new QueryClient({
@@ -147,6 +149,10 @@ export default function App() {
                   <Route path="/admin/backtesting/new" element={<NewBacktestPage />} />
                   <Route path="/admin/backtesting/runs" element={<BacktestRunsPage />} />
                   <Route path="/admin/backtesting/runs/:id" element={<BacktestRunPage />} />
+
+                  {/* Notebook module: whiteboards. The canvas itself is a lazy chunk. */}
+                  <Route path="/admin/notebook" element={<NotebookPage />} />
+                  <Route path="/admin/notebook/:id" element={<WhiteboardPage />} />
 
                   <Route path="/admin/system/alerts" element={<LiveAlertsV2Page />} />
                   <Route path="/admin/system/logs" element={<ActivityLogPage />} />

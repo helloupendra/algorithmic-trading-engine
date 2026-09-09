@@ -1149,6 +1149,8 @@ export interface PlatformModuleInfo {
   key: string
   name: string
   description: string
+  /** Only the admin console has screens for it yet; not offered as a trader grant. */
+  adminOnly: boolean
 }
 
 export interface UserAdmin {
@@ -1454,4 +1456,26 @@ export interface InstrumentMastersResponse {
   directory: string
   masters: InstrumentMasterStatus[]
   job: InstrumentMasterJob
+}
+
+/** A recording-list row the feed can no longer serve (GET /api/LiveData/watchlist/stale). */
+export interface StaleWatchlistItem {
+  id: number
+  symbol: string
+  /** 'expired' (contract expiry behind us) or 'silent' (no tick this session while the feed flows). */
+  reason: 'expired' | 'silent'
+  detail: string
+  expiryDate: string | null
+  lastTickUtc: string | null
+}
+
+export interface StaleWatchlistResponse {
+  feedAlive: boolean
+  sessionStartUtc: string | null
+  items: StaleWatchlistItem[]
+}
+
+export interface PruneWatchlistResponse {
+  removed: StaleWatchlistItem[]
+  message: string
 }

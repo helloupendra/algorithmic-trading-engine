@@ -43,8 +43,7 @@ LOG="$REPO_ROOT/logs/desk.log"
 . scripts/lib/desk-common.sh
 
 STATUS="$REPO_ROOT/logs/desk.status"
-PIDFILE="$HOME/Library/Application Support/algotrading/desk.pid"
-mkdir -p "$(dirname "$PIDFILE")"
+PIDFILE="$DESK_STATE_DIR/desk.pid"
 
 HEALTH_EVERY=30          # seconds between health checks
 DEPLOY_EVERY=120         # seconds between git checks
@@ -215,7 +214,7 @@ deploy_if_behind() {
   # One attempt per commit, pass or fail — a broken build is not retried every
   # two minutes; the next commit gets its own attempt.
   deployed_sha="$head"
-  osascript -e "display notification \"$last_deploy_note\" with title \"AlgoTrading deploy\"" 2>/dev/null || true
+  notify "AlgoTrading deploy" "$last_deploy_note"
 }
 
 # --- the loop -------------------------------------------------------------------

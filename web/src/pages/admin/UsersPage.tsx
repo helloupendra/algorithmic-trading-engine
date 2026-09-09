@@ -24,7 +24,7 @@ import {
   useUserAccounts,
   useUserRoles,
 } from '../../lib/queries'
-import type { UserAdmin } from '../../lib/types'
+import type { PlatformModuleInfo, UserAdmin } from '../../lib/types'
 import { formatAge, formatInr } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Panel, QueryBoundary } from '../../components/ui'
 
@@ -34,6 +34,23 @@ function RoleBadge({ role }: { role: string }) {
   return <Badge tone="pos">Trader</Badge>
 }
 
+/**
+ * A module the console only has admin screens for: shown so the list of
+ * modules is the whole list, but not tickable — a grant that opened nothing a
+ * trader can reach would look like access and not be any.
+ */
+function AdminOnlyGrant({ module }: { module: PlatformModuleInfo }) {
+  return (
+    <span className="grant" style={{ opacity: 0.55, cursor: 'default' }} aria-disabled="true">
+      <span className="grant__head">
+        <input type="checkbox" checked={false} disabled readOnly aria-label={`${module.name} — admin console only`} />
+        {module.name} <Badge tone="neutral">admin console only</Badge>
+      </span>
+      <span className="grant__desc">{module.description}</span>
+    </span>
+  )
+}
+
 function AccountRow({
   user,
   modules,
@@ -41,7 +58,7 @@ function AccountRow({
   onError,
 }: {
   user: UserAdmin
-  modules: { key: string; name: string; description: string }[]
+  modules: PlatformModuleInfo[]
   roles: string[]
   onError: (e: unknown) => void
 }) {
@@ -121,6 +138,7 @@ function AccountRow({
                   </p>
                   <div className="grant-grid">
                     {modules.map((m) => {
+                      if (m.adminOnly) return <AdminOnlyGrant key={m.key} module={m} />
                       const held = user.moduleGrants.includes(m.key)
                       return (
                         <label key={m.key} className="grant">
@@ -626,6 +644,7 @@ function InvitesPanel({ onError }: { onError: (e: unknown) => void }) {
             <div className="edit-grid__actions">
               <div className="grant-grid" style={{ marginBottom: 10 }}>
                 {(modules.data ?? []).map((m) => {
+                  if (m.adminOnly) return <AdminOnlyGrant key={m.key} module={m} />
                   const held = form.moduleKeys.includes(m.key)
                   return (
                     <label key={m.key} className="grant">
@@ -798,7 +817,15 @@ export function UsersPage() {
                 <tbody>
                   {list.map((m) => (
                     <tr key={m.key}>
-                      <td>{m.name}</td>
+                      <td>
+                        {m.name}
+                        {m.adminOnly && (
+                          <>
+                            {' '}
+                            <Badge tone="neutral">admin console only</Badge>
+                          </>
+                        )}
+                      </td>
                       <td className="mono">{m.key}</td>
                       <td className="muted">{m.description}</td>
                     </tr>

@@ -6,6 +6,9 @@ public class PlatformModuleResponse
     public string Key { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
+
+    /// <summary>Lives only in the admin console so far; the grant checkboxes leave it out.</summary>
+    public bool AdminOnly { get; set; }
 }
 
 /// <summary>An account as the admin panel shows it.</summary>

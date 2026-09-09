@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.HttpOverrides;
 using System.Threading.RateLimiting;
@@ -34,6 +35,15 @@ var builder = WebApplication.CreateBuilder(args);
 // real credentials never reach a tracked file. Added last so it wins over both
 // appsettings.json and appsettings.{Environment}.json.
 builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
+
+// Broker secrets, the trading PIN and FYERS tokens are stored encrypted with
+// ASP.NET Data Protection. Its default "application discriminator" is the
+// content-root PATH, so a payload written on one machine could not be read on
+// another even with the same key ring — the first day on the server every
+// stored credential decrypted to "The payload was invalid". A fixed name makes
+// the payloads portable wherever the key ring travels (scripts/aws/migrate-db.sh
+// copies ~/.aspnet/DataProtection-Keys with the database).
+builder.Services.AddDataProtection().SetApplicationName("AlgoTrading");
 
 builder.Services.AddControllers();
 
@@ -86,6 +96,7 @@ builder.Services.AddSingleton<AlgoTrading.Api.Services.ChainPollerSupervisor>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AlertsSupervisor>();
 builder.Services.AddHttpClient(nameof(AlgoTrading.Api.Services.InstrumentMasterService));
 builder.Services.AddSingleton<AlgoTrading.Api.Services.InstrumentMasterService>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.WatchlistPruneService>();
 // The Telegram notifier, same shape. Started with the API rather than by hand:
 // it used to be a sidecar, and the day nobody remembered to start it the
 // platform ran all day without a single alert and looked perfectly healthy.
@@ -340,6 +351,16 @@ using (var scope = app.Services.CreateScope())
     var services = scope.ServiceProvider;
 
     var dbContext = services.GetRequiredService<TradingDbContext>();
+    // Migrations get a long command timeout: a rebuild of a large table's key
+    // (live_ticks at 7.6M rows took 33 s for the key alone) is killed at the
+    // default 30 s and rolled back. This context is used for the migration
+    // only; request-scoped contexts keep the default.
+    dbContext.Database.SetCommandTimeout(TimeSpan.FromMinutes(30));
+    // Migrations get a long command timeout: a rebuild of a large table's key
+    // (live_ticks at 7.6M rows took 33 s for the key alone) is killed at the
+    // default 30 s and rolled back. This context is used for the migration
+    // only; request-scoped contexts keep the default.
+    dbContext.Database.SetCommandTimeout(TimeSpan.FromMinutes(30));
     await dbContext.Database.MigrateAsync();
 
     var seeder = services.GetRequiredService<ReferenceDataSeeder>();

@@ -64,6 +64,7 @@ public class TradingDbContext : DbContext
     public DbSet<UserWatchlistItem> UserWatchlistItems => Set<UserWatchlistItem>();
     public DbSet<UserInvite> UserInvites => Set<UserInvite>();
     public DbSet<ActivityLogEntry> ActivityLog => Set<ActivityLogEntry>();
+    public DbSet<Whiteboard> Whiteboards => Set<Whiteboard>();
 
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
 

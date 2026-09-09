@@ -230,7 +230,7 @@ function LivePipelinePanel() {
         <div>
           <span className="muted">Ingestor</span>
           <span className={isRunning ? 'pos' : 'muted'}>
-            {isRunning ? 'Running' : 'Stopped'}
+            {process.isPending ? 'Checking…' : isRunning ? 'Running' : 'Stopped'}
           </span>
         </div>
       </div>
@@ -315,7 +315,7 @@ export function DataOverviewPage() {
       <div className="stat-grid">
         <StatTile
           label="Live feeds"
-          value={isRunning ? 'Running' : 'Stopped'}
+          value={process.isPending ? '…' : isRunning ? 'Running' : 'Stopped'}
           tone={feedTone as 'pos' | 'warn' | undefined}
           sub={
             feeds.length > 0

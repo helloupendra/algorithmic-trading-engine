@@ -116,7 +116,14 @@ public class DatabaseBrokerSessionStore : IBrokerSessionStore
     private string Protect(string value)
         => string.IsNullOrEmpty(value) ? value : _protector.Protect(value);
 
-    /// <summary>Decrypts a stored value; legacy plaintext rows pass through.</summary>
+    /// <summary>
+    /// Decrypts a stored value; legacy plaintext rows pass through. A value
+    /// that IS a Data Protection payload but cannot be opened here (written
+    /// under another key ring or application name) is returned empty, so the
+    /// session reads as "not signed in" — returning the ciphertext, as this
+    /// once did, made the server report a valid FYERS session while holding
+    /// a token no broker call could use.
+    /// </summary>
     private string Unprotect(string? value)
     {
         if (string.IsNullOrEmpty(value)) return value ?? string.Empty;
@@ -126,8 +133,13 @@ public class DatabaseBrokerSessionStore : IBrokerSessionStore
         }
         catch (CryptographicException)
         {
-            // Written before encryption existed — treat as plaintext.
-            return value;
+            return IsProtectedPayload(value) ? string.Empty : value;
         }
     }
+
+    /// <summary>
+    /// Every Data Protection payload starts with the magic header 09 F0 C9 F0,
+    /// which is "CfDJ8" in base64url; a broker token never does.
+    /// </summary>
+    internal static bool IsProtectedPayload(string value) => value.StartsWith("CfDJ8", StringComparison.Ordinal);
 }

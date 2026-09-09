@@ -1,0 +1,189 @@
+/*
+ * Notebook module — the board list and the whiteboard page. Tokens and the
+ * primitives (.btn, .field__input, .table, .badge, .alert) come from
+ * styles.css; everything here is layout that only these two screens need,
+ * prefixed nb- (list) and wb- (board) so nothing leaks either way.
+ */
+
+/* --- board list ----------------------------------------------------------- */
+
+.nb-name {
+  font-weight: 600;
+  color: var(--text);
+  text-decoration: none;
+}
+.nb-name:hover { color: var(--brand-hi); text-decoration: underline; }
+
+.nb-rename {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.nb-rename .field__input { width: min(100%, 320px); }
+
+/* Row actions are quiet until the row is pointed at — the list is for
+   opening boards, and a Delete on every line pulls the eye. */
+.nb-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+  opacity: 0.55;
+  transition: opacity 0.14s ease;
+}
+.table tbody tr:hover .nb-actions,
+.nb-actions:focus-within { opacity: 1; }
+
+.nb-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 26px 22px;
+}
+.nb-empty p { margin: 0; color: var(--text-2); max-width: 52ch; }
+
+/* --- whiteboard page ------------------------------------------------------ */
+
+/* The canvas fills what is left of the viewport under the topbar: the
+   header, the card toolbar, then the board taking the rest. 62px is the
+   shell's vertical padding (22 + 40); a phone's is 14 + 40. Should the
+   header and toolbar wrap taller than the viewport allows, the 480px floor
+   on the canvas wins and the page scrolls — better than a canvas too short
+   to draw in. */
+.wb {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: calc(100dvh - var(--topbar-h) - 62px);
+  min-height: 0;
+}
+
+.wb__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.wb__back {
+  color: var(--text-2);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.wb__back:hover { color: var(--text); }
+.wb__back svg { width: 15px; height: 15px; transform: rotate(180deg); }
+
+/* The form exists for Enter to commit; the input lays out as the header's own child. */
+.wb__name-form { display: contents; }
+
+/* The name is the page title and an input at once: it reads as a heading
+   until pointed at, and the border appears only then. */
+.wb__name {
+  flex: 1 1 220px;
+  min-width: 0;
+  margin: 0;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+.wb__name:hover { border-color: var(--line); }
+.wb__name:focus {
+  outline: none;
+  background: var(--bg1);
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px var(--brand-soft);
+}
+
+.wb__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.wb__conflict {
+  flex-wrap: wrap;
+}
+.wb__conflict-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Three insert forms in one row, each a labelled group; on a phone they wrap
+   to a column and every group takes the full width. */
+.wb-tools {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+}
+
+.wb-tool {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.wb-tool__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.wb-tool__row > .combo,
+.wb-tool__row > select { flex: 1 1 auto; min-width: 0; }
+.wb-tool__row > .combo .field__input { width: 100%; }
+.wb-tool__row > input[type='number'] { width: 96px; flex: none; }
+
+.wb-canvas {
+  flex: 1 1 auto;
+  min-height: 480px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg1);
+}
+
+.wb-canvas__loading {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+/* Excalidraw ships its own dark palette; only its accent is retuned to the
+   console's brand so the selected tool and focus rings match the chrome
+   around the canvas. */
+.wb-canvas .excalidraw.theme--dark {
+  --color-primary: var(--brand);
+  --color-primary-darker: #3f6be6;
+  --color-primary-darkest: #3059cc;
+  --color-primary-light: #1a2a4d;
+}
+
+@media (max-width: 760px) {
+  .wb { height: calc(100dvh - var(--topbar-h) - 54px); }
+  .wb__name { font-size: 16px; }
+  .wb-tool { flex-basis: 100%; }
+}
