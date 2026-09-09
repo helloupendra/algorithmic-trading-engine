@@ -33,6 +33,7 @@ public class UsersController : ControllerBase
             Key = m.Key,
             Name = m.Name,
             Description = m.Description,
+            AdminOnly = m.AdminOnly,
         }).ToList());
 
     /// <summary>The roles an account can hold.</summary>

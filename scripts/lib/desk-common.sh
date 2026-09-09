@@ -11,6 +11,18 @@ API="${API_BASE_URL:-http://localhost:5025}"
 LOG="${LOG:-$REPO_ROOT/logs/desk.log}"
 mkdir -p "$REPO_ROOT/logs"
 
+# The same scripts run the desk on the Mac and on the Linux server (AWS): the
+# few places that differ are behind these two.
+IS_MAC=false; [ "$(uname -s)" = "Darwin" ] && IS_MAC=true
+if $IS_MAC; then DESK_STATE_DIR="$HOME/Library/Application Support/algotrading"; else DESK_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/algotrading"; fi
+mkdir -p "$DESK_STATE_DIR"
+
+# A desktop notification on the Mac; on a server there is no desktop, the log
+# line (and the Telegram notifier, which reads the API) is the notification.
+notify() {  # title, message
+  if $IS_MAC; then osascript -e "display notification \"$2\" with title \"$1\"" 2>/dev/null || true; fi
+}
+
 # Every line goes to the log; it is echoed to the screen too unless
 # DESK_LOG_ONLY is set (the headless desk's stdout IS the log, and a tee
 # there would write each line twice).
@@ -42,8 +54,13 @@ api_healthy() { curl -sf -o /dev/null --max-time 4 "$API/health"; }
 # daemon is not answering, then bring the containers up.
 infra_up() {
   if ! docker info >/dev/null 2>&1; then
-    say "Docker daemon is not running — starting Docker Desktop"
-    open -g -a Docker 2>/dev/null || { warn "could not open Docker Desktop"; return 1; }
+    if $IS_MAC; then
+      say "Docker daemon is not running — starting Docker Desktop"
+      open -g -a Docker 2>/dev/null || { warn "could not open Docker Desktop"; return 1; }
+    else
+      say "Docker daemon is not running — starting the docker service"
+      sudo -n systemctl start docker 2>>"$LOG" || { warn "could not start docker (systemctl)"; return 1; }
+    fi
     local i; for i in $(seq 1 40); do sleep 3; docker info >/dev/null 2>&1 && break; done
     docker info >/dev/null 2>&1 || { warn "Docker daemon did not come up in two minutes"; return 1; }
   fi

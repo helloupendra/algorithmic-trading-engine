@@ -266,3 +266,11 @@ export const IconMenu = (p: SVGProps<SVGSVGElement>) => (
     <path d="M4 7h16M4 12h16M4 17h16" />
   </Icon>
 )
+
+/** Pen on a page — the Notebook module and its whiteboards. */
+export const IconPen = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M4 20l4.3-1.1L18.6 8.6a2 2 0 000-2.8l-.4-.4a2 2 0 00-2.8 0L5.1 15.7 4 20z" />
+    <path d="M13.5 6.9l3.6 3.6" />
+  </Icon>
+)

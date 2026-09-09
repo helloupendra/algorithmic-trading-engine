@@ -86,6 +86,16 @@ public class TickRetentionService : BackgroundService
 
     private async Task SweepAsync(CancellationToken stoppingToken)
     {
+        // A hypertable ages out by dropping whole day-chunks (add_retention_policy
+        // in the LiveTicksHypertable migration): instant, and no dead rows left
+        // behind. Deleting rows from it here would only decompress old chunks to
+        // remove what the policy is about to drop anyway.
+        if (await IsHypertableAsync(stoppingToken))
+        {
+            _logger.LogDebug("live_ticks is a hypertable; retention is TimescaleDB's drop_chunks policy, nothing to sweep.");
+            return;
+        }
+
         var cutoff = DateTime.UtcNow.AddDays(-_options.RetentionDays);
         int removedTotal = 0;
 
@@ -115,6 +125,24 @@ public class TickRetentionService : BackgroundService
                 removedTotal, _options.RetentionDays);
         }
     }
+
+    private async Task<bool> IsHypertableAsync(CancellationToken stoppingToken)
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
+            var n = await db.Database
+                .SqlQueryRaw<int>("SELECT count(*)::int AS \"Value\" FROM timescaledb_information.hypertables WHERE hypertable_name = 'live_ticks'")
+                .FirstOrDefaultAsync(stoppingToken);
+            return n > 0;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not tell whether live_ticks is a hypertable; sweeping rows.");
+            return false;
+        }
+    }
 }
 
 /// <summary>How long raw ticks are kept, and how gently they are removed.</summary>
@@ -133,4 +161,5 @@ public sealed class TickRetentionOptions
     public TimeSpan StartupDelay { get; set; } = TimeSpan.FromMinutes(5);
 
     public TimeSpan BatchPause { get; set; } = TimeSpan.FromMilliseconds(250);
+
 }

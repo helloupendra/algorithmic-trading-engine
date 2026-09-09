@@ -9,7 +9,7 @@
 cd "$(dirname "$0")/.."
 API="${API_BASE_URL:-http://localhost:5025}"
 PUBLIC="${PUBLIC_URL:-https://console.snehatra.com}"
-PIDFILE="$HOME/Library/Application Support/algotrading/desk.pid"
+if [ "$(uname -s)" = "Darwin" ]; then PIDFILE="$HOME/Library/Application Support/algotrading/desk.pid"; else PIDFILE="${XDG_STATE_HOME:-$HOME/.local/state}/algotrading/desk.pid"; fi
 G='\033[32m'; R='\033[31m'; Y='\033[33m'; D='\033[2m'; N='\033[0m'
 ok()   { printf "  ${G}●${N} %-28s %s\n" "$1" "$2"; }
 bad()  { printf "  ${R}●${N} %-28s %s\n" "$1" "$2"; }
@@ -22,7 +22,8 @@ if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
   age=""
   if [ -f logs/desk.status ]; then
     upd="$(grep '^updated=' logs/desk.status | cut -d= -f2-)"
-    secs=$(( $(date +%s) - $(date -j -f '%Y-%m-%d %H:%M:%S' "$upd" +%s 2>/dev/null || echo 0) ))
+    if [ "$(uname -s)" = "Darwin" ]; then upd_s=$(date -j -f '%Y-%m-%d %H:%M:%S' "$upd" +%s 2>/dev/null || echo 0); else upd_s=$(date -d "$upd" +%s 2>/dev/null || echo 0); fi
+    secs=$(( $(date +%s) - upd_s ))
     age="(last loop ${secs}s ago)"
     [ "$secs" -gt 120 ] && age="${age} ${Y}— stale, the loop may be stuck${N}"
   fi
@@ -33,9 +34,10 @@ else
 fi
 
 # --- services -----------------------------------------------------------------
-launchctl list 2>/dev/null | grep -q com.algotrading.tunnel \
+if [ "$(uname -s)" = "Darwin" ]; then tunnel_ok=$(launchctl list 2>/dev/null | grep -q com.algotrading.tunnel && echo yes); else tunnel_ok=$(systemctl is-active cloudflared >/dev/null 2>&1 && echo yes); fi
+[ -n "$tunnel_ok" ] \
   && ok  "cloudflare tunnel service" "registered$(tail -50 logs/tunnel.log 2>/dev/null | grep -q 'Registered tunnel' && echo ', connected')" \
-  || bad "cloudflare tunnel service" "not installed (scripts/install-tunnel.sh)"
+  || bad "cloudflare tunnel service" "not installed (scripts/install-tunnel.sh on the Mac, scripts/aws/bootstrap.sh on the server)"
 
 code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 "$API/health" 2>/dev/null)"
 [ "$code" = "200" ] && ok "API (local :5025)" "healthy" || bad "API (local :5025)" "health returned '${code:-no response}'"
@@ -60,8 +62,8 @@ if [ -f .env ]; then
   if [ -n "$tok" ]; then
     sess="$(curl -fsS --max-time 6 "$API/api/auth/session" -H "Authorization: Bearer $tok" 2>/dev/null)"
     if printf '%s' "$sess" | grep -q '"isAuthenticated":true'; then
-      exp="$(printf '%s' "$sess" | grep -o '"accessToken":"[^"]*' | cut -d'"' -f4 | cut -d. -f2 | { read p; p="$p$(printf '%*s' $(( (4 - ${#p} % 4) % 4 )) '' | tr ' ' '=')"; echo "$p" | base64 -D 2>/dev/null; } | grep -o '"exp":[0-9]*' | cut -d: -f2)"
-      when="$( [ -n "$exp" ] && date -r "$exp" '+%a %H:%M' )"
+      exp="$(printf '%s' "$sess" | grep -o '"accessToken":"[^"]*' | cut -d'"' -f4 | cut -d. -f2 | { read p; p="$p$(printf '%*s' $(( (4 - ${#p} % 4) % 4 )) '' | tr ' ' '=')"; echo "$p" | base64 -d 2>/dev/null || base64 -D 2>/dev/null; } | grep -o '"exp":[0-9]*' | cut -d: -f2)"
+      if [ "$(uname -s)" = "Darwin" ]; then when="$( [ -n "$exp" ] && date -r "$exp" '+%a %H:%M' )"; else when="$( [ -n "$exp" ] && date -d "@$exp" '+%a %H:%M' )"; fi
       if [ -n "$exp" ] && [ "$exp" -gt "$(date +%s)" ]; then ok "FYERS session" "valid until $when"; else bad "FYERS session" "EXPIRED at $when — sign in at $PUBLIC/login"; fi
     else
       bad "FYERS session" "not connected — sign in at $PUBLIC/login → Connectors"

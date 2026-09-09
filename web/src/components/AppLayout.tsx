@@ -34,6 +34,7 @@ import {
   IconLayers,
   IconLogo,
   IconMenu,
+  IconPen,
   IconPlay,
   IconPulse,
   IconSignOut,
@@ -156,6 +157,14 @@ function TopbarStatus() {
     </div>
   )
 }
+
+/**
+ * The Notebook module's sidebar group: one entry today, the whiteboard list
+ * (a board's own page is reached from there). Declared beside TRADER_NAV
+ * rather than in the module registry, which feeds the overview grid a card per
+ * module — the registry entry is its own change.
+ */
+const NOTEBOOK_SECTIONS = [{ route: '/admin/notebook', label: 'Whiteboards', icon: IconPen, end: false }]
 
 const TRADER_NAV = [
   { to: '/trader', label: 'Overview', icon: IconDashboard, end: true },
@@ -296,6 +305,7 @@ function AdminNav() {
       <NavGroup label="Trading" sections={TRADING_SECTIONS} />
       <NavGroup label="Strategies" sections={STRATEGIES_SECTIONS} />
       <NavGroup label="Backtesting" sections={BACKTESTING_SECTIONS} />
+      <NavGroup label="Notebook" sections={NOTEBOOK_SECTIONS} />
       <NavGroup label="System" sections={SYSTEM_SECTIONS} />
 
     </>
@@ -338,6 +348,8 @@ const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]>
   ['/admin/system/logs', 'System', 'Activity log'],
   ['/admin/system/deployments', 'System', 'Deployments'],
   ['/admin/broker', 'Data', 'Connectors'],
+  ['/admin/notebook/', 'Notebook', 'Whiteboard'],
+  ['/admin/notebook', 'Notebook', 'Whiteboards'],
   ['/admin/system', 'System', 'Overview'],
   ['/admin', null, 'Overview'],
   ['/trader/strategies/history', 'Trading', 'My runs'],

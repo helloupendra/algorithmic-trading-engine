@@ -1,5 +1,6 @@
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Application.UseCases.LiveData;
+using AlgoTrading.Api.Services;
 using AlgoTrading.Contracts.LiveData;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
@@ -98,6 +99,25 @@ public class LiveDataController : ControllerBase
         await _removeWatchlistItemUseCase.ExecuteAsync(id, cancellationToken);
         return Ok(new { message = "Watchlist item removed successfully." });
     }
+
+    /// <summary>
+    /// Recording-list rows the feed can no longer serve — expired contracts,
+    /// and symbols silent all session while others tick — with the reason each.
+    /// </summary>
+    [HttpGet("watchlist/stale")]
+    public Task<StaleWatchlistResponse> GetStaleWatchlist([FromServices] WatchlistPruneService pruner, CancellationToken cancellationToken)
+        => pruner.FindAsync(cancellationToken);
+
+    /// <summary>
+    /// Removes the stale rows in one go (the same set GET watchlist/stale
+    /// lists, or only the ids given) and tells the ingestor to resubscribe.
+    /// </summary>
+    [HttpPost("watchlist/prune")]
+    public async Task<ActionResult<PruneWatchlistResponse>> PruneWatchlist(
+        [FromServices] WatchlistPruneService pruner,
+        [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] PruneWatchlistRequest? request,
+        CancellationToken cancellationToken)
+        => Ok(await pruner.PruneAsync(request?.Ids, cancellationToken));
 
     [HttpGet("latest")]
     public async Task<IActionResult> GetLatest([FromQuery] string symbol, CancellationToken cancellationToken)

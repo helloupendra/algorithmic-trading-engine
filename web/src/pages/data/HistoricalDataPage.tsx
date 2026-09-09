@@ -5,7 +5,8 @@
  * the backfill panel extends it (or pulls a brand-new symbol) from FYERS.
  */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   useBackfillHistory,
   useDataCoverage,
@@ -49,12 +50,15 @@ function CoverageBrowser({
   rows,
   selected,
   onSelect,
+  initialSearch,
 }: {
   rows: CoverageRow[]
   selected: CoverageRow | null
   onSelect: (row: CoverageRow) => void
+  /** What the filter box starts with — the symbol a deep link asked for, so its ranges are the list. */
+  initialSearch: string
 }) {
-  const [search, setSearch] = useState('')
+  const [search, setSearch] = useState(initialSearch)
   const [source, setSource] = useState<SourceFilter>('all')
   const [category, setCategory] = useState<SymbolCategory | 'all'>('all')
 
@@ -243,10 +247,12 @@ function SelectionDetail({ row }: { row: CoverageRow }) {
 }
 
 /** Pull candles from FYERS — extend the selection or fetch a new symbol. */
-function BackfillPanel({ selected }: { selected: CoverageRow | null }) {
+function BackfillPanel({ selected, initialSymbol }: { selected: CoverageRow | null; initialSymbol: string }) {
   const backfill = useBackfillHistory()
 
-  const [symbol, setSymbol] = useState('')
+  // A deep link's symbol lands here too, so a symbol with no local data yet
+  // (a card for a contract never backfilled) is one click from being fetched.
+  const [symbol, setSymbol] = useState(initialSymbol)
   const [resolution, setResolution] = useState('D')
   const [fromDate, setFromDate] = useState(isoDate(new Date(Date.now() - 30 * 24 * 3600 * 1000)))
   const [toDate, setToDate] = useState(isoDate(new Date()))
@@ -563,7 +569,22 @@ export function HistoricalDataPage() {
     source: string
   } | null>(null)
 
+  // ?symbol=<vendor symbol>, as a whiteboard card links here. Read once: the
+  // page's own selection takes over from the first click, and a later
+  // coverage poll must not snap it back.
+  const [params] = useSearchParams()
+  const [wantedSymbol] = useState(() => params.get('symbol')?.trim() ?? '')
+  const deepLinked = useRef(false)
   const rows = coverage.data ?? []
+  useEffect(() => {
+    if (deepLinked.current || !wantedSymbol || !coverage.data) return
+    deepLinked.current = true
+    // The symbol's finest stored range — the one the browser lists first.
+    const match = coverage.data
+      .filter((r) => r.symbol.toUpperCase() === wantedSymbol.toUpperCase())
+      .sort((a, b) => resolutionRank(a.resolution) - resolutionRank(b.resolution))[0]
+    if (match) setSelectedKey({ symbol: match.symbol, resolution: match.resolution, source: match.source })
+  }, [coverage.data, wantedSymbol])
   const selected = selectedKey
     ? (rows.find(
         (r) =>
@@ -594,7 +615,12 @@ export function HistoricalDataPage() {
         {(rows) => (
           <div className="cov-layout">
             <Panel title="Available ranges" className="panel--well">
-              <CoverageBrowser rows={rows} selected={selected} onSelect={setSelected} />
+              <CoverageBrowser
+                rows={rows}
+                selected={selected}
+                onSelect={setSelected}
+                initialSearch={wantedSymbol}
+              />
             </Panel>
             {selected ? (
               <SelectionDetail row={selected} />
@@ -608,7 +634,7 @@ export function HistoricalDataPage() {
         )}
       </QueryBoundary>
 
-      <BackfillPanel selected={selected} />
+      <BackfillPanel selected={selected} initialSymbol={wantedSymbol} />
       <OptionsBackfillPanel />
     </div>
   )

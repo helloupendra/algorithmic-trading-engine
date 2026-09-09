@@ -21,7 +21,9 @@ import {
   useLiveBars,
   useMarketSession,
   useRecentTicks,
+  usePruneWatchlist,
   useRemoveWatchlistSymbol,
+  useStaleWatchlist,
   useStaleQuotes,
   useStartIngestor,
   useStopIngestor,
@@ -198,7 +200,12 @@ function ChainPollerPanel() {
               {stop.isPending ? 'Stopping…' : 'Stop poller'}
             </button>
           ) : (
-            <button className="btn btn--pos" disabled={start.isPending} onClick={() => start.mutate()}>
+            <button
+              className="btn btn--pos"
+              disabled={start.isPending || status.isPending}
+              onClick={() => start.mutate()}
+              title={status.isPending ? 'Checking whether the poller is running…' : undefined}
+            >
               <IconPlay style={{ width: 14, height: 14 }} />
               {start.isPending ? 'Starting…' : 'Start poller'}
             </button>
@@ -209,18 +216,25 @@ function ChainPollerPanel() {
       <div className="kv-grid" style={{ marginBottom: 10 }}>
         <div>
           <span className="muted">Process</span>
-          <span className={running ? 'pos' : 'muted'}>
-            {running
-              ? status.data?.source === 'adopted'
-                ? `Running (adopted, pid ${status.data?.processId})`
-                : `Running (pid ${status.data?.processId})`
-              : 'Stopped'}
+          {/* "Stopped" is a claim; it is made only once the API has answered.
+              Before that the panel said Stopped and never for a poller that was
+              storing a chain every few seconds (seen 2026-09-09, mid-session). */}
+          <span className={status.isPending ? 'muted' : status.isError ? 'warn' : running ? 'pos' : 'muted'}>
+            {status.isPending
+              ? 'Checking…'
+              : status.isError
+                ? 'Unknown — the status request failed'
+                : running
+                  ? status.data?.source === 'adopted'
+                    ? `Running (adopted, pid ${status.data?.processId})`
+                    : `Running (pid ${status.data?.processId})`
+                  : 'Stopped'}
           </span>
         </div>
         <div>
           <span className="muted">Last chain stored</span>
           <span className={stalled ? 'warn' : undefined}>
-            {captured ? formatAge(captured) : 'never'}
+            {status.isPending ? '…' : captured ? formatAge(captured) : 'never'}
           </span>
         </div>
       </div>
@@ -476,6 +490,8 @@ function LiveWatchlistPanel() {
   const watchlist = useWatchlist()
   const quotes = useLatestQuotes()
   const remove = useRemoveWatchlistSymbol()
+  const stale = useStaleWatchlist()
+  const prune = usePruneWatchlist()
   const session = useMarketSession()
   const [filter, setFilter] = useState('')
 
@@ -483,6 +499,31 @@ function LiveWatchlistPanel() {
     () => new Map((quotes.data ?? []).map((q) => [q.symbol, q])),
     [quotes.data],
   )
+  const staleById = useMemo(
+    () => new Map((stale.data?.items ?? []).map((i) => [i.id, i])),
+    [stale.data],
+  )
+  const staleCount = stale.data?.items.length ?? 0
+
+  // One button for the rows nothing will ever tick for again: expired
+  // contracts (last week's weekly options showing "21h ago" for good) and,
+  // while the feed flows, symbols silent all session. The list is the
+  // server's, so what is removed is exactly what was shown.
+  function confirmPrune() {
+    const items = stale.data?.items ?? []
+    if (items.length === 0) return
+    const expired = items.filter((i) => i.reason === 'expired')
+    const silent = items.filter((i) => i.reason === 'silent')
+    const lines = [
+      `Remove ${items.length} symbol${items.length === 1 ? '' : 's'} from the recording list?`,
+      '',
+      ...(expired.length ? [`Expired (${expired.length}): ${expired.map((i) => shortSymbol(i.symbol)).join(', ')}`] : []),
+      ...(silent.length ? ['', `No tick this session (${silent.length}): ${silent.map((i) => `${shortSymbol(i.symbol)} — ${i.detail}`).join(', ')}`] : []),
+      '',
+      'Live capture stops for them immediately. Live runs holding one of these as a position are not affected — a position is priced from its own contract.',
+    ]
+    if (window.confirm(lines.join('\n'))) prune.mutate(items.map((i) => i.id))
+  }
 
   function confirmRemove(id: number, symbol: string) {
     const open = session.data?.isMarketOpen
@@ -500,14 +541,35 @@ function LiveWatchlistPanel() {
         </>
       }
       actions={
-        <input
-          className="field__input field__input--sm"
-          placeholder="Filter…"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
+        <div className="toolbar" style={{ gap: 8 }}>
+          <button
+            type="button"
+            className={`btn btn--sm ${staleCount > 0 ? 'btn--danger' : 'btn--ghost'}`}
+            disabled={staleCount === 0 || prune.isPending}
+            onClick={confirmPrune}
+            title={
+              staleCount > 0
+                ? 'Remove every expired contract and every symbol silent all session while the feed flows'
+                : 'Nothing to remove — every symbol on the list is current'
+            }
+          >
+            <IconTrash /> {prune.isPending ? 'Removing…' : staleCount > 0 ? `Remove stale (${staleCount})` : 'Nothing stale'}
+          </button>
+          <input
+            className="field__input field__input--sm"
+            placeholder="Filter…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+        </div>
       }
     >
+      {prune.isError && <InlineError error={prune.error} />}
+      {prune.isSuccess && prune.data.removed.length > 0 && (
+        <div className="alert alert--success" role="status" style={{ marginBottom: 12 }}>
+          <span>{prune.data.message}</span>
+        </div>
+      )}
       <div className="toolbar" style={{ marginBottom: 12, alignItems: 'flex-start' }}>
         <AddSymbolForm />
         <AddGroupForm />
@@ -569,6 +631,11 @@ function LiveWatchlistPanel() {
                         </td>
                         <td className={ageMs != null && ageMs > 120_000 ? 'warn' : 'muted'}>
                           {quote ? formatAge(quote.updatedUtc) : '—'}
+                          {staleById.has(item.id) && (
+                            <span className="cell-sub">
+                              <Badge tone="neg">{staleById.get(item.id)!.detail}</Badge>
+                            </span>
+                          )}
                         </td>
                         <td>
                           <span className="muted">{item.dataType === 'symbolUpdate' ? 'Full' : 'Lite'}</span>{' '}

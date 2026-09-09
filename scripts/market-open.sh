@@ -107,7 +107,7 @@ else
     # Put the login in front of the operator rather than in a log they have to
     # go looking for: open the console and raise a notification.
     open "$CONSOLE/admin/data/connectors" 2>/dev/null || true
-    osascript -e 'display notification "Sign in to FYERS — the morning run is waiting." with title "AlgoTrading" sound name "Submarine"' 2>/dev/null || true
+    notify "AlgoTrading" "Sign in to FYERS — the morning run is waiting."
 
     NUDGED_OPEN=0
     LAST_NUDGE=$(date +%s)
@@ -121,11 +121,11 @@ else
       # first notification is easy to sleep through, and every minute waited is
       # a minute of the session gone.
       if [ "$NUDGED_OPEN" = 0 ] && [ "$NOW" -ge 0915 ]; then
-        osascript -e 'display notification "Market is OPEN and FYERS is not signed in — nothing is trading." with title "AlgoTrading" sound name "Sosumi"' 2>/dev/null || true
+        notify "AlgoTrading" "Market is OPEN and FYERS is not signed in — nothing is trading."
         NUDGED_OPEN=1
         LAST_NUDGE=$(date +%s)
       elif [ $(( $(date +%s) - LAST_NUDGE )) -ge 600 ]; then
-        osascript -e 'display notification "Still waiting for the FYERS sign-in." with title "AlgoTrading" sound name "Submarine"' 2>/dev/null || true
+        notify "AlgoTrading" "Still waiting for the FYERS sign-in."
         LAST_NUDGE=$(date +%s)
       fi
 

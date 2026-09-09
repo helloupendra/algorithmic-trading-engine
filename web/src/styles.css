@@ -833,6 +833,15 @@ select.field__input { appearance: auto; }
   overflow-y: auto;
 }
 
+/* Five rows, then it scrolls. Sized from the two-line position rows of a run
+   card (33px header + 50px rows) plus a sliver of the sixth row, so the cut
+   itself says there is more below; the header stays put while scrolling. A
+   run with fifty legs used to push the run log 2,500px down the page. */
+.tablewrap--rows5 {
+  max-height: calc(33px + 5 * 50px + 14px);
+  overflow-y: auto;
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;

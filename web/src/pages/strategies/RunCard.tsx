@@ -343,7 +343,7 @@ function PositionsTable({
   }
 
   return (
-    <div className="tablewrap">
+    <div className="tablewrap tablewrap--rows5">
       {close.isError && <InlineError error={close.error} />}
       <table className="table">
         <thead>
