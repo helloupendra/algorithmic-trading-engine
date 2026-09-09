@@ -149,6 +149,16 @@ if [ "$DRY_RUN" = 1 ]; then
   exit 0
 fi
 
+# Fresh daemons, never "already running": a feed that lived through the night
+# (the MCX session runs to 23:30) holds a token that expired at 06:00 and
+# would sit deaf all day while the API reports it healthy. Stop first — a
+# stop with nothing running is a no-op — then start with today's token.
+stop_daemon() {  # label, path
+  out="$(curl -sS -X POST "$API$2" -H "$AUTH" -H 'Content-Type: application/json' -d '{}' 2>/dev/null)"
+  case "$out" in *'"wasRunning":true'*) say "  $1 from before the open stopped — restarting it on today's token";; esac
+}
+stop_daemon "tick ingestor" "/api/Ingestor/stop"
+stop_daemon "chain poller" "/api/OptionChain/poller/stop"
 start_daemon "tick ingestor" "/api/Ingestor/start"
 
 # The poller start endpoint takes no body: it reads CHAIN_UNDERLYINGS from the
