@@ -23,7 +23,8 @@
 .lp .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15.5px; letter-spacing: -.01em; color: var(--text); line-height: 1.15; }
 .lp .brand:hover { text-decoration: none; }
 .lp .brand__mark { width: 30px; height: 30px; border-radius: 9px; display: inline-grid; place-items: center; background: linear-gradient(135deg, var(--brand), var(--live)); color: #fff; box-shadow: 0 8px 24px -10px var(--brand); }
-.lp .brand__mark svg { width: 17px; height: 17px; }
+.lp .brand__mark svg { width: 18px; height: 18px; }
+.lp .brand__word b { font-weight: 800; color: var(--live); }
 .lp .brand small { display: block; font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--text-3); line-height: 1.1; }
 .lp .nav__links { display: flex; align-items: center; gap: 22px; margin-left: auto; font-size: 13.5px; font-weight: 550; }
 /* :visited out-specifies the console's a:not([class]):visited (0,2,1) so clicked section links stay grey. */

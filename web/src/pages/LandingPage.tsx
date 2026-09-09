@@ -99,8 +99,8 @@ function TiltCard({ children, delay }: { children: ReactNode; delay?: number }) 
 }
 
 const Mark = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M3 17l5-8 4 5 3-4 6 7" />
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <g fill="currentColor" stroke="none"><rect x="5.25" y="6.5" width="4.5" height="2.3" rx="1.15"/><rect x="14.25" y="6.5" width="4.5" height="2.3" rx="1.15"/><rect x="3" y="10.7" width="6.75" height="2.6" rx="1.3"/><rect x="14.25" y="10.7" width="6.75" height="2.6" rx="1.3"/><rect x="5.25" y="15.2" width="4.5" height="2.3" rx="1.15"/><rect x="14.25" y="15.2" width="4.5" height="2.3" rx="1.15"/><rect x="11.5" y="4.8" width="1" height="14.4" rx=".5" opacity=".9"/></g>
   </svg>
 )
 
@@ -151,7 +151,7 @@ export function LandingPage() {
 
   useEffect(() => {
     const previous = document.title
-    document.title = 'AlgoTrading — see every trade your strategy makes'
+    document.title = 'OpenFNO — see every trade your strategy makes'
     return () => {
       document.title = previous
     }
@@ -161,9 +161,9 @@ export function LandingPage() {
     <div className="lp" ref={rootRef}>
       <header className="nav">
         <div className="wrap">
-          <a className="brand" href="#top" aria-label="AlgoTrading home">
+          <a className="brand" href="#top" aria-label="OpenFNO home">
             <span className="brand__mark"><Mark /></span>
-            <span>AlgoTrading<small>Console</small></span>
+            <span className="brand__word">open<b>fno</b><small>open-source F&amp;O</small></span>
           </a>
           <nav className="nav__links" aria-label="Sections">
             <a href="#modules">Modules</a>
@@ -450,7 +450,7 @@ export function LandingPage() {
 
       <footer>
         <div className="wrap">
-          <span>AlgoTrading Console · open source · paper execution on live ticks</span>
+          <span>OpenFNO · open source · paper execution on live ticks</span>
           <span className="footer__author">
             Built by {AUTHOR}
             <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" aria-label="GitHub"><GitHubMark /> GitHub</a>

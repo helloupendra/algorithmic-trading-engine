@@ -399,7 +399,8 @@ select.field__input { appearance: auto; }
   color: #fff;
   flex: none;
 }
-.shell__brand-mark svg { width: 15px; height: 15px; }
+.shell__brand-mark svg { width: 16px; height: 16px; }
+.shell__brand-word b { font-weight: 800; color: var(--live); }
 
 .shell__brand small {
   display: block;

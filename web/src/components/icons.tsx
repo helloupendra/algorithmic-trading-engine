@@ -32,9 +32,15 @@ function Icon({ children, ...props }: SVGProps<SVGSVGElement> & { children: Reac
   )
 }
 
+/**
+ * The OpenFNO mark: an option chain — calls left, puts right, the ATM row the
+ * longest, the strike ladder down the middle. Filled, not stroked, so it
+ * reads at 15px on the sidebar tile as well as at 64px on the favicon
+ * (public/favicon.svg carries the same geometry on the brand gradient).
+ */
 export const IconLogo = (p: SVGProps<SVGSVGElement>) => (
-  <Icon strokeWidth="2.2" {...p}>
-    <path d="M3 17l5-8 4 5 3-4 6 7" />
+  <Icon strokeWidth="0" {...p}>
+    <g fill="currentColor" stroke="none"><rect x="5.25" y="6.5" width="4.5" height="2.3" rx="1.15"/><rect x="14.25" y="6.5" width="4.5" height="2.3" rx="1.15"/><rect x="3" y="10.7" width="6.75" height="2.6" rx="1.3"/><rect x="14.25" y="10.7" width="6.75" height="2.6" rx="1.3"/><rect x="5.25" y="15.2" width="4.5" height="2.3" rx="1.15"/><rect x="14.25" y="15.2" width="4.5" height="2.3" rx="1.15"/><rect x="11.5" y="4.8" width="1" height="14.4" rx=".5" opacity=".9"/></g>
   </Icon>
 )
 

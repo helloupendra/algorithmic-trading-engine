@@ -91,7 +91,7 @@ export function AcceptInvitePage() {
             <span className="shell__brand-mark" aria-hidden="true">
               <IconLogo />
             </span>
-            AlgoTrading Console
+            OpenFNO Console
           </div>
 
           <h1 className="login__title">Join the console</h1>
