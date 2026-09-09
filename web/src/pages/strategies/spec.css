@@ -229,7 +229,7 @@
   align-items: start;
 }
 @media (min-width: 1100px) {
-  .spec-page__layout { grid-template-columns: 220px minmax(0, 880px); }
+  .spec-page__layout--toc { grid-template-columns: 220px minmax(0, 900px); }
 }
 
 .spec-page__toc {
@@ -262,3 +262,60 @@
 .spec-page__doc .spec__body .katex-display { margin: 16px 0; overflow-x: auto; overflow-y: hidden; padding: 4px 0; }
 /* The page header already carries the strategy's name; the document's own H1 would repeat it. */
 .spec-page__doc .spec__body > h1:first-child { display: none; }
+
+
+/* --- the sheet: what the catalog knows, as key / value rows ---------------- */
+.spec-page__section { margin-top: 8px; }
+.spec-page__section + .spec-page__section { margin-top: 28px; }
+.spec-page__section > .section-title { margin-bottom: 12px; }
+
+.spec-page__sheet {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 0;
+  margin: 0;
+  max-width: 1120px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg1);
+  font-size: 14px;
+  line-height: 1.55;
+}
+.spec-page__sheet dt,
+.spec-page__sheet dd {
+  margin: 0;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line-soft);
+}
+.spec-page__sheet dt:first-of-type,
+.spec-page__sheet dd:first-of-type { border-top: 0; }
+.spec-page__sheet dt {
+  color: var(--text-3);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding-top: 13px;
+}
+.spec-page__sheet .chip-row { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.spec-page__list { margin: 0; padding-left: 18px; }
+.spec-page__list li { margin: 2px 0; }
+.spec-page__sheet .spec-page__params { width: auto; min-width: 0; }
+.spec-page__sheet .spec-page__params td { padding: 4px 18px 4px 10px; white-space: nowrap; }
+@media (max-width: 720px) {
+  .spec-page__sheet { grid-template-columns: 1fr; }
+  .spec-page__sheet dt { padding-bottom: 0; border-top: 1px solid var(--line-soft); }
+  .spec-page__sheet dd { border-top: 0; padding-top: 4px; }
+}
+
+/* The unwritten-spec note: one paragraph, not a poster. */
+.spec-page__pending {
+  max-width: 900px;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font-size: 14px;
+  line-height: 1.55;
+}
+.spec-page__pending a { color: var(--brand); }

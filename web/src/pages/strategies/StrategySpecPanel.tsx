@@ -132,7 +132,7 @@ function SpecPending({ spec }: { spec: StrategySpec }) {
   )
 }
 
-export function StrategySpecPanel({ strategyId }: { strategyId: number }) {
+export function StrategySpecPanel({ strategyId, hideFacts = false }: { strategyId: number; hideFacts?: boolean }) {
   const spec = useStrategySpec(strategyId)
 
   if (spec.isPending) return <Loading label="Loading spec…" />
@@ -140,6 +140,10 @@ export function StrategySpecPanel({ strategyId }: { strategyId: number }) {
 
   const data = spec.data
   if (!data.hasSpec || data.markdown == null) return <SpecPending spec={data} />
+
+  // The facts block is what the chips above show; the page hides the
+  // section itself so the document ends at Limitations.
+  const body = hideFacts ? data.markdown.replace(/\n## Facts[\s\S]*$/, '') : data.markdown
 
   return (
     <div className="spec">
@@ -150,7 +154,7 @@ export function StrategySpecPanel({ strategyId }: { strategyId: number }) {
       <FactChips facts={data.facts} />
       <article className="spec__body">
         <Markdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={components}>
-          {data.markdown}
+          {body}
         </Markdown>
       </article>
     </div>
