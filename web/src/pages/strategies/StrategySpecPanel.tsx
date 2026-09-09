@@ -32,7 +32,28 @@ const rehypePlugins = [rehypeKatex]
  * `node` is the hast node react-markdown adds to every element's props — it
  * is dropped so it does not reach the DOM as an attribute.
  */
+/** "Position management" → "position-management": the anchor the page's table of contents jumps to. */
+export function headingSlug(text: string): string {
+  return text.toLowerCase().replace(/\(.*?\)/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+}
+
+function textOf(children: unknown): string {
+  if (typeof children === 'string') return children
+  if (Array.isArray(children)) return children.map(textOf).join('')
+  if (children && typeof children === 'object' && 'props' in children) return textOf((children as { props: { children?: unknown } }).props.children)
+  return ''
+}
+
 const components: Components = {
+  // Every H2 gets the id the table of contents links to.
+  h2: ({ node, children, ...props }) => {
+    void node
+    return (
+      <h2 id={headingSlug(textOf(children))} {...props}>
+        {children}
+      </h2>
+    )
+  },
   table: ({ node, ...props }) => {
     void node
     return (

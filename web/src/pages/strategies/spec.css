@@ -214,3 +214,51 @@
 @media (max-width: 720px) {
   .spec__pending-list { columns: 1; }
 }
+
+
+/* --- the spec page (StrategySpecPage.tsx): document + contents ------------- */
+.spec-page__back { font-size: 13px; color: var(--text-3); text-decoration: none; }
+.spec-page__back:hover { color: var(--text); }
+.spec-page__title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+.spec-page__subtitle { max-width: 860px; }
+
+.spec-page__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+@media (min-width: 1100px) {
+  .spec-page__layout { grid-template-columns: 220px minmax(0, 880px); }
+}
+
+.spec-page__toc {
+  position: sticky;
+  top: 72px;
+  font-size: 13px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg1);
+  padding: 12px 14px;
+}
+.spec-page__toc-title { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); margin-bottom: 8px; }
+.spec-page__toc ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; counter-reset: toc; }
+.spec-page__toc li { counter-increment: toc; display: flex; gap: 8px; }
+.spec-page__toc li::before { content: counter(toc); color: var(--text-3); font-variant-numeric: tabular-nums; min-width: 14px; }
+.spec-page__toc a { color: var(--text-2); text-decoration: none; }
+.spec-page__toc a:hover { color: var(--text); }
+.spec-page__toc-foot { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-soft); }
+.spec-page__toc-foot a { color: var(--brand); text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
+@media (max-width: 1099px) {
+  .spec-page__toc { position: static; }
+  .spec-page__toc ol { flex-direction: row; flex-wrap: wrap; gap: 6px 16px; }
+}
+
+/* A page of prose reads at 15px, not the table's 13px, with room to breathe. */
+.spec-page__doc .spec__body { font-size: 15px; line-height: 1.65; }
+.spec-page__doc .spec__body h2 { font-size: 22px; margin-top: 40px; padding-top: 12px; scroll-margin-top: 80px; }
+.spec-page__doc .spec__body h2:first-of-type { margin-top: 12px; }
+.spec-page__doc .spec__body h3 { font-size: 16px; margin-top: 26px; }
+.spec-page__doc .spec__body .katex-display { margin: 16px 0; overflow-x: auto; overflow-y: hidden; padding: 4px 0; }
+/* The page header already carries the strategy's name; the document's own H1 would repeat it. */
+.spec-page__doc .spec__body > h1:first-child { display: none; }

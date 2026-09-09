@@ -5,13 +5,13 @@
  * specification (docs/strategies/<Name>.md) rendered below the table.
  */
 
-import { Suspense, lazy, useEffect, useRef, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useStrategies } from '../../lib/queries'
 import { contractRequirementSummary, contractRequirementsOf } from '../../lib/contracts'
 import { formatResolution } from '../../lib/symbols'
-import { Badge, Loading, Panel, QueryBoundary } from '../../components/ui'
-import { IconLayers, IconX } from '../../components/icons'
+import { Badge, Panel, QueryBoundary } from '../../components/ui'
+import { IconArrowRight, IconLayers } from '../../components/icons'
 import type { StrategyListItem } from '../../lib/types'
 import { CategoryBadge, LaunchDialog, StrategyCard } from './shared'
 import { activeUnderlyings } from '../../lib/strategyList'
@@ -19,7 +19,6 @@ import { activeUnderlyings } from '../../lib/strategyList'
 // The spec renderer carries react-markdown and KaTeX (CSS and fonts included).
 // Nobody pays for that until they open a spec, and the strategy list itself
 // stays in the main bundle.
-const StrategySpecPanel = lazy(() => import('./StrategySpecPanel'))
 
 function compactJson(json: string): string {
   try {
@@ -41,26 +40,13 @@ export function StrategyLibraryPage() {
   const launch: StrategyListItem | null =
     launchId != null ? (strategies.data?.find((s) => s.id === launchId) ?? null) : null
 
-  // The strategy whose spec is open. The panel sits below the reference table
-  // (the page is a single column), so a pick in the table scrolls it into
-  // view; the panel carries its own strategy picker so the reader can move
-  // between specs without scrolling back up. ?strategy=<catalog id> — how a
-  // whiteboard card links here — opens with that spec selected; it is read
-  // once, and the page's own picks take over from there.
+  // ?strategy=<catalog id> is how older whiteboard cards link here; the spec
+  // now has a page of its own, so the link is forwarded there.
   const [params] = useSearchParams()
-  const [specId, setSpecId] = useState<number | null>(() => {
-    const wanted = Number(params.get('strategy'))
-    return Number.isInteger(wanted) && wanted > 0 ? wanted : null
-  })
-  const specRef = useRef<HTMLDivElement | null>(null)
-  const spec: StrategyListItem | null =
-    specId != null ? (strategies.data?.find((s) => s.id === specId) ?? null) : null
-  // Keyed on the resolved spec, not the id: a deep-linked id is set before the
-  // list has loaded, and the panel to scroll to only exists once it has.
-  const openSpecId = spec?.id ?? null
   useEffect(() => {
-    if (openSpecId != null) specRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }, [openSpecId])
+    const wanted = Number(params.get('strategy'))
+    if (Number.isInteger(wanted) && wanted > 0) navigate(`/admin/strategies/library/${wanted}`, { replace: true })
+  }, [params, navigate])
 
   return (
     <div className="page">
@@ -114,8 +100,6 @@ export function StrategyLibraryPage() {
                       return (
                         <tr
                           key={s.id}
-                          className={s.id === specId ? 'row--selected' : undefined}
-                          onClick={() => setSpecId(s.id)}
                         >
                           <td>
                             <b>{s.name}</b>{' '}
@@ -150,16 +134,9 @@ export function StrategyLibraryPage() {
                             {s.sourceFile || '—'}
                           </td>
                           <td>
-                            <button
-                              type="button"
-                              className="btn btn--sm btn--ghost"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setSpecId(s.id)
-                              }}
-                            >
-                              How it works
-                            </button>
+                            <Link className="btn btn--sm" to={`/admin/strategies/library/${s.id}`}>
+                              How it works <IconArrowRight style={{ width: 12, height: 12 }} />
+                            </Link>
                           </td>
                         </tr>
                       )
@@ -169,45 +146,6 @@ export function StrategyLibraryPage() {
               </div>
             </Panel>
 
-            {spec && (
-              <div ref={specRef}>
-                <Panel
-                  title={
-                    <>
-                      <IconLayers /> How it works — {spec.name}
-                    </>
-                  }
-                  actions={
-                    <>
-                      <select
-                        className="field__input field__input--sm"
-                        aria-label="Strategy"
-                        value={spec.id}
-                        onChange={(e) => setSpecId(Number(e.target.value))}
-                      >
-                        {items.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.name}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        className="btn btn--sm btn--ghost"
-                        onClick={() => setSpecId(null)}
-                        aria-label="Close the spec"
-                      >
-                        <IconX style={{ width: 13, height: 13 }} /> Close
-                      </button>
-                    </>
-                  }
-                >
-                  <Suspense fallback={<Loading label="Loading spec…" />}>
-                    <StrategySpecPanel strategyId={spec.id} />
-                  </Suspense>
-                </Panel>
-              </div>
-            )}
           </>
         )}
       </QueryBoundary>
