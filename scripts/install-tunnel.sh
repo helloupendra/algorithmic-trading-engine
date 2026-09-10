@@ -14,7 +14,7 @@
 # thing it lacked was a way in.
 #
 # Usage:
-#   ./scripts/install-tunnel.sh <tunnel-token> console.snehatra.com
+#   ./scripts/install-tunnel.sh <tunnel-token> openfno.com
 #   ./scripts/install-tunnel.sh --remove
 #
 # The token comes from Cloudflare → Zero Trust → Networks → Tunnels → Create.

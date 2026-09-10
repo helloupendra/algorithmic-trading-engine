@@ -1,7 +1,7 @@
 # Running the platform on AWS
 
 The Mac stays the development machine; the server runs the live desk. Same
-layout, same scripts, same domain: `console.snehatra.com` keeps pointing at the
+layout, same scripts, same domain: `openfno.com` (formerly `console.snehatra.com`) keeps pointing at the
 Cloudflare tunnel, which now terminates on the server instead of the Mac. The
 FYERS callback URL and every console link stay unchanged.
 
@@ -74,7 +74,7 @@ working without being re-entered.
 ## 4. Cut over
 
 Once `./scripts/status.sh` on the server is green and
-`https://console.snehatra.com` answers from it, stop the Mac's copies so two
+`https://openfno.com` answers from it, stop the Mac's copies so two
 desks never run the same morning:
 
 ```bash
@@ -94,3 +94,30 @@ starts serving before the Mac stops.
 - Heavy migrations (a rebuild of a big table): apply them by hand first with `dotnet ef database update` while the desk is stopped, then start the desk. The desk restarts an API that takes longer than two minutes to come up, which would interrupt the migration.
 - The FYERS sign-in is still a daily manual step at the console before 09:15; the desk waits for it.
 - Logs rotate as on the Mac (`logs/api-until-*.log`); raw ticks age out after seven days by TimescaleDB's retention policy.
+
+## Security posture (checked 2026-09-10, before the URL went public)
+
+- **Nothing but SSH is reachable from the internet.** The security group allows port 22 only;
+  the API listens on loopback and is published through the Cloudflare tunnel. Postgres, Redis,
+  Grafana and Prometheus are bound to `127.0.0.1` in `docker-compose.yml` as well, so a firewall
+  slip cannot expose them. SSH is key-only with fail2ban.
+- **Every API route requires a signed-in user** by default (a fallback policy); the only anonymous
+  routes are sign-in, token refresh, the broker's OAuth callback, invite acceptance and the
+  backend status ping. Admin-only routes carry the Admin policy; module routes check the
+  caller's grants. Sign-in is rate-limited in Production.
+- **Security headers on every response** (`Program.cs`): a strict Content-Security-Policy
+  (only the console's own bundles may run; no third-party script anywhere; the console cannot be
+  framed), `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, and HSTS for a year
+  on HTTPS. The whiteboard's console shows CSP refusals for Excalidraw's optional CDN fonts — that
+  is the policy working; the fonts it uses are served locally.
+- **Secrets are never in the repository**: `.env` (mode 600) holds them on the host, the broker
+  secret, trading PIN and tokens are encrypted at rest with ASP.NET Data Protection (key ring in
+  `~/.aspnet/DataProtection-Keys`, mode 700), the pre-commit hook blocks a retired name, and the
+  `private/` tree is ignored. JWT signing key is 48 characters; the admin password is 24.
+- **Accounts:** demo and test traders are deactivated on the public instance (re-enable from
+  Users when needed). Traders never see the platform broker or feed state.
+- **At Cloudflare** (dashboard): keep *Always Use HTTPS* on and the minimum TLS at 1.2; the tunnel
+  is the only origin.
+
+Grafana's admin password lives only in the host's `.env` (and `~/private/grafana-admin.txt`);
+reach Grafana through an SSH tunnel (`ssh -L 3000:localhost:3000 …`), never by opening the port.

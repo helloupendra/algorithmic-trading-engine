@@ -77,7 +77,7 @@ export function BarChart({ bars }: { bars: LiveBar[] }) {
     const data = [...bars]
       .sort((a, b) => a.barStartUtc.localeCompare(b.barStartUtc))
       .map((b) => ({
-        time: (new Date(b.barStartUtc).getTime() / 1000) as UTCTimestamp,
+        time: istTime(b.barStartUtc),
         open: b.open,
         high: b.high,
         low: b.low,
@@ -142,6 +142,17 @@ export function EquityChart({ snapshots }: { snapshots: EquitySnapshot[] }) {
 }
 
 /** A normalized candle any source (stored history, live bars) can map into. */
+/**
+ * lightweight-charts labels its axis in UTC. Every bar here is an Indian
+ * session, so the timestamps are shifted by the fixed IST offset (no daylight
+ * saving) before they reach the chart: 03:45Z shows as 09:15, the way the
+ * trader read it on the exchange.
+ */
+const IST_OFFSET_SECONDS = 19_800
+function istTime(iso: string): UTCTimestamp {
+  return (Math.floor(new Date(iso).getTime() / 1000) + IST_OFFSET_SECONDS) as UTCTimestamp
+}
+
 export interface PriceCandle {
   timeUtc: string
   open: number
@@ -188,7 +199,7 @@ export function PriceChart({ candles }: { candles: PriceCandle[] }) {
     // lightweight-charts requires strictly ascending unique times.
     const byTime = new Map<number, PriceCandle>()
     for (const c of [...candles].sort((a, b) => a.timeUtc.localeCompare(b.timeUtc))) {
-      byTime.set(Math.floor(new Date(c.timeUtc).getTime() / 1000), c)
+      byTime.set(istTime(c.timeUtc), c)
     }
     const rows = [...byTime.entries()]
 

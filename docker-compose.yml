@@ -21,8 +21,11 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is not set — copy .env.example to .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set — copy .env.example to .env}
       POSTGRES_DB: ${POSTGRES_DB:-algotrading}
+    # Loopback only, here and below: the API, the desk and the engine all run
+    # on this host, and nothing on the internet should be able to reach the
+    # database, the cache or the dashboards even if a firewall rule slips.
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - timescaledb_data:/var/lib/postgresql/data
     healthcheck:
@@ -45,7 +48,7 @@ services:
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -60,7 +63,7 @@ services:
     image: prom/prometheus:latest
     container_name: algotrading_prometheus
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -73,7 +76,7 @@ services:
     image: grafana/grafana:latest
     container_name: algotrading_grafana
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - grafana_data:/var/lib/grafana
       - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
@@ -92,7 +95,7 @@ services:
     container_name: algotrading_redisinsight
     profiles: ["tools"]
     ports:
-      - "8001:5540"
+      - "127.0.0.1:8001:5540"
     depends_on:
       - redis
     restart: unless-stopped

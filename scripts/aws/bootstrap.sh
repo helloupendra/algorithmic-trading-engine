@@ -23,7 +23,7 @@ REPO_URL="https://github.com/helloupendra/algorithmic-trading-engine.git"
 BRANCH="main"
 TUNNEL_TOKEN=""
 ENV_FILE="$HOME/.env"
-PUBLIC_HOST="console.snehatra.com"
+PUBLIC_HOST="openfno.com"
 REPO_DIR="$HOME/algorithmic-trading-engine"
 
 while [ $# -gt 0 ]; do

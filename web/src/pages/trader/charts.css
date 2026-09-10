@@ -1,0 +1,108 @@
+/* Charts: the chart is the page. A slim toolbar, quick picks, a header with
+   the price, the stage, then a row of numbers for what is on screen. */
+
+.charts { display: flex; flex-direction: column; gap: 12px; }
+
+.charts__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.charts__symbol { width: 300px; max-width: 100%; }
+.charts__symbol .combo { width: 100%; }
+.charts__symbol .combo .field__input { width: 100%; box-sizing: border-box; }
+
+.charts__picks { display: flex; flex-wrap: wrap; gap: 6px; }
+.charts__pick {
+  all: unset;
+  box-sizing: border-box;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--bg1);
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.charts__pick:hover { border-color: var(--line-strong); color: var(--text); }
+.charts__pick.is-active { border-color: var(--brand-line); background: var(--brand-soft); color: var(--text); }
+.charts__pick:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+.charts__head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 2px 2px 0;
+}
+.charts__title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.charts__name { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
+.charts__sym { font-size: 12px; color: var(--text-3); }
+.charts__live { font-size: 11px; color: var(--pos); font-weight: 650; letter-spacing: 0.04em; }
+.charts__quote { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.charts__price { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.charts__change { font-size: 13px; font-variant-numeric: tabular-nums; color: var(--text-2); }
+.charts__change.pos { color: var(--pos); }
+.charts__change.neg { color: var(--neg); }
+.charts__over { color: var(--text-3); }
+.charts__asof { font-size: 11.5px; color: var(--text-3); }
+
+.charts__stage {
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: 8px;
+  min-height: 420px;
+  display: flex;
+  flex-direction: column;
+}
+.charts__stage .chart { height: min(62vh, 620px); }
+.charts__empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: 400px;
+  color: var(--text-2);
+  text-align: center;
+  padding: 24px;
+}
+
+.charts__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+.charts__stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 11px;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+}
+.charts__stat-k {
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.charts__stat-v { font-size: 13.5px; color: var(--text); font-variant-numeric: tabular-nums; }
+
+.charts__data { color: var(--text-3); font-size: 12.5px; }
+.charts__data summary { cursor: pointer; padding: 4px 0; }
+.charts__data-table { margin-top: 6px; }
+.charts__data-table td { padding: 6px 10px; font-size: 12.5px; }
+
+@media (max-width: 720px) {
+  .charts__symbol { width: 100%; }
+  .charts__stage .chart { height: 46vh; }
+  .charts__price { font-size: 22px; }
+}

@@ -101,8 +101,29 @@ public class DailyCandleArchiveService : IDailyCandleArchiveService
                 // replays the previous close with a date-only stamp before the
                 // open, and one such row per contract survives in live_bars.
                 // Rolling it up would invent a 00:00 candle.
-                bars = bars.Where(b => !IstTime.IsMidnightIst(b.BarStartUtc)).ToList();
+                bars = bars
+                    .Where(b => !IstTime.IsMidnightIst(b.BarStartUtc))
+                    // NSE/BSE pre-open (09:00–09:15 IST) is an auction, not a
+                    // session: a few indicative prints that put a wick to
+                    // nowhere on the first candle. The broker's own candles
+                    // start at 09:15, and so do these. MCX has no pre-open.
+                    .Where(b => !IsExchangePreOpen(symbol, b.BarStartUtc))
+                    .ToList();
                 result.LiveBarsRead += bars.Count;
+
+                // Pre-open candles written by earlier archive runs (before
+                // the rule above existed) are taken back out, so a chart of
+                // that day does not open on the auction's wick.
+                var stalePreOpen = await _db.Candles
+                    .Where(c => c.Symbol == symbol && c.SourceKey == SourceKey && c.TimeStampUtc >= fromUtc && c.TimeStampUtc <= toUtc)
+                    .ToListAsync(cancellationToken);
+                stalePreOpen = stalePreOpen.Where(c => IsExchangePreOpen(symbol, c.TimeStampUtc)).ToList();
+                if (stalePreOpen.Count > 0)
+                {
+                    _db.Candles.RemoveRange(stalePreOpen);
+                    await _db.SaveChangesAsync(cancellationToken);
+                }
+
                 if (bars.Count == 0) continue;
 
                 foreach (var m in Minutes)
@@ -127,6 +148,13 @@ public class DailyCandleArchiveService : IDailyCandleArchiveService
             istDay, result.SymbolsWithLiveBars, result.LiveBarsRead,
             result.CandlesInserted.Values.Sum(), result.CandlesUpdated.Values.Sum(), result.CandlesOwnedElsewhere, result.Errors.Count);
         return result;
+    }
+
+    private static bool IsExchangePreOpen(string symbol, DateTime barStartUtc)
+    {
+        if (!symbol.StartsWith("NSE:", StringComparison.Ordinal) && !symbol.StartsWith("BSE:", StringComparison.Ordinal))
+            return false;
+        return IstTime.ToIst(barStartUtc).TimeOfDay < IstTime.SessionOpen;
     }
 
     private async Task WriteAsync(string symbol, string resolution, IReadOnlyList<ProviderHistoryBar> rolled, CandleArchiveResult result, CancellationToken ct)
