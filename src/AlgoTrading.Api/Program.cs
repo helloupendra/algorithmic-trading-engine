@@ -373,6 +373,27 @@ app.Use(async (context, next) =>
     await next();
 });
 
+app.Use(async (context, next) =>
+{
+    var p = context.Request.Path.Value ?? string.Empty;
+    // /docs and /docs/<page> → their trailing-slash form (a directory with an index.html).
+    if ((p == "/docs" || (p.StartsWith("/docs/", StringComparison.Ordinal) && !p.EndsWith('/') && !Path.HasExtension(p)))
+        && Directory.Exists(Path.Combine(app.Environment.WebRootPath ?? string.Empty, p.TrimStart('/'))))
+    {
+        context.Response.Redirect(p + "/" + context.Request.QueryString, permanent: true);
+        return;
+    }
+    // The console is behind a sign-in and is not a page to index; the landing
+    // page and the docs are the public face.
+    if (p.StartsWith("/admin", StringComparison.Ordinal) || p.StartsWith("/trader", StringComparison.Ordinal)
+        || p.StartsWith("/login", StringComparison.Ordinal) || p.StartsWith("/invite", StringComparison.Ordinal)
+        || p.StartsWith("/api", StringComparison.Ordinal) || p.StartsWith("/hubs", StringComparison.Ordinal))
+    {
+        context.Response.Headers["X-Robots-Tag"] = "noindex, nofollow";
+    }
+    await next();
+});
+
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
@@ -400,7 +421,11 @@ app.MapMetrics().AllowAnonymous();
 // client-side routing works on hard refresh / deep links. API and hub paths
 // are excluded on purpose: an unknown /api route must answer 404, never a
 // cacheable HTML document that a client then mistakes for JSON.
-app.MapFallbackToFile("{*path:regex(^(?!api(/|$)|hubs(/|$)|swagger(/|$)).*$)}", "index.html").AllowAnonymous();
+// The documentation site under /docs is static HTML of its own; the SPA
+// fallback must not swallow it. A docs address without its trailing slash
+// (/docs, /docs/architecture) is sent to the canonical one so every page has
+// exactly one URL for search engines and for people.
+app.MapFallbackToFile("{*path:regex(^(?!api(/|$)|hubs(/|$)|swagger(/|$)|docs(/|$)).*$)}", "index.html").AllowAnonymous();
 
 // Signed-in callers only. Anonymous, this hub shipped the broker's full raw
 // tick payload to anyone who had the URL — including every browser sitting on
