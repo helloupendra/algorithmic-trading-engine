@@ -344,6 +344,7 @@ namespace AlgoTrading.Api.Controllers;
                 isAuthenticated = session.IsAuthenticated,
                 createdUtc = session.CreatedUtc,
                 updatedUtc = session.UpdatedUtc,
+                expiresAtUtc = session.ExpiresAtUtc,
                 // Shaped the same way on purpose: a caller that only checks
                 // whether the broker is linked keeps working unchanged.
                 accessToken = string.Empty,
@@ -357,6 +358,7 @@ namespace AlgoTrading.Api.Controllers;
             isAuthenticated = session.IsAuthenticated,
             createdUtc = session.CreatedUtc,
             updatedUtc = session.UpdatedUtc,
+            expiresAtUtc = session.ExpiresAtUtc,
             accessToken = session.AccessToken,
             refreshToken = session.RefreshToken
         });

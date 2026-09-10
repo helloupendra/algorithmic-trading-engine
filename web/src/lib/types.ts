@@ -975,6 +975,8 @@ export interface BrokerSessionInfo {
   isAuthenticated: boolean
   createdUtc?: string
   updatedUtc?: string
+  /** When the access token stops working (FYERS: 06:00 IST after issue). Absent when the broker's rule is unknown. */
+  expiresAtUtc?: string | null
 }
 
 export interface CandleDto {

@@ -179,12 +179,38 @@ fi
 # Long enough for the ingestor to have subscribed and the first ticks to land.
 sleep 90
 
-TICKS="$(curl -fsS "$API/api/LiveData/latest/all" -H "$AUTH" 2>/dev/null \
-  | tr ',' '\n' | grep -c 'lastTradedPrice' || true)"
-say "  symbols carrying a price: ${TICKS:-0}"
+# Only quotes updated in the last few minutes count. The table keeps every
+# symbol's LAST price forever, so on 2026-09-10 it showed 127 "prices" from
+# the previous evening while the ingestor sat on an expired token and
+# nothing was flowing. The date-time filter is done in python on purpose:
+# the JSON is one line and grep cannot tell today's stamp from yesterday's.
+TICKS="$(curl -fsS "$API/api/LiveData/latest/all" -H "$AUTH" 2>/dev/null | python3 -c '
+import json, sys
+from datetime import datetime, timedelta, timezone
+try:
+    rows = json.load(sys.stdin)
+except Exception:
+    rows = []
+if isinstance(rows, dict):
+    rows = rows.get("items") or rows.get("quotes") or rows.get("data") or []
+cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
+fresh = 0
+for r in rows:
+    stamp = r.get("updatedUtc") or r.get("receivedUtc") or ""
+    try:
+        at = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=timezone.utc)
+    except Exception:
+        continue
+    if at >= cutoff and r.get("lastTradedPrice") is not None:
+        fresh += 1
+print(fresh)
+' 2>/dev/null || echo 0)"
+say "  symbols with a price in the last 5 minutes: ${TICKS:-0}"
 
 if [ "${TICKS:-0}" -lt 1 ]; then
-  fail "no live prices after the ingestor started — the feed is not flowing."
+  fail "no fresh prices after the ingestor started — the feed is not flowing (check the broker token: FYERS expires it at 06:00 IST)."
 fi
 
 # --- 7. the strategy ---------------------------------------------------------
