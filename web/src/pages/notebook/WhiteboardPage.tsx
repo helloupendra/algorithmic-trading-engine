@@ -495,8 +495,25 @@ function InsertToolbar({ onInsert, disabled }: { onInsert: (card: CardSpec) => v
 
 function BoardEditor({ board, onReload }: { board: WhiteboardDetail; onReload: () => Promise<void> }) {
   const navigate = useNavigate()
-  // Folded by default only where the screen is short.
-  const [cardsOpen, setCardsOpen] = useState<boolean>(() => !window.matchMedia('(max-width: 760px)').matches)
+  const [insertOpen, setInsertOpen] = useState(false)
+  const insertRef = useRef<HTMLDivElement>(null)
+
+  // The insert panel closes like a menu: Escape, or a click anywhere else.
+  useEffect(() => {
+    if (!insertOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setInsertOpen(false)
+    }
+    const onDown = (e: MouseEvent) => {
+      if (insertRef.current && !insertRef.current.contains(e.target as Node)) setInsertOpen(false)
+    }
+    document.addEventListener('keydown', onKey)
+    document.addEventListener('mousedown', onDown)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('mousedown', onDown)
+    }
+  }, [insertOpen])
   const rename = useRenameWhiteboard()
   const handleRef = useRef<BoardHandle | null>(null)
   const [ready, setReady] = useState(false)
@@ -566,6 +583,30 @@ function BoardEditor({ board, onReload }: { board: WhiteboardDetail; onReload: (
             }}
           />
         </form>
+        {/* The three insert forms live behind one button. Laid out open they
+            took a third of the screen; a board is for looking at the board. */}
+        <div className="wb__insert" ref={insertRef}>
+          <button
+            type="button"
+            className="btn btn--sm"
+            aria-expanded={insertOpen}
+            aria-haspopup="dialog"
+            onClick={() => setInsertOpen((v) => !v)}
+          >
+            <IconPlus /> Add card
+          </button>
+          {insertOpen && (
+            <div className="wb__insert-panel" role="dialog" aria-label="Insert a card">
+              <InsertToolbar
+                disabled={!ready}
+                onInsert={(card) => {
+                  handleRef.current?.insertCard(card)
+                  setInsertOpen(false)
+                }}
+              />
+            </div>
+          )}
+        </div>
         <SaveStatus state={autosave.state} onRetry={autosave.retry} />
       </header>
 
@@ -612,20 +653,6 @@ function BoardEditor({ board, onReload }: { board: WhiteboardDetail; onReload: (
         </div>
       )}
 
-      {/* On a phone the card toolbar is taller than the drawing it leaves
-          room for, so there it folds away behind one button and the canvas
-          gets the screen. Desktop keeps it open. */}
-      <button
-        type="button"
-        className="btn btn--ghost btn--sm wb__cards-toggle"
-        aria-expanded={cardsOpen}
-        onClick={() => setCardsOpen((v) => !v)}
-      >
-        <IconPlus /> {cardsOpen ? 'Hide cards' : 'Add a card'}
-      </button>
-      <div className={`wb__tools-wrap${cardsOpen ? '' : ' wb__tools-wrap--folded'}`}>
-        <InsertToolbar disabled={!ready} onInsert={(card) => handleRef.current?.insertCard(card)} />
-      </div>
 
       <ChunkErrorBoundary what="the canvas">
         <Suspense fallback={<div className="wb-canvas wb-canvas__loading">Loading the canvas…</div>}>
