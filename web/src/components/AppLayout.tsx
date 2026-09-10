@@ -184,29 +184,36 @@ function TopbarStatus() {
 
 /**
  * The Notebook module's sidebar group: one entry today, the whiteboard list
- * (a board's own page is reached from there). Declared beside TRADER_NAV
+ * (a board's own page is reached from there). Declared beside the trader sections
  * rather than in the module registry, which feeds the overview grid a card per
  * module — the registry entry is its own change.
  */
 const NOTEBOOK_SECTIONS = [{ route: '/admin/notebook', label: 'Whiteboards', icon: IconPen, end: false }]
 
-const TRADER_NAV = [
-  { to: '/trader', label: 'Overview', icon: IconDashboard, end: true },
-  { to: '/trader/watchlist', label: 'Watchlist', icon: IconPulse },
-  { to: '/trader/charts', label: 'Charts', icon: IconCandles },
-  { to: '/trader/news', label: 'Market news', icon: IconGlobe },
-  { to: '/trader/movers', label: 'Top movers', icon: IconArrowRight },
-  { to: '/trader/option-chain', label: 'Option chain', icon: IconLayers },
-  { to: '/trader/positions', label: 'Positions', icon: IconDatabase },
-  { to: '/trader/orders', label: 'Orders', icon: IconClock },
-  { to: '/trader/trading', label: 'Manual order', icon: IconArrowRight },
-  { to: '/trader/trading/lab', label: 'Filter lab', icon: IconFlask },
-  // One place for strategies: the cards, "How it works", and the deploy
-  // wizard on a single page. A separate descriptions-only page was a second
-  // copy of the same list with nothing to do on it.
-  { to: '/trader/deploy', label: 'Strategies', icon: IconFlask },
-  { to: '/trader/strategies/history', label: 'My runs', icon: IconClock },
-  { to: '/trader/account', label: 'Account', icon: IconUsers },
+/**
+ * The trader's sidebar, in the order a trading day is lived: what is running
+ * and what it is making first, then the market to look at, then the tools
+ * used now and then. Grouped like the operator's side so both feel like one
+ * console — and so the list stays short even as pages are added.
+ */
+const TRADER_TRADE_SECTIONS = [
+  { route: '/trader/deploy', label: 'Strategies', icon: IconFlask, end: false },
+  { route: '/trader/strategies/history', label: 'My runs', icon: IconClock, end: false },
+  { route: '/trader/positions', label: 'Positions', icon: IconDatabase, end: false },
+  { route: '/trader/orders', label: 'Orders', icon: IconClock, end: false },
+]
+
+const TRADER_MARKET_SECTIONS = [
+  { route: '/trader/watchlist', label: 'Watchlist', icon: IconPulse, end: false },
+  { route: '/trader/charts', label: 'Charts', icon: IconCandles, end: false },
+  { route: '/trader/option-chain', label: 'Option chain', icon: IconLayers, end: false },
+  { route: '/trader/movers', label: 'Top movers', icon: IconArrowRight, end: false },
+  { route: '/trader/news', label: 'Market news', icon: IconGlobe, end: false },
+]
+
+const TRADER_TOOL_SECTIONS = [
+  { route: '/trader/trading', label: 'Manual order', icon: IconArrowRight, end: true },
+  { route: '/trader/trading/lab', label: 'Filter lab', icon: IconFlask, end: false },
 ]
 
 function NavItem({
@@ -252,6 +259,7 @@ function NavItem({
 function NavGroup({
   label,
   sections,
+  defaultOpen = false,
 }: {
   label: string
   sections: ReadonlyArray<{
@@ -260,6 +268,8 @@ function NavGroup({
     icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
     end?: boolean
   }>
+  /** Open on a first visit, before the person has chosen; a group they close stays closed. */
+  defaultOpen?: boolean
 }) {
   const location = useLocation()
   const storageKey = `algotrading.nav.${label.toLowerCase()}`
@@ -272,7 +282,7 @@ function NavGroup({
     } catch {
       // Private mode, or storage disabled. Fall through to the route.
     }
-    return holdsCurrentRoute
+    return holdsCurrentRoute || defaultOpen
   })
 
   // Navigating into a group reveals it. Deliberately one-way: this must not
@@ -341,12 +351,19 @@ function AdminNav() {
 
 function TraderNav() {
   return (
-    <div className="nav-group">
-      <div className="nav-group__label">Trading</div>
-      {TRADER_NAV.map((item) => (
-        <NavItem key={item.to} to={item.to} label={item.label} icon={item.icon} end={item.end} />
-      ))}
-    </div>
+    <>
+      <div className="nav-group">
+        <NavItem to="/trader" label="Overview" icon={IconDashboard} end />
+      </div>
+
+      <NavGroup label="Trade" sections={TRADER_TRADE_SECTIONS} defaultOpen />
+      <NavGroup label="Markets" sections={TRADER_MARKET_SECTIONS} defaultOpen />
+      <NavGroup label="Tools" sections={TRADER_TOOL_SECTIONS} />
+
+      <div className="nav-group">
+        <NavItem to="/trader/account" label="Account" icon={IconUsers} />
+      </div>
+    </>
   )
 }
 
@@ -380,12 +397,21 @@ const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]>
   ['/admin/notebook', 'Notebook', 'Whiteboards'],
   ['/admin/system', 'System', 'Overview'],
   ['/admin', null, 'Overview'],
-  ['/trader/strategies/history', 'Trading', 'My runs'],
-  ['/trader/strategies/runs/', 'Trading', 'Live run'],
-  ['/trader/strategies/', 'Trading', 'How it works'],
-  ['/trader/deploy', 'Trading', 'Strategies'],
-  ['/trader/account', 'Trading', 'Account'],
-  ['/trader', null, 'Trading'],
+  ['/trader/strategies/history', 'Trade', 'My runs'],
+  ['/trader/strategies/runs/', 'Trade', 'Live run'],
+  ['/trader/strategies/', 'Trade', 'How it works'],
+  ['/trader/deploy', 'Trade', 'Strategies'],
+  ['/trader/positions', 'Trade', 'Positions'],
+  ['/trader/orders', 'Trade', 'Orders'],
+  ['/trader/watchlist', 'Markets', 'Watchlist'],
+  ['/trader/charts', 'Markets', 'Charts'],
+  ['/trader/option-chain', 'Markets', 'Option chain'],
+  ['/trader/movers', 'Markets', 'Top movers'],
+  ['/trader/news', 'Markets', 'Market news'],
+  ['/trader/trading/lab', 'Tools', 'Filter lab'],
+  ['/trader/trading', 'Tools', 'Manual order'],
+  ['/trader/account', null, 'Account'],
+  ['/trader', null, 'Overview'],
 ]
 
 export function AppLayout() {

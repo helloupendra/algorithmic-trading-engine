@@ -143,10 +143,17 @@ public class StrategyController : ControllerBase
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// Launches the Python execution runner on the chosen underlying. Admin-only:
-    /// it starts a process on the API host that can place (paper) orders.
+    /// Launches the Python execution runner on the chosen underlying.
     /// </summary>
-    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    /// <remarks>
+    /// Open to traders as well as the operator: the trader's Strategies page
+    /// uses the same launch dialog (underlying, lots, risk rules, strikes) as
+    /// the admin runner, and this is the one endpoint behind it. What keeps a
+    /// trader inside their package is <see cref="IStrategyAccessService.CanDeployAsync"/>,
+    /// checked below on the last step before a runner is launched — the same
+    /// gate the older create-run-then-deploy path applies. Admins pass it by
+    /// role. The run is owned by whoever started it.
+    /// </remarks>
     [HttpPost("{id:int}/start")]
     public async Task<IActionResult> StartStrategy(
         int id, 
@@ -229,6 +236,20 @@ public class StrategyController : ControllerBase
         var userId = User.GetRequiredUserId();
         var startedBy = User.GetUserName() ?? "unknown";
         var now = DateTime.UtcNow;
+
+        // What this trader may run — strategy, underlying, lots, mode and how
+        // many runs they already have open. Filtering the list they see is a
+        // courtesy; this is what actually stops anything.
+        int openRuns = await _dbContext.SimulationRuns
+            .CountAsync(
+                x => x.UserId == userId && (x.Status == "Running" || x.Status == "Stopping"),
+                cancellationToken);
+        var decision = await _strategyAccess.CanDeployAsync(
+            userId, strategy.Name, underlying, lots, LivePaperMode, openRuns, cancellationToken);
+        if (!decision.Allowed)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = decision.Reason });
+        }
 
         var run = new SimulationRun
         {

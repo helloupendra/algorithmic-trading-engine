@@ -8,7 +8,7 @@
  * kept apart on the server by broker account; nothing on this page can touch
  * the platform session.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../lib/auth'
@@ -50,6 +50,288 @@ function BrokerLight({ state, expiresAtUtc }: { state: LinkState; expiresAtUtc: 
   )
 }
 
+/* --------------------------------------------------------------- brokers */
+
+interface BrokerField {
+  key: string
+  label: string
+  secret?: boolean
+  optional?: boolean
+  placeholder?: string
+  hint?: string
+}
+
+interface BrokerDef {
+  key: string
+  name: string
+  tagline: string
+  /** Linking works end to end today; others are the shape of what is coming. */
+  available: boolean
+  fields: BrokerField[]
+  setup: string
+}
+
+/**
+ * Every broker a trader might bring. Each has its own credentials and its own
+ * sign-in dance, so each gets its own form. Only FYERS is wired to the server
+ * today; the rest are the exact fields their APIs need, shown so the page is
+ * honest about what linking will ask for — nothing typed into them is stored.
+ */
+const BROKERS: BrokerDef[] = [
+  {
+    key: 'fyers',
+    name: 'FYERS',
+    tagline: 'API v3 · daily sign-in',
+    available: true,
+    setup: 'Create an app at myapi.fyers.in and give it this redirect URL, exactly:',
+    fields: [
+      { key: 'clientId', label: 'App ID', placeholder: 'XXXXXXXXXX-100' },
+      { key: 'secretKey', label: 'Secret key', secret: true },
+      { key: 'tradingPin', label: 'Trading PIN', secret: true, optional: true, hint: 'only if you want the token renewed without you' },
+    ],
+  },
+  {
+    key: 'angelone',
+    name: 'Angel One',
+    tagline: 'SmartAPI · TOTP sign-in',
+    available: false,
+    setup: 'Create an app at smartapi.angelbroking.com; sign-in uses your client code, MPIN and a TOTP.',
+    fields: [
+      { key: 'apiKey', label: 'API key' },
+      { key: 'clientCode', label: 'Client code' },
+      { key: 'mpin', label: 'MPIN', secret: true },
+      { key: 'totpSecret', label: 'TOTP secret', secret: true, hint: 'from the SmartAPI TOTP setup page' },
+    ],
+  },
+  {
+    key: 'zerodha',
+    name: 'Zerodha',
+    tagline: 'Kite Connect · daily sign-in',
+    available: false,
+    setup: 'Create a Kite Connect app at developers.kite.trade with this redirect URL:',
+    fields: [
+      { key: 'apiKey', label: 'API key' },
+      { key: 'apiSecret', label: 'API secret', secret: true },
+    ],
+  },
+  {
+    key: 'upstox',
+    name: 'Upstox',
+    tagline: 'Upstox API v2 · daily sign-in',
+    available: false,
+    setup: 'Create an app at account.upstox.com/developer with this redirect URL:',
+    fields: [
+      { key: 'apiKey', label: 'API key' },
+      { key: 'apiSecret', label: 'API secret', secret: true },
+    ],
+  },
+  {
+    key: 'dhan',
+    name: 'Dhan',
+    tagline: 'DhanHQ · long-lived token',
+    available: false,
+    setup: 'Generate an access token at web.dhan.co → My profile → Access DhanHQ APIs.',
+    fields: [
+      { key: 'clientId', label: 'Client ID' },
+      { key: 'accessToken', label: 'Access token', secret: true },
+    ],
+  },
+  { key: '5paisa', name: '5paisa', tagline: 'OpenAPI · TOTP sign-in', available: false, setup: 'Create an app at 5paisa.com/developerapi.', fields: [{ key: 'appKey', label: 'App key' }, { key: 'clientCode', label: 'Client code' }, { key: 'pin', label: 'PIN', secret: true }, { key: 'totpSecret', label: 'TOTP secret', secret: true }] },
+  { key: 'icici', name: 'ICICI Direct', tagline: 'Breeze API · daily sign-in', available: false, setup: 'Register an app at api.icicidirect.com with this redirect URL:', fields: [{ key: 'apiKey', label: 'API key' }, { key: 'apiSecret', label: 'API secret', secret: true }] },
+  { key: 'kotak', name: 'Kotak Neo', tagline: 'Neo API · TOTP sign-in', available: false, setup: 'Create an app at napi.kotaksecurities.com.', fields: [{ key: 'consumerKey', label: 'Consumer key' }, { key: 'consumerSecret', label: 'Consumer secret', secret: true }, { key: 'mobile', label: 'Mobile number' }, { key: 'mpin', label: 'MPIN', secret: true }] },
+  { key: 'hdfc', name: 'HDFC Securities', tagline: 'InvestRight API · daily sign-in', available: false, setup: 'Create an app on the HDFC Securities developer portal with this redirect URL:', fields: [{ key: 'apiKey', label: 'API key' }, { key: 'apiSecret', label: 'API secret', secret: true }] },
+  { key: 'groww', name: 'Groww', tagline: 'Groww API · long-lived token', available: false, setup: 'Generate an API token from the Groww trade API settings.', fields: [{ key: 'accessToken', label: 'Access token', secret: true }] },
+  { key: 'paytm', name: 'Paytm Money', tagline: 'Paytm Money API · daily sign-in', available: false, setup: 'Create an app on the Paytm Money developer portal with this redirect URL:', fields: [{ key: 'apiKey', label: 'API key' }, { key: 'apiSecret', label: 'API secret', secret: true }] },
+  { key: 'aliceblue', name: 'Alice Blue', tagline: 'ANT API · daily sign-in', available: false, setup: 'Create an app at a3.aliceblueonline.com with this redirect URL:', fields: [{ key: 'appCode', label: 'App code' }, { key: 'apiSecret', label: 'API secret', secret: true }, { key: 'userId', label: 'User ID' }] },
+  { key: 'shoonya', name: 'Shoonya (Finvasia)', tagline: 'NorenAPI · TOTP sign-in', available: false, setup: 'Enable API access at shoonya.com; sign-in uses your user id, password and a TOTP.', fields: [{ key: 'userId', label: 'User ID' }, { key: 'password', label: 'Password', secret: true }, { key: 'vendorCode', label: 'Vendor code' }, { key: 'apiKey', label: 'API key', secret: true }, { key: 'totpSecret', label: 'TOTP secret', secret: true }] },
+  { key: 'flattrade', name: 'Flattrade', tagline: 'Pi API · daily sign-in', available: false, setup: 'Create an app at wall.flattrade.in with this redirect URL:', fields: [{ key: 'apiKey', label: 'API key' }, { key: 'apiSecret', label: 'API secret', secret: true }] },
+  { key: 'iifl', name: 'IIFL Securities', tagline: 'IIFL API · daily sign-in', available: false, setup: 'Register on the IIFL developer portal with this redirect URL:', fields: [{ key: 'apiKey', label: 'API key' }, { key: 'apiSecret', label: 'API secret', secret: true }, { key: 'clientId', label: 'Client ID' }] },
+  { key: 'motilal', name: 'Motilal Oswal', tagline: 'MOFSL API · daily sign-in', available: false, setup: 'Register on the Motilal Oswal developer portal.', fields: [{ key: 'apiKey', label: 'API key' }, { key: 'clientCode', label: 'Client code' }, { key: 'password', label: 'Password', secret: true }] },
+  { key: 'nuvama', name: 'Nuvama', tagline: 'Nuvama API · daily sign-in', available: false, setup: 'Register on the Nuvama developer portal with this redirect URL:', fields: [{ key: 'apiKey', label: 'API key' }, { key: 'apiSecret', label: 'API secret', secret: true }] },
+  { key: 'sharekhan', name: 'Sharekhan', tagline: 'Sharekhan API · daily sign-in', available: false, setup: 'Register on the Sharekhan developer portal with this redirect URL:', fields: [{ key: 'apiKey', label: 'API key' }, { key: 'apiSecret', label: 'API secret', secret: true }, { key: 'customerId', label: 'Customer ID' }] },
+]
+
+/** Two letters and a steady colour per broker, in place of logos we do not ship. */
+function monogram(name: string): { text: string; hue: number } {
+  const words = name.replace(/\(.*?\)/g, '').trim().split(/\s+/)
+  const text = (words.length > 1 ? words[0][0] + words[1][0] : name.slice(0, 2)).toUpperCase()
+  let h = 0
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) % 360
+  return { text, hue: h }
+}
+
+function Monogram({ name, size = 28 }: { name: string; size?: number }) {
+  const m = monogram(name)
+  return (
+    <span
+      className="acct__mono"
+      style={{ width: size, height: size, fontSize: size * 0.4, background: `hsl(${m.hue} 45% 22%)`, color: `hsl(${m.hue} 70% 78%)` }}
+      aria-hidden="true"
+    >
+      {m.text}
+    </span>
+  )
+}
+
+/**
+ * A searchable broker select. A grid of cards was fine for five brokers and
+ * a wall for thirty-five; a list with a search box is the same size for any
+ * number. Wired brokers first, the rest under "Coming soon".
+ */
+function BrokerSelect({ value, onChange }: { value: string; onChange: (key: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const [q, setQ] = useState('')
+  const boxRef = useRef<HTMLDivElement>(null)
+  const chosen = BROKERS.find((b) => b.key === value) ?? BROKERS[0]
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const needle = q.trim().toLowerCase()
+  const matches = BROKERS.filter((b) => !needle || b.name.toLowerCase().includes(needle) || b.tagline.toLowerCase().includes(needle))
+  const groups: [string, BrokerDef[]][] = [
+    ['Available now', matches.filter((b) => b.available)],
+    ['Coming soon', matches.filter((b) => !b.available)],
+  ]
+
+  return (
+    <div className="acct__select" ref={boxRef}>
+      <button
+        type="button"
+        className="acct__select-btn"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <Monogram name={chosen.name} />
+        <span className="acct__select-text">
+          <span className="acct__select-name">{chosen.name}</span>
+          <span className="acct__select-tag">{chosen.tagline}</span>
+        </span>
+        {!chosen.available && <span className="acct__soon">coming soon</span>}
+        <span className="acct__select-caret" aria-hidden="true">
+          ▾
+        </span>
+      </button>
+      {open && (
+        <div className="acct__menu" role="listbox" aria-label="Broker">
+          <input
+            className="field__input acct__menu-search"
+            placeholder={`Search ${BROKERS.length} brokers…`}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            autoFocus
+          />
+          <div className="acct__menu-list">
+            {groups.map(([title, items]) =>
+              items.length === 0 ? null : (
+                <div key={title}>
+                  <div className="acct__menu-group">{title}</div>
+                  {items.map((b) => (
+                    <button
+                      key={b.key}
+                      type="button"
+                      role="option"
+                      aria-selected={b.key === value}
+                      className={`acct__menu-item${b.key === value ? ' is-selected' : ''}`}
+                      onClick={() => {
+                        onChange(b.key)
+                        setOpen(false)
+                        setQ('')
+                      }}
+                    >
+                      <Monogram name={b.name} size={24} />
+                      <span className="acct__select-text">
+                        <span className="acct__select-name">{b.name}</span>
+                        <span className="acct__select-tag">{b.tagline}</span>
+                      </span>
+                      {b.available ? <span className="acct__ok">available</span> : <span className="acct__soon">soon</span>}
+                    </button>
+                  ))}
+                </div>
+              ),
+            )}
+            {matches.length === 0 && <div className="acct__menu-empty">No broker matches “{q}”. Ask us to add it.</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** The fields a broker that is not wired yet will ask for. Nothing here is sent anywhere. */
+function BrokerPreviewForm({ broker, callbackUrl }: { broker: BrokerDef; callbackUrl: string }) {
+  const [values, setValues] = useState<Record<string, string>>({})
+  return (
+    <form className="acct__form" onSubmit={(e) => e.preventDefault()}>
+      <p className="muted">{broker.setup}</p>
+      {broker.setup.endsWith(':') && <CallbackUrl url={callbackUrl} />}
+      <div className="acct__fields">
+      {broker.fields.map((f) => (
+        <label className="field" key={f.key}>
+          <span className="field__label">
+            {f.label}
+            {f.optional ? ' (optional)' : ''}
+          </span>
+          <input
+            className="field__input mono"
+            type={f.secret ? 'password' : 'text'}
+            value={values[f.key] ?? ''}
+            onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
+            placeholder={f.placeholder ?? f.hint ?? ''}
+            autoComplete="off"
+          />
+        </label>
+      ))}
+      </div>
+      <div className="alert alert--warn">
+        Linking {broker.name} is not switched on yet. These are the details it will ask for; nothing you type here
+        is stored.
+      </div>
+      <div className="toolbar">
+        <button type="submit" className="btn btn--primary" disabled title={`${broker.name} linking arrives later`}>
+          Save
+        </button>
+      </div>
+    </form>
+  )
+}
+
+/** The redirect URL to paste into the broker's app, with a copy button. */
+function CallbackUrl({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <div className="acct__callback">
+      <code>{url}</code>
+      <button
+        type="button"
+        className="btn btn--sm"
+        onClick={() => {
+          navigator.clipboard?.writeText(url).then(() => {
+            setCopied(true)
+            setTimeout(() => setCopied(false), 1500)
+          })
+        }}
+      >
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+    </div>
+  )
+}
+
 /* ------------------------------------------------------------- the page */
 
 export function AccountPage() {
@@ -76,6 +358,22 @@ export function AccountPage() {
     void broker.refetch()
   }, [search, setSearch, broker])
 
+  const [brokerKey, setBrokerKey] = useState<string>(() => {
+    try {
+      return localStorage.getItem('openfno.trader.broker') || 'fyers'
+    } catch {
+      return 'fyers'
+    }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('openfno.trader.broker', brokerKey)
+    } catch {
+      /* a remembered choice only */
+    }
+  }, [brokerKey])
+  const chosenBroker = BROKERS.find((b) => b.key === brokerKey) ?? BROKERS[0]
+
   const [editing, setEditing] = useState(false)
   const [clientId, setClientId] = useState('')
   const [secretKey, setSecretKey] = useState('')
@@ -83,7 +381,9 @@ export function AccountPage() {
   const [signingIn, setSigningIn] = useState<string | null>(null)
 
   const status = broker.data
-  const state: LinkState = status ? linkState(status) : 'none'
+  // The light reports the broker that is actually wired; a broker that is not
+  // switched on yet is "not linked" whatever was typed into its form.
+  const state: LinkState = status && chosenBroker.available ? linkState(status) : 'none'
   const showForm = status ? editing || state === 'none' : false
 
   function submit(e: FormEvent) {
@@ -148,6 +448,7 @@ export function AccountPage() {
           title="My broker"
           actions={status ? <BrokerLight state={state} expiresAtUtc={status.expiresAtUtc} /> : undefined}
         >
+          <BrokerSelect value={brokerKey} onChange={setBrokerKey} />
           {broker.isError && <InlineError error={broker.error} />}
           {save.isError && <InlineError error={save.error} />}
           {signOut.isError && <InlineError error={signOut.error} />}
@@ -161,12 +462,15 @@ export function AccountPage() {
 
           {!status ? (
             <Loading label="Loading…" />
+          ) : !chosenBroker.available ? (
+            <BrokerPreviewForm broker={chosenBroker} callbackUrl={status.callbackUrl} />
           ) : showForm ? (
             <form className="acct__form" onSubmit={submit}>
               <p className="muted">
                 Create an app at <b>myapi.fyers.in</b> and give it this redirect URL, exactly:
               </p>
-              <code className="acct__callback">{status.callbackUrl}</code>
+              <CallbackUrl url={status.callbackUrl} />
+              <div className="acct__fields">
               <label className="field">
                 <span className="field__label">App ID</span>
                 <input
@@ -201,6 +505,7 @@ export function AccountPage() {
                   placeholder="only if you want the token renewed without you"
                 />
               </label>
+              </div>
               <p className="muted small-note">
                 The secret and PIN are encrypted before they are stored and are never shown again.
               </p>
@@ -264,7 +569,7 @@ export function AccountPage() {
         </Panel>
       </div>
 
-      {status && state === 'linked' && <BrokerBooks />}
+      {status && chosenBroker.available && state === 'linked' && <BrokerBooks />}
     </div>
   )
 }
