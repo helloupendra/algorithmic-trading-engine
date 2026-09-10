@@ -1481,3 +1481,32 @@ export interface PruneWatchlistResponse {
   removed: StaleWatchlistItem[]
   message: string
 }
+
+/* --- market pulse ------------------------------------------------------- */
+export interface MarketPulseItem {
+  symbol: string
+  name: string
+  /** For a future, the contract month shown ("Sep 2026"). */
+  contract: string | null
+  lastTradedPrice: number | null
+  previousClose: number | null
+  open: number | null
+  high: number | null
+  low: number | null
+  volume: number | null
+  change: number | null
+  changePercent: number | null
+  updatedUtc: string | null
+  isSubscribed: boolean
+}
+
+export interface MarketPulseGroup {
+  key: 'index' | 'equity' | 'commodity' | string
+  title: string
+  items: MarketPulseItem[]
+}
+
+export interface MarketPulseResponse {
+  groups: MarketPulseGroup[]
+  latestQuoteUtc: string | null
+}

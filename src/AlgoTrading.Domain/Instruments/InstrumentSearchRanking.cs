@@ -46,6 +46,17 @@ public static class InstrumentSearchRanking
     /// search can ever reach it. Passing the resolved spot symbol in means the
     /// thing being asked for comes first instead of never.
     /// </remarks>
+    /// <summary>
+    /// The words of a query, upper-cased, in order. "nifty 23500 pe" is three
+    /// tokens; every one of them has to appear in a row for it to match, which
+    /// is how a strike typed the way people say it reaches
+    /// NSE:NIFTY2691523500PE. A one-word query is a single token.
+    /// </summary>
+    public static string[] Tokens(string? query)
+        => (query ?? string.Empty)
+            .ToUpperInvariant()
+            .Split(new[] { ' ', '\t', ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
     public static Expression<Func<Instrument, int>> RankBy(string query, string? aliasSymbol = null)
     {
         string q = (query ?? string.Empty).Trim().ToUpperInvariant();

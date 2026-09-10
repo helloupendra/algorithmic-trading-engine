@@ -1609,6 +1609,15 @@ export function useRevokeUserSessions() {
 
 // ---------- The signed-in trader's own watchlist ----------
 
+/** The market at a glance — indices, large caps, commodities — the same for everyone. */
+export function useMarketPulse() {
+  return useQuery({
+    queryKey: ['market', 'pulse'],
+    queryFn: () => api.get<import('./types').MarketPulseResponse>('/api/MarketPulse'),
+    refetchInterval: POLL_FAST,
+  })
+}
+
 export function useMyWatchlist() {
   return useQuery({
     queryKey: ['watchlist', 'me'],

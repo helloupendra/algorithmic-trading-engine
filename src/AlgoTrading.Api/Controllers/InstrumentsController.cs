@@ -1,3 +1,4 @@
+using System.Linq;
 ﻿using AlgoTrading.Domain.Constants;
 using AlgoTrading.Api.Security;
 using AlgoTrading.Api.Services;
@@ -78,12 +79,29 @@ public class InstrumentsController : ControllerBase
         // as NSE:NIFTYBANK-INDEX, which no substring of the query can reach.
         string? alias = UnderlyingCatalog.IsIndex(q) ? UnderlyingCatalog.SpotSymbolFor(q) : null;
 
-        var dbQuery = _dbContext.Instruments
-            .AsNoTracking()
-            .Where(x =>
+        // A query is words, and every word must be in the row: "nifty 23500 pe"
+        // used to be one string that no symbol contains and returned nothing;
+        // as three tokens it lands on NSE:NIFTY2691523500PE. The whole query
+        // is still tried as-is so a name typed with a space ("HDFC BANK") also
+        // matches a description word for word.
+        var tokens = InstrumentSearchRanking.Tokens(q);
+        IQueryable<AlgoTrading.Domain.Entities.Instrument> dbQuery = _dbContext.Instruments.AsNoTracking();
+        if (tokens.Length <= 1)
+        {
+            dbQuery = dbQuery.Where(x =>
                 x.Symbol.ToUpper().Contains(q) ||
                 x.Description.ToUpper().Contains(q) ||
                 (alias != null && x.Symbol == alias));
+        }
+        else
+        {
+            foreach (var token in tokens)
+            {
+                var t = token;
+                dbQuery = dbQuery.Where(x => x.Symbol.ToUpper().Contains(t) || x.Description.ToUpper().Contains(t));
+            }
+        }
+        string rankQuery = tokens.Length <= 1 ? q : tokens[0];
 
         // Expired contracts stay in the master - a backfill still needs them -
         // but they must not be offered to anything trading TODAY. The manual
@@ -111,7 +129,7 @@ public class InstrumentsController : ControllerBase
         // fifty. Cutting first — which is what alphabetical order amounted to —
         // dropped NSE:TCS-EQ off the end of a page of bonds.
         var rows = await dbQuery
-            .OrderBy(InstrumentSearchRanking.RankBy(q, alias))
+            .OrderBy(InstrumentSearchRanking.RankBy(rankQuery, alias))
             .ThenBy(InstrumentSearchRanking.KindRank())
             // Nearest expiry first among a name's contracts: "crudeoil" used to
             // list DEC, NOV, OCT and only then the SEP future that trades today.

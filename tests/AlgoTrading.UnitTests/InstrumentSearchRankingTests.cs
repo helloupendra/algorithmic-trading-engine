@@ -145,3 +145,26 @@ public class InstrumentSearchRankingTests
         Assert.Equal(expected, kind(Row("X:Y", "d", type)));
     }
 }
+
+public class InstrumentSearchTokensTests
+{
+    [Fact]
+    public void A_strike_typed_the_way_people_say_it_is_three_tokens()
+    {
+        Assert.Equal(new[] { "NIFTY", "23500", "PE" }, AlgoTrading.Domain.Instruments.InstrumentSearchRanking.Tokens("nifty 23500 pe"));
+    }
+
+    [Fact]
+    public void One_word_is_one_token_and_blanks_are_none()
+    {
+        Assert.Equal(new[] { "HDFCBANK" }, AlgoTrading.Domain.Instruments.InstrumentSearchRanking.Tokens("  hdfcbank "));
+        Assert.Empty(AlgoTrading.Domain.Instruments.InstrumentSearchRanking.Tokens("   "));
+        Assert.Empty(AlgoTrading.Domain.Instruments.InstrumentSearchRanking.Tokens(null));
+    }
+
+    [Fact]
+    public void Commas_separate_too()
+    {
+        Assert.Equal(new[] { "BANKNIFTY", "56500", "PE" }, AlgoTrading.Domain.Instruments.InstrumentSearchRanking.Tokens("BANKNIFTY,56500 PE"));
+    }
+}
