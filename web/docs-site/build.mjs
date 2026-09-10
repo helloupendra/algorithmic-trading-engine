@@ -240,8 +240,11 @@ function jsonLd(obj) {
   return `<script type="application/ld+json">${JSON.stringify(obj).replace(/</g, '\\u003c')}</script>`
 }
 
+/** The navigation actually built: sections whose source files exist here. */
+let nav = NAV
+
 function navHtml(current) {
-  return NAV.map(
+  return nav.map(
     (g) => `<div class="nav__group"><div class="nav__label">${esc(g.section)}</div>${g.items
       .map((it) => `<a class="nav__item${it.slug === current ? ' is-active' : ''}" href="${urlFor(it.slug)}"${it.slug === current ? ' aria-current="page"' : ''}>${esc(it.title)}</a>`)
       .join('')}</div>`,
@@ -345,7 +348,7 @@ ${page.hasMermaid ? '<script src="/docs/assets/mermaid.min.js" defer></script>' 
 }
 
 function indexBody() {
-  const cards = NAV.flatMap((g) => g.items.filter((it) => !it.index).map((it) => ({ ...it, section: g.section })))
+  const cards = nav.flatMap((g) => g.items.filter((it) => !it.index).map((it) => ({ ...it, section: g.section })))
   const featured = [
     ['architecture', 'How the pieces fit: a .NET control plane, a Python engine, TimescaleDB, Redis, a React console.'],
     ['modules/strategies', 'The live runner: lots × lot size, three levels of risk rules, one stop pipeline.'],
@@ -369,6 +372,7 @@ function indexBody() {
   ${featured
     .map(([slug, blurb]) => {
       const it = cards.find((c) => c.slug === slug)
+      if (!it) return ''
       return `<a class="card" href="${urlFor(slug)}"><span class="card__section">${esc(it.section)}</span><span class="card__title">${esc(it.title)}</span><span class="card__blurb">${esc(blurb)}</span></a>`
     })
     .join('')}
@@ -384,7 +388,7 @@ function indexBody() {
 
 <section class="all" aria-label="All pages">
   <h2 id="all-pages">All pages</h2>
-  ${NAV.map((g) => `<h3>${esc(g.section)}</h3><ul>${g.items.filter((it) => !it.index).map((it) => `<li><a href="${urlFor(it.slug)}">${esc(it.title)}</a></li>`).join('')}</ul>`).join('')}
+  ${nav.map((g) => `<h3>${esc(g.section)}</h3><ul>${g.items.filter((it) => !it.index).map((it) => `<li><a href="${urlFor(it.slug)}">${esc(it.title)}</a></li>`).join('')}</ul>`).join('')}
 </section>
 `
 }
@@ -396,7 +400,20 @@ export async function buildDocs({ outDir }) {
   await fs.rm(docsOut, { recursive: true, force: true })
   await fs.mkdir(path.join(docsOut, 'assets'), { recursive: true })
 
-  const flat = NAV.flatMap((g) => g.items)
+  // Some sources are private to the working copy (docs/roadmap is
+  // gitignored — planning notes, not documentation). A deployment without
+  // them builds the pages it has instead of failing the whole console build.
+  const exists = async (rel) => fs.access(path.join(repo, rel)).then(() => true, () => false)
+  nav = []
+  for (const g of NAV) {
+    const items = []
+    for (const it of g.items) {
+      if (it.index || (await exists(it.src))) items.push(it)
+      else console.warn(`docs-site: skipping ${it.slug} — ${it.src} is not in this checkout`)
+    }
+    if (items.length) nav.push({ ...g, items })
+  }
+  const flat = nav.flatMap((g) => g.items)
   const slugToUrl = new Map(flat.filter((it) => it.src).map((it) => [it.src.replace(/\\/g, '/'), urlFor(it.slug)]))
   // The repo README is linked from a few docs; it has no page here.
   slugToUrl.set('README.md', `${SITE.github}#readme`)
