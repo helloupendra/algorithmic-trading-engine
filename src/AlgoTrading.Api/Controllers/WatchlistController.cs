@@ -31,16 +31,12 @@ namespace AlgoTrading.Api.Controllers;
 public class WatchlistController : ControllerBase
 {
     /// <summary>
-    /// What a new trader starts with. Three index symbols, so the page is useful
-    /// on first sight instead of being an empty box; everything after that is
-    /// their own choice.
+    /// What a new trader starts with: nothing. The three indices used to be
+    /// seeded here so the page was not an empty box, but the market pulse
+    /// on the overview now shows them to everyone; the list is purely the
+    /// trader's own picks, so a symbol on it is one they put there.
     /// </summary>
-    private static readonly string[] DefaultSymbols =
-    {
-        "NSE:NIFTYBANK-INDEX",
-        "NSE:NIFTY50-INDEX",
-        "BSE:SENSEX-INDEX",
-    };
+    private static readonly string[] DefaultSymbols = System.Array.Empty<string>();
 
     private readonly TradingDbContext _dbContext;
     private readonly ILiveDataService _liveData;
@@ -187,7 +183,7 @@ public class WatchlistController : ControllerBase
 
         await LoadOrSeedAsync(userId, cancellationToken);
 
-        return Ok(new { message = "Watchlist reset to the default indices." });
+        return Ok(new { message = "Watchlist cleared." });
     }
 
     /// <summary>
@@ -204,7 +200,7 @@ public class WatchlistController : ControllerBase
             .ThenBy(x => x.Symbol)
             .ToListAsync(cancellationToken);
 
-        if (items.Count > 0) return items;
+        if (items.Count > 0 || DefaultSymbols.Length == 0) return items;
 
         var now = DateTime.UtcNow;
         int order = 0;

@@ -36,7 +36,7 @@ export function SymbolCombobox({
   const boxRef = useRef<HTMLDivElement>(null)
 
   const search = useInstrumentSearch(value, undefined, includeExpired)
-  const results = (search.data ?? []).slice(0, 8)
+  const results = (search.data ?? []).slice(0, 12)
 
   // A click anywhere else is a dismissal; without this the list stays open
   // over whatever the page shows next.

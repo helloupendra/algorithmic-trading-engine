@@ -16,6 +16,7 @@ import {
 import type { MyWatchlistItem } from '../../lib/types'
 import { formatAge, formatPrice, pnlClass } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Panel, QueryBoundary } from '../../components/ui'
+import { SymbolCombobox } from '../../components/SymbolCombobox'
 
 function change(item: MyWatchlistItem): { text: string; cls: string } {
   if (item.lastTradedPrice == null || item.close == null || item.close === 0) {
@@ -43,8 +44,9 @@ export function WatchlistPage() {
       <header className="page__header">
         <h1 className="page__title">Watchlist</h1>
         <p className="page__subtitle">
-          Your own list of symbols, with the last saved quote for each. It starts with the three
-          indices and is yours to change.
+          Your own list of symbols, with the last saved quote for each. It is stored against your
+          account, so it is the same on every device. The indices, large caps and commodities are
+          always on the overview; this list is for what you want on top of them.
         </p>
       </header>
 
@@ -66,13 +68,11 @@ export function WatchlistPage() {
               add.mutate(symbol.trim(), { onSuccess: () => setSymbol('') })
             }}
           >
-            <input
-              className="field__input mono"
-              placeholder="NSE:SBIN-EQ"
-              value={symbol}
-              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-              aria-label="Symbol to add"
-            />
+            {/* A search, not a blank for the exact symbol: type "hdfc",
+                "crude", "nifty 23500 pe" and pick from the master. */}
+            <div className="wl__search">
+              <SymbolCombobox id="wl-symbol" value={symbol} onChange={setSymbol} disabled={add.isPending} />
+            </div>
             <button className="btn btn--primary btn--sm" disabled={add.isPending || !symbol.trim()}>
               {add.isPending ? 'Adding…' : 'Add'}
             </button>
@@ -80,10 +80,12 @@ export function WatchlistPage() {
               type="button"
               className="btn btn--ghost btn--sm"
               disabled={reset.isPending}
-              onClick={() => reset.mutate()}
-              title="Put the three default indices back"
+              onClick={() => {
+                if (window.confirm('Remove every symbol from your watchlist?')) reset.mutate()
+              }}
+              title="Remove every symbol from your list"
             >
-              Reset
+              Clear
             </button>
           </form>
         }
@@ -91,9 +93,9 @@ export function WatchlistPage() {
         <QueryBoundary query={watchlist}>
           {(list) =>
             list.length === 0 ? (
-              <EmptyState>Your watchlist is empty. Add a symbol, or reset to the defaults.</EmptyState>
+              <EmptyState>Your watchlist is empty. Add a symbol above and it stays here.</EmptyState>
             ) : (
-              <div className="tablewrap">
+              <div className={`tablewrap${list.length > 8 ? ' tablewrap--rows8' : ''}`}>
                 <table className="table">
                   <thead>
                     <tr>

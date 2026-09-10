@@ -846,6 +846,18 @@ select.field__input { appearance: auto; }
   overflow-y: auto;
 }
 
+/* A personal list can grow without limit; past eight rows it scrolls in place. */
+.tablewrap--rows8 {
+  max-height: calc(33px + 8 * 44px + 14px);
+  overflow-y: auto;
+}
+.tablewrap--rows8 thead th { position: sticky; top: 0; z-index: 1; background: var(--surface); }
+
+/* The watchlist's search box: wide enough for a full option symbol. */
+.wl__search { min-width: 300px; }
+.wl__search .combo { width: 100%; }
+@media (max-width: 640px) { .wl__search { min-width: 0; flex: 1 1 100%; } }
+
 .table {
   width: 100%;
   border-collapse: collapse;

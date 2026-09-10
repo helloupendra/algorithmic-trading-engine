@@ -1,0 +1,205 @@
+/* Market pulse — the first thing a trader sees. Two rows: the six big tiles
+   (indices left, commodities right), then the large-cap grid. Colour is used
+   for one thing only: up is green, down is red. */
+
+.pulse { display: flex; flex-direction: column; gap: 14px; }
+.pulse--loading { opacity: 0.6; }
+
+.pulse__row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.pulse__group { min-width: 0; }
+
+.pulse__title {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.pulse__hint {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  color: var(--text-3);
+  opacity: 0.8;
+}
+
+.pulse__big {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+/* --- big tile ---------------------------------------------------------- */
+.pulse-tile {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px 14px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  cursor: pointer;
+  position: relative;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.pulse-tile:hover { border-color: var(--brand-line); transform: translateY(-1px); }
+.pulse-tile:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+/* A thin band of the day's colour along the top edge. */
+.pulse-tile::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: var(--line-strong);
+  opacity: 0.7;
+}
+.pulse-tile--pos::before { background: var(--pos); }
+.pulse-tile--neg::before { background: var(--neg); }
+
+.pulse-tile__head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.pulse-tile__name {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pulse-tile__contract { font-size: 11px; color: var(--text-3); white-space: nowrap; }
+
+.pulse-tile__price {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+  color: var(--text);
+}
+
+.pulse-tile__change {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+.pulse-tile__change--pos { color: var(--pos); }
+.pulse-tile__change--neg { color: var(--neg); }
+.pulse__arrow { flex: none; }
+
+/* Day range: low ——●—— high */
+.pulse-range {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 10.5px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.pulse-range--empty { display: block; }
+.pulse-range__bar {
+  position: relative;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line-strong);
+}
+.pulse-range__dot {
+  position: absolute;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--text-2);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.pulse-range__dot--pos { background: var(--pos); }
+.pulse-range__dot--neg { background: var(--neg); }
+
+.pulse-tile__age {
+  font-size: 10.5px;
+  color: var(--text-3);
+  min-height: 13px;
+}
+
+/* --- large-cap grid ---------------------------------------------------- */
+.pulse__grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.pulse-chip {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 9px 11px;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+.pulse-chip:hover { border-color: var(--brand-line); }
+.pulse-chip:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.pulse-chip__name {
+  font-size: 11.5px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pulse-chip__price {
+  font-size: 15px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+.pulse-chip__pct {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+.pulse-chip__pct--pos { color: var(--pos); }
+.pulse-chip__pct--neg { color: var(--neg); }
+
+/* A quote older than five minutes is shown, but not as if it were live. */
+.pulse-tile.is-stale .pulse-tile__price,
+.pulse-chip.is-stale .pulse-chip__price { color: var(--text-2); }
+.pulse-tile.is-stale .pulse-tile__age { color: var(--warn); }
+
+@media (max-width: 1100px) {
+  .pulse__grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 860px) {
+  .pulse__row { grid-template-columns: 1fr; }
+  .pulse__grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 520px) {
+  .pulse__big { grid-template-columns: 1fr; }
+  .pulse__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

@@ -8,39 +8,28 @@
  * next to the data.
  */
 
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../../lib/auth'
 import {
   useKillSwitch,
-  useLatestQuotes,
+  useMarketPulse,
   useMarketSession,
   useSimulationRuns,
   useStrategies,
 } from '../../lib/queries'
-import {
-  formatAge,
-  formatDateTime,
-  formatInrWhole,
-  formatPrice,
-  pnlClass,
-  quoteChange,
-  shortSymbol,
-} from '../../lib/format'
+import { formatAge, formatDateTime, formatInrWhole, shortSymbol } from '../../lib/format'
 import { Badge, Panel, QueryBoundary, StatTile } from '../../components/ui'
+import { MarketPulse } from '../../components/MarketPulse'
 
 export function OverviewPage() {
-  const navigate = useNavigate()
   const { user } = useAuth()
   const session = useMarketSession()
   const killSwitch = useKillSwitch()
-  const quotes = useLatestQuotes()
+  const pulse = useMarketPulse()
   const runs = useSimulationRuns()
   const strategies = useStrategies()
 
-  const lastQuoteUtc = quotes.data?.reduce<string | null>(
-    (max, q) => (max == null || q.updatedUtc > max ? q.updatedUtc : max),
-    null,
-  )
+  const lastQuoteUtc = pulse.data?.latestQuoteUtc ?? null
 
   // "Can I trust these prices?" is the only feed question a trader needs, and it
   // is answered by the age of the data itself rather than by a process's health.
@@ -107,53 +96,9 @@ export function OverviewPage() {
         />
       </div>
 
-      <Panel
-        title="Last saved quotes"
-        actions={<Link to="/trader/watchlist">Watchlist →</Link>}
-      >
-        <QueryBoundary query={quotes} empty="No quotes stored yet — start the ingestor during market hours.">
-          {(data) => (
-            <div className="tablewrap">
-              <table className="table table--hover">
-                <thead>
-                  <tr>
-                    <th>Symbol</th>
-                    <th className="r">LTP</th>
-                    <th className="r">Change</th>
-                    <th className="r">Open</th>
-                    <th className="r">High</th>
-                    <th className="r">Low</th>
-                    <th className="r">Volume</th>
-                    <th className="r">As of</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.map((q) => {
-                    const chg = quoteChange(q.lastTradedPrice, q.close)
-                    return (
-                      <tr
-                        key={q.symbol}
-                        onClick={() => navigate(`/trader/charts?symbol=${encodeURIComponent(q.symbol)}`)}
-                      >
-                        <td className="mono">{shortSymbol(q.symbol)}</td>
-                        <td className="r mono">{formatPrice(q.lastTradedPrice)}</td>
-                        <td className={`r mono ${pnlClass(chg?.abs)}`}>
-                          {chg ? `${chg.abs >= 0 ? '+' : ''}${chg.abs.toFixed(2)} (${chg.pct.toFixed(2)}%)` : '—'}
-                        </td>
-                        <td className="r mono">{formatPrice(q.open)}</td>
-                        <td className="r mono">{formatPrice(q.high)}</td>
-                        <td className="r mono">{formatPrice(q.low)}</td>
-                        <td className="r mono">{q.volume?.toLocaleString('en-IN') ?? '—'}</td>
-                        <td className="r muted">{formatAge(q.updatedUtc)}</td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </QueryBoundary>
-      </Panel>
+      {/* The market first: the same six numbers and twelve names for everyone,
+          always on the feed. The trader's own list has its own page. */}
+      <MarketPulse />
 
       <Panel title="Recent runs" actions={<Link to="/trader/strategies">All strategies →</Link>}>
         <QueryBoundary query={runs} empty="No simulation runs yet.">

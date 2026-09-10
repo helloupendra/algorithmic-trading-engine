@@ -50,6 +50,20 @@ Because the Ingestor is a standalone Python process, its health must be tracked 
 
 ---
 
+### 5a. The Market Pulse (the trader's first screen)
+
+A trader's overview opens on the market, not on the platform's whole watchlist: three index
+levels (NIFTY 50, BANK NIFTY, SENSEX), twelve large caps by index weight, and three commodities
+(crude oil, gold, silver as the nearest unexpired MCX future). `MarketPulseService` owns that
+universe, keeps every symbol on the live feed (`MarketPulseSubscriptionService`, on boot and
+hourly), resolves each commodity from the instrument master and rolls it when the contract
+expires — retiring the old contract from the feed unless a trader has it on their own list.
+`GET /api/MarketPulse` returns the groups with the last saved quote, change and day range per row.
+
+The per-user watchlist (`/api/Watchlist/me`, stored against the user id) is separate and starts
+empty; it is for whatever a trader wants on top of the pulse, and it scrolls in place past eight
+rows.
+
 ### 6. What Is Kept, and For How Long
 
 Everything the platform sees during a session is written down; the only thing with a shelf life is the raw tick table.
