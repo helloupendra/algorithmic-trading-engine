@@ -171,6 +171,7 @@ export function LandingPage() {
             <a href="#backtest">Backtesting</a>
             <a href="#how">How it works</a>
             <a href="#principles">Principles</a>
+            <a href="/docs/">Docs</a>
             <a className="nav__icon" href={GITHUB_URL} target="_blank" rel="noopener noreferrer" aria-label="Source on GitHub" title="Source on GitHub">
               <GitHubMark />
             </a>
@@ -441,8 +442,8 @@ export function LandingPage() {
             <p>Sign in, start the live feed, and run your first strategy on paper today. Backtest it over stored history tonight.</p>
             <div className="cta" style={{ justifyContent: 'center' }}>
               <Link className="btn btn--primary" to={consoleHref}>{consoleLabel}</Link>
-              <a className="btn" href={GITHUB_URL} target="_blank" rel="noopener noreferrer"><GitHubMark /> Read the source</a>
-              <a className="btn btn--ghost" href="#modules">See the modules</a>
+              <a className="btn" href="/docs/">Read the docs</a>
+              <a className="btn btn--ghost" href={GITHUB_URL} target="_blank" rel="noopener noreferrer"><GitHubMark /> Source</a>
             </div>
           </div>
         </section>
@@ -455,6 +456,7 @@ export function LandingPage() {
             Built by {AUTHOR}
             <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" aria-label="GitHub"><GitHubMark /> GitHub</a>
             <a href={LINKEDIN_URL} target="_blank" rel="noopener noreferrer" aria-label="LinkedIn"><LinkedInMark /> LinkedIn</a>
+            <a href="/docs/">Docs</a>
             <a href="#top">Back to top ↑</a>
           </span>
         </div>
