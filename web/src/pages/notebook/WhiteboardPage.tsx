@@ -495,6 +495,8 @@ function InsertToolbar({ onInsert, disabled }: { onInsert: (card: CardSpec) => v
 
 function BoardEditor({ board, onReload }: { board: WhiteboardDetail; onReload: () => Promise<void> }) {
   const navigate = useNavigate()
+  // Folded by default only where the screen is short.
+  const [cardsOpen, setCardsOpen] = useState<boolean>(() => !window.matchMedia('(max-width: 760px)').matches)
   const rename = useRenameWhiteboard()
   const handleRef = useRef<BoardHandle | null>(null)
   const [ready, setReady] = useState(false)
@@ -540,7 +542,7 @@ function BoardEditor({ board, onReload }: { board: WhiteboardDetail; onReload: (
   const draft = autosave.draft
 
   return (
-    <div className="wb">
+    <div className="wb wb--window">
       <header className="wb__head">
         <Link
           className="wb__back"
@@ -610,7 +612,20 @@ function BoardEditor({ board, onReload }: { board: WhiteboardDetail; onReload: (
         </div>
       )}
 
-      <InsertToolbar disabled={!ready} onInsert={(card) => handleRef.current?.insertCard(card)} />
+      {/* On a phone the card toolbar is taller than the drawing it leaves
+          room for, so there it folds away behind one button and the canvas
+          gets the screen. Desktop keeps it open. */}
+      <button
+        type="button"
+        className="btn btn--ghost btn--sm wb__cards-toggle"
+        aria-expanded={cardsOpen}
+        onClick={() => setCardsOpen((v) => !v)}
+      >
+        <IconPlus /> {cardsOpen ? 'Hide cards' : 'Add a card'}
+      </button>
+      <div className={`wb__tools-wrap${cardsOpen ? '' : ' wb__tools-wrap--folded'}`}>
+        <InsertToolbar disabled={!ready} onInsert={(card) => handleRef.current?.insertCard(card)} />
+      </div>
 
       <ChunkErrorBoundary what="the canvas">
         <Suspense fallback={<div className="wb-canvas wb-canvas__loading">Loading the canvas…</div>}>
@@ -622,8 +637,12 @@ function BoardEditor({ board, onReload }: { board: WhiteboardDetail; onReload: (
               setReady(true)
             }}
             onChange={autosave.markDirty}
+            // The board lives in its own tab now; a card's console page opens
+            // in a separate tab so the drawing is never navigated away from
+            // — and a sketch in progress is never put behind a leave prompt.
             onOpenLink={(path) => {
-              if (autosave.confirmLeave()) navigate(path)
+              const tab = window.open(`${window.location.origin}${path}`, '_blank', 'noopener')
+              if (!tab && autosave.confirmLeave()) navigate(path)
             }}
           />
         </Suspense>
@@ -649,7 +668,7 @@ export function WhiteboardPage() {
 
   if (!validId) {
     return (
-      <div className="page">
+      <div className="page wb-window">
         {backLink}
         <InlineError error={new Error('That is not a board address.')} />
       </div>
@@ -662,19 +681,19 @@ export function WhiteboardPage() {
   if (board.data === undefined) {
     if (board.isError) {
       return (
-        <div className="page">
+        <div className="page wb-window">
           {backLink}
           <InlineError error={board.error} />
         </div>
       )
     }
-    return <Loading label="Opening board…" />
+    return <div className="wb-window"><Loading label="Opening board…" /></div>
   }
   // The scene is handed to the canvas exactly once, so a board that was in
   // the cache from an earlier visit is re-read first: opening it as it was
   // ten minutes ago would only end in a conflict on the first stroke.
   if (!board.isFetchedAfterMount) {
-    return <Loading label="Opening board…" />
+    return <div className="wb-window"><Loading label="Opening board…" /></div>
   }
 
   return (

@@ -92,6 +92,13 @@ export default function App() {
             </Route>
 
             <Route element={<RequireAuth />}>
+              {/* Full-window pages: no sidebar, no top bar. A whiteboard inside
+                  the console shell was a canvas the size of a postcard; it
+                  opens in its own tab and takes the whole viewport. */}
+              <Route element={<RequireRole role="Admin" />}>
+                <Route path="/admin/notebook/:id" element={<WhiteboardPage />} />
+              </Route>
+
               <Route element={<AppLayout />}>
                 {/* Trader area — any signed-in user. v1 pages, rebuild queued. */}
                 <Route path="/trader" element={<OverviewPage />} />
@@ -152,9 +159,9 @@ export default function App() {
                   <Route path="/admin/backtesting/runs" element={<BacktestRunsPage />} />
                   <Route path="/admin/backtesting/runs/:id" element={<BacktestRunPage />} />
 
-                  {/* Notebook module: whiteboards. The canvas itself is a lazy chunk. */}
+                  {/* Notebook module: the board list. The boards themselves are
+                      full-window routes above; the canvas is a lazy chunk. */}
                   <Route path="/admin/notebook" element={<NotebookPage />} />
-                  <Route path="/admin/notebook/:id" element={<WhiteboardPage />} />
 
                   <Route path="/admin/system/alerts" element={<LiveAlertsV2Page />} />
                   <Route path="/admin/system/logs" element={<ActivityLogPage />} />
