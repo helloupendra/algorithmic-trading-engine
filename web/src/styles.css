@@ -853,10 +853,18 @@ select.field__input { appearance: auto; }
 }
 .tablewrap--rows8 thead th { position: sticky; top: 0; z-index: 1; background: var(--surface); }
 
-/* The watchlist's search box: wide enough for a full option symbol. */
-.wl__search { min-width: 300px; }
+/* The watchlist's search box: the size of the small buttons beside it, wide
+   enough for an option symbol, and the input fills it — a default-width
+   input inside a wider box left a gap. */
+.wl__search { width: 220px; max-width: 100%; }
 .wl__search .combo { width: 100%; }
-@media (max-width: 640px) { .wl__search { min-width: 0; flex: 1 1 100%; } }
+.wl__search .combo .field__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 9px;
+  font-size: 12.5px;
+}
+@media (max-width: 640px) { .wl__search { width: 100%; flex: 1 1 100%; } }
 
 .table {
   width: 100%;

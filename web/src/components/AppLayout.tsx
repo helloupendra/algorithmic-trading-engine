@@ -97,8 +97,12 @@ function TopbarStatus() {
   const backend = useBackendStatus()
   const ingestors = useIngestorStatuses()
 
-  const market = session.data
-  const mcx = mcxSession.data
+  // With the API down, a session or broker chip would only be repeating the
+  // last answer it got — "MCX open" from ten minutes ago, presented as now.
+  // Nothing about the market is known while the backend is unreachable, so
+  // nothing about it is shown; the red "Backend down" chip is the whole story.
+  const market = backend.isDown ? undefined : session.data
+  const mcx = backend.isDown ? undefined : mcxSession.data
   const feeds = ingestors.data ?? []
   const healthyFeeds = feeds.filter((f) => f.isHealthy).length
 
@@ -156,14 +160,14 @@ function TopbarStatus() {
           }
         />
       )}
-      {showOperatorPills && broker.data && (
+      {showOperatorPills && !backend.isDown && broker.data && (
         <StatusPill
           tone={broker.data.isAuthenticated ? 'pos' : 'neg'}
           label={brokerPillLabel(broker.data)}
           title={brokerPillTitle(broker.data)}
         />
       )}
-      {showOperatorPills && feeds.length > 0 && (
+      {showOperatorPills && !backend.isDown && feeds.length > 0 && (
         <StatusPill
           tone={healthyFeeds === feeds.length ? 'live' : 'warn'}
           label={
