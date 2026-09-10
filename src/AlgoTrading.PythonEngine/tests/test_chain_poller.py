@@ -67,6 +67,49 @@ class NormalisationTests(unittest.TestCase):
         # available on the very first round.
         self.assertEqual(out["priceChange"], 10.2)
 
+    def test_a_live_contract_is_priced_and_the_greeks_ride_on_the_snapshot(self):
+        # Priced as of a moment well before expiry so the test does not age.
+        from datetime import date, datetime, timezone
+        as_of = datetime(2026, 9, 10, 5, 0, tzinfo=timezone.utc)
+        out = poller.price_greeks(spot=23400.0, strike=23400.0, kind="CE",
+                                  expiry=date(2026, 9, 29), last_price=180.0, now=as_of)
+
+        self.assertIsNotNone(out["impliedVolatility"])
+        self.assertGreater(out["impliedVolatility"], 0.0)
+        # An at-the-money call: delta near a half, positive vega, negative theta.
+        self.assertTrue(0.4 < out["delta"] < 0.65, out)
+        self.assertGreater(out["vega"], 0.0)
+        self.assertLess(out["theta"], 0.0)
+        self.assertGreater(out["gamma"], 0.0)
+
+    def test_greeks_land_on_the_normalised_row(self):
+        row = {"symbol": "NSE:NIFTY25SEP23400CE", "ltp": 180.0, "bid": 179.5, "ask": 180.5}
+        with mock.patch.object(poller, "price_greeks", return_value={
+            "impliedVolatility": 0.12, "delta": 0.5, "gamma": 0.001, "theta": -8.0, "vega": 12.0,
+        }) as priced:
+            out = poller.normalise_chain_row(row, spot=23400.0)
+        priced.assert_called_once()
+        self.assertEqual(out["delta"], 0.5)
+        self.assertEqual(out["impliedVolatility"], 0.12)
+
+    def test_an_untraded_or_expired_contract_gets_no_greeks_rather_than_wrong_ones(self):
+        from datetime import date, datetime, timezone
+        none = {"impliedVolatility": None, "delta": None, "gamma": None, "theta": None, "vega": None}
+        # No last price: nothing to imply a volatility from.
+        self.assertEqual(none, poller.price_greeks(23400.0, 23400.0, "CE", date(2026, 9, 25), None))
+        self.assertEqual(none, poller.price_greeks(23400.0, 23400.0, "CE", date(2026, 9, 25), 0.0))
+        # No spot.
+        self.assertEqual(none, poller.price_greeks(0.0, 23400.0, "CE", date(2026, 9, 25), 180.0))
+        # After the closing bell on expiry day.
+        after = datetime(2026, 9, 26, 12, 0, tzinfo=timezone.utc)
+        self.assertEqual(none, poller.price_greeks(23400.0, 23400.0, "CE", date(2026, 9, 25), 180.0, now=after))
+
+    def test_a_pricing_failure_never_costs_the_row(self):
+        from datetime import date
+        with mock.patch("core.greeks_calculator.calculate_greeks", side_effect=RuntimeError("boom")):
+            out = poller.price_greeks(23400.0, 23400.0, "CE", date(2099, 1, 1), 180.0)
+        self.assertIsNone(out["delta"])
+
     def test_the_underlying_row_is_not_mistaken_for_a_strike(self):
         # The response mixes the index itself in with the option rows.
         self.assertIsNone(poller.normalise_chain_row({"symbol": "NSE:NIFTYBANK-INDEX", "ltp": 57369.65}, 57369.65))

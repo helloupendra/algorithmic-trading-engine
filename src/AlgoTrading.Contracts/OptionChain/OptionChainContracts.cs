@@ -36,6 +36,23 @@ public class OptionChainSnapshotRow
     /// </remarks>
     public decimal? PriceChange { get; set; }
 
+    /// <summary>
+    /// Black-Scholes implied volatility and greeks, computed by the poller from
+    /// the spot, strike, time to expiry and last traded price on this row.
+    /// </summary>
+    /// <remarks>
+    /// The broker's chain carries none of these. Until 2026-09-10 they were
+    /// computed only for the live-quote table, which is overwritten on every
+    /// tick — so "what was the delta at 10:30" had no answer anywhere. Stored
+    /// with every snapshot they become a history. Null when the contract
+    /// could not be priced (no trade, after the bell, IV did not converge).
+    /// </remarks>
+    public decimal? ImpliedVolatility { get; set; }
+    public decimal? Delta { get; set; }
+    public decimal? Gamma { get; set; }
+    public decimal? Theta { get; set; }
+    public decimal? Vega { get; set; }
+
     public string? SourceKey { get; set; }
 }
 
@@ -62,6 +79,9 @@ public class OptionChainLegResponse
 
     public decimal? ImpliedVolatility { get; set; }
     public decimal? Delta { get; set; }
+    public decimal? Gamma { get; set; }
+    public decimal? Theta { get; set; }
+    public decimal? Vega { get; set; }
 
     /// <summary>"LongBuildUp", "ShortCovering", … or "Neutral".</summary>
     public string BuildUp { get; set; } = "Neutral";

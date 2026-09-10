@@ -50,6 +50,24 @@ Because the Ingestor is a standalone Python process, its health must be tracked 
 
 ---
 
+### 6. What Is Kept, and For How Long
+
+Everything the platform sees during a session is written down; the only thing with a shelf life is the raw tick table.
+
+| Data | Where | Retention |
+| :--- | :--- | :--- |
+| Every tick (price, bid/ask, sizes, OHLC, volume, raw payload) | `live_ticks` hypertable | 90 days, compressed after 2 (`LiveTicksRetention90Days` migration) |
+| 1-minute bars folded from ticks | `live_bars` | Permanent |
+| 1/5/15-minute candles | `candles` | Permanent. Broker backfills carry source `fyers`; the nightly archive writes source `live` and never overwrites a broker row |
+| Option chain every ~5 s: price, bid/ask, volume, OI, previous-day OI, IV, delta/gamma/theta/vega | `option_chain_snapshots` | Permanent |
+| Latest quote per symbol with IV and greeks | `live_quotes_latest` | Overwritten on every tick (the history is in the chain snapshots) |
+
+**The nightly candle archive** (`NightlyArchiveService`, 23:50 IST, configurable as `Archive:RunAtIst`) turns the day's live 1-minute bars into 1, 5 and 15-minute candles for every symbol that ticked, and asks the broker for its own candles of the index symbols (`Archive:BrokerSymbols`, default NIFTY 50, BANKNIFTY, SENSEX, FINNIFTY). The last archived day is kept in `system_settings` (`archive.candles.lastDay`), so a night the API was down is caught up on its next tick, up to seven days back. Options are the reason this matters: the broker serves no history for an expired contract, so the bars captured live are the only record of what a strike did.
+
+Run it by hand for any day with `POST /api/Backfill/archive?day=YYYY-MM-DD` (admin; add `&broker=false` to skip the broker calls). The response lists what was inserted, updated, or left to the broker.
+
+**Not kept yet:** a live run's equity curve (the `equity-snapshots` endpoint is backtest-only; live P&L is reconstructed from positions and ticks), and OI for underlyings the chain poller is not configured for (FINNIFTY, MCX).
+
 ## Module Components
 
 ### Python Scripts
