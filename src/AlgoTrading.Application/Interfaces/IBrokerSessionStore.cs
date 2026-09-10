@@ -20,6 +20,16 @@ public interface IBrokerSessionStore
     Task<BrokerSession?> GetCurrentAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// The active session of one trader's own broker account, or null. Never
+    /// returned by <see cref="GetCurrentAsync"/> or the provider lookup: a
+    /// trader's token must never become the platform's feed token.
+    /// </summary>
+    Task<BrokerSession?> GetForAccountAsync(long brokerAccountId, CancellationToken cancellationToken = default);
+
+    /// <summary>Signs one trader's broker account out; the platform session is untouched.</summary>
+    Task ClearAccountAsync(long brokerAccountId, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// The active session for one connector, or null when it is not connected.
     /// </summary>
     Task<BrokerSession?> GetForProviderAsync(

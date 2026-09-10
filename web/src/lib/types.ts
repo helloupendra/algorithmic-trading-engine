@@ -1510,3 +1510,25 @@ export interface MarketPulseResponse {
   groups: MarketPulseGroup[]
   latestQuoteUtc: string | null
 }
+
+/* --- trader's own broker --------------------------------------------- */
+export interface TraderBrokerStatus {
+  providerKey: string
+  providerName: string
+  configured: boolean
+  clientId: string | null
+  redirectUri: string | null
+  hasTradingPin: boolean
+  isAuthenticated: boolean
+  signedInUtc: string | null
+  expiresAtUtc: string | null
+  /** The redirect URL to register in the FYERS app — this server's callback. */
+  callbackUrl: string
+}
+
+export interface SaveTraderBrokerInput {
+  clientId: string
+  secretKey: string
+  redirectUri?: string
+  tradingPin?: string
+}

@@ -38,9 +38,9 @@ public class FyersBrokerProvider : IBrokerProvider
     /// user's own browser to this URL; FYERS then redirects to our configured
     /// callback with an auth_code.
     /// </remarks>
-    public async Task<string> GetAuthUrlAsync(string? state = null, CancellationToken cancellationToken = default)
+    public async Task<string> GetAuthUrlAsync(string? state = null, long? brokerAccountId = null, CancellationToken cancellationToken = default)
     {
-        var creds = await _credentials.GetAsync(FyersProvider.Key, cancellationToken: cancellationToken);
+        var creds = await _credentials.GetAsync(FyersProvider.Key, brokerAccountId, cancellationToken);
         if (creds.Source == "none")
         {
             throw new InvalidOperationException(
@@ -56,11 +56,12 @@ public class FyersBrokerProvider : IBrokerProvider
 
     public async Task<BrokerTokenResult> ExchangeAuthCodeAsync(
         string authCode,
+        long? brokerAccountId = null,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var creds = await _credentials.GetAsync(FyersProvider.Key, cancellationToken: cancellationToken);
+        var creds = await _credentials.GetAsync(FyersProvider.Key, brokerAccountId, cancellationToken);
 
         FyersClass fyers = FyersClass.Instance;
 

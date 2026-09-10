@@ -186,7 +186,7 @@ public class ProvidersController : ControllerBase
         try
         {
             var broker = _registry.GetBrokerProvider(descriptor.Key);
-            return Ok(new { authUrl = await broker.GetAuthUrlAsync("webui", cancellationToken) });
+            return Ok(new { authUrl = await broker.GetAuthUrlAsync("webui", cancellationToken: cancellationToken) });
         }
         catch (InvalidOperationException ex)
         {

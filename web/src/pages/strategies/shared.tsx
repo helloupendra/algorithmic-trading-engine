@@ -13,6 +13,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import { useAuth } from '../../lib/auth'
 import {
   useBrokerSession,
   useFnoUnderlyings,
@@ -847,6 +848,7 @@ export function LaunchDialog({
   const underlyings = useFnoUnderlyings()
   const start = useStartStrategy()
   const readiness = useReadiness()
+  const { isAdmin } = useAuth()
   const cardRef = useDialogChrome(onClose)
 
   const supported = useMemo(
@@ -877,7 +879,16 @@ export function LaunchDialog({
   )
   const [validation, setValidation] = useState<string | null>(null)
 
-  const list = underlyings.data ?? []
+  // The ones this strategy can trade come first: a commodity strategy used to
+  // open on a screen of "not supported" index rows with CRUDEOIL below the fold.
+  const list = useMemo(() => {
+    const all = underlyings.data ?? []
+    return [...all].sort((a, b) => {
+      const sa = supported.has(a.underlying.toUpperCase()) ? 0 : 1
+      const sb = supported.has(b.underlying.toUpperCase()) ? 0 : 1
+      return sa - sb
+    })
+  }, [underlyings.data, supported])
   const firstSupported = list.find((u) => supported.has(u.underlying.toUpperCase())) ?? null
   const firstStartable =
     list.find((u) => {
@@ -954,16 +965,19 @@ export function LaunchDialog({
     )
   }
 
+  // The broker link and the feed are the operator's to fix; a trader can do
+  // nothing about either, so only the operator is told. The market being
+  // closed is everyone's business — the run waits for the open.
   const notes: ReactNode[] = []
   if (readiness.marketOpen === false)
     notes.push(<span key="market">Market is closed: the runner will start and wait for ticks.</span>)
-  if (readiness.feed && readiness.feed !== 'live')
+  if (isAdmin && readiness.feed && readiness.feed !== 'live')
     notes.push(
       <span key="feed">
         Live feed is not running — start it on <Link to="/admin/data/live">Data › Live feeds</Link>.
       </span>,
     )
-  if (readiness.brokerLinked === false)
+  if (isAdmin && readiness.brokerLinked === false)
     notes.push(
       <span key="broker">
         FYERS is not linked — no ticks will arrive until the <Link to="/admin/broker">broker session</Link>{' '}

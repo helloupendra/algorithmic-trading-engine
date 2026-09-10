@@ -1,0 +1,73 @@
+/* Account page: profile and the trader's own broker. */
+
+.acct__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 900px) { .acct__grid { grid-template-columns: 1fr; } }
+
+.acct__sheet { margin: 0; display: grid; gap: 0; }
+.acct__row {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line-soft);
+  align-items: baseline;
+}
+.acct__row:last-child { border-bottom: 0; }
+.acct__row dt {
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.acct__row dd { margin: 0; font-size: 13.5px; min-width: 0; }
+.acct__wrap { word-break: break-all; }
+
+/* The one thing a trader looks for: is my broker linked? A light, not a word. */
+.acct-light {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.acct-light__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-3);
+  flex: none;
+}
+.acct-light--saved { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+.acct-light--saved .acct-light__dot { background: var(--warn); }
+.acct-light--linked { color: var(--pos); border-color: color-mix(in srgb, var(--pos) 40%, transparent); }
+.acct-light--linked .acct-light__dot {
+  background: var(--pos);
+  box-shadow: 0 0 0 0 rgba(49, 196, 141, 0.55);
+  animation: pill-pulse 2.4s infinite;
+}
+
+.acct__form { display: flex; flex-direction: column; gap: 12px; max-width: 520px; }
+.acct__form .field { display: flex; flex-direction: column; gap: 5px; }
+.acct__form .field__input { width: 100%; box-sizing: border-box; }
+.acct__callback {
+  display: block;
+  padding: 8px 10px;
+  background: var(--bg1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  word-break: break-all;
+  user-select: all;
+}
+.acct__broker { display: flex; flex-direction: column; gap: 14px; }

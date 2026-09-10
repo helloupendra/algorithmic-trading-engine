@@ -37,10 +37,15 @@ public interface IBrokerProvider
     /// redirects back to our callback with an auth code.
     /// </summary>
     /// <exception cref="InvalidOperationException">Credentials for this provider are not configured.</exception>
-    Task<string> GetAuthUrlAsync(string? state = null, CancellationToken cancellationToken = default);
+    /// <param name="brokerAccountId">
+    /// Whose app the sign-in is for: null is the shared platform account; a
+    /// trader linking their own broker passes their account, and the URL is
+    /// built from that account's client id and redirect.
+    /// </param>
+    Task<string> GetAuthUrlAsync(string? state = null, long? brokerAccountId = null, CancellationToken cancellationToken = default);
 
     /// <summary>Exchanges the callback's auth code for a usable session.</summary>
-    Task<BrokerTokenResult> ExchangeAuthCodeAsync(string authCode, CancellationToken cancellationToken = default);
+    Task<BrokerTokenResult> ExchangeAuthCodeAsync(string authCode, long? brokerAccountId = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Renews an expired access token from the refresh token issued with it.

@@ -33,7 +33,7 @@ public class DatabaseBrokerSessionStore : IBrokerSessionStore
     {
         var session = await _dbContext.BrokerSessions
             .AsNoTracking()
-            .Where(x => x.IsActive)
+            .Where(x => x.IsActive && x.BrokerAccountId == null)
             .OrderByDescending(x => x.UpdatedUtc)
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -46,7 +46,7 @@ public class DatabaseBrokerSessionStore : IBrokerSessionStore
     {
         var session = await _dbContext.BrokerSessions
             .AsNoTracking()
-            .Where(x => x.IsActive && x.ProviderKey == providerKey)
+            .Where(x => x.IsActive && x.ProviderKey == providerKey && x.BrokerAccountId == null)
             .OrderByDescending(x => x.UpdatedUtc)
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -73,9 +73,13 @@ public class DatabaseBrokerSessionStore : IBrokerSessionStore
             ? session.RefreshToken
             : Protect(session.RefreshToken);
 
+        // One row per provider AND account: a trader signing in to their own
+        // FYERS app must land on their row, never over the platform's.
         var existing = await _dbContext.BrokerSessions
             .OrderByDescending(x => x.UpdatedUtc)
-            .FirstOrDefaultAsync(x => x.ProviderKey == session.ProviderKey, cancellationToken);
+            .FirstOrDefaultAsync(
+                x => x.ProviderKey == session.ProviderKey && x.BrokerAccountId == session.BrokerAccountId,
+                cancellationToken);
 
         if (existing is null)
         {
@@ -98,10 +102,36 @@ public class DatabaseBrokerSessionStore : IBrokerSessionStore
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task<BrokerSession?> GetForAccountAsync(long brokerAccountId, CancellationToken cancellationToken = default)
+    {
+        var session = await _dbContext.BrokerSessions
+            .AsNoTracking()
+            .Where(x => x.IsActive && x.BrokerAccountId == brokerAccountId)
+            .OrderByDescending(x => x.UpdatedUtc)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (session is null) return null;
+        session.AccessToken = Unprotect(session.AccessToken);
+        session.RefreshToken = Unprotect(session.RefreshToken);
+        return session;
+    }
+
+    public async Task ClearAccountAsync(long brokerAccountId, CancellationToken cancellationToken = default)
+    {
+        var rows = await _dbContext.BrokerSessions
+            .Where(x => x.IsActive && x.BrokerAccountId == brokerAccountId)
+            .ToListAsync(cancellationToken);
+        foreach (var row in rows)
+        {
+            row.IsActive = false;
+            row.UpdatedUtc = DateTime.UtcNow;
+        }
+        if (rows.Count > 0) await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task ClearAsync(string? providerKey = null, CancellationToken cancellationToken = default)
     {
         var activeSessions = await _dbContext.BrokerSessions
-            .Where(x => x.IsActive && (providerKey == null || x.ProviderKey == providerKey))
+            .Where(x => x.IsActive && x.BrokerAccountId == null && (providerKey == null || x.ProviderKey == providerKey))
             .ToListAsync(cancellationToken);
 
         foreach (var session in activeSessions)
