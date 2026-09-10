@@ -8,7 +8,7 @@
 
 cd "$(dirname "$0")/.."
 API="${API_BASE_URL:-http://localhost:5025}"
-PUBLIC="${PUBLIC_URL:-https://console.snehatra.com}"
+PUBLIC="${PUBLIC_URL:-https://openfno.com}"
 if [ "$(uname -s)" = "Darwin" ]; then PIDFILE="$HOME/Library/Application Support/algotrading/desk.pid"; else PIDFILE="${XDG_STATE_HOME:-$HOME/.local/state}/algotrading/desk.pid"; fi
 G='\033[32m'; R='\033[31m'; Y='\033[33m'; D='\033[2m'; N='\033[0m'
 ok()   { printf "  ${G}●${N} %-28s %s\n" "$1" "$2"; }

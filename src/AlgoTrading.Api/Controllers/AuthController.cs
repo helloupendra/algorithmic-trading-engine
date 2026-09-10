@@ -160,11 +160,9 @@ namespace AlgoTrading.Api.Controllers;
         [FromServices] IBrokerCredentialsProvider credentialsProvider,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(request.ClientId) ||
-            string.IsNullOrWhiteSpace(request.SecretKey) ||
-            string.IsNullOrWhiteSpace(request.RedirectUri))
+        if (string.IsNullOrWhiteSpace(request.ClientId) || string.IsNullOrWhiteSpace(request.RedirectUri))
         {
-            return BadRequest(new { message = "clientId, secretKey and redirectUri are all required." });
+            return BadRequest(new { message = "clientId and redirectUri are required." });
         }
 
         if (!Uri.TryCreate(request.RedirectUri, UriKind.Absolute, out _))
@@ -174,13 +172,32 @@ namespace AlgoTrading.Api.Controllers;
 
         var broker = await _providerRouter.ResolveBrokerAsync(cancellationToken: cancellationToken);
 
+        // A blank secret keeps the one on file: moving the console to a new
+        // domain changes only the redirect, and retyping the app secret for
+        // that is a chance to mistype it. The same for the trading PIN.
+        var secret = request.SecretKey?.Trim() ?? string.Empty;
+        var pin = request.TradingPin;
+        if (secret.Length == 0 || string.IsNullOrWhiteSpace(pin))
+        {
+            var existing = await credentialsProvider.GetAsync(broker.Descriptor.Key, cancellationToken: cancellationToken);
+            if (existing.Source == "database" && string.Equals(existing.ClientId, request.ClientId.Trim(), StringComparison.Ordinal))
+            {
+                if (secret.Length == 0) secret = existing.SecretKey;
+                if (string.IsNullOrWhiteSpace(pin)) pin = existing.TradingPin;
+            }
+        }
+        if (secret.Length == 0)
+        {
+            return BadRequest(new { message = "secretKey is required the first time an app is saved, or when the app id changes." });
+        }
+
         await credentialsProvider.SaveAsync(
             broker.Descriptor.Key,
-            request.ClientId,
-            request.SecretKey,
-            request.RedirectUri,
+            request.ClientId.Trim(),
+            secret,
+            request.RedirectUri.Trim(),
             User.Identity?.Name ?? "admin",
-            request.TradingPin,
+            pin,
             cancellationToken: cancellationToken);
 
         return Ok(new { message = $"{broker.Descriptor.DisplayName} app credentials saved. You can connect now." });

@@ -172,6 +172,22 @@ builder.Services
         // someone's hands would keep working for up to its full hour.
         options.Events = new JwtBearerEvents
         {
+            // A browser cannot put a header on a WebSocket or EventSource, so
+            // SignalR sends the bearer token as ?access_token= on the hub
+            // path. Without this the upgrade answered 401, every client fell
+            // back to long polling, and the live feed was "fast" on paper only.
+            // Limited to the hub path: a token in a query string is never
+            // accepted for an ordinary API call.
+            OnMessageReceived = context =>
+            {
+                var accessToken = context.Request.Query["access_token"];
+                var path = context.HttpContext.Request.Path;
+                if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+                {
+                    context.Token = accessToken;
+                }
+                return Task.CompletedTask;
+            },
             OnTokenValidated = async context =>
             {
                 var principal = context.Principal;
@@ -311,13 +327,58 @@ if (app.Environment.IsDevelopment())
 
 // Serves the built web client from wwwroot so the API and frontend share one
 // origin (and one tunnel URL). Populated by `npm run build` — see scripts/go-live.sh.
+// Forwarded headers come first so the HTTPS check below sees the scheme the
+// tunnel forwarded, not the plain HTTP hop between cloudflared and Kestrel.
+app.UseForwardedHeaders();
+
+// Security headers on every response — the console and the API share one
+// origin, so one policy covers both. The content-security policy is built
+// for what the SPA actually loads: its own bundles, fonts and images, inline
+// styles (React and Excalidraw set style attributes), blob workers
+// (Excalidraw), same-origin fetch and websockets (SignalR). Nothing is
+// loaded from a third party, so nothing else is allowed — a script injected
+// through any future XSS cannot run, and no other site may frame the console.
+app.Use(async (context, next) =>
+{
+    var h = context.Response.Headers;
+    h["X-Content-Type-Options"] = "nosniff";
+    h["X-Frame-Options"] = "DENY";
+    h["Referrer-Policy"] = "strict-origin-when-cross-origin";
+    h["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=(), usb=()";
+    h["Cross-Origin-Opener-Policy"] = "same-origin";
+    h["Content-Security-Policy"] =
+        "default-src 'self'; " +
+        "script-src 'self'; " +
+        "style-src 'self' 'unsafe-inline'; " +
+        "img-src 'self' data: blob:; " +
+        // Excalidraw registers a CDN (esm.sh) fallback for every font family
+        // it knows; the families the board uses ship in wwwroot/excalidraw,
+        // so the fallback is refused here on purpose — the whiteboard's
+        // console shows the refusals, and the 12 MB Chinese handwriting
+        // family it would otherwise fetch never leaves the CDN.
+        "font-src 'self' data:; " +
+        "connect-src 'self' ws: wss:; " +
+        "worker-src 'self' blob:; " +
+        "manifest-src 'self'; " +
+        "object-src 'none'; " +
+        "base-uri 'self'; " +
+        "form-action 'self'; " +
+        "frame-ancestors 'none'";
+    if (context.Request.IsHttps)
+    {
+        // A year, subdomains included: the console is only ever served over
+        // Cloudflare's TLS, so a browser may refuse plain HTTP outright.
+        h["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
+    }
+    await next();
+});
+
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
 app.UseRouting();
 app.UseHttpMetrics();
 
-app.UseForwardedHeaders();
 app.UseCors(CorsPolicies.WebClient);
 
 app.UseRateLimiter();

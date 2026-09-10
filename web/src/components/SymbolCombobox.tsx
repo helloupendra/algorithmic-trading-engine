@@ -22,6 +22,7 @@ export function SymbolCombobox({
   placeholder = 'NSE:SBIN-EQ',
   disabled = false,
   includeExpired = false,
+  onSelect,
 }: {
   value: string
   onChange: (symbol: string) => void
@@ -30,6 +31,8 @@ export function SymbolCombobox({
   disabled?: boolean
   /** Offer contracts whose expiry has passed. Only historical work wants them. */
   includeExpired?: boolean
+  /** Fired only when a suggestion is picked (click or Enter) — not on every keystroke. */
+  onSelect?: (symbol: string) => void
 }) {
   const [open, setOpen] = useState(false)
   const [highlight, setHighlight] = useState(0)
@@ -53,6 +56,7 @@ export function SymbolCombobox({
 
   function choose(symbol: string) {
     onChange(symbol)
+    onSelect?.(symbol)
     setOpen(false)
   }
 
