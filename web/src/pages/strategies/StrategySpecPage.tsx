@@ -31,7 +31,7 @@ function paramRows(json: string): { key: string; value: string }[] {
  * This is what the Library's reference table used to spread over eight
  * columns; here it reads top to bottom, for every strategy, spec or not.
  */
-function DetailsSheet({ s }: { s: StrategyListItem }) {
+function DetailsSheet({ s, runHref }: { s: StrategyListItem; runHref: (runId: number) => string }) {
   const contracts = contractRequirementsOf(s.contractRequirements)
   const params = paramRows(s.defaultParametersJson)
   return (
@@ -122,7 +122,7 @@ function DetailsSheet({ s }: { s: StrategyListItem }) {
             {s.runId != null && (
               <>
                 {' · '}
-                <Link to={`/admin/strategies/runs/${s.runId}`}>run #{s.runId}</Link>
+                <Link to={runHref(s.runId)}>run #{s.runId}</Link>
               </>
             )}
           </>
@@ -138,9 +138,16 @@ function DetailsSheet({ s }: { s: StrategyListItem }) {
  * One strategy, read top to bottom: what the catalog knows (the sheet), then
  * how it works (the specification, with a table of contents beside it).
  */
-export function StrategySpecPage() {
+export function StrategySpecPage({ mode = 'admin' }: { mode?: 'admin' | 'trader' }) {
   const { id } = useParams()
   const navigate = useNavigate()
+  // The same document for both areas; only where the buttons lead differs.
+  // A trader deploys through the wizard (with this strategy pre-selected)
+  // and has no backtesting module or admin runner to be sent to.
+  const trader = mode === 'trader'
+  const backHref = trader ? '/trader/deploy' : '/admin/strategies/library'
+  const backLabel = trader ? '← Deploy' : '← Strategy library'
+  const runHref = (runId: number) => (trader ? `/trader/strategies/runs/${runId}` : `/admin/strategies/runs/${runId}`)
   const strategyId = Number(id)
   const strategies = useStrategies()
   const spec = useStrategySpec(Number.isInteger(strategyId) && strategyId > 0 ? strategyId : null)
@@ -159,8 +166,8 @@ export function StrategySpecPage() {
     <div className="page spec-page">
       <header className="page__header">
         <div>
-          <Link to="/admin/strategies/library" className="spec-page__back">
-            ← Strategy library
+          <Link to={backHref} className="spec-page__back">
+            {backLabel}
           </Link>
           <h1 className="page__title spec-page__title">
             {strategy?.name ?? spec.data?.name ?? `Strategy ${id}`}
@@ -170,12 +177,24 @@ export function StrategySpecPage() {
         </div>
         {strategy && (
           <div className="toolbar">
-            <button type="button" className="btn btn--primary" onClick={() => setLaunching(true)}>
-              <IconPlay style={{ width: 13, height: 13 }} /> Start…
-            </button>
-            <Link className="btn" to="/admin/backtesting/new">
-              Backtest… <IconArrowRight style={{ width: 12, height: 12 }} />
-            </Link>
+            {trader ? (
+              <button
+                type="button"
+                className="btn btn--primary"
+                onClick={() => navigate(`/trader/deploy?strategy=${strategy.id}`)}
+              >
+                <IconPlay style={{ width: 13, height: 13 }} /> Deploy this strategy…
+              </button>
+            ) : (
+              <>
+                <button type="button" className="btn btn--primary" onClick={() => setLaunching(true)}>
+                  <IconPlay style={{ width: 13, height: 13 }} /> Start…
+                </button>
+                <Link className="btn" to="/admin/backtesting/new">
+                  Backtest… <IconArrowRight style={{ width: 12, height: 12 }} />
+                </Link>
+              </>
+            )}
           </div>
         )}
       </header>
@@ -184,13 +203,13 @@ export function StrategySpecPage() {
         {() =>
           !strategy ? (
             <p className="empty">
-              No strategy with id {id} in the catalog. <Link to="/admin/strategies/library">Back to the library</Link>.
+              No strategy with id {id} in the catalog. <Link to={backHref}>Go back</Link>.
             </p>
           ) : (
             <>
               <section className="spec-page__section">
                 <h2 className="section-title">At a glance</h2>
-                <DetailsSheet s={strategy} />
+                <DetailsSheet s={strategy} runHref={runHref} />
               </section>
 
               <section className="spec-page__section">

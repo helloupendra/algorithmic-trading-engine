@@ -14,7 +14,6 @@ import { ChartsPage } from './pages/trader/ChartsPage'
 import { OptionChainPage } from './pages/trader/OptionChainPage'
 import { PositionsPage } from './pages/trader/PositionsPage'
 import { OrdersPage } from './pages/trader/OrdersPage'
-import { StrategiesPage } from './pages/trader/StrategiesPage'
 import { MarketNewsPage } from './pages/trader/MarketNewsPage'
 import { TopMoversPage } from './pages/trader/TopMoversPage'
 import { DeployPage } from './pages/trader/DeployPage'
@@ -111,8 +110,9 @@ export default function App() {
                 <Route path="/trader/orders" element={<OrdersPage />} />
                 <Route path="/trader/trading" element={<ManualOrderPage />} />
                 <Route path="/trader/trading/lab" element={<FilterLabPage />} />
-                <Route path="/trader/strategies" element={<StrategiesPage />} />
+                <Route path="/trader/strategies" element={<Navigate to="/trader/deploy" replace />} />
                 <Route path="/trader/deploy" element={<DeployPage />} />
+                <Route path="/trader/strategies/:id/how-it-works" element={<StrategySpecPage mode="trader" />} />
                 <Route path="/trader/runs/:id" element={<RunDetailPage />} />
                 {/* Live run history — own runs only (the API enforces it). */}
                 <Route path="/trader/strategies/history" element={<RunHistoryPage mode="trader" />} />

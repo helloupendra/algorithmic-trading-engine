@@ -80,13 +80,13 @@ export function OverviewPage() {
           value={myLiveRuns.length}
           tone={myLiveRuns.length > 0 ? 'accent' : undefined}
           sub={myLiveRuns.length > 0 ? 'open right now' : 'nothing running'}
-          to="/trader/strategies"
+          to="/trader/strategies/history"
         />
         <StatTile
           label="Strategies I can run"
           value={strategies.data?.length ?? '…'}
           sub="from my package"
-          to="/trader/strategies"
+          to="/trader/deploy"
         />
         <StatTile
           label="Price data"
@@ -100,7 +100,7 @@ export function OverviewPage() {
           always on the feed. The trader's own list has its own page. */}
       <MarketPulse />
 
-      <Panel title="Recent runs" actions={<Link to="/trader/strategies">All strategies →</Link>}>
+      <Panel title="Recent runs" actions={<Link to="/trader/strategies/history">My runs →</Link>}>
         <QueryBoundary query={runs} empty="No simulation runs yet.">
           {(data) => (
             <div className="tablewrap">

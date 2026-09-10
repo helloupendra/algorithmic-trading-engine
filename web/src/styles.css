@@ -2188,6 +2188,10 @@ a.pill:hover { border-color: var(--line-strong); }
 }
 .strategy-card:hover { border-color: var(--line-strong); }
 .strategy-card--running { border-color: color-mix(in srgb, var(--pos) 40%, transparent); }
+.strategy-card--selected {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px var(--brand-soft);
+}
 
 .strategy-card__head {
   display: flex;
