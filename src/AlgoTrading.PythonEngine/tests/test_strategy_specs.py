@@ -57,32 +57,9 @@ REQUIRED_FACT_KEYS = frozenset({
 # Debt: strategies that predate the spec rule and still owe a document.
 # Remove a name here when its spec is written — the test fails if a listed
 # strategy has a spec file, so this set cannot silently go stale. Never add a
-# new strategy here: write its spec instead.
-PENDING_SPECS = frozenset({
-    "BearPutSpread",
-    "BullCallSpread",
-    "CrudeMomentum",
-    "ExampleStraddle",
-    "Fulcrum",
-    "Fulcrum2Straddle20",
-    "Fulcrum2StraddleBuy20",
-    "Fulcrum3Straddle175",
-    "Fulcrum3StraddleBuy175",
-    "FulcrumBuy",
-    "FulcrumMulti50",
-    "FulcrumMulti70",
-    "FulcrumMulti90",
-    "FulcrumMultiBuy50",
-    "FulcrumMultiBuy70",
-    "FulcrumMultiBuy90",
-    "FulcrumMultiStraddle",
-    "FulcrumQtyAdjustment",
-    "FulcrumQtyAdjustmentBuy",
-    "IronButterfly",
-    "LogicEngine",
-    "ShortStraddle",
-    "ShortStrangle",
-})
+# new strategy here: write its spec instead. Empty since 2026-09-11: every
+# registered strategy has a spec.
+PENDING_SPECS: frozenset[str] = frozenset()
 
 _H2 = re.compile(r"^##\s+(.*?)\s*$")
 _FENCE_OPEN = re.compile(r"^```\s*ya?ml\s*$", re.IGNORECASE)

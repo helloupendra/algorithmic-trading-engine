@@ -56,6 +56,11 @@ export const SPEC_HEADINGS: ReadonlyArray<string> = [
   'Facts (machine-readable)',
 ]
 
+/** "Position management" → "position-management": the anchor a spec page's table of contents jumps to. */
+export function headingSlug(text: string): string {
+  return text.toLowerCase().replace(/\(.*?\)/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+}
+
 function normalizeSpec(raw: Partial<StrategySpec> & { name: string }): StrategySpec {
   return {
     name: raw.name,

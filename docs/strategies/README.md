@@ -204,7 +204,8 @@ spec_version: 1               # bump when the rule changes, not for wording
    `src/AlgoTrading.PythonEngine/tests/test_strategy_specs.py`. That set is
    the list of strategies that predate this rule and still owe a spec; the
    test fails if a name listed there has a spec, so the debt list cannot go
-   stale. Remove the name when the spec is written.
+   stale. It has been empty since 2026-09-11 — every registered strategy
+   has a spec — and a new strategy is never added to it: write the spec.
 3. The suite passes:
 
    ```sh
