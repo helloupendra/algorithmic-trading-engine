@@ -236,11 +236,17 @@ export function StrategyCard({
   actionLabel = 'Start…',
   allowWhileActive = false,
   showSpecLink = true,
+  specHref,
+  selected = false,
 }: {
   strategy: StrategyListItem
   onStart: (strategy: StrategyListItem) => void
   /** The "How it works" link to the strategy's spec page; every card shows it unless told not to. */
   showSpecLink?: boolean
+  /** Where "How it works" goes; the admin library page unless a trader area says otherwise. */
+  specHref?: string
+  /** The card is the chosen one (a deploy wizard's step 1). */
+  selected?: boolean
   /** Button text; the Live runner starts, the Backtesting module replays. */
   actionLabel?: string
   /**
@@ -257,7 +263,10 @@ export function StrategyCard({
   // second underlying, and the launch dialog greys out the ones already taken.
   const label = s.isActive && !allowWhileActive ? 'Start on another underlying…' : actionLabel
   return (
-    <article className={`strategy-card ${s.isActive ? 'strategy-card--running' : ''}`}>
+    <article
+      className={`strategy-card${s.isActive ? ' strategy-card--running' : ''}${selected ? ' strategy-card--selected' : ''}`}
+      aria-selected={selected || undefined}
+    >
       <div className="strategy-card__head">
         <span className="strategy-card__name">{s.name}</span>
         <CategoryBadge category={s.category} />
@@ -309,7 +318,7 @@ export function StrategyCard({
         {showSpecLink && (
           <Link
             className="btn btn--sm"
-            to={`/admin/strategies/library/${s.id}`}
+            to={specHref ?? `/admin/strategies/library/${s.id}`}
             title="Entry, exits, data it needs and a worked example — the strategy's specification"
           >
             How it works <IconArrowRight style={{ width: 12, height: 12 }} />

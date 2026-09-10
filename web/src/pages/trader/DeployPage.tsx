@@ -12,13 +12,14 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useMutation } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { useAuth } from '../../lib/auth'
 import { useBrokerSession, useIngestorStatuses, useKillSwitch, useStrategies, useRiskExposure, useRiskLimits } from '../../lib/queries'
 import { formatInrWhole } from '../../lib/format'
 import { Badge, InlineError, Panel, QueryBoundary } from '../../components/ui'
+import { StrategyCard } from '../strategies/shared'
 import type { SimulationRun, StrategyListItem } from '../../lib/types'
 
 // `underlying` is what the API derives from the spot symbol (UnderlyingCatalog)
@@ -87,6 +88,16 @@ export function DeployPage() {
     blockers.push({ text: `Max concurrent runs limit reached (${exposure.data.activeRunsCount}/${riskLimits.data.maxConcurrentRuns})`, to: '/trader/overview' })
 
   const [selected, setSelected] = useState<StrategyListItem | null>(null)
+  // "Deploy this strategy…" on a How-it-works page lands here with the
+  // strategy in the address; it is selected as soon as the catalog arrives.
+  const [search, setSearch] = useSearchParams()
+  useEffect(() => {
+    const wanted = Number(search.get('strategy'))
+    if (!Number.isInteger(wanted) || wanted <= 0 || !strategies.data) return
+    const found = strategies.data.find((s) => s.id === wanted)
+    if (found) setSelected(found)
+    setSearch({}, { replace: true })
+  }, [search, setSearch, strategies.data])
   const [symbol, setSymbol] = useState(UNDERLYINGS[0].symbol)
   const [capital, setCapital] = useState(1_000_000)
   const [params, setParams] = useState<ParamRow[]>([])
@@ -154,7 +165,7 @@ export function DeployPage() {
   return (
     <div className="page">
       <header className="page__header">
-        <h1 className="page__title">Deploy a strategy</h1>
+        <h1 className="page__title">Strategies</h1>
         <p className="page__subtitle">
           Three steps on this one page: <b>click a strategy card below</b> → its settings
           open in step 2 → review and press Deploy in step 3. No code.
@@ -172,45 +183,43 @@ export function DeployPage() {
         </div>
       )}
 
-      <Panel title="1 · Choose a strategy — click a card to select it">
+      <Panel title="1 · Choose a strategy">
         <QueryBoundary query={strategies} empty="No strategies registered yet.">
           {(list) => (
-            <div className="deploy-grid">
+            /* The same cards as the strategy library — category, underlyings,
+               legs, contracts, and "How it works" — with Select as the action. */
+            <div className="strategy-grid">
               {list.map((s) => (
-                <button
+                <StrategyCard
                   key={s.id}
-                  type="button"
-                  className={`deploy-card ${selected?.id === s.id ? 'is-selected' : ''}`}
-                  onClick={() => setSelected(s)}
-                  title={
-                    s.activeRuns.length > 0
-                      ? `Already running on ${s.activeRuns.map((r) => r.underlying).join(', ')} — deploy on a different underlying`
-                      : undefined
-                  }
-                >
-                  <b className="mono">{s.name}</b>
-                  <span>{s.description || 'No description'}</span>
-                  {s.isActive && (
-                    <Badge tone="pos">
-                      running
-                      {s.activeRuns.length > 0 ? ` · ${s.activeRuns.map((r) => r.underlying).join(', ')}` : ''}
-                    </Badge>
-                  )}
-                </button>
+                  strategy={s}
+                  selected={selected?.id === s.id}
+                  actionLabel={selected?.id === s.id ? 'Selected' : 'Select'}
+                  allowWhileActive
+                  specHref={`/trader/strategies/${s.id}/how-it-works`}
+                  onStart={(st) => {
+                    setSelected(st)
+                    // Step 2 sits below the grid; bring it into view.
+                    requestAnimationFrame(() =>
+                      document.getElementById('deploy-step-2')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+                    )
+                  }}
+                />
               ))}
             </div>
           )}
         </QueryBoundary>
         {!selected && (
           <p className="muted small-note">
-            Select a strategy card — <b>Step 2 (Configure)</b> and <b>Step 3 (Deploy)</b> unlock
-            below once one is chosen.
+            Pick a strategy — <b>Step 2 (Configure)</b> and <b>Step 3 (Deploy)</b> unlock below once
+            one is chosen. <b>How it works</b> opens the full write-up.
           </p>
         )}
       </Panel>
 
       {selected && current && (
         <>
+          <div id="deploy-step-2" />
           <Panel title={`2 · Configure ${current.name}`}>
             <div className="form-row" style={{ marginBottom: 18 }}>
               <div className="field">

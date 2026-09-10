@@ -222,7 +222,7 @@ export function RunDetailPage() {
       </div>
 
       <p>
-        <Link to="/trader/strategies">← All runs</Link>
+        <Link to="/trader/strategies/history">← My runs</Link>
       </p>
     </div>
   )

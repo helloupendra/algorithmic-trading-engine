@@ -36,7 +36,6 @@ import {
   IconLogo,
   IconMenu,
   IconPen,
-  IconPlay,
   IconPulse,
   IconSignOut,
   IconX,
@@ -201,8 +200,10 @@ const TRADER_NAV = [
   { to: '/trader/orders', label: 'Orders', icon: IconClock },
   { to: '/trader/trading', label: 'Manual order', icon: IconArrowRight },
   { to: '/trader/trading/lab', label: 'Filter lab', icon: IconFlask },
-  { to: '/trader/strategies', label: 'Strategies', icon: IconFlask, end: true },
-  { to: '/trader/deploy', label: 'Deploy', icon: IconPlay },
+  // One place for strategies: the cards, "How it works", and the deploy
+  // wizard on a single page. A separate descriptions-only page was a second
+  // copy of the same list with nothing to do on it.
+  { to: '/trader/deploy', label: 'Strategies', icon: IconFlask },
   { to: '/trader/strategies/history', label: 'My runs', icon: IconClock },
 ]
 
@@ -379,6 +380,8 @@ const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]>
   ['/admin', null, 'Overview'],
   ['/trader/strategies/history', 'Trading', 'My runs'],
   ['/trader/strategies/runs/', 'Trading', 'Live run'],
+  ['/trader/strategies/', 'Trading', 'How it works'],
+  ['/trader/deploy', 'Trading', 'Strategies'],
   ['/trader', null, 'Trading'],
 ]
 
