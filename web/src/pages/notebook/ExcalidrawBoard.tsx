@@ -44,7 +44,7 @@ export interface CardSpec {
 }
 
 export interface BoardHandle {
-  insertCard(card: CardSpec): void
+  insertCard(card: CardSpec): Promise<void>
   /** The scene as the API stores it — elements, the whitelisted app state, the files still in use. */
   serializeScene(): string
   /** Replace what is on the canvas with a scene serialised earlier (a recovered draft). Counts as the user's change. */
@@ -138,19 +138,41 @@ function serializeScene({ elements, appState, files }: SceneSnapshot): string {
   return JSON.stringify({ elements: live, appState: persistedAppState(appState), files: keptFiles })
 }
 
+/**
+ * Excalidraw's own defaults are a hand-lettered font and a sketchy stroke.
+ * This is a trading notebook, not a doodle: notes are read back at speed,
+ * so new text is set in Nunito and new shapes are drawn clean. A hand font
+ * chosen deliberately in the properties panel is respected once it is any
+ * other family; only the two hand-drawn defaults are replaced.
+ */
+const HAND_FONTS: ReadonlySet<number> = new Set([FONT_FAMILY.Virgil, FONT_FAMILY.Excalifont])
+
+function readableDefaults<T extends Partial<PersistedAppState>>(appState: T): T {
+  const font = appState.currentItemFontFamily
+  return {
+    ...appState,
+    currentItemFontFamily: font === undefined || HAND_FONTS.has(font) ? FONT_FAMILY.Nunito : font,
+    currentItemRoughness: appState.currentItemRoughness ?? 0,
+  }
+}
+
 /** What the board was saved with, or an empty scene for "{}" and anything unreadable. */
 function parseScene(sceneJson: string): ExcalidrawInitialDataState {
   try {
     const raw: unknown = JSON.parse(sceneJson)
     if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
       const scene = raw as ExcalidrawInitialDataState
-      return { elements: scene.elements ?? [], appState: scene.appState ?? {}, files: scene.files ?? {} }
+      return {
+        elements: scene.elements ?? [],
+        appState: readableDefaults((scene.appState ?? {}) as Partial<PersistedAppState>),
+        files: scene.files ?? {},
+      }
     }
   } catch {
     // A scene the current editor cannot read is treated as blank rather than
     // blocking the board; the next save replaces it.
   }
-  return { elements: [], appState: {}, files: {} }
+  return { elements: [], appState: readableDefaults({}), files: {} }
 }
 
 /* --- cards ------------------------------------------------------------------ */
@@ -164,10 +186,23 @@ function randomId(): string {
   return Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10)
 }
 
+/**
+ * Text is measured by Excalidraw when the skeleton is converted — with
+ * whatever font is loaded at that moment. Before Nunito arrives the fallback
+ * is narrower, the tile came out short, and "FulcrumQtyAdjustmentBuy" ended
+ * at the edge as "FulcrumQtyAdjustmentE". A per-glyph estimate is the floor
+ * the measurement may not go under.
+ */
+const NUNITO_EM_PER_CHAR = 0.58
+
+function textWidthFloor(text: string, fontSize: number): number {
+  return text.length * fontSize * NUNITO_EM_PER_CHAR
+}
+
 function buildCard(card: CardSpec, x: number, y: number): ExcalidrawElement[] {
   // One group id on all three: a card moves, copies and deletes as a unit.
-  const group = { groupIds: [randomId()], roughness: 1 }
-  const line = { ...group, fontFamily: FONT_FAMILY.Excalifont }
+  const group = { groupIds: [randomId()], roughness: 0 }
+  const line = { ...group, fontFamily: FONT_FAMILY.Nunito }
   const elements = convertToExcalidrawElements([
     {
       type: 'rectangle',
@@ -189,7 +224,9 @@ function buildCard(card: CardSpec, x: number, y: number): ExcalidrawElement[] {
   // Text is measured only once converted, so the tile is widened afterwards
   // when a long strategy name would otherwise run past its edge.
   const [tile, ...lines] = elements
-  const needed = Math.max(...lines.map((l) => l.width)) + CARD_PAD * 2
+  const measured = Math.max(...lines.map((l) => l.width))
+  const estimated = Math.max(textWidthFloor(card.title, 20), textWidthFloor(card.subtitle, 14))
+  const needed = Math.ceil(Math.max(measured, estimated)) + CARD_PAD * 2
   return [needed > tile.width ? newElementWith(tile, { width: needed }) : tile, ...lines]
 }
 
@@ -261,9 +298,20 @@ export default function ExcalidrawBoard({
   // One handle for the page's lifetime; it reads the API through a ref, so it
   // is valid the moment Excalidraw reports in and never goes stale.
   const [handle] = useState<BoardHandle>(() => ({
-    insertCard(card) {
+    async insertCard(card) {
       const api = apiRef.current
       if (!api) return
+      // The card's text is measured when the skeleton is converted, with
+      // whatever font is loaded at that moment. Excalidraw registers Nunito
+      // but only fetches it when something on the canvas asks for it, so on
+      // a board with no Nunito text yet the first card was measured in the
+      // fallback font and drawn too narrow. Fetch it first; a failure to
+      // load falls through to the width floor below.
+      try {
+        await Promise.all([document.fonts.load('500 20px Nunito'), document.fonts.load('500 14px Nunito')])
+      } catch {
+        /* measured with the fallback and widened by the floor */
+      }
       armed.current = true
       const state = api.getAppState()
       const centre = viewportCentre(state)
@@ -301,7 +349,7 @@ export default function ExcalidrawBoard({
       api.addFiles(Object.values(scene.files ?? {}))
       // updateScene sets whatever keys it is given, undefined included, so
       // only the persisted keys the draft actually carries go in.
-      const saved: Partial<PersistedAppState> = scene.appState ?? {}
+      const saved: Partial<PersistedAppState> = readableDefaults(scene.appState ?? {})
       const appState = Object.fromEntries(
         PERSISTED_APP_STATE.filter((k) => saved[k] !== undefined).map((k) => [k, saved[k]]),
       ) as PersistedAppState

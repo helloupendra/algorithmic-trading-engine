@@ -64,7 +64,8 @@
 .wb--window {
   height: 100dvh;
   box-sizing: border-box;
-  padding: 10px 14px 12px;
+  padding: 6px 10px 8px;
+  gap: 6px;
   background: var(--bg0);
   color: var(--text);
 }
@@ -77,11 +78,25 @@
   box-sizing: border-box;
 }
 
+/* One row, 36px tall: back, name, the Add-card button, the save status.
+   Nothing else sits between the top of the window and the drawing. */
 .wb__head {
   display: flex;
   align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
+  gap: 10px;
+  flex-wrap: nowrap;
+  min-height: 36px;
+}
+
+.wb__insert { position: relative; flex: none; }
+
+.wb__insert-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: min(440px, calc(100vw - 20px));
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
 }
 
 .wb__back {
@@ -105,9 +120,9 @@
   flex: 1 1 220px;
   min-width: 0;
   margin: 0;
-  padding: 4px 8px;
+  padding: 3px 8px;
   font: inherit;
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--text);
@@ -143,16 +158,14 @@
   flex-wrap: wrap;
 }
 
-/* Three insert forms in one row, each a labelled group; on a phone they wrap
-   to a column and every group takes the full width. */
+/* The three insert forms, stacked inside the Add-card panel. */
 .wb-tools {
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
   gap: 10px;
-  flex-wrap: wrap;
-  padding: 10px 12px;
+  padding: 12px;
   background: var(--surface);
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--line);
   border-radius: var(--radius);
 }
 
@@ -160,7 +173,6 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  flex: 1 1 260px;
   min-width: 0;
 }
 
@@ -176,7 +188,7 @@
 
 .wb-canvas {
   flex: 1 1 auto;
-  min-height: 480px;
+  min-height: 360px;
   border: 1px solid var(--line-soft);
   border-radius: var(--radius);
   overflow: hidden;
@@ -201,16 +213,12 @@
   --color-primary-light: #1a2a4d;
 }
 
-/* The fold button exists for phones only; the wrap is a plain box on desktop. */
-.wb__cards-toggle { display: none; align-self: flex-start; }
-.wb__tools-wrap { display: contents; }
-
 @media (max-width: 760px) {
   .wb { height: calc(100dvh - var(--topbar-h) - 54px); }
-  .wb--window { height: 100dvh; padding: 8px 8px 10px; }
-  .wb__cards-toggle { display: inline-flex; }
-  .wb__tools-wrap { display: block; }
-  .wb__tools-wrap--folded { display: none; }
+  .wb--window { height: 100dvh; padding: 6px 6px 8px; }
+  .wb__head { flex-wrap: wrap; }
+  .wb__name { flex-basis: 100%; order: 3; }
+  .wb__insert-panel { right: auto; left: 0; }
   .wb__name { font-size: 16px; }
   .wb-tool { flex-basis: 100%; }
 }
