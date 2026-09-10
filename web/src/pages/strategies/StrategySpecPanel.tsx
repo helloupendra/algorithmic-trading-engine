@@ -17,7 +17,7 @@ import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
 import './spec.css'
-import { FACT_CHIPS, SPEC_HEADINGS, useStrategySpec } from '../../lib/specs'
+import { FACT_CHIPS, SPEC_HEADINGS, headingSlug, useStrategySpec } from '../../lib/specs'
 import type { StrategySpec } from '../../lib/specs'
 import { InlineError, Loading } from '../../components/ui'
 
@@ -32,11 +32,6 @@ const rehypePlugins = [rehypeKatex]
  * `node` is the hast node react-markdown adds to every element's props — it
  * is dropped so it does not reach the DOM as an attribute.
  */
-/** "Position management" → "position-management": the anchor the page's table of contents jumps to. */
-export function headingSlug(text: string): string {
-  return text.toLowerCase().replace(/\(.*?\)/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
-}
-
 function textOf(children: unknown): string {
   if (typeof children === 'string') return children
   if (Array.isArray(children)) return children.map(textOf).join('')

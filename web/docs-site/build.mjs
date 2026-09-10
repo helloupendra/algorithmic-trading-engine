@@ -58,10 +58,10 @@ const NAV = [
   },
   {
     section: 'Strategies',
-    items: [
-      { slug: 'strategies', src: 'docs/strategies/README.md', title: 'Strategy specifications' },
-      { slug: 'strategies/ghost-tangent-crossings', src: 'docs/strategies/GhostTangentCrossings.md', title: 'GhostTangentCrossings' },
-    ],
+    // Filled at build time from docs/strategies/*.md — every spec the test
+    // guard knows about, without a hand-kept list that would go stale.
+    items: [{ slug: 'strategies', src: 'docs/strategies/README.md', title: 'Strategy specifications' }],
+    glob: 'docs/strategies',
   },
   {
     section: 'Run it',
@@ -142,7 +142,7 @@ function firstParagraph(md) {
 
 /** `$$…$$` and inline `$…$` rendered by KaTeX before Markdown sees them, outside code. */
 function renderMath(md) {
-  if (!md.includes('$$')) return md
+  if (!md.includes('$')) return md
   const parts = md.split(/(```[\s\S]*?```|`[^`\n]*`)/g)
   return parts
     .map((part, i) => {
@@ -174,14 +174,18 @@ function makeMarked(page, slugToUrl) {
     renderer: {
       heading({ tokens, depth }) {
         const html = this.parser.parseInline(tokens)
-        let id = slugify(html) || `section-${toc.length + 1}`
+        // A heading with inline math carries KaTeX's MathML twin (plus the TeX
+        // source as an annotation); drop it so the id and the contents entry
+        // read the visible text once, not three times.
+        const visible = html.replace(/<span class="katex-mathml">[\s\S]*?<\/math><\/span>/g, '')
+        let id = slugify(visible) || `section-${toc.length + 1}`
         const n = seen.get(id) ?? 0
         seen.set(id, n + 1)
         if (n > 0) id = `${id}-${n}`
         // The document's H1 is the page title, rendered by the layout.
         if (depth === 1) return ''
         // Already HTML-escaped by the inline parser; tags are dropped, entities kept.
-        if (depth <= 3) toc.push({ depth, id, text: html.replace(/<[^>]+>/g, '') })
+        if (depth <= 3) toc.push({ depth, id, text: visible.replace(/<[^>]+>/g, '') })
         return `<h${depth} id="${id}"><a class="anchor" href="#${id}" aria-label="Link to this section">#</a>${html}</h${depth}>\n`
       },
       code({ text, lang }) {
@@ -410,6 +414,15 @@ export async function buildDocs({ outDir }) {
     for (const it of g.items) {
       if (it.index || (await exists(it.src))) items.push(it)
       else console.warn(`docs-site: skipping ${it.slug} — ${it.src} is not in this checkout`)
+    }
+    if (g.glob) {
+      // One page per strategy spec, registry name as the title, kebab-case as the slug.
+      const files = (await fs.readdir(path.join(repo, g.glob))).filter((f) => f.endsWith('.md') && f !== 'README.md').sort()
+      for (const f of files) {
+        const name = f.slice(0, -3)
+        const slug = `strategies/${name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1-$2').toLowerCase()}`
+        items.push({ slug, src: `${g.glob}/${f}`, title: name })
+      }
     }
     if (items.length) nav.push({ ...g, items })
   }

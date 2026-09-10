@@ -1,7 +1,7 @@
 import { Suspense, lazy, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useStrategies } from '../../lib/queries'
-import { useStrategySpec } from '../../lib/specs'
+import { headingSlug, useStrategySpec } from '../../lib/specs'
 import { contractRequirementsOf, describeRequirement } from '../../lib/contracts'
 import { formatResolution } from '../../lib/symbols'
 import { formatDateTime } from '../../lib/format'
@@ -9,7 +9,6 @@ import { Badge, Loading, QueryBoundary } from '../../components/ui'
 import { IconArrowRight, IconPlay } from '../../components/icons'
 import type { StrategyListItem } from '../../lib/types'
 import { CategoryBadge, LaunchDialog } from './shared'
-import { headingSlug } from './StrategySpecPanel'
 import './spec.css'
 
 const StrategySpecPanel = lazy(() => import('./StrategySpecPanel'))
