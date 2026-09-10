@@ -90,6 +90,56 @@ DISCONNECT_RESTART_SECONDS = 20
 # and nothing has arrived for this long.
 STALL_AFTER_SECONDS = 120
 
+# When the socket opened (monotonic). A dead token is the case this exists
+# for: FYERS answers the connect with "Token is expired", then reports the
+# socket as connected anyway, and no message ever follows. Measuring silence
+# from the connect — not only from the last message — is what makes that
+# visible as a stall instead of two hours of "Running".
+connected_at = None
+
+# The token FYERS refused, and when. Set from the SDK's error callback; the
+# connection manager restarts on it, but only once the API hands out a
+# DIFFERENT token — restarting with the same dead token every second would
+# hammer the broker and still be deaf.
+rejected_token = None
+token_rejected_at = None
+
+# How often to ask the API for a replacement while a rejected token stands.
+TOKEN_REPLACEMENT_POLL_SECONDS = 10
+
+
+def is_token_rejection(message) -> bool:
+    """
+    True when a socket error from FYERS means the access token itself is bad.
+    Seen shapes: {'type': 'cn', 'code': -99, 'message': 'Token is expired'}
+    and the -16 "Could not authenticate the user" family on REST.
+    """
+    if isinstance(message, dict):
+        code = message.get("code")
+        text = str(message.get("message", ""))
+    else:
+        code = None
+        text = str(message)
+    if code in (-99, -16, -8):
+        return True
+    lowered = text.lower()
+    return "token" in lowered and ("expired" in lowered or "invalid" in lowered) \
+        or "could not authenticate" in lowered
+
+
+def feed_silent_for(now: float, connected: bool, connected_since, last_message) -> float | None:
+    """
+    Seconds since the last websocket message — or since the connect when no
+    message has arrived at all. None when the socket is down (that is the
+    disconnect watchdog's business, not a stall).
+    """
+    if not connected:
+        return None
+    base = last_message if last_message is not None else connected_since
+    if base is None:
+        return None
+    return now - base
+
 # Symbols added to the watchlist are subscribed on the LIVE socket rather than
 # by tearing the connection down and rebuilding it. A rolling straddle rolls its
 # ATM strike several times a day; rebuilding for each roll blacked out every
@@ -117,13 +167,23 @@ def utc_now_iso():
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def get_active_session():
+# The token the live socket was built with; what onerror() records as
+# rejected when FYERS refuses it.
+current_access_token = None
+
+
+def get_active_session(not_this_token=None):
     """
     Read the current broker session from your .NET API.
     Retries gracefully if the API is down or not logged in yet.
+
+    With not_this_token, keeps polling until the API hands out a different
+    token: the one FYERS just refused is no use however many times it is
+    re-read.
     """
     url = f"{API_BASE_URL}/api/auth/session"
-    
+    waited_on_rejected = False
+
     while True:
         try:
             response = http.get(url, verify=VERIFY_SSL, timeout=10)
@@ -131,8 +191,16 @@ def get_active_session():
             data = response.json()
 
             if data.get("isAuthenticated") and data.get("accessToken"):
-                return data["accessToken"]
-                
+                token = data["accessToken"]
+                if not_this_token is not None and token == not_this_token:
+                    if not waited_on_rejected:
+                        print("[API Wait] the API still holds the token FYERS rejected — "
+                              f"waiting for a new sign-in (checking every {TOKEN_REPLACEMENT_POLL_SECONDS}s).")
+                        waited_on_rejected = True
+                    time.sleep(TOKEN_REPLACEMENT_POLL_SECONDS)
+                    continue
+                return token
+
             print("[API Wait] C# API is running, but FYERS is not authenticated. Please login via the dashboard. Retrying in 5s...")
             time.sleep(5)
             
@@ -350,9 +418,14 @@ def compute_status() -> str:
     if not socket_connected:
         return "Disconnected"
 
-    if subscribed_symbols and last_tick_monotonic is not None:
-        silent_for = time.monotonic() - last_tick_monotonic
-        if silent_for > STALL_AFTER_SECONDS and is_market_open() is True:
+    if rejected_token is not None:
+        # Connected in name only: the broker refused the token this socket
+        # was built with, so nothing will ever arrive on it.
+        return "Stalled"
+
+    if subscribed_symbols:
+        silent_for = feed_silent_for(time.monotonic(), socket_connected, connected_at, last_tick_monotonic)
+        if silent_for is not None and silent_for > STALL_AFTER_SECONDS and is_market_open() is True:
             return "Stalled"
 
     return "Running"
@@ -559,9 +632,15 @@ def onmessage(message):
 
 def onerror(message):
     global last_error_message
+    global rejected_token, token_rejected_at
     last_error_message = str(message)
     print("SOCKET ERROR:")
     print(message)
+    if is_token_rejection(message) and rejected_token is None:
+        rejected_token = current_access_token
+        token_rejected_at = time.monotonic()
+        print("TOKEN REJECTED by FYERS — this socket will never carry data. "
+              "Waiting for a new broker sign-in, then reconnecting.")
 
 
 def onclose(message):
@@ -833,10 +912,13 @@ def onopen():
     global socket_connected
     global disconnected_since
 
+    global connected_at
+
     try:
         last_error_message = ""
         socket_connected = True
         disconnected_since = None
+        connected_at = time.monotonic()
         print("FYERS WEBSOCKET CONNECTED!")
         
         # Now that socket is ready, fetch the active DB watchlist and subscribe
@@ -933,6 +1015,7 @@ def main():
     global fyers
     global last_error_message
     global restart_required
+    global rejected_token, token_rejected_at, connected_at, last_tick_monotonic, current_access_token
     global threads_started
     global socket_connected
     global disconnected_since
@@ -986,8 +1069,16 @@ def main():
 
             # Wipe the singleton to prevent corruption carrying over
             data_ws.FyersDataSocket._instance = None
-            
-            access_token = get_active_session()
+
+            # A refused token must be replaced, not re-read: block here until
+            # the API has a different one (a new broker sign-in).
+            refused = rejected_token
+            access_token = get_active_session(not_this_token=refused)
+            rejected_token = None
+            token_rejected_at = None
+            connected_at = None
+            last_tick_monotonic = None
+            current_access_token = access_token
             fyers_socket_token = f"{require_app_id()}:{access_token}"
 
             fyers = data_ws.FyersDataSocket(
@@ -1021,6 +1112,12 @@ def main():
                 # where that did not take.
                 check_pending_subscriptions()
 
+                if rejected_token is not None:
+                    print("WATCHDOG: FYERS rejected this socket's token — "
+                          "rebuilding once the API holds a new one.")
+                    restart_required = True
+                    continue
+
                 if not socket_connected:
                     # Down since the last close — or, if it never opened at
                     # all (e.g. dead token at connect), since connect().
@@ -1030,6 +1127,19 @@ def main():
                         print(
                             f"WATCHDOG: socket down for {int(down_for)}s — "
                             "forcing full reconnect with a fresh broker token."
+                        )
+                        restart_required = True
+                    continue
+
+                # Connected, subscribed, market open, and nothing has arrived
+                # since the connect (or since the last message): the socket
+                # is a dead line. Rebuild it on the API's current token.
+                if subscribed_symbols:
+                    silent_for = feed_silent_for(time.monotonic(), socket_connected, connected_at, last_tick_monotonic)
+                    if silent_for is not None and silent_for > STALL_AFTER_SECONDS and is_market_open() is True:
+                        print(
+                            f"WATCHDOG: connected but silent for {int(silent_for)}s with the market open — "
+                            "forcing full reconnect with the API's current broker token."
                         )
                         restart_required = True
 

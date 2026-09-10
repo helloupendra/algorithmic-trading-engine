@@ -82,6 +82,7 @@ from strategies.signal_utils import (  # noqa: F401
 from backtest.run_spec import parse_risk_rules
 
 import core.fyers_orders as fyers_orders
+from core.warmup_retry import fetch_warmup_bars_with_retry
 
 try:
     # pyrefly: ignore [missing-import]
@@ -720,12 +721,14 @@ if __name__ == "__main__":
                 from datetime import datetime, timedelta
                 end_time = datetime.now()
                 start_time = end_time - timedelta(days=15)
-                
-                bars = engine.get_historical_bars(
+
+                bars = fetch_warmup_bars_with_retry(
+                    make_engine=DataEngine,
                     symbol=args.spot_symbol,
                     resolution=req.resolution,
                     start_date=start_time.strftime("%Y-%m-%d"),
-                    end_date=end_time.strftime("%Y-%m-%d")
+                    end_date=end_time.strftime("%Y-%m-%d"),
+                    label=args.underlying,
                 )
                 
                 if bars:

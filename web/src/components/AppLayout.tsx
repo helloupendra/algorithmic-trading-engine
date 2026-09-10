@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
+import type { BrokerSessionInfo } from '../lib/types'
 import {
   useBackendStatus,
   useBrokerSession,
@@ -66,6 +67,25 @@ function StatusPill({
       {label}
     </span>
   )
+}
+
+/**
+ * A token that expired is a different fact from a broker that was never
+ * linked: the first is fixed by the daily sign-in, and saying so is what gets
+ * it done before the open.
+ */
+function brokerPillLabel(b: BrokerSessionInfo): string {
+  if (b.isAuthenticated) return 'FYERS linked'
+  const expired = b.expiresAtUtc && b.updatedUtc && new Date(b.expiresAtUtc).getTime() <= Date.now()
+  return expired ? 'FYERS sign-in needed' : 'FYERS not linked'
+}
+
+function brokerPillTitle(b: BrokerSessionInfo): string {
+  if (!b.expiresAtUtc) return 'Broker session'
+  const at = new Date(b.expiresAtUtc).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })
+  return b.isAuthenticated
+    ? `Broker session — token valid until ${at} IST`
+    : `Broker session — the token expired at ${at} IST; sign in to FYERS again`
 }
 
 /** Market open/closed, broker connected, ingestor heartbeat — the pulse row. */
@@ -139,8 +159,8 @@ function TopbarStatus() {
       {showOperatorPills && broker.data && (
         <StatusPill
           tone={broker.data.isAuthenticated ? 'pos' : 'neg'}
-          label={broker.data.isAuthenticated ? 'FYERS linked' : 'FYERS not linked'}
-          title="Broker session"
+          label={brokerPillLabel(broker.data)}
+          title={brokerPillTitle(broker.data)}
         />
       )}
       {showOperatorPills && feeds.length > 0 && (
