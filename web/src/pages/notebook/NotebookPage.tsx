@@ -7,7 +7,7 @@
 
 import { useState } from 'react'
 import type { FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../lib/auth'
 import { formatAge, formatDateTime } from '../../lib/format'
 import {
@@ -20,6 +20,11 @@ import type { WhiteboardSummary } from '../../lib/whiteboard'
 import { Badge, InlineError, Panel, QueryBoundary } from '../../components/ui'
 import { IconPen, IconPlus, IconTrash } from '../../components/icons'
 import './notebook.css'
+
+/** Boards are full-window routes; every way in opens a new tab. */
+function boardUrl(id: number): string {
+  return `${window.location.origin}/admin/notebook/${id}`
+}
 
 const DEFAULT_NAME = 'Untitled board'
 
@@ -78,9 +83,15 @@ function BoardRow({
             />
           </form>
         ) : (
-          <Link className="nb-name" to={`/admin/notebook/${board.id}`}>
+          <a
+            className="nb-name"
+            href={boardUrl(board.id)}
+            target="_blank"
+            rel="noopener"
+            title="Opens in a new tab, full window"
+          >
             {board.name}
-          </Link>
+          </a>
         )}
         {rename.isError && <InlineError error={rename.error} />}
         {remove.isError && <InlineError error={remove.error} />}
@@ -126,7 +137,21 @@ export function NotebookPage() {
   const navigate = useNavigate()
 
   function createBoard() {
-    create.mutate({ name: DEFAULT_NAME }, { onSuccess: (board) => navigate(`/admin/notebook/${board.id}`) })
+    // The tab is opened inside the click itself, before the request: a tab
+    // opened from the response callback is what popup blockers exist to
+    // stop. It is pointed at the board once the API has named it, and closed
+    // again if the API refused.
+    const tab = window.open('', '_blank')
+    create.mutate(
+      { name: DEFAULT_NAME },
+      {
+        onSuccess: (board) => {
+          if (tab && !tab.closed) tab.location.href = boardUrl(board.id)
+          else navigate(`/admin/notebook/${board.id}`)
+        },
+        onError: () => tab?.close(),
+      },
+    )
   }
 
   const newBoardButton = (

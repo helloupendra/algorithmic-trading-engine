@@ -786,7 +786,6 @@ rm -rf .venv data/instruments/*.csv
 | [docs/modules/option_chain.md](docs/modules/option_chain.md) | The option chain and its open-interest history: where OI comes from, and why a session missed cannot be recovered |
 | [docs/modules/activity_log.md](docs/modules/activity_log.md) | Who did what, across every module — what is recorded, what deliberately is not |
 | [docs/roadmap/broker-and-data-provider-module.md](docs/roadmap/broker-and-data-provider-module.md) | Multi-vendor architecture: decisions taken, phases delivered, what is left |
-| [docs/android-app-prompt.md](docs/android-app-prompt.md) | A ready-to-paste prompt for generating an Android companion app against this API |
 
 ---
 

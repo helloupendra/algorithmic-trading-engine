@@ -58,6 +58,25 @@
   min-height: 0;
 }
 
+/* The board is a full-window route (no console shell around it), so the
+   page itself is the frame: the whole viewport, a slim margin, and the
+   canvas takes everything the header and toolbar do not. */
+.wb--window {
+  height: 100dvh;
+  box-sizing: border-box;
+  padding: 10px 14px 12px;
+  background: var(--bg0);
+  color: var(--text);
+}
+
+.wb-window {
+  padding: 22px 24px;
+  background: var(--bg0);
+  color: var(--text);
+  min-height: 100dvh;
+  box-sizing: border-box;
+}
+
 .wb__head {
   display: flex;
   align-items: center;
@@ -182,8 +201,16 @@
   --color-primary-light: #1a2a4d;
 }
 
+/* The fold button exists for phones only; the wrap is a plain box on desktop. */
+.wb__cards-toggle { display: none; align-self: flex-start; }
+.wb__tools-wrap { display: contents; }
+
 @media (max-width: 760px) {
   .wb { height: calc(100dvh - var(--topbar-h) - 54px); }
+  .wb--window { height: 100dvh; padding: 8px 8px 10px; }
+  .wb__cards-toggle { display: inline-flex; }
+  .wb__tools-wrap { display: block; }
+  .wb__tools-wrap--folded { display: none; }
   .wb__name { font-size: 16px; }
   .wb-tool { flex-basis: 100%; }
 }
