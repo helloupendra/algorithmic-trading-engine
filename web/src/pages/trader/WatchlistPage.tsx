@@ -65,7 +65,12 @@ export function WatchlistPage() {
             className="chip-row"
             onSubmit={(e) => {
               e.preventDefault()
-              add.mutate(symbol.trim(), { onSuccess: () => setSymbol('') })
+              const s = symbol.trim().toUpperCase()
+              if (!s) {
+                document.getElementById('wl-symbol')?.focus()
+                return
+              }
+              add.mutate(s, { onSuccess: () => setSymbol('') })
             }}
           >
             {/* A search, not a blank for the exact symbol: type "hdfc",
@@ -73,7 +78,9 @@ export function WatchlistPage() {
             <div className="wl__search">
               <SymbolCombobox id="wl-symbol" value={symbol} onChange={setSymbol} disabled={add.isPending} />
             </div>
-            <button className="btn btn--primary btn--sm" disabled={add.isPending || !symbol.trim()}>
+            {/* Always at full colour: an empty box sends the focus back to the
+                search instead of greying the button out. */}
+            <button className="btn btn--primary btn--sm" disabled={add.isPending}>
               {add.isPending ? 'Adding…' : 'Add'}
             </button>
             <button
