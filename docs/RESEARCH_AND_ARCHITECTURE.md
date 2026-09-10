@@ -502,10 +502,11 @@ Managed by EF Core with 20+ sequential migrations. Selected tables:
 | :--- | :--- |
 | `instruments` | NSE CM + FO symbol master, including strike, option type, and expiry metadata |
 | `expiry_rules` | Declarative weekly/monthly expiry resolution with holiday-shift handling |
-| `market_ticks` | **Hypertable.** Immutable raw tick archive, 1-day chunks |
-| `live_quote_latest` | Hot upsert table — current quote per symbol |
-| `live_ticks` · `live_bars` | Recent tick window and folded 1-minute OHLC bars |
-| `historical_candles` · `symbol_sync_state` | Backfilled OHLC history with per-symbol coverage tracking |
+| `market_ticks` | **Hypertable.** Legacy raw tick archive, 1-day chunks (empty on current installs; `live_ticks` took its place) |
+| `live_quote_latest` | Hot upsert table — current quote per symbol, with Black-Scholes IV and greeks for options |
+| `live_ticks` · `live_bars` | **Hypertable.** Every tick as received (1-day chunks, compressed after 2 days, dropped after 90) and the 1-minute OHLC bars folded from them (kept for good) |
+| `option_chain_snapshots` | The chain every ~5 s per underlying: price, bid/ask, volume, OI, previous-day OI, and — since 2026-09-10 — IV and greeks per strike |
+| `candles` · `symbol_sync_state` | Permanent OHLC history: broker backfills (source `fyers`) plus the nightly archive of live bars into 1/5/15-minute candles (source `live`, never overwriting a broker row) |
 | `live_watchlist_items` | Active subscription set driving ingestion |
 | `equity_groups` · `equity_group_members` | Named instrument baskets for bulk watchlist operations |
 | `broker_sessions` | Active broker OAuth tokens |

@@ -86,6 +86,11 @@ public class OptionChainService
                 // and does not depend on when this poller started. Only when it
                 // is absent does the session's first reading stand in.
                 OpenInterestAtOpen = row.PreviousDayOpenInterest ?? atOpen ?? row.OpenInterest,
+                ImpliedVolatility = row.ImpliedVolatility,
+                Delta = row.Delta,
+                Gamma = row.Gamma,
+                Theta = row.Theta,
+                Vega = row.Vega,
                 SourceKey = string.IsNullOrWhiteSpace(row.SourceKey) ? "fyers" : row.SourceKey!,
             });
         }
@@ -242,6 +247,9 @@ public class OptionChainService
                 : null,
             ImpliedVolatility = row.ImpliedVolatility,
             Delta = row.Delta,
+            Gamma = row.Gamma,
+            Theta = row.Theta,
+            Vega = row.Vega,
         };
 
         // The broker's own day-change when it sent one: it is measured from the

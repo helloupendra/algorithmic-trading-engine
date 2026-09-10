@@ -147,6 +147,7 @@ public static class DependencyInjection
 
         services.AddScoped<IExpiryResolverService, ExpiryResolverService>();
         services.AddScoped<IHistoricalCandleStore, HistoricalCandleStore>();
+        services.AddScoped<IDailyCandleArchiveService, DailyCandleArchiveService>();
         services.AddScoped<IOptionHistoryBackfillService, OptionHistoryBackfillService>();
 
         services.AddScoped<IMarketTickArchiveService, MarketTickArchiveService>();

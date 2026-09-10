@@ -27,7 +27,8 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
             // The same shape market_ticks already has: one chunk per day, so the
             // indexes being written are a day's worth and stay in cache; old
             // chunks compress ~10x after two days and are DROPPED whole after
-            // seven (no DELETE, no dead rows, no bloat).
+            // seven (no DELETE, no dead rows, no bloat). The retention window
+            // was widened to 90 days on 2026-09-10 (LiveTicksRetention90Days).
             migrationBuilder.Sql(@"SELECT create_hypertable('live_ticks', 'ReceivedUtc', chunk_time_interval => INTERVAL '1 day', migrate_data => true);");
             migrationBuilder.Sql(@"
                 ALTER TABLE live_ticks SET (

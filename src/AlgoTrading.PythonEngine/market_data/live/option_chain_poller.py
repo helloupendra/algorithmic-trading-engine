@@ -32,7 +32,7 @@ import requests
 
 from core.api_client import build_session, PlatformApiClient
 from core.config import API_BASE_URL, VERIFY_SSL, DATA_PROVIDER_KEY, require_app_id
-from core.option_symbol import parse_option_symbol
+from core.option_symbol import parse_option_symbol, years_to_expiry
 
 #: The chain: every strike's price in one call, plus India VIX and the chain's
 #: total call/put open interest. What it does NOT carry is per-strike open
@@ -131,14 +131,15 @@ def normalise_chain_row(row: Dict[str, Any], spot: float) -> Optional[Dict[str, 
     if contract is None:
         return None
 
-    return {
+    last = _first_number(row, "ltp", "last_price", "lastPrice")
+    snapshot = {
         "underlying": contract.underlying,
         "expiryDate": contract.expiry.isoformat(),
         "strikePrice": contract.strike,
         "optionType": contract.kind,
         "symbol": symbol,
         "spotPrice": spot,
-        "lastTradedPrice": _first_number(row, "ltp", "last_price", "lastPrice"),
+        "lastTradedPrice": last,
         # The day's move, as the broker reports it. Measured from the previous
         # close — the same basis as pdoi — so the build-up reading works from
         # the poller's very first round instead of waiting for a session's
@@ -150,6 +151,44 @@ def normalise_chain_row(row: Dict[str, Any], spot: float) -> Optional[Dict[str, 
         # separate per-symbol call and are merged in later. Left absent rather
         # than zeroed: a zero would be read as "nothing is written here".
         "sourceKey": DATA_PROVIDER_KEY,
+    }
+    snapshot.update(price_greeks(spot, contract.strike, contract.kind, contract.expiry, last))
+    return snapshot
+
+
+def price_greeks(spot: float, strike: float, kind: str, expiry, last_price: Optional[float],
+                 now: Optional[datetime] = None) -> Dict[str, Optional[float]]:
+    """
+    Black-Scholes implied volatility and greeks for one snapshot row, or all
+    None when the contract cannot honestly be priced (no trade, no spot,
+    after the closing bell, IV did not converge).
+
+    The broker's chain carries none of these. The live-quote table had them,
+    but it is overwritten on every tick — so until 2026-09-10 "what was the
+    delta at 10:30" had no answer anywhere. Computed here, they land in every
+    snapshot and become a history. Same model and inputs as the ingestor.
+    """
+    empty = {"impliedVolatility": None, "delta": None, "gamma": None, "theta": None, "vega": None}
+    if not last_price or last_price <= 0 or not spot or spot <= 0:
+        return empty
+    try:
+        tte_years = years_to_expiry(expiry, now)
+        if tte_years <= 0:
+            return empty
+        from core.greeks_calculator import calculate_greeks
+        greeks = calculate_greeks(spot=spot, strike=strike, tte_years=tte_years,
+                                  option_type=kind, option_price=last_price)
+    except Exception:
+        # A pricing failure must never cost the row it sits on.
+        return empty
+    if greeks is None:
+        return empty
+    return {
+        "impliedVolatility": greeks.iv,
+        "delta": greeks.delta,
+        "gamma": greeks.gamma,
+        "theta": greeks.theta,
+        "vega": greeks.vega,
     }
 
 

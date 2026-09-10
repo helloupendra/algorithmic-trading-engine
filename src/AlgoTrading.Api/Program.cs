@@ -124,6 +124,7 @@ builder.Services.AddHostedService<AlgoTrading.Api.Services.LiveRunStartupReconci
 builder.Services.AddHostedService<AlgoTrading.Api.Services.StrategyRiskGuardService>();
 // Market Hours Service for automated halt/flatten at 3:15 PM
 builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketHoursService>();
+builder.Services.AddHostedService<AlgoTrading.Api.Services.NightlyArchiveService>();
 // Alert Subscriber Service for logic engine pub/sub
 builder.Services.AddHostedService<AlgoTrading.Api.Services.AlertSubscriberService>();
 // Keeps the Telegram notifier running for as long as the API does.
