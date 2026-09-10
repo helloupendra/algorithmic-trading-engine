@@ -76,12 +76,18 @@ public class DatabaseBrokerCredentialsProvider : IBrokerCredentialsProvider
                 _logger.LogWarning(ex,
                     "Broker credentials for {Provider} cannot be decrypted on this machine; re-enter them on the Connectors page.",
                     providerKey);
-                return _fallbacks.Find(providerKey);
+                return brokerAccountId is null ? _fallbacks.Find(providerKey) : NotConfigured();
             }
         }
 
-        return _fallbacks.Find(providerKey);
+        return brokerAccountId is null ? _fallbacks.Find(providerKey) : NotConfigured();
     }
+
+    // The .env fallback is the PLATFORM's app. A trader's account with no
+    // saved credentials is simply not configured — it must never quietly
+    // sign in through the operator's app.
+    private static BrokerCredentials NotConfigured()
+        => new(string.Empty, string.Empty, string.Empty, null, "none", null, null);
 
     public async Task SaveAsync(
         string providerKey,

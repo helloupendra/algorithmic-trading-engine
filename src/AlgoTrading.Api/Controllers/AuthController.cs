@@ -23,15 +23,19 @@ namespace AlgoTrading.Api.Controllers;
     private readonly IProviderRouter _providerRouter;
     private readonly string? _frontendBaseUrl;
 
+    private readonly Microsoft.Extensions.Caching.Memory.IMemoryCache _cache;
+
     public AuthController(
         GenerateAccessTokenUseCase generateAccessTokenUseCase,
         IBrokerSessionStore brokerSessionStore,
         IProviderRouter providerRouter,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        Microsoft.Extensions.Caching.Memory.IMemoryCache cache)
     {
         _generateAccessTokenUseCase = generateAccessTokenUseCase;
         _brokerSessionStore = brokerSessionStore;
         _providerRouter = providerRouter;
+        _cache = cache;
         // An explicit override only. Unset, the redirect goes back to the
         // origin the request came in on (see FrontendRedirect): the API serves
         // the console itself, so that is always a page that exists — on the
@@ -53,7 +57,7 @@ namespace AlgoTrading.Api.Controllers;
         try
         {
             var broker = await _providerRouter.ResolveBrokerAsync(cancellationToken: cancellationToken);
-            return Ok(new { authUrl = await broker.GetAuthUrlAsync("webui", cancellationToken) });
+            return Ok(new { authUrl = await broker.GetAuthUrlAsync("webui", cancellationToken: cancellationToken) });
         }
         catch (InvalidOperationException ex)
         {
@@ -217,7 +221,7 @@ namespace AlgoTrading.Api.Controllers;
         try
         {
             var broker = await _providerRouter.ResolveBrokerAsync(cancellationToken: cancellationToken);
-            string authUrl = await broker.GetAuthUrlAsync("start", cancellationToken);
+            string authUrl = await broker.GetAuthUrlAsync("start", cancellationToken: cancellationToken);
 
             return IsBrowserNavigation()
                 ? Redirect(authUrl)
@@ -243,37 +247,51 @@ namespace AlgoTrading.Api.Controllers;
         [FromQuery] int? code,
         CancellationToken cancellationToken)
     {
-        var broker = await _providerRouter.ResolveBrokerAsync(cancellationToken: cancellationToken);
+        // A trader linking their OWN broker arrives with a one-time state the
+        // Account page minted; it names their broker account, and the token is
+        // exchanged with that account's app and saved on that account's row.
+        // Anything else is the platform's shared account, exactly as before.
+        long? accountId = TraderBrokerController.ConsumeState(_cache, state);
+        bool traderFlow = state?.StartsWith(TraderBrokerController.StatePrefix, StringComparison.Ordinal) == true;
+        if (traderFlow && accountId is null)
+        {
+            const string stale = "This sign-in link has expired or was already used — open the Account page and press Sign in again.";
+            return IsBrowserNavigation() ? TraderRedirect(false, stale) : BadRequest(new { message = stale });
+        }
+
+        IBrokerProvider broker;
+        try
+        {
+            broker = await _providerRouter.ResolveBrokerAsync(accountId, cancellationToken);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return IsBrowserNavigation() ? TraderRedirect(false, ex.Message) : BadRequest(new { message = ex.Message });
+        }
         string brokerName = broker.Descriptor.DisplayName;
+
+        IActionResult Failed(string reason, int statusCode = 502) => IsBrowserNavigation()
+            ? (traderFlow ? TraderRedirect(false, reason) : FrontendRedirect(connected: false, reason, broker.Descriptor.Key))
+            : StatusCode(statusCode, new { message = reason, state, status, code });
 
         if (string.IsNullOrWhiteSpace(authCode))
         {
-            string reason = $"{brokerName} redirected back without an auth_code (s={status}, code={code}).";
-            return IsBrowserNavigation()
-                ? FrontendRedirect(connected: false, reason, broker.Descriptor.Key)
-                : BadRequest(new { message = reason, state, status, code });
+            return Failed($"{brokerName} redirected back without an auth_code (s={status}, code={code}).", 400);
         }
 
         BrokerTokenResult tokenResult;
         try
         {
-            tokenResult = await _generateAccessTokenUseCase.ExecuteAsync(
-                authCode,
-                cancellationToken: cancellationToken);
+            tokenResult = await _generateAccessTokenUseCase.ExecuteAsync(authCode, accountId, cancellationToken);
         }
         catch (Exception ex)
         {
-            return IsBrowserNavigation()
-                ? FrontendRedirect(connected: false, $"Token exchange failed: {ex.Message}", broker.Descriptor.Key)
-                : StatusCode(502, new { message = $"Token exchange failed: {ex.Message}" });
+            return Failed($"Token exchange failed: {ex.Message}");
         }
 
         if (!tokenResult.Succeeded)
         {
-            string reason = tokenResult.ErrorMessage ?? $"{brokerName} returned no access token.";
-            return IsBrowserNavigation()
-                ? FrontendRedirect(connected: false, reason, broker.Descriptor.Key)
-                : StatusCode(502, new { message = reason });
+            return Failed(tokenResult.ErrorMessage ?? $"{brokerName} returned no access token.");
         }
 
         string accessToken = tokenResult.AccessToken;
@@ -282,6 +300,7 @@ namespace AlgoTrading.Api.Controllers;
         {
             BrokerName = brokerName,
             ProviderKey = broker.Descriptor.Key,
+            BrokerAccountId = accountId,
             AccessToken = accessToken,
             RefreshToken = tokenResult.RefreshToken,
             CreatedUtc = DateTime.UtcNow
@@ -291,11 +310,21 @@ namespace AlgoTrading.Api.Controllers;
 
         // Never print the token itself — a masked confirmation is enough.
         Console.WriteLine(
-            $"{brokerName} token saved ({accessToken[..Math.Min(6, accessToken.Length)]}… , {accessToken.Length} chars).");
+            $"{brokerName} token saved for {(accountId is null ? "the platform" : $"broker account {accountId}")} " +
+            $"({accessToken[..Math.Min(6, accessToken.Length)]}… , {accessToken.Length} chars).");
 
-        return IsBrowserNavigation()
-            ? FrontendRedirect(connected: true, null, broker.Descriptor.Key)
-            : Ok(new { message = "Access token generated and saved.", isAuthenticated = session.IsAuthenticated, state, status, code });
+        if (IsBrowserNavigation())
+            return traderFlow ? TraderRedirect(true, null) : FrontendRedirect(connected: true, null, broker.Descriptor.Key);
+        return Ok(new { message = "Access token generated and saved.", isAuthenticated = session.IsAuthenticated, state, status, code });
+    }
+
+    /// <summary>Back to the trader's Account page, which reads the outcome from the address.</summary>
+    private IActionResult TraderRedirect(bool connected, string? reason)
+    {
+        string origin = _frontendBaseUrl ?? $"{Request.Scheme}://{Request.Host}";
+        string url = $"{origin}/trader/account?broker={(connected ? 1 : 0)}";
+        if (!string.IsNullOrWhiteSpace(reason)) url += $"&reason={Uri.EscapeDataString(reason)}";
+        return Redirect(url);
     }
 
     /// <summary>

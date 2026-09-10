@@ -26,7 +26,7 @@ namespace AlgoTrading.Application.UseCases.Auth
         {
             var broker = await _router.ResolveBrokerAsync(brokerAccountId, cancellationToken);
 
-            return await broker.ExchangeAuthCodeAsync(authCode, cancellationToken);
+            return await broker.ExchangeAuthCodeAsync(authCode, brokerAccountId, cancellationToken);
         }
     }
 }

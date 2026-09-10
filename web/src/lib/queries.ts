@@ -1609,6 +1609,52 @@ export function useRevokeUserSessions() {
 
 // ---------- The signed-in trader's own watchlist ----------
 
+// ---------- Trader's own broker ----------
+
+export function useTraderBroker() {
+  return useQuery({
+    queryKey: ['trader', 'broker'],
+    queryFn: () => api.get<import('./types').TraderBrokerStatus>('/api/Trader/broker'),
+    refetchInterval: 30_000,
+  })
+}
+
+export function useSaveTraderBroker() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: import('./types').SaveTraderBrokerInput) =>
+      api.put<{ message: string; accountId: number }>('/api/Trader/broker/credentials', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['trader', 'broker'] }),
+  })
+}
+
+export function useTraderBrokerSignOut() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.post<{ message: string }>('/api/Trader/broker/disconnect', {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['trader', 'broker'] }),
+  })
+}
+
+export function useRemoveTraderBroker() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.delete<{ message: string }>('/api/Trader/broker'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['trader'] }),
+  })
+}
+
+/** One of the broker's own books, as FYERS returns it, with the trader's token. */
+export function useTraderBrokerResource<T = Record<string, unknown>>(name: 'profile' | 'funds' | 'holdings' | 'positions' | 'orders' | 'trades', enabled: boolean) {
+  return useQuery({
+    queryKey: ['trader', 'broker', name],
+    queryFn: () => api.get<T>(`/api/Trader/broker/${name}`),
+    enabled,
+    refetchInterval: name === 'positions' || name === 'orders' ? 10_000 : 60_000,
+    retry: false,
+  })
+}
+
 /** The market at a glance — indices, large caps, commodities — the same for everyone. */
 export function useMarketPulse() {
   return useQuery({

@@ -95,6 +95,7 @@ builder.Services.AddSingleton<AlgoTrading.Api.Services.ChainPollerSupervisor>();
 // to /api/Alerts/status, start and stop answered 500.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AlertsSupervisor>();
 builder.Services.AddHttpClient(nameof(AlgoTrading.Api.Services.InstrumentMasterService));
+builder.Services.AddHttpClient(nameof(AlgoTrading.Api.Controllers.TraderBrokerController), c => c.Timeout = TimeSpan.FromSeconds(20));
 builder.Services.AddSingleton<AlgoTrading.Api.Services.InstrumentMasterService>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.WatchlistPruneService>();
 // The Telegram notifier, same shape. Started with the API rather than by hand:

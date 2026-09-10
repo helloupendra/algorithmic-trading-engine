@@ -119,3 +119,21 @@ engine's account is moved to the `Service` role at the same time.
 
 Invite links, so an admin invites someone and that person sets their own password without it ever
 passing through the admin. Safe to add precisely because a new account holds nothing until granted.
+
+## A trader's own broker (Account page)
+
+`/trader/account` shows the trader's profile and lets them link **their own** FYERS app: save
+app id, secret and optional trading PIN (encrypted at rest), sign in through FYERS, and see a
+light — grey *Not linked*, amber *App saved · sign in needed*, green *Linked · valid until 06:00*.
+Once linked, the page reads their **funds, positions, orders, holdings and trades straight from
+FYERS with their own token** (`GET /api/Trader/broker/{funds|positions|orders|holdings|trades}`).
+
+The platform's shared FYERS account (the feed, the strategies) and a trader's account never share
+a session row: `broker_sessions.BrokerAccountId` is null for the platform and the trader's
+`broker_accounts.Id` for theirs; the session store's "current" lookups return platform rows only,
+and a trader account with no saved credentials never falls back to the operator's `.env` app.
+The OAuth callback tells the two flows apart by a one-time `state` (`acct-<nonce>`, 15 minutes,
+single use) minted by `GET /api/Trader/broker/auth-url`.
+
+Traders are never told about the platform broker or the feed — those are the operator's; a
+trader's Strategies page shows only the kill switch and their concurrent-run ceiling.

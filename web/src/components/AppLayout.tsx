@@ -39,6 +39,7 @@ import {
   IconPulse,
   IconSignOut,
   IconX,
+  IconUsers,
 } from './icons'
 
 /** "2h 14m", "6m", "48s" — short enough for a chip. */
@@ -205,6 +206,7 @@ const TRADER_NAV = [
   // copy of the same list with nothing to do on it.
   { to: '/trader/deploy', label: 'Strategies', icon: IconFlask },
   { to: '/trader/strategies/history', label: 'My runs', icon: IconClock },
+  { to: '/trader/account', label: 'Account', icon: IconUsers },
 ]
 
 function NavItem({
@@ -382,6 +384,7 @@ const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]>
   ['/trader/strategies/runs/', 'Trading', 'Live run'],
   ['/trader/strategies/', 'Trading', 'How it works'],
   ['/trader/deploy', 'Trading', 'Strategies'],
+  ['/trader/account', 'Trading', 'Account'],
   ['/trader', null, 'Trading'],
 ]
 
