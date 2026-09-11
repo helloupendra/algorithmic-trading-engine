@@ -35,6 +35,17 @@ public class StrategyLiveViewResponse
     public DateTime? StoppedUtc { get; set; }
     public string? StopReason { get; set; }
 
+    /// <summary>
+    /// "live", or "recap" for a run trading an evening replay. A recap's
+    /// positions, orders and activity are timed by the replayed session, so
+    /// they read against that day's chart; StartedUtc and StoppedUtc stay the
+    /// real moments the run started and stopped.
+    /// </summary>
+    public string Session { get; set; } = "live";
+
+    /// <summary>The replayed day (yyyy-MM-dd) of a recap run; null otherwise.</summary>
+    public string? RecapDate { get; set; }
+
     public StrategyPnlSummary Pnl { get; set; } = new();
 
     /// <summary>Open first, then newest first.</summary>

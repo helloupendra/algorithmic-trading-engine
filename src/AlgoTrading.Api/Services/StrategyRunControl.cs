@@ -436,12 +436,17 @@ public sealed class StrategyRunControl
 
         var metadata = JsonSerializer.Serialize(new { reason, by });
 
+        // On the activity timeline a recap's stop belongs to the replayed
+        // session, after the trades it ends; CompletedUtc above stays the moment
+        // it actually stopped.
+        var marketNow = run is null ? null : await RecapClock.NowAsync(_dbContext, run, cancellationToken);
+
         await _dbContext.SimulationSignals.AddAsync(new SimulationSignal
         {
             SimulationRunId = runId,
             StrategyName = strategyName,
             SignalType = RunStoppedSignalType,
-            TimestampUtc = now,
+            TimestampUtc = marketNow ?? now,
             GroupId = string.Empty,
             MetadataJson = metadata,
             CreatedUtc = now

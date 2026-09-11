@@ -698,12 +698,14 @@ public class StrategyController : ControllerBase
         }
 
         var now = DateTime.UtcNow;
+        // A recap run's activity is on the replayed session's clock (RecapClock).
+        var marketNow = run is null ? null : await RecapClock.NowAsync(_dbContext, run, cancellationToken);
         await _dbContext.SimulationSignals.AddAsync(new SimulationSignal
         {
             SimulationRunId = runId,
             StrategyName = running.Name,
             SignalType = RunRiskRules.RiskUpdatedSignalType,
-            TimestampUtc = now,
+            TimestampUtc = marketNow ?? now,
             GroupId = string.Empty,
             MetadataJson = RunRiskRules.UpdatedMetadata(rules, userName),
             CreatedUtc = now
@@ -1118,6 +1120,11 @@ public class StrategyController : ControllerBase
                           ?? UnderlyingCatalog.InferUnderlying(run.Symbol);
         view.SpotSymbol = running?.SpotSymbol ?? lastExit?.SpotSymbol ?? run.Symbol;
         view.Lots = running?.Lots ?? lastExit?.Lots ?? p.Lots;
+        if (RecapClock.IsRecap(run.ParametersJson))
+        {
+            view.Session = RecapClock.RecapSession;
+            view.RecapDate = RecapClock.RecapDate(run.ParametersJson)?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        }
 
         if (running is not null)
         {
