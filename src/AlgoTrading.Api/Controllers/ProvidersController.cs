@@ -150,14 +150,25 @@ public class ProvidersController : ControllerBase
             return NotFound(new { message = $"No connector is registered under '{providerKey}'." });
         }
 
-        if (string.IsNullOrWhiteSpace(request.ClientId) ||
-            string.IsNullOrWhiteSpace(request.SecretKey) ||
-            string.IsNullOrWhiteSpace(request.RedirectUri))
+        if (string.IsNullOrWhiteSpace(request.ClientId) || string.IsNullOrWhiteSpace(request.SecretKey))
         {
-            return BadRequest(new { message = "clientId, secretKey and redirectUri are all required." });
+            return BadRequest(new { message = "clientId and secretKey are both required." });
         }
 
-        if (!Uri.TryCreate(request.RedirectUri, UriKind.Absolute, out _))
+        // A redirect URL is where a hosted login sends the browser back, so only
+        // a connector that has a hosted login needs one. TrueData signs in with
+        // a username and a password over REST and has no browser leg at all;
+        // demanding a URL there would mean storing an invented one to satisfy a
+        // check, which is how a field stops meaning anything.
+        bool needsRedirect = descriptor.Auth == ProviderAuthKind.OAuthDaily;
+
+        if (needsRedirect && string.IsNullOrWhiteSpace(request.RedirectUri))
+        {
+            return BadRequest(new { message = "redirectUri is required for a connector that signs in through a browser." });
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.RedirectUri) &&
+            !Uri.TryCreate(request.RedirectUri, UriKind.Absolute, out _))
         {
             return BadRequest(new { message = "redirectUri must be an absolute URL." });
         }
