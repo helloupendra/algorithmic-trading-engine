@@ -39,6 +39,9 @@
     <ProjectReference Include="../../src/AlgoTrading.Contracts/AlgoTrading.Contracts.csproj" />
     <ProjectReference Include="../../src/AlgoTrading.Application/AlgoTrading.Application.csproj" />
     <ProjectReference Include="../../src/AlgoTrading.Infrastructure/AlgoTrading.Infrastructure.csproj" />
+    <!-- For the process supervisors, whose safety rules (which pid may be
+         adopted and killed) are plain logic that needs no host to test. -->
+    <ProjectReference Include="../../src/AlgoTrading.Api/AlgoTrading.Api.csproj" />
   </ItemGroup>
 
 </Project>

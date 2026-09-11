@@ -14,7 +14,7 @@ import unittest
 
 import _bootstrap  # noqa: F401
 
-from market_data.live.fyers_streamer import trim_raw_payload
+from market_data.live.vendors.fyers import trim_raw_payload
 
 # One real MCX message, copied from live_ticks on 2026-09-11.
 REAL_MESSAGE = {

@@ -39,6 +39,9 @@ public abstract class PythonDaemonSupervisor
     private readonly ILogger _logger;
     private readonly DaemonDescriptor _daemon;
 
+    // The current marker first, then any the daemon answered to before a rename.
+    private readonly string[] _markers;
+
     // Serializes start attempts so two overlapping POSTs cannot both spawn a
     // process (the second would be untracked and therefore unstoppable).
     private readonly object _startLock = new();
@@ -58,10 +61,20 @@ public abstract class PythonDaemonSupervisor
         ILogger logger)
     {
         _daemon = daemon;
+        _markers = new[] { daemon.ProcessMarker }.Concat(daemon.LegacyMarkers ?? Array.Empty<string>()).ToArray();
         _engine = engine;
         _scopeFactory = scopeFactory;
         _logger = logger;
     }
+
+    /// <summary>What this supervisor runs, how it recognises it and where its pid lives.</summary>
+    public DaemonDescriptor Descriptor => _daemon;
+
+    /// <summary>
+    /// The markers a stored pid is checked against before it is adopted or
+    /// killed: <see cref="DaemonDescriptor.ProcessMarker"/>, then any legacy ones.
+    /// </summary>
+    public IReadOnlyList<string> Markers => _markers;
 
     /// <summary>What a daemon is: what to run, how to recognise it, where its pid lives.</summary>
     /// <param name="Name">Used in messages and logs — "ingestor", "chain poller".</param>
@@ -69,25 +82,34 @@ public abstract class PythonDaemonSupervisor
     /// <param name="ProcessMarker">
     /// A substring of the command line that identifies this daemon. Checked
     /// before anything is killed, so a recycled pid cannot be mistaken for ours.
+    /// The exact rule is <see cref="ProcessProbe.NamesAnyMarker"/>.
     /// </param>
     /// <param name="PidSettingKey">Where the pid is recorded so it survives an API restart.</param>
     /// <param name="Args">
     /// Arguments passed after the script path. Each is quoted individually by
     /// ArgumentList, so a value with spaces needs no escaping here.
     /// </param>
+    /// <param name="LegacyMarkers">
+    /// Markers the same daemon was recognised by before its script was renamed.
+    /// Only adoption reads them: a process launched under the old name before a
+    /// deploy is still ours, and must stay stoppable until it is next restarted.
+    /// New launches always use <paramref name="ScriptParts"/>.
+    /// </param>
     public sealed record DaemonDescriptor(
         string Name,
         string[] ScriptParts,
         string ProcessMarker,
         string PidSettingKey,
-        string[]? Args = null);
+        string[]? Args = null,
+        string[]? LegacyMarkers = null);
 
     /// <summary>Capitalised for the start of a sentence.</summary>
     private string Sentence => char.ToUpperInvariant(_daemon.Name[0]) + _daemon.Name[1..];
 
     /// <summary>
     /// isRunning is true when this API launched the process and it is alive
-    /// (managed) OR a stored pid is alive and is a fyers_streamer (adopted).
+    /// (managed) OR a stored pid is alive and its command line names this
+    /// daemon's marker (adopted).
     /// </summary>
     public sealed record Status(bool IsRunning, bool Managed, int? ProcessId, string Source);
 
@@ -109,7 +131,7 @@ public abstract class PythonDaemonSupervisor
             return new Status(false, false, null, SourceNone);
         }
 
-        var probe = ProcessProbe.Probe(stored.Value, _daemon.ProcessMarker, null, _logger);
+        var probe = ProcessProbe.Probe(stored.Value, _markers, null, _logger);
         if (probe.IsDead)
         {
             // Stale record from an instance that died without a clean stop.
@@ -149,7 +171,7 @@ public abstract class PythonDaemonSupervisor
         var stored = await ReadStoredPidAsync(cancellationToken);
         if (stored is not null)
         {
-            var probe = ProcessProbe.Probe(stored.Value, _daemon.ProcessMarker, null, _logger);
+            var probe = ProcessProbe.Probe(stored.Value, _markers, null, _logger);
             if (probe.IsAlive)
             {
                 probe.Process?.Dispose();
@@ -280,7 +302,7 @@ public abstract class PythonDaemonSupervisor
             return new StopOutcome(false, $"{Sentence} is not running", null, SourceNone);
         }
 
-        var probe = ProcessProbe.Probe(stored.Value, _daemon.ProcessMarker, null, _logger);
+        var probe = ProcessProbe.Probe(stored.Value, _markers, null, _logger);
         if (probe.IsDead)
         {
             await ClearStoredPidAsync(stored.Value, cancellationToken);

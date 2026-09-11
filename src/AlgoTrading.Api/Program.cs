@@ -90,7 +90,10 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.StrategyRunControl>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.LiveRunHistoryBuilder>();
 // The live data ingestor process: launch, durable pid, adoption after a restart.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.IngestorSupervisor>();
-builder.Services.AddSingleton<AlgoTrading.Api.Services.TrueDataFeedSupervisor>();
+// One live feed per connector that declares live ticks, FYERS being the
+// ingestor above. The registry builds the other vendors' supervisors itself,
+// so a new vendor needs no registration here.
+builder.Services.AddSingleton<AlgoTrading.Api.Services.FeedSupervisorRegistry>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.ChainPollerSupervisor>();
 // The signal alerter process, same shape. It was never registered, so every call
 // to /api/Alerts/status, start and stop answered 500.

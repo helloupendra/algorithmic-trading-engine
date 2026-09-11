@@ -246,7 +246,10 @@ public class LiveDataService : ILiveDataService
             // Only enforced when both sides carry an exchange stamp. Without one
             // there is no order to preserve and last-writer-wins is all there is.
             var incomingExchangeUtc = request.ExchangeTimestampUtc?.ToUniversalTime();
-            if (incomingExchangeUtc is not null
+            // A replay runs behind the stamps the live session already wrote;
+            // refusing it as out of order would freeze the quote at the close.
+            if (!request.IsReplay
+                && incomingExchangeUtc is not null
                 && existing.ExchangeTimestampUtc is not null
                 && incomingExchangeUtc < existing.ExchangeTimestampUtc)
             {
@@ -463,9 +466,10 @@ public class LiveDataService : ILiveDataService
             Gamma = request.Gamma,
             Theta = request.Theta,
             Vega = request.Vega,
-            // Lets the snapshot refuse an out-of-order tick.
+            // Lets the snapshot refuse an out-of-order tick — unless it is a replay.
             ExchangeTimestampUtc = request.ExchangeTimestampUtc,
-            SourceKey = sourceKey
+            SourceKey = sourceKey,
+            IsReplay = request.IsReplay
         }, cancellationToken);
 
         // Every symbol goes through the batched archive writer, not just one.
@@ -790,7 +794,11 @@ public class LiveDataService : ILiveDataService
             return;
         }
 
-        if (incomingExchangeUtc is not null
+        // A replay runs behind the stamps the live session already wrote. The
+        // first TrueData recap froze all 49 of its contracts on exactly this
+        // check: entries filled at a stale price and no leg target could fire.
+        if (!request.IsReplay
+            && incomingExchangeUtc is not null
             && existing.ExchangeTimestampUtc is not null
             && incomingExchangeUtc < existing.ExchangeTimestampUtc)
         {

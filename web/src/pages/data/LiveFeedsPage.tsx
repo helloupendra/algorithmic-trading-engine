@@ -1,7 +1,8 @@
 /**
  * Data module — Live feeds, v2.1 layout.
  *
- * One control: the Start/Stop button in the page header. One data surface:
+ * One control for the main feed: the Start/Stop button in the page header
+ * (FeedsPanel lists every vendor's feed, that one included). One data surface:
  * the live watchlist table, which joins subscriptions with their live quotes
  * (the old page showed the same symbols twice — once as a bare watchlist,
  * once as quotes). Index tickers sit on top and start moving the moment the
@@ -9,7 +10,7 @@
  */
 
 import { useMemo, useState } from 'react'
-import { TrueDataFeedPanel } from '../admin/TrueDataPanel'
+import { FeedsPanel } from './FeedsPanel'
 import {
   useAddEquityGroupToWatchlist,
   useAddWatchlistSymbol,
@@ -935,7 +936,7 @@ export function LiveFeedsPage() {
       <StalePanel />
       <LiveWatchlistPanel />
       <ChainPollerPanel />
-      <TrueDataFeedPanel />
+      <FeedsPanel />
       <DiagnosticsPanel />
       <InspectorPanel />
     </div>

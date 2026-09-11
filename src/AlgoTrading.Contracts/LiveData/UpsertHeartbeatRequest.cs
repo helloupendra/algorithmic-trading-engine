@@ -45,5 +45,12 @@ namespace AlgoTrading.Contracts.LiveData
         /// an API restart. Optional; older ingestors do not send it.
         /// </summary>
         public int? ProcessId { get; set; }
+
+        /// <summary>
+        /// The connector key of the feed sending this ("fyers", "truedata"), so its
+        /// process id is recorded under that feed and nowhere else. Absent from an
+        /// ingestor older than per-vendor feeds, which was always FYERS.
+        /// </summary>
+        public string? FeedKey { get; set; }
     }
 }

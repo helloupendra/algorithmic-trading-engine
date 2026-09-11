@@ -49,7 +49,12 @@ running="$(docker compose ps --status running --format '{{.Service}}' 2>/dev/nul
 case "$running" in *timescaledb*redis*|*redis*timescaledb*) ok "docker infra" "$running";; *) bad "docker infra" "${running:-nothing running} — need timescaledb + redis";; esac
 
 # --- daemons and runs ----------------------------------------------------------
-pgrep -f fyers_streamer >/dev/null       && ok  "tick ingestor"  "running" || meh "tick ingestor"  "not running (normal outside market hours)"
+# Every vendor's feed is run_feed.py --vendor <key>; fyers_streamer is the old
+# name, still matched so a feed started before the rename is not missed.
+pgrep -f "run_feed.py --vendor fyers|fyers_streamer" >/dev/null && ok "tick ingestor" "running (fyers)" || meh "tick ingestor" "not running (normal outside market hours)"
+for v in $(pgrep -af "run_feed.py --vendor" 2>/dev/null | grep -o -- "--vendor [a-z0-9_-]*" | awk '{print $2}' | sort -u | grep -v '^fyers$'); do
+  ok "$v feed" "running"
+done
 pgrep -f option_chain_poller >/dev/null  && ok  "chain poller"   "running" || meh "chain poller"   "not running (normal outside market hours)"
 n="$(pgrep -f execution_runner | wc -l | tr -d ' ')"
 [ "$n" -gt 0 ] && ok "strategy runners" "$n live" || meh "strategy runners" "none live"

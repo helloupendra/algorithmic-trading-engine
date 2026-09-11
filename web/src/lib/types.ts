@@ -100,6 +100,20 @@ export interface IngestorProcessStatus {
   source?: 'managed' | 'adopted' | 'none'
 }
 
+/**
+ * One row of GET /api/Feeds — a live feed per connector that declares live
+ * ticks. `key` is the connector key ("fyers", "truedata"); the FYERS row is
+ * the same process as /api/Ingestor. `source` means what it does there.
+ */
+export interface LiveFeed {
+  key: string
+  displayName: string
+  isRunning: boolean
+  managed: boolean
+  processId: number | null
+  source: 'managed' | 'adopted' | 'none'
+}
+
 export interface StaleQuote {
   symbol: string
   dataType: string

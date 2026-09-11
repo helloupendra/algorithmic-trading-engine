@@ -11,9 +11,9 @@ using Microsoft.Extensions.Logging;
 namespace AlgoTrading.Api.Services
 {
     /// <summary>
-    /// Auto-shutdown at market close (15:30 IST, weekdays): stops the data ingestor
-    /// and every running strategy — squaring off their open paper positions — so
-    /// nothing keeps consuming the host after the session ends.
+    /// Auto-shutdown at market close (15:30 IST, weekdays): stops every live data
+    /// feed and every running strategy — squaring off their open paper positions —
+    /// so nothing keeps consuming the host after the session ends.
     /// </summary>
     public class MarketHoursService : BackgroundService
     {
@@ -21,22 +21,23 @@ namespace AlgoTrading.Api.Services
 
         private readonly ILogger<MarketHoursService> _logger;
         private readonly IServiceScopeFactory _scopeFactory;
-        private readonly IngestorSupervisor _ingestor;
+        private readonly FeedSupervisorRegistry _feeds;
         private readonly ChainPollerSupervisor _poller;
         private readonly AlertsSupervisor _alerts;
         private readonly IMarketSessionService _marketSession;
         private readonly TimeZoneInfo _istZone;
         private bool _hasShutdownToday;
         private DateTime _lastShutdownDate;
-        // Set at 15:30 when the ingestor is left running for MCX; cleared at the MCX close.
-        private bool _mcxFeedKeptOpen;
+        // Connector keys of the feeds left running for MCX at 15:30; each is
+        // removed once it has been stopped at the MCX close.
+        private readonly HashSet<string> _feedsKeptOpenForMcx = new(StringComparer.OrdinalIgnoreCase);
         public const string McxClosedReason = "MCX closed";
 
-        public MarketHoursService(ILogger<MarketHoursService> logger, IServiceScopeFactory scopeFactory, IngestorSupervisor ingestor, ChainPollerSupervisor poller, AlertsSupervisor alerts, IMarketSessionService marketSession)
+        public MarketHoursService(ILogger<MarketHoursService> logger, IServiceScopeFactory scopeFactory, FeedSupervisorRegistry feeds, ChainPollerSupervisor poller, AlertsSupervisor alerts, IMarketSessionService marketSession)
         {
             _logger = logger;
             _scopeFactory = scopeFactory;
-            _ingestor = ingestor;
+            _feeds = feeds;
             _poller = poller;
             _alerts = alerts;
             _marketSession = marketSession;
@@ -79,21 +80,44 @@ namespace AlgoTrading.Api.Services
                         {
                             _logger.LogInformation("Market has closed (15:30 IST). Triggering auto-shutdown of heavy processes to save system load.");
 
-                            // Stop the data ingestor (managed, or adopted after an API restart) —
+                            // Stop every live feed (managed, or adopted after an API restart) —
                             // unless the commodity session is still on and the list carries
                             // MCX symbols: MCX trades until 23:30, and stopping the feed at the
                             // equity close left the Commodity page frozen at 15:30 on the first
-                            // evening on the server. The ingestor is then stopped at the MCX
-                            // close instead (below), so the morning starts a fresh one.
-                            if (await McxStillWantsTheFeedAsync(nowUtc, stoppingToken))
+                            // evening on the server. The feeds are then stopped at the MCX
+                            // close instead (below), so the morning starts fresh ones.
+                            //
+                            // The question is asked once and the same answer applied to each
+                            // feed: it is about the session and the recording list, which
+                            // every feed reads, not about any one vendor. FYERS is the
+                            // "ingestor" here, and its log lines read exactly as they did
+                            // before the other vendors were added to this loop.
+                            var mcxWantsTheFeeds = await McxStillWantsTheFeedAsync(nowUtc, stoppingToken);
+                            foreach (var (key, _, feed) in _feeds.All)
                             {
-                                _mcxFeedKeptOpen = true;
-                                _logger.LogInformation("Market close: ingestor kept running for the MCX session (MCX symbols on the recording list).");
-                            }
-                            else
-                            {
-                                var ingestorStop = await _ingestor.StopAsync(MarketClosedReason, stoppingToken);
-                                _logger.LogInformation("Market close: ingestor {Outcome}.", ingestorStop.Message);
+                                if (mcxWantsTheFeeds)
+                                {
+                                    // Only a feed running now is kept for MCX, and so
+                                    // only it is stopped at the MCX close. A feed started
+                                    // later in the evening — TrueData's recap, which plays
+                                    // until about 00:30 — was started on purpose after
+                                    // this decision and must not be cut off at 23:30 by it.
+                                    var running = await feed.GetStatusAsync(stoppingToken);
+                                    if (running.IsRunning)
+                                    {
+                                        _feedsKeptOpenForMcx.Add(key);
+                                        _logger.LogInformation("Market close: {Feed} kept running for the MCX session (MCX symbols on the recording list).", feed.Descriptor.Name);
+                                    }
+                                    else
+                                    {
+                                        _logger.LogInformation("Market close: {Feed} was not running.", feed.Descriptor.Name);
+                                    }
+                                }
+                                else
+                                {
+                                    var feedStop = await feed.StopAsync(MarketClosedReason, stoppingToken);
+                                    _logger.LogInformation("Market close: {Feed} {Outcome}.", feed.Descriptor.Name, feedStop.Message);
+                                }
                             }
 
                             // The chain poller too. Nothing in a chain moves after the close,
@@ -123,15 +147,21 @@ namespace AlgoTrading.Api.Services
                         }
                     }
 
-                    // The MCX close: the feed that stayed up for commodities is stopped
+                    // The MCX close: the feeds that stayed up for commodities are stopped
                     // once that session ends, so no ingestor lives through the night on a
                     // token that expires at 06:00 — market-open would otherwise find it
                     // "already running" and leave it deaf all day.
-                    if (_mcxFeedKeptOpen && !_marketSession.IsMarketOpen(nowUtc, "MCX", "COM"))
+                    if (_feedsKeptOpenForMcx.Count > 0 && !_marketSession.IsMarketOpen(nowUtc, "MCX", "COM"))
                     {
-                        var ingestorStop = await _ingestor.StopAsync(McxClosedReason, stoppingToken);
-                        _logger.LogInformation("MCX close: ingestor {Outcome}.", ingestorStop.Message);
-                        _mcxFeedKeptOpen = false;
+                        foreach (var (key, _, feed) in _feeds.All)
+                        {
+                            if (!_feedsKeptOpenForMcx.Contains(key)) continue;
+
+                            var feedStop = await feed.StopAsync(McxClosedReason, stoppingToken);
+                            _logger.LogInformation("MCX close: {Feed} {Outcome}.", feed.Descriptor.Name, feedStop.Message);
+                            // One at a time, so a failure part-way retries only the feeds still up.
+                            _feedsKeptOpenForMcx.Remove(key);
+                        }
                     }
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
