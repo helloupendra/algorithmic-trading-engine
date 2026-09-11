@@ -496,6 +496,47 @@ UNDERLYING_BY_SPOT_SYMBOL = {
     "BSE:BANKEX-INDEX": "BANKEX",
 }
 
+# Every field of the vendor message that this platform already stores in a
+# column of its own. Keeping them in rawPayload too was storing each tick twice:
+# on 2026-09-11 rawPayload was 73% of every row, 1.2 GB of one session, and a
+# full day of ticks was 2.2 GB across live_ticks and market_ticks.
+#
+# What is NOT listed here survives, so a field the vendor adds later is still
+# captured — the point is to drop duplication, not to stop recording. Today the
+# survivors are last_traded_qty, tot_buy_qty, tot_sell_qty, avg_trade_price,
+# lower_ckt and upper_ckt: six numbers with no column, and the buy/sell totals
+# are the order-book imbalance the alert rules want.
+_RAW_FIELDS_ALREADY_COLUMNS = frozenset({
+    "symbol",           # Symbol
+    "type",             # DataType
+    "last_traded_time", # ExchangeTimestampUtc
+    "exch_feed_time",   # ExchangeTimestampUtc
+    "ltp",              # LastTradedPrice
+    "bid_price",        # BidPrice
+    "ask_price",        # AskPrice
+    "bid_size",         # BidSize
+    "ask_size",         # AskSize
+    "open_price",       # Open
+    "high_price",       # High
+    "low_price",        # Low
+    "prev_close_price", # PrevClose
+    "vol_traded_today", # Volume
+})
+
+
+def trim_raw_payload(message):
+    """The vendor message with the fields that are already columns removed.
+
+    Never returns the empty object: a fabricated tick is written with
+    {"mock": true}, and a real tick that happened to carry nothing new would
+    otherwise be indistinguishable from one.
+    """
+    kept = {k: v for k, v in message.items() if k not in _RAW_FIELDS_ALREADY_COLUMNS}
+    if not kept:
+        return '{"trimmed": true}'
+    return json.dumps(kept)
+
+
 def map_message_to_payload(message: dict) -> dict | None:
     symbol = message.get("symbol")
     if not symbol:
@@ -551,7 +592,7 @@ def map_message_to_payload(message: dict) -> dict | None:
         "prevClose": message.get("prev_close_price") or message.get("close"),
         "volume": message.get("vol_traded_today") or message.get("volume"),
         "openInterest": message.get("min_oi") or message.get("oi") or message.get("open_interest", 0),
-        "rawPayload": json.dumps(message)
+        "rawPayload": trim_raw_payload(message)
     }
 
     # Implied volatility and greeks, when this is an option we can actually price.
@@ -1004,7 +1045,9 @@ def mock_tick_loop():
                         "low": min(mock_open_prices[sym], price * 0.99),
                         "prevClose": mock_open_prices[sym] * 1.002,
                         "volume": random.randint(100, 5000),
-                        "rawPayload": "{}"
+                        # Says so in the row itself: an empty object used to be
+                        # the only sign, and nothing ever checked for it.
+                        "rawPayload": '{"mock": true}'
                     }
                     upsert_tick(payload)
         except Exception as e:

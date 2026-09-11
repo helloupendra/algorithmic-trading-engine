@@ -15,7 +15,7 @@ mkdir -p "$REPO_ROOT/logs"
 # few places that differ are behind these two.
 IS_MAC=false; [ "$(uname -s)" = "Darwin" ] && IS_MAC=true
 if $IS_MAC; then DESK_STATE_DIR="$HOME/Library/Application Support/algotrading"; else DESK_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/algotrading"; fi
-mkdir -p "$DESK_STATE_DIR"
+mkdir -p "$DESK_STATE_DIR"; chmod 700 "$DESK_STATE_DIR" 2>/dev/null || true
 
 # How the desk reaches the operator. On the Mac that is a desktop notification;
 # on the server there is no desktop, so it is Telegram.
@@ -30,6 +30,14 @@ notify() {  # title, message
   if $IS_MAC; then
     osascript -e "display notification \"$2\" with title \"$1\"" 2>/dev/null || true
     return 0
+  fi
+  # The alert path must not depend on the caller having loaded .env. desk.sh
+  # reaches load_env only inside command substitutions, so those exports never
+  # reach its own shell: without this, every deploy notice was a silent no-op —
+  # the same "it looked fine because nothing said otherwise" failure this
+  # function exists to end. Read straight from the file, quietly.
+  if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+    if [ -f "$REPO_ROOT/.env" ]; then set -a; . "$REPO_ROOT/.env"; set +a; fi
   fi
   [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ] || return 0
   # -o /dev/null: the URL carries the bot token, so nothing from this call is
@@ -158,22 +166,47 @@ admin_token() {
 # Every authenticated call goes through these instead. They mint on first use,
 # reuse the token while it is comfortably fresh, and mint a new one on a 401 —
 # staleness is the one failure a long-running script can always repair itself.
-_ADMIN_TOKEN=""
-_ADMIN_TOKEN_AT=0
-# Half the token's life: a call can never race the expiry, and a morning of
-# waiting costs one sign-in every thirty minutes rather than one per poll.
+# The cache is a file, not a variable. Every call site reads the result
+# through $(...), which is a subshell, so a variable cache is thrown away the
+# moment the call returns: the morning wait would sign in three times a minute,
+# fill the activity log with hundreds of "admin signed in" rows, and sit one
+# busy console away from the 10-per-minute limit. The file survives subshells.
+# It holds a 60-minute bearer token, so it is written 0600 in a 0700 dir.
+_TOKEN_CACHE="$DESK_STATE_DIR/admin-token"
+# Half the token's 60-minute life: a call can never race the expiry.
 ADMIN_TOKEN_TTL="${ADMIN_TOKEN_TTL:-1800}"
 
+# Drops the cached token, so the next call signs in again. Called on a 401.
+auth_token_forget() { rm -f "$_TOKEN_CACHE" 2>/dev/null || true; }
+
 auth_token() {
-  local now fresh
+  local now minted cached fresh deadline
   now="$(date +%s)"
-  if [ -z "$_ADMIN_TOKEN" ] || [ "$(( now - _ADMIN_TOKEN_AT ))" -ge "$ADMIN_TOKEN_TTL" ]; then
-    fresh="$(admin_token 2>/dev/null)" || return 1
-    [ -n "$fresh" ] || return 1
-    _ADMIN_TOKEN="$fresh"
-    _ADMIN_TOKEN_AT="$now"
+  if [ -r "$_TOKEN_CACHE" ]; then
+    minted="$(sed -n 1p "$_TOKEN_CACHE" 2>/dev/null)"
+    cached="$(sed -n 2p "$_TOKEN_CACHE" 2>/dev/null)"
+    case "$minted" in ''|*[!0-9]*) minted=0 ;; esac
+    if [ -n "$cached" ] && [ "$(( now - minted ))" -lt "$ADMIN_TOKEN_TTL" ]; then
+      printf '%s' "$cached"
+      return 0
+    fi
   fi
-  printf '%s' "$_ADMIN_TOKEN"
+  # Keep asking across the whole sign-in window and a little past it. The API
+  # allows 10 sign-ins per minute per IP on a 1-minute sliding window
+  # (Program.cs), so a burst locks the door for up to a minute. Giving up
+  # inside that minute would report a transient as "the credentials are wrong"
+  # and cost the morning, which is the failure this file exists to end.
+  deadline=$(( now + ${ADMIN_TOKEN_WAIT:-90} ))
+  while :; do
+    fresh="$(admin_token 2>/dev/null)" || fresh=""
+    if [ -n "$fresh" ]; then
+      ( umask 077; printf '%s\n%s\n' "$(date +%s)" "$fresh" > "$_TOKEN_CACHE" )
+      printf '%s' "$fresh"
+      return 0
+    fi
+    [ "$(date +%s)" -ge "$deadline" ] && return 1
+    sleep "${ADMIN_TOKEN_RETRY_WAIT:-15}"
+  done
 }
 
 # api_get PATH   /   api_post PATH [JSON-BODY]
@@ -197,7 +230,7 @@ _api_call() {
     fi
     code="${raw##*$'\n'}"
     out="${raw%$'\n'*}"
-    if [ "$code" = 401 ] && [ "$attempt" = 1 ]; then _ADMIN_TOKEN=""; continue; fi
+    if [ "$code" = 401 ] && [ "$attempt" = 1 ]; then auth_token_forget; continue; fi
     printf '%s' "$out"
     case "$code" in 2??) return 0 ;; *) return 1 ;; esac
   done
