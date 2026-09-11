@@ -11,6 +11,7 @@ using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Providers;
 using AlgoTrading.Infrastructure.Providers.Fyers;
 using AlgoTrading.Infrastructure.Providers.Replay;
+using AlgoTrading.Infrastructure.Providers.TrueData;
 using AlgoTrading.Infrastructure.Services;
 using AlgoTrading.Infrastructure.Session;
 using Microsoft.EntityFrameworkCore;
@@ -69,6 +70,7 @@ public static class DependencyInjection
         services.AddScoped<IProviderCatalog, ProviderCatalog>();
 
         services.AddFyersProvider(configuration, catalogSeed, credentialFallbacks);
+        services.AddTrueDataProvider(configuration, catalogSeed, credentialFallbacks);
         services.AddReplayProvider(catalogSeed);
 
         services.AddScoped<IProviderRegistry, ProviderRegistry>();
