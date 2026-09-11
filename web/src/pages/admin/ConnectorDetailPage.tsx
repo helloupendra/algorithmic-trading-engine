@@ -18,6 +18,7 @@ import {
   useSaveProviderCredentials,
   useTestProvider,
 } from '../../lib/queries'
+import { TrueDataPanel } from './TrueDataPanel'
 import type { Provider, ProviderTestResult } from '../../lib/types'
 import { formatAge, formatDateTime } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components/ui'
@@ -305,6 +306,8 @@ export function ConnectorDetailPage() {
           </p>
         </Panel>
       )}
+
+      {provider.isInstalled && provider.key === 'truedata' && <TrueDataPanel />}
 
       {provider.isInstalled && (
         <>
