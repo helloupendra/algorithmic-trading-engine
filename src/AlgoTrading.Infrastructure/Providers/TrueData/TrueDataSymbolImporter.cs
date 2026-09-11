@@ -1,3 +1,4 @@
+using System.Globalization;
 using AlgoTrading.Application.Interfaces;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Logging;
@@ -31,6 +32,13 @@ public sealed class TrueDataSymbolImporter
     /// "all" would download a list TrueData itself calls not recommended.
     /// </summary>
     public static readonly IReadOnlyList<string> DefaultSegments = new[] { "fo", "mcx", "bsefo" };
+
+    /// <summary>
+    /// Ceiling asked of the vendor. High enough to mean "all of it" — the
+    /// largest segment is under 80,000 rows — and present only because leaving
+    /// it out silently caps the answer at twenty.
+    /// </summary>
+    public const int MaxRowsPerSegment = 200_000;
 
     private readonly IBrokerCredentialsProvider _credentials;
     private readonly ISymbolMapper _symbolMapper;
@@ -96,6 +104,12 @@ public sealed class TrueDataSymbolImporter
             // Expired contracts would map canonical names onto instruments that
             // can no longer be quoted.
             ["allexpiry"] = "false",
+            // Without a limit TrueData answers with twenty rows and no hint
+            // that it truncated: the first import looked like a success and
+            // mapped a NIFTY chain's worth of nothing. Asked for explicitly,
+            // the same call returns 7,122 rows for a NIFTY search and 79,380
+            // for the whole F&O segment.
+            ["limit"] = MaxRowsPerSegment.ToString(CultureInfo.InvariantCulture),
         };
         if (!string.IsNullOrWhiteSpace(search)) query["search"] = search;
 

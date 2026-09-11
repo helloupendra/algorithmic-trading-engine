@@ -38,12 +38,27 @@ function CredentialsForm({ provider }: { provider: Provider }) {
     }))
   }, [provider])
 
+  // A redirect URL is where a hosted login sends the browser back. A connector
+  // that signs in over REST has no browser leg, so asking for one would mean
+  // storing an invented URL to satisfy a required field.
+  const hasBrowserLogin = provider.auth === 'OAuthDaily'
+
   return (
     <Panel title="App credentials">
       <p className="muted" style={{ maxWidth: '78ch' }}>
-        Each installation uses its <b>own</b> {provider.displayName} app. Register the redirect URL{' '}
-        <code>{provider.suggestedRedirectUri}</code> with the vendor, then save the app id and secret
-        here — stored encrypted in this installation's database, never in the repository.
+        {hasBrowserLogin ? (
+          <>
+            Each installation uses its <b>own</b> {provider.displayName} app. Register the redirect URL{' '}
+            <code>{provider.suggestedRedirectUri}</code> with the vendor, then save the app id and secret
+            here — stored encrypted in this installation's database, never in the repository.
+          </>
+        ) : (
+          <>
+            {provider.displayName} signs in with the username and password it issued you, over its own
+            API. There is no browser step and no redirect URL. Both are stored encrypted in this
+            installation's database, never in the repository.
+          </>
+        )}
       </p>
       <p className="small-note muted">
         Current source:{' '}
@@ -74,7 +89,7 @@ function CredentialsForm({ provider }: { provider: Provider }) {
       >
         <div className="field">
           <label className="field__label" htmlFor="cd-client">
-            App id (client id)
+            {hasBrowserLogin ? 'App id (client id)' : 'Username'}
           </label>
           <input
             id="cd-client"
@@ -86,7 +101,7 @@ function CredentialsForm({ provider }: { provider: Provider }) {
         </div>
         <div className="field">
           <label className="field__label" htmlFor="cd-secret">
-            Secret key
+            {hasBrowserLogin ? 'Secret key' : 'Password'}
           </label>
           <input
             id="cd-secret"
@@ -99,18 +114,20 @@ function CredentialsForm({ provider }: { provider: Provider }) {
             autoComplete="new-password"
           />
         </div>
-        <div className="field">
-          <label className="field__label" htmlFor="cd-redirect">
-            Redirect URL (register with the vendor)
-          </label>
-          <input
-            id="cd-redirect"
-            className="field__input"
-            required
-            value={form.redirectUri}
-            onChange={(e) => setForm({ ...form, redirectUri: e.target.value })}
-          />
-        </div>
+        {hasBrowserLogin && (
+          <div className="field">
+            <label className="field__label" htmlFor="cd-redirect">
+              Redirect URL (register with the vendor)
+            </label>
+            <input
+              id="cd-redirect"
+              className="field__input"
+              required
+              value={form.redirectUri}
+              onChange={(e) => setForm({ ...form, redirectUri: e.target.value })}
+            />
+          </div>
+        )}
         <button className="btn btn--primary" disabled={saveCredentials.isPending}>
           {saveCredentials.isPending ? 'Saving…' : 'Save credentials'}
         </button>
