@@ -37,6 +37,7 @@ import type {
   Instrument,
   KillSwitchState,
   LiveBar,
+  LiveFeed,
   LiveQuote,
   LiveRunSummary,
   LiveRunUserSummary,
@@ -225,6 +226,8 @@ export function useStartIngestor() {
     mutationFn: () => api.post<{ message: string }>('/api/Ingestor/start'),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['ingestor'] })
+      // The ingestor is also the "fyers" row of the feeds list.
+      qc.invalidateQueries({ queryKey: ['feeds'] })
     },
   })
 }
@@ -235,7 +238,56 @@ export function useStopIngestor() {
     mutationFn: () => api.post<{ message: string }>('/api/Ingestor/stop'),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['ingestor'] })
+      qc.invalidateQueries({ queryKey: ['feeds'] })
     },
+  })
+}
+
+/**
+ * Every live feed the API can run, one per connector that declares live ticks,
+ * with whether each is running. The list is the server's: a vendor added there
+ * appears here with no change to the console.
+ */
+export function useFeeds() {
+  return useQuery({
+    queryKey: ['feeds'],
+    queryFn: () => api.get<LiveFeed[]>('/api/Feeds'),
+    refetchInterval: POLL_SLOW,
+  })
+}
+
+/**
+ * Settles on success and on failure alike: a start refused as "already
+ * running", or a stop that timed out, still changed what the list should say.
+ * The ingestor queries are refreshed too, since the FYERS row is that process.
+ */
+function useFeedMutation(action: 'start' | 'stop') {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (key: string) =>
+      api.post<{ message: string }>(`/api/Feeds/${encodeURIComponent(key)}/${action}`),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['feeds'] })
+      qc.invalidateQueries({ queryKey: ['ingestor'] })
+    },
+  })
+}
+
+export function useStartFeed() {
+  return useFeedMutation('start')
+}
+
+export function useStopFeed() {
+  return useFeedMutation('stop')
+}
+
+/** Recent output of one feed's process; only fetched while someone is looking. */
+export function useFeedLogs(key: string | null, take = 80) {
+  return useQuery({
+    queryKey: ['feeds', 'logs', key, take],
+    queryFn: () => api.get<string[]>(`/api/Feeds/${encodeURIComponent(key!)}/logs?take=${take}`),
+    enabled: key !== null,
+    refetchInterval: POLL_FAST,
   })
 }
 

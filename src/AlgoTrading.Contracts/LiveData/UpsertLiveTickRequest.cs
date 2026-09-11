@@ -107,6 +107,16 @@ namespace AlgoTrading.Contracts.LiveData
         /// a live feed, and leaves it blank rather than guess when several do.
         /// </summary>
         public string? SourceKey { get; set; }
+
+        /// <summary>
+        /// True when this tick comes from a replay of a past session (TrueData's
+        /// evening recap). A replay deliberately runs behind the exchange times the
+        /// quote store already holds for that day, so the rule that refuses an
+        /// older tick — right for a live feed, where it stops a delayed tick
+        /// overwriting a newer price — would freeze every replayed quote at the
+        /// live close. Replay ticks are written in the order they arrive.
+        /// </summary>
+        public bool IsReplay { get; set; }
     }
 
 }

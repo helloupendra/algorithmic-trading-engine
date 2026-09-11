@@ -1,85 +1,16 @@
 /**
- * TrueData controls, each placed where its kind of thing already lives.
+ * TrueData's symbol-name import, placed with the other symbol masters because
+ * that is the kind of thing it is. It does not belong on the Connectors page,
+ * which configures a connector and shows no market data.
  *
- * The feed is a feed, so it sits on Live feeds beside the FYERS one. Its symbol
- * names are part of the symbol masters, so the import sits with the other
- * masters. Neither belongs on the Connectors page, which configures a connector
- * and shows no market data.
+ * TrueData's live feed is not here: it is a row in the Live feeds page's
+ * FeedsPanel, like every other vendor's.
  */
 
 import { useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation } from '@tanstack/react-query'
 import { api } from '../../lib/api'
-import { InlineError, Panel } from '../../components/ui'
-
-interface FeedStatus {
-  isRunning: boolean
-  managed: boolean
-  processId: number | null
-  source: string
-}
-
-/** The TrueData live feed: status, start and stop. Runs beside the FYERS feed. */
-export function TrueDataFeedPanel() {
-  const qc = useQueryClient()
-  const status = useQuery({
-    queryKey: ['truedata', 'feed'],
-    queryFn: () => api.get<FeedStatus>('/api/TrueData/feed/status'),
-    refetchInterval: 10_000,
-  })
-
-  const start = useMutation({
-    mutationFn: () => api.post<{ message: string }>('/api/TrueData/feed/start'),
-    onSettled: () => qc.invalidateQueries({ queryKey: ['truedata', 'feed'] }),
-  })
-  const stop = useMutation({
-    mutationFn: () => api.post<{ message: string }>('/api/TrueData/feed/stop'),
-    onSettled: () => qc.invalidateQueries({ queryKey: ['truedata', 'feed'] }),
-  })
-
-  const running = status.data?.isRunning ?? false
-
-  return (
-    <Panel
-      title="TrueData feed"
-      actions={
-        // Nothing is offered until the state is known: Start on a feed that is
-        // already running is the one click here that does harm.
-        status.isPending ? (
-          <button className="btn btn--sm" disabled>Checking…</button>
-        ) : running ? (
-          <button className="btn btn--danger btn--sm" disabled={stop.isPending} onClick={() => stop.mutate()}>
-            {stop.isPending ? 'Stopping…' : 'Stop'}
-          </button>
-        ) : (
-          <button className="btn btn--pos btn--sm" disabled={start.isPending} onClick={() => start.mutate()}>
-            {start.isPending ? 'Starting…' : 'Start'}
-          </button>
-        )
-      }
-    >
-      <p style={{ margin: 0 }}>
-        <span className={status.isPending ? 'muted' : running ? 'pos' : 'muted'}>
-          {status.isPending
-            ? 'checking…'
-            : status.isError
-              ? 'status unavailable'
-              : running
-                ? `running${status.data?.processId ? ` · pid ${status.data.processId}` : ''}`
-                : 'stopped'}
-        </span>
-      </p>
-      <p className="muted" style={{ maxWidth: '80ch', marginBottom: 0 }}>
-        A second live feed beside FYERS, stamped <code className="mono">truedata</code> on every row so the two
-        can be compared. It carries open interest, which FYERS does not. The trial allows 50 symbols and the
-        recording list has more; the ones left out are named in the diagnostics log. One session per account,
-        so stop any other TrueData client first.
-      </p>
-      {start.isError && <InlineError error={start.error} />}
-      {stop.isError && <InlineError error={stop.error} />}
-    </Panel>
-  )
-}
+import { InlineError } from '../../components/ui'
 
 interface ImportSegment {
   segment: string

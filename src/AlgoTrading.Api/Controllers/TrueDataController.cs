@@ -1,6 +1,5 @@
 using System.Globalization;
 using AlgoTrading.Api.Security;
-using AlgoTrading.Api.Services;
 using AlgoTrading.Infrastructure.Providers.TrueData;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -14,8 +13,9 @@ namespace AlgoTrading.Api.Controllers;
 /// <remarks>
 /// Everything a connector has in common with the others — credentials, session,
 /// capability matrix, routing — is on the Connectors page already and is not
-/// repeated here. This controller only carries what that page cannot know how
-/// to ask for.
+/// repeated here. Its live feed is not here either: that is started and stopped
+/// through FeedsController, like every other vendor's. This controller only
+/// carries what neither of those can know how to ask for.
 /// </remarks>
 [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
 [ApiController]
@@ -24,61 +24,13 @@ public class TrueDataController : ControllerBase
 {
     private readonly TrueDataSymbolImporter _importer;
     private readonly TrueDataChainClient _chain;
-    private readonly TrueDataFeedSupervisor _feed;
 
     public TrueDataController(
         TrueDataSymbolImporter importer,
-        TrueDataChainClient chain,
-        TrueDataFeedSupervisor feed)
+        TrueDataChainClient chain)
     {
         _importer = importer;
         _chain = chain;
-        _feed = feed;
-    }
-
-    /// <summary>
-    /// { isRunning, managed, processId, source } for the TrueData live feed.
-    /// Separate from the FYERS ingestor's status: two feeds, two answers.
-    /// </summary>
-    [HttpGet("feed/status")]
-    public async Task<IActionResult> FeedStatus(CancellationToken cancellationToken)
-    {
-        var status = await _feed.GetStatusAsync(cancellationToken);
-        return Ok(new
-        {
-            isRunning = status.IsRunning,
-            managed = status.Managed,
-            processId = status.ProcessId,
-            source = status.Source,
-        });
-    }
-
-    /// <summary>
-    /// Starts the TrueData live feed beside the FYERS one. It does not stop or
-    /// replace FYERS: both write the same tables under their own SourceKey.
-    /// </summary>
-    [HttpPost("feed/start")]
-    public async Task<IActionResult> StartFeed(CancellationToken cancellationToken)
-    {
-        var outcome = await _feed.StartAsync(cancellationToken);
-        if (!outcome.Started)
-            return StatusCode(outcome.StatusCode, new { message = outcome.Message, processId = outcome.ProcessId });
-
-        return Ok(new { message = outcome.Message, processId = outcome.ProcessId });
-    }
-
-    /// <summary>Stops the TrueData live feed only; the FYERS ingestor is untouched.</summary>
-    [HttpPost("feed/stop")]
-    public async Task<IActionResult> StopFeed(CancellationToken cancellationToken)
-    {
-        var userName = User.GetUserName() ?? "unknown";
-        var outcome = await _feed.StopAsync($"Stopped by {userName}", cancellationToken);
-        return Ok(new
-        {
-            message = outcome.Message,
-            wasRunning = outcome.WasRunning,
-            processId = outcome.ProcessId,
-        });
     }
 
     /// <summary>

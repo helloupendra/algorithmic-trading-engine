@@ -12,14 +12,12 @@ namespace AlgoTrading.Api.Services;
 /// </summary>
 public static class ProcessProbe
 {
-    public const string IngestorMarker = "fyers_streamer";
+    // The live feeds are not here: every vendor runs the same script, so a feed
+    // is recognised by its "--vendor <key>" argument (FeedSupervisor.MarkerFor).
     public const string ChainPollerMarker = "option_chain_poller";
     public const string StrategyRunnerMarker = "execution_runner";
     public const string BacktestRunnerMarker = "backtest_runner";
     public const string NotifierMarker = "telegram_notifier";
-
-    /// <summary>The second live feed. Its own marker so a stop can never hit the FYERS one.</summary>
-    public const string TrueDataFeedMarker = "truedata_streamer";
 
     private static readonly TimeSpan PsTimeout = TimeSpan.FromSeconds(5);
 
@@ -70,8 +68,21 @@ public static class ProcessProbe
     /// process is gone.
     /// </summary>
     public static ProbeResult Probe(int pid, string marker, long? runId, ILogger logger)
+        => Probe(pid, new[] { marker }, runId, logger);
+
+    /// <summary>
+    /// <see cref="Probe(int, string, long?, ILogger)"/> for a process that
+    /// answers to more than one marker: a daemon whose script was renamed is
+    /// still running under the old name until it is next restarted, and
+    /// refusing to recognise it would leave it alive and unstoppable. The
+    /// command line is read once and passes when it names any of them.
+    /// </summary>
+    public static ProbeResult Probe(int pid, IReadOnlyList<string> markers, long? runId, ILogger logger)
     {
         if (pid <= 0) return new ProbeResult(Outcome.Dead, null);
+
+        // For the log lines only: "fyers_streamer", or "--vendor fyers or fyers_streamer".
+        var marker = string.Join(" or ", markers);
 
         Process? process;
         try
@@ -116,7 +127,7 @@ public static class ProcessProbe
             return new ProbeResult(Outcome.Unknown, null);
         }
 
-        if (!commandLine.Contains(marker, StringComparison.OrdinalIgnoreCase))
+        if (!NamesAnyMarker(commandLine, markers))
         {
             logger.LogWarning("Pid {Pid} is alive but is not a {Marker} process ({CommandLine}); it was recycled.", pid, marker, Truncate(commandLine));
             process.Dispose();
@@ -172,6 +183,39 @@ public static class ProcessProbe
             return null;
         }
     }
+
+    /// <summary>
+    /// True when <paramref name="commandLine"/> contains any of
+    /// <paramref name="markers"/> (case-insensitively) and the match is not
+    /// just the start of a longer name.
+    /// </summary>
+    /// <remarks>
+    /// The second condition is for the live feeds, which differ only in a
+    /// vendor key: "--vendor fyers" must not be satisfied by a process started
+    /// with "--vendor fyers-paper", or a stop aimed at one feed could kill
+    /// another. A marker followed by the end of the line, a space, a dot
+    /// ("fyers_streamer.py") or a slash still counts; followed by a letter,
+    /// digit, underscore or hyphen it does not.
+    /// </remarks>
+    public static bool NamesAnyMarker(string commandLine, IReadOnlyList<string> markers)
+    {
+        foreach (var marker in markers)
+        {
+            if (string.IsNullOrEmpty(marker)) continue;
+
+            for (int at = commandLine.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+                 at >= 0;
+                 at = commandLine.IndexOf(marker, at + 1, StringComparison.OrdinalIgnoreCase))
+            {
+                int end = at + marker.Length;
+                if (end == commandLine.Length || !ContinuesName(commandLine[end])) return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool ContinuesName(char c) => char.IsLetterOrDigit(c) || c == '_' || c == '-';
 
     /// <summary>True when the command line carries <c>--run-id &lt;runId&gt;</c> (or <c>--run-id=&lt;runId&gt;</c>) as whole tokens.</summary>
     public static bool HasRunIdArgument(string commandLine, long runId)

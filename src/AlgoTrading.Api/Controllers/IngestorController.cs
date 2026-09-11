@@ -6,11 +6,16 @@ using Microsoft.AspNetCore.Mvc;
 namespace AlgoTrading.Api.Controllers;
 
 /// <summary>
-/// Start / stop / status of the live data ingestor. The process itself is
-/// owned by <see cref="IngestorSupervisor"/>, which also recognises an
+/// Start / stop / status of the live data ingestor — the FYERS feed. The process
+/// itself is owned by <see cref="IngestorSupervisor"/>, which also recognises an
 /// instance launched by a previous API process (by its stored pid) so status
 /// and Stop keep working across an API restart.
 /// </summary>
+/// <remarks>
+/// <see cref="FeedsController"/> reaches the same supervisor as "fyers" along
+/// with every other vendor's feed. These routes stay because the market-open
+/// script and the notifier call them.
+/// </remarks>
 [ApiController]
 [Route("api/[controller]")]
 [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
@@ -24,7 +29,7 @@ public class IngestorController : ControllerBase
     }
 
     /// <summary>
-    /// Launches fyers_streamer.py. 400 when an instance is already alive —
+    /// Launches the FYERS feed (run_feed.py --vendor fyers). 400 when an instance is already alive —
     /// managed by this API, or adopted from a previous one.
     /// </summary>
     [HttpPost("start")]

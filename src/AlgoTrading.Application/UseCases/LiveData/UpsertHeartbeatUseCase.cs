@@ -35,8 +35,17 @@ public class UpsertHeartbeatUseCase
 
         if (request.ProcessId is > 0)
         {
+            // Each feed's pid under its own key. Every heartbeat used to land in
+            // "ingestor.pid": with FYERS and TrueData both up, TrueData's pid
+            // overwrote FYERS's, and after an API restart the FYERS supervisor
+            // found a process that was not FYERS, dropped the record, and showed
+            // a running feed as stopped — to Start, and to the market-close stop.
+            var pidKey = string.IsNullOrWhiteSpace(request.FeedKey)
+                ? SystemSettingKeys.IngestorPid
+                : SystemSettingKeys.PidForFeed(request.FeedKey);
+
             await _processSettings.SetPidAsync(
-                SystemSettingKeys.IngestorPid, request.ProcessId.Value, updatedBy: request.SourceName, cancellationToken);
+                pidKey, request.ProcessId.Value, updatedBy: request.SourceName, cancellationToken);
         }
     }
 }

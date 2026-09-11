@@ -53,8 +53,10 @@ public static class SystemSettingKeys
     public const string MaxRunsPerUser = "risk.limits.maxRunsPerUser";
 
     /// <summary>
-    /// OS process id of the live data ingestor (fyers_streamer). Written at
-    /// launch and confirmed by its heartbeat; deleted on a clean stop/exit.
+    /// OS process id of the FYERS live feed. Written at launch and confirmed by
+    /// its heartbeat; deleted on a clean stop/exit. Older than
+    /// <see cref="FeedPid"/> and kept under this name so a feed running across
+    /// the deploy that introduced per-vendor keys is still found.
     /// </summary>
     public const string IngestorPid = "ingestor.pid";
 
@@ -64,12 +66,28 @@ public static class SystemSettingKeys
     /// <summary>The Telegram notifier — the sidecar that turns run activity into alerts.</summary>
     public const string NotifierPid = "notifier.pid";
 
-    /// <summary>Pid of the TrueData live feed, so the API can adopt it after a restart.</summary>
-    public const string TrueDataFeedPid = "truedata-feed.pid";
-
+    private const string FeedPidPrefix = "feed.";
     private const string StrategyRunPidPrefix = "strategyrun.";
     private const string BacktestRunPidPrefix = "backtestrun.";
     private const string PidSuffix = ".pid";
+
+    /// <summary>
+    /// "feed.&lt;providerKey&gt;.pid": a vendor's live feed process id, so the API
+    /// can adopt it after a restart. One key per vendor, never shared: a stop
+    /// aimed at one feed must not be able to find another feed's pid.
+    /// </summary>
+    public static string FeedPid(string providerKey) => $"{FeedPidPrefix}{providerKey}{PidSuffix}";
+
+    /// <summary>
+    /// The pid key a vendor's feed process is recorded under: FYERS keeps
+    /// <see cref="IngestorPid"/>, every other vendor <see cref="FeedPid"/>. The
+    /// supervisors and the heartbeat both read it from here, so the place a feed
+    /// reports its pid and the place its supervisor looks can never drift apart.
+    /// </summary>
+    public static string PidForFeed(string providerKey) =>
+        string.Equals(providerKey, "fyers", StringComparison.OrdinalIgnoreCase)
+            ? IngestorPid
+            : FeedPid(providerKey.Trim().ToLowerInvariant());
 
     /// <summary>"strategyrun.&lt;runId&gt;.pid": the execution runner's process id for a LivePaper run.</summary>
     public static string StrategyRunPid(long runId) => $"{StrategyRunPidPrefix}{runId}{PidSuffix}";

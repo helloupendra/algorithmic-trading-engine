@@ -102,6 +102,9 @@ namespace AlgoTrading.Contracts.LiveData
         /// <see cref="UpsertLiveTickRequest.SourceKey"/>.
         /// </summary>
         public string? SourceKey { get; set; }
+
+        /// <summary>A replayed tick: written in arrival order, never refused as older. See UpsertLiveTickRequest.IsReplay.</summary>
+        public bool IsReplay { get; set; }
     }
 
 }
