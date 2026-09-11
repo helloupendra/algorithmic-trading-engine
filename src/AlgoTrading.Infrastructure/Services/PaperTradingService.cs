@@ -106,10 +106,13 @@ public class PaperTradingService : IPaperTradingService
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         // Convert signal -> orders -> positions. Replays are clocked by the bar
-        // time and skip the wall-clock risk gate (rate limit / daily loss).
+        // time and skip the wall-clock risk gate (rate limit / daily loss). A
+        // recap is clocked by the replayed session the runner stamped the signal
+        // with, but keeps the gate: it trades in real time, like a live run.
         if (request.Legs is not null && request.Legs.Count > 0)
         {
-            DateTime? clock = replay ? timestampUtc : null;
+            bool recap = !replay && RecapClock.IsRecap(run.ParametersJson);
+            DateTime? clock = replay || recap ? timestampUtc : null;
 
             // A CLOSE_GROUP (or any square-off / risk-rule signal) may only
             // shrink or close what is open — exactly like the backtest ledger.
@@ -678,14 +681,18 @@ public class PaperTradingService : IPaperTradingService
 
         // Live runs square off at the latest quote; replays at the last stored
         // bar-close mark, stamped at the time of that mark so the closing rows
-        // stay on the historical timeline.
+        // stay on the historical timeline. A recap squares off at the latest
+        // quote too, stamped at the replayed session's time so its exits sit on
+        // the same timeline as the entries the runner stamped.
         var latestQuotes = replay
             ? new Dictionary<string, decimal?>()
             : await LoadLiveQuotesAsync(openPositions.Select(x => x.Symbol).Distinct().ToList(), cancellationToken);
 
+        DateTime? recapNow = replay ? null : await RecapClock.NowAsync(_dbContext, run, cancellationToken);
+
         DateTime atUtc = replay
             ? openPositions.Max(x => x.UpdatedUtc)
-            : DateTime.UtcNow;
+            : recapNow ?? DateTime.UtcNow;
 
         int closed = 0;
 
@@ -728,7 +735,8 @@ public class PaperTradingService : IPaperTradingService
                 // snapshot above and now, the closing leg is skipped instead of
                 // opening a reverse position on a run that is being stopped.
                 bool closedLeg = await CreateOrderAndApplyPositionAsync(
-                    signal, leg, cancellationToken, bypassRiskCheck: true, reduceOnly: true, atUtc: replay ? atUtc : null);
+                    signal, leg, cancellationToken, bypassRiskCheck: true, reduceOnly: true,
+                    atUtc: replay || recapNow.HasValue ? atUtc : null);
                 if (closedLeg) closed++;
             }
         }
@@ -889,7 +897,8 @@ public class PaperTradingService : IPaperTradingService
     /// existing open position in its group: quantity is clamped to what is open
     /// and, when nothing is open (already closed by a concurrent stop), the leg
     /// is skipped and <c>false</c> is returned. <paramref name="atUtc"/> is the
-    /// historical clock for replays; null means the wall clock.
+    /// market's clock: the bar time for replays, the replayed session's time for a
+    /// recap (see <see cref="RecapClock"/>); null means the wall clock.
     /// </summary>
     private async Task<bool> CreateOrderAndApplyPositionAsync(
         SimulationSignal signal,
@@ -1003,7 +1012,8 @@ public class PaperTradingService : IPaperTradingService
     /// Applies a filled order to the run's open position for (group, symbol).
     /// Returns <c>false</c> only in reduce-only mode when there is no open
     /// position to reduce; otherwise a fresh position is opened. Every
-    /// timestamp written here is <paramref name="clock"/> (bar time for replays).
+    /// timestamp written here is <paramref name="clock"/> (bar time for replays,
+    /// the replayed session's time for a recap).
     /// </summary>
     private async Task<bool> ApplyPositionAsync(
         SimulationSignal signal,

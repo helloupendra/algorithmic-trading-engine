@@ -602,6 +602,15 @@ export interface StrategyLiveView {
   startedUtc: string | null
   stoppedUtc: string | null
   stopReason: string | null
+  /**
+   * 'recap' for a run trading an evening replay: its positions, orders and
+   * activity are timed by the replayed session, so they read against that
+   * day's chart. startedUtc/stoppedUtc stay the real times. Absent on an older
+   * API build.
+   */
+  session?: 'live' | 'recap'
+  /** The replayed day (yyyy-MM-dd) of a recap run. */
+  recapDate?: string | null
   pnl: {
     realized: number
     unrealized: number

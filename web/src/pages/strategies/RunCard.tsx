@@ -51,6 +51,14 @@ function contractLabel(p: LivePosition): string {
   return p.contract?.label || formatContract(p.symbol)
 }
 
+/** "2026-09-11" → "11 Sep": the replayed day, read as an IST calendar date. */
+function recapDayLabel(day: string): string {
+  const at = new Date(`${day}T12:00:00+05:30`)
+  return Number.isNaN(at.getTime())
+    ? day
+    : at.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })
+}
+
 /** What the card needs to know about the strategy — a catalogue item fits, so does a history row. */
 export interface RunCardStrategy {
   name: string
@@ -569,6 +577,18 @@ export function RunCard({
           <Badge tone="live">running</Badge>
         ) : (
           <Badge tone="warn">Stopped{stopReason ? ` · ${stopReason}` : ''}</Badge>
+        )}
+        {view?.session === 'recap' && (
+          <span
+            className="badge"
+            title={
+              `Replay of ${view.recapDate ? recapDayLabel(view.recapDate) : 'an earlier session'}. ` +
+              'Entry, exit, order and activity times are the replayed market times, so they match that day’s chart. ' +
+              'Started and stopped are the real times.'
+            }
+          >
+            Recap{view.recapDate ? ` · ${recapDayLabel(view.recapDate)}` : ''} · market time
+          </span>
         )}
         <span className="run-card__meta">
           {startedBy ? `started by ${startedBy}` : 'started'} · {formatTime(startedUtc)}
