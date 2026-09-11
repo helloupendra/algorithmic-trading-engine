@@ -17,10 +17,27 @@ IS_MAC=false; [ "$(uname -s)" = "Darwin" ] && IS_MAC=true
 if $IS_MAC; then DESK_STATE_DIR="$HOME/Library/Application Support/algotrading"; else DESK_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/algotrading"; fi
 mkdir -p "$DESK_STATE_DIR"
 
-# A desktop notification on the Mac; on a server there is no desktop, the log
-# line (and the Telegram notifier, which reads the API) is the notification.
+# How the desk reaches the operator. On the Mac that is a desktop notification;
+# on the server there is no desktop, so it is Telegram.
+#
+# This used to be Mac-only, with the log as the server's "notification". The
+# log is not a notification: on 2026-09-11 the morning run waited for a FYERS
+# sign-in from 08:46, nudged at the open and every ten minutes after it, and
+# every one of those nudges went nowhere because the desk had moved to Linux.
+# Telegram is called directly rather than through the API, because notify() is
+# needed most exactly when the API is the thing that is wrong.
 notify() {  # title, message
-  if $IS_MAC; then osascript -e "display notification \"$2\" with title \"$1\"" 2>/dev/null || true; fi
+  if $IS_MAC; then
+    osascript -e "display notification \"$2\" with title \"$1\"" 2>/dev/null || true
+    return 0
+  fi
+  [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ] || return 0
+  # -o /dev/null: the URL carries the bot token, so nothing from this call is
+  # ever echoed or logged.
+  curl -fsS --max-time 10 -o /dev/null \
+    "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+    --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+    --data-urlencode "text=$1 — $2" 2>/dev/null || true
 }
 
 # Every line goes to the log; it is echoed to the screen too unless
@@ -129,6 +146,62 @@ admin_token() {
   curl -fsS --max-time 10 -X POST "$API/api/UserAuth/login" -H 'Content-Type: application/json' \
     -d "{\"userNameOrEmail\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}" \
     | grep -o '"accessToken":"[^"]*' | grep -o '[^"]*$'
+}
+
+# --- authenticated calls that outlive a long morning -------------------------
+# The admin JWT lives 60 minutes (Jwt:AccessTokenMinutes). A script that waits
+# for the FYERS sign-in can run for hours, so a token minted once at the start
+# is long dead by the time it is used: on 2026-09-11 market-open polled the
+# session endpoint with a token that had expired at 09:46, could not see the
+# 10:17 sign-in, and so started no feed and no strategy for the whole day.
+#
+# Every authenticated call goes through these instead. They mint on first use,
+# reuse the token while it is comfortably fresh, and mint a new one on a 401 —
+# staleness is the one failure a long-running script can always repair itself.
+_ADMIN_TOKEN=""
+_ADMIN_TOKEN_AT=0
+# Half the token's life: a call can never race the expiry, and a morning of
+# waiting costs one sign-in every thirty minutes rather than one per poll.
+ADMIN_TOKEN_TTL="${ADMIN_TOKEN_TTL:-1800}"
+
+auth_token() {
+  local now fresh
+  now="$(date +%s)"
+  if [ -z "$_ADMIN_TOKEN" ] || [ "$(( now - _ADMIN_TOKEN_AT ))" -ge "$ADMIN_TOKEN_TTL" ]; then
+    fresh="$(admin_token 2>/dev/null)" || return 1
+    [ -n "$fresh" ] || return 1
+    _ADMIN_TOKEN="$fresh"
+    _ADMIN_TOKEN_AT="$now"
+  fi
+  printf '%s' "$_ADMIN_TOKEN"
+}
+
+# api_get PATH   /   api_post PATH [JSON-BODY]
+# The response body is printed; the return code is 0 only for a 2xx, so
+# `if api_get ...` reads as "the API answered properly". A 401 is retried once
+# with a fresh token; every other status is the answer and is handed back.
+api_get()  { _api_call GET  "$1" ''; }
+api_post() { _api_call POST "$1" "${2-'{}'}"; }
+
+_api_call() {
+  local method="$1" path="$2" body="$3" attempt tok raw code out
+  for attempt in 1 2; do
+    tok="$(auth_token)" || return 1
+    if [ "$method" = GET ]; then
+      raw="$(curl -sS --max-time 30 -w '\n%{http_code}' "$API$path" \
+        -H "Authorization: Bearer $tok" 2>/dev/null)" || return 1
+    else
+      raw="$(curl -sS --max-time 30 -w '\n%{http_code}' -X POST "$API$path" \
+        -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' \
+        -d "$body" 2>/dev/null)" || return 1
+    fi
+    code="${raw##*$'\n'}"
+    out="${raw%$'\n'*}"
+    if [ "$code" = 401 ] && [ "$attempt" = 1 ]; then _ADMIN_TOKEN=""; continue; fi
+    printf '%s' "$out"
+    case "$code" in 2??) return 0 ;; *) return 1 ;; esac
+  done
+  return 1
 }
 
 # Number of strategy runs currently Running; -1 when the API cannot be asked

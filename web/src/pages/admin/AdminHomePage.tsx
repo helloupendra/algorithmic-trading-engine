@@ -31,6 +31,13 @@ export function AdminHomePage() {
   const marketOpen = session.data?.isMarketOpen ?? false
   const mcxOpen = mcxSession.data?.isMarketOpen ?? false
   const ksActive = killSwitch.data?.isActive ?? false
+  const feedRunning = (process.data?.isRunning ?? false) || healthy > 0
+
+  // These tiles are the first thing read each morning, so none of them may
+  // answer before it has been told. Until a query returns, the tile says so:
+  // a "Stopped" feed or a "Not linked" broker that is really just a request in
+  // flight is the kind of thing that sends you restarting something healthy.
+  const unknown = '—'
 
   // Only the hour is worth showing here; the exact close is in the chip's title
   // on the topbar. MCX ends at 23:55 IST in summer and 23:30 in winter.
@@ -53,7 +60,7 @@ export function AdminHomePage() {
       <div className="stat-grid">
         <StatTile
           label="Equity market"
-          value={marketOpen ? 'Open' : 'Closed'}
+          value={session.isPending ? unknown : marketOpen ? 'Open' : 'Closed'}
           tone={marketOpen ? 'pos' : undefined}
           sub="NSE cash session"
         />
@@ -62,22 +69,22 @@ export function AdminHomePage() {
             reading one and assuming the other is how you misjudge the desk. */}
         <StatTile
           label="Commodity market"
-          value={mcxOpen ? 'Open' : 'Closed'}
+          value={mcxSession.isPending ? unknown : mcxOpen ? 'Open' : 'Closed'}
           tone={mcxOpen ? 'pos' : undefined}
           sub={mcxOpen && mcxCloseLabel ? `MCX until ${mcxCloseLabel}` : 'MCX session'}
           to="/admin/data/commodity"
         />
         <StatTile
           label="Live feed"
-          value={(process.data?.isRunning || healthy > 0) ? 'Running' : 'Stopped'}
-          tone={(process.data?.isRunning || healthy > 0) ? (healthy === feeds.length && feeds.length > 0 ? 'pos' : 'warn') : undefined}
+          value={process.isPending && ingestors.isPending ? unknown : feedRunning ? 'Running' : 'Stopped'}
+          tone={feedRunning ? (healthy === feeds.length && feeds.length > 0 ? 'pos' : 'warn') : undefined}
           sub={feeds.length > 0 ? `${healthy}/${feeds.length} sources healthy` : 'no heartbeat yet'}
           to="/admin/data/live"
         />
         <StatTile
           label="Broker"
-          value={broker.data?.isAuthenticated ? 'Linked' : 'Not linked'}
-          tone={broker.data?.isAuthenticated ? 'pos' : 'neg'}
+          value={broker.isPending ? unknown : broker.data?.isAuthenticated ? 'Linked' : 'Not linked'}
+          tone={broker.isPending ? undefined : broker.data?.isAuthenticated ? 'pos' : 'neg'}
           sub="FYERS session"
           to="/admin/broker"
         />
@@ -89,9 +96,9 @@ export function AdminHomePage() {
         />
         <StatTile
           label="Kill switch"
-          value={ksActive ? 'ACTIVE' : 'Off'}
+          value={killSwitch.isPending ? unknown : ksActive ? 'ACTIVE' : 'Off'}
           tone={ksActive ? 'neg' : undefined}
-          sub={ksActive ? 'all trading halted' : 'trading allowed'}
+          sub={killSwitch.isPending ? 'checking…' : ksActive ? 'all trading halted' : 'trading allowed'}
           to="/admin/system/risk"
         />
       </div>

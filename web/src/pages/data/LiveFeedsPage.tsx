@@ -95,6 +95,16 @@ function useFeedProcess() {
     processId: status?.processId ?? null,
     healthyCount,
     loaded: process.data !== undefined,
+    /**
+     * Both answers are in, so "stopped" is a fact rather than "the page has
+     * not been told yet". Without this the card read a loading state as
+     * stopped: for the ~2 s before the two calls returned, a feed that was
+     * running showed a green Start button, and only a reload — which the
+     * operator reached for because the page looked wrong — appeared to fix it.
+     * An errored query still counts as answered: an old API build has no
+     * process endpoint, and the heartbeat heuristic above is the answer.
+     */
+    known: (process.data !== undefined || process.isError) && (ingestors.data !== undefined || ingestors.isError),
   }
 }
 
@@ -122,6 +132,18 @@ function FeedControlButton() {
       : feed.kind === 'adopted'
         ? `Not launched by this API instance${feed.processId != null ? ` (pid ${feed.processId})` : ''} — running outside this console, known by its pid; Stop kills that process.`
         : undefined
+
+  // Nothing is offered until the state is known. Start on a running feed is
+  // the one click here that can do damage, so it is never shown on a guess.
+  if (!feed.known) {
+    return (
+      <div className="toolbar">
+        <button className="btn" disabled title="Asking the API whether the live feed is running…">
+          Checking…
+        </button>
+      </div>
+    )
+  }
 
   return (
     <div className="toolbar">
