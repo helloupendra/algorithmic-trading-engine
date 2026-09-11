@@ -204,6 +204,17 @@ class PlatformApiClient:
         resp.raise_for_status()
         return resp.json()
 
+    def stop_run(self, run_id: int, flatten: bool = True) -> dict[str, Any]:
+        """Stops one run through the same endpoint the console uses, squaring off when asked."""
+        resp = self.http.post(
+            f"{self.base_url}/api/Strategy/runs/{run_id}/stop",
+            json={"flatten": flatten},
+            verify=self.verify_ssl,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json() if resp.content else {}
+
     def get_recent_bars(self, symbol: str, resolution: str = "1m", take: int = 1) -> list[dict[str, Any]]:
         resp = self.http.get(
             f"{self.base_url}/api/LiveData/bars",

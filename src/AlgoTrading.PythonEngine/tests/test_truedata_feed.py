@@ -184,3 +184,78 @@ class TrueDataSubscribeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TrueDataGivenNamesTests(unittest.TestCase):
+    """A name read from the master wins over the grammar, which declines monthlies."""
+
+    def test_a_monthly_option_is_subscribed_by_the_name_it_was_given(self):
+        sent = []
+        feed = TrueDataFeed("u", "p", vendor_names={
+            "NSE:BANKNIFTY26SEP56400CE": "BANKNIFTY26092956400CE",
+        })
+        feed._send = sent.append
+        taken = feed.subscribe(["NSE:BANKNIFTY26SEP56400CE"])
+        self.assertEqual(["NSE:BANKNIFTY26SEP56400CE"], taken)
+        self.assertEqual(["BANKNIFTY26092956400CE"], sent[0]["symbols"])
+
+    def test_without_a_given_name_the_monthly_is_still_declined(self):
+        sent, states = [], []
+        feed = TrueDataFeed("u", "p")
+        feed._send = sent.append
+        feed._on_state = lambda e, d="": states.append(e)
+        self.assertEqual([], feed.subscribe(["NSE:BANKNIFTY26SEP56400CE"]))
+        self.assertEqual([], sent)
+        self.assertIn("skipped", states)
+
+
+class SymbolListParsingTests(unittest.TestCase):
+    """TRUEDATA_SYMBOLS, as the recap sets it on the server."""
+
+    def test_plain_and_named_entries(self):
+        from market_data.live.truedata_streamer import parse_symbol_list
+        symbols, names = parse_symbol_list(
+            "NSE:NIFTY50-INDEX, NSE:BANKNIFTY26SEP56400CE=BANKNIFTY26092956400CE ,,")
+        self.assertEqual(["NSE:NIFTY50-INDEX", "NSE:BANKNIFTY26SEP56400CE"], symbols)
+        self.assertEqual({"NSE:BANKNIFTY26SEP56400CE": "BANKNIFTY26092956400CE"}, names)
+
+    def test_nothing_set_is_the_recording_list(self):
+        from market_data.live.truedata_streamer import parse_symbol_list
+        self.assertEqual(([], {}), parse_symbol_list(None))
+        self.assertEqual(([], {}), parse_symbol_list(""))
+
+
+class MainStartsTests(unittest.TestCase):
+    """main() must get as far as connecting — the check that would have caught the UnboundLocalError."""
+
+    def test_main_builds_the_feed_and_runner_from_the_environment(self):
+        import os
+        from unittest import mock
+        import market_data.live.truedata_streamer as streamer
+
+        env = {
+            "TRUEDATA_USERNAME": "u", "TRUEDATA_PASSWORD": "p",
+            "TRUEDATA_HOST": "replay.truedata.in", "TRUEDATA_REALTIME_PORT": "8082",
+            "TRUEDATA_SYMBOLS": "NSE:NIFTY50-INDEX,NSE:BANKNIFTY26SEP56400CE=BANKNIFTY26092956400CE",
+        }
+        built = {}
+
+        class FakeRunner:
+            def __init__(self, feed, source_name=None, fixed_symbols=None, **_):
+                built.update(feed=feed, source=source_name, fixed=fixed_symbols)
+            def run(self):
+                built["ran"] = True
+            def stop(self):
+                pass
+
+        with mock.patch.dict(os.environ, env, clear=False), \
+             mock.patch("core.live.feed_runner.FeedRunner", FakeRunner), \
+             mock.patch("core.safe_output.install_safe_stdio"), \
+             mock.patch("signal.signal"):
+            streamer.main()
+
+        self.assertTrue(built.get("ran"))
+        self.assertEqual("python-truedata-recap", built["source"])
+        self.assertEqual(["NSE:NIFTY50-INDEX", "NSE:BANKNIFTY26SEP56400CE"], built["fixed"])
+        self.assertIn("replay.truedata.in:8082", built["feed"]._url)
+        self.assertEqual("BANKNIFTY26092956400CE", built["feed"].to_vendor("NSE:BANKNIFTY26SEP56400CE"))
