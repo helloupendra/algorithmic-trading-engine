@@ -405,11 +405,17 @@ def main() -> None:
     # contracts a strategy trades must fit the trial's 50-symbol limit.
     fixed, names = parse_symbol_list(os.getenv("TRUEDATA_SYMBOLS"))
 
+    # Strategies read ticks from the Redis stream, not from the tables.
+    from messaging.redis_publisher import build_publisher_from_env
+    publisher = build_publisher_from_env()
+    publisher.ensure_connection()
+
     feed = TrueDataFeed(username, password, host=host, port=port, vendor_names=names)
     runner = FeedRunner(
         feed,
         source_name="python-truedata-recap" if host.startswith("replay.") else "python-truedata-ingestor",
         fixed_symbols=fixed or None,
+        publisher=publisher,
     )
     if fixed:
         print(f"[truedata] streaming {len(fixed)} named symbol(s) instead of the recording list "
