@@ -40,7 +40,8 @@ class FeedRunner:
 
     def __init__(self, feed, http=None, source_name=None,
                  silent_restart_seconds: float = 90.0,
-                 fixed_symbols: list[str] | None = None):
+                 fixed_symbols: list[str] | None = None,
+                 publisher=None):
         self._feed = feed
         self._http = http or build_session()
         self._source_name = source_name or f"python-{feed.key}-ingestor"
@@ -52,6 +53,13 @@ class FeedRunner:
         self._silent_restart_seconds = silent_restart_seconds
 
         self._pump = TickPump(self._post_batch, label=feed.key)
+        # The Redis stream the strategy runners read. Storing a tick through the
+        # API does not put it there — the FYERS streamer publishes every tick
+        # itself — so a feed that only posts to the API fills the tables and
+        # leaves every running strategy "waiting for ticks". That is exactly
+        # what the first TrueData recap run did.
+        self._publisher = publisher
+        self._publish_errors = 0
         # What the vendor actually took, not what it was offered.
         self._subscribed: set[str] = set()
         # Offered and declined (no vendor name, or over the symbol limit). Kept
@@ -104,6 +112,16 @@ class FeedRunner:
     def _on_tick(self, payload: dict) -> None:
         self._last_message = time.monotonic()
         self._ticks += 1
+        if self._publisher is not None:
+            try:
+                self._publisher.publish_tick(payload)
+            except Exception as ex:
+                # Said, not swallowed: a strategy that stops hearing prices
+                # while the tables keep filling is the failure to catch early.
+                self._publish_errors += 1
+                if self._publish_errors in (1, 100, 1000) or self._publish_errors % 10000 == 0:
+                    print(f"[{self._feed.key}] could not publish a tick to the strategy stream "
+                          f"({self._publish_errors} so far): {ex}", flush=True)
         self._pump.offer(payload)
 
     def _on_state(self, event: str, detail: str = "") -> None:

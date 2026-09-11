@@ -241,21 +241,55 @@ class MainStartsTests(unittest.TestCase):
         built = {}
 
         class FakeRunner:
-            def __init__(self, feed, source_name=None, fixed_symbols=None, **_):
-                built.update(feed=feed, source=source_name, fixed=fixed_symbols)
+            def __init__(self, feed, source_name=None, fixed_symbols=None, publisher=None, **_):
+                built.update(feed=feed, source=source_name, fixed=fixed_symbols, publisher=publisher)
             def run(self):
                 built["ran"] = True
             def stop(self):
                 pass
 
+        fake_publisher = mock.MagicMock()
         with mock.patch.dict(os.environ, env, clear=False), \
+             mock.patch("messaging.redis_publisher.build_publisher_from_env", return_value=fake_publisher), \
              mock.patch("core.live.feed_runner.FeedRunner", FakeRunner), \
              mock.patch("core.safe_output.install_safe_stdio"), \
              mock.patch("signal.signal"):
             streamer.main()
 
         self.assertTrue(built.get("ran"))
+        # Without this the strategies never hear a single price.
+        self.assertIs(fake_publisher, built["publisher"])
+        fake_publisher.ensure_connection.assert_called_once()
         self.assertEqual("python-truedata-recap", built["source"])
         self.assertEqual(["NSE:NIFTY50-INDEX", "NSE:BANKNIFTY26SEP56400CE"], built["fixed"])
         self.assertIn("replay.truedata.in:8082", built["feed"]._url)
         self.assertEqual("BANKNIFTY26092956400CE", built["feed"].to_vendor("NSE:BANKNIFTY26SEP56400CE"))
+
+
+class FeedRunnerPublishTests(unittest.TestCase):
+    """A tick must reach the strategy stream as well as the tables."""
+
+    def test_every_tick_is_published_and_stored(self):
+        from unittest import mock
+        from core.live.feed_runner import FeedRunner
+
+        publisher = mock.MagicMock()
+        runner = FeedRunner(mock.MagicMock(key="truedata"), http=mock.MagicMock(), publisher=publisher)
+        tick = {"symbol": "NSE:NIFTY50-INDEX", "lastTradedPrice": 23400.0,
+                "exchangeTimestampUtc": "2026-09-11T03:45:00Z"}
+        runner._on_tick(tick)
+
+        publisher.publish_tick.assert_called_once_with(tick)
+        self.assertEqual(1, runner._pump.depth())
+
+    def test_a_redis_failure_does_not_stop_the_tick_being_stored(self):
+        from unittest import mock
+        from core.live.feed_runner import FeedRunner
+
+        publisher = mock.MagicMock()
+        publisher.publish_tick.side_effect = ConnectionError("redis down")
+        runner = FeedRunner(mock.MagicMock(key="truedata"), http=mock.MagicMock(), publisher=publisher)
+        runner._on_tick({"symbol": "X", "lastTradedPrice": 1.0})
+
+        self.assertEqual(1, runner._pump.depth())
+        self.assertEqual(1, runner._publish_errors)
