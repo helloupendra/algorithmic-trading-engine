@@ -18,6 +18,9 @@ public static class ProcessProbe
     public const string BacktestRunnerMarker = "backtest_runner";
     public const string NotifierMarker = "telegram_notifier";
 
+    /// <summary>The second live feed. Its own marker so a stop can never hit the FYERS one.</summary>
+    public const string TrueDataFeedMarker = "truedata_streamer";
+
     private static readonly TimeSpan PsTimeout = TimeSpan.FromSeconds(5);
 
     /// <summary>What a probe found out about a pid.</summary>
