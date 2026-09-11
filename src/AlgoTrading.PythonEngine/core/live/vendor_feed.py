@@ -44,8 +44,16 @@ class VendorFeed(ABC):
         """Stop streaming. Must be safe to call when nothing is open."""
 
     @abstractmethod
-    def subscribe(self, canonical_symbols: list[str]) -> None:
-        """Ask for these instruments, named canonically."""
+    def subscribe(self, canonical_symbols: list[str]) -> list[str]:
+        """
+        Ask for these instruments, named canonically, and return the ones that
+        were actually asked for.
+
+        The return value is the point. A vendor can take fewer than it was
+        given — a name it cannot derive, a symbol limit — and a runner that
+        assumed otherwise would report every one of them as subscribed while
+        prices for a third of them never arrived.
+        """
 
     @abstractmethod
     def unsubscribe(self, canonical_symbols: list[str]) -> None:

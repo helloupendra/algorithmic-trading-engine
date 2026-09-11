@@ -1,4 +1,5 @@
 import { useAuth } from '../../lib/auth'
+import { TrueDataSymbolImport } from '../admin/TrueDataPanel'
 import { useInstrumentMasters, useRefreshInstrumentMasters } from '../../lib/queries'
 import { formatAge, formatDateTime, formatNumber } from '../../lib/format'
 import { Badge, InlineError, Panel, QueryBoundary } from '../../components/ui'
@@ -76,6 +77,7 @@ export function SymbolMastersPanel() {
           </>
         )}
       </QueryBoundary>
+      {isAdmin && <TrueDataSymbolImport />}
     </Panel>
   )
 }

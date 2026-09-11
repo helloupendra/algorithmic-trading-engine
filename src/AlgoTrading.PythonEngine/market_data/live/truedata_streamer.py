@@ -98,8 +98,14 @@ class TrueDataFeed(VendorFeed):
 
     key = "truedata"
 
-    def __init__(self, username, password, host="push.truedata.in", port=8086, max_symbols=50):
+    def __init__(self, username, password, host="push.truedata.in", port=8086, max_symbols=50,
+                 vendor_names=None):
         self.max_symbols = max_symbols
+        # Canonical -> TrueData name, given rather than derived. For the ones
+        # the grammar cannot build (a monthly option carries a month and no
+        # expiry day), the caller supplies the name it read from the instrument
+        # master, so nothing here has to guess.
+        self._given_names = {k.upper(): v for k, v in (vendor_names or {}).items()}
         self._username = username
         self._password = password
         self._url = f"wss://{host}:{port}?user={username}&password={password}"
@@ -165,32 +171,46 @@ class TrueDataFeed(VendorFeed):
     # ------------------------------------------------------------ subscribing
 
     def to_vendor(self, canonical_symbol: str) -> str | None:
-        return to_vendor(canonical_symbol)
+        given = self._given_names.get((canonical_symbol or "").upper())
+        return given or to_vendor(canonical_symbol)
 
-    def subscribe(self, canonical_symbols: list[str]) -> None:
+    def subscribe(self, canonical_symbols: list[str]) -> list[str]:
         wanted = {}
+        underivable = []
         for canonical in canonical_symbols:
             vendor = self.to_vendor(canonical)
             if vendor:
                 wanted[vendor] = canonical
+            else:
+                underivable.append(canonical)
+
+        if underivable:
+            # Named, not counted: which contracts this feed is not carrying is
+            # the thing an operator has to know to trust the other feed for them.
+            shown = ", ".join(underivable[:8]) + (f" (+{len(underivable) - 8} more)" if len(underivable) > 8 else "")
+            self._state("skipped", f"{len(underivable)} symbol(s) have no TrueData name "
+                                   f"(futures and monthly options need the symbol master): {shown}")
 
         if not wanted:
-            return
+            return []
 
         with self._lock:
             room = self.max_symbols - len(self._subscribed) if self.max_symbols else len(wanted)
             if room <= 0:
                 self._state("limit", f"already at the {self.max_symbols}-symbol limit; "
                                      f"{len(wanted)} more were not asked for")
-                return
+                return []
             if len(wanted) > room:
+                left_out = [wanted[v] for v in list(wanted)[room:]]
+                shown = ", ".join(left_out[:8]) + (f" (+{len(left_out) - 8} more)" if len(left_out) > 8 else "")
                 self._state("limit", f"only {room} of {len(wanted)} symbols fit under the "
-                                     f"{self.max_symbols}-symbol limit")
+                                     f"{self.max_symbols}-symbol limit; left out: {shown}")
                 wanted = dict(list(wanted.items())[:room])
             self._vendor_to_canonical.update(wanted)
             self._subscribed.update(wanted)
 
         self._send({"method": "addsymbol", "symbols": list(wanted)})
+        return list(wanted.values())
 
     def unsubscribe(self, canonical_symbols: list[str]) -> None:
         vendors = [v for v in (self.to_vendor(c) for c in canonical_symbols) if v]
@@ -333,6 +353,12 @@ def main() -> None:
     import os
     import signal
 
+    # Loads .env. The API starts this process without the desk's environment,
+    # so the credentials exist only in that file; importing config here, before
+    # anything reads them, keeps that from depending on which module happens to
+    # be imported first.
+    import core.config  # noqa: F401
+
     from core.live.feed_runner import FeedRunner
     from core.safe_output import install_safe_stdio
 
@@ -352,8 +378,28 @@ def main() -> None:
         # 8086 is the sandbox and 8084 production; TrueData moves an account
         # from one to the other once integration is signed off.
         port=int(os.getenv("TRUEDATA_REALTIME_PORT", "8086")),
+        vendor_names=names,
     )
-    runner = FeedRunner(feed, source_name="python-truedata-ingestor")
+    # TRUEDATA_SYMBOLS: comma-separated canonical symbols to stream instead of
+    # the recording list. Used for the evening recap, where the contracts a
+    # strategy trades must be inside the trial's 50-symbol limit.
+    # Each entry is CANONICAL or CANONICAL=TRUEDATA_NAME.
+    fixed, names = [], {}
+    for entry in (e.strip() for e in os.getenv("TRUEDATA_SYMBOLS", "").split(",")):
+        if not entry:
+            continue
+        canonical, _, vendor = entry.partition("=")
+        fixed.append(canonical.strip())
+        if vendor.strip():
+            names[canonical.strip()] = vendor.strip()
+    host = os.getenv("TRUEDATA_HOST", "push.truedata.in").strip() or "push.truedata.in"
+    runner = FeedRunner(
+        feed,
+        source_name="python-truedata-recap" if host.startswith("replay.") else "python-truedata-ingestor",
+        fixed_symbols=fixed or None,
+    )
+    if fixed:
+        print(f"[truedata] streaming {len(fixed)} named symbol(s) instead of the recording list", flush=True)
 
     def shutdown(*_):
         print("[truedata] stopping", flush=True)

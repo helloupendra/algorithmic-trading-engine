@@ -39,14 +39,26 @@ class FeedRunner:
     CONNECT_GRACE_SECONDS = 20.0
 
     def __init__(self, feed, http=None, source_name=None,
-                 silent_restart_seconds: float = 90.0):
+                 silent_restart_seconds: float = 90.0,
+                 fixed_symbols: list[str] | None = None):
         self._feed = feed
         self._http = http or build_session()
         self._source_name = source_name or f"python-{feed.key}-ingestor"
+        # An explicit list replaces the recording list. The trial allows 50
+        # symbols and the list carries 80, sorted, so the contracts a strategy
+        # actually trades can fall outside the first 50; naming them is the only
+        # way to be sure they are the ones subscribed.
+        self._fixed_symbols = sorted(set(fixed_symbols)) if fixed_symbols else None
         self._silent_restart_seconds = silent_restart_seconds
 
         self._pump = TickPump(self._post_batch, label=feed.key)
+        # What the vendor actually took, not what it was offered.
         self._subscribed: set[str] = set()
+        # Offered and declined (no vendor name, or over the symbol limit). Kept
+        # so they are not offered again every five seconds and reported every
+        # five seconds with them; forgotten on reconnect, when a raised limit or
+        # a new mapping could change the answer.
+        self._declined: set[str] = set()
         self._stop = threading.Event()
 
         self._last_message = 0.0
@@ -86,6 +98,7 @@ class FeedRunner:
         self._connect_started = time.monotonic()
         self._last_message = self._connect_started
         self._subscribed.clear()
+        self._declined.clear()
         self._feed.connect(on_tick=self._on_tick, on_state=self._on_state)
 
     def _on_tick(self, payload: dict) -> None:
@@ -139,17 +152,24 @@ class FeedRunner:
         if not self._connected:
             return
 
-        added = wanted - self._subscribed
+        added = wanted - self._subscribed - self._declined
         removed = self._subscribed - wanted
+        # A symbol that left the list is no longer declined either; if it comes
+        # back it gets a fresh answer.
+        self._declined &= wanted
 
         if added:
-            self._feed.subscribe(sorted(added))
-            self._subscribed |= added
+            accepted = set(self._feed.subscribe(sorted(added)))
+            self._subscribed |= accepted
+            self._declined |= added - accepted
         if removed:
             self._feed.unsubscribe(sorted(removed))
             self._subscribed -= removed
 
     def _read_watchlist(self) -> list[str]:
+        if self._fixed_symbols is not None:
+            self._last_watchlist_utc = utc_now_iso()
+            return list(self._fixed_symbols)
         response = self._http.get(
             f"{API_BASE_URL}/api/LiveData/watchlist", verify=VERIFY_SSL, timeout=30)
         response.raise_for_status()

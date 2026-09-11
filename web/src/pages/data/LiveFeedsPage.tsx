@@ -9,6 +9,7 @@
  */
 
 import { useMemo, useState } from 'react'
+import { TrueDataFeedPanel } from '../admin/TrueDataPanel'
 import {
   useAddEquityGroupToWatchlist,
   useAddWatchlistSymbol,
@@ -934,6 +935,7 @@ export function LiveFeedsPage() {
       <StalePanel />
       <LiveWatchlistPanel />
       <ChainPollerPanel />
+      <TrueDataFeedPanel />
       <DiagnosticsPanel />
       <InspectorPanel />
     </div>

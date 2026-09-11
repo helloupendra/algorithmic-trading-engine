@@ -18,7 +18,6 @@ import {
   useSaveProviderCredentials,
   useTestProvider,
 } from '../../lib/queries'
-import { TrueDataPanel } from './TrueDataPanel'
 import type { Provider, ProviderTestResult } from '../../lib/types'
 import { formatAge, formatDateTime } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components/ui'
@@ -153,6 +152,10 @@ function SessionPanel({ provider }: { provider: Provider }) {
 
   const credentialsMissing = provider.credentials.source === 'none'
   const needsLogin = provider.auth !== 'None'
+  // A username/password connector signs itself in whenever it needs a token.
+  // It has no browser session to be "connected", so judging it by one showed
+  // "Not connected" directly above a test that had just returned 130 bars.
+  const signsInItself = provider.auth === 'ApiKey'
 
   return (
     <Panel title="Session">
@@ -162,14 +165,20 @@ function SessionPanel({ provider }: { provider: Provider }) {
         <div>
           <div
             className={`killswitch__state ${
-              !needsLogin || (provider.session.isConnected && !provider.session.needsReconnect)
+              !needsLogin ||
+              (signsInItself && !credentialsMissing) ||
+              (provider.session.isConnected && !provider.session.needsReconnect)
                 ? 'pos'
                 : 'warn'
             }`}
           >
             {!needsLogin
               ? 'Always available'
-              : provider.session.isConnected
+              : signsInItself
+                ? credentialsMissing
+                  ? 'Credentials needed'
+                  : 'Signs in automatically'
+                : provider.session.isConnected
                 ? provider.session.needsReconnect
                   ? 'Token is from a previous day'
                   : 'Connected'
@@ -178,6 +187,15 @@ function SessionPanel({ provider }: { provider: Provider }) {
           <p className="muted">
             {!needsLogin ? (
               <>This connector needs no login — it reads what the platform already has.</>
+            ) : signsInItself ? (
+              credentialsMissing ? (
+                <>Save the username and password above. Nothing else is needed — there is no browser step.</>
+              ) : (
+                <>
+                  {provider.displayName} takes a fresh token with the saved username and password whenever it
+                  needs one, so there is no daily login. <b>Test connection</b> proves it end to end.
+                </>
+              )
             ) : provider.session.isConnected ? (
               <>
                 Token saved {formatAge(provider.session.connectedUtc)} (
@@ -323,8 +341,6 @@ export function ConnectorDetailPage() {
           </p>
         </Panel>
       )}
-
-      {provider.isInstalled && provider.key === 'truedata' && <TrueDataPanel />}
 
       {provider.isInstalled && (
         <>

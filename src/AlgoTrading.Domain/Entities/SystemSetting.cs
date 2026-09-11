@@ -64,6 +64,9 @@ public static class SystemSettingKeys
     /// <summary>The Telegram notifier — the sidecar that turns run activity into alerts.</summary>
     public const string NotifierPid = "notifier.pid";
 
+    /// <summary>Pid of the TrueData live feed, so the API can adopt it after a restart.</summary>
+    public const string TrueDataFeedPid = "truedata-feed.pid";
+
     private const string StrategyRunPidPrefix = "strategyrun.";
     private const string BacktestRunPidPrefix = "backtestrun.";
     private const string PidSuffix = ".pid";
