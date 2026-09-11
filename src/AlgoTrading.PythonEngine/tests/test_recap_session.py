@@ -41,14 +41,38 @@ class RecapClockTests(unittest.TestCase):
         # it must be refused, not fed to the strategy as if it were 09:15.
         self.assertFalse(DAY.in_session("2026-09-11T12:45:00Z"))
 
-    def test_the_close_is_reached_on_the_replayed_day(self):
-        self.assertTrue(DAY.past_close("2026-09-11T10:00:00Z"))
-        self.assertFalse(DAY.past_close("2026-09-11T09:59:59Z"))
+    def test_the_close_is_reached_when_the_replay_plays_into_it(self):
+        s = RecapSession(date(2026, 9, 11))
+        s.note_in_session("2026-09-11T09:58:00Z")        # 15:28 IST
+        self.assertTrue(s.reached_close("2026-09-11T10:00:00Z"))   # 15:30
+
+    def test_a_wall_clock_snapshot_is_not_the_close(self):
+        # The failure of the first evening: a touchline stamped 17:31 IST arrived
+        # right after the open and stopped all three runs.
+        s = RecapSession(date(2026, 9, 11))
+        s.note_in_session("2026-09-11T03:46:00Z")        # 09:16 IST
+        self.assertFalse(s.reached_close("2026-09-11T12:01:01Z"))  # 17:31 IST
+
+    def test_nothing_is_the_close_before_the_replay_has_traded(self):
+        s = RecapSession(date(2026, 9, 11))
+        self.assertFalse(s.reached_close("2026-09-11T10:00:00Z"))
+
+    def test_a_jump_far_past_the_close_is_not_the_close(self):
+        s = RecapSession(date(2026, 9, 11))
+        s.note_in_session("2026-09-11T09:58:00Z")        # 15:28 IST
+        self.assertFalse(s.reached_close("2026-09-11T12:01:01Z"))  # 17:31, hours on
 
     def test_a_stamp_on_another_day_does_not_stop_the_run(self):
-        # A clock mistake must not square a run off.
-        self.assertFalse(DAY.past_close("2026-09-12T11:00:00Z"))
-        self.assertFalse(DAY.past_close("2026-09-10T11:00:00Z"))
+        s = RecapSession(date(2026, 9, 11))
+        s.note_in_session("2026-09-11T09:58:00Z")
+        self.assertFalse(s.reached_close("2026-09-12T10:00:00Z"))
+
+    def test_progress_only_moves_forward_and_only_inside_the_session(self):
+        s = RecapSession(date(2026, 9, 11))
+        s.note_in_session("2026-09-11T05:00:00Z")
+        s.note_in_session("2026-09-11T04:00:00Z")        # older: ignored
+        s.note_in_session("2026-09-11T12:01:01Z")        # outside the session: ignored
+        self.assertEqual("2026-09-11 05:00:00+00:00", str(s.last_in_session_utc))
 
 
 class NoLookaheadTests(unittest.TestCase):

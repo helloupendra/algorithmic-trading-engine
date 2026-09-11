@@ -44,8 +44,19 @@ def _parse_utc(stamp) -> datetime | None:
 class RecapSession:
     """One replayed trading day, and the clock that belongs to it."""
 
+    #: How close to 15:30 the replay must already be before a later stamp is
+    #: believed to be the close. TrueData sends a touchline snapshot on every
+    #: subscribe, stamped with the time it was sent — 17:31 on the first
+    #: evening — and the first version of this class took that for the replayed
+    #: close and stopped all three runs within a second of the open.
+    CLOSE_APPROACH = timedelta(minutes=5)
+    #: The largest step between two ticks that still counts as the replay
+    #: moving forward rather than a stamp from somewhere else.
+    MAX_STEP = timedelta(minutes=15)
+
     def __init__(self, day: date):
         self.day = day
+        self.last_in_session_utc: datetime | None = None
         self.open_utc = datetime.combine(day, SESSION_OPEN, IST).astimezone(timezone.utc)
         self.close_utc = datetime.combine(day, SESSION_CLOSE, IST).astimezone(timezone.utc)
         self.start_of_day_utc = datetime.combine(day, time(0, 0), IST).astimezone(timezone.utc)
@@ -92,17 +103,31 @@ class RecapSession:
         at = _parse_utc(stamp)
         return at is not None and self.open_utc <= at < self.close_utc
 
-    def past_close(self, stamp) -> bool:
+    def note_in_session(self, stamp) -> None:
+        """Record the replay's progress: the latest tick accepted inside the session."""
+        at = _parse_utc(stamp)
+        if at is not None and self.in_session(at):
+            if self.last_in_session_utc is None or at > self.last_in_session_utc:
+                self.last_in_session_utc = at
+
+    def reached_close(self, stamp) -> bool:
         """
-        The replay reached 15:30 on the day it is replaying. Only a tick on that
-        day counts: a stamp on any other day is a clock this class does not
-        trust, and treating it as "after the close" would stop a run on a
-        timestamp mistake.
+        The replay has played its way to 15:30.
+
+        A stamp after 15:30 is not enough on its own: the replay must already
+        have been trading within a few minutes of the close, and this tick must
+        follow on from it. A snapshot stamped with the wall clock, a stamp from
+        another day, or anything that jumps hours ahead of the replay is not the
+        close — it is a timestamp this class cannot place, and a run stopped on
+        one is a run lost to a clock.
         """
         at = _parse_utc(stamp)
-        if at is None:
+        last = self.last_in_session_utc
+        if at is None or last is None:
             return False
-        return self.close_utc <= at < self.start_of_day_utc + timedelta(days=1)
+        if not (self.close_utc <= at < self.start_of_day_utc + timedelta(days=1)):
+            return False
+        return last >= self.close_utc - self.CLOSE_APPROACH and at - last <= self.MAX_STEP
 
     def drop_future_bars(self, rows, stamp):
         """

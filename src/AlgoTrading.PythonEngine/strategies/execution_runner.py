@@ -907,6 +907,8 @@ if __name__ == "__main__":
 
     # Ticks a recap run refused because they fell outside the replayed session.
     recap_refused = [0]
+    # Set once the replay has played to 15:30; the strategy is fed nothing after.
+    recap_closed = [False]
 
     try:
         for tick in subscriber.listen_for_ticks(block_ms=1000, yield_idle=True):
@@ -928,15 +930,23 @@ if __name__ == "__main__":
                 timestamp_utc = tick.get("exchangeTimestampUtc") or tick.get("receivedUtc") or datetime.now(timezone.utc).isoformat()
 
                 if recap is not None:
-                    if recap.past_close(tick.get("exchangeTimestampUtc")):
-                        print(f"[{args.underlying}] RECAP reached the replayed 15:30 — stopping the run "
-                              f"and squaring off at the replay's prices.", flush=True)
-                        try:
-                            api.stop_run(args.run_id, flatten=True)
-                        except Exception as ex:
-                            print(f"[{args.underlying}] RECAP could not stop run {args.run_id}: {ex}", flush=True)
-                        break
-                    if not recap.in_session(tick.get("exchangeTimestampUtc")):
+                    recap_stamp = tick.get("exchangeTimestampUtc")
+                    if recap_closed[0]:
+                        housekeeping()
+                        continue
+                    if recap.reached_close(recap_stamp):
+                        # The runner does not stop the run itself: it is not
+                        # allowed to (403), and exiting would leave the square-off
+                        # to whatever handles a vanished runner. It stops trading,
+                        # and says what to do. The latest quotes are the replay's
+                        # closing prices and stay so until Monday's feed.
+                        recap_closed[0] = True
+                        print(f"[{args.underlying}] RECAP reached the replayed 15:30 — the strategy takes no "
+                              f"further entries or exits. Stop run {args.run_id} from the console to square "
+                              f"off at the replay's closing prices.", flush=True)
+                        housekeeping()
+                        continue
+                    if not recap.in_session(recap_stamp):
                         # Pre-open, or a stamp that is not the replayed session's
                         # clock at all. Refused rather than fed through: the one
                         # way this mode could quietly go wrong is by trusting a
@@ -947,6 +957,7 @@ if __name__ == "__main__":
                                   f"({tick.get('exchangeTimestampUtc')}); {recap_refused[0]} so far.", flush=True)
                         housekeeping()
                         continue
+                    recap.note_in_session(recap_stamp)
                 # ATM strike on the underlying's real strike grid (from the option chain)
                 atm_strike = round_to_step(spot_price, strike_step)
 
