@@ -83,6 +83,7 @@ from backtest.run_spec import parse_risk_rules
 
 import core.fyers_orders as fyers_orders
 from core.warmup_retry import fetch_warmup_bars_with_retry
+from core.recap_session import RecapSession
 
 try:
     # pyrefly: ignore [missing-import]
@@ -492,6 +493,16 @@ if __name__ == "__main__":
     if run_underlying:
         args.underlying = run_underlying
 
+    # A recap run trades a replay of a day the platform already holds. Only
+    # three things change, all inside RecapSession: warm-up stops the day
+    # before, bars later than the replay's clock are never shown, and the run
+    # ends at the replayed 15:30. An ordinary live run has recap = None and
+    # takes none of those branches.
+    recap = RecapSession.from_params(run_params)
+    if recap is not None:
+        print(f"[{args.underlying}] RECAP RUN — replaying {recap.day.isoformat()}; the strategy sees only "
+              f"prices up to the replay's clock and stops at its 15:30.", flush=True)
+
     strategy = strategies_map[args.strategy](run_params)
     state = strategy.initialize_state()
 
@@ -720,6 +731,10 @@ if __name__ == "__main__":
                 
                 from datetime import datetime, timedelta
                 end_time = datetime.now()
+                if recap is not None:
+                    # Warm-up up to today would feed this morning's real close
+                    # into the state before the replay reaches the open.
+                    end_time = datetime.fromisoformat(recap.warmup_end_date())
                 start_time = end_time - timedelta(days=15)
 
                 bars = fetch_warmup_bars_with_retry(
@@ -731,6 +746,8 @@ if __name__ == "__main__":
                     label=args.underlying,
                 )
                 
+                if bars and recap is not None:
+                    bars = [b for b in bars if recap.before_session(b.timestamp_start)]
                 if bars:
                     # Take the last 500 for warmup
                     warmup_bars = bars[-500:] if len(bars) > 500 else bars
@@ -888,6 +905,9 @@ if __name__ == "__main__":
         print_status_if_due()
         check_feed_if_due()
 
+    # Ticks a recap run refused because they fell outside the replayed session.
+    recap_refused = [0]
+
     try:
         for tick in subscriber.listen_for_ticks(block_ms=1000, yield_idle=True):
             if tick is None:
@@ -906,6 +926,27 @@ if __name__ == "__main__":
                     continue
 
                 timestamp_utc = tick.get("exchangeTimestampUtc") or tick.get("receivedUtc") or datetime.now(timezone.utc).isoformat()
+
+                if recap is not None:
+                    if recap.past_close(tick.get("exchangeTimestampUtc")):
+                        print(f"[{args.underlying}] RECAP reached the replayed 15:30 — stopping the run "
+                              f"and squaring off at the replay's prices.", flush=True)
+                        try:
+                            api.stop_run(args.run_id, flatten=True)
+                        except Exception as ex:
+                            print(f"[{args.underlying}] RECAP could not stop run {args.run_id}: {ex}", flush=True)
+                        break
+                    if not recap.in_session(tick.get("exchangeTimestampUtc")):
+                        # Pre-open, or a stamp that is not the replayed session's
+                        # clock at all. Refused rather than fed through: the one
+                        # way this mode could quietly go wrong is by trusting a
+                        # tick it cannot place in the day.
+                        recap_refused[0] += 1
+                        if recap_refused[0] in (1, 100, 1000):
+                            print(f"[{args.underlying}] RECAP ignoring a tick outside the replayed session "
+                                  f"({tick.get('exchangeTimestampUtc')}); {recap_refused[0]} so far.", flush=True)
+                        housekeeping()
+                        continue
                 # ATM strike on the underlying's real strike grid (from the option chain)
                 atm_strike = round_to_step(spot_price, strike_step)
 
@@ -926,7 +967,7 @@ if __name__ == "__main__":
                 lag = tick_age_seconds(timestamp_utc, time.time())
                 if lag is not None:
                     REDIS_LAG.set(lag)
-                    if lag > 30 and ticks_processed % 200 == 0:
+                    if recap is None and lag > 30 and ticks_processed % 200 == 0:
                         print(f"[{args.underlying}] WARN: ticks are {lag:.0f}s behind the exchange.",
                               flush=True)
 
@@ -962,6 +1003,8 @@ if __name__ == "__main__":
                         if not symbol:
                             continue
                         rows = api.get_recent_bars(symbol, resolution=res, take=500)
+                        if recap is not None:
+                            rows = recap.drop_future_bars(rows, timestamp_utc)
                         if rows:
                             bars_dict[res][sym_type] = bar_frames_from_rows(rows, symbol, res)
 

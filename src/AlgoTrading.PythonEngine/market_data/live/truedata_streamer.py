@@ -341,6 +341,31 @@ class TrueDataFeed(VendorFeed):
             self._on_state(event, detail)
 
 
+def parse_symbol_list(value: str | None) -> tuple[list[str], dict[str, str]]:
+    """
+    TRUEDATA_SYMBOLS: comma-separated entries, each CANONICAL or
+    CANONICAL=TRUEDATA_NAME. Returns the canonical symbols in order, and the
+    names given for the ones the grammar cannot build.
+
+    Its own function so it can be tested: the first version of this lived
+    inline in main(), below the line that used its result, and the feed died
+    with UnboundLocalError the first time the server started it.
+    """
+    symbols: list[str] = []
+    names: dict[str, str] = {}
+    for entry in (e.strip() for e in (value or "").split(",")):
+        if not entry:
+            continue
+        canonical, _, vendor = entry.partition("=")
+        canonical = canonical.strip()
+        if not canonical:
+            continue
+        symbols.append(canonical)
+        if vendor.strip():
+            names[canonical] = vendor.strip()
+    return symbols, names
+
+
 def main() -> None:
     """
     Run the TrueData feed as its own process.
@@ -371,35 +396,24 @@ def main() -> None:
             "TRUEDATA_USERNAME and TRUEDATA_PASSWORD are not set. "
             "Add them to .env — they are never stored in the repository.")
 
-    feed = TrueDataFeed(
-        username,
-        password,
-        host=os.getenv("TRUEDATA_HOST", "push.truedata.in").strip() or "push.truedata.in",
-        # 8086 is the sandbox and 8084 production; TrueData moves an account
-        # from one to the other once integration is signed off.
-        port=int(os.getenv("TRUEDATA_REALTIME_PORT", "8086")),
-        vendor_names=names,
-    )
-    # TRUEDATA_SYMBOLS: comma-separated canonical symbols to stream instead of
-    # the recording list. Used for the evening recap, where the contracts a
-    # strategy trades must be inside the trial's 50-symbol limit.
-    # Each entry is CANONICAL or CANONICAL=TRUEDATA_NAME.
-    fixed, names = [], {}
-    for entry in (e.strip() for e in os.getenv("TRUEDATA_SYMBOLS", "").split(",")):
-        if not entry:
-            continue
-        canonical, _, vendor = entry.partition("=")
-        fixed.append(canonical.strip())
-        if vendor.strip():
-            names[canonical.strip()] = vendor.strip()
+    # Every setting is read before anything is built from it.
     host = os.getenv("TRUEDATA_HOST", "push.truedata.in").strip() or "push.truedata.in"
+    # 8086 is the sandbox and 8084 production; the evening recap is 8082 on
+    # replay.truedata.in.
+    port = int(os.getenv("TRUEDATA_REALTIME_PORT", "8086"))
+    # A named list replaces the recording list — for the recap, where the
+    # contracts a strategy trades must fit the trial's 50-symbol limit.
+    fixed, names = parse_symbol_list(os.getenv("TRUEDATA_SYMBOLS"))
+
+    feed = TrueDataFeed(username, password, host=host, port=port, vendor_names=names)
     runner = FeedRunner(
         feed,
         source_name="python-truedata-recap" if host.startswith("replay.") else "python-truedata-ingestor",
         fixed_symbols=fixed or None,
     )
     if fixed:
-        print(f"[truedata] streaming {len(fixed)} named symbol(s) instead of the recording list", flush=True)
+        print(f"[truedata] streaming {len(fixed)} named symbol(s) instead of the recording list "
+              f"({len(names)} with a TrueData name given)", flush=True)
 
     def shutdown(*_):
         print("[truedata] stopping", flush=True)
