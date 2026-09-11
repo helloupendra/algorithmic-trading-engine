@@ -44,6 +44,7 @@ public static class TrueDataRegistration
         // The chain is not part of the market-data seam — that interface is
         // bars — so it is injected where it is wanted by name.
         services.AddScoped<TrueDataChainClient>();
+        services.AddScoped<TrueDataSymbolImporter>();
 
         return services;
     }
