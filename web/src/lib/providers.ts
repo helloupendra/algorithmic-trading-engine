@@ -39,6 +39,15 @@ export function needsCredentials(provider: Provider): boolean {
 }
 
 /**
+ * Signs in by itself from its saved credentials (TrueData's username and
+ * password), so it has no browser session to be "connected". Judging it by one
+ * showed "not connected" on a vendor that was streaming at that moment.
+ */
+export function signsInItself(provider: Provider): boolean {
+  return provider.auth === 'ApiKey'
+}
+
+/**
  * Usable right now: either it needs no login, or its credentials are saved.
  * This is what the directory means by "active" — not merely "installed".
  */

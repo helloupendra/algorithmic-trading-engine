@@ -21,12 +21,13 @@ import {
 import type { Provider } from '../../lib/types'
 import { formatAge } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Panel, QueryBoundary } from '../../components/ui'
-import { capabilitySummary, isReady, kindLabel, needsCredentials } from '../../lib/providers'
+import { capabilitySummary, isReady, kindLabel, needsCredentials, signsInItself } from '../../lib/providers'
 
 function StatusBadge({ provider }: { provider: Provider }) {
   if (!provider.isInstalled) return <Badge tone="neutral">adapter not installed</Badge>
   if (!needsCredentials(provider)) return <Badge tone="pos">ready · no login</Badge>
   if (!provider.isConfigured) return <Badge tone="warn">credentials needed</Badge>
+  if (signsInItself(provider)) return <Badge tone="pos">signs in automatically</Badge>
   if (!provider.session.isConnected) return <Badge tone="warn">not connected</Badge>
   if (provider.session.needsReconnect) return <Badge tone="warn">reconnect due</Badge>
   return <Badge tone="pos">connected</Badge>

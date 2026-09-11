@@ -247,12 +247,16 @@ export function useStopIngestor() {
  * Every live feed the API can run, one per connector that declares live ticks,
  * with whether each is running. The list is the server's: a vendor added there
  * appears here with no change to the console.
+ *
+ * Admin-only on the API: the topbar, mounted for every role, passes `enabled`
+ * so a trader's console does not poll a 403.
  */
-export function useFeeds() {
+export function useFeeds({ enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['feeds'],
     queryFn: () => api.get<LiveFeed[]>('/api/Feeds'),
     refetchInterval: POLL_SLOW,
+    enabled,
   })
 }
 

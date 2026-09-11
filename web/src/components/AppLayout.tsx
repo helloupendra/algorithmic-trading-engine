@@ -12,9 +12,11 @@ import type { BrokerSessionInfo } from '../lib/types'
 import {
   useBackendStatus,
   useBrokerSession,
+  useFeeds,
   useIngestorStatuses,
   useMarketSession,
 } from '../lib/queries'
+import { feedPulses, marketPulses, recapVendors } from '../lib/pulse'
 import {
   BACKTESTING_SECTIONS,
   DATA_SECTIONS,
@@ -88,7 +90,10 @@ function brokerPillTitle(b: BrokerSessionInfo): string {
     : `Broker session — the token expired at ${at} IST; sign in to FYERS again`
 }
 
-/** Market open/closed, broker connected, ingestor heartbeat — the pulse row. */
+/**
+ * What is trading, and what is feeding it — the pulse row. The rules for which
+ * pill appears live in lib/pulse.ts.
+ */
 function TopbarStatus() {
   const { isAdmin } = useAuth()
   const session = useMarketSession()
@@ -96,6 +101,13 @@ function TopbarStatus() {
   const broker = useBrokerSession()
   const backend = useBackendStatus()
   const ingestors = useIngestorStatuses()
+  // Broker links and feeds are the operator's job. A trader can do nothing
+  // about either, and a red pill they cannot act on is just noise. What a
+  // trader needs to know about the feed — whether the numbers are fresh — is
+  // said on their own pages, next to the numbers. A replay is the exception:
+  // it changes what their recap runs trade on, so "NSE recap" is for everyone.
+  const showOperatorPills = isAdmin
+  const feedList = useFeeds({ enabled: showOperatorPills })
 
   // With the API down, a session or broker chip would only be repeating the
   // last answer it got — "MCX open" from ten minutes ago, presented as now.
@@ -103,14 +115,10 @@ function TopbarStatus() {
   // nothing about it is shown; the red "Backend down" chip is the whole story.
   const market = backend.isDown ? undefined : session.data
   const mcx = backend.isDown ? undefined : mcxSession.data
-  const feeds = ingestors.data ?? []
-  const healthyFeeds = feeds.filter((f) => f.isHealthy).length
-
-  // Broker links and ingestor heartbeats are the operator's job. A trader can do
-  // nothing about either, and a red pill they cannot act on is just noise. What
-  // a trader needs to know about the feed — whether the numbers are fresh — is
-  // said on their own pages, next to the numbers.
-  const showOperatorPills = isAdmin
+  const heartbeats = backend.isDown ? undefined : ingestors.data
+  const feeds = backend.isDown ? undefined : feedList.data
+  const markets = marketPulses(market, mcx, recapVendors(heartbeats, feeds))
+  const feedPills = showOperatorPills ? feedPulses(feeds, heartbeats, market?.isMarketOpen === true, Date.now()) : []
 
   return (
     <div className="topbar__status">
@@ -135,31 +143,9 @@ function TopbarStatus() {
           />
         )
       )}
-      {market && (
-        <StatusPill
-          tone={market.isMarketOpen ? 'pos' : 'idle'}
-          label={market.isMarketOpen ? 'NSE open' : 'NSE closed'}
-          title={
-            market.isMarketOpen
-              ? 'Market session is live'
-              : `Next open: ${new Date(market.nextMarketOpenUtc).toLocaleString('en-IN')}`
-          }
-        />
-      )}
-      {/* MCX keeps trading for eight hours after NSE stops, so one "market"
-          chip could never be right for both. Its close follows New York's
-          daylight saving: 23:55 IST in summer, 23:30 in winter. */}
-      {mcx && (
-        <StatusPill
-          tone={mcx.isMarketOpen ? 'pos' : 'idle'}
-          label={mcx.isMarketOpen ? 'MCX open' : 'MCX closed'}
-          title={
-            mcx.isMarketOpen
-              ? `Commodity session is live until ${new Date(mcx.sessionCloseUtc).toLocaleTimeString('en-IN')}`
-              : `Next open: ${new Date(mcx.nextMarketOpenUtc).toLocaleString('en-IN')}`
-          }
-        />
-      )}
+      {markets.map((p) => (
+        <StatusPill key={p.key} tone={p.tone} label={p.label} title={p.title} />
+      ))}
       {showOperatorPills && !backend.isDown && broker.data && (
         <StatusPill
           tone={broker.data.isAuthenticated ? 'pos' : 'neg'}
@@ -167,17 +153,11 @@ function TopbarStatus() {
           title={brokerPillTitle(broker.data)}
         />
       )}
-      {showOperatorPills && !backend.isDown && feeds.length > 0 && (
-        <StatusPill
-          tone={healthyFeeds === feeds.length ? 'live' : 'warn'}
-          label={
-            healthyFeeds === feeds.length
-              ? `Feed live (${feeds.length})`
-              : `Feed degraded (${healthyFeeds}/${feeds.length})`
-          }
-          title="Live ingestor heartbeat"
-        />
-      )}
+      {feedPills.map((p) => (
+        <NavLink key={`feed-${p.key}`} to="/admin/data/live" className="topbar__pill-link">
+          <StatusPill tone={p.tone} label={p.label} title={`${p.title} — open Live feeds`} />
+        </NavLink>
+      ))}
     </div>
   )
 }

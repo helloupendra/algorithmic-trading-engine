@@ -21,7 +21,7 @@ import {
 import type { Provider, ProviderTestResult } from '../../lib/types'
 import { formatAge, formatDateTime } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components/ui'
-import { CAPABILITY_LABELS, kindLabel } from '../../lib/providers'
+import { CAPABILITY_LABELS, kindLabel, signsInItself as signsInAutomatically } from '../../lib/providers'
 
 function CredentialsForm({ provider }: { provider: Provider }) {
   const saveCredentials = useSaveProviderCredentials()
@@ -155,7 +155,7 @@ function SessionPanel({ provider }: { provider: Provider }) {
   // A username/password connector signs itself in whenever it needs a token.
   // It has no browser session to be "connected", so judging it by one showed
   // "Not connected" directly above a test that had just returned 130 bars.
-  const signsInItself = provider.auth === 'ApiKey'
+  const signsInItself = signsInAutomatically(provider)
 
   return (
     <Panel title="Session">
