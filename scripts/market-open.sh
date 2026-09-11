@@ -78,13 +78,14 @@ say "  infra up"
 web_build || true
 api_restart || fail "the API did not come up."
 
-TOKEN="$(admin_token)" || true
-[ -n "$TOKEN" ] || fail "could not sign in to the API as $ADMIN_USERNAME."
-AUTH="Authorization: Bearer $TOKEN"
+# Proves the credentials work now; every later call re-mints through
+# auth_token() rather than carrying this one. The admin JWT lives 60 minutes
+# and the sign-in wait below can run past 14:30 — see desk-common.sh.
+auth_token >/dev/null || fail "could not sign in to the API as $ADMIN_USERNAME."
 
 # --- 4. the broker token, which expires daily --------------------------------
 connected() {
-  curl -fsS "$API/api/auth/session" -H "$AUTH" 2>/dev/null | grep -q '"isAuthenticated":true'
+  api_get /api/auth/session 2>/dev/null | grep -q '"isAuthenticated":true'
 }
 
 if connected; then
@@ -95,7 +96,7 @@ else
   # regulations" — the daily sign-in is a regulator's requirement, not a gap
   # in this platform, and no amount of code removes it.
   say "FYERS token expired — trying a refresh ..."
-  REFRESH="$(curl -sS -X POST "$API/api/auth/refresh-token" -H "$AUTH" -H 'Content-Type: application/json' -d '{}' 2>/dev/null)"
+  REFRESH="$(api_post /api/auth/refresh-token '{}' 2>/dev/null || true)"
 
   if connected; then
     say "  token renewed"
@@ -105,9 +106,9 @@ else
     say "  (the token expired at 06:00; FYERS fixes that hour and has disabled refresh)"
 
     # Put the login in front of the operator rather than in a log they have to
-    # go looking for: open the console and raise a notification.
-    open "$CONSOLE/admin/data/connectors" 2>/dev/null || true
-    notify "AlgoTrading" "Sign in to FYERS — the morning run is waiting."
+    # go looking for: raise a notification, and on the Mac open the page too.
+    if $IS_MAC; then open "$CONSOLE/admin/data/connectors" 2>/dev/null || true; fi
+    notify "AlgoTrading" "Sign in to FYERS at $CONSOLE — the morning run is waiting."
 
     NUDGED_OPEN=0
     LAST_NUDGE=$(date +%s)
@@ -140,7 +141,7 @@ start_daemon() {
   label="$1"; path="$2"
   body="${3:-{\}}"
   say "starting $label ..."
-  out="$(curl -sS -X POST "$API$path" -H "$AUTH" -H 'Content-Type: application/json' -d "$body")"
+  out="$(api_post "$path" "$body" || true)"
   say "  $label: $(printf '%s' "$out" | head -c 160)"
 }
 
@@ -154,11 +155,51 @@ fi
 # would sit deaf all day while the API reports it healthy. Stop first — a
 # stop with nothing running is a no-op — then start with today's token.
 stop_daemon() {  # label, path
-  out="$(curl -sS -X POST "$API$2" -H "$AUTH" -H 'Content-Type: application/json' -d '{}' 2>/dev/null)"
+  out="$(api_post "$2" '{}' 2>/dev/null || true)"
   case "$out" in *'"wasRunning":true'*) say "  $1 from before the open stopped — restarting it on today's token";; esac
 }
 stop_daemon "tick ingestor" "/api/Ingestor/stop"
 stop_daemon "chain poller" "/api/OptionChain/poller/stop"
+
+# Last week's weekly options are still on the recording list, and FYERS answers
+# a subscribe that contains them with -300 "Please provide a valid symbol",
+# naming them. On 2026-09-11 that was all 36 SENSEX strikes of the 09-10
+# expiry: the rest of the batch still subscribed, but SENSEX options recorded
+# nothing all day and the error hid in the log. Only rows the API itself calls
+# "expired" (its instrument expiry is behind today's IST date) are removed —
+# never a "silent" one, which before the feed is up would mean every symbol.
+prune_expired_watchlist() {
+  local stale parsed count body
+  stale="$(api_get /api/LiveData/watchlist/stale 2>/dev/null)" || {
+    warn "could not read the recording list — leaving it as it is"
+    return 0
+  }
+  # Two lines out: how many rows, then the request body naming exactly those.
+  parsed="$(printf '%s' "$stale" | python3 -c '
+import json, sys
+try:
+    rows = (json.load(sys.stdin) or {}).get("items") or []
+except Exception:
+    rows = []
+ids = [r["id"] for r in rows if r.get("reason") == "expired" and r.get("id")]
+print(len(ids))
+print(json.dumps({"ids": ids}))
+' 2>/dev/null)" || parsed=""
+  count="$(printf '%s\n' "$parsed" | sed -n 1p)"
+  body="$(printf '%s\n' "$parsed" | sed -n 2p)"
+  if [ -z "$count" ] || [ "$count" = 0 ]; then
+    say "  recording list: no expired contracts"
+    return 0
+  fi
+  if api_post /api/LiveData/watchlist/prune "$body" >/dev/null 2>&1; then
+    say "  recording list: dropped $count expired contract(s)"
+  else
+    warn "could not drop $count expired contract(s) from the recording list"
+  fi
+}
+say "checking the recording list for expired contracts ..."
+prune_expired_watchlist
+
 start_daemon "tick ingestor" "/api/Ingestor/start"
 
 # The poller start endpoint takes no body: it reads CHAIN_UNDERLYINGS from the
@@ -184,7 +225,7 @@ sleep 90
 # the previous evening while the ingestor sat on an expired token and
 # nothing was flowing. The date-time filter is done in python on purpose:
 # the JSON is one line and grep cannot tell today's stamp from yesterday's.
-TICKS="$(curl -fsS "$API/api/LiveData/latest/all" -H "$AUTH" 2>/dev/null | python3 -c '
+TICKS="$(api_get /api/LiveData/latest/all 2>/dev/null | python3 -c '
 import json, sys
 from datetime import datetime, timedelta, timezone
 try:
@@ -214,7 +255,7 @@ if [ "${TICKS:-0}" -lt 1 ]; then
 fi
 
 # --- 7. the strategy ---------------------------------------------------------
-SID="$(curl -fsS "$API/api/Strategy" -H "$AUTH" \
+SID="$(api_get /api/Strategy \
   | tr '{' '\n' | grep "\"name\":\"$STRATEGY\"" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)"
 
 if [ -z "$SID" ]; then
@@ -223,7 +264,7 @@ fi
 
 # Already-running underlyings are left alone: a second launchd fire, or a hand
 # re-run after a stumble, must not double the position.
-RUNNING="$(curl -fsS "$API/api/Strategy/runs?status=Running" -H "$AUTH" 2>/dev/null || echo '')"
+RUNNING="$(api_get '/api/Strategy/runs?status=Running' 2>/dev/null || echo '')"
 
 # One run per underlying. A failure on one is reported and the others still go:
 # losing SENSEX should not cost the BANKNIFTY session too.
@@ -255,8 +296,8 @@ for U in $UNDERLYINGS; do
   fi
 
   say "deploying $STRATEGY (id $SID) on $U, $LOTS lot(s), $RISK_TEXT — paper"
-  RUN="$(curl -sS -X POST "$API/api/Strategy/$SID/start" -H "$AUTH" -H 'Content-Type: application/json' \
-    -d "{\"underlying\":\"$U\",\"lots\":$LOTS,\"risk\":$RISK_JSON}")"
+  RUN="$(api_post "/api/Strategy/$SID/start" \
+    "{\"underlying\":\"$U\",\"lots\":$LOTS,\"risk\":$RISK_JSON}" || true)"
   say "  $(printf '%s' "$RUN" | head -c 220)"
   case "$RUN" in *'"runId"'*) STARTED=$((STARTED + 1)) ;; esac
   sleep 2
