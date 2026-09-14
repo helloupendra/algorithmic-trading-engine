@@ -68,6 +68,10 @@ public class TradingDbContext : DbContext
 
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
 
+    // The exchanges' own calendars: which days are closed, and which run special hours.
+    public DbSet<MarketHoliday> MarketHolidays => Set<MarketHoliday>();
+    public DbSet<MarketSpecialSession> MarketSpecialSessions => Set<MarketSpecialSession>();
+
     public DbSet<RiskEvent> RiskEvents => Set<RiskEvent>();
     public DbSet<AlertEvent> AlertEvents => Set<AlertEvent>();
 

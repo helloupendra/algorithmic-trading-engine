@@ -112,6 +112,9 @@ public static class DependencyInjection
         services.AddScoped<GetRecentTicksUseCase>();
         services.AddScoped<GetRecentBarsUseCase>();
 
+        // The calendar is loaded once at startup (Program.cs) and after every
+        // change, so session checks on the tick path stay in memory.
+        services.AddSingleton<IMarketCalendar, MarketCalendar>();
         services.AddSingleton<IMarketSessionService, MarketSessionService>();
 
 

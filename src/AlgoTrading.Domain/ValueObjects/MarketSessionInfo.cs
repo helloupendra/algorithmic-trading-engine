@@ -59,5 +59,27 @@ namespace AlgoTrading.Domain.ValueObjects
         /// The IANA timezone identifier of the exchange (e.g., "Asia/Kolkata").
         /// </summary>
         public string TimeZoneId { get; set; } = string.Empty;
+
+        /// <summary>
+        /// True when today is on the exchange's holiday list — closed all day, or
+        /// (MCX) closed for one of its two sessions.
+        /// </summary>
+        public bool IsHoliday { get; set; }
+
+        /// <summary>The occasion, e.g. "Ganesh Chaturthi"; null on an ordinary day.</summary>
+        public string? HolidayName { get; set; }
+
+        /// <summary>"FullDay", "MorningSession" or "EveningSession" when <see cref="IsHoliday"/>.</summary>
+        public string? HolidayClosure { get; set; }
+
+        /// <summary>Set when today runs special hours: Muhurat trading, a special Saturday session.</summary>
+        public string? SpecialSessionName { get; set; }
+
+        /// <summary>
+        /// Set when the holiday calendar for this date is not loaded, so the answer
+        /// rests on weekends alone. Not knowing about a holiday is not the same as
+        /// knowing there is none, and callers must be able to tell.
+        /// </summary>
+        public string? CalendarWarning { get; set; }
     }
 }

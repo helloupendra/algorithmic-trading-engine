@@ -243,6 +243,7 @@ export const SYSTEM_SECTIONS = [
   { route: '/admin/system', label: 'Overview', icon: IconServer, end: true },
   { route: '/admin/system/risk', label: 'Risk & kill switch', icon: IconShield },
   { route: '/admin/system/alerts', label: 'Alerts', icon: IconBell },
+  { route: '/admin/system/calendar', label: 'Market calendar', icon: IconClock },
   { route: '/admin/system/logs', label: 'Activity log', icon: IconClock },
   { route: '/admin/system/deployments', label: 'Deployments', icon: IconRefresh },
   { route: '/admin/users', label: 'Users & access', icon: IconUsers },

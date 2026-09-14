@@ -459,6 +459,18 @@ using (var scope = app.Services.CreateScope())
     var seeder = services.GetRequiredService<ReferenceDataSeeder>();
     await seeder.SeedAsync();
 
+    // After seeding, before anything asks whether the market is open. A load
+    // failure is logged and left visible (every session answer then carries a
+    // calendar warning) rather than stopping the API.
+    try
+    {
+        await services.GetRequiredService<IMarketCalendar>().RefreshAsync();
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "Market calendar could not be loaded; session checks will know weekends only.");
+    }
+
     // Runs after seeding so it can promote a seeded account if one matches.
     var adminBootstrapper = services.GetRequiredService<AdminBootstrapper>();
     await adminBootstrapper.EnsureAdminAsync();

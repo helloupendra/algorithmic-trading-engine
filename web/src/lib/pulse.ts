@@ -109,6 +109,11 @@ export function marketPulses(
   const open = known.filter((m) => m.session.isMarketOpen)
   const closed = known.filter((m) => !m.session.isMarketOpen)
 
+  // "NSE closed for Ganesh Chaturthi, opens Tue 09:15 IST": a holiday is the
+  // reason worth naming, because "closed" on a weekday reads like a fault.
+  const closedText = (m: (typeof known)[number]) =>
+    `${m.name} closed${m.session.holidayName ? ` for ${m.session.holidayName}` : ''}, opens ${dayTimeIst(m.session.nextMarketOpenUtc)} IST`
+
   if (open.length > 0) {
     pulses.push({
       key: 'markets',
@@ -116,15 +121,16 @@ export function marketPulses(
       tone: 'pos',
       title: [
         ...open.map((m) => `${m.name} until ${timeIst(m.session.sessionCloseUtc)} IST`),
-        ...closed.map((m) => `${m.name} closed, opens ${dayTimeIst(m.session.nextMarketOpenUtc)} IST`),
+        ...closed.map(closedText),
       ].join(' · '),
     })
   } else if (closed.length === 2) {
+    const holiday = closed.map((m) => m.session.holidayName).find((name): name is string => !!name)
     pulses.push({
       key: 'markets',
-      label: 'Markets closed',
+      label: holiday ? `Holiday · ${holiday}` : 'Markets closed',
       tone: 'idle',
-      title: closed.map((m) => `${m.name} opens ${dayTimeIst(m.session.nextMarketOpenUtc)} IST`).join(' · '),
+      title: closed.map(closedText).join(' · '),
     })
   } else {
     // The other session is still unknown, so "Markets closed" would be a guess
@@ -132,9 +138,9 @@ export function marketPulses(
     for (const m of closed) {
       pulses.push({
         key: m.name.toLowerCase(),
-        label: `${m.name} closed`,
+        label: m.session.holidayName ? `${m.name} holiday` : `${m.name} closed`,
         tone: 'idle',
-        title: `Opens ${dayTimeIst(m.session.nextMarketOpenUtc)} IST`,
+        title: closedText(m),
       })
     }
   }
@@ -149,6 +155,18 @@ export function marketPulses(
   }
 
   return pulses
+}
+
+/**
+ * A warning pill when a session answer rests on weekends alone because the
+ * exchange's holiday calendar for today is not loaded. Not knowing about a
+ * holiday is not the same as knowing there is none.
+ */
+export function calendarPulse(...sessions: (MarketSessionInfo | undefined)[]): Pulse | null {
+  const warning = sessions.map((s) => s?.calendarWarning).find((w): w is string => !!w)
+  return warning
+    ? { key: 'calendar', label: 'Holiday calendar missing', tone: 'warn', title: `${warning} Add it under System → Market calendar.` }
+    : null
 }
 
 /**

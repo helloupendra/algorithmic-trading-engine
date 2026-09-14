@@ -3129,3 +3129,9 @@ a.pill:hover { border-color: var(--line-strong); }
   .lab-grid { grid-template-columns: 1fr; }
   .lab-grid__wide { grid-column: auto; }
 }
+
+/* Market calendar: a remove control on every exchange cell would read as noise
+   down a 16-row year; it comes forward on the row being looked at. */
+.calendar-remove { opacity: 0.25; padding: 0 6px; }
+tr:hover .calendar-remove,
+.calendar-remove:focus-visible { opacity: 1; }
