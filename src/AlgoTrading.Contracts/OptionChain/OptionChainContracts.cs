@@ -339,3 +339,41 @@ public class OptionChainSeriesResponse
     public List<OptionChainSeriesPointResponse> Points { get; set; } = new();
     public bool OpenInterestUnavailable { get; set; }
 }
+
+/// <summary>
+/// One open paper position on a contract of the chain's underlying: a strategy
+/// run's leg or a manual trade, so the chain shows what is being held on it.
+/// </summary>
+public class OptionChainPositionResponse
+{
+    public long RunId { get; set; }
+
+    /// <summary>"Manual" for the manual book, otherwise the strategy's name.</summary>
+    public string StrategyName { get; set; } = string.Empty;
+    public bool IsManual { get; set; }
+    public string UserName { get; set; } = string.Empty;
+    public string GroupId { get; set; } = string.Empty;
+
+    public string Symbol { get; set; } = string.Empty;
+
+    /// <summary>"CE", "PE" or "FUT" (or the instrument type for anything else).</summary>
+    public string InstrumentType { get; set; } = string.Empty;
+    public decimal? StrikePrice { get; set; }
+    public DateOnly? ExpiryDate { get; set; }
+
+    /// <summary>"LONG" or "SHORT".</summary>
+    public string Direction { get; set; } = string.Empty;
+
+    /// <summary>Lots for a derivative.</summary>
+    public int Quantity { get; set; }
+    public int LotSize { get; set; }
+    public decimal AveragePrice { get; set; }
+
+    /// <summary>The newest price known: the live quote when there is one, else the engine's last mark.</summary>
+    public decimal? MarkPrice { get; set; }
+    public DateTime? MarkUtc { get; set; }
+    public decimal? UnrealizedPnl { get; set; }
+    public decimal? StopLossPrice { get; set; }
+    public decimal? TargetPrice { get; set; }
+    public DateTime OpenedUtc { get; set; }
+}

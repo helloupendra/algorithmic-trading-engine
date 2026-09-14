@@ -277,3 +277,38 @@ export const BUILD_UP: Record<string, { label: string; className: string; meanin
   ShortCovering: { label: 'Short cover', className: 'oc-build-cover', meaning: 'Price up, OI down — writers are buying back.' },
   LongUnwinding: { label: 'Long unwind', className: 'oc-build-unwind', meaning: 'Price down, OI down — buyers are exiting.' },
 }
+
+// --- positions on the chain ------------------------------------------------------
+
+export interface HeldPosition {
+  symbol: string
+  direction: string
+  quantity: number
+}
+
+/** Open positions grouped by contract symbol. */
+export function positionsBySymbol<T extends HeldPosition>(positions: readonly T[] | null | undefined): Map<string, T[]> {
+  const map = new Map<string, T[]>()
+  for (const p of positions ?? []) {
+    const list = map.get(p.symbol)
+    if (list) list.push(p)
+    else map.set(p.symbol, [p])
+  }
+  return map
+}
+
+/**
+ * The marker a held leg carries on the chain: "B 2" for two lots bought, "S 1"
+ * for one sold, "B 1 · S 1" when books disagree on the same contract. Summed per
+ * side, never netted: a strategy's short and a manual long are two positions,
+ * and netting them would show nothing held at all.
+ */
+export function positionMarker(positions: readonly HeldPosition[] | undefined): { label: string; tone: 'long' | 'short' | 'mixed' } | null {
+  if (!positions || positions.length === 0) return null
+  const bought = positions.filter((p) => p.direction.toUpperCase() === 'LONG').reduce((n, p) => n + p.quantity, 0)
+  const sold = positions.filter((p) => p.direction.toUpperCase() === 'SHORT').reduce((n, p) => n + p.quantity, 0)
+  if (bought > 0 && sold > 0) return { label: `B ${bought} · S ${sold}`, tone: 'mixed' }
+  if (bought > 0) return { label: `B ${bought}`, tone: 'long' }
+  if (sold > 0) return { label: `S ${sold}`, tone: 'short' }
+  return null
+}

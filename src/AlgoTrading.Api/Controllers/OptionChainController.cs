@@ -1,4 +1,7 @@
 using AlgoTrading.Api.Security;
+using AlgoTrading.Application.Interfaces;
+using AlgoTrading.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 using AlgoTrading.Contracts.OptionChain;
 using AlgoTrading.Api.Services;
 using AlgoTrading.Infrastructure.Services;
@@ -48,6 +51,99 @@ public class OptionChainController : ControllerBase
             return BadRequest(new { message = "underlying is required." });
 
         return Ok(await _chain.GetChainAsync(underlying, expiry, asOfUtc?.ToUniversalTime(), cancellationToken));
+    }
+
+    /// <summary>
+    /// Open paper positions on this underlying's contracts, from running strategy
+    /// runs and manual books, marked at the live price. An admin sees every
+    /// book; anyone else sees their own.
+    /// </summary>
+    [HttpGet("positions")]
+    public async Task<ActionResult<IReadOnlyList<OptionChainPositionResponse>>> GetPositions(
+        [FromQuery] string underlying,
+        [FromServices] TradingDbContext db,
+        [FromServices] ILotSizeResolver lotSizes,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(underlying))
+            return BadRequest(new { message = "underlying is required." });
+
+        string key = underlying.Trim().ToUpperInvariant();
+        bool admin = User.IsAdmin();
+        long? userId = User.GetUserId();
+        if (!admin && userId is null) return Ok(Array.Empty<OptionChainPositionResponse>());
+
+        var rows = await (
+                from p in db.PaperPositions.AsNoTracking()
+                join r in db.SimulationRuns.AsNoTracking() on p.SimulationRunId equals r.Id
+                join i in db.Instruments.AsNoTracking() on p.Symbol equals i.Symbol
+                join u in db.AppUsers.AsNoTracking() on r.UserId equals u.Id into users
+                from u in users.DefaultIfEmpty()
+                join q in db.LiveQuotesLatest.AsNoTracking() on p.Symbol equals q.Symbol into quotes
+                from q in quotes.DefaultIfEmpty()
+                where p.Status == "Open" && p.Quantity > 0 && r.Status == "Running" && i.Underlying == key
+                      && (admin || r.UserId == userId)
+                orderby p.OpenedUtc
+                select new
+                {
+                    RunId = r.Id,
+                    r.StrategyName,
+                    UserName = u != null ? u.UserName : string.Empty,
+                    p.GroupId,
+                    p.Symbol,
+                    i.InstrumentType,
+                    i.OptionType,
+                    i.StrikePrice,
+                    i.ExpiryDate,
+                    p.Direction,
+                    p.Quantity,
+                    p.AveragePrice,
+                    p.LastMarkPrice,
+                    p.UpdatedUtc,
+                    QuotePrice = q != null ? q.LastTradedPrice : null,
+                    QuoteUtc = q != null ? (DateTime?)q.UpdatedUtc : null,
+                    p.StopLossPrice,
+                    p.TargetPrice,
+                    p.OpenedUtc,
+                })
+            .ToListAsync(cancellationToken);
+
+        var lots = rows.Count == 0
+            ? new Dictionary<string, LotSizeInfo>()
+            : await lotSizes.ResolveManyAsync(rows.Select(x => x.Symbol).Distinct().ToList(), cancellationToken);
+
+        var result = rows.Select(x =>
+        {
+            int lotSize = lots.TryGetValue(x.Symbol, out var info) && info.LotSize > 0 ? info.LotSize : 1;
+            // The live quote wins when it is newer than the engine's last mark:
+            // the manual book is marked only when something touches it.
+            bool quoteNewer = x.QuotePrice is > 0 && x.QuoteUtc is { } qu && qu >= x.UpdatedUtc;
+            decimal? mark = quoteNewer ? x.QuotePrice : x.LastMarkPrice ?? x.QuotePrice;
+            return new OptionChainPositionResponse
+            {
+                RunId = x.RunId,
+                StrategyName = x.StrategyName,
+                IsManual = string.Equals(x.StrategyName, ManualOrdersController.BookStrategyName, StringComparison.Ordinal),
+                UserName = x.UserName,
+                GroupId = x.GroupId,
+                Symbol = x.Symbol,
+                InstrumentType = string.IsNullOrEmpty(x.OptionType) ? x.InstrumentType : x.OptionType,
+                StrikePrice = x.StrikePrice,
+                ExpiryDate = x.ExpiryDate,
+                Direction = x.Direction,
+                Quantity = x.Quantity,
+                LotSize = lotSize,
+                AveragePrice = x.AveragePrice,
+                MarkPrice = mark,
+                MarkUtc = quoteNewer ? x.QuoteUtc : x.UpdatedUtc,
+                UnrealizedPnl = mark is { } m ? PaperPnl.Unrealized(x.Direction, x.AveragePrice, m, x.Quantity, lotSize) : null,
+                StopLossPrice = x.StopLossPrice,
+                TargetPrice = x.TargetPrice,
+                OpenedUtc = x.OpenedUtc,
+            };
+        }).ToList();
+
+        return Ok(result);
     }
 
     /// <summary>

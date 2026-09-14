@@ -3404,3 +3404,24 @@ a.pill:hover { border-color: var(--line-strong); }
 .calendar-remove { opacity: 0.25; padding: 0 6px; }
 tr:hover .calendar-remove,
 .calendar-remove:focus-visible { opacity: 1; }
+
+/* Positions on the option chain: a B/S marker beside a held leg's LTP, the
+   held row outlined on its strike, and the positions panel above the chain. */
+.oc-pos {
+  display: inline-block;
+  margin: 0 4px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 16px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.oc-pos--long { color: var(--pos, #2fbf71); background: color-mix(in srgb, var(--pos, #2fbf71) 18%, transparent); }
+.oc-pos--short { color: var(--neg, #e5484d); background: color-mix(in srgb, var(--neg, #e5484d) 18%, transparent); }
+.oc-pos--mixed { color: var(--warn, #e5b54a); background: color-mix(in srgb, var(--warn, #e5b54a) 18%, transparent); }
+.oc-row--held .oc-strike { box-shadow: inset 3px 0 0 var(--warn, #e5b54a), inset -3px 0 0 var(--warn, #e5b54a); }
+.oc-pos-total { font-weight: 600; font-variant-numeric: tabular-nums; }
+.oc-pos-table td { font-variant-numeric: tabular-nums; white-space: nowrap; }

@@ -1967,6 +1967,23 @@ export function useOptionChainExpiries(underlying: string) {
  * the header strip. Polls every 3 s while the underlying's market is open and
  * every 60 s otherwise; a replay (`asOfUtc`) never changes, so it never polls.
  */
+/**
+ * Open paper positions on the underlying's contracts — strategy legs and manual
+ * trades — polled with the chain so a new fill shows within seconds.
+ */
+export function useOptionChainPositions(underlying: string, live: boolean) {
+  return useQuery({
+    queryKey: ['optionChainPositions', underlying],
+    queryFn: () =>
+      api.get<import('./types').OptionChainPosition[]>(
+        `/api/OptionChain/positions?${new URLSearchParams({ underlying })}`,
+      ),
+    enabled: Boolean(underlying),
+    refetchInterval: live ? 3_000 : 30_000,
+    placeholderData: keepPreviousData,
+  })
+}
+
 export function useOptionChainView(underlying: string, expiry?: string, asOfUtc?: string) {
   return useQuery({
     queryKey: ['optionChainView', underlying, expiry ?? null, asOfUtc ?? null],
