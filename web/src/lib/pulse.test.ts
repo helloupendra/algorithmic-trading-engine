@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { feedPulses, heartbeatFeed, marketPulses, recapVendors } from './pulse'
+import { calendarPulse, feedPulses, heartbeatFeed, marketPulses, recapVendors } from './pulse'
 import type { IngestorStatus, LiveFeed, MarketSessionInfo } from './types'
 
 /**
@@ -90,6 +90,31 @@ describe('marketPulses', () => {
     const pulses = marketPulses(nseClosed, mcxOpen, ['TrueData'])
     expect(pulses.map((p) => p.label)).toEqual(['MCX open', 'NSE recap'])
     expect(pulses[1].title).toContain('TrueData')
+  })
+})
+
+describe('holidays', () => {
+  // 2026-09-14, Ganesh Chaturthi: NSE shut all day, MCX shut until its evening session.
+  const nseHoliday = { ...nseClosed, isHoliday: true, holidayName: 'Ganesh Chaturthi', holidayClosure: 'FullDay' }
+  const mcxMorningShut = { ...mcxClosed, isTradingDay: true, isHoliday: true, holidayName: 'Ganesh Chaturthi', holidayClosure: 'MorningSession' }
+
+  it('names the holiday when every market is shut', () => {
+    const [pulse] = marketPulses(nseHoliday, mcxMorningShut, [])
+    expect(pulse.label).toBe('Holiday · Ganesh Chaturthi')
+    expect(pulse.title).toContain('NSE closed for Ganesh Chaturthi')
+  })
+
+  it('says why NSE is shut while MCX trades', () => {
+    const [pulse] = marketPulses(nseHoliday, mcxOpen, [])
+    expect(pulse.label).toBe('MCX open')
+    expect(pulse.title).toContain('NSE closed for Ganesh Chaturthi')
+  })
+
+  it('raises a missing holiday calendar, and stays quiet when it is loaded', () => {
+    const missing = { ...nseClosed, calendarWarning: 'No NSE holiday calendar is loaded for 2027; only weekends are known to be closed.' }
+    expect(calendarPulse(missing, mcxOpen)).toMatchObject({ label: 'Holiday calendar missing', tone: 'warn' })
+    expect(calendarPulse(nseClosed, mcxOpen)).toBeNull()
+    expect(calendarPulse(undefined, undefined)).toBeNull()
   })
 })
 

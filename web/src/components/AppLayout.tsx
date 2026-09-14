@@ -16,7 +16,7 @@ import {
   useIngestorStatuses,
   useMarketSession,
 } from '../lib/queries'
-import { feedPulses, marketPulses, recapVendors } from '../lib/pulse'
+import { calendarPulse, feedPulses, marketPulses, recapVendors } from '../lib/pulse'
 import {
   BACKTESTING_SECTIONS,
   DATA_SECTIONS,
@@ -118,6 +118,7 @@ function TopbarStatus() {
   const heartbeats = backend.isDown ? undefined : ingestors.data
   const feeds = backend.isDown ? undefined : feedList.data
   const markets = marketPulses(market, mcx, recapVendors(heartbeats, feeds))
+  const calendar = showOperatorPills ? calendarPulse(market, mcx) : null
   const feedPills = showOperatorPills ? feedPulses(feeds, heartbeats, market?.isMarketOpen === true, Date.now()) : []
 
   return (
@@ -146,11 +147,23 @@ function TopbarStatus() {
       {markets.map((p) => (
         <StatusPill key={p.key} tone={p.tone} label={p.label} title={p.title} />
       ))}
+      {calendar && (
+        <NavLink to="/admin/system/calendar" className="topbar__pill-link">
+          <StatusPill tone={calendar.tone} label={calendar.label} title={calendar.title} />
+        </NavLink>
+      )}
       {showOperatorPills && !backend.isDown && broker.data && (
+        // A missing sign-in is an alarm only on a day NSE trades. On a holiday
+        // nothing needs the token, and a red pill says the opposite.
         <StatusPill
-          tone={broker.data.isAuthenticated ? 'pos' : 'neg'}
+          tone={broker.data.isAuthenticated ? 'pos' : market?.isTradingDay === false ? 'idle' : 'neg'}
           label={brokerPillLabel(broker.data)}
-          title={brokerPillTitle(broker.data)}
+          title={
+            brokerPillTitle(broker.data) +
+            (!broker.data.isAuthenticated && market?.isTradingDay === false
+              ? ` — not needed today: NSE is closed${market.holidayName ? ` for ${market.holidayName}` : ''}`
+              : '')
+          }
         />
       )}
       {feedPills.map((p) => (
@@ -370,6 +383,7 @@ const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]>
   ['/admin/users', 'System', 'Users & access'],
   ['/admin/system/risk', 'System', 'Risk & kill switch'],
   ['/admin/system/alerts', 'System', 'Alerts'],
+  ['/admin/system/calendar', 'System', 'Market calendar'],
   ['/admin/system/logs', 'System', 'Activity log'],
   ['/admin/system/deployments', 'System', 'Deployments'],
   ['/admin/broker', 'Data', 'Connectors'],

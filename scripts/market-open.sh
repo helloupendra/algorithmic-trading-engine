@@ -83,6 +83,44 @@ api_restart || fail "the API did not come up."
 # and the sign-in wait below can run past 14:30 — see desk-common.sh.
 auth_token >/dev/null || fail "could not sign in to the API as $ADMIN_USERNAME."
 
+# --- 3b. is the exchange open today? -----------------------------------------
+# Weekends are caught above without the API; holidays need the exchanges' own
+# calendar, which the API holds (System > Market calendar). On 2026-09-14,
+# Ganesh Chaturthi, this script could not tell: it restarted everything and
+# waited for a FYERS sign-in until 14:30 on a day NSE never opened.
+SESSION_JSON="$(api_get "/api/MarketSession/check?exchange=NSE&segment=CM" 2>/dev/null || true)"
+read_session() {  # field -> value, empty when the answer is missing or unreadable
+  printf '%s' "$SESSION_JSON" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+field = sys.argv[1]
+if field == "holiday":
+    print((d.get("holidayName") or "a non-trading day") if d.get("isTradingDay") is False else "")
+else:
+    print(d.get(field) or "")
+' "$1" 2>/dev/null
+}
+
+if [ -z "$SESSION_JSON" ]; then
+  warn "could not ask the API whether today is a trading day — carrying on as an ordinary weekday"
+else
+  CALENDAR_WARNING="$(read_session calendarWarning)"
+  if [ -n "$CALENDAR_WARNING" ]; then
+    warn "$CALENDAR_WARNING"
+    notify "AlgoTrading" "Holiday calendar: $CALENDAR_WARNING Add it under System > Market calendar."
+  fi
+
+  HOLIDAY="$(read_session holiday)"
+  if [ -n "$HOLIDAY" ]; then
+    say "Exchange holiday — NSE is closed today ($HOLIDAY). Nothing to start."
+    notify "AlgoTrading" "Market holiday today: $HOLIDAY. NSE is closed; the desk is not starting feeds or strategies."
+    exit 0
+  fi
+fi
+
 # --- 4. the broker token, which expires daily --------------------------------
 connected() {
   api_get /api/auth/session 2>/dev/null | grep -q '"isAuthenticated":true'

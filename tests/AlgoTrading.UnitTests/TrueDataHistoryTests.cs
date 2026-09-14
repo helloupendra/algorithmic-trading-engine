@@ -3,6 +3,7 @@ using System.Text;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Application.Providers;
 using AlgoTrading.Infrastructure.Providers.TrueData;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -127,8 +128,15 @@ public class TrueDataHistoryTests
         var factory = new FakeHttpClientFactory(handler);
         var settings = Options.Create(new TrueDataSettings());
 
+        // The store resolves credentials per sign-in from a scope, as it does in
+        // the API, so the fake is registered scoped the way the real one is.
+        var scopes = new ServiceCollection()
+            .AddScoped<IBrokerCredentialsProvider, FakeCredentials>()
+            .BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true })
+            .GetRequiredService<IServiceScopeFactory>();
+
         var tokens = new TrueDataTokenStore(
-            settings, new FakeCredentials(), factory, NullLogger<TrueDataTokenStore>.Instance);
+            settings, scopes, factory, NullLogger<TrueDataTokenStore>.Instance);
 
         var provider = new TrueDataMarketDataProvider(
             settings, tokens, new IdentitySymbolMapper(), factory,

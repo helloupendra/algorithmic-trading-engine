@@ -29,6 +29,7 @@ import { ConnectorDetailPage } from './pages/admin/ConnectorDetailPage'
 import { LiveAlertsV2Page } from './pages/admin/LiveAlertsV2Page'
 import { ActivityLogPage } from './pages/admin/ActivityLogPage'
 import { DeploymentsPage } from './pages/admin/DeploymentsPage'
+import { MarketCalendarPage } from './pages/admin/MarketCalendarPage'
 import { StrategiesOverviewPage } from './pages/strategies/StrategiesOverviewPage'
 import { ManualOrderPage } from './pages/trading/ManualOrderPage'
 import { FilterLabPage } from './pages/trading/FilterLabPage'
@@ -166,6 +167,7 @@ export default function App() {
                   <Route path="/admin/notebook" element={<NotebookPage />} />
 
                   <Route path="/admin/system/alerts" element={<LiveAlertsV2Page />} />
+                  <Route path="/admin/system/calendar" element={<MarketCalendarPage />} />
                   <Route path="/admin/system/logs" element={<ActivityLogPage />} />
                   <Route path="/admin/system/deployments" element={<DeploymentsPage />} />
                   <Route path="/admin/live-alerts" element={<Navigate to="/admin/system/alerts" replace />} />

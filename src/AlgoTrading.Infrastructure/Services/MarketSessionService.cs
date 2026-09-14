@@ -1,30 +1,46 @@
-using System;
-using System.Collections.Generic;
-using System.Text;
 using AlgoTrading.Application.Interfaces;
+using AlgoTrading.Domain.Enums;
 using AlgoTrading.Domain.ValueObjects;
-
 
 namespace AlgoTrading.Infrastructure.Services;
 
 /// <summary>
-/// Evaluates market trading hours and holidays (e.g., NSE Equity) using localized timezone arithmetic.
-/// Vital for pausing live ingestion loops and avoiding unnecessary API calls during closed hours.
+/// When each exchange trades: its timetable, weekends, and the holidays and
+/// special sessions in the exchange's own calendar (<see cref="IMarketCalendar"/>).
+/// Feeds, runners and the morning job ask this before treating a quiet market
+/// as a broken one.
 /// </summary>
+/// <remarks>
+/// Until 2026-09-14 this knew only weekends. That day was Ganesh Chaturthi: the
+/// morning job restarted the API and waited for a broker sign-in until 14:30,
+/// and every feed reported a closed market as an open one that had gone silent.
+/// </remarks>
 public class MarketSessionService : IMarketSessionService
 {
-    private static readonly TimeOnly NseCmOpen = new(9, 15);
-    private static readonly TimeOnly NseCmClose = new(15, 30);
+    private static readonly TimeOnly EquityOpen = new(9, 15);
+    private static readonly TimeOnly EquityClose = new(15, 30);
 
-    // MCX runs a single session from 09:00 into the night. Its close tracks the
-    // US energy and metals markets, so it moves with American daylight saving:
-    // 23:30 IST while New York is on standard time, 23:55 while it is on DST.
-    // Both are the exchange's published non-agri timings; agricultural
-    // contracts close at 17:00 and are not modelled here because nothing on this
-    // platform trades them.
+    // MCX runs from 09:00 into the night. Its close tracks the US energy and
+    // metals markets, so it moves with American daylight saving: 23:30 IST while
+    // New York is on standard time, 23:55 while it is on DST. Agricultural
+    // contracts close at 17:00 and are not modelled; nothing here trades them.
     private static readonly TimeOnly McxOpen = new(9, 0);
     private static readonly TimeOnly McxCloseStandard = new(23, 30);
     private static readonly TimeOnly McxCloseDaylight = new(23, 55);
+
+    // MCX publishes its holidays per session: a holiday can close the morning
+    // half and still trade the evening, or the other way round.
+    private static readonly TimeOnly McxSessionSplit = new(17, 0);
+
+    // Longer than any run of weekends and holidays an Indian exchange has had.
+    private const int NextOpenSearchDays = 30;
+
+    private readonly IMarketCalendar _calendar;
+
+    public MarketSessionService(IMarketCalendar calendar)
+    {
+        _calendar = calendar;
+    }
 
     public MarketSessionInfo GetSessionInfo(
         DateTime utcNow,
@@ -37,27 +53,55 @@ public class MarketSessionService : IMarketSessionService
         if (string.IsNullOrWhiteSpace(segment))
             throw new ArgumentException("Segment is required.", nameof(segment));
 
-        var indiaTz = GetIndiaTimeZone();
-        var localNow = TimeZoneInfo.ConvertTimeFromUtc(utcNow, indiaTz);
+        var market = exchange.Trim().ToUpperInvariant();
+        var seg = segment.Trim().ToUpperInvariant();
 
-        var normalizedExchange = exchange.Trim().ToUpperInvariant();
-        var normalizedSegment = segment.Trim().ToUpperInvariant();
-
-        if (normalizedExchange == "NSE" && normalizedSegment == "CM")
+        bool supported = market switch
         {
-            return BuildNseCmSessionInfo(utcNow, localNow, indiaTz);
-        }
+            // Cash and equity derivatives trade the same hours and share one list.
+            "NSE" or "BSE" => seg is "CM" or "FO",
+            // COM is what MCX calls the segment; CM is accepted too because the
+            // console's default query string carries it.
+            "MCX" => true,
+            _ => false,
+        };
 
-        // COM is what MCX calls the segment; CM is accepted too because the
-        // console's default query string carries it and a commodity page asking
-        // about MCX plainly means the commodity session.
-        if (normalizedExchange == "MCX")
+        if (!supported)
+            throw new NotSupportedException(
+                $"Market session rules are not configured yet for exchange '{market}' and segment '{seg}'.");
+
+        var zone = IstTime.Zone;
+        var localNow = TimeZoneInfo.ConvertTimeFromUtc(utcNow, zone);
+        var today = DateOnly.FromDateTime(localNow);
+
+        var windows = WindowsOn(market, today);
+        var holiday = _calendar.HolidayOn(market, today);
+        var special = _calendar.SpecialSessionOn(market, today);
+
+        // A closed day still reports its usual hours, so "opens at" and "closes
+        // at" read sensibly on a page; IsTradingDay says whether they apply.
+        var (dayOpen, dayClose) = windows.Count > 0
+            ? (windows[0].Open, windows[^1].Close)
+            : NominalHours(market, today);
+
+        return new MarketSessionInfo
         {
-            return BuildMcxSessionInfo(utcNow, localNow, indiaTz, normalizedSegment);
-        }
-
-        throw new NotSupportedException(
-            $"Market session rules are not configured yet for exchange '{normalizedExchange}' and segment '{normalizedSegment}'.");
+            Exchange = market,
+            Segment = seg,
+            UtcNow = utcNow,
+            LocalNow = localNow,
+            IsTradingDay = windows.Count > 0,
+            IsMarketOpen = windows.Any(w => localNow >= w.Open && localNow < w.Close),
+            SessionOpenUtc = TimeZoneInfo.ConvertTimeToUtc(dayOpen, zone),
+            SessionCloseUtc = TimeZoneInfo.ConvertTimeToUtc(dayClose, zone),
+            NextMarketOpenUtc = TimeZoneInfo.ConvertTimeToUtc(NextOpen(market, localNow), zone),
+            TimeZoneId = zone.Id,
+            IsHoliday = holiday is not null,
+            HolidayName = holiday?.Name,
+            HolidayClosure = holiday?.Closure.ToString(),
+            SpecialSessionName = special?.Name,
+            CalendarWarning = CalendarWarning(market, today),
+        };
     }
 
     public bool IsMarketOpen(
@@ -76,86 +120,80 @@ public class MarketSessionService : IMarketSessionService
         return GetSessionInfo(utcNow, exchange, segment).NextMarketOpenUtc;
     }
 
-    private static MarketSessionInfo BuildNseCmSessionInfo(
-        DateTime utcNow,
-        DateTime localNow,
-        TimeZoneInfo indiaTz)
+    /// <summary>
+    /// The IST windows the exchange trades on a date, in order. Empty when it does
+    /// not trade at all. A special session replaces everything else that day.
+    /// </summary>
+    private List<(DateTime Open, DateTime Close)> WindowsOn(string market, DateOnly date)
     {
-        bool isTradingDay = IsTradingDay(localNow.Date);
+        var special = _calendar.SpecialSessionOn(market, date);
+        if (special is not null)
+            return [(date.ToDateTime(special.OpenIst), date.ToDateTime(special.CloseIst))];
 
-        DateTime sessionOpenLocal = localNow.Date.Add(NseCmOpen.ToTimeSpan());
-        DateTime sessionCloseLocal = localNow.Date.Add(NseCmClose.ToTimeSpan());
+        if (date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday)
+            return [];
 
-        DateTime sessionOpenUtc = TimeZoneInfo.ConvertTimeToUtc(sessionOpenLocal, indiaTz);
-        DateTime sessionCloseUtc = TimeZoneInfo.ConvertTimeToUtc(sessionCloseLocal, indiaTz);
+        var closure = _calendar.HolidayOn(market, date)?.Closure;
+        if (closure == MarketClosure.FullDay)
+            return [];
 
-        bool isMarketOpen =
-            isTradingDay &&
-            localNow >= sessionOpenLocal &&
-            localNow < sessionCloseLocal;
+        if (market != "MCX")
+            return [(date.ToDateTime(EquityOpen), date.ToDateTime(EquityClose))];
 
-        DateTime nextOpenLocal = CalculateNextMarketOpenLocal(localNow);
-        DateTime nextOpenUtc = TimeZoneInfo.ConvertTimeToUtc(nextOpenLocal, indiaTz);
-
-        return new MarketSessionInfo
+        var close = McxCloseFor(date);
+        return closure switch
         {
-            Exchange = "NSE",
-            Segment = "CM",
-            UtcNow = utcNow,
-            LocalNow = localNow,
-            IsTradingDay = isTradingDay,
-            IsMarketOpen = isMarketOpen,
-            SessionOpenUtc = sessionOpenUtc,
-            SessionCloseUtc = sessionCloseUtc,
-            NextMarketOpenUtc = nextOpenUtc,
-            TimeZoneId = indiaTz.Id
+            MarketClosure.MorningSession => [(date.ToDateTime(McxSessionSplit), date.ToDateTime(close))],
+            MarketClosure.EveningSession => [(date.ToDateTime(McxOpen), date.ToDateTime(McxSessionSplit))],
+            _ => [(date.ToDateTime(McxOpen), date.ToDateTime(close))],
         };
     }
 
-    private static MarketSessionInfo BuildMcxSessionInfo(
-        DateTime utcNow,
-        DateTime localNow,
-        TimeZoneInfo indiaTz,
-        string segment)
+    private static (DateTime Open, DateTime Close) NominalHours(string market, DateOnly date)
+        => market == "MCX"
+            ? (date.ToDateTime(McxOpen), date.ToDateTime(McxCloseFor(date)))
+            : (date.ToDateTime(EquityOpen), date.ToDateTime(EquityClose));
+
+    /// <summary>The first session start after <paramref name="localNow"/>, today included.</summary>
+    private DateTime NextOpen(string market, DateTime localNow)
     {
-        bool isTradingDay = IsTradingDay(localNow.Date);
-        TimeOnly close = McxCloseFor(utcNow);
-
-        DateTime sessionOpenLocal = localNow.Date.Add(McxOpen.ToTimeSpan());
-        DateTime sessionCloseLocal = localNow.Date.Add(close.ToTimeSpan());
-
-        bool isMarketOpen =
-            isTradingDay &&
-            localNow >= sessionOpenLocal &&
-            localNow < sessionCloseLocal;
-
-        DateTime nextOpenLocal;
-        if (isTradingDay && localNow < sessionOpenLocal)
+        var today = DateOnly.FromDateTime(localNow);
+        for (int offset = 0; offset <= NextOpenSearchDays; offset++)
         {
-            nextOpenLocal = sessionOpenLocal;
-        }
-        else
-        {
-            nextOpenLocal = NextTradingDay(localNow.Date).Add(McxOpen.ToTimeSpan());
+            foreach (var (open, _) in WindowsOn(market, today.AddDays(offset)))
+            {
+                if (open > localNow) return open;
+            }
         }
 
-        return new MarketSessionInfo
-        {
-            Exchange = "MCX",
-            Segment = string.IsNullOrWhiteSpace(segment) ? "COM" : segment,
-            UtcNow = utcNow,
-            LocalNow = localNow,
-            IsTradingDay = isTradingDay,
-            IsMarketOpen = isMarketOpen,
-            SessionOpenUtc = TimeZoneInfo.ConvertTimeToUtc(sessionOpenLocal, indiaTz),
-            SessionCloseUtc = TimeZoneInfo.ConvertTimeToUtc(sessionCloseLocal, indiaTz),
-            NextMarketOpenUtc = TimeZoneInfo.ConvertTimeToUtc(nextOpenLocal, indiaTz),
-            TimeZoneId = indiaTz.Id
-        };
+        // A month with no session at all is a broken calendar, not a real one.
+        // Answer with the weekday rule rather than with nothing.
+        var next = today.AddDays(1);
+        while (next.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) next = next.AddDays(1);
+        return next.ToDateTime(market == "MCX" ? McxOpen : EquityOpen);
     }
 
     /// <summary>
-    /// MCX's evening close, which follows New York rather than the calendar.
+    /// Why today's answer may be wrong: the calendar did not load, or has no list
+    /// for this year. In December it also warns that next year's list is missing,
+    /// while there is still time to add it.
+    /// </summary>
+    private string? CalendarWarning(string market, DateOnly today)
+    {
+        if (!_calendar.IsLoaded)
+            return "The holiday calendar could not be loaded; only weekends are known to be closed.";
+
+        if (!_calendar.HasYear(market, today.Year))
+            return $"No {market} holiday calendar is loaded for {today.Year}; only weekends are known to be closed.";
+
+        if (today.Month == 12 && !_calendar.HasYear(market, today.Year + 1))
+            return $"The {market} holiday calendar for {today.Year + 1} is not loaded yet.";
+
+        return null;
+    }
+
+    /// <summary>
+    /// MCX's evening close on a date, which follows New York rather than India.
     /// </summary>
     /// <remarks>
     /// Asked of the OS instead of hardcoding "second Sunday in March": the rule
@@ -164,7 +202,7 @@ public class MarketSessionService : IMarketSessionService
     /// falls back to the earlier close, which can only ever say "closed" a few
     /// minutes early - the safe direction to be wrong in.
     /// </remarks>
-    private static TimeOnly McxCloseFor(DateTime utcNow)
+    private static TimeOnly McxCloseFor(DateOnly date)
     {
         try
         {
@@ -178,70 +216,14 @@ public class MarketSessionService : IMarketSessionService
                 newYork = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
             }
 
-            return newYork.IsDaylightSavingTime(
-                TimeZoneInfo.ConvertTimeFromUtc(utcNow, newYork))
+            var middayUtc = TimeZoneInfo.ConvertTimeToUtc(date.ToDateTime(new TimeOnly(12, 0)), IstTime.Zone);
+            return newYork.IsDaylightSavingTime(TimeZoneInfo.ConvertTimeFromUtc(middayUtc, newYork))
                 ? McxCloseDaylight
                 : McxCloseStandard;
         }
         catch (TimeZoneNotFoundException)
         {
             return McxCloseStandard;
-        }
-    }
-
-    private static bool IsTradingDay(DateTime localDate)
-    {
-        return localDate.DayOfWeek != DayOfWeek.Saturday &&
-               localDate.DayOfWeek != DayOfWeek.Sunday;
-    }
-
-    private static DateTime CalculateNextMarketOpenLocal(DateTime localNow)
-    {
-        DateTime todayOpen = localNow.Date.Add(NseCmOpen.ToTimeSpan());
-        DateTime todayClose = localNow.Date.Add(NseCmClose.ToTimeSpan());
-
-        // If today is a trading day and we are before session open,
-        // next market open is today at 09:15 IST.
-        if (IsTradingDay(localNow.Date) && localNow < todayOpen)
-        {
-            return todayOpen;
-        }
-
-        // If today is a trading day and session is already open,
-        // next market open means the next trading day's session open.
-        if (IsTradingDay(localNow.Date) && localNow >= todayOpen && localNow < todayClose)
-        {
-            return NextTradingDay(localNow.Date).Add(NseCmOpen.ToTimeSpan());
-        }
-
-        // If after session close or non-trading day,
-        // move to the next trading day at 09:15 IST.
-        return NextTradingDay(localNow.Date).Add(NseCmOpen.ToTimeSpan());
-    }
-
-    private static DateTime NextTradingDay(DateTime localDate)
-    {
-        DateTime next = localDate.AddDays(1);
-
-        while (!IsTradingDay(next))
-        {
-            next = next.AddDays(1);
-        }
-
-        return next;
-    }
-
-    private static TimeZoneInfo GetIndiaTimeZone()
-    {
-        // Windows
-        try
-        {
-            return TimeZoneInfo.FindSystemTimeZoneById("India Standard Time");
-        }
-        catch (TimeZoneNotFoundException)
-        {
-            // Linux/macOS
-            return TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
         }
     }
 }

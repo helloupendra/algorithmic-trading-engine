@@ -991,6 +991,16 @@ export interface MarketSessionInfo {
   sessionCloseUtc: string
   nextMarketOpenUtc: string
   timeZoneId: string
+  /** On the exchange's holiday list today: closed all day, or (MCX) for one session. Absent on older API builds. */
+  isHoliday?: boolean
+  /** The occasion, e.g. "Ganesh Chaturthi". */
+  holidayName?: string | null
+  /** 'FullDay' | 'MorningSession' | 'EveningSession' */
+  holidayClosure?: string | null
+  /** Set when today runs special hours (Muhurat trading, a special Saturday). */
+  specialSessionName?: string | null
+  /** Set when today's holiday calendar is not loaded, so the answer knows weekends only. */
+  calendarWarning?: string | null
 }
 
 export interface BrokerSessionInfo {

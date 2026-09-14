@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AlgoTrading.Application.Interfaces;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -26,7 +27,13 @@ public sealed class TrueDataTokenStore
     /// </summary>
     private static readonly TimeSpan RenewBefore = TimeSpan.FromMinutes(5);
 
-    private readonly IBrokerCredentialsProvider _credentials;
+    // The credentials provider is scoped (it reads through a DbContext), and this
+    // store is a singleton. Holding the provider directly kept one DbContext
+    // alive for the life of the process, shared across threads, and made the
+    // API refuse to start in Development, where scope validation catches it
+    // (2026-09-14). A scope is opened for each sign-in instead; sign-ins happen
+    // about twice a day, so the cost is nothing.
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly TrueDataSettings _settings;
     private readonly ILogger<TrueDataTokenStore> _logger;
@@ -39,12 +46,12 @@ public sealed class TrueDataTokenStore
 
     public TrueDataTokenStore(
         IOptions<TrueDataSettings> settings,
-        IBrokerCredentialsProvider credentials,
+        IServiceScopeFactory scopeFactory,
         IHttpClientFactory httpClientFactory,
         ILogger<TrueDataTokenStore> logger)
     {
         _settings = settings.Value;
-        _credentials = credentials;
+        _scopeFactory = scopeFactory;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
@@ -67,7 +74,12 @@ public sealed class TrueDataTokenStore
             // Another caller may have renewed while this one waited.
             if (IsFresh()) return _token!;
 
-            var creds = await _credentials.GetAsync(TrueDataProvider.Key, cancellationToken: cancellationToken);
+            BrokerCredentials creds;
+            using (var scope = _scopeFactory.CreateScope())
+            {
+                creds = await scope.ServiceProvider.GetRequiredService<IBrokerCredentialsProvider>()
+                    .GetAsync(TrueDataProvider.Key, cancellationToken: cancellationToken);
+            }
             if (string.IsNullOrWhiteSpace(creds.ClientId) || string.IsNullOrWhiteSpace(creds.SecretKey))
             {
                 throw new InvalidOperationException(

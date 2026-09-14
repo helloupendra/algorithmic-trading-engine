@@ -31,6 +31,132 @@ public class ReferenceDataSeeder
         await SeedLiveWatchlistAsync(cancellationToken);
         await SeedEquityGroupsAsync(cancellationToken);
         await SeedEquityGroupMembersAsync(cancellationToken);
+        await SeedMarketCalendarAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// The shipped holiday calendar (<c>SeedData/market_calendar.json</c>, one
+    /// block per exchange circular).
+    /// </summary>
+    /// <remarks>
+    /// A year is seeded once per exchange. After that the table is the truth: an
+    /// admin's correction or deletion (a holiday the exchange cancelled) must
+    /// survive every restart, so a year that already has rows is left alone.
+    /// Special sessions are announced later in the year than holidays, so they
+    /// are added by date whenever the file gains one.
+    /// </remarks>
+    internal async Task SeedMarketCalendarAsync(CancellationToken cancellationToken)
+    {
+        string path = Path.Combine(_hostEnvironment.ContentRootPath, "SeedData", "market_calendar.json");
+        if (!File.Exists(path))
+        {
+            _logger.LogWarning("Seed file not found: {Path}. Session checks will know weekends only until a calendar is added.", path);
+            return;
+        }
+
+        var json = await File.ReadAllTextAsync(path, cancellationToken);
+        var file = JsonSerializer.Deserialize<MarketCalendarSeedFile>(json,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new MarketCalendarSeedFile();
+
+        var existingHolidays = await _dbContext.MarketHolidays.AsNoTracking()
+            .Select(x => new { x.Exchange, x.Date })
+            .ToListAsync(cancellationToken);
+        var seededYears = existingHolidays.Select(x => (x.Exchange.ToUpperInvariant(), x.Date.Year)).ToHashSet();
+
+        int addedHolidays = 0;
+        var now = DateTime.UtcNow;
+        foreach (var item in file.Holidays ?? new())
+        {
+            var exchange = MarketCalendar.NormalizeExchange(item.Exchange);
+            if (!DateOnly.TryParseExact(item.Date, "yyyy-MM-dd", out var date) ||
+                !Enum.TryParse<Domain.Enums.MarketClosure>(item.Closure ?? "FullDay", ignoreCase: true, out var closure) ||
+                string.IsNullOrWhiteSpace(item.Name))
+            {
+                _logger.LogWarning("Skipped an unreadable market holiday in the seed file: {Exchange} {Date} {Name}.", item.Exchange, item.Date, item.Name);
+                continue;
+            }
+
+            if (seededYears.Contains((exchange, date.Year))) continue;
+
+            _dbContext.MarketHolidays.Add(new MarketHoliday
+            {
+                Exchange = exchange,
+                Date = date,
+                Name = item.Name.Trim(),
+                Closure = closure,
+                Source = item.Source,
+                UpdatedBy = "seed",
+                CreatedUtc = now,
+                UpdatedUtc = now,
+            });
+            addedHolidays++;
+        }
+
+        var existingSessions = await _dbContext.MarketSpecialSessions.AsNoTracking()
+            .Select(x => new { x.Exchange, x.Date })
+            .ToListAsync(cancellationToken);
+        var sessionDays = existingSessions.Select(x => (x.Exchange.ToUpperInvariant(), x.Date)).ToHashSet();
+
+        int addedSessions = 0;
+        foreach (var item in file.SpecialSessions ?? new())
+        {
+            var exchange = MarketCalendar.NormalizeExchange(item.Exchange);
+            if (!DateOnly.TryParseExact(item.Date, "yyyy-MM-dd", out var date) ||
+                !TimeOnly.TryParseExact(item.OpenIst, "HH:mm", out var open) ||
+                !TimeOnly.TryParseExact(item.CloseIst, "HH:mm", out var close) ||
+                close <= open || string.IsNullOrWhiteSpace(item.Name))
+            {
+                _logger.LogWarning("Skipped an unreadable special session in the seed file: {Exchange} {Date} {Name}.", item.Exchange, item.Date, item.Name);
+                continue;
+            }
+
+            if (!sessionDays.Add((exchange, date))) continue;
+
+            _dbContext.MarketSpecialSessions.Add(new MarketSpecialSession
+            {
+                Exchange = exchange,
+                Date = date,
+                Name = item.Name.Trim(),
+                OpenIst = open,
+                CloseIst = close,
+                Source = item.Source,
+                UpdatedBy = "seed",
+                CreatedUtc = now,
+                UpdatedUtc = now,
+            });
+            addedSessions++;
+        }
+
+        if (addedHolidays + addedSessions > 0)
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            _logger.LogInformation("Seeded {Holidays} market holiday(s) and {Sessions} special session(s).", addedHolidays, addedSessions);
+        }
+    }
+
+    private sealed class MarketCalendarSeedFile
+    {
+        public List<HolidaySeedItem>? Holidays { get; set; }
+        public List<SpecialSessionSeedItem>? SpecialSessions { get; set; }
+    }
+
+    private sealed class HolidaySeedItem
+    {
+        public string Exchange { get; set; } = string.Empty;
+        public string Date { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string? Closure { get; set; }
+        public string? Source { get; set; }
+    }
+
+    private sealed class SpecialSessionSeedItem
+    {
+        public string Exchange { get; set; } = string.Empty;
+        public string Date { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string OpenIst { get; set; } = string.Empty;
+        public string CloseIst { get; set; } = string.Empty;
+        public string? Source { get; set; }
     }
 
     private async Task SeedUsersAsync(CancellationToken cancellationToken)
