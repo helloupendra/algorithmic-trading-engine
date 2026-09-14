@@ -25,6 +25,8 @@ public static class DhanRegistration
             // console cannot hold yet.
             if (string.IsNullOrWhiteSpace(s.ApiKey)) s.ApiKey = configuration["DHAN_API_KEY"] ?? string.Empty;
             if (string.IsNullOrWhiteSpace(s.AccessToken)) s.AccessToken = configuration["DHAN_ACCESS_TOKEN"] ?? string.Empty;
+            if (bool.TryParse(configuration["DHAN_CHAIN_POLLER_ENABLED"], out bool poll) && section.GetSection("ChainPoller")["Enabled"] is null)
+                s.ChainPoller.Enabled = poll;
         });
 
         catalog.Add(DhanProvider.Descriptor);
@@ -56,6 +58,14 @@ public static class DhanRegistration
         // injected where they are wanted by name.
         services.AddScoped<DhanOptionChainClient>();
         services.AddScoped<DhanInstrumentImporter>();
+
+        // The chain recorder (off unless Dhan:ChainPoller:Enabled) and what the
+        // live feed streams beyond the watchlist.
+        services.AddSingleton<DhanChainPollerState>();
+        services.AddScoped<DhanChainRecorder>();
+        services.AddHostedService<DhanChainPoller>();
+        services.AddSingleton<DhanUniverseCache>();
+        services.AddScoped<DhanUniverseBuilder>();
 
         return services;
     }

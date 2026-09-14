@@ -213,6 +213,8 @@ auth_token() {
 # The response body is printed; the return code is 0 only for a 2xx, so
 # `if api_get ...` reads as "the API answered properly". A 401 is retried once
 # with a fresh token; every other status is the answer and is handed back.
+# API_MAX_TIME (seconds, default 30) is for the few calls that legitimately
+# take longer, such as a vendor's instrument import.
 api_get()  { _api_call GET  "$1" ''; }
 api_post() { _api_call POST "$1" "${2-'{}'}"; }
 
@@ -221,10 +223,10 @@ _api_call() {
   for attempt in 1 2; do
     tok="$(auth_token)" || return 1
     if [ "$method" = GET ]; then
-      raw="$(curl -sS --max-time 30 -w '\n%{http_code}' "$API$path" \
+      raw="$(curl -sS --max-time "${API_MAX_TIME:-30}" -w '\n%{http_code}' "$API$path" \
         -H "Authorization: Bearer $tok" 2>/dev/null)" || return 1
     else
-      raw="$(curl -sS --max-time 30 -w '\n%{http_code}' -X POST "$API$path" \
+      raw="$(curl -sS --max-time "${API_MAX_TIME:-30}" -w '\n%{http_code}' -X POST "$API$path" \
         -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' \
         -d "$body" 2>/dev/null)" || return 1
     fi

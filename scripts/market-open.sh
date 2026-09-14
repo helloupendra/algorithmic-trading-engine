@@ -121,6 +121,107 @@ else
   fi
 fi
 
+start_daemon() {
+  label="$1"; path="$2"
+  body="${3:-{\}}"
+  say "starting $label ..."
+  out="$(api_post "$path" "$body" || true)"
+  say "  $label: $(printf '%s' "$out" | head -c 160)"
+}
+
+stop_daemon() {  # label, path
+  out="$(api_post "$2" '{}' 2>/dev/null || true)"
+  case "$out" in *'"wasRunning":true'*) say "  $1 from before the open stopped — restarting it on today's token";; esac
+}
+
+# --- 3c. Dhan: the day's market data -----------------------------------------
+# Dhan is the primary feed when it is signed in: ticks with five-level depth,
+# OI and volume for the indices, near futures and at-the-money options, and its
+# option chain (OI, IV, greeks) recorded every minute. FYERS stays the backup.
+#
+# Only ONE live feed runs. Bars and latest quotes are kept per symbol, not per
+# vendor, so two feeds on the same contract would build one bar out of two
+# vendors' volume counters. When Dhan is up the FYERS feed and its chain poller
+# are not started; when Dhan cannot start, they are, exactly as before.
+#
+# Dhan's token lasts 24 hours from the sign-in (Connectors > Dhan > Connect).
+# This runs before the FYERS wait, so a missing FYERS sign-in never costs the
+# day's data.
+DHAN_PRIMARY=0
+DHAN_WAIT_UNTIL="${MARKET_OPEN_DHAN_UNTIL:-0912}"
+
+dhan_state() {  # prints "ok|<hours of token left, or ?>" or "no|<reason>"
+  api_get /api/Dhan/status 2>/dev/null | python3 -c '
+import json, sys
+from datetime import datetime, timedelta, timezone
+IST = timezone(timedelta(hours=5, minutes=30))
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("no|the API did not answer"); sys.exit(0)
+if not d.get("ok"):
+    print("no|" + (d.get("error") or "not signed in")); sys.exit(0)
+until = None
+if d.get("signInExpiresUtc"):
+    try:
+        until = datetime.fromisoformat(d["signInExpiresUtc"].replace("Z", "+00:00"))
+        if until.tzinfo is None: until = until.replace(tzinfo=timezone.utc)
+    except Exception:
+        until = None
+if until is None and d.get("tokenValidity"):
+    for fmt in ("%d/%m/%Y %H:%M", "%d/%m/%Y %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+        try:
+            until = datetime.strptime(d["tokenValidity"], fmt).replace(tzinfo=IST); break
+        except Exception:
+            pass
+if until is None:
+    print("ok|?")
+else:
+    print("ok|%.1f|%s" % ((until - datetime.now(timezone.utc)).total_seconds() / 3600, until.astimezone(IST).strftime("%H:%M")))
+' 2>/dev/null || echo "no|could not read the answer"
+}
+
+if [ "$DRY_RUN" = 1 ]; then
+  say "dry run: would check Dhan ($(dhan_state)), map instruments, start the Dhan feed and chain recorder"
+else
+  say "checking Dhan ..."
+  DHAN="$(dhan_state)"
+  if [ "${DHAN%%|*}" != ok ]; then
+    say "  Dhan is not usable: ${DHAN#*|}"
+    notify "AlgoTrading" "Dhan is not signed in — press Connect on Connectors > Dhan before 09:12. FYERS is the fallback."
+    while [ "${DHAN%%|*}" != ok ] && [ "$(date +%H%M)" -lt "$DHAN_WAIT_UNTIL" ]; do
+      sleep 20
+      DHAN="$(dhan_state)"
+    done
+  fi
+
+  if [ "${DHAN%%|*}" = ok ]; then
+    HOURS_LEFT="$(printf '%s' "$DHAN" | cut -d'|' -f2)"
+    ENDS_AT="$(printf '%s' "$DHAN" | cut -d'|' -f3)"
+    say "  Dhan signed in${ENDS_AT:+; token valid until $ENDS_AT IST}"
+    # The MCX session runs to 23:30, about 14.5 hours after this check.
+    case "$HOURS_LEFT" in
+      '?'|'') ;;
+      *) if python3 -c "import sys; sys.exit(0 if float('$HOURS_LEFT') < 14.5 else 1)" 2>/dev/null; then
+           warn "the Dhan token ends at $ENDS_AT IST, before the evening session closes"
+           notify "AlgoTrading" "Dhan token ends at $ENDS_AT IST. Press Connect on Connectors > Dhan for a full day; the feed picks the new token up by itself."
+         fi ;;
+    esac
+
+    # Today's contracts (a new weekly expiry, new strikes) get their Dhan ids.
+    say "  mapping today's instruments to Dhan ids (about a minute) ..."
+    IMPORT="$(API_MAX_TIME=240 api_post /api/Dhan/instruments/import '{}' 2>/dev/null || true)"
+    say "  $(printf '%s' "$IMPORT" | head -c 200)"
+
+    stop_daemon "Dhan feed" "/api/Feeds/dhan/stop"
+    start_daemon "Dhan feed" "/api/Feeds/dhan/start"
+    start_daemon "Dhan chain recorder" "/api/Dhan/chain-poller/start"
+    DHAN_PRIMARY=1
+  else
+    warn "no Dhan sign-in by $DHAN_WAIT_UNTIL IST — FYERS will be the feed today"
+  fi
+fi
+
 # --- 4. the broker token, which expires daily --------------------------------
 connected() {
   api_get /api/auth/session 2>/dev/null | grep -q '"isAuthenticated":true'
@@ -175,13 +276,6 @@ else
 fi
 
 # --- 5. market data ----------------------------------------------------------
-start_daemon() {
-  label="$1"; path="$2"
-  body="${3:-{\}}"
-  say "starting $label ..."
-  out="$(api_post "$path" "$body" || true)"
-  say "  $label: $(printf '%s' "$out" | head -c 160)"
-}
 
 if [ "$DRY_RUN" = 1 ]; then
   say "dry run: would start the ingestor, the chain poller, and $STRATEGY on:$(printf ' %s' $UNDERLYINGS) at $LOTS lot(s)"
@@ -192,10 +286,6 @@ fi
 # (the MCX session runs to 23:30) holds a token that expired at 06:00 and
 # would sit deaf all day while the API reports it healthy. Stop first — a
 # stop with nothing running is a no-op — then start with today's token.
-stop_daemon() {  # label, path
-  out="$(api_post "$2" '{}' 2>/dev/null || true)"
-  case "$out" in *'"wasRunning":true'*) say "  $1 from before the open stopped — restarting it on today's token";; esac
-}
 stop_daemon "tick ingestor" "/api/Ingestor/stop"
 stop_daemon "chain poller" "/api/OptionChain/poller/stop"
 
@@ -238,11 +328,18 @@ print(json.dumps({"ids": ids}))
 say "checking the recording list for expired contracts ..."
 prune_expired_watchlist
 
-start_daemon "tick ingestor" "/api/Ingestor/start"
+start_fyers_feed() {
+  start_daemon "tick ingestor" "/api/Ingestor/start"
+  # The poller start endpoint takes no body: it reads CHAIN_UNDERLYINGS from the
+  # environment the API handed it, which was exported above.
+  start_daemon "chain poller ($CHAIN_UNDERLYINGS)" "/api/OptionChain/poller/start"
+}
 
-# The poller start endpoint takes no body: it reads CHAIN_UNDERLYINGS from the
-# environment the API handed it, which was exported above.
-start_daemon "chain poller ($CHAIN_UNDERLYINGS)" "/api/OptionChain/poller/start"
+if [ "$DHAN_PRIMARY" = 1 ]; then
+  say "Dhan is today's feed; the FYERS feed and chain poller stay off as the backup"
+else
+  start_fyers_feed
+fi
 
 # --- 6. wait for the open, then prove the feed is live -----------------------
 if [ "$(date +%H%M)" -lt 0916 ]; then
@@ -263,7 +360,7 @@ sleep 90
 # the previous evening while the ingestor sat on an expired token and
 # nothing was flowing. The date-time filter is done in python on purpose:
 # the JSON is one line and grep cannot tell today's stamp from yesterday's.
-TICKS="$(api_get /api/LiveData/latest/all 2>/dev/null | python3 -c '
+FRESH_PRICES_PY='
 import json, sys
 from datetime import datetime, timedelta, timezone
 try:
@@ -285,8 +382,22 @@ for r in rows:
     if at >= cutoff and r.get("lastTradedPrice") is not None:
         fresh += 1
 print(fresh)
-' 2>/dev/null || echo 0)"
+'
+TICKS="$(api_get /api/LiveData/latest/all 2>/dev/null | python3 -c "$FRESH_PRICES_PY" 2>/dev/null || echo 0)"
 say "  symbols with a price in the last 5 minutes: ${TICKS:-0}"
+
+# The backup: Dhan was started but nothing is arriving. Its feed is stopped and
+# the FYERS feed takes over, so the strategies are not left without prices.
+if [ "${TICKS:-0}" -lt 1 ] && [ "$DHAN_PRIMARY" = 1 ]; then
+  warn "the Dhan feed delivered no prices — switching to the FYERS feed"
+  notify "AlgoTrading" "Dhan feed delivered no prices after the open. Switched to FYERS; Dhan's option chain keeps recording."
+  stop_daemon "Dhan feed" "/api/Feeds/dhan/stop"
+  DHAN_PRIMARY=0
+  start_fyers_feed
+  sleep 90
+  TICKS="$(api_get /api/LiveData/latest/all 2>/dev/null | python3 -c "$FRESH_PRICES_PY" 2>/dev/null || echo 0)"
+  say "  symbols with a price in the last 5 minutes (FYERS): ${TICKS:-0}"
+fi
 
 if [ "${TICKS:-0}" -lt 1 ]; then
   fail "no fresh prices after the ingestor started — the feed is not flowing (check the broker token: FYERS expires it at 06:00 IST)."

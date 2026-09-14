@@ -22,13 +22,25 @@ holiday, with an active data plan) unless it says otherwise.
 | Piece | State |
 | --- | --- |
 | History (1, 5, 15, 25, 60-minute and daily bars, with OI) | **Working** |
-| Option chain with OI, OI change, volume, IV and greeks | **Working** (index underlyings) |
+| Option chain with OI, OI change, volume, IV and greeks | **Working**: indices and MCX (CRUDEOIL, NATURALGAS) |
+| Option chain recording (every minute, into the chain history) | **Working**: verified on MCX, 2026-09-14 |
+| Live feed (binary websocket): price, 5-level depth, volume, OI | **Working**: verified on MCX, 2026-09-14; first NSE session 2026-09-15 |
 | Instrument import (canonical symbol → Dhan security id) | **Working**: 104,114 of 104,355 live instruments matched |
 | Token and data-plan status | **Working** |
-| Daily sign-in with the API key (Connect, like FYERS) | **Built**: consent and login URL verified live; first full sign-in after deploy |
-| Live feed (binary websocket) | **In progress**: Python adapter built (38 tests); live test pending |
+| Daily sign-in with the API key (Connect, like FYERS) | **Working** |
 | Unattended daily sign-in (PIN + TOTP) | **Next** |
 | Orders | Not built |
+
+## What the platform takes from Dhan
+
+Dhan is the primary market-data source whenever it is signed in; FYERS is the
+backup. The Dhan connector page shows each of these as on or off, live.
+
+| Data | How | Where it lands |
+| --- | --- | --- |
+| Ticks: last price, best bid and ask with sizes, 5-level depth, volume, OI, day OHLC | Live feed, Full mode for F&O and MCX, Quote mode for indices and equities | `live_ticks`, `live_quotes_latest`, 1-minute bars, the Redis tick stream |
+| Option chain: every strike's OI, previous OI, volume, IV, delta, gamma, theta, vega, bid and ask | Chain recorder, once a minute, nearest expiry | `option_chain_snapshots` with source `dhan`: the chain page, OI history and replay read it |
+| History with OI | History router (fallback behind FYERS and TrueData) | `candles` |
 
 ## Setting it up
 
@@ -88,9 +100,89 @@ steps*).
 | `GET /api/Dhan/chain?underlying=BANKNIFTY&expiry=2026-09-29` | The whole chain, plus peak call and put OI strikes and put/call OI ratio. |
 | `POST /api/Dhan/instruments/import` | Downloads Dhan's instrument master and maps every live instrument. About a minute. |
 | `POST /api/Dhan/instruments/resolve` | Dhan ids for canonical symbols; the live feed subscribes with this. |
+| `GET /api/Dhan/universe` | What the live feed streams beyond the recording list, with the prices the strikes were centred on and any warnings. |
+| `GET /api/Dhan/chain-poller` | Is the chain recorder on, and what each underlying's last round did (recorded, idle because its market is closed, or failed and why). |
+| `POST /api/Dhan/chain-poller/start` and `/stop` | Turns the recorder on or off until the API restarts. |
+| `POST /api/Dhan/chain-poller/capture?underlyings=CRUDEOIL` | One round now. Closed markets are skipped unless `evenIfClosed=true`. |
 
-All of them are admin-only, except `resolve`, which the Service account behind the
-live feed may call too.
+All of them are admin-only, except `session`, `resolve` and `universe`, which the
+Service account behind the live feed may call too.
+
+## Every trading day
+
+`scripts/market-open.sh` runs at 08:45 IST on the server:
+
+1. Holiday check (System > Market calendar). On a holiday nothing starts.
+2. **Dhan status.** If Dhan is not signed in, a notification asks for Connect,
+   and the script waits until 09:12. If the token ends before the MCX close, it
+   says so.
+3. **Instrument import**, so the day's new strikes and expiries have Dhan ids.
+4. **Dhan feed** started from Live feeds, and the **chain recorder** switched on.
+5. FYERS sign-in wait, as before, for the strategies.
+6. The FYERS feed and its chain poller are **not** started while Dhan is the
+   feed.
+7. After the open, the script counts fresh prices. If the Dhan feed delivered
+   none, it stops it and starts the FYERS feed instead; Dhan's chain keeps
+   recording.
+
+Only one live feed runs at a time. Bars and latest quotes are kept per symbol,
+not per vendor, so two feeds on one contract would build a bar from two vendors'
+volume counters.
+
+**Operator's one job:** press **Connect** on Connectors → Dhan before 09:00. The
+feed picks up a new token by itself; nothing needs restarting.
+
+## Live feed
+
+The adapter is `market_data/live/vendors/dhan.py`, started from Live feeds like
+every other vendor.
+
+- **Credentials** come from `GET /api/Dhan/session`, so the daily Connect is
+  all it needs. `.env` (`DHAN_CLIENT_ID`, `DHAN_ACCESS_TOKEN`) is the fallback.
+  A refused token is remembered, and the feed waits, checking every 30 s, for a
+  different one.
+- **What it streams:** the recording list, plus the universe from
+  `GET /api/Dhan/universe`, asked again every 5 minutes so strikes follow the
+  market:
+  - the six indices;
+  - the two nearest futures of each index, CRUDEOIL(M), NATURALGAS, GOLD(M) and
+    SILVER(M);
+  - five strikes either side of at-the-money for the nearest expiry of each
+    index, CRUDEOIL and NATURALGAS; on an expiry day, the next expiry too.
+  - Prices for at-the-money come from Dhan's last price. When the exchange is
+    closed they fall back to the last recorded quote, candle or chain spot.
+- **One update a second per contract** (`DHAN_MIN_TICK_INTERVAL_MS`, default
+  1000). Dhan sends about ten a second per contract in Full mode, and the server
+  records every update it receives. Each update sent carries the latest merged
+  state, and a contract's last change is always sent, even if it then goes quiet.
+- **Depth** (five levels) is stored with each tick in the database, but left
+  out of the Redis stream that strategies read.
+
+Measured on MCX on 2026-09-14: 66 contracts, about 55 updates a second in total,
+with price, bid and ask with sizes, volume, OI and exchange time on every quote.
+
+Settings, all optional, in the `Dhan:Universe` section: `StrikesEachSide` (5),
+`FuturesPerUnderlying` (2), `IndexUnderlyings`, `McxFutureUnderlyings`,
+`McxOptionUnderlyings` (comma-separated).
+
+## Option chain recording
+
+The chain recorder runs inside the API. Each round covers every configured
+underlying whose exchange is open: the nearest expiry, one call per underlying.
+Dhan allows one chain call every three seconds, so a round of eight takes about
+25 seconds. The rows are written through the option chain module with source
+`dhan`, under the platform's own contract symbols, matched by strike and CE/PE
+(never built from a string).
+
+| Setting (`Dhan:ChainPoller`) | Default | |
+| --- | --- | --- |
+| `Enabled` | false | On only on the host that records. Dhan's chain limit is per account, so two hosts polling would starve each other. |
+| `IntervalSeconds` | 60 | Between the starts of two rounds. |
+| `Underlyings` | NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY, SENSEX, BANKEX, CRUDEOIL, NATURALGAS | An MCX commodity is chained on its nearest future. |
+
+First MCX capture, 2026-09-14 18:24 IST:
+- CRUDEOIL: 402 rows. 24 strikes Dhan lists had no platform contract and were skipped.
+- NATURALGAS: 184 rows.
 
 ## How symbols are translated
 
@@ -182,17 +274,19 @@ is.
 
 ## Next steps
 
-1. **Live feed.** A binary websocket adapter in the Python engine: Full mode for
-   F&O and MCX (OI and five-level depth), Quote mode for indices and equities.
-   It must be verified live, in particular the timezone of Dhan's trade-time
-   field and how index packets arrive.
+1. **Verify the first NSE session** (2026-09-15):
+   - index packets in Quote mode;
+   - the tick rate and database growth at about 200 contracts;
+   - subscribing new strikes in place as the universe rolls.
 2. **Unattended sign-in.**
    `POST https://auth.dhan.co/app/generateAccessToken?dhanClientId=&pin=&totp=`
    returns a 24-hour token with no API key, once TOTP is enabled on the account.
    The PIN and TOTP secret will be stored encrypted, and the token renewed before
    the open.
-3. **Option chains for stocks and MCX**, using the mapped underlying ids.
-4. **Shadow comparison** against FYERS before any routing is changed.
+3. **Stock option chains**, using the mapped underlying ids.
+4. **More than one expiry per recorded chain.** The chain read assumes one
+   expiry per capture today.
+5. **Shadow comparison** against FYERS.
 
 ## Code map
 
@@ -205,8 +299,12 @@ is.
 | `Providers/Dhan/DhanHistory.cs` | History request and response rules |
 | `Providers/Dhan/DhanMarketDataProvider.cs` | `IMarketDataProvider` for history |
 | `Providers/Dhan/DhanOptionChain.cs`, `DhanOptionChainClient.cs` | Chain model and client |
+| `Providers/Dhan/DhanChainPoller.cs` | Chain recorder: rows mapping, per-underlying rounds, the hosted loop and its state |
+| `Providers/Dhan/DhanUniverse.cs` | What the live feed streams beyond the recording list |
 | `Providers/Dhan/DhanInstruments.cs`, `DhanInstrumentMaster.cs`, `DhanInstrumentImporter.cs` | Symbol vocabulary, master parsing and matching, bulk import |
 | `Api/Controllers/DhanController.cs` | The endpoints above |
 | `tests/AlgoTrading.UnitTests/DhanConnectorTests.cs` | Rules pinned against real answers and master rows |
 | `tests/AlgoTrading.UnitTests/DhanLoginTests.cs` | Sign-in, account pin, 24-hour expiry, and the FYERS session guard |
-| `market_data/live/vendors/dhan.py`, `tests/test_dhan_feed.py` (Python engine) | Live feed adapter: binary packets, subscribe batching, disconnect codes |
+| `tests/AlgoTrading.UnitTests/DhanChainPollerTests.cs` | Chain rows, expiry choice, closed markets, rejected tokens, at-the-money selection |
+| `market_data/live/vendors/dhan.py`, `tests/test_dhan_feed.py` (Python engine) | Live feed adapter: binary packets, subscribe batching, credentials from the API, one update a second per contract, the universe |
+| `scripts/market-open.sh` | The morning: Dhan status, import, feed and recorder; FYERS as the fallback |

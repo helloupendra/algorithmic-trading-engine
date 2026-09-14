@@ -1156,6 +1156,34 @@ export interface ProviderTestResult {
   elapsedMs: number
 }
 
+/** "unknown" is a read that failed — never shown as off. */
+export type ProviderUsageState = 'on' | 'idle' | 'off' | 'unknown' | 'not-offered'
+
+export interface ProviderUsageItem {
+  /** session, liveTicks, quotes, depth, openInterest, greeks, optionChain, history, instruments, orders. */
+  id: string
+  label: string
+  /** Whether the connector declares this kind of data. */
+  offered: boolean
+  state: ProviderUsageState
+  summary: string
+  lastUtc: string | null
+}
+
+export interface ProviderUsageMarket {
+  /** Null when the session could not be read. */
+  open: boolean | null
+  holiday: string | null
+}
+
+/** GET /api/Providers/{key}/usage — what the platform is taking from one connector right now. */
+export interface ProviderUsage {
+  providerKey: string
+  checkedUtc: string
+  markets: { nse: ProviderUsageMarket; mcx: ProviderUsageMarket }
+  items: ProviderUsageItem[]
+}
+
 /** A file-based data vendor an operator added from the console. */
 export interface DataVendor {
   id: number

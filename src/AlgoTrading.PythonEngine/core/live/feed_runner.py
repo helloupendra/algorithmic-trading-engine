@@ -10,7 +10,8 @@ word for word; the difference is that a vendor now gets all of it by being a
   * greeks for option ticks, from whichever vendor sent them;
   * what a snapshot means, and what a replay means, for storage;
   * the watchlist: the Redis signal, a periodic reconcile, in-place add/remove,
-    and proof that an incremental subscribe actually took;
+    and proof that an incremental subscribe actually took — together with any
+    symbols the feed carries of its own (VendorFeed.extra_symbols);
   * the heartbeat, with an honest status;
   * the watchdogs: socket down, connected but silent, credential refused,
     login refused.
@@ -48,6 +49,11 @@ def feed_silent_for(now: float, connected: bool, connected_since, last_message) 
     if base is None:
         return None
     return now - base
+
+
+def _shown(names, limit=8) -> str:
+    """A long symbol list, cut to what a log line can carry."""
+    return ", ".join(names[:limit]) + (f" (+{len(names) - limit} more)" if len(names) > limit else "")
 
 
 class FeedRunner:
@@ -131,6 +137,13 @@ class FeedRunner:
         # A refusal reconnecting cannot fix.
         self.refused_detail: str | None = None
 
+        # The feed's own additions to the watchlist (VendorFeed.extra_symbols):
+        # the last list it gave, kept so one failed ask does not unsubscribe
+        # everything on it, and how many of it the symbol limit left out, so
+        # that is said when it changes rather than every few seconds.
+        self._last_extra: list[str] = []
+        self._extra_left_out = 0
+
         self.restart_required = False
         self.last_watchlist_refresh_utc = None
         self.last_error = ""
@@ -186,7 +199,9 @@ class FeedRunner:
             message = normalize_tick(tick)
             message["sourceKey"] = tick.get("sourceKey")
             message["isReplay"] = bool(tick.get("isReplay"))
-            message["rawPayload"] = tick.get("rawPayload", "")
+            # The API still gets the full payload (see _accept); this only keeps
+            # a bulky one off the stream every strategy has to read.
+            message["rawPayload"] = tick.get("rawPayload", "") if self._feed.publish_raw_payload else ""
             self._publisher.publish_tick(message)
         except Exception as ex:
             self._publish_errors += 1
@@ -252,9 +267,57 @@ class FeedRunner:
             and row.get("symbol")
         })
 
+    def desired_symbols(self) -> tuple[list[str], list[str]]:
+        """
+        (watchlist, extra): what should be on the wire, in priority order.
+
+        The watchlist, then whatever the feed carries of its own that the
+        watchlist does not already name — a fixed symbol list is exactly that
+        list and nothing more. Under a symbol limit the watchlist wins: the
+        extras only fill the room it leaves. The watchlist itself is never cut
+        here, so a feed without extras is offered exactly what it always was
+        and declines past its own limit as before.
+        """
+        watchlist = list(dict.fromkeys(self.read_watchlist()))
+        if self._fixed_symbols is not None:
+            return watchlist, []
+
+        try:
+            offered = list(self._feed.extra_symbols() or [])
+            self._last_extra = offered
+        except Exception as ex:
+            # An empty answer would unsubscribe every extra; the last list is
+            # the better guess until the feed can say again.
+            offered = self._last_extra
+            print(f"[{self._feed.key}] could not get the feed's extra symbols ({ex}) — keeping the last "
+                  f"{len(offered)}.", flush=True)
+
+        seen = {symbol.strip().upper() for symbol in watchlist}
+        extra = []
+        for symbol in offered:
+            name = str(symbol or "").strip()
+            if name and name.upper() not in seen:
+                seen.add(name.upper())
+                extra.append(name)
+
+        limit = self._feed.max_symbols
+        left_out = 0
+        if limit and len(extra) > max(limit - len(watchlist), 0):
+            room = max(limit - len(watchlist), 0)
+            left_out = len(extra) - room
+            extra = extra[:room]
+        if left_out != self._extra_left_out:
+            self._extra_left_out = left_out
+            if left_out:
+                print(f"[{self._feed.key}] {left_out} of the feed's extra symbol(s) do not fit under the "
+                      f"{limit}-symbol limit after {len(watchlist)} watchlist symbol(s); the watchlist comes "
+                      f"first.", flush=True)
+        return watchlist, extra
+
     def sync_watchlist(self, force_subscribe: bool = False) -> None:
         """
-        Fetch the watchlist and adjust subscriptions on the LIVE socket.
+        Fetch the watchlist (and the feed's extra symbols) and adjust
+        subscriptions on the LIVE socket.
 
         Only a fresh connection subscribes the whole list. After that the
         difference is applied in place, so an intraday ATM roll costs nothing to
@@ -263,31 +326,26 @@ class FeedRunner:
         """
         try:
             before = set(self.subscribed)
-            desired = set(self.read_watchlist())
+            watchlist, extra = self.desired_symbols()
+            ordered = watchlist + extra
+            desired = set(ordered)
 
             if force_subscribe or not self.subscribed:
                 self.declined.clear()
-                taken = set(self._feed.subscribe(sorted(desired))) if desired else set()
+                taken = set(self._feed.subscribe(ordered)) if ordered else set()
                 self.subscribed = taken
                 self.declined = desired - taken
                 # A fresh socket is proved by the feed as a whole, not per symbol.
                 self.pending_subscriptions.clear()
             else:
-                added = desired - self.subscribed - self.declined
+                added = [s for s in ordered if s not in self.subscribed and s not in self.declined]
                 removed = self.subscribed - desired
                 # A symbol that left the list is no longer declined either.
                 self.declined &= desired
 
-                if added:
-                    print(f"[{self._feed.key}] WATCHLIST CHANGED — subscribing on the live socket: "
-                          f"{sorted(added)}", flush=True)
-                    taken = set(self._feed.subscribe(sorted(added)))
-                    self.subscribed |= taken
-                    self.declined |= added - taken
-                    marker = (time.time(), time.monotonic() + self.SUBSCRIBE_PROOF_SECONDS)
-                    for symbol in taken:
-                        self.pending_subscriptions[symbol] = marker
-
+                # Removals go first: under a vendor's limit they are the room an
+                # addition needs, and a symbol added into a full connection is
+                # declined and not offered again.
                 if removed:
                     if self._feed.unsubscribe(sorted(removed)):
                         self.subscribed -= removed
@@ -297,9 +355,28 @@ class FeedRunner:
                     for symbol in removed:
                         self.pending_subscriptions.pop(symbol, None)
 
+                if added:
+                    on_watchlist = set(watchlist)
+                    from_watchlist = sorted(s for s in added if s in on_watchlist)
+                    from_feed = [s for s in added if s not in on_watchlist]
+                    if from_watchlist:
+                        print(f"[{self._feed.key}] WATCHLIST CHANGED — subscribing on the live socket: "
+                              f"{from_watchlist}", flush=True)
+                    if from_feed:
+                        print(f"[{self._feed.key}] EXTRA SYMBOLS CHANGED — subscribing {len(from_feed)} on the "
+                              f"live socket: {_shown(from_feed)}", flush=True)
+                    taken = set(self._feed.subscribe(added))
+                    self.subscribed |= taken
+                    self.declined |= set(added) - taken
+                    marker = (time.time(), time.monotonic() + self.SUBSCRIBE_PROOF_SECONDS)
+                    for symbol in taken:
+                        self.pending_subscriptions[symbol] = marker
+
             self.last_watchlist_refresh_utc = datetime.now(timezone.utc)
             if force_subscribe or self.subscribed != before:
+                beyond = len(self.subscribed & set(extra))
                 print(f"[{self._feed.key}] SUBSCRIBED: {len(self.subscribed)} symbol(s)"
+                      + (f", {beyond} beyond the watchlist" if beyond else "")
                       + (f", {len(self.declined)} declined" if self.declined else ""), flush=True)
             self.last_error = ""
         except Exception as ex:

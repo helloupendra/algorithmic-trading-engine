@@ -8,6 +8,16 @@ that name an instrument instead of a symbol, the 100-instruments-per-request and
 dropped. Storage, Redis, greeks, the watchlist and every watchdog come from
 core.live.feed_runner.
 
+Three things are Dhan's because of how much Dhan sends. Full mode carries about
+ten packets a second per instrument (measured on MCX, 2026-09-14), and every
+tick is stored through the API and put on the strategy stream — a few hundred
+instruments at that rate would swamp a 2-vCPU server and its disk. So ticks
+are conflated to one per instrument per DHAN_MIN_TICK_INTERVAL_MS, each carrying
+the instrument's latest state; the five-level book stays out of the strategy
+stream; and the extra instruments the API names (the universe) ride on the same
+socket as the watchlist. The credential comes from the API, where the console's
+daily Connect sign-in puts it, with .env as the fallback.
+
 Layouts follow Dhan's v2 documentation and its Python SDK's struct formats.
 Three things they leave open are handled defensively and named where they are
 handled: whether a trade time is true UTC or IST wall-clock, the index packet's
@@ -72,6 +82,12 @@ MAX_INSTRUMENTS_PER_REQUEST = 100
 
 #: And the platform's resolve endpoint takes at most this many symbols a call.
 MAX_SYMBOLS_PER_RESOLVE = 5000
+
+#: At most one tick per instrument per this many milliseconds, unless
+#: DHAN_MIN_TICK_INTERVAL_MS says otherwise. A second is finer than any bar the
+#: platform builds and than any strategy here decides on, and it cuts Full
+#: mode's ~10 packets a second to one row. 0 hands on every packet.
+DEFAULT_MIN_TICK_INTERVAL_MS = 1000
 
 
 class DhanInstrument(NamedTuple):
@@ -308,6 +324,9 @@ _DECODERS = {
 _STATE_FIELDS = ("ltp", "ltt", "open", "high", "low", "volume", "oi", "prev_close")
 
 #: Decoded fields that have no column of their own, so they go to rawPayload.
+#: They are merged per instrument like the columns: a conflated tick stands for
+#: every packet since the last one, so a previous-close packet that happened to
+#: arrive last must not leave it without the book the Full packet before it had.
 _RAW_FIELDS = ("ltq", "atp", "tot_buy_qty", "tot_sell_qty", "close", "oi_high", "oi_low", "prev_oi")
 
 
@@ -324,9 +343,10 @@ def _looks_like_header(data, offset) -> bool:
 
 def _credentials_from_env_file():
     """
-    The Dhan credential as .env holds it now. Only the file can change under a
-    running process — its environment was fixed when it started — so a token
-    refreshed by pasting it into .env is found here without a restart.
+    The Dhan credential as .env holds it now — the fallback when the API has no
+    session to give. Only the file can change under a running process — its
+    environment was fixed when it started — so a token refreshed by pasting it
+    into .env is found here without a restart.
     """
     try:
         from dotenv import dotenv_values
@@ -352,14 +372,42 @@ class DhanFeed(VendorFeed):
     lock_key = "feed:dhan:lock"
     ready_event = FeedEvent.CONNECTED
 
-    #: How often to look for a replacement while a rejected credential stands.
-    TOKEN_REPLACEMENT_POLL_SECONDS = 10
+    #: The rawPayload carries the five-level book. It is stored through the
+    #: API, but no strategy prices against level five, and on the stream every
+    #: consumer reads it would be most of every message.
+    publish_raw_payload = False
 
-    def __init__(self, client_id, access_token, feed_url=FEED_URL, max_symbols=5000, vendor_names=None,
+    #: How often to look for a credential while there is none, or while only
+    #: refused ones exist. Someone has to press Connect; a minute of slack
+    #: either way is nothing, a request every second is noise in two logs.
+    TOKEN_REPLACEMENT_POLL_SECONDS = 30
+
+    #: How long the API's universe is used before asking again. It follows the
+    #: money — strikes move as the index does — so it goes stale in minutes,
+    #: not seconds.
+    UNIVERSE_CACHE_SECONDS = 300
+
+    #: How soon to ask again after the universe could not be fetched. Sooner
+    #: than the cache, so an API back from a restart is picked up quickly;
+    #: not every refresh, so an API that times out does not hold up the
+    #: watchlist sync every five seconds.
+    UNIVERSE_RETRY_SECONDS = 30
+
+    def __init__(self, client_id=None, access_token=None, feed_url=FEED_URL, max_symbols=5000, vendor_names=None,
                  http=None, api_base_url=None, verify_ssl=None, credentials_source=None, now=None,
-                 sleep=time.sleep):
-        self._client_id = client_id
-        self._access_token = access_token
+                 sleep=time.sleep, min_tick_interval_ms=DEFAULT_MIN_TICK_INTERVAL_MS, clock=None):
+        # The credential this process was started with, if any. The API's
+        # session and .env are asked first (see acquire_credentials); this is
+        # the last resort, and the pair actually in use afterwards.
+        self._client_id = (client_id or "").strip() or None
+        self._access_token = (access_token or "").strip() or None
+        self._env_credential = ((self._client_id, self._access_token)
+                                if self._client_id and self._access_token else None)
+        # Every credential Dhan has refused. Tokens last a day and a refused one
+        # never comes back to life; remembering only the latest would swap
+        # between two dead ones (yesterday's in .env, a stale one in the API).
+        self._rejected: set[tuple[str, str]] = set()
+
         self._feed_url = (feed_url or FEED_URL).rstrip("/")
         self.max_symbols = max_symbols
 
@@ -377,9 +425,11 @@ class DhanFeed(VendorFeed):
             raise ValueError(f"DHAN_SYMBOLS names {len(malformed)} symbol(s) with a Dhan name that is not "
                              f"SEGMENT:SECURITYID:INSTRUMENT: {', '.join(malformed)}")
 
-        # The platform API, for everything the index table and DHAN_SYMBOLS do
-        # not name. Built on first use, so a feed that never needs it never signs in.
+        # The platform API: the credential, the universe, and every instrument
+        # the index table and DHAN_SYMBOLS do not name. Built on first use, so a
+        # feed that never needs it never signs in.
         self._http = http
+        self._http_lock = threading.Lock()
         self._api = (api_base_url or API_BASE_URL).rstrip("/")
         self._verify = VERIFY_SSL if verify_ssl is None else verify_ssl
         self._resolved: dict[str, DhanInstrument] = {}
@@ -388,6 +438,27 @@ class DhanFeed(VendorFeed):
         self._credentials_source = credentials_source or _credentials_from_env_file
         self._now = now or (lambda: datetime.now(timezone.utc))
         self._sleep = sleep
+        # Monotonic seconds, for conflation and the universe cache. Injectable
+        # so the tests step time instead of sleeping through it.
+        self._clock = clock or time.monotonic
+
+        # The universe: the last good list, when to ask again, and whether the
+        # asking is currently failing (said once per run of failures).
+        self._universe: list[str] = []
+        self._universe_next_ask = None
+        self._universe_failing = False
+        self._universe_lock = threading.Lock()
+
+        # Conflation. `_emit_lock` covers merging a packet into its instrument's
+        # state, deciding whether it goes out, and handing it on — on the socket
+        # thread and the flusher alike — so the runner is never called from two
+        # threads at once and an instrument's ticks leave in the order they
+        # were built.
+        self._min_interval = max(int(min_tick_interval_ms or 0), 0) / 1000.0
+        self._emit_lock = threading.Lock()
+        self._last_emitted: dict[str, float] = {}           # canonical -> clock time
+        self._held: dict[str, tuple[int, int]] = {}          # canonical -> key, updated since then
+        self._flusher = None                                 # (thread, stop event)
 
         self._app = None
         self._closing = False
@@ -409,19 +480,24 @@ class DhanFeed(VendorFeed):
 
     @classmethod
     def from_env(cls):
+        # Neither half of the credential is required: the console's daily
+        # Connect puts it in the API, which is asked first. When set, these are
+        # the fallback for an API that is down or has no session.
         client_id = os.getenv("DHAN_CLIENT_ID", "").strip()
         token = os.getenv("DHAN_ACCESS_TOKEN", "").strip()
-        missing = [name for name, value in (("DHAN_CLIENT_ID", client_id), ("DHAN_ACCESS_TOKEN", token))
-                   if not value]
-        if missing:
-            raise SystemExit(f"{' and '.join(missing)} {'is' if len(missing) == 1 else 'are'} not set. "
-                             f"Add {'it' if len(missing) == 1 else 'them'} to .env — "
-                             f"they are never stored in the repository.")
+        interval = os.getenv("DHAN_MIN_TICK_INTERVAL_MS", "").strip()
+        try:
+            interval_ms = int(interval) if interval else DEFAULT_MIN_TICK_INTERVAL_MS
+            if interval_ms < 0:
+                raise ValueError
+        except ValueError:
+            raise SystemExit(f"DHAN_MIN_TICK_INTERVAL_MS must be a whole number of milliseconds, 0 or more "
+                             f"(0 hands on every packet); it is {interval!r}.")
         _, names = symbols_for(cls.key)
         try:
-            return cls(client_id, token,
+            return cls(client_id or None, token or None,
                        feed_url=os.getenv("DHAN_FEED_URL", "").strip() or FEED_URL,
-                       vendor_names=names)
+                       vendor_names=names, min_tick_interval_ms=interval_ms)
         except ValueError as ex:
             raise SystemExit(str(ex))
 
@@ -430,27 +506,144 @@ class DhanFeed(VendorFeed):
         """The feed's address without the login — the only form that is ever logged."""
         return self._feed_url
 
+    def _session(self):
+        """The platform API session, built once, by whichever thread needs it first."""
+        with self._http_lock:
+            if self._http is None:
+                self._http = build_session()
+            return self._http
+
+    # ------------------------------------------------------------ credentials
+
     def acquire_credentials(self, not_this=None):
         """
-        (client id, access token). A Dhan token lasts a day, and reconnecting with
-        the one Dhan just refused would be refused again every few seconds, so
-        after a rejection this waits for .env to hold a different one.
+        (client id, access token): the API's Dhan session first — the console's
+        daily Connect sign-in puts a fresh token there — then .env as it is now,
+        then the environment this process started with.
+
+        A Dhan token lasts a day, and reconnecting with one Dhan has refused
+        would be refused again every few seconds. So a refused credential is
+        never offered again, from any source, and while nothing else exists this
+        asks the API and .env every TOKEN_REPLACEMENT_POLL_SECONDS, saying so
+        once. The same wait covers a first start with no credential anywhere.
         """
-        current = (self._client_id, self._access_token)
-        if not_this is None or tuple(not_this) != current:
-            return current
+        if not_this:
+            self._rejected.add(tuple(not_this))
         waiting_said = False
         while True:
-            replacement = self._credentials_source()
-            if replacement and tuple(replacement) != tuple(not_this):
-                self._client_id, self._access_token = replacement
-                print("[dhan] found a different Dhan credential in .env — reconnecting with it.", flush=True)
-                return tuple(replacement)
+            reasons = []
+            for credential, where in self._credentials(reasons):
+                if credential in self._rejected:
+                    reasons.append(f"the one from {where} was already refused")
+                    continue
+                self._client_id, self._access_token = credential
+                # Redacted although it names only a source and an expiry: the
+                # text comes from the API, and the token must not reach a log
+                # even if the API misbehaves.
+                print(f"[dhan] using the Dhan credential from {self._redact(where)}.", flush=True)
+                return credential
             if not waiting_said:
-                print("[dhan] Dhan refused the current credential — waiting for a new DHAN_ACCESS_TOKEN "
-                      f"in .env (checking every {self.TOKEN_REPLACEMENT_POLL_SECONDS}s).", flush=True)
+                print(f"[dhan] no usable Dhan credential ({self._redact('; '.join(reasons)) or 'none found'}) — press Connect "
+                      f"on the Dhan connector page, or put DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN in .env. "
+                      f"Checking again every {self.TOKEN_REPLACEMENT_POLL_SECONDS}s.", flush=True)
                 waiting_said = True
             self._sleep(self.TOKEN_REPLACEMENT_POLL_SECONDS)
+
+    def _credentials(self, reasons):
+        """
+        Yields (credential, where it came from), freshest source first, asking
+        each only when the one before gave nothing usable. Why a source gave
+        nothing goes into `reasons`, for the one line said while waiting.
+        """
+        from_api, detail = self._credentials_from_api()
+        if from_api is not None:
+            yield from_api, detail
+        else:
+            reasons.append(detail)
+
+        try:
+            from_file = self._credentials_source()
+        except Exception as ex:
+            from_file = None
+            reasons.append(f".env could not be read: {self._redact(ex)}")
+        if from_file:
+            yield tuple(from_file), ".env"
+        else:
+            reasons.append(".env has no Dhan credential")
+
+        if self._env_credential is not None:
+            yield self._env_credential, "the environment the feed started with"
+
+    def _credentials_from_api(self):
+        """
+        ((client id, token), where) from GET /api/Dhan/session, or (None, why
+        not). Anything short of both halves — the API down, 404 because nobody
+        has signed in and no token is configured, an odd body — is None, and
+        .env is asked next. `where` names the API's source and expiry (neither
+        is a secret) so the log says which token the feed is running on.
+        """
+        try:
+            response = self._session().get(f"{self._api}/api/Dhan/session", verify=self._verify, timeout=15)
+            if response.status_code == 404:
+                return None, "the API has no Dhan session"
+            response.raise_for_status()
+            body = response.json()
+            client_id = str(body.get("clientId") or "").strip()
+            token = str(body.get("accessToken") or "").strip()
+            source, expires = body.get("source"), body.get("expiresUtc")
+        except Exception as ex:
+            return None, f"the API could not be asked for the Dhan session ({self._redact(ex)})"
+        if not client_id or not token:
+            return None, "the API's Dhan session has no client id or access token"
+        where = f"the API ({source or 'unknown source'}" + (f", expires {expires}" if expires else "") + ")"
+        return (client_id, token), where
+
+    # --------------------------------------------------------------- universe
+
+    def extra_symbols(self):
+        """
+        What the API says a Dhan feed should carry beyond the watchlist
+        (GET /api/Dhan/universe): the indices, index futures, the strikes
+        around the money on the nearest expiries, MCX futures and crude options
+        near the money. It follows the market, so it is asked for again every
+        UNIVERSE_CACHE_SECONDS. A failed ask answers with the last good list —
+        an empty one would unsubscribe all of it mid-session — and is said once
+        per run of failures, not on every refresh.
+        """
+        with self._universe_lock:
+            now = self._clock()
+            if self._universe_next_ask is not None and now < self._universe_next_ask:
+                return list(self._universe)
+            try:
+                response = self._session().get(f"{self._api}/api/Dhan/universe", verify=self._verify, timeout=10)
+                response.raise_for_status()
+                body = response.json()
+                symbols = body.get("symbols") if isinstance(body, dict) else None
+                if not isinstance(symbols, list):
+                    raise ValueError("the answer carries no symbols list")
+            except Exception as ex:
+                self._universe_next_ask = now + self.UNIVERSE_RETRY_SECONDS
+                if not self._universe_failing:
+                    self._universe_failing = True
+                    print(f"[dhan] could not get the Dhan universe from the API ({self._redact(ex)}) — keeping "
+                          f"the last {len(self._universe)} symbol(s), asking again every "
+                          f"{self.UNIVERSE_RETRY_SECONDS}s.", flush=True)
+                return list(self._universe)
+
+            universe = list(dict.fromkeys(s.strip() for s in symbols if isinstance(s, str) and s.strip()))
+            self._universe_next_ask = now + self.UNIVERSE_CACHE_SECONDS
+            if self._universe_failing or universe != self._universe:
+                # Said when it changes, with the API's own warnings (an
+                # underlying it had no spot for, say): a strike list that is
+                # quietly short is otherwise only noticed when a price is missing.
+                counts, warnings = body.get("counts"), body.get("warnings")
+                print(f"[dhan] universe: {len(universe)} symbol(s) from the API"
+                      + (f" {counts}" if isinstance(counts, dict) and counts else "")
+                      + (f"; warnings: {warnings}" if isinstance(warnings, list) and warnings else "")
+                      + (" — the API answers again" if self._universe_failing else "") + ".", flush=True)
+            self._universe_failing = False
+            self._universe = universe
+            return list(universe)
 
     # -------------------------------------------------------------- the socket
 
@@ -480,10 +673,23 @@ class DhanFeed(VendorFeed):
             on_close=live(lambda _, code, msg: on_event(FeedEvent.DISCONNECTED,
                                                         self._redact(f"{code} {msg}"))),
         )
+        self._start_flusher()
         threading.Thread(target=self._app.run_forever, name="dhan-socket", daemon=True).start()
 
     def close(self):
         self._closing = True
+        self._stop_flusher()
+        with self._emit_lock:
+            # Every instrument still inside its interval gets its last state
+            # handed on: those packets arrived, and a price that moved and then
+            # went quiet would otherwise be stored a step behind until it next
+            # traded — possibly tomorrow. The next connection starts each
+            # instrument's interval afresh.
+            try:
+                self._deliver(self._take_held(everything=True))
+            except Exception as ex:
+                print(f"[dhan] could not hand on the last held ticks while closing: {self._redact(ex)}", flush=True)
+            self._last_emitted.clear()
         with self._lock:
             self._subscribed.clear()
             self._canonical_by_key.clear()
@@ -492,6 +698,71 @@ class DhanFeed(VendorFeed):
                 self._app.close()
             except Exception:
                 pass
+
+    # ------------------------------------------------------------ conflation
+
+    def _start_flusher(self):
+        """One flusher per connection, and none when every packet goes straight out."""
+        self._stop_flusher()
+        if self._min_interval <= 0:
+            return
+        stop = threading.Event()
+        thread = threading.Thread(target=self._flush_until, args=(stop,), name="dhan-conflation", daemon=True)
+        self._flusher = (thread, stop)
+        thread.start()
+
+    def _stop_flusher(self):
+        flusher, self._flusher = self._flusher, None
+        if flusher is None:
+            return
+        thread, stop = flusher
+        stop.set()
+        if thread is not threading.current_thread():
+            # Bounded: a runner stuck on a dead Redis must not hang the close.
+            thread.join(timeout=2)
+
+    def _flush_until(self, stop):
+        """
+        Hands on the instruments whose interval has run out since their last
+        update — the ones that moved and then went quiet, which no later packet
+        would ever carry out. Wakes ten times an interval (at most every 100 ms),
+        so a held state leaves at most that late.
+        """
+        period = min(max(self._min_interval / 10, 0.01), 0.1)
+        while not stop.wait(period):
+            try:
+                self.flush_due()
+            except Exception as ex:
+                self._once(("flush-failed",), FeedEvent.ERROR,
+                           f"could not hand on conflated ticks: {self._redact(ex)}")
+
+    def flush_due(self) -> int:
+        """Hand on every held instrument whose interval has elapsed. Returns how many."""
+        with self._emit_lock:
+            ticks = self._take_held(everything=False)
+            self._deliver(ticks)
+            return len(ticks)
+
+    def _take_held(self, everything):
+        """Ticks for the held instruments that are due (or all of them). Call under _emit_lock."""
+        if not self._held:
+            return []
+        now = self._clock()
+        ticks = []
+        for canonical, key in list(self._held.items()):
+            last = self._last_emitted.get(canonical)
+            if not everything and last is not None and now - last < self._min_interval:
+                continue
+            del self._held[canonical]
+            state = self._state.get(key)
+            if state and state.get("ltp") is not None:
+                self._last_emitted[canonical] = now
+                ticks.append(self._tick(canonical, state))
+        return ticks
+
+    def _deliver(self, ticks):
+        if ticks and self._on_ticks is not None:
+            self._on_ticks(ticks)
 
     def _on_error(self, err):
         # A handshake refused outright (rather than a disconnect packet after the
@@ -506,9 +777,13 @@ class DhanFeed(VendorFeed):
     def _redact(self, text):
         """Transport errors can quote the request. The login never reaches a log."""
         text = str(text)
-        for secret in (self._access_token, self._client_id):
-            if secret:
-                text = text.replace(secret, "***")
+        secrets = {self._access_token, self._client_id}
+        for client_id, token in self._rejected:
+            secrets.update((client_id, token))
+        # Longest first, so a client id inside a token cannot leave the rest of
+        # the token behind.
+        for secret in sorted((s for s in secrets if s), key=len, reverse=True):
+            text = text.replace(secret, "***")
         return text
 
     # ------------------------------------------------------------ subscribing
@@ -541,9 +816,7 @@ class DhanFeed(VendorFeed):
         for start in range(0, len(ask), MAX_SYMBOLS_PER_RESOLVE):
             chunk = ask[start:start + MAX_SYMBOLS_PER_RESOLVE]
             try:
-                if self._http is None:
-                    self._http = build_session()
-                response = self._http.post(f"{self._api}/api/Dhan/instruments/resolve",
+                response = self._session().post(f"{self._api}/api/Dhan/instruments/resolve",
                                            json={"symbols": chunk}, verify=self._verify, timeout=15)
                 response.raise_for_status()
                 answer = {str(k).strip().upper(): v for k, v in ((response.json() or {}).get("resolved") or {}).items()}
@@ -658,34 +931,36 @@ class DhanFeed(VendorFeed):
             self._once(("short",), FeedEvent.ERROR, f"a {len(data)}-byte frame is shorter than a packet header")
             return
 
-        ticks = []
-        offset = 0
-        while True:
-            remaining = len(data) - offset
-            code, declared, segment, security_id = _HEADER.unpack_from(data, offset)
-            size = PACKET_SIZES.get(code)
-            if size is None:
-                size = declared if HEADER_SIZE <= declared <= remaining else remaining
-            elif remaining < size:
-                self._once(("truncated", code), FeedEvent.ERROR,
-                           f"a code-{code} packet arrived with {remaining} bytes; it needs {size}")
-                break
+        # Held from the first packet's merge to the hand-off, so the flusher
+        # cannot slip a tick for the same instrument in between.
+        with self._emit_lock:
+            ticks = []
+            offset = 0
+            while True:
+                remaining = len(data) - offset
+                code, declared, segment, security_id = _HEADER.unpack_from(data, offset)
+                size = PACKET_SIZES.get(code)
+                if size is None:
+                    size = declared if HEADER_SIZE <= declared <= remaining else remaining
+                elif remaining < size:
+                    self._once(("truncated", code), FeedEvent.ERROR,
+                               f"a code-{code} packet arrived with {remaining} bytes; it needs {size}")
+                    break
 
-            self._handle(code, segment, security_id, data, offset, size, ticks)
-            offset += size
-            if offset >= len(data):
-                break
-            # Dhan documents one packet per message. Should it ever stack them,
-            # the rest is read too — but only when it starts like a packet, so
-            # padding or a longer layout is never read as prices.
-            if not _looks_like_header(data, offset):
-                self._once(("trailing", code), FeedEvent.INFO,
-                           f"{len(data) - offset} byte(s) after a code-{code} packet are not another packet; "
-                           f"ignored")
-                break
+                self._handle(code, segment, security_id, data, offset, size, ticks)
+                offset += size
+                if offset >= len(data):
+                    break
+                # Dhan documents one packet per message. Should it ever stack
+                # them, the rest is read too — but only when it starts like a
+                # packet, so padding or a longer layout is never read as prices.
+                if not _looks_like_header(data, offset):
+                    self._once(("trailing", code), FeedEvent.INFO,
+                               f"{len(data) - offset} byte(s) after a code-{code} packet are not another packet; "
+                               f"ignored")
+                    break
 
-        if ticks and self._on_ticks is not None:
-            self._on_ticks(ticks)
+            self._deliver(ticks)
 
     def _handle(self, code, segment, security_id, data, offset, size, ticks):
         if code == DISCONNECT_PACKET:
@@ -721,6 +996,11 @@ class DhanFeed(VendorFeed):
         for name in _STATE_FIELDS:
             if fields.get(name) is not None:
                 state[name] = fields[name]
+        raw = state.setdefault("raw", {})
+        raw["type"] = kind
+        for name in _RAW_FIELDS:
+            if fields.get(name) is not None:
+                raw[name] = fields[name]
         if code == FULL_PACKET:
             # The book replaces the book: an emptied side is None, not the last
             # price someone was once bidding.
@@ -728,21 +1008,37 @@ class DhanFeed(VendorFeed):
             state["bid"], state["ask"] = bid, ask
             state["bid_qty"] = bid_qty if bid is not None else None
             state["ask_qty"] = ask_qty if ask is not None else None
-
-        if state.get("ltp") is None:
-            # OI or a previous close before any price: kept for the first tick.
-            return
-        ticks.append(self._tick(canonical, state, kind, fields))
-
-    def _tick(self, canonical, state, kind, fields):
-        raw = {"type": kind}
-        raw.update({name: fields[name] for name in _RAW_FIELDS if fields.get(name) is not None})
-        if "depth" in fields:
             depth = [list(level) for level in fields["depth"]]
             while depth and not any(depth[-1]):
                 depth.pop()
             if depth:
                 raw["depth"] = depth
+            else:
+                raw.pop("depth", None)
+
+        if state.get("ltp") is None:
+            # OI or a previous close before any price: kept for the first tick.
+            return
+
+        if self._min_interval <= 0:
+            ticks.append(self._tick(canonical, state))
+            return
+        # Conflation: the first update after a quiet interval goes out at once,
+        # so a move out of calm is not delayed at all; updates inside the
+        # interval only mark the instrument, and the flusher sends its state as
+        # it stands when the interval runs out — at most one interval (plus a
+        # wake-up) late, never lost.
+        now = self._clock()
+        last = self._last_emitted.get(canonical)
+        if last is None or now - last >= self._min_interval:
+            self._last_emitted[canonical] = now
+            self._held.pop(canonical, None)
+            ticks.append(self._tick(canonical, state))
+        else:
+            self._held[canonical] = key
+
+    def _tick(self, canonical, state):
+        """A platform tick from an instrument's merged state, as it stands now."""
         return {
             "symbol": canonical,
             "dataType": "symbolUpdate",
@@ -761,7 +1057,8 @@ class DhanFeed(VendorFeed):
             "volume": state.get("volume"),
             # An index has no OI and sends zero: unknown, not "all positions closed".
             "openInterest": state.get("oi") or None,
-            "rawPayload": json.dumps(raw, separators=(",", ":")),
+            # Serialised now: the state keeps changing after this tick has gone.
+            "rawPayload": json.dumps(state.get("raw") or {}, separators=(",", ":")),
         }
 
     def _stamp(self, ltt):

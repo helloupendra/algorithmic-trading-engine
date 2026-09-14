@@ -1,6 +1,7 @@
 /**
- * One connector, in full: what it can deliver, its app credentials, its session,
- * and a probe that fetches real bars so "saved" and "working" are never confused.
+ * One connector, in full: what the platform is taking from it right now, what
+ * it can deliver, its app credentials, its session, and a probe that fetches
+ * real bars so "saved" and "working" are never confused.
  *
  * Reached from the Connectors directory, and from the OAuth callback — the API
  * redirects to /admin/broker/{key} so the operator lands where they pressed
@@ -14,6 +15,7 @@ import { api } from '../../lib/api'
 import {
   useDisconnectProvider,
   useProviderBindings,
+  useProviderUsage,
   useProviders,
   useSaveProviderCredentials,
   useTestProvider,
@@ -22,6 +24,63 @@ import type { Provider, ProviderTestResult } from '../../lib/types'
 import { formatAge, formatDateTime } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components/ui'
 import { CAPABILITY_LABELS, kindLabel, signsInItself as signsInAutomatically } from '../../lib/providers'
+import { usageView } from '../../lib/usage'
+
+/**
+ * Each kind of data this connector could give, and whether the platform is
+ * taking it right now. The same panel for every connector: the API reads rows
+ * by their source key, so nothing here knows which vendor it is looking at.
+ */
+function UsagePanel({ provider }: { provider: Provider }) {
+  const usage = useProviderUsage(provider.key)
+  const view = usageView(usage)
+
+  return (
+    <Panel title={`What we take from ${provider.displayName}`}>
+      {view.kind === 'failed' && <InlineError error={view.error} />}
+      <div className="tablewrap">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Data</th>
+              <th>Status</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            {view.rows.map((row) => (
+              <tr key={row.id}>
+                <td>{row.label}</td>
+                <td>
+                  {row.badge.tone === 'muted' ? (
+                    <span className="muted">{row.badge.label}</span>
+                  ) : (
+                    <Badge tone={row.badge.tone}>{row.badge.label}</Badge>
+                  )}
+                </td>
+                <td className="muted" style={{ whiteSpace: 'normal', minWidth: 160 }}>
+                  {row.summary}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="small-note muted">
+        {view.kind === 'ready' ? (
+          <>
+            {view.markets} · checked {formatAge(view.checkedUtc)}
+            {view.stale ? ' — the latest refresh failed, so these are the last known answers' : ' · refreshes every 10 s'}
+          </>
+        ) : view.kind === 'checking' ? (
+          'Checking what this connector is delivering…'
+        ) : (
+          'Could not check this connector. Nothing above is known to be on or off.'
+        )}
+      </p>
+    </Panel>
+  )
+}
 
 function CredentialsForm({ provider }: { provider: Provider }) {
   const saveCredentials = useSaveProviderCredentials()
@@ -344,6 +403,8 @@ export function ConnectorDetailPage() {
 
       {provider.isInstalled && (
         <>
+          <UsagePanel provider={provider} />
+
           <Panel title="What it can deliver">
             <div className="tablewrap">
               <table className="table">

@@ -26,9 +26,15 @@ public sealed class DhanOptionChainClient
     }
 
     /// <summary>Expiries Dhan lists for an underlying, nearest first.</summary>
-    public async Task<IReadOnlyList<DateOnly>> GetExpiriesAsync(string underlying, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<DateOnly>> GetExpiriesAsync(string underlying, CancellationToken cancellationToken = default)
+        => GetExpiriesAsync(Underlying(underlying), cancellationToken);
+
+    /// <summary>
+    /// Expiries for any underlying Dhan chains: an index, or for MCX the future
+    /// the options are written on (verified with CRUDEOIL on 2026-09-14).
+    /// </summary>
+    public async Task<IReadOnlyList<DateOnly>> GetExpiriesAsync(DhanInstrument instrument, CancellationToken cancellationToken = default)
     {
-        var instrument = Underlying(underlying);
         using var document = await _api.PostAsync(
             "/optionchain/expirylist",
             new { UnderlyingScrip = instrument.SecurityId, UnderlyingSeg = instrument.Segment },
@@ -50,9 +56,12 @@ public sealed class DhanOptionChainClient
 
     /// <summary>The whole chain for one underlying and expiry.</summary>
     /// <param name="underlying">"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX".</param>
-    public async Task<DhanOptionChain> GetChainAsync(string underlying, DateOnly expiry, CancellationToken cancellationToken = default)
+    public Task<DhanOptionChain> GetChainAsync(string underlying, DateOnly expiry, CancellationToken cancellationToken = default)
+        => GetChainAsync(Underlying(underlying), underlying, expiry, cancellationToken);
+
+    /// <summary>The chain of any underlying, named <paramref name="underlying"/> in the result.</summary>
+    public async Task<DhanOptionChain> GetChainAsync(DhanInstrument instrument, string underlying, DateOnly expiry, CancellationToken cancellationToken = default)
     {
-        var instrument = Underlying(underlying);
         string name = underlying.Trim().ToUpperInvariant();
 
         using var document = await _api.PostAsync(

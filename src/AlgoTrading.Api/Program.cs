@@ -94,6 +94,8 @@ builder.Services.AddSingleton<AlgoTrading.Api.Services.IngestorSupervisor>();
 // ingestor above. The registry builds the other vendors' supervisors itself,
 // so a new vendor needs no registration here.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.FeedSupervisorRegistry>();
+// What each connector is delivering right now, for its page in the Connectors module.
+builder.Services.AddScoped<AlgoTrading.Api.Services.ProviderUsageService>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.ChainPollerSupervisor>();
 // The signal alerter process, same shape. It was never registered, so every call
 // to /api/Alerts/status, start and stop answered 500.
