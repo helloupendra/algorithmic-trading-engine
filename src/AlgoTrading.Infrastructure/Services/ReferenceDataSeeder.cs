@@ -32,6 +32,42 @@ public class ReferenceDataSeeder
         await SeedEquityGroupsAsync(cancellationToken);
         await SeedEquityGroupMembersAsync(cancellationToken);
         await SeedMarketCalendarAsync(cancellationToken);
+        await SeedCandlePatternRulesAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// The default candle-pattern rules, exactly once per database.
+    /// </summary>
+    /// <remarks>
+    /// Once is recorded in <c>system_settings</c> rather than inferred from an
+    /// empty table: an admin who deletes every rule has chosen silence, and a
+    /// restart must not undo that.
+    /// </remarks>
+    internal async Task SeedCandlePatternRulesAsync(CancellationToken cancellationToken)
+    {
+        bool seeded = await _dbContext.SystemSettings.AsNoTracking()
+            .AnyAsync(x => x.Key == SystemSettingKeys.PatternRulesSeeded, cancellationToken);
+        if (seeded) return;
+
+        var now = DateTime.UtcNow;
+        bool empty = !await _dbContext.CandlePatternRules.AnyAsync(cancellationToken);
+        if (empty)
+        {
+            _dbContext.CandlePatternRules.AddRange(Patterns.CandlePatternRules.Defaults(now));
+        }
+
+        _dbContext.SystemSettings.Add(new SystemSetting
+        {
+            Key = SystemSettingKeys.PatternRulesSeeded,
+            Value = "true",
+            UpdatedBy = "seed",
+            Reason = empty ? "Default candle-pattern rules added." : "Rules already present; defaults not added.",
+            CreatedUtc = now,
+            UpdatedUtc = now,
+        });
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        if (empty) _logger.LogInformation("Seeded the default candle-pattern rules.");
     }
 
     /// <summary>

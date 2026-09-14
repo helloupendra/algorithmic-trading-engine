@@ -192,7 +192,7 @@ class PacketTests(unittest.TestCase):
         self.assertEqual(134.25, tick["lastTradedPrice"])
         self.assertEqual("2026-09-14T04:59:58Z", tick["exchangeTimestampUtc"])
         self.assertIsNone(tick["bidPrice"])
-        self.assertEqual({"type": "ticker"}, json.loads(tick["rawPayload"]))
+        self.assertEqual({"type": "ticker", "dhan": f"NSE_FNO:{OPTION_ID}"}, json.loads(tick["rawPayload"]))
 
     def test_a_quote_packet_carries_the_day_and_no_book(self):
         self.feed._on_message(quote(NSE_EQ, EQUITY_ID, 2913.05, TRADE_UTC, volume=1234567,
@@ -206,7 +206,7 @@ class PacketTests(unittest.TestCase):
         self.assertIsNone(tick["askSize"])
         self.assertIsNone(tick["openInterest"])
         raw = json.loads(tick["rawPayload"])
-        self.assertEqual({"type": "quote", "ltq": 25, "atp": 101.5, "tot_buy_qty": 700, "tot_sell_qty": 500}, raw)
+        self.assertEqual({"type": "quote", "dhan": f"NSE_EQ:{EQUITY_ID}", "ltq": 25, "atp": 101.5, "tot_buy_qty": 700, "tot_sell_qty": 500}, raw)
         self.assertNotIn("close", raw, "a zero close is no close")
 
     def test_oi_and_previous_close_are_merged_into_later_ticks(self):

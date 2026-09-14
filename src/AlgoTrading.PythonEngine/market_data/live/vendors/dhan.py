@@ -998,6 +998,10 @@ class DhanFeed(VendorFeed):
                 state[name] = fields[name]
         raw = state.setdefault("raw", {})
         raw["type"] = kind
+        # Dhan's own name for the contract, stored with every tick: if a symbol
+        # mapping is ever found wrong, the rows it wrote can be put back under
+        # the right symbol from this, instead of being thrown away.
+        raw["dhan"] = f"{_SEGMENT_BY_NUMBER.get(segment, segment)}:{security_id}"
         for name in _RAW_FIELDS:
             if fields.get(name) is not None:
                 raw[name] = fields[name]

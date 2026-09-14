@@ -27,6 +27,7 @@ import { RiskV2Page } from './pages/admin/RiskV2Page'
 import { BrokerPage } from './pages/admin/BrokerPage'
 import { ConnectorDetailPage } from './pages/admin/ConnectorDetailPage'
 import { LiveAlertsV2Page } from './pages/admin/LiveAlertsV2Page'
+import { PatternAlertsPage } from './pages/admin/PatternAlertsPage'
 import { ActivityLogPage } from './pages/admin/ActivityLogPage'
 import { DeploymentsPage } from './pages/admin/DeploymentsPage'
 import { MarketCalendarPage } from './pages/admin/MarketCalendarPage'
@@ -167,6 +168,7 @@ export default function App() {
                   <Route path="/admin/notebook" element={<NotebookPage />} />
 
                   <Route path="/admin/system/alerts" element={<LiveAlertsV2Page />} />
+                  <Route path="/admin/system/patterns" element={<PatternAlertsPage />} />
                   <Route path="/admin/system/calendar" element={<MarketCalendarPage />} />
                   <Route path="/admin/system/logs" element={<ActivityLogPage />} />
                   <Route path="/admin/system/deployments" element={<DeploymentsPage />} />

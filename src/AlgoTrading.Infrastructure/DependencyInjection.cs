@@ -204,6 +204,16 @@ public static class DependencyInjection
         services.AddScoped<IUserAdminService, UserAdminService>();
         services.AddScoped<IStrategyAccessService, StrategyAccessService>();
 
+        // Candle-pattern alerts: the scanner reads live 1-minute bars, records
+        // one alert per pattern per candle and sends Telegram through the same
+        // Telegram:BotToken / Telegram:ChatId the alert subscriber uses.
+        services.AddHttpClient(TelegramSender.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(20));
+        services.AddSingleton<TelegramSender>();
+        services.AddSingleton<Patterns.PatternScannerState>();
+        services.AddScoped<Patterns.PatternWatchPlanner>();
+        services.AddScoped<Patterns.CandlePatternScanner>();
+        services.AddHostedService<Patterns.CandlePatternAlertService>();
+
         return services;
     }
 }

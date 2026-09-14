@@ -2867,6 +2867,9 @@ a.pill:hover { border-color: var(--line-strong); }
 
 .oc-table { font-size: 12px; }
 .oc-table th { white-space: nowrap; }
+/* Each side's name sits against the strike column, where a centred chain is scrolled to. */
+.oc-page .oc-table th.oc-side--call { text-align: right; }
+.oc-page .oc-table th.oc-side--put { text-align: left; }
 
 .oc-side {
   text-align: center;
@@ -2931,6 +2934,272 @@ a.pill:hover { border-color: var(--line-strong); }
 .oc-build-short { color: var(--neg); font-weight: 600; }
 .oc-build-cover { color: var(--text-2); }
 .oc-build-unwind { color: var(--text-2); }
+
+/* --- advanced option chain (live view) ---------------------------------------- */
+.oc-page > .page__header { margin-bottom: 4px; }
+
+.oc-tabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+  scrollbar-width: none;
+}
+.oc-tab {
+  flex: 0 0 auto;
+  padding: 7px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+.oc-tab:hover { color: var(--text); }
+.oc-tab--on { color: var(--text); border-bottom-color: var(--brand); }
+
+.oc-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+.oc-toolbar__spacer { flex: 1 1 0; }
+.oc-control { display: inline-flex; align-items: center; gap: 6px; }
+.oc-control__label {
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.oc-control__hint { font-size: 11.5px; }
+.oc-time { width: 104px; }
+
+.oc-seg {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.oc-seg button {
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.oc-seg button + button { border-left: 1px solid var(--line); }
+.oc-seg button[aria-pressed='true'] { background: var(--brand-soft); color: var(--text); }
+
+.oc-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.oc-toggle:disabled { opacity: 0.45; cursor: default; }
+.oc-toggle__box {
+  width: 22px;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--line-strong);
+  position: relative;
+  transition: background 0.12s ease;
+}
+.oc-toggle__box::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-2);
+  transition: transform 0.12s ease;
+}
+.oc-toggle[aria-pressed='true'] { color: var(--text); border-color: var(--brand-line); }
+.oc-toggle[aria-pressed='true'] .oc-toggle__box { background: var(--brand); }
+.oc-toggle[aria-pressed='true'] .oc-toggle__box::after { transform: translateX(10px); background: #fff; }
+
+.oc-page .oc-header {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  grid-auto-flow: row dense;
+  gap: 1px;
+  margin-bottom: 0;
+}
+.oc-page .oc-head-item { padding: 7px 11px; }
+.oc-page .oc-head-item--wide { grid-column: span 2; }
+/* The last tile takes the rest of its row, so a short second row has no hole. */
+.oc-page .oc-head-item:last-child { grid-column-end: -1; }
+@media (max-width: 520px) {
+  .oc-page .oc-header { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .oc-page .oc-head-item { padding: 6px 8px; }
+  .oc-page .oc-head-item--wide { grid-column: 1 / -1; }
+  .oc-page .oc-head-value { font-size: 13.5px; }
+  .oc-page .oc-head-label { font-size: 9.5px; letter-spacing: 0.05em; }
+}
+.oc-head-value .oc-chg { font-size: 12px; font-weight: 600; margin-left: 4px; white-space: nowrap; }
+.oc-head-sub {
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* A price that is not live is still shown, but it must not look like one that is. */
+.oc-dim { color: var(--text-2); }
+
+.oc-fresh {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.oc-fresh__dot { display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: var(--text-3); vertical-align: 1px; }
+.oc-fresh--live { color: var(--live); }
+.oc-fresh--live .oc-fresh__dot { background: var(--live); animation: pill-pulse 2.4s infinite; }
+.oc-fresh--stale { color: var(--warn); }
+.oc-fresh--stale .oc-fresh__dot { background: var(--warn); }
+.oc-fresh--replay .oc-fresh__dot { background: var(--brand); }
+
+/* The chain scrolls inside its own box; the page never scrolls sideways. */
+.oc-wrap {
+  max-height: min(74vh, 780px);
+  overflow: auto;
+  background: var(--surface);
+}
+/* Two header rows cannot both sit at top: 0, so the head moves as one. */
+/* Separate borders: with collapsed ones Chromium lets scrolled rows show through the sticky head. */
+.oc-page .oc-table { font-size: 11.5px; border-collapse: separate; border-spacing: 0; }
+.oc-table thead th { background: var(--bg1); padding: 0 6px; height: 26px; box-sizing: border-box; z-index: 3; }
+.oc-table thead tr:first-child th { top: 0; }
+.oc-table thead tr:nth-child(2) th { top: 26px; box-shadow: inset 0 -1px 0 var(--line); }
+.oc-table td { padding: 5px 6px; }
+.oc-table .oc-strike { padding: 4px 9px; border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
+.oc-table th.oc-strike-head { border-left: 1px solid var(--line); border-right: 1px solid var(--line); font-size: 10px; }
+.oc-table .oc-pcr { font-size: 9.5px; }
+
+.oc-sub { font-size: 10px; margin-left: 2px; }
+.oc-itm { background: color-mix(in srgb, var(--warn) 10%, transparent); }
+.oc-table tbody tr.oc-row--atm td { background: var(--brand-soft); }
+.oc-table tbody tr.oc-row--atm td.oc-strike { background: color-mix(in srgb, var(--brand) 26%, var(--bg1)); }
+.oc-table tbody tr.oc-row--atm td.oc-strike b { color: #fff; }
+
+.oc-peak .oc-value { font-weight: 700; color: var(--text); }
+.oc-peak .oc-bar { opacity: 0.55; }
+
+/* In the cell's padding on the strike side, so a live leg is no wider than a captured one. */
+.oc-live-dot {
+  position: absolute;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 50%;
+  background: var(--live);
+}
+.oc-cell--right .oc-live-dot { right: 0; }
+.oc-cell--left .oc-live-dot { left: 0; }
+
+/* The spot line: a row of its own between the two strikes the price is between. */
+.oc-table tbody tr.oc-spot-row td,
+.oc-table tbody tr.oc-spot-row:hover td {
+  height: 24px;
+  padding: 0;
+  border-bottom: 0;
+  background: linear-gradient(var(--brand-hi), var(--brand-hi)) center / 100% 1px no-repeat;
+}
+.oc-table tbody tr.oc-spot-row td.oc-spot-cell { position: relative; }
+.oc-spot-pill {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 650;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.oc-spot-pill--static { background: var(--line-strong); }
+.oc-spot-chg { font-weight: 600; opacity: 0.9; }
+
+.oc-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  margin-top: 8px;
+  font-size: 11.5px;
+}
+
+.oc-analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+  gap: 18px 22px;
+}
+.oc-analysis-grid > * { min-width: 0; }
+.oc-chart { margin: 0; }
+.oc-chart__head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-bottom: 6px; }
+.oc-chart__title {
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  margin-right: auto;
+}
+.oc-chart__value { font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.oc-chart__plot { position: relative; width: 100%; }
+.oc-chart__plot svg { display: block; }
+.oc-chart__note { margin: 4px 0 0; font-size: 11px; color: var(--text-3); }
+.oc-trend { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.oc-grid { stroke: var(--line-soft); stroke-width: 1; }
+.oc-axis { stroke: var(--line-strong); stroke-width: 1; }
+.oc-refline { stroke: var(--text-3); stroke-width: 1; stroke-dasharray: 3 3; }
+.oc-spotline { stroke: var(--brand-hi); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.oc-crosshair { stroke: var(--line-strong); stroke-width: 1; }
+.oc-hoverband { fill: var(--surface2); }
+.oc-tick { fill: var(--text-3); font-size: 10px; font-variant-numeric: tabular-nums; }
+.oc-tick--pain { fill: var(--warn); }
+.oc-swatch-line { display: inline-block; width: 12px; border-top: 2px dashed var(--brand-hi); vertical-align: middle; }
+.oc-tooltip {
+  position: absolute;
+  top: 4px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg1);
+  box-shadow: var(--shadow-2);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
 
 
 /* --- open interest series --------------------------------------------------- */

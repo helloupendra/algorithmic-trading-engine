@@ -2,6 +2,7 @@ using System.Text.Json;
 using StackExchange.Redis;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
+using AlgoTrading.Infrastructure.Services;
 
 namespace AlgoTrading.Api.Services;
 
@@ -10,22 +11,18 @@ public class AlertSubscriberService : BackgroundService
     private readonly IServiceProvider _serviceProvider;
     private readonly IConnectionMultiplexer _redis;
     private readonly ILogger<AlertSubscriberService> _logger;
-    private readonly string _botToken;
-    private readonly string _chatId;
-    private readonly HttpClient _httpClient;
+    private readonly TelegramSender _telegram;
 
     public AlertSubscriberService(
         IServiceProvider serviceProvider,
         IConnectionMultiplexer redis,
-        IConfiguration configuration,
+        TelegramSender telegram,
         ILogger<AlertSubscriberService> logger)
     {
         _serviceProvider = serviceProvider;
         _redis = redis;
+        _telegram = telegram;
         _logger = logger;
-        _botToken = configuration["Telegram:BotToken"] ?? string.Empty;
-        _chatId = configuration["Telegram:ChatId"] ?? string.Empty;
-        _httpClient = new HttpClient();
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -42,11 +39,7 @@ public class AlertSubscriberService : BackgroundService
                 var payload = JsonSerializer.Deserialize<AlertEventPayload>((string)message!);
                 if (payload == null) return;
 
-                bool delivered = false;
-                if (!string.IsNullOrEmpty(_botToken) && !string.IsNullOrEmpty(_chatId))
-                {
-                    delivered = await SendToTelegramAsync(payload);
-                }
+                bool delivered = _telegram.IsConfigured && await SendToTelegramAsync(payload);
 
                 await SaveToDatabaseAsync(payload, delivered);
             }
@@ -57,30 +50,12 @@ public class AlertSubscriberService : BackgroundService
         });
     }
 
-    private async Task<bool> SendToTelegramAsync(AlertEventPayload payload)
-    {
-        try
-        {
-            var text = $"🚨 ALERT: {payload.Title}!\n{payload.Message}";
-            
-            var requestBody = new
-            {
-                chat_id = _chatId,
-                text = text,
-                parse_mode = "HTML"
-            };
-
-            var url = $"https://api.telegram.org/bot{_botToken}/sendMessage";
-            var response = await _httpClient.PostAsJsonAsync(url, requestBody);
-            
-            return response.IsSuccessStatusCode;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error sending alert to Telegram");
-            return false;
-        }
-    }
+    /// <summary>
+    /// Through the shared <see cref="TelegramSender"/>, which reads the same
+    /// Telegram:BotToken / Telegram:ChatId and logs failures without the token.
+    /// </summary>
+    private Task<bool> SendToTelegramAsync(AlertEventPayload payload)
+        => _telegram.SendHtmlAsync($"🚨 ALERT: {payload.Title}!\n{payload.Message}");
 
     private async Task SaveToDatabaseAsync(AlertEventPayload payload, bool delivered)
     {

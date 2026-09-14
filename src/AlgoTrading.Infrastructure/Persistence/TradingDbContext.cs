@@ -75,6 +75,9 @@ public class TradingDbContext : DbContext
     public DbSet<RiskEvent> RiskEvents => Set<RiskEvent>();
     public DbSet<AlertEvent> AlertEvents => Set<AlertEvent>();
 
+    /// <summary>What the candle-pattern scanner watches and whether it notifies.</summary>
+    public DbSet<CandlePatternRule> CandlePatternRules => Set<CandlePatternRule>();
+
     // Multi-provider foundation: who we can connect to, who serves what, and
     // what each vendor calls an instrument we already know.
     public DbSet<BrokerAccount> BrokerAccounts => Set<BrokerAccount>();

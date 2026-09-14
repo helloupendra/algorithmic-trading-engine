@@ -110,6 +110,10 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
 
+                    b.Property<string>("DedupeKey")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.Property<bool>("DeliveredToTelegram")
                         .HasColumnType("boolean");
 
@@ -152,6 +156,9 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(40)");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("DedupeKey")
+                        .IsUnique();
 
                     b.HasIndex("OccurredUtc")
                         .IsDescending();
@@ -428,6 +435,59 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("candles", (string)null);
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.CandlePatternRule", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("GroupsCsv")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<bool>("Notify")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("PatternsCsv")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("SymbolsCsv")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TimeframesCsv")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("candle_pattern_rules", (string)null);
                 });
 
             modelBuilder.Entity("AlgoTrading.Domain.Entities.DataVendor", b =>

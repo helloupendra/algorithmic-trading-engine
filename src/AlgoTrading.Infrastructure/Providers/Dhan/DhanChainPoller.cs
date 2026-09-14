@@ -12,7 +12,11 @@ using Microsoft.Extensions.Options;
 namespace AlgoTrading.Infrastructure.Providers.Dhan;
 
 /// <summary>An underlying the chain can be asked for, with the exchange whose hours gate it.</summary>
-public sealed record DhanChainUnderlying(string Name, string Exchange, DhanInstrument Instrument)
+/// <param name="PriceSymbol">
+/// Where the underlying's price is read from when the chain's own figure cannot
+/// be trusted: for MCX, the future the options are written on.
+/// </param>
+public sealed record DhanChainUnderlying(string Name, string Exchange, DhanInstrument Instrument, string? PriceSymbol = null)
 {
     /// <summary>The segment the market-session rules know this exchange's derivatives by.</summary>
     public string SessionSegment => Exchange == "MCX" ? "COM" : "FO";
@@ -147,6 +151,7 @@ public sealed class DhanChainPollerState
 public sealed class DhanChainRecorder
 {
     private readonly DhanOptionChainClient _chain;
+    private readonly DhanApiClient _api;
     private readonly OptionChainService _store;
     private readonly TradingDbContext _db;
     private readonly IMarketSessionService _sessions;
@@ -155,6 +160,7 @@ public sealed class DhanChainRecorder
 
     public DhanChainRecorder(
         DhanOptionChainClient chain,
+        DhanApiClient api,
         OptionChainService store,
         TradingDbContext db,
         IMarketSessionService sessions,
@@ -162,6 +168,7 @@ public sealed class DhanChainRecorder
         ILogger<DhanChainRecorder> logger)
     {
         _chain = chain;
+        _api = api;
         _store = store;
         _db = db;
         _sessions = sessions;
@@ -228,6 +235,18 @@ public sealed class DhanChainRecorder
                 return new DhanChainOutcome(underlying.Name, now, "failed", "Dhan listed no current expiry");
 
             var chain = await _chain.GetChainAsync(underlying.Instrument, underlying.Name, expiry.Value, cancellationToken);
+            if (underlying.PriceSymbol is not null)
+            {
+                // Dhan's MCX chain reports a price that is not the future's: on
+                // 2026-09-14 CRUDEOIL's said 9,577 while the future traded 9,971
+                // and put-call parity on the same chain gave about 9,985. The
+                // future's own recent quote is the spot its options are priced on.
+                var quoted = await _db.LiveQuotesLatest.AsNoTracking()
+                    .Where(q => q.Symbol == underlying.PriceSymbol && q.LastTradedPrice > 0 && q.UpdatedUtc >= now.AddMinutes(-5))
+                    .Select(q => q.LastTradedPrice)
+                    .FirstOrDefaultAsync(cancellationToken);
+                chain = chain with { UnderlyingPrice = quoted ?? await FutureLastPriceAsync(underlying, cancellationToken) ?? chain.UnderlyingPrice };
+            }
             var contracts = await ContractsAsync(underlying, expiry.Value, cancellationToken);
             var (rows, unmatched) = DhanChainRows.Build(chain, contracts);
 
@@ -271,11 +290,33 @@ public sealed class DhanChainRecorder
                       && i.Exchange == "MCX" && i.Underlying == key && i.InstrumentType == "FUT"
                       && i.ExpiryDate >= today
                 orderby i.ExpiryDate
-                select v.VendorSymbol)
+                select new { i.Symbol, v.VendorSymbol })
             .FirstOrDefaultAsync(cancellationToken);
 
-        var instrument = DhanInstrument.Parse(future);
-        return instrument is null ? null : new DhanChainUnderlying(key, "MCX", instrument);
+        var instrument = DhanInstrument.Parse(future?.VendorSymbol);
+        return instrument is null ? null : new DhanChainUnderlying(key, "MCX", instrument, future!.Symbol);
+    }
+
+    /// <summary>The future's last price from Dhan, when no live quote for it is recorded.</summary>
+    private async Task<decimal?> FutureLastPriceAsync(DhanChainUnderlying underlying, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var answer = await _api.PostAsync(
+                "/marketfeed/ltp",
+                new Dictionary<string, long[]> { [underlying.Instrument.Segment] = new[] { underlying.Instrument.SecurityId } },
+                DhanRateClass.Quote,
+                cancellationToken);
+            return DhanUniverseBuilder.ReadLastPrices(answer.RootElement)
+                .TryGetValue((underlying.Instrument.Segment, underlying.Instrument.SecurityId), out var price) && price > 0
+                ? price
+                : null;
+        }
+        catch (DhanApiException ex)
+        {
+            _logger.LogWarning("Dhan chain {Underlying}: the future's last price was not available ({Message}).", underlying.Name, ex.Message);
+            return null;
+        }
     }
 
     private async Task<Dictionary<(decimal Strike, string Type), string>> ContractsAsync(

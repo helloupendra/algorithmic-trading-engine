@@ -62,6 +62,10 @@ public static class DhanInstruments
             ["NSE:MIDCPNIFTY-INDEX"] = new(IndexSegment, 442, "INDEX"),
             ["BSE:SENSEX-INDEX"] = new(IndexSegment, 51, "INDEX"),
             ["BSE:BANKEX-INDEX"] = new(IndexSegment, 69, "INDEX"),
+            // Not an option underlying; the universe streams it anyway, because
+            // the option chain's header reads it. Master row: NSE,I,21,INDIA VIX.
+            // Platform symbol from the FYERS master's instruments row.
+            ["NSE:INDIAVIX-INDEX"] = new(IndexSegment, 21, "INDEX"),
         };
 
     /// <summary>Option-chain underlyings by the name traders use.</summary>

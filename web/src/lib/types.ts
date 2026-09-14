@@ -1403,8 +1403,16 @@ export interface OptionChainLeg {
   openInterestChangePercent: number | null
   impliedVolatility: number | null
   delta: number | null
+  gamma?: number | null
+  theta?: number | null
+  vega?: number | null
   /** "LongBuildUp" | "ShortBuildUp" | "ShortCovering" | "LongUnwinding" | "Neutral" */
   buildUp: string
+  /** The previous day's OI the change is measured from. */
+  openInterestBaseline?: number | null
+  /** LTP, bid/ask, volume and OI from a live quote no older than the freshness limit. */
+  isLive?: boolean
+  quoteUpdatedUtc?: string | null
 }
 
 export interface OptionChainStrike {
@@ -1436,6 +1444,88 @@ export interface OptionChain {
    * replay of an earlier session has prices and volume and nothing else.
    */
   openInterestUnavailable: boolean
+  totalCallOpenInterestChange?: number
+  totalPutOpenInterestChange?: number
+  /** Filled only by /api/OptionChain/view. */
+  header?: OptionChainHeader | null
+}
+
+/** One price in the chain's header strip, and how much to trust it. */
+export interface OptionChainQuote {
+  symbol: string
+  lastPrice: number | null
+  change: number | null
+  changePercent: number | null
+  previousClose: number | null
+  /** "feed" | "dhan-close-field" | null (no previous close known) */
+  previousCloseBasis: string | null
+  asOfUtc: string | null
+  sourceKey: string | null
+  isLive: boolean
+  /** "live-quote" | "last-quote" | "snapshot" */
+  basis: string
+}
+
+export interface OptionChainFuture extends OptionChainQuote {
+  expiryDate: string | null
+  premiumOverSpot: number | null
+  premiumPercent: number | null
+}
+
+export interface OptionChainHeader {
+  /** "live" | "snapshot" | "replay" */
+  mode: string
+  serverUtc: string
+  exchange: string
+  marketOpen: boolean
+  spot: OptionChainQuote | null
+  /** The spot is a futures contract (MCX commodities). */
+  spotIsFuture: boolean
+  future: OptionChainFuture | null
+  vix: OptionChainQuote | null
+  atTheMoneyStrike: number | null
+  maxPainStrike: number | null
+  putCallRatio: number | null
+  putCallRatioOfChange: number | null
+  supportStrike: number | null
+  supportOpenInterest: number | null
+  resistanceStrike: number | null
+  resistanceOpenInterest: number | null
+  totalCallOpenInterest: number
+  totalPutOpenInterest: number
+  totalCallOpenInterestChange: number
+  totalPutOpenInterestChange: number
+  atTheMoneyIv: number | null
+  daysToExpiry: number | null
+  lotSize: number | null
+  lotSizeSource: string | null
+  spotBetweenLower: number | null
+  spotBetweenUpper: number | null
+  snapshotCapturedUtc: string | null
+  snapshotSourceKey: string | null
+  liveOverlayUtc: string | null
+  liveSourceKey: string | null
+  liveLegs: number
+  totalLegs: number
+  freshSeconds: number
+}
+
+export interface OptionChainTrendPoint {
+  capturedUtc: string
+  spotPrice: number
+  callOpenInterest: number
+  putOpenInterest: number
+  callOpenInterestChange: number
+  putOpenInterestChange: number
+  putCallRatio: number | null
+}
+
+export interface OptionChainTrend {
+  underlying: string
+  expiryDate: string | null
+  sessionDate: string | null
+  captures: number
+  points: OptionChainTrendPoint[]
 }
 
 export interface OptionChainSeriesPoint {
