@@ -7,6 +7,8 @@ import {
   expiryLabel,
   isCallItm,
   isPutItm,
+  positionMarker,
+  positionsBySymbol,
   signedPercent,
   spotMarkerIndex,
   strikeWindow,
@@ -193,5 +195,26 @@ describe('describeFreshness', () => {
     const f = describeFreshness({ ...base, mode: 'replay', marketOpen: false }, at('2026-09-15T08:00:00Z'))
     expect(f.tone).toBe('replay')
     expect(f.text).toMatch(/^replay · snapshot 15 Sep 10:40 IST/)
+  })
+})
+
+describe('positions on the chain', () => {
+  const long = (symbol: string, quantity: number) => ({ symbol, direction: 'LONG', quantity })
+  const short = (symbol: string, quantity: number) => ({ symbol, direction: 'SHORT', quantity })
+
+  it('groups open positions by contract', () => {
+    const map = positionsBySymbol([long('MCX:CRUDEOIL26SEP9700CE', 1), short('MCX:CRUDEOIL26SEP9700CE', 2), long('X', 1)])
+    expect(map.get('MCX:CRUDEOIL26SEP9700CE')).toHaveLength(2)
+    expect(map.get('X')).toHaveLength(1)
+    expect(positionsBySymbol(null).size).toBe(0)
+  })
+
+  it('marks bought and sold lots per side, never netted', () => {
+    expect(positionMarker([long('A', 1)])).toEqual({ label: 'B 1', tone: 'long' })
+    expect(positionMarker([short('A', 2), short('A', 1)])).toEqual({ label: 'S 3', tone: 'short' })
+    // A strategy's short and a manual long on one contract: both shown.
+    expect(positionMarker([short('A', 1), long('A', 1)])).toEqual({ label: 'B 1 · S 1', tone: 'mixed' })
+    expect(positionMarker([])).toBeNull()
+    expect(positionMarker(undefined)).toBeNull()
   })
 })

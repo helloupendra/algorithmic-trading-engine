@@ -1687,3 +1687,26 @@ export interface SaveTraderBrokerInput {
   redirectUri?: string
   tradingPin?: string
 }
+
+/** An open paper position on a contract of the chain's underlying (GET /api/OptionChain/positions). */
+export interface OptionChainPosition {
+  runId: number
+  strategyName: string
+  isManual: boolean
+  userName: string
+  groupId: string
+  symbol: string
+  instrumentType: string
+  strikePrice: number | null
+  expiryDate: string | null
+  direction: 'LONG' | 'SHORT' | string
+  quantity: number
+  lotSize: number
+  averagePrice: number
+  markPrice: number | null
+  markUtc: string | null
+  unrealizedPnl: number | null
+  stopLossPrice: number | null
+  targetPrice: number | null
+  openedUtc: string
+}

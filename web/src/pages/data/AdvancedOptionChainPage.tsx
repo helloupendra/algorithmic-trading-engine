@@ -18,9 +18,9 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { useOptionChainExpiries, useOptionChainTrend, useOptionChainView } from '../../lib/queries'
-import type { OptionChain, OptionChainHeader, OptionChainLeg, OptionChainQuote, OptionChainStrike } from '../../lib/types'
+import { Link, useSearchParams } from 'react-router-dom'
+import { useOptionChainExpiries, useOptionChainPositions, useOptionChainTrend, useOptionChainView } from '../../lib/queries'
+import type { OptionChain, OptionChainHeader, OptionChainLeg, OptionChainPosition, OptionChainQuote, OptionChainStrike } from '../../lib/types'
 import { EmptyState, InlineError, Loading, Panel } from '../../components/ui'
 import {
   BUILD_UP,
@@ -34,6 +34,8 @@ import {
   isCallItm,
   isPutItm,
   istDate,
+  positionMarker,
+  positionsBySymbol,
   istStamp,
   istTime,
   price,
@@ -46,6 +48,7 @@ import {
   type WindowSize,
 } from '../../lib/optionChain'
 import { OptionChainAnalysis } from './OptionChainAnalysis'
+import { formatInrSigned } from '../../lib/format'
 
 // --- columns ----------------------------------------------------------------------
 
@@ -127,6 +130,7 @@ function LegCell({
   peaks,
   toggles,
   lotSize,
+  held,
 }: {
   column: ColumnKey
   leg: OptionChainLeg | null
@@ -135,6 +139,7 @@ function LegCell({
   peaks: Peaks
   toggles: Toggles
   lotSize: number | null
+  held?: OptionChainPosition[]
 }) {
   const align = side === 'call' ? 'oc-cell--right' : 'oc-cell--left'
   const base = `oc-cell ${align} ${itm ? 'oc-itm' : ''}`
@@ -198,17 +203,110 @@ function LegCell({
       const change = leg.priceChangePercent != null
         ? <span className={`oc-sub ${tone(leg.priceChangePercent)}`}>({signedPercent(leg.priceChangePercent, 1)})</span>
         : null
+      const marker = positionMarker(held)
+      const badge = marker ? (
+        <span className={`oc-pos oc-pos--${marker.tone}`} title={heldTitle(held ?? [])}>
+          {marker.label}
+        </span>
+      ) : null
       return (
         <td className={`${base} oc-ltp`}>
+          {side === 'put' && badge}
           {side === 'put' && dot}
           {side === 'call' && change}
           <span className="oc-value"> {premium(leg.lastTradedPrice, toggles, lotSize)} </span>
           {side === 'put' && change}
           {side === 'call' && dot}
+          {side === 'call' && badge}
         </td>
       )
     }
   }
+}
+
+/** One line per held position, for the marker's tooltip. */
+function heldTitle(positions: OptionChainPosition[]): string {
+  return positions
+    .map((p) => {
+      const side = p.direction.toUpperCase() === 'SHORT' ? 'Sold' : 'Bought'
+      const pnl = p.unrealizedPnl != null ? ` · P&L ${formatInrSigned(p.unrealizedPnl)}` : ''
+      return `${side} ${p.quantity} lot${p.quantity === 1 ? '' : 's'} @ ${price(p.averagePrice)} — ${p.isManual ? 'Manual' : p.strategyName} (run #${p.runId})${pnl}`
+    })
+    .join('\n')
+}
+
+// --- positions --------------------------------------------------------------------
+
+/**
+ * What is held on this underlying right now: every open leg of a running
+ * strategy and every manual trade, marked at the live price. The same legs carry
+ * a B/S marker in the chain below, so a position can be read against its strike.
+ */
+function PositionsPanel({ underlying, positions }: { underlying: string; positions: OptionChainPosition[] }) {
+  const total = positions.reduce((sum, p) => sum + (p.unrealizedPnl ?? 0), 0)
+  return (
+    <Panel
+      title={`Positions on ${underlying}`}
+      actions={positions.length > 0 ? <span className={`oc-pos-total ${tone(total)}`}>Open P&amp;L {formatInrSigned(total)}</span> : undefined}
+    >
+      {positions.length === 0 ? (
+        <p className="muted small-note">
+          Nothing held on {underlying}. Legs from running strategies and manual trades appear here, and are marked
+          B (bought) or S (sold) beside their LTP in the chain.
+        </p>
+      ) : (
+        <div className="tablewrap">
+          <table className="table oc-pos-table">
+            <thead>
+              <tr>
+                <th>Book</th>
+                <th>Contract</th>
+                <th>Side</th>
+                <th className="r">Lots</th>
+                <th className="r">Avg</th>
+                <th className="r">LTP</th>
+                <th className="r">P&amp;L</th>
+                <th className="r">SL / Target</th>
+              </tr>
+            </thead>
+            <tbody>
+              {positions.map((p) => {
+                const short = p.direction.toUpperCase() === 'SHORT'
+                const contract = p.strikePrice != null
+                  ? `${p.strikePrice.toLocaleString('en-IN')} ${p.instrumentType}`
+                  : p.instrumentType
+                return (
+                  <tr key={`${p.runId}-${p.symbol}-${p.groupId}`}>
+                    <td>
+                      <Link to={`/admin/strategies/runs/${p.runId}`}>{p.isManual ? 'Manual' : p.strategyName}</Link>
+                      <span className="faint"> #{p.runId}{p.userName ? ` · ${p.userName}` : ''}</span>
+                    </td>
+                    <td title={p.symbol}>
+                      {contract}
+                      {p.expiryDate ? <span className="faint"> · {expiryLabel(p.expiryDate, p.expiryDate).split(' (')[0]}</span> : null}
+                    </td>
+                    <td>
+                      <span className={`oc-pos oc-pos--${short ? 'short' : 'long'}`}>{short ? 'SELL' : 'BUY'}</span>
+                    </td>
+                    <td className="r">
+                      {p.quantity}
+                      <span className="faint"> ×{p.lotSize}</span>
+                    </td>
+                    <td className="r">{price(p.averagePrice)}</td>
+                    <td className="r">{price(p.markPrice)}</td>
+                    <td className={`r ${tone(p.unrealizedPnl)}`}>{p.unrealizedPnl != null ? formatInrSigned(p.unrealizedPnl) : '—'}</td>
+                    <td className="r muted">
+                      {p.stopLossPrice != null ? price(p.stopLossPrice) : '—'} / {p.targetPrice != null ? price(p.targetPrice) : '—'}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
+  )
 }
 
 // --- the chain ------------------------------------------------------------------
@@ -219,13 +317,16 @@ function ChainTable({
   toggles,
   windowSize,
   scrollKey,
+  positions,
 }: {
   chain: OptionChain
   header: OptionChainHeader
   toggles: Toggles
   windowSize: WindowSize
   scrollKey: string
+  positions: OptionChainPosition[]
 }) {
+  const held = useMemo(() => positionsBySymbol(positions), [positions])
   const wrapRef = useRef<HTMLDivElement>(null)
   const scrolledFor = useRef<string | null>(null)
   const spot = header.spot?.lastPrice ?? (chain.spotPrice > 0 ? chain.spotPrice : null)
@@ -297,11 +398,13 @@ function ChainTable({
     rows.push(
       <tr
         key={strike.strikePrice}
-        className={`oc-row ${strike.isAtTheMoney ? 'oc-row--atm' : ''}`}
+        className={`oc-row ${strike.isAtTheMoney ? 'oc-row--atm' : ''} ${
+          (strike.call && held.has(strike.call.symbol)) || (strike.put && held.has(strike.put.symbol)) ? 'oc-row--held' : ''
+        }`}
         data-atm={strike.isAtTheMoney ? 'true' : undefined}
       >
         {calls.map((c) => (
-          <LegCell key={`c-${c}`} column={c} leg={strike.call} side="call" itm={callItm} peaks={peaks} toggles={toggles} lotSize={lotSize} />
+          <LegCell key={`c-${c}`} column={c} leg={strike.call} side="call" itm={callItm} peaks={peaks} toggles={toggles} lotSize={lotSize} held={strike.call ? held.get(strike.call.symbol) : undefined} />
         ))}
         <td className="oc-strike" title={strike.isAtTheMoney ? 'At the money' : undefined}>
           <b>{strike.strikePrice.toLocaleString('en-IN')}</b>
@@ -310,7 +413,7 @@ function ChainTable({
           </span>
         </td>
         {puts.map((c) => (
-          <LegCell key={`p-${c}`} column={c} leg={strike.put} side="put" itm={putItm} peaks={peaks} toggles={toggles} lotSize={lotSize} />
+          <LegCell key={`p-${c}`} column={c} leg={strike.put} side="put" itm={putItm} peaks={peaks} toggles={toggles} lotSize={lotSize} held={strike.put ? held.get(strike.put.symbol) : undefined} />
         ))}
       </tr>,
     )
@@ -501,7 +604,7 @@ function BuildUpLegend() {
         </span>
       ))}
       <span className="faint">
-        Shaded: in the money. Teal dot: LTP from a live quote. Bold bar: heaviest OI or volume on that side.
+        Shaded: in the money. Teal dot: LTP from a live quote. Bold bar: heaviest OI or volume on that side. B / S: lots bought or sold on that leg by a strategy or a manual trade.
       </span>
     </div>
   )
@@ -534,6 +637,9 @@ export function AdvancedOptionChainPage({ asOfUtc: asOfProp }: { asOfUtc?: strin
   const data = view.data && view.data.underlying === underlying ? view.data : undefined
   const header = data?.header ?? null
   const trend = useOptionChainTrend(underlying, expiry ?? data?.expiryDate, asOfUtc, header?.marketOpen)
+  // Positions are today's, not the replay clock's: hidden while replaying.
+  const positionsQuery = useOptionChainPositions(underlying, Boolean(header?.marketOpen))
+  const positions = !asOfUtc && positionsQuery.data ? positionsQuery.data : []
   const trendData = trend.data && trend.data.underlying === underlying ? trend.data : undefined
 
   // The replay clock is a time on the session the chain belongs to.
@@ -658,6 +764,7 @@ export function AdvancedOptionChainPage({ asOfUtc: asOfProp }: { asOfUtc?: strin
         <>
           <HeaderStrip chain={data} header={header} />
           <FreshnessLine header={header} receivedAt={view.dataUpdatedAt} fetchFailed={view.isError} />
+          {!asOfUtc && <PositionsPanel underlying={underlying} positions={positions} />}
 
           {data.strikes.length === 0 ? (
             <EmptyState>
@@ -678,6 +785,7 @@ export function AdvancedOptionChainPage({ asOfUtc: asOfProp }: { asOfUtc?: strin
                 toggles={toggles}
                 windowSize={windowSize}
                 scrollKey={`${underlying}|${data.expiryDate}|${windowSize}|${asOfUtc ? 'r' : 'l'}`}
+                positions={positions}
               />
               <BuildUpLegend />
               <Panel title="OI analysis" className="oc-analysis-panel">
