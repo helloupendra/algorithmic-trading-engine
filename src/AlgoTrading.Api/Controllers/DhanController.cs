@@ -30,14 +30,16 @@ public class DhanController : ControllerBase
     private readonly DhanInstrumentImporter _importer;
     private readonly ISymbolMapper _symbolMapper;
     private readonly DhanLoginFlow _login;
+    private readonly DhanChainPollerState _pollerState;
 
-    public DhanController(DhanApiClient api, DhanOptionChainClient chain, DhanInstrumentImporter importer, ISymbolMapper symbolMapper, DhanLoginFlow login)
+    public DhanController(DhanApiClient api, DhanOptionChainClient chain, DhanInstrumentImporter importer, ISymbolMapper symbolMapper, DhanLoginFlow login, DhanChainPollerState pollerState)
     {
         _api = api;
         _chain = chain;
         _importer = importer;
         _symbolMapper = symbolMapper;
         _login = login;
+        _pollerState = pollerState;
     }
 
     /// <summary>
@@ -217,6 +219,80 @@ public class DhanController : ControllerBase
 
         return Ok(new { resolved, unresolved = symbols.Where(s => !resolved.ContainsKey(s)).ToList() });
     }
+
+    /// <summary>
+    /// What the Dhan feed streams beyond the watchlist: indices, nearest futures,
+    /// at-the-money options. Read by the feed every few minutes, so it follows
+    /// the market through the day.
+    /// </summary>
+    [HttpGet("universe")]
+    [Authorize(Roles = $"{UserRoles.Admin},{UserRoles.Service}")]
+    public async Task<IActionResult> Universe([FromServices] DhanUniverseBuilder builder, CancellationToken cancellationToken)
+    {
+        var universe = await builder.GetAsync(cancellationToken);
+        return Ok(new
+        {
+            symbols = universe.Symbols,
+            generatedUtc = universe.GeneratedUtc,
+            counts = universe.Counts,
+            spots = universe.Spots,
+            warnings = universe.Warnings,
+        });
+    }
+
+    /// <summary>Is the chain recorder on, and what did each underlying's last round do?</summary>
+    [HttpGet("chain-poller")]
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    public IActionResult ChainPollerStatus([FromServices] Microsoft.Extensions.Options.IOptions<DhanSettings> settings) => Ok(PollerView(settings.Value));
+
+    /// <summary>Turns the recorder on until the API restarts; Dhan:ChainPoller:Enabled decides after that.</summary>
+    [HttpPost("chain-poller/start")]
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    public IActionResult StartChainPoller([FromServices] Microsoft.Extensions.Options.IOptions<DhanSettings> settings)
+    {
+        _pollerState.Enabled = true;
+        return Ok(PollerView(settings.Value));
+    }
+
+    [HttpPost("chain-poller/stop")]
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    public IActionResult StopChainPoller([FromServices] Microsoft.Extensions.Options.IOptions<DhanSettings> settings)
+    {
+        _pollerState.Enabled = false;
+        return Ok(PollerView(settings.Value));
+    }
+
+    /// <summary>
+    /// One round now, for the named underlyings or the configured ones. Markets
+    /// that are closed are skipped unless <paramref name="evenIfClosed"/>: a closed
+    /// market's chain is its last close, and it would be stored stamped now.
+    /// </summary>
+    [HttpPost("chain-poller/capture")]
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    public async Task<IActionResult> CaptureChain(
+        [FromServices] DhanChainRecorder recorder,
+        [FromServices] Microsoft.Extensions.Options.IOptions<DhanSettings> settings,
+        [FromQuery] string? underlyings,
+        [FromQuery] bool evenIfClosed,
+        CancellationToken cancellationToken)
+    {
+        var names = string.IsNullOrWhiteSpace(underlyings)
+            ? settings.Value.ChainPoller.UnderlyingList
+            : underlyings.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var outcomes = await recorder.RecordAsync(names, onlyOpenMarkets: !evenIfClosed, cancellationToken);
+        return Ok(new { outcomes });
+    }
+
+    private object PollerView(DhanSettings settings) => new
+    {
+        enabled = _pollerState.Enabled,
+        configuredEnabled = settings.ChainPoller.Enabled,
+        intervalSeconds = settings.ChainPoller.IntervalSeconds,
+        underlyings = settings.ChainPoller.UnderlyingList,
+        lastRoundStartedUtc = _pollerState.LastRoundStartedUtc,
+        lastRoundFinishedUtc = _pollerState.LastRoundFinishedUtc,
+        outcomes = _pollerState.Outcomes,
+    };
 
     private IActionResult Failure(Exception ex) => ex switch
     {

@@ -167,6 +167,18 @@ class SharedRunnerRules(unittest.TestCase):
         self.assertEqual("NSE:NIFTY50-INDEX", publisher.publish_tick.call_args.args[0]["symbol"])
         self.assertEqual(1, runner.pump.depth())
 
+    def test_the_raw_payload_rides_on_the_stream_unless_the_feed_says_not(self):
+        tick = {"symbol": "NSE:X", "lastTradedPrice": 1.0, "rawPayload": '{"depth":[[1,1,1.0,1.1,1,1]]}'}
+        runner, publisher = self._runner(is_replay=False)
+        runner.on_ticks([dict(tick)])
+        self.assertEqual(tick["rawPayload"], publisher.publish_tick.call_args.args[0]["rawPayload"])
+
+        publisher = mock.MagicMock()
+        lean = runner_for(FakeFeed(publish_raw_payload=False), publisher=publisher)
+        lean.on_ticks([dict(tick)])
+        self.assertEqual("", publisher.publish_tick.call_args.args[0]["rawPayload"])
+        self.assertEqual(tick["rawPayload"], lean.pump.drain(10)[0]["rawPayload"], "the API still gets it")
+
     def test_a_redis_failure_does_not_stop_the_tick_being_stored(self):
         runner, publisher = self._runner(is_replay=False)
         publisher.publish_tick.side_effect = ConnectionError("redis down")

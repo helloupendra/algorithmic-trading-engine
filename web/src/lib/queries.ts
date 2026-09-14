@@ -1561,6 +1561,16 @@ export function useDisconnectProvider() {
   })
 }
 
+/** What the platform is taking from one connector, item by item. Polled: it is the live picture. */
+export function useProviderUsage(providerKey: string, enabled = true) {
+  return useQuery({
+    queryKey: ['providers', 'usage', providerKey],
+    queryFn: () => api.get<import('./types').ProviderUsage>(`/api/Providers/${providerKey}/usage`),
+    enabled: enabled && providerKey.length > 0,
+    refetchInterval: 10_000,
+  })
+}
+
 export function useTestProvider() {
   return useMutation({
     mutationFn: (providerKey: string) =>

@@ -233,6 +233,26 @@ public class ProvidersController : ControllerBase
         return Ok(new { message = $"{descriptor.DisplayName} disconnected." });
     }
 
+    /// <summary>
+    /// What the platform is taking from this connector right now: its session,
+    /// live ticks, quotes, depth, open interest, greeks, option chain, history,
+    /// instruments and orders, each "on", "idle", "off", "unknown" or
+    /// "not-offered" with a line saying why. The rules are in
+    /// <see cref="ProviderUsageRules"/>; the console polls this every 10 s.
+    /// </summary>
+    [HttpGet("{providerKey}/usage")]
+    public async Task<ActionResult<ProviderUsageResponse>> GetUsage(
+        string providerKey,
+        [FromServices] AlgoTrading.Api.Services.ProviderUsageService usage,
+        CancellationToken cancellationToken)
+    {
+        var result = await usage.GetAsync(providerKey, cancellationToken);
+
+        return result is null
+            ? NotFound(new { message = $"No connector is registered under '{providerKey}'." })
+            : Ok(result);
+    }
+
     /// <summary>Which connectors serve which capability, in priority order.</summary>
     [HttpGet("bindings")]
     public async Task<ActionResult<IReadOnlyList<ProviderBindingResponse>>> GetBindings(

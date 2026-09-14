@@ -8,13 +8,22 @@ from core.live.vendor_feed import FeedEvent, VendorFeed
 class FakeFeed(VendorFeed):
     key = "fake"
 
-    def __init__(self, is_replay=False, take=None, unsubscribe_works=True):
+    def __init__(self, is_replay=False, take=None, unsubscribe_works=True, extra=None, max_symbols=None,
+                 publish_raw_payload=True):
         self.is_replay = is_replay
         self.ready_event = FeedEvent.CONNECTED
         self.subscribed_calls: list[list[str]] = []
         self.unsubscribed_calls: list[list[str]] = []
+        # Both kinds of call in the order they were made.
+        self.calls: list[tuple[str, list[str]]] = []
         self._take = take
         self.unsubscribe_works = unsubscribe_works
+        self.max_symbols = max_symbols
+        self.publish_raw_payload = publish_raw_payload
+        # None keeps VendorFeed's default; a list, or a callable for a feed
+        # whose extras change or fail.
+        self._extra = extra
+        self.extra_calls = 0
 
     def connect(self, credentials, on_ticks, on_event):
         pass
@@ -24,11 +33,19 @@ class FakeFeed(VendorFeed):
 
     def subscribe(self, symbols):
         self.subscribed_calls.append(list(symbols))
+        self.calls.append(("subscribe", list(symbols)))
         return [s for s in symbols if self._take is None or s in self._take]
 
     def unsubscribe(self, symbols):
         self.unsubscribed_calls.append(list(symbols))
+        self.calls.append(("unsubscribe", list(symbols)))
         return self.unsubscribe_works
+
+    def extra_symbols(self):
+        self.extra_calls += 1
+        if self._extra is None:
+            return super().extra_symbols()
+        return list(self._extra()) if callable(self._extra) else list(self._extra)
 
 
 def runner_for(feed, watchlist=(), publisher=None, market_open=None):

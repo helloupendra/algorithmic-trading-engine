@@ -16,8 +16,7 @@ namespace AlgoTrading.Infrastructure.Providers.Dhan;
 /// open interest in quotes and in history (intraday and daily, derivatives and
 /// MCX), an option chain carrying OI, previous OI, volume, IV and greeks in one
 /// call, and index volume in history. The live stream is a separate adapter in
-/// the Python engine; until it ships, <see cref="ProviderCapabilities.LiveTicks"/>
-/// stays false so the console never offers a feed that cannot start.</para>
+/// the Python engine, run from Live feeds like every other vendor's.</para>
 /// </remarks>
 public static class DhanProvider
 {
@@ -40,9 +39,10 @@ public static class DhanProvider
         {
             History = true,
 
-            // The websocket adapter lives in the Python engine and is not built
-            // yet. Claimed the day it can actually stream.
-            LiveTicks = false,
+            // The binary websocket adapter in the Python engine
+            // (market_data/live/vendors/dhan.py), verified streaming MCX on
+            // 2026-09-14: price, bid/ask with five levels, volume and OI.
+            LiveTicks = true,
 
             // /marketfeed/ltp, /ohlc and /quote: up to 1,000 instruments a call.
             Quotes = true,

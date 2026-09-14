@@ -83,6 +83,13 @@ class VendorFeed(ABC):
     #: as soon as the socket opens; TrueData only once it has accepted the login.
     ready_event: str = FeedEvent.CONNECTED
 
+    #: Whether a tick's rawPayload rides along on the Redis stream every
+    #: strategy reads. It always goes to the API, which stores it. A vendor
+    #: whose rawPayload is bulky and of no use to a strategy (Dhan's five-level
+    #: book, several times a second per contract) turns this off, so every
+    #: consumer is not made to read and discard it.
+    publish_raw_payload: bool = True
+
     def acquire_credentials(self, not_this: Any = None) -> Any:
         """
         Block until a usable credential exists and return it.
@@ -129,3 +136,19 @@ class VendorFeed(ABC):
     def to_vendor(self, canonical_symbol: str) -> str | None:
         """This vendor's name for an instrument; the canonical one by default."""
         return canonical_symbol
+
+    def extra_symbols(self) -> list[str]:
+        """
+        Instruments this feed should carry beyond the watchlist, canonically
+        named, most important first. The runner subscribes the watchlist and
+        these together and re-asks on its usual refresh, so a list that follows
+        the market (the strikes around the money) moves in place. They are
+        never written to the watchlist: they are this feed's business, not a
+        trader's choice.
+
+        Called every few seconds, so an implementation that asks the network
+        must cache, and must answer with its last good list when the network
+        fails — an empty answer unsubscribes everything it listed before.
+        The default is a feed that streams the watchlist and nothing else.
+        """
+        return []
