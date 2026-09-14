@@ -1,5 +1,5 @@
 /**
- * System module — Pattern alerts: candle patterns on live bars, as they close.
+ * Data module — Pattern alerts: candle patterns on live bars, as they close.
  *
  * The scanner (CandlePatternAlertService in the API) rolls the live 1-minute
  * bars of every watched symbol into 3–60-minute candles aligned to the
