@@ -215,6 +215,14 @@ function SessionPanel({ provider }: { provider: Provider }) {
   // It has no browser session to be "connected", so judging it by one showed
   // "Not connected" directly above a test that had just returned 130 bars.
   const signsInItself = signsInAutomatically(provider)
+  // A daily-login connector can also run on a token set in the server's
+  // configuration. Its session row then says "not connected" while its data
+  // arrives, so the session line from the usage check decides what is shown.
+  // Same query as the usage panel below: one request, not two.
+  const usage = useProviderUsage(provider.key)
+  const sessionUsage = usage.data?.items.find((item) => item.id === 'session')
+  const runsWithoutSignIn =
+    needsLogin && !signsInItself && !provider.session.isConnected && sessionUsage?.state === 'on'
 
   return (
     <Panel title="Session">
@@ -241,7 +249,9 @@ function SessionPanel({ provider }: { provider: Provider }) {
                 ? provider.session.needsReconnect
                   ? 'Token is from a previous day'
                   : 'Connected'
-                : 'Not connected'}
+                : runsWithoutSignIn
+                  ? 'Running without a sign-in'
+                  : 'Not connected'}
           </div>
           <p className="muted">
             {!needsLogin ? (
@@ -262,13 +272,20 @@ function SessionPanel({ provider }: { provider: Provider }) {
                 {provider.auth === 'OAuthDaily' &&
                   ' Tokens expire daily — reconnect each trading morning.'}
               </>
+            ) : runsWithoutSignIn ? (
+              <>
+                Data is arriving on a token set in the server&apos;s configuration, not on a sign-in, and that
+                token ends on its own. <b>Connect</b> gives a fresh token for the whole day.
+              </>
             ) : (
               <>No usable token. Connect to authorise this platform against your account.</>
             )}
           </p>
         </div>
         <div className="broker-state__actions">
-          {needsLogin && provider.isBroker && (
+          {/* Every daily-login connector, broker or data-only: a data vendor with a
+              browser sign-in had no way to sign in from here. */}
+          {needsLogin && !signsInItself && (
             <button
               type="button"
               className="btn btn--primary"
