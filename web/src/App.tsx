@@ -27,7 +27,7 @@ import { RiskV2Page } from './pages/admin/RiskV2Page'
 import { BrokerPage } from './pages/admin/BrokerPage'
 import { ConnectorDetailPage } from './pages/admin/ConnectorDetailPage'
 import { LiveAlertsV2Page } from './pages/admin/LiveAlertsV2Page'
-import { PatternAlertsPage } from './pages/admin/PatternAlertsPage'
+import { PatternAlertsPage } from './pages/data/PatternAlertsPage'
 import { ActivityLogPage } from './pages/admin/ActivityLogPage'
 import { DeploymentsPage } from './pages/admin/DeploymentsPage'
 import { MarketCalendarPage } from './pages/admin/MarketCalendarPage'
@@ -135,6 +135,7 @@ export default function App() {
                   <Route path="/admin/data/commodity" element={<CommodityPage />} />
                   <Route path="/admin/data/chain" element={<AdvancedOptionChainPage />} />
                   <Route path="/admin/data/open-interest" element={<OptionInterestPage />} />
+                  <Route path="/admin/data/patterns" element={<PatternAlertsPage />} />
                   <Route path="/admin/data/historical" element={<HistoricalDataPage />} />
                   <Route path="/admin/data/instruments" element={<InstrumentsFnoPage />} />
 
@@ -168,7 +169,7 @@ export default function App() {
                   <Route path="/admin/notebook" element={<NotebookPage />} />
 
                   <Route path="/admin/system/alerts" element={<LiveAlertsV2Page />} />
-                  <Route path="/admin/system/patterns" element={<PatternAlertsPage />} />
+                  <Route path="/admin/system/patterns" element={<Navigate to="/admin/data/patterns" replace />} />
                   <Route path="/admin/system/calendar" element={<MarketCalendarPage />} />
                   <Route path="/admin/system/logs" element={<ActivityLogPage />} />
                   <Route path="/admin/system/deployments" element={<DeploymentsPage />} />

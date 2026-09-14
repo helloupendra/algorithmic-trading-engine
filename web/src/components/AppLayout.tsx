@@ -383,7 +383,7 @@ const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]>
   ['/admin/users', 'System', 'Users & access'],
   ['/admin/system/risk', 'System', 'Risk & kill switch'],
   ['/admin/system/alerts', 'System', 'Alerts'],
-  ['/admin/system/patterns', 'System', 'Pattern alerts'],
+  ['/admin/data/patterns', 'Data', 'Pattern alerts'],
   ['/admin/system/calendar', 'System', 'Market calendar'],
   ['/admin/system/logs', 'System', 'Activity log'],
   ['/admin/system/deployments', 'System', 'Deployments'],

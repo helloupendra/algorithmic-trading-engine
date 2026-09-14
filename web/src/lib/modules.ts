@@ -140,6 +140,14 @@ export const DATA_SECTIONS = [
     end: false,
   },
   {
+    // Read from the same live bars as the rest of this module, so it sits with
+    // the data it watches.
+    route: '/admin/data/patterns',
+    label: 'Pattern alerts',
+    icon: IconBell,
+    end: false,
+  },
+  {
     route: '/admin/data/historical',
     label: 'Historical',
     icon: IconCandles,
@@ -243,7 +251,6 @@ export const SYSTEM_SECTIONS = [
   { route: '/admin/system', label: 'Overview', icon: IconServer, end: true },
   { route: '/admin/system/risk', label: 'Risk & kill switch', icon: IconShield },
   { route: '/admin/system/alerts', label: 'Alerts', icon: IconBell },
-  { route: '/admin/system/patterns', label: 'Pattern alerts', icon: IconCandles },
   { route: '/admin/system/calendar', label: 'Market calendar', icon: IconClock },
   { route: '/admin/system/logs', label: 'Activity log', icon: IconClock },
   { route: '/admin/system/deployments', label: 'Deployments', icon: IconRefresh },

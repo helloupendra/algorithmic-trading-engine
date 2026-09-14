@@ -2,8 +2,8 @@
 
 The platform watches live candles and says when a pattern forms on them: a doji
 on BANKNIFTY's 15-minute chart, an engulfing candle on a stock on the recording
-list, a morning star on CRUDEOIL. Alerts appear on **System → Pattern alerts**
-(`/admin/system/patterns`) and, for rules that ask for it, on Telegram.
+list, a morning star on CRUDEOIL. Alerts appear on **Data → Pattern alerts**
+(`/admin/data/patterns`) and, for rules that ask for it, on Telegram.
 
 ## What it reads
 
