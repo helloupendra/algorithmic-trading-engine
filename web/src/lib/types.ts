@@ -1107,6 +1107,10 @@ export interface ProviderCredentials {
   hasSecret: boolean
   updatedBy: string | null
   updatedUtc: string | null
+  /** The connector's own name for the first field, e.g. "Client ID"; absent means the default for its auth kind. */
+  clientIdLabel?: string | null
+  /** The connector's own name for the secret field. */
+  secretLabel?: string | null
 }
 
 export interface ProviderSession {

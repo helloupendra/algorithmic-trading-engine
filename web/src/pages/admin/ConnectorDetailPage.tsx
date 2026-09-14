@@ -88,7 +88,7 @@ function CredentialsForm({ provider }: { provider: Provider }) {
       >
         <div className="field">
           <label className="field__label" htmlFor="cd-client">
-            {hasBrowserLogin ? 'App id (client id)' : 'Username'}
+            {provider.credentials.clientIdLabel ?? (hasBrowserLogin ? 'App id (client id)' : 'Username')}
           </label>
           <input
             id="cd-client"
@@ -100,7 +100,7 @@ function CredentialsForm({ provider }: { provider: Provider }) {
         </div>
         <div className="field">
           <label className="field__label" htmlFor="cd-secret">
-            {hasBrowserLogin ? 'Secret key' : 'Password'}
+            {provider.credentials.secretLabel ?? (hasBrowserLogin ? 'Secret key' : 'Password')}
           </label>
           <input
             id="cd-secret"

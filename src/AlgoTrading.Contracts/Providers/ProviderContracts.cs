@@ -28,6 +28,12 @@ public class ProviderCredentialsResponse
     public bool HasSecret { get; set; }
     public string? UpdatedBy { get; set; }
     public DateTime? UpdatedUtc { get; set; }
+
+    /// <summary>The connector's own name for the first field ("Client ID"); null keeps the console default.</summary>
+    public string? ClientIdLabel { get; set; }
+
+    /// <summary>The connector's own name for the secret field; null keeps the console default.</summary>
+    public string? SecretLabel { get; set; }
 }
 
 /// <summary>The connector's live session, for connectors that need one.</summary>

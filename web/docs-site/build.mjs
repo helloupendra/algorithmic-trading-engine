@@ -51,6 +51,7 @@ const NAV = [
       { slug: 'modules/backtesting', src: 'docs/modules/backtesting_module.md', title: 'Backtesting' },
       { slug: 'modules/option-chain', src: 'docs/modules/option_chain.md', title: 'Option chain' },
       { slug: 'modules/connectors', src: 'docs/modules/connectors_module.md', title: 'Connectors' },
+      { slug: 'modules/dhan', src: 'docs/modules/dhan_connector.md', title: 'Dhan connector' },
       { slug: 'modules/users', src: 'docs/modules/users_module.md', title: 'Users & access' },
       { slug: 'modules/strategy-packages', src: 'docs/modules/strategy_packages.md', title: 'Strategy packages' },
       { slug: 'modules/activity-log', src: 'docs/modules/activity_log.md', title: 'Activity log' },

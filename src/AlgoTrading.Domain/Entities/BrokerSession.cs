@@ -89,10 +89,14 @@ namespace AlgoTrading.Domain.Entities
 
         /// <summary>
         /// FYERS access tokens are valid until 06:00 IST following their issue,
-        /// however late in the day they were issued. Other brokers: unknown.
+        /// however late in the day they were issued. Dhan tokens last 24 hours
+        /// from issue. Other brokers: unknown.
         /// </summary>
         public static DateTime? TokenExpiryUtc(string? providerKey, string? brokerName, DateTime issuedUtc)
         {
+            if (string.Equals(providerKey, "dhan", StringComparison.OrdinalIgnoreCase))
+                return DateTime.SpecifyKind(issuedUtc, DateTimeKind.Utc).AddHours(24);
+
             var isFyers = string.Equals(providerKey, "fyers", StringComparison.OrdinalIgnoreCase)
                           || (string.IsNullOrWhiteSpace(providerKey)
                               && string.Equals(brokerName, "FYERS", StringComparison.OrdinalIgnoreCase));

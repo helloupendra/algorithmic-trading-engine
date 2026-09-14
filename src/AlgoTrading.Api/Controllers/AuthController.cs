@@ -413,7 +413,11 @@ namespace AlgoTrading.Api.Controllers;
     [HttpPost("logout")]
     public async Task<IActionResult> Logout(CancellationToken cancellationToken)
     {
-        await _brokerSessionStore.ClearAsync(cancellationToken: cancellationToken);
+        // The platform broker session only. Clearing every connector's here would
+        // sign Dhan out whenever FYERS is disconnected; each connector has its
+        // own disconnect on the Connectors page.
+        await _brokerSessionStore.ClearAsync(
+            AlgoTrading.Infrastructure.Session.DatabaseBrokerSessionStore.PrimaryBrokerProviderKey, cancellationToken);
 
         return Ok(new
         {
