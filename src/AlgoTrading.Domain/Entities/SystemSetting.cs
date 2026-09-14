@@ -66,6 +66,12 @@ public static class SystemSettingKeys
     /// <summary>The Telegram notifier — the sidecar that turns run activity into alerts.</summary>
     public const string NotifierPid = "notifier.pid";
 
+    /// <summary>
+    /// Set once the default candle-pattern rules have been seeded, so rules an
+    /// admin deleted stay deleted across restarts.
+    /// </summary>
+    public const string PatternRulesSeeded = "patterns.rules.seeded";
+
     private const string FeedPidPrefix = "feed.";
     private const string StrategyRunPidPrefix = "strategyrun.";
     private const string BacktestRunPidPrefix = "backtestrun.";

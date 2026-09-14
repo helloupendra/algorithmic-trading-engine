@@ -38,7 +38,14 @@ public class AlertEventConfiguration : IEntityTypeConfiguration<AlertEvent>
         builder.Property(x => x.MetadataJson)
             .HasColumnType("text");
 
+        builder.Property(x => x.DedupeKey)
+            .HasMaxLength(200);
+
         builder.HasIndex(x => x.OccurredUtc).IsDescending();
         builder.HasIndex(x => x.Underlying);
+
+        // Postgres treats NULLs as distinct, so only rows that carry a key are
+        // held to one each.
+        builder.HasIndex(x => x.DedupeKey).IsUnique();
     }
 }

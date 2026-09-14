@@ -115,6 +115,33 @@ public class DhanChainPollerTests
     }
 
     [Fact]
+    public async Task An_MCX_chain_is_priced_on_its_future_not_on_the_chains_own_figure()
+    {
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, IstTime.Zone));
+        await using var db = Db();
+        db.Instruments.AddRange(
+            new Instrument { Symbol = "MCX:CRUDEOILTESTFUT", Exchange = "MCX", Segment = "COM", InstrumentType = "FUT", Underlying = "CRUDEOIL", ExpiryDate = today.AddDays(7), IsEnabled = true },
+            new Instrument { Symbol = "MCX:CRUDEOILTEST9950CE", Exchange = "MCX", Segment = "COM", InstrumentType = "CE", OptionType = "CE", Underlying = "CRUDEOIL", ExpiryDate = today.AddDays(3), StrikePrice = 9950m, IsEnabled = true });
+        db.InstrumentVendorSymbols.Add(new InstrumentVendorSymbol { ProviderKey = "dhan", CanonicalSymbol = "MCX:CRUDEOILTESTFUT", VendorSymbol = "MCX_COMM:565899:FUTCOM" });
+        db.LiveQuotesLatest.Add(new LiveQuoteLatest { Symbol = "MCX:CRUDEOILTESTFUT", LastTradedPrice = 9971m, UpdatedUtc = DateTime.UtcNow, SourceKey = "dhan" });
+        await db.SaveChangesAsync();
+
+        var handler = new Routes
+        {
+            ["/optionchain/expirylist"] = $$"""{"data":["{{today.AddDays(3):yyyy-MM-dd}}"],"status":"success"}""",
+            // The figure Dhan sent on 2026-09-14 while the future traded 9,971.
+            ["/optionchain"] = """{"data":{"last_price":9577,"oc":{"9950.000000":{"ce":{"last_price":302.3,"oi":1797,"security_id":7}}}},"status":"success"}""",
+        };
+        var recorder = Recorder(db, handler, new DhanChainPollerState(Options.Create(new DhanSettings())), marketOpen: true);
+
+        var outcome = Assert.Single(await recorder.RecordAsync(new[] { "CRUDEOIL" }, onlyOpenMarkets: true, CancellationToken.None));
+
+        Assert.Equal("recorded", outcome.State);
+        Assert.Equal(9971m, outcome.Spot);
+        Assert.Equal(9971m, (await db.OptionChainSnapshots.SingleAsync()).SpotPrice);
+    }
+
+    [Fact]
     public async Task A_closed_market_is_not_asked_and_says_why()
     {
         await using var db = Db();
@@ -225,7 +252,7 @@ public class DhanChainPollerTests
             new DhanRateGate(),
             NullLogger<DhanApiClient>.Instance);
         var chain = new DhanOptionChainClient(api, NullLogger<DhanOptionChainClient>.Instance);
-        return new DhanChainRecorder(chain, new OptionChainService(db), db, new Sessions(marketOpen), state, NullLogger<DhanChainRecorder>.Instance);
+        return new DhanChainRecorder(chain, api, new OptionChainService(db), db, new Sessions(marketOpen), state, NullLogger<DhanChainRecorder>.Instance);
     }
 
     /// <summary>Answers by path, longest match first, so "/optionchain" never shadows its expiry list.</summary>

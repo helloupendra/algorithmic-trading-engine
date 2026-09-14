@@ -51,6 +51,43 @@ public class OptionChainController : ControllerBase
     }
 
     /// <summary>
+    /// The chain as the console reads it: the newest capture with every strike
+    /// that has a fresh live quote brought up to the second, plus the header
+    /// strip (spot, future, VIX, support/resistance, totals, lot size, market
+    /// state, and the time and source of both layers).
+    /// </summary>
+    /// <param name="asOfUtc">The replay clock: snapshots only, no live overlay.</param>
+    [HttpGet("view")]
+    public async Task<ActionResult<OptionChainResponse>> GetView(
+        [FromQuery] string underlying,
+        [FromQuery] DateOnly? expiry,
+        [FromQuery] DateTime? asOfUtc,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(underlying))
+            return BadRequest(new { message = "underlying is required." });
+
+        return Ok(await _chain.GetViewAsync(underlying, expiry, asOfUtc?.ToUniversalTime(), cancellationToken));
+    }
+
+    /// <summary>
+    /// The session's trend, one point per capture: spot, total OI each side, PCR.
+    /// The session is the IST day of the newest capture at or before <c>toUtc</c>.
+    /// </summary>
+    [HttpGet("trend")]
+    public async Task<ActionResult<OptionChainTrendResponse>> GetTrend(
+        [FromQuery] string underlying,
+        [FromQuery] DateOnly? expiry,
+        [FromQuery] DateTime? toUtc,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(underlying))
+            return BadRequest(new { message = "underlying is required." });
+
+        return Ok(await _chain.GetTrendAsync(underlying, expiry, toUtc?.ToUniversalTime(), cancellationToken: cancellationToken));
+    }
+
+    /// <summary>
     /// One strike through the session — the OI-change curves.
     /// </summary>
     [HttpGet("series")]

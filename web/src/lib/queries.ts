@@ -1962,6 +1962,43 @@ export function useOptionChainExpiries(underlying: string) {
   })
 }
 
+/**
+ * The live chain view: the newest capture with fresh live quotes overlaid and
+ * the header strip. Polls every 3 s while the underlying's market is open and
+ * every 60 s otherwise; a replay (`asOfUtc`) never changes, so it never polls.
+ */
+export function useOptionChainView(underlying: string, expiry?: string, asOfUtc?: string) {
+  return useQuery({
+    queryKey: ['optionChainView', underlying, expiry ?? null, asOfUtc ?? null],
+    queryFn: () => {
+      const params = new URLSearchParams({ underlying })
+      if (expiry) params.set('expiry', expiry)
+      if (asOfUtc) params.set('asOfUtc', asOfUtc)
+      return api.get<OptionChain>(`/api/OptionChain/view?${params}`)
+    },
+    enabled: Boolean(underlying),
+    refetchInterval: (query) => (asOfUtc ? false : query.state.data?.header?.marketOpen ? 3_000 : 60_000),
+    placeholderData: keepPreviousData,
+  })
+}
+
+/** The session's trend — spot, total OI and PCR per capture. */
+export function useOptionChainTrend(underlying: string, expiry?: string, toUtc?: string, marketOpen?: boolean) {
+  return useQuery({
+    queryKey: ['optionChainTrend', underlying, expiry ?? null, toUtc ?? null],
+    queryFn: () => {
+      const params = new URLSearchParams({ underlying })
+      if (expiry) params.set('expiry', expiry)
+      if (toUtc) params.set('toUtc', toUtc)
+      return api.get<import('./types').OptionChainTrend>(`/api/OptionChain/trend?${params}`)
+    },
+    enabled: Boolean(underlying),
+    // Captures arrive once a minute; asking more often only repeats the answer.
+    refetchInterval: toUtc ? false : marketOpen ? 30_000 : 120_000,
+    placeholderData: keepPreviousData,
+  })
+}
+
 
 // --- option chain poller -----------------------------------------------------
 //

@@ -23,6 +23,14 @@ public class AlertEvent
     
     public string? MetadataJson { get; set; }
     public bool DeliveredToTelegram { get; set; }
-    
+
+    /// <summary>
+    /// Identity of an event that must be recorded at most once, whoever writes it
+    /// and however often it restarts. Unique when set; null for everything that
+    /// is free to repeat. The candle-pattern scanner uses
+    /// "patterns:{symbol}:{timeframe}m:{candle start}:{pattern}".
+    /// </summary>
+    public string? DedupeKey { get; set; }
+
     public long? SimulationRunId { get; set; }
 }

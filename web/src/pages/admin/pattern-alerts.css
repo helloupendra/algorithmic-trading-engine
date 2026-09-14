@@ -1,0 +1,91 @@
+/* Pattern alerts page. Built from the shared vocabulary (panel, table, badge,
+   grant, coverage-chip); only what that vocabulary lacks lives here. */
+
+.pa-hits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  white-space: normal;
+  min-width: 140px;
+}
+
+.pa-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pa-checks .coverage-chip {
+  cursor: pointer;
+}
+
+.pa-checks .coverage-chip:has(input:checked) {
+  border-color: var(--brand-line);
+  background: var(--brand-soft);
+  color: var(--text);
+}
+
+.pa-textarea {
+  min-height: 64px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+.pa-guide {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+  gap: 8px;
+}
+
+.pa-guide__item {
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg1);
+}
+
+.pa-guide__item dt {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.pa-guide__item dd {
+  margin: 5px 0 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.pa-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px 12px;
+  margin-bottom: 12px;
+}
+
+.pa-guide__definition {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-3);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.pa-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.pa-reason {
+  white-space: normal;
+  max-width: 220px;
+}
+
+.pa-rule-name {
+  white-space: normal;
+  min-width: 180px;
+}

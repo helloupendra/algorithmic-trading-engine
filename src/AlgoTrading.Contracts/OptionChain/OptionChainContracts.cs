@@ -85,6 +85,23 @@ public class OptionChainLegResponse
 
     /// <summary>"LongBuildUp", "ShortCovering", … or "Neutral".</summary>
     public string BuildUp { get; set; } = "Neutral";
+
+    /// <summary>
+    /// The open interest the change is measured from — the previous day's close
+    /// as the broker reported it. Carried so a live OI can be re-measured
+    /// against the same baseline the snapshot used.
+    /// </summary>
+    public long? OpenInterestBaseline { get; set; }
+
+    /// <summary>
+    /// True when LTP, bid/ask, volume and OI on this leg come from a live quote
+    /// no older than the freshness limit, rather than the per-minute snapshot.
+    /// IV and greeks are always the snapshot's.
+    /// </summary>
+    public bool IsLive { get; set; }
+
+    /// <summary>When the live quote was written; null for a snapshot-only leg.</summary>
+    public DateTime? QuoteUpdatedUtc { get; set; }
 }
 
 public class OptionChainStrikeResponse
@@ -138,6 +155,161 @@ public class OptionChainResponse
     /// market with no open positions.
     /// </remarks>
     public bool OpenInterestUnavailable { get; set; }
+
+    /// <summary>
+    /// The reading strip above the chain: spot, future, VIX and the chain's own
+    /// summary, each with where it came from. Filled only by the view endpoint;
+    /// null on the plain chain read.
+    /// </summary>
+    public OptionChainHeaderResponse? Header { get; set; }
+
+    /// <summary>Total day's change in call and put OI across the chain.</summary>
+    public long TotalCallOpenInterestChange { get; set; }
+    public long TotalPutOpenInterestChange { get; set; }
+}
+
+/// <summary>One price in the header strip, and how much to trust it.</summary>
+public class OptionChainQuoteResponse
+{
+    public string Symbol { get; set; } = string.Empty;
+    public decimal? LastPrice { get; set; }
+
+    /// <summary>Against <see cref="PreviousClose"/>; null when no previous close is known.</summary>
+    public decimal? Change { get; set; }
+    public decimal? ChangePercent { get; set; }
+    public decimal? PreviousClose { get; set; }
+
+    /// <summary>
+    /// Where the previous close came from: "feed" (the tick's own previous-close
+    /// field), "dhan-close-field" (the close field of Dhan's quote packet, which
+    /// carries the previous close during the session) or null when unknown.
+    /// </summary>
+    public string? PreviousCloseBasis { get; set; }
+
+    /// <summary>When this price was true: the quote's write time, or the snapshot's capture time.</summary>
+    public DateTime? AsOfUtc { get; set; }
+
+    public string? SourceKey { get; set; }
+
+    /// <summary>True only for a live quote no older than the freshness limit.</summary>
+    public bool IsLive { get; set; }
+
+    /// <summary>
+    /// "live-quote", "last-quote" (older than the limit), "snapshot" (the
+    /// capture's own spot) or "bar" (a replay reading the future's one-minute bar).
+    /// </summary>
+    public string Basis { get; set; } = "snapshot";
+}
+
+public class OptionChainFutureResponse : OptionChainQuoteResponse
+{
+    public DateOnly? ExpiryDate { get; set; }
+
+    /// <summary>Future minus spot, when both are known.</summary>
+    public decimal? PremiumOverSpot { get; set; }
+    public decimal? PremiumPercent { get; set; }
+}
+
+public class OptionChainHeaderResponse
+{
+    /// <summary>"live" (at least one fresh quote overlaid), "snapshot" or "replay".</summary>
+    public string Mode { get; set; } = "snapshot";
+
+    /// <summary>The server's clock when the answer was built, so ages are not at the mercy of the browser's clock.</summary>
+    public DateTime ServerUtc { get; set; }
+
+    public string Exchange { get; set; } = string.Empty;
+    public bool MarketOpen { get; set; }
+
+    /// <summary>
+    /// The index for NSE/BSE underlyings. For an MCX commodity there is no spot:
+    /// this is the future its options are written on.
+    /// </summary>
+    public OptionChainQuoteResponse? Spot { get; set; }
+
+    /// <summary>True when <see cref="Spot"/> is a futures contract (MCX).</summary>
+    public bool SpotIsFuture { get; set; }
+
+    /// <summary>The nearest future of an index underlying; null for MCX, where the spot already is one.</summary>
+    public OptionChainFutureResponse? Future { get; set; }
+
+    /// <summary>India VIX; null when no quote for it exists.</summary>
+    public OptionChainQuoteResponse? Vix { get; set; }
+
+    public decimal? AtTheMoneyStrike { get; set; }
+    public decimal? MaxPainStrike { get; set; }
+    public decimal? PutCallRatio { get; set; }
+
+    /// <summary>Put OI change over call OI change; null unless both sides added contracts.</summary>
+    public decimal? PutCallRatioOfChange { get; set; }
+
+    /// <summary>The strike with the most put OI — where writers defend the floor.</summary>
+    public decimal? SupportStrike { get; set; }
+    public long? SupportOpenInterest { get; set; }
+
+    /// <summary>The strike with the most call OI — the defended ceiling.</summary>
+    public decimal? ResistanceStrike { get; set; }
+    public long? ResistanceOpenInterest { get; set; }
+
+    public long TotalCallOpenInterest { get; set; }
+    public long TotalPutOpenInterest { get; set; }
+    public long TotalCallOpenInterestChange { get; set; }
+    public long TotalPutOpenInterestChange { get; set; }
+
+    /// <summary>Mean of the ATM call and put IV (either alone when one is missing).</summary>
+    public decimal? AtTheMoneyIv { get; set; }
+
+    /// <summary>IST calendar days from the chain's moment to expiry; 0 on expiry day.</summary>
+    public int? DaysToExpiry { get; set; }
+
+    public int? LotSize { get; set; }
+
+    /// <summary>"master", "configured" or "unknown".</summary>
+    public string? LotSizeSource { get; set; }
+
+    /// <summary>The highest strike at or below spot, and the lowest above it — where the spot line sits.</summary>
+    public decimal? SpotBetweenLower { get; set; }
+    public decimal? SpotBetweenUpper { get; set; }
+
+    public DateTime? SnapshotCapturedUtc { get; set; }
+    public string? SnapshotSourceKey { get; set; }
+
+    /// <summary>The newest live quote overlaid on the chain; null when none was fresh.</summary>
+    public DateTime? LiveOverlayUtc { get; set; }
+    public string? LiveSourceKey { get; set; }
+
+    /// <summary>Legs carrying a fresh live quote, of all legs in the chain.</summary>
+    public int LiveLegs { get; set; }
+    public int TotalLegs { get; set; }
+
+    /// <summary>The freshness limit a quote must meet to be shown as live.</summary>
+    public int FreshSeconds { get; set; }
+}
+
+/// <summary>One capture of the whole chain, reduced to the numbers a session trend plots.</summary>
+public class OptionChainTrendPointResponse
+{
+    public DateTime CapturedUtc { get; set; }
+    public decimal SpotPrice { get; set; }
+    public long CallOpenInterest { get; set; }
+    public long PutOpenInterest { get; set; }
+    public long CallOpenInterestChange { get; set; }
+    public long PutOpenInterestChange { get; set; }
+    public decimal? PutCallRatio { get; set; }
+}
+
+public class OptionChainTrendResponse
+{
+    public string Underlying { get; set; } = string.Empty;
+    public DateOnly? ExpiryDate { get; set; }
+
+    /// <summary>The IST session day the points belong to.</summary>
+    public DateOnly? SessionDate { get; set; }
+
+    /// <summary>Captures on that day before thinning; the points are at most a few hundred of them.</summary>
+    public int Captures { get; set; }
+
+    public List<OptionChainTrendPointResponse> Points { get; set; } = new();
 }
 
 /// <summary>One strike's intraday history — the OI-change curves.</summary>

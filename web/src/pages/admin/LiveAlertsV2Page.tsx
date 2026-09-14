@@ -37,6 +37,10 @@ const WHAT_GETS_SENT: { label: string; detail: string }[] = [
   { label: 'Strategy run stopped', detail: 'who stopped it and how many positions were squared off' },
   { label: 'Kill switch', detail: 'activated or released, with the reason' },
   { label: 'Strategy signals', detail: 'from the alerter process below, per underlying' },
+  {
+    label: 'Candle patterns',
+    detail: 'doji, hammer, engulfing and more as candles close, per the rules on Pattern alerts',
+  },
 ]
 
 function severityTone(severity: string): 'pos' | 'neg' | 'warn' | 'accent' | 'neutral' {

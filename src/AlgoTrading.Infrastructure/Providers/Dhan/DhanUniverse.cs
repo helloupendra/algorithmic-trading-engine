@@ -129,6 +129,11 @@ public sealed class DhanUniverseBuilder
         // 1. Indices: a fixed table, always resolvable.
         foreach (var name in indexNames)
             symbols.Add(DhanInstruments.Indices.First(kv => kv.Value == DhanInstruments.IndexUnderlyings[name]).Key);
+        // Indices that are not option underlyings (India VIX): always streamed,
+        // because the option chain's header reads them.
+        symbols.AddRange(DhanInstruments.Indices
+            .Where(kv => !DhanInstruments.IndexUnderlyings.Values.Contains(kv.Value))
+            .Select(kv => kv.Key));
         counts["indices"] = symbols.Count;
 
         // 2. The nearest futures.
