@@ -33,6 +33,7 @@ public class ProvidersController : ControllerBase
     private readonly IBrokerSessionStore _sessions;
     private readonly TradingDbContext _dbContext;
     private readonly ILogger<ProvidersController> _logger;
+    private readonly IEnumerable<IProviderLoginFlow> _loginFlows;
 
     public ProvidersController(
         IProviderCatalog catalog,
@@ -41,7 +42,8 @@ public class ProvidersController : ControllerBase
         IBrokerCredentialsProvider credentials,
         IBrokerSessionStore sessions,
         TradingDbContext dbContext,
-        ILogger<ProvidersController> logger)
+        ILogger<ProvidersController> logger,
+        IEnumerable<IProviderLoginFlow> loginFlows)
     {
         _catalog = catalog;
         _registry = registry;
@@ -50,6 +52,7 @@ public class ProvidersController : ControllerBase
         _sessions = sessions;
         _dbContext = dbContext;
         _logger = logger;
+        _loginFlows = loginFlows;
     }
 
     private static readonly ProviderCapability[] AllCapabilities =
@@ -105,9 +108,11 @@ public class ProvidersController : ControllerBase
                     HasSecret = !string.IsNullOrWhiteSpace(credentials.SecretKey),
                     UpdatedBy = credentials.UpdatedBy,
                     UpdatedUtc = credentials.UpdatedUtc,
+                    ClientIdLabel = descriptor.ClientIdLabel,
+                    SecretLabel = descriptor.SecretLabel,
                 },
                 Session = MapSession(descriptor, session),
-                SuggestedRedirectUri = $"{Request.Scheme}://{Request.Host}/api/Auth/callback",
+                SuggestedRedirectUri = $"{Request.Scheme}://{Request.Host}{descriptor.CallbackPath ?? "/api/Auth/callback"}",
                 ServingCapabilities = serving.TryGetValue(descriptor.Key, out var caps)
                     ? caps
                     : Array.Empty<string>(),
@@ -196,6 +201,14 @@ public class ProvidersController : ControllerBase
 
         try
         {
+            // A data connector with a daily browser sign-in brings its own flow;
+            // brokers answer through the broker registry as before.
+            var flow = _loginFlows.FirstOrDefault(f => string.Equals(f.ProviderKey, descriptor.Key, StringComparison.OrdinalIgnoreCase));
+            if (flow is not null)
+            {
+                return Ok(new { authUrl = await flow.GetLoginUrlAsync(cancellationToken) });
+            }
+
             var broker = _registry.GetBrokerProvider(descriptor.Key);
             return Ok(new { authUrl = await broker.GetAuthUrlAsync("webui", cancellationToken: cancellationToken) });
         }

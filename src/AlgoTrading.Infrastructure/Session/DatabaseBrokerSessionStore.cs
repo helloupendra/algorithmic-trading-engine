@@ -29,11 +29,25 @@ public class DatabaseBrokerSessionStore : IBrokerSessionStore
         _protector = dataProtectionProvider.CreateProtector("BrokerSession.Tokens.v1");
     }
 
+    /// <summary>
+    /// The provider whose shared session is "the" platform broker session: the
+    /// one the FYERS feed (through /api/Auth/session), the history sync worker
+    /// and backtest data sign in with.
+    /// </summary>
+    /// <remarks>
+    /// Until 2026-09-14 <see cref="GetCurrentAsync"/> returned the newest session
+    /// of any connector. The first Dhan sign-in would then have handed the FYERS
+    /// feed a Dhan token and silenced it the next morning. Legacy rows written
+    /// before sessions carried a provider key count as this provider.
+    /// </remarks>
+    public const string PrimaryBrokerProviderKey = "fyers";
+
     public async Task<BrokerSession?> GetCurrentAsync(CancellationToken cancellationToken = default)
     {
         var session = await _dbContext.BrokerSessions
             .AsNoTracking()
             .Where(x => x.IsActive && x.BrokerAccountId == null)
+            .Where(x => x.ProviderKey == PrimaryBrokerProviderKey || x.ProviderKey == string.Empty)
             .OrderByDescending(x => x.UpdatedUtc)
             .FirstOrDefaultAsync(cancellationToken);
 

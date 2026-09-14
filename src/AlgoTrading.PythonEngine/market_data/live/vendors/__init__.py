@@ -11,6 +11,7 @@ import importlib
 #: connector key -> "module:class". Imported only when asked for, so a TrueData
 #: process never loads the FYERS SDK and the reverse.
 ADAPTERS = {
+    "dhan": "market_data.live.vendors.dhan:DhanFeed",
     "fyers": "market_data.live.vendors.fyers:FyersFeed",
     "truedata": "market_data.live.vendors.truedata:TrueDataFeed",
 }

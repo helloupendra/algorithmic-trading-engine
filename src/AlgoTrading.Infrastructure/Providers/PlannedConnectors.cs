@@ -26,12 +26,7 @@ public sealed record PlannedConnector(
 /// </remarks>
 public static class PlannedConnectors
 {
-    public static readonly IReadOnlyList<PlannedConnector> All = new[]
-    {
-        new PlannedConnector(
-            "dhan",
-            "Dhan",
-            ProviderKind.Both,
-            "Free API with a websocket feed, chosen as the first real second vendor so failover can be tested against something live."),
-    };
+    // Dhan left this list on 2026-09-14, when its data connector shipped
+    // (Providers/Dhan). Angel One is next; it is added here when work on it starts.
+    public static readonly IReadOnlyList<PlannedConnector> All = Array.Empty<PlannedConnector>();
 }

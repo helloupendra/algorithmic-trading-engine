@@ -125,4 +125,25 @@ public sealed record ProviderDescriptor(
     /// can only return what the platform already has rank last.
     /// </remarks>
     public int FallbackRank { get; init; }
+
+    /// <summary>
+    /// What the console calls the first credential field ("Client ID"), when the
+    /// generic name for the auth kind would mislead. Null keeps the default.
+    /// </summary>
+    /// <remarks>
+    /// Declared here so the page never has to name a vendor: every connector
+    /// stores its two credentials in the same two encrypted fields, but a Dhan
+    /// access token labelled "Password" is a form nobody fills in correctly.
+    /// </remarks>
+    public string? ClientIdLabel { get; init; }
+
+    /// <summary>What the console calls the second, secret credential field. Null keeps the default.</summary>
+    public string? SecretLabel { get; init; }
+
+    /// <summary>
+    /// The path the vendor redirects to after its browser sign-in, when it is not
+    /// the shared "/api/Auth/callback". Shown to the operator as the redirect URL
+    /// to register with the vendor.
+    /// </summary>
+    public string? CallbackPath { get; init; }
 }
