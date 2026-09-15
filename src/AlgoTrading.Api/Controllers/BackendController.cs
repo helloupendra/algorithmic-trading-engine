@@ -29,7 +29,8 @@ public class BackendController : ControllerBase
     // Captured once, when the class is first touched, from the OS process
     // itself - not a static field set in Program, which a hot reload could
     // leave pointing at an older moment than the process it describes.
-    private static readonly DateTime StartedUtc =
+    // SystemHostService reads it too, so the System page and the topbar agree.
+    internal static readonly DateTime StartedUtc =
         Process.GetCurrentProcess().StartTime.ToUniversalTime();
 
     /// <summary>Uptime and the moment this process started.</summary>

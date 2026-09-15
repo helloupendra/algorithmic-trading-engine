@@ -151,6 +151,33 @@ def say(message: str) -> None:
     print(f"{datetime.now():%H:%M:%S}  {message}", flush=True)
 
 
+def days_with_rows(table: str, column: str, done: set, since: Optional[str], now_utc: datetime) -> List[date]:
+    """
+    The closed days on which `table` has rows.
+
+    Asked of each table, not derived from one: the option chain recording began
+    days before the oldest tick on the server, and a stray bar stamped
+    1980-01-01 in live_bars must not turn the job into forty-six years of
+    empty days. After the first run only the days since the newest verified
+    one (less three, for safety) are looked at, so the nightly scan stays small.
+    """
+    if since:
+        lower = since
+    elif done:
+        lower = (max(date.fromisoformat(d) for d in done) - timedelta(days=3)).isoformat()
+    else:
+        lower = None
+    if table in HYPERTABLES:
+        where = f"and range_start >= '{lower}'::timestamptz - interval '1 day'" if lower else ""
+        sql = (f"select distinct (range_start at time zone 'UTC')::date from timescaledb_information.chunks "
+               f"where hypertable_name = '{table}' {where} order by 1")
+    else:
+        where = f"""where "{column}" >= '{lower}'""" if lower else ""
+        sql = f"""select distinct ("{column}" at time zone 'UTC')::date from {table} {where} order by 1"""
+    today = now_utc.astimezone(timezone.utc).date()
+    return [d for d in (date.fromisoformat(x) for x in psql(sql).split()) if d < today]
+
+
 def archive_one(table: str, column: str, day: date, dry_run: bool) -> Optional[dict]:
     lo, hi = day_bounds(day)
     where = f'"{column}" >= \'{lo}\' and "{column}" < \'{hi}\''
@@ -292,31 +319,41 @@ def main(argv: Optional[List[str]] = None) -> int:
             say(f"{days[0]} is not over yet in UTC; it can be archived after 05:30 IST tomorrow")
             return 2
     else:
-        oldest = args.since or psql('select min("ReceivedUtc")::date from live_ticks')
-        days = closed_days(date.fromisoformat(oldest), now) if oldest else []
+        days = None
 
     done = verified_days(read_manifest())
+    work = []  # (day, table, column), oldest day first
+    for table, column in TABLES.items():
+        table_days = days if days is not None else days_with_rows(table, column, done.get(table, set()), args.since, now)
+        work += [(day, table, column) for day in table_days if day.isoformat() not in done.get(table, set())]
+    work.sort()
+
     failures = 0
-    for day in days:
-        for table, column in TABLES.items():
-            if day.isoformat() in done.get(table, set()):
-                continue
-            try:
-                entry = archive_one(table, column, day, args.dry_run)
-                if entry is not None and not entry["verified"]:
-                    failures += 1
-            except Exception as ex:  # one failed day must not stop the rest
+    for day, table, column in work:
+        try:
+            entry = archive_one(table, column, day, args.dry_run)
+            if entry is not None and not entry["verified"]:
                 failures += 1
-                say(f"FAILED {ex}")
+        except Exception as ex:  # one failed day must not stop the rest
+            failures += 1
+            say(f"FAILED {ex}")
 
     if not args.dry_run and MANIFEST.exists():
         rclone("copyto", str(MANIFEST), f"{REMOTE.rstrip('/')}/manifest.jsonl")
 
     if args.drop_older_than is not None:
         cutoff = now.date() - timedelta(days=args.drop_older_than)
-        oldest = psql('select min("ReceivedUtc")::date from live_ticks')
-        candidates = [d for d in closed_days(date.fromisoformat(oldest), now) if d < cutoff] if oldest else []
-        keep = droppable_days(candidates, verified_days(read_manifest()), TABLES)
+        candidates = sorted({d for t, c in list(TABLES.items()) + [("market_ticks", "ReceivedUtc")]
+                             for d in days_with_rows(t, c, set(), None, now) if d < cutoff})
+        verified = verified_days(read_manifest())
+        # A table with no rows on a day has nothing to lose there: count it as done.
+        for d in candidates:
+            lo, hi = day_bounds(d)
+            for t, c in TABLES.items():
+                if d.isoformat() not in verified.get(t, set()) and \
+                        int(psql(f'select count(*) from {t} where "{c}" >= \'{lo}\' and "{c}" < \'{hi}\'') or 0) == 0:
+                    verified.setdefault(t, set()).add(d.isoformat())
+        keep = droppable_days(candidates, verified, TABLES)
         skipped = sorted(set(candidates) - set(keep))
         if skipped:
             say(f"keeping {len(skipped)} day(s) not verified on Drive: {', '.join(map(str, skipped))}")
