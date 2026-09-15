@@ -5,7 +5,7 @@
  * a test rather than by looking at a screenshot at 09:15.
  */
 
-import type { OptionChainHeader, OptionChainStrike } from './types'
+import type { OptionChain, OptionChainHeader, OptionChainLeg, OptionChainQuote, OptionChainStrike } from './types'
 
 export const UNDERLYINGS = [
   'NIFTY',
@@ -312,3 +312,138 @@ export function positionMarker(positions: readonly HeldPosition[] | undefined): 
   if (sold > 0) return { label: `S ${sold}`, tone: 'short' }
   return null
 }
+
+// --- pushed ticks -----------------------------------------------------------------
+
+/** A price as the live feed hub pushes it ("ReceiveTicks"). */
+export interface PushedTick {
+  symbol: string
+  lastTradedPrice?: number | null
+  bidPrice?: number | null
+  askPrice?: number | null
+  volume?: number | null
+  openInterest?: number | null
+}
+
+/** The server's build-up rule (OptionChainAnalytics.Classify), so a pushed price and a poll agree. */
+export function classifyBuildUp(priceChange: number, openInterestChange: number): string {
+  if (priceChange === 0 || openInterestChange === 0) return 'Neutral'
+  if (priceChange > 0) return openInterestChange > 0 ? 'LongBuildUp' : 'ShortCovering'
+  return openInterestChange > 0 ? 'ShortBuildUp' : 'LongUnwinding'
+}
+
+/**
+ * One leg with a pushed price laid over it: the same rule the API applies to a
+ * live quote (OptionChainLiveView.ApplyQuote), so the three seconds between
+ * polls show what the next poll will show.
+ */
+function applyTickToLeg(leg: OptionChainLeg, tick: PushedTick, snapshotAgeMs: number, nowIso: string): OptionChainLeg {
+  const ltp = tick.lastTradedPrice
+  if (ltp == null || ltp <= 0) return leg
+  // The baseline the capture measured its change from is recoverable from it.
+  const baseline = leg.lastTradedPrice != null && leg.priceChange != null ? leg.lastTradedPrice - leg.priceChange : null
+  const next: OptionChainLeg = { ...leg, lastTradedPrice: ltp }
+  if (tick.bidPrice != null || tick.askPrice != null) {
+    next.bidPrice = tick.bidPrice ?? null
+    next.askPrice = tick.askPrice ?? null
+  }
+  if (tick.volume != null) next.volume = tick.volume
+  const oi = tick.openInterest
+  if (oi != null && oi > 0) {
+    // A figure eight times away from a recent capture is a unit mismatch, not a market (OpenInterestAgrees).
+    const snap = leg.openInterest
+    const agrees = snap == null || snap < 500 || snapshotAgeMs > 5 * 60_000 || (oi * 8 >= snap && oi <= snap * 8)
+    if (agrees) next.openInterest = oi
+  }
+  if (baseline != null && baseline > 0) {
+    next.priceChange = ltp - baseline
+    next.priceChangePercent = (next.priceChange / baseline) * 100
+  }
+  const oiBase = leg.openInterestBaseline
+  if (next.openInterest != null && oiBase != null) {
+    next.openInterestChange = next.openInterest - oiBase
+    next.openInterestChangePercent = oiBase > 0 ? ((next.openInterest - oiBase) / oiBase) * 100 : null
+  }
+  next.buildUp = classifyBuildUp(next.priceChange ?? 0, next.openInterestChange ?? 0)
+  next.isLive = true
+  next.quoteUpdatedUtc = nowIso
+  return next
+}
+
+function applyTickToQuote<T extends OptionChainQuote>(quote: T | null, tick: PushedTick | undefined, nowIso: string): T | null {
+  const ltp = tick?.lastTradedPrice
+  if (!quote || ltp == null || ltp <= 0) return quote
+  const prev = quote.previousClose
+  const change = prev != null && prev > 0 ? ltp - prev : quote.change
+  return {
+    ...quote,
+    lastPrice: ltp,
+    change,
+    changePercent: prev != null && prev > 0 && change != null ? (change / prev) * 100 : quote.changePercent,
+    asOfUtc: nowIso,
+    isLive: true,
+    basis: 'live-quote',
+  }
+}
+
+/**
+ * The chain with pushed ticks applied, without waiting for the next poll.
+ *
+ * Only LTP, bid/ask, volume, OI and what follows from them (change, OI change,
+ * build-up, the header's spot, future and VIX) move here. Totals, PCR, max pain
+ * and support/resistance are left to the poll, which recomputes them every few
+ * seconds from the same stored quotes. A replay is never touched. Returns the
+ * same object when nothing in it changed, so a push for other symbols does not
+ * re-render the table.
+ *
+ * `nowIso` is the server's clock as the page estimates it, so the freshness
+ * line keeps measuring ages on one clock.
+ */
+export function applyTicksToChain(chain: OptionChain, ticks: readonly PushedTick[], nowIso: string): OptionChain {
+  const header = chain.header
+  if (!header || header.mode === 'replay' || ticks.length === 0) return chain
+
+  const bySymbol = new Map<string, PushedTick>()
+  for (const tick of ticks) if (tick?.symbol) bySymbol.set(tick.symbol, tick)
+
+  const snapshotAgeMs = header.snapshotCapturedUtc ? Date.parse(nowIso) - Date.parse(header.snapshotCapturedUtc) : Infinity
+  let legsChanged = 0
+  const strikes = chain.strikes.map((strike) => {
+    const callTick = strike.call ? bySymbol.get(strike.call.symbol) : undefined
+    const putTick = strike.put ? bySymbol.get(strike.put.symbol) : undefined
+    if (!callTick && !putTick) return strike
+    const call = strike.call && callTick ? applyTickToLeg(strike.call, callTick, snapshotAgeMs, nowIso) : strike.call
+    const put = strike.put && putTick ? applyTickToLeg(strike.put, putTick, snapshotAgeMs, nowIso) : strike.put
+    if (call === strike.call && put === strike.put) return strike
+    legsChanged += Number(call !== strike.call) + Number(put !== strike.put)
+    return { ...strike, call, put }
+  })
+
+  const spot = applyTickToQuote(header.spot, header.spot ? bySymbol.get(header.spot.symbol) : undefined, nowIso)
+  let future = applyTickToQuote(header.future, header.future ? bySymbol.get(header.future.symbol) : undefined, nowIso)
+  const vix = applyTickToQuote(header.vix, header.vix ? bySymbol.get(header.vix.symbol) : undefined, nowIso)
+  if (future && spot?.lastPrice != null && future.lastPrice != null && (future !== header.future || spot !== header.spot)) {
+    const premium = future.lastPrice - spot.lastPrice
+    future = { ...future, premiumOverSpot: premium, premiumPercent: spot.lastPrice > 0 ? (premium / spot.lastPrice) * 100 : null }
+  }
+
+  if (legsChanged === 0 && spot === header.spot && future === header.future && vix === header.vix) return chain
+
+  const liveLegs = legsChanged > 0
+    ? strikes.reduce((n, s) => n + Number(!!s.call?.isLive) + Number(!!s.put?.isLive), 0)
+    : header.liveLegs
+  return {
+    ...chain,
+    spotPrice: spot?.lastPrice ?? chain.spotPrice,
+    strikes,
+    header: {
+      ...header,
+      spot,
+      future,
+      vix,
+      serverUtc: nowIso,
+      ...(legsChanged > 0 ? { mode: 'live', liveOverlayUtc: nowIso, liveLegs } : {}),
+    },
+  }
+}
+

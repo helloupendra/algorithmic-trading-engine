@@ -19,7 +19,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { useOptionChainExpiries, useOptionChainPositions, useOptionChainTrend, useOptionChainView } from '../../lib/queries'
+import { useQueryClient } from '@tanstack/react-query'
+import { onLiveTicks, useOptionChainExpiries, useOptionChainPositions, useOptionChainTrend, useOptionChainView } from '../../lib/queries'
 import type { OptionChain, OptionChainHeader, OptionChainLeg, OptionChainPosition, OptionChainQuote, OptionChainStrike } from '../../lib/types'
 import { EmptyState, InlineError, Loading, Panel } from '../../components/ui'
 import {
@@ -33,6 +34,8 @@ import {
   expiryLabel,
   isCallItm,
   isPutItm,
+  applyTicksToChain,
+  type PushedTick,
   istDate,
   positionMarker,
   positionsBySymbol,
@@ -633,6 +636,37 @@ export function AdvancedOptionChainPage({ asOfUtc: asOfProp }: { asOfUtc?: strin
 
   const expiries = useOptionChainExpiries(underlying)
   const view = useOptionChainView(underlying, expiry, asOfUtc)
+
+  // Prices between polls. The hub pushes every tick batch the API stores; they
+  // are gathered and laid over the chain four times a second, so an LTP moves
+  // within a fraction of a second of reaching the platform instead of waiting
+  // up to three seconds for the next poll. A replay is left alone.
+  const queryClient = useQueryClient()
+  useEffect(() => {
+    if (asOfUtc) return
+    const key = ['optionChainView', underlying, expiry ?? null, null]
+    let pending: PushedTick[] = []
+    const stop = onLiveTicks((ticks) => {
+      pending.push(...ticks)
+    })
+    const timer = window.setInterval(() => {
+      if (pending.length === 0) return
+      const batch = pending
+      pending = []
+      const state = queryClient.getQueryState<OptionChain>(key)
+      const chain = state?.data
+      const serverUtc = chain?.header?.serverUtc
+      if (!chain || !serverUtc) return
+      // The server's clock now: its stamp on the data plus the time since it arrived.
+      const nowIso = new Date(Date.parse(serverUtc) + (Date.now() - state.dataUpdatedAt)).toISOString()
+      const next = applyTicksToChain(chain, batch, nowIso)
+      if (next !== chain) queryClient.setQueryData(key, next)
+    }, 250)
+    return () => {
+      stop()
+      window.clearInterval(timer)
+    }
+  }, [queryClient, underlying, expiry, asOfUtc])
   // keepPreviousData must never show one underlying's chain under another's tab.
   const data = view.data && view.data.underlying === underlying ? view.data : undefined
   const header = data?.header ?? null

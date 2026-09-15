@@ -411,9 +411,32 @@ if [ -z "$SID" ]; then
   fail "strategy '$STRATEGY' is not in the catalogue."
 fi
 
-# Already-running underlyings are left alone: a second launchd fire, or a hand
-# re-run after a stumble, must not double the position.
+# An underlying that already has THIS strategy running is left alone: a second
+# fire, or a hand re-run after a stumble, must not double the position.
+#
+# Matched on strategy and underlying together, in the same run. Until
+# 2026-09-15 this grepped the whole list for the underlying alone, so a
+# ChainFlowBuy run started by hand on BANKNIFTY at 08:24 read as "BANKNIFTY
+# already has a running GhostTangentCrossings" and Ghost never started there.
 RUNNING="$(api_get '/api/Strategy/runs?status=Running' 2>/dev/null || echo '')"
+strategy_running_on() {  # underlying -> exit 0 when $STRATEGY already runs on it
+  printf '%s' "$RUNNING" | STRATEGY="$STRATEGY" UNDERLYING="$1" python3 -c '
+import json, os, sys
+try:
+    runs = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+if isinstance(runs, dict):
+    runs = runs.get("items") or runs.get("runs") or []
+want_strategy = os.environ["STRATEGY"].strip().lower()
+want_underlying = os.environ["UNDERLYING"].strip().upper()
+for run in runs if isinstance(runs, list) else []:
+    if str(run.get("strategyName") or "").strip().lower() == want_strategy \
+            and str(run.get("underlying") or "").strip().upper() == want_underlying:
+        sys.exit(0)
+sys.exit(1)
+' 2>/dev/null
+}
 
 # One run per underlying. A failure on one is reported and the others still go:
 # losing SENSEX should not cost the BANKNIFTY session too.
@@ -438,7 +461,7 @@ RISK_TEXT="leg target ${LEG_TARGET_PTS:-none} pts / leg SL ${LEG_STOP_PTS:-none}
 say "risk rules for every run: $RISK_TEXT  ($RISK_JSON)"
 
 for U in $UNDERLYINGS; do
-  if printf '%s' "$RUNNING" | grep -q "\"underlying\":\"$U\""; then
+  if strategy_running_on "$U"; then
     say "$U already has a running $STRATEGY — leaving it alone"
     SKIPPED=$((SKIPPED + 1))
     continue

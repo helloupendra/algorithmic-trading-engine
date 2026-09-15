@@ -7,13 +7,15 @@ import {
   expiryLabel,
   isCallItm,
   isPutItm,
+  applyTicksToChain,
+  classifyBuildUp,
   positionMarker,
   positionsBySymbol,
   signedPercent,
   spotMarkerIndex,
   strikeWindow,
 } from './optionChain'
-import type { OptionChainHeader } from './types'
+import type { OptionChain, OptionChainHeader } from './types'
 
 /**
  * The advanced option chain's reading rules. The owner's complaint about the
@@ -218,3 +220,64 @@ describe('positions on the chain', () => {
     expect(positionMarker(undefined)).toBeNull()
   })
 })
+
+describe('pushed ticks on the chain', () => {
+  const now = '2026-09-15T04:00:10.000Z'
+  function chain(mode = 'live'): OptionChain {
+    const leg = (symbol: string, ltp: number, change: number, oi: number, baseline: number) => ({
+      symbol, lastTradedPrice: ltp, priceChange: change, priceChangePercent: null, bidPrice: ltp - 0.5, askPrice: ltp + 0.5,
+      volume: 1000, openInterest: oi, openInterestChange: oi - baseline, openInterestChangePercent: null,
+      impliedVolatility: 14, delta: 0.5, buildUp: 'Neutral', openInterestBaseline: baseline, isLive: false, quoteUpdatedUtc: null,
+    })
+    return {
+      underlying: 'NIFTY', expiryDate: '2026-09-22', asOfUtc: now, spotPrice: 23500, atTheMoneyStrike: 23500,
+      maxPainStrike: null, putCallRatio: null, totalCallOpenInterest: 0, totalPutOpenInterest: 0,
+      heaviestCallStrike: null, heaviestPutStrike: null, openInterestUnavailable: false,
+      strikes: [{ strikePrice: 23500, isAtTheMoney: true, putCallRatio: null, putCallRatioOfChange: null, call: leg('CE1', 100, 10, 50_000, 40_000), put: leg('PE1', 90, -5, 60_000, 61_000) }],
+      header: {
+        mode, serverUtc: '2026-09-15T04:00:00.000Z', marketOpen: true, snapshotCapturedUtc: '2026-09-15T03:59:30.000Z',
+        liveOverlayUtc: null, liveLegs: 0, totalLegs: 2, freshSeconds: 120,
+        spot: { symbol: 'NSE:NIFTY50-INDEX', lastPrice: 23500, change: 0, changePercent: 0, previousClose: 23400, previousCloseBasis: 'feed', asOfUtc: null, sourceKey: 'dhan', isLive: false, basis: 'snapshot' },
+        future: null, vix: null,
+      } as unknown as OptionChainHeader,
+    }
+  }
+
+  it('moves a leg the way the API overlay does', () => {
+    const next = applyTicksToChain(chain(), [{ symbol: 'CE1', lastTradedPrice: 104, bidPrice: 103.9, askPrice: 104.1, volume: 1500, openInterest: 52_000 }], now)
+    const call = next.strikes[0].call!
+    expect(call.lastTradedPrice).toBe(104)
+    expect(call.priceChange).toBe(14) // baseline 100 - 10 = 90
+    expect(call.openInterestChange).toBe(12_000)
+    expect(call.buildUp).toBe('LongBuildUp')
+    expect(call.isLive).toBe(true)
+    expect(next.header!.liveOverlayUtc).toBe(now)
+    expect(next.header!.liveLegs).toBe(1)
+    expect(next.strikes[0].put!.lastTradedPrice).toBe(90) // a put with no push keeps its capture
+  })
+
+  it('updates the spot from its previous close and leaves unrelated pushes alone', () => {
+    const base = chain()
+    const next = applyTicksToChain(base, [{ symbol: 'NSE:NIFTY50-INDEX', lastTradedPrice: 23517 }], now)
+    expect(next.header!.spot!.lastPrice).toBe(23517)
+    expect(next.header!.spot!.change).toBe(117)
+    expect(next.spotPrice).toBe(23517)
+    expect(applyTicksToChain(base, [{ symbol: 'OTHER', lastTradedPrice: 5 }], now)).toBe(base)
+  })
+
+  it('never touches a replay, and refuses an OI eight times away from a fresh capture', () => {
+    const replay = chain('replay')
+    expect(applyTicksToChain(replay, [{ symbol: 'CE1', lastTradedPrice: 120 }], now)).toBe(replay)
+    const next = applyTicksToChain(chain(), [{ symbol: 'CE1', lastTradedPrice: 101, openInterest: 50_000 * 65 }], now)
+    expect(next.strikes[0].call!.openInterest).toBe(50_000)
+  })
+
+  it('classifies build-up like the server', () => {
+    expect(classifyBuildUp(1, 1)).toBe('LongBuildUp')
+    expect(classifyBuildUp(-1, 1)).toBe('ShortBuildUp')
+    expect(classifyBuildUp(1, -1)).toBe('ShortCovering')
+    expect(classifyBuildUp(-1, -1)).toBe('LongUnwinding')
+    expect(classifyBuildUp(0, 5)).toBe('Neutral')
+  })
+})
+

@@ -266,14 +266,17 @@ public class LiveDataController : ControllerBase
         var usable = requests.Where(r => !string.IsNullOrWhiteSpace(r.Symbol)).ToList();
         int skipped = requests.Count - usable.Count;
 
+        // Pushed before the write, not after it, and not awaited. Awaited, a
+        // screen could apply back pressure to the feed the strategies trade on
+        // (the single-tick path explains that). After the write, every open
+        // chain waited for the database too: 60 ms at p50 on 2026-09-15, and
+        // whatever an open-bell write burst costs on top.
+        _ = BroadcastTickBatchAsync(usable);
+
         if (usable.Count > 0)
         {
             await _upsertLiveTicksUseCase.ExecuteAsync(usable, cancellationToken);
         }
-
-        // Same reasoning as the single-tick path: a screen must never be able to
-        // apply back pressure to the feed the strategies trade on.
-        _ = BroadcastTickBatchAsync(usable);
 
         return Ok(new { stored = usable.Count, skipped });
     }
