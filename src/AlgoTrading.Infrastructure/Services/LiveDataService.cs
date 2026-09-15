@@ -26,7 +26,6 @@ public class LiveDataService : ILiveDataService
         new HistogramConfiguration { Buckets = Histogram.ExponentialBuckets(0.001, 2, 10) });
 
     private readonly TradingDbContext _dbContext;
-    private readonly IMarketTickArchiveQueue _marketTickArchiveQueue;
     private readonly IProviderCatalog _providerCatalog;
 
     /// <summary>Lazily resolved once; the catalog is static metadata, not a query.</summary>
@@ -34,11 +33,9 @@ public class LiveDataService : ILiveDataService
 
     public LiveDataService(
         TradingDbContext dbContext,
-        IMarketTickArchiveQueue marketTickArchiveQueue,
         IProviderCatalog providerCatalog)
     {
         _dbContext = dbContext;
-        _marketTickArchiveQueue = marketTickArchiveQueue;
         _providerCatalog = providerCatalog;
     }
 
@@ -472,33 +469,6 @@ public class LiveDataService : ILiveDataService
             IsReplay = request.IsReplay
         }, cancellationToken);
 
-        // Every symbol goes through the batched archive writer, not just one.
-        // The batching machinery (250 rows / 500ms) was built and then gated to
-        // NSE:NIFTYBANK-INDEX, so eighteen other symbols each took a synchronous
-        // single-row insert instead — the good path served one symbol and the
-        // rest took the slow one.
-        {
-            await _marketTickArchiveQueue.EnqueueAsync(
-                new MarketTickArchiveRequest
-                {
-                    Symbol = request.Symbol,
-                    DataType = request.DataType,
-                    ExchangeTimestampUtc = request.ExchangeTimestampUtc,
-                    LastTradedPrice = request.LastTradedPrice,
-                    BidPrice = request.BidPrice,
-                    AskPrice = request.AskPrice,
-                    BidSize = request.BidSize,
-                    AskSize = request.AskSize,
-                    Open = request.Open,
-                    High = request.High,
-                    Low = request.Low,
-                    PrevClose = request.PrevClose,
-                    Volume = request.Volume,
-                    RawPayload = request.RawPayload,
-                    SourceKey = sourceKey
-                },
-                cancellationToken);
-        }
 
         // 3) Upsert 1-minute bar
         //
@@ -706,26 +676,6 @@ public class LiveDataService : ILiveDataService
 
                 ApplyLatestQuote(request, latest, sourceKey, quoteBySymbol);
 
-                await _marketTickArchiveQueue.EnqueueAsync(
-                    new MarketTickArchiveRequest
-                    {
-                        Symbol = symbol,
-                        DataType = request.DataType,
-                        ExchangeTimestampUtc = request.ExchangeTimestampUtc,
-                        LastTradedPrice = request.LastTradedPrice,
-                        BidPrice = request.BidPrice,
-                        AskPrice = request.AskPrice,
-                        BidSize = request.BidSize,
-                        AskSize = request.AskSize,
-                        Open = request.Open,
-                        High = request.High,
-                        Low = request.Low,
-                        PrevClose = request.PrevClose,
-                        Volume = request.Volume,
-                        RawPayload = request.RawPayload,
-                        SourceKey = sourceKey
-                    },
-                    cancellationToken);
 
                 if (request.LastTradedPrice.HasValue)
                 {

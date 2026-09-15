@@ -17,9 +17,9 @@ namespace AlgoTrading.Infrastructure.Services;
 /// platform, it stops it — ingestion, the API and the runners all write to the
 /// same database.
 /// <para>
-/// Only the raw log is trimmed. The 1-minute bars, the quote snapshots and the
-/// compressed <c>market_ticks</c> archive are the record worth keeping; this
-/// table is a debugging aid whose value falls off within days.
+/// Only the raw log is trimmed. The 1-minute bars and the quote snapshots stay,
+/// and every tick is copied, verified, to Google Drive each night before it can
+/// age out (scripts/archive_to_drive.py).
 /// </para>
 /// <para>
 /// Deleted in bounded batches rather than one statement. A single DELETE over a
