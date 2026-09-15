@@ -27,13 +27,21 @@ export CHAIN_UNDERLYINGS="$(printf '%s' "$UNDERLYINGS" | tr ' ' ',')"
 STRATEGY="${MARKET_OPEN_STRATEGY:-GhostTangentCrossings}"
 LOTS="${MARKET_OPEN_LOTS:-2}"
 # Risk rules every run is deployed with. Per leg, in premium points from its
-# own entry: the risk guard closes that leg alone once it has made
-# LEG_TARGET_PTS (and, if set, once it has lost LEG_STOP_PTS). Nothing at the
-# day level unless DAY_TARGET / DAY_STOP_LOSS (rupees on the day's total P&L)
-# are given. The owner's brief for Ghost (2026-09-09): "target = entry + 20
-# points, leave the stop-loss empty". Rules can still be edited on a live run.
-LEG_TARGET_PTS="${MARKET_OPEN_LEG_TARGET_PTS:-20}"
-LEG_STOP_PTS="${MARKET_OPEN_LEG_STOP_PTS:-}"
+# own entry; the risk guard closes that leg alone:
+#   - LEG_STOP_PTS: once it has lost this many points (the initial stop-loss);
+#   - trailing: once it has made LEG_TRAIL_TRIGGER_PTS the trail arms, follows
+#     the leg's best P&L, and closes it when it gives back LEG_TRAIL_PTS from
+#     that best - so the stop only ever moves up, and a winner is not capped;
+#   - LEG_TARGET_PTS: a fixed target. Unset by default: a fixed target would
+#     book the leg at +20 before the trail could let it run.
+# Nothing at the day level unless DAY_TARGET / DAY_STOP_LOSS (rupees on the
+# day's total P&L) are given. Rules can still be edited on a live run.
+# History of the owner's brief for Ghost: 2026-09-09 "target = entry + 20
+# points, leave the stop-loss empty"; 2026-09-15 "trail the SL and the profit".
+LEG_TARGET_PTS="${MARKET_OPEN_LEG_TARGET_PTS:-}"
+LEG_STOP_PTS="${MARKET_OPEN_LEG_STOP_PTS:-20}"
+LEG_TRAIL_TRIGGER_PTS="${MARKET_OPEN_LEG_TRAIL_TRIGGER_PTS:-20}"
+LEG_TRAIL_PTS="${MARKET_OPEN_LEG_TRAIL_PTS:-10}"
 DAY_TARGET="${MARKET_OPEN_DAY_TARGET:-}"
 DAY_STOP_LOSS="${MARKET_OPEN_DAY_STOP_LOSS:-}"
 # Clock time (HHMM, IST) to stop waiting for the morning FYERS sign-in.
@@ -421,12 +429,18 @@ STARTED=0
 SKIPPED=0
 # The rules as the API's RiskRulesDto (camelCase; leg rules in premium
 # points, day rules in rupees with scope "day"), and a sentence for the log.
-RISK_JSON="$(LEG_TARGET_PTS="$LEG_TARGET_PTS" LEG_STOP_PTS="$LEG_STOP_PTS" DAY_TARGET="$DAY_TARGET" DAY_STOP_LOSS="$DAY_STOP_LOSS" python3 - <<'PYEOF'
+RISK_JSON="$(LEG_TARGET_PTS="$LEG_TARGET_PTS" LEG_STOP_PTS="$LEG_STOP_PTS" LEG_TRAIL_TRIGGER_PTS="$LEG_TRAIL_TRIGGER_PTS" LEG_TRAIL_PTS="$LEG_TRAIL_PTS" DAY_TARGET="$DAY_TARGET" DAY_STOP_LOSS="$DAY_STOP_LOSS" python3 - <<'PYEOF'
 import json, os
 def num(k):
     v = os.environ.get(k, "").strip()
     return float(v) if v else None
-leg = {k: v for k, v in {"targetPoints": num("LEG_TARGET_PTS"), "stopLossPoints": num("LEG_STOP_PTS")}.items() if v}
+leg = {k: v for k, v in {
+    "targetPoints": num("LEG_TARGET_PTS"),
+    "stopLossPoints": num("LEG_STOP_PTS"),
+    # A trigger alone trails nothing, so it is sent only with a trail distance.
+    "trailStopLossPoints": num("LEG_TRAIL_PTS"),
+    "trailTriggerPoints": num("LEG_TRAIL_PTS") and num("LEG_TRAIL_TRIGGER_PTS"),
+}.items() if v}
 day = {k: v for k, v in {"target": num("DAY_TARGET"), "stopLoss": num("DAY_STOP_LOSS")}.items() if v}
 risk = {}
 if leg: risk["leg"] = leg
@@ -434,7 +448,7 @@ if day: risk["overall"] = {**day, "scope": "day"}
 print(json.dumps(risk))
 PYEOF
 )"
-RISK_TEXT="leg target ${LEG_TARGET_PTS:-none} pts / leg SL ${LEG_STOP_PTS:-none}${DAY_TARGET:+, day target ₹$DAY_TARGET}${DAY_STOP_LOSS:+, day SL ₹$DAY_STOP_LOSS}"
+RISK_TEXT="leg SL ${LEG_STOP_PTS:-none} pts${LEG_TRAIL_PTS:+, trail ${LEG_TRAIL_PTS} pts from the best once +${LEG_TRAIL_TRIGGER_PTS:-0}}, leg target ${LEG_TARGET_PTS:-none}${DAY_TARGET:+, day target ₹$DAY_TARGET}${DAY_STOP_LOSS:+, day SL ₹$DAY_STOP_LOSS}"
 say "risk rules for every run: $RISK_TEXT  ($RISK_JSON)"
 
 for U in $UNDERLYINGS; do
