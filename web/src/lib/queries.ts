@@ -98,6 +98,20 @@ export function useLatestQuotes() {
   })
 }
 
+/**
+ * Pages that want every pushed price as it lands (the option chain) listen
+ * here, rather than opening a second hub connection of their own.
+ */
+type LiveTicksListener = (ticks: any[]) => void
+const liveTicksListeners = new Set<LiveTicksListener>()
+
+export function onLiveTicks(listener: LiveTicksListener): () => void {
+  liveTicksListeners.add(listener)
+  return () => {
+    liveTicksListeners.delete(listener)
+  }
+}
+
 export function useLiveFeedSignalR() {
   const qc = useQueryClient()
 
@@ -126,6 +140,13 @@ export function useLiveFeedSignalR() {
     // what keeps a busy open-bell burst from thrashing the tree.
     const applyTicks = (ticks: any[]) => {
       if (!ticks.length) return
+      for (const listener of liveTicksListeners) {
+        try {
+          listener(ticks)
+        } catch {
+          // One page's handler must not stop the prices reaching the rest.
+        }
+      }
       qc.setQueryData(['quotes', 'all'], (old: LiveQuote[] | undefined) => {
         if (!old) return old
 
