@@ -1391,6 +1391,94 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.ToTable("option_chain_snapshots", (string)null);
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.OptionHistoryBar", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("BarStartUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal>("Close")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<int>("ExpiryCode")
+                        .HasColumnType("integer");
+
+                    b.Property<DateOnly?>("ExpiryDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("ExpiryFlag")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
+                    b.Property<decimal>("High")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<decimal?>("ImpliedVolatility")
+                        .HasPrecision(12, 4)
+                        .HasColumnType("numeric(12,4)");
+
+                    b.Property<decimal>("Low")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<decimal>("Open")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<long?>("OpenInterest")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("OptionType")
+                        .IsRequired()
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)");
+
+                    b.Property<string>("Resolution")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
+                    b.Property<string>("SourceKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<decimal?>("SpotPrice")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<decimal>("Strike")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<int>("StrikeOffset")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Underlying")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<long?>("Volume")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id", "BarStartUtc");
+
+                    b.HasIndex("Underlying", "ExpiryFlag", "ExpiryCode", "StrikeOffset", "OptionType", "Resolution", "BarStartUtc")
+                        .IsUnique()
+                        .HasDatabaseName("ux_option_history_series_time");
+
+                    b.ToTable("option_history_bars", (string)null);
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.PaperOrder", b =>
                 {
                     b.Property<long>("Id")

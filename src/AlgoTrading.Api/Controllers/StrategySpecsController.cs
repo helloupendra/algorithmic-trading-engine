@@ -1,6 +1,7 @@
 // src/AlgoTrading.Api/Controllers/StrategySpecsController.cs
 using AlgoTrading.Api.Security;
 using AlgoTrading.Api.Services;
+using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.Strategies;
 using AlgoTrading.Domain.Constants;
 using Microsoft.AspNetCore.Mvc;
@@ -30,17 +31,54 @@ public class StrategySpecsController : ControllerBase
     private const string SpecsFolder = "docs/strategies";
 
     private readonly StrategyCatalogService _catalog;
+    private readonly IStrategyAccessService _strategyAccess;
     private readonly IWebHostEnvironment _env;
     private readonly ILogger<StrategySpecsController> _logger;
 
     public StrategySpecsController(
         StrategyCatalogService catalog,
+        IStrategyAccessService strategyAccess,
         IWebHostEnvironment env,
         ILogger<StrategySpecsController> logger)
     {
         _catalog = catalog;
+        _strategyAccess = strategyAccess;
         _env = env;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// The facts block of every catalog strategy's spec, without the documents
+    /// — what the Library page's cards and filters need (resolution, data,
+    /// built-in exit). Filtered by the caller's strategy package the same way
+    /// GET /api/Strategy is, so a trader is not told the names of strategies
+    /// outside their package.
+    /// </summary>
+    [HttpGet("specs/facts")]
+    public async Task<ActionResult<List<StrategySpecFactsResponse>>> GetAllFacts(CancellationToken cancellationToken)
+    {
+        var entries = await _catalog.GetAllAsync(cancellationToken);
+        var access = await _strategyAccess.GetAccessAsync(User.GetRequiredUserId(), cancellationToken);
+        if (!access.IsUnrestricted)
+        {
+            entries = entries.Where(x => access.AllowsStrategy(x.Name)).ToList();
+        }
+
+        var rows = new List<StrategySpecFactsResponse>(entries.Count);
+        foreach (var entry in entries)
+        {
+            var file = SpecFile(entry.Name);
+            var markdown = file is null ? null : await ReadSpecAsync(file, cancellationToken);
+            rows.Add(new StrategySpecFactsResponse
+            {
+                Id = entry.Id,
+                Name = entry.Name,
+                HasSpec = markdown is not null,
+                Facts = markdown is null ? null : ParseFacts(markdown)
+            });
+        }
+
+        return Ok(rows);
     }
 
     /// <summary>
@@ -54,43 +92,11 @@ public class StrategySpecsController : ControllerBase
         var entry = await _catalog.FindAsync(id, cancellationToken);
         if (entry is null) return NotFound(new { message = $"Strategy {id} not found." });
 
-        // The file name is the registry name. Registry names are identifiers
-        // (class `name` attributes, factory keys); anything else cannot have a
-        // spec, and refusing it here is what keeps a crafted name from naming
-        // a path outside the folder.
-        if (!SpecFileName.IsMatch(entry.Name))
-        {
-            _logger.LogWarning("Strategy name {Name} is not a valid spec file name; reporting no spec.", entry.Name);
-            return Ok(Missing(entry.Name));
-        }
+        var file = SpecFile(entry.Name);
+        if (file is null) return Ok(Missing(entry.Name));
 
-        var folder = Path.GetFullPath(Path.Combine(_env.ContentRootPath, "..", "..", "docs", "strategies"));
-        var file = Path.GetFullPath(Path.Combine(folder, entry.Name + ".md"));
-        if (!file.StartsWith(folder + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-        {
-            // Unreachable given the regex above; kept so the guard does not
-            // depend on the regex staying strict.
-            return Ok(Missing(entry.Name));
-        }
-
-        if (!System.IO.File.Exists(file)) return Ok(Missing(entry.Name));
-
-        string markdown;
-        try
-        {
-            markdown = await System.IO.File.ReadAllTextAsync(file, cancellationToken);
-            // HTML comments carry the author's verification SQL and notes for
-            // reviewers; a reader of the page is not one, and the renderer
-            // would print them as text.
-            markdown = System.Text.RegularExpressions.Regex.Replace(markdown, @"<!--[\s\S]*?-->", string.Empty);
-        }
-        catch (IOException ex)
-        {
-            // A spec being saved by its author at this instant: report it as
-            // absent for this request rather than fail the page.
-            _logger.LogWarning(ex, "Could not read strategy spec {File}.", file);
-            return Ok(Missing(entry.Name));
-        }
+        var markdown = await ReadSpecAsync(file, cancellationToken);
+        if (markdown is null) return Ok(Missing(entry.Name));
 
         return Ok(new StrategySpecResponse
         {
@@ -108,6 +114,54 @@ public class StrategySpecsController : ControllerBase
     // ------------------------------------------------------------------
 
     private static readonly Regex SpecFileName = new("^[A-Za-z0-9]+$", RegexOptions.Compiled);
+
+    /// <summary>
+    /// The full path of the strategy's spec file when it exists; null when the
+    /// name cannot name a spec or the file has not been written.
+    /// </summary>
+    private string? SpecFile(string name)
+    {
+        // The file name is the registry name. Registry names are identifiers
+        // (class `name` attributes, factory keys); anything else cannot have a
+        // spec, and refusing it here is what keeps a crafted name from naming
+        // a path outside the folder.
+        if (!SpecFileName.IsMatch(name))
+        {
+            _logger.LogWarning("Strategy name {Name} is not a valid spec file name; reporting no spec.", name);
+            return null;
+        }
+
+        var folder = Path.GetFullPath(Path.Combine(_env.ContentRootPath, "..", "..", "docs", "strategies"));
+        var file = Path.GetFullPath(Path.Combine(folder, name + ".md"));
+        if (!file.StartsWith(folder + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+        {
+            // Unreachable given the regex above; kept so the guard does not
+            // depend on the regex staying strict.
+            return null;
+        }
+
+        return System.IO.File.Exists(file) ? file : null;
+    }
+
+    /// <summary>The spec's Markdown without its HTML comments; null when the file cannot be read right now.</summary>
+    private async Task<string?> ReadSpecAsync(string file, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var markdown = await System.IO.File.ReadAllTextAsync(file, cancellationToken);
+            // HTML comments carry the author's verification SQL and notes for
+            // reviewers; a reader of the page is not one, and the renderer
+            // would print them as text.
+            return Regex.Replace(markdown, @"<!--[\s\S]*?-->", string.Empty);
+        }
+        catch (IOException ex)
+        {
+            // A spec being saved by its author at this instant: report it as
+            // absent for this request rather than fail the page.
+            _logger.LogWarning(ex, "Could not read strategy spec {File}.", file);
+            return null;
+        }
+    }
 
     /// <summary>A fenced yaml block: the last one in the file is the facts block.</summary>
     private static readonly Regex YamlFence = new(

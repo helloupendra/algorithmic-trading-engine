@@ -72,6 +72,29 @@ function normalizeSpec(raw: Partial<StrategySpec> & { name: string }): StrategyS
   }
 }
 
+/**
+ * The facts block of every strategy's spec by catalog id, without the
+ * documents (GET /api/Strategy/specs/facts) — the Library cards' timeframe,
+ * data and exit chips. A strategy without a spec, or an API build from before
+ * the endpoint, is simply absent from the map: its chips are left out, not
+ * shown as "no".
+ */
+export function useStrategySpecFacts() {
+  return useQuery({
+    queryKey: ['strategies', 'spec-facts'],
+    queryFn: async () => {
+      const rows = await api.get<Array<{ id: number; hasSpec?: boolean; facts?: SpecFacts | null }>>('/api/Strategy/specs/facts')
+      const map = new Map<number, SpecFacts>()
+      for (const row of Array.isArray(rows) ? rows : []) {
+        if (row.hasSpec && row.facts && typeof row.facts === 'object') map.set(row.id, row.facts)
+      }
+      return map
+    },
+    staleTime: 60_000,
+    retry: 1,
+  })
+}
+
 /** The spec of one strategy by catalog id; disabled until an id is chosen. */
 export function useStrategySpec(id: number | null) {
   return useQuery({
