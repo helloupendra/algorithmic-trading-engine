@@ -844,3 +844,15 @@ class RegistrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CloseDetailTests(unittest.TestCase):
+    """A dropped socket reads as words, never as the heartbeat error "None None"."""
+
+    def test_close_reasons_read_as_words(self):
+        from core.live.vendor_feed import close_detail
+        self.assertEqual("connection dropped without a reason", close_detail(None, None))
+        self.assertEqual("connection closed (1006)", close_detail(1006, None))
+        self.assertEqual("connection closed (1000: bye)", close_detail(1000, "bye"))
+        self.assertEqual("connection closed (going away)", close_detail(None, b"going away"))
+

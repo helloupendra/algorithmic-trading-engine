@@ -3425,3 +3425,68 @@ tr:hover .calendar-remove,
 .oc-row--held .oc-strike { box-shadow: inset 3px 0 0 var(--warn, #e5b54a), inset -3px 0 0 var(--warn, #e5b54a); }
 .oc-pos-total { font-weight: 600; font-variant-numeric: tabular-nums; }
 .oc-pos-table td { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Connectors pill: one pill for every broker and data vendor, with the list
+   under it. The panel is fixed to the viewport because the pill row scrolls
+   sideways on a phone and would clip anything positioned inside it. */
+.topbar__pill-button { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; color: inherit; }
+.conn-pop { display: inline-flex; }
+.conn-pop__panel {
+  position: fixed;
+  top: calc(var(--topbar-h) + 6px);
+  right: 16px;
+  z-index: 60;
+  width: min(380px, calc(100vw - 32px));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-2);
+  padding: 10px 0 8px;
+  font-size: 12.5px;
+}
+.conn-pop__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 14px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  font-weight: 600;
+}
+.conn-pop__head .faint { font-weight: 400; }
+.conn-pop__list { list-style: none; margin: 0; padding: 4px 0; }
+.conn-pop__row {
+  display: grid;
+  grid-template-columns: 10px 1fr;
+  column-gap: 10px;
+  row-gap: 2px;
+  align-items: center;
+  padding: 7px 14px;
+  color: inherit;
+  text-decoration: none;
+}
+.conn-pop__row:hover, .conn-pop__row:focus-visible { background: var(--surface2); outline: none; }
+.conn-pop__name { font-weight: 600; }
+.conn-pop__name .faint { font-weight: 400; margin-left: 4px; }
+.conn-pop__detail { grid-column: 2; color: var(--text-2); }
+.conn-pop__foot {
+  display: flex;
+  gap: 16px;
+  padding: 8px 14px 0;
+  border-top: 1px solid var(--border-soft);
+}
+.conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+.conn-dot--pos { background: var(--pos); }
+.conn-dot--neg { background: var(--neg); }
+.conn-dot--idle { background: var(--line); }
+.diag-table td { vertical-align: middle; }
+
+/* Open interest: the strike picker (a dropdown with one-step arrows). */
+.oi-strike-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0 0 12px;
+}
+.oi-strike-picker select { min-width: 140px; }
+

@@ -19,6 +19,24 @@ from abc import ABC, abstractmethod
 from typing import Any, Callable
 
 
+def close_detail(code: Any, message: Any) -> str:
+    """
+    Why a websocket closed, in words.
+
+    websocket-client hands on_close a status code and a reason, and both are
+    None when the connection simply dropped. Formatted as f"{code} {msg}" that
+    became the heartbeat's last error "None None", shown in red on Live feeds
+    with nothing a reader could act on.
+    """
+    code_text = "" if code in (None, "") else str(code)
+    reason = "" if message in (None, "", b"") else (message.decode(errors="replace") if isinstance(message, bytes) else str(message))
+    if code_text and reason:
+        return f"connection closed ({code_text}: {reason})"
+    if code_text or reason:
+        return f"connection closed ({code_text or reason})"
+    return "connection dropped without a reason"
+
+
 class FeedEvent:
     """What an adapter can tell the runner. Plain strings, so logs stay readable."""
 

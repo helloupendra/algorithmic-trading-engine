@@ -15,8 +15,7 @@ import {
   useAddEquityGroupToWatchlist,
   useAddWatchlistSymbol,
   useEquityGroups,
-  useIngestorLogs,
-  useIngestorProcessStatus,
+  useFeeds,
   useIngestorStatuses,
   useInstrumentSearch,
   useLatestQuotes,
@@ -27,8 +26,6 @@ import {
   useRemoveWatchlistSymbol,
   useStaleWatchlist,
   useStaleQuotes,
-  useStartIngestor,
-  useStopIngestor,
   useChainPollerStatus,
   useChainPollerLogs,
   useStartChainPoller,
@@ -37,6 +34,7 @@ import {
 } from '../../lib/queries'
 import { formatAge, formatDateTime, formatPrice, shortSymbol } from '../../lib/format'
 import { classifySymbol } from '../../lib/symbols'
+import { feedDiagnostics } from '../../lib/feeds'
 import { Badge, EmptyState, FlashPrice, InlineError, Panel, QueryBoundary } from '../../components/ui'
 import {
   IconDatabase,
@@ -55,124 +53,6 @@ function changePct(quote: LiveQuote | undefined): number | null {
   if (!quote || quote.lastTradedPrice == null || quote.close == null || quote.close === 0)
     return null
   return ((quote.lastTradedPrice - quote.close) / quote.close) * 100
-}
-
-/* ------------------------------------------------------------ header bits */
-
-/**
- * How the console relates to the feed process, from GET /api/Ingestor/status
- * plus the heartbeats:
- *  - managed:  spawned by this API instance — Stop works, output is captured;
- *  - adopted:  a stored pid is alive but was not launched by this API
- *              instance (an earlier instance spawned it, or it was started
- *              from a terminal and reported its pid through its heartbeat) —
- *              Stop works (the API kills that pid), output is not captured;
- *  - external: no pid known but a heartbeat is healthy — a streamer build
- *              that does not report its pid; it can only be stopped from
- *              where it was started;
- *  - stopped:  nothing alive.
- * An API build from before supervision hardening answers with `isRunning`
- * only, which reads as managed (true) or external/stopped (false).
- */
-function useFeedProcess() {
-  const process = useIngestorProcessStatus()
-  const ingestors = useIngestorStatuses()
-  const healthyCount = (ingestors.data ?? []).filter((f) => f.isHealthy).length
-  const status = process.data
-  const pidKnown = status?.isRunning ?? false
-  const source = status?.source ?? (pidKnown ? 'managed' : 'none')
-  const external = !pidKnown && source === 'none' && healthyCount > 0
-  const kind: 'managed' | 'adopted' | 'external' | 'stopped' = pidKnown
-    ? source === 'adopted'
-      ? 'adopted'
-      : 'managed'
-    : external
-      ? 'external'
-      : 'stopped'
-  return {
-    kind,
-    /** Stop is possible: the API holds a handle or a live pid. */
-    canStop: pidKnown,
-    isRunning: pidKnown || healthyCount > 0,
-    processId: status?.processId ?? null,
-    healthyCount,
-    loaded: process.data !== undefined,
-    /**
-     * Both answers are in, so "stopped" is a fact rather than "the page has
-     * not been told yet". Without this the card read a loading state as
-     * stopped: for the ~2 s before the two calls returned, a feed that was
-     * running showed a green Start button, and only a reload — which the
-     * operator reached for because the page looked wrong — appeared to fix it.
-     * An errored query still counts as answered: an old API build has no
-     * process endpoint, and the heartbeat heuristic above is the answer.
-     */
-    known: (process.data !== undefined || process.isError) && (ingestors.data !== undefined || ingestors.isError),
-  }
-}
-
-function FeedControlButton() {
-  const feed = useFeedProcess()
-  const session = useMarketSession()
-  const start = useStartIngestor()
-  const stop = useStopIngestor()
-
-  function confirmStop() {
-    const pid = feed.processId != null ? ` (pid ${feed.processId})` : ''
-    const adopted =
-      feed.kind === 'adopted'
-        ? ` This feed was not launched by this API instance${pid} — an earlier instance or a terminal started it; the API will kill that process.`
-        : ''
-    const warning = session.data?.isMarketOpen
-      ? `Market is OPEN. Stopping the ingestor halts tick capture for every running strategy.${adopted} Stop anyway?`
-      : `Stop the live ingestor process${pid}?${adopted}`
-    if (window.confirm(warning)) stop.mutate()
-  }
-
-  const stopTitle =
-    feed.kind === 'external'
-      ? 'The feed is running outside this console (no pid known) — stop it from the terminal that started it.'
-      : feed.kind === 'adopted'
-        ? `Not launched by this API instance${feed.processId != null ? ` (pid ${feed.processId})` : ''} — running outside this console, known by its pid; Stop kills that process.`
-        : undefined
-
-  // Nothing is offered until the state is known. Start on a running feed is
-  // the one click here that can do damage, so it is never shown on a guess.
-  if (!feed.known) {
-    return (
-      <div className="toolbar">
-        <button className="btn" disabled title="Asking the API whether the live feed is running…">
-          Checking…
-        </button>
-      </div>
-    )
-  }
-
-  return (
-    <div className="toolbar">
-      {start.isError && <InlineError error={start.error} />}
-      {stop.isError && <InlineError error={stop.error} />}
-      {feed.isRunning ? (
-        <button
-          className="btn btn--danger"
-          disabled={stop.isPending || !feed.canStop}
-          onClick={confirmStop}
-          title={stopTitle}
-        >
-          <IconStop style={{ width: 14, height: 14 }} />
-          {stop.isPending ? 'Stopping…' : feed.kind === 'adopted' ? 'Stop live feed (adopted)' : 'Stop live feed'}
-        </button>
-      ) : (
-        <button
-          className="btn btn--pos"
-          disabled={start.isPending}
-          onClick={() => start.mutate()}
-        >
-          <IconPlay style={{ width: 14, height: 14 }} />
-          {start.isPending ? 'Starting…' : 'Start live feed'}
-        </button>
-      )}
-    </div>
-  )
 }
 
 /* ------------------------------------------------- option chain poller */
@@ -206,7 +86,7 @@ function ChainPollerPanel() {
 
   return (
     <Panel
-      title="Option chain poller"
+      title="FYERS option chain poller (backup)"
       actions={
         <div className="toolbar">
           {start.isError && <InlineError error={start.error} />}
@@ -237,6 +117,10 @@ function ChainPollerPanel() {
         </div>
       }
     >
+      <p className="small-note muted" style={{ marginTop: 0 }}>
+        While Dhan is signed in, its chain recorder captures every underlying once a minute and this poller stays off:
+        two chain sources would interleave in one history. Dhan&apos;s recording shows on Connectors → Dhan.
+      </p>
       <div className="kv-grid" style={{ marginBottom: 10 }}>
         <div>
           <span className="muted">Process</span>
@@ -692,106 +576,75 @@ function LiveWatchlistPanel() {
 
 /* ------------------------------------------------------------- diagnostics */
 
-/** One line on how the console holds the feed process, for the diagnostics panel. */
-function processSummary(feed: ReturnType<typeof useFeedProcess>): { tone: 'pos' | 'warn' | 'neutral' | 'accent'; text: string } {
-  const pid = feed.processId != null ? ` · pid ${feed.processId}` : ''
-  switch (feed.kind) {
-    case 'managed':
-      return { tone: 'pos', text: `process managed by this API instance${pid} · output captured below` }
-    case 'adopted':
-      return {
-        tone: 'accent',
-        text: `not launched by this API instance — known by its pid${pid}, output not captured · Stop kills that process`,
-      }
-    case 'external':
-      return {
-        tone: 'warn',
-        text: 'heartbeat healthy but no pid known — the feed was started outside this console',
-      }
-    default:
-      return { tone: 'neutral', text: 'no feed process alive' }
-  }
-}
-
+/**
+ * Each feed's process beside its own heartbeat. Start, Stop and each feed's
+ * output live in "Feeds by connector" above; this is the second opinion: what
+ * the feed itself last reported, and anything the two disagree about.
+ */
 function DiagnosticsPanel() {
-  const [open, setOpen] = useState(false)
   const statuses = useIngestorStatuses()
-  const feed = useFeedProcess()
-  const logs = useIngestorLogs(open)
-
-  const feeds = statuses.data ?? []
-  // Defensive: an API build without /api/Ingestor/logs answers with the SPA
-  // fallback HTML (a string) — never crash on it.
-  const logLines = Array.isArray(logs.data) ? logs.data : []
-  const summary = processSummary(feed)
-
-  let emptyOutput: string
-  switch (feed.kind) {
-    case 'adopted':
-      emptyOutput =
-        'The ingestor was not launched by this API instance (an earlier instance or a terminal started it), so its output is not captured here. ' +
-        `It keeps writing to logs/engine/ingestor-${feed.processId ?? '<pid>'}.log on the API host.`
-      break
-    case 'external':
-      emptyOutput =
-        'The ingestor is running outside this console — its output goes to the terminal that started it.'
-      break
-    default:
-      emptyOutput =
-        'No process output yet — appears after the feed is started from this console (requires the updated API).'
-  }
+  const feeds = useFeeds()
+  const diagnostics = feedDiagnostics(feeds.data, statuses.data, Date.now())
 
   return (
-    <Panel
-      title="Feed diagnostics"
-      actions={
-        <button className="btn btn--ghost btn--sm" onClick={() => setOpen(!open)}>
-          {open ? 'Hide' : 'Show'}
-        </button>
-      }
-    >
-      {feed.loaded && (
-        <p className="inline-form" style={{ margin: '0 0 8px', gap: 8, fontSize: 12.5 }}>
-          <Badge tone={summary.tone}>{feed.kind}</Badge>
-          <span className="muted">{summary.text}</span>
-        </p>
-      )}
-      <div className="chip-row">
-        {feeds.map((s) => (
-          <span key={s.sourceName} className="inline-form" style={{ gap: 6 }}>
-            <b className="mono" style={{ fontSize: 12 }}>{s.sourceName}</b>
-            <Badge tone={s.isHealthy ? 'pos' : 'warn'}>
-              {s.isHealthy ? s.status : `${s.status} · stale`}
-            </Badge>
-            <span className="faint" style={{ fontSize: 12 }}>
-              beat {formatAge(s.lastHeartbeatUtc)} · {s.currentSubscribedSymbols.length} symbols
-            </span>
-          </span>
-        ))}
-        {feeds.length === 0 && <span className="faint">No heartbeat recorded yet.</span>}
-      </div>
-      {feeds.some((s) => s.lastError) && (
-        <p className="neg" style={{ margin: '8px 0 0', fontSize: 12.5 }}>
-          {feeds.find((s) => s.lastError)?.lastError}
-        </p>
-      )}
-
-      {open && (
-        <div style={{ marginTop: 12 }}>
-          <div className="console">
-            <div className="console__bar">
-              <span className="console__dot console__dot--r" />
-              <span className="console__dot console__dot--y" />
-              <span className="console__dot console__dot--g" />
-              <span className="console__title">Ingestor process output</span>
-            </div>
-            <div className={`console__body ${logLines.length === 0 ? 'faint' : ''}`}>
-              {logLines.length === 0
-                ? emptyOutput
-                : logLines.map((line, i) => <div key={i}>{line}</div>)}
-            </div>
+    <Panel title="Feed diagnostics">
+      {feeds.isPending || statuses.isPending ? (
+        <p className="muted small-note">Checking…</p>
+      ) : (
+        <>
+          <div className="tablewrap">
+            <table className="table diag-table">
+              <thead>
+                <tr>
+                  <th>Feed</th>
+                  <th>Process</th>
+                  <th>Heartbeat</th>
+                  <th className="r">Symbols</th>
+                  <th>Last error</th>
+                </tr>
+              </thead>
+              <tbody>
+                {diagnostics.rows.map((row) => (
+                  <tr key={row.key}>
+                    <td>
+                      <b>{row.name}</b> <span className="mono faint">{row.key}</span>
+                    </td>
+                    <td className={row.processTone}>{row.process}</td>
+                    <td>
+                      {row.heartbeat ? (
+                        <>
+                          <Badge tone={row.heartbeatTone === 'muted' ? 'neutral' : row.heartbeatTone}>
+                            {row.mode === 'recap' ? `Recap · ${row.heartbeat}` : row.heartbeat}
+                          </Badge>{' '}
+                          <span className="faint">{formatAge(row.heartbeatUtc)}</span>
+                        </>
+                      ) : (
+                        <span className="faint">none in the last 30 min</span>
+                      )}
+                    </td>
+                    <td className="r">{row.symbols ?? <span className="faint">—</span>}</td>
+                    <td className={row.error ? 'neg' : 'faint'}>{row.error ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </div>
+          {diagnostics.rows
+            .filter((row) => row.note)
+            .map((row) => (
+              <p key={`note-${row.key}`} className="small-note warn" style={{ margin: '8px 0 0' }}>
+                <b>{row.name}:</b> {row.note}
+              </p>
+            ))}
+          {diagnostics.older.length > 0 && (
+            <p className="small-note faint" style={{ margin: '8px 0 0' }}>
+              Older heartbeats, not describing anything running now:{' '}
+              {diagnostics.older
+                .map((o) => `${o.sourceName} (${o.status.toLowerCase()}, ${formatAge(o.lastHeartbeatUtc)})`)
+                .join(' · ')}
+            </p>
+          )}
+        </>
       )}
     </Panel>
   )
@@ -925,11 +778,11 @@ export function LiveFeedsPage() {
         <div>
           <h1 className="page__title">Live feeds</h1>
           <p className="page__subtitle">
-            Broker websocket → watchlist subscriptions → live quotes, ticks and bars, and the
-            chain poller that records open interest alongside them.
+            Each connector's websocket → watchlist subscriptions → live quotes, ticks and bars, and the
+            chain recording that captures open interest alongside them. Start and stop feeds under Feeds by
+            connector.
           </p>
         </div>
-        <FeedControlButton />
       </header>
 
       <IndexTickerRow />

@@ -161,8 +161,9 @@ export function FeedsPanel() {
             </table>
           </div>
           <p className="small-note" style={{ marginBottom: 0 }}>
-            Each feed stamps its connector key on every tick it stores, so two can run side by side and be
-            compared.
+            Run one feed at a time. Every tick carries its connector&apos;s key, but 1-minute bars and latest
+            quotes are kept per symbol, so two feeds on the same contracts would build one bar from two vendors&apos;
+            volume counts.
           </p>
         </>
       )}

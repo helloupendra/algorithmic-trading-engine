@@ -19,7 +19,7 @@
  * session is not "closed", and an unknown feed list is not "no feed".
  */
 
-import type { IngestorStatus, LiveFeed, MarketSessionInfo } from './types'
+import type { IngestorStatus, LiveFeed, MarketSessionInfo, Provider } from './types'
 
 export type PulseTone = 'pos' | 'neg' | 'warn' | 'live' | 'idle'
 
@@ -237,4 +237,120 @@ export function feedPulses(
   }
 
   return pulses
+}
+
+// --- connectors ---------------------------------------------------------------
+
+export type ConnectorState = 'ready' | 'sign-in' | 'expired' | 'not-set-up'
+
+export interface ConnectorLine {
+  key: string
+  name: string
+  /** "Broker + data", "Data". */
+  role: string
+  state: ConnectorState
+  /** What the session is, in words: "signed in · valid until 16 Sep, 06:00 IST". */
+  session: string
+  /** "feed running", "feed off", or null for a connector with no live feed. */
+  feed: string | null
+  feedRunning: boolean
+}
+
+export interface ConnectorsSummary {
+  pulse: Pulse
+  lines: ConnectorLine[]
+  /** Names of the feeds running now. */
+  liveFeeds: string[]
+}
+
+function dateTimeIst(iso: string): string {
+  return new Date(iso).toLocaleString('en-IN', { ...IST, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+}
+
+/**
+ * One pill for every broker and data vendor, instead of one vendor's name.
+ *
+ * With FYERS alone, "FYERS linked" was the whole story. With FYERS, Dhan and
+ * TrueData it is a third of it, and three pills would crowd out the market. So
+ * the pill names only what needs a hand — a sign-in, or two feeds running at
+ * once — and the full list opens under it.
+ *
+ * Connectors nobody set up are listed but never raise the alarm: a vendor not
+ * added is a choice, not a fault.
+ */
+export function connectorsSummary(
+  providers: Provider[] | undefined,
+  feeds: LiveFeed[] | undefined,
+  tradingDay: boolean,
+  nowMs: number,
+): ConnectorsSummary | null {
+  if (!providers) return null
+  const lines: ConnectorLine[] = providers
+    .filter((p) => p.isInstalled && p.auth !== 'None')
+    .map((p) => {
+      const feed = feeds?.find((f) => f.key === p.key)
+      const role = p.kind === 'Both' ? 'Broker + data' : p.kind === 'Execution' ? 'Broker' : 'Data'
+      let state: ConnectorState
+      let session: string
+      if (!p.isConfigured) {
+        state = 'not-set-up'
+        session = 'not set up'
+      } else if (p.auth === 'ApiKey') {
+        state = 'ready'
+        session = 'signs in automatically'
+      } else {
+        const expires = p.session.expiresUtc ? Date.parse(p.session.expiresUtc) : null
+        if (!p.session.isConnected) {
+          state = 'sign-in'
+          session = 'not signed in'
+        } else if ((expires != null && expires <= nowMs) || p.session.needsReconnect) {
+          state = 'expired'
+          session = expires != null && expires <= nowMs
+            ? `token expired ${dateTimeIst(p.session.expiresUtc!)} IST`
+            : 'token is from a previous day'
+        } else {
+          state = 'ready'
+          session = p.session.expiresUtc ? `signed in · valid until ${dateTimeIst(p.session.expiresUtc)} IST` : 'signed in'
+        }
+      }
+      return {
+        key: p.key,
+        name: p.displayName,
+        role,
+        state,
+        session,
+        feed: feed ? (feed.isRunning ? 'feed running' : 'feed off') : null,
+        feedRunning: feed?.isRunning === true,
+      }
+    })
+
+  const configured = lines.filter((l) => l.state !== 'not-set-up')
+  const needHand = configured.filter((l) => l.state === 'sign-in' || l.state === 'expired')
+  const liveFeeds = lines.filter((l) => l.feedRunning).map((l) => l.name)
+  const detail = lines.map((l) => `${l.name}: ${l.session}${l.feed ? ` · ${l.feed}` : ''}`).join('\n')
+
+  let pulse: Pulse
+  if (needHand.length > 0) {
+    const label = needHand.length === 1 ? `${needHand[0].name} sign-in needed` : `${needHand.length} connectors need sign-in`
+    // A missing sign-in is an alarm only on a day the market trades.
+    pulse = { key: 'connectors', label, tone: tradingDay ? 'neg' : 'idle', title: detail }
+  } else if (liveFeeds.length > 1) {
+    // Bars and latest quotes are kept per symbol, not per vendor: two feeds on
+    // the same contracts build one bar from two vendors' volume counters.
+    pulse = {
+      key: 'connectors',
+      label: `${liveFeeds.length} feeds running`,
+      tone: 'warn',
+      title: `${liveFeeds.join(' and ')} are both feeding live data; keep one running.\n${detail}`,
+    }
+  } else {
+    pulse = {
+      key: 'connectors',
+      label: configured.length === 0 ? 'No connectors' : `Connectors ${configured.length}/${configured.length} ready`,
+      tone: configured.length === 0 ? 'warn' : 'pos',
+      title: detail,
+    }
+  }
+
+  return { pulse, lines, liveFeeds }
 }
