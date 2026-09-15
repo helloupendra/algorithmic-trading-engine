@@ -403,7 +403,8 @@ class Watcher:
         self._counters: dict[int, tuple[int, int]] = {}
         # runId -> monotonic time of the last /live call
         self._last_detail: dict[int, float] = {}
-        self._ingestor_running: bool | None = None
+        # connector key -> (display name, running) as last seen; None until read.
+        self._feeds: dict[str, tuple[str, bool]] | None = None
         self._baselined = False
         self.detail_calls = 0
 
@@ -442,11 +443,28 @@ class Watcher:
         last = self._last_detail.get(run_id)
         return last is None or (time.monotonic() - last) >= self._reconcile_seconds
 
-    def _fetch_ingestor(self) -> bool | None:
+    def _fetch_feeds(self) -> dict[str, tuple[str, bool]] | None:
+        """
+        Every live feed, by connector key: (display name, running).
+
+        Read from /api/Feeds, which lists each connector's feed. Until
+        2026-09-15 this read /api/Ingestor/status, which is the FYERS feed
+        alone: starting or stopping Dhan's feed sent nothing to Telegram.
+        An API too old for /api/Feeds still answers the ingestor endpoint,
+        read as the FYERS feed.
+        """
+        feeds = self._api.get("/api/Feeds")
+        if isinstance(feeds, list):
+            result = {}
+            for feed in feeds:
+                key = str(feed.get("key") or "").strip()
+                if key:
+                    result[key] = (str(feed.get("displayName") or key), bool(feed.get("isRunning")))
+            return result
         status = self._api.get("/api/Ingestor/status")
         if not isinstance(status, dict) or "isRunning" not in status:
             return None
-        return bool(status["isRunning"])
+        return {"fyers": ("FYERS", bool(status["isRunning"]))}
 
     # -- baseline ----------------------------------------------------------- #
     def baseline(self) -> dict[str, Any]:
@@ -458,7 +476,7 @@ class Watcher:
             if run.get("isActive"):
                 live = self._fetch_live(run_id)
                 self._positions[run_id] = self._position_states(live)
-        self._ingestor_running = self._fetch_ingestor()
+        self._feeds = self._fetch_feeds()
         self._baselined = True
 
         active = [r for r in runs.values() if r.get("isActive")]
@@ -472,7 +490,7 @@ class Watcher:
                 sum(1 for status in legs.values() if status.lower() == "open")
                 for legs in self._positions.values()
             ),
-            "ingestor": self._ingestor_running,
+            "feeds": self._feeds,
         }
 
     @staticmethod
@@ -498,7 +516,7 @@ class Watcher:
             return  # a transient API problem; try again next tick
 
         self._diff_runs(runs)
-        self._diff_ingestor()
+        self._diff_feeds()
         self._runs = runs
 
     # -- runs --------------------------------------------------------------- #
@@ -760,38 +778,49 @@ class Watcher:
 
 
     # -- market data --------------------------------------------------------- #
-    def _diff_ingestor(self) -> None:
-        running = self._fetch_ingestor()
-        if running is None or running == self._ingestor_running:
-            return
-        was = self._ingestor_running
-        self._ingestor_running = running
-
-        if was is None:
+    def _diff_feeds(self) -> None:
+        """One message per feed that started or stopped since the last tick."""
+        feeds = self._fetch_feeds()
+        if feeds is None:
+            return  # a transient API problem; try again next tick
+        before = self._feeds
+        self._feeds = feeds
+        if before is None:
             return  # first reading is the baseline, not a transition
 
-        if running:
-            title = "Market data started"
-            body = (
-                "📡 <b>Market data started</b>\n\n"
-                "The tick ingestor is running and feeding Redis."
-            )
-            severity = "success"
-        else:
-            title = "Market data stopped"
-            body = (
-                "🛑 <b>Market data stopped</b>\n\n"
-                "The tick ingestor is no longer running. Live quotes and any "
-                "running strategy will go stale until it is started again."
-            )
-            severity = "warning"
+        running_now = [name for name, running in feeds.values() if running]
+        at = ist(datetime.now(timezone.utc).isoformat())
 
-        self._publisher.publish(
-            title=title,
-            message=f"{body}\nAt: {ist(datetime.now(timezone.utc).isoformat())}",
-            source="process",
-            severity=severity,
-        )
+        for key, (name, running) in feeds.items():
+            was = before.get(key)
+            if was is None or was[1] == running:
+                continue  # a feed first seen now, or unchanged
+
+            if running:
+                title = f"{name} feed started"
+                lines = [f"📡 <b>{esc(name)} feed started</b>", "", f"Live data from {esc(name)} is flowing into the platform."]
+                severity = "success"
+                if len(running_now) > 1:
+                    # Bars and latest quotes are kept per symbol, not per vendor.
+                    lines += ["", f"⚠️ {len(running_now)} feeds are running ({esc(', '.join(running_now))}). "
+                                  "Keep one: two feeds on the same contracts build one bar from two vendors' volume."]
+                    severity = "warning"
+            else:
+                title = f"{name} feed stopped"
+                lines = [f"🛑 <b>{esc(name)} feed stopped</b>", ""]
+                if running_now:
+                    lines.append(f"Still feeding: {esc(', '.join(running_now))}.")
+                else:
+                    lines.append("No feed is running now. Live quotes and any running strategy will go stale "
+                                 "until one is started.")
+                severity = "warning"
+
+            self._publisher.publish(
+                title=title,
+                message="\n".join(lines) + f"\nAt: {at}",
+                source="process",
+                severity=severity,
+            )
 
 
 # --------------------------------------------------------------------------- #
@@ -910,13 +939,14 @@ def startup_summary(snapshot: dict[str, Any]) -> str:
     lines = [
         "🔔 <b>Notifier online</b>",
         "",
-        "Watching for: strategy start/stop, position open/close, market data start/stop.",
+        "Watching for: strategy start/stop, position open/close, each live feed's start/stop.",
         "",
         f"Live runs now: <b>{snapshot['active']}</b>   ·   open positions: <b>{snapshot['open_positions']}</b>",
     ]
-    ingestor = snapshot.get("ingestor")
-    if ingestor is not None:
-        lines.append(f"Market data: {'running' if ingestor else 'stopped'}")
+    feeds = snapshot.get("feeds")
+    if feeds:
+        lines.append("Market data: " + " · ".join(
+            f"{esc(name)} {'running' if running else 'stopped'}" for name, running in feeds.values()))
 
     for run in snapshot.get("active_runs", []):
         lines.append(
@@ -1010,11 +1040,11 @@ def main(argv: list[str] | None = None) -> int:
 
     snapshot = watcher.baseline()
     log.info(
-        "baseline: %s runs (%s live), %s open positions, ingestor=%s",
+        "baseline: %s runs (%s live), %s open positions, feeds=%s",
         snapshot["runs"],
         snapshot["active"],
         snapshot["open_positions"],
-        snapshot["ingestor"],
+        {key: running for key, (_, running) in (snapshot["feeds"] or {}).items()},
     )
 
     if not args.quiet_start:
