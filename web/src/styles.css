@@ -3203,35 +3203,6 @@ a.pill:hover { border-color: var(--line-strong); }
 
 
 /* --- open interest series --------------------------------------------------- */
-.oi-strikes {
-  display: flex;
-  gap: 4px;
-  overflow-x: auto;
-  padding: 6px 2px;
-  margin-bottom: 10px;
-  border-bottom: 1px solid var(--line);
-}
-.oi-strike {
-  flex: 0 0 auto;
-  padding: 5px 11px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--bg1);
-  color: var(--text-2);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  cursor: pointer;
-  transition: border-color 0.12s ease, color 0.12s ease;
-}
-.oi-strike:hover { border-color: var(--brand-line); color: var(--text); }
-.oi-strike--atm { color: var(--text); border-color: var(--line-strong); }
-.oi-strike--on {
-  background: var(--brand);
-  border-color: var(--brand);
-  color: #fff;
-  font-weight: 600;
-}
-
 .oi-chart { width: 100%; height: auto; display: block; overflow: visible; }
 .oi-grid { stroke: var(--line-soft); stroke-width: 1; }
 /* The zero line is the reading on a change chart, so it is drawn, not implied. */

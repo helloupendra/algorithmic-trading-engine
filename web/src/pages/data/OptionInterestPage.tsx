@@ -22,8 +22,8 @@ import { useMemo, useState } from 'react'
 import { useLiveOptionChain, useOptionChainSeries } from '../../lib/queries'
 import type { OptionChainSeries, OptionChainSeriesPoint } from '../../lib/types'
 import { EmptyState, InlineError, Panel, QueryBoundary } from '../../components/ui'
-
-const UNDERLYINGS = ['BANKNIFTY', 'NIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX']
+// The same underlyings the option chain records, so every chain has its OI view.
+import { UNDERLYINGS } from '../../lib/optionChain'
 
 type View = 'oiChange' | 'oiLevel' | 'price' | 'volume'
 
@@ -178,8 +178,12 @@ export function OptionInterestPage({ asOfUtc }: { asOfUtc?: string } = {}) {
   const chain = useLiveOptionChain(underlying, undefined, asOfUtc)
 
   // Default to the money: it is the strike anyone opens this page to look at.
+  // A strike picked earlier that is no longer listed (the chain moved on, or a
+  // new expiry) falls back to the money rather than showing nothing.
   const strikes = chain.data?.strikes.map((s) => s.strikePrice) ?? []
-  const selected = strike ?? chain.data?.atTheMoneyStrike ?? strikes[0] ?? null
+  const selected =
+    (strike != null && strikes.includes(strike) ? strike : null) ?? chain.data?.atTheMoneyStrike ?? strikes[0] ?? null
+  const selectedIndex = selected != null ? strikes.indexOf(selected) : -1
 
   const series = useOptionChainSeries(underlying, selected, chain.data?.expiryDate, asOfUtc)
 
@@ -218,21 +222,55 @@ export function OptionInterestPage({ asOfUtc }: { asOfUtc?: string } = {}) {
             </EmptyState>
           ) : (
             <>
-              <div className="oi-strikes">
-                {data.strikes.map((s) => (
-                  <button
-                    key={s.strikePrice}
-                    type="button"
-                    className={`oi-strike ${s.strikePrice === selected ? 'oi-strike--on' : ''} ${s.isAtTheMoney ? 'oi-strike--atm' : ''}`}
-                    onClick={() => setStrike(s.strikePrice)}
-                  >
-                    {s.strikePrice}
+              {/* A dropdown, not a row of every strike: a BANKNIFTY chain lists a hundred-odd
+                  strikes, and the row ran off the screen. The arrows step one strike either way. */}
+              <div className="oi-strike-picker">
+                <span className="oc-control__label">Strike</span>
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  aria-label="Previous strike"
+                  disabled={selectedIndex <= 0}
+                  onClick={() => setStrike(strikes[selectedIndex - 1])}
+                >
+                  ‹
+                </button>
+                <select
+                  className="field__input field__input--sm"
+                  aria-label="Strike"
+                  value={selected ?? ''}
+                  onChange={(e) => setStrike(Number(e.target.value))}
+                >
+                  {data.strikes.map((s) => (
+                    <option key={s.strikePrice} value={s.strikePrice}>
+                      {s.strikePrice.toLocaleString('en-IN')}
+                      {s.isAtTheMoney ? ' · ATM' : ''}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  aria-label="Next strike"
+                  disabled={selectedIndex < 0 || selectedIndex >= strikes.length - 1}
+                  onClick={() => setStrike(strikes[selectedIndex + 1])}
+                >
+                  ›
+                </button>
+                {data.atTheMoneyStrike != null && selected !== data.atTheMoneyStrike && (
+                  <button type="button" className="btn btn--ghost btn--sm" onClick={() => setStrike(data.atTheMoneyStrike)}>
+                    Back to ATM {data.atTheMoneyStrike.toLocaleString('en-IN')}
                   </button>
-                ))}
+                )}
+                {data.spotPrice > 0 && (
+                  <span className="faint">
+                    {underlying} {data.spotPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                  </span>
+                )}
               </div>
 
               <Panel
-                title={`${underlying} · ${selected ?? '—'}`}
+                title={`${underlying} · ${selected != null ? selected.toLocaleString('en-IN') : '—'}${selected === data.atTheMoneyStrike ? ' (ATM)' : ''}`}
                 actions={
                   <div className="chip-row">
                     {VIEWS.map((v) => (
