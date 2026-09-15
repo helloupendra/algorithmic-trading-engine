@@ -93,11 +93,18 @@ class FakeApi:
     def __init__(self):
         self.runs = []
         self.live = {}
+        # connector key -> running; None serves an API too old for /api/Feeds.
+        self.feeds = {"fyers": False, "dhan": True}
         self.ingestor = True
 
     def get(self, path):
         if path == "/api/Strategy/runs":
             return self.runs
+        if path == "/api/Feeds":
+            if self.feeds is None:
+                return "<!doctype html>"  # the SPA fallback an old API answers with
+            names = {"fyers": "FYERS", "dhan": "Dhan", "truedata": "TrueData"}
+            return [{"key": k, "displayName": names.get(k, k), "isRunning": v} for k, v in self.feeds.items()]
         if path == "/api/Ingestor/status":
             return {"isRunning": self.ingestor}
         if "/live" in path:
@@ -216,21 +223,53 @@ class WatcherTransitionTests(unittest.TestCase):
         stopped = [t for t in self.titles() if t.startswith("Strategy stopped")]
         self.assertEqual(len(stopped), 1, stopped)
 
-    def test_market_data_stop_and_start(self):
-        self.api.ingestor = False
+    def test_every_connectors_feed_is_announced_by_name(self):
+        # 2026-09-15: stopping and starting Dhan's feed sent nothing, because
+        # only the FYERS ingestor was watched.
+        self.api.feeds["dhan"] = False
         self.watcher.tick()
-        self.assertIn("Market data stopped", self.titles())
+        stopped = [e for e in self.publisher.events if e["title"] == "Dhan feed stopped"]
+        self.assertEqual(len(stopped), 1)
+        self.assertIn("No feed is running now", stopped[0]["message"])
 
-        self.api.ingestor = True
+        self.api.feeds["dhan"] = True
         self.watcher.tick()
-        self.assertIn("Market data started", self.titles())
+        started = [e for e in self.publisher.events if e["title"] == "Dhan feed started"]
+        self.assertEqual(len(started), 1)
+        self.assertEqual("success", started[0]["severity"])
 
-    def test_first_ingestor_reading_is_a_baseline_not_a_transition(self):
+    def test_a_second_feed_starting_warns_and_a_stop_names_what_still_feeds(self):
+        self.api.feeds["fyers"] = True
+        self.watcher.tick()
+        started = [e for e in self.publisher.events if e["title"] == "FYERS feed started"][0]
+        self.assertEqual("warning", started["severity"])
+        self.assertIn("2 feeds are running", started["message"])
+
+        self.api.feeds["fyers"] = False
+        self.watcher.tick()
+        stopped = [e for e in self.publisher.events if e["title"] == "FYERS feed stopped"][0]
+        self.assertIn("Still feeding: Dhan", stopped["message"])
+
+    def test_unchanged_feeds_and_a_new_connector_are_silent(self):
+        self.api.feeds["truedata"] = False
+        self.watcher.tick()
+        self.assertEqual([t for t in self.titles() if "feed" in t], [])
+
+    def test_first_feed_reading_is_a_baseline_not_a_transition(self):
         watcher = tn.Watcher(FakeApi(), RecordingPublisher())
-        watcher._ingestor_running = None
-        watcher._api.ingestor = False
-        watcher._diff_ingestor()
+        watcher._feeds = None
+        watcher._api.feeds["dhan"] = False
+        watcher._diff_feeds()
         self.assertEqual(watcher._publisher.events, [])
+
+    def test_an_api_without_feeds_is_read_through_the_ingestor(self):
+        api = FakeApi()
+        api.feeds = None
+        watcher = tn.Watcher(api, RecordingPublisher())
+        watcher.baseline()
+        api.ingestor = False
+        watcher._diff_feeds()
+        self.assertEqual(["FYERS feed stopped"], [e["title"] for e in watcher._publisher.events])
 
 
 class ForwarderSuppressionTests(unittest.TestCase):
@@ -256,6 +295,8 @@ class ForwarderSuppressionTests(unittest.TestCase):
             ({"Title": "Kill switch engaged", "Source": "risk"}),
             ({"Title": "Trading resumed", "Source": "risk"}),
             ({"Title": "Market data stopped", "Source": "process"}),
+            ({"Title": "Dhan feed stopped", "Source": "process"}),
+            ({"Title": "FYERS feed started", "Source": "process"}),
         ]
         for payload in keep:
             self.assertFalse(tn.is_superseded(payload), payload["Title"])
