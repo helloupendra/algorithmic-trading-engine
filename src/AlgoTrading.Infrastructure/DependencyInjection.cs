@@ -158,14 +158,12 @@ public static class DependencyInjection
         services.AddScoped<IMarketPulseService, MarketPulseService>();
         services.AddScoped<IOptionHistoryBackfillService, OptionHistoryBackfillService>();
 
+        // Tick history reads live_ticks. The market_ticks copy (a second write of
+        // every tick through a queue) was removed on 2026-09-15: same rows, minus
+        // the batches its writer dropped and without the vendor key, and the
+        // verified Drive archive is now the long-term record.
         services.AddScoped<IMarketTickArchiveService, MarketTickArchiveService>();
-
-
-        services.AddSingleton<MarketTickArchiveQueue>();
-        services.AddSingleton<IMarketTickArchiveQueue>(sp => sp.GetRequiredService<MarketTickArchiveQueue>());
         services.AddScoped<OptionChainService>();
-
-        services.AddHostedService<MarketTickBatchWriterService>();
 
         // Raw ticks are a debugging aid, not the record — and nothing was ever
         // deleting them. A full disk stops ingestion, the API and every runner

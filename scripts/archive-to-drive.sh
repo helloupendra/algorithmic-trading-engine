@@ -3,7 +3,7 @@
 # 1-minute bars to Google Drive, verified (scripts/archive_to_drive.py).
 #
 # Run by cron at 06:00 IST, after the UTC day has ended and before the 08:45
-# morning job (see docs/modules/data_archive.md for the crontab line).
+# morning job (setup notes are kept outside the public repo).
 # ARCHIVE_DROP_OLDER_THAN_DAYS in .env, when set, also frees the server's disk
 # of verified days older than that; unset, nothing is ever deleted.
 set -uo pipefail

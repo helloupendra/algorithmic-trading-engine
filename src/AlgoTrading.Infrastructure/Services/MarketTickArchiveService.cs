@@ -1,58 +1,35 @@
 // src/AlgoTrading.Infrastructure/Services/MarketTickArchiveService.cs
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.LiveData;
-using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
 namespace AlgoTrading.Infrastructure.Services;
 
+/// <summary>
+/// A symbol's ticks over a time range (GET /api/LiveData/ticks/history).
+/// </summary>
+/// <remarks>
+/// Read from <c>live_ticks</c>. Until 2026-09-15 every tick was written a second
+/// time, through a queue, into <c>market_ticks</c>, and this read that copy.
+/// Compared day by day the copy held the same ticks minus the batches its writer
+/// had dropped (80 on 2026-09-10, 24 on 2026-09-15) and without the vendor key,
+/// at the cost of about half the database's disk. Ticks older than the database
+/// keeps are in the verified Google Drive archive (scripts/archive_to_drive.py).
+/// </remarks>
 public class MarketTickArchiveService : IMarketTickArchiveService
 {
+    /// <summary>
+    /// How far a tick's exchange stamp may sit from the moment it was stored. A
+    /// recap replays the morning in the evening, so it is hours, never days.
+    /// </summary>
+    private static readonly TimeSpan StampWindow = TimeSpan.FromDays(1);
+
     private readonly TradingDbContext _dbContext;
 
     public MarketTickArchiveService(TradingDbContext dbContext)
     {
         _dbContext = dbContext;
-    }
-
-    public async Task ArchiveAsync(
-        MarketTickArchiveRequest request,
-        CancellationToken cancellationToken = default)
-    {
-        if (string.IsNullOrWhiteSpace(request.Symbol))
-            throw new InvalidOperationException("Symbol is required.");
-
-        var entity = new MarketTick
-        {
-            Symbol = request.Symbol.Trim().ToUpperInvariant(),
-            DataType = string.IsNullOrWhiteSpace(request.DataType)
-                ? "symbolUpdate"
-                : request.DataType.Trim(),
-
-            ExchangeTimestampUtc = request.ExchangeTimestampUtc,
-
-            LastTradedPrice = request.LastTradedPrice,
-            BidPrice = request.BidPrice,
-            AskPrice = request.AskPrice,
-
-            BidSize = request.BidSize,
-            AskSize = request.AskSize,
-
-            Open = request.Open,
-            High = request.High,
-            Low = request.Low,
-            PrevClose = request.PrevClose,
-
-            Volume = request.Volume,
-            RawPayload = request.RawPayload ?? string.Empty,
-            SourceKey = request.SourceKey ?? string.Empty,
-
-            ReceivedUtc = DateTime.UtcNow
-        };
-
-        await _dbContext.MarketTicks.AddAsync(entity, cancellationToken);
-        await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<MarketTickDto>> GetRangeAsync(
@@ -72,9 +49,13 @@ public class MarketTickArchiveService : IMarketTickArchiveService
             take = 10000;
 
         string normalized = symbol.Trim().ToUpperInvariant();
+        DateTime storedFrom = fromUtc - StampWindow, storedTo = toUtc + StampWindow;
 
-        var rows = await _dbContext.MarketTicks
+        var rows = await _dbContext.LiveTicks
             .AsNoTracking()
+            // The stored-time bound lets TimescaleDB skip every chunk outside the
+            // range; without it this would read the whole hypertable.
+            .Where(x => x.ReceivedUtc >= storedFrom && x.ReceivedUtc <= storedTo)
             .Where(x =>
                 x.Symbol == normalized &&
                 (x.ExchangeTimestampUtc ?? x.ReceivedUtc) >= fromUtc &&

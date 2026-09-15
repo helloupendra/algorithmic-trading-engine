@@ -43,6 +43,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
@@ -58,6 +59,16 @@ DB_NAME = os.environ.get("ARCHIVE_DB_NAME", "algotrading")
 #: rclone remote and folder. A remote made with scope drive.file can see only
 #: the files it created, never the rest of the owner's Drive.
 REMOTE = os.environ.get("ARCHIVE_REMOTE", "openfno-drive:openfno-archive")
+
+#: Gentle with Drive's API. Without our own OAuth client, rclone shares Google's
+#: per-minute query quota with every rclone user, and on 2026-09-15 uploads hit
+#: "Quota exceeded ... Requests per minute" (403). Few requests a second, and
+#: many low-level retries, turn that from a failed file into a slow one.
+RCLONE_FLAGS = ["--tpslimit", "2", "--retries", "5", "--low-level-retries", "30"]
+
+#: Whole-file attempts before a (table, day) is reported failed; the next run tries again.
+ATTEMPTS = int(os.environ.get("ARCHIVE_ATTEMPTS", "3"))
+RETRY_WAIT_SECONDS = int(os.environ.get("ARCHIVE_RETRY_WAIT_SECONDS", "90"))
 
 #: What is archived, and the column that places a row in a day.
 #: market_ticks is not here: it is a second copy of every live tick (same rows,
@@ -144,7 +155,7 @@ def append_manifest(entry: dict) -> None:
 
 
 def rclone(*args: str, stdin=None, capture=True) -> subprocess.CompletedProcess:
-    return subprocess.run(["rclone", *args], input=stdin, capture_output=capture, text=True)
+    return subprocess.run(["rclone", *RCLONE_FLAGS, *args], input=stdin, capture_output=capture, text=True)
 
 
 def say(message: str) -> None:
@@ -201,7 +212,7 @@ def archive_one(table: str, column: str, day: date, dry_run: bool) -> Optional[d
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     upload = subprocess.Popen(
-        ["rclone", "rcat", "--drive-chunk-size", "64M", target],
+        ["rclone", *RCLONE_FLAGS, "rcat", "--drive-chunk-size", "64M", target],
         stdin=subprocess.PIPE, stderr=subprocess.PIPE,
     )
 
@@ -238,7 +249,7 @@ def archive_one(table: str, column: str, day: date, dry_run: bool) -> Optional[d
     # Proof 1: the bytes Drive holds are the bytes we sent.
     remote_md5 = (rclone("md5sum", target).stdout.split() or [""])[0]
     # Proof 2: the file reads back as a CSV with every row.
-    reader = subprocess.Popen(["rclone", "cat", target], stdout=subprocess.PIPE)
+    reader = subprocess.Popen(["rclone", *RCLONE_FLAGS, "cat", target], stdout=subprocess.PIPE)
     read_back = count_csv_rows(reader.stdout)
     reader.wait()
 
@@ -250,6 +261,32 @@ def archive_one(table: str, column: str, day: date, dry_run: bool) -> Optional[d
     say(f"{table} {day}: {size / 1e6:,.1f} MB, md5 {'matches' if remote_md5 == md5.hexdigest() else 'DIFFERS'}, "
         f"{read_back:,}/{rows:,} rows read back -> {'VERIFIED' if verified else 'NOT VERIFIED'}")
     return entry
+
+
+def retire_market_ticks(live_ticks_verified: set) -> None:
+    """
+    Drops what is left of the legacy market_ticks copy, one closed day at a time.
+
+    The API stopped writing it on 2026-09-15: it was a second copy of every
+    live tick, and compared row by row every one of its rows for 09-09 to 09-14
+    was in live_ticks (which also keeps the vendor key and the rows the copy's
+    writer dropped). A day is dropped only once live_ticks for it is verified on
+    Drive and holds at least as many rows, so nothing is lost if the copy ever
+    had something the live table did not.
+    """
+    days = psql("select distinct (range_start at time zone 'UTC')::date from timescaledb_information.chunks "
+                "where hypertable_name = 'market_ticks' order by 1").split()
+    for text in days:
+        if text not in live_ticks_verified:
+            continue
+        lo, hi = day_bounds(date.fromisoformat(text))
+        market = int(psql(f'select count(*) from market_ticks where "ReceivedUtc" >= \'{lo}\' and "ReceivedUtc" < \'{hi}\'') or 0)
+        live = int(psql(f'select count(*) from live_ticks where "ReceivedUtc" >= \'{lo}\' and "ReceivedUtc" < \'{hi}\'') or 0)
+        if market > live:
+            say(f"market_ticks {text}: keeping it, it has {market:,} rows and live_ticks {live:,}")
+            continue
+        psql(f"select count(*) from drop_chunks('market_ticks', older_than => '{hi}'::timestamptz, newer_than => '{lo}'::timestamptz)")
+        say(f"market_ticks {text}: dropped the legacy copy ({market:,} rows; live_ticks holds {live:,}, verified on Drive)")
 
 
 def drop_local(days: List[date], dry_run: bool) -> None:
@@ -278,7 +315,7 @@ def restore(table: str, day: date) -> None:
         raise SystemExit(f"{table} already holds {present:,} rows for {day}; refusing to load a second copy.")
     target = remote_path(REMOTE, table, day)
     say(f"restoring {target} into {table}")
-    cat = subprocess.Popen(["rclone", "cat", target], stdout=subprocess.PIPE)
+    cat = subprocess.Popen(["rclone", *RCLONE_FLAGS, "cat", target], stdout=subprocess.PIPE)
     load = subprocess.Popen(
         ["docker", "exec", "-i", DB_CONTAINER, "psql", "-U", DB_USER, "-d", DB_NAME, "-c",
          f"COPY {table} FROM STDIN WITH (FORMAT csv, HEADER)"],
@@ -309,7 +346,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     reach = rclone("mkdir", REMOTE)
     if reach.returncode != 0:
-        say(f"rclone cannot reach {REMOTE}: {reach.stderr.strip()[:200]} (set it up first: docs/modules/data_archive.md)")
+        say(f"rclone cannot reach {REMOTE}: {reach.stderr.strip()[:200]} (set up the rclone remote first)")
         return 2
 
     now = datetime.now(timezone.utc)
@@ -330,16 +367,26 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     failures = 0
     for day, table, column in work:
-        try:
-            entry = archive_one(table, column, day, args.dry_run)
-            if entry is not None and not entry["verified"]:
+        for attempt in range(1, ATTEMPTS + 1):
+            try:
+                entry = archive_one(table, column, day, args.dry_run)
+                if entry is None or entry["verified"]:
+                    break
+                problem = "not verified"
+            except Exception as ex:  # one failed day must not stop the rest
+                problem = str(ex)
+            if attempt == ATTEMPTS:
                 failures += 1
-        except Exception as ex:  # one failed day must not stop the rest
-            failures += 1
-            say(f"FAILED {ex}")
+                say(f"FAILED {table} {day} after {ATTEMPTS} attempt(s): {problem[:300]}")
+            else:
+                say(f"retrying {table} {day} in {RETRY_WAIT_SECONDS}s (attempt {attempt} of {ATTEMPTS}): {problem[:200]}")
+                time.sleep(RETRY_WAIT_SECONDS)
 
     if not args.dry_run and MANIFEST.exists():
         rclone("copyto", str(MANIFEST), f"{REMOTE.rstrip('/')}/manifest.jsonl")
+
+    if not args.dry_run:
+        retire_market_ticks(verified_days(read_manifest()).get("live_ticks", set()))
 
     if args.drop_older_than is not None:
         cutoff = now.date() - timedelta(days=args.drop_older_than)

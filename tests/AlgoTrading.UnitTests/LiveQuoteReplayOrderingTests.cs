@@ -44,7 +44,7 @@ public class LiveQuoteReplayOrderingTests
             UpdatedUtc = StoredStamp,
         });
         db.SaveChanges();
-        return (new LiveDataService(db, new NoArchive(), new NoCatalog()), db);
+        return (new LiveDataService(db, new NoCatalog()), db);
     }
 
     private static UpsertLiveTickRequest Tick(bool isReplay) => new()
@@ -99,12 +99,6 @@ public class LiveQuoteReplayOrderingTests
         });
         await db.SaveChangesAsync();
         Assert.Equal(877.20m, Ltp(db));
-    }
-
-    private sealed class NoArchive : IMarketTickArchiveQueue
-    {
-        public ValueTask EnqueueAsync(MarketTickArchiveRequest request, CancellationToken cancellationToken = default)
-            => ValueTask.CompletedTask;
     }
 
     private sealed class NoCatalog : IProviderCatalog

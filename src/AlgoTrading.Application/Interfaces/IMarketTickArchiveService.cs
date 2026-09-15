@@ -5,10 +5,6 @@ namespace AlgoTrading.Application.Interfaces;
 
 public interface IMarketTickArchiveService
 {
-    Task ArchiveAsync(
-        MarketTickArchiveRequest request,
-        CancellationToken cancellationToken = default);
-
     Task<IReadOnlyList<MarketTickDto>> GetRangeAsync(
         string symbol,
         DateTime fromUtc,
