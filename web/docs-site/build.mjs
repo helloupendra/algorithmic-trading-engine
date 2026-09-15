@@ -53,6 +53,7 @@ const NAV = [
       { slug: 'modules/pattern-alerts', src: 'docs/modules/pattern_alerts.md', title: 'Candle pattern alerts' },
       { slug: 'modules/connectors', src: 'docs/modules/connectors_module.md', title: 'Connectors' },
       { slug: 'modules/dhan', src: 'docs/modules/dhan_connector.md', title: 'Dhan connector' },
+      { slug: 'modules/data-archive', src: 'docs/modules/data_archive.md', title: 'Data archive (Google Drive)' },
       { slug: 'modules/users', src: 'docs/modules/users_module.md', title: 'Users & access' },
       { slug: 'modules/strategy-packages', src: 'docs/modules/strategy_packages.md', title: 'Strategy packages' },
       { slug: 'modules/activity-log', src: 'docs/modules/activity_log.md', title: 'Activity log' },
