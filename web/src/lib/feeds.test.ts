@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { describeFeedState, feedsView } from './feeds'
-import type { LiveFeed } from './types'
+import { describeFeedState, feedDiagnostics, feedsView, meaningfulError } from './feeds'
+import type { IngestorStatus, LiveFeed } from './types'
 
 /**
  * The feeds panel must never offer Start on a guess.
@@ -68,5 +68,54 @@ describe('describeFeedState', () => {
     expect(describeFeedState(fyers)).toBe('Running (pid 4242)')
     expect(describeFeedState({ ...fyers, managed: false, source: 'adopted' })).toBe('Running (adopted, pid 4242)')
     expect(describeFeedState(truedata)).toBe('Stopped')
+  })
+})
+
+describe('feedDiagnostics', () => {
+  // 2026-09-15 07:50 IST: Dhan running, FYERS stopped, last night's TrueData recap row still in the table.
+  const now = Date.parse('2026-09-15T02:20:30Z')
+  const beat = (sourceName: string, at: string, extra: Partial<IngestorStatus> = {}): IngestorStatus => ({
+    sourceName,
+    status: 'Running',
+    lastHeartbeatUtc: at,
+    lastWatchlistRefreshUtc: at,
+    currentSubscribedSymbols: ['A', 'B'],
+    lastError: null,
+    updatedUtc: at,
+    isHealthy: true,
+    ...extra,
+  })
+  const dhan: LiveFeed = { key: 'dhan', displayName: 'Dhan', isRunning: true, managed: true, processId: 222061, source: 'managed' }
+  const fyersOff: LiveFeed = { ...fyers, isRunning: false, managed: false, processId: null, source: 'none' }
+  const heartbeats = [
+    beat('python-dhan-feed', '2026-09-15T02:20:19Z'),
+    beat('python-live-ingestor', '2026-09-15T02:17:32Z', { status: 'Disconnected', isHealthy: false, currentSubscribedSymbols: [] }),
+    beat('python-truedata-recap', '2026-09-14T09:00:55Z', { status: 'Disconnected', isHealthy: false, lastError: 'None None' }),
+  ]
+
+  it('joins each feed to its own heartbeat, never to any healthy one', () => {
+    const d = feedDiagnostics([fyersOff, truedata, dhan], heartbeats, now)
+    const byKey = Object.fromEntries(d.rows.map((r) => [r.key, r]))
+    expect(byKey.dhan).toMatchObject({ process: 'Running (pid 222061)', heartbeat: 'Running', heartbeatTone: 'pos', symbols: 2, note: null })
+    // Dhan's healthy heartbeat must not make FYERS look like it runs outside the console.
+    expect(byKey.fyers).toMatchObject({ process: 'Stopped', heartbeat: 'Disconnected · quiet', note: null })
+    expect(byKey.truedata).toMatchObject({ heartbeat: null, error: null })
+  })
+
+  it('moves heartbeats older than half an hour out of the rows', () => {
+    const d = feedDiagnostics([fyersOff, truedata, dhan], heartbeats, now)
+    expect(d.older.map((o) => o.sourceName)).toEqual(['python-truedata-recap'])
+  })
+
+  it('says when a heartbeat arrives with no process behind it', () => {
+    const d = feedDiagnostics([fyersOff], [beat('python-live-ingestor', '2026-09-15T02:20:25Z')], now)
+    expect(d.rows[0].note).toContain('started outside this console')
+  })
+
+  it('drops error text that says nothing', () => {
+    expect(meaningfulError('None None')).toBeNull()
+    expect(meaningfulError(' null ')).toBeNull()
+    expect(meaningfulError('')).toBeNull()
+    expect(meaningfulError('DH-901 Invalid_Authentication')).toBe('DH-901 Invalid_Authentication')
   })
 })

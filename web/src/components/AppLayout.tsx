@@ -1,22 +1,22 @@
 /**
  * The signed-in shell, v2: grouped sidebar navigation plus a sticky topbar
- * that keeps the three live health signals — market session, broker session,
- * ingestor heartbeat — visible on every screen. Navigation is built from the
+ * that keeps the live health signals — backend, market sessions, connectors,
+ * feeds — visible on every screen. Navigation is built from the
  * module registry and the user's role.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
-import type { BrokerSessionInfo } from '../lib/types'
 import {
   useBackendStatus,
-  useBrokerSession,
   useFeeds,
   useIngestorStatuses,
   useMarketSession,
+  useProviders,
 } from '../lib/queries'
-import { calendarPulse, feedPulses, marketPulses, recapVendors } from '../lib/pulse'
+import { calendarPulse, connectorsSummary, feedPulses, marketPulses, recapVendors } from '../lib/pulse'
+import type { ConnectorState } from '../lib/pulse'
 import {
   BACKTESTING_SECTIONS,
   DATA_SECTIONS,
@@ -71,23 +71,91 @@ function StatusPill({
   )
 }
 
-/**
- * A token that expired is a different fact from a broker that was never
- * linked: the first is fixed by the daily sign-in, and saying so is what gets
- * it done before the open.
- */
-function brokerPillLabel(b: BrokerSessionInfo): string {
-  if (b.isAuthenticated) return 'FYERS linked'
-  const expired = b.expiresAtUtc && b.updatedUtc && new Date(b.expiresAtUtc).getTime() <= Date.now()
-  return expired ? 'FYERS sign-in needed' : 'FYERS not linked'
+const CONNECTOR_DOT: Record<ConnectorState, string> = {
+  ready: 'conn-dot--pos',
+  'sign-in': 'conn-dot--neg',
+  expired: 'conn-dot--neg',
+  'not-set-up': 'conn-dot--idle',
 }
 
-function brokerPillTitle(b: BrokerSessionInfo): string {
-  if (!b.expiresAtUtc) return 'Broker session'
-  const at = new Date(b.expiresAtUtc).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })
-  return b.isAuthenticated
-    ? `Broker session — token valid until ${at} IST`
-    : `Broker session — the token expired at ${at} IST; sign in to FYERS again`
+/**
+ * Every broker and data vendor behind one pill. The pill names only what needs
+ * a hand (a sign-in, two feeds at once); the list under it says where each
+ * connector stands, and each line opens that connector.
+ */
+function ConnectorsPill({ tradingDay }: { tradingDay: boolean }) {
+  const providers = useProviders()
+  const feeds = useFeeds()
+  const [open, setOpen] = useState(false)
+  const boxRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onPointer = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onPointer)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onPointer)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const summary = connectorsSummary(providers.data, feeds.data, tradingDay, Date.now())
+  if (!summary) return null
+
+  return (
+    <div className="conn-pop" ref={boxRef}>
+      <button
+        type="button"
+        className="topbar__pill-link topbar__pill-button"
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        onClick={() => setOpen((v) => !v)}
+        title={open ? undefined : summary.pulse.title}
+      >
+        <StatusPill tone={summary.pulse.tone} label={summary.pulse.label} />
+      </button>
+      {open && (
+        <div className="conn-pop__panel" role="dialog" aria-label="Connectors">
+          <div className="conn-pop__head">
+            <span>Connectors</span>
+            <span className="faint">
+              Live data: {summary.liveFeeds.length > 0 ? summary.liveFeeds.join(', ') : 'no feed running'}
+            </span>
+          </div>
+          <ul className="conn-pop__list">
+            {summary.lines.map((line) => (
+              <li key={line.key}>
+                <NavLink to={`/admin/broker/${line.key}`} className="conn-pop__row" onClick={() => setOpen(false)}>
+                  <span className={`conn-dot ${CONNECTOR_DOT[line.state]}`} aria-hidden="true" />
+                  <span className="conn-pop__name">
+                    {line.name} <span className="faint">{line.role}</span>
+                  </span>
+                  <span className="conn-pop__detail">
+                    {line.session}
+                    {line.feed && <span className={line.feedRunning ? 'pos' : 'faint'}> · {line.feed}</span>}
+                  </span>
+                </NavLink>
+              </li>
+            ))}
+          </ul>
+          <div className="conn-pop__foot">
+            <NavLink to="/admin/broker" onClick={() => setOpen(false)}>
+              All connectors
+            </NavLink>
+            <NavLink to="/admin/data/live" onClick={() => setOpen(false)}>
+              Live feeds
+            </NavLink>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 /**
@@ -98,7 +166,6 @@ function TopbarStatus() {
   const { isAdmin } = useAuth()
   const session = useMarketSession()
   const mcxSession = useMarketSession('MCX', 'COM')
-  const broker = useBrokerSession()
   const backend = useBackendStatus()
   const ingestors = useIngestorStatuses()
   // Broker links and feeds are the operator's job. A trader can do nothing
@@ -152,19 +219,10 @@ function TopbarStatus() {
           <StatusPill tone={calendar.tone} label={calendar.label} title={calendar.title} />
         </NavLink>
       )}
-      {showOperatorPills && !backend.isDown && broker.data && (
+      {showOperatorPills && !backend.isDown && (
         // A missing sign-in is an alarm only on a day NSE trades. On a holiday
-        // nothing needs the token, and a red pill says the opposite.
-        <StatusPill
-          tone={broker.data.isAuthenticated ? 'pos' : market?.isTradingDay === false ? 'idle' : 'neg'}
-          label={brokerPillLabel(broker.data)}
-          title={
-            brokerPillTitle(broker.data) +
-            (!broker.data.isAuthenticated && market?.isTradingDay === false
-              ? ` — not needed today: NSE is closed${market.holidayName ? ` for ${market.holidayName}` : ''}`
-              : '')
-          }
-        />
+        // nothing needs a token, and a red pill says the opposite.
+        <ConnectorsPill tradingDay={market?.isTradingDay !== false} />
       )}
       {feedPills.map((p) => (
         <NavLink key={`feed-${p.key}`} to="/admin/data/live" className="topbar__pill-link">

@@ -17,7 +17,7 @@ import websocket
 
 from core.live.symbol_list import symbols_for
 from core.live.truedata_symbols import to_vendor
-from core.live.vendor_feed import FeedEvent, VendorFeed
+from core.live.vendor_feed import FeedEvent, VendorFeed, close_detail
 
 #: The exchange's clock. Every TrueData timestamp is in it.
 _IST_OFFSET = timedelta(hours=5, minutes=30)
@@ -154,7 +154,7 @@ class TrueDataFeed(VendorFeed):
             on_open=live(lambda _: on_event(FeedEvent.CONNECTED, self.url)),
             on_message=live(lambda _, raw: self._on_message(raw)),
             on_error=live(lambda _, err: on_event(FeedEvent.ERROR, str(err))),
-            on_close=live(lambda _, code, msg: on_event(FeedEvent.DISCONNECTED, f"{code} {msg}")),
+            on_close=live(lambda _, code, msg: on_event(FeedEvent.DISCONNECTED, close_detail(code, msg))),
         )
         threading.Thread(target=self._app.run_forever, name="truedata-socket", daemon=True,
                          kwargs={"ping_interval": 30, "ping_timeout": 10}).start()

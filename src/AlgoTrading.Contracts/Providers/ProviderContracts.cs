@@ -43,6 +43,9 @@ public class ProviderSessionResponse
     public DateTime? ConnectedUtc { get; set; }
     public int? AgeSeconds { get; set; }
 
+    /// <summary>When the saved token stops working, where the broker's rule is known (FYERS 06:00 IST, Dhan 24 hours).</summary>
+    public DateTime? ExpiresUtc { get; set; }
+
     /// <summary>
     /// True for a connector whose token expires daily and whose session was last
     /// saved before today's session started — a reconnect is due.

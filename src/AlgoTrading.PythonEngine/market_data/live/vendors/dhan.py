@@ -39,7 +39,7 @@ import websocket
 from core.api_client import build_session
 from core.config import API_BASE_URL, ENV_FILE, VERIFY_SSL
 from core.live.symbol_list import symbols_for
-from core.live.vendor_feed import FeedEvent, VendorFeed
+from core.live.vendor_feed import FeedEvent, VendorFeed, close_detail
 
 FEED_URL = "wss://api-feed.dhan.co"
 
@@ -671,7 +671,7 @@ class DhanFeed(VendorFeed):
             on_message=live(lambda _, raw: self._on_message(raw)),
             on_error=live(lambda _, err: self._on_error(err)),
             on_close=live(lambda _, code, msg: on_event(FeedEvent.DISCONNECTED,
-                                                        self._redact(f"{code} {msg}"))),
+                                                        self._redact(close_detail(code, msg)))),
         )
         self._start_flusher()
         threading.Thread(target=self._app.run_forever, name="dhan-socket", daemon=True).start()

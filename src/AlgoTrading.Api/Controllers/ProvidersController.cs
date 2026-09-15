@@ -639,6 +639,7 @@ public class ProvidersController : ControllerBase
             IsConnected = true,
             ConnectedUtc = savedUtc,
             AgeSeconds = (int)(DateTime.UtcNow - savedUtc).TotalSeconds,
+            ExpiresUtc = session.ExpiresAtUtc,
             NeedsReconnect =
                 descriptor.Auth == ProviderAuthKind.OAuthDaily &&
                 savedIst.Date < nowIst.Date,

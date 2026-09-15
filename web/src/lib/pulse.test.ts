@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { calendarPulse, feedPulses, heartbeatFeed, marketPulses, recapVendors } from './pulse'
-import type { IngestorStatus, LiveFeed, MarketSessionInfo } from './types'
+import { calendarPulse, connectorsSummary, feedPulses, heartbeatFeed, marketPulses, recapVendors } from './pulse'
+import type { IngestorStatus, LiveFeed, MarketSessionInfo, Provider } from './types'
 
 /**
  * The pulse row must say what is on, by name.
@@ -169,5 +169,54 @@ describe('feedPulses', () => {
 
   it('claims nothing before the feed list has answered', () => {
     expect(feedPulses(undefined, [beat('python-live-ingestor', 3)], true, NOW)).toEqual([])
+  })
+})
+
+describe('connectorsSummary', () => {
+  const at = Date.parse('2026-09-15T02:30:00Z') // 08:00 IST
+  function provider(key: string, name: string, extra: Partial<Provider>): Provider {
+    return {
+      key,
+      displayName: name,
+      kind: 'Data',
+      auth: 'OAuthDaily',
+      isDataProvider: true,
+      isBroker: false,
+      isInstalled: true,
+      plannedNote: '',
+      isConfigured: true,
+      session: { isConnected: true, connectedUtc: '2026-09-15T02:15:00Z', ageSeconds: 900, needsReconnect: false, expiresUtc: '2026-09-16T00:30:00Z' },
+      ...extra,
+    } as Provider
+  }
+  const fyersP = provider('fyers', 'FYERS', { kind: 'Both', isBroker: true })
+  const dhanP = provider('dhan', 'Dhan', { session: { isConnected: true, connectedUtc: '2026-09-15T02:15:00Z', ageSeconds: 900, needsReconnect: false, expiresUtc: '2026-09-16T02:15:00Z' } })
+  const truedataP = provider('truedata', 'TrueData', { auth: 'ApiKey', session: { isConnected: false, connectedUtc: null, ageSeconds: null, needsReconnect: false } })
+  const replayP = provider('replay', 'Replay', { auth: 'None', isConfigured: false })
+  const feed = (key: string, running: boolean): LiveFeed => ({ key, displayName: key, isRunning: running, managed: running, processId: running ? 1 : null, source: running ? 'managed' : 'none' })
+
+  it('is one quiet pill when every connector that is set up is ready', () => {
+    const s = connectorsSummary([fyersP, dhanP, truedataP, replayP], [feed('fyers', false), feed('dhan', true)], true, at)!
+    expect(s.pulse).toMatchObject({ label: 'Connectors 3/3 ready', tone: 'pos' })
+    expect(s.lines.map((l) => l.key)).toEqual(['fyers', 'dhan', 'truedata'])
+    expect(s.lines[0]).toMatchObject({ role: 'Broker + data', feed: 'feed off' })
+    expect(s.lines[1].session).toContain('valid until')
+    expect(s.lines[2].session).toBe('signs in automatically')
+    expect(s.liveFeeds).toEqual(['Dhan'])
+  })
+
+  it('names the one connector that needs a sign-in, and is calm on a holiday', () => {
+    const expired = provider('dhan', 'Dhan', { session: { isConnected: true, connectedUtc: '2026-09-14T02:15:00Z', ageSeconds: 90000, needsReconnect: true, expiresUtc: '2026-09-15T02:15:00Z' } })
+    expect(connectorsSummary([fyersP, expired], [], true, at)!.pulse).toMatchObject({ label: 'Dhan sign-in needed', tone: 'neg' })
+    expect(connectorsSummary([fyersP, expired], [], false, at)!.pulse.tone).toBe('idle')
+    const never = provider('fyers', 'FYERS', { session: { isConnected: false, connectedUtc: null, ageSeconds: null, needsReconnect: true } })
+    expect(connectorsSummary([never, expired], [], true, at)!.pulse.label).toBe('2 connectors need sign-in')
+  })
+
+  it('warns when two feeds run at once, and ignores a vendor nobody set up', () => {
+    const s = connectorsSummary([fyersP, dhanP], [feed('fyers', true), feed('dhan', true)], true, at)!
+    expect(s.pulse).toMatchObject({ label: '2 feeds running', tone: 'warn' })
+    const notSetUp = provider('dhan', 'Dhan', { isConfigured: false, session: { isConnected: false, connectedUtc: null, ageSeconds: null, needsReconnect: true } })
+    expect(connectorsSummary([fyersP, notSetUp], [], true, at)!.pulse).toMatchObject({ label: 'Connectors 1/1 ready', tone: 'pos' })
   })
 })

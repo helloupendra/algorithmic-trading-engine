@@ -1118,6 +1118,8 @@ export interface ProviderSession {
   connectedUtc: string | null
   ageSeconds: number | null
   needsReconnect: boolean
+  /** When the token stops working, where the broker's rule is known. */
+  expiresUtc?: string | null
 }
 
 export interface Provider {
