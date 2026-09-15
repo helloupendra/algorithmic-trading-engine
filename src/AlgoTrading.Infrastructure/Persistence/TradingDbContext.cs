@@ -40,6 +40,9 @@ public class TradingDbContext : DbContext
 
     /// <summary>Per-strike option chain history — the only place open interest is recorded.</summary>
     public DbSet<OptionChainSnapshot> OptionChainSnapshots => Set<OptionChainSnapshot>();
+
+    /// <summary>Past option bars by distance from the money, imported from Dhan's expired options endpoint.</summary>
+    public DbSet<OptionHistoryBar> OptionHistoryBars => Set<OptionHistoryBar>();
     public DbSet<SimulationRun> SimulationRuns => Set<SimulationRun>();
 
     public DbSet<SimulationSignal> SimulationSignals => Set<SimulationSignal>();

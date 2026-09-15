@@ -283,6 +283,123 @@ public class DhanController : ControllerBase
         return Ok(new { outcomes });
     }
 
+    /// <summary>An expired options import. Offsets as [-3,…,3] or "-3..3"; types default to CE and PE.</summary>
+    public sealed record OptionHistoryImportRequest(
+        string? Underlying,
+        string? From,
+        string? To,
+        System.Text.Json.JsonElement? StrikeOffsets,
+        IReadOnlyList<string>? OptionTypes,
+        string? ExpiryFlag,
+        int? ExpiryCode,
+        string? Interval);
+
+    /// <summary>
+    /// Queues an import of Dhan's expired options history into option_history_bars
+    /// and answers at once with the job id. Windows already stored
+    /// are skipped, so posting the same import again resumes it.
+    /// </summary>
+    [HttpPost("option-history/import")]
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    public IActionResult ImportOptionHistory(
+        [FromBody] OptionHistoryImportRequest? request,
+        [FromServices] DhanOptionHistoryJobs jobs)
+    {
+        if (request is null) return BadRequest(new { message = "A JSON body is required." });
+
+        DhanOptionHistoryRequest validated;
+        try
+        {
+            var todayIst = AlgoTrading.Infrastructure.Services.IstTime.DateOf(DateTime.UtcNow);
+            validated = DhanOptionHistoryRequest.Create(
+                request.Underlying, request.From, request.To, request.StrikeOffsets, request.OptionTypes,
+                request.ExpiryFlag, request.ExpiryCode, request.Interval, todayIst);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+
+        var job = jobs.Enqueue(validated);
+        int windows = DhanRollingOptions.Windows(validated.From, validated.To).Count * validated.Series.Count;
+        return Accepted($"/api/Dhan/option-history/jobs/{job.Id}", new
+        {
+            jobId = job.Id,
+            windows,
+            // The most this can ask of Dhan: one request per window, before
+            // skipping what is stored and what fell on no trading day.
+            maxRequests = windows,
+            job = job.View(),
+        });
+    }
+
+    /// <summary>Every import this process has run or queued, newest first.</summary>
+    [HttpGet("option-history/jobs")]
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    public IActionResult OptionHistoryJobs([FromServices] DhanOptionHistoryJobs jobs) =>
+        Ok(new { jobs = jobs.All().Select(j => j.View()) });
+
+    /// <summary>One import's progress: windows done of total, rows, errors.</summary>
+    [HttpGet("option-history/jobs/{id:guid}")]
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    public IActionResult OptionHistoryJob(Guid id, [FromServices] DhanOptionHistoryJobs jobs) =>
+        jobs.Get(id) is { } job
+            ? Ok(job.View())
+            : NotFound(new { message = "No such import in this process. Jobs do not survive a restart; posting the import again resumes it." });
+
+    /// <summary>Stops an import after the requests in flight.</summary>
+    [HttpPost("option-history/jobs/{id:guid}/cancel")]
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    public IActionResult CancelOptionHistoryJob(Guid id, [FromServices] DhanOptionHistoryJobs jobs)
+    {
+        if (jobs.Get(id) is not { } job) return NotFound(new { message = "No such import in this process." });
+        if (!job.IsFinished) job.Cancellation.Cancel();
+        return Ok(job.View());
+    }
+
+    /// <summary>
+    /// What option_history_bars holds for an underlying: per series, the days
+    /// stored as runs of consecutive weekdays, so any missing trading day (or
+    /// holiday) shows as a break.
+    /// </summary>
+    [HttpGet("option-history/coverage")]
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    public async Task<IActionResult> OptionHistoryCoverage(
+        [FromQuery] string underlying,
+        [FromServices] DhanOptionHistoryImporter importer,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(underlying)) return BadRequest(new { message = "underlying is required." });
+
+        var rows = await importer.CoverageAsync(underlying, cancellationToken);
+        string Day(DateOnly d) => d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+        var series = rows
+            .GroupBy(r => (r.ExpiryFlag, r.ExpiryCode, r.Resolution, r.StrikeOffset, r.OptionType))
+            .Select(g => new
+            {
+                expiryFlag = g.Key.ExpiryFlag,
+                expiryCode = g.Key.ExpiryCode,
+                resolution = g.Key.Resolution,
+                strikeOffset = g.Key.StrikeOffset,
+                optionType = g.Key.OptionType,
+                days = g.Count(),
+                bars = g.Sum(r => r.Bars),
+                first = Day(g.Min(r => r.Day)),
+                last = Day(g.Max(r => r.Day)),
+                runs = DhanRollingOptions.Runs(g.Select(r => r.Day)).Select(run => new[] { Day(run.From), Day(run.To) }),
+            })
+            .ToList();
+
+        return Ok(new
+        {
+            underlying = underlying.Trim().ToUpperInvariant(),
+            series = series.Count,
+            bars = series.Sum(s => s.bars),
+            coverage = series,
+        });
+    }
+
     private object PollerView(DhanSettings settings) => new
     {
         enabled = _pollerState.Enabled,

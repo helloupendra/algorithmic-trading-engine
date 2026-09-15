@@ -1,13 +1,25 @@
-import { Suspense, lazy, useState } from 'react'
+import { Suspense, lazy, useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { useStrategies } from '../../lib/queries'
+import { useLiveRunHistory, useStrategies } from '../../lib/queries'
 import { headingSlug, useStrategySpec } from '../../lib/specs'
+import type { SpecFacts } from '../../lib/specs'
 import { contractRequirementsOf, describeRequirement } from '../../lib/contracts'
 import { formatResolution } from '../../lib/symbols'
-import { formatDateTime } from '../../lib/format'
-import { Badge, Loading, QueryBoundary } from '../../components/ui'
+import { formatDateTime, formatInrSigned, pnlClass } from '../../lib/format'
+import {
+  RUN_WINDOW_DAYS,
+  SIDE_LABEL,
+  builtInExit,
+  cadenceText,
+  recentPaperByStrategy,
+  shortLegs,
+  tradeSide,
+} from '../../lib/strategyLibrary'
+import { Loading, QueryBoundary } from '../../components/ui'
 import { IconArrowRight, IconPlay } from '../../components/icons'
 import type { StrategyListItem } from '../../lib/types'
+import { addDays, todayIst } from '../backtesting/shared'
 import { CategoryBadge, LaunchDialog } from './shared'
 import './spec.css'
 
@@ -25,117 +37,231 @@ function paramRows(json: string): { key: string; value: string }[] {
   }
 }
 
-/**
- * Everything the catalog knows about the strategy, as a two-column sheet.
- * This is what the Library's reference table used to spread over eight
- * columns; here it reads top to bottom, for every strategy, spec or not.
- */
-function DetailsSheet({ s, runHref }: { s: StrategyListItem; runHref: (runId: number) => string }) {
-  const contracts = contractRequirementsOf(s.contractRequirements)
-  const params = paramRows(s.defaultParametersJson)
+/** A link into the document below, only when the spec has that section. */
+function SpecLink({ headings, heading, children }: { headings: string[]; heading: string; children: ReactNode }) {
+  const found = headings.find((h) => headingSlug(h) === headingSlug(heading))
+  if (!found) return null
   return (
-    <dl className="spec-page__sheet">
-      <dt>Category</dt>
-      <dd>
-        <CategoryBadge category={s.category} />
-        {s.instrumentKind && <span className="muted"> · {s.instrumentKind}</span>}
-      </dd>
+    <a className="spec-sum__link" href={`#${headingSlug(found)}`}>
+      {children} <IconArrowRight style={{ width: 11, height: 11 }} />
+    </a>
+  )
+}
 
-      <dt>Underlyings</dt>
-      <dd>
-        {s.supportedUnderlyings.length === 0 ? (
-          <span className="muted">any</span>
-        ) : (
-          <span className="chip-row">
-            {s.supportedUnderlyings.map((u) => (
-              <span key={u} className="badge badge--neutral mono">{u}</span>
-            ))}
-          </span>
-        )}
-      </dd>
+function SummaryItem({ title, wide = false, children }: { title: string; wide?: boolean; children: ReactNode }) {
+  return (
+    <div className={`spec-sum__item${wide ? ' spec-sum__item--wide' : ''}`}>
+      <h3 className="spec-sum__title">{title}</h3>
+      {children}
+    </div>
+  )
+}
 
-      <dt>Legs</dt>
-      <dd>{s.legsSummary || <span className="muted">—</span>}</dd>
-
-      <dt>Contracts it trades</dt>
-      <dd>
-        {contracts.length === 0 ? (
-          <span className="muted">ATM CE + ATM PE (declares none; the runner's default)</span>
-        ) : (
-          <ul className="spec-page__list">
-            {contracts.map((r) => (
-              <li key={r.key}>
-                <span className="mono">{r.key}</span> — {describeRequirement(r)}
-              </li>
-            ))}
-          </ul>
-        )}
-      </dd>
-
-      <dt>Data it needs</dt>
-      <dd>
-        {s.dataRequirements.length === 0 ? (
-          <span className="muted">live spot ticks only</span>
-        ) : (
-          <ul className="spec-page__list">
-            {s.dataRequirements.map((d, i) => (
-              <li key={i}>
-                {d.symbolType} @ {formatResolution(d.resolution)}
-              </li>
-            ))}
-          </ul>
-        )}
-      </dd>
-
-      <dt>Default lots</dt>
-      <dd>{s.defaultLots > 0 ? s.defaultLots : 1}</dd>
-
-      <dt>Default parameters</dt>
-      <dd>
-        {params.length === 0 ? (
-          <span className="muted">none — the strategy has no tunables</span>
-        ) : (
-          <table className="table spec-page__params">
-            <tbody>
-              {params.map((p) => (
-                <tr key={p.key}>
-                  <td className="mono">{p.key}</td>
-                  <td className="mono">{p.value}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </dd>
-
-      <dt>Source</dt>
-      <dd className="mono">{s.sourceFile || '—'}</dd>
-
-      <dt>Right now</dt>
-      <dd>
-        {s.isActive ? (
-          <>
-            <Badge tone="pos">running</Badge>
-            {s.underlying ? ` on ${s.underlying}` : ''}
-            {s.startedUtc ? ` since ${formatDateTime(s.startedUtc)}` : ''}
-            {s.runId != null && (
-              <>
-                {' · '}
-                <Link to={runHref(s.runId)}>run #{s.runId}</Link>
-              </>
-            )}
-          </>
-        ) : (
-          <span className="muted">not running</span>
-        )}
-      </dd>
-    </dl>
+/** Descriptions run from one line to a paragraph; past three lines the rest is one click away. */
+function Description({ text }: { text: string }) {
+  const [open, setOpen] = useState(false)
+  if (!text) return <p className="spec-sum__text faint">No description provided by the strategy.</p>
+  const long = text.length > 320
+  return (
+    <>
+      <p className={`spec-sum__text${long && !open ? ' spec-sum__text--clamp' : ''}`}>{text}</p>
+      {long && (
+        <button type="button" className="spec-sum__more-btn" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+          {open ? 'Show less' : 'Read all'}
+        </button>
+      )}
+    </>
   )
 }
 
 /**
- * One strategy, read top to bottom: what the catalog knows (the sheet), then
- * how it works (the specification, with a table of contents beside it).
+ * The strategy in six short answers — what it does, its legs, when it enters,
+ * how it exits, the data it needs and its parameters — read from the catalog
+ * entry and the spec's facts. The full specification follows below it; the
+ * links jump there. Anything neither source states is said to be unknown.
+ */
+function Summary({ s, facts, headings, hasSpec }: { s: StrategyListItem; facts: SpecFacts | null; headings: string[]; hasSpec: boolean }) {
+  const contracts = contractRequirementsOf(s.contractRequirements)
+  const params = paramRows(s.defaultParametersJson)
+  const legs = shortLegs(s.legsSummary)
+  const cadence = cadenceText(facts)
+  const exit = builtInExit(facts)
+  const lots = s.defaultLots > 0 ? s.defaultLots : 1
+  const unknown = <span className="faint">{hasSpec ? 'The spec’s facts do not say.' : 'Not stated until the spec is written.'}</span>
+
+  return (
+    <section className="spec-sum" aria-label="Summary">
+      <div className="spec-sum__grid">
+        <SummaryItem title="What it does" wide>
+          <Description text={s.description} />
+        </SummaryItem>
+
+        <SummaryItem title="Legs">
+          <p className="spec-sum__lead mono">{legs ?? 'No orders — alerts only'}</p>
+          {s.legsSummary && s.legsSummary !== legs && <p className="spec-sum__sub">{s.legsSummary}</p>}
+          <p className="spec-sum__sub">
+            {SIDE_LABEL[tradeSide(s.legsSummary)]} · default {lots} {lots === 1 ? 'lot' : 'lots'}
+          </p>
+        </SummaryItem>
+
+        <SummaryItem title="When it enters">
+          <p className="spec-sum__lead">{cadence ?? unknown}</p>
+          <div className="spec-sum__links">
+            <SpecLink headings={headings} heading="Entry">Entry rule</SpecLink>
+            <SpecLink headings={headings} heading="Timeframe">Session window</SpecLink>
+          </div>
+        </SummaryItem>
+
+        <SummaryItem title="How it exits">
+          <p className="spec-sum__lead">
+            {exit == null ? unknown : exit ? 'Has its own exit rule' : 'No exit of its own'}
+          </p>
+          {exit != null && (
+            <p className="spec-sum__sub">
+              {exit
+                ? 'The run’s risk rules still apply on top of it.'
+                : 'Positions are held until the run’s risk rules (stop-loss, target), a manual stop or the platform’s end-of-session square-off.'}
+            </p>
+          )}
+          <div className="spec-sum__links">
+            <SpecLink headings={headings} heading="Exit">Exit rules</SpecLink>
+          </div>
+        </SummaryItem>
+
+        <SummaryItem title="Data it needs">
+          <p className="spec-sum__lead">
+            {facts?.data ? (
+              facts.data
+            ) : s.dataRequirements.length > 0 ? (
+              s.dataRequirements.map((d) => `${d.symbolType} @ ${formatResolution(d.resolution)}`).join(', ')
+            ) : (
+              unknown
+            )}
+          </p>
+          <div className="spec-sum__chips" aria-label="Underlyings">
+            {s.supportedUnderlyings.length === 0 ? (
+              <span className="faint">any underlying</span>
+            ) : (
+              s.supportedUnderlyings.map((u) => (
+                <span key={u} className="spec-sum__chip mono">
+                  {u}
+                </span>
+              ))
+            )}
+          </div>
+        </SummaryItem>
+
+        <SummaryItem title="Parameters" wide={params.length > 4}>
+          {params.length === 0 ? (
+            <p className="spec-sum__sub">None — the only knob is the run’s lot count.</p>
+          ) : (
+            <dl className="spec-sum__params">
+              {params.map((p) => (
+                <div key={p.key}>
+                  <dt className="mono">{p.key}</dt>
+                  <dd className="mono">{p.value}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+          <div className="spec-sum__links">
+            <SpecLink headings={headings} heading="Parameters">What each one does</SpecLink>
+          </div>
+        </SummaryItem>
+      </div>
+
+      <details className="spec-sum__more">
+        <summary>Technical details</summary>
+        <dl className="spec-sum__tech">
+          <dt>Contracts it trades</dt>
+          <dd>
+            {contracts.length === 0 ? (
+              <span className="muted">ATM CE + ATM PE (declares none; the runner’s default)</span>
+            ) : (
+              <ul className="spec-page__list">
+                {contracts.map((r) => (
+                  <li key={r.key}>
+                    <span className="mono">{r.key}</span> — {describeRequirement(r)}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </dd>
+          {s.dataRequirements.length > 0 && (
+            <>
+              <dt>Declared data</dt>
+              <dd>{s.dataRequirements.map((d) => `${d.symbolType} @ ${formatResolution(d.resolution)}`).join(', ')}</dd>
+            </>
+          )}
+          {facts?.evaluates_on && (
+            <>
+              <dt>Evaluates on</dt>
+              <dd className="mono">
+                {facts.evaluates_on}
+                {facts.resolution ? ` · ${facts.resolution}` : ''}
+              </dd>
+            </>
+          )}
+          <dt>Instrument kind</dt>
+          <dd>{s.instrumentKind || '—'}</dd>
+          <dt>Source</dt>
+          <dd className="mono">{s.sourceFile || '—'}</dd>
+        </dl>
+      </details>
+    </section>
+  )
+}
+
+/** Running on which underlyings (each a link to its run), and the recent paper P&L. */
+function StateLine({ s, runHref, trader }: { s: StrategyListItem; runHref: (runId: number) => string; trader: boolean }) {
+  const fromDate = useMemo(() => addDays(todayIst(), -(RUN_WINDOW_DAYS - 1)), [])
+  // A trader's history holds only their own runs; the line is the operator's.
+  const history = useLiveRunHistory({ strategyId: s.id, fromDate, take: 500 }, !trader)
+  const recent = history.data && history.data.length < 500 ? recentPaperByStrategy(history.data).get(s.id) : undefined
+  const runs = s.activeRuns
+
+  return (
+    <div className="spec-sum__state">
+      {runs.length > 0 ? (
+        <span className="spec-sum__live">
+          <span className="spec-sum__dot" aria-hidden="true" />
+          Running on{' '}
+          {runs.map((r, i) => (
+            <span key={r.runId}>
+              {i > 0 && ', '}
+              <Link to={runHref(r.runId)} title={`Run #${r.runId}, started ${formatDateTime(r.startedUtc)} by ${r.startedBy}`}>
+                {r.underlying}
+              </Link>
+            </span>
+          ))}
+        </span>
+      ) : (
+        <span className="faint">Not running</span>
+      )}
+      {!trader && history.data && (
+        <span className="faint">
+          {recent && recent.runs + recent.alertRuns > 0 ? (
+            recent.runs > 0 ? (
+              <>
+                {RUN_WINDOW_DAYS}d paper <span className={`mono ${pnlClass(recent.netPnl)}`}>{formatInrSigned(recent.netPnl)}</span> ·{' '}
+                {recent.runs + recent.alertRuns} {recent.runs + recent.alertRuns === 1 ? 'run' : 'runs'}
+              </>
+            ) : (
+              `${RUN_WINDOW_DAYS}d · ${recent.alertRuns} alert ${recent.alertRuns === 1 ? 'run' : 'runs'}`
+            )
+          ) : history.data.length < 500 ? (
+            `No runs in ${RUN_WINDOW_DAYS}d`
+          ) : null}
+        </span>
+      )}
+    </div>
+  )
+}
+
+/**
+ * One strategy, read top to bottom: a short summary (what it does, legs,
+ * entry, exit, data, parameters), then how it works — the full specification,
+ * with a table of contents beside it.
  */
 export function StrategySpecPage({ mode = 'admin' }: { mode?: 'admin' | 'trader' }) {
   const { id } = useParams()
@@ -154,7 +280,7 @@ export function StrategySpecPage({ mode = 'admin' }: { mode?: 'admin' | 'trader'
 
   const strategy = strategies.data?.find((s) => s.id === strategyId) ?? null
   // Contents from the document's own H2 lines. The machine-readable facts
-  // section is left out: its content is the chips at the top of the document.
+  // section is left out: its content is the summary at the top of the page.
   const headings = (spec.data?.markdown ?? '')
     .split('\n')
     .filter((l) => l.startsWith('## ') && !/^## Facts/.test(l))
@@ -172,7 +298,7 @@ export function StrategySpecPage({ mode = 'admin' }: { mode?: 'admin' | 'trader'
             {strategy?.name ?? spec.data?.name ?? `Strategy ${id}`}
             {strategy && <CategoryBadge category={strategy.category} />}
           </h1>
-          {strategy && <p className="page__subtitle spec-page__subtitle">{strategy.description}</p>}
+          {strategy && <StateLine s={strategy} runHref={runHref} trader={trader} />}
         </div>
         {strategy && (
           <div className="toolbar">
@@ -206,13 +332,14 @@ export function StrategySpecPage({ mode = 'admin' }: { mode?: 'admin' | 'trader'
             </p>
           ) : (
             <>
-              <section className="spec-page__section">
-                <h2 className="section-title">At a glance</h2>
-                <DetailsSheet s={strategy} runHref={runHref} />
-              </section>
+              {spec.isPending ? (
+                <Loading label="Loading summary…" />
+              ) : (
+                <Summary s={strategy} facts={spec.data?.facts ?? null} headings={headings} hasSpec={hasSpec} />
+              )}
 
               <section className="spec-page__section">
-                <h2 className="section-title">How it works</h2>
+                <h2 className="section-title">Full specification</h2>
                 {spec.isPending ? (
                   <Loading label="Loading spec…" />
                 ) : hasSpec ? (
@@ -240,7 +367,7 @@ export function StrategySpecPage({ mode = 'admin' }: { mode?: 'admin' | 'trader'
                     The written specification for <b>{strategy.name}</b> is not done yet — the rule as
                     maths, the exits and a worked example from a real run (the{' '}
                     <a href={README_URL} target="_blank" rel="noreferrer">authoring guide</a> lists the
-                    sections). Everything above comes from the code and is current.
+                    sections). The summary above comes from the code and is current.
                   </p>
                 )}
               </section>

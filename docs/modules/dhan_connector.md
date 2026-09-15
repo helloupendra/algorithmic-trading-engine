@@ -27,6 +27,7 @@ holiday, with an active data plan) unless it says otherwise.
 | Live feed (binary websocket): price, 5-level depth, volume, OI | **Working**: verified on MCX, 2026-09-14; first NSE session 2026-09-15 |
 | Instrument import (canonical symbol → Dhan security id) | **Working**: 104,114 of 104,355 live instruments matched |
 | Token and data-plan status | **Working** |
+| Expired options history import (into `option_history_bars`) | **Built**: unit-tested, migration applied locally; a full local import not yet run |
 | Daily sign-in with the API key (Connect, like FYERS) | **Working** |
 | Unattended daily sign-in (PIN + TOTP) | **Next** |
 | Orders | Not built |
@@ -249,6 +250,121 @@ Example, BANKNIFTY 29 Sep 2026, spot 56,606.55, 359 strikes, PCR 0.92:
 | Call | 818.90 | 1,28,520 | +12,870 | 14,35,410 | 14.8 | 0.563 |
 | Put | 493.90 | 1,32,990 | +30,840 | 9,21,870 | 13.1 | −0.431 |
 
+## Expired options history
+
+Dhan sells minute bars for option series named by their distance from the
+money: "NIFTY, nearest weekly expiry, one strike above ATM, call". Each bar has
+premium OHLC, volume, OI, IV, the strike at that moment and the index spot. It
+is the platform's only record of option premiums, OI and IV from before its own
+chain recording began on 2026-09-14. It exists for researching option-buying
+strategies on real history.
+
+The importer fetches these series into **`option_history_bars`**, a TimescaleDB
+hypertable (migration `OptionHistoryBars`). Its setup:
+- 7-day chunks on `BarStartUtc`;
+- compression after 7 days, segmented by `Underlying`;
+- no retention policy.
+
+| Column | Meaning |
+| --- | --- |
+| `Underlying` | `NIFTY`, `BANKNIFTY`, `FINNIFTY`, `MIDCPNIFTY`, `SENSEX`, `BANKEX` |
+| `ExpiryFlag`, `ExpiryCode` | `WEEK`/`MONTH`; 1 nearest, 2 next, 3 far |
+| `ExpiryDate` | Always null for now: Dhan does not send it (see below) |
+| `StrikeOffset`, `Strike` | 0 is ATM, +1 one strike above; `Strike` is the strike at that offset during the bar |
+| `OptionType` | `CE` / `PE` |
+| `Resolution` | `1m`, `5m`, `15m`, `60m` |
+| `BarStartUtc` | Bar start |
+| `Open`…`Close`, `Volume`, `OpenInterest`, `ImpliedVolatility`, `SpotPrice` | As Dhan sends them. OI, IV or spot of 0 are stored as null. Volume and OI are in units, not lots. IV is in percent. |
+| `SourceKey` | `dhan` |
+
+The unique index is (Underlying, ExpiryFlag, ExpiryCode, StrikeOffset,
+OptionType, Resolution, BarStartUtc). Inserts use `ON CONFLICT DO NOTHING`, so
+a re-import writes nothing twice. This also holds for chunks that are already
+compressed (checked on TimescaleDB 2.27).
+
+### Endpoints (admin only)
+
+| Call | What it does |
+| --- | --- |
+| `POST /api/Dhan/option-history/import` | Queues an import and returns `202` with a `jobId` straight away |
+| `GET /api/Dhan/option-history/jobs/{id}` | Progress: windows total/done/remaining, what was skipped, empty or failed, rows, requests, retries, ETA, errors |
+| `GET /api/Dhan/option-history/jobs` | Every job this process knows, newest first |
+| `POST /api/Dhan/option-history/jobs/{id}/cancel` | Stops a job after the requests already in flight |
+| `GET /api/Dhan/option-history/coverage?underlying=NIFTY` | For each series: days, bars, first and last day, and runs of consecutive weekdays (every missing weekday, holidays included, breaks a run) |
+
+```json
+POST /api/Dhan/option-history/import
+{"underlying":"NIFTY","from":"2025-08-01","to":"2025-09-30",
+ "strikeOffsets":"-3..3","optionTypes":["CE","PE"],
+ "expiryFlag":"WEEK","expiryCode":1,"interval":"5"}
+```
+
+- `strikeOffsets` may be written as `"-3..3"`, as `[-3,-2,-1,0,1,2,3]`, or as a
+  single number. It must lie within ±10.
+- Defaults: `CE` and `PE`, `WEEK`, code 1, interval `5`.
+- `to` must be before today, because a session still in progress would be
+  stored half-finished.
+
+### How an import runs
+
+1. **Trading days.** It reads the underlying index's daily bars from Dhan: one
+   request per year. This gives the exchange's own calendar, including years
+   the holiday table does not cover. If that read fails, every weekday counts
+   as a trading day.
+2. **Windows.** The range is cut into windows of 30 days. Each window is asked
+   for once per series, where a series is one offset and one option type.
+3. **Skipping.** A window is skipped if the series already has bars on every
+   trading day in it, or if the window has no trading days at all. So posting
+   the same import again resumes it. Jobs live in memory, so an API restart
+   loses the job but keeps the data.
+4. **Fetching.** Four lanes run at once. All of them share the process-wide
+   `DhanRateGate` (one data request per 220 ms).
+5. **Retries.** Throttling (429, 805, `DH-904`), Dhan server errors and network
+   failures are retried after 2, 5, 15, 30 and 60 s. Other failures are handled
+   differently:
+   - a refused token or a missing data plan fails the whole job at once;
+   - any other refusal fails only that window, which is listed under `errors`,
+     and the job carries on.
+6. **Empty answers.** If Dhan returns no bars for a window that has trading
+   days, the window is counted as done and reported under `windows.empty`.
+
+Estimate: 2 years × 3 underlyings × ATM±3 × CE+PE is 25 windows × 14 series ×
+3, or about 1,050 requests. The gate allows this in about 4 minutes. With Dhan answering in 0.2–4.5 s
+per request, expect 5–10 minutes. That is about 1% of the 100,000-request
+daily cap. At 1-minute bars it is about 7.8 million rows; at 5-minute bars,
+about 1.6 million.
+
+### Verified against the live API (2026-09-15)
+
+Where Dhan's answers differ from its documentation, the answers win.
+
+| Fact | Detail |
+| --- | --- |
+| Timestamps | Epoch seconds, **bar start**. The first bar is 09:15 IST. The 1-minute `spot` equals the NIFTY index's 1-minute **close** for the same stamp, and the 5-minute `spot` equals the index's 5-minute close. |
+| `toDate` | **Inclusive** in practice, though documented as exclusive: from 2025-09-01 to 2025-09-01 returned that day's 75 bars. The importer asks for one day past the window and trims, which is correct either way. |
+| Range per call | Documented as 30 days. A 44-day request answered, and 60 days was refused with `DH-905`. The importer keeps to 30. |
+| History depth | Data starts in **August 2020**: 2020-08-03 answers, July 2020 is empty. Recent weeks are served too, including today's session after the close. |
+| `expiryCode` | **1 is the nearest**, 2 the next, 3 the far. `0` is refused ("expiryCode is required"), although the annexure lists 0 as current. On expiry day, code 1 is still the contract expiring that day: it closed at 0.05 at 15:27 on 2025-09-02. |
+| `WEEK` without weeklies | BANKNIFTY and BANKEX `WEEK` answer with the **monthly** series (identical bars to `MONTH`), with no error. |
+| Strikes | ATM−10 to ATM+10 answer for index options, weekly and monthly. `ATM+11` answers 200 with empty arrays. A malformed strike such as `"+1"` is silently read as ATM. Lower case `atm+1` works. |
+| CE / PE | A CALL request fills `ce` and returns `pe` as null. A PUT request does the reverse. |
+| Intervals | 1, 5, 15 and 60 answer. **25 is refused** (`DH-905`) although it is documented. 60-minute bars start at 09:15. |
+| BSE | SENSEX (51) and BANKEX (69) need `exchangeSegment` **`BSE_FNO`**. Under `NSE_FNO` or `IDX_I` they answer 200 with no bars. |
+| Holidays | 200 with every array empty. The same shape is returned for out-of-range strikes, wrong segments and dates before 2020-08. |
+| Extra bars | Some days carry bars after 15:25 (15:30 and 15:35 in September 2026). They are stored as sent. |
+| Bar counts | 7,125 one-minute bars for a 30-day window (19 sessions). There is no per-response cap below that. |
+
+**Traps for research:**
+- **Bars coarser than 1 minute mix strikes.** When ATM moves inside a 5-minute
+  bar, the bar is built from minutes of two different contracts. For example,
+  NIFTY CE at 09:20 on 2025-09-01 shows `strike` 24550, but its open (102.45)
+  and high (104.8) are the 24500 strike's prices. `strike` is the strike at
+  the bar's end. Use 1-minute bars wherever a premium's path matters.
+- **The series rolls.** After an expiry, the same offset and code point to the
+  next contract. Dhan does not send the expiry date, and the platform has no
+  historical expiry calendar (its holiday table starts in 2026), so
+  `ExpiryDate` is left null rather than guessed.
+
 ## Limits Dhan enforces
 
 | Kind | Limit | How the connector keeps to it |
@@ -300,11 +416,15 @@ is.
 | `Providers/Dhan/DhanMarketDataProvider.cs` | `IMarketDataProvider` for history |
 | `Providers/Dhan/DhanOptionChain.cs`, `DhanOptionChainClient.cs` | Chain model and client |
 | `Providers/Dhan/DhanChainPoller.cs` | Chain recorder: rows mapping, per-underlying rounds, the hosted loop and its state |
+| `Providers/Dhan/DhanRollingOptions.cs` | Expired options request and response rules: strike strings, windows, mapping, offsets, coverage runs |
+| `Providers/Dhan/DhanOptionHistoryImporter.cs` | Trading days, stored days, one window fetched with retries, bulk insert, coverage query |
+| `Providers/Dhan/DhanOptionHistoryJobs.cs` | Import request validation, the resume plan, job state, the background worker |
 | `Providers/Dhan/DhanUniverse.cs` | What the live feed streams beyond the recording list |
 | `Providers/Dhan/DhanInstruments.cs`, `DhanInstrumentMaster.cs`, `DhanInstrumentImporter.cs` | Symbol vocabulary, master parsing and matching, bulk import |
 | `Api/Controllers/DhanController.cs` | The endpoints above |
 | `tests/AlgoTrading.UnitTests/DhanConnectorTests.cs` | Rules pinned against real answers and master rows |
 | `tests/AlgoTrading.UnitTests/DhanLoginTests.cs` | Sign-in, account pin, 24-hour expiry, and the FYERS session guard |
+| `tests/AlgoTrading.UnitTests/DhanOptionHistoryTests.cs` | Expired options mapping against real answers, windows, the resume plan, request validation, retry rules |
 | `tests/AlgoTrading.UnitTests/DhanChainPollerTests.cs` | Chain rows, expiry choice, closed markets, rejected tokens, at-the-money selection |
 | `market_data/live/vendors/dhan.py`, `tests/test_dhan_feed.py` (Python engine) | Live feed adapter: binary packets, subscribe batching, credentials from the API, one update a second per contract, the universe |
 | `scripts/market-open.sh` | The morning: Dhan status, import, feed and recorder; FYERS as the fallback |

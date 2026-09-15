@@ -136,8 +136,9 @@ export function StrategySpecPanel({ strategyId, hideFacts = false }: { strategyI
   const data = spec.data
   if (!data.hasSpec || data.markdown == null) return <SpecPending spec={data} />
 
-  // The facts block is what the chips above show; the page hides the
-  // section itself so the document ends at Limitations.
+  // The strategy page shows the facts in its summary above the document, so
+  // with `hideFacts` neither the chips nor the section itself are repeated
+  // and the document ends at Limitations.
   const body = hideFacts ? data.markdown.replace(/\n## Facts[\s\S]*$/, '') : data.markdown
 
   return (
@@ -146,7 +147,7 @@ export function StrategySpecPanel({ strategyId, hideFacts = false }: { strategyI
         <span className="mono">{data.path}</span>
         <span className="spec__updated">Updated {formatUpdated(data.updatedUtc)}</span>
       </div>
-      <FactChips facts={data.facts} />
+      {!hideFacts && <FactChips facts={data.facts} />}
       <article className="spec__body">
         <Markdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={components}>
           {body}

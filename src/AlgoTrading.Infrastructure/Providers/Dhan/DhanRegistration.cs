@@ -67,6 +67,12 @@ public static class DhanRegistration
         services.AddSingleton<DhanUniverseCache>();
         services.AddScoped<DhanUniverseBuilder>();
 
+        // Expired options history: imports queued from the console, run in the
+        // background one at a time, idle until one is posted.
+        services.AddScoped<DhanOptionHistoryImporter>();
+        services.AddSingleton<DhanOptionHistoryJobs>();
+        services.AddHostedService<DhanOptionHistoryWorker>();
+
         return services;
     }
 }
