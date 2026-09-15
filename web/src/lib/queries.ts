@@ -73,6 +73,7 @@ import type {
   RiskExposureResponse,
 } from './types'
 import type { MeResponse } from './api'
+import type { SystemHostReport } from './system'
 
 // Re-exported so pages import user types from one place.
 export type { MeResponse }
@@ -504,6 +505,19 @@ export function useBackendStatus() {
     acknowledgeRestart: () => setRestartedAt(null),
     isDown: query.isError,
   }
+}
+
+/**
+ * The server the platform runs on: disk, memory, CPU, the database and how
+ * fast it grows, the Drive archive. Admin-only. The API caches the report for
+ * ~12 s, so polling every 15 s costs it a cached read.
+ */
+export function useSystemHost() {
+  return useQuery({
+    queryKey: ['system', 'host'],
+    queryFn: () => api.get<SystemHostReport>('/api/System/host'),
+    refetchInterval: POLL_SLOW,
+  })
 }
 
 // ---------- Manual orders ----------

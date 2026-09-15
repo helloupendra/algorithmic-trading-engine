@@ -108,6 +108,10 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.WatchlistPruneService>();
 // it used to be a sidecar, and the day nobody remembered to start it the
 // platform ran all day without a single alert and looked perfectly healthy.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.NotifierSupervisor>();
+// The System page's server report: disk, memory, CPU, database size and growth.
+// A singleton so its short cache and the previous CPU reading outlive a request.
+builder.Services.AddSingleton<AlgoTrading.Api.Services.SystemHostService>();
+builder.Services.AddHttpClient(nameof(AlgoTrading.Api.Services.SystemHostService));
 
 // Backtesting: the backtest runner registry and its stop path, the coverage /
 // backfill service and the view builders shared with the live runner.
