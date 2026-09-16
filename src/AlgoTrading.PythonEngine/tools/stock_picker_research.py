@@ -150,7 +150,7 @@ def run_r1(root: str, start: str, design_end: str, top: int, out_dir: str) -> st
         "# R1: selection power of nightly watchlists (design period)", "",
         f"Picks made on dates {start} to {design_end}; outcomes are the next NSE session. Holdout dates after "
         f"{design_end} are not analysed. Features use a 400-day warm-up before {start}.", "",
-        f"Universe: NSE series EQ, close ≥ ₹50, ≥ 60 sessions listed, 20-session median turnover ≥ ₹10 crore. "
+        f"Universe: NSE series EQ, close ≥ ₹50, ≥ 60 sessions listed, 20-session median turnover ≥ ₹10 crore, no fund units (ISIN INF…: ETFs, liquid funds). "
         f"Stocks per date: median {int(sizes.median())}, min {int(sizes.min())}, max {int(sizes.max())} "
         f"({sizes.index.nunique()} dates).", "",
         "## How to read", "",

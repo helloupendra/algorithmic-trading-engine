@@ -40,7 +40,11 @@ def main(argv=None) -> int:
     parser.add_argument("--limit", type=int)
     parser.add_argument("--spacing", type=float, default=intraday.SPACING_SECONDS,
                         help="seconds between requests (default %(default)s); raise it after a DH-904 rate limit")
+    parser.add_argument("--stop-at", help="HH:MM IST: stop before the next request at or after this time (next occurrence)")
     args = parser.parse_args(argv)
+    import socket
+    import urllib3.util.connection as connection
+    connection.allowed_gai_family = lambda: socket.AF_INET   # this workstation's IPv6 route is dead (84 s a call)
 
     with open(args.symbols) as fh:
         rows = list(csv.DictReader(fh))
@@ -52,9 +56,18 @@ def main(argv=None) -> int:
         stocks = stocks[:args.limit]
     start = date.fromisoformat(args.date_from)
     end = date.fromisoformat(args.date_to) if args.date_to else datetime.now(IST).date()
+    stop_at = None
+    if args.stop_at:
+        now = datetime.now(IST)
+        h, m = (int(x) for x in args.stop_at.split(":"))
+        deadline = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        if deadline <= now:
+            deadline += timedelta(days=1)
+        print(f"stops at {deadline:%Y-%m-%d %H:%M} IST", flush=True)
+        stop_at = lambda: datetime.now(IST) >= deadline  # noqa: E731
     try:
         counts = intraday.download(args.root, stocks, start, end, log=lambda line: print(line, flush=True),
-                                   pacer=intraday.Pacer(spacing=args.spacing))
+                                   pacer=intraday.Pacer(spacing=args.spacing), stop_at=stop_at)
     except intraday.AuthError as ex:
         print(f"stopped: {ex}", flush=True)
         return 2

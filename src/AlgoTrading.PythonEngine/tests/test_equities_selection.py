@@ -12,12 +12,14 @@ import pandas as pd
 from research.equities import selection as sel
 
 
-def stock(symbol, closes, start="2025-01-01", volume=1_000_000.0, turnover=2e8, deliv=40.0, series="EQ"):
+def stock(symbol, closes, start="2025-01-01", volume=1_000_000.0, turnover=2e8, deliv=40.0, series="EQ",
+          isin="INE000A01010"):
     dates = pd.bdate_range(start, periods=len(closes))
     rows = []
     prev = closes[0]
     for day, close in zip(dates, closes):
-        rows.append(dict(trade_date=day, symbol=symbol, series=series, open=prev, high=max(prev, close) * 1.01,
+        rows.append(dict(trade_date=day, symbol=symbol, series=series, isin=isin, open=prev,
+                         high=max(prev, close) * 1.01,
                          low=min(prev, close) * 0.99, close=close, prev_close=prev, volume=volume,
                          turnover=turnover, delivery_pct=deliv))
         prev = close
@@ -69,6 +71,10 @@ class UniverseTests(unittest.TestCase):
         self.assertFalse(cheap["in_universe"].any())
         be = sel.add_features(stock("BESER", closes, series="BE"))
         self.assertFalse(be["in_universe"].any())
+        # An ETF trades in series EQ with plenty of turnover, and is still not a
+        # stock to pick: its ISIN says it is a fund unit.
+        etf = sel.add_features(stock("NIFTYBEES", closes, isin="INF204KB14I2"))
+        self.assertFalse(etf["in_universe"].any())
 
 
 class OutcomeTests(unittest.TestCase):

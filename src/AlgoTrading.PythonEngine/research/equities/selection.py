@@ -125,9 +125,15 @@ def add_features(df: pd.DataFrame, rules: UniverseRules = UniverseRules()) -> pd
     d["circuit_days20"] = d.groupby("symbol", sort=False)["upper_circuitish"].transform(
         lambda s: s.astype(float).rolling(20, min_periods=1).sum())
 
+    # Fund units (ETFs, liquid funds) trade in series EQ too; their ISIN starts
+    # with "INF" where a company's share starts with "INE". The ISIN is on every
+    # bhavcopy row back to 2023, so this holds for old dates, unlike a
+    # current ETF list would. 257 of them in June 2025 alone.
+    d["is_fund_unit"] = d["isin"].astype(str).str.upper().str.startswith("INF")
     d["in_universe"] = ((d["series"] == rules.series) & (d["close"] >= rules.min_price)
                         & (d["sessions"] >= rules.min_sessions)
-                        & (d["median_turnover"] >= rules.min_median_turnover))
+                        & (d["median_turnover"] >= rules.min_median_turnover)
+                        & ~d["is_fund_unit"])
     return d.drop(columns=["range"])
 
 
