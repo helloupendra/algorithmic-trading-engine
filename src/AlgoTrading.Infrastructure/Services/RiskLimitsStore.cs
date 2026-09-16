@@ -16,6 +16,13 @@ public class RiskLimitsStore : IRiskLimitsStore
     private readonly ILogger<RiskLimitsStore> _logger;
     private readonly RiskManagementSettings _defaultSettings;
 
+    /// <summary>No platform cap on runs. The owner's desk is the common case;
+    /// a shared host sets a positive number from the Risk page.</summary>
+    private const int NoCap = 0;
+
+    /// <summary>The largest cap that can be stored, to catch a typo.</summary>
+    private const int MaxCapValue = 500;
+
     // Cache to match the 2-second cache killswitch pattern
     private RiskLimitsDto? _cachedLimits;
     private DateTime _lastCacheUpdate = DateTime.MinValue;
@@ -63,8 +70,8 @@ public class RiskLimitsStore : IRiskLimitsStore
             var maxLoss = GetDecimal(settings, SystemSettingKeys.MaxDailyLoss, _defaultSettings.MaxDailyLoss);
             
             // Assume default concurrent runs = 10, runs per user = 5
-            var maxConcurrent = GetInt(settings, SystemSettingKeys.MaxConcurrentRuns, 10);
-            var maxPerUser = GetInt(settings, SystemSettingKeys.MaxRunsPerUser, 5);
+            var maxConcurrent = GetInt(settings, SystemSettingKeys.MaxConcurrentRuns, NoCap);
+            var maxPerUser = GetInt(settings, SystemSettingKeys.MaxRunsPerUser, NoCap);
 
             var latestUpdate = settings.Count > 0 ? settings.Max(s => s.UpdatedUtc) : (DateTime?)null;
             var latestUpdater = settings.OrderByDescending(s => s.UpdatedUtc).FirstOrDefault()?.UpdatedBy;
@@ -105,8 +112,8 @@ public class RiskLimitsStore : IRiskLimitsStore
             {
                 MaxOrdersPerMinute = _defaultSettings.MaxOrdersPerMinute,
                 MaxDailyLoss = _defaultSettings.MaxDailyLoss,
-                MaxConcurrentRuns = 10,
-                MaxRunsPerUser = 5,
+                MaxConcurrentRuns = NoCap,
+                MaxRunsPerUser = NoCap,
                 Source = "config"
             };
         }
@@ -120,11 +127,13 @@ public class RiskLimitsStore : IRiskLimitsStore
         if (newLimits.MaxDailyLoss > 0)
             throw new ArgumentOutOfRangeException(nameof(newLimits.MaxDailyLoss), "Must be <= 0 (negative).");
             
-        if (newLimits.MaxConcurrentRuns < 1 || newLimits.MaxConcurrentRuns > 50)
-            throw new ArgumentOutOfRangeException(nameof(newLimits.MaxConcurrentRuns), "Must be between 1 and 50.");
-            
-        if (newLimits.MaxRunsPerUser < 1 || newLimits.MaxRunsPerUser > 50)
-            throw new ArgumentOutOfRangeException(nameof(newLimits.MaxRunsPerUser), "Must be between 1 and 50.");
+        if (newLimits.MaxConcurrentRuns < NoCap || newLimits.MaxConcurrentRuns > MaxCapValue)
+            throw new ArgumentOutOfRangeException(nameof(newLimits.MaxConcurrentRuns),
+                $"Must be between 0 (no cap) and {MaxCapValue}.");
+
+        if (newLimits.MaxRunsPerUser < NoCap || newLimits.MaxRunsPerUser > MaxCapValue)
+            throw new ArgumentOutOfRangeException(nameof(newLimits.MaxRunsPerUser),
+                $"Must be between 0 (no cap) and {MaxCapValue}.");
 
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<TradingDbContext>();

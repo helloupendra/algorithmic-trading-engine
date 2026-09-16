@@ -30,6 +30,7 @@ from core.config import (API_BASE_URL, ENABLE_MOCK_TICKS, HEARTBEAT_SECONDS,
 from core.heartbeat import run_forever
 from core.live.greeks_enricher import GreeksEnricher
 from core.live.tick_pump import TickPump
+from core.live.reconnect_policy import describe, reconnect_delay
 from core.live.vendor_feed import FeedEvent
 
 
@@ -146,6 +147,9 @@ class FeedRunner:
 
         self.restart_required = False
         self.last_watchlist_refresh_utc = None
+        #: Ticks accepted since the process started; the reconnect backoff
+        #: uses it to tell a working connection from a looping one.
+        self.ticks_accepted = 0
         self.last_error = ""
         self._publish_errors = 0
         self._market_open_cache = {"value": None, "checked_at": 0.0}
@@ -156,6 +160,7 @@ class FeedRunner:
     def on_ticks(self, ticks) -> None:
         now = time.monotonic()
         self.last_message = now
+        self.ticks_accepted += len(ticks or [])
         for tick in ticks or []:
             try:
                 self._accept(tick)
@@ -583,7 +588,12 @@ class FeedRunner:
             source = MockTickSource(subscribed=lambda: set(self.subscribed), offer=self.pump.offer)
             threading.Thread(target=source.run_forever, name="mock-ticks", daemon=True).start()
 
+        # A cycle that carried no ticks is a failure, and failures back off:
+        # reconnecting every 20s against a dead session is what got the Dhan
+        # account rate-limited on 2026-09-16 (core/live/reconnect_policy.py).
+        tickless_cycles = 0
         while not self._stop.is_set():
+            ticks_before = self.ticks_accepted
             try:
                 self._connect_once_and_watch()
             except Exception as ex:
@@ -591,6 +601,11 @@ class FeedRunner:
                 print(f"[{self._feed.key}] ERROR IN CONNECTION MANAGER: {ex}", flush=True)
                 traceback.print_exc()
                 self._stop.wait(5)
+            tickless_cycles = 0 if self.ticks_accepted > ticks_before else tickless_cycles + 1
+            delay = reconnect_delay(tickless_cycles, self.last_error)
+            if delay > 0 and not self._stop.is_set():
+                print(f"[{self._feed.key}] {describe(tickless_cycles, delay, self.last_error)}", flush=True)
+                self._stop.wait(delay)
 
     def _connect_once_and_watch(self) -> None:
         self.restart_required = False

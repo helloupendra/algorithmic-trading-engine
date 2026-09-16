@@ -13,6 +13,8 @@ import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useMutation } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import {
+  useAngelStatus,
+  useAngelTest,
   useDisconnectProvider,
   useProviderBindings,
   useProviderUsage,
@@ -25,6 +27,92 @@ import { formatAge, formatDateTime } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components/ui'
 import { CAPABILITY_LABELS, kindLabel, signsInItself as signsInAutomatically } from '../../lib/providers'
 import { usageView } from '../../lib/usage'
+import { angelFailureHint, angelReadiness } from '../../lib/angel'
+
+/**
+ * Angel One keeps its credentials in .env, not in the console: a SmartAPI
+ * session needs four values (API key, client code, trading PIN, TOTP secret)
+ * and the two encrypted fields every connector shares hold two. Until that is
+ * built the page says where the values live, and offers the one thing that
+ * actually proves them — a sign-in followed by a real price.
+ */
+function AngelPanel() {
+  const status = useAngelStatus()
+  const test = useAngelTest()
+  const readiness = angelReadiness(status.data)
+  const result = test.data
+  const hint = result && !result.ok ? angelFailureHint(result.message) : null
+
+  return (
+    <Panel title="Angel One session">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <Badge tone={readiness.tone}>{readiness.label}</Badge>
+        <span className="muted small">{readiness.detail}</span>
+      </div>
+
+      {status.data && (
+        <div className="kv-grid" style={{ marginTop: 12 }}>
+          <div>
+            <span>Root URL</span>
+            <span className="mono">{status.data.rootUrl}</span>
+          </div>
+          <div>
+            <span>Client code</span>
+            <span className="mono">{status.data.clientCode || '—'}</span>
+          </div>
+          <div>
+            <span>Registered static IP</span>
+            <span className="mono">{status.data.staticIp || 'not recorded'}</span>
+          </div>
+          {status.data.sessionStartedUtc && (
+            <div>
+              <span>Signed in</span>
+              <span>{formatAge(status.data.sessionStartedUtc)}</span>
+            </div>
+          )}
+          {status.data.missing.length > 0 && (
+            <div>
+              <span>Missing in .env</span>
+              <span className="mono">{status.data.missing.join(', ')}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      <p className="muted small" style={{ marginTop: 10 }}>
+        {status.data?.note ??
+          'The SmartAPI app answers only from the static IP it was registered with.'}{' '}
+        Credentials are read from <code>.env</code> (ANGEL_*), so a change there needs an API restart.
+      </p>
+
+      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+        <button
+          className="btn"
+          onClick={() => test.mutate({ forceLogin: false })}
+          disabled={test.isPending || status.data?.configured === false}
+        >
+          {test.isPending ? 'Testing…' : 'Test connection'}
+        </button>
+        <button
+          className="btn btn--ghost"
+          onClick={() => test.mutate({ forceLogin: true })}
+          disabled={test.isPending || status.data?.configured === false}
+        >
+          Sign in again
+        </button>
+      </div>
+
+      {result && (
+        <div style={{ marginTop: 12 }}>
+          <Badge tone={result.ok ? 'pos' : 'neg'}>{result.ok ? 'working' : result.step}</Badge>{' '}
+          <span className={result.ok ? '' : 'muted'}>{result.message}</span>
+          {hint && <div className="muted small" style={{ marginTop: 6 }}>{hint}</div>}
+        </div>
+      )}
+      {test.isError && <InlineError error={test.error} />}
+    </Panel>
+  )
+}
 
 /**
  * Each kind of data this connector could give, and whether the platform is
@@ -479,9 +567,15 @@ export function ConnectorDetailPage() {
             </div>
           </Panel>
 
-          {provider.auth !== 'None' && <CredentialsForm provider={provider} />}
+          {provider.key === 'angel' ? (
+            <AngelPanel />
+          ) : (
+            <>
+              {provider.auth !== 'None' && <CredentialsForm provider={provider} />}
 
-          <SessionPanel provider={provider} />
+              <SessionPanel provider={provider} />
+            </>
+          )}
 
           <Panel title="What this connector is serving">
             {servingHere.length === 0 ? (

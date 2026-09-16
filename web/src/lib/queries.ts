@@ -1606,6 +1606,39 @@ export function useProviderUsage(providerKey: string, enabled = true) {
   })
 }
 
+/**
+ * The market-movers snapshot: gainers, losers, OI build-up and PCR in one
+ * answer. The API caches it for 45 s (six SmartAPI calls go into it), so this
+ * polls at the same pace rather than faster.
+ */
+export function useAngelMovers(expiry = 'NEAR') {
+  return useQuery({
+    queryKey: ['angel', 'movers', expiry],
+    queryFn: () => api.get<import('./movers').MoversSnapshot>(`/api/Angel/movers?expiry=${expiry}`),
+    refetchInterval: 45_000,
+  })
+}
+
+/** Angel One's own status: what is configured, and whether a session is held. */
+export function useAngelStatus(enabled = true) {
+  return useQuery({
+    queryKey: ['angel', 'status'],
+    queryFn: () => api.get<import('./angel').AngelStatus>('/api/Angel/status'),
+    enabled,
+    refetchInterval: 30_000,
+  })
+}
+
+/** Sign in and price one instrument — the proof that the credentials and the IP are right. */
+export function useAngelTest() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body?: { forceLogin?: boolean }) =>
+      api.post<import('./angel').AngelTestResult>('/api/Angel/test', body ?? {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['angel', 'status'] }),
+  })
+}
+
 export function useTestProvider() {
   return useMutation({
     mutationFn: (providerKey: string) =>

@@ -172,3 +172,32 @@ export function feedDiagnostics(
   older.sort((a, b) => Date.parse(b.lastHeartbeatUtc) - Date.parse(a.lastHeartbeatUtc))
   return { rows, older }
 }
+
+/* --------------------------------------------------------------- readiness */
+
+/** What a strategy needs to know about the data feeds, in one word. */
+export type FeedState = 'live' | 'degraded' | 'stopped'
+
+/**
+ * The feed state a runner cares about.
+ *
+ * A strategy needs ONE feed delivering ticks, not all of them. The platform
+ * carries several connectors (FYERS, Dhan, TrueData) and normally runs one,
+ * with the others as backups; the old rule ("live" only when every registered
+ * feed was healthy) therefore warned "Live feed is not running" on a perfectly
+ * good Dhan-only morning — 16 Sep 2026.
+ *
+ * `null` means no answer yet: neither query has returned, and "not known" must
+ * not render as "stopped".
+ */
+export function readinessFeedState(
+  feeds: ReadonlyArray<{ isHealthy: boolean }> | undefined,
+  processRunning: boolean | undefined,
+  asked: boolean,
+): FeedState | null {
+  if (!asked) return null
+  const healthy = (feeds ?? []).filter((f) => f.isHealthy).length
+  if (healthy > 0) return 'live'
+  if (processRunning) return 'degraded'
+  return 'stopped'
+}

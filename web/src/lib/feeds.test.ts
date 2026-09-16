@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { describeFeedState, feedDiagnostics, feedsView, meaningfulError } from './feeds'
+import { describeFeedState, feedDiagnostics, feedsView, meaningfulError, readinessFeedState } from './feeds'
 import type { IngestorStatus, LiveFeed } from './types'
 
 /**
@@ -117,5 +117,31 @@ describe('feedDiagnostics', () => {
     expect(meaningfulError(' null ')).toBeNull()
     expect(meaningfulError('')).toBeNull()
     expect(meaningfulError('DH-901 Invalid_Authentication')).toBe('DH-901 Invalid_Authentication')
+  })
+})
+
+describe('readinessFeedState', () => {
+  const healthy = { isHealthy: true }
+  const dead = { isHealthy: false }
+
+  it('is live when any one feed is healthy, not only when all are', () => {
+    // 16 Sep 2026: Dhan carried the day, FYERS and TrueData were idle, and the
+    // strategy page still said the live feed was not running.
+    expect(readinessFeedState([dead, healthy, dead], false, true)).toBe('live')
+    expect(readinessFeedState([healthy], false, true)).toBe('live')
+  })
+
+  it('is degraded when a feed process runs but none is healthy yet', () => {
+    expect(readinessFeedState([dead], true, true)).toBe('degraded')
+    expect(readinessFeedState([], true, true)).toBe('degraded')
+  })
+
+  it('is stopped when nothing runs', () => {
+    expect(readinessFeedState([dead, dead], false, true)).toBe('stopped')
+    expect(readinessFeedState([], false, true)).toBe('stopped')
+  })
+
+  it('says nothing until an answer arrives', () => {
+    expect(readinessFeedState(undefined, undefined, false)).toBeNull()
   })
 })

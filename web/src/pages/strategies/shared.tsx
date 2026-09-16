@@ -30,6 +30,7 @@ import {
   formatTime,
   pnlClass,
 } from '../../lib/format'
+import { readinessFeedState } from '../../lib/feeds'
 import { formatResolution } from '../../lib/symbols'
 import { EMPTY_RISK_DRAFT, RISK_UPDATED_TYPE, activityText, parseRiskDraft } from '../../lib/risk'
 import type { RiskDraft, RiskDraftField } from '../../lib/risk'
@@ -127,7 +128,7 @@ export function formatDay(iso: string | null | undefined): string {
 
 /* ---------------------------------------------------------------- readiness */
 
-export type FeedState = 'live' | 'degraded' | 'stopped'
+export type { FeedState } from '../../lib/feeds'
 
 /** The three things a runner needs — none of them blocks a start, all warn. */
 export function useReadiness() {
@@ -140,12 +141,8 @@ export function useReadiness() {
   const healthy = feeds.filter((f) => f.isHealthy).length
   const processRunning = process.data?.isRunning ?? false
 
-  let feed: FeedState | null = null
-  if (ingestors.data || process.data) {
-    if (feeds.length > 0 && healthy === feeds.length) feed = 'live'
-    else if (healthy > 0 || processRunning) feed = 'degraded'
-    else feed = 'stopped'
-  }
+  // One healthy feed is enough to trade: see readinessFeedState.
+  const feed = readinessFeedState(feeds, processRunning, !!(ingestors.data || process.data))
 
   return {
     marketOpen: session.data?.isMarketOpen ?? null,
@@ -974,14 +971,16 @@ export function LaunchDialog({
   if (isAdmin && readiness.feed && readiness.feed !== 'live')
     notes.push(
       <span key="feed">
-        Live feed is not running — start it on <Link to="/admin/data/live">Data › Live feeds</Link>.
+        No live feed is delivering ticks — start one on <Link to="/admin/data/live">Data › Live feeds</Link>.
       </span>,
     )
-  if (isAdmin && readiness.brokerLinked === false)
+  // Only worth saying when nothing else is feeding the runner: any connector's
+  // feed will do, and on a Dhan morning a dark FYERS session changes nothing.
+  if (isAdmin && readiness.brokerLinked === false && readiness.feed !== 'live')
     notes.push(
       <span key="broker">
-        FYERS is not linked — no ticks will arrive until the <Link to="/admin/broker">broker session</Link>{' '}
-        is restored.
+        FYERS is not linked — if no other connector is feeding, no ticks will arrive until the{' '}
+        <Link to="/admin/broker">broker session</Link> is restored.
       </span>,
     )
 
