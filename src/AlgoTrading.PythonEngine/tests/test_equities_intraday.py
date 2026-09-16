@@ -102,6 +102,15 @@ class DownloadTests(unittest.TestCase):
                          pacer=NoWait())
         self.assertEqual(1, len(self.bodies))
 
+    def test_the_time_limit_stops_before_the_next_request(self):
+        def answers(body):
+            return 200, payload([body["fromDate"][:10] + " 09:15"])
+        counts = idl.download(self.root, [("A", "1"), ("B", "2")], date(2025, 1, 1), date(2025, 1, 31),
+                              post=self.poster(answers), log=lambda _: None, pacer=NoWait(),
+                              stop_at=lambda: len(self.bodies) >= 1)
+        self.assertEqual(1, len(self.bodies))
+        self.assertEqual(1, counts.get("stopped"))
+
     def test_rate_limit_answers_are_retried(self):
         answers = iter([(429, {"errorCode": "DH-904"}), (200, payload(["2025-01-01 09:15"]))])
         manifest = idl.Manifest(self.root)

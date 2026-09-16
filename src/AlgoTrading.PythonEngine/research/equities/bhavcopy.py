@@ -393,8 +393,15 @@ def _nse_ok(day: date, results: Dict[str, str]) -> bool:
 
 
 def download(root: str, start: date, end: date, fetch: Optional[Fetcher] = None,
-             log: Callable[[str], None] = print, retry_errors: bool = True) -> Manifest:
-    """Every calendar day in [start, end]: NSE bhavcopy + delivery, BSE bhavcopy."""
+             log: Callable[[str], None] = print, retry_errors: bool = True,
+             retry_missing_from: Optional[date] = None) -> Manifest:
+    """
+    Every calendar day in [start, end]: NSE bhavcopy + delivery, BSE bhavcopy.
+
+    A 404 is normally final. `retry_missing_from` makes it provisional for days
+    on or after that date: a daily job that runs before the exchange publishes
+    the evening's file must be able to ask again the next time.
+    """
     fetch = fetch or http_fetcher()
     manifest = Manifest(root)
     day = start
@@ -404,6 +411,8 @@ def download(root: str, start: date, end: date, fetch: Optional[Fetcher] = None,
             status = manifest.status(day, source)
             # A failed or invalid attempt is tried again on the next run: both
             # can be transient (a timeout, a truncated file).
+            if status == "missing" and retry_missing_from is not None and day >= retry_missing_from:
+                continue
             if status in ("ok", "missing") or (status in ("error", "invalid") and not retry_errors):
                 if status != "ok" or os.path.exists(raw_path(root, source, day)):
                     results[source] = status

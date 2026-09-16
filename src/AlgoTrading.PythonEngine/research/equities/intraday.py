@@ -115,7 +115,8 @@ class Manifest:
 Poster = Callable[[Dict[str, object]], Tuple[int, object]]
 
 
-def dhan_poster(client_id: Optional[str] = None, token: Optional[str] = None, timeout: float = 30.0) -> Poster:
+def dhan_poster(client_id: Optional[str] = None, token: Optional[str] = None, timeout: float = 30.0,
+                url: str = URL) -> Poster:
     import requests
 
     client_id = client_id or os.environ.get("DHAN_CLIENT_ID")
@@ -127,7 +128,7 @@ def dhan_poster(client_id: Optional[str] = None, token: Optional[str] = None, ti
                             "Accept": "application/json"})
 
     def post(body: Dict[str, object]) -> Tuple[int, object]:
-        response = session.post(URL, json=body, timeout=timeout)
+        response = session.post(url, json=body, timeout=timeout)
         try:
             return response.status_code, response.json()
         except ValueError:
@@ -192,8 +193,13 @@ def fetch_window(root: str, manifest: Manifest, symbol: str, security_id: str, l
 
 
 def download(root: str, stocks: Iterable[Tuple[str, str]], start: date, end: date, post: Optional[Poster] = None,
-             log: Callable[[str], None] = print, pacer: Optional[Pacer] = None) -> Dict[str, int]:
-    """Every (symbol, Dhan security id) over [start, end]. Stops at the first authentication failure."""
+             log: Callable[[str], None] = print, pacer: Optional[Pacer] = None,
+             stop_at: Optional[Callable[[], bool]] = None) -> Dict[str, int]:
+    """
+    Every (symbol, Dhan security id) over [start, end]. Stops at the first
+    authentication failure, or before the next request once `stop_at()` is true
+    (a night run must end before the production server uses the same account).
+    """
     post = post or dhan_poster()
     pacer = pacer or Pacer()
     manifest = Manifest(root)
@@ -205,6 +211,10 @@ def download(root: str, stocks: Iterable[Tuple[str, str]], start: date, end: dat
                                               or os.path.exists(window_path(root, symbol, lo, hi))):
                 counts["skipped"] += 1
                 continue
+            if stop_at is not None and stop_at():
+                log(f"stopped by the time limit at {symbol} {lo}")
+                counts["stopped"] = 1
+                return counts
             attempt = fetch_window(root, manifest, symbol, security_id, lo, hi, post, pacer)
             counts[attempt.status] += 1
             if attempt.status == "error":

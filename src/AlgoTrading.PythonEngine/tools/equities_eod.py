@@ -38,6 +38,10 @@ def main(argv=None) -> int:
     parser.add_argument("--to", dest="date_to")
     parser.add_argument("--root", default=bhavcopy.DEFAULT_ROOT)
     args = parser.parse_args(argv)
+    import socket
+    import urllib3.util.connection as connection
+    # This workstation's IPv6 route is dead: requests tried IPv6 first and each new connection waited ~80 s.
+    connection.allowed_gai_family = lambda: socket.AF_INET
 
     start = date.fromisoformat(args.date_from)
     end = date.fromisoformat(args.date_to) if args.date_to else datetime.now(IST).date()

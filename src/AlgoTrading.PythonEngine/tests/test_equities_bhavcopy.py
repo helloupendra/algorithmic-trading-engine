@@ -210,6 +210,23 @@ class DownloadTests(unittest.TestCase):
         self.assertEqual(3, self.calls.count(bc.url_for("bse_udiff", DAY)))
         self.assertFalse(os.path.exists(bc.raw_path(self.root, "bse_udiff", DAY)))
 
+    def test_a_404_is_final_unless_the_day_is_recent_enough_to_ask_again(self):
+        # Asked before the exchange published the evening's files: everything 404s.
+        served, self.served = self.served, {}
+        bc.download(self.root, DAY, DAY, fetch=self.fetch, log=lambda _: None)
+        self.assertEqual("missing", bc.Manifest(self.root).status(DAY, "nse_udiff"))
+
+        # Published now. A plain re-run trusts the 404 and asks nothing.
+        self.served = served
+        self.calls.clear()
+        bc.download(self.root, DAY, DAY, fetch=self.fetch, log=lambda _: None)
+        self.assertEqual([], self.calls)
+
+        # A daily job marks recent days as provisional and gets the files.
+        bc.download(self.root, DAY, DAY, fetch=self.fetch, log=lambda _: None, retry_missing_from=DAY)
+        self.assertEqual("ok", bc.Manifest(self.root).status(DAY, "nse_udiff"))
+        self.assertEqual("session", bc.coverage(self.root, DAY, DAY)[0].verdict)
+
     def test_normalise_merges_delivery_into_nse_rows(self):
         bc.download(self.root, DAY, DAY, fetch=self.fetch, log=lambda _: None)
         paths = bc.normalise(self.root, DAY, DAY, log=lambda _: None)
