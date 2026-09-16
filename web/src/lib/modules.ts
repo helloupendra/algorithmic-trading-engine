@@ -167,14 +167,6 @@ export const DATA_SECTIONS = [
     icon: IconServer,
     end: false,
   },
-  {
-    // Where the data comes from, so it sits with the data rather than under a
-    // generic "modules" heading that says nothing.
-    route: '/admin/broker',
-    label: 'Connectors',
-    icon: IconPlug,
-    end: false,
-  },
 ] as const
 
 /**
@@ -263,4 +255,8 @@ export const SYSTEM_SECTIONS = [
   { route: '/admin/system/logs', label: 'Activity log', icon: IconClock },
   { route: '/admin/system/deployments', label: 'Deployments', icon: IconRefresh },
   { route: '/admin/users', label: 'Users & access', icon: IconUsers },
+  // Vendor credentials, sign-ins and routing are set up once and then left
+  // alone, so they sit last with the rest of the operator's plumbing (owner's
+  // call, 2026-09-16) rather than among the market-data pages used every day.
+  { route: '/admin/broker', label: 'Connectors', icon: IconPlug },
 ]

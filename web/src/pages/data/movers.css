@@ -1,0 +1,151 @@
+/* Market movers: one section at a time, each card scrolling on its own.
+
+   The page used to be one long column — gainers, losers, 20 build-up rows and
+   two PCR tables stacked — so reading the PCR meant scrolling past everything
+   else. Now a tab picks the section, the section fills the window, and every
+   card keeps its header in place while its rows scroll. */
+
+/* The page is exactly the window below the top bar (the shell adds 22px of
+   padding above and 40px below), so only the cards scroll — never the page. */
+.mv {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: calc(100dvh - var(--topbar-h) - 62px);
+  min-height: 480px;
+}
+.page.mv > * + * { margin-top: 0; }   /* the flex gap does the spacing */
+
+/* Only the section body may give up height. The tab bar scrolls sideways
+   (overflow-x), which lets a flex item shrink to nothing in a fixed-height
+   column — it collapsed to 0px until it was pinned here. */
+.mv > .mv-head,
+.mv > .oc-tabs,
+.mv > .panel { flex: none; }
+
+/* Whatever follows the tabs takes the remaining height. */
+.mv-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.mv-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+.mv-head h1 { margin: 0; }
+.mv-head__meta { margin-top: 4px; }
+
+.mv-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
+}
+.mv-grid--one { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 900px) {
+  .mv-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+.mv-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding-bottom: 12px;
+}
+.mv-body > .mv-card { flex: 1 1 auto; }
+.mv-card .panel__head { margin-bottom: 8px; }
+
+/* The card's own scroll: it takes whatever height the card has left. */
+.mv-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  scrollbar-width: thin;
+}
+.mv-scroll .col-rank { width: 44px; }
+.mv-scroll table { margin: 0; }
+.mv-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface2);
+}
+.mv-scroll td.num,
+.mv-scroll th.num { text-align: right; white-space: nowrap; }
+
+.mv-sym__code {
+  display: block;
+  font-size: 11px;
+  color: var(--text-2);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.mv-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.mv-filter {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.mv-filter:hover { color: var(--text); }
+.mv-filter[aria-pressed='true'] {
+  color: var(--text);
+  border-color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 14%, transparent);
+}
+.mv-filter__count { margin-left: 6px; color: var(--text-2); }
+
+.mv-tiles {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 12px;
+}
+@media (max-width: 700px) {
+  .mv-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.mv-tile {
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--surface2);
+}
+.mv-tile__value { font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.mv-tile__label { font-size: 11.5px; color: var(--text-2); margin-top: 2px; }
+
+.mv-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.mv-tools .field__input { max-width: 220px; }
+
+/* A phone or a short window: fixed heights would leave a sliver to scroll, so
+   the page flows again and each card is capped instead. */
+@media (max-width: 900px), (max-height: 620px) {
+  .mv { height: auto; min-height: 0; }
+  .mv-grid { grid-template-rows: none; }
+  .mv-scroll { flex: none; max-height: 60vh; }
+}

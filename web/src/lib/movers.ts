@@ -95,3 +95,68 @@ export function buildUpCounts(rows: MoverRow[] | undefined): Array<{ label: stri
     .map(([label, count]) => ({ label, count }))
     .sort((a, b) => b.count - a.count)
 }
+
+/* ------------------------------------------------------------ sections -- */
+
+/** The three views of the page, one at a time. */
+export type MoverSectionKey = 'price' | 'buildup' | 'pcr'
+
+export const MOVER_SECTIONS: ReadonlyArray<{ key: MoverSectionKey; label: string }> = [
+  { key: 'price', label: 'Gainers & losers' },
+  { key: 'buildup', label: 'OI build-up' },
+  { key: 'pcr', label: 'Put-call ratio' },
+]
+
+/** A section from the URL, or the first one when the value is missing or unknown. */
+export function sectionFrom(value: string | null | undefined): MoverSectionKey {
+  return MOVER_SECTIONS.some((s) => s.key === value) ? (value as MoverSectionKey) : 'price'
+}
+
+/** How many rows each section holds, for its tab. */
+export function sectionCount(data: MoversSnapshot | undefined, key: MoverSectionKey): number {
+  if (!data) return 0
+  if (key === 'price') return (data.priceGainers?.length ?? 0) + (data.priceLosers?.length ?? 0)
+  if (key === 'buildup') return data.buildUp?.length ?? 0
+  return data.pcr?.length ?? 0
+}
+
+/** The build-up rows for one reading, or all of them. */
+export function filterBuildUp(rows: MoverRow[] | undefined, reading: string): MoverRow[] {
+  const all = rows ?? []
+  return reading === 'all' ? all : all.filter((r) => r.buildUp === reading)
+}
+
+export type PcrOrder = 'high' | 'low'
+
+/**
+ * The put-call ratio list as the table shows it: searched by underlying, then
+ * ordered put-heavy first ('high') or call-heavy first ('low').
+ */
+export function sortPcr(rows: PcrRow[] | undefined, order: PcrOrder, query = ''): PcrRow[] {
+  const needle = query.trim().toUpperCase()
+  const kept = (rows ?? []).filter(
+    (r) => Number.isFinite(r.pcr) && r.pcr > 0 && (needle === '' || r.underlying.includes(needle)),
+  )
+  return kept.sort((a, b) => (order === 'high' ? b.pcr - a.pcr : a.pcr - b.pcr))
+}
+
+/** Three numbers that describe the whole put-call ratio list at a glance. */
+export function pcrSummary(rows: PcrRow[] | undefined): {
+  count: number
+  median: number | null
+  putHeavy: number
+  callHeavy: number
+} {
+  const values = (rows ?? []).map((r) => r.pcr).filter((v) => Number.isFinite(v) && v > 0)
+  if (values.length === 0) return { count: 0, median: null, putHeavy: 0, callHeavy: 0 }
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+  return {
+    count: values.length,
+    median,
+    // Above 1: more put than call open interest. Below 0.5: calls dominate.
+    putHeavy: values.filter((v) => v > 1).length,
+    callHeavy: values.filter((v) => v < 0.5).length,
+  }
+}
