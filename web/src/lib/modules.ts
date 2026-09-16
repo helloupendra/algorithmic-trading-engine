@@ -148,6 +148,14 @@ export const DATA_SECTIONS = [
     end: false,
   },
   {
+    // Angel One's market-wide screens; it is the only connector that publishes
+    // them, so the page lives with the rest of the market data.
+    route: '/admin/data/movers',
+    label: 'Market movers',
+    icon: IconActivity,
+    end: false,
+  },
+  {
     route: '/admin/data/historical',
     label: 'Historical',
     icon: IconCandles,

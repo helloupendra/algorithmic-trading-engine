@@ -42,6 +42,7 @@ from core.api_client import build_session, PlatformApiClient
 from core.feed_watchdog import assess_feed
 from core.tick_age import tick_age_seconds
 from core.leg_pricing import DEFAULT_WAIT_SECONDS, resolve_leg_prices
+from core.warmup_source import load_warmup_bars
 import urllib3
 from typing import Callable, List, Dict, Any, Optional
 
@@ -82,7 +83,6 @@ from strategies.signal_utils import (  # noqa: F401
 from backtest.run_spec import parse_risk_rules
 
 import core.fyers_orders as fyers_orders
-from core.warmup_retry import fetch_warmup_bars_with_retry
 from core.recap_session import RecapSession
 
 try:
@@ -737,7 +737,8 @@ if __name__ == "__main__":
                     end_time = datetime.fromisoformat(recap.warmup_end_date())
                 start_time = end_time - timedelta(days=15)
 
-                bars = fetch_warmup_bars_with_retry(
+                warmup = load_warmup_bars(
+                    api=api,
                     make_engine=DataEngine,
                     symbol=args.spot_symbol,
                     resolution=req.resolution,
@@ -745,6 +746,9 @@ if __name__ == "__main__":
                     end_date=end_time.strftime("%Y-%m-%d"),
                     label=args.underlying,
                 )
+                bars = warmup.bars
+                print(f"[{args.underlying}] Warmup source: {warmup.source}"
+                      + (f" — {warmup.detail}" if warmup.detail else ""), flush=True)
                 
                 if bars and recap is not None:
                     bars = [b for b in bars if recap.before_session(b.timestamp_start)]

@@ -6,6 +6,8 @@
 #     and deploys — console rebuilt in place, API rebuilt and restarted when
 #     its code changed;
 #   - at 08:45 on weekdays runs scripts/market-open.sh once;
+#   - at 23:35 on weekdays, after the MCX close, runs scripts/market-close.sh
+#     once, so no feed, recorder or run is left holding a session overnight;
 #   - writes logs/desk.status every loop so scripts/status.sh can answer
 #     "is it running?" without guessing.
 #
@@ -48,6 +50,10 @@ PIDFILE="$DESK_STATE_DIR/desk.pid"
 HEALTH_EVERY=30          # seconds between health checks
 DEPLOY_EVERY=120         # seconds between git checks
 OPEN_AT="${MARKET_OPEN_AT:-0845}"   # HHMM, weekdays
+# HHMM, weekdays: after MCX closes at 23:30, stop every feed, recorder and run.
+# A feed left alive overnight wakes up with a dead token and reconnects in a
+# loop — on 2026-09-16 that got the Dhan account blocked (scripts/market-close.sh).
+CLOSE_AT="${MARKET_CLOSE_AT:-2335}"
 
 desk_pid() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null && cat "$PIDFILE"; }
 
@@ -109,6 +115,7 @@ api_start || true
 fails=0
 last_deploy_check=0
 opened_on=""
+closed_on=""
 last_commit="$(git rev-parse --short HEAD 2>/dev/null || echo '?')"
 last_deploy_note="none since desk started"
 
@@ -259,6 +266,13 @@ while true; do
     # stdout, so the log-only flag is lifted for it.
     DESK_LOG_ONLY= ./scripts/market-open.sh >>"$LOG" 2>&1 || warn "market-open.sh exited non-zero (see logs/market-open-$today.log)"
     opened_on="$today"
+  fi
+
+  # 4. market close, once per weekday, after the MCX session
+  if [ "$dow" -le 5 ] && [ "$hhmm" -ge "$CLOSE_AT" ] && [ "$closed_on" != "$today" ]; then
+    say "=== $CLOSE_AT — running market-close.sh ==="
+    DESK_LOG_ONLY= ./scripts/market-close.sh >>"$LOG" 2>&1 || warn "market-close.sh exited non-zero (see logs/market-close-$today.log)"
+    closed_on="$today"
   fi
 
   write_status

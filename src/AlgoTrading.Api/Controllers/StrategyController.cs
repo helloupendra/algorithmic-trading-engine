@@ -4,6 +4,7 @@ using AlgoTrading.Api.Configuration;
 using AlgoTrading.Api.Security;
 using AlgoTrading.Api.Services;
 using AlgoTrading.Application.Interfaces;
+using AlgoTrading.Application.Risk;
 using AlgoTrading.Application.UseCases.LiveData;
 using AlgoTrading.Application.UseCases.Simulator;
 using AlgoTrading.Contracts.LiveData;
@@ -179,7 +180,7 @@ public class StrategyController : ControllerBase
             return Conflict(new { message = AlreadyRunningMessage(strategy.Name, underlying) });
 
         var riskLimits = limitsStore.GetLimits();
-        if (_registry.Count >= riskLimits.MaxConcurrentRuns)
+        if (RunCap.Blocks(riskLimits.MaxConcurrentRuns, _registry.Count))
             return StatusCode(StatusCodes.Status429TooManyRequests,
                 new { message = $"Concurrent strategy limit reached ({riskLimits.MaxConcurrentRuns})." });
 
@@ -329,7 +330,7 @@ public class StrategyController : ControllerBase
             return Conflict(new { message = AlreadyRunningMessage(strategy.Name, underlying) });
 
         var riskLimits = limitsStore.GetLimits();
-        if (_registry.Count >= riskLimits.MaxConcurrentRuns)
+        if (RunCap.Blocks(riskLimits.MaxConcurrentRuns, _registry.Count))
             return StatusCode(StatusCodes.Status429TooManyRequests,
                 new { message = $"Concurrent strategy limit reached ({riskLimits.MaxConcurrentRuns})." });
 

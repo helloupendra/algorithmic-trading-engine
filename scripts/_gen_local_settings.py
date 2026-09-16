@@ -159,6 +159,19 @@ def main() -> int:
             "BotToken": env.get("TELEGRAM_BOT_TOKEN", ""),
             "ChatId": env.get("TELEGRAM_CHAT_ID", ""),
         },
+        # Angel One SmartAPI. Four values, because its session is client code +
+        # PIN + a TOTP code rather than a browser sign-in; the console cannot
+        # hold them yet, so .env is where they live.
+        "Angel": {
+            "ApiKey": env.get("ANGEL_API_KEY", ""),
+            "ClientCode": env.get("ANGEL_CLIENT_CODE", ""),
+            "Pin": env.get("ANGEL_PIN", ""),
+            "TotpSecret": env.get("ANGEL_TOTP_SECRET", ""),
+            "RootUrl": env.get("ANGEL_ROOT_URL", "https://apiconnect.angelone.in"),
+            # Shown in the console when a call is refused: the app answers only
+            # from the IP it was registered with.
+            "StaticIp": env.get("ANGEL_STATIC_IP", ""),
+        },
     }
 
     worker_settings = {
