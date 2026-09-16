@@ -446,7 +446,7 @@ const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]>
   ['/admin/system/calendar', 'System', 'Market calendar'],
   ['/admin/system/logs', 'System', 'Activity log'],
   ['/admin/system/deployments', 'System', 'Deployments'],
-  ['/admin/broker', 'Data', 'Connectors'],
+  ['/admin/broker', 'System', 'Connectors'],
   ['/admin/notebook/', 'Notebook', 'Whiteboard'],
   ['/admin/notebook', 'Notebook', 'Whiteboards'],
   ['/admin/system', 'System', 'Overview'],

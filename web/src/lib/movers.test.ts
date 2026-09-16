@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildUpCounts, buildUpTone, formatOi, movePercent, pcrEnds } from './movers'
+import {
+  buildUpCounts,
+  buildUpTone,
+  filterBuildUp,
+  formatOi,
+  movePercent,
+  pcrEnds,
+  pcrSummary,
+  sectionCount,
+  sectionFrom,
+  sortPcr,
+} from './movers'
 import type { MoverRow, PcrRow } from './movers'
 
 const row = (underlying: string, buildUp: string | null, oi = 10): MoverRow => ({
@@ -70,5 +81,54 @@ describe('buildUpCounts', () => {
       { label: 'Long build-up', count: 2 },
       { label: 'Short build-up', count: 1 },
     ])
+  })
+})
+
+describe('sections', () => {
+  const snapshot = {
+    configured: true,
+    priceGainers: [row('A', null), row('B', null)],
+    priceLosers: [row('C', null)],
+    buildUp: [row('D', 'Long build-up'), row('E', 'Short build-up')],
+    pcr: [{ symbol: 'X', underlying: 'X', pcr: 1 }],
+  }
+
+  it('reads the section from the URL and falls back to the first', () => {
+    expect(sectionFrom('buildup')).toBe('buildup')
+    expect(sectionFrom('nonsense')).toBe('price')
+    expect(sectionFrom(null)).toBe('price')
+  })
+
+  it('counts each section for its tab', () => {
+    expect(sectionCount(snapshot, 'price')).toBe(3)
+    expect(sectionCount(snapshot, 'buildup')).toBe(2)
+    expect(sectionCount(snapshot, 'pcr')).toBe(1)
+    expect(sectionCount(undefined, 'pcr')).toBe(0)
+  })
+
+  it('filters the build-up by reading', () => {
+    expect(filterBuildUp(snapshot.buildUp, 'all')).toHaveLength(2)
+    expect(filterBuildUp(snapshot.buildUp, 'Short build-up').map((r) => r.underlying)).toEqual(['E'])
+    expect(filterBuildUp(undefined, 'all')).toEqual([])
+  })
+})
+
+describe('put-call ratio table', () => {
+  const rows: PcrRow[] = [
+    { symbol: 'NHPC29SEP26FUT', underlying: 'NHPC', pcr: 1.22 },
+    { symbol: 'IREDA29SEP26FUT', underlying: 'IREDA', pcr: 0.18 },
+    { symbol: 'ABB29SEP26FUT', underlying: 'ABB', pcr: 0.95 },
+    { symbol: 'BAD29SEP26FUT', underlying: 'BAD', pcr: 0 },
+  ]
+
+  it('orders both ways, drops rows with no ratio, and searches by underlying', () => {
+    expect(sortPcr(rows, 'high').map((r) => r.underlying)).toEqual(['NHPC', 'ABB', 'IREDA'])
+    expect(sortPcr(rows, 'low').map((r) => r.underlying)).toEqual(['IREDA', 'ABB', 'NHPC'])
+    expect(sortPcr(rows, 'high', 'ir').map((r) => r.underlying)).toEqual(['IREDA'])
+  })
+
+  it('summarises the whole list', () => {
+    expect(pcrSummary(rows)).toEqual({ count: 3, median: 0.95, putHeavy: 1, callHeavy: 1 })
+    expect(pcrSummary([])).toEqual({ count: 0, median: null, putHeavy: 0, callHeavy: 0 })
   })
 })
