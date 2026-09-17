@@ -199,7 +199,10 @@ public class BacktestController : ControllerBase
         if (eod is null)
             return BadRequest(new { message = eodError });
 
-        if (!await HasOptionContractsAsync(underlying, cancellationToken))
+        bool equity = string.Equals(strategy.InstrumentKind, "equity", StringComparison.OrdinalIgnoreCase);
+        // An equity run trades the instrument itself, so it needs no option chain —
+        // and no lot: one "lot" is one share, and `lots` is the share count.
+        if (!equity && !await HasOptionContractsAsync(underlying, cancellationToken))
             return BadRequest(new { message = $"No option contracts loaded for {underlying} — import the F&O master first." });
 
         var spotSymbol = UnderlyingCatalog.SpotSymbolFor(underlying);
@@ -262,7 +265,9 @@ public class BacktestController : ControllerBase
             StrategyName = strategy.Name,
             ParametersJson = BacktestRunParameters.Merge(
                 strategy.DefaultParametersJson, request.Parameters, lots, risk,
-                underlying, resolution, eod, chargesPerLot, lot.LotSize, lot.Source),
+                underlying, resolution, eod, chargesPerLot,
+                equity ? 1 : lot.LotSize, equity ? "shares" : lot.Source,
+                equity ? "equity" : "options"),
             InitialCapital = initialCapital,
             CreatedUtc = now
         };

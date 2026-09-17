@@ -357,6 +357,14 @@ class BacktestRun:
     user_id: Optional[int] = None
     params: Dict[str, Any] = field(default_factory=dict)
     risk: RiskRules = RiskRules()
+    #: "options" (the strategy trades contracts of an underlying) or "equity"
+    #: (it trades the instrument itself, in shares). The API freezes the
+    #: strategy's own kind into the run.
+    instrument_kind: str = "options"
+
+    @property
+    def is_equity(self) -> bool:
+        return self.instrument_kind == "equity"
 
     @property
     def eod_square_off(self) -> Optional[time]:
@@ -371,7 +379,8 @@ class BacktestRun:
             f"target={self.target if self.target is not None else 'none'} "
             f"risk=[{self.risk.describe()}] "
             f"eod_square_off_ist={self.eod_square_off_ist or 'none'} "
-            f"charges_per_lot={self.charges_per_lot:g} initial_capital={self.initial_capital:g}"
+            f"charges_per_lot={self.charges_per_lot:g} initial_capital={self.initial_capital:g} "
+            f"instrument_kind={self.instrument_kind}"
         )
 
 
@@ -466,4 +475,5 @@ def parse_run_row(run_row: Dict[str, Any], default_lots: int = 1) -> BacktestRun
         user_id=int(user_id) if isinstance(user_id, (int, float)) else None,
         params=params,
         risk=risk,
+        instrument_kind=str(params.get("instrument_kind") or "options").strip().lower() or "options",
     )

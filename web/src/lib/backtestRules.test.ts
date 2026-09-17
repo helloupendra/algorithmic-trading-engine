@@ -5,6 +5,7 @@ import {
   countSet,
   describeRules,
   formatWindows,
+  parseWindowRows,
   parseWindows,
   rulesFromParams,
   rulesToParams,
@@ -76,6 +77,15 @@ describe('backtest rules', () => {
     expect(parseWindows('09:20-11:00, 13:00-15:15')).toEqual([['09:20', '11:00'], ['13:00', '15:15']])
     expect(parseWindows('morning')).toEqual([])
     expect(formatWindows([['09:20', '11:00'], ['', '']])).toBe('09:20-11:00')
+  })
+
+  it('keeps a half-typed window on screen but never sends one', () => {
+    // Typing the "from" time first must not wipe it while the "to" is still empty.
+    const half = formatWindows([['09:20', ''], ['', '']])
+    expect(half).toBe('09:20-')
+    expect(parseWindowRows(half)).toEqual([['09:20', '']])
+    expect(parseWindows(half)).toEqual([])
+    expect(rulesToParams({ windows_ist: half })).toEqual({})
   })
 
   it('counts and describes what a run will enforce', () => {
