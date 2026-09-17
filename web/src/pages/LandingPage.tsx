@@ -28,6 +28,13 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { ScrollScene } from '../components/ScrollScene'
 import { IconLogo } from '../components/icons'
+// Fingerprinted by the bundler — see the note on the SCREENS list.
+import shotChain from '../shots/option-chain.webp'
+import shotPulse from '../shots/market-pulse.webp'
+import shotCoverage from '../shots/history-coverage.webp'
+import shotFactors from '../shots/market-factors.webp'
+import shotRun from '../shots/run-ledger.webp'
+import shotSetup from '../shots/setup-editor.webp'
 import { prefersReducedMotion } from '../lib/motion'
 import './landing.css'
 
@@ -123,12 +130,18 @@ function Tile({
 
 /* ------------------------------------------------------------ the console */
 
-/** Screens from this deployment. The caption says what each one is for. */
+/**
+ * Screens from this deployment. The caption says what each one is for, and the
+ * files are imported rather than referenced by path so the build gives each one
+ * a content hash: the first set shipped from public/ kept its name, and the CDN
+ * in front of the server went on serving the old, half-resolution bytes for
+ * hours after the new ones were deployed.
+ */
 const SCREENS = [
   {
     key: 'chain',
     tab: 'Option chain',
-    src: '/shots/option-chain.webp',
+    src: shotChain,
     w: 2200,
     h: 1291,
     alt: 'The option chain: calls left, puts right, strike in the middle, with open interest, its change, IV and the build-up on each row.',
@@ -138,7 +151,7 @@ const SCREENS = [
   {
     key: 'pulse',
     tab: 'Market pulse',
-    src: '/shots/market-pulse.webp',
+    src: shotPulse,
     w: 2200,
     h: 924,
     alt: 'The overview screen: market state, indices, MCX commodities and large caps, each with the day range and the age of its last price.',
@@ -148,7 +161,7 @@ const SCREENS = [
   {
     key: 'history',
     tab: 'History on hand',
-    src: '/shots/history-coverage.webp',
+    src: shotCoverage,
     w: 2100,
     h: 1112,
     alt: 'The stored history table: index, resolution, the date range, sessions, bars and where each range came from.',
@@ -158,7 +171,7 @@ const SCREENS = [
   {
     key: 'factors',
     tab: 'Market factors',
-    src: '/shots/market-factors.webp',
+    src: shotFactors,
     w: 2200,
     h: 1222,
     alt: 'The market factors screen: option walls, max pain, put-call ratio, ATM IV and India VIX, each labelled with how fresh it is and what testing it has had.',
@@ -168,7 +181,7 @@ const SCREENS = [
   {
     key: 'run',
     tab: 'A finished run',
-    src: '/shots/run-ledger.webp',
+    src: shotRun,
     w: 2100,
     h: 1351,
     alt: 'A completed backtest: net P&L, trades, win rate, profit factor, drawdown, and an account panel with the lowest balance and the closing balance.',
@@ -399,7 +412,7 @@ export function LandingPage() {
               </ul>
             </div>
             <figure className="chapter__panel">
-              <img src="/shots/history-coverage.webp" width={2100} height={1112} loading="lazy" decoding="async"
+              <img src={shotCoverage} width={2100} height={1112} loading="lazy" decoding="async"
                 alt="The stored history table in the console: index, resolution, the date range, how many sessions and bars, and where each range came from." />
               <figcaption>What is stored, listed before you pick a range</figcaption>
             </figure>
@@ -417,7 +430,7 @@ export function LandingPage() {
               </p>
             </div>
             <figure className="chapter__panel">
-              <img src="/shots/option-chain.webp" width={2200} height={1291} loading="lazy" decoding="async"
+              <img src={shotChain} width={2200} height={1291} loading="lazy" decoding="async"
                 alt="The option chain in the console: calls left, puts right, open interest and its change on every row." />
               <figcaption>The live chain — a capture from this deployment</figcaption>
             </figure>
@@ -443,7 +456,7 @@ export function LandingPage() {
               </div>
             </div>
             <figure className="chapter__panel">
-              <img src="/shots/setup-editor.webp" width={2000} height={924} loading="lazy" decoding="async"
+              <img src={shotSetup} width={2000} height={924} loading="lazy" decoding="async"
                 alt="The setup editor in the console: a long setup and a short setup written as conditions, with the run's rules listed under them." />
               <figcaption>Where the setup is written — and the rules it runs under</figcaption>
             </figure>
@@ -466,7 +479,7 @@ export function LandingPage() {
               </ul>
             </div>
             <figure className="chapter__panel">
-              <img src="/shots/run-ledger.webp" width={2100} height={1351} loading="lazy" decoding="async"
+              <img src={shotRun} width={2100} height={1351} loading="lazy" decoding="async"
                 alt="The finished run in the console: net P&L, win rate, profit factor, drawdown and the account panel." />
               <figcaption>The same run, as the console reports it</figcaption>
             </figure>
