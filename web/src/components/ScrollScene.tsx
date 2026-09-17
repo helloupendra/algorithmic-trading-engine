@@ -48,7 +48,7 @@ const COLORS = {
   call: '#5b86ff',
   put: '#2bd4bd',
   dim: '#334565',
-  mark: '#8fb0ff',
+  mark: '#c9dbff',
   bg: '#04060c',
 }
 
@@ -174,40 +174,52 @@ function layoutCurve(i: number): Atom {
 }
 
 /**
- * Chapter 6 — the mark: the logo's own shape, drawn in boxes. Calls on the
- * left, puts on the right, the ATM row longest, the strike ladder down the
- * middle — the same glyph as the favicon.
+ * Chapter 6 — the mark: the platform's own logo, built out of the same boxes.
+ * A rounded tile drawn as a ring of cubes, and inside it the three candles the
+ * icon is made of — so the object the story has been rearranging ends up as the
+ * thing in the tab.
  */
+const MARK = { y: 3.5, half: 1.15, cube: 0.11 }
+
 function layoutMark(i: number): Atom {
-  const rows = [
-    { y: 2, len: 0.9 },
-    { y: 1, len: 1.45 },
-    { y: 0, len: 0.9 },
+  const RING = 36
+  const PER = 28 // cubes per candle: 18 body, 10 wick
+  if (i < RING) {
+    // The tile: a square ring with its corners pulled in, walked at a constant
+    // step so the cubes are evenly spaced whatever the side length.
+    const t = (i / RING) * 4
+    const side = Math.floor(t)
+    const f = t - side
+    const h = MARK.half
+    const r = 0.30
+    const a = -h + r + f * (2 * h - 2 * r)
+    const pts: [number, number][] = [[a, h], [h, -a], [-a, -h], [-h, a]]
+    const [x, y] = pts[side]
+    return { x, y: MARK.y + y, z: 0, w: MARK.cube, h: MARK.cube, d: MARK.cube, c: 5 }
+  }
+  const k = i - RING
+  const which = Math.floor(k / PER)
+  if (which > 2) return HIDDEN
+  const j = k % PER
+  // Open, close and the wick of each candle in the icon, in its own units.
+  const candles = [
+    { x: -0.58, top: 0.36, bot: -0.36, wickTop: 0.68, wickBot: -0.62 },
+    { x: 0.0, top: 0.64, bot: -0.44, wickTop: 0.86, wickBot: -0.72 },
+    { x: 0.58, top: 0.48, bot: -0.34, wickTop: 0.72, wickBot: -0.64 },
   ]
-  const perRow = 18
-  const spine = 6
-  if (i < rows.length * perRow) {
-    const r = Math.floor(i / perRow)
-    const k = i % perRow
-    const row = rows[r]
-    const side = k % 2 === 0 ? -1 : 1
-    const j = Math.floor(k / 2)
-    const step = row.len / (perRow / 2)
-    return {
-      x: side * (0.34 + j * step),
-      y: 2.75 + row.y * 0.62,
-      z: 0,
-      w: step * 0.8,
-      h: 0.30,
-      d: 0.30,
-      c: 5,
-    }
+  const c = candles[which]
+  if (j < 18) {
+    // The body: a column of cubes two wide, so it reads as a solid bar.
+    const row = Math.floor(j / 2)
+    const col = j % 2
+    const steps = 9
+    const y = c.bot + ((row + 0.5) / steps) * (c.top - c.bot)
+    return { x: c.x + (col ? 0.07 : -0.07), y: MARK.y + y, z: 0, w: 0.14, h: (c.top - c.bot) / steps + 0.015, d: 0.14, c: 5 }
   }
-  const k = i - rows.length * perRow
-  if (k < spine) {
-    return { x: 0, y: 3.37 + (k - (spine - 1) / 2) * 0.33, z: 0, w: 0.12, h: 0.3, d: 0.3, c: 5 }
-  }
-  return HIDDEN
+  const row = j - 18
+  const steps = 10
+  const y = c.wickBot + ((row + 0.5) / steps) * (c.wickTop - c.wickBot)
+  return { x: c.x, y: MARK.y + y, z: 0, w: 0.075, h: (c.wickTop - c.wickBot) / steps + 0.01, d: 0.075, c: 5 }
 }
 
 const LAYOUTS = [layoutTape, layoutYears, layoutChain, layoutSetup, layoutCurve, layoutMark]
@@ -219,7 +231,7 @@ export const CHAPTERS: Chapter[] = [
   { at: 0.40, camera: { pos: [0.4, 2.5, 10.8], look: [0, 2.1, 0] } },
   { at: 0.60, camera: { pos: [-2.4, 2.4, 11.2], look: [0, 1.6, 0] } },
   { at: 0.80, camera: { pos: [0, 2.1, 13.8], look: [0, 1.45, 0] } },
-  { at: 1.00, camera: { pos: [0, 3.3, 8.2], look: [0, 3.3, 0] } },
+  { at: 1.00, camera: { pos: [0, 3.4, 10.8], look: [0, 2.3, 0] } },
 ]
 
 /* ---------------------------------------------------------------- shaders */
