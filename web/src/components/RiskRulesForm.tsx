@@ -20,6 +20,7 @@
  */
 
 import { useEffect, useRef } from 'react'
+import { formatInrWhole } from '../lib/format'
 import { riskFieldInvalid } from '../lib/risk'
 import type { RiskDraft, RiskDraftField } from '../lib/risk'
 
@@ -94,6 +95,16 @@ const LEVELS: LevelSpec[] = [
   },
 ]
 
+/** "· a 20-point stop is ₹1,300" — what the typed points are worth at this size. */
+function legPointsHint(value: RiskDraft, unitValue: number): string {
+  const parts: string[] = []
+  for (const [key, name] of [['legStopLossPoints', 'stop'], ['legTargetPoints', 'target']] as const) {
+    const points = Number((value[key] ?? '').trim())
+    if (Number.isFinite(points) && points > 0) parts.push(`${name} ${points} pts = ${formatInrWhole(points * unitValue)}`)
+  }
+  return parts.length > 0 ? ` · ${parts.join(' · ')}` : ''
+}
+
 export function RiskRulesForm({
   value,
   onChange,
@@ -102,6 +113,7 @@ export function RiskRulesForm({
   invalidField = null,
   invalidNonce = 0,
   autoFocus = false,
+  unitValue = null,
 }: {
   value: RiskDraft
   onChange: (next: RiskDraft) => void
@@ -119,6 +131,12 @@ export function RiskRulesForm({
   invalidNonce?: number
   /** Focus the first input on mount (the run card's inline editor). */
   autoFocus?: boolean
+  /**
+   * Units the run trades (lots × lot size). With it, the per-leg level says what
+   * a premium point is worth in rupees — the difference between a 20-point stop
+   * and a ₹20 one, which is otherwise only obvious after a run closes on nothing.
+   */
+  unitValue?: number | null
 }) {
   const firstRef = useRef<HTMLInputElement>(null)
   const invalidRef = useRef<HTMLInputElement>(null)
@@ -178,6 +196,12 @@ export function RiskRulesForm({
             <span className="risk-form__help">{level.help}</span>
           </div>
           <div className="risk-form__stack">
+            {level.name === 'Per leg' && unitValue != null && unitValue > 0 && (
+              <span className="risk-form__help">
+                One premium point on one leg = {formatInrWhole(unitValue)} at this run's size
+                {legPointsHint(value, unitValue)}
+              </span>
+            )}
             {level.scope && (
               <div className="risk-form__fields">
                 <div className="risk-form__field">

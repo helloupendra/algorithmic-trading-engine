@@ -15,6 +15,10 @@ contract as the live runner.
               everything and ends the run;
     within a level the order is fixed stop-loss -> trailing stop -> target;
     trailing peaks live in `backtest/trailing.py` for the length of the session;
+  - the run's own rules on top of the strategy's (backtest/rules.py): how often
+    it may open (limits), exits of its own (the clock, a stop that moves to
+    entry and then steps up, the index turning against the position), which
+    contract a bare BUY/SELL takes, and what a fill costs;
   - an end-of-day square-off at `eod_square_off_ist` and an end-of-range
     square-off;
   - every fill, mark, equity point and the final summary are posted to the
@@ -37,19 +41,22 @@ from core.resolutions import to_strategy_resolution
 from strategies.base_strategy import BarFrame, BaseStrategy, OptionContract, StrategyInput, StrategySignal
 from strategies.contract_selector import describe_requirement, fallback_strike_step, format_strike
 from strategies.signal_utils import signal_to_request, stamp_signal_metadata
-from strategies import signal_filters
+from strategies import indicators, signal_filters
 
 from backtest.contracts import ContractResolver
 from backtest.feed import HistoricalFeed
 from backtest.ledger import ApplyResult, LedgerPosition, PaperLedger, pnl_percent, pnl_points
+from backtest.rules import ExitManager, RunRules, TradeLimiter, parse_rules
 from backtest.run_spec import BacktestRun, RiskRules, parse_parameters, parse_run_row
-from backtest.timeutil import compact_stamp, format_ist, in_session, iso_utc, ist_date, ist_time, parse_utc
+from backtest.timeutil import compact_stamp, format_ist, in_session, iso_utc, ist_date, ist_time, parse_utc, to_ist
 from backtest.trailing import TrailLevels
 
 SNAPSHOT_BATCH = 500
 PROGRESS_INTERVAL_SECONDS = 2.0
 WARMUP_DAYS = 15
 MAX_LOGGED_SKIPS = 200
+#: India's volatility index, as the VIX filters read it.
+VIX_SYMBOL = "NSE:INDIAVIX-INDEX"
 
 ProgressCallback = Callable[[Dict[str, Any]], None]
 Logger = Callable[[str], None]
@@ -100,6 +107,23 @@ def _leg_move(points: float, percent: Optional[float]) -> str:
     if percent is not None:
         text += f" ({_signed(percent, 1, '%')})"
     return text
+
+
+def position_direction(position: LedgerPosition) -> Optional[str]:
+    """
+    The market view an open leg expresses: a bought call or a sold put is
+    bullish, the mirror is bearish. None for anything that is not an option, so
+    the direction rules stand aside rather than guess.
+    """
+    symbol = str(position.symbol or "").upper()
+    if symbol.endswith("CE"):
+        call = True
+    elif symbol.endswith("PE"):
+        call = False
+    else:
+        return None
+    long = position.side == "LONG"
+    return "bullish" if call == long else "bearish"
 
 
 @dataclass
@@ -153,12 +177,17 @@ class BacktestSession:
 
         self.feed = HistoricalFeed(api, run, broker_linked=self.broker_linked, warmup_days=warmup_days, log=log)
         self.resolver = ContractResolver(api, run.underlying, log=log)
-        self.ledger = PaperLedger(self.lot_size, run.charges_per_lot)
+        #: The run's own rules: limits, extra exits, contract choice and costs.
+        self.rules: RunRules = parse_rules(run.params)
+        self.limiter = TradeLimiter(self.rules.limits, self.rules.windows)
+        self.exit_manager = ExitManager(self.rules.exits)
+        self.ledger = PaperLedger(self.lot_size, run.charges_per_lot, costs=self.rules.costs)
 
         self.requirements = list(self.strategy.get_data_requirements() or [])
         # The same market-context gate the live runner uses, so a filter can be
         # measured here before it is trusted there.
         self.filter_config = signal_filters.parse_filters(run.params)
+        self.needs_vix = bool(self.filter_config is not None and self.filter_config.needs_vix)
         self.filtered_count = 0
         self.filtered_by: Dict[str, int] = {}
         # The option contracts the strategy wants each bar (ATM / OTM / ITM),
@@ -206,6 +235,11 @@ class BacktestSession:
         # restart nor a live rule change, so they last the whole session.
         self.trails = TrailLevels()
         self.overall_trail_stop = False
+        #: Set when a limit ended the day; the main loop squares off and stops entering.
+        self._limits_day_close: Optional[str] = None
+        #: What the index says right now by the exit indicator, recomputed once a bar.
+        self._index_view: Optional[str] = None
+        self.limit_day_closes = 0
 
     # --- configuration ------------------------------------------------------
 
@@ -347,10 +381,14 @@ class BacktestSession:
         return contracts
 
     def _build_input(self, bar: BarFrame, t: datetime, contracts: Dict[str, OptionContract],
-                     atm_strike: Any, source: str) -> StrategyInput:
+                     atm_strike: Any, source: str, expiry: Optional[str] = None) -> StrategyInput:
         bars: Dict[str, Dict[str, List[BarFrame]]] = {}
         for resolution in self.resolutions:
             bars[resolution] = {"index": self.feed.bars_upto(resolution, t)}
+        if self.needs_vix:
+            # The VIX rules read the index's own volatility gauge; it is a plain
+            # candle series, so the same reader serves it.
+            bars[self.run.resolution]["vix"] = self.feed.option_bars_upto(VIX_SYMBOL, self.run.resolution, t)
         for req in self.requirements:
             resolution = to_strategy_resolution(req.resolution) if req.resolution else self.run.resolution
             kind = req.symbol_type
@@ -376,7 +414,9 @@ class BacktestSession:
             lot_size=self.lot_size,
             contracts=contracts,
             bars=bars,
-            metadata={"source": source},
+            # The expiry is what the expiry-day rules judge on, and a strategy that
+            # wants it no longer has to work it out again.
+            metadata={"source": source, "expiry_date": expiry or ""},
         )
 
     # --- square-off / risk --------------------------------------------------
@@ -402,8 +442,19 @@ class BacktestSession:
             result = self.ledger.apply("CLOSE_GROUP", group_id, sig.legs, t_iso, sig.reason)
             if result.applied:
                 closed += len(result.closed)
+                self._book_closes(result, t)
                 self._post_signal(sig, spot, atm, result)
         return closed
+
+    def _book_closes(self, result: ApplyResult, t: datetime) -> None:
+        """Tell the limiter what each closed position did, so its counts and cooldowns are current."""
+        if not self.rules.limits.is_set:
+            return
+        moment = to_ist(t)
+        for position in result.closed:
+            ended = self.limiter.closed(moment, position_direction(position), position.realized)
+            if ended and not self._limits_day_close:
+                self._limits_day_close = ended
 
     def _square_off(self, t: datetime, reason: str, spot: Optional[float] = None, atm: Any = None) -> int:
         """Close every open position at the last known close of its contract at t."""
@@ -585,6 +636,55 @@ class BacktestSession:
         self._square_off(t, self.stop_reason, spot, atm)
         return True
 
+    def _index_reading(self, t: datetime) -> Optional[str]:
+        """
+        What the index says right now by the configured exit indicator:
+        "bullish", "bearish", or None when it cannot be read (an index has no
+        volume, so VWAP is unavailable, and the rule then stands aside).
+        """
+        exits = self.rules.exits
+        if not exits.needs_bars:
+            return None
+        bars = self.feed.bars_upto(self.run.resolution, t)
+        if not bars:
+            return None
+        close = float(bars[-1].close)
+        if exits.exit_on_supertrend:
+            period, multiple = exits.exit_on_supertrend
+            reading = indicators.supertrend(bars, int(period), float(multiple))
+            return None if reading is None else str(reading["direction"])
+        if exits.exit_on_ema_cross:
+            value = indicators.ema(indicators.closes(bars), int(exits.exit_on_ema_cross))
+            return None if value is None else ("bullish" if close >= value else "bearish")
+        value = indicators.vwap(indicators.session_bars(bars))
+        return None if value is None else ("bullish" if close >= value else "bearish")
+
+    def _apply_exit_rules(self, t: datetime, spot: float, atm: Any) -> int:
+        """The run's own exits: the clock, the moving stop, and the index turning against a position."""
+        if not self.rules.exits.is_set:
+            return 0
+        self.exit_manager.prune(self.ledger.open_keys())
+        moment = to_ist(t)
+        trips: List[Tuple[Tuple[str, str], str, str]] = []
+        for pos in self.ledger.open_positions():
+            key = (pos.group_id, pos.symbol)
+            trip = self.exit_manager.check(key, moment, pnl_points(pos), pnl_percent(pos),
+                                           position_direction(pos), self._index_view)
+            if trip is not None:
+                trips.append((key, trip[0], trip[1]))
+        closed = 0
+        for key, rule, why in trips:
+            name = self.resolver.display_name(key[1])
+            reason = f"Run exit ({rule.replace('_', ' ')}): {name} {why}"
+            self.log(f"[EXIT] {format_ist(t)} IST {reason}")
+            signals = self.ledger.close_positions([key], self._price_at(t), iso_utc(t), reason,
+                                                  self.run.strategy_name, metadata={"exit_rule": rule})
+            count = self._apply_close_signals(signals, t, spot, atm, "EXIT")
+            if count:
+                closed += count
+                self.exit_manager.count(rule)
+        return closed
+
     def _check_risk(self, t: datetime, spot: float, atm: Any) -> bool:
         """
         One risk sweep at bar t, in the guard's order: leg rules, then group
@@ -598,6 +698,7 @@ class BacktestSession:
         self.trails.prune_legs(self.ledger.open_keys())
         self.trails.prune_groups(self.ledger.open_groups())
         self._apply_leg_rules(t, spot, atm)
+        self._apply_exit_rules(t, spot, atm)
         self._apply_group_rules(t, spot, atm)
         return self._check_overall(t, spot, atm)
 
@@ -623,17 +724,29 @@ class BacktestSession:
     def _ghost_to_open_group(self, sig: StrategySignal, t: datetime, contracts: Dict[str, OptionContract],
                              expiry: Optional[str], atm: Any) -> Optional[StrategySignal]:
         direction = sig.signal_type
-        key = "atm_ce" if direction == "BUY" else "atm_pe"
-        contract = contracts.get(key)
-        if contract is None:
-            side = key[-2:].upper()
-            self._skip(iso_utc(t), f"ATM {side}", f"ATM {self.resolver.missing_reason(expiry, atm, side)}")
-            return None
+        rules = self.rules.contract
+        side = rules.side_for(direction)
+        if rules.is_set:
+            # The run chose the side and the strike; resolve that contract rather
+            # than the ATM pair the strategy was handed.
+            strike = rules.strike_for(float(atm), side, self.step)
+            contract = self.resolver.contract(expiry, strike, side) if expiry else None
+            if contract is None:
+                self._skip(iso_utc(t), f"{side} {format_strike(strike)}",
+                           self.resolver.missing_reason(expiry, strike, side))
+                return None
+        else:
+            contract = contracts.get("atm_ce" if side == "CE" else "atm_pe")
+            if contract is None:
+                self._skip(iso_utc(t), f"ATM {side}", f"ATM {self.resolver.missing_reason(expiry, atm, side)}")
+                return None
         self._ghost_counter += 1
         sig.signal_type = "OPEN_GROUP"
         sig.metadata = dict(sig.metadata or {})
         sig.metadata["group_id"] = f"GTC_{compact_stamp(t)}_{self._ghost_counter:03d}"
-        sig.metadata["direction"] = direction
+        # The view the position expresses, which is the flipped one when the run
+        # flips: every direction rule downstream must read the trade, not the signal.
+        sig.metadata["direction"] = "BUY" if side == "CE" else "SELL"
         sig.legs = [{"symbol": contract.symbol, "side": "BUY", "quantity": self.lots}]
         return sig
 
@@ -715,6 +828,17 @@ class BacktestSession:
             sig.metadata["group_id"] = group_id
         sig.timestamp_utc = t_iso
 
+        if sig.signal_type == "OPEN_GROUP" and self.rules.limits.is_set:
+            blocked = self.limiter.allow(to_ist(t), signal_filters.signal_direction(sig),
+                                         len(self.ledger.open_groups()))
+            if blocked is not None:
+                rule, why = blocked
+                self.limiter.count_block(rule)
+                symbols = ", ".join(str(l.get("symbol")) for l in sig.legs) or group_id
+                self.log(f"[LIMIT] {format_ist(t)} IST {rule}: {why}")
+                self._skip(t_iso, symbols, f"{rule}: {why}")
+                return
+
         if sig.signal_type == "OPEN_GROUP" and self._day.squared_off:
             self.skipped_after_eod += 1
             symbols = ", ".join(str(l.get("symbol")) for l in sig.legs) or group_id
@@ -746,6 +870,8 @@ class BacktestSession:
                 leg["price"] = price
 
         result = self.ledger.apply(sig.signal_type, group_id, legs, t_iso, sig.reason)
+        if sig.signal_type == "CLOSE_GROUP":
+            self._book_closes(result, t)
         for leg, why in result.ignored:
             self.log(f"[IGNORE] {format_ist(t)} IST {sig.signal_type} {group_id} {leg.get('side')} {leg.get('symbol')}: {why}")
         if not result.applied:
@@ -757,6 +883,9 @@ class BacktestSession:
             for leg in legs:
                 if leg["symbol"] in filled and ":" not in leg["logical"]:
                     self._opened_as[(group_id, leg["logical"].upper())] = leg["symbol"]
+            self.limiter.opened(to_ist(t), signal_filters.signal_direction(sig))
+            for symbol in filled:
+                self.exit_manager.opened((group_id, symbol), to_ist(t))
         self._post_signal(sig, inp.spot_price, inp.atm_strike, result)
 
     # --- main loop ----------------------------------------------------------
@@ -791,6 +920,8 @@ class BacktestSession:
         # against a high this day never reached.
         self._day = _DayState(day=day, squared_off=False, last_t=None,
                               start_pnl=self.ledger.total_pnl())
+        self.limiter.start_day(day)
+        self._limits_day_close = None
         if self.risk.overall.per_day:
             self.trails.overall.reset(TrailLevels.RUN)
         self.sessions.add(day)
@@ -813,6 +944,7 @@ class BacktestSession:
             f"strategy_lots={self.lots} broker_linked={'yes' if self.broker_linked else 'no'} "
             f"resolutions={','.join(self.resolutions)} "
             f"(risk rules enforced by the engine every bar: leg → group → overall on total P&L)"
+            + (f" run rules: {self.rules.describe()}" if self.rules.is_set else "")
         )
         self.state = self.strategy.initialize_state()
         self.feed.load(self.resolutions)
@@ -882,16 +1014,24 @@ class BacktestSession:
             # charges) before the strategy sees this bar; if that pushed total
             # P&L through the stop-loss / target the run ends here, exactly as
             # the live guard would, instead of letting a new entry through.
+            self._index_view = self._index_reading(t)
             stopped = self._check_risk(t, spot, atm)
             if not stopped:
                 contracts = self._resolve_contracts(expiry, atm, t)
-                inp = self._build_input(bar, t, contracts, atm, "backtest")
+                inp = self._build_input(bar, t, contracts, atm, "backtest", expiry)
                 signals = self.strategy.on_bar(self.state, inp) or []
                 for sig in signals:
                     self._handle_signal(sig, t, inp, contracts, expiry)
 
                 self._mark(t)
                 stopped = self._check_risk(t, spot, atm)
+
+            if self._limits_day_close and not self._day.squared_off:
+                reason = f"Day closed by a run limit: {self._limits_day_close}"
+                self.log(f"[LIMIT] {format_ist(t)} IST {reason} — the run continues tomorrow")
+                self._square_off(t, reason, spot, atm)
+                self._day.squared_off = True
+                self.limit_day_closes += 1
 
             self.bars_processed += 1
             self._day.last_t = t
@@ -969,6 +1109,24 @@ class BacktestSession:
         risk_note = self._risk_note()
         if risk_note:
             notes.append(risk_note)
+        if self.limiter.blocked:
+            breakdown = ", ".join(f"{rule} {count}" for rule, count in sorted(self.limiter.blocked.items(),
+                                                                             key=lambda kv: -kv[1]))
+            notes.append(f"Run limits refused {sum(self.limiter.blocked.values())} entry(ies): {breakdown}.")
+        if self.exit_manager.counts:
+            breakdown = ", ".join(f"{rule.replace('_', ' ')} {count}"
+                                  for rule, count in sorted(self.exit_manager.counts.items(), key=lambda kv: -kv[1]))
+            notes.append(f"Run exits closed {sum(self.exit_manager.counts.values())} position(s): {breakdown}.")
+        if self.limit_day_closes:
+            notes.append(f"{self.limit_day_closes} session(s) ended early by a run limit.")
+        if self.rules.costs is not None:
+            notes.append(
+                f"Costs: {self.rules.costs.slippage_pct:g}% slippage a side (floor ₹{self.rules.costs.min_slippage:g}) "
+                f"plus brokerage, STT, exchange, SEBI, stamp duty and GST — ₹{self.ledger.charges:,.0f} charged, "
+                f"₹{self.ledger.slippage:,.0f} paid in slippage."
+            )
+        if self.rules.is_set:
+            notes.append(f"Run rules: {self.rules.describe()}.")
         return {
             "totalBars": self.total_bars,
             "barsProcessed": self.bars_processed,
@@ -983,6 +1141,11 @@ class BacktestSession:
             **{key: self.risk_counts[key] for key in RISK_COUNTERS},
             "overallTrailStop": self.overall_trail_stop,
             "charges": round(self.ledger.charges, 4),
+            "slippage": round(self.ledger.slippage, 4),
+            "runRules": self.rules.to_dict(),
+            "limitBlocks": dict(self.limiter.blocked),
+            "runExits": dict(self.exit_manager.counts),
+            "limitDayCloses": self.limit_day_closes,
             "realizedPnl": round(self.ledger.realized_pnl(), 4),
             "signalsPosted": self._signals_posted,
             "equityPoints": len(self.equity_points),

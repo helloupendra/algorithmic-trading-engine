@@ -264,6 +264,7 @@ class ChainFlowBuyStrategy(BaseStrategy):
         self._api = None
         self._chain: Optional[Dict[str, Any]] = None
         self._chain_fetched_at = 0.0
+        self._chain_as_of: Optional[datetime] = None
         self._chain_error_said = ""
 
     def _p(self, key: str) -> Any:
@@ -289,9 +290,19 @@ class ChainFlowBuyStrategy(BaseStrategy):
 
     # ---------------------------------------------------------------- chain --
 
-    def _fetch_chain(self, underlying: str) -> Optional[Dict[str, Any]]:
-        """The platform's chain view, at most once every `chain_refresh_seconds`."""
-        if time.monotonic() - self._chain_fetched_at < float(self._p("chain_refresh_seconds")) and self._chain:
+    def _fetch_chain(self, underlying: str, as_of: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
+        """
+        The platform's chain view: live and throttled to `chain_refresh_seconds`, or
+        the chain as it stood at `as_of` when a replay asks for a past minute.
+
+        A replay throttles on the bar's own clock, not the wall clock: keeping a
+        chain for 20 real seconds would hand a 2021 candle a chain from a different
+        week, which is the kind of mistake that makes a backtest look brilliant.
+        """
+        if as_of is not None:
+            if self._chain_as_of == as_of and self._chain:
+                return self._chain
+        elif time.monotonic() - self._chain_fetched_at < float(self._p("chain_refresh_seconds")) and self._chain:
             return self._chain
         try:
             if self._api is None:
@@ -300,15 +311,19 @@ class ChainFlowBuyStrategy(BaseStrategy):
                 from core.api_client import PlatformApiClient
                 from core.config import API_BASE_URL, VERIFY_SSL
                 self._api = PlatformApiClient(API_BASE_URL, verify_ssl=VERIFY_SSL)
+            params: Dict[str, Any] = {"underlying": underlying}
+            if as_of is not None:
+                params["asOfUtc"] = as_of.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
             resp = self._api.http.get(
                 f"{self._api.base_url}/api/OptionChain/view",
-                params={"underlying": underlying},
+                params=params,
                 verify=self._api.verify_ssl,
                 timeout=15,
             )
             resp.raise_for_status()
             self._chain = resp.json()
             self._chain_fetched_at = time.monotonic()
+            self._chain_as_of = as_of
             self._chain_error_said = ""
         except Exception as ex:  # a failed fetch is a skipped candle, never a crashed run
             message = f"{type(ex).__name__}: {ex}"
@@ -344,14 +359,16 @@ class ChainFlowBuyStrategy(BaseStrategy):
             state.update(session_date=session, trades_this_session=0, disarmed_side=None,
                          oi_samples=[], iv_low=None)
 
-        # The chain is the platform's recording of the live market. A replay has
-        # no way to ask for "now", so it sits out rather than trading on today's
-        # chain against an old candle.
-        if inp.mode != "LivePaper" or metadata.get("chain") == "none":
+        # The chain is the platform's recording of the market. Live, that is "now";
+        # in a replay it is the chain as it stood when this candle closed, which the
+        # view endpoint rebuilds from the stored option history. What it must never
+        # be is today's chain against an old candle.
+        if metadata.get("chain") == "none":
             return signals
 
-        now_utc = datetime.now(timezone.utc)
         decided_at = bar_start + timedelta(minutes=5)
+        replay = inp.mode != "LivePaper"
+        now_utc = decided_at if replay else datetime.now(timezone.utc)
 
         history = bars[: len(bars) - 1]
         closes = [float(b.close) for b in history]
@@ -372,7 +389,7 @@ class ChainFlowBuyStrategy(BaseStrategy):
            (disarmed == "PE" and not (close < ema_fast < ema_slow)):
             state["disarmed_side"] = None
 
-        chain = self._fetch_chain(inp.underlying)
+        chain = self._fetch_chain(inp.underlying, as_of=decided_at if replay else None)
         ok, why, facts = data_check(chain, close, now_utc, float(self._p("max_chain_age_seconds")),
                                     float(self._p("max_spot_gap_pct")))
 

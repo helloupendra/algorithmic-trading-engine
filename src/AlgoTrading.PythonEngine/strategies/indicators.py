@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 # Indian exchanges stamp everything in IST; bars carry UTC. One definition,
 # because a session boundary computed two ways is two different sessions.
@@ -165,6 +165,141 @@ def atr_percent(bars: Sequence[Any], period: int = 14) -> Optional[float]:
         return None
     last = float(bars[-1].close)
     return (value / last) * 100.0 if last else None
+
+
+def wilder_atr(bars: Sequence[Any], period: int = 14) -> Optional[float]:
+    """
+    Wilder's smoothed average true range, which is what Supertrend and ADX are
+    defined on. `atr` above is the simple mean and stays as it is: changing it
+    would move every threshold already chosen against it.
+    """
+    if period < 1 or len(bars) < period + 1:
+        return None
+    ranges = [true_range(bars[i], bars[i - 1]) for i in range(1, len(bars))]
+    value = sum(ranges[:period]) / float(period)
+    for tr in ranges[period:]:
+        value = (value * (period - 1) + tr) / float(period)
+    return value
+
+
+def supertrend(bars: Sequence[Any], period: int = 10, multiple: float = 3.0) -> Optional[Dict[str, Any]]:
+    """
+    Supertrend over the bars given: {"direction": "bullish"|"bearish", "level"}.
+
+    The bands are the median price plus and minus `multiple` ATRs; each band
+    only tightens while the trend holds, and price closing through the active
+    band flips the direction. None until there are enough bars to define it.
+    """
+    if period < 1 or len(bars) < period + 2:
+        return None
+    ranges = [true_range(bars[i], bars[i - 1]) for i in range(1, len(bars))]
+    atr_value = sum(ranges[:period]) / float(period)
+    direction = "bullish"
+    upper = lower = None
+    for index in range(period, len(bars)):
+        bar = bars[index]
+        if index > period:
+            atr_value = (atr_value * (period - 1) + ranges[index - 1]) / float(period)
+        median = (float(bar.high) + float(bar.low)) / 2.0
+        band_up, band_down = median + multiple * atr_value, median - multiple * atr_value
+        close, previous_close = float(bar.close), float(bars[index - 1].close)
+        upper = band_up if upper is None or band_up < upper or previous_close > upper else upper
+        lower = band_down if lower is None or band_down > lower or previous_close < lower else lower
+        if direction == "bullish" and close < lower:
+            direction, upper = "bearish", band_up
+        elif direction == "bearish" and close > upper:
+            direction, lower = "bullish", band_down
+    return {"direction": direction, "level": round(lower if direction == "bullish" else upper, 2)}
+
+
+def adx(bars: Sequence[Any], period: int = 14) -> Optional[Dict[str, float]]:
+    """
+    Wilder's ADX with both directional indicators: {"adx", "plus_di", "minus_di"}.
+
+    ADX says how strongly the market is trending, the two DIs say which way. A
+    filter that wants "a real trend, and it is against me" needs both numbers,
+    so they are returned together.
+    """
+    if period < 1 or len(bars) < 2 * period + 1:
+        return None
+    plus_moves, minus_moves, ranges = [], [], []
+    for index in range(1, len(bars)):
+        bar, previous = bars[index], bars[index - 1]
+        up = float(bar.high) - float(previous.high)
+        down = float(previous.low) - float(bar.low)
+        plus_moves.append(up if up > down and up > 0 else 0.0)
+        minus_moves.append(down if down > up and down > 0 else 0.0)
+        ranges.append(true_range(bar, previous))
+
+    def smooth(values: Sequence[float]) -> List[float]:
+        out = [sum(values[:period])]
+        for value in values[period:]:
+            out.append(out[-1] - out[-1] / period + value)
+        return out
+
+    smoothed_tr, smoothed_plus, smoothed_minus = smooth(ranges), smooth(plus_moves), smooth(minus_moves)
+    dx: List[float] = []
+    for tr, plus, minus in zip(smoothed_tr, smoothed_plus, smoothed_minus):
+        if tr <= 0:
+            continue
+        plus_di, minus_di = 100.0 * plus / tr, 100.0 * minus / tr
+        total = plus_di + minus_di
+        dx.append(100.0 * abs(plus_di - minus_di) / total if total else 0.0)
+    if len(dx) < period:
+        return None
+    value = sum(dx[:period]) / float(period)
+    for item in dx[period:]:
+        value = (value * (period - 1) + item) / float(period)
+    last_tr = smoothed_tr[-1]
+    return {
+        "adx": value,
+        "plus_di": 100.0 * smoothed_plus[-1] / last_tr if last_tr else 0.0,
+        "minus_di": 100.0 * smoothed_minus[-1] / last_tr if last_tr else 0.0,
+    }
+
+
+def opening_range(bars: Sequence[Any], minutes: int = 15) -> Optional[Dict[str, float]]:
+    """The session's first `minutes` as {"high", "low"}; None before it is complete."""
+    session = session_bars(bars)
+    if not session:
+        return None
+    first = ist_of(session[0])
+    if first is None:
+        return None
+    end = first + timedelta(minutes=minutes)
+    inside = [b for b in session if (ist_of(b) or first) < end]
+    if not inside or (ist_of(session[-1]) or first) < end:
+        return None
+    return {"high": max(float(b.high) for b in inside), "low": min(float(b.low) for b in inside)}
+
+
+def move_from_open_percent(bars: Sequence[Any]) -> Optional[float]:
+    """How far the last close is from the session's open, in percent."""
+    session = session_bars(bars)
+    if not session:
+        return None
+    open_price = float(session[0].open)
+    return None if open_price == 0 else 100.0 * (float(session[-1].close) - open_price) / open_price
+
+
+def return_percent(bars: Sequence[Any], lookback: int) -> Optional[float]:
+    """The percentage move over the last `lookback` bars."""
+    if lookback < 1 or len(bars) < lookback + 1:
+        return None
+    before = float(bars[-1 - lookback].close)
+    return None if before == 0 else 100.0 * (float(bars[-1].close) - before) / before
+
+
+def gap_percent(bars: Sequence[Any]) -> Optional[float]:
+    """The session's open against the previous session's last close, in percent."""
+    session = session_bars(bars)
+    if not session:
+        return None
+    first_index = len(bars) - len(session)
+    if first_index <= 0:
+        return None
+    previous_close = float(bars[first_index - 1].close)
+    return None if previous_close == 0 else 100.0 * (float(session[0].open) - previous_close) / previous_close
 
 
 def rsi(values: Sequence[float], period: int = 14) -> Optional[float]:

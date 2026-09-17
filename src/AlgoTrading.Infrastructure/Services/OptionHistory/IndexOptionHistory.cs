@@ -1,8 +1,10 @@
 using System.Globalization;
 using AlgoTrading.Contracts.Instruments;
 using AlgoTrading.Contracts.MarketData;
+using AlgoTrading.Contracts.OptionChain;
 using AlgoTrading.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace AlgoTrading.Infrastructure.Services.OptionHistory;
 
@@ -37,12 +39,14 @@ public sealed class IndexOptionHistory
 
     private readonly TradingDbContext _db;
     private readonly IndexOptionExpiryCalendar _calendar;
+    private readonly IMemoryCache? _cache;
     private readonly Dictionary<string, IReadOnlyList<DateOnly>> _expiries = new(StringComparer.OrdinalIgnoreCase);
 
-    public IndexOptionHistory(TradingDbContext db, IndexOptionExpiryCalendar calendar)
+    public IndexOptionHistory(TradingDbContext db, IndexOptionExpiryCalendar calendar, IMemoryCache? cache = null)
     {
         _db = db;
         _calendar = calendar;
+        _cache = cache;
     }
 
     /// <summary>
@@ -142,6 +146,162 @@ public sealed class IndexOptionHistory
 
         return RollUp(symbol.Trim(), bars, code);
     }
+
+    /// <summary>
+    /// The option chain as it stood at <paramref name="asOfUtc"/>, rebuilt from the stored
+    /// history: every strike the history holds at that minute, with its premium, open
+    /// interest, implied volatility, build-up since the session open and a delta computed
+    /// from that IV. Null when the history has no bar within ten minutes of the clock.
+    /// </summary>
+    /// <remarks>
+    /// This is what lets a chain-reading strategy replay a year it has no recorded chain
+    /// for. It is narrower than a live chain — only the strikes the importer kept around
+    /// ATM, and no bid/ask — so a strategy that needs a far strike still finds nothing,
+    /// which is the honest answer rather than a filled-in one.
+    /// </remarks>
+    public async Task<OptionChainResponse?> ChainAsync(string underlying, DateTime asOfUtc, CancellationToken cancellationToken)
+    {
+        string key = underlying.Trim().ToUpperInvariant();
+        if (!UnderlyingCatalog.IsIndex(key)) return null;
+
+        var asOf = DateTime.SpecifyKind(asOfUtc, DateTimeKind.Utc);
+        var day = DateOnly.FromDateTime(asOf + Ist);
+        var dayStart = IstMidnightUtc(day);
+        var series = _db.OptionHistoryBars.AsNoTracking().Where(x =>
+            x.Underlying == key && x.ExpiryFlag == NearestWeekFlag && x.ExpiryCode == NearestCode
+            && x.Resolution == MinuteResolution);
+
+        var minute = await series
+            .Where(x => x.BarStartUtc <= asOf && x.BarStartUtc >= dayStart && x.BarStartUtc >= asOf.AddMinutes(-10))
+            .OrderByDescending(x => x.BarStartUtc)
+            .Select(x => (DateTime?)x.BarStartUtc)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (minute is null) return null;
+
+        var rows = await series.Where(x => x.BarStartUtc == minute)
+            .Select(x => new HistoryLeg(x.Strike, x.OptionType, x.StrikeOffset, x.Close, x.Volume,
+                                        x.OpenInterest, x.ImpliedVolatility, x.SpotPrice))
+            .ToListAsync(cancellationToken);
+        if (rows.Count == 0) return null;
+
+        var expiries = await ExpiriesAsync(key, cancellationToken);
+        var expiry = expiries.FirstOrDefault(x => x >= day);
+        var opens = await SessionOpensAsync(key, day, dayStart, minute.Value, cancellationToken);
+
+        decimal spot = rows.Select(x => x.Spot).FirstOrDefault(x => x is > 0) ?? 0m;
+        decimal? atm = rows.Where(x => x.Offset == 0).Select(x => (decimal?)x.Strike).FirstOrDefault();
+        double years = expiry == default ? 0 : OptionMath.YearsBetween(minute.Value, ExpiryCloseUtc(expiry));
+
+        var response = new OptionChainResponse
+        {
+            Underlying = key,
+            ExpiryDate = expiry,
+            AsOfUtc = minute.Value,
+            SpotPrice = spot,
+            AtTheMoneyStrike = atm,
+        };
+
+        foreach (var group in rows.GroupBy(x => x.Strike).OrderBy(g => g.Key))
+        {
+            var strike = new OptionChainStrikeResponse
+            {
+                StrikePrice = group.Key,
+                IsAtTheMoney = atm is not null && group.Key == atm,
+                Call = Leg(group.FirstOrDefault(x => x.OptionType == "CE"), key, expiry, expiries, spot, years, opens, true),
+                Put = Leg(group.FirstOrDefault(x => x.OptionType == "PE"), key, expiry, expiries, spot, years, opens, false),
+            };
+            long calls = strike.Call?.OpenInterest ?? 0, puts = strike.Put?.OpenInterest ?? 0;
+            strike.PutCallRatio = calls > 0 ? Math.Round((decimal)puts / calls, 4) : null;
+            response.Strikes.Add(strike);
+        }
+
+        response.TotalCallOpenInterest = response.Strikes.Sum(s => s.Call?.OpenInterest ?? 0);
+        response.TotalPutOpenInterest = response.Strikes.Sum(s => s.Put?.OpenInterest ?? 0);
+        response.PutCallRatio = response.TotalCallOpenInterest > 0
+            ? Math.Round((decimal)response.TotalPutOpenInterest / response.TotalCallOpenInterest, 4)
+            : null;
+        response.HeaviestCallStrike = response.Strikes.OrderByDescending(s => s.Call?.OpenInterest ?? 0)
+            .Select(s => (decimal?)s.StrikePrice).FirstOrDefault();
+        response.HeaviestPutStrike = response.Strikes.OrderByDescending(s => s.Put?.OpenInterest ?? 0)
+            .Select(s => (decimal?)s.StrikePrice).FirstOrDefault();
+        // Max pain over five strikes either side of ATM would be a number about the
+        // window, not about the market, so it is left unanswered.
+        return response;
+    }
+
+    private OptionChainLegResponse? Leg(HistoryLeg? row, string underlying, DateOnly expiry,
+                                        IReadOnlyList<DateOnly> expiries, decimal spot, double years,
+                                        IReadOnlyDictionary<(decimal, string), (decimal Close, long? OpenInterest)> opens,
+                                        bool isCall)
+    {
+        if (row is null) return null;
+        var leg = new OptionChainLegResponse
+        {
+            Symbol = expiry == default ? string.Empty
+                : IndexOptionSymbols.Format(underlying, expiry, row.Strike, row.OptionType, IsMonthly(expiries, expiry)),
+            LastTradedPrice = row.Close,
+            Volume = row.Volume,
+            OpenInterest = row.OpenInterest,
+            ImpliedVolatility = row.Iv,
+            Delta = row.Iv is > 0 && spot > 0
+                ? OptionMath.Delta(isCall, (double)spot, (double)row.Strike, (double)row.Iv.Value, years)
+                : null,
+        };
+        if (opens.TryGetValue((row.Strike, row.OptionType), out var open))
+        {
+            leg.PriceChange = row.Close - open.Close;
+            leg.PriceChangePercent = open.Close > 0 ? Math.Round((row.Close - open.Close) / open.Close * 100m, 2) : null;
+            if (row.OpenInterest is not null && open.OpenInterest is not null)
+            {
+                leg.OpenInterestBaseline = open.OpenInterest;
+                leg.OpenInterestChange = row.OpenInterest - open.OpenInterest;
+                leg.OpenInterestChangePercent = open.OpenInterest > 0
+                    ? Math.Round((decimal)(row.OpenInterest - open.OpenInterest) / open.OpenInterest.Value * 100m, 2)
+                    : null;
+            }
+            leg.BuildUp = OptionChainAnalytics
+                .Classify(leg.PriceChange ?? 0m, leg.OpenInterestChange ?? 0)
+                .ToString();
+        }
+        return leg;
+    }
+
+    /// <summary>
+    /// Each contract's first bar of the session, which is what the build-up column is
+    /// measured from. Cached per underlying and day: the chain is asked for once a bar,
+    /// and reading the day's rows every time would cost far more than the answer.
+    /// </summary>
+    private async Task<IReadOnlyDictionary<(decimal, string), (decimal Close, long? OpenInterest)>> SessionOpensAsync(
+        string underlying, DateOnly day, DateTime dayStart, DateTime upto, CancellationToken cancellationToken)
+    {
+        string cacheKey = $"option-history-opens:{underlying}:{day:yyyy-MM-dd}";
+        if (_cache is not null && _cache.TryGetValue(cacheKey, out Dictionary<(decimal, string), (decimal, long?)>? cached) && cached is not null)
+            return cached;
+
+        var rows = await _db.OptionHistoryBars.AsNoTracking()
+            .Where(x => x.Underlying == underlying && x.ExpiryFlag == NearestWeekFlag && x.ExpiryCode == NearestCode
+                        && x.Resolution == MinuteResolution
+                        && x.BarStartUtc >= dayStart && x.BarStartUtc <= upto)
+            .GroupBy(x => new { x.Strike, x.OptionType })
+            .Select(g => new
+            {
+                g.Key.Strike,
+                g.Key.OptionType,
+                First = g.OrderBy(b => b.BarStartUtc).Select(b => new { b.Close, b.OpenInterest }).First(),
+            })
+            .ToListAsync(cancellationToken);
+
+        var opens = rows.ToDictionary(x => (x.Strike, x.OptionType), x => (x.First.Close, x.First.OpenInterest));
+        _cache?.Set(cacheKey, opens, TimeSpan.FromMinutes(30));
+        return opens;
+    }
+
+    private sealed record HistoryLeg(decimal Strike, string OptionType, int Offset, decimal Close, long? Volume,
+                                     long? OpenInterest, decimal? Iv, decimal? Spot);
+
+    /// <summary>The close of an expiry day in UTC: 15:30 IST.</summary>
+    private static DateTime ExpiryCloseUtc(DateOnly expiry) =>
+        DateTime.SpecifyKind(expiry.ToDateTime(new TimeOnly(15, 30)) - Ist, DateTimeKind.Utc);
 
     /// <summary>First and last stored bar of an index's nearest-expiry history, and the calendar's span.</summary>
     public async Task<OptionHistorySpan?> SpanAsync(string underlying, CancellationToken cancellationToken)

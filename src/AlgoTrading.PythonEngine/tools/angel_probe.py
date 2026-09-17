@@ -29,8 +29,9 @@ import sys
 from datetime import date, datetime, timedelta
 
 ENGINE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ENGINE_DIR not in sys.path:
-    sys.path.insert(0, ENGINE_DIR)
+# First, always: the tools folder is sys.path[0] when a tool is run as a script,
+# and `tools/research.py` would otherwise shadow the `research` package.
+sys.path.insert(0, ENGINE_DIR)
 
 import core.config  # noqa: F401,E402  — loads the repo-root .env
 

@@ -30,8 +30,9 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 ENGINE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ENGINE_DIR not in sys.path:
-    sys.path.insert(0, ENGINE_DIR)
+# First, always: the tools folder is sys.path[0] when a tool is run as a script,
+# and `tools/research.py` would otherwise shadow the `research` package.
+sys.path.insert(0, ENGINE_DIR)
 
 from core.api_client import PlatformApiClient  # noqa: E402
 from core.config import API_BASE_URL, VERIFY_SSL  # noqa: E402

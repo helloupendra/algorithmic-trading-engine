@@ -40,8 +40,9 @@ from datetime import date, datetime, timezone
 from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 ENGINE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ENGINE_DIR not in sys.path:
-    sys.path.insert(0, ENGINE_DIR)
+# First, always: the tools folder is sys.path[0] when a tool is run as a script,
+# and `tools/research.py` would otherwise shadow the `research` package.
+sys.path.insert(0, ENGINE_DIR)
 
 DATA_DIR = os.path.expanduser(os.getenv("OPENFNO_DATA_DIR", "~/OpenFNO-data"))
 UDIFF_FROM = date(2024, 7, 8)
