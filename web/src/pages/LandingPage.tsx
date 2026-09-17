@@ -26,7 +26,7 @@ import {
 } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
-import { AuroraCanvas } from '../components/AuroraScene'
+import { ScrollScene } from '../components/ScrollScene'
 import { prefersReducedMotion } from '../lib/motion'
 import './landing.css'
 
@@ -301,7 +301,18 @@ export function LandingPage() {
   const navLabel = sessionLikely ? 'Console' : 'Open console'
 
   const rootRef = useRef<HTMLDivElement | null>(null)
+  // The element whose scroll drives the world behind the six chapters.
+  const storyRef = useRef<HTMLDivElement | null>(null)
   useReveal(rootRef)
+
+  // The bar is quiet over the hero and solid once the page has moved.
+  const navRef = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    const onScroll = () => navRef.current?.classList.toggle('is-stuck', window.scrollY > 40)
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
 
   useEffect(() => {
     const previous = document.title
@@ -313,9 +324,7 @@ export function LandingPage() {
 
   return (
     <div className="lp" ref={rootRef}>
-      <AuroraCanvas className="lp__light" />
-
-      <header className="nav">
+      <header className="nav" ref={navRef}>
         <div className="nav__inner">
           <a className="brand" href="#top" aria-label="OpenFNO home">
             <span className="brand__mark"><Mark /></span>
@@ -324,11 +333,11 @@ export function LandingPage() {
           <nav className="nav__links" aria-label="Sections">
             <a href="#console">Console</a>
             <a href="#modules">Modules</a>
-            <a href="#setup">Build a setup</a>
-            <a href="#evidence">Evidence</a>
+            <a href="#how">How it works</a>
             <a href="/docs/">Docs</a>
           </nav>
           <div className="nav__end">
+            <span className="nav__rule" aria-hidden="true" />
             <a className="nav__icon" href={GITHUB_URL} target="_blank" rel="noopener noreferrer" aria-label="Source on GitHub" title="Source on GitHub">
               <GitHubMark />
             </a>
@@ -338,33 +347,152 @@ export function LandingPage() {
       </header>
 
       <main id="top">
-        {/* ------------------------------------------------------- hero */}
-        <section className="hero" aria-labelledby="hero-title">
-          <div className="wrap hero__copy">
-            <span className="eyebrow"><span className="dot" aria-hidden="true" />Open-source F&amp;O desk · self-hosted · your broker keys</span>
-            <h1 id="hero-title">
-              Run it live.<br />
-              Replay five years.<br />
-              <em>See every rupee.</em>
-            </h1>
-            <p className="lead">
-              One desk for Indian F&amp;O — four vendor feeds into a single store, 25 strategies plus one
-              you write in the console, and a replay engine that prices every trade from stored option
-              premiums with your own windows, exits, limits and costs applied.
-            </p>
-            <div className="cta">
-              <Link className="btn btn--primary btn--lg" to={consoleHref}>{consoleLabel}</Link>
-              <a className="btn btn--glass btn--lg" href="#console">See the console</a>
-            </div>
-            <p className="hero__vendors">
-              Dhan · FYERS · Angel One · TrueData&nbsp;&nbsp;—&nbsp;&nbsp;NSE · BSE · MCX
-            </p>
-          </div>
+        {/* --------------------------------------------------- the story */}
+        {/* Six chapters over one 3D world (components/ScrollScene): the tape
+            draws itself, multiplies into five years, splits into the chain,
+            lights the bars a setup would take, falls into a real run's equity
+            curve, and assembles into the mark. The copy answers, in order, what
+            this is, why it exists, what it does, who it is for, what it proves,
+            and what to do next. */}
+        <div className="story" ref={storyRef}>
+          <ScrollScene trackRef={storyRef} className="story__world" />
 
-          <div className="wrap wrap--wide" id="console">
-            <Console />
+          <div className="story__chapters">
+          <section className="chapter chapter--center" aria-labelledby="hero-title">
+            <div className="chapter__copy">
+              <span className="eyebrow"><span className="dot" aria-hidden="true" />Open-source F&amp;O desk · self-hosted · your broker keys</span>
+              <h1 id="hero-title">
+                Run it live.<br />
+                Replay five years.<br />
+                <em>See every rupee.</em>
+              </h1>
+              <p className="lead">
+                A trading desk you run yourself: live paper execution on real ticks, and a replay engine
+                that prices every trade from stored option premiums. Nothing is a black box — every fill,
+                every skipped entry and every stop carries its reason.
+              </p>
+              <div className="cta">
+                <Link className="btn btn--primary btn--lg" to={consoleHref}>{consoleLabel}</Link>
+                <a className="btn btn--glass btn--lg" href="#console">See inside the console</a>
+              </div>
+              <div className="hero__rail">
+                <span className="hero__rail-label">Connects to</span>
+                <span className="hero__rail-set">
+                  <b>Dhan</b><i /><b>FYERS</b><i /><b>Angel One</b><i /><b>TrueData</b>
+                </span>
+                <span className="hero__rail-label">Covers</span>
+                <span className="hero__rail-set"><b>NSE</b><i /><b>BSE</b><i /><b>MCX</b></span>
+              </div>
+            </div>
+            <div className="scroll-cue" aria-hidden="true"><span />scroll</div>
+          </section>
+
+          <section className="chapter chapter--right" aria-labelledby="ch-history">
+            <div className="chapter__copy">
+              <p className="kicker">01 — The store</p>
+              <h2 id="ch-history">Five years of the market,<br />on your own disk.</h2>
+              <p>
+                You cannot test what you did not keep. Four vendors feed one TimescaleDB store: index
+                candles from one minute to daily, ticks, quotes, and minute-level option history around
+                the money for NIFTY, BANKNIFTY and SENSEX — compressed after two hours, archived every
+                night, and listed in the console before you are asked to pick a range.
+              </p>
+              <ul className="chapter__facts">
+                <li><b>5 yrs</b> index candles</li>
+                <li><b>±10</b> strikes of option history</li>
+                <li><b>4</b> vendors, one store</li>
+              </ul>
+            </div>
+            <figure className="chapter__panel">
+              <img src="/shots/history-coverage.webp" width={1500} height={798} loading="lazy" decoding="async"
+                alt="The stored history table in the console: index, resolution, the date range, how many sessions and bars, and where each range came from." />
+              <figcaption>What is stored, listed before you pick a range</figcaption>
+            </figure>
+          </section>
+
+          <section className="chapter chapter--left" aria-labelledby="ch-chain">
+            <div className="chapter__copy">
+              <p className="kicker">02 — The chain</p>
+              <h2 id="ch-chain">Every strike. Every minute.</h2>
+              <p>
+                Calls on one side, puts on the other, open interest reading out from the strike ladder in
+                the middle. The console shows it live with Greeks, build-up, PCR and max pain — and
+                rebuilds the same chain for any past minute from stored history, which is what makes an
+                option strategy testable at all.
+              </p>
+            </div>
+            <figure className="chapter__panel">
+              <img src="/shots/option-chain.webp" width={1600} height={939} loading="lazy" decoding="async"
+                alt="The option chain in the console: calls left, puts right, open interest and its change on every row." />
+              <figcaption>The live chain — a capture from this deployment</figcaption>
+            </figure>
+          </section>
+
+          <section className="chapter chapter--right" aria-labelledby="ch-setup">
+            <div className="chapter__copy">
+              <p className="kicker">03 — The setup</p>
+              <h2 id="ch-setup">Write the setup,<br />not the plumbing.</h2>
+              <p>
+                List what makes a long and what makes a short — price against VWAP or an EMA, an RSI
+                cross, a candle body, Supertrend, an opening-range break — and the engine turns them into
+                signals. When it may trade, how often, where the stop moves, which strike it takes and
+                what a fill costs are the run&rsquo;s own rules, set beside the setup.
+              </p>
+              <div className="chapter__setup">
+                {SETUP.map((row) => (
+                  <div className="setup-row" key={row.side}>
+                    <span className={`side side--${row.side}`}>{row.side}</span>
+                    <span className="side__conds">{row.conditions.map((c) => <code key={c}>{c}</code>)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <figure className="chapter__panel">
+              <img src="/shots/setup-editor.webp" width={1400} height={1083} loading="lazy" decoding="async"
+                alt="The setup editor in the console: a long setup and a short setup written as conditions, with the run's rules listed under them." />
+              <figcaption>Where the setup is written — and the rules it runs under</figcaption>
+            </figure>
+          </section>
+
+          <section className="chapter chapter--left" aria-labelledby="ch-ledger">
+            <div className="chapter__copy">
+              <p className="kicker">04 — The ledger</p>
+              <h2 id="ch-ledger">Evidence, not promises.</h2>
+              <p>
+                The curve behind this is a real run: a directional strategy on BANKNIFTY one-minute
+                candles, January to September 2026, 760 closed trades — and ₹1,05,391 lost on a
+                ₹10,00,000 account. It is on the homepage because a platform that only shows its wins is
+                not a platform, it is a pitch.
+              </p>
+              <ul className="chapter__facts">
+                <li><b>35%</b> win rate</li>
+                <li><b>−₹139</b> a trade</li>
+                <li><b>75/176</b> days positive</li>
+              </ul>
+            </div>
+            <figure className="chapter__panel">
+              <img src="/shots/run-ledger.webp" width={1500} height={954} loading="lazy" decoding="async"
+                alt="The finished run in the console: net P&L, win rate, profit factor, drawdown and the account panel." />
+              <figcaption>The same run, as the console reports it</figcaption>
+            </figure>
+          </section>
+
+          <section className="chapter chapter--center chapter--foot" aria-labelledby="ch-open">
+            <div className="chapter__copy">
+              <p className="kicker">05 — Yours</p>
+              <h2 id="ch-open">Your machine. Your keys.<br />Your ledger.</h2>
+              <p>
+                Postgres/TimescaleDB, Redis, a .NET API and a Python engine, all on hardware you control.
+                No data leaves, no strategy is uploaded, and the whole thing is open source.
+              </p>
+              <div className="cta cta--center">
+                <Link className="btn btn--primary btn--lg" to={consoleHref}>{consoleLabel}</Link>
+                <a className="btn btn--glass btn--lg" href={GITHUB_URL} target="_blank" rel="noopener noreferrer"><GitHubMark /> Read the source</a>
+              </div>
+            </div>
+          </section>
           </div>
-        </section>
+        </div>
 
         {/* the instruments the store carries */}
         <div className="tape" aria-hidden="true">
@@ -379,14 +507,16 @@ export function LandingPage() {
           </div>
         </div>
 
-        {/* ----------------------------------------------------- numbers */}
-        <section className="band" aria-label="Platform facts">
-          <div className="wrap band__grid">
-            <div className="fig reveal"><b>25</b><span>strategies in the catalogue</span></div>
-            <div className="fig reveal" style={{ '--d': '0.06s' } as CSSProperties}><b>5 yrs</b><span>of index candles, 1m to daily</span></div>
-            <div className="fig reveal" style={{ '--d': '0.12s' } as CSSProperties}><b>±10</b><span>strikes of stored option history</span></div>
-            <div className="fig reveal" style={{ '--d': '0.18s' } as CSSProperties}><b>3 s</b><span>risk guard interval, live</span></div>
+        {/* ----------------------------------------------------- console */}
+        <section id="console" aria-labelledby="console-title">
+          <div className="wrap">
+            <div className="head head--center reveal">
+              <p className="kicker">Inside the console</p>
+              <h2 id="console-title">Five screens you actually live in.</h2>
+              <p>Captures from this deployment — not mock-ups. Pick one.</p>
+            </div>
           </div>
+          <div className="wrap wrap--wide"><Console /></div>
         </section>
 
         {/* ----------------------------------------------------- modules */}
@@ -435,100 +565,6 @@ export function LandingPage() {
                 <h3>Risk, three levels</h3>
                 <p>A stop on the leg, a stop on the group, a stop on the day — editable while the run is going, measured per trading day, with a kill switch that survives a restart.</p>
               </Tile>
-            </div>
-          </div>
-        </section>
-
-        {/* ------------------------------------------------ build a setup */}
-        <section id="setup" aria-labelledby="setup-title">
-          <div className="wrap">
-            <div className="head reveal">
-              <p className="kicker">Write the setup, not the plumbing</p>
-              <h2 id="setup-title">A strategy you can type.</h2>
-              <p>List what makes a long and what makes a short. The engine turns them into signals; the run's rules decide everything after that.</p>
-            </div>
-
-            <div className="split">
-              <div className="card reveal">
-                <div className="card__head"><span className="card__dot" aria-hidden="true" />The setup</div>
-                <div className="setup-rows">
-                  {SETUP.map((row) => (
-                    <div className="setup-row" key={row.side}>
-                      <span className={`side side--${row.side}`}>{row.side}</span>
-                      <span className="side__conds">
-                        {row.conditions.map((c) => (
-                          <code key={c}>{c}</code>
-                        ))}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-                <p className="card__note">
-                  Also available: EMA pairs, Supertrend, ADX, opening-range breaks, the gap, the move from
-                  the open, a volume z-score. A condition that cannot be computed yet counts as false — a
-                  setup that cannot be checked has not happened.
-                </p>
-              </div>
-
-              <div className="card reveal" style={{ '--d': '0.08s' } as CSSProperties}>
-                <div className="card__head">And the run's own rules</div>
-                <ul className="rules-list">
-                  <li><b>09:20–11:00, 13:00–15:15</b> <span>two trading windows</span></li>
-                  <li><b>1 trade a day</b> <span>with a 15-minute cooldown</span></li>
-                  <li><b>Stop after 2 losses</b> <span>and the day is closed</span></li>
-                  <li><b>−12% leg stop</b> <span>moving to entry after +15%</span></li>
-                  <li><b>Step trail</b> <span>10% behind the best premium</span></li>
-                  <li><b>Time exit</b> <span>45 minutes after entry</span></li>
-                  <li><b>Strike offset</b> <span>one step out of the money</span></li>
-                  <li><b>₹20 a leg + 0.05% slippage</b> <span>on every fill</span></li>
-                </ul>
-                <p className="card__note">
-                  The same rules gate a live run and a replay, so the setup you tested is the setup you run.
-                </p>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* ---------------------------------------------------- evidence */}
-        <section id="evidence" aria-labelledby="evidence-title">
-          <div className="wrap">
-            <div className="head reveal">
-              <p className="kicker">Evidence, not promises</p>
-              <h2 id="evidence-title">The run below lost ₹1,05,391.</h2>
-              <p>
-                It is on the homepage because it is real: a directional strategy on BANKNIFTY one-minute
-                candles, January to September 2026, one lot, replayed with the leg stop and target it was
-                given.
-              </p>
-            </div>
-
-            <div className="split split--wide">
-              <figure className="shot reveal">
-                <img
-                  src="/shots/run-ledger.webp"
-                  width={1500}
-                  height={954}
-                  loading="lazy"
-                  decoding="async"
-                  alt="The run's numbers: net P&L minus ₹1,05,391, 760 trades, 35% win rate, 0.86 profit factor, and the account panel showing the lowest balance and the deepest fall from a peak."
-                />
-              </figure>
-
-              <div className="card reveal" style={{ '--d': '0.08s' } as CSSProperties}>
-                <div className="card__head">What the ledger says</div>
-                <ul className="notes">
-                  <li><b>760 closed trades</b>, 264 winners against 494 losers — a 35% win rate.</li>
-                  <li><b>Expectancy −₹139 a trade.</b> The average win is larger than the average loss and it still loses; the count decides it.</li>
-                  <li><b>75 of 176 sessions</b> ended positive. The account panel is what says the run was survivable at all.</li>
-                  <li><b>Every exit carries its reason</b> — leg stop, target, a limit closing the day, or the 15:15 square-off.</li>
-                  <li><b>Entries that could not be priced are listed</b>, never quietly filled at a made-up price.</li>
-                </ul>
-                <p className="card__note">
-                  This is what the platform is for: finding that out in an evening, on stored data, before a
-                  rupee is at risk.
-                </p>
-              </div>
             </div>
           </div>
         </section>

@@ -1,28 +1,58 @@
 /**
  * Sign-in.
  *
- * One composition, the homepage's: the same field of colour (components/
- * AuroraScene) lighting the page, the product's own claim on the left, and the
- * form in glass on the right. Narrow screens keep the form and the three lines
- * that say what this is — someone opening this on a phone at 09:14 came for the
- * form, not for the picture.
+ * The page a trading desk opens with. The left half is the session this page is
+ * about to start — the market clock in IST, what a session brings up, and a tape
+ * printing under it — and the right half is the form. The field behind both is
+ * the homepage's (components/AuroraScene), so arriving here from "/" feels like
+ * walking into the same room.
+ *
+ * The clock is the visitor's own, formatted in IST; the session line is computed
+ * from the standard NSE cash timings and says "holidays aside" because this page
+ * does not load the calendar. Nothing here pretends to be live market data.
  *
  * Username and password only. There is no public sign-up and no shortcut:
  * accounts are issued by an administrator.
  */
 
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { ApiError } from '../lib/api'
 import { IconLogo } from '../components/icons'
 import { AuroraCanvas } from '../components/AuroraScene'
+import { CandleBars, CandleLoader } from '../components/CandleLoader'
 import './landing.css'
+
+/** The IST clock, and whether the cash session is open by the standard timings. */
+function useMarketClock() {
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 1000)
+    return () => window.clearInterval(id)
+  }, [])
+
+  const time = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).format(now)
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(now)
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? ''
+  const weekday = get('weekday')
+  const minutes = Number(get('hour')) * 60 + Number(get('minute'))
+  const weekend = weekday === 'Sat' || weekday === 'Sun'
+  // 09:15 → 15:30 IST, the NSE cash session. The calendar lives in the console,
+  // not on this page, which is why the label says "holidays aside".
+  const open = !weekend && minutes >= 555 && minutes < 930
+  return { time, open }
+}
 
 export function LoginPage() {
   const { login } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
+  const clock = useMarketClock()
 
   const [userNameOrEmail, setUserNameOrEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -52,9 +82,9 @@ export function LoginPage() {
             ? 'Could not reach the API. Is it running on port 5025?'
             : "Couldn't reach the server. Check your connection and try again.",
       )
-    } finally {
       setIsSubmitting(false)
     }
+    // On success the loader stays up until the console route has taken over.
   }
 
   function handleSubmit(event: FormEvent) {
@@ -66,37 +96,43 @@ export function LoginPage() {
     <div className="login">
       <AuroraCanvas className="login__light" warm={1.6} />
 
+      {isSubmitting && !error && <CandleLoader label="Opening the console" />}
+
+      <header className="login__top">
+        <Link className="login__brand" to="/">
+          <span className="login__mark" aria-hidden="true"><IconLogo /></span>
+          <span className="login__wordmark">
+            <span className="login__word">open<b>fno</b></span>
+            <span className="login__tag">Open-source F&amp;O desk</span>
+          </span>
+        </Link>
+        <div className="login__clock">
+          <span className={`login__state${clock.open ? ' is-open' : ''}`}>
+            <i aria-hidden="true" />{clock.open ? 'Market open' : 'Market closed'}
+          </span>
+          <span className="login__time">{clock.time} IST</span>
+          <span className="login__note">NSE cash timings, holidays aside</span>
+        </div>
+      </header>
+
       <div className="login__grid">
         <section className="login__pitch">
-          <Link className="login__brand" to="/">
-            <span className="login__mark" aria-hidden="true"><IconLogo /></span>
-            <span className="login__wordmark">
-              <span className="login__word">open<b>fno</b></span>
-              <span className="login__tag">Open-source F&amp;O desk</span>
-            </span>
-          </Link>
-
           <h1 className="login__lead">
             The desk,<br />
             <em>before the open.</em>
           </h1>
 
-          <ul className="login__points">
-            <li><b>Live and replay, one contract.</b> The runner and the backtester feed a strategy the same shapes.</li>
-            <li><b>Coverage first.</b> Every picker is built from what is actually stored — no empty range to ask for.</li>
-            <li><b>Nothing fails silently.</b> A stale feed, a skipped entry or a stopped run says so, with a reason.</li>
-          </ul>
-
-          <figure className="login__shot">
-            <img
-              src="/shots/option-chain.webp"
-              width={1600}
-              height={939}
-              loading="lazy"
-              decoding="async"
-              alt="The console's option chain: calls on the left, puts on the right, strikes down the middle."
-            />
-          </figure>
+          <div className="term">
+            <div className="term__bar"><i /><i /><i /><span>session · what signing in brings up</span></div>
+            <pre className="term__body"><code>
+              <span className="term__line"><b>feeds</b>      four vendors, one store — ticks, bars, chain</span>
+              <span className="term__line"><b>history</b>    five years of index candles, ±10 strikes of options</span>
+              <span className="term__line"><b>strategies</b> 25 in the catalogue, or one you write here</span>
+              <span className="term__line"><b>risk</b>       leg → group → day, guarded every 3 seconds</span>
+              <span className="term__line term__line--cue"><b>execution</b>  paper, on live ticks</span>
+            </code></pre>
+            <CandleBars className="term__tape" />
+          </div>
         </section>
 
         <div className="login__pane">

@@ -38,7 +38,7 @@
 .lp .mono { font-family: var(--mono); font-size: .94em; }
 .lp .wrap { width: min(1120px, 100% - 40px); margin: 0 auto; }
 .lp .wrap--wide { width: min(1320px, 100% - 40px); }
-.lp [id] { scroll-margin-top: 96px; }
+.lp [id] { scroll-margin-top: 124px; }
 
 /* --- the light ------------------------------------------------------------- */
 /* The canvas covers this wrapper; the gradients under it are what shows before
@@ -74,26 +74,34 @@
   pointer-events: auto;
   display: flex;
   align-items: center;
-  gap: 26px;
-  padding: 7px 7px 7px 16px;
+  gap: 8px;
+  padding: 6px 6px 6px 14px;
   border-radius: 999px;
-  border: 1px solid var(--edge);
-  background: rgba(10, 14, 22, 0.66);
-  backdrop-filter: blur(18px) saturate(1.3);
-  -webkit-backdrop-filter: blur(18px) saturate(1.3);
-  box-shadow: 0 14px 40px -18px rgb(0 0 0 / .8), inset 0 1px 0 rgb(255 255 255 / .06);
+  border: 1px solid rgba(255, 255, 255, .07);
+  background: rgba(8, 11, 18, 0.5);
+  backdrop-filter: blur(16px) saturate(1.25);
+  -webkit-backdrop-filter: blur(16px) saturate(1.25);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .05);
   max-width: calc(100% - 24px);
+  transition: background .25s ease, border-color .25s ease, box-shadow .25s ease;
 }
-.lp .brand { display: inline-flex; align-items: center; gap: 11px; font-weight: 750; font-size: 19px; letter-spacing: -.028em; }
-.lp .brand__mark { width: 32px; height: 32px; border-radius: 10px; display: inline-grid; place-items: center; background: linear-gradient(140deg, var(--accent), var(--accent-2)); color: #05070d; box-shadow: 0 10px 24px -10px rgba(111, 141, 255, .8); }
+/* Once the page has moved, the bar earns its weight. */
+.lp .nav.is-stuck .nav__inner {
+  background: rgba(6, 9, 15, .86);
+  border-color: rgba(255, 255, 255, .11);
+  box-shadow: 0 18px 44px -22px rgb(0 0 0 / .9), inset 0 1px 0 rgb(255 255 255 / .06);
+}
+.lp .nav__rule { width: 1px; height: 20px; margin: 0 6px; background: rgba(255, 255, 255, .1); }
+.lp .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 750; font-size: 17.5px; letter-spacing: -.028em; }
+.lp .brand__mark { width: 30px; height: 30px; border-radius: 10px; display: inline-grid; place-items: center; background: linear-gradient(140deg, var(--accent), var(--accent-2)); color: #05070d; box-shadow: 0 10px 24px -10px rgba(111, 141, 255, .8); }
 .lp .brand__mark svg { width: 19px; height: 19px; }
 .lp .brand__word b { font-weight: 800; background: linear-gradient(96deg, var(--accent) 5%, var(--accent-2) 95%); -webkit-background-clip: text; background-clip: text; color: transparent; }
-.lp .nav__links { display: flex; align-items: center; gap: 20px; font-size: 13.5px; font-weight: 500; }
-.lp .nav__links a, .lp .nav__links a:visited { color: var(--ink-2); white-space: nowrap; }
-.lp .nav__links a:hover { color: var(--ink); }
-.lp .nav__end { display: flex; align-items: center; gap: 12px; }
-.lp .nav__icon { display: inline-flex; color: var(--ink-3); }
-.lp .nav__icon:hover { color: var(--ink); }
+.lp .nav__links { display: flex; align-items: center; gap: 2px; margin-left: 16px; font-size: 13px; font-weight: 500; }
+.lp .nav__links a, .lp .nav__links a:visited { color: var(--ink-3); white-space: nowrap; padding: 7px 12px; border-radius: 999px; transition: color .18s ease, background .18s ease; }
+.lp .nav__links a:hover { color: var(--ink); background: rgba(255, 255, 255, .06); }
+.lp .nav__end { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.lp .nav__icon { display: inline-flex; padding: 7px; border-radius: 999px; color: var(--ink-3); }
+.lp .nav__icon:hover { color: var(--ink); background: rgba(255, 255, 255, .06); }
 @media (max-width: 900px) { .lp .nav__links { display: none; } }
 
 /* --- buttons --------------------------------------------------------------- */
@@ -141,10 +149,30 @@
 }
 .lp .lead { margin: 22px auto 0; max-width: 64ch; font-size: clamp(15.5px, 1.35vw, 18px); color: var(--ink-2); }
 .lp .cta { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; justify-content: center; margin-top: 30px; }
-.lp .hero__vendors { margin: 26px 0 0; font: 500 11px/1.6 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); }
+/* What it connects to, as a rail rather than a sentence: a label, a set of
+   names with hairlines between them, and air above so it stops touching the
+   buttons. */
+.lp .hero__rail {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+  gap: 10px 18px;
+  margin: 40px auto 0; padding-top: 22px;
+  max-width: 760px;
+  border-top: 1px solid rgba(255, 255, 255, .08);
+}
+.lp .hero__rail-label { font: 600 10px/1 var(--mono); letter-spacing: .22em; text-transform: uppercase; color: rgba(233, 238, 250, .3); }
+.lp .hero__rail-set { display: inline-flex; align-items: center; gap: 14px; }
+.lp .hero__rail-set b { font: 600 12.5px/1 var(--sans); letter-spacing: -.01em; color: var(--ink-2); }
+.lp .hero__rail-set i { width: 1px; height: 12px; background: rgba(255, 255, 255, .14); }
+@media (max-width: 620px) {
+  .lp .hero__rail { gap: 8px 12px; padding-top: 18px; margin-top: 30px; }
+  .lp .hero__rail-set { gap: 10px; }
+  .lp .hero__rail-set b { font-size: 11.5px; }
+}
 
 /* --- the product ----------------------------------------------------------- */
-.lp .showcase { margin-top: 54px; }
+/* The frame is capped well under the page width: a screenshot blown up to
+   1300px is unreadable AND enormous, which is the worst of both. */
+.lp .showcase { margin-top: 40px; width: min(1000px, 100%); margin-inline: auto; }
 .lp .showcase__tabs { display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; margin-bottom: 22px; }
 .lp .tab {
   padding: 8px 16px; border-radius: 999px; border: 1px solid transparent;
@@ -175,13 +203,13 @@
 .lp .screen__bar span { margin-left: 14px; font: 11px/1 var(--mono); letter-spacing: .06em; color: var(--ink-3); }
 /* One box for every screen: the shots differ in aspect, so they are contained on
    the app's own background and the frame never resizes when a tab changes. */
-.lp .screen__shot { position: relative; aspect-ratio: 16 / 9.3; background: #070b11; }
+.lp .screen__shot { position: relative; aspect-ratio: 16 / 9.1; background: #070b11; }
 .lp .screen__shot img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: 0; transition: opacity .4s ease; }
 .lp .screen__shot img.is-on { opacity: 1; }
 /* The floor: the same picture, upside down, fading into the page. */
-.lp .screen__floor { margin-top: 6px; height: 170px; overflow: hidden; opacity: .22; filter: blur(1.5px); transform: perspective(2200px) rotateX(7deg) scaleY(-1); -webkit-mask-image: linear-gradient(0deg, transparent 8%, #000 100%); mask-image: linear-gradient(0deg, transparent 8%, #000 100%); }
+.lp .screen__floor { margin-top: 6px; height: 130px; overflow: hidden; opacity: .22; filter: blur(1.5px); transform: perspective(2200px) rotateX(7deg) scaleY(-1); -webkit-mask-image: linear-gradient(0deg, transparent 8%, #000 100%); mask-image: linear-gradient(0deg, transparent 8%, #000 100%); }
 .lp .screen__floor img { width: 100%; height: auto; display: block; }
-.lp .showcase__say { display: grid; grid-template-columns: minmax(0, 320px) minmax(0, 1fr); gap: 10px 36px; margin: 28px auto 0; text-align: left; max-width: 1060px; }
+.lp .showcase__say { display: grid; grid-template-columns: minmax(0, 280px) minmax(0, 1fr); gap: 10px 32px; margin: 26px auto 0; text-align: left; max-width: 1000px; }
 .lp .showcase__say h3 { margin: 0; font-size: 19px; font-weight: 650; letter-spacing: -.02em; }
 .lp .showcase__say p { margin: 0; color: var(--ink-2); font-size: 14.5px; }
 @media (max-width: 820px) {
@@ -319,9 +347,11 @@
 }
 
 /* ===========================================================================
-   Sign-in ("/login"). The homepage's light, the product's claim on the left,
-   the form in glass on the right. Below 940px the picture goes and the form
-   takes the page.
+   Sign-in ("/login"). The page a desk opens with: the market clock across the
+   top, the session this page is about to start on the left, the form on the
+   right, and the homepage's field of light behind all of it. Below 980px the
+   terminal goes and the form takes the page — someone opening this on a phone
+   at 09:14 came for the form.
    =========================================================================== */
 
 .login {
@@ -329,7 +359,6 @@
   --ink-2: rgba(233, 238, 250, 0.66);
   --ink-3: rgba(233, 238, 250, 0.42);
   --page: #04060c;
-  --glass: rgba(255, 255, 255, 0.05);
   --edge: rgba(255, 255, 255, 0.10);
   --accent: #6f8dff;
   --accent-2: #2bd4bd;
@@ -338,6 +367,8 @@
   isolation: isolate;
   min-height: 100vh;
   min-height: 100svh;
+  display: flex;
+  flex-direction: column;
   background: var(--page);
   color: var(--ink);
   overflow: hidden;
@@ -347,98 +378,138 @@
   inset: 0;
   z-index: -1;
   background:
-    radial-gradient(50% 42% at 18% 18%, rgba(56, 84, 245, 0.18), transparent 70%),
-    radial-gradient(46% 40% at 84% 68%, rgba(28, 199, 179, 0.12), transparent 72%);
+    radial-gradient(50% 42% at 18% 18%, rgba(56, 84, 245, 0.16), transparent 70%),
+    radial-gradient(46% 40% at 84% 68%, rgba(28, 199, 179, 0.10), transparent 72%);
 }
 
+/* --- the top bar ----------------------------------------------------------- */
+.login__top {
+  display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap;
+  padding: 24px clamp(20px, 4vw, 44px) 0;
+}
+.login__brand { display: inline-flex; align-items: center; gap: 13px; color: var(--ink); text-decoration: none; }
+.login__brand:hover { color: var(--ink); text-decoration: none; }
+.login__wordmark { display: grid; gap: 4px; }
+.login__word { font-size: 23px; font-weight: 750; letter-spacing: -.035em; line-height: 1; }
+.login__word b { font-weight: 800; background: linear-gradient(96deg, var(--accent) 5%, var(--accent-2) 95%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.login__tag { font: 600 9.5px/1 var(--mono); letter-spacing: .2em; text-transform: uppercase; color: var(--ink-3); }
+.login__mark { width: 40px; height: 40px; border-radius: 13px; display: inline-grid; place-items: center; background: linear-gradient(140deg, var(--accent), var(--accent-2)); color: #05070d; box-shadow: 0 14px 30px -14px rgba(111, 141, 255, .85); }
+.login__mark svg { width: 23px; height: 23px; }
+
+/* The clock is the visitor's own, in IST; the state comes from the standard
+   session timings, which is why it says so. */
+.login__clock { display: inline-flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.login__state { display: inline-flex; align-items: center; gap: 8px; padding: 6px 13px; border-radius: 999px; border: 1px solid var(--edge); background: rgba(255, 255, 255, .04); font: 600 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+.login__state i { width: 6px; height: 6px; border-radius: 50%; background: rgba(233, 238, 250, .35); }
+.login__state.is-open { color: #3ddc97; border-color: rgba(61, 220, 151, .3); background: rgba(61, 220, 151, .1); }
+.login__state.is-open i { background: #3ddc97; box-shadow: 0 0 0 0 rgba(61, 220, 151, .5); animation: lp-pulse 2.6s infinite; }
+.login__time { font: 600 13px/1 var(--mono); letter-spacing: .06em; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.login__note { font: 500 10.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: rgba(233, 238, 250, .28); }
+
+/* --- the two halves -------------------------------------------------------- */
 .login__grid {
-  position: relative;
+  flex: 1;
   display: grid;
-  /* Both columns are sized to their content and the pair is centred: a 1fr
-     column left a lane of empty page between the claim and the card. */
-  grid-template-columns: minmax(0, 540px) minmax(340px, 400px);
+  grid-template-columns: minmax(0, 560px) minmax(340px, 400px);
   justify-content: center;
   align-items: center;
-  gap: 56px;
-  width: min(1060px, 100% - 48px);
-  margin: 0 auto;
-  min-height: inherit;
-  padding: 64px 0;
+  gap: clamp(32px, 5vw, 72px);
+  width: min(1160px, 100% - 48px);
+  margin-inline: auto;
+  padding: 40px 0 56px;
 }
-
-/* --- the claim ------------------------------------------------------------- */
 .login__pitch { min-width: 0; }
-.login__brand { display: inline-flex; align-items: center; gap: 14px; color: var(--ink); text-decoration: none; }
-.login__brand:hover { color: var(--ink); text-decoration: none; }
-.login__wordmark { display: grid; gap: 3px; }
-.login__word { font-size: 27px; font-weight: 750; letter-spacing: -.035em; line-height: 1; }
-.login__word b { font-weight: 800; background: linear-gradient(96deg, var(--accent) 5%, var(--accent-2) 95%); -webkit-background-clip: text; background-clip: text; color: transparent; }
-.login__tag { font: 600 10.5px/1 var(--mono); letter-spacing: .2em; text-transform: uppercase; color: var(--ink-3); }
-.login__mark { width: 46px; height: 46px; border-radius: 14px; display: inline-grid; place-items: center; background: linear-gradient(140deg, var(--accent), var(--accent-2)); color: #05070d; box-shadow: 0 16px 36px -14px rgba(111, 141, 255, .85); }
-.login__mark svg { width: 27px; height: 27px; }
-@media (max-width: 940px) { .login__brand { justify-content: center; } }
-
-.login__lead { margin: 34px 0 0; font-size: clamp(34px, 4.4vw, 54px); line-height: 1.02; letter-spacing: -.042em; font-weight: 700; }
+.login__lead { margin: 0 0 26px; font-size: clamp(32px, 4.2vw, 50px); line-height: 1.02; letter-spacing: -.042em; font-weight: 700; }
 .login__lead em { font-style: normal; background: linear-gradient(96deg, var(--accent) 10%, var(--accent-2) 80%); -webkit-background-clip: text; background-clip: text; color: transparent; }
 
-.login__points { list-style: none; margin: 26px 0 0; padding: 0; display: grid; gap: 13px; font-size: 14.5px; color: var(--ink-2); }
-.login__points li { padding-left: 18px; position: relative; }
-.login__points li::before { content: ''; position: absolute; left: 0; top: 9px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-2); }
-.login__points b { color: var(--ink); font-weight: 600; }
-
-/* The one picture: a glimpse of the chain, standing at a slight angle and
-   dissolving into the page. It stays inside its own column — it ran under the
-   sign-in card when it was allowed to bleed, and two things fighting for the
-   same pixels is the one thing a sign-in page cannot afford. */
-.login__shot {
-  margin: 34px 0 0;
-  width: 100%;
-  max-height: 268px;
-  overflow: hidden;
-  border-radius: 16px;
+/* The session panel: what signing in brings up, set as a terminal because that
+   is what this is — a desk starting, not a product tour. */
+.term {
   border: 1px solid var(--edge);
-  background: #070b11;
-  transform: perspective(1700px) rotateY(-6deg) rotateX(3deg);
-  box-shadow: 0 50px 100px -55px rgb(0 0 0 / .95), 0 26px 80px -60px rgba(88, 120, 255, .5);
-  -webkit-mask-image: linear-gradient(180deg, #000 52%, transparent 98%);
-  mask-image: linear-gradient(180deg, #000 52%, transparent 98%);
+  border-radius: 14px;
+  overflow: hidden;
+  background: rgba(8, 11, 18, .66);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 40px 90px -50px rgb(0 0 0 / .9);
 }
-.login__shot img { display: block; width: 100%; height: auto; }
+.term__bar { display: flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px; border-bottom: 1px solid rgba(255, 255, 255, .06); background: rgba(255, 255, 255, .03); }
+.term__bar i { width: 8px; height: 8px; border-radius: 50%; background: rgba(255, 255, 255, .13); flex: none; }
+.term__bar span { margin-left: 12px; font: 500 10.5px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); }
+/* The console's own <pre> has a well behind it; this one is part of the panel. */
+.term__body { margin: 0; padding: 18px 18px 8px; overflow-x: auto; background: none; border: 0; border-radius: 0; }
+.term__body code { display: grid; gap: 9px; font: 12px/1.5 var(--mono); background: none; padding: 0; }
+.term__line { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 14px; color: var(--ink-2); white-space: nowrap; }
+.term__line b { color: var(--accent-2); font-weight: 600; }
+.term__line--cue { color: var(--ink); }
+.term__line--cue b { color: #fff; }
+.term__tape { height: 54px; gap: 6px; padding: 12px 18px 20px; }
+.term__tape .candles__c { width: 9px; }
 
 /* --- the form -------------------------------------------------------------- */
 .login__pane { min-width: 0; display: flex; flex-direction: column; align-items: center; }
 .login__card {
   position: relative;
-  width: min(420px, 100%);
-  padding: 34px 32px 28px;
+  width: min(400px, 100%);
+  padding: 32px 30px 26px;
   border-radius: 20px;
   border: 1px solid var(--edge);
-  background: rgba(12, 17, 27, 0.72);
+  background: rgba(12, 17, 27, 0.78);
   backdrop-filter: blur(22px) saturate(1.3);
   -webkit-backdrop-filter: blur(22px) saturate(1.3);
-  box-shadow: 0 1px 0 rgb(255 255 255 / .06) inset, 0 40px 90px -40px rgb(0 0 0 / .9);
+  box-shadow: 0 1px 0 rgb(255 255 255 / .06) inset, 0 44px 90px -44px rgb(0 0 0 / .92);
 }
-.login__card::before { content: ''; position: absolute; top: -1px; left: 16%; right: 16%; height: 1px; background: linear-gradient(90deg, transparent, rgba(111, 141, 255, .55), transparent); }
-.login__title { margin: 0 0 6px; font-size: 24px; font-weight: 700; letter-spacing: -.03em; }
+.login__card::before { content: ''; position: absolute; top: -1px; left: 16%; right: 16%; height: 1px; background: linear-gradient(90deg, transparent, rgba(111, 141, 255, .6), transparent); }
+.login__title { margin: 0 0 6px; font-size: 23px; font-weight: 700; letter-spacing: -.03em; }
 .login__sub { margin: 0 0 22px; color: var(--ink-2); font-size: 13.5px; }
 .login__form { display: grid; gap: 14px; }
 .login .field__label { color: var(--ink-3); }
 .login__hint { margin: 20px 0 0; text-align: center; font-size: 12px; color: var(--ink-3); line-height: 1.5; }
 .login__foot { margin: 22px 0 0; text-align: center; font-size: 12px; color: var(--ink-3); }
 
-@media (max-width: 940px) {
-  .login__grid { grid-template-columns: 1fr; gap: 34px; padding: 56px 0; width: min(560px, 100% - 40px); }
+@media (max-width: 980px) {
+  .login__grid { grid-template-columns: minmax(0, 420px); justify-content: center; padding: 28px 0 44px; gap: 28px; }
   .login__pitch { text-align: center; }
-  .login__points { margin-inline: auto; text-align: left; }
-  .login__shot { display: none; }
-  .login__lead { margin-top: 24px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .login__shot { transform: none; }
+  .login__lead { font-size: clamp(28px, 7vw, 36px); margin-bottom: 20px; }
+  .term { display: none; }
+  .login__top { justify-content: center; gap: 14px; }
 }
 
+/* ===========================================================================
+   The loading state (components/CandleLoader, and the copy of it inlined in
+   index.html). A row of candles printing up and down: the one animation this
+   platform is allowed to show before it can show anything real.
+   =========================================================================== */
+
+.candles { display: flex; align-items: flex-end; gap: 7px; height: 64px; }
+.candles__c { position: relative; display: block; width: 10px; height: var(--h, 50%); border-radius: 2px; animation: candle-print 1.9s var(--d, 0s) cubic-bezier(.45, 0, .3, 1) infinite; transform-origin: bottom; }
+.candles__c.is-up { background: #25d69a; box-shadow: 0 0 18px -4px rgba(37, 214, 154, .7); }
+.candles__c.is-down { background: #ff5f5c; box-shadow: 0 0 18px -4px rgba(255, 95, 92, .7); }
+/* The wick: the same colour, one pixel wide, above and below the body. */
+.candles__c i { position: absolute; left: 50%; top: -7px; bottom: -7px; width: 2px; margin-left: -1px; background: inherit; opacity: .7; border-radius: 2px; }
+@keyframes candle-print {
+  0% { transform: scaleY(.25); opacity: .35; }
+  35% { transform: scaleY(1); opacity: 1; }
+  70% { transform: scaleY(.62); opacity: .85; }
+  100% { transform: scaleY(.25); opacity: .35; }
+}
+
+.loader { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: #04060c; }
+.loader__inner { display: grid; justify-items: center; gap: 22px; }
+.loader__label { margin: 0; font: 500 12px/1 var(--mono); letter-spacing: .18em; text-transform: uppercase; color: rgba(233, 238, 250, .42); }
+.loader__dots { animation: loader-dots 1.4s steps(4, end) infinite; }
+@keyframes loader-dots { 0% { opacity: 0; } 50% { opacity: 1; } 100% { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .candles__c, .loader__dots { animation: none; }
+}
+
+/* A centred section head, for the one section whose subject is centred too. */
+.lp .head--center { max-width: 720px; margin-inline: auto; text-align: center; }
+.lp .head--center p { margin-inline: auto; }
+
 /* The card's button follows the public pages, not the console: light on dark,
-   which is the one button on this page and should read as the only one. */
+   the only button on the page. */
 .login .btn--primary {
   background: #f2f6ff;
   color: #05070d;
@@ -453,15 +524,135 @@
 .login .field__input { background: rgba(255, 255, 255, .04); border-color: var(--edge); color: var(--ink); }
 .login .field__input:focus { border-color: rgba(111, 141, 255, .7); background: rgba(255, 255, 255, .06); }
 
-/* --- phones ---------------------------------------------------------------- */
+/* ===========================================================================
+   The scroll story. One 3D world (components/ScrollScene) sits sticky behind
+   six chapters; each chapter is a screen tall and holds its copy on one side,
+   so the object always has the other.
+   =========================================================================== */
+
+.lp .story { position: relative; }
+/* The world sticks for the length of the story. The chapters — not the rest of
+   the page — are pulled up over it: pulling the page up instead (a negative
+   margin on the sticky element) leaves the canvas hanging one screen into
+   whatever follows. */
+.lp .story__world { position: sticky; top: 0; height: 100vh; height: 100svh; z-index: 0; }
+.lp .story__chapters { position: relative; z-index: 1; margin-top: -100vh; }
+@supports (height: 100svh) { .lp .story__chapters { margin-top: -100svh; } }
+
+/* The canvas is transparent where nothing is drawn, so these gradients are both
+   the light in the scene AND the whole picture on a machine with WebGL turned
+   off — which is the difference between "dark" and "a black screen". */
+.world {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(58% 48% at 18% 24%, rgba(56, 84, 245, .16), transparent 70%),
+    radial-gradient(52% 44% at 84% 62%, rgba(28, 199, 179, .10), transparent 72%),
+    radial-gradient(90% 60% at 50% 108%, rgba(111, 141, 255, .10), transparent 70%),
+    linear-gradient(180deg, #060912 0%, #04060c 60%, #05070f 100%);
+}
+/* A floor, for the same reason: without the rendered grid the lower half of the
+   page would have nothing in it at all. */
+.world::after {
+  content: '';
+  position: absolute;
+  inset: 45% 0 0 0;
+  background-image: linear-gradient(rgba(120, 150, 255, .07) 1px, transparent 1px), linear-gradient(90deg, rgba(120, 150, 255, .07) 1px, transparent 1px);
+  background-size: 90px 90px;
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 40%, transparent 92%);
+  mask-image: linear-gradient(180deg, transparent, #000 40%, transparent 92%);
+}
+.world__gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; opacity: 0; transition: opacity .9s ease; }
+.world__gl.is-on { opacity: 1; }
+
+.lp .chapter {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+  min-height: 100svh;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  align-items: center;
+  gap: 40px;
+  width: min(1340px, 100% - 56px);
+  margin-inline: auto;
+  padding: 132px 0 104px;
+}
+/* The world is dimmed on the side the copy sits, with a gradient across the
+   whole chapter rather than a patch behind the words. A blurred blob under a
+   paragraph reads as a smudge; a side wash reads as lighting. */
+.lp .chapter::before { content: ''; position: absolute; inset: 0 -50vw; pointer-events: none; z-index: -1; }
+.lp .chapter--left::before { background: linear-gradient(90deg, rgba(4, 6, 12, .96) 12%, rgba(4, 6, 12, .8) 42%, rgba(4, 6, 12, 0) 68%); }
+.lp .chapter--right::before { background: linear-gradient(270deg, rgba(4, 6, 12, .96) 12%, rgba(4, 6, 12, .8) 42%, rgba(4, 6, 12, 0) 68%); }
+.lp .chapter--center::before { background: radial-gradient(64% 54% at 50% 46%, rgba(4, 6, 12, .88) 26%, rgba(4, 6, 12, .45) 60%, rgba(4, 6, 12, 0) 86%); }
+
+.lp .chapter__copy { grid-column: 1 / span 5; grid-row: 1; }
+.lp .chapter--right .chapter__copy { grid-column: 8 / span 5; }
+.lp .chapter--center .chapter__copy { grid-column: 2 / span 10; justify-self: center; text-align: center; max-width: 880px; }
+.lp .chapter--left .chapter__panel { grid-column: 7 / span 6; grid-row: 1; }
+.lp .chapter--right .chapter__panel { grid-column: 1 / span 6; grid-row: 1; }
+/* The last chapter: the mark assembles above the words, so the copy sits low. */
+.lp .chapter--foot { align-items: center; min-height: 86vh; padding: 96px 0 72px; }
+
+.lp .chapter h2 { margin: 0 0 18px; font-size: clamp(30px, 3.9vw, 48px); line-height: 1.05; letter-spacing: -.04em; }
+.lp .chapter p { margin: 0; color: var(--ink-2); font-size: clamp(15px, 1.25vw, 16.5px); max-width: 46ch; }
+.lp .chapter--center p { max-width: 62ch; margin-inline: auto; }
+.lp .chapter .kicker { margin-bottom: 18px; }
+.lp .chapter .lead { margin-top: 24px; }
+.lp .chapter .cta { margin-top: 32px; }
+
+.lp .chapter__facts { list-style: none; display: flex; flex-wrap: wrap; gap: 14px 34px; margin: 30px 0 0; padding: 0; }
+.lp .chapter__facts li { font-size: 12.5px; color: var(--ink-3); }
+.lp .chapter__facts b { display: block; margin-bottom: 4px; font-size: 27px; font-weight: 700; letter-spacing: -.035em; color: var(--ink); line-height: 1; font-variant-numeric: tabular-nums; }
+.lp .chapter__setup { display: grid; gap: 10px; margin-top: 28px; }
+
+/* The screen a chapter is talking about: one treatment everywhere — hairline
+   border, a caption bar in mono, and a slight turn so it sits in the world
+   rather than on top of it. */
+.lp .chapter__panel {
+  margin: 0;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--edge-2);
+  background: #070b11;
+  box-shadow: 0 60px 120px -55px rgb(0 0 0 / .95), 0 24px 70px -50px rgba(88, 120, 255, .4);
+  transition: transform .5s cubic-bezier(.2, .7, .3, 1);
+}
+.lp .chapter--left .chapter__panel { transform: perspective(2000px) rotateY(-6deg); }
+.lp .chapter--right .chapter__panel { transform: perspective(2000px) rotateY(6deg); }
+.lp .chapter__panel:hover { transform: perspective(2000px) rotateY(0deg); }
+.lp .chapter__panel img { display: block; width: 100%; height: auto; }
+.lp .chapter__panel figcaption { padding: 11px 15px; font: 500 10.5px/1.4 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); border-top: 1px solid rgba(255, 255, 255, .07); background: rgba(255, 255, 255, .02); }
+
+.lp .scroll-cue { position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%); display: grid; justify-items: center; gap: 8px; font: 500 10.5px/1 var(--mono); letter-spacing: .22em; text-transform: uppercase; color: var(--ink-3); }
+.lp .scroll-cue span { width: 1px; height: 34px; background: linear-gradient(180deg, transparent, var(--ink-3)); animation: lp-cue 2s ease-in-out infinite; }
+@keyframes lp-cue { 0%, 100% { opacity: .25; transform: scaleY(.6); } 50% { opacity: 1; transform: scaleY(1); } }
+
+@media (max-width: 1080px) {
+  .lp .chapter { grid-template-columns: minmax(0, 1fr); gap: 32px; width: min(680px, 100% - 40px); }
+  .lp .chapter__copy,
+  .lp .chapter--right .chapter__copy,
+  .lp .chapter--center .chapter__copy,
+  .lp .chapter--left .chapter__panel,
+  .lp .chapter--right .chapter__panel { grid-column: 1; grid-row: auto; }
+  .lp .chapter p { max-width: none; }
+  .lp .chapter--left .chapter__panel,
+  .lp .chapter--right .chapter__panel { transform: none; }
+  .lp .chapter::before { background: linear-gradient(180deg, rgba(4, 6, 12, .82), rgba(4, 6, 12, .93)); }
+}
 @media (max-width: 620px) {
+  .lp .chapter { min-height: auto; padding: 104px 0 72px; }
+  .lp .chapter__panel figcaption { font-size: 9.5px; letter-spacing: .1em; }
   .lp .hero { padding-top: 112px; }
-  /* The pill wraps to two lines at this width; the dot stays with the first. */
   .lp .eyebrow { font-size: 11.5px; padding: 7px 13px 7px 11px; align-items: flex-start; text-align: left; }
   .lp .eyebrow .dot { margin-top: 5px; }
-  .lp h1 { letter-spacing: -.035em; }
   .lp .cta .btn { flex: 1 1 auto; }
   .lp .showcase__tabs { gap: 5px; }
   .lp .tab { padding: 7px 13px; font-size: 12.5px; }
   .lp .wrap, .lp .wrap--wide { width: min(100%, 100% - 32px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lp .scroll-cue span { animation: none; }
+  .lp .chapter__panel { transition: none; }
 }
