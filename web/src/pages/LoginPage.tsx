@@ -1,20 +1,23 @@
 /**
- * Sign-in. One composition: the strike ledger as a low shelf along the foot of
- * the page (see components/ChainScene — the option-chain poller's ring buffer,
- * quieter here and never moving under the pointer), a soft brand glow behind
- * the card, and nothing else competing with the form. The card carries the
- * contrast; the backdrop only has to say what this is.
+ * Sign-in.
+ *
+ * One composition, the homepage's: the same field of colour (components/
+ * AuroraScene) lighting the page, the product's own claim on the left, and the
+ * form in glass on the right. Narrow screens keep the form and the three lines
+ * that say what this is — someone opening this on a phone at 09:14 came for the
+ * form, not for the picture.
  *
  * Username and password only. There is no public sign-up and no shortcut:
  * accounts are issued by an administrator.
  */
 
-import { useRef, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { ApiError } from '../lib/api'
 import { IconLogo } from '../components/icons'
-import { ChainCanvas } from '../components/ChainScene'
+import { AuroraCanvas } from '../components/AuroraScene'
+import './landing.css'
 
 export function LoginPage() {
   const { login } = useAuth()
@@ -25,8 +28,6 @@ export function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  // The risk note; the shelf keeps its call tips below it.
-  const footRef = useRef<HTMLParagraphElement | null>(null)
 
   async function signIn(name: string, pass: string) {
     setError(null)
@@ -63,69 +64,94 @@ export function LoginPage() {
 
   return (
     <div className="login">
-      <div className="login__pane">
-        <div className="login__card">
+      <AuroraCanvas className="login__light" warm={1.6} />
+
+      <div className="login__grid">
+        <section className="login__pitch">
           <Link className="login__brand" to="/">
-            <span className="shell__brand-mark" aria-hidden="true">
-              <IconLogo />
+            <span className="login__mark" aria-hidden="true"><IconLogo /></span>
+            <span className="login__wordmark">
+              <span className="login__word">open<b>fno</b></span>
+              <span className="login__tag">Open-source F&amp;O desk</span>
             </span>
-            OpenFNO Console
           </Link>
 
-          <h1 className="login__title">Sign in</h1>
-          <p className="login__sub">Live data, strategies and risk — one console.</p>
+          <h1 className="login__lead">
+            The desk,<br />
+            <em>before the open.</em>
+          </h1>
 
-          {error && (
-            <div className="alert alert--error" role="alert" style={{ marginBottom: 14 }}>
-              {error}
-            </div>
-          )}
+          <ul className="login__points">
+            <li><b>Live and replay, one contract.</b> The runner and the backtester feed a strategy the same shapes.</li>
+            <li><b>Coverage first.</b> Every picker is built from what is actually stored — no empty range to ask for.</li>
+            <li><b>Nothing fails silently.</b> A stale feed, a skipped entry or a stopped run says so, with a reason.</li>
+          </ul>
 
-          <form onSubmit={handleSubmit} className="login__form">
-            <label className="field">
-              <span className="field__label">Username or email</span>
-              <input
-                className="field__input"
-                value={userNameOrEmail}
-                onChange={(e) => setUserNameOrEmail(e.target.value)}
-                autoComplete="username"
-                placeholder="you@example.com"
-                required
-                autoFocus
-              />
-            </label>
+          <figure className="login__shot">
+            <img
+              src="/shots/option-chain.webp"
+              width={1600}
+              height={939}
+              loading="lazy"
+              decoding="async"
+              alt="The console's option chain: calls on the left, puts on the right, strikes down the middle."
+            />
+          </figure>
+        </section>
 
-            <label className="field">
-              <span className="field__label">Password</span>
-              <input
-                className="field__input"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="current-password"
-                placeholder="••••••••••••"
-                required
-              />
-            </label>
+        <div className="login__pane">
+          <div className="login__card">
+            <h2 className="login__title">Sign in</h2>
+            <p className="login__sub">Live data, strategies, backtests and risk — one console.</p>
 
-            <button type="submit" className="btn btn--primary btn--block" disabled={isSubmitting}>
-              {isSubmitting ? 'Signing in…' : 'Sign in'}
-            </button>
-          </form>
+            {error && (
+              <div className="alert alert--error" role="alert" style={{ marginBottom: 14 }}>
+                {error}
+              </div>
+            )}
 
-          <p className="login__hint">
-            Accounts are issued by an administrator — there is no public sign-up.
+            <form onSubmit={handleSubmit} className="login__form">
+              <label className="field">
+                <span className="field__label">Username or email</span>
+                <input
+                  className="field__input"
+                  value={userNameOrEmail}
+                  onChange={(e) => setUserNameOrEmail(e.target.value)}
+                  autoComplete="username"
+                  placeholder="you@example.com"
+                  required
+                  autoFocus
+                />
+              </label>
+
+              <label className="field">
+                <span className="field__label">Password</span>
+                <input
+                  className="field__input"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                  placeholder="••••••••••••"
+                  required
+                />
+              </label>
+
+              <button type="submit" className="btn btn--primary btn--block" disabled={isSubmitting}>
+                {isSubmitting ? 'Signing in…' : 'Sign in'}
+              </button>
+            </form>
+
+            <p className="login__hint">
+              Accounts are issued by an administrator — there is no public sign-up.
+            </p>
+          </div>
+
+          <p className="login__foot">
+            Trading involves financial risk. Validate every strategy on paper first.
           </p>
         </div>
-
-        <p className="login__foot" ref={footRef}>
-          Trading involves financial risk. Validate every strategy on paper first.
-        </p>
       </div>
-
-      {/* After the pane: the shelf measures the risk note in a layout effect,
-          and refs attach in tree order. z-index puts it behind the card. */}
-      <ChainCanvas variant="login" anchorRef={footRef} className="login__scene" />
     </div>
   )
 }

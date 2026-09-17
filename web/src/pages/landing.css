@@ -1,195 +1,467 @@
 /*
- * Public landing page ("/"). Every rule is scoped under .lp so the console's
- * vocabulary (.btn, .badge, .panel, .stat …) and this page's marketing styling
- * do not fight: .lp .btn (0,2,0) beats .btn (0,1,0) on specificity alone.
- * Pseudo-class rules are a tie at equal specificity (e.g. .lp .btn:hover vs
- * .btn:hover:not(:disabled), both (0,3,0)) and are then resolved by source
- * order — this file is injected BEFORE styles.css — so every scoped :hover /
- * :visited rule below sets every property it cares about and out-specifies the
- * console rule where a tie would otherwise leak. Tokens come from styles.css.
+ * Public pages ("/" and "/login"). Every rule is scoped under .lp or .login so
+ * the console's vocabulary (.btn, .badge, .panel …) and this page's marketing
+ * styling do not fight: .lp .btn (0,2,0) beats .btn (0,1,0) on specificity
+ * alone. This file is injected BEFORE styles.css, so scoped :hover / :visited
+ * rules set every property they care about.
+ *
+ * The design: one field of colour at the top of the page (components/
+ * AuroraScene), the product standing in it, and flat, quiet type below. Glass
+ * over the light, hairlines over the dark. Depth comes from three things and no
+ * others — the light, the tilt of the screen, and the lift of a tile under the
+ * pointer.
  */
 
-.lp { font-size: 16px; line-height: 1.6; color: var(--text); background: var(--bg0); overflow-x: hidden; min-height: 100vh; }
-.lp a { color: var(--brand-hi); text-decoration: none; }
-.lp a:hover { text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--brand-hi) 55%, transparent); }
-.lp .mono { font-family: var(--mono); font-size: .94em; }
-.lp .pos { color: var(--pos); } .lp .neg { color: var(--neg); } .lp .live { color: var(--live); } .lp .muted { color: var(--text-2); } .lp .faint { color: var(--text-3); }
-.lp .wrap { width: min(1180px, 100% - 48px); margin: 0 auto; }
-.lp [id] { scroll-margin-top: 80px; }
+.lp {
+  --ink: #e9eefa;
+  --ink-2: rgba(233, 238, 250, 0.66);
+  --ink-3: rgba(233, 238, 250, 0.42);
+  --page: #04060c;
+  --glass: rgba(255, 255, 255, 0.045);
+  --glass-2: rgba(255, 255, 255, 0.075);
+  --edge: rgba(255, 255, 255, 0.09);
+  --edge-2: rgba(255, 255, 255, 0.16);
+  --accent: #6f8dff;
+  --accent-2: #2bd4bd;
 
-/* --- nav ------------------------------------------------------------------ */
-.lp .nav { position: fixed; inset: 0 0 auto 0; z-index: 30; height: 64px; display: flex; align-items: center; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); background: color-mix(in srgb, var(--bg0) 62%, transparent); border-bottom: 1px solid color-mix(in srgb, var(--line-soft) 70%, transparent); }
-.lp .nav .wrap { display: flex; align-items: center; gap: 28px; }
-.lp .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15.5px; letter-spacing: -.01em; color: var(--text); line-height: 1.15; }
-.lp .brand:hover { text-decoration: none; }
-.lp .brand__mark { width: 30px; height: 30px; border-radius: 9px; display: inline-grid; place-items: center; background: linear-gradient(135deg, var(--brand), var(--live)); color: #fff; box-shadow: 0 8px 24px -10px var(--brand); }
-.lp .brand__mark svg { width: 18px; height: 18px; }
-.lp .brand__word b { font-weight: 800; color: var(--live); }
-.lp .brand small { display: block; font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--text-3); line-height: 1.1; }
-.lp .nav__links { display: flex; align-items: center; gap: 22px; margin-left: auto; font-size: 13.5px; font-weight: 550; }
-/* :visited out-specifies the console's a:not([class]):visited (0,2,1) so clicked section links stay grey. */
-/* :not(.btn) because the CTA is an <a> in here too: `.lp .nav__links a` is
-   (0,2,1) and beat `.lp .btn--primary` (0,2,0), so the button took the muted
-   section-link grey instead of its white — blue-grey text on a blue fill, which
-   is roughly the one combination that button must never have. The :hover rule
-   below did the same thing to :hover. */
-.lp .nav__links a:not(.btn), .lp .nav__links a:not(.btn):visited { color: var(--text-2); white-space: nowrap; }
-.lp .nav__links a:not(.btn):hover { color: var(--text); text-decoration: none; }
-/* The repository mark sits with the section links, not the buttons: an icon,
-   the same grey, brightening on hover like the words beside it. */
-.lp .nav__icon { display: inline-flex; align-items: center; opacity: .85; }
-.lp .nav__icon:hover { opacity: 1; }
-.lp .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 11px 18px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--surface2); color: var(--text); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: transform .16s ease, background .16s ease, border-color .16s ease, box-shadow .16s ease; }
-.lp .btn:hover { text-decoration: none; transform: translateY(-1px); background: #1c2836; border-color: #37485f; }
-.lp .btn--primary { background: var(--brand); border-color: transparent; color: #fff; box-shadow: 0 12px 30px -12px var(--brand); }
-.lp .btn--primary:hover { background: var(--brand-hi); border-color: transparent; }
-.lp .btn--ghost { background: transparent; border-color: transparent; color: var(--text-2); }
-.lp .btn--ghost:hover { color: var(--text); background: var(--surface2); border-color: transparent; }
-.lp .btn--sm { padding: 7px 13px; font-size: 13px; }
-/* Section links hide where the hero goes single-column; at 768px (iPad portrait) they no longer fit beside the brand and CTA. */
-@media (max-width: 900px) { .lp .nav__links a:not(.btn) { display: none; } }
-
-/* --- hero ----------------------------------------------------------------- */
-/* Bottom padding clears the absolutely positioned scroll hint (22px offset + ~54px tall) when the hero is content-driven. */
-.lp .hero { position: relative; min-height: 100vh; min-height: 100svh; display: grid; align-items: center; padding: 120px 0 96px; overflow: hidden; isolation: isolate; }
-/* The ledger's wrapper (components/ChainScene): SVG twin, GL canvas and labels, full-bleed behind the copy. */
-.lp .hero__scene { position: absolute; inset: 0; z-index: -2; width: 100%; height: 100%; display: block; }
-/* Nothing of the object sits under the copy, so the veil only closes the bottom
-   edge into the modules section — late enough to leave the caption and the
-   contact shadow alone. */
-.lp .hero__veil { position: absolute; inset: 0; z-index: -1; pointer-events: none; background: linear-gradient(180deg, transparent 84%, var(--bg0) 100%); }
-.lp .hero__grid { display: grid; grid-template-columns: minmax(0, 640px) 1fr; gap: 32px; }
-.lp .hero__grid > div { min-width: 0; }
-/* The right column: empty in the DOM, it is the rect the ledger lays itself out against. */
-.lp .hero__stage { min-width: 0; }
-.lp .eyebrow { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 8px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--live) 35%, transparent); background: var(--live-soft); color: var(--live); font-size: 12.5px; font-weight: 600; letter-spacing: .02em; }
-.lp .eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 0 rgba(43,212,189,.5); animation: lp-pulse 2.4s infinite; }
-@keyframes lp-pulse { 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
-.lp h1 { margin: 22px 0 16px; font-size: clamp(38px, 6vw, 68px); line-height: 1.02; letter-spacing: -.035em; font-weight: 800; }
-.lp h1 em { font-style: normal; background: linear-gradient(90deg, var(--brand-hi), var(--live)); -webkit-background-clip: text; background-clip: text; color: transparent; }
-.lp .lead { margin: 0 0 30px; font-size: clamp(16px, 1.6vw, 19px); color: var(--text-2); max-width: 56ch; }
-.lp .lead b { color: var(--text); font-weight: 600; }
-.lp .cta { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-.lp .hero__stats { display: grid; grid-template-columns: repeat(4, auto); justify-content: start; gap: 18px 30px; margin-top: 44px; padding-top: 22px; border-top: 1px solid color-mix(in srgb, var(--line) 80%, transparent); }
-.lp .stat { min-width: 0; background: none; border: 0; padding: 0; border-radius: 0; box-shadow: none; }
-.lp .stat__v { font-size: 26px; font-weight: 750; letter-spacing: -.02em; font-variant-numeric: tabular-nums; line-height: 1.1; }
-.lp .stat__l { font-size: 11px; font-weight: 650; letter-spacing: .07em; text-transform: uppercase; color: var(--text-3); margin-top: 5px; }
-@media (max-width: 560px) { .lp .hero__stats { grid-template-columns: repeat(2, auto); } }
-.lp .scroll-hint { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); color: var(--text-3); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; display: flex; flex-direction: column; align-items: center; gap: 6px; }
-.lp .scroll-hint span { width: 1px; height: 30px; background: linear-gradient(180deg, var(--text-3), transparent); animation: lp-drop 1.8s ease-in-out infinite; }
-@keyframes lp-drop { 0% { transform: scaleY(0); transform-origin: top; } 50% { transform: scaleY(1); transform-origin: top; } 51% { transform-origin: bottom; } 100% { transform: scaleY(0); transform-origin: bottom; } }
-@media (max-width: 900px) {
-  .lp .hero__grid { grid-template-columns: 1fr; }
-  /* Single column: the ledger gets its own row under the stats. The object
-     fits itself to this row, labels and caption included (lib/chainView
-     fitToStage); the margin keeps its side labels clear of the stat labels,
-     which are the same size and case. */
-  .lp .hero__stage { height: 340px; margin-top: 28px; }
-  .lp .hero__veil { background: linear-gradient(180deg, transparent 88%, var(--bg0) 100%); }
-  /* The hero already exceeds one screen here; the hint would only crowd the stats. */
-  .lp .scroll-hint { display: none; }
+  position: relative;
+  isolation: isolate;
+  background: var(--page);
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1.6;
+  overflow-x: clip;
+  min-height: 100vh;
 }
 
-/* --- sections ------------------------------------------------------------- */
-.lp section { padding: 96px 0; }
-.lp .section__head { max-width: 720px; margin-bottom: 40px; }
-.lp .kicker { font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--brand-hi); margin: 0 0 12px; }
-.lp h2 { margin: 0 0 14px; font-size: clamp(28px, 3.6vw, 42px); line-height: 1.08; letter-spacing: -.03em; font-weight: 750; }
-.lp .section__head p { margin: 0; color: var(--text-2); font-size: 17px; }
-.lp .reveal { opacity: 0; transform: translateY(18px); transition: opacity .7s ease var(--d, 0s), transform .7s ease var(--d, 0s); }
+.lp a { color: inherit; text-decoration: none; }
+.lp .mono { font-family: var(--mono); font-size: .94em; }
+.lp .wrap { width: min(1120px, 100% - 40px); margin: 0 auto; }
+.lp .wrap--wide { width: min(1320px, 100% - 40px); }
+.lp [id] { scroll-margin-top: 96px; }
+
+/* --- the light ------------------------------------------------------------- */
+/* The canvas covers this wrapper; the gradients under it are what shows before
+   three.js arrives, and all there is if it never does. The mask is what keeps
+   the field from ending on a line halfway down the page. */
+.lp__light {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: min(1180px, 130vh);
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(52% 44% at 16% 14%, rgba(56, 84, 245, 0.16), transparent 70%),
+    radial-gradient(48% 40% at 86% 26%, rgba(28, 199, 179, 0.10), transparent 72%),
+    radial-gradient(70% 50% at 52% 92%, rgba(133, 66, 224, 0.08), transparent 72%);
+  -webkit-mask-image: linear-gradient(180deg, #000 55%, transparent 100%);
+  mask-image: linear-gradient(180deg, #000 55%, transparent 100%);
+}
+.aurora { position: absolute; inset: 0; overflow: hidden; }
+.aurora__gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; opacity: 0; transition: opacity .8s ease; }
+.aurora__gl.is-on { opacity: 1; }
+/* Grain over the field: a dark gradient on an 8-bit screen bands without it. */
+.aurora__grain {
+  position: absolute;
+  inset: -50%;
+  opacity: .5;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.055'/%3E%3C/svg%3E");
+}
+
+/* --- nav ------------------------------------------------------------------- */
+.lp .nav { position: fixed; inset: 14px 0 auto 0; z-index: 40; display: flex; justify-content: center; pointer-events: none; }
+.lp .nav__inner {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  padding: 7px 7px 7px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  background: rgba(10, 14, 22, 0.66);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+  box-shadow: 0 14px 40px -18px rgb(0 0 0 / .8), inset 0 1px 0 rgb(255 255 255 / .06);
+  max-width: calc(100% - 24px);
+}
+.lp .brand { display: inline-flex; align-items: center; gap: 11px; font-weight: 750; font-size: 19px; letter-spacing: -.028em; }
+.lp .brand__mark { width: 32px; height: 32px; border-radius: 10px; display: inline-grid; place-items: center; background: linear-gradient(140deg, var(--accent), var(--accent-2)); color: #05070d; box-shadow: 0 10px 24px -10px rgba(111, 141, 255, .8); }
+.lp .brand__mark svg { width: 19px; height: 19px; }
+.lp .brand__word b { font-weight: 800; background: linear-gradient(96deg, var(--accent) 5%, var(--accent-2) 95%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.lp .nav__links { display: flex; align-items: center; gap: 20px; font-size: 13.5px; font-weight: 500; }
+.lp .nav__links a, .lp .nav__links a:visited { color: var(--ink-2); white-space: nowrap; }
+.lp .nav__links a:hover { color: var(--ink); }
+.lp .nav__end { display: flex; align-items: center; gap: 12px; }
+.lp .nav__icon { display: inline-flex; color: var(--ink-3); }
+.lp .nav__icon:hover { color: var(--ink); }
+@media (max-width: 900px) { .lp .nav__links { display: none; } }
+
+/* --- buttons --------------------------------------------------------------- */
+.lp .btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 11px 18px; border-radius: 12px; border: 1px solid transparent;
+  font: inherit; font-size: 14px; font-weight: 600; letter-spacing: -.01em;
+  cursor: pointer; white-space: nowrap;
+  transition: transform .18s ease, background .18s ease, border-color .18s ease, box-shadow .18s ease, color .18s ease;
+}
+.lp .btn--lg { padding: 14px 24px; font-size: 15px; border-radius: 14px; }
+.lp .btn--sm { padding: 8px 15px; font-size: 13px; border-radius: 10px; }
+.lp .btn--primary { background: #f2f6ff; color: #05070d; box-shadow: 0 16px 40px -18px rgb(242 246 255 / .55); }
+.lp .btn--primary:hover { background: #fff; transform: translateY(-1px); }
+.lp .btn--glass { background: var(--glass-2); color: var(--ink); border-color: var(--edge); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+.lp .btn--glass:hover { background: rgba(255, 255, 255, .12); border-color: var(--edge-2); transform: translateY(-1px); }
+.lp .btn--ghost { background: transparent; color: var(--ink-2); }
+.lp .btn--ghost:hover { color: var(--ink); background: var(--glass); }
+
+/* --- hero ------------------------------------------------------------------ */
+.lp .hero { position: relative; padding: 152px 0 0; text-align: center; }
+.lp .hero__copy { max-width: 980px; }
+.lp .eyebrow {
+  display: inline-flex; align-items: center; gap: 9px;
+  padding: 6px 15px 6px 11px; border-radius: 999px;
+  border: 1px solid var(--edge); background: var(--glass);
+  font-size: 12.5px; font-weight: 500; color: var(--ink-2); letter-spacing: .01em;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+}
+.lp .eyebrow .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent-2); box-shadow: 0 0 0 0 rgba(43, 212, 189, .55); animation: lp-pulse 2.6s infinite; }
+@keyframes lp-pulse { 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+
+.lp h1 {
+  margin: 26px auto 0;
+  font-size: clamp(40px, 6.6vw, 86px);
+  line-height: 1.0;
+  letter-spacing: -.045em;
+  font-weight: 700;
+  max-width: 16ch;
+}
+.lp h1 em {
+  font-style: normal;
+  background: linear-gradient(96deg, var(--accent) 12%, var(--accent-2) 78%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.lp .lead { margin: 22px auto 0; max-width: 64ch; font-size: clamp(15.5px, 1.35vw, 18px); color: var(--ink-2); }
+.lp .cta { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; justify-content: center; margin-top: 30px; }
+.lp .hero__vendors { margin: 26px 0 0; font: 500 11px/1.6 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); }
+
+/* --- the product ----------------------------------------------------------- */
+.lp .showcase { margin-top: 54px; }
+.lp .showcase__tabs { display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; margin-bottom: 22px; }
+.lp .tab {
+  padding: 8px 16px; border-radius: 999px; border: 1px solid transparent;
+  background: transparent; color: var(--ink-3); font: inherit; font-size: 13px; font-weight: 550;
+  cursor: pointer; transition: color .18s ease, background .18s ease, border-color .18s ease;
+}
+.lp .tab:hover { color: var(--ink); background: var(--glass); }
+.lp .tab.is-on { color: var(--ink); background: var(--glass-2); border-color: var(--edge); }
+
+.lp .showcase__stage { perspective: 2200px; }
+/* The screen: tilted back like a monitor on a desk, straightening under the
+   pointer. The shadow is deep on purpose — it is what lifts it off the light. */
+.lp .screen {
+  position: relative; margin: 0;
+  border-radius: 16px; overflow: hidden;
+  border: 1px solid var(--edge-2);
+  background: #0a0f18;
+  transform-style: preserve-3d;
+  transform: rotateX(var(--rx, 7deg)) rotateY(var(--ry, 0deg));
+  transition: transform .4s cubic-bezier(.2, .7, .3, 1);
+  box-shadow:
+    0 2px 0 rgb(255 255 255 / .06) inset,
+    0 70px 130px -50px rgb(0 0 0 / .95),
+    0 40px 120px -60px rgba(88, 120, 255, .55);
+}
+.lp .screen__bar { display: flex; align-items: center; gap: 7px; height: 38px; padding: 0 15px; border-bottom: 1px solid rgba(255, 255, 255, .06); background: rgba(255, 255, 255, .04); }
+.lp .screen__bar i { width: 9px; height: 9px; border-radius: 50%; background: rgba(255, 255, 255, .13); flex: none; }
+.lp .screen__bar span { margin-left: 14px; font: 11px/1 var(--mono); letter-spacing: .06em; color: var(--ink-3); }
+/* One box for every screen: the shots differ in aspect, so they are contained on
+   the app's own background and the frame never resizes when a tab changes. */
+.lp .screen__shot { position: relative; aspect-ratio: 16 / 9.3; background: #070b11; }
+.lp .screen__shot img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: 0; transition: opacity .4s ease; }
+.lp .screen__shot img.is-on { opacity: 1; }
+/* The floor: the same picture, upside down, fading into the page. */
+.lp .screen__floor { margin-top: 6px; height: 170px; overflow: hidden; opacity: .22; filter: blur(1.5px); transform: perspective(2200px) rotateX(7deg) scaleY(-1); -webkit-mask-image: linear-gradient(0deg, transparent 8%, #000 100%); mask-image: linear-gradient(0deg, transparent 8%, #000 100%); }
+.lp .screen__floor img { width: 100%; height: auto; display: block; }
+.lp .showcase__say { display: grid; grid-template-columns: minmax(0, 320px) minmax(0, 1fr); gap: 10px 36px; margin: 28px auto 0; text-align: left; max-width: 1060px; }
+.lp .showcase__say h3 { margin: 0; font-size: 19px; font-weight: 650; letter-spacing: -.02em; }
+.lp .showcase__say p { margin: 0; color: var(--ink-2); font-size: 14.5px; }
+@media (max-width: 820px) {
+  .lp .screen { transform: none; }
+  .lp .screen__floor { display: none; }
+  .lp .showcase__say { grid-template-columns: 1fr; }
+}
+
+/* --- instrument tape ------------------------------------------------------- */
+.lp .tape {
+  position: relative; margin-top: 74px; padding: 16px 0; overflow: hidden;
+  border-top: 1px solid rgba(255, 255, 255, .06); border-bottom: 1px solid rgba(255, 255, 255, .06);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+}
+.lp .tape__run { display: flex; width: max-content; animation: lp-tape 68s linear infinite; }
+.lp .tape__set { display: flex; }
+.lp .tape__item { padding: 0 26px; font: 500 11px/1 var(--mono); letter-spacing: .18em; color: var(--ink-3); white-space: nowrap; }
+.lp .tape__item + .tape__item { border-left: 1px solid rgba(255, 255, 255, .07); }
+@keyframes lp-tape { to { transform: translateX(-50%); } }
+
+/* --- sections -------------------------------------------------------------- */
+.lp section { padding: 74px 0; }
+.lp .head { max-width: 760px; margin-bottom: 36px; }
+.lp .kicker { margin: 0 0 14px; font: 600 11.5px/1 var(--mono); letter-spacing: .18em; text-transform: uppercase; color: var(--accent-2); }
+.lp h2 { margin: 0; font-size: clamp(28px, 3.9vw, 46px); line-height: 1.06; letter-spacing: -.035em; font-weight: 700; }
+.lp .head p { margin: 16px 0 0; color: var(--ink-2); font-size: 16.5px; }
+.lp .reveal { opacity: 0; transform: translateY(16px); transition: opacity .7s ease var(--d, 0s), transform .7s cubic-bezier(.2, .7, .3, 1) var(--d, 0s); }
 .lp .reveal.is-in { opacity: 1; transform: none; }
 
-/* --- pipeline (3D tilt cards) --------------------------------------------- */
-.lp .pipeline { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
-/* perspective applies to an element's direct children; the .reveal wrapper is the parent of .tilt, so it must carry it. */
-.lp .pipeline > * { min-width: 0; perspective: 1400px; }
-.lp .tilt { position: relative; height: 100%; background: linear-gradient(160deg, var(--surface) 0%, var(--bg1) 100%); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px 22px 22px; transform-style: preserve-3d; transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease; will-change: transform; }
-.lp .tilt::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: radial-gradient(380px 200px at var(--mx, 50%) var(--my, 0%), rgba(112,150,255,.16), transparent 60%); opacity: 0; transition: opacity .25s ease; pointer-events: none; }
-.lp .tilt:hover { border-color: var(--brand-line); box-shadow: 0 30px 60px -30px rgba(79,125,255,.45); }
-.lp .tilt:hover::after { opacity: 1; }
-.lp .tilt__n { font-family: var(--mono); font-size: 12px; color: var(--text-3); letter-spacing: .08em; }
-.lp .tilt__icon { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; background: var(--brand-soft); color: var(--brand-hi); margin: 14px 0 16px; transform: translateZ(24px); }
-.lp .tilt__icon svg { width: 20px; height: 20px; }
-.lp .tilt h3 { margin: 0 0 8px; font-size: 19px; letter-spacing: -.02em; transform: translateZ(18px); }
-.lp .tilt p { margin: 0 0 14px; color: var(--text-2); font-size: 14.5px; transform: translateZ(12px); }
-.lp .tilt ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 7px; font-size: 13.5px; color: var(--text-2); transform: translateZ(8px); }
-.lp .tilt li { display: flex; gap: 9px; align-items: flex-start; }
-.lp .tilt li::before { content: ''; flex: none; width: 6px; height: 6px; margin-top: 8px; border-radius: 50%; background: var(--live); }
-.lp .tag { position: absolute; top: 18px; right: 18px; font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--pos) 40%, transparent); color: var(--pos); background: var(--pos-soft); }
-@media (max-width: 1000px) { .lp .pipeline { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 560px) { .lp .pipeline { grid-template-columns: 1fr; } }
+/* --- the numbers ----------------------------------------------------------- */
+.lp .band { padding: 34px 0 0; }
+.lp .band__grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .07); border-radius: 18px; overflow: hidden; }
+.lp .fig { background: var(--page); padding: 26px 24px; }
+.lp .fig b { display: block; font-size: clamp(28px, 3.4vw, 42px); font-weight: 700; letter-spacing: -.035em; line-height: 1; }
+.lp .fig span { display: block; margin-top: 9px; font-size: 13px; color: var(--ink-3); }
+@media (max-width: 760px) { .lp .band__grid { grid-template-columns: repeat(2, 1fr); } }
 
-/* --- showcase --------------------------------------------------------------- */
-.lp .showcase { display: grid; grid-template-columns: 1.25fr 1fr; gap: 20px; align-items: stretch; }
-.lp .showcase > * { min-width: 0; }
-.lp .panel { background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--radius); padding: 20px 22px; box-shadow: 0 1px 2px rgb(0 0 0 / .3); }
-.lp .panel__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
-.lp .panel__title { margin: 0; font-size: 13.5px; font-weight: 650; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.lp .panel__title svg { width: 15px; height: 15px; color: var(--text-3); }
-.lp .badge { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; border: 1px solid transparent; white-space: nowrap; }
-.lp .badge--pos { color: var(--pos); border-color: color-mix(in srgb, var(--pos) 40%, transparent); background: var(--pos-soft); }
-.lp .badge--neg { color: var(--neg); border-color: color-mix(in srgb, var(--neg) 40%, transparent); background: var(--neg-soft); }
-.lp .badge--live { color: var(--live); border-color: color-mix(in srgb, var(--live) 40%, transparent); background: var(--live-soft); }
-.lp .badge--neutral { color: var(--text-2); border-color: var(--line-strong); background: transparent; }
-.lp .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 16px; }
-.lp .metric { background: var(--bg1); border: 1px solid var(--line-soft); border-radius: var(--radius-sm); padding: 10px 12px; }
-.lp .metric__l { font-size: 10.5px; font-weight: 650; letter-spacing: .07em; text-transform: uppercase; color: var(--text-3); }
-.lp .metric__v { font-size: 20px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; margin-top: 3px; }
-.lp .tablewrap { overflow-x: auto; max-width: 100%; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--bg1); }
-.lp table { width: 100%; border-collapse: collapse; font-size: 12.5px; white-space: nowrap; }
-.lp th { text-align: left; font-size: 10.5px; font-weight: 650; letter-spacing: .07em; text-transform: uppercase; color: var(--text-3); padding: 9px 12px; border-bottom: 1px solid var(--line); background: transparent; position: static; }
-.lp td { padding: 8px 12px; border-bottom: 1px solid var(--line-soft); font-variant-numeric: tabular-nums; }
-.lp tr:last-child td { border-bottom: 0; }
-.lp .r { text-align: right; }
-.lp .row--closed { opacity: .7; } /* .55 drops badge/P&L text below 4.5:1 on bg1 */
-.lp .note { margin: 12px 0 0; font-size: 12.5px; color: var(--text-3); }
-/* Resets the console's .activity box (border, bg1, 260px scroll) which would otherwise cascade in. */
-.lp .activity { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; font-size: 13.5px; border: 0; border-radius: 0; background: transparent; max-height: none; overflow: visible; }
-.lp .bt-curve { height: 120px; margin: 4px 0 14px; }
-.lp .bt-curve svg { width: 100%; height: 100%; display: block; }
-.lp .daily { display: flex; gap: 4px; align-items: flex-end; height: 54px; margin-bottom: 6px; }
-.lp .daily i { flex: 1; display: block; border-radius: 3px 3px 0 0; background: var(--pos); min-height: 3px; opacity: .85; }
-.lp .daily i.n { background: var(--neg); }
-.lp .daily-l { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--text-3); font-family: var(--mono); }
-.lp .notes { margin: 0; padding: 0 0 0 18px; display: grid; gap: 9px; font-size: 13.5px; color: var(--text-2); }
-@media (max-width: 900px) { .lp .showcase { grid-template-columns: 1fr; } }
+/* --- bento ----------------------------------------------------------------- */
+.lp .bento { display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px; perspective: 1600px; }
+.lp .tile {
+  grid-column: span var(--span, 2); min-width: 0;
+  padding: 26px 24px 24px; border-radius: 20px;
+  border: 1px solid var(--edge); background: linear-gradient(180deg, rgba(255, 255, 255, .055), rgba(255, 255, 255, .018));
+  position: relative; overflow: hidden; transform-style: preserve-3d;
+  transform: rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+  transition: transform .3s ease, border-color .3s ease, box-shadow .3s ease, opacity .7s ease var(--d, 0s);
+}
+.lp .tile::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: radial-gradient(420px 220px at var(--mx, 50%) var(--my, 0%), rgba(126, 156, 255, .16), transparent 62%);
+  opacity: 0; transition: opacity .3s ease;
+}
+.lp .tile:hover { border-color: var(--edge-2); box-shadow: 0 30px 70px -40px rgb(0 0 0 / .9); }
+.lp .tile:hover::after { opacity: 1; }
+.lp .tile__icon { display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: var(--glass-2); border: 1px solid var(--edge); color: var(--accent-2); margin-bottom: 18px; }
+.lp .tile__icon svg { width: 20px; height: 20px; }
+.lp .tile h3 { margin: 0 0 9px; font-size: 19px; font-weight: 650; letter-spacing: -.02em; }
+.lp .tile p { margin: 0; color: var(--ink-2); font-size: 14.5px; }
+.lp .tile ul { margin: 16px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; font-size: 13.5px; color: var(--ink-3); }
+.lp .tile li { display: flex; gap: 9px; align-items: flex-start; }
+.lp .tile li::before { content: ''; flex: none; width: 5px; height: 5px; margin-top: 8px; border-radius: 50%; background: var(--accent-2); }
+@media (max-width: 1000px) { .lp .bento { grid-template-columns: repeat(2, 1fr); } .lp .tile { grid-column: span 1; } }
+@media (max-width: 620px) { .lp .bento { grid-template-columns: 1fr; } }
 
-/* --- how it works --------------------------------------------------------- */
-.lp .steps { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; counter-reset: s; }
-.lp .step { position: relative; min-width: 0; background: var(--bg1); border: 1px solid var(--line-soft); border-radius: var(--radius-sm); padding: 18px 16px 16px; }
-.lp .step::before { counter-increment: s; content: counter(s, decimal-leading-zero); font-family: var(--mono); font-size: 11px; color: var(--brand-hi); letter-spacing: .1em; }
-.lp .step h4 { margin: 8px 0 6px; font-size: 15px; letter-spacing: -.01em; }
-.lp .step p { margin: 0; font-size: 13px; color: var(--text-2); }
-.lp .step::after { content: ''; position: absolute; top: 50%; right: -13px; width: 12px; height: 1px; background: var(--line-strong); }
-.lp .step:last-child::after { display: none; }
-@media (max-width: 1000px) { .lp .steps { grid-template-columns: repeat(3, 1fr); } .lp .step::after { display: none; } }
-@media (max-width: 560px) { .lp .steps { grid-template-columns: 1fr; } }
+/* --- cards, splits --------------------------------------------------------- */
+.lp .split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+.lp .split--wide { grid-template-columns: 1.25fr 1fr; }
+.lp .split > * { min-width: 0; }
+.lp .card { padding: 24px; border-radius: 20px; border: 1px solid var(--edge); background: linear-gradient(180deg, rgba(255, 255, 255, .05), rgba(255, 255, 255, .015)); }
+.lp .card__head { display: flex; align-items: center; gap: 9px; margin-bottom: 18px; font: 600 11.5px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); }
+.lp .card__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-2); flex: none; }
+.lp .card__note { margin: 18px 0 0; font-size: 13px; color: var(--ink-3); }
+@media (max-width: 900px) { .lp .split, .lp .split--wide { grid-template-columns: 1fr; } }
 
-/* --- principles ------------------------------------------------------------ */
-.lp .principles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
-.lp .principle { min-width: 0; padding: 22px; border-radius: var(--radius); border: 1px solid var(--line-soft); background: linear-gradient(180deg, var(--surface), var(--bg1)); }
-.lp .principle h3 { margin: 10px 0 8px; font-size: 17px; letter-spacing: -.02em; }
-.lp .principle p { margin: 0; font-size: 14px; color: var(--text-2); }
-.lp .principle .k { font-family: var(--mono); font-size: 11px; color: var(--live); letter-spacing: .08em; }
+.lp .setup-rows { display: grid; gap: 12px; }
+.lp .setup-row { display: grid; grid-template-columns: 66px minmax(0, 1fr); gap: 12px; align-items: start; }
+.lp .side { font: 700 10.5px/24px var(--mono); letter-spacing: .16em; text-transform: uppercase; text-align: center; border-radius: 8px; }
+.lp .side--long { color: #3ddc97; background: rgba(61, 220, 151, .12); border: 1px solid rgba(61, 220, 151, .3); }
+.lp .side--short { color: #ff7b75; background: rgba(255, 123, 117, .12); border: 1px solid rgba(255, 123, 117, .3); }
+.lp .side__conds { display: flex; flex-wrap: wrap; gap: 6px; }
+.lp .side__conds code { font: 12.5px/1 var(--mono); color: var(--ink-2); background: rgba(255, 255, 255, .05); border: 1px solid var(--edge); border-radius: 8px; padding: 6px 10px; }
+
+.lp .rules-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; font-size: 14px; color: var(--ink-2); }
+.lp .rules-list li { padding-bottom: 10px; border-bottom: 1px solid rgba(255, 255, 255, .06); }
+.lp .rules-list li:last-child { border-bottom: 0; padding-bottom: 0; }
+.lp .rules-list b { color: var(--ink); font-weight: 600; margin-right: 8px; }
+.lp .rules-list span { color: var(--ink-3); }
+
+.lp .notes { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; font-size: 14px; color: var(--ink-2); }
+.lp .notes li { padding-left: 16px; position: relative; }
+.lp .notes li::before { content: ''; position: absolute; left: 0; top: 9px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent-2); }
+.lp .notes b { color: var(--ink); font-weight: 600; }
+
+.lp .shot { margin: 0; border-radius: 18px; overflow: hidden; border: 1px solid var(--edge); background: #070b11; box-shadow: 0 40px 90px -50px rgb(0 0 0 / .9); }
+.lp .shot img { display: block; width: 100%; height: auto; }
+
+/* --- steps ----------------------------------------------------------------- */
+.lp .steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .07); border-radius: 20px; overflow: hidden; counter-reset: s; }
+.lp .steps li { background: var(--page); padding: 26px 24px 24px; }
+.lp .steps li::before { counter-increment: s; content: counter(s, decimal-leading-zero); font: 600 11px/1 var(--mono); letter-spacing: .14em; color: var(--accent); }
+.lp .steps h4 { margin: 12px 0 7px; font-size: 16px; font-weight: 650; letter-spacing: -.015em; }
+.lp .steps p { margin: 0; font-size: 13.5px; color: var(--ink-3); }
+@media (max-width: 900px) { .lp .steps { grid-template-columns: 1fr; } }
+
+/* --- principles, stack, final, footer -------------------------------------- */
+.lp .principles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.lp .principle { min-width: 0; padding: 24px; border-radius: 18px; border: 1px solid var(--edge); background: linear-gradient(180deg, rgba(255, 255, 255, .04), rgba(255, 255, 255, .012)); }
+.lp .principle .k { font: 600 11px/1 var(--mono); letter-spacing: .14em; color: var(--accent-2); }
+.lp .principle h3 { margin: 12px 0 8px; font-size: 17px; font-weight: 650; letter-spacing: -.02em; }
+.lp .principle p { margin: 0; font-size: 13.5px; color: var(--ink-3); }
 @media (max-width: 1000px) { .lp .principles { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 560px) { .lp .principles { grid-template-columns: 1fr; } }
+@media (max-width: 620px) { .lp .principles { grid-template-columns: 1fr; } }
 
-/* --- stack strip, final CTA, footer ---------------------------------------- */
-.lp .stack { display: flex; flex-wrap: wrap; gap: 10px 26px; align-items: center; justify-content: center; padding: 26px 0; border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); color: var(--text-3); font-size: 13px; font-weight: 600; letter-spacing: .04em; }
-.lp .stack b { color: var(--text-2); font-weight: 600; }
-.lp .final { text-align: center; padding: 110px 0 100px; position: relative; overflow: hidden; }
-.lp .final::before { content: ''; position: absolute; inset: auto 0 0 0; height: 60%; background: radial-gradient(700px 320px at 50% 100%, rgba(79,125,255,.22), transparent 70%); pointer-events: none; }
-.lp .final h2 { font-size: clamp(30px, 4.4vw, 50px); }
-.lp .final p { color: var(--text-2); max-width: 56ch; margin: 0 auto 28px; font-size: 17px; }
-.lp footer { padding: 26px 0 40px; color: var(--text-3); font-size: 13px; }
+.lp .stack { display: flex; flex-wrap: wrap; gap: 10px 28px; align-items: center; justify-content: center; padding: 26px 0; border-top: 1px solid rgba(255, 255, 255, .06); border-bottom: 1px solid rgba(255, 255, 255, .06); color: var(--ink-3); font-size: 13px; }
+.lp .stack b { color: var(--ink-2); font-weight: 600; }
+
+.lp .final { text-align: center; padding: 96px 0 92px; position: relative; overflow: hidden; }
+.lp .final::before { content: ''; position: absolute; inset: auto 0 -40% 0; height: 90%; background: radial-gradient(640px 320px at 50% 100%, rgba(93, 124, 255, .26), transparent 70%); pointer-events: none; }
+.lp .final h2 { font-size: clamp(32px, 5vw, 58px); }
+.lp .final p { color: var(--ink-2); max-width: 56ch; margin: 18px auto 30px; font-size: 16.5px; }
+.lp .cta--center { justify-content: center; }
+
+.lp footer { padding: 30px 0 46px; color: var(--ink-3); font-size: 13px; }
 .lp footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; align-items: center; }
-.lp footer a, .lp footer a:visited { color: var(--text-2); }
+.lp footer a, .lp footer a:visited { color: var(--ink-2); }
+.lp footer a:hover { color: var(--ink); }
 .lp .footer__author { display: inline-flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .lp .footer__author a { display: inline-flex; align-items: center; gap: 6px; }
-.lp .footer__author a:hover { color: var(--text); text-decoration: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .lp .reveal { opacity: 1; transform: none; transition: none; }
-  .lp .eyebrow .dot, .lp .scroll-hint span { animation: none; }
-  .lp .tilt, .lp .btn { transition: none; }
+  .lp .eyebrow .dot, .lp .tape__run { animation: none; }
+  .lp .tile, .lp .btn, .lp .screen, .lp .screen__shot img { transition: none; }
+}
+
+/* ===========================================================================
+   Sign-in ("/login"). The homepage's light, the product's claim on the left,
+   the form in glass on the right. Below 940px the picture goes and the form
+   takes the page.
+   =========================================================================== */
+
+.login {
+  --ink: #e9eefa;
+  --ink-2: rgba(233, 238, 250, 0.66);
+  --ink-3: rgba(233, 238, 250, 0.42);
+  --page: #04060c;
+  --glass: rgba(255, 255, 255, 0.05);
+  --edge: rgba(255, 255, 255, 0.10);
+  --accent: #6f8dff;
+  --accent-2: #2bd4bd;
+
+  position: relative;
+  isolation: isolate;
+  min-height: 100vh;
+  min-height: 100svh;
+  background: var(--page);
+  color: var(--ink);
+  overflow: hidden;
+}
+.login__light {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(50% 42% at 18% 18%, rgba(56, 84, 245, 0.18), transparent 70%),
+    radial-gradient(46% 40% at 84% 68%, rgba(28, 199, 179, 0.12), transparent 72%);
+}
+
+.login__grid {
+  position: relative;
+  display: grid;
+  /* Both columns are sized to their content and the pair is centred: a 1fr
+     column left a lane of empty page between the claim and the card. */
+  grid-template-columns: minmax(0, 540px) minmax(340px, 400px);
+  justify-content: center;
+  align-items: center;
+  gap: 56px;
+  width: min(1060px, 100% - 48px);
+  margin: 0 auto;
+  min-height: inherit;
+  padding: 64px 0;
+}
+
+/* --- the claim ------------------------------------------------------------- */
+.login__pitch { min-width: 0; }
+.login__brand { display: inline-flex; align-items: center; gap: 14px; color: var(--ink); text-decoration: none; }
+.login__brand:hover { color: var(--ink); text-decoration: none; }
+.login__wordmark { display: grid; gap: 3px; }
+.login__word { font-size: 27px; font-weight: 750; letter-spacing: -.035em; line-height: 1; }
+.login__word b { font-weight: 800; background: linear-gradient(96deg, var(--accent) 5%, var(--accent-2) 95%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.login__tag { font: 600 10.5px/1 var(--mono); letter-spacing: .2em; text-transform: uppercase; color: var(--ink-3); }
+.login__mark { width: 46px; height: 46px; border-radius: 14px; display: inline-grid; place-items: center; background: linear-gradient(140deg, var(--accent), var(--accent-2)); color: #05070d; box-shadow: 0 16px 36px -14px rgba(111, 141, 255, .85); }
+.login__mark svg { width: 27px; height: 27px; }
+@media (max-width: 940px) { .login__brand { justify-content: center; } }
+
+.login__lead { margin: 34px 0 0; font-size: clamp(34px, 4.4vw, 54px); line-height: 1.02; letter-spacing: -.042em; font-weight: 700; }
+.login__lead em { font-style: normal; background: linear-gradient(96deg, var(--accent) 10%, var(--accent-2) 80%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+.login__points { list-style: none; margin: 26px 0 0; padding: 0; display: grid; gap: 13px; font-size: 14.5px; color: var(--ink-2); }
+.login__points li { padding-left: 18px; position: relative; }
+.login__points li::before { content: ''; position: absolute; left: 0; top: 9px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-2); }
+.login__points b { color: var(--ink); font-weight: 600; }
+
+/* The one picture: a glimpse of the chain, standing at a slight angle and
+   dissolving into the page. It stays inside its own column — it ran under the
+   sign-in card when it was allowed to bleed, and two things fighting for the
+   same pixels is the one thing a sign-in page cannot afford. */
+.login__shot {
+  margin: 34px 0 0;
+  width: 100%;
+  max-height: 268px;
+  overflow: hidden;
+  border-radius: 16px;
+  border: 1px solid var(--edge);
+  background: #070b11;
+  transform: perspective(1700px) rotateY(-6deg) rotateX(3deg);
+  box-shadow: 0 50px 100px -55px rgb(0 0 0 / .95), 0 26px 80px -60px rgba(88, 120, 255, .5);
+  -webkit-mask-image: linear-gradient(180deg, #000 52%, transparent 98%);
+  mask-image: linear-gradient(180deg, #000 52%, transparent 98%);
+}
+.login__shot img { display: block; width: 100%; height: auto; }
+
+/* --- the form -------------------------------------------------------------- */
+.login__pane { min-width: 0; display: flex; flex-direction: column; align-items: center; }
+.login__card {
+  position: relative;
+  width: min(420px, 100%);
+  padding: 34px 32px 28px;
+  border-radius: 20px;
+  border: 1px solid var(--edge);
+  background: rgba(12, 17, 27, 0.72);
+  backdrop-filter: blur(22px) saturate(1.3);
+  -webkit-backdrop-filter: blur(22px) saturate(1.3);
+  box-shadow: 0 1px 0 rgb(255 255 255 / .06) inset, 0 40px 90px -40px rgb(0 0 0 / .9);
+}
+.login__card::before { content: ''; position: absolute; top: -1px; left: 16%; right: 16%; height: 1px; background: linear-gradient(90deg, transparent, rgba(111, 141, 255, .55), transparent); }
+.login__title { margin: 0 0 6px; font-size: 24px; font-weight: 700; letter-spacing: -.03em; }
+.login__sub { margin: 0 0 22px; color: var(--ink-2); font-size: 13.5px; }
+.login__form { display: grid; gap: 14px; }
+.login .field__label { color: var(--ink-3); }
+.login__hint { margin: 20px 0 0; text-align: center; font-size: 12px; color: var(--ink-3); line-height: 1.5; }
+.login__foot { margin: 22px 0 0; text-align: center; font-size: 12px; color: var(--ink-3); }
+
+@media (max-width: 940px) {
+  .login__grid { grid-template-columns: 1fr; gap: 34px; padding: 56px 0; width: min(560px, 100% - 40px); }
+  .login__pitch { text-align: center; }
+  .login__points { margin-inline: auto; text-align: left; }
+  .login__shot { display: none; }
+  .login__lead { margin-top: 24px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .login__shot { transform: none; }
+}
+
+/* The card's button follows the public pages, not the console: light on dark,
+   which is the one button on this page and should read as the only one. */
+.login .btn--primary {
+  background: #f2f6ff;
+  color: #05070d;
+  border-color: transparent;
+  border-radius: 12px;
+  padding: 12px 18px;
+  font-weight: 650;
+  box-shadow: 0 16px 40px -20px rgb(242 246 255 / .6);
+}
+.login .btn--primary:hover:not(:disabled) { background: #fff; color: #05070d; transform: translateY(-1px); }
+.login .btn--primary:disabled { background: rgba(242, 246, 255, .45); color: #05070d; }
+.login .field__input { background: rgba(255, 255, 255, .04); border-color: var(--edge); color: var(--ink); }
+.login .field__input:focus { border-color: rgba(111, 141, 255, .7); background: rgba(255, 255, 255, .06); }
+
+/* --- phones ---------------------------------------------------------------- */
+@media (max-width: 620px) {
+  .lp .hero { padding-top: 112px; }
+  /* The pill wraps to two lines at this width; the dot stays with the first. */
+  .lp .eyebrow { font-size: 11.5px; padding: 7px 13px 7px 11px; align-items: flex-start; text-align: left; }
+  .lp .eyebrow .dot { margin-top: 5px; }
+  .lp h1 { letter-spacing: -.035em; }
+  .lp .cta .btn { flex: 1 1 auto; }
+  .lp .showcase__tabs { gap: 5px; }
+  .lp .tab { padding: 7px 13px; font-size: 12.5px; }
+  .lp .wrap, .lp .wrap--wide { width: min(100%, 100% - 32px); }
 }

@@ -12,29 +12,37 @@
     <!-- The console is dark; without this iOS paints white behind rubber-band
          scrolling and around the status bar. -->
     <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#070b11" />
+    <meta name="theme-color" content="#04060c" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <title>OpenFNO — open-source algorithmic trading for Indian F&amp;O</title>
-    <meta name="description" content="OpenFNO is an open-source algorithmic trading platform for Indian F&O: live paper runs on real ticks, coverage-first backtests, options strategies with position-level risk, and a console for operators and traders. Self-hosted, on your own broker keys." />
+    <title>OpenFNO — open-source algo trading desk for Indian F&amp;O</title>
+    <meta name="description" content="OpenFNO is a self-hosted, open-source desk for Indian F&amp;O: live paper runs on real ticks from four vendors, five years of stored index candles and minute-level option history, 25 strategies plus a setup you write in the console, and backtests with your own windows, exits, limits and costs." />
     <link rel="canonical" href="https://openfno.com/" />
     <meta name="robots" content="index,follow,max-image-preview:large" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="OpenFNO" />
     <meta property="og:url" content="https://openfno.com/" />
-    <meta property="og:title" content="OpenFNO — open-source algorithmic trading for Indian F&amp;O" />
-    <meta property="og:description" content="Live paper runs on real ticks, coverage-first backtests, options strategies with position-level risk. Self-hosted, on your own broker keys." />
+    <meta property="og:title" content="OpenFNO — open-source algo trading desk for Indian F&amp;O" />
+    <meta property="og:description" content="Run it live, replay five years, see every rupee. Four vendor feeds into one store, 25 strategies plus one you write in the console, and backtests priced from stored option premiums." />
+    <meta property="og:image:alt" content="The OpenFNO console: the option chain, with calls left, puts right and the strike ladder down the middle." />
+    <meta property="og:locale" content="en_IN" />
     <meta property="og:image" content="https://openfno.com/brand/og-image.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="OpenFNO — open-source algorithmic trading for Indian F&amp;O" />
-    <meta name="twitter:description" content="Live paper runs on real ticks, coverage-first backtests, options strategies with position-level risk." />
+    <meta name="twitter:title" content="OpenFNO — open-source algo trading desk for Indian F&amp;O" />
+    <meta name="twitter:description" content="Run it live, replay five years, see every rupee. A self-hosted, open-source F&amp;O desk." />
     <meta name="twitter:image" content="https://openfno.com/brand/og-image.png" />
     <script type="application/ld+json">
     {"@context":"https://schema.org","@graph":[
       {"@type":"Organization","@id":"https://openfno.com/#org","name":"OpenFNO","url":"https://openfno.com/","logo":"https://openfno.com/brand/openfno-mark-512.png","sameAs":["https://github.com/helloupendra/algorithmic-trading-engine"]},
       {"@type":"WebSite","@id":"https://openfno.com/#site","url":"https://openfno.com/","name":"OpenFNO","publisher":{"@id":"https://openfno.com/#org"}},
-      {"@type":"SoftwareApplication","name":"OpenFNO","applicationCategory":"FinanceApplication","operatingSystem":"Linux, macOS, Windows","url":"https://openfno.com/","description":"Open-source algorithmic trading platform for Indian F&O: live paper runs on real ticks, coverage-first backtests, options strategies with position-level risk.","offers":{"@type":"Offer","price":"0","priceCurrency":"INR"},"codeRepository":"https://github.com/helloupendra/algorithmic-trading-engine","license":"https://opensource.org/licenses/MIT","author":{"@id":"https://openfno.com/#org"}}
+      {"@type":"FAQPage","@id":"https://openfno.com/#faq","mainEntity":[
+        {"@type":"Question","name":"Is OpenFNO free and open source?","acceptedAnswer":{"@type":"Answer","text":"Yes. The source is on GitHub under the MIT licence and the platform is self-hosted: it runs on your machine or your server, with your own broker keys, and no market data or credentials leave it."}},
+        {"@type":"Question","name":"Which brokers and data vendors does it support?","acceptedAnswer":{"@type":"Answer","text":"Dhan, FYERS, Angel One and TrueData feed one store, covering NSE, BSE and MCX instruments: index and stock candles, ticks, quotes and option chain snapshots."}},
+        {"@type":"Question","name":"Can I backtest option strategies on Indian indices?","acceptedAnswer":{"@type":"Answer","text":"Yes. Backtests replay stored index candles and price each leg from stored option premiums — minute-level history around the at-the-money strike for NIFTY, BANKNIFTY and SENSEX — with trading windows, trade limits, exits, strike offsets, brokerage and slippage applied. Entries that cannot be priced are listed as skipped rather than filled at a made-up price."}},
+        {"@type":"Question","name":"Do I need to write Python to build a strategy?","acceptedAnswer":{"@type":"Answer","text":"No. A strategy can be written in the console as a list of conditions — price against VWAP or an EMA, an EMA pair, RSI levels or a cross, candle body, Supertrend, ADX, an opening-range break, the gap — and the run's own rules decide when it may trade and how it exits."}}
+      ]},
+      {"@type":"SoftwareApplication","name":"OpenFNO","applicationCategory":"FinanceApplication","operatingSystem":"Linux, macOS, Windows","url":"https://openfno.com/","description":"Self-hosted, open-source desk for Indian F&O: live paper runs on real ticks from four vendors, five years of stored index candles and minute-level option history, 25 strategies plus a setup you write in the console, and backtests with your own windows, exits, limits and costs.","offers":{"@type":"Offer","price":"0","priceCurrency":"INR"},"codeRepository":"https://github.com/helloupendra/algorithmic-trading-engine","license":"https://opensource.org/licenses/MIT","author":{"@id":"https://openfno.com/#org"}}
     ]}
     </script>
   </head>
