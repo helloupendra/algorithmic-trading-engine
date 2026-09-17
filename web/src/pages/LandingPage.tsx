@@ -129,8 +129,8 @@ const SCREENS = [
     key: 'chain',
     tab: 'Option chain',
     src: '/shots/option-chain.webp',
-    w: 1600,
-    h: 939,
+    w: 2200,
+    h: 1291,
     alt: 'The option chain: calls left, puts right, strike in the middle, with open interest, its change, IV and the build-up on each row.',
     title: 'The chain, read the way a trader reads it',
     text: 'Calls left, puts right, strike in the middle, the spot line between the two strikes the price sits between. Open interest and its change, IV, volume — and what the pair of them means: long build-up, short covering. PCR, max pain and the walls come from the same snapshot, stamped with when it was captured and by which vendor.',
@@ -139,8 +139,8 @@ const SCREENS = [
     key: 'pulse',
     tab: 'Market pulse',
     src: '/shots/market-pulse.webp',
-    w: 1600,
-    h: 669,
+    w: 2200,
+    h: 924,
     alt: 'The overview screen: market state, indices, MCX commodities and large caps, each with the day range and the age of its last price.',
     title: 'First screen: what the market is doing',
     text: 'Indices, the nearest MCX contracts and the large caps that carry the index weight — each with its day range and, in plain words, how old the last price is. A stale price says "5h ago" instead of pretending to be live, and the market card knows the holiday calendar, so "closed" arrives with the next open.',
@@ -149,8 +149,8 @@ const SCREENS = [
     key: 'history',
     tab: 'History on hand',
     src: '/shots/history-coverage.webp',
-    w: 1500,
-    h: 798,
+    w: 2100,
+    h: 1112,
     alt: 'The stored history table: index, resolution, the date range, sessions, bars and where each range came from.',
     title: 'What is stored, before you pick anything',
     text: 'Every picker is built from an inventory of what is actually on disk: index, resolution, first and last session, how many bars, and whether they arrived from a backfill or from the live feed. You cannot ask this platform to replay a range it does not have — it shows you the ranges first.',
@@ -159,8 +159,8 @@ const SCREENS = [
     key: 'factors',
     tab: 'Market factors',
     src: '/shots/market-factors.webp',
-    w: 1600,
-    h: 885,
+    w: 2200,
+    h: 1222,
     alt: 'The market factors screen: option walls, max pain, put-call ratio, ATM IV and India VIX, each labelled with how fresh it is and what testing it has had.',
     title: 'What desks read — and how much of it holds',
     text: 'Option walls, max pain, the put-call ratio, ATM IV, participant open interest and the FII/DII flows, each stamped with how fresh it is. Every section also carries what our own testing found: the levels here are marked "not tested yet", and the PCR and OI-change signals are marked as having made no money after costs on 2021–2025 NIFTY data.',
@@ -169,8 +169,8 @@ const SCREENS = [
     key: 'run',
     tab: 'A finished run',
     src: '/shots/run-ledger.webp',
-    w: 1500,
-    h: 954,
+    w: 2100,
+    h: 1351,
     alt: 'A completed backtest: net P&L, trades, win rate, profit factor, drawdown, and an account panel with the lowest balance and the closing balance.',
     title: 'A real run, including the part that hurts',
     text: 'A directional strategy replayed over BANKNIFTY one-minute candles from January to September 2026: 760 closed trades, 35% winners, ₹1,05,391 lost on a ₹10,00,000 account. The account panel is there because a total says nothing about whether the account survived to collect it.',
@@ -399,7 +399,7 @@ export function LandingPage() {
               </ul>
             </div>
             <figure className="chapter__panel">
-              <img src="/shots/history-coverage.webp" width={1500} height={798} loading="lazy" decoding="async"
+              <img src="/shots/history-coverage.webp" width={2100} height={1112} loading="lazy" decoding="async"
                 alt="The stored history table in the console: index, resolution, the date range, how many sessions and bars, and where each range came from." />
               <figcaption>What is stored, listed before you pick a range</figcaption>
             </figure>
@@ -417,7 +417,7 @@ export function LandingPage() {
               </p>
             </div>
             <figure className="chapter__panel">
-              <img src="/shots/option-chain.webp" width={1600} height={939} loading="lazy" decoding="async"
+              <img src="/shots/option-chain.webp" width={2200} height={1291} loading="lazy" decoding="async"
                 alt="The option chain in the console: calls left, puts right, open interest and its change on every row." />
               <figcaption>The live chain — a capture from this deployment</figcaption>
             </figure>
@@ -443,7 +443,7 @@ export function LandingPage() {
               </div>
             </div>
             <figure className="chapter__panel">
-              <img src="/shots/setup-editor.webp" width={1400} height={1083} loading="lazy" decoding="async"
+              <img src="/shots/setup-editor.webp" width={2000} height={924} loading="lazy" decoding="async"
                 alt="The setup editor in the console: a long setup and a short setup written as conditions, with the run's rules listed under them." />
               <figcaption>Where the setup is written — and the rules it runs under</figcaption>
             </figure>
@@ -466,7 +466,7 @@ export function LandingPage() {
               </ul>
             </div>
             <figure className="chapter__panel">
-              <img src="/shots/run-ledger.webp" width={1500} height={954} loading="lazy" decoding="async"
+              <img src="/shots/run-ledger.webp" width={2100} height={1351} loading="lazy" decoding="async"
                 alt="The finished run in the console: net P&L, win rate, profit factor, drawdown and the account panel." />
               <figcaption>The same run, as the console reports it</figcaption>
             </figure>
