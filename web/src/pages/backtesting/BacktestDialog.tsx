@@ -194,8 +194,11 @@ export function BacktestConfigurator({
   const chosenUnderlying = list.find((u) => u.underlying === underlying) ?? null
 
   useEffect(() => {
-    if (underlying == null && firstSupported) setUnderlying(firstSupported.underlying)
-  }, [underlying, firstSupported])
+    // Only the F&O list can pre-fill an underlying; an equity run picks from the
+    // stocks that have candles, and defaulting it to NIFTY would price the wrong
+    // thing while the picker still says "choose a stock".
+    if (!equity && underlying == null && firstSupported) setUnderlying(firstSupported.underlying)
+  }, [equity, underlying, firstSupported])
 
   const coverage = useBacktestCoverage(underlying, strategy.id, equity ? 'equity' : undefined)
   // The query keeps the previous underlying's answer as a placeholder while
@@ -520,7 +523,10 @@ export function BacktestConfigurator({
           </div>
 
           <div className="field">
-            <span className="field__label">Resolution (index candles stored for {underlying ?? '…'})</span>
+            <span className="field__label">
+              {equity ? 'Resolution (candles stored for ' : 'Resolution (index candles stored for '}
+              {underlying ?? '…'})
+            </span>
             {!underlying ? (
               <span className="field__help">Pick an underlying first.</span>
             ) : coverageLoading ? (
@@ -771,6 +777,7 @@ export function BacktestConfigurator({
               invalidField={riskField}
               invalidNonce={riskNonce}
               unitValue={equity ? (Number.isInteger(lotsNum) && lotsNum > 0 ? lotsNum : null) : units}
+              unitNoun={equity ? 'rupee of price on one share' : 'premium point on one leg'}
             />
           </div>
 
