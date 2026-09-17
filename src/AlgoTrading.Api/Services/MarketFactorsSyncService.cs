@@ -9,16 +9,20 @@ namespace AlgoTrading.Api.Services;
 /// </summary>
 /// <remarks>
 /// NSE publishes all three in the evening. The service looks back over the last
-/// 40 sessions once, a few minutes after the API starts (a new server, or one
-/// that was down, catches up by itself), then every 30 minutes between 18:00 and
-/// 23:30 IST looks back over 5 sessions, which fills in the day as soon as NSE
-/// posts it. Each look fetches only missing days, so a quiet evening costs a few
-/// database reads. Set <c>MarketFactors:SyncEnabled</c> to false to switch it off.
+/// 40 sessions a few minutes after the API starts (a new server, or one that was
+/// down, catches up by itself), then again every 30 minutes between 18:00 and
+/// 23:30 IST, which fills in the day as soon as NSE posts it. Every look covers
+/// the same 40 sessions: a run stops at the per-run fetch cap, and a shorter
+/// evening look would leave the days the first run did not reach missing for
+/// good. Each look fetches only missing days, so a quiet evening costs a few
+/// database reads and one request for the day NSE has not posted yet. Set
+/// <c>MarketFactors:SyncEnabled</c> to false to switch it off.
 /// </remarks>
 public class MarketFactorsSyncService : BackgroundService
 {
     private static readonly TimeSpan EveningStart = new(18, 0, 0);
     private static readonly TimeSpan EveningEnd = new(23, 30, 0);
+    private const int LookbackSessions = 40;
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<MarketFactorsSyncService> _logger;
@@ -50,14 +54,14 @@ public class MarketFactorsSyncService : BackgroundService
         try { await Task.Delay(TimeSpan.FromMinutes(3), stoppingToken); }
         catch (OperationCanceledException) { return; }
 
-        await RunAsync(40, stoppingToken);
+        await RunAsync(LookbackSessions, stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
             try { await Task.Delay(TimeSpan.FromMinutes(30), stoppingToken); }
             catch (OperationCanceledException) { break; }
 
-            if (InEveningWindow(DateTime.UtcNow)) await RunAsync(5, stoppingToken);
+            if (InEveningWindow(DateTime.UtcNow)) await RunAsync(LookbackSessions, stoppingToken);
         }
     }
 

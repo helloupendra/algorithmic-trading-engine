@@ -263,6 +263,33 @@ public class MarketFactorsSyncRunTests
         Assert.Equal(5, db.MarketParticipantOpenInterest.Count());
         Assert.Equal(2, db.MarketCashFlows.Count());
     }
+
+    [Fact]
+    public async Task A_run_that_hits_the_fetch_cap_asks_for_the_newest_days_first()
+    {
+        // On 17 Sep 2026 the server's first run looked back 40 sessions, stopped at the
+        // cap after the oldest 25, and the page's newest participant day was 26 Aug.
+        var options = new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<AlgoTrading.Infrastructure.Persistence.TradingDbContext>()
+            .UseInMemoryDatabase($"factors-{Guid.NewGuid():N}").Options;
+        await using var db = new AlgoTrading.Infrastructure.Persistence.TradingDbContext(options);
+        var nse = new FakeNse();
+        var clock = new DateTime(2026, 9, 17, 13, 30, 0, DateTimeKind.Utc);
+        var sync = new MarketFactorsSync(db, new Factory(nse), new NoHolidays(), new MarketFactorsStatus(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<MarketFactorsSync>.Instance)
+        {
+            Clock = () => clock,
+            Pace = TimeSpan.Zero,
+        };
+        int lookback = MarketFactorsSync.MaxFetchesPerDataset + 5;
+        var sessions = MarketFactorsSync.RecentSessions(clock, lookback, _ => false);
+
+        await sync.RunAsync(lookback, CancellationToken.None);
+
+        var asked = nse.Requests.Where(u => u.Contains("fao_participant_oi_")).ToList();
+        Assert.Equal(MarketFactorsSync.MaxFetchesPerDataset, asked.Count);
+        Assert.Equal(sessions.Take(MarketFactorsSync.MaxFetchesPerDataset).Select(MarketFactorsSync.ParticipantUrl), asked);
+        Assert.Single(db.MarketParticipantOpenInterest.Select(r => r.Date).Distinct());   // 16 Sep, the one day the fake serves
+    }
 }
 
 /// <summary>Real answers shared by the market-factor tests.</summary>

@@ -45,7 +45,9 @@ public sealed record MarketFactorsSyncReport(IReadOnlyList<string> Lines);
 /// over recent NSE sessions and fetches only the days that are missing, so an API
 /// that was down for a few evenings catches up by itself. Requests are paced and
 /// capped per run: these are NSE's public archives, not an API with a quota, and
-/// a burst would be the quickest way to get the server's address refused.
+/// a burst would be the quickest way to get the server's address refused. Missing
+/// days are fetched newest first, so a run that hits the cap has already stored
+/// the latest day and the next run carries on with the older ones.
 /// </remarks>
 public sealed class MarketFactorsSync
 {
@@ -62,7 +64,7 @@ public sealed class MarketFactorsSync
 
     public const string CashFlowsUrl = "https://www.nseindia.com/api/fiidiiTradeReact";
 
-    private const int MaxFetchesPerDataset = 25;
+    public const int MaxFetchesPerDataset = 25;
     /// <summary>The pause before every request to NSE; zero in tests.</summary>
     public TimeSpan Pace { get; set; } = TimeSpan.FromMilliseconds(700);
 
@@ -131,7 +133,7 @@ public sealed class MarketFactorsSync
 
         int stored = 0, notYet = 0, failed = 0, fetches = 0;
         string? lastError = null;
-        foreach (var day in sessions.Where(d => !have.Contains(d)).OrderBy(d => d))
+        foreach (var day in sessions.Where(d => !have.Contains(d)).OrderByDescending(d => d))
         {
             if (fetches++ >= MaxFetchesPerDataset) break;
             string url = ParticipantUrl(day);
@@ -170,7 +172,7 @@ public sealed class MarketFactorsSync
 
         int stored = 0, notYet = 0, failed = 0, fetches = 0;
         string? lastError = null;
-        foreach (var day in sessions.Where(d => !have.Contains(d)).OrderBy(d => d))
+        foreach (var day in sessions.Where(d => !have.Contains(d)).OrderByDescending(d => d))
         {
             if (fetches++ >= MaxFetchesPerDataset) break;
             string url = FuturesBhavcopyUrl(day);
