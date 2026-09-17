@@ -66,6 +66,22 @@ Every blocked entry and every rule-driven exit is counted in the run summary (`l
 for "it traded better". The console edits all of this on `/admin/backtesting/new`
 (`web/src/lib/backtestRules.ts` holds the catalogue).
 
+### 3c. Stocks, and strategies written in the console
+- **An equity run** trades the instrument itself. A strategy declares
+  `instrument_kind = "equity"`; the API then asks for no option chain, freezes the lot at **one
+  share** (so `lots` is the share count) and the runner skips expiries, strikes and contracts
+  altogether. A bare BUY buys the stock, a SELL short-sells it, and the run's own rules, risk rules
+  and square-off work exactly as they do on options.
+- **Which stocks can be replayed** is what has candles: `GET /api/Backtest/equities` lists every
+  `NSE:…-EQ` symbol in the candles table with its range, and the console's picker shows only those.
+  Load them with `tools/equities_candles_import.py` from the 5-minute stock files (data set D2); it
+  writes 5-minute bars and a daily roll-up.
+- **SignalBuilder** (`strategies/builder/`) is a strategy the operator writes on the New backtest
+  page: two lists of conditions (`close>vwap`, `ema:9>ema:21`, `rsi_cross_up:60`, `body>=0.5`,
+  `supertrend:bullish`, `break_high:15`, …), one for a long setup and one for a short. It emits the
+  matching BUY/SELL and nothing else, so the run's rules decide everything after the entry. Its spec
+  is `docs/strategies/SignalBuilder.md`; the grammar is `strategies/builder/conditions.py`.
+
 ### 4. Data honesty
 - **Option premiums, recent contracts:** from FYERS history per contract. FYERS serves history only for contracts that still exist.
 - **Option premiums, expired index contracts (NIFTY from Aug 2020, BANKNIFTY from Aug 2021, SENSEX from May 2023):** from `option_history_bars`, Dhan's expired-options history, which stores the nearest expiry at each strike offset from ATM, 1-minute bars.
@@ -89,6 +105,7 @@ for "it traded better". The console edits all of this on `/admin/backtesting/new
 | Method | Route | Purpose |
 |---|---|---|
 | GET | `/api/Backtest/coverage` | bars/sessions per resolution, required resolutions, option candle inventory, broker state |
+| GET | `/api/Backtest/equities` | stocks with stored candles, for an equity strategy's picker (cached) |
 | POST | `/api/Backtest/backfill` | FYERS index backfill in chunks (admin) |
 | POST | `/api/Backtest/runs` | validate, create the OfflineReplay run, spawn the runner (admin) |
 | POST | `/api/Backtest/runs/{id}/stop` | square off at last mark, stop the process (admin) |
