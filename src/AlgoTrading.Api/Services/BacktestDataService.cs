@@ -153,10 +153,18 @@ public sealed class BacktestDataService
             LastExpiry = span.LastCalendarExpiry?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
         };
 
+        bool equity = string.Equals(strategy?.InstrumentKind, "equity", StringComparison.OrdinalIgnoreCase);
         var notes = new List<string>();
-        var lotText = lot.Source == LotSizeInfo.SourceMaster ? "from the instrument master" : $"({lot.Source})";
-        notes.Add($"Lot size {lot.LotSize} {lotText} applies to the whole range; historical lot-size changes are not modelled.");
-        notes.Add(optionHistory is null ? OptionPremiumNote : OptionHistoryNote(optionHistory));
+        if (equity)
+        {
+            notes.Add("An equity run trades the instrument itself: one unit is one share, and the F&O lot size does not apply.");
+        }
+        else
+        {
+            var lotText = lot.Source == LotSizeInfo.SourceMaster ? "from the instrument master" : $"({lot.Source})";
+            notes.Add($"Lot size {lot.LotSize} {lotText} applies to the whole range; historical lot-size changes are not modelled.");
+        }
+        if (!equity) notes.Add(optionHistory is null ? OptionPremiumNote : OptionHistoryNote(optionHistory));
         if (!brokerLinked)
         {
             notes.Add(BrokerNotLinkedNote);
@@ -184,8 +192,8 @@ public sealed class BacktestDataService
         {
             Underlying = underlying,
             SpotSymbol = spot,
-            LotSize = lot.LotSize,
-            LotSizeSource = lot.Source,
+            LotSize = equity ? 1 : lot.LotSize,
+            LotSizeSource = equity ? "shares" : lot.Source,
             Resolutions = rows,
             RequiredResolutions = required,
             OptionCandles = optionCoverage,

@@ -22,6 +22,7 @@ import type {
   BacktestBackfillRequest,
   BacktestBackfillResponse,
   BacktestCoverageResponse,
+  BacktestEquity,
   InstrumentMastersResponse,
   PruneWatchlistResponse,
   StaleWatchlistResponse,
@@ -1096,6 +1097,16 @@ function isBacktestActive(status: string | undefined): boolean {
  * the dialog marks it as required itself, so toggling resolutions never
  * re-runs the coverage aggregate.
  */
+/** Stocks with stored candles, for an equity strategy's underlying picker. */
+export function useBacktestEquities(enabled: boolean) {
+  return useQuery({
+    queryKey: ['backtest', 'equities'],
+    queryFn: () => api.get<BacktestEquity[]>('/api/Backtest/equities'),
+    enabled,
+    staleTime: 5 * 60_000,
+  })
+}
+
 export function useBacktestCoverage(underlying: string | null, strategyId: number | null) {
   return useQuery({
     queryKey: ['backtest', 'coverage', underlying, strategyId],
