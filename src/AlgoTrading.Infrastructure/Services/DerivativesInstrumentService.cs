@@ -2,6 +2,7 @@
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.Instruments;
 using AlgoTrading.Infrastructure.Persistence;
+using AlgoTrading.Infrastructure.Services.OptionHistory;
 using Microsoft.EntityFrameworkCore;
 
 namespace AlgoTrading.Infrastructure.Services;
@@ -13,10 +14,12 @@ namespace AlgoTrading.Infrastructure.Services;
 public class DerivativesInstrumentService : IDerivativesInstrumentService
 {
     private readonly TradingDbContext _dbContext;
+    private readonly IndexOptionHistory? _optionHistory;
 
-    public DerivativesInstrumentService(TradingDbContext dbContext)
+    public DerivativesInstrumentService(TradingDbContext dbContext, IndexOptionHistory? optionHistory = null)
     {
         _dbContext = dbContext;
+        _optionHistory = optionHistory;
     }
 
     public async Task<string?> GetNearestFutureSymbolAsync(
@@ -45,6 +48,7 @@ public class DerivativesInstrumentService : IDerivativesInstrumentService
 
     public async Task<IReadOnlyList<DerivativeExpiryResponse>> GetExpiriesAsync(
         string underlying,
+        bool includeHistory = false,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(underlying))
@@ -69,6 +73,16 @@ public class DerivativesInstrumentService : IDerivativesInstrumentService
             .Distinct()
             .OrderBy(x => x)
             .ToListAsync(cancellationToken);
+
+        // A backtest of an earlier year needs the expiries of that year, which the
+        // master disabled or never had.
+        if (includeHistory && _optionHistory is not null)
+        {
+            rows = rows.Concat(await _optionHistory.ExpiriesAsync(underlying, cancellationToken))
+                .Distinct()
+                .Order()
+                .ToList();
+        }
 
         return rows.Select(x => new DerivativeExpiryResponse
         {
@@ -124,6 +138,7 @@ public class DerivativesInstrumentService : IDerivativesInstrumentService
         DateOnly expiryDate,
         decimal strike,
         string optionType,
+        bool includeHistory = false,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(underlying))
@@ -137,11 +152,12 @@ public class DerivativesInstrumentService : IDerivativesInstrumentService
         var row = await _dbContext.Instruments
             .AsNoTracking()
             .Where(x =>
-                x.IsEnabled &&
+                (x.IsEnabled || includeHistory) &&
                 x.Underlying == underlying &&
                 x.ExpiryDate == expiryDate &&
                 x.StrikePrice == strike &&
                 x.OptionType == normalizedOptionType)
+            .OrderByDescending(x => x.IsEnabled)
             .Select(x => new OptionChainItemResponse
             {
                 Symbol = x.Symbol,
@@ -153,6 +169,13 @@ public class DerivativesInstrumentService : IDerivativesInstrumentService
                 Description = x.Description
             })
             .FirstOrDefaultAsync(cancellationToken);
+
+        // Expired before the master was first imported: the stored history knows it
+        // when it holds bars at that strike.
+        if (row is null && includeHistory && _optionHistory is not null)
+        {
+            row = await _optionHistory.FindContractAsync(underlying, expiryDate, strike, normalizedOptionType, cancellationToken);
+        }
 
         return row;
     }

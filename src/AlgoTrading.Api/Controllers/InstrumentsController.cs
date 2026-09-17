@@ -320,6 +320,7 @@ public class InstrumentsController : ControllerBase
     [HttpGet("derivatives/expiries")]
     public async Task<IActionResult> GetExpiries(
         [FromQuery] string underlying,
+        [FromQuery] bool includeHistory,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(underlying))
@@ -327,6 +328,7 @@ public class InstrumentsController : ControllerBase
 
         var result = await _derivativesInstrumentService.GetExpiriesAsync(
             underlying.Trim().ToUpperInvariant(),
+            includeHistory,
             cancellationToken);
 
         return Ok(result);
@@ -361,6 +363,7 @@ public class InstrumentsController : ControllerBase
         [FromQuery] DateOnly expiry,
         [FromQuery] decimal strike,
         [FromQuery] string optionType,
+        [FromQuery] bool includeHistory,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(underlying))
@@ -374,6 +377,7 @@ public class InstrumentsController : ControllerBase
             expiry,
             strike,
             optionType.Trim().ToUpperInvariant(),
+            includeHistory,
             cancellationToken);
 
         if (result is null)

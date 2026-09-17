@@ -49,7 +49,13 @@ A backtest is persisted as a `SimulationRun` with mode `OfflineReplay`, and its 
 `GET /api/Backtest/runs/{id}` returns everything the results page needs: header, progress, P&L (realized, unrealized, charges, return %), metrics (win rate, profit factor, average and largest win/loss, expectancy, max drawdown in ₹ and %, profitable days), daily P&L by IST day, positions with exit price and exit reason, activity, data notes and the equity curve. `GET /api/Backtest/runs` lists all backtests with net P&L, trades and win rate.
 
 ### 4. Data honesty
-- Option premiums come from FYERS history per contract. FYERS serves history only for contracts that still exist, so entries on expired contracts are skipped and listed — the results say how many.
+- **Option premiums, recent contracts:** from FYERS history per contract. FYERS serves history only for contracts that still exist.
+- **Option premiums, expired index contracts (NIFTY from Aug 2020, BANKNIFTY from Aug 2021, SENSEX from May 2023):** from `option_history_bars`, Dhan's expired-options history, which stores the nearest expiry at each strike offset from ATM, 1-minute bars.
+  - The expiry each bar belongs to comes from `SeedData/index_option_expiries.json`. The file is built from the NSE and BSE derivative bhavcopies by `tools/option_expiry_calendar.py`, so holiday moves and weekday changes are what the exchanges recorded.
+  - The backtest asks for these with `includeHistory=true` on `GET /api/Instruments/derivatives/expiries` and `/contract`. An expired contract is built in the master's symbol grammar (`NSE:NIFTY2131015100CE`, monthly `NSE:NIFTY21MAR15100CE`), and `GET /api/MarketData/history/local` serves its bars rolled up to the run's resolution. Stored broker candles win where both exist.
+  - Only strikes near ATM exist: ATM−5…ATM+5 as imported, and Dhan offers at most ±10. A strategy whose legs sit further out (far OTM hedge wings, e.g. Fulcrum2Straddle20 and the FulcrumMulti variants) cannot open on these years, and every such entry is skipped and listed. A held contract the market moves away from keeps its last price of that day.
+  - Anything else with no price is skipped and listed — the results say how many.
+- Index candles for those years come from Dhan's index history (`tools/index_history_import.py`, SourceKey `dhan`); FYERS candles win where both exist.
 - Lot sizes are the current master values; historical lot-size changes are not modelled (noted in the run's data notes).
 - Fills use the signal bar's close with no slippage; a flat per-lot charge can be set in the dialog.
 

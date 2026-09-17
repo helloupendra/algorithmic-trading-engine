@@ -269,7 +269,7 @@ hypertable (migration `OptionHistoryBars`). Its setup:
 | --- | --- |
 | `Underlying` | `NIFTY`, `BANKNIFTY`, `FINNIFTY`, `MIDCPNIFTY`, `SENSEX`, `BANKEX` |
 | `ExpiryFlag`, `ExpiryCode` | `WEEK`/`MONTH`; 1 nearest, 2 next, 3 far |
-| `ExpiryDate` | Always null for now: Dhan does not send it (see below) |
+| `ExpiryDate` | Always null: Dhan does not send it (see below). Backtests take the expiry from the exchange calendar, `SeedData/index_option_expiries.json` |
 | `StrikeOffset`, `Strike` | 0 is ATM, +1 one strike above; `Strike` is the strike at that offset during the bar |
 | `OptionType` | `CE` / `PE` |
 | `Resolution` | `1m`, `5m`, `15m`, `60m` |

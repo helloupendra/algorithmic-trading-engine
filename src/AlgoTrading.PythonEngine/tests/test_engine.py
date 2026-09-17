@@ -103,13 +103,13 @@ class FakeApi:
     def get_fno_underlyings(self):
         return [{"underlying": UNDERLYING, "lotSize": LOT_SIZE, "lotSizeSource": "master", "strikeStep": 100}]
 
-    def get_expiries(self, underlying):
+    def get_expiries(self, underlying, include_history=False):
         return [{"underlying": underlying, "expiryDate": EXPIRY}, {"underlying": underlying, "expiryDate": "2026-09-29"}]
 
     def get_option_chain(self, underlying, expiry, from_strike=None, to_strike=None):
         return [{"strikePrice": 57000 + i * 100} for i in range(10)]
 
-    def get_exact_contract(self, underlying, expiry, strike, option_type):
+    def get_exact_contract(self, underlying, expiry, strike, option_type, include_history=False):
         self.contract_calls += 1
         if self.fail_contract_lookups > 0:
             self.fail_contract_lookups -= 1

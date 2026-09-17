@@ -258,10 +258,17 @@ class PlatformApiClient:
         resp.raise_for_status()
         return resp.json()
 
-    def get_expiries(self, underlying: str) -> list[dict[str, Any]]:
+    def get_expiries(self, underlying: str, include_history: bool = False) -> list[dict[str, Any]]:
+        """
+        Option expiries of an underlying. `include_history` adds the expired ones an index
+        backtest needs (the exchange calendar and the master's expired rows).
+        """
+        params: dict[str, Any] = {"underlying": underlying}
+        if include_history:
+            params["includeHistory"] = "true"
         resp = self.http.get(
             f"{self.base_url}/api/Instruments/derivatives/expiries",
-            params={"underlying": underlying},
+            params=params,
             verify=self.verify_ssl,
             timeout=30,
         )
@@ -310,17 +317,22 @@ class PlatformApiClient:
         expiry: str,
         strike: float,
         option_type: str,
+        include_history: bool = False,
     ) -> dict[str, Any]:
         # `strike` may be fractional (stock options on a 2.5-point grid); the API
-        # binds it as a decimal and matches it exactly.
+        # binds it as a decimal and matches it exactly. `include_history` also finds
+        # an expired contract (from the master, else from the stored option history).
+        params: dict[str, Any] = {
+            "underlying": underlying,
+            "expiry": expiry,
+            "strike": strike,
+            "optionType": option_type,
+        }
+        if include_history:
+            params["includeHistory"] = "true"
         resp = self.http.get(
             f"{self.base_url}/api/Instruments/derivatives/contract",
-            params={
-                "underlying": underlying,
-                "expiry": expiry,
-                "strike": strike,
-                "optionType": option_type,
-            },
+            params=params,
             verify=self.verify_ssl,
             timeout=30,
         )

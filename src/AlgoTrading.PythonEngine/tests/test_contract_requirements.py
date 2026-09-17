@@ -44,7 +44,7 @@ STRANGLE = [
 class CappedApi(FakeApi):
     """FakeApi whose instrument master stops at 58000, as a real chain does."""
 
-    def get_exact_contract(self, underlying, expiry, strike, option_type):
+    def get_exact_contract(self, underlying, expiry, strike, option_type, include_history=False):
         self.contract_calls += 1
         if float(strike) > 58000:
             return None

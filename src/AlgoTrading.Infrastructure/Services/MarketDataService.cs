@@ -2,6 +2,7 @@ using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Application.Providers;
 using AlgoTrading.Contracts.MarketData;
 using AlgoTrading.Infrastructure.Persistence;
+using AlgoTrading.Infrastructure.Services.OptionHistory;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -18,17 +19,20 @@ public class MarketDataService : IMarketDataService
     private readonly IHistoricalCandleStore _candleStore;
     private readonly TradingDbContext _dbContext;
     private readonly ILogger<MarketDataService> _logger;
+    private readonly IndexOptionHistory? _optionHistory;
 
     public MarketDataService(
         IProviderRouter router,
         IHistoricalCandleStore candleStore,
         TradingDbContext dbContext,
-        ILogger<MarketDataService> logger)
+        ILogger<MarketDataService> logger,
+        IndexOptionHistory? optionHistory = null)
     {
         _router = router;
         _candleStore = candleStore;
         _dbContext = dbContext;
         _logger = logger;
+        _optionHistory = optionHistory;
     }
 
     public async Task<IReadOnlyList<CandleResponse>> SyncHistoryAsync(
@@ -140,7 +144,7 @@ public class MarketDataService : IMarketDataService
             query = query.Where(x => x.TimeStampUtc < toUtcExclusive);
         }
 
-        return await query
+        var stored = await query
             .OrderBy(x => x.TimeStampUtc)
             .Select(x => new CandleResponse
             {
@@ -154,5 +158,26 @@ public class MarketDataService : IMarketDataService
                 Volume = x.Volume,
             })
             .ToListAsync(cancellationToken);
+
+        if (_optionHistory is null) return stored;
+
+        // An expired index option: the broker has no history for it any more, but the
+        // stored Dhan history does. Broker candles win where both have a bar.
+        var history = await _optionHistory.CandlesAsync(
+            request.Symbol, resolution, request.FromDate, request.ToDate, cancellationToken);
+        return MergeCandles(stored, history);
+    }
+
+    /// <summary>Both series by bar start; a stored candle wins over a history bar at the same start.</summary>
+    public static IReadOnlyList<CandleResponse> MergeCandles(
+        IReadOnlyList<CandleResponse> stored,
+        IReadOnlyList<CandleResponse> history)
+    {
+        if (history.Count == 0) return stored;
+        if (stored.Count == 0) return history;
+        var starts = stored.Select(x => x.TimestampUtc).ToHashSet();
+        return stored.Concat(history.Where(x => !starts.Contains(x.TimestampUtc)))
+            .OrderBy(x => x.TimestampUtc)
+            .ToList();
     }
 }

@@ -4,6 +4,7 @@ using AlgoTrading.Contracts.Backtest;
 using AlgoTrading.Contracts.MarketData;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Services;
+using AlgoTrading.Infrastructure.Services.OptionHistory;
 using Microsoft.EntityFrameworkCore;
 using System.Globalization;
 
@@ -21,10 +22,21 @@ public sealed class BacktestDataService
 
     public const string OptionPremiumNote =
         "Option premiums are fetched from FYERS history per contract on demand; expired contracts have no history — trades on them will be listed as skipped.";
+    /// <summary>The premium note when stored expired-options history exists for the underlying.</summary>
+    public static string OptionHistoryNote(BacktestOptionHistoryCoverage history)
+    {
+        string Day(DateTime utc) => utc.AddMinutes(330).ToString("dd MMM yyyy", CultureInfo.InvariantCulture);
+        return $"Option premiums for expired contracts come from stored history, {Day(history.FirstUtc)} – {Day(history.LastUtc)}: " +
+               "the nearest expiry at the strikes near ATM that were imported (usually ATM−5…ATM+5), 1-minute bars rolled up to the run's resolution. " +
+               "A leg at a strike outside that band has no price and its trade is skipped; a held contract the market moves away from keeps its last price of that day. " +
+               "Contracts after that range are fetched from FYERS on demand.";
+    }
+
     public const string BrokerNotLinkedNote =
         "Broker not linked: only contracts already stored can be priced, and no index candles can be backfilled.";
 
     private readonly TradingDbContext _dbContext;
+    private readonly IndexOptionHistory? _optionHistory;
     private readonly StrategyCatalogService _catalog;
     private readonly ILotSizeResolver _lotSizeResolver;
     private readonly IBrokerSessionStore _brokerSessionStore;
@@ -37,7 +49,8 @@ public sealed class BacktestDataService
         ILotSizeResolver lotSizeResolver,
         IBrokerSessionStore brokerSessionStore,
         IMarketDataService marketDataService,
-        ILogger<BacktestDataService> logger)
+        ILogger<BacktestDataService> logger,
+        IndexOptionHistory? optionHistory = null)
     {
         _dbContext = dbContext;
         _catalog = catalog;
@@ -45,6 +58,7 @@ public sealed class BacktestDataService
         _brokerSessionStore = brokerSessionStore;
         _marketDataService = marketDataService;
         _logger = logger;
+        _optionHistory = optionHistory;
     }
 
     // ------------------------------------------------------------------
@@ -129,11 +143,20 @@ public sealed class BacktestDataService
         }
 
         var optionCoverage = await GetOptionCoverageAsync(underlying, cancellationToken);
+        var span = _optionHistory is null ? null : await _optionHistory.SpanAsync(underlying, cancellationToken);
+        var optionHistory = span is null ? null : new BacktestOptionHistoryCoverage
+        {
+            FirstUtc = span.FirstBarUtc,
+            LastUtc = span.LastBarUtc,
+            CalendarExpiries = span.CalendarExpiries,
+            FirstExpiry = span.FirstCalendarExpiry?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            LastExpiry = span.LastCalendarExpiry?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
+        };
 
         var notes = new List<string>();
         var lotText = lot.Source == LotSizeInfo.SourceMaster ? "from the instrument master" : $"({lot.Source})";
         notes.Add($"Lot size {lot.LotSize} {lotText} applies to the whole range; historical lot-size changes are not modelled.");
-        notes.Add(OptionPremiumNote);
+        notes.Add(optionHistory is null ? OptionPremiumNote : OptionHistoryNote(optionHistory));
         if (!brokerLinked)
         {
             notes.Add(BrokerNotLinkedNote);
@@ -166,6 +189,7 @@ public sealed class BacktestDataService
             Resolutions = rows,
             RequiredResolutions = required,
             OptionCandles = optionCoverage,
+            OptionHistory = optionHistory,
             BrokerLinked = brokerLinked,
             Notes = notes
         };
