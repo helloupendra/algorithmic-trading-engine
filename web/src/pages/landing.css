@@ -640,7 +640,8 @@
   .lp .chapter p { max-width: none; }
   .lp .chapter--left .chapter__panel,
   .lp .chapter--right .chapter__panel { transform: none; }
-  .lp .chapter::before { background: linear-gradient(180deg, rgba(4, 6, 12, .82), rgba(4, 6, 12, .93)); }
+  /* One column: the copy sits over the object, so the wash has to carry it. */
+  .lp .chapter::before { background: linear-gradient(180deg, rgba(4, 6, 12, .88), rgba(4, 6, 12, .95)); }
 }
 @media (max-width: 620px) {
   .lp .chapter { min-height: auto; padding: 104px 0 72px; }
