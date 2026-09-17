@@ -593,8 +593,10 @@
 .lp .chapter--center .chapter__copy { grid-column: 2 / span 10; justify-self: center; text-align: center; max-width: 880px; }
 .lp .chapter--left .chapter__panel { grid-column: 7 / span 6; grid-row: 1; }
 .lp .chapter--right .chapter__panel { grid-column: 1 / span 6; grid-row: 1; }
-/* The last chapter: the mark assembles above the words, so the copy sits low. */
-.lp .chapter--foot { align-items: center; min-height: 86vh; padding: 96px 0 72px; }
+/* The last chapter: the mark assembles above the words, so the copy sits low
+   and its wash only reaches the bottom half. */
+.lp .chapter--foot { align-items: end; min-height: 92vh; padding: 96px 0 10vh; }
+.lp .chapter--foot::before { background: linear-gradient(180deg, rgba(4, 6, 12, 0) 18%, rgba(4, 6, 12, .72) 46%, rgba(4, 6, 12, .94) 72%); }
 
 .lp .chapter h2 { margin: 0 0 18px; font-size: clamp(30px, 3.9vw, 48px); line-height: 1.05; letter-spacing: -.04em; }
 .lp .chapter p { margin: 0; color: var(--ink-2); font-size: clamp(15px, 1.25vw, 16.5px); max-width: 46ch; }
