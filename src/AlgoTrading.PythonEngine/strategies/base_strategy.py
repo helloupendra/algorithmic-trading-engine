@@ -163,7 +163,8 @@ class BaseStrategy:
     category: str = "Other"
     # Underlyings the strategy is designed for (see DEFAULT_SUPPORTED_UNDERLYINGS).
     supported_underlyings: List[str] = list(DEFAULT_SUPPORTED_UNDERLYINGS)
-    # The kind of instrument the legs trade. Only "options" is supported today.
+    # The kind of instrument the legs trade: "options" (contracts of an underlying)
+    # or "equity" (the instrument itself, in shares).
     instrument_kind: str = "options"
     # One-line description of the legs, e.g. "Sell ATM CE + Sell ATM PE".
     legs_summary: str = ""

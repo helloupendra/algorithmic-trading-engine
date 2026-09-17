@@ -115,65 +115,99 @@ def _compare(op: str, left: Optional[float], right: Optional[float]) -> bool:
     return left == right
 
 
-def evaluate(condition: str, bars: Sequence[Any]) -> bool:
-    """Whether one condition holds on the last closed bar. Unreadable input raises."""
+#: A parsed condition: bars in, True/False out.
+Evaluator = Callable[[Sequence[Any]], bool]
+
+
+def parse(condition: str) -> Evaluator:
+    """
+    One condition, read once into a function. Unreadable text raises here — when
+    the run is built — rather than on the bar it would first have been checked.
+    """
     text = condition.strip().lower()
-    if not bars:
-        return False
+
     if text in ("green", "red"):
-        last = bars[-1]
-        return float(last.close) > float(last.open) if text == "green" else float(last.close) < float(last.open)
+        def candle_direction(bars: Sequence[Any]) -> bool:
+            if not bars:
+                return False
+            last = bars[-1]
+            return float(last.close) > float(last.open) if text == "green" else float(last.close) < float(last.open)
+        return candle_direction
+
     if text in ("above_open", "below_open"):
-        move = indicators.move_from_open_percent(bars)
-        return False if move is None else (move > 0 if text == "above_open" else move < 0)
+        def against_open(bars: Sequence[Any]) -> bool:
+            move = indicators.move_from_open_percent(bars) if bars else None
+            return False if move is None else (move > 0 if text == "above_open" else move < 0)
+        return against_open
 
     match = _PATTERN.match(text)
     if match is None:
         raise ConditionError(f"cannot read the condition {condition!r}")
     left, op, right = match.group("left"), match.group("op"), match.group("right")
+    key, _, argument = left.partition(":")
 
-    if left.startswith("rsi_cross_"):
-        level = float(right) if right else (float(left.partition(":")[2]) if ":" in left else None)
-        if level is None:
+    if key.startswith("rsi_cross_"):
+        level_text = right if right else argument
+        if not level_text or not re.fullmatch(_NUMBER, level_text):
             raise ConditionError(f"{condition!r} needs a level, e.g. rsi_cross_up:60")
-        closes = indicators.closes(bars)
-        now, before = indicators.rsi(closes, RSI_PERIOD), indicators.rsi(closes[:-1], RSI_PERIOD)
-        if now is None or before is None:
-            return False
-        return before <= level < now if left.startswith("rsi_cross_up") else before >= level > now
+        level, upwards = float(level_text), key == "rsi_cross_up"
+        def rsi_cross(bars: Sequence[Any]) -> bool:
+            closes = indicators.closes(bars)
+            now, before = indicators.rsi(closes, RSI_PERIOD), indicators.rsi(closes[:-1], RSI_PERIOD)
+            if now is None or before is None:
+                return False
+            return before <= level < now if upwards else before >= level > now
+        return rsi_cross
 
-    if left.startswith("supertrend"):
-        want = (right or "").strip()
+    if key == "supertrend":
+        want = (right or argument or "").strip()
         if want not in ("bullish", "bearish"):
             raise ConditionError(f"{condition!r} must say supertrend:bullish or supertrend:bearish")
-        reading = indicators.supertrend(bars, *SUPERTREND)
-        return reading is not None and reading["direction"] == want
+        def supertrend_is(bars: Sequence[Any]) -> bool:
+            reading = indicators.supertrend(bars, *SUPERTREND)
+            return reading is not None and reading["direction"] == want
+        return supertrend_is
 
-    if left.startswith("break_"):
-        minutes = int(float(right)) if right else 15
-        window = indicators.opening_range(bars, minutes)
-        if window is None:
-            return False
-        close = float(bars[-1].close)
-        return close > window["high"] if left == "break_high" else close < window["low"]
+    if key in ("break_high", "break_low"):
+        minutes_text = argument or right or "15"
+        if not re.fullmatch(_NUMBER, minutes_text):
+            raise ConditionError(f"{condition!r} needs minutes, e.g. break_high:15")
+        minutes, upwards = int(float(minutes_text)), key == "break_high"
+        def breaks_range(bars: Sequence[Any]) -> bool:
+            window = indicators.opening_range(bars, minutes) if bars else None
+            if window is None:
+                return False
+            close = float(bars[-1].close)
+            return close > window["high"] if upwards else close < window["low"]
+        return breaks_range
 
     if op is None or right is None:
         raise ConditionError(f"the condition {condition!r} compares nothing")
+    if op == ":":
+        raise ConditionError(f"the condition {condition!r} compares nothing")
 
-    right_value = float(right) if re.fullmatch(_NUMBER, right) else _value(right, bars)
-    return _compare(op, _value(left, bars), right_value)
+    literal = float(right) if re.fullmatch(_NUMBER, right) else None
+    def compares(bars: Sequence[Any]) -> bool:
+        if not bars:
+            return False
+        right_value = literal if literal is not None else _value(right, bars)
+        return _compare(op, _value(left, bars), right_value)
+    return compares
 
 
-def compile_all(conditions: Sequence[str]) -> Callable[[Sequence[Any]], bool]:
+def evaluate(condition: str, bars: Sequence[Any]) -> bool:
+    """Whether one condition holds on the last closed bar."""
+    return parse(condition)(bars)
+
+
+def compile_all(conditions: Sequence[str]) -> Evaluator:
     """
     Every condition as one predicate: all of them must hold. An empty list never
     fires — a side with no conditions is a side the strategy does not trade.
     """
-    items = list(conditions)
-    for condition in items:                       # fail loudly at build time, not mid-run
-        evaluate(condition, [])
+    evaluators = [parse(condition) for condition in conditions]
     def holds(bars: Sequence[Any]) -> bool:
-        return bool(items) and all(evaluate(condition, bars) for condition in items)
+        return bool(evaluators) and all(check(bars) for check in evaluators)
     return holds
 
 
