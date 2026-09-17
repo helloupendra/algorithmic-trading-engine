@@ -294,3 +294,46 @@ export function describeRules(draft: RulesDraft): string | null {
   }).filter(Boolean)
   return parts.length > 0 ? parts.join(' · ') : null
 }
+
+// --- saved sets ------------------------------------------------------------
+//
+// A set of rules is worth reusing: the same windows and limits are tried across
+// strategies, and retyping them is how two runs quietly stop being comparable.
+// They live in this browser only (localStorage), which is why every read and
+// write is guarded — a private window or blocked storage must not break the form.
+
+const PRESETS_KEY = 'backtest.rulePresets'
+
+export type RulePresets = Record<string, RulesDraft>
+
+export function loadPresets(): RulePresets {
+  try {
+    const raw = window.localStorage.getItem(PRESETS_KEY)
+    const parsed = raw ? JSON.parse(raw) : null
+    return parsed && typeof parsed === 'object' ? (parsed as RulePresets) : {}
+  } catch {
+    return {}
+  }
+}
+
+export function savePreset(name: string, draft: RulesDraft): RulePresets {
+  const cleaned = Object.fromEntries(Object.entries(draft).filter(([, value]) => (value ?? '').trim() !== ''))
+  const next = { ...loadPresets(), [name.trim()]: cleaned }
+  try {
+    window.localStorage.setItem(PRESETS_KEY, JSON.stringify(next))
+  } catch {
+    // Storage can be full or blocked; the set stays in the form either way.
+  }
+  return next
+}
+
+export function deletePreset(name: string): RulePresets {
+  const next = { ...loadPresets() }
+  delete next[name]
+  try {
+    window.localStorage.setItem(PRESETS_KEY, JSON.stringify(next))
+  } catch {
+    // As above: nothing to do but keep going.
+  }
+  return next
+}

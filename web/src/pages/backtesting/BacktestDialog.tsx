@@ -21,6 +21,8 @@ import { DateField } from '../../components/DateField'
 import { InlineError, Loading } from '../../components/ui'
 import { RiskRulesForm } from '../../components/RiskRulesForm'
 import { RulesForm } from './RulesForm'
+import { EquityPicker } from './EquityPicker'
+import { ConditionsEditor, conditionsToText, textToConditions } from './ConditionsEditor'
 import { describeRules, rulesFromParams, rulesToParams, type RulesDraft } from '../../lib/backtestRules'
 import { IconChevronDown, IconChevronRight, IconPlay, IconX } from '../../components/icons'
 import type {
@@ -42,6 +44,7 @@ import {
   type ParamRow,
 } from '../strategies/shared'
 import { parseStrikeParams } from '../../lib/contracts'
+import './backtesting.css'
 import {
   addDays,
   countWeekdays,
@@ -160,9 +163,21 @@ export function BacktestConfigurator({
   const [params, setParams] = useState<ParamRow[]>(() =>
     parseParamDefaults(
       initial?.parametersJson ?? strategy.defaultParametersJson,
-      new Set([...RESERVED_PARAM_KEYS, ...strike.omitKeys]),
+      new Set([...RESERVED_PARAM_KEYS, ...strike.omitKeys, 'long_conditions', 'short_conditions']),
     ),
   )
+  // A strategy that trades the instrument itself: no option chain, no strike, and
+  // "lots" counts shares.
+  const equity = (strategy.instrumentKind ?? '').toLowerCase() === 'equity'
+  const written = 'long_conditions' in parseParamDefaults(strategy.defaultParametersJson, new Set())
+    .reduce<Record<string, string>>((all, row) => ({ ...all, [row.key]: row.value }), {})
+  const [conditions, setConditions] = useState(() => {
+    const source = parseJsonObject(initial?.parametersJson ?? strategy.defaultParametersJson) ?? {}
+    return {
+      long: conditionsToText(source.long_conditions),
+      short: conditionsToText(source.short_conditions),
+    }
+  })
   const [rules, setRules] = useState<RulesDraft>(() => rulesFromParams(parseJsonObject(initial?.parametersJson)))
   const [backfilling, setBackfilling] = useState<string | null>(null)
   const [validation, setValidation] = useState<string | null>(null)
@@ -342,7 +357,13 @@ export function BacktestConfigurator({
       risk: parsedRisk.rules,
       eodSquareOffIst: eodNone ? '' : eodTime,
       chargesPerLot: chg,
-      parameters: { ...mergeParams(params, strikes.values), ...rulesToParams(rules) },
+      parameters: {
+        ...mergeParams(params, strikes.values),
+        ...(written
+          ? { long_conditions: textToConditions(conditions.long), short_conditions: textToConditions(conditions.short) }
+          : {}),
+        ...rulesToParams(rules),
+      },
       initialCapital: cap,
     }
     start.mutate(body, {
@@ -423,8 +444,10 @@ export function BacktestConfigurator({
       )}
 
           <div className="field">
-            <span className="field__label">Underlying (required)</span>
-            {underlyings.isPending ? (
+            <span className="field__label">{equity ? 'Stock (required)' : 'Underlying (required)'}</span>
+            {equity ? (
+              <EquityPicker value={underlying} onChange={pickUnderlying} />
+            ) : underlyings.isPending ? (
               <Loading label="Loading F&O universe…" />
             ) : underlyings.isError && underlyings.data === undefined ? (
               <InlineError error={underlyings.error} />
@@ -612,7 +635,7 @@ export function BacktestConfigurator({
           <div className="form-row">
             <div className="field">
               <label className="field__label" htmlFor="bt-lots">
-                Lots
+                {equity ? 'Shares' : 'Lots'}
               </label>
               <input
                 id="bt-lots"
@@ -625,7 +648,11 @@ export function BacktestConfigurator({
                 onChange={(e) => setLots(e.target.value)}
               />
               <span className="field__help">
-                {units != null ? `= ${formatNumber(units)} units (lot size ${lotSize})` : 'whole lots of the chosen underlying'}
+                {equity
+                  ? 'shares bought or sold per signal'
+                  : units != null
+                    ? `= ${formatNumber(units)} units (lot size ${lotSize})`
+                    : 'whole lots of the chosen underlying'}
               </span>
             </div>
             <div className="field">
@@ -647,7 +674,19 @@ export function BacktestConfigurator({
             </div>
           </div>
 
-          {strike.requirements.length > 0 && (
+          {written && (
+            <div className="field">
+              <span className="field__label">The setup (this is the strategy)</span>
+              <ConditionsEditor
+                long={conditions.long}
+                short={conditions.short}
+                onChange={setConditions}
+                disabled={start.isPending}
+              />
+            </div>
+          )}
+
+          {!equity && strike.requirements.length > 0 && (
             <div className="field">
               <span className="field__label">
                 Strike selection
@@ -692,7 +731,7 @@ export function BacktestConfigurator({
               idPrefix="bt-risk"
               invalidField={riskField}
               invalidNonce={riskNonce}
-              unitValue={units}
+              unitValue={equity ? (Number.isInteger(lotsNum) && lotsNum > 0 ? lotsNum : null) : units}
             />
           </div>
 

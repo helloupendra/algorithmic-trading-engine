@@ -15,9 +15,13 @@ import {
   RULE_GROUPS,
   WEEKDAYS,
   countSet,
+  deletePreset,
   formatWindows,
+  loadPresets,
   parseWindowRows,
+  savePreset,
   type RuleField,
+  type RulePresets,
   type RulesDraft,
 } from '../../lib/backtestRules'
 
@@ -33,13 +37,62 @@ export function RulesForm({
   disabled?: boolean
 }) {
   const [open, setOpen] = useState<string | null>(null)
+  const [presets, setPresets] = useState<RulePresets>(() => loadPresets())
+  const [chosen, setChosen] = useState('')
 
   function set(key: string, value: string) {
     onChange({ ...draft, [key]: value })
   }
 
+  const names = Object.keys(presets).sort()
+  const anySet = Object.values(draft).some((value) => (value ?? '').trim() !== '')
+
   return (
     <div className="rules">
+      <div className="rules__presets">
+        <select
+          className="field__input field__input--sm"
+          value={chosen}
+          disabled={disabled || names.length === 0}
+          aria-label="Saved rule sets"
+          onChange={(e) => {
+            const name = e.target.value
+            setChosen(name)
+            if (name && presets[name]) onChange({ ...presets[name] })
+          }}
+        >
+          <option value="">{names.length === 0 ? 'No saved sets yet' : 'Load a saved set…'}</option>
+          {names.map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </select>
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          disabled={disabled || !anySet}
+          onClick={() => {
+            const name = window.prompt('Save these rules as')
+            if (name && name.trim()) {
+              setPresets(savePreset(name, draft))
+              setChosen(name.trim())
+            }
+          }}
+        >
+          Save set
+        </button>
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          disabled={disabled || !chosen}
+          onClick={() => {
+            setPresets(deletePreset(chosen))
+            setChosen('')
+          }}
+        >
+          Delete
+        </button>
+        <span className="field__help">Saved in this browser only.</span>
+      </div>
       {RULE_GROUPS.map((group) => {
         const isOpen = open === group.id
         const set_ = countSet(draft, group)

@@ -135,3 +135,85 @@
   .bt-config { grid-template-columns: minmax(0, 1fr); }
   .bt-config > .modal__aside { border-right: 0; border-bottom: 1px solid var(--line); }
 }
+
+/* --- stock picker (equity strategies) ------------------------------------- */
+
+.equity-picker { display: grid; gap: 8px; }
+
+.equity-picker__list {
+  display: grid;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg1);
+}
+
+.equity-picker__row {
+  display: grid;
+  grid-template-columns: minmax(96px, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.equity-picker__row:hover { background: var(--surface2); }
+.equity-picker__row.is-active {
+  background: var(--surface2);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.equity-picker__row b { font-family: var(--mono); font-weight: 650; color: var(--text); }
+.equity-picker__bars { font-variant-numeric: tabular-nums; color: var(--text-3); font-size: 11.5px; }
+
+/* --- the written setup ---------------------------------------------------- */
+
+.conditions { display: grid; gap: 8px; }
+
+.conditions__pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.conditions__box {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 92px;
+}
+
+.conditions__help {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 10px 12px;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg1);
+  font-size: 12px;
+  color: var(--text-3);
+}
+.conditions__help li { display: grid; grid-template-columns: minmax(140px, auto) 1fr; gap: 10px; }
+.conditions__help code { font-family: var(--mono); color: var(--text-2); }
+
+.rules__presets {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-bottom: 2px;
+}
+.rules__presets select { max-width: 220px; }
+.rules__presets .field__help { margin-left: auto; }
