@@ -45,7 +45,7 @@ class SignalBuilderStrategy(BaseStrategy):
     supported_underlyings: List[str] = ["NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCPNIFTY"]
     instrument_kind = "options"
     default_lots = 1
-    default_parameters: Dict[str, Any] = {
+    default_params: Dict[str, Any] = {
         "long_conditions": ["close>vwap", "close>ema:9", "body>=0.5", "rsi_cross_up:60"],
         "short_conditions": ["close<vwap", "close<ema:9", "body>=0.5", "rsi_cross_down:40"],
         "resolution": "5m",
@@ -66,13 +66,13 @@ class SignalBuilderStrategy(BaseStrategy):
         self._said = ""
 
     def _p(self, key: str) -> Any:
-        return self.params.get(key, self.default_parameters.get(key))
+        return self.params.get(key, self.default_params.get(key))
 
     # --- catalogue ----------------------------------------------------------
 
     @classmethod
     def get_data_requirements(cls, params: Optional[Dict[str, Any]] = None) -> List[DataRequirement]:
-        resolution = str((params or {}).get("resolution") or cls.default_parameters["resolution"])
+        resolution = str((params or {}).get("resolution") or cls.default_params["resolution"])
         return [DataRequirement(symbol_type="index", resolution=resolution)]
 
     @classmethod
