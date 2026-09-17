@@ -49,6 +49,16 @@ class RequestTests(unittest.TestCase):
         self.assertEqual([date(2020, 8, 15)] * 4 + [date(2020, 9, 1)] * 4, [j.lo for j in jobs])
         self.assertEqual(date(2020, 9, 10), jobs[-1].hi)
 
+    def test_offsets_parse_ranges_and_stay_within_dhan_limits(self):
+        self.assertEqual([-10, -9, -8, -7, -6, 6, 7, 8, 9, 10], ih.parse_offsets("-10:-6, 6:10"))
+        self.assertEqual(list(range(-5, 6)), ih.parse_offsets("-5:5"))
+        self.assertEqual([0, 3], ih.parse_offsets("3,0,3"))
+        jobs = ih.option_jobs(["NIFTY"], date(2024, 3, 1), date(2024, 3, 31), ih.parse_offsets("6:7"))
+        self.assertEqual(["ATM+6", "ATM+7"] * 2, [ih.request(j)[1]["strike"] for j in jobs])
+        self.assertTrue(ih.path_of("/r", jobs[0]).endswith("NIFTY/2024-03/CE_+6.csv.gz"))
+        with self.assertRaises(ValueError):
+            ih.parse_offsets("-11:-6")
+
     def test_parse_keeps_window_and_session(self):
         job = ih.Job("candles", "NIFTY", "13", "5", date(2020, 9, 1), date(2020, 9, 30))
         rows = ih.parse(job, block(["2020-08-31 15:25", "2020-09-01 09:10", "2020-09-01 09:15", "2020-09-30 15:25"]))

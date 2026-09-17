@@ -17,7 +17,8 @@ Facts this relies on, checked against the live API on 2026-09-16:
     = the index id, exchangeSegment NSE_FNO (BSE_FNO for SENSEX), expiryFlag
     "WEEK", expiryCode 1 = the nearest expiry. NIFTY ATM CE, September 2020,
     1-minute: 8,249 bars. ATM-10..ATM+10 answer for indices; this data set keeps
-    ATM-5..ATM+5, the width of the existing database copy.
+    ATM-5..ATM+5, the width of the existing database copy, and NIFTY from Aug 2021
+    also ATM-10..-6 and +6..+10 (added 17 Sep 2026 so hedged option spreads can be priced).
 
 Files:
   <root>/candles-<n>m/raw/<INDEX>/<from>_<to>.csv.gz     (+ manifest.jsonl)
@@ -81,6 +82,18 @@ def month_windows(start: date, end: date) -> List[Tuple[date, date]]:
 
 def candle_jobs(names: Sequence[str], resolutions: Sequence[str], start: date, end: date) -> List[Job]:
     return [Job("candles", n, INDICES[n][0], r, lo, hi) for n in names for r in resolutions for lo, hi in windows(start, end)]
+
+
+def parse_offsets(text: str) -> List[int]:
+    """'-10:-6,6:10' -> [-10, -9, -8, -7, -6, 6, 7, 8, 9, 10]; ranges are inclusive. Dhan answers ATM-10..ATM+10."""
+    out: List[int] = []
+    for part in (p.strip() for p in text.split(",") if p.strip()):
+        lo, _, hi = part.partition(":")
+        a, b = int(lo), int(hi or lo)
+        out += range(min(a, b), max(a, b) + 1)
+    if any(abs(o) > 10 for o in out):
+        raise ValueError(f"offsets must lie within ATM-10..ATM+10: {text}")
+    return sorted(set(out))
 
 
 def option_jobs(names: Sequence[str], start: date, end: date, offsets: Sequence[int] = tuple(range(-5, 6))) -> List[Job]:

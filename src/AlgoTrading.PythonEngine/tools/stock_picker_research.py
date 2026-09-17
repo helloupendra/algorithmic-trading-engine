@@ -230,6 +230,7 @@ def collect(eod_root: str, intraday_root: str, start: str, design_end: str, top:
     candidates: List["st.Candidate"] = []
     tags: Dict[Tuple[str, str], dict] = {}
     missing = []
+    no_prev_session = 0
     symbols = sorted(contexts)
     for k, symbol in enumerate(symbols, 1):
         if k % 200 == 0 or k == len(symbols):
@@ -242,8 +243,15 @@ def collect(eod_root: str, intraday_root: str, start: str, design_end: str, top:
         rvol = _rvol15(sessions)
         for day, c in contexts[symbol].items():
             bars = sessions.get(day)
+            prev = sessions.get(c["pick_date"].strftime("%Y-%m-%d"))
             if bars is None:
                 continue
+            if prev is None:
+                no_prev_session += 1
+                continue
+            # Previous-day levels from the same (adjusted) bars, never from the bhavcopy: see st.session_levels.
+            c = {**c}
+            c["prev_close"], c["prev_high"], c["prev_low"] = st.session_levels(prev)
             tags[(symbol, day)] = c
             facts = st.session_facts(bars)
             if facts is not None:
@@ -254,6 +262,8 @@ def collect(eod_root: str, intraday_root: str, start: str, design_end: str, top:
                 if cand is not None:
                     cand.priority = float(rvol.get(day) or 0.0) if not pd.isna(rvol.get(day)) else 0.0
                     candidates.append(st.precompute_exit(bars, cand))
+    if no_prev_session:
+        log(f"{no_prev_session} stock-days skipped: no intraday bars for the previous session")
     return pd.DataFrame(facts_rows), candidates, tags, missing, len(pick_keys)
 
 

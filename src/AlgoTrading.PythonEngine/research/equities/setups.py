@@ -98,6 +98,20 @@ def sessions_from_frame(symbol: str, frame: pd.DataFrame) -> Dict[str, SessionBa
     return out
 
 
+def session_levels(bars: SessionBars) -> Tuple[float, float, float]:
+    """
+    (close, high, low) of a session from its own bars: the last bar's close and
+    the session's extremes.
+
+    The previous day's levels must come from the same bars the setups trade on.
+    Dhan's intraday history is adjusted for later bonuses and splits (RELIANCE in
+    Sep 2024 reads ~1,510; the exchange printed ~3,020) while the bhavcopy is not,
+    so mixing the two broke the levels on 15,947 stock-days of Sep 2024 - Dec
+    2025 (232 stocks): found 2026-09-17.
+    """
+    return float(bars.close[-1]), float(bars.high.max()), float(bars.low.min())
+
+
 # --------------------------------------------------------------------- R2 --
 
 def session_facts(bars: SessionBars) -> Optional[Dict[str, float]]:
@@ -127,7 +141,7 @@ def session_facts(bars: SessionBars) -> Optional[Dict[str, float]]:
 
 @dataclass
 class Context:
-    """Facts from the previous session (bhavcopy) and the 09:30 relative volume."""
+    """Facts from the previous session (its own intraday bars) and the 09:30 relative volume."""
     prev_close: float
     prev_high: float
     prev_low: float
