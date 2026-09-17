@@ -1107,12 +1107,17 @@ export function useBacktestEquities(enabled: boolean) {
   })
 }
 
-export function useBacktestCoverage(underlying: string | null, strategyId: number | null) {
+export function useBacktestCoverage(
+  underlying: string | null,
+  strategyId: number | null,
+  instrumentKind?: string,
+) {
   return useQuery({
-    queryKey: ['backtest', 'coverage', underlying, strategyId],
+    queryKey: ['backtest', 'coverage', underlying, strategyId, instrumentKind ?? ''],
     queryFn: () =>
       api.get<BacktestCoverageResponse>(
-        `/api/Backtest/coverage?underlying=${encodeURIComponent(underlying!)}&strategyId=${strategyId}`,
+        `/api/Backtest/coverage?underlying=${encodeURIComponent(underlying!)}&strategyId=${strategyId}` +
+          (instrumentKind ? `&instrumentKind=${encodeURIComponent(instrumentKind)}` : ''),
       ),
     enabled: !!underlying && strategyId != null,
     // Switching underlying keeps the last answer on screen instead of

@@ -10,6 +10,7 @@ using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.EntityFrameworkCore;
@@ -87,6 +88,7 @@ public class BacktestController : ControllerBase
         [FromQuery] string? underlying,
         [FromQuery] int? strategyId,
         [FromQuery] string? resolution,
+        [FromQuery] string? instrumentKind,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(underlying))
@@ -95,7 +97,7 @@ public class BacktestController : ControllerBase
         if (!string.IsNullOrWhiteSpace(resolution) && !ResolutionCodes.IsAllowed(resolution))
             return BadRequest(new { message = $"resolution must be one of {string.Join(", ", ResolutionCodes.Allowed)}." });
 
-        var result = await _data.GetCoverageAsync(underlying, strategyId, resolution, cancellationToken);
+        var result = await _data.GetCoverageAsync(underlying, strategyId, resolution, instrumentKind, cancellationToken);
         return Ok(result);
     }
 
@@ -255,7 +257,10 @@ public class BacktestController : ControllerBase
         if (eod is null)
             return BadRequest(new { message = eodError });
 
-        bool equity = string.Equals(strategy.InstrumentKind, "equity", StringComparison.OrdinalIgnoreCase);
+        // The strategy's own kind, or the run's when the strategy can do either
+        // (SignalBuilder trades an index option or the instrument itself).
+        bool equity = string.Equals(strategy.InstrumentKind, "equity", StringComparison.OrdinalIgnoreCase)
+                      || IsEquityRequest(request.Parameters);
         // An equity run trades the instrument itself, so it needs no option chain —
         // and no lot: one "lot" is one share, and `lots` is the share count.
         if (!equity && !await HasOptionContractsAsync(underlying, cancellationToken))
@@ -554,6 +559,14 @@ public class BacktestController : ControllerBase
     }
 
     /// <summary>True when the underlying has at least one CE/PE contract in the master (any expiry).</summary>
+    /// <summary>True when the run's own parameters ask for an equity run.</summary>
+    internal static bool IsEquityRequest(Dictionary<string, JsonElement>? parameters)
+    {
+        if (parameters is null || !parameters.TryGetValue("instrument_kind", out var value)) return false;
+        return value.ValueKind == JsonValueKind.String
+               && string.Equals(value.GetString(), "equity", StringComparison.OrdinalIgnoreCase);
+    }
+
     private Task<bool> HasOptionContractsAsync(string underlying, CancellationToken cancellationToken)
         => _dbContext.Instruments
             .AsNoTracking()
