@@ -94,7 +94,7 @@ class Harness:
         self.bars = index_bars(40, direction=direction)  # signal bar = 38th, decided at 12:25 IST
         self.close = self.bars[-2].close
         self.chain = None
-        self.strategy._fetch_chain = lambda underlying: self.chain
+        self.strategy._fetch_chain = lambda underlying, as_of=None: self.chain
         self.decided_at = datetime.fromisoformat(self.bars[-2].timestamp_utc) + timedelta(minutes=5)
 
     def seed(self, call_oi, put_oi, iv_low=None):
@@ -195,6 +195,29 @@ class EntryTests(unittest.TestCase):
         self.assertEqual([], h.run())
         self.assertIn("BLOCKED: chain is", h.log)
 
+    def test_a_replay_trades_on_the_chain_of_that_very_minute(self):
+        # The replay asks the view endpoint for the chain as it stood when the candle
+        # closed, and judges its age against that moment rather than against today.
+        asked = []
+        h = Harness(direction=1)
+        h.seed(call_oi=100_000, put_oi=100_000, iv_low=13.5)
+        h.chain = chain(h.close, call_oi=101_000, put_oi=106_000, captured=h.decided_at)
+        h.strategy._fetch_chain = lambda underlying, as_of=None: (asked.append(as_of), h.chain)[1]
+
+        signals = h.run(mode="OfflineReplay")
+
+        self.assertEqual(1, len(signals))
+        self.assertEqual([h.decided_at], asked)
+
+    def test_a_replay_will_not_trade_on_a_chain_from_another_time(self):
+        h = Harness(direction=1)
+        h.seed(call_oi=100_000, put_oi=100_000, iv_low=13.5)
+        # Today's chain against an old candle: hours apart, so the age check refuses it.
+        h.chain = chain(h.close, call_oi=101_000, put_oi=106_000, captured=datetime.now(timezone.utc))
+
+        self.assertEqual([], h.run(mode="OfflineReplay"))
+        self.assertIn("chain is", h.log)
+
     def test_one_entry_per_setup_and_nothing_outside_live_paper(self):
         h = Harness(direction=1)
         h.seed(call_oi=100_000, put_oi=100_000, iv_low=13.5)
@@ -207,11 +230,7 @@ class EntryTests(unittest.TestCase):
         h.chain = chain(h.close, call_oi=102_000, put_oi=112_000)
         self.assertEqual([], h.run())
 
-        replay = Harness(direction=1)
-        replay.seed(call_oi=100_000, put_oi=100_000, iv_low=13.5)
-        replay.chain = chain(replay.close, call_oi=101_000, put_oi=106_000)
-        self.assertEqual([], replay.run(mode="OfflineReplay"))
-        self.assertEqual([], replay.run(metadata={"source": "warmup"}))
+        self.assertEqual([], h.run(metadata={"source": "warmup"}))
 
 
 class RuleTests(unittest.TestCase):

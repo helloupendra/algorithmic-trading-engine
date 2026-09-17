@@ -18,6 +18,10 @@ namespace AlgoTrading.Infrastructure.Services;
 /// </remarks>
 public class OptionChainService
 {
+    /// <summary>What a chain rebuilt from the stored option history is stamped with.</summary>
+    public const string HistorySourceKey = "history";
+
+    private readonly OptionHistory.IndexOptionHistory? _optionHistory;
     private readonly TradingDbContext _dbContext;
     private readonly IMarketSessionService? _sessions;
     private readonly ILotSizeResolver? _lotSizes;
@@ -27,11 +31,13 @@ public class OptionChainService
     public OptionChainService(
         TradingDbContext dbContext,
         IMarketSessionService? sessions = null,
-        ILotSizeResolver? lotSizes = null)
+        ILotSizeResolver? lotSizes = null,
+        OptionHistory.IndexOptionHistory? optionHistory = null)
     {
         _dbContext = dbContext;
         _sessions = sessions;
         _lotSizes = lotSizes;
+        _optionHistory = optionHistory;
     }
 
     // ------------------------------------------------------------------
@@ -156,6 +162,15 @@ public class OptionChainService
 
         if (momentUtc is null)
         {
+            // Nothing was recorded then — but for an index the stored option history
+            // can say what the chain looked like, which is how a replay of a year
+            // before the poller existed still sees open interest and IV.
+            var rebuilt = asOfUtc is null || _optionHistory is null
+                ? null
+                : await _optionHistory.ChainAsync(key, asOfUtc.Value, cancellationToken);
+            if (rebuilt is not null && rebuilt.Strikes.Count > 0 && (expiry is null || rebuilt.ExpiryDate == expiry))
+                return (rebuilt, HistorySourceKey);
+
             response.OpenInterestUnavailable = true;
             return (response, null);
         }

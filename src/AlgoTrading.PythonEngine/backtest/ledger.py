@@ -11,7 +11,9 @@ Paper ledger for the replay. Mirrors the netting rules of the C# paper engine
     the position and books realized P&L, a remainder opens a reverse position
     (never for CLOSE_GROUP, which is reduce-only: legs with no open position
     or that would increase a position are ignored and counted);
-  - charges are a flat amount per lot per fill when `charges_per_lot` > 0;
+  - charges are a flat amount per lot per fill when `charges_per_lot` > 0, or the
+    real ones (slippage on the fill price, brokerage, STT, exchange, SEBI, stamp
+    and GST on the turnover) when the run configures a `CostModel`;
   - risk helpers for the engine: per-position entry/side/lots/avg and
     `pnl_points` / `pnl_percent` (signed, profit positive), per-group P&L
     (`group_pnl`) and reduce-only exits for chosen legs (`close_positions`).
@@ -24,6 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
+from core.charges import CostModel
 from strategies.base_strategy import StrategySignal
 
 LONG = "LONG"
@@ -147,11 +150,17 @@ def _side_for(leg_side: str) -> str:
 class PaperLedger:
     """Positions in lots x lot size, with realized/unrealized P&L and charges."""
 
-    def __init__(self, lot_size: int, charges_per_lot: float = 0.0) -> None:
+    def __init__(self, lot_size: int, charges_per_lot: float = 0.0,
+                 costs: Optional[CostModel] = None) -> None:
         if lot_size is None or int(lot_size) < 1:
             raise ValueError("lot_size must be >= 1")
         self.lot_size = int(lot_size)
         self.charges_per_lot = max(0.0, float(charges_per_lot or 0.0))
+        #: When set, every fill pays slippage and the statutory charges of its
+        #: turnover, and `charges_per_lot` is ignored: the two are alternative
+        #: answers to the same question and adding both would count twice.
+        self.costs = costs
+        self.slippage = 0.0
         self._open: Dict[Tuple[str, str], LedgerPosition] = {}
         self.closed: List[LedgerPosition] = []
         self.fills: List[Fill] = []
@@ -273,6 +282,10 @@ class PaperLedger:
                 self._ignore(result, leg, "no price")
                 continue
             price = float(price)
+            if self.costs is not None:
+                filled = self.costs.fill_price(side, price)
+                self.slippage += abs(filled - price) * lots * self.lot_size
+                price = filled
 
             if pos is None:
                 self._open_position(result, group, symbol, wanted, lots, price, t)
@@ -299,7 +312,8 @@ class PaperLedger:
 
     def _record_fill(self, result: ApplyResult, group: str, symbol: str, side: str,
                      lots: int, price: float, t: str, realized: float) -> float:
-        charge = self.charges_per_lot * lots
+        charge = (self.costs.fill_charges(side, price * lots * self.lot_size)
+                  if self.costs is not None else self.charges_per_lot * lots)
         self.charges += charge
         fill = Fill(at_utc=t, group_id=group, symbol=symbol, side=side, lots=lots,
                     price=price, charges=charge, realized=realized)

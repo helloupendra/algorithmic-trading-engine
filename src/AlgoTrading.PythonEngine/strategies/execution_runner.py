@@ -1037,7 +1037,9 @@ if __name__ == "__main__":
                     lot_size=lot_size,
                     contracts=contracts,
                     bars=bars_dict,
-                    metadata={"source": "live-api", "tick": tick},
+                    # The expiry the run trades, so the expiry-day filters judge the
+                    # same way here as they do in a replay.
+                    metadata={"source": "live-api", "tick": tick, "expiry_date": expiry_date},
                 )
 
                 # Record STRATEGY_LOOP_DURATION metric

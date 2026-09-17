@@ -1,0 +1,137 @@
+/* Backtesting: the configurator when it sits on the page, and the run-rules form. */
+
+.bt-config {
+  display: grid;
+  grid-template-columns: minmax(0, 260px) minmax(0, 1fr);
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+/* The strategy summary keeps the dialog's aside styling; on a page it needs a divider. */
+.bt-config > .modal__aside {
+  border-right: 1px solid var(--line);
+}
+
+.bt-form {
+  display: grid;
+  gap: 16px;
+  padding: 18px 20px 16px;
+  min-width: 0;
+}
+
+.bt-search {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 280px;
+  min-width: 0;
+}
+.bt-search svg {
+  position: absolute;
+  left: 9px;
+  width: 14px;
+  height: 14px;
+  color: var(--text-3);
+  pointer-events: none;
+}
+.bt-search input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding-left: 28px;
+}
+
+.bt-spacer { flex: 1 1 0; }
+
+/* --- run rules ------------------------------------------------------------ */
+
+.rules {
+  display: grid;
+  gap: 6px;
+}
+
+.rules__group {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg1);
+  overflow: hidden;
+}
+.rules__group.is-open { border-color: var(--line-strong); }
+
+.rules__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.rules__head:hover { background: var(--surface2); }
+.rules__head svg { width: 13px; height: 13px; color: var(--text-3); flex: none; }
+
+.rules__title { font-weight: 600; }
+.rules__summary {
+  color: var(--text-3);
+  font-size: 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rules__count {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface2);
+  color: var(--text-2);
+  border: 1px solid var(--line);
+}
+
+.rules__body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px 14px;
+  padding: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.rules__field { min-width: 0; }
+.rules__field--wide { grid-column: 1 / -1; }
+
+.rules__check {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 4px 8px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.rules__check input { margin-top: 2px; }
+.rules__check .field__help { grid-column: 2; }
+
+.rules__note { color: var(--text-3); font-style: normal; font-size: 11px; }
+
+.rules__windows { display: grid; gap: 6px; }
+.rules__window { display: flex; align-items: center; gap: 8px; }
+.rules__window input { max-width: 120px; }
+
+.rules__pair { display: flex; gap: 8px; }
+.rules__pair input { min-width: 0; }
+
+@media (max-width: 860px) {
+  .bt-config { grid-template-columns: minmax(0, 1fr); }
+  .bt-config > .modal__aside { border-right: 0; border-bottom: 1px solid var(--line); }
+}

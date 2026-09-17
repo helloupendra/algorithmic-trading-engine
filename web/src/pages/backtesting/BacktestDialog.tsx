@@ -20,6 +20,8 @@ import type { RiskDraft, RiskDraftField } from '../../lib/risk'
 import { DateField } from '../../components/DateField'
 import { InlineError, Loading } from '../../components/ui'
 import { RiskRulesForm } from '../../components/RiskRulesForm'
+import { RulesForm } from './RulesForm'
+import { describeRules, rulesFromParams, rulesToParams, type RulesDraft } from '../../lib/backtestRules'
 import { IconChevronDown, IconChevronRight, IconPlay, IconX } from '../../components/icons'
 import type {
   BacktestCoverageResolution,
@@ -48,6 +50,17 @@ import {
   RESERVED_PARAM_KEYS,
   todayIst,
 } from './shared'
+
+/** A run's parametersJson as an object, for reading its rule blocks back. */
+function parseJsonObject(text: string | null | undefined): Record<string, unknown> | null {
+  if (!text) return null
+  try {
+    const parsed = JSON.parse(text)
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null
+  } catch {
+    return null
+  }
+}
 
 const DEFAULT_EOD = '15:15'
 const DEFAULT_CAPITAL = 1_000_000
@@ -92,16 +105,22 @@ function replayable(r: BacktestCoverageResolution | null | undefined): boolean {
   return !!r && r.source === 'backfill' && r.barCount > 0
 }
 
-export function BacktestDialog({
+/**
+ * The configurator itself. `inline` renders it as a page section (New backtest);
+ * without it the same form is the launch dialog opened from a run or a card.
+ */
+export function BacktestConfigurator({
   strategy,
   onClose,
   onStarted,
   initial,
+  inline = false,
 }: {
   strategy: StrategyListItem
   onClose: () => void
   onStarted?: (response: StartBacktestResponse) => void
   initial?: BacktestDialogInitial
+  inline?: boolean
 }) {
   const underlyings = useFnoUnderlyings()
   const start = useStartBacktest()
@@ -144,6 +163,7 @@ export function BacktestDialog({
       new Set([...RESERVED_PARAM_KEYS, ...strike.omitKeys]),
     ),
   )
+  const [rules, setRules] = useState<RulesDraft>(() => rulesFromParams(parseJsonObject(initial?.parametersJson)))
   const [backfilling, setBackfilling] = useState<string | null>(null)
   const [validation, setValidation] = useState<string | null>(null)
 
@@ -322,7 +342,7 @@ export function BacktestDialog({
       risk: parsedRisk.rules,
       eodSquareOffIst: eodNone ? '' : eodTime,
       chargesPerLot: chg,
-      parameters: mergeParams(params, strikes.values),
+      parameters: { ...mergeParams(params, strikes.values), ...rulesToParams(rules) },
       initialCapital: cap,
     }
     start.mutate(body, {
@@ -383,38 +403,24 @@ export function BacktestDialog({
     sessionsInRange.count > 0 &&
     !start.isPending
 
-  return (
-    <div
-      className="modal"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose()
-      }}
-    >
-      <div
-        className="modal__card"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="backtest-title"
-        tabIndex={-1}
-        ref={cardRef}
-      >
-        <StrategyAside strategy={strategy} titleId="backtest-title" />
-
-        <div className="modal__body">
-          <div className="modal__head">
-            <span className="section-title" style={{ margin: 0 }}>
-              Backtest over stored history
-            </span>
-            <button
-              type="button"
-              className="btn btn--ghost btn--sm"
-              onClick={onClose}
-              aria-label="Close"
-              title="Close (Esc)"
-            >
-              <IconX style={{ width: 14, height: 14 }} />
-            </button>
-          </div>
+  const body = (
+    <div className={inline ? 'bt-form' : 'modal__body'}>
+      {!inline && (
+        <div className="modal__head">
+          <span className="section-title" style={{ margin: 0 }}>
+            Backtest over stored history
+          </span>
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={onClose}
+            aria-label="Close"
+            title="Close (Esc)"
+          >
+            <IconX style={{ width: 14, height: 14 }} />
+          </button>
+        </div>
+      )}
 
           <div className="field">
             <span className="field__label">Underlying (required)</span>
@@ -668,6 +674,14 @@ export function BacktestDialog({
           )}
 
           <div className="field">
+            <span className="field__label">
+              Run rules (optional · applied to this strategy for this run, in the backtest only)
+              {describeRules(rules) && <span className="faint"> · {describeRules(rules)}</span>}
+            </span>
+            <RulesForm draft={rules} onChange={setRules} disabled={start.isPending} />
+          </div>
+
+          <div className="field">
             <span className="field__label">Risk rules (all optional · evaluated every bar, leg → group → overall)</span>
             <RiskRulesForm
               value={risk}
@@ -678,6 +692,7 @@ export function BacktestDialog({
               idPrefix="bt-risk"
               invalidField={riskField}
               invalidNonce={riskNonce}
+              unitValue={units}
             />
           </div>
 
@@ -747,19 +762,57 @@ export function BacktestDialog({
           )}
           {start.isError && <InlineError error={start.error} />}
 
-          <div className="modal__foot">
-            <button type="button" className="btn btn--ghost" onClick={onClose}>
-              Cancel
-            </button>
-            <button type="button" className="btn btn--pos" disabled={!canStart} onClick={submit}>
-              <IconPlay style={{ width: 14, height: 14 }} />
-              {start.isPending
-                ? 'Starting…'
-                : `Start backtest on ${chosenUnderlying?.underlying ?? '…'}${chosen ? ` · ${resolutionLabel(chosen.resolution)}` : ''}`}
-            </button>
-          </div>
-        </div>
+      <div className="modal__foot">
+        <button type="button" className="btn btn--ghost" onClick={onClose}>
+          {inline ? 'Pick another strategy' : 'Cancel'}
+        </button>
+        <button type="button" className="btn btn--pos" disabled={!canStart} onClick={submit}>
+          <IconPlay style={{ width: 14, height: 14 }} />
+          {start.isPending
+            ? 'Starting…'
+            : `Start backtest on ${chosenUnderlying?.underlying ?? '…'}${chosen ? ` · ${resolutionLabel(chosen.resolution)}` : ''}`}
+        </button>
       </div>
     </div>
   )
+
+  if (inline) {
+    return (
+      <div className="bt-config">
+        <StrategyAside strategy={strategy} titleId="backtest-title" />
+        {body}
+      </div>
+    )
+  }
+
+  return (
+    <div
+      className="modal"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
+      <div
+        className="modal__card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="backtest-title"
+        tabIndex={-1}
+        ref={cardRef}
+      >
+        <StrategyAside strategy={strategy} titleId="backtest-title" />
+        {body}
+      </div>
+    </div>
+  )
+}
+
+/** The launch dialog: the configurator in a modal. */
+export function BacktestDialog(props: {
+  strategy: StrategyListItem
+  onClose: () => void
+  onStarted?: (response: StartBacktestResponse) => void
+  initial?: BacktestDialogInitial
+}) {
+  return <BacktestConfigurator {...props} />
 }

@@ -48,6 +48,24 @@ A backtest is persisted as a `SimulationRun` with mode `OfflineReplay`, and its 
 ### 3. Reading results
 `GET /api/Backtest/runs/{id}` returns everything the results page needs: header, progress, P&L (realized, unrealized, charges, return %), metrics (win rate, profit factor, average and largest win/loss, expectancy, max drawdown in ₹ and %, profitable days), daily P&L by IST day, positions with exit price and exit reason, activity, data notes and the equity curve. `GET /api/Backtest/runs` lists all backtests with net P&L, trades and win rate.
 
+### 3b. The run's own rules
+Besides the strategy's logic, a run carries rules of its own, set in the console and stored in
+`parametersJson`. They apply to every strategy, which is what makes two runs comparable, and they
+are enforced in the **backtest only** (the live runner applies `filters`, not the rest, yet).
+
+| Block | What it does | Where |
+|---|---|---|
+| `filters` | When it may trade (windows, weekdays, expiry days), what the market must look like (gap, INDIA VIX, ATR, volume) and which trends it may not fight (VWAP, EMA, EMA order, Supertrend, ADX, move from the open, opening range, recent bars, a vote of them), plus RSI levels/crosses and candle shape | `strategies/signal_filters.py`, shared with the live runner |
+| `limits` | Trades a day, per window and open at once; a cooldown after a loss; no repeat of a direction that lost; the day ends after N losses or −₹X realised | `backtest/rules.py` |
+| `exits` | Exit N minutes after entry; the stop moves to entry after a set gain and then steps up with the profit; exit when the index closes against EMA/VWAP/Supertrend | `backtest/rules.py` |
+| `contract` | For a bare BUY/SELL signal: how many strikes in or out of the money, and whether to flip the side | `backtest/rules.py` |
+| `costs` | Slippage a side plus brokerage, STT, exchange, SEBI, stamp duty and GST on every fill (replaces the flat charge per lot) | `core/charges.py`, shared with the research harness |
+
+Every blocked entry and every rule-driven exit is counted in the run summary (`limitBlocks`,
+`runExits`, `limitDayCloses`) and explained in its data notes, so "it traded less" is never mistaken
+for "it traded better". The console edits all of this on `/admin/backtesting/new`
+(`web/src/lib/backtestRules.ts` holds the catalogue).
+
 ### 4. Data honesty
 - **Option premiums, recent contracts:** from FYERS history per contract. FYERS serves history only for contracts that still exist.
 - **Option premiums, expired index contracts (NIFTY from Aug 2020, BANKNIFTY from Aug 2021, SENSEX from May 2023):** from `option_history_bars`, Dhan's expired-options history, which stores the nearest expiry at each strike offset from ATM, 1-minute bars.
@@ -55,6 +73,12 @@ A backtest is persisted as a `SimulationRun` with mode `OfflineReplay`, and its 
   - The backtest asks for these with `includeHistory=true` on `GET /api/Instruments/derivatives/expiries` and `/contract`. An expired contract is built in the master's symbol grammar (`NSE:NIFTY2131015100CE`, monthly `NSE:NIFTY21MAR15100CE`), and `GET /api/MarketData/history/local` serves its bars rolled up to the run's resolution. Stored broker candles win where both exist.
   - Only strikes near ATM exist: ATM−5…ATM+5 as imported, and Dhan offers at most ±10. A strategy whose legs sit further out (far OTM hedge wings, e.g. Fulcrum2Straddle20 and the FulcrumMulti variants) cannot open on these years, and every such entry is skipped and listed. A held contract the market moves away from keeps its last price of that day.
   - Anything else with no price is skipped and listed — the results say how many.
+- **Option chain, past sessions:** `GET /api/OptionChain/view?asOfUtc=…` answers from the platform's own
+  minute captures when it has them, and otherwise rebuilds the chain from `option_history_bars`:
+  each stored strike with its premium, open interest, IV, the build-up since that session's open and a
+  Black-Scholes delta from the stored IV (`OptionMath`). That is what lets a chain-reading strategy
+  (ChainFlowBuy) replay years the poller never saw; it asks for the chain **as of the candle it is
+  judging**, and a chain from another minute is refused by its own age check.
 - Index candles for those years come from Dhan's index history (`tools/index_history_import.py`, SourceKey `dhan`); FYERS candles win where both exist.
 - Lot sizes are the current master values; historical lot-size changes are not modelled (noted in the run's data notes).
 - Fills use the signal bar's close with no slippage; a flat per-lot charge can be set in the dialog.

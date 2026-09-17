@@ -157,14 +157,75 @@ public class IndexOptionHistoryTests
         Assert.Equal(new[] { 10m, 1m, 30m }, merged.Select(x => x.Close));
     }
 
+    [Fact]
+    public async Task A_chain_is_rebuilt_from_the_stored_history_at_that_minute()
+    {
+        await using var db = NewDb();
+        var minute = Ist(2021, 3, 8, 11, 0);
+        var open = Ist(2021, 3, 8, 9, 15);
+        // Two strikes either side of the money, priced at 11:00 and at the session open.
+        foreach (var (strike, offset) in new[] { (15000m, -2), (15100m, 0), (15200m, 2) })
+        {
+            db.OptionHistoryBars.AddRange(
+                Bar(open, strike, "CE", close: 100m, offset: offset, oi: 1000, iv: 20m, spot: 15100m),
+                Bar(open, strike, "PE", close: 90m, offset: offset, oi: 2000, iv: 21m, spot: 15100m),
+                Bar(minute, strike, "CE", close: 130m, offset: offset, oi: 1500, iv: 22m, spot: 15100m),
+                Bar(minute, strike, "PE", close: 70m, offset: offset, oi: 1800, iv: 19m, spot: 15100m));
+        }
+        await db.SaveChangesAsync();
+        var history = new IndexOptionHistory(db, Calendar());
+
+        var chain = await history.ChainAsync("NIFTY", minute.AddMinutes(2), default);
+
+        Assert.NotNull(chain);
+        Assert.Equal(new DateOnly(2021, 3, 10), chain!.ExpiryDate);       // the nearest expiry that week
+        Assert.Equal(minute, chain.AsOfUtc);
+        Assert.Equal(15100m, chain.SpotPrice);
+        Assert.Equal(15100m, chain.AtTheMoneyStrike);
+        Assert.Equal(3, chain.Strikes.Count);
+        Assert.Equal(4500, chain.TotalCallOpenInterest);
+        Assert.Equal(5400, chain.TotalPutOpenInterest);
+        Assert.Equal(1.2m, chain.PutCallRatio);
+
+        var atm = chain.Strikes.Single(s => s.StrikePrice == 15100m);
+        Assert.True(atm.IsAtTheMoney);
+        Assert.Equal("NSE:NIFTY2131015100CE", atm.Call!.Symbol);
+        Assert.Equal(130m, atm.Call.LastTradedPrice);
+        Assert.Equal(500, atm.Call.OpenInterestChange);                    // 1500 against the session's 1000
+        Assert.Equal("LongBuildUp", atm.Call.BuildUp);                     // price up, open interest up
+        Assert.Equal("LongUnwinding", atm.Put!.BuildUp);                   // price down, open interest down
+        // The ATM call of a two-day-old weekly at 22% IV sits near half a delta.
+        Assert.InRange(atm.Call.Delta!.Value, 0.45m, 0.60m);
+        Assert.InRange(atm.Put.Delta!.Value, -0.60m, -0.40m);
+
+        // Nothing within ten minutes of the clock: no chain rather than a stale one.
+        Assert.Null(await history.ChainAsync("NIFTY", minute.AddHours(1), default));
+    }
+
+    [Fact]
+    public void Delta_follows_black_scholes_and_says_nothing_without_inputs()
+    {
+        // At the money, 20% IV, a week out: a call is a little over half a delta.
+        var call = OptionMath.Delta(true, 15000, 15000, 20, 7.0 / 365.0);
+        Assert.InRange(call!.Value, 0.50m, 0.56m);
+        var put = OptionMath.Delta(false, 15000, 15000, 20, 7.0 / 365.0);
+        Assert.InRange(put!.Value, -0.50m, -0.44m);
+        // Deep in the money is nearly one; far out is nearly nothing.
+        Assert.InRange(OptionMath.Delta(true, 15000, 13000, 20, 7.0 / 365.0)!.Value, 0.98m, 1.00m);
+        Assert.InRange(OptionMath.Delta(true, 15000, 17000, 20, 7.0 / 365.0)!.Value, 0.00m, 0.02m);
+        Assert.Null(OptionMath.Delta(true, 15000, 15000, 0, 7.0 / 365.0));      // no volatility
+        Assert.Null(OptionMath.Delta(true, 15000, 15000, 20, 0));               // no time left
+    }
+
     private static IndexOptionExpiryCalendar Calendar() =>
         IndexOptionExpiryCalendar.From(new Dictionary<string, IEnumerable<DateOnly>> { ["NIFTY"] = March2021 });
 
-    private static OptionHistoryBar Bar(DateTime startUtc, decimal strike, string side, decimal close) => new()
+    private static OptionHistoryBar Bar(DateTime startUtc, decimal strike, string side, decimal close,
+                                        int offset = 0, long oi = 1, decimal? iv = null, decimal? spot = null) => new()
     {
-        BarStartUtc = startUtc, Underlying = "NIFTY", ExpiryFlag = "WEEK", ExpiryCode = 1, StrikeOffset = 0,
+        BarStartUtc = startUtc, Underlying = "NIFTY", ExpiryFlag = "WEEK", ExpiryCode = 1, StrikeOffset = offset,
         Strike = strike, OptionType = side, Resolution = "1m", Open = close, High = close, Low = close, Close = close,
-        Volume = 1, SourceKey = "dhan"
+        Volume = 1, OpenInterest = oi, ImpliedVolatility = iv, SpotPrice = spot, SourceKey = "dhan"
     };
 
     private static TradingDbContext NewDb() => new(new DbContextOptionsBuilder<TradingDbContext>()
