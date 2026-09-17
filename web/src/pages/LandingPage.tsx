@@ -27,6 +27,7 @@ import {
 import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { ScrollScene } from '../components/ScrollScene'
+import { IconLogo } from '../components/icons'
 import { prefersReducedMotion } from '../lib/motion'
 import './landing.css'
 
@@ -119,12 +120,6 @@ function Tile({
     </article>
   )
 }
-
-const Mark = () => (
-  <svg viewBox="0 0 24 24" aria-hidden="true">
-    <g fill="currentColor" stroke="none"><rect x="5.25" y="6.5" width="4.5" height="2.3" rx="1.15"/><rect x="14.25" y="6.5" width="4.5" height="2.3" rx="1.15"/><rect x="3" y="10.7" width="6.75" height="2.6" rx="1.3"/><rect x="14.25" y="10.7" width="6.75" height="2.6" rx="1.3"/><rect x="5.25" y="15.2" width="4.5" height="2.3" rx="1.15"/><rect x="14.25" y="15.2" width="4.5" height="2.3" rx="1.15"/><rect x="11.5" y="4.8" width="1" height="14.4" rx=".5" opacity=".9"/></g>
-  </svg>
-)
 
 /* ------------------------------------------------------------ the console */
 
@@ -327,7 +322,7 @@ export function LandingPage() {
       <header className="nav" ref={navRef}>
         <div className="nav__inner">
           <a className="brand" href="#top" aria-label="OpenFNO home">
-            <span className="brand__mark"><Mark /></span>
+            <span className="brand__mark"><IconLogo /></span>
             <span className="brand__word">open<b>fno</b></span>
           </a>
           <nav className="nav__links" aria-label="Sections">
