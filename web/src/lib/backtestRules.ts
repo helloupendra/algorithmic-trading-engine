@@ -177,18 +177,35 @@ export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'] as const
 /** What the form holds while it is being typed: strings, exactly as entered. */
 export type RulesDraft = Record<string, string>
 
-/** A window row in the draft, stored as "09:20-11:00" entries joined by commas. */
-export function parseWindows(value: string): Array<[string, string]> {
+const TIME = /^\d{1,2}:\d{2}$/
+
+/**
+ * The rows as they are being typed, half-filled ones included: a window whose
+ * "from" is set but whose "to" is not must stay on screen until it is finished.
+ * Only `parseWindows` — what the run is sent — insists on both.
+ */
+export function parseWindowRows(value: string): Array<[string, string]> {
   return (value || '')
     .split(',')
     .map((part) => part.trim())
     .filter(Boolean)
-    .map((part) => part.split('-').map((x) => x.trim()) as [string, string])
-    .filter(([from, to]) => /^\d{1,2}:\d{2}$/.test(from) && /^\d{1,2}:\d{2}$/.test(to))
+    .map((part) => {
+      const [from = '', to = ''] = part.split('-')
+      return [from.trim(), to.trim()] as [string, string]
+    })
 }
 
+/** The complete windows only, as the engine reads them. */
+export function parseWindows(value: string): Array<[string, string]> {
+  return parseWindowRows(value).filter(([from, to]) => TIME.test(from) && TIME.test(to))
+}
+
+/** Rows back into the draft, keeping a row that has one side filled in so far. */
 export function formatWindows(windows: Array<[string, string]>): string {
-  return windows.filter(([a, b]) => a && b).map(([a, b]) => `${a}-${b}`).join(',')
+  return windows
+    .filter(([a, b]) => a || b)
+    .map(([a, b]) => `${a}-${b}`)
+    .join(',')
 }
 
 function num(value: string): number | null {

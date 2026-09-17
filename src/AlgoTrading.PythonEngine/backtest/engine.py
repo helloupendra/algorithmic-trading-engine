@@ -263,6 +263,10 @@ class BacktestSession:
             return False
 
     def _resolve_lot_size(self, explicit: Optional[int], source: str) -> tuple:
+        # An equity run trades the instrument itself: one "lot" is one share, so
+        # `lots` is the share count and P&L is price move x shares.
+        if self.run.is_equity:
+            return 1, "shares"
         if explicit is not None and int(explicit) >= 1:
             return int(explicit), source or "given"
         # The API freezes the lot size into the run at start ("lot_size") and
@@ -362,6 +366,8 @@ class BacktestSession:
         no explanation. `optional` requirements are not reported, and neither is
         a lookup the next bar will retry (the resolver logs and counts those).
         """
+        if self.run.is_equity:
+            return {}
         contracts, missing = self.resolver.contracts_for(
             self.contract_requirements, expiry, atm, self.step, self.run.params
         )
@@ -724,6 +730,15 @@ class BacktestSession:
     def _ghost_to_open_group(self, sig: StrategySignal, t: datetime, contracts: Dict[str, OptionContract],
                              expiry: Optional[str], atm: Any) -> Optional[StrategySignal]:
         direction = sig.signal_type
+        if self.run.is_equity:
+            self._ghost_counter += 1
+            sig.signal_type = "OPEN_GROUP"
+            sig.metadata = dict(sig.metadata or {})
+            sig.metadata["group_id"] = f"EQ_{compact_stamp(t)}_{self._ghost_counter:03d}"
+            sig.metadata["direction"] = direction
+            sig.legs = [{"symbol": self.run.spot_symbol, "side": direction, "quantity": self.lots}]
+            return sig
+
         rules = self.rules.contract
         side = rules.side_for(direction)
         if rules.is_set:
@@ -900,7 +915,8 @@ class BacktestSession:
             return
         for bar in bars:
             t = parse_utc(bar.timestamp_utc)
-            inp = self._build_input(bar, t, {}, self.resolver.atm(bar.close, self.step), "warmup")
+            atm = None if self.run.is_equity else self.resolver.atm(bar.close, self.step)
+            inp = self._build_input(bar, t, {}, atm, "warmup")
             self.strategy.on_bar(self.state, inp)
         self.warmup_bars_used = len(bars)
         self.log(f"[WARMUP] fed {len(bars)} {self.run.resolution} index candles before {self.run.from_date.isoformat()}")
@@ -980,17 +996,22 @@ class BacktestSession:
             self.log(f"[FEED] WARN: {message}")
             self._note(f"No {resolution} index candles stored for {run.spot_symbol} in range; bars[{resolution!r}]['index'] stayed empty.")
 
-        if self.resolver.expiries:
+        if run.is_equity:
+            self.step = 0.0
+        elif self.resolver.expiries:
             self.step = self.resolver.step_for(self.resolver.expiry_for(run.from_date))
         else:
             self.step = fallback_strike_step(run.underlying)
             self._note(f"No option contracts for {run.underlying} in the instrument master; every entry was skipped.")
 
-        self.log(
-            f"[CONFIG] contracts (strike step {format_strike(self.step)}): "
-            + ("; ".join(describe_requirement(req, self.step, run.params) for req in self.contract_requirements)
-               or "none declared")
-        )
+        if run.is_equity:
+            self.log(f"[CONFIG] equity run: trades {run.spot_symbol} itself, {self.lots} share(s) a signal")
+        else:
+            self.log(
+                f"[CONFIG] contracts (strike step {format_strike(self.step)}): "
+                + ("; ".join(describe_requirement(req, self.step, run.params) for req in self.contract_requirements)
+                   or "none declared")
+            )
 
         self._warm_up()
         self._last_progress_at = 0.0
@@ -1005,8 +1026,11 @@ class BacktestSession:
                 self._start_day(day, t)
 
             spot = bar.close
-            expiry = self.resolver.expiry_for(day) if self.resolver.expiries else None
-            atm = self.resolver.atm(spot, self.step)
+            if run.is_equity:
+                expiry, atm = None, None
+            else:
+                expiry = self.resolver.expiry_for(day) if self.resolver.expiries else None
+                atm = self.resolver.atm(spot, self.step)
 
             self._eod_check(t, spot, atm)
 

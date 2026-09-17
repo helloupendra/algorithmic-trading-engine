@@ -16,7 +16,7 @@ import {
   WEEKDAYS,
   countSet,
   formatWindows,
-  parseWindows,
+  parseWindowRows,
   type RuleField,
   type RulesDraft,
 } from '../../lib/backtestRules'
@@ -104,7 +104,7 @@ function Field({
   }
 
   if (field.kind === 'windows') {
-    const windows = parseWindows(value)
+    const windows = parseWindowRows(value)
     const rows: Array<[string, string]> = windows.length > 0 ? [...windows] : [['', '']]
     if (rows.length < MAX_WINDOWS) rows.push(['', ''])
     return (

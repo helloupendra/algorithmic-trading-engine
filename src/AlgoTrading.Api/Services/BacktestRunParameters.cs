@@ -82,7 +82,8 @@ public sealed record BacktestRunParameters(
         string eodSquareOffIst,
         decimal chargesPerLot,
         int lotSize,
-        string lotSizeSource)
+        string lotSizeSource,
+        string instrumentKind = "options")
     {
         JsonObject merged;
         try
@@ -114,6 +115,8 @@ public sealed record BacktestRunParameters(
         merged["charges_per_lot"] = chargesPerLot;
         merged[LotSizeKey] = Math.Max(1, lotSize);
         merged[LotSizeSourceKey] = lotSizeSource;
+        // "equity" tells the runner to trade the instrument itself, in shares.
+        merged["instrument_kind"] = string.IsNullOrWhiteSpace(instrumentKind) ? "options" : instrumentKind;
         RunRiskRules.WriteInto(merged, risk);
 
         return merged.ToJsonString();
