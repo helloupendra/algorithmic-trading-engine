@@ -40,6 +40,7 @@ import {
   PositionValueCell,
   formatDay,
 } from '../strategies/shared'
+import { readAccount, summariseYears } from '../../lib/backtestAccount'
 import { BacktestDialog } from './BacktestDialog'
 import { DailyPnlChart, EquityCurveChart } from './charts'
 import { BacktestStatusBadge, formatDayRange, isActiveStatus, runSpecLabel } from './shared'
@@ -339,6 +340,8 @@ export function BacktestRunPage() {
             )}
           </div>
 
+          <AccountPanel view={view} />
+
           <div className="two-col">
             <Panel
               title={
@@ -495,5 +498,70 @@ export function BacktestRunPage() {
         />
       )}
     </div>
+  )
+}
+
+
+/**
+ * What the account did, and what each year did — the two readings a total P&L
+ * hides. A run whose balance crossed zero says so plainly: the rest of its
+ * curve is money it did not have.
+ */
+function AccountPanel({ view }: { view: BacktestRunView }) {
+  const account = readAccount(view.equityCurve, view.initialCapital)
+  const years = summariseYears(view.daily)
+  if (!account && years.length === 0) return null
+
+  return (
+    <Panel
+      title={
+        <>
+          <IconFlask /> The account
+        </>
+      }
+      actions={<span className="muted" style={{ fontSize: 12 }}>started with {formatInrWhole(view.initialCapital)}</span>}
+    >
+      {account && (
+        <div className="stat-row">
+          <StatTile label="Lowest balance" value={formatInrWhole(account.lowest)}
+            sub={account.lowestAtUtc ? `on ${formatDay(account.lowestAtUtc.slice(0, 10))}` : undefined}
+            tone={account.lowest < view.initialCapital ? 'neg' : undefined} />
+          <StatTile label="Balance at the end" value={formatInrWhole(account.final)}
+            tone={account.final >= view.initialCapital ? 'pos' : 'neg'} />
+          <StatTile label="Deepest fall from a peak" value={formatInrWhole(account.drawdown)}
+            sub={`${account.drawdownPercent.toFixed(1)}% of that peak`} />
+          {account.ranOutAtUtc && (
+            <StatTile label="Ran out of money" value={formatDay(account.ranOutAtUtc.slice(0, 10))}
+              sub="the curve after this is money the account did not have" tone="neg" />
+          )}
+        </div>
+      )}
+      {years.length > 0 && (
+        <div className="tablewrap" style={{ marginTop: 12 }}>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Year</th>
+                <th className="r">P&L</th>
+                <th className="r">Trades</th>
+                <th className="r">Trading days</th>
+                <th className="r">Winning days</th>
+              </tr>
+            </thead>
+            <tbody>
+              {years.map((y) => (
+                <tr key={y.year}>
+                  <td className="mono">{y.year}</td>
+                  <td className="r"><PnlValue value={y.pnl} /></td>
+                  <td className="r">{formatNumber(y.trades)}</td>
+                  <td className="r">{formatNumber(y.days)}</td>
+                  <td className="r">{formatNumber(y.winningDays)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
   )
 }
