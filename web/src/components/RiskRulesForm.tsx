@@ -100,7 +100,7 @@ function legPointsHint(value: RiskDraft, unitValue: number): string {
   const parts: string[] = []
   for (const [key, name] of [['legStopLossPoints', 'stop'], ['legTargetPoints', 'target']] as const) {
     const points = Number((value[key] ?? '').trim())
-    if (Number.isFinite(points) && points > 0) parts.push(`${name} ${points} pts = ${formatInrWhole(points * unitValue)}`)
+    if (Number.isFinite(points) && points > 0) parts.push(`${name} ${points} = ${formatInrWhole(points * unitValue)}`)
   }
   return parts.length > 0 ? ` · ${parts.join(' · ')}` : ''
 }
@@ -114,6 +114,7 @@ export function RiskRulesForm({
   invalidNonce = 0,
   autoFocus = false,
   unitValue = null,
+  unitNoun = 'premium point on one leg',
 }: {
   value: RiskDraft
   onChange: (next: RiskDraft) => void
@@ -137,6 +138,8 @@ export function RiskRulesForm({
    * and a ₹20 one, which is otherwise only obvious after a run closes on nothing.
    */
   unitValue?: number | null
+  /** What one unit of the per-leg numbers is, in words: a premium point, or a rupee of a share price. */
+  unitNoun?: string
 }) {
   const firstRef = useRef<HTMLInputElement>(null)
   const invalidRef = useRef<HTMLInputElement>(null)
@@ -198,7 +201,7 @@ export function RiskRulesForm({
           <div className="risk-form__stack">
             {level.name === 'Per leg' && unitValue != null && unitValue > 0 && (
               <span className="risk-form__help">
-                One premium point on one leg = {formatInrWhole(unitValue)} at this run's size
+                One {unitNoun} = {formatInrWhole(unitValue)} at this run's size
                 {legPointsHint(value, unitValue)}
               </span>
             )}
