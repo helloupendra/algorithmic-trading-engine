@@ -911,7 +911,8 @@ class BacktestSession:
         bars = [b for b in self.feed.warmup_bars(self.run.resolution_code)
                 if self.run.resolution_code == "D" or in_session(parse_utc(b.timestamp_utc))]
         if not bars:
-            self.log(f"[WARMUP] no {self.run.resolution} index candles stored before {self.run.from_date.isoformat()}; strategy starts cold")
+            self.log(f"[WARMUP] no {self.run.resolution} {self.run.spot_symbol} candles stored before "
+                     f"{self.run.from_date.isoformat()}; strategy starts cold")
             return
         for bar in bars:
             t = parse_utc(bar.timestamp_utc)
@@ -920,7 +921,8 @@ class BacktestSession:
             self.strategy.on_bar(self.state, inp)
         self.warmup_bars_used = len(bars)
         self.log(f"[WARMUP] fed {len(bars)} {self.run.resolution} index candles before {self.run.from_date.isoformat()}")
-        self._note(f"Strategy warm-up used {len(bars)} {self.run.resolution} index candles stored before {self.run.from_date.isoformat()}.")
+        self._note(f"Strategy warm-up used {len(bars)} {self.run.resolution} {self.run.spot_symbol} candles "
+                   f"stored before {self.run.from_date.isoformat()}.")
 
     def _start_day(self, day: date, t: datetime) -> None:
         previous = self._day
@@ -1105,10 +1107,13 @@ class BacktestSession:
 
     def _summary(self) -> Dict[str, Any]:
         notes = list(self.data_notes)
-        if self.resolver.lookups or self.feed.no_data or self.feed.synced:
+        if not self.run.is_equity and (self.resolver.lookups or self.feed.no_data or self.feed.synced):
             notes.append(
-                "Option premiums come from FYERS history for contracts that still exist; "
-                "expired contracts have no history and were skipped."
+                "Option premiums come from the stored candles, and for contracts the broker no longer "
+                "serves from the stored expired-options history. A contract with no price at all is "
+                "listed as a skipped entry."
+                + (f" {len(self.feed.synced)} contract(s) were fetched from the broker during this run."
+                   if self.feed.synced else "")
             )
         # Skipped entries are reported per reason by the API's run view (it
         # groups `skippedEntries`), and the lot-size note is added there too,
