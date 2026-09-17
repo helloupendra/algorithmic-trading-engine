@@ -729,6 +729,15 @@ export interface BacktestOptionCoverage {
   expiries: string[]
 }
 
+/** A stock a replay can run on: what is stored for it, from GET /api/Backtest/equities. */
+export interface BacktestEquity {
+  underlying: string
+  symbol: string
+  firstUtc: string
+  lastUtc: string
+  resolutions: Array<{ resolution: string; barCount: number }>
+}
+
 export interface BacktestOptionHistoryCoverage {
   firstUtc: string
   lastUtc: string

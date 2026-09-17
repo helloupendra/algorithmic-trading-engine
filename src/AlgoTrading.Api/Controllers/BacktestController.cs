@@ -11,6 +11,7 @@ using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using System.Diagnostics;
@@ -43,7 +44,12 @@ public class BacktestController : ControllerBase
     private readonly BacktestRunViewBuilder _views;
     private readonly ILotSizeResolver _lotSizeResolver;
     private readonly StrategyRunnerOptions _options;
+    private readonly IMemoryCache _cache;
     private readonly ILogger<BacktestController> _logger;
+
+    /// <summary>How long the stock inventory is reused (it counts candle rows).</summary>
+    private static readonly TimeSpan EquitiesFor = TimeSpan.FromMinutes(5);
+    private const string EquitiesKey = "backtest:equities";
 
     public BacktestController(
         TradingDbContext dbContext,
@@ -55,8 +61,10 @@ public class BacktestController : ControllerBase
         BacktestRunViewBuilder views,
         ILotSizeResolver lotSizeResolver,
         IOptions<StrategyRunnerOptions> options,
+        IMemoryCache cache,
         ILogger<BacktestController> logger)
     {
+        _cache = cache;
         _dbContext = dbContext;
         _catalog = catalog;
         _registry = registry;
@@ -89,6 +97,54 @@ public class BacktestController : ControllerBase
 
         var result = await _data.GetCoverageAsync(underlying, strategyId, resolution, cancellationToken);
         return Ok(result);
+    }
+
+    /// <summary>
+    /// The stocks a replay can actually run on: every equity symbol with stored candles,
+    /// with its range and how many sessions it covers.
+    /// </summary>
+    /// <remarks>
+    /// Equity strategies have no option chain to pick an underlying from, so the console
+    /// picks from what is stored instead. The count is over the candles table, so the
+    /// answer is cached for a few minutes rather than recounted per keystroke.
+    /// </remarks>
+    [HttpGet("equities")]
+    public async Task<IActionResult> GetEquities(CancellationToken cancellationToken)
+    {
+        if (_cache.TryGetValue(EquitiesKey, out object? cached) && cached is not null)
+            return Ok(cached);
+
+        var rows = await _dbContext.Candles
+            .AsNoTracking()
+            .Where(c => c.Symbol.StartsWith("NSE:") && c.Symbol.EndsWith("-EQ"))
+            .GroupBy(c => new { c.Symbol, c.Resolution })
+            .Select(g => new
+            {
+                symbol = g.Key.Symbol,
+                resolution = g.Key.Resolution,
+                barCount = g.Count(),
+                firstUtc = g.Min(x => x.TimeStampUtc),
+                lastUtc = g.Max(x => x.TimeStampUtc),
+            })
+            .ToListAsync(cancellationToken);
+
+        var equities = rows
+            .GroupBy(r => r.symbol)
+            .Select(g => new
+            {
+                underlying = g.Key[4..^3],                      // NSE:RELIANCE-EQ -> RELIANCE
+                symbol = g.Key,
+                firstUtc = g.Min(x => x.firstUtc),
+                lastUtc = g.Max(x => x.lastUtc),
+                resolutions = g.OrderBy(x => x.resolution)
+                    .Select(x => new { resolution = ResolutionCodes.ToCandle(x.resolution), x.barCount })
+                    .ToList(),
+            })
+            .OrderBy(x => x.underlying)
+            .ToList();
+
+        _cache.Set(EquitiesKey, equities, EquitiesFor);
+        return Ok(equities);
     }
 
     /// <summary>Pulls the spot symbol's candles from FYERS in ≤ 30-day chunks per resolution.</summary>

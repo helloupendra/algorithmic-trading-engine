@@ -54,5 +54,23 @@ class ImportTests(unittest.TestCase):
         self.assertEqual((bar[13], bar[14], bar[15]), (1500, None, 12.3))
 
 
+class EquityImportTests(unittest.TestCase):
+    """The stock importer's own pieces: the platform's symbol, and reading a name list."""
+
+    def test_a_stock_name_becomes_the_platforms_equity_symbol(self):
+        from tools import equities_candles_import as eq
+        self.assertEqual(eq.equity_symbol("reliance"), "NSE:RELIANCE-EQ")
+        self.assertEqual(eq.equity_symbol("NSE:TCS-EQ"), "NSE:TCS-EQ")
+
+    def test_names_are_read_from_a_list_or_a_file_without_repeats(self):
+        import tempfile
+        from tools import equities_candles_import as eq
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as handle:
+            handle.write("hdfcbank\nreliance,INFY\n")
+            path = handle.name
+        self.assertEqual(eq.read_symbol_list("reliance, tcs", path), ["RELIANCE", "TCS", "HDFCBANK", "INFY"])
+        self.assertEqual(eq.read_symbol_list(None, None), [])
+
+
 if __name__ == "__main__":
     unittest.main()
