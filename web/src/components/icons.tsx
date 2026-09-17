@@ -40,7 +40,9 @@ function Icon({ children, ...props }: SVGProps<SVGSVGElement> & { children: Reac
  */
 export const IconLogo = (p: SVGProps<SVGSVGElement>) => (
   <Icon strokeWidth="0" {...p}>
-    <g fill="currentColor" stroke="none"><rect x="5.25" y="6.5" width="4.5" height="2.3" rx="1.15"/><rect x="14.25" y="6.5" width="4.5" height="2.3" rx="1.15"/><rect x="3" y="10.7" width="6.75" height="2.6" rx="1.3"/><rect x="14.25" y="10.7" width="6.75" height="2.6" rx="1.3"/><rect x="5.25" y="15.2" width="4.5" height="2.3" rx="1.15"/><rect x="14.25" y="15.2" width="4.5" height="2.3" rx="1.15"/><rect x="11.5" y="4.8" width="1" height="14.4" rx=".5" opacity=".9"/></g>
+    {/* Three candles with their wicks — the one picture this platform is
+        about, and the only glyph that still reads at 16px in a tab. */}
+    <g fill="currentColor" stroke="none"><rect x="4.9" y="8.4" width="1.2" height="9.4" rx=".6" opacity=".5"/><rect x="3.6" y="10.6" width="3.8" height="5.2" rx="1.2"/><rect x="11.4" y="4.6" width="1.2" height="12.6" rx=".6" opacity=".5"/><rect x="10.1" y="6.6" width="3.8" height="8.2" rx="1.2"/><rect x="17.9" y="6.6" width="1.2" height="10.6" rx=".6" opacity=".5"/><rect x="16.6" y="8.8" width="3.8" height="6.2" rx="1.2"/></g>
   </Icon>
 )
 

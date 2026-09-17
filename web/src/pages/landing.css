@@ -436,9 +436,10 @@
 .term__bar { display: flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px; border-bottom: 1px solid rgba(255, 255, 255, .06); background: rgba(255, 255, 255, .03); }
 .term__bar i { width: 8px; height: 8px; border-radius: 50%; background: rgba(255, 255, 255, .13); flex: none; }
 .term__bar span { margin-left: 12px; font: 500 10.5px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); }
-/* The console's own <pre> has a well behind it; this one is part of the panel. */
-.term__body { margin: 0; padding: 18px 18px 8px; overflow-x: auto; background: none; border: 0; border-radius: 0; }
-.term__body code { display: grid; gap: 9px; font: 12px/1.5 var(--mono); background: none; padding: 0; }
+/* The console's own <pre>/<code> have wells behind them; here they are part of
+   the panel, so both are reset at a specificity that beats the element rules. */
+.login .term__body { margin: 0; padding: 18px 18px 8px; overflow-x: auto; background: transparent; border: 0; border-radius: 0; }
+.login .term__body code { display: grid; gap: 9px; font: 12px/1.5 var(--mono); background: transparent; border: 0; padding: 0; }
 .term__line { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 14px; color: var(--ink-2); white-space: nowrap; }
 .term__line b { color: var(--accent-2); font-weight: 600; }
 .term__line--cue { color: var(--ink); }
