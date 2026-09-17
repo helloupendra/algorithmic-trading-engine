@@ -145,8 +145,9 @@ stop_daemon() {  # label, path
 # are not started; when Dhan cannot start, they are, exactly as before.
 #
 # Dhan's token lasts 24 hours from the sign-in (Connectors > Dhan > Connect).
-# This runs before the FYERS wait, so a missing FYERS sign-in never costs the
-# day's data.
+# This runs before the FYERS check, so a missing FYERS sign-in never costs the
+# day's data, and when Dhan is up it does not hold the strategies back either
+# (step 4).
 DHAN_PRIMARY=0
 DHAN_WAIT_UNTIL="${MARKET_OPEN_DHAN_UNTIL:-0912}"
 
@@ -223,56 +224,90 @@ else
 fi
 
 # --- 4. the broker token, which expires daily --------------------------------
+# >>> fyers-gate (these functions are also loaded by scripts/tests/market-open-fyers-gate.test.sh)
 connected() {
   api_get /api/auth/session 2>/dev/null | grep -q '"isAuthenticated":true'
 }
 
-if connected; then
-  say "FYERS session already valid"
-else
+fyers_try_refresh() {  # exit 0 when the token is (now) valid
   # Try the refresh anyway: it costs one call, and it starts working the day
   # FYERS re-enables the API. Today it answers "disabled to comply with SEBI
   # regulations" — the daily sign-in is a regulator's requirement, not a gap
   # in this platform, and no amount of code removes it.
   say "FYERS token expired — trying a refresh ..."
   REFRESH="$(api_post /api/auth/refresh-token '{}' 2>/dev/null || true)"
-
   if connected; then
     say "  token renewed"
-  else
-    say "  refresh unavailable: $(printf '%s' "$REFRESH" | head -c 140)"
-    say "  waiting for the FYERS sign-in — will keep watching until ${LOGIN_WAIT_UNTIL} IST"
-    say "  (the token expired at 06:00; FYERS fixes that hour and has disabled refresh)"
-
-    # Put the login in front of the operator rather than in a log they have to
-    # go looking for: raise a notification, and on the Mac open the page too.
-    if $IS_MAC; then open "$CONSOLE/admin/data/connectors" 2>/dev/null || true; fi
-    notify "AlgoTrading" "Sign in to FYERS at $CONSOLE — the morning run is waiting."
-
-    NUDGED_OPEN=0
-    LAST_NUDGE=$(date +%s)
-    while ! connected; do
-      NOW="$(date +%H%M)"
-      if [ "$NOW" -ge "$LOGIN_WAIT_UNTIL" ]; then
-        fail "no FYERS sign-in by ${LOGIN_WAIT_UNTIL} IST; nothing was started."
-      fi
-
-      # A louder reminder at the open itself, then one every ten minutes: the
-      # first notification is easy to sleep through, and every minute waited is
-      # a minute of the session gone.
-      if [ "$NUDGED_OPEN" = 0 ] && [ "$NOW" -ge 0915 ]; then
-        notify "AlgoTrading" "Market is OPEN and FYERS is not signed in — nothing is trading."
-        NUDGED_OPEN=1
-        LAST_NUDGE=$(date +%s)
-      elif [ $(( $(date +%s) - LAST_NUDGE )) -ge 600 ]; then
-        notify "AlgoTrading" "Still waiting for the FYERS sign-in."
-        LAST_NUDGE=$(date +%s)
-      fi
-
-      sleep 20
-    done
-    say "  signed in at $(date '+%H:%M') — carrying on"
+    return 0
   fi
+  say "  refresh unavailable: $(printf '%s' "$REFRESH" | head -c 140)"
+  return 1
+}
+
+wait_for_fyers() {  # blocks until FYERS is signed in; fails the run at LOGIN_WAIT_UNTIL
+  say "  waiting for the FYERS sign-in — will keep watching until ${LOGIN_WAIT_UNTIL} IST"
+  say "  (the token expired at 06:00; FYERS fixes that hour and has disabled refresh)"
+
+  # Put the login in front of the operator rather than in a log they have to
+  # go looking for: raise a notification, and on the Mac open the page too.
+  if $IS_MAC; then open "$CONSOLE/admin/data/connectors" 2>/dev/null || true; fi
+  notify "AlgoTrading" "Sign in to FYERS at $CONSOLE — the morning run is waiting."
+
+  NUDGED_OPEN=0
+  LAST_NUDGE=$(date +%s)
+  while ! connected; do
+    NOW="$(date +%H%M)"
+    if [ "$NOW" -ge "$LOGIN_WAIT_UNTIL" ]; then
+      fail "no FYERS sign-in by ${LOGIN_WAIT_UNTIL} IST; nothing was started."
+    fi
+
+    # A louder reminder at the open itself, then one every ten minutes: the
+    # first notification is easy to sleep through, and every minute waited is
+    # a minute of the session gone.
+    if [ "$NUDGED_OPEN" = 0 ] && [ "$NOW" -ge 0915 ]; then
+      notify "AlgoTrading" "Market is OPEN and FYERS is not signed in — nothing is trading."
+      NUDGED_OPEN=1
+      LAST_NUDGE=$(date +%s)
+    elif [ $(( $(date +%s) - LAST_NUDGE )) -ge 600 ]; then
+      notify "AlgoTrading" "Still waiting for the FYERS sign-in."
+      LAST_NUDGE=$(date +%s)
+    fi
+
+    sleep 20
+  done
+  say "  signed in at $(date '+%H:%M') — carrying on"
+}
+
+# FYERS matters only as the backup feed. Every run this script starts is paper,
+# filled at the live feed's quotes, and warms up from the platform's own
+# candles, so when Dhan is the day's feed the morning does not wait for the
+# FYERS sign-in. On 2026-09-17 that wait held Ghost back from 09:15 until the
+# sign-in at 09:19 (deployed 09:21) while Dhan had been streaming since 08:45.
+# The wait still happens when FYERS has to feed the day: Dhan not signed in, or
+# Dhan silent after the open (step 6).
+fyers_gate() {  # $1 = 1 when Dhan is the day's feed
+  if connected; then
+    say "FYERS session already valid"
+    return 0
+  fi
+  fyers_try_refresh && return 0
+  if [ "${1:-0}" = 1 ]; then
+    say "  not waiting for FYERS: Dhan is today's feed and every run is paper, so FYERS is only the backup"
+    notify "AlgoTrading" "FYERS is not signed in. Strategies start on Dhan without it; sign in when you can so the backup feed is ready."
+    return 0
+  fi
+  wait_for_fyers
+}
+# <<< fyers-gate
+
+if [ "$DRY_RUN" = 1 ] && ! connected; then
+  if [ "$DHAN_PRIMARY" = 1 ]; then
+    say "dry run: FYERS is not signed in; would carry on without it (Dhan is the feed)"
+  else
+    say "dry run: FYERS is not signed in; would wait for the sign-in until ${LOGIN_WAIT_UNTIL} IST"
+  fi
+else
+  fyers_gate "$DHAN_PRIMARY"
 fi
 
 # --- 5. market data ----------------------------------------------------------
@@ -393,6 +428,11 @@ if [ "${TICKS:-0}" -lt 1 ] && [ "$DHAN_PRIMARY" = 1 ]; then
   notify "AlgoTrading" "Dhan feed delivered no prices after the open. Switched to FYERS; Dhan's option chain keeps recording."
   stop_daemon "Dhan feed" "/api/Feeds/dhan/stop"
   DHAN_PRIMARY=0
+  # The morning did not wait for FYERS while Dhan was the feed; now it is needed.
+  if ! connected; then
+    say "  the FYERS feed needs a FYERS sign-in first"
+    fyers_try_refresh || wait_for_fyers
+  fi
   start_fyers_feed
   sleep 90
   TICKS="$(api_get /api/LiveData/latest/all 2>/dev/null | python3 -c "$FRESH_PRICES_PY" 2>/dev/null || echo 0)"
