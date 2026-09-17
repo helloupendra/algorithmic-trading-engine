@@ -27,8 +27,14 @@ namespace AlgoTrading.Application.Interfaces
             string underlying,
             CancellationToken cancellationToken = default);
 
+        /// <summary>
+        /// Option expiry dates of an underlying. With <paramref name="includeHistory"/>, an
+        /// index also gets every expired expiry the exchange calendar and the master know
+        /// (backtests); without it, only listed contracts count.
+        /// </summary>
         Task<IReadOnlyList<DerivativeExpiryResponse>> GetExpiriesAsync(
             string underlying,
+            bool includeHistory = false,
             CancellationToken cancellationToken = default);
 
         /// <summary>
@@ -44,12 +50,15 @@ namespace AlgoTrading.Application.Interfaces
 
         /// <summary>
         /// Resolves an exact option contract based on underlying, expiry, strike, and type (CE/PE).
+        /// With <paramref name="includeHistory"/>, an expired contract is found too: from the
+        /// master when it still holds the row, else from the stored option history (backtests).
         /// </summary>
         Task<OptionChainItemResponse?> GetExactContractAsync(
             string underlying,
             DateOnly expiryDate,
             decimal strike,
             string optionType,
+            bool includeHistory = false,
             CancellationToken cancellationToken = default);
     }
 

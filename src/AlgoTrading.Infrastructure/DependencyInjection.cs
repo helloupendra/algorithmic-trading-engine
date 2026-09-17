@@ -149,6 +149,11 @@ public static class DependencyInjection
 
         services.AddScoped<IDerivativesInstrumentService, DerivativesInstrumentService>();
 
+        // Expired index options for backtests: the exchange expiry calendar and the
+        // stored Dhan history (option_history_bars).
+        services.AddSingleton<AlgoTrading.Infrastructure.Services.OptionHistory.IndexOptionExpiryCalendar>();
+        services.AddScoped<AlgoTrading.Infrastructure.Services.OptionHistory.IndexOptionHistory>();
+
         // Lot sizes: master value per contract, else the configured LotSizes table.
         services.AddSingleton(LotSizeOptions.FromConfiguration(configuration));
         services.AddScoped<ILotSizeResolver, LotSizeResolver>();

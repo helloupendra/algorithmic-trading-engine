@@ -76,9 +76,12 @@ class ContractResolver:
 
     @property
     def expiries(self) -> List[str]:
-        """All expiry dates (yyyy-MM-dd, ascending) the instrument master holds."""
+        """
+        All expiry dates (yyyy-MM-dd, ascending) the platform knows, expired ones
+        included: a replay of an earlier year needs the expiries of that year.
+        """
         if self._expiries is None:
-            rows = self.api.get_expiries(self.underlying) or []
+            rows = self.api.get_expiries(self.underlying, include_history=True) or []
             dates = set()
             for row in rows:
                 raw = row.get("expiryDate") if isinstance(row, dict) else row
@@ -153,7 +156,8 @@ class ContractResolver:
         self.lookups += 1
         try:
             raw = self.api.get_exact_contract(
-                underlying=self.underlying, expiry=key[0], strike=key[1], option_type=key[2]
+                underlying=self.underlying, expiry=key[0], strike=key[1], option_type=key[2],
+                include_history=True,
             )
         except Exception as ex:
             self.failed_lookups += 1

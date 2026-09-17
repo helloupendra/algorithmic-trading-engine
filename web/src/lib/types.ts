@@ -729,6 +729,14 @@ export interface BacktestOptionCoverage {
   expiries: string[]
 }
 
+export interface BacktestOptionHistoryCoverage {
+  firstUtc: string
+  lastUtc: string
+  calendarExpiries: number
+  firstExpiry: string | null
+  lastExpiry: string | null
+}
+
 export interface BacktestCoverageResponse {
   underlying: string
   spotSymbol: string
@@ -738,6 +746,8 @@ export interface BacktestCoverageResponse {
   /** Strategy-facing codes ("5m") the catalog entry declares, plus the driver. */
   requiredResolutions: string[]
   optionCandles: BacktestOptionCoverage
+  /** Stored expired-options history (option_history_bars + exchange expiry calendar); null when none. */
+  optionHistory: BacktestOptionHistoryCoverage | null
   /** FYERS session valid — a backfill can be attempted. */
   brokerLinked: boolean
   notes: string[]

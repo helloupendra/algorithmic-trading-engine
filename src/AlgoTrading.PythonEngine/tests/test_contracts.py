@@ -37,13 +37,13 @@ class FakeInstrumentsApi:
         self.step = step
         self.contract_calls = 0
 
-    def get_expiries(self, underlying):
+    def get_expiries(self, underlying, include_history=False):
         return [{"underlying": underlying, "expiryDate": e} for e in self.expiries_list]
 
     def get_option_chain(self, underlying, expiry, from_strike=None, to_strike=None):
         return [{"strikePrice": 57000 + i * self.step, "optionType": t} for i in range(5) for t in ("CE", "PE")]
 
-    def get_exact_contract(self, underlying, expiry, strike, option_type):
+    def get_exact_contract(self, underlying, expiry, strike, option_type, include_history=False):
         self.contract_calls += 1
         if strike >= 60000:
             return None
@@ -141,6 +141,24 @@ class ContractRequirementTests(unittest.TestCase):
 
 
 class ContractResolverTests(unittest.TestCase):
+    def test_a_replay_asks_for_expired_expiries_and_contracts_too(self):
+        # A backtest of 2021 needs that year's expiries and contracts, which only
+        # the history-aware lookups return.
+        calls = []
+
+        class RecordingApi(FakeInstrumentsApi):
+            def get_expiries(self, underlying, include_history=False):
+                calls.append(("expiries", include_history))
+                return super().get_expiries(underlying, include_history)
+
+            def get_exact_contract(self, underlying, expiry, strike, option_type, include_history=False):
+                calls.append(("contract", include_history))
+                return super().get_exact_contract(underlying, expiry, strike, option_type, include_history)
+
+        resolver = ContractResolver(RecordingApi(), "BANKNIFTY", log=lambda _m: None)
+        resolver.contract(resolver.expiry_for("2026-08-20"), 57100, "CE")
+        self.assertEqual(calls, [("expiries", True), ("contract", True)])
+
     def test_expiry_as_of_date(self):
         resolver = ContractResolver(FakeInstrumentsApi(), "BANKNIFTY", log=lambda _: None)
         self.assertEqual(resolver.expiry_for(date(2026, 8, 19)), "2026-08-25")

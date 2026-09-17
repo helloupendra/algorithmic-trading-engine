@@ -23,6 +23,12 @@ public class BacktestCoverageResponse
     /// <summary>Stored option candles for this underlying's CE/PE contracts.</summary>
     public BacktestOptionCoverage OptionCandles { get; set; } = new();
 
+    /// <summary>
+    /// Expired-options history the run prices past contracts from (option_history_bars
+    /// plus the exchange expiry calendar); null when none is stored for this underlying.
+    /// </summary>
+    public BacktestOptionHistoryCoverage? OptionHistory { get; set; }
+
     /// <summary>True when a valid FYERS session exists, so a backfill is possible.</summary>
     public bool BrokerLinked { get; set; }
 
@@ -65,4 +71,16 @@ public class BacktestOptionCoverage
 
     /// <summary>Expiry dates ("yyyy-MM-dd") of those contracts, ascending.</summary>
     public List<string> Expiries { get; set; } = new();
+}
+
+/// <summary>Stored nearest-expiry option history of an index, 1-minute bars.</summary>
+public class BacktestOptionHistoryCoverage
+{
+    public DateTime FirstUtc { get; set; }
+    public DateTime LastUtc { get; set; }
+
+    /// <summary>Expiries in the exchange calendar, and its first and last ("yyyy-MM-dd").</summary>
+    public int CalendarExpiries { get; set; }
+    public string? FirstExpiry { get; set; }
+    public string? LastExpiry { get; set; }
 }

@@ -333,12 +333,16 @@ export function BacktestDialog({
     })
   }
 
-  const notes: ReactNode[] = [
-    <li key="premiums">
-      Option premiums are fetched from FYERS history per contract on demand; expired contracts have
-      no history — trades on them will be listed as skipped.
-    </li>,
-  ]
+  // Once coverage has loaded, the server's notes say where premiums come from
+  // (stored expired-options history when there is one), so this line is only a placeholder.
+  const notes: ReactNode[] = cov
+    ? []
+    : [
+        <li key="premiums">
+          Option premiums are fetched from FYERS history per contract on demand; expired contracts have
+          no history — trades on them will be listed as skipped.
+        </li>,
+      ]
   if (cov && !cov.brokerLinked)
     notes.push(
       <li key="broker">
