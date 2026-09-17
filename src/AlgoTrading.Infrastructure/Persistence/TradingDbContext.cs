@@ -75,6 +75,12 @@ public class TradingDbContext : DbContext
     public DbSet<MarketHoliday> MarketHolidays => Set<MarketHoliday>();
     public DbSet<MarketSpecialSession> MarketSpecialSessions => Set<MarketSpecialSession>();
 
+    // Market factors: what the big participants hold and trade, futures build-up, and the event calendar.
+    public DbSet<MarketParticipantOpenInterest> MarketParticipantOpenInterest => Set<MarketParticipantOpenInterest>();
+    public DbSet<MarketCashFlow> MarketCashFlows => Set<MarketCashFlow>();
+    public DbSet<MarketFuturesDaily> MarketFuturesDaily => Set<MarketFuturesDaily>();
+    public DbSet<MarketEvent> MarketEvents => Set<MarketEvent>();
+
     public DbSet<RiskEvent> RiskEvents => Set<RiskEvent>();
     public DbSet<AlertEvent> AlertEvents => Set<AlertEvent>();
 

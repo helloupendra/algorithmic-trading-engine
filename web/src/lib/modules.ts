@@ -156,6 +156,14 @@ export const DATA_SECTIONS = [
     end: false,
   },
   {
+    // What desks read to judge direction: OI walls, futures build-up, FII/DII
+    // positioning, GIFT Nifty and overseas markets, and the event calendar.
+    route: '/admin/data/factors',
+    label: 'Market factors',
+    icon: IconPulse,
+    end: false,
+  },
+  {
     route: '/admin/data/historical',
     label: 'Historical',
     icon: IconCandles,

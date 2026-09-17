@@ -29,6 +29,7 @@ import { ConnectorDetailPage } from './pages/admin/ConnectorDetailPage'
 import { LiveAlertsV2Page } from './pages/admin/LiveAlertsV2Page'
 import { PatternAlertsPage } from './pages/data/PatternAlertsPage'
 import MarketMoversPage from './pages/data/MarketMoversPage'
+import MarketFactorsPage from './pages/data/MarketFactorsPage'
 import { ActivityLogPage } from './pages/admin/ActivityLogPage'
 import { DeploymentsPage } from './pages/admin/DeploymentsPage'
 import { MarketCalendarPage } from './pages/admin/MarketCalendarPage'
@@ -138,6 +139,7 @@ export default function App() {
                   <Route path="/admin/data/open-interest" element={<OptionInterestPage />} />
                   <Route path="/admin/data/patterns" element={<PatternAlertsPage />} />
                   <Route path="/admin/data/movers" element={<MarketMoversPage />} />
+                  <Route path="/admin/data/factors" element={<MarketFactorsPage />} />
                   <Route path="/admin/data/historical" element={<HistoricalDataPage />} />
                   <Route path="/admin/data/instruments" element={<InstrumentsFnoPage />} />
 
