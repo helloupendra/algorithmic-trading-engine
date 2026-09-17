@@ -3,6 +3,7 @@ using AlgoTrading.Contracts.MarketData;
 using AlgoTrading.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace AlgoTrading.Api.Controllers;
 
@@ -17,16 +18,27 @@ public class MarketDataController : ControllerBase
     private readonly SyncHistoryUseCase _syncHistoryUseCase;
     private readonly GetStoredCandlesUseCase _getStoredCandlesUseCase;
     private readonly TradingDbContext _dbContext;
+    private readonly IMemoryCache _cache;
 
     public MarketDataController(
         SyncHistoryUseCase syncHistoryUseCase,
         GetStoredCandlesUseCase getStoredCandlesUseCase,
-        TradingDbContext dbContext)
+        TradingDbContext dbContext,
+        IMemoryCache cache)
     {
         _syncHistoryUseCase = syncHistoryUseCase;
         _getStoredCandlesUseCase = getStoredCandlesUseCase;
         _dbContext = dbContext;
+        _cache = cache;
     }
+
+    /// <summary>
+    /// How long the inventory is reused. It counts every candle row, five pages
+    /// poll it every minute, and the table grows with every stock imported — so
+    /// the answer is shared for a minute rather than recounted per caller.
+    /// </summary>
+    private static readonly TimeSpan CoverageFor = TimeSpan.FromSeconds(60);
+    private const string CoverageKey = "market-data:coverage";
 
     /// <summary>
     /// The data inventory: every (symbol, resolution) this installation has
@@ -38,6 +50,9 @@ public class MarketDataController : ControllerBase
     [HttpGet("coverage")]
     public async Task<IActionResult> GetCoverage(CancellationToken cancellationToken)
     {
+        if (_cache.TryGetValue(CoverageKey, out object? cached) && cached is not null)
+            return Ok(cached);
+
         var backfill = await _dbContext.Candles
             .AsNoTracking()
             .GroupBy(c => new { c.Symbol, c.Resolution })
@@ -72,6 +87,7 @@ public class MarketDataController : ControllerBase
             .ThenBy(r => r.resolution)
             .ToList();
 
+        _cache.Set(CoverageKey, rows, CoverageFor);
         return Ok(rows);
     }
 
