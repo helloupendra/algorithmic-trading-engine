@@ -528,9 +528,13 @@ public sealed class BacktestRunViewBuilder
 
     private static List<string> BuildDataNotes(RunSummary? summary, LotSizeInfo lot)
     {
+        // An equity run books shares, so the lot-size sentence would be wrong twice
+        // over: there is no lot, and no lot-size change to model.
         var notes = new List<string>
         {
-            $"Lot size {lot.LotSize} ({lot.Source}) applied to every contract over the whole range; historical lot-size changes are not modelled."
+            string.Equals(lot.Source, "shares", StringComparison.OrdinalIgnoreCase)
+                ? "This run traded the instrument itself: one unit is one share, so no lot size applies."
+                : $"Lot size {lot.LotSize} ({lot.Source}) applied to every contract over the whole range; historical lot-size changes are not modelled."
         };
 
         if (summary is null) return notes;
