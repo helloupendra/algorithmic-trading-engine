@@ -1,0 +1,346 @@
+{
+  "version": 1,
+  "checked": "2026-09-17",
+  "events": [
+    {
+      "date": "2026-04-08",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 6-8 Apr 2026; the decision is announced on the last day, usually at 10:00 IST.",
+      "source": "https://www.rbi.org.in/scripts/BS_PressReleaseDisplay.aspx?prid=62422"
+    },
+    {
+      "date": "2026-06-05",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 3-5 Jun 2026; the decision is announced on the last day, usually at 10:00 IST.",
+      "source": "https://www.rbi.org.in/scripts/BS_PressReleaseDisplay.aspx?prid=62422"
+    },
+    {
+      "date": "2026-08-05",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 3-5 Aug 2026; the decision is announced on the last day, usually at 10:00 IST.",
+      "source": "https://www.rbi.org.in/scripts/BS_PressReleaseDisplay.aspx?prid=62422"
+    },
+    {
+      "date": "2026-10-07",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 5-7 Oct 2026; the decision is announced on the last day, usually at 10:00 IST.",
+      "source": "https://www.rbi.org.in/scripts/BS_PressReleaseDisplay.aspx?prid=62422"
+    },
+    {
+      "date": "2026-12-04",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 2-4 Dec 2026; the decision is announced on the last day, usually at 10:00 IST.",
+      "source": "https://www.rbi.org.in/scripts/BS_PressReleaseDisplay.aspx?prid=62422"
+    },
+    {
+      "date": "2027-02-05",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 3-5 Feb 2027; the decision is announced on the last day, usually at 10:00 IST.",
+      "source": "https://www.rbi.org.in/scripts/BS_PressReleaseDisplay.aspx?prid=62422"
+    },
+    {
+      "date": "2026-01-29",
+      "timeIst": "00:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-01-28; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+    },
+    {
+      "date": "2026-03-18",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-03-18; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+    },
+    {
+      "date": "2026-04-29",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-04-29; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+    },
+    {
+      "date": "2026-06-17",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-06-17; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+    },
+    {
+      "date": "2026-07-29",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-07-29; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+    },
+    {
+      "date": "2026-09-16",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-09-16; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+    },
+    {
+      "date": "2026-10-28",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-10-28; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+    },
+    {
+      "date": "2026-12-10",
+      "timeIst": "00:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-12-09; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+    },
+    {
+      "date": "2027-01-28",
+      "timeIst": "00:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-01-27; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+    },
+    {
+      "date": "2027-03-17",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-03-17; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+    },
+    {
+      "date": "2027-04-28",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-04-28; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+    },
+    {
+      "date": "2027-06-09",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-06-09; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+    },
+    {
+      "date": "2027-07-28",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-07-28; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+    },
+    {
+      "date": "2027-09-15",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-09-15; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+    },
+    {
+      "date": "2027-10-27",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-10-27; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+    },
+    {
+      "date": "2027-12-09",
+      "timeIst": "00:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-12-08; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+    },
+    {
+      "date": "2026-01-13",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Dec 2025)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
+    },
+    {
+      "date": "2026-02-13",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Jan 2026)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
+    },
+    {
+      "date": "2026-03-11",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Feb 2026)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
+    },
+    {
+      "date": "2026-04-10",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Mar 2026)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
+    },
+    {
+      "date": "2026-05-12",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Apr 2026)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
+    },
+    {
+      "date": "2026-06-10",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (May 2026)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
+    },
+    {
+      "date": "2026-07-14",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Jun 2026)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
+    },
+    {
+      "date": "2026-08-12",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Jul 2026)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
+    },
+    {
+      "date": "2026-09-11",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Aug 2026)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
+    },
+    {
+      "date": "2026-10-14",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Sep 2026)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
+    },
+    {
+      "date": "2026-11-10",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Oct 2026)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
+    },
+    {
+      "date": "2026-12-10",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Nov 2026)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
+    }
+  ]
+}

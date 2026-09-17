@@ -2151,3 +2151,77 @@ export function useRefreshInstrumentMasters() {
     },
   })
 }
+
+// ---------------------------------------------------------------------------
+// Market factors: participant positioning, futures build-up, global cues, events.
+// ---------------------------------------------------------------------------
+
+/** FII/DII cash and participant-wise index positions; NSE posts them once each evening. */
+export function useMarketFlows(days = 20) {
+  return useQuery({
+    queryKey: ['marketFactors', 'flows', days],
+    queryFn: () => api.get<import('./factors').MarketFlows>(`/api/MarketFactors/flows?days=${days}`),
+    refetchInterval: 300_000,
+  })
+}
+
+/** Index futures build-up, daily and live against the last close; the live part moves with the feed. */
+export function useMarketFutures(days = 10) {
+  return useQuery({
+    queryKey: ['marketFactors', 'futures', days],
+    queryFn: () => api.get<import('./factors').MarketFutures>(`/api/MarketFactors/futures?days=${days}`),
+    refetchInterval: 15_000,
+  })
+}
+
+/** GIFT Nifty and overseas markets; the API shares one snapshot and refreshes it every two minutes. */
+export function useGlobalCues() {
+  return useQuery({
+    queryKey: ['marketFactors', 'global'],
+    queryFn: () => api.get<import('./factors').GlobalCues>('/api/MarketFactors/global'),
+    refetchInterval: 120_000,
+  })
+}
+
+export function useMarketEvents(from?: string, to?: string) {
+  return useQuery({
+    queryKey: ['marketFactors', 'events', from ?? null, to ?? null],
+    queryFn: () => {
+      const params = new URLSearchParams()
+      if (from) params.set('from', from)
+      if (to) params.set('to', to)
+      const query = params.toString()
+      return api.get<import('./factors').MarketEvents>(`/api/MarketFactors/events${query ? `?${query}` : ''}`)
+    },
+    refetchInterval: 600_000,
+  })
+}
+
+export function useAddMarketEvent() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: import('./factors').SaveMarketEvent) =>
+      api.post<import('./factors').MarketEvent>('/api/MarketFactors/events', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['marketFactors', 'events'] }),
+  })
+}
+
+export function useDeleteMarketEvent() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => api.delete<void>(`/api/MarketFactors/events/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['marketFactors', 'events'] }),
+  })
+}
+
+/** Fetch NSE's missing evening files now (admin). */
+export function useSyncMarketFactors() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.post<{ lines: string[] }>('/api/MarketFactors/sync?sessions=20'),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['marketFactors', 'flows'] })
+      qc.invalidateQueries({ queryKey: ['marketFactors', 'futures'] })
+    },
+  })
+}

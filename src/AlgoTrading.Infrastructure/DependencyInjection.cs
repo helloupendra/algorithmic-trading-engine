@@ -121,6 +121,17 @@ public static class DependencyInjection
         services.AddSingleton<IMarketCalendar, MarketCalendar>();
         services.AddSingleton<IMarketSessionService, MarketSessionService>();
 
+        // Market factors: NSE's evening files (participant OI, F&O bhavcopy, FII/DII),
+        // GIFT Nifty and overseas markets, and the event calendar.
+        services.AddHttpClient(AlgoTrading.Infrastructure.Services.MarketFactors.MarketFactorsSync.HttpClientName,
+            AlgoTrading.Infrastructure.Services.MarketFactors.MarketFactorsSync.Configure);
+        services.AddHttpClient(AlgoTrading.Infrastructure.Services.MarketFactors.GlobalCuesService.HttpClientName,
+            AlgoTrading.Infrastructure.Services.MarketFactors.GlobalCuesService.Configure);
+        services.AddSingleton<AlgoTrading.Infrastructure.Services.MarketFactors.MarketFactorsStatus>();
+        services.AddSingleton<AlgoTrading.Infrastructure.Services.MarketFactors.GlobalCuesService>();
+        services.AddScoped<AlgoTrading.Infrastructure.Services.MarketFactors.MarketFactorsSync>();
+        services.AddScoped<AlgoTrading.Infrastructure.Services.MarketFactors.MarketFactorsQueries>();
+
 
         services.AddScoped<ISimulationService, SimulationService>();
 

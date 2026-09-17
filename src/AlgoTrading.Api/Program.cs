@@ -136,6 +136,8 @@ builder.Services.AddHostedService<AlgoTrading.Api.Services.StrategyRiskGuardServ
 // Market Hours Service for automated halt/flatten at 3:15 PM
 builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketHoursService>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.NightlyArchiveService>();
+// NSE's evening market-factor files (participant OI, F&O bhavcopy, FII/DII), fetched after 18:00 IST.
+builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketFactorsSyncService>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketPulseSubscriptionService>();
 // Alert Subscriber Service for logic engine pub/sub
 builder.Services.AddHostedService<AlgoTrading.Api.Services.AlertSubscriberService>();

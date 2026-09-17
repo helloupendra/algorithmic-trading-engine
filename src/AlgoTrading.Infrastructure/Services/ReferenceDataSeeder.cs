@@ -32,6 +32,7 @@ public class ReferenceDataSeeder
         await SeedEquityGroupsAsync(cancellationToken);
         await SeedEquityGroupMembersAsync(cancellationToken);
         await SeedMarketCalendarAsync(cancellationToken);
+        await SeedMarketEventsAsync(cancellationToken);
         await SeedCandlePatternRulesAsync(cancellationToken);
     }
 
@@ -168,6 +169,101 @@ public class ReferenceDataSeeder
             await _dbContext.SaveChangesAsync(cancellationToken);
             _logger.LogInformation("Seeded {Holidays} market holiday(s) and {Sessions} special session(s).", addedHolidays, addedSessions);
         }
+    }
+
+    public const string MarketEventsSeedVersionKey = "seed.marketEvents.version";
+
+    /// <summary>
+    /// The shipped event calendar (<c>SeedData/market_events.json</c>): RBI and US Fed
+    /// policy decisions and US inflation prints, each with its official source.
+    /// </summary>
+    /// <remarks>
+    /// The file carries a version. Its rows are added once per version, and only
+    /// when no row with the same date, category and title exists, so an admin's
+    /// deletion of a shipped event survives restarts, and a new version of the
+    /// file adds only what it newly lists.
+    /// </remarks>
+    internal async Task SeedMarketEventsAsync(CancellationToken cancellationToken)
+    {
+        string path = Path.Combine(_hostEnvironment.ContentRootPath, "SeedData", "market_events.json");
+        if (!File.Exists(path))
+        {
+            _logger.LogWarning("Seed file not found: {Path}. The event calendar starts empty.", path);
+            return;
+        }
+
+        var file = JsonSerializer.Deserialize<MarketEventsSeedFile>(await File.ReadAllTextAsync(path, cancellationToken),
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new MarketEventsSeedFile();
+
+        var setting = await _dbContext.SystemSettings.FirstOrDefaultAsync(s => s.Key == MarketEventsSeedVersionKey, cancellationToken);
+        int seeded = setting is not null && int.TryParse(setting.Value, out var v) ? v : 0;
+        if (file.Version <= seeded) return;
+
+        var existing = (await _dbContext.MarketEvents.AsNoTracking()
+                .Select(e => new { e.Date, e.Category, e.Title })
+                .ToListAsync(cancellationToken))
+            .Select(e => (e.Date, e.Category, e.Title))
+            .ToHashSet();
+
+        int added = 0;
+        var now = DateTime.UtcNow;
+        foreach (var item in file.Events ?? new())
+        {
+            if (!DateOnly.TryParseExact(item.Date, "yyyy-MM-dd", out var date) || string.IsNullOrWhiteSpace(item.Title))
+            {
+                _logger.LogWarning("Skipped an unreadable market event in the seed file: {Date} {Title}.", item.Date, item.Title);
+                continue;
+            }
+
+            TimeOnly? time = TimeOnly.TryParseExact(item.TimeIst ?? string.Empty, "HH:mm", out var t) ? t : null;
+            string category = string.IsNullOrWhiteSpace(item.Category) ? "Other" : item.Category.Trim();
+            string title = item.Title.Trim();
+            if (!existing.Add((date, category, title))) continue;
+
+            _dbContext.MarketEvents.Add(new MarketEvent
+            {
+                Date = date,
+                TimeIst = time,
+                Region = string.IsNullOrWhiteSpace(item.Region) ? "IN" : item.Region.Trim().ToUpperInvariant(),
+                Category = category,
+                Title = title,
+                Importance = Math.Clamp(item.Importance, 1, 3),
+                Notes = item.Notes,
+                Source = item.Source,
+                UpdatedBy = "seed",
+                CreatedUtc = now,
+                UpdatedUtc = now,
+            });
+            added++;
+        }
+
+        if (setting is null)
+        {
+            setting = new SystemSetting { Key = MarketEventsSeedVersionKey, UpdatedBy = "seed", Reason = "market events seed file version" };
+            _dbContext.SystemSettings.Add(setting);
+        }
+        setting.Value = file.Version.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        setting.UpdatedUtc = now;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        _logger.LogInformation("Seeded {Count} market event(s) from version {Version} of the event calendar.", added, file.Version);
+    }
+
+    private sealed class MarketEventsSeedFile
+    {
+        public int Version { get; set; }
+        public List<MarketEventSeedItem>? Events { get; set; }
+    }
+
+    private sealed class MarketEventSeedItem
+    {
+        public string Date { get; set; } = string.Empty;
+        public string? TimeIst { get; set; }
+        public string? Region { get; set; }
+        public string? Category { get; set; }
+        public string Title { get; set; } = string.Empty;
+        public int Importance { get; set; } = 2;
+        public string? Notes { get; set; }
+        public string? Source { get; set; }
     }
 
     private sealed class MarketCalendarSeedFile
