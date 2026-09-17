@@ -47,7 +47,29 @@
     </script>
   </head>
   <body>
-    <div id="root"></div>
+    <!-- The first paint, before any JavaScript has parsed: the same candles the
+         app shows while it loads (components/CandleLoader). React replaces the
+         contents of #root on mount, so this needs no teardown. -->
+    <style>
+      #boot { position: fixed; inset: 0; display: grid; place-items: center; background: #04060c; }
+      #boot .b { display: flex; align-items: flex-end; gap: 7px; height: 64px; }
+      #boot .b span { display: block; width: 10px; border-radius: 2px; transform-origin: bottom; animation: bootc 1.9s cubic-bezier(.45,0,.3,1) infinite; }
+      #boot .b span:nth-child(odd) { background: #25d69a; }
+      #boot .b span:nth-child(even) { background: #ff5f5c; }
+      #boot .b span:nth-child(1) { height: 34%; animation-delay: 0s }
+      #boot .b span:nth-child(2) { height: 58%; animation-delay: .12s }
+      #boot .b span:nth-child(3) { height: 46%; animation-delay: .24s }
+      #boot .b span:nth-child(4) { height: 72%; animation-delay: .36s }
+      #boot .b span:nth-child(5) { height: 40%; animation-delay: .48s }
+      #boot .b span:nth-child(6) { height: 64%; animation-delay: .6s }
+      #boot .b span:nth-child(7) { height: 50%; animation-delay: .72s }
+      #boot .b span:nth-child(8) { height: 78%; animation-delay: .84s }
+      #boot .b span:nth-child(9) { height: 44%; animation-delay: .96s }
+      #boot p { margin: 22px 0 0; font: 500 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .18em; text-transform: uppercase; color: rgba(233,238,250,.42); text-align: center; }
+      @keyframes bootc { 0% { transform: scaleY(.25); opacity: .35 } 35% { transform: scaleY(1); opacity: 1 } 70% { transform: scaleY(.62); opacity: .85 } 100% { transform: scaleY(.25); opacity: .35 } }
+      @media (prefers-reduced-motion: reduce) { #boot .b span { animation: none } }
+    </style>
+    <div id="root"><div id="boot"><div><div class="b"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><p>Loading the console</p></div></div></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
