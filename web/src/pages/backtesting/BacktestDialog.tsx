@@ -166,11 +166,18 @@ export function BacktestConfigurator({
       new Set([...RESERVED_PARAM_KEYS, ...strike.omitKeys, 'long_conditions', 'short_conditions']),
     ),
   )
-  // A strategy that trades the instrument itself: no option chain, no strike, and
-  // "lots" counts shares.
-  const equity = (strategy.instrumentKind ?? '').toLowerCase() === 'equity'
-  const written = 'long_conditions' in parseParamDefaults(strategy.defaultParametersJson, new Set())
+  const defaults = parseParamDefaults(strategy.defaultParametersJson, new Set())
     .reduce<Record<string, string>>((all, row) => ({ ...all, [row.key]: row.value }), {})
+  const written = 'long_conditions' in defaults
+  // A strategy that can trade either the option or the instrument itself lets the
+  // run decide; one that only trades shares says so in the catalogue.
+  const choosesKind = 'instrument_kind' in defaults
+  const [kind, setKind] = useState<'options' | 'equity'>(() => {
+    const initialKind = (parseJsonObject(initial?.parametersJson)?.instrument_kind as string) ?? defaults.instrument_kind
+    return (strategy.instrumentKind ?? '').toLowerCase() === 'equity' || initialKind === 'equity' ? 'equity' : 'options'
+  })
+  // "lots" counts shares on an equity run, and there is no chain, strike or expiry.
+  const equity = (strategy.instrumentKind ?? '').toLowerCase() === 'equity' || kind === 'equity'
   const [conditions, setConditions] = useState(() => {
     const source = parseJsonObject(initial?.parametersJson ?? strategy.defaultParametersJson) ?? {}
     return {
@@ -190,7 +197,7 @@ export function BacktestConfigurator({
     if (underlying == null && firstSupported) setUnderlying(firstSupported.underlying)
   }, [underlying, firstSupported])
 
-  const coverage = useBacktestCoverage(underlying, strategy.id)
+  const coverage = useBacktestCoverage(underlying, strategy.id, equity ? 'equity' : undefined)
   // The query keeps the previous underlying's answer as a placeholder while
   // the new one loads; only an answer for the chosen underlying counts.
   const cov =
@@ -359,6 +366,7 @@ export function BacktestConfigurator({
       chargesPerLot: chg,
       parameters: {
         ...mergeParams(params, strikes.values),
+        ...(choosesKind ? { instrument_kind: kind } : {}),
         ...(written
           ? { long_conditions: textToConditions(conditions.long), short_conditions: textToConditions(conditions.short) }
           : {}),
@@ -442,6 +450,37 @@ export function BacktestConfigurator({
           </button>
         </div>
       )}
+
+          {choosesKind && (strategy.instrumentKind ?? '').toLowerCase() !== 'equity' && (
+            <div className="field">
+              <span className="field__label">What it trades</span>
+              <div className="seg" role="radiogroup" aria-label="What it trades">
+                {(['options', 'equity'] as const).map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    role="radio"
+                    aria-checked={kind === option}
+                    className={`seg__btn ${kind === option ? 'is-active' : ''}`}
+                    onClick={() => {
+                      setKind(option)
+                      setUnderlying(null)
+                      setResolution(null)
+                      setSeededFor(null)
+                      setValidation(null)
+                    }}
+                  >
+                    {option === 'options' ? 'Index options' : 'The stock itself'}
+                  </button>
+                ))}
+              </div>
+              <span className="field__help">
+                {kind === 'options'
+                  ? 'A signal buys the ATM option of the chosen index.'
+                  : 'A signal buys or short-sells the stock, in shares.'}
+              </span>
+            </div>
+          )}
 
           <div className="field">
             <span className="field__label">{equity ? 'Stock (required)' : 'Underlying (required)'}</span>

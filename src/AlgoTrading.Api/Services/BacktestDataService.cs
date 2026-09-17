@@ -69,6 +69,7 @@ public sealed class BacktestDataService
         string underlying,
         int? strategyId,
         string? resolution,
+        string? instrumentKind,
         CancellationToken cancellationToken)
     {
         underlying = underlying.Trim().ToUpperInvariant();
@@ -153,7 +154,8 @@ public sealed class BacktestDataService
             LastExpiry = span.LastCalendarExpiry?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
         };
 
-        bool equity = string.Equals(strategy?.InstrumentKind, "equity", StringComparison.OrdinalIgnoreCase);
+        bool equity = string.Equals(strategy?.InstrumentKind, "equity", StringComparison.OrdinalIgnoreCase)
+                      || string.Equals(instrumentKind, "equity", StringComparison.OrdinalIgnoreCase);
         var notes = new List<string>();
         if (equity)
         {
