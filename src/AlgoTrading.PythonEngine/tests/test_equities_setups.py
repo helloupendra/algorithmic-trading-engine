@@ -80,6 +80,25 @@ class WalkTests(unittest.TestCase):
         self.assertAlmostEqual(t.gross - t.charges, t.net)
 
 
+class SessionLevelTests(unittest.TestCase):
+    def test_previous_day_levels_come_from_the_bars_themselves(self):
+        # Close of the last bar, and the session's extremes, whatever the bhavcopy printed: Dhan's bars are
+        # adjusted for later bonuses and splits, so the bhavcopy's levels can be twice the bars' prices.
+        prev = session([(100, 104, 99, 101), (101, 108, 100, 107), (107, 107.5, 95, 96)])
+        self.assertEqual((96.0, 108.0, 95.0), st.session_levels(prev))
+
+    def test_prev_day_break_on_bar_levels_fires_where_bhavcopy_levels_would_not(self):
+        prev = session([(100, 104, 99, 101), (101, 105, 100, 102)])
+        close, high, low = st.session_levels(prev)
+        day = session(flat(3, 103.0) + [(104.0, 106.0, 103.8, 105.5), (105.5, 106.2, 105.4, 106.0)] + flat(60, 106.0))
+        on_bars = st.prev_day_break(day, st.Context(close, high, low, atr_pct=2.0))
+        # The same stock's unadjusted bhavcopy (a 1:1 bonus later): every level doubled.
+        on_bhavcopy = st.prev_day_break(day, st.Context(close * 2, high * 2, low * 2, atr_pct=2.0))
+        self.assertIsNotNone(on_bars)
+        self.assertEqual(1, on_bars.side)
+        self.assertTrue(on_bhavcopy is None or on_bhavcopy.side != 1)
+
+
 class OtherSetupTests(unittest.TestCase):
     def test_prev_day_break_needs_an_open_below_the_level(self):
         rows = [(99, 99.5, 98.8, 99.2)] * 3 + [(99.2, 100.6, 99.1, 100.5), (100.5, 100.8, 100.2, 100.6)] + flat(40, 100.6)

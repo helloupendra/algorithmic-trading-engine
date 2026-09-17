@@ -4,10 +4,12 @@ tools/index_history_download.py
 Long index history as files (data set D0): index candles (1 and 5 minutes) for
 NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY, SENSEX and INDIA VIX, then 1-minute
 option premiums (nearest expiry, ATM-5..ATM+5, CE and PE) for NIFTY, BANKNIFTY
-and SENSEX, month by month. See research/index_history.py.
+and SENSEX, month by month. --names and --offsets fetch other strikes, such as
+NIFTY ATM-10..-6 and +6..+10. See research/index_history.py.
 
 Usage (from src/AlgoTrading.PythonEngine, after market hours):
     python tools/index_history_download.py [--what all|candles|options] [--from 2020-08-01] [--to 2026-09-16]
+                                           [--names NIFTY,BANKNIFTY,SENSEX] [--offsets=-5:5]
                                            [--stop-at 08:30] [--spacing 0.5] [--limit 10]
 """
 
@@ -34,6 +36,8 @@ def main(argv=None) -> int:
     ap.add_argument("--what", choices=("all", "candles", "options"), default="all")
     ap.add_argument("--from", dest="start", default="2020-08-01")
     ap.add_argument("--to", dest="end")
+    ap.add_argument("--names", default="NIFTY,BANKNIFTY,SENSEX", help="underlyings for --what options")
+    ap.add_argument("--offsets", default="-5:5", help="strikes from ATM as inclusive ranges; write --offsets=-10:-6,6:10 (with =) because the value starts with a minus")
     ap.add_argument("--root", default=ih.ROOT)
     ap.add_argument("--stop-at", default="08:30")
     ap.add_argument("--spacing", type=float, default=0.5)
@@ -57,7 +61,7 @@ def main(argv=None) -> int:
     if args.what in ("all", "candles"):
         jobs += ih.candle_jobs(list(ih.INDICES), ["5", "1"], start, end)
     if args.what in ("all", "options"):
-        jobs += ih.option_jobs(["NIFTY", "BANKNIFTY", "SENSEX"], start, end)
+        jobs += ih.option_jobs([n.strip() for n in args.names.split(",") if n.strip()], start, end, ih.parse_offsets(args.offsets))
     if args.limit:
         jobs = jobs[:args.limit]
     h, m = (int(x) for x in args.stop_at.split(":"))
