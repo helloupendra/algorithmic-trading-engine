@@ -51,6 +51,20 @@ It never reads option candles or option-chain OI.
   candle complete by the end of that bar, so the newest bar has closed). The
   list is uncapped there (`feed.bars_upto` only appends), so the 500-bar
   limits under Pivots apply to live only.
+- **Backtest at a longer resolution.** With `timeframe` = `"auto"` the pivots
+  are drawn on the run's own candles when they are longer than 5 minutes
+  (15m, 1h, 1D); a 1m or 5m run, and live, stay on the 5m chart. Before
+  2026-09-20 a 1D run read the 5m list anyway: each daily step handed it ~75
+  new 5m bars but the counter advanced by one, so every pivot index was wrong,
+  and the 15-day warm-up held 11 daily bars against the 51 needed. Runs
+  179–181 (BANKNIFTY, 1D, Aug–Sep 2026) completed with no trades. The warm-up
+  is now sized from $4F$ bars at the run's resolution (100 daily bars ≈ 159
+  calendar days). A daily run carries positions from day to day (no EOD
+  square-off), closes a contract that expired at its last close, takes the
+  next expiry for an entry on an expiry day, and stamps what a daily candle
+  triggers at 15:30 IST (the candle is stored at 05:30 IST). Stops and
+  targets are checked once a day, on the close, so a 50-point stop can exit
+  hundreds of points past its level.
 - **Session window:** none of its own. It evaluates from the first tick the
   runner receives (runs 82–84 and 95–97 started at 09:17:39–09:17:45 IST)
   until the run stops; there is no last-entry time (run 82 entered at 14:05,
@@ -324,6 +338,7 @@ square-off at `eod_square_off_ist` (15:15 in run 75) instead of 15:30.
 | `pivot_forward` | 25 | $F$: bars to the right that must not exceed a candidate before it is a pivot; also the initial left window and the minimum-bars guard $2F+1$ | Fewer, larger swings; confirmation lags $5F$ minutes more; confirmed crossings are found further in the past; ghost legs span more bars, so their lines move more slowly | More pivots and legs, faster confirmation, steeper and more often redrawn lines, more signals |
 | `pivot_type` | `"Wick"` | `"Wick"`: pivots from $H_i / L_i$; anything else: from $\max/\min(O_i, C_i)$ | n/a — a choice. Body ignores wick-only spikes (the pre-open prints in Limitations would not have become pivots) but moves every other pivot too | |
 | `use_ghost_signals` | `true` | evaluate provisional legs on every tick | n/a. `false`: only confirmed legs, so every signal is found at pivot confirmation, up to $F$ bars after the crossing bar; 29 of the 30 entries in runs 82–84 and 95–97 were ghosts | |
+| `timeframe` | `"auto"` | the chart the pivots are drawn on: `"auto"` = the run's candles when longer than 5m, else 5m; any resolution (`"5m"`, `"15m"`, `"1D"`) forces it | n/a — a choice. A longer chart gives fewer, slower swings and holds positions for days on a daily run | |
 | `lots` (run parameter) | `default_lots` = 1 | lots per signal; P&L = points × lots × lot size | larger positions, same signals | |
 
 ## Worked example

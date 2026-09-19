@@ -30,14 +30,15 @@ with `[SKIP]` and listed in the summary's `skippedEntries`.
 
 from __future__ import annotations
 
+import math
 import sys
 import time
 import traceback
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-from core.resolutions import to_strategy_resolution
+from core.resolutions import is_daily, minutes_of, to_strategy_resolution
 from strategies.base_strategy import BarFrame, BaseStrategy, OptionContract, StrategyInput, StrategySignal
 from strategies.contract_selector import describe_requirement, fallback_strike_step, format_strike
 from strategies.signal_utils import signal_to_request, stamp_signal_metadata
@@ -48,15 +49,40 @@ from backtest.feed import HistoricalFeed
 from backtest.ledger import ApplyResult, LedgerPosition, PaperLedger, pnl_percent, pnl_points
 from backtest.rules import ExitManager, RunRules, TradeLimiter, parse_rules
 from backtest.run_spec import BacktestRun, RiskRules, parse_parameters, parse_run_row
-from backtest.timeutil import compact_stamp, format_ist, in_session, iso_utc, ist_date, ist_time, parse_utc, to_ist
+from backtest.timeutil import (IST, SESSION_CLOSE_IST, compact_stamp, format_ist, in_session, iso_utc, ist_date,
+                               ist_time, parse_utc, to_ist)
 from backtest.trailing import TrailLevels
 
 SNAPSHOT_BATCH = 500
 PROGRESS_INTERVAL_SECONDS = 2.0
 WARMUP_DAYS = 15
+#: Minutes in one NSE session (09:15-15:30), to turn intraday bars into days.
+SESSION_MINUTES = 375
 MAX_LOGGED_SKIPS = 200
 #: India's volatility index, as the VIX filters read it.
 VIX_SYMBOL = "NSE:INDIAVIX-INDEX"
+
+
+def warmup_days_for(strategy: BaseStrategy, resolution_code: str, default: int = WARMUP_DAYS) -> int:
+    """
+    Calendar days of index history to load before the range so the strategy
+    has the bars it says it needs (`warmup_bars`) at the run's resolution.
+    Fifteen days hold ~1,100 5-minute bars but only ~11 daily ones, which left
+    a daily run of a 51-bar strategy with nothing to evaluate: the window has
+    to follow the bar length, not stay fixed. Never less than `default`.
+    """
+    bars = getattr(strategy, "warmup_bars", None)
+    if callable(bars):
+        bars = bars()
+    if not isinstance(bars, int) or bars <= 0:
+        return default
+    if is_daily(resolution_code):
+        sessions = bars
+    else:
+        sessions = math.ceil(bars / max(1, SESSION_MINUTES // max(1, minutes_of(resolution_code))))
+    # Sessions to calendar days: five sessions a week, plus room for holidays.
+    return max(default, math.ceil(sessions * 7 / 5 * 1.1) + 5)
+
 
 ProgressCallback = Callable[[Dict[str, Any]], None]
 Logger = Callable[[str], None]
@@ -166,7 +192,10 @@ class BacktestSession:
         self.strategy = strategy
         self.on_progress = on_progress
         self.log = log
-        self.warmup_days = warmup_days
+        self.warmup_days = warmup_days_for(strategy, run.resolution_code, warmup_days)
+        #: A daily candle is a whole session, so a daily run holds positions
+        #: from one day to the next instead of squaring off at the day's end.
+        self.carries_overnight = is_daily(run.resolution_code)
         self.progress_interval = progress_interval
         self.snapshot_batch = max(1, min(int(snapshot_batch), 5000))
 
@@ -175,7 +204,7 @@ class BacktestSession:
         self.broker_linked = self._resolve_broker_linked(broker_linked)
         self.lot_size, self.lot_size_source = self._resolve_lot_size(lot_size, lot_size_source)
 
-        self.feed = HistoricalFeed(api, run, broker_linked=self.broker_linked, warmup_days=warmup_days, log=log)
+        self.feed = HistoricalFeed(api, run, broker_linked=self.broker_linked, warmup_days=self.warmup_days, log=log)
         self.resolver = ContractResolver(api, run.underlying, log=log)
         #: The run's own rules: limits, extra exits, contract choice and costs.
         self.rules: RunRules = parse_rules(run.params)
@@ -422,7 +451,9 @@ class BacktestSession:
             bars=bars,
             # The expiry is what the expiry-day rules judge on, and a strategy that
             # wants it no longer has to work it out again.
-            metadata={"source": source, "expiry_date": expiry or ""},
+            # The run's bar length, so a strategy written for one timeframe can
+            # read the candles the run is actually stepping through.
+            metadata={"source": source, "expiry_date": expiry or "", "resolution": self.run.resolution},
         )
 
     # --- square-off / risk --------------------------------------------------
@@ -926,8 +957,10 @@ class BacktestSession:
 
     def _start_day(self, day: date, t: datetime) -> None:
         previous = self._day
+        if self.carries_overnight and previous.last_t is not None:
+            self._settle_expired(day, previous.last_t)
         if previous.day is not None and previous.last_t is not None and self.ledger.has_open() \
-                and self.run.eod_square_off is not None and not previous.squared_off:
+                and self.run.eod_square_off is not None and not previous.squared_off and not self.carries_overnight:
             reason = f"End-of-day square-off {self.run.eod_square_off_ist} IST"
             self.log(f"[EOD] {previous.day.isoformat()} ended with open positions before {self.run.eod_square_off_ist} IST; squaring off at the last close")
             closed = self._square_off(previous.last_t, reason)
@@ -944,9 +977,31 @@ class BacktestSession:
             self.trails.overall.reset(TrailLevels.RUN)
         self.sessions.add(day)
 
+    def _settle_expired(self, day: date, last_t: datetime) -> None:
+        """
+        Closes carried option positions whose contract expired before `day`, at
+        the contract's last close. Only daily runs carry positions across
+        sessions; without this a position would sit on a dead contract, marked
+        at its final price, until the range ended.
+        """
+        expired = []
+        for position in self.ledger.open_positions():
+            expiry = self.resolver.expiry_of(position.symbol)
+            if expiry and expiry < day.isoformat():
+                expired.append(((position.group_id, position.symbol), expiry))
+        if not expired:
+            return
+        when = iso_utc(last_t)
+        for (key, expiry) in expired:
+            reason = f"Contract expired on {expiry}; settled at its last close"
+            signals = self.ledger.close_positions(
+                [key], lambda symbol: self.feed.option_last_close(symbol, last_t), when, reason, self.run.strategy_name)
+            if self._apply_close_signals(signals, last_t, None, None, "EXPIRY"):
+                self.log(f"[EXPIRY] {key[1]} expired on {expiry}; closed at its last close")
+
     def _eod_check(self, t: datetime, spot: float, atm: Any) -> None:
         eod = self.run.eod_square_off
-        if eod is None or self._day.squared_off or ist_time(t) < eod:
+        if self.carries_overnight or eod is None or self._day.squared_off or ist_time(t) < eod:
             return
         if self.ledger.has_open():
             self.log(f"[EOD] {format_ist(t)} IST square-off")
@@ -964,6 +1019,19 @@ class BacktestSession:
             f"(risk rules enforced by the engine every bar: leg → group → overall on total P&L)"
             + (f" run rules: {self.rules.describe()}" if self.rules.is_set else "")
         )
+        if self.carries_overnight:
+            self.log("[CONFIG] daily candles: positions carry from one session to the next; "
+                     "no end-of-day square-off, an expired contract is closed at its last close, "
+                     "and entries on an expiry day take the next expiry")
+            if self.risk.is_set:
+                self._note("Daily candles: stops and targets are checked once a day, on the close, "
+                           "so an exit can land well past its level.")
+            if run.eod_square_off is not None:
+                self._note(f"Daily candles: the {run.eod_square_off_ist} IST end-of-day square-off does not apply; "
+                           "positions carry until an exit, a stop, their contract's expiry or the end of the range.")
+        if self.warmup_days != WARMUP_DAYS:
+            self.log(f"[CONFIG] warm-up window {self.warmup_days} calendar days for "
+                     f"{getattr(self.strategy, 'warmup_bars', '?')} {run.resolution} bars")
         self.state = self.strategy.initialize_state()
         self.feed.load(self.resolutions)
 
@@ -1023,6 +1091,10 @@ class BacktestSession:
         last_bar: Optional[BarFrame] = None
         for bar in driver:
             t = parse_utc(bar.timestamp_utc)
+            if self.carries_overnight:
+                # A daily candle is stored at midnight UTC (05:30 IST) but is only
+                # known at the close: fills, marks and exits happen at 15:30 IST.
+                t = datetime.combine(ist_date(t), SESSION_CLOSE_IST, tzinfo=IST).astimezone(t.tzinfo)
             day = ist_date(t)
             if self._day.day != day:
                 self._start_day(day, t)
@@ -1031,7 +1103,10 @@ class BacktestSession:
             if run.is_equity:
                 expiry, atm = None, None
             else:
-                expiry = self.resolver.expiry_for(day) if self.resolver.expiries else None
+                # A daily bar is traded at the session close, when that day's
+                # contract has already expired: a daily run takes the next one.
+                trade_day = day + timedelta(days=1) if self.carries_overnight else day
+                expiry = self.resolver.expiry_for(trade_day) if self.resolver.expiries else None
                 atm = self.resolver.atm(spot, self.step)
 
             self._eod_check(t, spot, atm)

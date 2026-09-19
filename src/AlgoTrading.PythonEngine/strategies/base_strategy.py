@@ -205,6 +205,11 @@ class BaseStrategy:
         """
         return {}
 
+    #: How many bars of the run's resolution the strategy needs before its
+    #: first real evaluation; the backtest sizes its warm-up window from it.
+    #: None keeps the default window (15 calendar days).
+    warmup_bars: Optional[int] = None
+
     @classmethod
     def get_data_requirements(cls) -> List[DataRequirement]:
         """

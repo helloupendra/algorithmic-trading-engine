@@ -1,6 +1,7 @@
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.resolutions import minutes_of, to_strategy_resolution
 from strategies.base_strategy import BaseStrategy, StrategyInput, StrategySignal, DataRequirement
 
 
@@ -16,7 +17,8 @@ class GhostTangentCrossingsStrategy(BaseStrategy):
         "ellipse-tangent trigger line from the last swing; a confirmed or early ('ghost') close through the "
         "line buys the ATM call on an upside break or the ATM put on a downside break. Profits when the "
         "break follows through; there is no built-in exit, so use the run's stop-loss/target. Needs "
-        "5-minute index bars (about 15 days of history for warmup) plus live spot ticks."
+        "5-minute index bars (about 15 days of history for warmup) plus live spot ticks. A backtest at a "
+        "longer resolution (15m, 1h, 1D) draws the pivots on that chart instead."
     )
     category = "Directional"
     legs_summary = "Buy ATM CE on an up-break, or Buy ATM PE on a down-break"
@@ -25,6 +27,9 @@ class GhostTangentCrossingsStrategy(BaseStrategy):
         "pivot_forward": 25,
         "pivot_type": "Wick",
         "use_ghost_signals": True,
+        # "auto": the run's own candles when they are longer than 5 minutes,
+        # else 5m. Any resolution ("5m", "15m", "1D") forces that chart.
+        "timeframe": "auto",
     }
 
     @classmethod
@@ -39,8 +44,32 @@ class GhostTangentCrossingsStrategy(BaseStrategy):
         self.pivot_forward = int(params.get("pivot_forward", self.default_params["pivot_forward"]))
         self.pivot_type = str(params.get("pivot_type", self.default_params["pivot_type"]))
         self.use_ghost_signals = bool(params.get("use_ghost_signals", self.default_params["use_ghost_signals"]))
+        self.timeframe = str(params.get("timeframe") or self.default_params["timeframe"]).strip()
         # Lots per leg; the runner converts BUY/SELL into a one-leg OPEN_GROUP of this size.
         self.lots = self.lots_from(params, self.default_lots)
+
+    @property
+    def warmup_bars(self) -> int:
+        """Bars the pivots need before the first line can be drawn, with room for two opposite pivots."""
+        return self.pivot_forward * 4
+
+    def chart(self, inp: StrategyInput) -> str:
+        """
+        The candles the pivots are drawn on. The strategy was written for the
+        5-minute chart; a run stepping through longer candles (a 1D backtest)
+        must read those, because the bar counter advances once per new bar it
+        sees: fed 75 fresh 5-minute bars per daily step, every pivot index was
+        wrong and the run completed with no trades at all.
+        """
+        if self.timeframe and self.timeframe.lower() != "auto":
+            return to_strategy_resolution(self.timeframe)
+        run = (inp.metadata or {}).get("resolution")
+        try:
+            if run and minutes_of(run) > 5:
+                return to_strategy_resolution(run)
+        except ValueError:
+            pass
+        return "5m"
 
     def initialize_state(self) -> Dict[str, Any]:
         return {
@@ -252,7 +281,7 @@ class GhostTangentCrossingsStrategy(BaseStrategy):
     def on_bar(self, state: Dict[str, Any], inp: StrategyInput) -> List[StrategySignal]:
         signals = []
         
-        bars = inp.bars.get("5m", {}).get("index", [])
+        bars = inp.bars.get(self.chart(inp), {}).get("index", [])
         if not bars:
             return signals
 

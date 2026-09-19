@@ -91,6 +91,13 @@ class ContractResolver:
             self._expiries = sorted(dates)
         return self._expiries
 
+    def expiry_of(self, symbol: str) -> Optional[str]:
+        """The expiry of a contract this resolver has looked up, or None for anything else."""
+        for (expiry, _strike, _type), contract in self._contracts.items():
+            if contract is not None and contract.symbol == symbol:
+                return expiry
+        return None
+
     def expiry_for(self, ist_day: Union[date, str]) -> Optional[str]:
         """Earliest expiry on or after the bar's IST date (None when the master has none)."""
         wanted = _date_str(ist_day)
