@@ -18,24 +18,24 @@ import { useEffect, useRef, useState } from 'react'
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr'
 import { api, API_BASE_URL, tokenStore } from './api'
 import type {
+  AlertEvent,
   BackfillHistoryResponse,
   BacktestBackfillRequest,
   BacktestBackfillResponse,
   BacktestCoverageResponse,
   BacktestEquity,
-  InstrumentMastersResponse,
-  PruneWatchlistResponse,
-  StaleWatchlistResponse,
   BacktestRunSummary,
   BacktestRunView,
   BrokerSessionInfo,
   CandleDto,
+  ChainPollerStatus,
   DerivativeExpiry,
   EquitySnapshot,
   FnoUnderlying,
   IngestorProcessStatus,
   IngestorStatus,
   Instrument,
+  InstrumentMastersResponse,
   KillSwitchState,
   LiveBar,
   LiveFeed,
@@ -45,21 +45,23 @@ import type {
   LiveTick,
   LiveWatchlistItem,
   MarketSessionInfo,
-  OptionChainItem,
-  ChainPollerStatus,
   OptionChain,
+  OptionChainItem,
   OptionChainSeries,
   PaperOrder,
   PaperOrderRow,
   PaperPosition,
   PerformanceMetrics,
+  PruneWatchlistResponse,
   RiskEvent,
+  RiskExposureResponse,
   RiskLimits,
-  AlertEvent,
   SimulationPortfolio,
   SimulationRun,
   SimulationSignal,
+  SmcStructure,
   StaleQuote,
+  StaleWatchlistResponse,
   StartBacktestRequest,
   StartBacktestResponse,
   StartStrategyRequest,
@@ -71,7 +73,6 @@ import type {
   StrategyLiveView,
   UpdateRunRiskRequest,
   UpdateRunRiskResponse,
-  RiskExposureResponse,
 } from './types'
 import type { MeResponse } from './api'
 import type { SystemHostReport } from './system'
@@ -684,6 +685,36 @@ export function useStoredCandles(
       ),
     enabled: !!symbol,
     staleTime: 60_000,
+  })
+}
+
+/**
+ * Market structure for one symbol and timeframe: the candles and the marks read
+ * from them come back together, so the chart never draws a mark against a
+ * different series than it was computed on.
+ */
+export function useSmcStructure(params: {
+  symbol: string | null
+  resolution: string
+  fromDate?: string
+  toDate?: string
+  method: string
+  breakOn: string
+  inducement: string
+  includeLive: boolean
+}) {
+  const { symbol, resolution, fromDate, toDate, method, breakOn, inducement, includeLive } = params
+  const range = (fromDate ? `&fromDate=${fromDate}` : '') + (toDate ? `&toDate=${toDate}` : '')
+  return useQuery({
+    queryKey: ['smc', symbol, resolution, fromDate, toDate, method, breakOn, inducement, includeLive],
+    queryFn: () =>
+      api.get<SmcStructure>(
+        `/api/Smc/structure?symbol=${encodeURIComponent(symbol!)}&resolution=${resolution}` +
+          `${range}&method=${method}&breakOn=${breakOn}&inducement=${inducement}&includeLive=${includeLive}`,
+      ),
+    enabled: !!symbol,
+    staleTime: 30_000,
+    refetchInterval: includeLive ? POLL_SLOW : false,
   })
 }
 

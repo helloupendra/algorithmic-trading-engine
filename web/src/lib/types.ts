@@ -1731,3 +1731,67 @@ export interface OptionChainPosition {
   targetPrice: number | null
   openedUtc: string
 }
+
+/* --- market structure (Smart Money Concepts) -------------------------- */
+
+export interface SmcCandle {
+  timestampUtc: string
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+  live: boolean
+}
+
+export interface SmcSwing {
+  kind: 'high' | 'low'
+  /** "HH", "HL", "LH", "LL", or null for the first swing of its kind. */
+  label: string | null
+  price: number
+  timeUtc: string
+  /** The candle that made it a structural point: nothing is drawn before this. */
+  confirmedTimeUtc: string
+  /** True for a swing the structure turned on, as against a pullback inside a leg. */
+  major: boolean
+}
+
+export interface SmcEvent {
+  kind: 'BOS' | 'CHOCH'
+  direction: 'bullish' | 'bearish'
+  level: number
+  levelTimeUtc: string
+  breakTimeUtc: string
+  breakPrice: number
+}
+
+export interface SmcInducement {
+  kind: 'high' | 'low'
+  level: number
+  timeUtc: string
+  sweptTimeUtc: string | null
+  /** Where the leg ended for one that was never taken; null while it still stands. */
+  endedTimeUtc: string | null
+}
+
+export interface SmcStructure {
+  symbol: string
+  resolution: string
+  method: string
+  strength: number
+  breakOn: string
+  inducement: string
+  candles: SmcCandle[]
+  swings: SmcSwing[]
+  events: SmcEvent[]
+  inducements: SmcInducement[]
+  trend: 'none' | 'bullish' | 'bearish'
+  protectedLevel: number | null
+  breakLevel: number | null
+  inducementTaken: boolean
+  inducementLevel: number | null
+  liveCandles: number
+  /** Stored candles stamped outside the trading session, which were left out. */
+  droppedOutsideSession: number
+  note: string | null
+}

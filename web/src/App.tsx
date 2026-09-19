@@ -51,6 +51,7 @@ import { OptionInterestPage } from './pages/data/OptionInterestPage'
 import { LiveFeedsPage } from './pages/data/LiveFeedsPage'
 import { CommodityPage } from './pages/data/CommodityPage'
 import { HistoricalDataPage } from './pages/data/HistoricalDataPage'
+import { StructurePage } from './pages/data/StructurePage'
 import { InstrumentsFnoPage } from './pages/data/InstrumentsFnoPage'
 import { NotebookPage } from './pages/notebook/NotebookPage'
 import { WhiteboardPage } from './pages/notebook/WhiteboardPage'
@@ -141,6 +142,7 @@ export default function App() {
                   <Route path="/admin/data/movers" element={<MarketMoversPage />} />
                   <Route path="/admin/data/factors" element={<MarketFactorsPage />} />
                   <Route path="/admin/data/historical" element={<HistoricalDataPage />} />
+                  <Route path="/admin/data/structure" element={<StructurePage />} />
                   <Route path="/admin/data/instruments" element={<InstrumentsFnoPage />} />
 
                   {/* v1 modules, awaiting their rebuild. */}

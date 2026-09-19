@@ -1,0 +1,173 @@
+/* Market structure (SMC): a chart-first page — toolbar, chart, the state it
+   reads, then the legend that says what each mark means. */
+
+.smc__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.smc__bar--marks {
+  gap: 8px;
+}
+
+.smc__symbol {
+  min-width: 260px;
+  flex: 0 1 320px;
+}
+
+.smc__stage {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 8px 8px 4px;
+  margin-bottom: 12px;
+}
+
+.smc__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.smc__stat {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.smc__stat-label {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.smc__stat-value {
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  color: var(--text);
+}
+
+.smc__stat-note {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.smc__trend--bullish {
+  color: var(--pos);
+}
+
+.smc__trend--bearish {
+  color: var(--neg);
+}
+
+.smc__note {
+  color: var(--text-2);
+  font-size: 12px;
+  margin: 0 0 12px;
+}
+
+.smc__legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.smc__legend li {
+  display: grid;
+  grid-template-columns: 26px 1fr;
+  align-items: start;
+  gap: 8px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.smc__key {
+  margin-top: 8px;
+  height: 0;
+  border-top-width: 2px;
+  border-top-style: solid;
+}
+
+.smc__key--swing {
+  height: 8px;
+  width: 8px;
+  margin: 5px 0 0 8px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--pos);
+}
+
+.smc__key--bos {
+  border-top-color: var(--pos);
+}
+
+.smc__key--choch {
+  border-top-color: var(--neg);
+  border-top-style: dashed;
+}
+
+.smc__key--idm {
+  border-top-color: var(--text-3);
+  border-top-style: dotted;
+}
+
+.smc__fineprint {
+  margin: 12px 0 0;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.smc__head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 2px 0 10px;
+}
+
+.smc__title {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: 0.01em;
+}
+
+.smc__subtitle {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.smc__last {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.smc__last-price {
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.smc__last-change {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.smc__last-time {
+  font-size: 11px;
+  color: var(--text-3);
+}
