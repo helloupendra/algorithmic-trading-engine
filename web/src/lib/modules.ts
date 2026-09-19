@@ -170,6 +170,12 @@ export const DATA_SECTIONS = [
     end: false,
   },
   {
+    route: '/admin/data/structure',
+    label: 'Market structure',
+    icon: IconCandles,
+    end: false,
+  },
+  {
     route: '/admin/data/instruments',
     label: 'Instruments & F&O',
     icon: IconServer,

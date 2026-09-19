@@ -425,6 +425,7 @@ const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]>
   ['/admin/data/chain', 'Data', 'Option chain'],
   ['/admin/data/open-interest', 'Data', 'Open interest'],
   ['/admin/data/historical', 'Data', 'Historical'],
+  ['/admin/data/structure', 'Data', 'Market structure'],
   ['/admin/data/instruments', 'Data', 'Instruments & F&O'],
   ['/admin/data/movers', 'Data', 'Market movers'],
   ['/admin/data/factors', 'Data', 'Market factors'],
