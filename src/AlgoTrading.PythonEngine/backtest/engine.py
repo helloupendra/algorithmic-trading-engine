@@ -453,7 +453,11 @@ class BacktestSession:
             # wants it no longer has to work it out again.
             # The run's bar length, so a strategy written for one timeframe can
             # read the candles the run is actually stepping through.
-            metadata={"source": source, "expiry_date": expiry or "", "resolution": self.run.resolution},
+            # The groups still open, so a strategy with an exit of its own can
+            # tell that the run's stop-loss, target or square-off closed its
+            # position without it.
+            metadata={"source": source, "expiry_date": expiry or "", "resolution": self.run.resolution,
+                      "open_groups": self.ledger.open_groups()},
         )
 
     # --- square-off / risk --------------------------------------------------

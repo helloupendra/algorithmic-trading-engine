@@ -109,7 +109,9 @@ one whose $|\Delta|$ is closest to `target_delta` (0.5). One leg, bought, of
 - the trend.
 
 No entry is taken when:
-- the chain is older than `max_chain_age_seconds` (180);
+- the chain is more than `max_chain_age_seconds` (180) away from the candle in
+  either direction — older, or captured after it, which in a replay would be
+  information the candle could not have had;
 - its spot is more than `max_spot_gap_pct` (0.35%) from the index close;
 - it has no ATM IV.
 
@@ -158,7 +160,7 @@ In order of precedence:
 | `entry_end` | 14:45 | Last entry (IST) | Later entries, less time to work | Earlier stop |
 | `expiry_day_entry_end` | 13:30 | Last entry on the chain's expiry day | More expiry-day theta risk | Less |
 | `max_trades_per_session` | 3 | Entries per day | More trades | Fewer |
-| `max_chain_age_seconds` | 180 | Oldest chain the strategy trades on | Tolerates a lagging recorder | Blocks sooner |
+| `max_chain_age_seconds` | 180 | How far from the candle a chain may be captured, either side | Tolerates a lagging recorder | Blocks sooner |
 | `max_spot_gap_pct` | 0.35 | Largest chain-spot vs index-close gap | Tolerates a mismatch | Blocks sooner |
 | `chain_refresh_seconds` | 20 | Seconds between chain fetches | Fewer API calls | Fresher chain |
 | `lots` | 1 | Lots per leg | Larger position | — |
