@@ -13,6 +13,7 @@ using AlgoTrading.Infrastructure.Providers.Angel;
 using AlgoTrading.Infrastructure.Providers.Dhan;
 using AlgoTrading.Infrastructure.Providers.Fyers;
 using AlgoTrading.Infrastructure.Providers.Replay;
+using AlgoTrading.Infrastructure.Providers.SimBroker;
 using AlgoTrading.Infrastructure.Providers.TrueData;
 using AlgoTrading.Infrastructure.Services;
 using AlgoTrading.Infrastructure.Session;
@@ -75,6 +76,7 @@ public static class DependencyInjection
         services.AddTrueDataProvider(configuration, catalogSeed, credentialFallbacks);
         services.AddDhanProvider(configuration, catalogSeed, credentialFallbacks);
         services.AddAngelProvider(configuration, catalogSeed, credentialFallbacks);
+        services.AddSimBrokerProvider(configuration, catalogSeed, credentialFallbacks);
         services.AddReplayProvider(catalogSeed);
 
         services.AddScoped<IProviderRegistry, ProviderRegistry>();
