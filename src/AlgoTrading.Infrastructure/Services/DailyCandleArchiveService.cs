@@ -108,19 +108,30 @@ public class DailyCandleArchiveService : IDailyCandleArchiveService
                     // nowhere on the first candle. The broker's own candles
                     // start at 09:15, and so do these. MCX has no pre-open.
                     .Where(b => !IsExchangePreOpen(symbol, b.BarStartUtc))
+                    // And nothing after the close. The vendors keep quoting the
+                    // day's last price for hours — NIFTYBANK arrived at 57 ticks
+                    // a minute until 20:00 IST on 2026-09-18 — and those bars
+                    // rolled up into flat candles a chart reads as a market that
+                    // traded without moving.
+                    .Where(b => !IsExchangeAfterClose(symbol, b.BarStartUtc))
                     .ToList();
                 result.LiveBarsRead += bars.Count;
 
-                // Pre-open candles written by earlier archive runs (before
-                // the rule above existed) are taken back out, so a chart of
-                // that day does not open on the auction's wick.
-                var stalePreOpen = await _db.Candles
+                // Candles written by earlier archive runs outside the session —
+                // before these rules existed — are taken back out, so a chart of
+                // that day neither opens on the auction's wick nor runs flat
+                // into the evening. Only rows this service owns are touched;
+                // the broker's own candles are never removed.
+                var outsideSession = await _db.Candles
                     .Where(c => c.Symbol == symbol && c.SourceKey == SourceKey && c.TimeStampUtc >= fromUtc && c.TimeStampUtc <= toUtc)
                     .ToListAsync(cancellationToken);
-                stalePreOpen = stalePreOpen.Where(c => IsExchangePreOpen(symbol, c.TimeStampUtc)).ToList();
-                if (stalePreOpen.Count > 0)
+                outsideSession = outsideSession
+                    .Where(c => IsExchangePreOpen(symbol, c.TimeStampUtc) || IsExchangeAfterClose(symbol, c.TimeStampUtc))
+                    .ToList();
+                if (outsideSession.Count > 0)
                 {
-                    _db.Candles.RemoveRange(stalePreOpen);
+                    _db.Candles.RemoveRange(outsideSession);
+                    result.OutsideSessionRemoved += outsideSession.Count;
                     await _db.SaveChangesAsync(cancellationToken);
                 }
 
@@ -144,9 +155,11 @@ public class DailyCandleArchiveService : IDailyCandleArchiveService
         }
 
         _logger.LogInformation(
-            "Candle archive for {Day}: {Symbols} symbols, {Bars} live bars, inserted {Inserted}, updated {Updated}, {Owned} owned by the broker, {Errors} errors.",
+            "Candle archive for {Day}: {Symbols} symbols, {Bars} live bars, inserted {Inserted}, updated {Updated}, "
+            + "{Owned} owned by the broker, {OutsideSession} removed as outside the session, {Errors} errors.",
             istDay, result.SymbolsWithLiveBars, result.LiveBarsRead,
-            result.CandlesInserted.Values.Sum(), result.CandlesUpdated.Values.Sum(), result.CandlesOwnedElsewhere, result.Errors.Count);
+            result.CandlesInserted.Values.Sum(), result.CandlesUpdated.Values.Sum(), result.CandlesOwnedElsewhere,
+            result.OutsideSessionRemoved, result.Errors.Count);
         return result;
     }
 
@@ -155,6 +168,17 @@ public class DailyCandleArchiveService : IDailyCandleArchiveService
         if (!symbol.StartsWith("NSE:", StringComparison.Ordinal) && !symbol.StartsWith("BSE:", StringComparison.Ordinal))
             return false;
         return IstTime.ToIst(barStartUtc).TimeOfDay < IstTime.SessionOpen;
+    }
+
+    /// <summary>
+    /// A minute after the equity close. Only NSE and BSE: MCX trades into the
+    /// night and its evening bars are the session, not an echo of it.
+    /// </summary>
+    private static bool IsExchangeAfterClose(string symbol, DateTime barStartUtc)
+    {
+        if (!symbol.StartsWith("NSE:", StringComparison.Ordinal) && !symbol.StartsWith("BSE:", StringComparison.Ordinal))
+            return false;
+        return IstTime.ToIst(barStartUtc).TimeOfDay >= IstTime.SessionClose;
     }
 
     private async Task WriteAsync(string symbol, string resolution, IReadOnlyList<ProviderHistoryBar> rolled, CandleArchiveResult result, CancellationToken ct)

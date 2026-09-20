@@ -27,16 +27,56 @@ public class LiveDataService : ILiveDataService
 
     private readonly TradingDbContext _dbContext;
     private readonly IProviderCatalog _providerCatalog;
+    private readonly IMarketSessionService _sessions;
 
     /// <summary>Lazily resolved once; the catalog is static metadata, not a query.</summary>
     private string? _defaultSourceKey;
 
     public LiveDataService(
         TradingDbContext dbContext,
-        IProviderCatalog providerCatalog)
+        IProviderCatalog providerCatalog,
+        IMarketSessionService sessions)
     {
         _dbContext = dbContext;
         _providerCatalog = providerCatalog;
+        _sessions = sessions;
+    }
+
+    /// <summary>
+    /// Whether a minute belongs to its exchange's trading session.
+    ///
+    /// The vendors keep publishing the last quote after the close — on
+    /// 2026-09-18 NIFTYBANK arrived at 57 ticks a minute until 20:00 IST, every
+    /// one carrying 56,358.70, the price it had closed at. Filed as bars they
+    /// became four and a half hours of flat candles, which the nightly archive
+    /// then copied into the candle table, and which a chart or a strategy reads
+    /// as a market that traded without moving. The ticks are still kept — they
+    /// are what the vendor sent — but a minute the exchange was not open does
+    /// not get a bar.
+    ///
+    /// The session comes from <see cref="IMarketSessionService"/>, so holidays,
+    /// MCX's split sessions and its daylight-saving close are already accounted
+    /// for; an exchange it does not know keeps its bars rather than losing them.
+    /// </summary>
+    private bool InSession(string symbol, DateTime barStartUtc)
+    {
+        var exchange = symbol.Contains(':') ? symbol.Split(':')[0].Trim().ToUpperInvariant() : string.Empty;
+        if (exchange.Length == 0) return true;
+
+        try
+        {
+            // NSE and BSE cash and derivatives share one set of hours, so the
+            // segment only has to separate the commodity exchange from them.
+            return _sessions.GetSessionInfo(barStartUtc, exchange, exchange == "MCX" ? "COM" : "CM").IsMarketOpen;
+        }
+        catch (NotSupportedException)
+        {
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return true;
+        }
     }
 
     /// <summary>
@@ -504,6 +544,12 @@ public class LiveDataService : ILiveDataService
                 0,
                 DateTimeKind.Utc);
 
+            if (!InSession(request.Symbol ?? string.Empty, barStartUtc))
+            {
+                await _dbContext.SaveChangesAsync(cancellationToken);
+                return;
+            }
+
             var existingBar = await _dbContext.LiveBars
                 .FirstOrDefaultAsync(x =>
                     x.Symbol == request.Symbol &&
@@ -791,6 +837,10 @@ public class LiveDataService : ILiveDataService
     {
         var barClockUtc = request.ExchangeTimestampUtc?.ToUniversalTime() ?? nowUtc;
         var barStartUtc = FloorToMinute(barClockUtc);
+        // The vendors keep quoting after the close; a minute outside the
+        // session gets no bar. See InSession.
+        if (!InSession(request.Symbol!, barStartUtc)) return;
+
         var key = (request.Symbol!, barStartUtc);
         var ltp = request.LastTradedPrice!.Value;
 
