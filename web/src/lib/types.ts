@@ -1774,6 +1774,14 @@ export interface SmcInducement {
   endedTimeUtc: string | null
 }
 
+/** One chart's candles plus the structure of the timeframes above it. */
+export interface SmcLadder {
+  symbol: string
+  chart: SmcStructure | null
+  /** Highest first; these carry no candles, only their state and marks. */
+  higher: SmcStructure[]
+}
+
 export interface SmcStructure {
   symbol: string
   resolution: string

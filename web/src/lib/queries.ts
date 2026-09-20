@@ -59,6 +59,7 @@ import type {
   SimulationPortfolio,
   SimulationRun,
   SimulationSignal,
+  SmcLadder,
   SmcStructure,
   StaleQuote,
   StaleWatchlistResponse,
@@ -710,6 +711,36 @@ export function useSmcStructure(params: {
     queryFn: () =>
       api.get<SmcStructure>(
         `/api/Smc/structure?symbol=${encodeURIComponent(symbol!)}&resolution=${resolution}` +
+          `${range}&method=${method}&breakOn=${breakOn}&inducement=${inducement}&includeLive=${includeLive}`,
+      ),
+    enabled: !!symbol,
+    staleTime: 30_000,
+    refetchInterval: includeLive ? POLL_SLOW : false,
+  })
+}
+
+/**
+ * The same structure on several timeframes at once. The last timeframe is the
+ * one drawn; the ones above it come back as state and marks, so a 5-minute
+ * chart can show the level the day is protecting without a second request.
+ */
+export function useSmcLadder(params: {
+  symbol: string | null
+  timeframes: string
+  fromDate?: string
+  toDate?: string
+  method: string
+  breakOn: string
+  inducement: string
+  includeLive: boolean
+}) {
+  const { symbol, timeframes, fromDate, toDate, method, breakOn, inducement, includeLive } = params
+  const range = (fromDate ? `&fromDate=${fromDate}` : '') + (toDate ? `&toDate=${toDate}` : '')
+  return useQuery({
+    queryKey: ['smc-ladder', symbol, timeframes, fromDate, toDate, method, breakOn, inducement, includeLive],
+    queryFn: () =>
+      api.get<SmcLadder>(
+        `/api/Smc/ladder?symbol=${encodeURIComponent(symbol!)}&timeframes=${encodeURIComponent(timeframes)}` +
           `${range}&method=${method}&breakOn=${breakOn}&inducement=${inducement}&includeLive=${includeLive}`,
       ),
     enabled: !!symbol,

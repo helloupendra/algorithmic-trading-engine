@@ -17,8 +17,9 @@ import { SmcChart, type SmcLayers } from '../../components/SmcChart'
 import { SymbolCombobox } from '../../components/SymbolCombobox'
 import { InlineError, Loading, Panel } from '../../components/ui'
 import { formatDateTime, formatPrice, shortSymbol } from '../../lib/format'
-import { useDataCoverage, useSmcStructure } from '../../lib/queries'
+import { useDataCoverage, useSmcLadder } from '../../lib/queries'
 import type { CoverageRow } from '../../lib/queries'
+import type { SmcStructure } from '../../lib/types'
 import './structure.css'
 
 type Resolution = '1' | '5' | '15' | 'D'
@@ -63,12 +64,36 @@ function Toggle({
   )
 }
 
+function LadderRow({ tf, chart }: { tf: SmcStructure; chart: boolean }) {
+  const label = tf.trend === 'bullish' ? 'Bullish' : tf.trend === 'bearish' ? 'Bearish' : 'Not set'
+  const latest = tf.events.length > 0 ? tf.events[tf.events.length - 1] : null
+  return (
+    <div className={chart ? 'smc__rung smc__rung--chart' : 'smc__rung'}>
+      <span className="smc__rung-tf">{tf.resolution}</span>
+      <span className={`smc__rung-trend smc__trend--${tf.trend}`}>{label}</span>
+      <span className="smc__rung-level">
+        turns on <b>{tf.protectedLevel != null ? formatPrice(tf.protectedLevel) : '—'}</b>
+      </span>
+      <span className="smc__rung-level">
+        {tf.trend === 'bearish' ? 'breaks below' : 'breaks above'}{' '}
+        <b>{tf.breakLevel != null ? formatPrice(tf.breakLevel) : '—'}</b>
+      </span>
+      <span className="smc__rung-idm">{tf.inducementTaken ? 'inducement taken' : 'waiting for the inducement'}</span>
+      <span className="smc__rung-last">
+        {latest ? `${latest.kind === 'CHOCH' ? 'CHoCH' : 'BOS'} ${formatDateTime(latest.breakTimeUtc)}` : 'nothing broken'}
+      </span>
+    </div>
+  )
+}
+
 export function StructurePage() {
   const [symbol, setSymbol] = useState(DEFAULT_SYMBOL)
   const [search, setSearch] = useState('')
   const [resolution, setResolution] = useState<Resolution>('15')
   const [range, setRange] = useState('5D')
-  const [layers, setLayers] = useState<SmcLayers>({ swings: true, breaks: true, inducements: true, minorSwings: false })
+  const [layers, setLayers] = useState<SmcLayers>({
+    swings: true, breaks: true, inducements: true, minorSwings: false, higher: true,
+  })
   const [breakOn, setBreakOn] = useState<'close' | 'wick'>('close')
   const [inducement, setInducement] = useState<'last' | 'first'>('last')
 
@@ -126,9 +151,16 @@ export function StructurePage() {
     return dateInput(d)
   }, [days, anchorUtc])
 
-  const structure = useSmcStructure({
+  // A day's pullback is an hour's whole trend, so the chart carries the
+  // timeframes above it: each is read from its own closed candles only.
+  const ABOVE: Record<Resolution, Resolution[]> = { '1': ['D', '15'], '5': ['D', '15'], '15': ['D'], D: [] }
+  const timeframes = [...ABOVE[resolution], resolution]
+    .map((r) => (r === 'D' ? '1D' : `${r}m`))
+    .join(',')
+
+  const structure = useSmcLadder({
     symbol,
-    resolution,
+    timeframes,
     fromDate,
     method: 'validPullback',
     breakOn,
@@ -136,7 +168,8 @@ export function StructurePage() {
     includeLive: resolution !== 'D',
   })
 
-  const data = structure.data
+  const data = structure.data?.chart ?? undefined
+  const higher = structure.data?.higher ?? []
   const events = data?.events ?? []
   const latest = events.length > 0 ? events[events.length - 1] : null
   const trendLabel = data?.trend === 'bullish' ? 'Bullish' : data?.trend === 'bearish' ? 'Bearish' : 'Not set yet'
@@ -207,6 +240,13 @@ export function StructurePage() {
           <Toggle on={layers.inducements} onClick={() => setLayers((l) => ({ ...l, inducements: !l.inducements }))}>
             IDM
           </Toggle>
+          <Toggle
+            on={layers.higher}
+            onClick={() => setLayers((l) => ({ ...l, higher: !l.higher }))}
+            title="The levels the higher timeframes are holding, drawn across the chart"
+          >
+            Higher TF
+          </Toggle>
         </div>
         <div className="seg" role="group" aria-label="A level is broken by">
           <Toggle on={breakOn === 'close'} onClick={() => setBreakOn('close')} title="A candle has to close through the level">
@@ -265,8 +305,22 @@ export function StructurePage() {
         </Panel>
       ) : (
         <>
+          {/* The nested reading, highest timeframe first: what each one is doing,
+              and the level it is holding. A row is the whole story of the one below. */}
+          {higher.length > 0 && (
+            <div className="smc__ladder" aria-label="Structure by timeframe">
+              {[...higher, ...(data ? [data] : [])].map((tf, i) => (
+                <LadderRow key={tf.resolution} tf={tf} chart={i === higher.length} />
+              ))}
+            </div>
+          )}
+
           <div className="smc__stage">
-            {structure.isLoading && !data ? <Loading /> : <SmcChart data={data} layers={layers} fitKey={`${symbol}|${resolution}|${range}`} />}
+            {structure.isLoading && !data ? (
+              <Loading />
+            ) : (
+              <SmcChart data={data} higher={higher} layers={layers} fitKey={`${symbol}|${resolution}|${range}`} />
+            )}
           </div>
 
           <div className="smc__stats">
@@ -282,7 +336,9 @@ export function StructurePage() {
               <span className="smc__stat-note">{latest ? formatDateTime(latest.breakTimeUtc) : 'nothing broken yet'}</span>
             </div>
             <div className="smc__stat">
-              <span className="smc__stat-label">Breaks structure above</span>
+              <span className="smc__stat-label">
+                Breaks structure {data?.trend === 'bearish' ? 'below' : 'above'}
+              </span>
               <span className="smc__stat-value">{data?.breakLevel != null ? formatPrice(data.breakLevel) : '—'}</span>
               <span className="smc__stat-note">
                 {data?.inducementTaken ? 'inducement taken' : 'waiting for the inducement'}

@@ -131,6 +131,29 @@ Python package, MQL5's *Swing Detector by Pullback (SMC)*, and the written
 teaching at dailypriceaction, innercircletrader and liquidityscan. None is a
 standards body; they are the most copied, not the most correct.
 
+## Several timeframes at once
+
+`GET /api/Smc/ladder?symbol=…&timeframes=1D,15m,5m` reads the same structure on
+each timeframe listed, highest first, and returns the last one with its candles
+and the ones above it as state and marks. Each is read only from its own closed
+candles, so a daily level shown on a five-minute chart is one the day had
+already set — the page cannot show a level the market did not know yet.
+
+This is the nested reading the method works from: a day's pullback is an hour's
+whole trend, and an hour's pullback is five minutes' whole trend. The three can
+disagree without contradicting each other — on 18 September 2026 BANKNIFTY read
+bearish on the day (protecting 58,012), bullish on the 15-minute chart
+(protecting 56,073) and bullish on the 5-minute one.
+
+The console draws it as a ladder above the chart, one rung per timeframe, and
+puts each higher timeframe's protected and break levels on the chart as price
+lines.
+
+Whether trading that alignment pays is a separate question, and the answer on
+NIFTY is in [docs/strategies/SmcStructureBreak.md](strategies/SmcStructureBreak.md):
+taking only the breaks that agree with the day was the worst configuration
+measured, and the one that looked like an edge did not survive a holdout.
+
 ## Not built yet
 
 Equal highs and lows (EQH/EQL) with a tolerance, order blocks, fair-value gaps,

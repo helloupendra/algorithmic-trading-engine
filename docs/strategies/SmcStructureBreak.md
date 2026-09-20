@@ -23,7 +23,7 @@ checked rather than argued about.
 
 | What | Symbol(s) | Resolution | History before the first signal | Where the platform gets it |
 |------|-----------|------------|---------------------------------|----------------------------|
-| index candles | the run's spot symbol (`NSE:NIFTY50-INDEX`, `NSE:NIFTYBANK-INDEX`, …) | the run's resolution, 5m by default (`timeframe`) | 150 closed candles (`warmup_bars`): a leg needs a swing, its pullback, the sweep and the break, and no swing is confirmed until a candle takes the liquidity of the one that made it | Backtest: `candles` (backfill). Live: `live_bars` 1m rows aggregated on read |
+| index candles | the run's spot symbol (`NSE:NIFTY50-INDEX`, `NSE:NIFTYBANK-INDEX`, …) | the run's resolution, 5m by default (`timeframe`); plus `bias_timeframe` when a bias is asked for | 150 closed candles (`warmup_bars`): a leg needs a swing, its pullback, the sweep and the break, and no swing is confirmed until a candle takes the liquidity of the one that made it | Backtest: `candles` (backfill). Live: `live_bars` 1m rows aggregated on read |
 | ticks | the same spot symbol | every tick | none | ingestor → Redis `market:ticks`; a tick only matters because it closes a candle |
 | option quotes | ATM CE and ATM PE of the nearest expiry (`strike_steps` moves them out of the money) | latest quote | none | the runner puts both contracts on the watchlist; the replay prices them from `option_history_bars` |
 
@@ -129,6 +129,8 @@ side.
 | `strike_steps` | `0` | Strikes out of the money on the underlying's grid; 0 is ATM | Cheaper premium, lower delta, more of the move needed to pay | — |
 | `break_on` | `"close"` | Whether a level is broken by a close or by a wick | `"wick"` fires earlier and more often, on moves that close back inside | — |
 | `inducement` | `"last"` | Which pullback must be taken first: the one the leg is on (`"last"`) or the leg's first (`"first"`) | `"first"` is stricter and can stall a whole leg | — |
+| `bias` | `"off"` | A higher timeframe as a gate: `"with"` takes only the breaks it agrees with (how SMC teaches multi-timeframe work), `"against"` only the ones it disagrees with | n/a — a choice, and the measurements above say what each did | |
+| `bias_timeframe` | `"1D"` | The timeframe the bias is read on, by the same rules | A slower bias that changes less often | A faster one that blocks less |
 | `exit_on_turn` | `true` | Close the position when the structure changes character against it | — | `false` leaves the exit entirely to the run's rules and 15:30 |
 | `lots` (run parameter) | `default_lots` = 1 | Lots per signal; P&L = points × lots × lot size | Bigger position, same signals | — |
 
@@ -192,6 +194,40 @@ already given back the move.
   The one positive cell is a single year of 106 trades, which is what a coin
   looks like when it lands the right way; the same configuration lost in the two
   years before it.
+
+- **The higher timeframe does not rescue it, and the way it is taught is the
+  worst of the three.** Smart Money Concepts teaches bias from a higher
+  timeframe and entry from a lower one, which `bias` implements. On 15-minute
+  entries with the daily structure as bias, one lot, real premiums and costs:
+
+  | `bias` | 2024 | 2025 | 2026 (to 16 Sep) | Per trade |
+  |---|---|---|---|---|
+  | `"off"` | −₹79,067 | −₹118,089 | +₹2,334 | −₹513 |
+  | `"with"` (as taught) | −₹45,545 | −₹92,323 | −₹10,974 | −₹855 |
+  | `"against"` | −₹34,101 | −₹17,149 | +₹13,308 | −₹188 |
+
+  Taking only the breaks that *agree* with the day is the worst configuration
+  measured anywhere in this file.
+
+- **The one thing that looked like an edge did not survive a holdout.** The
+  breaks that disagree with the daily structure do move the index: on the
+  15-minute chart, four hours later, +19.3 points on average against +1.4 for
+  any candle (n=384, t=+2.20), and the same sign in 2024, 2025 and 2026
+  separately. Traded as futures rather than options — no premium to decay, a
+  flat two points of cost a round trip, out at the session close —
+  2024 to 2026 came to **+₹92,580** on one lot.
+
+  Then the same rule was run on 2020-09 to 2023-12, a period untouched until
+  that moment: **−₹118,028**, with 2022 alone at −₹204,769. Over all six years:
+
+  | | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026 |
+  |---|---|---|---|---|---|---|---|
+  | Net, 1 futures lot | +₹2,047 | +₹93,165 | −₹204,769 | −₹8,472 | +₹1,399 | +₹30,011 | +₹69,116 |
+
+  793 trades, **−₹17,502 in total, −₹22 a trade**. Two good years, one very bad
+  one, and nothing in between: that is what noise looks like when it is measured
+  long enough. The research that produced these numbers is in
+  `private/research/smc/` (`mtf_quality.py`, `futures_proxy.py`).
 
 - **The break itself carries no edge on the index.** Options decay, so a losing
   option strategy can still hide a good signal. This one does not. Measured on

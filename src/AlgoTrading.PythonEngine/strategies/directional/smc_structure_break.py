@@ -81,6 +81,14 @@ class SmcStructureBreakStrategy(BaseStrategy):
         "inducement": "last",
         # Close the position when the structure changes character against it.
         "exit_on_turn": True,
+        # A second, higher timeframe read the same way, used as a bias:
+        #   "off"     the higher timeframe is ignored
+        #   "with"    take a break only when the higher timeframe agrees, which
+        #             is how Smart Money Concepts teaches multi-timeframe work
+        #   "against" take it only when the higher timeframe disagrees
+        # docs/strategies/SmcStructureBreak.md has what each did on NIFTY.
+        "bias": "off",
+        "bias_timeframe": "1D",
     }
 
     #: Candles the structure needs before its first tradable break. A leg needs a
@@ -88,9 +96,17 @@ class SmcStructureBreakStrategy(BaseStrategy):
     #: nothing until a candle takes the liquidity of the one before it.
     warmup_bars = 150
 
-    @classmethod
-    def get_data_requirements(cls) -> List[DataRequirement]:
-        return [DataRequirement(symbol_type="index", resolution="5m")]
+    def get_data_requirements(self) -> List[DataRequirement]:
+        """
+        The chart, and the bias timeframe when a run asks for one. This is an
+        instance method rather than a classmethod because the second feed
+        depends on the run's own parameters, and both runners ask the strategy
+        they are about to run rather than the class.
+        """
+        wanted = [DataRequirement(symbol_type="index", resolution="5m")]
+        if self.bias != "off" and self.bias_timeframe != "5m":
+            wanted.append(DataRequirement(symbol_type="index", resolution=self.bias_timeframe))
+        return wanted
 
     @classmethod
     def get_contract_requirements(cls, params: Optional[Dict[str, Any]] = None) -> List[ContractRequirement]:
@@ -111,6 +127,9 @@ class SmcStructureBreakStrategy(BaseStrategy):
         self.break_on = str(params.get("break_on") or self.default_params["break_on"]).strip().lower()
         self.inducement = str(params.get("inducement") or self.default_params["inducement"]).strip().lower()
         self.exit_on_turn = bool(params.get("exit_on_turn", self.default_params["exit_on_turn"]))
+        self.bias = str(params.get("bias") or self.default_params["bias"]).strip().lower()
+        self.bias_timeframe = to_strategy_resolution(
+            str(params.get("bias_timeframe") or self.default_params["bias_timeframe"]).strip())
         self.lots = self.lots_from(params, self.default_lots)
 
     # ------------------------------------------------------------------ setup --
@@ -135,6 +154,9 @@ class SmcStructureBreakStrategy(BaseStrategy):
             "reader": MarketStructure(break_on=self.break_on, inducement_mode=self.inducement),
             "seen": None,           # timestamp of the last candle fed to the reader
             "fed": 0,               # candles fed, which names the groups
+            # The higher timeframe read the same way, when a bias is asked for.
+            "bias": MarketStructure(break_on=self.break_on, inducement_mode=self.inducement),
+            "bias_fed": 0,
             "position": None,       # {"group_id", "direction", "symbol", "level"}
             "pending": None,        # a retest waiting to happen
             "day": None,            # the session the position was opened in
@@ -153,6 +175,9 @@ class SmcStructureBreakStrategy(BaseStrategy):
         events = self._feed(state, closed)
         if not closed:
             return []
+
+        if self.bias != "off":
+            self._feed_bias(state, inp)
 
         signals: List[StrategySignal] = []
         last = closed[-1]
@@ -173,6 +198,31 @@ class SmcStructureBreakStrategy(BaseStrategy):
             state["seen"] = stamp
             state["fed"] += 1
         return fired
+
+    def _feed_bias(self, state: Dict[str, Any], inp: StrategyInput) -> None:
+        """
+        The higher timeframe, read by a second reader. The engine only hands over
+        candles of that resolution once they have closed, so a daily bias informs
+        the sessions after it rather than its own.
+        """
+        bars = inp.bars.get(self.bias_timeframe, {}).get("index", [])
+        if not bars:
+            return
+        closed = bars if inp.mode == "OfflineReplay" else bars[:-1]
+        reader: MarketStructure = state["bias"]
+        for frame in closed[state["bias_fed"]:]:
+            reader.push(Bar(getattr(frame, "timestamp_utc", ""), float(frame.open), float(frame.high),
+                            float(frame.low), float(frame.close)))
+            state["bias_fed"] += 1
+
+    def _allowed(self, state: Dict[str, Any], direction: str) -> bool:
+        """Whether the higher timeframe lets this break through."""
+        if self.bias == "off":
+            return True
+        trend = state["bias"].trend
+        if self.bias == "with":
+            return trend == direction
+        return trend not in (direction, "none")
 
     def _sync(self, state: Dict[str, Any], inp: StrategyInput, last: Any) -> None:
         """
@@ -239,10 +289,12 @@ class SmcStructureBreakStrategy(BaseStrategy):
                 state["pending"] = None
 
         for event in events:
-            if not self._tradable(event):
+            if not self._tradable(event) or not self._allowed(state, event.direction):
                 continue
             reason = (f"{event.kind} {event.direction} through {event.level:g} "
                       f"(inducement taken at {state['reader'].describe().get('inducement_level') or 'the pullback'})")
+            if self.bias != "off":
+                reason += f", {self.bias} the {self.bias_timeframe} structure ({state['bias'].trend})"
             if self.entry == "retest":
                 state["pending"] = {"direction": event.direction, "level": event.level, "bars": self.retest_bars}
                 return
