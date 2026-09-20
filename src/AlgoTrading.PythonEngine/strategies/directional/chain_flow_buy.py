@@ -167,8 +167,13 @@ def data_check(chain: Optional[Dict[str, Any]], index_close: float, now_utc: dat
     facts["atm_iv"] = atm_iv(chain)
     facts["live_legs"] = header.get("liveLegs")
 
-    if age > max_age_seconds:
-        return False, f"chain is {age:.0f}s old (limit {max_age_seconds:.0f}s)", facts
+    # Distance in time, not lateness: a chain captured *after* the candle is
+    # information the candle could not have had, and a replay that accepted it
+    # would be trading on the future. Before this the test was `age >`, so a
+    # negative age — the replay's own case — passed every check.
+    if abs(age) > max_age_seconds:
+        when = "old" if age >= 0 else "ahead of the candle"
+        return False, f"chain is {abs(age):.0f}s {when} (limit {max_age_seconds:.0f}s)", facts
     if not spot or not index_close:
         return False, "no spot price to compare the chain with", facts
     if facts["spot_gap_pct"] is not None and facts["spot_gap_pct"] > max_spot_gap_pct:

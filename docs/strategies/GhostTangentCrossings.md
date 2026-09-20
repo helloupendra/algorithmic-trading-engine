@@ -339,6 +339,7 @@ square-off at `eod_square_off_ist` (15:15 in run 75) instead of 15:30.
 | `pivot_type` | `"Wick"` | `"Wick"`: pivots from $H_i / L_i$; anything else: from $\max/\min(O_i, C_i)$ | n/a — a choice. Body ignores wick-only spikes (the pre-open prints in Limitations would not have become pivots) but moves every other pivot too | |
 | `use_ghost_signals` | `true` | evaluate provisional legs on every tick | n/a. `false`: only confirmed legs, so every signal is found at pivot confirmation, up to $F$ bars after the crossing bar; 29 of the 30 entries in runs 82–84 and 95–97 were ghosts | |
 | `timeframe` | `"auto"` | the chart the pivots are drawn on: `"auto"` = the run's candles when longer than 5m, else 5m; any resolution (`"5m"`, `"15m"`, `"1D"`) forces it | n/a — a choice. A longer chart gives fewer, slower swings and holds positions for days on a daily run | |
+| `smc_filter` | `"off"` | Smart Money Concepts structure, read on the same candles, as a gate on every signal: `"off"` takes them all; `"with"` only when the structure agrees with the signal's direction; `"against"` only when it disagrees; `"idm"` only once the leg's inducement has been taken | n/a — a choice. Every setting other than `"off"` cuts the trade count sharply, which on its own cuts the cost bleed; see Limitations for what each did on NIFTY | |
 | `lots` (run parameter) | `default_lots` = 1 | lots per signal; P&L = points × lots × lot size | larger positions, same signals | |
 
 ## Worked example
@@ -531,6 +532,38 @@ at the sweep against the entry, not the fills.
   those three sessions early (`dayRiskStops: 2`). EOD square-off at 15:15
   instead of 15:30;
   no slippage, `charges_per_lot` 0.
+
+### The Smart Money Concepts filter, measured
+
+One lot on NIFTY 5-minute candles, real premiums from `option_history_bars`,
+0.5 % slippage a side and the statutory charges, net of everything. The same
+runs are in `private/research/smc/results-*.jsonl`:
+
+| `smc_filter` | 2024 | 2025 | 2026 (to 16 Sep) | Per trade, 3 years |
+|---|---|---|---|---|
+| `"off"` | −₹161,706 (1,019 trades) | −₹471,772 (1,022) | −₹63,691 (736) | −₹251 |
+| `"with"` | −₹106,821 (290) | −₹115,035 (293) | −₹115,981 (236) | −₹400 |
+| `"against"` | −₹54,885 (729) | −₹356,737 (729) | **+₹52,289** (500) | −₹184 |
+| `"idm"` | −₹142,778 (355) | −₹118,654 (403) | −₹97,151 (266) | −₹351 |
+
+Read it as it is: no setting makes this strategy pay. `"with"` and `"idm"` are
+worse per trade than taking every signal. `"against"` is the only positive cell
+anywhere — one year out of three, after the two years before it lost ₹411,622
+between them — which is what a losing strategy looks like when a filter happens
+to sit on the right side of one year. Every filter mostly just trades less,
+and trading less is why the totals shrink.
+
+### The Smart Money Concepts filter
+
+`smc_filter` reads market structure on the same candles this strategy draws its
+pivots on, through `strategies/market_structure.py` — the same reader the chart
+uses, so what gates a signal is what Data → Market structure would have shown at
+that moment. It only ever removes signals; it never creates one, and with
+`"off"` (the default) the strategy behaves exactly as it did before the filter
+existed.
+
+A live run holds back the forming candle before feeding the reader, as the
+structure module requires; a replay feeds every closed candle.
 
 ## Facts (machine-readable)
 

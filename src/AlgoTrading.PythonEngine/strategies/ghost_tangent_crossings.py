@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.resolutions import minutes_of, to_strategy_resolution
 from strategies.base_strategy import BaseStrategy, StrategyInput, StrategySignal, DataRequirement
+from strategies.market_structure import BEARISH, BULLISH, Bar, MarketStructure
 
 
 class GhostTangentCrossingsStrategy(BaseStrategy):
@@ -30,6 +31,14 @@ class GhostTangentCrossingsStrategy(BaseStrategy):
         # "auto": the run's own candles when they are longer than 5 minutes,
         # else 5m. Any resolution ("5m", "15m", "1D") forces that chart.
         "timeframe": "auto",
+        # Smart Money Concepts structure, read on the same candles, as a filter:
+        #   "off"     every crossing is taken, as before this was added
+        #   "with"    only when the structure agrees with the signal
+        #   "against" only when it disagrees — the reading that a crossing marks
+        #             the end of the move the structure is still showing
+        #   "idm"     only once the current leg's inducement has been taken
+        # The evidence for each is in docs/strategies/GhostTangentCrossings.md.
+        "smc_filter": "off",
     }
 
     @classmethod
@@ -45,6 +54,7 @@ class GhostTangentCrossingsStrategy(BaseStrategy):
         self.pivot_type = str(params.get("pivot_type", self.default_params["pivot_type"]))
         self.use_ghost_signals = bool(params.get("use_ghost_signals", self.default_params["use_ghost_signals"]))
         self.timeframe = str(params.get("timeframe") or self.default_params["timeframe"]).strip()
+        self.smc_filter = str(params.get("smc_filter") or self.default_params["smc_filter"]).strip().lower()
         # Lots per leg; the runner converts BUY/SELL into a one-leg OPEN_GROUP of this size.
         self.lots = self.lots_from(params, self.default_lots)
 
@@ -73,6 +83,11 @@ class GhostTangentCrossingsStrategy(BaseStrategy):
 
     def initialize_state(self) -> Dict[str, Any]:
         return {
+            # The structure reader and how far it has been fed. Only used when
+            # `smc_filter` is on; an "off" run never touches it.
+            "smc": MarketStructure(),
+            "smc_fed": 0,
+            "smc_blocked": 0,
             "ph_back": self.pivot_forward,
             "pl_back": self.pivot_forward,
             "last_up_start": None,
@@ -285,6 +300,9 @@ class GhostTangentCrossingsStrategy(BaseStrategy):
         if not bars:
             return signals
 
+        if self.smc_filter != "off":
+            self._read_structure(state, bars, inp.mode)
+
         # Only increment bar_index if it's a new bar!
         current_bar_time = getattr(bars[-1], "timestamp_utc", None)
         last_processed_time = state.get("last_processed_bar_time")
@@ -416,4 +434,46 @@ class GhostTangentCrossingsStrategy(BaseStrategy):
                         sig = self._evaluate_zig_zag(state, bars, bar_index, ghost_down_start_x, ghost_down_end_x, ghost_down_start_y, ghost_down_end_y, False, inp, is_ghost=True)
                         if sig: signals.append(sig)
 
-        return signals
+        return self._filter_by_structure(state, signals)
+
+    # --- Smart Money Concepts filter -----------------------------------------
+
+    def _read_structure(self, state: Dict[str, Any], bars: List[Any], mode: str) -> None:
+        """
+        Feeds the structure reader the candles it has not seen. Live is handed a
+        forming candle, which is held back: a swing read on a candle that has
+        not closed can disappear.
+        """
+        reader: MarketStructure = state["smc"]
+        closed = bars if mode == "OfflineReplay" else bars[:-1]
+        for frame in closed[state["smc_fed"]:]:
+            reader.push(Bar(getattr(frame, "timestamp_utc", ""), float(frame.open), float(frame.high),
+                            float(frame.low), float(frame.close)))
+            state["smc_fed"] += 1
+
+    def _filter_by_structure(self, state: Dict[str, Any], signals: List[StrategySignal]) -> List[StrategySignal]:
+        """Drops the signals the chosen structure filter does not allow, and says so in the kept ones."""
+        if self.smc_filter == "off" or not signals:
+            return signals
+
+        reader: MarketStructure = state["smc"]
+        kept: List[StrategySignal] = []
+        for sig in signals:
+            wanted = BULLISH if sig.signal_type == "BUY" else BEARISH
+            if self.smc_filter == "with":
+                allowed = reader.trend == wanted
+            elif self.smc_filter == "against":
+                allowed = reader.trend not in (wanted, "none")
+            elif self.smc_filter == "idm":
+                allowed = reader.inducement_taken
+            else:
+                allowed = True
+
+            if not allowed:
+                state["smc_blocked"] += 1
+                continue
+            sig.reason = f"{sig.reason} [structure {reader.trend}]"
+            sig.metadata = dict(sig.metadata or {})
+            sig.metadata["structure"] = reader.describe()
+            kept.append(sig)
+        return kept
