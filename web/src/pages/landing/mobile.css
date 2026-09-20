@@ -155,7 +155,8 @@
 .lpm .lpm-stack-cta .cta { height: 54px; font-size: 16px; }
 
 .lpm .lpm-foot { position: relative; z-index: 4; background: var(--bg); border-top: 1px solid var(--line); padding: 34px 20px calc(34px + env(safe-area-inset-bottom)); overflow: hidden; }
-.lpm .lpm-foot__word { margin: 0 0 22px -0.04em; font: 600 25.5vw/1 var(--display); letter-spacing: -0.07em; color: transparent; -webkit-text-stroke: 1px rgba(255, 255, 255, 0.2); user-select: none; }
+/* The sign is a tenth of its desktop size here, so its tubes are drawn fatter to stay tubes. */
+.lpm .neon { --tube: 30; --core: 11; margin: 0 -3% 14px; }
 .lpm .lpm-foot__by, .lpm .lpm-foot__links { margin: 0; font: 400 11px/1.5 var(--code); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
 .lpm .lpm-foot__links { display: flex; flex-wrap: wrap; gap: 10px 20px; margin-top: 16px; }
 .lpm .lpm-foot__links a, .lpm .lpm-foot__links a:visited { color: var(--ink-2); text-decoration: none; }

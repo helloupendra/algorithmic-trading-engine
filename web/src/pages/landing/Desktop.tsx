@@ -33,7 +33,7 @@ import { CHAPTERS, chapterProgress, type ChapterKey, type Rect } from '../../sce
 import { RUN } from '../../scene/evidence'
 import type { MachineHandle } from '../../scene/machine'
 import { AUTHOR, COPY, GITHUB_URL, LICENSE_URL, LINKEDIN_URL, SCREENS, TAGS, rupees, type ChapterCopy } from './content'
-import { Arrow, EquityCurve, GitHubMark } from './parts'
+import { Arrow, EquityCurve, GitHubMark, NeonWordmark } from './parts'
 import '../landing.css'
 
 /* ------------------------------------------------------------------ chapter */
@@ -357,7 +357,7 @@ export function LandingDesktop() {
       </main>
 
       <footer className="foot">
-        <p className="foot__word" aria-hidden="true">openfno</p>
+        <NeonWordmark />
         <div className="foot__row">
           <span>Built by {AUTHOR}</span>
           <span className="foot__links">

@@ -277,7 +277,84 @@
 
 /* The foot. */
 .lp .foot { position: relative; z-index: 4; background: var(--bg); border-top: 1px solid var(--line); padding: 40px clamp(20px, 3vw, 40px) 36px; overflow: hidden; }
-.lp .foot__word { margin: 0 0 34px -0.05em; font: 600 23.4vw/1 var(--display); letter-spacing: -0.07em; color: transparent; -webkit-text-stroke: 1px rgba(255, 255, 255, 0.18); user-select: none; }
+/* The wordmark as a neon sign (landing/parts.tsx → NeonWordmark). Everything is a
+   stroke on the word's outline; widths are in the font's units (1000 to the em),
+   so the sign scales as one piece. The sign is a stack of SVGs the same size: the
+   glass, one lit layer per circuit, and the running pulses. On the lit layers
+   only `opacity` ever animates — the compositor's job, no repaint of their
+   blurs — and the pulses repaint alone in a layer that has no filter in it. */
+.lp .neon {
+  --tube: 21; --core: 7.5;
+  position: relative; margin: 0 -1.5% 10px; user-select: none; pointer-events: none;
+}
+/* The light the sign throws on the wall behind it. */
+.lp .neon::before {
+  content: ''; position: absolute; inset: -12% -6% 22%; z-index: -1; opacity: 0;
+  background:
+    radial-gradient(34% 58% at 27% 46%, rgba(122, 108, 255, 0.24), transparent 72%),
+    radial-gradient(22% 50% at 52% 46%, rgba(60, 160, 255, 0.13), transparent 72%),
+    radial-gradient(30% 56% at 80% 46%, rgba(40, 236, 190, 0.22), transparent 72%);
+}
+.lp .neon__layer { display: block; width: 100%; height: auto; overflow: visible; }
+.lp .neon__layer + .neon__layer { position: absolute; inset: 0; height: 100%; }
+.lp .neon use { fill: none; stroke-linejoin: round; stroke-linecap: round; }
+.lp .neon__glass use { stroke: rgba(196, 210, 245, 0.17); stroke-width: var(--tube); }
+.lp .neon__far use { stroke-width: 120; opacity: .6; }
+.lp .neon__near use { stroke-width: 52; opacity: .9; }
+.lp .neon__tube use { stroke-width: var(--tube); }
+.lp .neon__core use { stroke: #fbfdff; stroke-width: var(--core); }
+.lp .neon__mirror use { stroke-width: calc(var(--tube) * 1.5); }
+
+/* Striking: a few stutters, then steady. "fno" catches a beat after "open". After
+   that each circuit lives on its own clock — a slow breath, and now and then the
+   buzz of a transformer — so the two never flicker in step. */
+.lp .neon__layer--lit, .lp .neon__layer--pulse { opacity: 0; will-change: opacity; }
+.lp .neon.is-lit .neon__layer--a { animation: neon-strike-a 1.5s linear forwards, neon-live-a 13s ease-in-out 1.5s infinite; }
+.lp .neon.is-lit .neon__layer--b { animation: neon-strike-b 1.9s linear .25s forwards, neon-live-b 9.5s ease-in-out 2.15s infinite; }
+.lp .neon.is-lit .neon__layer--pulse { animation: neon-fade-in 1.6s ease 2.2s forwards; }
+.lp .neon.is-lit::before { animation: neon-fade-in 1.8s ease .5s forwards, neon-wall 6.5s ease-in-out 2.3s infinite; }
+@keyframes neon-strike-a {
+  0%, 7% { opacity: 0; } 8%, 11% { opacity: .9; } 12%, 24% { opacity: .08; } 25%, 29% { opacity: 1; }
+  30%, 36% { opacity: .25; } 37%, 100% { opacity: 1; }
+}
+@keyframes neon-strike-b {
+  0%, 14% { opacity: 0; } 15%, 17% { opacity: .7; } 18%, 38% { opacity: 0; } 39%, 42% { opacity: 1; }
+  43%, 47% { opacity: .15; } 48%, 56% { opacity: 1; } 57%, 60% { opacity: .4; } 61%, 100% { opacity: 1; }
+}
+@keyframes neon-live-a {
+  0% { opacity: 1; } 22% { opacity: .9; } 44% { opacity: 1; } 61.9% { opacity: .93; }
+  62% { opacity: .55; } 62.7% { opacity: 1; } 63.3% { opacity: .7; } 64% { opacity: 1; }
+  82% { opacity: .9; } 100% { opacity: 1; }
+}
+@keyframes neon-live-b {
+  0% { opacity: 1; } 18% { opacity: .88; } 29.9% { opacity: .97; }
+  30% { opacity: .3; } 30.8% { opacity: 1; } 31.5% { opacity: .5; } 32.4% { opacity: 1; }
+  55% { opacity: .9; } 70.9% { opacity: 1; }
+  71% { opacity: .3; } 71.6% { opacity: .9; } 72.3% { opacity: .22; } 73.6% { opacity: .3; } 74% { opacity: 1; }
+  88% { opacity: .92; } 100% { opacity: 1; }
+}
+@keyframes neon-fade-in { to { opacity: 1; } }
+@keyframes neon-wall { 0%, 100% { opacity: 1; } 50% { opacity: .72; } }
+
+/* Current running round every letter: a short white-hot dash with a soft halo of
+   the tube's own colour, each letter at its own speed, some the other way round. */
+.lp .neon__halo use, .lp .neon__spark use { stroke-dasharray: 58 942; animation: neon-run 7s linear infinite; }
+.lp .neon__halo use { stroke-width: calc(var(--tube) * 2.5); opacity: .38; }
+.lp .neon__spark use { stroke: #ffffff; stroke-width: calc(var(--tube) * .62); }
+.lp .neon .neon__l--1 { animation-duration: 8.5s; animation-direction: reverse; }
+.lp .neon .neon__l--2 { animation-duration: 6.2s; animation-delay: -2s; }
+.lp .neon .neon__l--3 { animation-duration: 7.6s; animation-direction: reverse; animation-delay: -1s; }
+.lp .neon .neon__l--4 { animation-duration: 5.6s; animation-delay: -3s; }
+.lp .neon .neon__l--5 { animation-duration: 8s; animation-delay: -4.5s; }
+.lp .neon .neon__l--6 { animation-duration: 6.8s; animation-direction: reverse; animation-delay: -.5s; }
+@keyframes neon-run { to { stroke-dashoffset: -1000; } }
+
+/* Off screen, everything holds still. */
+.lp .neon.is-away, .lp .neon.is-away::before, .lp .neon.is-away * { animation-play-state: paused !important; }
+@media (prefers-reduced-motion: reduce) {
+  .lp .neon::before, .lp .neon__layer--lit { opacity: 1; animation: none !important; }
+  .lp .neon__layer--pulse { display: none; }
+}
 .lp .foot__row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 14px 28px; font: 400 12px/1.4 var(--code); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
 .lp .foot__links { display: inline-flex; flex-wrap: wrap; gap: 8px 22px; }
 .lp .foot__links a, .lp .foot__links a:visited { color: var(--ink-3); text-decoration: none; }
