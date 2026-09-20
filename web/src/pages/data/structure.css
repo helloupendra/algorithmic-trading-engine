@@ -171,3 +171,55 @@
   font-size: 11px;
   color: var(--text-3);
 }
+
+/* The ladder: one rung per timeframe, highest first. The chart's own timeframe
+   is marked, because everything above it is context rather than what is drawn. */
+.smc__ladder {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.smc__rung {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 14px;
+  padding: 7px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.smc__rung--chart {
+  border-color: var(--brand-line);
+  background: var(--brand-soft);
+}
+
+.smc__rung-tf {
+  min-width: 34px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.smc__rung-trend {
+  min-width: 62px;
+}
+
+.smc__rung-level b {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.smc__rung-idm,
+.smc__rung-last {
+  color: var(--text-3);
+}
+
+.smc__rung-last {
+  margin-left: auto;
+}

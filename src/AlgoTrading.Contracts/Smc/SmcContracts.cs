@@ -109,3 +109,18 @@ public sealed class SmcStructureResponse
     /// <summary>Said in words when there is nothing to read: no candles stored, too few to turn.</summary>
     public string? Note { get; set; }
 }
+
+/// <summary>
+/// The nested reading: one chart's candles with the structure of that timeframe
+/// and of the higher ones above it, each read from its own closed candles.
+/// </summary>
+public sealed class SmcLadderResponse
+{
+    public string Symbol { get; set; } = string.Empty;
+
+    /// <summary>The timeframe being drawn: the only one that carries candles.</summary>
+    public SmcStructureResponse? Chart { get; set; }
+
+    /// <summary>The timeframes above it, highest first, as state and marks only.</summary>
+    public List<SmcStructureResponse> Higher { get; set; } = [];
+}

@@ -63,6 +63,15 @@ public class SmcController : ControllerBase
         if (string.IsNullOrWhiteSpace(symbol))
             return BadRequest(new { message = "symbol is required." });
 
+        return Ok(await ReadAsync(symbol, ResolutionCodes.ToCandle(resolution), fromDate, toDate, method, strength,
+            breakOn, inducement, includeLive, cancellationToken));
+    }
+
+    /// <summary>One timeframe, read and shaped for the wire. Both endpoints go through here.</summary>
+    private async Task<SmcStructureResponse> ReadAsync(
+        string symbol, string candleCode, DateOnly? fromDate, DateOnly? toDate, string method, int strength,
+        string breakOn, string inducement, bool includeLive, CancellationToken cancellationToken)
+    {
         var swingMethod = method.Equals("fractal", StringComparison.OrdinalIgnoreCase)
             ? SwingMethod.Fractal
             : SwingMethod.ValidPullback;
@@ -72,7 +81,6 @@ public class SmcController : ControllerBase
         var inducementMode = inducement.Equals("first", StringComparison.OrdinalIgnoreCase)
             ? InducementMode.First
             : InducementMode.Last;
-        var candleCode = ResolutionCodes.ToCandle(resolution);
 
         var stored = await _storedCandles.ExecuteAsync(new GetStoredCandlesRequest
         {
@@ -114,7 +122,7 @@ public class SmcController : ControllerBase
             candles.Select(c => new StructureBar(c.TimestampUtc, c.Open, c.High, c.Low, c.Close)).ToList(),
             swingMethod, strength, trigger, inducementMode);
 
-        return Ok(new SmcStructureResponse
+        return new SmcStructureResponse
         {
             Symbol = symbol,
             Resolution = ResolutionCodes.Label(candleCode),
@@ -162,7 +170,62 @@ public class SmcController : ControllerBase
             LiveCandles = live,
             DroppedOutsideSession = dropped,
             Note = NoteFor(candles.Count, result, dropped),
-        });
+        };
+    }
+
+    /// <summary>
+    /// The same structure read on several timeframes at once — the nested
+    /// reading Smart Money Concepts works from, where a day's pullback is an
+    /// hour's whole trend.
+    /// </summary>
+    /// <remarks>
+    /// The chart's own timeframe comes back in full (candles and every mark);
+    /// the higher ones come back as their state and their marks, so they can be
+    /// drawn over those candles without fetching each one separately.
+    /// Each timeframe is read only from its own closed candles, so a daily
+    /// level shown on a 5-minute chart is one the day had already set.
+    /// </remarks>
+    /// <param name="timeframes">Highest first, comma separated: "1D,15m,5m". The last one is the chart's own.</param>
+    [HttpGet("ladder")]
+    public async Task<ActionResult<SmcLadderResponse>> GetLadder(
+        [FromQuery] string symbol,
+        [FromQuery] string timeframes = "1D,15m,5m",
+        [FromQuery] DateOnly? fromDate = null,
+        [FromQuery] DateOnly? toDate = null,
+        [FromQuery] string method = "validPullback",
+        [FromQuery] int strength = MarketStructure.DefaultStrength,
+        [FromQuery] string breakOn = "close",
+        [FromQuery] string inducement = "last",
+        [FromQuery] bool includeLive = true,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(symbol))
+            return BadRequest(new { message = "symbol is required." });
+
+        var wanted = timeframes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(ResolutionCodes.ToCandle)
+            .Distinct()
+            .ToList();
+        if (wanted.Count == 0) return BadRequest(new { message = "timeframes is empty." });
+        if (wanted.Count > 4) return BadRequest(new { message = "at most four timeframes." });
+
+        var response = new SmcLadderResponse { Symbol = symbol };
+        foreach (var code in wanted)
+        {
+            // The chart's own timeframe is the last one; only it carries candles,
+            // and only it reaches back over the whole range the user asked for.
+            var isChart = code == wanted[^1];
+            var read = await ReadAsync(symbol, code, fromDate, toDate, method, strength, breakOn, inducement,
+                includeLive, cancellationToken);
+            if (isChart) response.Chart = read;
+            else
+            {
+                read.Candles = [];
+                response.Higher.Add(read);
+            }
+        }
+
+        return Ok(response);
     }
 
     /// <summary>

@@ -133,6 +133,67 @@ class PositionTests(unittest.TestCase):
         self.assertEqual([f["bar"] for f in fired if f["type"] == "OPEN_GROUP"], [10])
 
 
+class BiasTests(unittest.TestCase):
+    """The higher timeframe as a gate, read by a second reader."""
+
+    def bias_bars(self, kind):
+        """A daily series whose structure is bullish, bearish, or not yet set."""
+        if kind == "bullish":
+            rows = [(100, 105, 99, 104), (104, 110, 103, 109), (109, 109, 100, 101),
+                    (101, 108, 100, 107), (107, 115, 106, 114)]
+        elif kind == "bearish":
+            rows = [(110, 112, 105, 106), (106, 108, 104, 105), (105, 106, 98, 99),
+                    (99, 104, 98, 103), (103, 107, 100, 101), (101, 102, 95, 96)]
+        else:
+            rows = [(100, 101, 99, 100)]
+        return [Frame(b) for b in bars(*rows)]
+
+    def run_with_bias(self, params, kind):
+        frames = [Frame(b) for b in schematic()]
+        daily = self.bias_bars(kind)
+        strategy = SmcStructureBreakStrategy(params)
+        state = strategy.initialize_state()
+        opened = []
+        for i in range(1, len(frames) + 1):
+            visible = frames[:i]
+            inp = StrategyInput(mode="OfflineReplay", timestamp_utc=visible[-1].timestamp_utc,
+                                underlying=UNDERLYING, spot_price=visible[-1].close, atm_strike=25000,
+                                strike_step=50, lot_size=75, contracts={"atm_ce": CE, "atm_pe": PE},
+                                bars={"5m": {"index": visible}, "1D": {"index": daily}},
+                                metadata={"resolution": "5m"})
+            for signal in strategy.on_bar(state, inp) or []:
+                if signal.signal_type == "OPEN_GROUP":
+                    opened.append(signal.reason)
+        return opened
+
+    def test_with_the_higher_timeframe_takes_only_breaks_it_agrees_with(self):
+        # The schematic's first break is bullish.
+        self.assertEqual(len(self.run_with_bias({"bias": "with"}, "bullish")), 1)
+        self.assertEqual(self.run_with_bias({"bias": "with"}, "bearish"), [])
+
+    def test_against_the_higher_timeframe_takes_only_the_ones_it_disagrees_with(self):
+        self.assertEqual(len(self.run_with_bias({"bias": "against"}, "bearish")), 1)
+        self.assertEqual(self.run_with_bias({"bias": "against"}, "bullish"), [])
+
+    def test_a_higher_timeframe_with_no_structure_yet_blocks_nothing_and_allows_nothing(self):
+        # "with" needs agreement, "against" needs disagreement; neither is true
+        # of a timeframe that has not set a trend.
+        self.assertEqual(self.run_with_bias({"bias": "with"}, "none"), [])
+        self.assertEqual(self.run_with_bias({"bias": "against"}, "none"), [])
+
+    def test_the_reason_says_what_the_higher_timeframe_was_doing(self):
+        reasons = self.run_with_bias({"bias": "with"}, "bullish")
+
+        self.assertIn("with the 1D structure (bullish)", reasons[0])
+
+    def test_it_asks_the_engine_for_the_bias_candles(self):
+        # The runners ask the strategy they are about to run, so the second feed
+        # can depend on that run's parameters.
+        wanted = {r.resolution for r in SmcStructureBreakStrategy({"bias": "with"}).get_data_requirements()}
+        self.assertEqual(wanted, {"5m", "1D"})
+        self.assertEqual({r.resolution for r in SmcStructureBreakStrategy().get_data_requirements()}, {"5m"})
+
+
 class ShapeTests(unittest.TestCase):
     def test_it_asks_for_the_option_it_trades(self):
         keys = {r.key: r for r in SmcStructureBreakStrategy.get_contract_requirements({})}

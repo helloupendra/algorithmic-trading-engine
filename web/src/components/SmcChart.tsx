@@ -21,6 +21,7 @@ import {
   LineSeries,
   LineStyle,
   type IChartApi,
+  type IPriceLine,
   type ISeriesApi,
   type ISeriesMarkersPluginApi,
   type SeriesMarker,
@@ -44,20 +45,26 @@ export type SmcLayers = {
   breaks: boolean
   inducements: boolean
   minorSwings: boolean
+  /** The levels the higher timeframes are holding, drawn across the chart. */
+  higher: boolean
 }
 
 export function SmcChart({
   data,
+  higher,
   layers,
   fitKey,
 }: {
   data: SmcStructure | undefined
+  /** The timeframes above this one, highest first; only their levels are drawn. */
+  higher?: SmcStructure[]
   layers: SmcLayers
   fitKey: string
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const priceRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const priceLinesRef = useRef<IPriceLine[]>([])
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const linesRef = useRef<ISeriesApi<'Line'>[]>([])
   const lastFitKey = useRef<string | null>(null)
@@ -115,6 +122,7 @@ export function SmcChart({
       priceRef.current = null
       markersRef.current = null
       linesRef.current = []
+      priceLinesRef.current = []
       lastFitKey.current = null
     }
   }, [])
@@ -233,6 +241,34 @@ export function SmcChart({
 
     markers.setMarkers(drawn.sort((a, b) => (a.time as number) - (b.time as number)))
   }, [data, layers, candles])
+
+  useEffect(() => {
+    const price = priceRef.current
+    if (!price) return
+
+    for (const line of priceLinesRef.current) price.removePriceLine(line)
+    priceLinesRef.current = []
+    if (!layers.higher || !higher?.length) return
+
+    const bull = cssVar('--pos') || '#089981'
+    const bear = cssVar('--neg') || '#f2364a'
+
+    for (const timeframe of higher) {
+      const colour = timeframe.trend === 'bearish' ? bear : timeframe.trend === 'bullish' ? bull : cssVar('--text-3')
+      // What that timeframe is holding: the level whose break turns it, and
+      // the one whose break carries it on.
+      const levels: [number | null, string, LineStyle][] = [
+        [timeframe.protectedLevel, `${timeframe.resolution} turns`, LineStyle.Dashed],
+        [timeframe.breakLevel, `${timeframe.resolution} ${timeframe.trend === 'bearish' ? 'breaks ↓' : 'breaks ↑'}`, LineStyle.Dotted],
+      ]
+      for (const [value, title, style] of levels) {
+        if (value == null) continue
+        priceLinesRef.current.push(
+          price.createPriceLine({ price: value, color: colour, lineWidth: 1, lineStyle: style, axisLabelVisible: true, title }),
+        )
+      }
+    }
+  }, [higher, layers.higher])
 
   return <div ref={containerRef} className="chart chart--tall" />
 }
