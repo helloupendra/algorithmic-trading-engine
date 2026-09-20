@@ -1,0 +1,191 @@
+/*
+ * The homepage on a phone (landing/Mobile.tsx). The root carries both .lp and
+ * .lpm, so the tokens, fonts, calls to action, eyebrows and world labels come
+ * from landing.css; everything here is the phone's own composition and is
+ * scoped under .lpm.
+ *
+ * The shape: a fixed stage the height of the *large* viewport (so the browser's
+ * bar sliding away never resizes the renderer), the headline over the closed
+ * engine with the calls to action docked at the bottom edge, and a sheet that
+ * rises from the bottom with one layer's copy at a time. Two invisible boxes
+ * mark where the engine stands — between the headline and the dock, and
+ * between the bar and the sheet — and the page hands their rectangles to the
+ * scene. On its side, a phone puts the engine on the left and the sheet on the
+ * right; only the boxes move.
+ */
+
+.lpm { overflow-x: clip; }
+
+/* --- the bar ---------------------------------------------------------------- */
+.lpm .lpm-top {
+  position: fixed; inset: 0 0 auto 0; z-index: 40;
+  display: flex; align-items: center; gap: 12px;
+  height: calc(54px + env(safe-area-inset-top)); padding: env(safe-area-inset-top) 14px 0 16px;
+  border-bottom: 1px solid transparent;
+  transition: background .3s ease, border-color .3s ease;
+}
+.lpm.is-past .lpm-top { background: rgba(3, 4, 6, 0.92); }
+.lpm.is-scrolled .lpm-top { background: rgba(3, 4, 6, 0.72); border-bottom-color: var(--line); backdrop-filter: blur(16px) saturate(1.3); -webkit-backdrop-filter: blur(16px) saturate(1.3); }
+.lpm .lpm-top .brand__word { font-size: 18px; }
+.lpm .lpm-top .market { margin-left: auto; font-size: 10px; letter-spacing: 0.1em; }
+.lpm .lpm-top .cta--sm { padding: 9px 15px; font-size: 13px; }
+
+/* --- the story -------------------------------------------------------------- */
+.lpm .lpm-story { position: relative; }
+.lpm .lpm-story__length { height: 760vh; height: 760lvh; }
+.lpm .stage { inset: 0 0 auto 0; height: 100vh; height: 100lvh; }
+.lpm .stage.is-parked { position: absolute; inset: auto 0 0 0; height: 100vh; height: 100lvh; }
+.lpm .lpm-story::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 30vh; height: 30lvh; z-index: 1; pointer-events: none; background: linear-gradient(180deg, transparent, var(--bg)); }
+
+/* Where the engine stands. Never drawn; only measured. */
+.lpm .lpm-box { position: fixed; left: 0; right: 0; visibility: hidden; pointer-events: none; }
+.lpm .lpm-box--closed { top: calc(var(--hero-bottom, 46vh) + 2px); bottom: calc(var(--dock-h, 124px) + 2px); }
+.lpm .lpm-box--open { top: calc(64px + env(safe-area-inset-top)); bottom: calc(var(--sheet-h, 46vh) + 4px); }
+
+.lpm .lpm-hud { position: fixed; top: 0; left: 0; width: 100%; height: 100vh; height: 100lvh; z-index: 2; overflow: hidden; pointer-events: none; }
+.lpm .lpm-hud .tag { font-size: 9.5px; letter-spacing: 0.12em; }
+
+/* The headline over the closed engine, at the start and at the end. */
+.lpm .lpm-hero {
+  position: fixed; z-index: 3; top: calc(74px + env(safe-area-inset-top)); left: 20px; right: 20px;
+  opacity: 0; transform: translateY(16px); pointer-events: none;
+  transition: opacity .5s ease, transform .6s cubic-bezier(.2, .7, .2, 1);
+}
+.lpm .lpm-hero.is-on { opacity: 1; transform: none; pointer-events: auto; transition-delay: .08s; }
+.lpm .lpm-hero .eyebrow { margin-bottom: 16px; font-size: 10.5px; letter-spacing: 0.14em; }
+.lpm .lpm-hero__title { margin: 0; font: 600 clamp(52px, 16.6vw, 78px)/0.9 var(--display); letter-spacing: -0.055em; }
+.lpm .lpm-hero__body { margin: 18px 0 0; max-width: 36ch; font-size: 15.5px; line-height: 1.5; color: var(--ink-2); }
+
+/* The calls to action, where a thumb is. */
+.lpm .lpm-dock {
+  position: fixed; z-index: 4; left: 0; right: 0; bottom: 0;
+  padding: 26px 16px calc(16px + env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, transparent, rgba(3, 4, 6, 0.82) 46%);
+  opacity: 0; transform: translateY(24px); pointer-events: none;
+  transition: opacity .4s ease, transform .5s cubic-bezier(.2, .7, .2, 1);
+}
+.lpm .lpm-dock.is-on { opacity: 1; transform: none; pointer-events: auto; }
+.lpm .lpm-dock__cue { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 0 0 14px; font: 400 10px/1 var(--code); letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-3); transition: opacity .3s ease; }
+.lpm .lpm-dock__cue span { width: 1px; height: 22px; background: linear-gradient(0deg, transparent, var(--ink-2)); animation: lpm-cue 1.8s ease-in-out infinite; transform-origin: bottom; }
+.lpm.is-scrolled .lpm-dock__cue { opacity: 0; }
+@keyframes lpm-cue { 0%, 100% { opacity: .3; transform: translateY(4px) scaleY(.6); } 50% { opacity: 1; transform: none; } }
+.lpm .lpm-dock__row { display: flex; gap: 10px; }
+.lpm .lpm-dock__row .cta--solid { flex: 1; height: 54px; font-size: 16px; }
+.lpm .lpm-icon-cta { flex: none; width: 54px; height: 54px; padding: 0; }
+.lpm .lpm-icon-cta svg { width: 20px; height: 20px; }
+
+/* The sheet: one layer's copy at a time, and how far through the five you are. */
+.lpm .lpm-sheet {
+  position: fixed; z-index: 4; left: 0; right: 0; bottom: 0;
+  padding: 8px 20px calc(22px + env(safe-area-inset-bottom));
+  border-radius: 24px 24px 0 0; border-top: 1px solid rgba(255, 255, 255, 0.16);
+  background: linear-gradient(180deg, rgba(12, 16, 27, 0.8), rgba(5, 7, 12, 0.92));
+  backdrop-filter: blur(22px) saturate(1.5); -webkit-backdrop-filter: blur(22px) saturate(1.5);
+  box-shadow: 0 -30px 80px -30px rgba(0, 0, 0, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transform: translateY(105%); transition: transform .65s cubic-bezier(.2, .8, .2, 1);
+}
+.lpm .lpm-sheet.is-up { transform: none; }
+.lpm .lpm-sheet__grip { width: 38px; height: 4px; margin: 0 auto 12px; border-radius: 4px; background: rgba(255, 255, 255, 0.22); }
+.lpm .lpm-segs { display: flex; gap: 5px; margin-bottom: 18px; }
+.lpm .lpm-segs button { flex: 1; height: 22px; padding: 9px 0; border: 0; background: none; cursor: pointer; }
+.lpm .lpm-segs button::before { content: ''; display: block; height: 3px; margin-bottom: -3px; border-radius: 3px; background: rgba(255, 255, 255, 0.16); }
+.lpm .lpm-segs i { display: block; height: 3px; border-radius: 3px; background: var(--teal); transform: scaleX(0); transform-origin: left; }
+.lpm .lpm-panels { display: grid; }
+.lpm .lpm-panel { grid-area: 1 / 1; opacity: 0; transform: translateY(12px); pointer-events: none; transition: opacity .35s ease, transform .45s cubic-bezier(.2, .7, .2, 1); }
+.lpm .lpm-panel.is-on { opacity: 1; transform: none; pointer-events: auto; transition-delay: .12s; }
+.lpm .lpm-panel__k { display: flex; align-items: baseline; gap: 6px; margin: 0 0 10px; font: 400 10.5px/1 var(--code); letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-3); }
+.lpm .lpm-panel__k b { font-weight: 400; color: var(--teal); }
+.lpm .lpm-panel__k span { margin-left: auto; color: var(--ink-2); }
+.lpm .lpm-panel__title { margin: 0; font: 600 clamp(27px, 7.9vw, 34px)/1.02 var(--display); letter-spacing: -0.04em; text-wrap: balance; }
+.lpm .lpm-panel__body { margin: 12px 0 0; font-size: 14.5px; line-height: 1.5; color: var(--ink-2); }
+.lpm .lpm-specs { margin: 14px 0 0; border-top: 1px solid var(--line); }
+.lpm .lpm-specs div { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.lpm .lpm-specs dt { font: 400 9.5px/1.6 var(--code); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
+.lpm .lpm-specs dd { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+/* Once the story has been read, its fixed layers step aside. */
+.lpm.is-past .lpm-hero, .lpm.is-past .lpm-sheet, .lpm.is-past .lpm-dock, .lpm.is-past .lpm-hud { opacity: 0; visibility: hidden; transition: opacity .25s ease, visibility 0s .25s; }
+
+/* --- the same chapters over stills, a screen each --------------------------- */
+.lpm .lpm-still { position: relative; height: 100vh; height: 100lvh; min-height: 620px; overflow: hidden; isolation: isolate; }
+.lpm .lpm-still__bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top center; z-index: -1; }
+.lpm .still--empty { background: radial-gradient(60% 40% at 50% 45%, rgba(40, 80, 200, 0.18), transparent 70%), var(--bg); }
+.lpm .lpm-still__top { position: absolute; top: calc(74px + env(safe-area-inset-top)); left: 20px; right: 20px; }
+.lpm .lpm-still__top .eyebrow { margin-bottom: 16px; font-size: 10.5px; letter-spacing: 0.14em; }
+.lpm .lpm-still__dock { position: absolute; left: 16px; right: 16px; bottom: calc(22px + env(safe-area-inset-bottom)); }
+.lpm .lpm-still__sheet {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 22px 20px calc(24px + env(safe-area-inset-bottom));
+  border-radius: 24px 24px 0 0; border-top: 1px solid rgba(255, 255, 255, 0.16);
+  background: linear-gradient(180deg, rgba(12, 16, 27, 0.86), rgba(5, 7, 12, 0.95));
+}
+
+/* --- after the story --------------------------------------------------------- */
+.lpm .lpm-band { position: relative; z-index: 4; background: var(--bg); padding: 84px 20px 60px; border-top: 1px solid var(--line); }
+.lpm .lpm-band h2 { margin: 0; font: 600 clamp(38px, 11.4vw, 56px)/0.96 var(--display); letter-spacing: -0.05em; text-wrap: balance; }
+.lpm .lpm-band__lead { margin: 18px 0 0; font-size: 15.5px; line-height: 1.55; color: var(--ink-2); }
+
+.lpm .lpm-reel { display: flex; gap: 14px; margin: 30px -20px 0; padding: 0 20px 16px; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.lpm .lpm-reel::-webkit-scrollbar { display: none; }
+.lpm .lpm-reel__card { flex: 0 0 86vw; margin: 0; scroll-snap-align: center; }
+.lpm .lpm-reel__frame { aspect-ratio: 16 / 10.4; overflow: hidden; border-radius: 14px; border: 1px solid var(--line-2); background: #070b11; }
+.lpm .lpm-reel__frame img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: left top; }
+.lpm .lpm-reel figcaption { display: grid; gap: 6px; margin-top: 16px; }
+.lpm .lpm-reel__n { font: 400 10.5px/1 var(--code); letter-spacing: 0.14em; color: var(--teal); }
+.lpm .lpm-reel figcaption b { font: 600 19px/1.2 var(--display); letter-spacing: -0.03em; }
+.lpm .lpm-reel figcaption span:last-child { font-size: 14px; line-height: 1.5; color: var(--ink-2); }
+
+.lpm .lpm-figure { margin: 34px 0 0; }
+.lpm .lpm-figure b { display: block; font: 600 clamp(50px, 15.4vw, 84px)/0.92 var(--display); letter-spacing: -0.06em; color: var(--down); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lpm .lpm-figure span { display: block; margin-top: 12px; font: 400 10.5px/1.4 var(--code); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
+.lpm .curve { height: 170px; margin-top: 28px; }
+.lpm .lpm-stats { display: grid; grid-template-columns: 1fr 1fr; margin: 26px 0 0; border-top: 1px solid var(--line); }
+.lpm .lpm-stats div { padding: 16px 8px 16px 0; border-bottom: 1px solid var(--line); }
+.lpm .lpm-stats dt { font: 400 10px/1.4 var(--code); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
+.lpm .lpm-stats dd { margin: 8px 0 0; font: 600 24px/1 var(--display); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+
+.lpm .lpm-term { margin-top: 28px; border: 1px solid var(--line-2); border-radius: 14px; overflow: hidden; background: #06090f; }
+.lpm .lpm-term__bar { display: flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-bottom: 1px solid var(--line); }
+.lpm .lpm-term__bar i { width: 8px; height: 8px; border-radius: 50%; background: rgba(255, 255, 255, .14); }
+.lpm .lpm-term__bar span { margin-left: 10px; font: 400 10px/1 var(--code); letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-3); }
+.lpm .lpm-term pre { margin: 0; padding: 18px 16px; overflow-x: auto; background: transparent; border: 0; border-radius: 0; }
+.lpm .lpm-term code { display: block; font: 400 11.5px/1.85 var(--code); color: var(--ink); background: transparent; border: 0; padding: 0; white-space: pre; }
+.lpm .lpm-term .c { color: var(--ink-3); }
+.lpm .lpm-term .p { color: var(--teal); user-select: none; margin-right: 6px; }
+.lpm .lpm-stack-cta { display: grid; gap: 10px; margin-top: 22px; }
+.lpm .lpm-stack-cta .cta { height: 54px; font-size: 16px; }
+
+.lpm .lpm-foot { position: relative; z-index: 4; background: var(--bg); border-top: 1px solid var(--line); padding: 34px 20px calc(34px + env(safe-area-inset-bottom)); overflow: hidden; }
+.lpm .lpm-foot__word { margin: 0 0 22px -0.04em; font: 600 25.5vw/1 var(--display); letter-spacing: -0.07em; color: transparent; -webkit-text-stroke: 1px rgba(255, 255, 255, 0.2); user-select: none; }
+.lpm .lpm-foot__by, .lpm .lpm-foot__links { margin: 0; font: 400 11px/1.5 var(--code); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
+.lpm .lpm-foot__links { display: flex; flex-wrap: wrap; gap: 10px 20px; margin-top: 16px; }
+.lpm .lpm-foot__links a, .lpm .lpm-foot__links a:visited { color: var(--ink-2); text-decoration: none; }
+.lpm .lpm-foot__risk { margin: 22px 0 0; font-size: 12.5px; line-height: 1.55; color: var(--ink-3); }
+
+/* --- a phone on its side: engine left, words right --------------------------- */
+@media (orientation: landscape) and (max-height: 500px) {
+  .lpm .lpm-top { height: 46px; }
+  .lpm .lpm-hero { top: 56px; left: 22px; right: auto; width: 46%; }
+  .lpm .lpm-hero .eyebrow { display: none; }
+  .lpm .lpm-hero__title { font-size: clamp(36px, 13vh, 54px); }
+  .lpm .lpm-hero__title br { display: none; }
+  .lpm .lpm-hero__body { margin-top: 10px; font-size: 13.5px; }
+  .lpm .lpm-dock { right: auto; width: 50%; padding: 10px 22px calc(12px + env(safe-area-inset-bottom)); background: none; }
+  .lpm .lpm-dock__cue { display: none; }
+  .lpm .lpm-dock__row .cta--solid, .lpm .lpm-icon-cta { height: 46px; }
+  .lpm .lpm-icon-cta { width: 46px; }
+  .lpm .lpm-box--closed { top: 50px; left: 50%; right: 0; bottom: 6px; }
+  .lpm .lpm-box--open { top: 50px; left: 0; right: 54%; bottom: 6px; }
+  .lpm .lpm-sheet { top: 46px; left: auto; width: 54%; padding: 14px 22px 14px; border-radius: 22px 0 0 0; border-left: 1px solid rgba(255, 255, 255, 0.16); overflow-y: auto; transform: translateX(105%); }
+  .lpm .lpm-sheet__grip { display: none; }
+  .lpm .lpm-panel__title { font-size: 26px; }
+  .lpm .lpm-panel__body { font-size: 13.5px; }
+  .lpm .lpm-still { min-height: 360px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lpm .lpm-hero, .lpm .lpm-sheet, .lpm .lpm-dock, .lpm .lpm-panel { transition: none; }
+  .lpm .lpm-dock__cue span { animation: none; }
+}
+
+/* Still capture mode (?pose=…): the engine alone, framed by this layout. */
+html[data-still] .lpm .lpm-top, html[data-still] .lpm .lpm-hero, html[data-still] .lpm .lpm-sheet, html[data-still] .lpm .lpm-dock, html[data-still] .lpm .lpm-hud { visibility: hidden !important; }

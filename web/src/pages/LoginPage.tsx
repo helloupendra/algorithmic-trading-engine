@@ -6,8 +6,11 @@
  * open. The form is a sheet of glass on the right of the same room. On a narrow
  * screen the form takes the centre and the engine stands behind it.
  *
- * The page tells the world where the engine should stand by measuring the
- * empty side of its own layout, so the two never drift apart.
+ * The page tells the world where the engine should stand by measuring an empty
+ * box in its own layout, so the two never drift apart: beside the form on a
+ * computer, tablet or a phone on its side; under the form on a phone held
+ * upright, where the headline, the form and then the engine stack in one
+ * column; behind the form in between.
  *
  * The engine answers the form. It wakes as the fields are filled in; on submit
  * the lid lifts and the candle loader plays in place of the form; a failed
@@ -30,6 +33,7 @@ import { MachineScene } from '../components/MachineScene'
 import { Still } from '../components/Still'
 import { CandleBars } from '../components/CandleLoader'
 import type { MachineHandle } from '../scene/machine'
+import type { Rect } from '../scene/story'
 import './landing.css'
 
 export function LoginPage() {
@@ -46,24 +50,29 @@ export function LoginPage() {
   const [live, setLive] = useState(() => liveSceneWanted())
   const machineRef = useRef<MachineHandle | null>(null)
   const userRef = useRef<HTMLInputElement | null>(null)
-  const sideRef = useRef<HTMLDivElement | null>(null)
+  const boxRef = useRef<HTMLDivElement | null>(null)
 
-  /** Stand the engine in the middle of the side the form leaves free (or behind the form, when there is none). */
+  /** Stand the engine in the box the layout leaves for it; the world fits it inside. */
   const placeEngine = useCallback(() => {
-    const side = sideRef.current
+    const box = boxRef.current
     const m = machineRef.current
-    if (!side || !m) return
-    const r = side.getBoundingClientRect()
-    const free = r.width > 240
-    const portrait = window.innerHeight > window.innerWidth * 1.15
-    const cx = free ? (r.left + r.width / 2) / window.innerWidth - 0.5 : 0
-    // Beside the form when there is a free side; under it on a phone; behind it otherwise.
-    m.setScreenCentre(cx, free ? 0.12 : portrait ? 0.3 : 0.04)
+    if (!box || !m) return
+    const { width, height } = m.size()
+    if (!width || !height) return
+    const r = box.getBoundingClientRect()
+    const rect: Rect = { x: r.left / width, y: r.top / height, w: r.width / width, h: r.height / height }
+    m.setStage(r.width > 120 && r.height > 120 ? { closed: rect, open: rect } : null)
   }, [])
 
   useEffect(() => {
+    const box = boxRef.current
+    const ro = new ResizeObserver(placeEngine)
+    if (box) ro.observe(box)
     window.addEventListener('resize', placeEngine)
-    return () => window.removeEventListener('resize', placeEngine)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', placeEngine)
+    }
   }, [placeEngine])
 
   useEffect(() => {
@@ -144,9 +153,11 @@ export function LoginPage() {
       </header>
 
       <main className="login__main">
-        <div className="login__side" ref={sideRef}>
+        <div className="login__side">
           <p className="eyebrow"><i aria-hidden="true" />The desk, before the open</p>
-          <h1 className="login__lead">Sign in.<br /><em>The engine wakes.</em></h1>
+          <h1 className="login__lead">Sign in.{' '}<br /><em>The engine wakes.</em></h1>
+          {/* Where the engine stands: laid out by CSS, measured by placeEngine(), never drawn. */}
+          <div className="login__box" ref={boxRef} aria-hidden="true" />
         </div>
 
         <div className="login__form">

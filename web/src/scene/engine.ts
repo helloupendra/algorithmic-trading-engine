@@ -75,7 +75,7 @@ export class Engine {
   readonly bloom: UnrealBloomPass | null
   readonly grade: ShaderPass | null
   private readonly dprCap: number
-  private readonly maxPixels: number
+  private maxPixels: number
   private width = 1
   private height = 1
   private disposed = false
@@ -145,6 +145,12 @@ export class Engine {
     this.composer.setSize(width, height)
     this.camera.aspect = width / height
     this.camera.updateProjectionMatrix()
+  }
+
+  /** Render fewer pixels from now on (the scene's frame-time governor steps this down on a slow GPU). */
+  scalePixelBudget(factor: number): void {
+    this.maxPixels = Math.max(250_000, this.maxPixels * factor)
+    this.size(this.width, this.height)
   }
 
   get aspect(): number {
