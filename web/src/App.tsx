@@ -109,6 +109,7 @@ export default function App() {
                 <Route path="/trader" element={<OverviewPage />} />
                 <Route path="/trader/watchlist" element={<WatchlistPage />} />
                 <Route path="/trader/charts" element={<ChartsPage />} />
+                <Route path="/trader/structure" element={<StructurePage />} />
                 <Route path="/trader/news" element={<MarketNewsPage />} />
                 <Route path="/trader/movers" element={<TopMoversPage />} />
                 <Route path="/trader/option-chain" element={<OptionChainPage />} />
