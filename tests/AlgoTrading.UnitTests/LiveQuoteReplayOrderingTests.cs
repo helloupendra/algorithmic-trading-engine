@@ -44,7 +44,7 @@ public class LiveQuoteReplayOrderingTests
             UpdatedUtc = StoredStamp,
         });
         db.SaveChanges();
-        return (new LiveDataService(db, new NoCatalog()), db);
+        return (new LiveDataService(db, new NoCatalog(), new MarketSessionService(new OpenCalendar())), db);
     }
 
     private static UpsertLiveTickRequest Tick(bool isReplay) => new()
@@ -105,5 +105,15 @@ public class LiveQuoteReplayOrderingTests
     {
         public IReadOnlyList<ProviderDescriptor> Descriptors => Array.Empty<ProviderDescriptor>();
         public ProviderDescriptor? Find(string providerKey) => null;
+    }
+
+    /// <summary>A calendar with no holidays: the session rules only gate bars here.</summary>
+    private sealed class OpenCalendar : IMarketCalendar
+    {
+        public MarketHoliday? HolidayOn(string exchange, DateOnly date) => null;
+        public MarketSpecialSession? SpecialSessionOn(string exchange, DateOnly date) => null;
+        public bool HasYear(string exchange, int year) => true;
+        public bool IsLoaded => true;
+        public Task RefreshAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

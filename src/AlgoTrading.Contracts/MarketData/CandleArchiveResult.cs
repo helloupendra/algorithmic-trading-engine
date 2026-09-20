@@ -31,6 +31,13 @@ public class CandleArchiveResult
     /// <summary>Rows left alone because another source (the broker) already owns them.</summary>
     public int CandlesOwnedElsewhere { get; set; }
 
+    /// <summary>
+    /// Candles this service had written outside the exchange's session — the
+    /// pre-open auction, or the hours after the close when a vendor keeps
+    /// quoting the last price — removed by this run.
+    /// </summary>
+    public int OutsideSessionRemoved { get; set; }
+
     /// <summary>Broker backfills attempted for the index symbols: "SYMBOL/RES: n candles" or the failure.</summary>
     public List<string> BrokerBackfills { get; set; } = new();
 
