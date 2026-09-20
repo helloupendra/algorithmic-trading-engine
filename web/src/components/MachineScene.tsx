@@ -17,12 +17,14 @@
  * to the stills instead of leaving a hole.
  *
  * `?pose=<name>` holds a named pose with the HTML hidden; that is how the
- * fallback stills are rendered from the real scene.
+ * fallback stills are rendered from the real scene. `?harness` is the same
+ * without the pose: no arrival animation and no quality governor, for the
+ * screenshot harness (lib/sceneMode).
  */
 
 import { useEffect, useRef, type RefObject } from 'react'
 import { progressOf } from '../lib/timeline'
-import { stillPose } from '../lib/sceneMode'
+import { harnessMode, isPhone, stillPose } from '../lib/sceneMode'
 import type { MachineHandle } from '../scene/machine'
 
 export interface MachineSceneProps {
@@ -87,7 +89,10 @@ export function MachineScene({ mode, trackRef, onReady, onFrame, onUnavailable }
     }
 
     const onScroll = () => readScroll()
-    const onPointer = (e: PointerEvent) => machine?.setPointer(e.clientX / window.innerWidth - 0.5, e.clientY / window.innerHeight - 0.5)
+    // Mouse only: on a touch screen a pointer move is a scroll, and parallax would fight it.
+    const onPointer = (e: PointerEvent) => {
+      if (e.pointerType === 'mouse') machine?.setPointer(e.clientX / window.innerWidth - 0.5, e.clientY / window.innerHeight - 0.5)
+    }
     const onVisibility = () => {
       hidden = document.hidden
       last = 0
@@ -115,10 +120,14 @@ export function MachineScene({ mode, trackRef, onReady, onFrame, onUnavailable }
     void import('../scene/machine')
       .then(({ createMachine }) => {
         if (cancelled) return
+        const harness = harnessMode()
+        const touch = window.matchMedia('(pointer: coarse)').matches
         machine = createMachine({
           canvas,
-          quality: window.innerWidth < 1100 && !still ? 'light' : 'full',
-          skipIntro: mode === 'login' || !!still || new URLSearchParams(window.location.search).has('nointro'),
+          quality: isPhone() ? 'phone' : 'full',
+          skipIntro: mode === 'login' || harness,
+          adaptive: !harness,
+          touch,
         })
         machine.resize(wrap.clientWidth, wrap.clientHeight)
         if (still) machine.setPose(still)

@@ -1,0 +1,375 @@
+/**
+ * The homepage on a computer or a tablet: not a black box.
+ *
+ * One object carries the page — the engine in its glass case
+ * (components/MachineScene → scene/machine.ts). It arrives as a black box and
+ * clears to glass; scrolling takes the lid off, separates the engine into its
+ * five layers and climbs them one at a time: data, chain, strategy, risk,
+ * ledger. Each layer has one chapter of copy, set like a datasheet, on the side
+ * of the screen the engine is not. At the end the case closes again.
+ *
+ * After the story the page is flat and factual: the console's real screens,
+ * the one run the site shows in full (the losing one, drawn from
+ * scene/evidence.ts), and how to run it yourself.
+ *
+ * Rules this page keeps: every figure is one the console itself shows;
+ * strategy code names never appear; the synthetic objects in the world are
+ * captioned as synthetic. While the live world runs, a chapter's copy sits in
+ * a fixed layer and is shown — and reachable by keyboard — only while the
+ * camera holds on its layer. Without the world (reduced motion, no WebGL, a
+ * phone, a failed chunk) the same chapters lay out in flow over stills
+ * rendered from the real scene.
+ */
+
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
+import { useAuth } from '../../lib/auth'
+import { useMarketClock } from '../../lib/marketClock'
+import { liveSceneWanted } from '../../lib/sceneMode'
+import { IconLogo } from '../../components/icons'
+import { MachineScene } from '../../components/MachineScene'
+import { Still } from '../../components/Still'
+import { CHAPTERS, chapterProgress, type ChapterKey, type Rect } from '../../scene/story'
+import { RUN } from '../../scene/evidence'
+import type { MachineHandle } from '../../scene/machine'
+import { AUTHOR, COPY, GITHUB_URL, LICENSE_URL, LINKEDIN_URL, SCREENS, TAGS, rupees, type ChapterCopy } from './content'
+import { Arrow, EquityCurve, GitHubMark } from './parts'
+import '../landing.css'
+
+/* ------------------------------------------------------------------ chapter */
+
+function Chapter({ c, heading, children }: { c: ChapterCopy; heading: 'h1' | 'h2'; children?: ReactNode }) {
+  const H = heading
+  return (
+    <div className="chapter__inner">
+      {c.index && <span className="chapter__index" aria-hidden="true">{c.index}</span>}
+      <p className="eyebrow"><i aria-hidden="true" />{c.index ? `Layer ${c.index} · ${c.label}` : c.label}</p>
+      <H className="chapter__title" id={`${c.key}-title`}>{c.title}</H>
+      <p className="chapter__body">{c.body}</p>
+      {c.specs && (
+        <dl className="specs">
+          {c.specs.map(([k, v]) => (
+            <div key={k}><dt>{k}</dt><dd>{v}</dd></div>
+          ))}
+        </dl>
+      )}
+      {children}
+    </div>
+  )
+}
+
+/* --------------------------------------------------------------------- page */
+
+export function LandingDesktop() {
+  const { isAuthenticated, isAdmin, isLoading } = useAuth()
+  // isLoading is only true while a stored token is verified against /me
+  // (anonymous visitors never see it). During that probe the CTA already reads
+  // as the signed-in variant and points at /login, which bounces a valid session
+  // to its role home — so nothing visibly flips once the probe resolves.
+  const sessionLikely = isLoading || isAuthenticated
+  const consoleHref = isAuthenticated ? (isAdmin ? '/admin' : '/trader') : '/login'
+  const consoleLabel = sessionLikely ? 'Go to console' : 'Open the console'
+
+  const clock = useMarketClock()
+  const [live, setLive] = useState(() => liveSceneWanted())
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const storyRef = useRef<HTMLDivElement | null>(null)
+  const chaptersRef = useRef<HTMLDivElement | null>(null)
+  const hudRef = useRef<HTMLDivElement | null>(null)
+  const railRef = useRef<HTMLElement | null>(null)
+  const activeRef = useRef(0)
+  const machineRef = useRef<MachineHandle | null>(null)
+  const closedBoxRef = useRef<HTMLDivElement | null>(null)
+  const openBoxRef = useRef<HTMLDivElement | null>(null)
+
+  /**
+   * On a wide screen the story frames the engine itself, beside the copy. On a
+   * tablet held upright there is no "beside": the stylesheet moves the copy to
+   * the top and gives the engine two boxes underneath, and this hands their
+   * rectangles to the world. The boxes are `display: none` on a wide screen, so
+   * they measure as nothing and the story's own framing stays in charge.
+   */
+  const place = useCallback(() => {
+    const m = machineRef.current
+    const closed = closedBoxRef.current
+    const open = openBoxRef.current
+    if (!m || !closed || !open) return
+    const { width, height } = m.size()
+    const frac = (el: HTMLElement): Rect => {
+      const r = el.getBoundingClientRect()
+      return { x: r.left / width, y: r.top / height, w: r.width / width, h: r.height / height }
+    }
+    const used = width > 0 && height > 0 && closed.offsetWidth > 0 && open.offsetWidth > 0
+    m.setStage(used ? { closed: frac(closed), open: frac(open) } : null)
+  }, [])
+
+  useEffect(() => {
+    window.addEventListener('resize', place)
+    return () => window.removeEventListener('resize', place)
+  }, [place])
+
+  const onReady = useCallback((m: MachineHandle) => {
+    machineRef.current = m
+    place()
+  }, [place])
+
+  useEffect(() => {
+    const previous = document.title
+    document.title = 'OpenFNO — not a black box. An open-source algo trading desk for Indian F&O'
+    return () => {
+      document.title = previous
+    }
+  }, [])
+
+  // The bar gains a backdrop once the page has moved; the fixed copy and labels
+  // step aside once the story has been read.
+  useEffect(() => {
+    const onScroll = () => {
+      const root = rootRef.current
+      const story = storyRef.current
+      if (!root) return
+      root.classList.toggle('is-scrolled', window.scrollY > 24)
+      if (story) root.classList.toggle('is-past', story.getBoundingClientRect().bottom <= window.innerHeight + 2)
+    }
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
+
+  /** Scroll to the middle of a chapter's plateau (links and the rail; the copy itself is in a fixed layer). */
+  const goTo = useCallback((key: ChapterKey) => {
+    const story = storyRef.current
+    if (!story) return
+    if (!live) {
+      document.getElementById(key)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      return
+    }
+    const top = story.getBoundingClientRect().top + window.scrollY
+    window.scrollTo({ top: top + chapterProgress(key) * (story.offsetHeight - window.innerHeight), behavior: 'smooth' })
+  }, [live])
+
+  /** After each rendered frame: which chapter is up, and where the world's labels go. */
+  const onFrame = useCallback((m: MachineHandle) => {
+    const st = m.state()
+    const nearest = Math.round(st.u)
+    const active = Math.abs(st.u - nearest) < 0.36 ? nearest : -1
+    if (active !== activeRef.current) {
+      activeRef.current = active
+      const kids = chaptersRef.current?.children
+      if (kids) {
+        for (let i = 0; i < kids.length; i++) {
+          const el = kids[i] as HTMLElement
+          el.classList.toggle('is-on', i === active)
+          el.inert = i !== active
+        }
+      }
+      railRef.current?.querySelectorAll('button').forEach((b, i) => b.classList.toggle('is-on', i + 1 === active))
+      railRef.current?.classList.toggle('is-on', active >= 1 && active <= 5)
+    }
+    const hud = hudRef.current
+    if (!hud) return
+    const kids = hud.children
+    for (let i = 0; i < kids.length; i++) {
+      const el = kids[i] as HTMLElement
+      const tag = TAGS[i]
+      const chapterIndex = CHAPTERS.findIndex((c) => c.key === tag.chapter)
+      const near = 1 - Math.abs(st.u - chapterIndex) * 1.8
+      const a = m.project(tag.anchor)
+      const opacity = a.visible ? Math.max(0, Math.min(1, near)) : 0
+      el.style.opacity = opacity.toFixed(2)
+      if (opacity > 0) el.style.transform = `translate(${a.x.toFixed(1)}px, ${a.y.toFixed(1)}px)`
+    }
+  }, [])
+
+  return (
+    <div className={`lp ${live ? 'lp--live' : 'lp--still'}`} ref={rootRef}>
+      <header className="top">
+        <a className="brand" href="#top" aria-label="OpenFNO home">
+          <span className="brand__mark"><IconLogo /></span>
+          <span className="brand__word">openfno</span>
+        </a>
+        <nav className="top__links" aria-label="Sections">
+          <button type="button" onClick={() => goTo('data')}>The engine</button>
+          <a href="#console">Console</a>
+          <a href="#proof">Proof</a>
+          <a href="/docs/">Docs</a>
+        </nav>
+        <div className="top__end">
+          <span className={`market${clock.open ? ' is-open' : ''}`} title="NSE cash timings, holidays aside">
+            <i aria-hidden="true" />NSE {clock.open ? 'open' : 'closed'} · {clock.time} IST
+          </span>
+          <a className="top__icon" href={GITHUB_URL} target="_blank" rel="noopener noreferrer" aria-label="Source on GitHub"><GitHubMark /></a>
+          <Link className="cta cta--solid cta--sm" to={consoleHref}>{sessionLikely ? 'Console' : 'Open console'}</Link>
+        </div>
+      </header>
+
+      <main id="top">
+        <div className="story" ref={storyRef}>
+          {live && (
+            <>
+              <MachineScene mode="story" trackRef={storyRef} onReady={onReady} onFrame={onFrame} onUnavailable={() => setLive(false)} />
+
+              {/* Where the engine stands on an upright tablet: laid out by CSS, measured by place(), never drawn. */}
+              <div className="stage-box stage-box--closed" ref={closedBoxRef} aria-hidden="true" />
+              <div className="stage-box stage-box--open" ref={openBoxRef} aria-hidden="true" />
+
+              {/* Labels that live at points in the world. */}
+              <div className="hud" ref={hudRef} aria-hidden="true">
+                {TAGS.map((t) => (
+                  <span key={t.anchor} className={`tag${t.tone ? ` tag--${t.tone}` : ''}`}>{t.text}</span>
+                ))}
+              </div>
+
+              {/* One chapter of copy at a time, over the held world. */}
+              <div className="chapters" ref={chaptersRef}>
+                {COPY.map((c, i) => (
+                  <section
+                    key={c.key}
+                    className={`chapter chapter--${c.key}${i === 0 ? ' is-on' : ''}${i > 0 && i < 6 ? (i % 2 ? ' chapter--left' : ' chapter--right') : ''}`}
+                    aria-labelledby={`${c.key}-title`}
+                    inert={i !== 0}
+                  >
+                    <Chapter c={c} heading={i === 0 ? 'h1' : 'h2'}>
+                      {i === 0 && (
+                        <div className="actions">
+                          <Link className="cta cta--solid" to={consoleHref}>{consoleLabel} <Arrow /></Link>
+                          <a className="cta cta--line" href={GITHUB_URL} target="_blank" rel="noopener noreferrer"><GitHubMark /> Read the source</a>
+                        </div>
+                      )}
+                      {c.key === 'open' && (
+                        <div className="actions">
+                          <a className="cta cta--solid" href={GITHUB_URL} target="_blank" rel="noopener noreferrer"><GitHubMark /> Read the source</a>
+                          <Link className="cta cta--line" to={consoleHref}>{consoleLabel} <Arrow /></Link>
+                        </div>
+                      )}
+                    </Chapter>
+                  </section>
+                ))}
+              </div>
+
+              <nav className="rail" ref={railRef} aria-label="Layers of the engine">
+                {COPY.slice(1, 6).map((c) => (
+                  <button key={c.key} type="button" onClick={() => goTo(c.key)}><span>{c.label}</span><i aria-hidden="true" /></button>
+                ))}
+              </nav>
+
+              <p className="cue" aria-hidden="true"><span />scroll to take the lid off</p>
+              <div className="story__length" aria-hidden="true" />
+            </>
+          )}
+
+          {!live && (
+            <div className="stills">
+              {COPY.map((c, i) => (
+                <section key={c.key} className={`still-chapter still-chapter--${c.key}`} id={c.key} aria-labelledby={`${c.key}-title`}>
+                  <Still pose={c.key} className="still-chapter__bg" />
+                  <Chapter c={c} heading={i === 0 ? 'h1' : 'h2'}>
+                    {(i === 0 || c.key === 'open') && (
+                      <div className="actions">
+                        <Link className="cta cta--solid" to={consoleHref}>{consoleLabel} <Arrow /></Link>
+                        <a className="cta cta--line" href={GITHUB_URL} target="_blank" rel="noopener noreferrer"><GitHubMark /> Read the source</a>
+                      </div>
+                    )}
+                  </Chapter>
+                </section>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ------------------------------------------------------- console */}
+        <section id="console" className="band" aria-labelledby="console-title">
+          <div className="band__head">
+            <p className="eyebrow"><i aria-hidden="true" />The console</p>
+            <h2 id="console-title">Six screens. <em>No mock-ups.</em></h2>
+            <p>Captures of this deployment, as it ran. Scroll sideways.</p>
+          </div>
+          <div className="reel" tabIndex={0} role="group" aria-label="Console screens">
+            {SCREENS.map((s, i) => (
+              <figure className="reel__card" key={s.name}>
+                <div className="reel__frame">
+                  <img src={s.src} width={s.w} height={s.h} alt={s.alt} loading="lazy" decoding="async" />
+                </div>
+                <figcaption>
+                  <span className="reel__n">{String(i + 1).padStart(2, '0')}</span>
+                  <b>{s.name}</b>
+                  <span>{s.text}</span>
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+        </section>
+
+        {/* --------------------------------------------------------- proof */}
+        <section id="proof" className="band band--proof" aria-labelledby="proof-title">
+          <div className="band__head">
+            <p className="eyebrow"><i aria-hidden="true" />Proof, not promises</p>
+            <h2 id="proof-title">The only run we show in full <em>lost money.</em></h2>
+            <p>
+              A directional strategy replayed over {RUN.underlying} one-minute candles, {RUN.sessions} sessions from January to
+              September 2026, every option leg priced from stored premiums with brokerage and slippage applied. Entries that
+              could not be priced are listed as skipped, never filled at a made-up price.
+            </p>
+          </div>
+          <div className="proof">
+            <div className="proof__figure">
+              <b>−{rupees(RUN.netPnl)}</b>
+              <span>net, on a {rupees(RUN.initialCapital)} account</span>
+            </div>
+            <EquityCurve />
+            <dl className="proof__row">
+              <div><dt>closed trades</dt><dd>{RUN.trades}</dd></div>
+              <div><dt>winners</dt><dd>{RUN.winRatePct}%</dd></div>
+              <div><dt>a trade</dt><dd>−₹{Math.abs(RUN.perTrade)}</dd></div>
+              <div><dt>days positive</dt><dd>{RUN.profitableSessions} / {RUN.sessions}</dd></div>
+              <div><dt>deepest fall</dt><dd>{rupees(RUN.maxDrawdown)}</dd></div>
+              <div><dt>lowest balance</dt><dd>{rupees(RUN.lowestEquity)}</dd></div>
+            </dl>
+          </div>
+        </section>
+
+        {/* -------------------------------------------------------- run it */}
+        <section id="run" className="band band--run" aria-labelledby="run-title">
+          <div className="band__head">
+            <p className="eyebrow"><i aria-hidden="true" />Yours</p>
+            <h2 id="run-title">Your machine. <em>Your keys.</em></h2>
+            <p>The whole desk runs on hardware you control. No data leaves, and no strategy is uploaded anywhere.</p>
+            <div className="actions">
+              <a className="cta cta--solid" href={GITHUB_URL} target="_blank" rel="noopener noreferrer"><GitHubMark /> Read the source</a>
+              <a className="cta cta--line" href="/docs/">Read the docs <Arrow /></a>
+            </div>
+          </div>
+          <div className="term" role="group" aria-label="Quick start">
+            <div className="term__bar" aria-hidden="true"><i /><i /><i /><span>quick start</span></div>
+            <pre><code>
+              <span className="c"># 1 · clone and bootstrap — databases, keys, builds</span>{'\n'}
+              <span className="p">$</span> git clone {GITHUB_URL}.git{'\n'}
+              <span className="p">$</span> cd algorithmic-trading-engine{'\n'}
+              <span className="p">$</span> ./scripts/setup.sh{'\n\n'}
+              <span className="c"># 2 · start the API — it applies its own migrations</span>{'\n'}
+              <span className="p">$</span> dotnet run --project src/AlgoTrading.Api{'\n\n'}
+              <span className="c"># 3 · load expiries and the instrument masters</span>{'\n'}
+              <span className="p">$</span> ./scripts/load-data.sh
+            </code></pre>
+            <p className="term__stack">.NET 10 API · Python engine · React 19 console · TimescaleDB · Redis · SignalR</p>
+          </div>
+        </section>
+      </main>
+
+      <footer className="foot">
+        <p className="foot__word" aria-hidden="true">openfno</p>
+        <div className="foot__row">
+          <span>Built by {AUTHOR}</span>
+          <span className="foot__links">
+            <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer">GitHub</a>
+            <a href={LINKEDIN_URL} target="_blank" rel="noopener noreferrer">LinkedIn</a>
+            <a href="/docs/">Docs</a>
+            <a href={LICENSE_URL} target="_blank" rel="noopener noreferrer">Licence</a>
+            <Link to={consoleHref}>Console</Link>
+          </span>
+        </div>
+        <p className="foot__risk">Trading involves financial risk. OpenFNO executes on paper against live ticks; validate every strategy before you trust it with money.</p>
+      </footer>
+    </div>
+  )
+}

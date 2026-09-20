@@ -31,7 +31,7 @@ import * as THREE from 'three'
 import { Reflector } from 'three/addons/objects/Reflector.js'
 import { Engine } from './engine'
 import { ATM, STRIKES, ladder, rng, tape } from './synth'
-import { LAYERS, chapterProgress, layerY, stateAt, type ChapterKey, type StoryState } from './story'
+import { LAYERS, chapterProgress, layerY, lerpRect, stageFit, stateAt, type ChapterKey, type Rect, type StoryState } from './story'
 import { RUN, SESSIONS } from './evidence'
 import { follow } from '../lib/timeline'
 
@@ -80,10 +80,25 @@ export interface Anchor {
 
 export interface MachineOptions {
   canvas: HTMLCanvasElement
-  /** 'light' drops the floor reflection and anti-aliasing and renders at DPR 1. */
-  quality?: 'full' | 'light'
+  /**
+   * 'full' is the scene on a computer or a tablet. 'phone' keeps the floor
+   * reflection — it is most of the look — but renders about a million pixels,
+   * with no dust and no anti-aliasing pass. Either way a GPU that cannot keep up
+   * is handled at run time by the governor (`adaptive`), not guessed up front.
+   */
+  quality?: 'full' | 'phone'
   /** Skip the black-box-to-glass arrival (stills, reduced motion, the sign-in page). */
   skipIntro?: boolean
+  /** Watch the frame time and step the quality down on a GPU that cannot keep up. */
+  adaptive?: boolean
+  /** A touch screen: no pointer parallax (it fights the scroll); the engine sways a little on its own instead. */
+  touch?: boolean
+}
+
+/** Where the engine stands when a page lays it out itself: one box for the closed case, one for an open layer. */
+export interface Stage {
+  closed: Rect
+  open: Rect
 }
 
 export interface MachineHandle {
@@ -95,8 +110,13 @@ export interface MachineHandle {
   setPointer(x: number, y: number): void
   /** The sign-in page: how awake the engine is, 0…1 (it wakes as the form is filled in). */
   setEnergy(e: number): void
-  /** The sign-in page: where the engine stands, as fractions of the viewport from its centre (+x right, +y down). */
-  setScreenCentre(x: number, y: number): void
+  /**
+   * Let the page place the engine: the world fits it into these boxes of the
+   * viewport instead of using the story's own framing. Null hands the framing back.
+   */
+  setStage(stage: Stage | null): void
+  /** The canvas size in CSS px, for pages that turn their own layout into a Stage. */
+  size(): { width: number; height: number }
   resize(width: number, height: number): void
   /** Advance the world by `dt` seconds and render. */
   frame(dt: number, now: number): void
@@ -268,14 +288,15 @@ function squareFrame(half: number, bar: number, material: THREE.Material, uprigh
 /* ---------------------------------------------------------------- the world */
 
 export function createMachine(o: MachineOptions): MachineHandle {
-  const light = o.quality === 'light'
+  const phone = o.quality === 'phone'
   const engine = new Engine({
     canvas: o.canvas,
-    dprCap: light ? 1 : 1.5,
-    maxPixels: light ? 1_400_000 : 2_800_000,
-    bloom: { strength: light ? 0.45 : 0.55, radius: 0.7, threshold: 0.62 },
-    smaa: !light,
-    grade: { grain: light ? 0 : 0.012, vignette: 0.34 },
+    // A phone's screen is dense and its lines are thin: allow DPR 2, but hold the total to about a million pixels.
+    dprCap: phone ? 2 : 1.5,
+    maxPixels: phone ? 1_100_000 : 2_800_000,
+    bloom: { strength: 0.55, radius: 0.7, threshold: 0.62 },
+    smaa: !phone,
+    grade: { grain: phone ? 0 : 0.012, vignette: phone ? 0.22 : 0.34 },
     fov: 30,
     far: 200,
     clear: C.page,
@@ -319,27 +340,25 @@ export function createMachine(o: MachineOptions): MachineHandle {
   scene.add(sky)
 
   /* ---- floor ---- */
-  let floor: Reflector | null = null
-  if (!light) {
-    floor = new Reflector(new THREE.PlaneGeometry(90, 90), {
-      clipBias: 0.002,
-      textureWidth: 1024,
-      textureHeight: 512,
-      color: 0x030406,
-      shader: FLOOR_SHADER,
-    })
-    floor.rotation.x = -Math.PI / 2
-    ;(floor.material as THREE.ShaderMaterial).uniforms.uHorizon.value = HORIZON
-    scene.add(floor)
-  } else {
-    const pool = new THREE.Mesh(
-      new THREE.PlaneGeometry(14, 14),
-      new THREE.MeshBasicMaterial({ map: radialTexture([[0, 'rgba(18,30,62,1)'], [0.5, 'rgba(8,14,30,.5)'], [1, 'rgba(3,4,6,0)']]), transparent: true, depthWrite: false }),
-    )
-    pool.rotation.x = -Math.PI / 2
-    pool.position.y = 0.001
-    scene.add(pool)
-  }
+  const pool = new THREE.Mesh(
+    new THREE.PlaneGeometry(14, 14),
+    new THREE.MeshBasicMaterial({ map: radialTexture([[0, 'rgba(18,30,62,1)'], [0.5, 'rgba(8,14,30,.5)'], [1, 'rgba(3,4,6,0)']]), transparent: true, depthWrite: false }),
+  )
+  pool.rotation.x = -Math.PI / 2
+  pool.position.y = 0.001
+  // Only shown if the governor has to switch the reflection off.
+  pool.visible = false
+  scene.add(pool)
+  const floor = new Reflector(new THREE.PlaneGeometry(90, 90), {
+    clipBias: 0.002,
+    textureWidth: 1024,
+    textureHeight: 512,
+    color: 0x030406,
+    shader: FLOOR_SHADER,
+  })
+  floor.rotation.x = -Math.PI / 2
+  ;(floor.material as THREE.ShaderMaterial).uniforms.uHorizon.value = HORIZON
+  scene.add(floor)
 
   // A soft light behind the engine, always opposite the camera, so the glass has something to be seen against.
   const halo = new THREE.Sprite(
@@ -591,7 +610,7 @@ export function createMachine(o: MachineOptions): MachineHandle {
     [rad(128), 0.9, 1.65],
   ]
   const feedPoints = FEEDS.map(([a, y, r]) => new THREE.Vector3(Math.sin(a) * r, y, Math.cos(a) * r))
-  const PER_FEED = 70
+  const PER_FEED = phone ? 44 : 70
   const tickCount = PER_FEED * FEEDS.length
   const tickSource = new Float32Array(tickCount * 3)
   const tickSeed = new Float32Array(tickCount * 2)
@@ -650,7 +669,7 @@ export function createMachine(o: MachineOptions): MachineHandle {
   machine.add(ticks)
 
   // Dust in the air: what makes a dark room a room.
-  const DUST = light ? 0 : 320
+  const DUST = phone ? 0 : 320
   let dust: THREE.Points | null = null
   const dustUniforms = { uTime: { value: 0 }, uScale: { value: 1 } }
   if (DUST) {
@@ -705,8 +724,12 @@ export function createMachine(o: MachineOptions): MachineHandle {
   let intro = o.skipIntro ? 99 : 0
   let energyIn = 0
   let energy = 0
-  let centreX = 0
-  let centreY = 0.02
+  let stage: Stage | null = null
+  let stageNow: Rect | null = null
+  // Frame-time governor: 0 as built, 1 fewer pixels, 2 no floor reflection, 3 no bloom.
+  let governor = 0
+  let slowFrames = 0
+  let seenFrames = 0
   let openT = -1
   let errorT = -1
   let lift = 0
@@ -716,7 +739,7 @@ export function createMachine(o: MachineOptions): MachineHandle {
   const lookAt = new THREE.Vector3()
 
   const LOGIN: Omit<StoryState, 'focus' | 'chapter' | 'u' | 'phase'> = {
-    explode: 0, azim: 32, elev: 12, dist: 9.4, targetY: 1.0, shiftX: 0, shiftY: 0, spin: 1,
+    explode: 0, azim: 32, elev: 12, dist: 9.4, targetY: 1.0, shiftX: 0, shiftY: 0.04, spin: 1,
   }
 
   function currentState(): StoryState {
@@ -847,9 +870,23 @@ export function createMachine(o: MachineOptions): MachineHandle {
     const W = engine.cssWidth
     const H = engine.cssHeight
     const portrait = H > W * 1.15
-    const az = rad(s.azim + panX * 9)
-    const el = rad(Math.max(4, s.elev - panY * 5))
-    const dist = s.dist * (portrait ? 1.55 : 1) * (isLogin && portrait ? 1.1 : 1)
+    // On a touch screen the engine sways a little on its own in place of pointer parallax.
+    const sway = o.touch ? Math.sin(t * 0.33) * 3.2 * (1 - s.spin) : 0
+    const az = rad(s.azim + panX * 9 + sway)
+    // A tall, narrow stage is filled by looking at an open layer from higher up.
+    const elev = Math.max(4, s.elev - panY * 5) + (stage && portrait ? 20 * s.explode : 0)
+    const el = rad(elev)
+    // A page that lays the engine out itself hands over the boxes; the world
+    // follows them (damped, so a bottom sheet changing height is a glide, not a
+    // jump) and fits the engine inside. Otherwise the story's own framing applies.
+    let fitted: ReturnType<typeof stageFit> | null = null
+    if (stage) {
+      const want = lerpRect(stage.closed, stage.open, s.explode)
+      const k = stageNow ? 1 - Math.pow(0.5, dt / 0.16) : 1
+      stageNow = stageNow ? lerpRect(stageNow, want, k) : want
+      fitted = stageFit(stageNow, W, H, camera.fov, s.explode, elev)
+    }
+    const dist = fitted ? fitted.dist : s.dist * (portrait ? 1.55 : 1)
     lookAt.set(0, s.targetY, 0)
     camera.position.set(Math.sin(az) * Math.cos(el) * dist, s.targetY + Math.sin(el) * dist, Math.cos(az) * Math.cos(el) * dist)
     camera.lookAt(lookAt)
@@ -857,8 +894,8 @@ export function createMachine(o: MachineOptions): MachineHandle {
     // and up, not by an off-axis frustum: the floor's planar reflection mirrors
     // the camera, and a mirrored camera with a skewed frustum looks at the wrong
     // part of the floor (the reflection smears in from the screen's edge).
-    const sx = isLogin ? centreX : portrait ? 0 : s.shiftX
-    const sy = isLogin ? centreY : portrait ? 0.2 : s.shiftY
+    const sx = fitted ? fitted.shiftX : portrait ? 0 : s.shiftX
+    const sy = fitted ? fitted.shiftY : portrait ? 0.2 : s.shiftY
     const metresPerPx = dist / (H / 2 / Math.tan(rad(camera.fov) / 2))
     camera.updateMatrixWorld()
     camera.position.addScaledVector(tmp.setFromMatrixColumn(camera.matrixWorld, 0), -sx * W * metresPerPx)
@@ -874,6 +911,29 @@ export function createMachine(o: MachineOptions): MachineHandle {
     tickUniforms.uMax.value = 9 * pr
     dustUniforms.uScale.value = H * pr * 0.11
     engine.render(now)
+    if (o.adaptive) govern(dt)
+  }
+
+  /**
+   * A GPU that cannot hold ~30 fps gets a cheaper picture, one step at a time,
+   * each step judged on its own two seconds: fewer pixels, then no floor
+   * reflection (the second render of the scene), then no bloom.
+   */
+  function govern(dt: number) {
+    if (governor >= 3 || intro < 4) return
+    seenFrames++
+    if (dt > 1 / 32) slowFrames++
+    if (seenFrames < 120) return
+    const struggling = slowFrames > seenFrames * 0.5
+    seenFrames = 0
+    slowFrames = 0
+    if (!struggling) return
+    governor++
+    if (governor === 1) engine.scalePixelBudget(0.6)
+    else if (governor === 2) {
+      floor.visible = false
+      pool.visible = true
+    } else if (engine.bloom) engine.bloom.enabled = false
   }
 
   function project(name: AnchorName): Anchor {
@@ -887,11 +947,11 @@ export function createMachine(o: MachineOptions): MachineHandle {
   }
 
   function resize(width: number, height: number) {
+    // A portrait stage is narrow: a wider lens keeps the engine close and its perspective alive.
+    camera.fov = stage && height > width * 1.15 ? 38 : 30
     engine.size(width, height)
-    if (floor) {
-      const pr = renderer.getPixelRatio()
-      floor.getRenderTarget().setSize(Math.max(256, Math.round(width * pr * 0.5)), Math.max(128, Math.round(height * pr * 0.5)))
-    }
+    const pr = renderer.getPixelRatio()
+    floor.getRenderTarget().setSize(Math.max(256, Math.round(width * pr * 0.5)), Math.max(128, Math.round(height * pr * 0.5)))
   }
 
   if (import.meta.env.DEV) {
@@ -913,10 +973,13 @@ export function createMachine(o: MachineOptions): MachineHandle {
     setEnergy(e) {
       energyIn = clamp01(e)
     },
-    setScreenCentre(x, y) {
-      centreX = x
-      centreY = y
+    setStage(next) {
+      const had = !!stage
+      stage = next
+      if (!next) stageNow = null
+      if (had !== !!next) resize(engine.cssWidth, engine.cssHeight)
     },
+    size: () => ({ width: engine.cssWidth, height: engine.cssHeight }),
     resize,
     frame,
     project,
@@ -933,7 +996,7 @@ export function createMachine(o: MachineOptions): MachineHandle {
     dispose() {
       disposed = true
       if (import.meta.env.DEV) delete (window as unknown as { __openfno?: unknown }).__openfno
-      floor?.getRenderTarget().dispose()
+      floor.getRenderTarget().dispose()
       engine.dispose()
     },
   }

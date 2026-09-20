@@ -14,7 +14,8 @@ const STILLS = import.meta.glob('../shots/stills/*.webp', { eager: true, import:
 function sizeClass(): string {
   if (typeof window === 'undefined') return '1440x900'
   const w = window.innerWidth
-  if (w < 760) return '390x844'
+  if (w <= 700) return '390x844'
+  if (w <= 1100 && window.innerHeight > w * 1.15) return '820x1180'
   if (w < 1400) return '1280x733'
   return '1440x900'
 }

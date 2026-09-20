@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CHAPTERS, LAYERS, LAYER_BASE, chapterProgress, layerY, locate, stateAt } from './story'
+import { CHAPTERS, LAYERS, LAYER_BASE, SUBJECT, chapterProgress, layerY, lerpRect, locate, stageFit, stateAt } from './story'
 
 describe('the story', () => {
   it('covers 0…1 without gaps or overlaps, each plateau inside its chapter', () => {
@@ -89,5 +89,45 @@ describe('stateAt', () => {
       expect(Math.abs(s.azim - prev.azim)).toBeLessThan(6)
       prev = s
     }
+  })
+})
+
+describe('stageFit', () => {
+  const fov = 30
+  const focal = (h: number) => h / 2 / Math.tan((fov * Math.PI) / 360)
+
+  it('centres the engine in the rectangle it is given', () => {
+    const s = stageFit({ x: 0, y: 0.1, w: 1, h: 0.4 }, 390, 844, fov, 1, 30)
+    expect(s.shiftX).toBeCloseTo(0)
+    expect(s.shiftY).toBeCloseTo(-0.2)
+    const right = stageFit({ x: 0.5, y: 0, w: 0.5, h: 1 }, 1440, 900, fov, 0, 14)
+    expect(right.shiftX).toBeCloseTo(0.25)
+    expect(right.shiftY).toBeCloseTo(0)
+  })
+  it('is limited by width on a phone and by height in a wide, short box', () => {
+    const phone = stageFit({ x: 0, y: 0.1, w: 1, h: 0.45 }, 390, 844, fov, 1, 30)
+    expect(phone.dist).toBeCloseTo((focal(844) * SUBJECT.open.w) / 390 + SUBJECT.open.depth)
+    const wide = stageFit({ x: 0, y: 0.3, w: 1, h: 0.3 }, 1440, 900, fov, 0, 0)
+    expect(wide.dist).toBeCloseTo((focal(900) * SUBJECT.closed.tall) / (0.3 * 900) + SUBJECT.closed.depth)
+  })
+  it('needs more room the further above the engine the camera is', () => {
+    const box = { x: 0, y: 0.3, w: 1, h: 0.3 }
+    expect(stageFit(box, 1440, 900, fov, 1, 45).dist).toBeGreaterThan(stageFit(box, 1440, 900, fov, 1, 20).dist)
+  })
+  it('fits the nearest edge, not the middle: the engine never overflows its box', () => {
+    const s = stageFit({ x: 0, y: 0, w: 0.5, h: 0.5 }, 800, 800, fov, 0, 0)
+    const pxPerMetreAtNearEdge = focal(800) / (s.dist - SUBJECT.closed.depth)
+    expect(SUBJECT.closed.w * pxPerMetreAtNearEdge).toBeLessThanOrEqual(400 + 1e-6)
+    expect(SUBJECT.closed.tall * pxPerMetreAtNearEdge).toBeLessThanOrEqual(400 + 1e-6)
+  })
+  it('survives a degenerate rectangle without dividing by zero', () => {
+    const s = stageFit({ x: 0, y: 0, w: 0, h: 0 }, 390, 844, fov, 0.5, 20)
+    expect(Number.isFinite(s.dist)).toBe(true)
+  })
+})
+
+describe('lerpRect', () => {
+  it('blends every edge', () => {
+    expect(lerpRect({ x: 0, y: 0, w: 1, h: 1 }, { x: 0.5, y: 0.2, w: 0.5, h: 0.4 }, 0.5)).toEqual({ x: 0.25, y: 0.1, w: 0.75, h: 0.7 })
   })
 })

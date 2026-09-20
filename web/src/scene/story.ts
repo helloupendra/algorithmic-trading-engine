@@ -140,3 +140,67 @@ export function chapterProgress(key: ChapterKey): number {
   if (!c) return 0
   return (c.hold[0] + c.hold[1]) / 2
 }
+
+/* ------------------------------------------------------------------ staging */
+
+/**
+ * A rectangle of the viewport, in fractions of its width and height from the
+ * top-left corner. A page that lays the engine out itself — the phone story,
+ * the sign-in page — measures the box its layout leaves free and hands it to
+ * the world, so the two can never drift apart.
+ */
+export interface Rect {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+export const lerpRect = (a: Rect, b: Rect, t: number): Rect => ({
+  x: lerp(a.x, b.x, t),
+  y: lerp(a.y, b.y, t),
+  w: lerp(a.w, b.w, t),
+  h: lerp(a.h, b.h, t),
+})
+
+/**
+ * How much room the engine takes, in metres. Its width is fixed — the closed
+ * case turning on its diagonal, or one layer's plate seen corner-on — but how
+ * tall it looks depends on how far above it the camera is, and its nearest
+ * edge is `depth` closer to the camera than its middle, so it is that edge
+ * that has to fit.
+ */
+export const SUBJECT = {
+  closed: { w: 2.95, tall: 2.0, across: 2.83, depth: 1.42 },
+  open: { w: 2.5, tall: 0.5, across: 2.3, depth: 1.15 },
+} as const
+
+export interface Staging {
+  /** Camera distance at which the engine just fits the rectangle. */
+  dist: number
+  /** Where the engine's centre lands, as fractions of the viewport from its centre (+x right, +y down). */
+  shiftX: number
+  shiftY: number
+}
+
+/**
+ * Fit the engine into a rectangle of a `width`×`height` px viewport, seen from
+ * `elevDeg` above the floor through a camera of vertical field of view
+ * `fovDeg`. `explode` blends the room the closed case needs with the room one
+ * layer needs.
+ */
+export function stageFit(rect: Rect, width: number, height: number, fovDeg: number, explode: number, elevDeg: number): Staging {
+  const focal = height / 2 / Math.tan((fovDeg * Math.PI) / 360)
+  const e = (elevDeg * Math.PI) / 180
+  const seenHeight = (k: { tall: number; across: number }) => k.tall * Math.cos(e) + k.across * Math.sin(e)
+  const w = lerp(SUBJECT.closed.w, SUBJECT.open.w, explode)
+  const h = lerp(seenHeight(SUBJECT.closed), seenHeight(SUBJECT.open), explode)
+  const depth = lerp(SUBJECT.closed.depth, SUBJECT.open.depth, explode)
+  const boxW = Math.max(1, rect.w * width)
+  const boxH = Math.max(1, rect.h * height)
+  return {
+    dist: focal * Math.max(w / boxW, h / boxH) + depth,
+    shiftX: rect.x + rect.w / 2 - 0.5,
+    shiftY: rect.y + rect.h / 2 - 0.5,
+  }
+}
