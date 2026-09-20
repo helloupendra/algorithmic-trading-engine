@@ -60,6 +60,41 @@ timed out may already have accepted the order.
 | `fyers` | Data + Broker | daily OAuth | history, live ticks, quotes, option chain, depth, greeks | 0 |
 | *(your vendors)* | Data vendor | none | history from files on disk | 50 |
 | `replay` | Data vendor | none | history from this platform's own `candles` table | 100 |
+| `simbroker` | Broker | daily TOTP | orders, against play money (nothing is routed to it) | 900 |
+
+## The simulated broker
+
+`simbroker` connects to [OpenFNO Broker](https://broker.openfno.com), the simulated Indian broker
+this project also maintains ([source](https://github.com/helloupendra/openfno-broker)). It enforces
+the rules a real broker enforces — a whitelisted static IP, a daily two-factor login, a cap on order
+operations per second, no market orders from an API app, whole lots, tick sizes, margin and market
+hours — against play money.
+
+It is here so the order path can be built and proved against something that refuses orders the way a
+real broker refuses them. **Nothing in the platform routes orders to it.** Its `FallbackRank` is 900,
+behind every real vendor, and it declares no data capability at all, so it can never win a routing
+tie-break for history, quotes or ticks.
+
+Its login is not OAuth: client id, app id, app secret and a code from a stored TOTP secret go in one
+call, and the session ends at 06:00 IST the next day. That is why it has a typed client
+(`Infrastructure/Providers/SimBroker/SimBrokerClient.cs`) rather than an `IBrokerProvider`, whose shape
+describes a hosted browser sign-in. The client holds the session, signs in again once when the broker
+answers `401`, and reports a refusal with the broker's own code rather than throwing — including the
+one that is easy to misread, a `200` carrying an order that the risk checks rejected.
+
+Configure it with `SIMBROKER_BASE_URL`, `SIMBROKER_CLIENT_ID`, `SIMBROKER_APP_ID`,
+`SIMBROKER_APP_SECRET`, `SIMBROKER_TOTP_SECRET` and, so a refusal can be explained,
+`SIMBROKER_STATIC_IP`.
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| GET | `/api/SimBroker/status` | what is configured, what is missing, whether a session is held |
+| GET | `/api/SimBroker/ping` | the address the broker sees for this server, and whether it is the whitelisted one |
+| POST | `/api/SimBroker/test` | sign in, read funds and positions |
+| POST | `/api/SimBroker/sign-out` | forget the session |
+
+All four are admin-only. `ping` needs no credentials, which makes it the first thing to check when an
+order is refused with `STATIC_IP_MISMATCH`: it answers with the IP the broker's check actually compares.
 
 ## Adding a data vendor without writing code
 
