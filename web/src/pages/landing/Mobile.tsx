@@ -32,7 +32,7 @@ import { CHAPTERS, chapterProgress, type ChapterKey, type Rect } from '../../sce
 import { RUN } from '../../scene/evidence'
 import type { MachineHandle } from '../../scene/machine'
 import { AUTHOR, COPY, GITHUB_URL, LICENSE_URL, LINKEDIN_URL, SCREENS, TAGS, rupees, type ChapterCopy } from './content'
-import { Arrow, EquityCurve, GitHubMark } from './parts'
+import { Arrow, EquityCurve, GitHubMark, NeonWordmark } from './parts'
 import '../landing.css'
 import './mobile.css'
 
@@ -373,7 +373,7 @@ export function LandingMobile() {
       </main>
 
       <footer className="lpm-foot">
-        <p className="lpm-foot__word" aria-hidden="true">openfno</p>
+        <NeonWordmark />
         <p className="lpm-foot__by">Built by {AUTHOR}</p>
         <p className="lpm-foot__links">
           <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer">GitHub</a>
