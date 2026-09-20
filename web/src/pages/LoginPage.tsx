@@ -1,52 +1,36 @@
 /**
- * Sign-in.
+ * Sign-in ("/login").
  *
- * The page a trading desk opens with. The left half is the session this page is
- * about to start — the market clock in IST, what a session brings up, and a tape
- * printing under it — and the right half is the form. The field behind both is
- * the homepage's (components/AuroraScene), so arriving here from "/" feels like
- * walking into the same room.
+ * The same engine as the homepage (components/MachineScene), standing on the
+ * left of one continuous room, half asleep in its glass: the desk before the
+ * open. The form is a sheet of glass on the right of the same room. On a narrow
+ * screen the form takes the centre and the engine stands behind it.
  *
- * The clock is the visitor's own, formatted in IST; the session line is computed
- * from the standard NSE cash timings and says "holidays aside" because this page
- * does not load the calendar. Nothing here pretends to be live market data.
+ * The page tells the world where the engine should stand by measuring the
+ * empty side of its own layout, so the two never drift apart.
  *
- * Username and password only. There is no public sign-up and no shortcut:
- * accounts are issued by an administrator.
+ * The engine answers the form. It wakes as the fields are filled in; on submit
+ * the lid lifts and the candle loader plays in place of the form; a failed
+ * sign-in flashes the case red, drops the lid, brings the form back with the
+ * server's message and returns focus to the first field.
+ *
+ * The clock top-right is the visitor's own, read in IST, with the NSE cash
+ * timings ("holidays aside", because this page does not load the calendar).
+ * Username and password only: accounts are issued by an administrator.
  */
 
-import { useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { ApiError } from '../lib/api'
+import { useMarketClock } from '../lib/marketClock'
+import { liveSceneWanted } from '../lib/sceneMode'
 import { IconLogo } from '../components/icons'
-import { AuroraCanvas } from '../components/AuroraScene'
-import { CandleBars, CandleLoader } from '../components/CandleLoader'
+import { MachineScene } from '../components/MachineScene'
+import { Still } from '../components/Still'
+import { CandleBars } from '../components/CandleLoader'
+import type { MachineHandle } from '../scene/machine'
 import './landing.css'
-
-/** The IST clock, and whether the cash session is open by the standard timings. */
-function useMarketClock() {
-  const [now, setNow] = useState(() => new Date())
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(new Date()), 1000)
-    return () => window.clearInterval(id)
-  }, [])
-
-  const time = new Intl.DateTimeFormat('en-IN', {
-    timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-  }).format(now)
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Kolkata', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
-  }).formatToParts(now)
-  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? ''
-  const weekday = get('weekday')
-  const minutes = Number(get('hour')) * 60 + Number(get('minute'))
-  const weekend = weekday === 'Sat' || weekday === 'Sun'
-  // 09:15 → 15:30 IST, the NSE cash session. The calendar lives in the console,
-  // not on this page, which is why the label says "holidays aside".
-  const open = !weekend && minutes >= 555 && minutes < 930
-  return { time, open }
-}
 
 export function LoginPage() {
   const { login } = useAuth()
@@ -58,10 +42,54 @@ export function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [focused, setFocused] = useState(false)
+  const [live, setLive] = useState(() => liveSceneWanted())
+  const machineRef = useRef<MachineHandle | null>(null)
+  const userRef = useRef<HTMLInputElement | null>(null)
+  const sideRef = useRef<HTMLDivElement | null>(null)
+
+  /** Stand the engine in the middle of the side the form leaves free (or behind the form, when there is none). */
+  const placeEngine = useCallback(() => {
+    const side = sideRef.current
+    const m = machineRef.current
+    if (!side || !m) return
+    const r = side.getBoundingClientRect()
+    const free = r.width > 240
+    const portrait = window.innerHeight > window.innerWidth * 1.15
+    const cx = free ? (r.left + r.width / 2) / window.innerWidth - 0.5 : 0
+    // Beside the form when there is a free side; under it on a phone; behind it otherwise.
+    m.setScreenCentre(cx, free ? 0.12 : portrait ? 0.3 : 0.04)
+  }, [])
+
+  useEffect(() => {
+    window.addEventListener('resize', placeEngine)
+    return () => window.removeEventListener('resize', placeEngine)
+  }, [placeEngine])
+
+  useEffect(() => {
+    const previous = document.title
+    document.title = 'Sign in — OpenFNO'
+    return () => {
+      document.title = previous
+    }
+  }, [])
+
+  // The engine wakes as the form is filled in: a little for focus, the rest for what has been typed.
+  const energy = Math.min(1, (focused ? 0.22 : 0.08) + (userNameOrEmail.length + password.length) / 18)
+  useEffect(() => {
+    machineRef.current?.setEnergy(energy)
+  }, [energy])
+
+  const onReady = useCallback((m: MachineHandle) => {
+    machineRef.current = m
+    m.setEnergy(0.08)
+    placeEngine()
+  }, [placeEngine])
 
   async function signIn(name: string, pass: string) {
     setError(null)
     setIsSubmitting(true)
+    machineRef.current?.fire('open')
     try {
       const me = await login(name, pass)
       // RequireAuth stores the full Location; keep search and hash so deep links
@@ -83,6 +111,10 @@ export function LoginPage() {
             : "Couldn't reach the server. Check your connection and try again.",
       )
       setIsSubmitting(false)
+      machineRef.current?.fire('error')
+      // The submit button was disabled while focused, which drops focus to the
+      // body; put it back where the correction starts.
+      window.setTimeout(() => userRef.current?.focus(), 0)
     }
     // On success the loader stays up until the console route has taken over.
   }
@@ -92,64 +124,43 @@ export function LoginPage() {
     void signIn(userNameOrEmail.trim(), password)
   }
 
+  const opening = isSubmitting && !error
+
   return (
     <div className="login">
-      <AuroraCanvas className="login__light" warm={1.6} />
-
-      {isSubmitting && !error && <CandleLoader label="Opening the console" />}
+      {live
+        ? <MachineScene mode="login" onReady={onReady} onUnavailable={() => setLive(false)} />
+        : <Still pose="login" className="login__still" />}
 
       <header className="login__top">
-        <Link className="login__brand" to="/">
-          <span className="login__mark" aria-hidden="true"><IconLogo /></span>
-          <span className="login__wordmark">
-            <span className="login__word">open<b>fno</b></span>
-            <span className="login__tag">Open-source F&amp;O desk</span>
-          </span>
+        <Link className="brand" to="/" aria-label="OpenFNO home">
+          <span className="brand__mark"><IconLogo /></span>
+          <span className="brand__word">openfno</span>
         </Link>
-        <div className="login__clock">
-          <span className={`login__state${clock.open ? ' is-open' : ''}`}>
-            <i aria-hidden="true" />{clock.open ? 'Market open' : 'Market closed'}
-          </span>
-          <span className="login__time">{clock.time} IST</span>
-          <span className="login__note">NSE cash timings, holidays aside</span>
-        </div>
+        <span className={`market${clock.open ? ' is-open' : ''}`}>
+          <i aria-hidden="true" />NSE {clock.open ? 'open' : 'closed'} · {clock.time} IST
+          <small>cash timings, holidays aside</small>
+        </span>
       </header>
 
-      <div className="login__grid">
-        <section className="login__pitch">
-          <h1 className="login__lead">
-            The desk,<br />
-            <em>before the open.</em>
-          </h1>
+      <main className="login__main">
+        <div className="login__side" ref={sideRef}>
+          <p className="eyebrow"><i aria-hidden="true" />The desk, before the open</p>
+          <h1 className="login__lead">Sign in.<br /><em>The engine wakes.</em></h1>
+        </div>
 
-          <div className="term">
-            <div className="term__bar"><i /><i /><i /><span>session · what signing in brings up</span></div>
-            <pre className="term__body"><code>
-              <span className="term__line"><b>feeds</b>      four vendors, one store — ticks, bars, chain</span>
-              <span className="term__line"><b>history</b>    five years of index candles, ±10 strikes of options</span>
-              <span className="term__line"><b>strategies</b> 25 in the catalogue, or one you write here</span>
-              <span className="term__line"><b>risk</b>       leg → group → day, guarded every 3 seconds</span>
-              <span className="term__line term__line--cue"><b>execution</b>  paper, on live ticks</span>
-            </code></pre>
-            <CandleBars className="term__tape" />
-          </div>
-        </section>
+        <div className="login__form">
+        <div className={`card${opening ? ' is-opening' : ''}${error ? ' is-error' : ''}`}>
+          <div className="card__form" inert={opening}>
+            <h2 className="card__title">Sign in</h2>
 
-        <div className="login__pane">
-          <div className="login__card">
-            <h2 className="login__title">Sign in</h2>
-            <p className="login__sub">Live data, strategies, backtests and risk — one console.</p>
+            {error && <div className="card__alert" role="alert">{error}</div>}
 
-            {error && (
-              <div className="alert alert--error" role="alert" style={{ marginBottom: 14 }}>
-                {error}
-              </div>
-            )}
-
-            <form onSubmit={handleSubmit} className="login__form">
+            <form onSubmit={handleSubmit} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}>
               <label className="field">
                 <span className="field__label">Username or email</span>
                 <input
+                  ref={userRef}
                   className="field__input"
                   value={userNameOrEmail}
                   onChange={(e) => setUserNameOrEmail(e.target.value)}
@@ -159,7 +170,6 @@ export function LoginPage() {
                   autoFocus
                 />
               </label>
-
               <label className="field">
                 <span className="field__label">Password</span>
                 <input
@@ -172,22 +182,24 @@ export function LoginPage() {
                   required
                 />
               </label>
-
-              <button type="submit" className="btn btn--primary btn--block" disabled={isSubmitting}>
-                {isSubmitting ? 'Signing in…' : 'Sign in'}
+              <button type="submit" className="cta cta--solid cta--block" disabled={isSubmitting}>
+                {isSubmitting ? 'Opening…' : <>Sign in <span className="arrow" aria-hidden="true">→</span></>}
               </button>
             </form>
 
-            <p className="login__hint">
-              Accounts are issued by an administrator — there is no public sign-up.
-            </p>
+            <p className="card__hint">Accounts are issued by an administrator — there is no public sign-up.</p>
           </div>
 
-          <p className="login__foot">
-            Trading involves financial risk. Validate every strategy on paper first.
-          </p>
+          {opening && (
+            <div className="card__opening" role="status">
+              <CandleBars />
+              <p>Opening the console<span className="loader__dots" aria-hidden="true">…</span></p>
+            </div>
+          )}
         </div>
-      </div>
+        <p className="login__risk">Trading involves financial risk. Validate every strategy on paper first.</p>
+        </div>
+      </main>
     </div>
   )
 }
