@@ -120,20 +120,41 @@ engine's account is moved to the `Service` role at the same time.
 Invite links, so an admin invites someone and that person sets their own password without it ever
 passing through the admin. Safe to add precisely because a new account holds nothing until granted.
 
-## A trader's own broker (Account page)
+## A trader's broker account (Account page)
 
-`/trader/account` shows the trader's profile and lets them link **their own** FYERS app: save
-app id, secret and optional trading PIN (encrypted at rest), sign in through FYERS, and see a
-light — grey *Not linked*, amber *App saved · sign in needed*, green *Linked · valid until 06:00*.
-Once linked, the page reads their **funds, positions, orders, holdings and trades straight from
-FYERS with their own token** (`GET /api/Trader/broker/{funds|positions|orders|holdings|trades}`).
+Traders trade at the **simulated broker** ([OpenFNO Broker](https://broker.openfno.com)), and an
+administrator opens their account for them. There is nothing on `/trader/account` to link: the page
+shows the account the platform issued — client id, money, positions, the day's orders, and whether the
+account is stopped — all read from the broker on each request, never cached here.
 
-The platform's shared FYERS account (the feed, the strategies) and a trader's account never share
-a session row: `broker_sessions.BrokerAccountId` is null for the platform and the trader's
-`broker_accounts.Id` for theirs; the session store's "current" lookups return platform rows only,
-and a trader account with no saved credentials never falls back to the operator's `.env` app.
-The OAuth callback tells the two flows apart by a one-time `state` (`acct-<nonce>`, 15 minutes,
-single use) minted by `GET /api/Trader/broker/auth-url`.
+**Show API credentials** hands the trader the four things an API client needs: client id, app id, app
+secret and the TOTP secret. The broker shows the app secret and the TOTP secret once each, so the
+platform stores them encrypted (ASP.NET Data Protection, `sim_broker_accounts`); without that, a trader
+who lost them would have to have the whole account reopened. It is a POST, not part of the page's own
+data, so secrets travel only when someone asks for them.
+
+**From the admin side**, every user's row on `/admin/users` has a **Broker account** section:
+
+| Action | What it does |
+| --- | --- |
+| Open an account | Opens it at the broker, issues the app whitelisted to this server's address, and pays the opening balance in |
+| Pay in / out | Moves money on the broker's ledger (a negative amount pays out) |
+| Show credentials | The trader's client id, app id, app secret and TOTP secret |
+| Stop this account | The broker's kill switch: working orders cancelled, open positions closed |
+
+The app is whitelisted to the address **the broker says it sees** for this server, asked of it at the
+moment the app is issued — the static-IP check compares that address, so anything else would issue an
+app that cannot place an order. `SIMBROKER_STATIC_IP` adds more addresses for a second machine.
+
+Two deliberate limits. Disabling a trader's link does **not** touch their account at the broker: money
+and positions are not something a checkbox should destroy, so the account stays and simply stops being
+offered. And issuing is three calls to a separate system — open, issue the app, pay in — which cannot be
+one transaction; if the app fails, the account exists at the broker with no app, the platform saves
+nothing, and the failure is logged in the broker's own words rather than hidden behind a retry.
+
+Per-trader **FYERS** linking was removed on 2026-09-21: a trader's orders belong at the simulated
+broker, and real money stays with the platform's own shared FYERS account, which is the operator's.
+The `broker_accounts` rows an earlier version wrote are left where they are.
 
 Traders are never told about the platform broker or the feed — those are the operator's; a
 trader's Strategies page shows only the kill switch and their concurrent-run ceiling.

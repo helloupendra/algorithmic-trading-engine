@@ -82,9 +82,15 @@ describes a hosted browser sign-in. The client holds the session, signs in again
 answers `401`, and reports a refusal with the broker's own code rather than throwing — including the
 one that is easy to misread, a `200` carrying an order that the risk checks rejected.
 
-Configure it with `SIMBROKER_BASE_URL`, `SIMBROKER_CLIENT_ID`, `SIMBROKER_APP_ID`,
-`SIMBROKER_APP_SECRET`, `SIMBROKER_TOTP_SECRET` and, so a refusal can be explained,
-`SIMBROKER_STATIC_IP`.
+Each trader gets their own account there, opened from `/admin/users` — see
+[the Users module](users_module.md). Those accounts are read through the broker's back office with
+`SIMBROKER_ADMIN_KEY` rather than through each trader's own login, because a login costs a TOTP code,
+the broker refuses a code it has already seen, and a page showing twenty traders would spend its life
+failing to sign in. The numbers are the same numbers.
+
+Configure it with `SIMBROKER_BASE_URL`, `SIMBROKER_ADMIN_KEY` (to issue traders' accounts) and, for a
+single account configured by hand, `SIMBROKER_CLIENT_ID`, `SIMBROKER_APP_ID`, `SIMBROKER_APP_SECRET`,
+`SIMBROKER_TOTP_SECRET`; `SIMBROKER_STATIC_IP` names any further address an issued app may call from.
 
 | Method | Route | Purpose |
 | --- | --- | --- |
@@ -92,6 +98,11 @@ Configure it with `SIMBROKER_BASE_URL`, `SIMBROKER_CLIENT_ID`, `SIMBROKER_APP_ID
 | GET | `/api/SimBroker/ping` | the address the broker sees for this server, and whether it is the whitelisted one |
 | POST | `/api/SimBroker/test` | sign in, read funds and positions |
 | POST | `/api/SimBroker/sign-out` | forget the session |
+| GET | `/api/SimBroker/accounts` | every trader who has an account, without any secret |
+| GET/POST | `/api/SimBroker/accounts/{userId}` | one trader's account; POST opens it and issues its app |
+| POST | `/api/SimBroker/accounts/{userId}/funds` | pay in, or out with a negative amount |
+| POST | `/api/SimBroker/accounts/{userId}/kill-switch` | stop that account, or let it trade again |
+| POST | `/api/SimBroker/accounts/{userId}/credentials` | the trader's own credentials, to hand back |
 
 All four are admin-only. `ping` needs no credentials, which makes it the first thing to check when an
 order is refused with `STATIC_IP_MISMATCH`: it answers with the IP the broker's check actually compares.

@@ -90,6 +90,9 @@ public class TradingDbContext : DbContext
     // Multi-provider foundation: who we can connect to, who serves what, and
     // what each vendor calls an instrument we already know.
     public DbSet<BrokerAccount> BrokerAccounts => Set<BrokerAccount>();
+
+    /// <summary>Each trader's account at the simulated broker.</summary>
+    public DbSet<SimBrokerAccount> SimBrokerAccounts => Set<SimBrokerAccount>();
     public DbSet<ProviderBinding> ProviderBindings => Set<ProviderBinding>();
     public DbSet<InstrumentVendorSymbol> InstrumentVendorSymbols => Set<InstrumentVendorSymbol>();
     public DbSet<DataVendor> DataVendors => Set<DataVendor>();

@@ -31,6 +31,7 @@ public static class SimBrokerRegistration
             if (string.IsNullOrWhiteSpace(s.AppSecret)) s.AppSecret = configuration["SIMBROKER_APP_SECRET"] ?? string.Empty;
             if (string.IsNullOrWhiteSpace(s.TotpSecret)) s.TotpSecret = configuration["SIMBROKER_TOTP_SECRET"] ?? string.Empty;
             if (string.IsNullOrWhiteSpace(s.StaticIp)) s.StaticIp = configuration["SIMBROKER_STATIC_IP"] ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(s.AdminKey)) s.AdminKey = configuration["SIMBROKER_ADMIN_KEY"] ?? string.Empty;
             string? url = configuration["SIMBROKER_BASE_URL"];
             if (!string.IsNullOrWhiteSpace(url) && section["BaseUrl"] is null) s.BaseUrl = url;
         });
@@ -45,6 +46,10 @@ public static class SimBrokerRegistration
 
         services.AddHttpClient(SimBrokerSettings.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(30));
         services.AddSingleton<SimBrokerClient>();
+        services.AddSingleton<SimBrokerAdminClient>();
+
+        // Per-trader accounts need the database, so this one is scoped.
+        services.AddScoped<SimBrokerAccountService>();
 
         return services;
     }

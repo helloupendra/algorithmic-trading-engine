@@ -9,22 +9,27 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  useIssueSimBrokerAccount,
   usePlatformModules,
   useRegisterUser,
   useResetUserPassword,
   useRevokeUserSessions,
   useCreateInvite,
   useInvites,
+  useRevealSimBrokerCredentials,
   useRevokeInvite,
   useSetUserGrants,
   useSetUserStrategyGrants,
+  useSimBrokerAccount,
+  useSimBrokerFunds,
+  useSimBrokerKillSwitch,
   useStrategyCatalogNames,
   useStrategyPackages,
   useUpdateUser,
   useUserAccounts,
   useUserRoles,
 } from '../../lib/queries'
-import type { PlatformModuleInfo, UserAdmin } from '../../lib/types'
+import type { PlatformModuleInfo, SimBrokerCredentials, UserAdmin } from '../../lib/types'
 import { formatAge, formatInr } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Panel, QueryBoundary } from '../../components/ui'
 
@@ -170,6 +175,8 @@ function AccountRow({
               )}
 
               {!isService && !isAdmin && <StrategyAccessSection user={user} onError={onError} />}
+
+              {!isService && <BrokerAccountSection user={user} onError={onError} />}
 
               <h3 className="section-title connector-section">Account</h3>
               <div className="form-row">
@@ -317,6 +324,220 @@ function AccountRow({
  * The module grant above decides whether they can reach the Strategies module at
  * all; this decides which strategies exist for them once they are in it.
  */
+/**
+ * A trader's account at the simulated broker: opening it, funding it, stopping
+ * it, and handing back the credentials it signs in with.
+ *
+ * The money and the positions shown here are read from the broker each time.
+ * Nothing on this page copies them into the platform — the broker's ledger is
+ * the only record of what a trader has, and a second copy would only ever be
+ * a chance to disagree with it.
+ */
+function BrokerAccountSection({ user, onError }: { user: UserAdmin; onError: (e: unknown) => void }) {
+  const account = useSimBrokerAccount(user.id, true)
+  const issue = useIssueSimBrokerAccount()
+  const funds = useSimBrokerFunds()
+  const kill = useSimBrokerKillSwitch()
+  const reveal = useRevealSimBrokerCredentials()
+
+  const [opening, setOpening] = useState('500000')
+  const [amount, setAmount] = useState('')
+  const [reference, setReference] = useState('')
+  const [credentials, setCredentials] = useState<SimBrokerCredentials | null>(null)
+
+  // A 404 from the snapshot is the ordinary case — no account yet — and not an
+  // error worth colouring the page red.
+  const snapshot = account.data ?? null
+  const linked = snapshot != null
+
+  return (
+    <>
+      <h3 className="section-title connector-section">Broker account</h3>
+      {issue.isError && <InlineError error={issue.error} />}
+      {funds.isError && <InlineError error={funds.error} />}
+      {kill.isError && <InlineError error={kill.error} />}
+      {reveal.isError && <InlineError error={reveal.error} />}
+
+      {!linked ? (
+        <>
+          <p className="muted" style={{ maxWidth: '78ch' }}>
+            This trader has no account at the simulated broker. Opening one issues their client ID, the app
+            they sign in with, and the TOTP secret for it — the broker shows each of those once, so they are
+            stored encrypted here and can be handed back.
+          </p>
+          <div className="form-row">
+            <div className="field">
+              <label className="field__label" htmlFor={`open-${user.id}`}>
+                Opening balance (₹)
+              </label>
+              <input
+                id={`open-${user.id}`}
+                className="field__input"
+                inputMode="numeric"
+                value={opening}
+                onChange={(e) => setOpening(e.target.value)}
+              />
+            </div>
+            <div className="field field--action">
+              <button
+                type="button"
+                className="btn btn--primary"
+                disabled={issue.isPending}
+                onClick={() =>
+                  issue.mutate(
+                    { userId: user.id, openingFunds: Number(opening) || 0 },
+                    { onError, onSuccess: () => void account.refetch() },
+                  )
+                }
+              >
+                {issue.isPending ? 'Opening…' : 'Open an account'}
+              </button>
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="form-row">
+            <div className="field">
+              <span className="field__label">Client ID</span>
+              <span className="mono">{snapshot.link.clientId}</span>
+            </div>
+            <div className="field">
+              <span className="field__label">App ID</span>
+              <span className="mono">{snapshot.link.appId}</span>
+            </div>
+            <div className="field">
+              <span className="field__label">Available</span>
+              <span>{snapshot.funds ? formatInr(snapshot.funds.available) : '—'}</span>
+            </div>
+            <div className="field">
+              <span className="field__label">Booked today</span>
+              <span>{snapshot.funds ? formatInr(snapshot.funds.realisedToday) : '—'}</span>
+            </div>
+            <div className="field">
+              <span className="field__label">Open positions</span>
+              <span>{snapshot.positions.length}</span>
+            </div>
+            <div className="field">
+              <span className="field__label">Orders today</span>
+              <span>{snapshot.orders.length}</span>
+            </div>
+          </div>
+
+          {snapshot.warnings.length > 0 && (
+            <p className="small-note muted">{snapshot.warnings.join(' · ')}</p>
+          )}
+
+          <div className="form-row">
+            <div className="field">
+              <label className="field__label" htmlFor={`amt-${user.id}`}>
+                Pay in / out (₹)
+              </label>
+              <input
+                id={`amt-${user.id}`}
+                className="field__input"
+                inputMode="numeric"
+                placeholder="50000, or -50000 to take it back"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label className="field__label" htmlFor={`ref-${user.id}`}>
+                Reference
+              </label>
+              <input
+                id={`ref-${user.id}`}
+                className="field__input"
+                placeholder="what the ledger should say"
+                value={reference}
+                onChange={(e) => setReference(e.target.value)}
+              />
+            </div>
+            <div className="field field--action">
+              <button
+                type="button"
+                className="btn"
+                disabled={funds.isPending || Number(amount) === 0 || amount.trim() === ''}
+                onClick={() =>
+                  funds.mutate(
+                    { userId: user.id, amount: Number(amount), reference: reference.trim() || undefined },
+                    {
+                      onError,
+                      onSuccess: () => {
+                        setAmount('')
+                        setReference('')
+                        void account.refetch()
+                      },
+                    },
+                  )
+                }
+              >
+                {funds.isPending ? 'Moving…' : 'Move money'}
+              </button>
+            </div>
+          </div>
+
+          <div className="toolbar">
+            <button
+              type="button"
+              className="btn btn--ghost"
+              disabled={reveal.isPending}
+              onClick={() => {
+                if (credentials) {
+                  setCredentials(null)
+                  return
+                }
+                reveal.mutate(user.id, { onError, onSuccess: (data) => setCredentials(data) })
+              }}
+            >
+              {reveal.isPending ? 'Fetching…' : credentials ? 'Hide credentials' : 'Show credentials'}
+            </button>
+            <button
+              type="button"
+              className={`btn ${snapshot.killSwitch?.active ? '' : 'btn--danger'}`}
+              disabled={kill.isPending}
+              onClick={() => {
+                const stopping = !snapshot.killSwitch?.active
+                if (
+                  stopping &&
+                  !window.confirm(
+                    `Stop ${snapshot.link.clientId}? Working orders are cancelled and every open position is closed at the market.`,
+                  )
+                )
+                  return
+                kill.mutate(
+                  { userId: user.id, active: stopping, squareOff: stopping },
+                  { onError, onSuccess: () => void account.refetch() },
+                )
+              }}
+            >
+              {kill.isPending
+                ? 'Working…'
+                : snapshot.killSwitch?.active
+                  ? 'Let this account trade again'
+                  : 'Stop this account'}
+            </button>
+          </div>
+
+          {credentials && (
+            <div className="form-row">
+              <div className="field">
+                <span className="field__label">App secret</span>
+                <span className="mono">{credentials.appSecret}</span>
+              </div>
+              <div className="field">
+                <span className="field__label">TOTP secret</span>
+                <span className="mono">{credentials.totpSecret}</span>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </>
+  )
+}
+
 function StrategyAccessSection({
   user,
   onError,

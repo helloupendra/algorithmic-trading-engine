@@ -1688,27 +1688,96 @@ export interface MarketPulseResponse {
 }
 
 /* --- trader's own broker --------------------------------------------- */
-export interface TraderBrokerStatus {
-  providerKey: string
-  providerName: string
-  configured: boolean
-  clientId: string | null
-  redirectUri: string | null
-  hasTradingPin: boolean
-  isAuthenticated: boolean
-  signedInUtc: string | null
-  expiresAtUtc: string | null
-  /** The redirect URL to register in the FYERS app — this server's callback. */
-  callbackUrl: string
-}
-
-export interface SaveTraderBrokerInput {
+/** A trader's account at the simulated broker, as the platform records it. */
+export interface SimBrokerAccountLink {
+  userId: number
   clientId: string
-  secretKey: string
-  redirectUri?: string
-  tradingPin?: string
+  appId: string
+  staticIps: string[]
+  isEnabled: boolean
+  createdBy: string
+  createdUtc: string
 }
 
+export interface SimBrokerFunds {
+  netDeposits: number
+  ledgerBalance: number
+  realisedToday: number
+  chargesToday: number
+  cash: number
+  orderMargin: number
+  positionMargin: number
+  unrealised: number
+  available: number
+}
+
+export interface SimBrokerPosition {
+  symbol: string
+  product: string
+  quantity: number
+  averagePrice: number
+  lastPrice: number | null
+  unrealised: number
+  realisedToday: number
+  chargesToday: number
+  netToday: number
+  margin: number
+}
+
+export interface SimBrokerOrder {
+  orderId: string
+  symbol: string
+  side: string
+  quantity: number
+  filledQuantity: number
+  pendingQuantity: number
+  type: string
+  product: string
+  limitPrice: number | null
+  triggerPrice: number | null
+  averagePrice: number | null
+  status: string
+  rejectionCode: string | null
+  message: string | null
+  tag: string | null
+  blockedMargin: number
+  placedAt: string
+}
+
+export interface SimBrokerKillSwitch {
+  active: boolean
+  since: string | null
+  until: string | null
+  setBy: string | null
+}
+
+/** What one account is doing, read from the broker on every request. */
+export interface SimBrokerAccountSnapshot {
+  link: SimBrokerAccountLink
+  funds: SimBrokerFunds | null
+  positions: SimBrokerPosition[]
+  orders: SimBrokerOrder[]
+  killSwitch: SimBrokerKillSwitch | null
+  /** What could not be read, in the broker's own words. Never shown as zero. */
+  warnings: string[]
+}
+
+/** The credentials an account signs in with. Asked for explicitly, never carried by a page. */
+export interface SimBrokerCredentials {
+  clientId: string
+  appId: string
+  appSecret: string
+  totpSecret: string
+  totpUri: string
+}
+
+/** What the trader's own Account page gets. */
+export interface TraderSimBrokerResponse {
+  linked: boolean
+  account?: SimBrokerAccountSnapshot | null
+  message?: string
+  code?: string
+}
 /** An open paper position on a contract of the chain's underlying (GET /api/OptionChain/positions). */
 export interface OptionChainPosition {
   runId: number
