@@ -2,8 +2,6 @@ using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -121,8 +119,6 @@ public sealed class SimBrokerClient
     private readonly ILogger<SimBrokerClient> _logger;
     private readonly TimeProvider _time;
 
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
-
     private readonly SemaphoreSlim _loginGate = new(1, 1);
     private SimBrokerSession? _session;
 
@@ -191,8 +187,8 @@ public sealed class SimBrokerClient
                 totp = code,
             };
 
-            using var response = await Client().PostAsJsonAsync("api/v1/session", body, Json, cancellationToken);
-            var grant = await ReadAsync<SessionBody>(response, cancellationToken);
+            using var response = await Client().PostAsJsonAsync("api/v1/session", body, SimBrokerJson.Options, cancellationToken);
+            var grant = await SimBrokerJson.ReadAsync<SessionBody>(response, cancellationToken);
             if (!grant.Succeeded || grant.Value is null) return grant.As<SimBrokerSession>();
 
             _session = new SimBrokerSession(grant.Value.AccessToken, grant.Value.ClientId, grant.Value.AppId, grant.Value.ExpiresAt);
@@ -269,7 +265,7 @@ public sealed class SimBrokerClient
         return SendAsync<OrderBody, SimBrokerOrder>(
             () => new HttpRequestMessage(HttpMethod.Post, "api/v1/orders")
             {
-                Content = JsonContent.Create(body, options: Json),
+                Content = JsonContent.Create(body, options: SimBrokerJson.Options),
             },
             order =>
             {
@@ -298,7 +294,7 @@ public sealed class SimBrokerClient
         return SendAsync<OrderBody, SimBrokerOrder>(
             () => new HttpRequestMessage(HttpMethod.Patch, $"api/v1/orders/{orderId}")
             {
-                Content = JsonContent.Create(body, options: Json),
+                Content = JsonContent.Create(body, options: SimBrokerJson.Options),
             },
             Map,
             cancellationToken);
@@ -330,7 +326,7 @@ public sealed class SimBrokerClient
 
         using (response)
         {
-            var who = await ReadAsync<WhoAmIBody>(response, cancellationToken);
+            var who = await SimBrokerJson.ReadAsync<WhoAmIBody>(response, cancellationToken);
             return who.Succeeded && who.Value is not null
                 ? SimBrokerResult<string>.Ok(who.Value.Ip)
                 : who.As<string>();
@@ -386,7 +382,7 @@ public sealed class SimBrokerClient
 
             using (response)
             {
-                return await ReadAsync<TBody>(response, cancellationToken);
+                return await SimBrokerJson.ReadAsync<TBody>(response, cancellationToken);
             }
         }
     }
@@ -398,46 +394,6 @@ public sealed class SimBrokerClient
         return client;
     }
 
-    /// <summary>
-    /// The broker's one error shape — <c>{"error":{"code":…,"message":…}}</c> —
-    /// turned into a result. A body that is neither the payload nor that shape
-    /// is reported with its status rather than guessed at.
-    /// </summary>
-    private static async Task<SimBrokerResult<T>> ReadAsync<T>(HttpResponseMessage response, CancellationToken cancellationToken)
-    {
-        string text = await response.Content.ReadAsStringAsync(cancellationToken);
-        if (response.IsSuccessStatusCode)
-        {
-            try
-            {
-                var value = JsonSerializer.Deserialize<T>(text, Json);
-                if (value is not null) return SimBrokerResult<T>.Ok(value);
-            }
-            catch (JsonException)
-            {
-                // Falls through, with the body itself as the message.
-            }
-
-            return SimBrokerResult<T>.Failed("BAD_RESPONSE", Describe(response, text), response.StatusCode);
-        }
-
-        try
-        {
-            var error = JsonSerializer.Deserialize<ErrorEnvelope>(text, Json);
-            if (error?.Error is not null)
-                return SimBrokerResult<T>.Failed(error.Error.Code, error.Error.Message, response.StatusCode);
-        }
-        catch (JsonException)
-        {
-        }
-
-        return SimBrokerResult<T>.Failed(
-            ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture), Describe(response, text), response.StatusCode);
-    }
-
-    private static string Describe(HttpResponseMessage response, string body)
-        => $"HTTP {(int)response.StatusCode}: {(body.Length > 200 ? body[..200] : body)}";
-
     private static SimBrokerOrder Map(OrderBody o) => new(
         o.OrderId, o.Symbol, o.Side, o.Quantity, o.FilledQuantity, o.PendingQuantity, o.Type, o.Product,
         o.LimitPrice, o.TriggerPrice, o.AveragePrice, o.Status, o.RejectionCode, o.Message, o.Tag,
@@ -446,10 +402,6 @@ public sealed class SimBrokerClient
     private static SimBrokerPosition Map(PositionBody p) => new(
         p.Symbol, p.Product, p.Quantity, p.AveragePrice, p.LastPrice,
         p.Unrealised, p.RealisedToday, p.ChargesToday, p.NetToday, p.Margin);
-
-    private sealed record ErrorEnvelope([property: JsonPropertyName("error")] ErrorDetail? Error);
-
-    private sealed record ErrorDetail(string Code, string Message);
 
     private sealed record SessionBody(string AccessToken, string ClientId, string AppId, DateTimeOffset ExpiresAt);
 

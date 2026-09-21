@@ -37,6 +37,22 @@ public sealed class SimBrokerSettings
     /// </summary>
     public string StaticIp { get; set; } = string.Empty;
 
+    /// <summary>
+    /// The broker's back-office key, which opens accounts, moves money and
+    /// issues apps for this platform's traders.
+    /// </summary>
+    /// <remarks>
+    /// This is the whole broker, not one account, so it is never returned by an
+    /// endpoint and never reaches the console — only whether it is set. It is
+    /// needed because the platform's admin issues a trader's account for them;
+    /// without it the connector still works for a single account configured by
+    /// hand, and everything in <see cref="Missing"/> stays satisfied.
+    /// </remarks>
+    public string AdminKey { get; set; } = string.Empty;
+
+    /// <summary>Whether the platform can act as the broker's back office.</summary>
+    public bool CanAdminister => !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(AdminKey);
+
     /// <summary>Which values are still missing, by the name an operator would set.</summary>
     public IReadOnlyList<string> Missing()
     {

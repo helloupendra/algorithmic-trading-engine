@@ -23,19 +23,15 @@ namespace AlgoTrading.Api.Controllers;
     private readonly IProviderRouter _providerRouter;
     private readonly string? _frontendBaseUrl;
 
-    private readonly Microsoft.Extensions.Caching.Memory.IMemoryCache _cache;
-
     public AuthController(
         GenerateAccessTokenUseCase generateAccessTokenUseCase,
         IBrokerSessionStore brokerSessionStore,
         IProviderRouter providerRouter,
-        IConfiguration configuration,
-        Microsoft.Extensions.Caching.Memory.IMemoryCache cache)
+        IConfiguration configuration)
     {
         _generateAccessTokenUseCase = generateAccessTokenUseCase;
         _brokerSessionStore = brokerSessionStore;
         _providerRouter = providerRouter;
-        _cache = cache;
         // An explicit override only. Unset, the redirect goes back to the
         // origin the request came in on (see FrontendRedirect): the API serves
         // the console itself, so that is always a page that exists — on the
@@ -264,17 +260,10 @@ namespace AlgoTrading.Api.Controllers;
         [FromQuery] int? code,
         CancellationToken cancellationToken)
     {
-        // A trader linking their OWN broker arrives with a one-time state the
-        // Account page minted; it names their broker account, and the token is
-        // exchanged with that account's app and saved on that account's row.
-        // Anything else is the platform's shared account, exactly as before.
-        long? accountId = TraderBrokerController.ConsumeState(_cache, state);
-        bool traderFlow = state?.StartsWith(TraderBrokerController.StatePrefix, StringComparison.Ordinal) == true;
-        if (traderFlow && accountId is null)
-        {
-            const string stale = "This sign-in link has expired or was already used — open the Account page and press Sign in again.";
-            return IsBrowserNavigation() ? TraderRedirect(false, stale) : BadRequest(new { message = stale });
-        }
+        // The platform's shared account is the only one that signs in through a
+        // browser now: traders trade at the simulated broker, whose accounts an
+        // admin issues, so there is no per-trader OAuth dance to route here.
+        long? accountId = null;
 
         IBrokerProvider broker;
         try
@@ -283,12 +272,12 @@ namespace AlgoTrading.Api.Controllers;
         }
         catch (InvalidOperationException ex)
         {
-            return IsBrowserNavigation() ? TraderRedirect(false, ex.Message) : BadRequest(new { message = ex.Message });
+            return IsBrowserNavigation() ? FrontendRedirect(connected: false, ex.Message, null) : BadRequest(new { message = ex.Message });
         }
         string brokerName = broker.Descriptor.DisplayName;
 
         IActionResult Failed(string reason, int statusCode = 502) => IsBrowserNavigation()
-            ? (traderFlow ? TraderRedirect(false, reason) : FrontendRedirect(connected: false, reason, broker.Descriptor.Key))
+            ? FrontendRedirect(connected: false, reason, broker.Descriptor.Key)
             : StatusCode(statusCode, new { message = reason, state, status, code });
 
         if (string.IsNullOrWhiteSpace(authCode))
@@ -331,17 +320,8 @@ namespace AlgoTrading.Api.Controllers;
             $"({accessToken[..Math.Min(6, accessToken.Length)]}… , {accessToken.Length} chars).");
 
         if (IsBrowserNavigation())
-            return traderFlow ? TraderRedirect(true, null) : FrontendRedirect(connected: true, null, broker.Descriptor.Key);
+            return FrontendRedirect(connected: true, null, broker.Descriptor.Key);
         return Ok(new { message = "Access token generated and saved.", isAuthenticated = session.IsAuthenticated, state, status, code });
-    }
-
-    /// <summary>Back to the trader's Account page, which reads the outcome from the address.</summary>
-    private IActionResult TraderRedirect(bool connected, string? reason)
-    {
-        string origin = _frontendBaseUrl ?? $"{Request.Scheme}://{Request.Host}";
-        string url = $"{origin}/trader/account?broker={(connected ? 1 : 0)}";
-        if (!string.IsNullOrWhiteSpace(reason)) url += $"&reason={Uri.EscapeDataString(reason)}";
-        return Redirect(url);
     }
 
     /// <summary>

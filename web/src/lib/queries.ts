@@ -1821,49 +1821,70 @@ export function useRevokeUserSessions() {
 
 // ---------- The signed-in trader's own watchlist ----------
 
-// ---------- Trader's own broker ----------
+// ---------- The trader's account at the simulated broker ----------
+//
+// The platform issues each trader an account at the simulated broker and reads
+// it back through the back office, so these are reads of the broker's own
+// numbers — never a balance the console kept for itself.
 
-export function useTraderBroker() {
+export function useTraderSimBroker() {
   return useQuery({
-    queryKey: ['trader', 'broker'],
-    queryFn: () => api.get<import('./types').TraderBrokerStatus>('/api/Trader/broker'),
-    refetchInterval: 30_000,
+    queryKey: ['trader', 'simbroker'],
+    queryFn: () => api.get<import('./types').TraderSimBrokerResponse>('/api/Trader/simbroker'),
+    refetchInterval: 15_000,
   })
 }
 
-export function useSaveTraderBroker() {
-  const qc = useQueryClient()
+/** The trader's own credentials. A mutation, because asking is a deliberate act. */
+export function useTraderSimBrokerCredentials() {
   return useMutation({
-    mutationFn: (input: import('./types').SaveTraderBrokerInput) =>
-      api.put<{ message: string; accountId: number }>('/api/Trader/broker/credentials', input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['trader', 'broker'] }),
+    mutationFn: () => api.post<import('./types').SimBrokerCredentials>('/api/Trader/simbroker/credentials', {}),
   })
 }
 
-export function useTraderBrokerSignOut() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: () => api.post<{ message: string }>('/api/Trader/broker/disconnect', {}),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['trader', 'broker'] }),
-  })
-}
+// ---------- Traders' broker accounts, from the admin side ----------
 
-export function useRemoveTraderBroker() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: () => api.delete<{ message: string }>('/api/Trader/broker'),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['trader'] }),
-  })
-}
-
-/** One of the broker's own books, as FYERS returns it, with the trader's token. */
-export function useTraderBrokerResource<T = Record<string, unknown>>(name: 'profile' | 'funds' | 'holdings' | 'positions' | 'orders' | 'trades', enabled: boolean) {
+export function useSimBrokerAccount(userId: number, enabled: boolean) {
   return useQuery({
-    queryKey: ['trader', 'broker', name],
-    queryFn: () => api.get<T>(`/api/Trader/broker/${name}`),
+    queryKey: ['simbroker', 'accounts', userId],
+    queryFn: () => api.get<import('./types').SimBrokerAccountSnapshot>(`/api/SimBroker/accounts/${userId}`),
     enabled,
-    refetchInterval: name === 'positions' || name === 'orders' ? 10_000 : 60_000,
-    retry: false,
+    refetchInterval: 20_000,
+  })
+}
+
+export function useIssueSimBrokerAccount() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ userId, openingFunds, name }: { userId: number; openingFunds: number; name?: string }) =>
+      api.post<import('./types').SimBrokerAccountLink>(`/api/SimBroker/accounts/${userId}`, { openingFunds, name }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['simbroker'] }),
+  })
+}
+
+/** Money in, or out with a negative amount. */
+export function useSimBrokerFunds() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ userId, amount, reference }: { userId: number; amount: number; reference?: string }) =>
+      api.post<import('./types').SimBrokerFunds>(`/api/SimBroker/accounts/${userId}/funds`, { amount, reference }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['simbroker'] }),
+  })
+}
+
+export function useSimBrokerKillSwitch() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ userId, active, squareOff }: { userId: number; active: boolean; squareOff: boolean }) =>
+      api.post<import('./types').SimBrokerKillSwitch>(`/api/SimBroker/accounts/${userId}/kill-switch`, { active, squareOff }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['simbroker'] }),
+  })
+}
+
+export function useRevealSimBrokerCredentials() {
+  return useMutation({
+    mutationFn: (userId: number) =>
+      api.post<import('./types').SimBrokerCredentials>(`/api/SimBroker/accounts/${userId}/credentials`, {}),
   })
 }
 
