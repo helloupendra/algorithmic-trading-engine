@@ -28,19 +28,27 @@ public class SimBrokerController : ControllerBase
     private readonly SimBrokerClient _client;
     private readonly SimBrokerAccountService _accounts;
     private readonly IUserAdminService _users;
-    private readonly SimBrokerSettings _settings;
+    private readonly IOptionsMonitor<SimBrokerSettings> _options;
 
     public SimBrokerController(
         SimBrokerClient client,
         SimBrokerAccountService accounts,
         IUserAdminService users,
-        IOptions<SimBrokerSettings> settings)
+        IOptionsMonitor<SimBrokerSettings> options)
     {
         _client = client;
         _accounts = accounts;
         _users = users;
-        _settings = settings.Value;
+        _options = options;
     }
+
+    /// <summary>
+    /// Read every time, not captured once: appsettings.Local.json is written
+    /// from .env and reloads while the API runs, so a page holding the settings
+    /// it saw at startup would report "not configured" about a key that had
+    /// been working for an hour.
+    /// </summary>
+    private SimBrokerSettings _settings => _options.CurrentValue;
 
     /// <summary>What is configured, what is missing, and whether a session is held.</summary>
     [HttpGet("status")]
