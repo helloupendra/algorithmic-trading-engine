@@ -1,0 +1,217 @@
+// GENERATED FILE — edit down.html and run: node infra/cloudflare/build-worker.mjs
+//
+// Cloudflare Worker for openfno.com. It does nothing at all while the origin
+// answers; when the origin cannot be reached it serves the offline page
+// instead of Cloudflare's own "Bad gateway", which is the only thing a visitor
+// saw when the API was restarting.
+//
+// What it deliberately does NOT do: touch /api or /hubs. The API answers 502
+// itself when a call to a broker fails, and a Worker that turned those into a
+// pretty page would hide the broker's own words from the console. Those paths
+// pass straight through, and only a connection that failed outright is
+// reported — as JSON, because the console parses JSON.
+
+const DOWN_PAGE = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>OpenFNO — the desk is offline</title>
+<style>
+  :root {
+    --bg0: #070b11;
+    --bg1: #0b1017;
+    --line: #1c2735;
+    --line-soft: #151f2b;
+    --text: #e2e9f3;
+    --text-2: #91a0b4;
+    --text-3: #74849a;
+    --brand: #4f7dff;
+    --warm: #d99a2b;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(900px 500px at 50% -12%, rgba(79,125,255,0.10), transparent 70%),
+      var(--bg0);
+    color: var(--text);
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 16px;
+  }
+  .card {
+    width: 100%;
+    max-width: 560px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.025), transparent 40%), var(--bg1);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 28px 28px 24px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 26px; }
+  .brand__name { font-weight: 700; letter-spacing: 0.2px; font-size: 14.5px; }
+  .brand__sub { font-size: 11.5px; color: var(--text-3); letter-spacing: 0.08em; text-transform: uppercase; }
+
+  /* The tape: candles that were printing, and then stopped. The last three are
+     flat — the same price, no range — which is exactly what a dead feed looks
+     like on a chart, and the picture this page is about. */
+  .tape { display: block; width: 100%; height: 92px; margin: 0 0 24px; }
+
+  h1 { font-size: 21px; line-height: 1.3; margin: 0 0 10px; letter-spacing: -0.2px; }
+  p { margin: 0 0 14px; color: var(--text-2); }
+  p.small { font-size: 13px; color: var(--text-3); }
+
+  .facts { border-top: 1px solid var(--line-soft); margin-top: 20px; padding-top: 16px; display: grid; gap: 9px; }
+  .fact { display: flex; gap: 12px; font-size: 13px; }
+  .fact__k { color: var(--text-3); min-width: 132px; }
+  .fact__v { color: var(--text-2); }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--warm); margin-right: 7px; vertical-align: 1px; }
+
+  .row { display: flex; align-items: center; gap: 12px; margin-top: 22px; flex-wrap: wrap; }
+  button {
+    font: inherit; font-weight: 600; font-size: 13.5px;
+    color: #fff; background: var(--brand); border: 0; border-radius: 8px;
+    padding: 9px 16px; cursor: pointer;
+  }
+  button:hover { background: #6790ff; }
+  .countdown { font-family: var(--mono); font-size: 12.5px; color: var(--text-3); }
+  .mono { font-family: var(--mono); }
+  @media (max-width: 480px) {
+    .card { padding: 22px 18px 20px; }
+    .fact { flex-direction: column; gap: 2px; }
+    .fact__k { min-width: 0; }
+  }
+</style>
+</head>
+<body>
+  <main class="card" role="main">
+    <div class="brand">
+      <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
+        <rect x="1" y="1" width="24" height="24" rx="7" fill="none" stroke="#2b3a4e"/>
+        <rect x="8" y="7" width="3.2" height="12" rx="1" fill="#4f7dff"/>
+        <rect x="14.8" y="10" width="3.2" height="9" rx="1" fill="#2b3a4e"/>
+      </svg>
+      <div>
+        <div class="brand__name">OpenFNO</div>
+        <div class="brand__sub">Trading desk</div>
+      </div>
+    </div>
+
+    <svg class="tape" viewBox="0 0 520 92" preserveAspectRatio="none" aria-hidden="true">
+      <g stroke="#1c2735" stroke-width="1">
+        <line x1="0" y1="23" x2="520" y2="23"/><line x1="0" y1="46" x2="520" y2="46"/><line x1="0" y1="69" x2="520" y2="69"/>
+      </g>
+      <g stroke-width="2" stroke-linecap="round">
+        <g stroke="#3f7d5e" fill="#3f7d5e">
+          <line x1="24"  y1="58" x2="24"  y2="34"/><rect x="20"  y="40" width="9" height="14" rx="1.5"/>
+          <line x1="70"  y1="52" x2="70"  y2="26"/><rect x="66"  y="32" width="9" height="15" rx="1.5"/>
+          <line x1="162" y1="44" x2="162" y2="20"/><rect x="158" y="25" width="9" height="14" rx="1.5"/>
+        </g>
+        <g stroke="#a1494f" fill="#a1494f">
+          <line x1="47"  y1="63" x2="47"  y2="38"/><rect x="43"  y="43" width="9" height="15" rx="1.5"/>
+          <line x1="93"  y1="57" x2="93"  y2="30"/><rect x="89"  y="36" width="9" height="16" rx="1.5"/>
+          <line x1="116" y1="60" x2="116" y2="34"/><rect x="112" y="39" width="9" height="16" rx="1.5"/>
+          <line x1="139" y1="55" x2="139" y2="28"/><rect x="135" y="33" width="9" height="17" rx="1.5"/>
+        </g>
+        <!-- The feed stops here: three candles with no range at all, printed
+             at the last close. This is what a dead feed actually draws, and it
+             is the picture the rest of the page explains. -->
+        <g stroke="#74849a">
+          <line x1="181" y1="25" x2="190" y2="25"/>
+          <line x1="204" y1="25" x2="213" y2="25"/>
+          <line x1="227" y1="25" x2="236" y2="25"/>
+        </g>
+      </g>
+      <g stroke="#2b3a4e" stroke-width="1" stroke-dasharray="3 5">
+        <line x1="248" y1="25" x2="520" y2="25"/>
+      </g>
+    </svg>
+
+    <h1>The desk is offline for a moment.</h1>
+    <p>
+      The server that serves this console is not answering — usually it is restarting after a deploy,
+      which takes under a minute. This page will try again on its own.
+    </p>
+
+    <div class="facts">
+      <div class="fact"><span class="fact__k"><span class="dot"></span>Console</span><span class="fact__v">not reachable</span></div>
+      <div class="fact"><span class="fact__k">Your data</span><span class="fact__v">untouched — candles, runs and settings live in the database, not here</span></div>
+      <div class="fact"><span class="fact__k">Running strategies</span><span class="fact__v">separate processes; they keep their positions and re-register when the API returns</span></div>
+      <div class="fact"><span class="fact__k">Checked at</span><span class="fact__v mono" id="checked">—</span></div>
+    </div>
+
+    <div class="row">
+      <button type="button" onclick="location.reload()">Try now</button>
+      <span class="countdown">retrying in <span id="left">15</span>s</span>
+    </div>
+
+    <p class="small" style="margin-top:18px">
+      If this lasts more than a few minutes, the server itself is down: the supervisor restarts the API
+      after three failed health checks, and the tunnel needs the machine to be up.
+    </p>
+  </main>
+
+<script>
+  // Say when this was drawn, in the reader's own clock, so a stale tab in the
+  // background cannot pass itself off as a fresh check.
+  document.getElementById('checked').textContent =
+    new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+  var left = 15;
+  var el = document.getElementById('left');
+  setInterval(function () {
+    left -= 1;
+    if (left <= 0) { location.reload(); return; }
+    el.textContent = left;
+  }, 1000);
+</script>
+</body>
+</html>
+`
+
+/** Statuses Cloudflare returns when it could not reach the tunnel at all. */
+const ORIGIN_DOWN = new Set([502, 504, 521, 522, 523, 524, 525, 526, 530])
+
+export default {
+  async fetch(request) {
+    const url = new URL(request.url)
+    const isApi = url.pathname.startsWith('/api') || url.pathname.startsWith('/hubs')
+
+    // A WebSocket cannot be answered with a page, and the console's live feed
+    // is one; hand it over untouched.
+    if ((request.headers.get('Upgrade') || '').toLowerCase() === 'websocket') {
+      return fetch(request)
+    }
+
+    let response
+    try {
+      response = await fetch(request)
+    } catch (error) {
+      return offline(isApi, String(error && error.message ? error.message : error))
+    }
+
+    if (!isApi && ORIGIN_DOWN.has(response.status)) return offline(false, 'HTTP ' + response.status)
+    return response
+  },
+}
+
+function offline(isApi, reason) {
+  const headers = { 'cache-control': 'no-store', 'retry-after': '30' }
+
+  if (isApi) {
+    return new Response(
+      JSON.stringify({ code: 'ORIGIN_DOWN', message: 'The server is not answering (' + reason + '). It is usually restarting; try again in a moment.' }),
+      { status: 503, headers: { ...headers, 'content-type': 'application/json; charset=utf-8' } },
+    )
+  }
+
+  return new Response(DOWN_PAGE, {
+    status: 503,
+    headers: { ...headers, 'content-type': 'text/html; charset=utf-8' },
+  })
+}
