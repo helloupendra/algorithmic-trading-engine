@@ -1847,9 +1847,11 @@ export function useTraderSimBrokerCredentials() {
 export function useSimBrokerAccount(userId: number, enabled: boolean) {
   return useQuery({
     queryKey: ['simbroker', 'accounts', userId],
-    queryFn: () => api.get<import('./types').SimBrokerAccountSnapshot>(`/api/SimBroker/accounts/${userId}`),
+    queryFn: () => api.get<import('./types').SimBrokerAccountResponse>(`/api/SimBroker/accounts/${userId}`),
     enabled,
     refetchInterval: 20_000,
+    // A broker that cannot be reached is worth saying once, not four times.
+    retry: false,
   })
 }
 
