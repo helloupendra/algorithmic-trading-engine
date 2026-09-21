@@ -190,6 +190,19 @@ deploy_if_behind() {
     if ( cd web && npm ci --silent >>"$LOG" 2>&1 || true ) && web_build; then notes+=("console rebuilt"); steps+=("Console rebuilt|ok|New bundle is being served - no restart needed"); else notes+=("console build FAILED"); steps+=("Console rebuilt|failed|Build failed - the old bundle is still being served"); fi
   fi
 
+  # The API reads its secrets from appsettings.Local.json, which is generated
+  # from .env. A value added to .env by hand therefore does nothing until that
+  # file is written again — on 2026-09-21 a broker key sat in .env for an hour
+  # while the console said "not configured". Regenerating on every deploy costs
+  # nothing and makes .env the single place an operator has to edit.
+  if [ -f scripts/_gen_local_settings.py ]; then
+    if python3 scripts/_gen_local_settings.py --quiet >>"$LOG" 2>&1; then
+      say "  settings regenerated from .env"
+    else
+      warn "could not regenerate appsettings.Local.json from .env (see desk.log)"
+    fi
+  fi
+
   if [ "$api_changed" -gt 0 ]; then
     # Build BEFORE stopping the old API, so a broken build costs nothing but
     # a log line and the running API stays up.

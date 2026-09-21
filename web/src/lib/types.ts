@@ -1771,6 +1771,12 @@ export interface SimBrokerCredentials {
   totpUri: string
 }
 
+/** What the admin's user row gets: the account, or plainly that there is none yet. */
+export interface SimBrokerAccountResponse {
+  linked: boolean
+  account: SimBrokerAccountSnapshot | null
+}
+
 /** What the trader's own Account page gets. */
 export interface TraderSimBrokerResponse {
   linked: boolean

@@ -165,8 +165,13 @@ public class SimBrokerController : ControllerBase
         }
 
         var snapshot = await _accounts.SnapshotAsync(userId, tradingDate, cancellationToken);
-        return snapshot.Succeeded
-            ? Ok(snapshot.Value)
+        if (snapshot.Succeeded) return Ok(new { linked = true, account = snapshot.Value });
+
+        // A trader without an account is the ordinary case, not a failure: it
+        // is what the page shows an "Open an account" button for. Returning 404
+        // made the console retry it in a loop.
+        return snapshot.ErrorCode == "NOT_LINKED"
+            ? Ok(new { linked = false, account = (object?)null })
             : Failure(snapshot.ErrorCode, snapshot.ErrorMessage);
     }
 
@@ -247,15 +252,27 @@ public class SimBrokerController : ControllerBase
     }
 
     /// <summary>
-    /// The broker answers a refusal with its own code; the console shows that
-    /// code, so "not configured" and "no such account" do not both arrive as a
-    /// blank page.
+    /// A refusal arrives as a refusal. The status says who said no — this
+    /// platform, or the broker — and the body carries the broker's own code, so
+    /// the console can show why instead of a blank page.
     /// </summary>
+    /// <remarks>
+    /// This used to answer 200 with <c>ok: false</c>. The console read that as
+    /// success, said an account had been opened, and then could not find it:
+    /// the one failure mode this project keeps having to fix is a state nobody
+    /// knows yet rendered as a fact.
+    /// </remarks>
     private IActionResult Failure(string? code, string? message) => code switch
     {
         "NOT_LINKED" => NotFound(new { code, message }),
         "ALREADY_LINKED" => Conflict(new { code, message }),
-        _ => Ok(new { ok = false, code, message }),
+
+        // The platform is not set up to act as the broker's back office.
+        "NOT_CONFIGURED" => StatusCode(StatusCodes.Status503ServiceUnavailable, new { code, message }),
+
+        // Everything else came from the broker: it refused, or it could not be
+        // reached. Either way this server is the wrong place to look.
+        _ => StatusCode(StatusCodes.Status502BadGateway, new { code, message }),
     };
 }
 

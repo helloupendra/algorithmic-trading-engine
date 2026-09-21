@@ -345,14 +345,15 @@ function BrokerAccountSection({ user, onError }: { user: UserAdmin; onError: (e:
   const [reference, setReference] = useState('')
   const [credentials, setCredentials] = useState<SimBrokerCredentials | null>(null)
 
-  // A 404 from the snapshot is the ordinary case — no account yet — and not an
-  // error worth colouring the page red.
-  const snapshot = account.data ?? null
-  const linked = snapshot != null
+  // "No account yet" is an ordinary answer with linked: false, not an error —
+  // it is what the button below exists for.
+  const snapshot = account.data?.account ?? null
+  const linked = account.data?.linked === true && snapshot != null
 
   return (
     <>
       <h3 className="section-title connector-section">Broker account</h3>
+      {account.isError && <InlineError error={account.error} />}
       {issue.isError && <InlineError error={issue.error} />}
       {funds.isError && <InlineError error={funds.error} />}
       {kill.isError && <InlineError error={kill.error} />}

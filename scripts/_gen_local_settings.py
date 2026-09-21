@@ -172,6 +172,20 @@ def main() -> int:
             # from the IP it was registered with.
             "StaticIp": env.get("ANGEL_STATIC_IP", ""),
         },
+        # The simulated broker. AdminKey is the whole broker's back office —
+        # it opens traders' accounts and moves their money — so it lives in
+        # .env like every other secret and is never returned by an endpoint.
+        # The four account values below are only for a single account
+        # configured by hand; traders' accounts are issued from the console.
+        "SimBroker": {
+            "BaseUrl": env.get("SIMBROKER_BASE_URL", "https://broker.openfno.com"),
+            "AdminKey": env.get("SIMBROKER_ADMIN_KEY", ""),
+            "ClientId": env.get("SIMBROKER_CLIENT_ID", ""),
+            "AppId": env.get("SIMBROKER_APP_ID", ""),
+            "AppSecret": env.get("SIMBROKER_APP_SECRET", ""),
+            "TotpSecret": env.get("SIMBROKER_TOTP_SECRET", ""),
+            "StaticIp": env.get("SIMBROKER_STATIC_IP", ""),
+        },
     }
 
     worker_settings = {
