@@ -1419,12 +1419,26 @@ export function useBackfillHistory() {
 
 // ---------- Market intelligence ----------
 
-import type { EquityGroup, MoversResponse, NewsResponse } from './types'
+import type { EquityGroup, MoversResponse, NewsCategory, NewsResponse } from './types'
 
-export function useMarketNews(category: 'india' | 'global' | 'commodities') {
+/**
+ * The news tabs the server offers. It changes only when a category is added,
+ * so it is fetched once and kept — the headlines behind each tab are what
+ * refresh, not the list of tabs.
+ */
+export function useMarketNewsCategories() {
+  return useQuery({
+    queryKey: ['news', 'categories'],
+    queryFn: () => api.get<NewsCategory[]>('/api/MarketIntel/news/categories'),
+    staleTime: 60 * 60_000,
+  })
+}
+
+export function useMarketNews(category: string | null) {
   return useQuery({
     queryKey: ['news', category],
-    queryFn: () => api.get<NewsResponse>(`/api/MarketIntel/news?category=${category}`),
+    queryFn: () => api.get<NewsResponse>(`/api/MarketIntel/news?category=${encodeURIComponent(category!)}`),
+    enabled: category != null,
     refetchInterval: 5 * 60_000,
     staleTime: 4 * 60_000,
   })

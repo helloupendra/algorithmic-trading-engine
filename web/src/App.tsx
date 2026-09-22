@@ -14,7 +14,7 @@ import { ChartsPage } from './pages/trader/ChartsPage'
 import { OptionChainPage } from './pages/trader/OptionChainPage'
 import { PositionsPage } from './pages/trader/PositionsPage'
 import { OrdersPage } from './pages/trader/OrdersPage'
-import { MarketNewsPage } from './pages/trader/MarketNewsPage'
+import { MarketNewsPage } from './pages/data/MarketNewsPage'
 import { TopMoversPage } from './pages/trader/TopMoversPage'
 import { DeployPage } from './pages/trader/DeployPage'
 import { AccountPage } from './pages/trader/AccountPage'
@@ -142,6 +142,8 @@ export default function App() {
                   <Route path="/admin/data/patterns" element={<PatternAlertsPage />} />
                   <Route path="/admin/data/movers" element={<MarketMoversPage />} />
                   <Route path="/admin/data/factors" element={<MarketFactorsPage />} />
+                  {/* The same page both consoles read; the news is the news. */}
+                  <Route path="/admin/data/news" element={<MarketNewsPage />} />
                   <Route path="/admin/data/historical" element={<HistoricalDataPage />} />
                   <Route path="/admin/data/structure" element={<StructurePage />} />
                   <Route path="/admin/data/instruments" element={<InstrumentsFnoPage />} />

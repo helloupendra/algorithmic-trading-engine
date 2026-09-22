@@ -430,6 +430,7 @@ const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]>
   ['/admin/data/instruments', 'Data', 'Instruments & F&O'],
   ['/admin/data/movers', 'Data', 'Market movers'],
   ['/admin/data/factors', 'Data', 'Market factors'],
+  ['/admin/data/news', 'Data', 'Market news'],
   ['/admin/data', 'Data', 'Overview'],
   ['/admin/strategies/live', 'Strategies', 'Live runner'],
   ['/admin/strategies/history', 'Strategies', 'Run history'],

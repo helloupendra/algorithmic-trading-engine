@@ -1426,6 +1426,31 @@ a.checklist__item:hover { background: var(--brand-soft); }
 .param-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: center; }
 
 /* --- news list --------------------------------------------------------------- */
+/* News category tabs: one row for the broad feeds, one for the sectors. The
+   rows wrap rather than scroll, because a sector hidden past the edge is a
+   sector nobody clicks. */
+.newstabs__wrap { display: grid; gap: 8px; margin-bottom: 14px; }
+
+.newstabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.newstabs__label {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  min-width: 62px;
+}
+
+@media (max-width: 640px) {
+  .newstabs__label { min-width: 0; width: 100%; margin-bottom: 2px; }
+}
+
 .newslist { list-style: none; margin: 0; padding: 0; }
 
 .newsitem {
