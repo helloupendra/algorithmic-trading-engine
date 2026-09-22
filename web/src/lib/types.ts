@@ -1153,6 +1153,18 @@ export interface NewsResponse {
   items: NewsItem[]
 }
 
+/**
+ * GET /api/MarketIntel/news/categories — one tab of the news section. The page
+ * builds its tabs from this list rather than holding its own, so a sector added
+ * on the server shows up without a change here.
+ */
+export interface NewsCategory {
+  key: string
+  label: string
+  /** "markets" for the broad feeds, "sectors" for the per-industry ones. */
+  group: 'markets' | 'sectors'
+}
+
 export interface Mover {
   symbol: string
   yahooSymbol: string

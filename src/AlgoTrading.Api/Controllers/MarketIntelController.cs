@@ -1,6 +1,7 @@
 using AlgoTrading.Domain.Constants;
 using AlgoTrading.Api.Security;
 using AlgoTrading.Application.Interfaces;
+using AlgoTrading.Contracts.MarketIntel;
 using Microsoft.AspNetCore.Mvc;
 
 namespace AlgoTrading.Api.Controllers;
@@ -23,7 +24,19 @@ public class MarketIntelController : ControllerBase
         _marketIntelService = marketIntelService;
     }
 
-    /// <summary>Headlines for a category: india, global or commodities.</summary>
+    /// <summary>
+    /// The categories the news section offers: the broad market feeds, then one
+    /// per sector. The console builds its tabs from this, so adding a sector is
+    /// a server-side change alone.
+    /// </summary>
+    [HttpGet("news/categories")]
+    public ActionResult<IReadOnlyList<NewsCategoryDto>> GetNewsCategories()
+        => Ok(_marketIntelService.GetNewsCategories());
+
+    /// <summary>
+    /// Headlines for one category — a broad feed (india, global, commodities)
+    /// or a sector (pharma, banking, it, auto, energy, fmcg, metals, realty).
+    /// </summary>
     [HttpGet("news")]
     public async Task<IActionResult> GetNews(
         [FromQuery] string category = "india",

@@ -22,25 +22,80 @@ public class MarketIntelService : IMarketIntelService
     private static readonly TimeSpan NewsCacheTtl = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan MoversCacheTtl = TimeSpan.FromMinutes(5);
 
-    /// <summary>Feeds per category. All are public, key-less RSS endpoints.</summary>
-    private static readonly IReadOnlyDictionary<string, (string Source, string Url)[]> Feeds =
-        new Dictionary<string, (string, string)[]>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["india"] =
-            [
-                ("Economic Times · Markets", "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms"),
-                ("Economic Times · Stocks", "https://economictimes.indiatimes.com/markets/stocks/rssfeeds/2146842.cms"),
-            ],
-            ["global"] =
-            [
-                ("BBC Business", "https://feeds.bbci.co.uk/news/business/rss.xml"),
-                ("Economic Times · Forex", "https://economictimes.indiatimes.com/markets/forex/rssfeeds/1150221130.cms"),
-            ],
-            ["commodities"] =
-            [
-                ("Economic Times · Commodities", "https://economictimes.indiatimes.com/markets/commodities/rssfeeds/1808152121.cms"),
-            ],
-        };
+    private sealed record Feed(string Source, string Url);
+
+    private sealed record Category(string Key, string Label, string Group, Feed[] Feeds);
+
+    /// <summary>
+    /// The categories the news section offers, in the order the console shows
+    /// them. All feeds are the publishers' own public RSS endpoints, which is
+    /// what they are published for — an aggregator's feed would read the same
+    /// but carries terms that forbid using it inside a product.
+    /// </summary>
+    /// <remarks>
+    /// The sector feeds are Economic Times' industry sections, one per sector,
+    /// so a category is the publisher's own idea of "pharma" rather than a
+    /// keyword match over general news that would file every mention of the
+    /// word under it. IT is the exception: ET's technology feed carries barely
+    /// a headline at a time, so that one is Business Standard and Mint, both of
+    /// which keep a full section.
+    /// </remarks>
+    private static readonly Category[] Categories =
+    [
+        new("india", "India markets", NewsCategoryGroups.Markets,
+        [
+            new("Economic Times · Markets", "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms"),
+            new("Economic Times · Stocks", "https://economictimes.indiatimes.com/markets/stocks/rssfeeds/2146842.cms"),
+            new("Business Standard · Markets", "https://www.business-standard.com/rss/markets-106.rss"),
+            new("Mint · Markets", "https://www.livemint.com/rss/markets"),
+        ]),
+        new("global", "Global", NewsCategoryGroups.Markets,
+        [
+            new("BBC Business", "https://feeds.bbci.co.uk/news/business/rss.xml"),
+            new("Economic Times · Forex", "https://economictimes.indiatimes.com/markets/forex/rssfeeds/1150221130.cms"),
+        ]),
+        new("commodities", "Commodities", NewsCategoryGroups.Markets,
+        [
+            new("Economic Times · Commodities", "https://economictimes.indiatimes.com/markets/commodities/rssfeeds/1808152121.cms"),
+        ]),
+
+        new("banking", "Banking & financials", NewsCategoryGroups.Sectors,
+        [
+            new("Economic Times · Banking/Finance", "https://economictimes.indiatimes.com/rssfeeds/13358259.cms"),
+        ]),
+        new("pharma", "Pharma & healthcare", NewsCategoryGroups.Sectors,
+        [
+            new("Economic Times · Healthcare/Biotech", "https://economictimes.indiatimes.com/rssfeeds/13358050.cms"),
+        ]),
+        new("it", "IT & technology", NewsCategoryGroups.Sectors,
+        [
+            new("Business Standard · Technology", "https://www.business-standard.com/rss/technology-108.rss"),
+            new("Mint · Technology", "https://www.livemint.com/rss/technology"),
+        ]),
+        new("auto", "Auto", NewsCategoryGroups.Sectors,
+        [
+            new("Economic Times · Auto", "https://economictimes.indiatimes.com/rssfeeds/13359412.cms"),
+        ]),
+        new("energy", "Energy & power", NewsCategoryGroups.Sectors,
+        [
+            new("Economic Times · Energy", "https://economictimes.indiatimes.com/rssfeeds/13358350.cms"),
+        ]),
+        new("fmcg", "FMCG & consumer", NewsCategoryGroups.Sectors,
+        [
+            new("Economic Times · Cons. Products", "https://economictimes.indiatimes.com/rssfeeds/13358759.cms"),
+        ]),
+        new("metals", "Metals & mining", NewsCategoryGroups.Sectors,
+        [
+            new("Economic Times · Metals & Mining", "https://economictimes.indiatimes.com/rssfeeds/13357828.cms"),
+        ]),
+        new("realty", "Realty & construction", NewsCategoryGroups.Sectors,
+        [
+            new("Economic Times · Property/Construction", "https://economictimes.indiatimes.com/rssfeeds/13357019.cms"),
+        ]),
+    ];
+
+    private static readonly IReadOnlyDictionary<string, Category> CategoriesByKey =
+        Categories.ToDictionary(c => c.Key, StringComparer.OrdinalIgnoreCase);
 
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IMemoryCache _cache;
@@ -59,38 +114,50 @@ public class MarketIntelService : IMarketIntelService
         _logger = logger;
     }
 
+    public IReadOnlyList<NewsCategoryDto> GetNewsCategories()
+        => Categories.Select(c => new NewsCategoryDto(c.Key, c.Label, c.Group)).ToList();
+
     public async Task<NewsResponse> GetNewsAsync(string category, CancellationToken cancellationToken = default)
     {
-        if (!Feeds.TryGetValue(category, out var feeds))
+        if (!CategoriesByKey.TryGetValue(category, out var entry))
         {
             throw new ArgumentException(
-                $"Unknown news category '{category}'. Valid: {string.Join(", ", Feeds.Keys)}.");
+                $"Unknown news category '{category}'. Valid: {string.Join(", ", CategoriesByKey.Keys)}.");
         }
 
-        string cacheKey = $"news:{category.ToLowerInvariant()}";
+        string cacheKey = $"news:{entry.Key}";
         if (_cache.TryGetValue(cacheKey, out NewsResponse? cached) && cached is not null)
         {
             return cached;
         }
 
-        var items = new List<NewsItemDto>();
-        foreach (var (source, url) in feeds)
+        // The feeds of a category are fetched together rather than one after
+        // another: a category now holds up to four, and read in series the
+        // slowest one would decide how long every cache miss took.
+        var fetches = entry.Feeds.Select(async feed =>
         {
             try
             {
-                items.AddRange(await FetchFeedAsync(source, url, cancellationToken));
+                return await FetchFeedAsync(feed.Source, feed.Url, cancellationToken);
             }
             catch (Exception ex)
             {
                 // One dead feed must not blank the whole section.
-                _logger.LogWarning(ex, "News feed failed: {Source}", source);
+                _logger.LogWarning(ex, "News feed failed: {Source}", feed.Source);
+                return new List<NewsItemDto>();
             }
-        }
+        });
+
+        var items = (await Task.WhenAll(fetches)).SelectMany(x => x);
 
         var response = new NewsResponse(
-            category.ToLowerInvariant(),
+            entry.Key,
             DateTime.UtcNow,
             items
+                // Two publishers carrying the same wire story give the same
+                // link twice; the headline is left alone, because two outlets
+                // wording one story differently are two headlines.
+                .DistinctBy(i => i.Link, StringComparer.OrdinalIgnoreCase)
                 .OrderByDescending(i => i.PublishedUtc ?? DateTime.MinValue)
                 .Take(30)
                 .ToList());

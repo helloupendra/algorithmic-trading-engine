@@ -164,6 +164,15 @@ export const DATA_SECTIONS = [
     end: false,
   },
   {
+    // The headlines behind the factors above — broad market feeds and one tab
+    // per sector. It sits with market factors because it answers the same
+    // question, in words rather than in numbers: what is moving, and why.
+    route: '/admin/data/news',
+    label: 'Market news',
+    icon: IconGlobe,
+    end: false,
+  },
+  {
     route: '/admin/data/historical',
     label: 'Historical',
     icon: IconCandles,
