@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   RUN_HISTORY_PAGE,
   useFnoUnderlyings,
@@ -137,11 +137,24 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
   const routes = routesFor(mode)
   const isAdmin = mode === 'admin'
 
+  // `?strategy=<catalog id>` opens the page on that strategy — where a
+  // strategy's track record sends the reader for the filters it does not have.
+  // Such a link also drops the default 30-day floor, because arriving on one
+  // strategy means its whole history is what was asked for, not its last month.
+  // Read once, in the initialisers: after mount the controls own the filters,
+  // and a URL left behind in the address bar must not pull them back.
+  const [params] = useSearchParams()
+
   const [userId, setUserId] = useState<number | null>(null)
-  const [strategyId, setStrategyId] = useState<number | null>(null)
+  const [strategyId, setStrategyId] = useState<number | null>(() => {
+    const id = Number(params.get('strategy'))
+    return Number.isInteger(id) && id > 0 ? id : null
+  })
   const [underlying, setUnderlying] = useState<string>('all')
   const [status, setStatus] = useState<string>('any')
-  const [fromDate, setFromDate] = useState<string>(() => addDays(todayIst(), -DEFAULT_RANGE_DAYS))
+  const [fromDate, setFromDate] = useState<string>(() =>
+    params.get('strategy') ? '' : addDays(todayIst(), -DEFAULT_RANGE_DAYS),
+  )
   const [toDate, setToDate] = useState<string>(() => todayIst())
   const [search, setSearch] = useState('')
 

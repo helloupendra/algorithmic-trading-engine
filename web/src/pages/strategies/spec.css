@@ -403,3 +403,40 @@
   line-height: 1.55;
 }
 .spec-page__pending a { color: var(--brand); }
+
+/* ------------------------------------------------------------ track record */
+
+/* The section heading's second half: what the numbers below cover. Lower case
+   against the heading's caps, so it reads as an aside rather than a title. */
+.spec-page__section-note {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 450;
+  color: var(--text-3);
+  opacity: 0.8;
+}
+
+.track { display: grid; gap: 14px; }
+
+/* Per underlying and how the runs ended: two short tables that sit side by
+   side while both fit, and stack rather than shrink once they do not. */
+.track__breaks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.track__break { min-width: 0; }
+
+.track__break-title {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.track__break-title .faint { text-transform: none; letter-spacing: 0; font-weight: 450; }
+
+.track__runs { min-width: 0; }

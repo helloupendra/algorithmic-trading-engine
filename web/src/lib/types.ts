@@ -698,6 +698,87 @@ export interface LiveRunUserSummary {
   lastRunUtc: string | null
 }
 
+/** One run named by the track record — enough to label it and link to it. */
+export interface StrategyTrackRecordRunRef {
+  runId: number
+  underlying: string
+  startedUtc: string
+  netPnl: number
+}
+
+/** The strategy's record on one underlying. */
+export interface StrategyTrackRecordUnderlying {
+  underlying: string
+  runs: number
+  /** Finished trading runs on this underlying — what `wins` is counted out of. */
+  decidedRuns: number
+  wins: number
+  netPnl: number
+}
+
+/** How often the runs ended one way, and what those runs came to. */
+export interface StrategyTrackRecordStopReason {
+  /** The short form: "Stop loss hit", "Market closed", "Runner exited", "Not recorded". */
+  reason: string
+  runs: number
+  netPnl: number
+}
+
+/**
+ * GET /api/Strategy/{id}/track-record — one strategy's lifetime live record,
+ * rolled up over every run it has ever had. Backtests are not in it: a
+ * backtest is a hypothesis and a live run is a result.
+ */
+export interface StrategyTrackRecord {
+  strategyId: number
+  strategyName: string
+  /** "own" when the numbers cover one user's runs (always so for a trader), "all" when everyone's. */
+  scope: 'own' | 'all'
+  scopeUserId: number | null
+
+  runs: number
+  activeRuns: number
+  /** Runs that could place orders — everything that is not an alerter. */
+  tradingRuns: number
+  /** Alerter runs: no orders, no P&L, kept out of every figure below. */
+  alertRuns: number
+
+  /** Finished trading runs — the only ones a win or a loss is counted over. */
+  decidedRuns: number
+  wins: number
+  losses: number
+  /** Finished flat, usually because the run never opened a position. */
+  flat: number
+  /** Percent, one decimal; null until a run has finished. */
+  winRate: number | null
+
+  /** Σ realized over every trading run, finished or not. */
+  netPnl: number
+  /** Σ unrealized of the runs still going, at the latest mark. */
+  openPnl: number
+  grossProfit: number
+  /** Negative. */
+  grossLoss: number
+  averagePnlPerRun: number
+  trades: number
+
+  bestRun: StrategyTrackRecordRunRef | null
+  worstRun: StrategyTrackRecordRunRef | null
+
+  /** True while live runs carry no charges — the P&L above is then gross of brokerage, STT and slippage. */
+  pnlIsGrossOfCharges: boolean
+
+  firstRunUtc: string | null
+  lastRunUtc: string | null
+  /** Distinct IST days a run started on. */
+  tradingDays: number
+  totalRuntimeSeconds: number
+  averageRuntimeSeconds: number | null
+
+  byUnderlying: StrategyTrackRecordUnderlying[]
+  stopReasons: StrategyTrackRecordStopReason[]
+}
+
 /** GET /api/Strategy/runs/{runId}/orders — the run's paper order ledger, newest first. */
 export type PaperOrderRow = PaperOrder
 
