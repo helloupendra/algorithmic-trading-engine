@@ -910,6 +910,35 @@ public class StrategyController : ControllerBase
     }
 
     /// <summary>
+    /// The lifetime record of one strategy — every live run it has ever had,
+    /// rolled up into counts, P&amp;L, its best and worst run, and breakdowns by
+    /// underlying and by how the runs ended. The runs themselves still come from
+    /// <c>GET /api/Strategy/runs?strategyId=…</c>; this answers "has this
+    /// strategy ever paid?" without paging the whole history first.
+    /// </summary>
+    /// <remarks>
+    /// Scope comes from the token, exactly as the run list's does: a trader's
+    /// record is their own runs whatever userId they pass, and an admin gets
+    /// every user's or one user's. Live runs only — a backtest is a hypothesis
+    /// and a live run is a result, and a record that added the two would claim
+    /// something neither number supports.
+    /// </remarks>
+    [HttpGet("{id:int}/track-record")]
+    public async Task<ActionResult<StrategyTrackRecordResponse>> GetTrackRecord(
+        int id,
+        [FromQuery] long? userId,
+        CancellationToken cancellationToken)
+    {
+        long? scopeUserId = User.IsAdmin() ? userId : User.GetRequiredUserId();
+
+        var record = await _history.SummarizeStrategyAsync(id, scopeUserId, cancellationToken);
+        if (record is null)
+            return NotFound(new { message = $"Strategy {id} is in neither the catalog nor the run history." });
+
+        return Ok(record);
+    }
+
+    /// <summary>
     /// The paper orders of one live run, newest first — the order ledger under
     /// the detail page's position table. Admin, or the user who started the run.
     /// </summary>

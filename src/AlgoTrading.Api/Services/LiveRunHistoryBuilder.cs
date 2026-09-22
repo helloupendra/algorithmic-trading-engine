@@ -45,6 +45,20 @@ public sealed class LiveRunHistoryBuilder
     private const string OpenStatus = "Open";
     private const string ClosedStatus = "Closed";
 
+    /// <summary>
+    /// What a finished run's stop reason groups under when nothing recorded one
+    /// — a run the API lost track of across a restart, most often. It is its own
+    /// bucket rather than dropped, because "we do not know why 40 runs ended" is
+    /// the row most worth seeing.
+    /// </summary>
+    private const string UnknownStopReason = "Not recorded";
+
+    /// <summary>
+    /// Where a RUN_STOPPED reason stops being the reason and starts being its
+    /// detail. Kept in the order the API writes them.
+    /// </summary>
+    private static readonly string[] StopReasonSeparators = { ":", " (", ";", " — " };
+
     /// <summary>Canonical spellings of SimulationRun.Status a live run can carry.</summary>
     private static readonly string[] KnownStatuses =
     {
@@ -394,6 +408,209 @@ public sealed class LiveRunHistoryBuilder
     }
 
     // ------------------------------------------------------------------
+    // Per-strategy lifetime record
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// The lifetime record of one strategy: every live run of it in scope
+    /// folded into counts, P&amp;L, its best and worst run, and breakdowns by
+    /// underlying and by how the runs ended. <paramref name="userId"/> is
+    /// already resolved by the controller — a trader always gets their own runs
+    /// — and null covers every user. Null comes back only when neither the
+    /// catalog nor the run history has heard of the id.
+    /// </summary>
+    /// <remarks>
+    /// Where <see cref="ListAsync"/> pages, this deliberately does not: a record
+    /// that stopped at the newest 500 runs would be a window wearing the word
+    /// "lifetime". The cost is kept down instead by reading the runs narrow and
+    /// leaving every aggregate that SQL can do in SQL, joined against the same
+    /// query so no list of run ids is ever sent to the database.
+    /// </remarks>
+    public async Task<StrategyTrackRecordResponse?> SummarizeStrategyAsync(
+        int strategyId,
+        long? userId,
+        CancellationToken cancellationToken)
+    {
+        var catalog = await _catalog.GetAllAsync(cancellationToken);
+        var names = await StrategyNamesForIdAsync(strategyId, catalog, cancellationToken);
+        var entry = catalog.FirstOrDefault(x => x.Id == strategyId);
+        if (entry is null && names.Count == 0) return null;
+
+        var record = new StrategyTrackRecordResponse
+        {
+            StrategyId = strategyId,
+            StrategyName = entry?.Name ?? names.FirstOrDefault() ?? string.Empty,
+            Scope = userId.HasValue ? StrategyTrackRecordResponse.ScopeOwn : StrategyTrackRecordResponse.ScopeAll,
+            ScopeUserId = userId
+        };
+
+        // In the catalog but never started: an empty record, not a 404. "This
+        // has never run" is an answer the page needs to be able to give.
+        if (names.Count == 0) return record;
+
+        var runQuery = _dbContext.SimulationRuns.AsNoTracking()
+            .Where(x => x.Mode == LivePaperMode && names.Contains(x.StrategyName));
+
+        if (userId.HasValue)
+        {
+            long scopeUserId = userId.Value;
+            runQuery = runQuery.Where(x => x.UserId == scopeUserId);
+        }
+
+        // The underlying and the role of a run are derived from its parameters
+        // rather than stored as columns, so the rows come back narrow and the
+        // derivation happens here — the same chain ListAsync uses, so a row on
+        // the history page and this rollup can never disagree about a run.
+        var rows = await runQuery
+            .Select(x => new
+            {
+                x.Id,
+                x.Symbol,
+                x.ParametersJson,
+                x.StartedUtc,
+                x.CreatedUtc,
+                x.CompletedUtc,
+                x.LastError
+            })
+            .ToListAsync(cancellationToken);
+
+        if (rows.Count == 0) return record;
+
+        var stats = await (
+                from p in _dbContext.PaperPositions.AsNoTracking()
+                join r in runQuery on p.SimulationRunId equals r.Id
+                group p by p.SimulationRunId into g
+                select new
+                {
+                    RunId = g.Key,
+                    Realized = g.Sum(x => x.RealizedPnl),
+                    Closed = g.Count(x => x.Status == ClosedStatus)
+                })
+            .ToDictionaryAsync(x => x.RunId, cancellationToken);
+
+        var stops = await LoadStopsAsync(runQuery, cancellationToken);
+
+        var activeRunIds = rows.Where(x => _registry.Contains(x.Id)).Select(x => x.Id).ToList();
+        var liveMarks = await MarkActiveRunsAsync(activeRunIds, cancellationToken);
+
+        var byUnderlying = new Dictionary<string, StrategyTrackRecordUnderlying>(StringComparer.OrdinalIgnoreCase);
+        var byReason = new Dictionary<string, StrategyTrackRecordStopReason>(StringComparer.OrdinalIgnoreCase);
+        var days = new HashSet<DateOnly>();
+        var now = DateTime.UtcNow;
+
+        foreach (var row in rows)
+        {
+            var p = LiveRunParameters.Parse(row.ParametersJson);
+            var running = _registry.Get(row.Id);
+            var exit = running is null ? _registry.GetExitByRun(row.Id) : null;
+            var underlying = DeriveUnderlying(running, exit, p, row.Symbol);
+
+            bool isActive = running is not null;
+            var startedUtc = running?.StartedUtc ?? row.StartedUtc ?? row.CreatedUtc;
+            stops.TryGetValue(row.Id, out var stop);
+            DateTime? stoppedUtc = isActive ? null : row.CompletedUtc ?? stop?.AtUtc ?? exit?.AtUtc;
+
+            record.Runs++;
+            if (isActive) record.ActiveRuns++;
+            days.Add(IstTime.DateOf(startedUtc));
+            record.TotalRuntimeSeconds += DurationSeconds(startedUtc, isActive ? now : stoppedUtc ?? now);
+
+            if (record.FirstRunUtc is null || startedUtc < record.FirstRunUtc) record.FirstRunUtc = startedUtc;
+            if (record.LastRunUtc is null || startedUtc > record.LastRunUtc) record.LastRunUtc = startedUtc;
+
+            // An alerter never opens a position, so counting it among the
+            // trading runs would dilute every figure below with runs that could
+            // not have made or lost a rupee. It is counted, and then left out.
+            if (string.Equals(LiveRunParameters.ReadRole(row.ParametersJson), AlertsSupervisor.RoleAlerts, StringComparison.OrdinalIgnoreCase))
+            {
+                record.AlertRuns++;
+                continue;
+            }
+
+            record.TradingRuns++;
+
+            stats.TryGetValue(row.Id, out var s);
+            decimal realized = s?.Realized ?? 0m;
+            record.NetPnl += realized;
+            record.Trades += s?.Closed ?? 0;
+
+            if (isActive && liveMarks.TryGetValue(row.Id, out var mark))
+                record.OpenPnl += mark.Unrealized;
+
+            if (!byUnderlying.TryGetValue(underlying, out var u))
+            {
+                u = new StrategyTrackRecordUnderlying { Underlying = underlying };
+                byUnderlying[underlying] = u;
+            }
+            u.Runs++;
+            u.NetPnl += realized;
+
+            // A run still going has not won or lost yet — its open legs can
+            // still turn either way — so the win rate is counted only over the
+            // ones that are finished.
+            if (isActive) continue;
+
+            record.DecidedRuns++;
+            u.DecidedRuns++;
+
+            if (realized > 0m)
+            {
+                record.Wins++;
+                u.Wins++;
+                record.GrossProfit += realized;
+            }
+            else if (realized < 0m)
+            {
+                record.Losses++;
+                record.GrossLoss += realized;
+            }
+            else
+            {
+                record.Flat++;
+            }
+
+            if (record.BestRun is null || realized > record.BestRun.NetPnl)
+                record.BestRun = RunRef(row.Id, underlying, startedUtc, realized);
+
+            if (record.WorstRun is null || realized < record.WorstRun.NetPnl)
+                record.WorstRun = RunRef(row.Id, underlying, startedUtc, realized);
+
+            var reason = ShortStopReason(stop?.Reason ?? exit?.Reason ?? row.LastError) ?? UnknownStopReason;
+            if (!byReason.TryGetValue(reason, out var r))
+            {
+                r = new StrategyTrackRecordStopReason { Reason = reason };
+                byReason[reason] = r;
+            }
+            r.Runs++;
+            r.NetPnl += realized;
+        }
+
+        if (record.DecidedRuns > 0)
+        {
+            record.WinRate = Math.Round(100d * record.Wins / record.DecidedRuns, 1);
+            record.AveragePnlPerRun = Math.Round((record.GrossProfit + record.GrossLoss) / record.DecidedRuns, 2);
+        }
+
+        if (record.Runs > 0)
+            record.AverageRuntimeSeconds = record.TotalRuntimeSeconds / record.Runs;
+
+        record.TradingDays = days.Count;
+        record.ByUnderlying = byUnderlying.Values
+            .OrderByDescending(x => x.NetPnl)
+            .ThenBy(x => x.Underlying, StringComparer.Ordinal)
+            .ToList();
+        record.StopReasons = byReason.Values
+            .OrderByDescending(x => x.Runs)
+            .ThenBy(x => x.Reason, StringComparer.Ordinal)
+            .ToList();
+
+        return record;
+    }
+
+    private static StrategyTrackRecordRunRef RunRef(long runId, string underlying, DateTime startedUtc, decimal netPnl)
+        => new() { RunId = runId, Underlying = underlying, StartedUtc = startedUtc, NetPnl = netPnl };
+
+    // ------------------------------------------------------------------
     // Pieces
     // ------------------------------------------------------------------
 
@@ -468,6 +685,38 @@ public sealed class LiveRunHistoryBuilder
 
     private sealed record StopInfo(string? Reason, string? By, DateTime AtUtc);
 
+    private sealed record StopSignalRow(long RunId, DateTime TimestampUtc, string? MetadataJson);
+
+    /// <summary>
+    /// The short form of a RUN_STOPPED reason, so the reasons that mean the same
+    /// thing land in the same bucket. The API writes them as
+    /// "&lt;what&gt;: &lt;numbers&gt;", "&lt;what&gt; (&lt;detail&gt;)" or
+    /// "&lt;what&gt;; &lt;detail&gt;", and it is the part before the detail that
+    /// repeats:
+    /// <code>
+    /// "Stop loss hit: P&amp;L −₹5,120 ≤ −₹5,000" → "Stop loss hit"
+    /// "Market closed (15:30 IST)"               → "Market closed"
+    /// "Runner exited (code 1)"                  → "Runner exited"
+    /// </code>
+    /// The console's <c>shortStopReason()</c> cuts at the same separators, so a
+    /// badge on the history page and a row in the record read alike.
+    /// </summary>
+    public static string? ShortStopReason(string? reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason)) return null;
+
+        var text = reason.Trim();
+        int cut = text.Length;
+        foreach (var separator in StopReasonSeparators)
+        {
+            int i = text.IndexOf(separator, StringComparison.Ordinal);
+            if (i > 0 && i < cut) cut = i;
+        }
+
+        var head = text[..cut].Trim();
+        return head.Length == 0 ? null : head;
+    }
+
     /// <summary>The last RUN_STOPPED signal per run: { reason, by } and when.</summary>
     private async Task<Dictionary<long, StopInfo>> LoadStopsAsync(List<long> runIds, CancellationToken cancellationToken)
     {
@@ -479,12 +728,42 @@ public sealed class LiveRunHistoryBuilder
             .Select(x => new { x.SimulationRunId, x.TimestampUtc, x.MetadataJson })
             .ToListAsync(cancellationToken);
 
+        return FoldStops(signals.Select(x => new StopSignalRow(x.SimulationRunId, x.TimestampUtc, x.MetadataJson)));
+    }
+
+    /// <summary>
+    /// The same thing over a whole query of runs rather than one page of ids —
+    /// the lifetime record's form, joined in the database so a strategy with
+    /// thousands of runs never turns into an IN clause with thousands of terms.
+    /// </summary>
+    private async Task<Dictionary<long, StopInfo>> LoadStopsAsync(IQueryable<SimulationRun> runs, CancellationToken cancellationToken)
+    {
+        const string stoppedType = StrategyRunControl.RunStoppedSignalType;
+
+        var signals = await (
+                from s in _dbContext.SimulationSignals.AsNoTracking()
+                join r in runs on s.SimulationRunId equals r.Id
+                where s.SignalType == stoppedType
+                orderby s.Id
+                select new { s.SimulationRunId, s.TimestampUtc, s.MetadataJson })
+            .ToListAsync(cancellationToken);
+
+        return FoldStops(signals.Select(x => new StopSignalRow(x.SimulationRunId, x.TimestampUtc, x.MetadataJson)));
+    }
+
+    /// <summary>
+    /// Signals ordered by id folded to one entry per run — the last one wins,
+    /// because a run stopped twice (a stop that raced a market close, say) is
+    /// described by how it actually ended.
+    /// </summary>
+    private static Dictionary<long, StopInfo> FoldStops(IEnumerable<StopSignalRow> signals)
+    {
         var result = new Dictionary<long, StopInfo>();
         foreach (var s in signals)
         {
             var reason = SignalMetadata.ReadReason(s.MetadataJson);
             var by = SignalMetadata.ReadString(s.MetadataJson, "by");
-            result[s.SimulationRunId] = new StopInfo(
+            result[s.RunId] = new StopInfo(
                 string.IsNullOrWhiteSpace(reason) ? null : reason,
                 string.IsNullOrWhiteSpace(by) ? null : by,
                 s.TimestampUtc);

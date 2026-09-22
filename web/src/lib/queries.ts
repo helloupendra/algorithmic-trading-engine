@@ -42,6 +42,7 @@ import type {
   LiveQuote,
   LiveRunSummary,
   LiveRunUserSummary,
+  StrategyTrackRecord,
   LiveTick,
   LiveWatchlistItem,
   MarketSessionInfo,
@@ -1120,6 +1121,22 @@ export function useLiveRunUserSummary(enabled = true) {
     queryFn: () => api.get<LiveRunUserSummary[]>('/api/Strategy/runs/summary'),
     enabled,
     refetchInterval: POLL_SLOW,
+  })
+}
+
+/**
+ * One strategy's lifetime live record — every run of it ever, rolled up. A
+ * trader's covers their own runs; an admin's covers everyone's. Polled while
+ * the strategy has a run going, because those are the numbers still moving;
+ * once nothing is running the record only changes when a run is started.
+ */
+export function useStrategyTrackRecord(strategyId: number | null, enabled = true) {
+  return useQuery({
+    queryKey: ['strategy', 'track-record', strategyId],
+    queryFn: () => api.get<StrategyTrackRecord>(`/api/Strategy/${strategyId}/track-record`),
+    enabled: enabled && strategyId != null && Number.isInteger(strategyId) && strategyId > 0,
+    refetchInterval: (q: { state: { data?: StrategyTrackRecord } }) =>
+      (q.state.data?.activeRuns ?? 0) > 0 ? POLL_RUN_HISTORY_ACTIVE : false,
   })
 }
 

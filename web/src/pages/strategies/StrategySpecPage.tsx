@@ -21,6 +21,7 @@ import { IconArrowRight, IconPlay } from '../../components/icons'
 import type { StrategyListItem } from '../../lib/types'
 import { addDays, todayIst } from '../backtesting/shared'
 import { CategoryBadge, LaunchDialog } from './shared'
+import { TrackRecordPanel } from './TrackRecordPanel'
 import './spec.css'
 
 const StrategySpecPanel = lazy(() => import('./StrategySpecPanel'))
@@ -337,6 +338,25 @@ export function StrategySpecPage({ mode = 'admin' }: { mode?: 'admin' | 'trader'
               ) : (
                 <Summary s={strategy} facts={spec.data?.facts ?? null} headings={headings} hasSpec={hasSpec} />
               )}
+
+              {/* What it has done, between what it is meant to do and how it
+                  does it. A reader who has just learned the rule asks next
+                  whether the rule has ever paid — and the answer to that is a
+                  record of real runs, not the summary above it. */}
+              <section className="spec-page__section">
+                <h2 className="section-title">
+                  Track record
+                  <span className="spec-page__section-note">
+                    {trader ? 'your live runs of this strategy' : 'every live run of this strategy'}
+                  </span>
+                </h2>
+                <TrackRecordPanel
+                  strategyId={strategyId}
+                  runHref={runHref}
+                  isAdmin={!trader}
+                  historyHref={`${trader ? '/trader/strategies/history' : '/admin/strategies/history'}?strategy=${strategy.id}`}
+                />
+              </section>
 
               <section className="spec-page__section">
                 <h2 className="section-title">Full specification</h2>
