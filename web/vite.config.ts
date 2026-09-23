@@ -1,6 +1,18 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { fileURLToPath } from 'node:url'
 import type { Plugin } from 'vite'
+
+/**
+ * Not `new URL(...).pathname`. On Windows that returns "/C:/Users/..." with the
+ * leading slash still attached, which node then resolves against the drive and
+ * tries to mkdir "C:\C:\Users\...". The docs build died there and took the
+ * whole `npm run build` exit code with it, which is what scripts/deploy.ps1
+ * checks before it copies anything into wwwroot - so a Windows deploy stopped
+ * before it published. fileURLToPath is the conversion that knows about
+ * drive letters, and it percent-decodes a path with spaces in it as a bonus.
+ */
+const here = (rel: string) => fileURLToPath(new URL(rel, import.meta.url))
 
 /**
  * The documentation site is generated into dist/docs after the console
@@ -13,7 +25,7 @@ function docsSite(): Plugin {
     apply: 'build',
     async closeBundle() {
       const { buildDocs } = await import('./docs-site/build.mjs')
-      const pages = await buildDocs({ outDir: new URL('./dist', import.meta.url).pathname })
+      const pages = await buildDocs({ outDir: here('./dist') })
       console.log(`\n  docs-site: ${pages} pages → dist/docs\n`)
     },
   }
@@ -34,7 +46,7 @@ function freshStills(): Plugin {
     async buildStart() {
       const { readdirSync, statSync, existsSync } = await import('node:fs')
       const { join } = await import('node:path')
-      const root = new URL('./src', import.meta.url).pathname
+      const root = here('./src')
       const stillsDir = join(root, 'shots', 'stills')
       if (!existsSync(stillsDir)) {
         this.warn('no fallback stills under src/shots/stills — run private/homepage-v3/stills.mjs')
