@@ -26,8 +26,18 @@ DRY_RUN=0
 UNDERLYINGS="${MARKET_OPEN_UNDERLYINGS:-BANKNIFTY NIFTY SENSEX}"
 export CHAIN_UNDERLYINGS="$(printf '%s' "$UNDERLYINGS" | tr ' ' ',')"
 
-# The morning's plan: what to run, on what, at how many lots.
-# One entry per line, "Strategy UNDERLYING[,UNDERLYING...] lots".
+# The morning's plan: what to run, on what, at how many lots, and — where it
+# should differ from the default — that strategy's own leg target in premium
+# points.
+#
+#   Strategy  UNDERLYING[,UNDERLYING...]  lots  [legTargetPoints]
+#
+# The fourth column matters: the 20-point leg target below was written for
+# Ghost, which buys a single option. A straddle's legs and a crude option's
+# premium are not the same animal, so a strategy that wants a different number
+# says so here rather than inheriting one that happens to be there. An empty
+# fourth column means "no leg target at all" — write `-` for that, and leave it
+# off to take the default.
 #
 # Every account in MARKET_OPEN_ACCOUNTS gets the whole plan, so the number of
 # runners started is accounts x lines x underlyings. Each runner is its own
@@ -36,8 +46,8 @@ PLAN="${MARKET_OPEN_PLAN:-$(cat <<'PLANEOF'
 GhostTangentCrossings BANKNIFTY,NIFTY,SENSEX 2
 ChainFlowBuy BANKNIFTY,NIFTY,SENSEX 2
 SmcStructureBreak BANKNIFTY,NIFTY,SENSEX 2
-Fulcrum BANKNIFTY,NIFTY,SENSEX 2
-CrudeMomentum CRUDEOIL 2
+Fulcrum BANKNIFTY,NIFTY,SENSEX 2 -
+CrudeMomentum CRUDEOIL 2 -
 PLANEOF
 )}"
 
@@ -535,13 +545,15 @@ sys.exit(1)
 ' 2>/dev/null
 }
 
-# The rules as the API's RiskRulesDto (camelCase; leg rules in premium
-# points, day rules in rupees with scope "day"), and a sentence for the log.
-RISK_JSON="$(LEG_TARGET_PTS="$LEG_TARGET_PTS" LEG_STOP_PTS="$LEG_STOP_PTS" DAY_TARGET="$DAY_TARGET" DAY_STOP_LOSS="$DAY_STOP_LOSS" python3 - <<'PYEOF'
+# The rules as the API's RiskRulesDto (camelCase; leg rules in premium points,
+# day rules in rupees with scope "day"). Built per plan line, because the leg
+# target is the one rule a strategy may want its own.
+risk_json() {  # legTargetPoints -> the run's RiskRulesDto on stdout
+  LEG_TARGET_PTS="$1" LEG_STOP_PTS="$LEG_STOP_PTS" DAY_TARGET="$DAY_TARGET" DAY_STOP_LOSS="$DAY_STOP_LOSS" python3 - <<'PYEOF'
 import json, os
 def num(k):
     v = os.environ.get(k, "").strip()
-    return float(v) if v else None
+    return float(v) if v and v != "-" else None
 leg = {k: v for k, v in {"targetPoints": num("LEG_TARGET_PTS"), "stopLossPoints": num("LEG_STOP_PTS")}.items() if v}
 day = {k: v for k, v in {"target": num("DAY_TARGET"), "stopLoss": num("DAY_STOP_LOSS")}.items() if v}
 risk = {}
@@ -549,9 +561,9 @@ if leg: risk["leg"] = leg
 if day: risk["overall"] = {**day, "scope": "day"}
 print(json.dumps(risk))
 PYEOF
-)"
-RISK_TEXT="leg target ${LEG_TARGET_PTS:-none} pts / leg SL ${LEG_STOP_PTS:-none}${DAY_TARGET:+, day target ₹$DAY_TARGET}${DAY_STOP_LOSS:+, day SL ₹$DAY_STOP_LOSS}"
-say "risk rules for every run: $RISK_TEXT  ($RISK_JSON)"
+}
+
+say "day rules for every run: ${DAY_TARGET:+target ₹$DAY_TARGET }${DAY_STOP_LOSS:+SL ₹$DAY_STOP_LOSS}${DAY_TARGET:-${DAY_STOP_LOSS:-none}}; leg target is per strategy, below"
 
 for ACCOUNT in $ACCOUNTS; do
   OWNER_ID="$(user_id "$ACCOUNT")"
@@ -562,10 +574,14 @@ for ACCOUNT in $ACCOUNTS; do
 
   say "--- $ACCOUNT (user $OWNER_ID) ---"
 
-  printf '%s\n' "$PLAN" | while read -r NAME SYMBOLS PLAN_LOTS; do
+  printf '%s\n' "$PLAN" | while read -r NAME SYMBOLS PLAN_LOTS PLAN_TARGET; do
     [ -n "$NAME" ] || continue
     case "$NAME" in \#*) continue ;; esac
     PLAN_LOTS="${PLAN_LOTS:-$LOTS_DEFAULT}"
+    # No fourth column means the default; "-" means no leg target at all.
+    [ -n "${PLAN_TARGET:-}" ] || PLAN_TARGET="$LEG_TARGET_PTS"
+    RISK_JSON="$(risk_json "$PLAN_TARGET")"
+    RISK_TEXT="leg target $([ "$PLAN_TARGET" = "-" ] && echo none || echo "$PLAN_TARGET pts")"
 
     SID="$(strategy_id "$NAME")"
     if [ -z "$SID" ]; then
