@@ -245,7 +245,15 @@ function heldTitle(positions: OptionChainPosition[]): string {
  * strategy and every manual trade, marked at the live price. The same legs carry
  * a B/S marker in the chain below, so a position can be read against its strike.
  */
-function PositionsPanel({ underlying, positions }: { underlying: string; positions: OptionChainPosition[] }) {
+function PositionsPanel({
+  underlying,
+  positions,
+  runLink,
+}: {
+  underlying: string
+  positions: OptionChainPosition[]
+  runLink: (runId: number) => string
+}) {
   const total = positions.reduce((sum, p) => sum + (p.unrealizedPnl ?? 0), 0)
   return (
     <Panel
@@ -281,7 +289,7 @@ function PositionsPanel({ underlying, positions }: { underlying: string; positio
                 return (
                   <tr key={`${p.runId}-${p.symbol}-${p.groupId}`}>
                     <td>
-                      <Link to={`/admin/strategies/runs/${p.runId}`}>{p.isManual ? 'Manual' : p.strategyName}</Link>
+                      <Link to={runLink(p.runId)}>{p.isManual ? 'Manual' : p.strategyName}</Link>
                       <span className="faint"> #{p.runId}{p.userName ? ` · ${p.userName}` : ''}</span>
                     </td>
                     <td title={p.symbol}>
@@ -622,7 +630,18 @@ function asOfFor(sessionDate: string, time: string): string | undefined {
 
 // --- page -----------------------------------------------------------------------
 
-export function AdvancedOptionChainPage({ asOfUtc: asOfProp }: { asOfUtc?: string } = {}) {
+/**
+ * The same chain for an admin and for a trader. Only one thing differs: where a
+ * position's run link goes, because a trader's runs live under their own pages.
+ * The API already scopes the positions to whoever is asking.
+ */
+export function AdvancedOptionChainPage({
+  asOfUtc: asOfProp,
+  mode = 'admin',
+}: { asOfUtc?: string; mode?: 'admin' | 'trader' } = {}) {
+  const runLink = (runId: number) =>
+    mode === 'trader' ? `/trader/strategies/runs/${runId}` : `/admin/strategies/runs/${runId}`
+
   const [params, setParams] = useSearchParams()
   const requested = (params.get('u') ?? 'NIFTY').toUpperCase()
   const underlying = (UNDERLYINGS as readonly string[]).includes(requested) ? requested : 'NIFTY'
@@ -798,7 +817,7 @@ export function AdvancedOptionChainPage({ asOfUtc: asOfProp }: { asOfUtc?: strin
         <>
           <HeaderStrip chain={data} header={header} />
           <FreshnessLine header={header} receivedAt={view.dataUpdatedAt} fetchFailed={view.isError} />
-          {!asOfUtc && <PositionsPanel underlying={underlying} positions={positions} />}
+          {!asOfUtc && <PositionsPanel underlying={underlying} positions={positions} runLink={runLink} />}
 
           {data.strikes.length === 0 ? (
             <EmptyState>
