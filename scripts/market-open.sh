@@ -20,12 +20,34 @@ LOG="$REPO_ROOT/logs/market-open-$(date +%F).log"
 DRY_RUN=0
 [ "${1:-}" = "--dry-run" ] && DRY_RUN=1
 
-# Space-separated: one live run is started per underlying. The chain poller
-# covers the same set (CHAIN_UNDERLYINGS, set for the API by the library).
+# Space-separated: the underlyings the feed and the chain poller cover. The
+# chain poller covers the same set (CHAIN_UNDERLYINGS, set for the API by the
+# library). Commodities are not in here: the chain poller does not follow them.
 UNDERLYINGS="${MARKET_OPEN_UNDERLYINGS:-BANKNIFTY NIFTY SENSEX}"
 export CHAIN_UNDERLYINGS="$(printf '%s' "$UNDERLYINGS" | tr ' ' ',')"
-STRATEGY="${MARKET_OPEN_STRATEGY:-GhostTangentCrossings}"
-LOTS="${MARKET_OPEN_LOTS:-2}"
+
+# The morning's plan: what to run, on what, at how many lots.
+# One entry per line, "Strategy UNDERLYING[,UNDERLYING...] lots".
+#
+# Every account in MARKET_OPEN_ACCOUNTS gets the whole plan, so the number of
+# runners started is accounts x lines x underlyings. Each runner is its own
+# Python process; the API refuses to go past StrategyRunner:MaxConcurrentProcesses.
+PLAN="${MARKET_OPEN_PLAN:-$(cat <<'PLANEOF'
+GhostTangentCrossings BANKNIFTY,NIFTY,SENSEX 2
+ChainFlowBuy BANKNIFTY,NIFTY,SENSEX 2
+SmcStructureBreak BANKNIFTY,NIFTY,SENSEX 2
+Fulcrum BANKNIFTY,NIFTY,SENSEX 2
+CrudeMomentum CRUDEOIL 2
+PLANEOF
+)}"
+
+# Platform user names whose accounts the plan is deployed into. The script signs
+# in as the admin and names the owner on each start, so no trader's password is
+# held anywhere. A name that does not exist is reported and the rest still run.
+ACCOUNTS="${MARKET_OPEN_ACCOUNTS:-admin coderforchange}"
+
+# Lots for a plan line that leaves them out.
+LOTS_DEFAULT="${MARKET_OPEN_LOTS:-2}"
 # Risk rules every run is deployed with. Per leg, in premium points from its
 # own entry: the risk guard closes that leg alone once it has made
 # LEG_TARGET_PTS (and, if set, once it has lost LEG_STOP_PTS). Nothing at the
@@ -313,7 +335,7 @@ fi
 # --- 5. market data ----------------------------------------------------------
 
 if [ "$DRY_RUN" = 1 ]; then
-  say "dry run: would start the ingestor, the chain poller, and $STRATEGY on:$(printf ' %s' $UNDERLYINGS) at $LOTS lot(s)"
+  say "dry run: would start the ingestor, the chain poller, and the plan below for:$(printf ' %s' $ACCOUNTS)"
   exit 0
 fi
 
@@ -443,24 +465,53 @@ if [ "${TICKS:-0}" -lt 1 ]; then
   fail "no fresh prices after the ingestor started — the feed is not flowing (check the broker token: FYERS expires it at 06:00 IST)."
 fi
 
-# --- 7. the strategy ---------------------------------------------------------
-SID="$(api_get /api/Strategy \
-  | tr '{' '\n' | grep "\"name\":\"$STRATEGY\"" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)"
+# --- 7. the morning's plan ---------------------------------------------------
+# Every account in ACCOUNTS gets every line of PLAN. The script is signed in as
+# the admin and names the owner on each start, so no trader's password is held
+# anywhere and each run lands in that trader's own book.
 
-if [ -z "$SID" ]; then
-  fail "strategy '$STRATEGY' is not in the catalogue."
-fi
+CATALOGUE="$(api_get /api/Strategy)"
+USERS="$(api_get /api/Users)"
 
-# An underlying that already has THIS strategy running is left alone: a second
-# fire, or a hand re-run after a stumble, must not double the position.
-#
-# Matched on strategy and underlying together, in the same run. Until
-# 2026-09-15 this grepped the whole list for the underlying alone, so a
-# ChainFlowBuy run started by hand on BANKNIFTY at 08:24 read as "BANKNIFTY
-# already has a running GhostTangentCrossings" and Ghost never started there.
-RUNNING="$(api_get '/api/Strategy/runs?status=Running' 2>/dev/null || echo '')"
-strategy_running_on() {  # underlying -> exit 0 when $STRATEGY already runs on it
-  printf '%s' "$RUNNING" | STRATEGY="$STRATEGY" UNDERLYING="$1" python3 -c '
+strategy_id() {  # name -> id on stdout, empty when the catalogue has no such strategy
+  printf '%s' "$CATALOGUE" | NAME="$1" python3 -c '
+import json, os, sys
+try:
+    rows = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+if isinstance(rows, dict):
+    rows = rows.get("items") or rows.get("strategies") or []
+want = os.environ["NAME"].strip().lower()
+for row in rows if isinstance(rows, list) else []:
+    if str(row.get("name") or "").strip().lower() == want:
+        print(row.get("id") or "")
+        break
+' 2>/dev/null
+}
+
+user_id() {  # user name -> id on stdout, empty when there is no such account
+  printf '%s' "$USERS" | NAME="$1" python3 -c '
+import json, os, sys
+try:
+    rows = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+want = os.environ["NAME"].strip().lower()
+for row in rows if isinstance(rows, list) else []:
+    if str(row.get("userName") or "").strip().lower() == want and row.get("isActive"):
+        print(row.get("id") or "")
+        break
+' 2>/dev/null
+}
+
+# What is already running, per account. A second fire of this script, or a hand
+# re-run after a stumble, must not double anyone's position — and two accounts
+# running the same strategy on the same underlying is NOT a duplicate, it is
+# the point: same signal, two books.
+RUNNING="$(api_get '/api/Strategy/runs?status=Running&take=500' 2>/dev/null || echo '')"
+already_running() {  # strategy underlying userId -> exit 0 when that account already runs it
+  printf '%s' "$RUNNING" | STRATEGY="$1" UNDERLYING="$2" OWNER="$3" python3 -c '
 import json, os, sys
 try:
     runs = json.load(sys.stdin)
@@ -470,18 +521,16 @@ if isinstance(runs, dict):
     runs = runs.get("items") or runs.get("runs") or []
 want_strategy = os.environ["STRATEGY"].strip().lower()
 want_underlying = os.environ["UNDERLYING"].strip().upper()
+want_owner = os.environ["OWNER"].strip()
 for run in runs if isinstance(runs, list) else []:
     if str(run.get("strategyName") or "").strip().lower() == want_strategy \
-            and str(run.get("underlying") or "").strip().upper() == want_underlying:
+            and str(run.get("underlying") or "").strip().upper() == want_underlying \
+            and str(run.get("userId") or "").strip() == want_owner:
         sys.exit(0)
 sys.exit(1)
 ' 2>/dev/null
 }
 
-# One run per underlying. A failure on one is reported and the others still go:
-# losing SENSEX should not cost the BANKNIFTY session too.
-STARTED=0
-SKIPPED=0
 # The rules as the API's RiskRulesDto (camelCase; leg rules in premium
 # points, day rules in rupees with scope "day"), and a sentence for the log.
 RISK_JSON="$(LEG_TARGET_PTS="$LEG_TARGET_PTS" LEG_STOP_PTS="$LEG_STOP_PTS" DAY_TARGET="$DAY_TARGET" DAY_STOP_LOSS="$DAY_STOP_LOSS" python3 - <<'PYEOF'
@@ -500,20 +549,69 @@ PYEOF
 RISK_TEXT="leg target ${LEG_TARGET_PTS:-none} pts / leg SL ${LEG_STOP_PTS:-none}${DAY_TARGET:+, day target ₹$DAY_TARGET}${DAY_STOP_LOSS:+, day SL ₹$DAY_STOP_LOSS}"
 say "risk rules for every run: $RISK_TEXT  ($RISK_JSON)"
 
-for U in $UNDERLYINGS; do
-  if strategy_running_on "$U"; then
-    say "$U already has a running $STRATEGY — leaving it alone"
-    SKIPPED=$((SKIPPED + 1))
+for ACCOUNT in $ACCOUNTS; do
+  OWNER_ID="$(user_id "$ACCOUNT")"
+  if [ -z "$OWNER_ID" ]; then
+    say "no active account called '$ACCOUNT' — skipping it; the other accounts still run"
     continue
   fi
 
-  say "deploying $STRATEGY (id $SID) on $U, $LOTS lot(s), $RISK_TEXT — paper"
-  RUN="$(api_post "/api/Strategy/$SID/start" \
-    "{\"underlying\":\"$U\",\"lots\":$LOTS,\"risk\":$RISK_JSON}" || true)"
-  say "  $(printf '%s' "$RUN" | head -c 220)"
-  case "$RUN" in *'"runId"'*) STARTED=$((STARTED + 1)) ;; esac
-  sleep 2
+  say "--- $ACCOUNT (user $OWNER_ID) ---"
+
+  printf '%s\n' "$PLAN" | while read -r NAME SYMBOLS PLAN_LOTS; do
+    [ -n "$NAME" ] || continue
+    case "$NAME" in \#*) continue ;; esac
+    PLAN_LOTS="${PLAN_LOTS:-$LOTS_DEFAULT}"
+
+    SID="$(strategy_id "$NAME")"
+    if [ -z "$SID" ]; then
+      say "  '$NAME' is not in the catalogue — skipped"
+      continue
+    fi
+
+    for U in $(printf '%s' "$SYMBOLS" | tr ',' ' '); do
+      if already_running "$NAME" "$U" "$OWNER_ID"; then
+        say "  $NAME on $U — already running in this account, left alone"
+        continue
+      fi
+
+      if [ "$DRY_RUN" = 1 ]; then
+        say "  dry run: would start $NAME (id $SID) on $U, $PLAN_LOTS lot(s) for $ACCOUNT"
+        continue
+      fi
+
+      say "  deploying $NAME (id $SID) on $U, $PLAN_LOTS lot(s), $RISK_TEXT — paper, for $ACCOUNT"
+      RUN="$(api_post "/api/Strategy/$SID/start" \
+        "{\"underlying\":\"$U\",\"lots\":$PLAN_LOTS,\"ownerUserId\":$OWNER_ID,\"risk\":$RISK_JSON}" || true)"
+      say "    $(printf '%s' "$RUN" | head -c 200)"
+      sleep 2
+    done
+  done
 done
 
-say "=== $STARTED started, $SKIPPED already running, of $(printf '%s' "$UNDERLYINGS" | wc -w | tr -d ' ') ==="
+# The counters above live in a subshell (the pipeline into `while`), so the
+# tally is read back from the API rather than carried out of it — and reading
+# it back is the better check anyway: it counts what is actually running, not
+# what this script believes it started.
+FINAL="$(api_get '/api/Strategy/runs?status=Running&take=500' 2>/dev/null || echo '')"
+printf '%s' "$FINAL" | python3 - <<'PYEOF' | while read -r LINE; do say "$LINE"; done
+import json, sys
+try:
+    runs = json.load(sys.stdin)
+except Exception:
+    print("could not read the running list back")
+    sys.exit(0)
+if isinstance(runs, dict):
+    runs = runs.get("items") or runs.get("runs") or []
+by_user = {}
+for run in runs if isinstance(runs, list) else []:
+    who = str(run.get("userName") or run.get("userId") or "?")
+    by_user.setdefault(who, []).append(
+        str(run.get("strategyName")) + " on " + str(run.get("underlying")))
+total = sum(len(v) for v in by_user.values())
+print("=== " + str(total) + " run(s) live ===")
+for user, rows in sorted(by_user.items()):
+    print("  " + user + ": " + str(len(rows)) + " - " + ", ".join(sorted(rows)))
+PYEOF
+
 say "Watch them at $CONSOLE/admin/strategies/live — or read this file."

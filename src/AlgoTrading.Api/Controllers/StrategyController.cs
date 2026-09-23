@@ -174,13 +174,40 @@ public class StrategyController : ControllerBase
 
         var underlying = request.Underlying.Trim().ToUpperInvariant();
 
-        // The same strategy may run on several underlyings at once; only the
-        // same strategy on the SAME underlying is refused.
-        if (_registry.Find(id, underlying) is not null)
-            return Conflict(new { message = AlreadyRunningMessage(strategy.Name, underlying) });
+        // Whose account this run belongs to. Normally the caller's; an admin
+        // may name another trader, which is how the morning job deploys into
+        // every account without holding anyone's password.
+        long callerId = User.GetRequiredUserId();
+        long userId = callerId;
+        string ownerName = User.GetUserName() ?? "unknown";
+        if (request.OwnerUserId is long owner && owner != callerId)
+        {
+            if (!User.IsAdmin())
+                return StatusCode(StatusCodes.Status403Forbidden,
+                    new { message = "Only an admin can start a run in another trader's account." });
 
+            var target = await _dbContext.AppUsers
+                .FirstOrDefaultAsync(u => u.Id == owner, cancellationToken);
+            if (target is null)
+                return NotFound(new { message = $"There is no user {owner}." });
+            if (!target.IsActive)
+                return BadRequest(new { message = $"{target.UserName}'s account is disabled." });
+
+            userId = target.Id;
+            ownerName = target.UserName;
+        }
+
+        // The same strategy may run on several underlyings at once, and two
+        // traders may each run it on the same one — their books are separate.
+        // Only the same strategy, on the same underlying, in the SAME account
+        // is refused: that would double a position by accident.
+        if (_registry.Find(id, underlying, userId) is not null)
+            return Conflict(new { message = AlreadyRunningMessage(strategy.Name, underlying, ownerName) });
+
+        // The limit is per trader: one account filling the desk must not stop
+        // another account from opening its first run of the day.
         var riskLimits = limitsStore.GetLimits();
-        if (RunCap.Blocks(riskLimits.MaxConcurrentRuns, _registry.Count))
+        if (RunCap.Blocks(riskLimits.MaxConcurrentRuns, _registry.CountFor(userId)))
             return StatusCode(StatusCodes.Status429TooManyRequests,
                 new { message = $"Concurrent strategy limit reached ({riskLimits.MaxConcurrentRuns})." });
 
@@ -234,7 +261,7 @@ public class StrategyController : ControllerBase
             }
         }
 
-        var userId = User.GetRequiredUserId();
+        // Who pressed the button, which is not always whose account it is.
         var startedBy = User.GetUserName() ?? "unknown";
         var now = DateTime.UtcNow;
 
@@ -326,11 +353,13 @@ public class StrategyController : ControllerBase
 
         underlying = underlying.Trim().ToUpperInvariant();
 
-        if (_registry.Find(id, underlying) is not null)
+        // The run row already says whose it is, so the duplicate to refuse is
+        // the same strategy on the same underlying in that same account.
+        if (_registry.Find(id, underlying, run.UserId) is not null)
             return Conflict(new { message = AlreadyRunningMessage(strategy.Name, underlying) });
 
         var riskLimits = limitsStore.GetLimits();
-        if (RunCap.Blocks(riskLimits.MaxConcurrentRuns, _registry.Count))
+        if (RunCap.Blocks(riskLimits.MaxConcurrentRuns, _registry.CountFor(run.UserId)))
             return StatusCode(StatusCodes.Status429TooManyRequests,
                 new { message = $"Concurrent strategy limit reached ({riskLimits.MaxConcurrentRuns})." });
 
@@ -1340,8 +1369,10 @@ public class StrategyController : ControllerBase
         return runs.Count == 0 ? null : runs[^1];
     }
 
-    private static string AlreadyRunningMessage(string strategyName, string underlying)
-        => $"{strategyName} is already running on {underlying} — stop that run or pick another underlying.";
+    private static string AlreadyRunningMessage(string strategyName, string underlying, string? account = null)
+        => account is null
+            ? $"{strategyName} is already running on {underlying} — stop that run or pick another underlying."
+            : $"{strategyName} is already running on {underlying} in {account}'s account — stop that run or pick another underlying.";
 
     // ------------------------------------------------------------------
     // Launch plumbing
@@ -1418,7 +1449,7 @@ public class StrategyController : ControllerBase
 
         lock (_registry.StartLock)
         {
-            if (_registry.Find(id, spec.Underlying) is not null)
+            if (_registry.Find(id, spec.Underlying, spec.UserId) is not null)
             {
                 return (Conflict(new { message = AlreadyRunningMessage(spec.Strategy.Name, spec.Underlying) }), null);
             }
