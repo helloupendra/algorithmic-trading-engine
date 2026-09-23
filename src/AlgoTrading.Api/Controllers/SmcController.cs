@@ -46,6 +46,9 @@ public class SmcController : ControllerBase
     /// <param name="strength">Candles either side of a fractal swing; ignored by the pullback rule.</param>
     /// <param name="breakOn">"close" (default) or "wick".</param>
     /// <param name="inducement">"last" (default: the pullback the leg is on now) or "first" (as it is taught, but it stalls on a strong trend).</param>
+    /// <param name="zones">When price coming back into an order block or a gap counts as having used it: "touch" (default), "midpoint" or "close".</param>
+    /// <param name="fvgMinSize">Report only gaps at least this wide, in points. Zero, the default, applies no threshold — the teaching names no number.</param>
+    /// <param name="standingZonesOnly">Report only the zones still standing at the last candle: unmitigated blocks and unfilled gaps. Off by default, so the history comes back whole.</param>
     /// <param name="includeLive">Append today's live bars past the stored history.</param>
     [HttpGet("structure")]
     public async Task<ActionResult<SmcStructureResponse>> GetStructure(
@@ -57,6 +60,9 @@ public class SmcController : ControllerBase
         [FromQuery] int strength = MarketStructure.DefaultStrength,
         [FromQuery] string breakOn = "close",
         [FromQuery] string inducement = "last",
+        [FromQuery] string zones = "touch",
+        [FromQuery] decimal fvgMinSize = 0m,
+        [FromQuery] bool standingZonesOnly = false,
         [FromQuery] bool includeLive = true,
         CancellationToken cancellationToken = default)
     {
@@ -64,13 +70,14 @@ public class SmcController : ControllerBase
             return BadRequest(new { message = "symbol is required." });
 
         return Ok(await ReadAsync(symbol, ResolutionCodes.ToCandle(resolution), fromDate, toDate, method, strength,
-            breakOn, inducement, includeLive, cancellationToken));
+            breakOn, inducement, zones, fvgMinSize, standingZonesOnly, includeLive, cancellationToken));
     }
 
     /// <summary>One timeframe, read and shaped for the wire. Both endpoints go through here.</summary>
     private async Task<SmcStructureResponse> ReadAsync(
         string symbol, string candleCode, DateOnly? fromDate, DateOnly? toDate, string method, int strength,
-        string breakOn, string inducement, bool includeLive, CancellationToken cancellationToken)
+        string breakOn, string inducement, string zones, decimal fvgMinSize, bool standingZonesOnly,
+        bool includeLive, CancellationToken cancellationToken)
     {
         var swingMethod = method.Equals("fractal", StringComparison.OrdinalIgnoreCase)
             ? SwingMethod.Fractal
@@ -81,6 +88,11 @@ public class SmcController : ControllerBase
         var inducementMode = inducement.Equals("first", StringComparison.OrdinalIgnoreCase)
             ? InducementMode.First
             : InducementMode.Last;
+        var zoneMitigation = zones.Equals("midpoint", StringComparison.OrdinalIgnoreCase)
+            ? ZoneMitigation.Midpoint
+            : zones.Equals("close", StringComparison.OrdinalIgnoreCase)
+                ? ZoneMitigation.Close
+                : ZoneMitigation.Touch;
 
         var stored = await _storedCandles.ExecuteAsync(new GetStoredCandlesRequest
         {
@@ -118,9 +130,18 @@ public class SmcController : ControllerBase
         // The newest candles are the ones being read; older ones only add cost.
         if (candles.Count > MaxCandles) candles.RemoveRange(0, candles.Count - MaxCandles);
 
+        // The reader is handed a list with a hole in it every night, because the
+        // rows outside 09:15-15:30 were dropped above. Telling it how long a bar
+        // is lets it refuse to call yesterday's close and this morning's open
+        // three candles in a row, which would otherwise invent a fair-value gap
+        // at every gap open. Daily candles pass null: there the overnight gap is
+        // the fair-value gap, and filtering it out would be the error.
+        var barMinutes = ResolutionCodes.MinutesOf(candleCode);
+        var barInterval = barMinutes is { } minutes ? TimeSpan.FromMinutes(minutes) : (TimeSpan?)null;
+
         var result = MarketStructure.Read(
             candles.Select(c => new StructureBar(c.TimestampUtc, c.Open, c.High, c.Low, c.Close)).ToList(),
-            swingMethod, strength, trigger, inducementMode);
+            swingMethod, strength, trigger, inducementMode, zoneMitigation, barInterval, fvgMinSize);
 
         return new SmcStructureResponse
         {
@@ -129,6 +150,14 @@ public class SmcController : ControllerBase
             Method = swingMethod == SwingMethod.Fractal ? "fractal" : "validPullback",
             Strength = strength,
             BreakOn = trigger == BreakTrigger.Wick ? "wick" : "close",
+            Zones = zoneMitigation switch
+            {
+                ZoneMitigation.Midpoint => "midpoint",
+                ZoneMitigation.Close => "close",
+                _ => "touch",
+            },
+            FvgMinSize = fvgMinSize,
+            StandingZonesOnly = standingZonesOnly,
             Candles = candles,
             Swings = result.Swings.Select(s => new SmcSwingDto
             {
@@ -156,6 +185,61 @@ public class SmcController : ControllerBase
                 SweptTimeUtc = i.SweptTimeUtc,
                 EndedTimeUtc = i.EndedTimeUtc,
             }).ToList(),
+            // The engine stamps each zone with both a candle index and that
+            // candle's time; only the time crosses the wire, because the candles
+            // travel with the marks and every other mark here is placed by time.
+            //
+            // A zone the market has already spent is almost all of the weight and
+            // almost none of the reading. Measured on NSE:NIFTYBANK-INDEX at 5m
+            // over 3751 candles: 650 gaps of which 6 were still open, and 150
+            // blocks of which 3 were still unmitigated — the spent ones are 139
+            // of the 932 KB answer, fetched every fifteen seconds and thrown away
+            // by the chart that asked for it. So the caller may ask for the
+            // standing ones alone.
+            //
+            // This filters what is REPORTED, never what is read. The forward pass
+            // above has already run over every candle, each mark still carries the
+            // ConfirmedTimeUtc it was stamped with, and nothing is drawn earlier or
+            // moved. A gap that fills tomorrow simply stops being reported then,
+            // which is what the chart's own filter did to it before.
+            //
+            // Runs are deliberately left whole. A finished run is not spent the way
+            // a mitigated block is — it is the record of which way the market was
+            // being delivered over a stretch of the time axis, and a chart showing
+            // only the current one would show a single band and no context to read
+            // it against. They cost little either way: a window holds a few dozen
+            // runs against several hundred gaps.
+            OrderBlocks = result.OrderBlocks
+                .Where(b => !standingZonesOnly || b.MitigatedTimeUtc is null)
+                .Select(b => new SmcOrderBlockDto
+                {
+                    Direction = b.Direction == TrendDirection.Bearish ? "bearish" : "bullish",
+                    Top = b.Top,
+                    Bottom = b.Bottom,
+                    TimeUtc = b.TimeUtc,
+                    ConfirmedTimeUtc = b.ConfirmedTimeUtc,
+                    MitigatedTimeUtc = b.MitigatedTimeUtc,
+                })
+                .ToList(),
+            Gaps = result.Gaps
+                .Where(g => !standingZonesOnly || g.FilledTimeUtc is null)
+                .Select(g => new SmcFairValueGapDto
+                {
+                    Direction = g.Direction == TrendDirection.Bearish ? "bearish" : "bullish",
+                    Top = g.Top,
+                    Bottom = g.Bottom,
+                    TimeUtc = g.TimeUtc,
+                    ConfirmedTimeUtc = g.ConfirmedTimeUtc,
+                    FilledTimeUtc = g.FilledTimeUtc,
+                })
+                .ToList(),
+            OrderFlowRuns = result.OrderFlowRuns.Select(r => new SmcOrderFlowRunDto
+            {
+                Direction = r.Direction == TrendDirection.Bearish ? "bearish" : "bullish",
+                FromTimeUtc = r.FromTimeUtc,
+                ToTimeUtc = r.ToTimeUtc,
+                InducedTimeUtc = r.InducedTimeUtc,
+            }).ToList(),
             Trend = result.Trend switch
             {
                 TrendDirection.Bullish => "bullish",
@@ -180,8 +264,10 @@ public class SmcController : ControllerBase
     /// </summary>
     /// <remarks>
     /// The chart's own timeframe comes back in full (candles and every mark);
-    /// the higher ones come back as their state and their marks, so they can be
-    /// drawn over those candles without fetching each one separately.
+    /// the higher ones come back as their state and the marks that are lines and
+    /// points, so they can be drawn over those candles without fetching each one
+    /// separately. Their zones are left out: a box is drawn between two candles,
+    /// and a higher timeframe has none here.
     /// Each timeframe is read only from its own closed candles, so a daily
     /// level shown on a 5-minute chart is one the day had already set.
     /// </remarks>
@@ -196,6 +282,9 @@ public class SmcController : ControllerBase
         [FromQuery] int strength = MarketStructure.DefaultStrength,
         [FromQuery] string breakOn = "close",
         [FromQuery] string inducement = "last",
+        [FromQuery] string zones = "touch",
+        [FromQuery] decimal fvgMinSize = 0m,
+        [FromQuery] bool standingZonesOnly = false,
         [FromQuery] bool includeLive = true,
         CancellationToken cancellationToken = default)
     {
@@ -216,11 +305,18 @@ public class SmcController : ControllerBase
             // and only it reaches back over the whole range the user asked for.
             var isChart = code == wanted[^1];
             var read = await ReadAsync(symbol, code, fromDate, toDate, method, strength, breakOn, inducement,
-                includeLive, cancellationToken);
+                zones, fvgMinSize, standingZonesOnly, includeLive, cancellationToken);
             if (isChart) response.Chart = read;
             else
             {
                 read.Candles = [];
+                // Zones are dropped with the candles for the same reason: a box
+                // is drawn between two candles of the chart's own series, and a
+                // higher timeframe has none here. Kept, they would add three
+                // full sets per rung to every fifteen-second poll for nothing.
+                read.OrderBlocks = [];
+                read.Gaps = [];
+                read.OrderFlowRuns = [];
                 response.Higher.Add(read);
             }
         }

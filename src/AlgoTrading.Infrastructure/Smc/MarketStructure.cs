@@ -115,6 +115,97 @@ public sealed record Inducement(
     public DateTime? EndedTimeUtc { get; init; }
 }
 
+/// <summary>
+/// An order block: the candle an impulse came from, drawn wick to wick. Known
+/// only at the candle that broke structure, which is usually several candles
+/// later than the block's own.
+/// </summary>
+/// <remarks>
+/// The schools do not agree on which candle this is. ICT's written teaching and
+/// LuxAlgo's concept page name the last candle that closed against the move; the
+/// smart-money-concepts Python package takes the most extreme low or high between
+/// the swing and the breakout, which need not be an opposing candle at all; and
+/// LuxAlgo's own shipped indicator anchors blocks at swing points instead. This
+/// reader takes the last opposing close, because it is the reading the teaching
+/// names and the only one the break itself makes knowable. Wick to wick rather
+/// than body-only, for the same reason the inducement sweep is wick-inclusive
+/// here — the cost is a wider zone that is touched sooner. Mitigated and
+/// invalidated are two different states in the teaching: a zone used once, versus
+/// a zone that failed and is re-read as a breaker. Only mitigation is modelled;
+/// breaker blocks are not built.
+/// </remarks>
+public sealed record OrderBlock(
+    TrendDirection Direction,
+    decimal Top,
+    decimal Bottom,
+    /// <summary>The block's own candle, which is earlier than the candle that confirmed it.</summary>
+    int Index,
+    DateTime TimeUtc,
+    /// <summary>The candle that broke structure. Nothing is drawn before it.</summary>
+    int ConfirmedIndex,
+    DateTime ConfirmedTimeUtc,
+    /// <summary>The candle that came back for the block, by whichever <see cref="ZoneMitigation"/> reading was asked for. Null while it still stands.</summary>
+    int? MitigatedIndex,
+    DateTime? MitigatedTimeUtc);
+
+/// <summary>
+/// A fair-value gap: a band of price the first and third of three candles leave
+/// untouched between them, so the move ran through it and nobody traded either
+/// side of it there.
+/// </summary>
+/// <remarks>
+/// Read geometrically, as LuxAlgo's concept page reads it: the middle candle's
+/// body is not required to agree, because the gap is a fact about where price did
+/// not trade and a body rule is a filter laid on top of it. The
+/// smart-money-concepts Python package requires the body, and so draws fewer
+/// gaps. No size threshold is applied by default either — every fast three-bar
+/// move prints a gap, and a number invented in here would be worse than an honest
+/// crowded chart, so the chart prunes instead by drawing unfilled gaps only.
+/// Inversion gaps, where a filled gap flips role and starts acting as the
+/// opposite level, are not built.
+/// </remarks>
+public sealed record FairValueGap(
+    TrendDirection Direction,
+    decimal Top,
+    decimal Bottom,
+    /// <summary>The first of the three candles, which is where the band starts.</summary>
+    int Index,
+    DateTime TimeUtc,
+    /// <summary>The third candle, whose extreme closes the band. Nothing is drawn before it.</summary>
+    int ConfirmedIndex,
+    DateTime ConfirmedTimeUtc,
+    /// <summary>The candle that came back into the gap, by whichever <see cref="ZoneMitigation"/> reading was asked for. Null while it stands open.</summary>
+    int? FilledIndex,
+    DateTime? FilledTimeUtc);
+
+/// <summary>
+/// A delivery run: the stretch of candles one reading of the market held for,
+/// from the break that started it to the break that ended it.
+/// </summary>
+/// <remarks>
+/// This is order flow in the narrative sense the SMC and ICT material use it —
+/// which way the market is being delivered, inferred from price. It is not
+/// footprint order flow: bid/ask delta, cumulative delta and volume at price all
+/// need trade prints classified by aggressor side, and this reader is handed
+/// nothing but OHLC. Nothing new is measured here; what is new is that the
+/// reading is drawn along time, so its history is visible instead of only its
+/// value at the last candle. Note a narrower ICT usage in which "bullish order
+/// flow" means the corrective down-close candles around a break — which are the
+/// very candles <see cref="OrderBlock"/> is cut from. The two marks are drawn
+/// separately, so a chart that shows both has to say which usage it means.
+/// </remarks>
+public sealed record OrderFlowRun(
+    TrendDirection Direction,
+    /// <summary>The candle that broke structure and started the run. Nothing is drawn before it.</summary>
+    int FromIndex,
+    DateTime FromTimeUtc,
+    /// <summary>The break that ended the run. Null while it is still running, which is drawn open to the right edge.</summary>
+    int? ToIndex,
+    DateTime? ToTimeUtc,
+    /// <summary>The candle that swept this leg's inducement, which is where a break of structure became armed. Null until then.</summary>
+    int? InducedIndex,
+    DateTime? InducedTimeUtc);
+
 /// <summary>Which pullback inside the leg is treated as the inducement.</summary>
 public enum InducementMode
 {
@@ -134,6 +225,32 @@ public enum InducementMode
     First,
 }
 
+/// <summary>When price coming back into a zone counts as having used it.</summary>
+public enum ZoneMitigation
+{
+    /// <summary>
+    /// A wick into the zone's near edge, and the default. It matches the asymmetry
+    /// this module already reads elsewhere: a break needs a close, but a level is
+    /// tested by a wick. The cost is that a zone is spent by the lightest touch,
+    /// so on a noisy chart few blocks survive their first retest.
+    /// </summary>
+    Touch,
+
+    /// <summary>
+    /// A wick through the zone's midpoint — ICT's consequent encroachment, and
+    /// LuxAlgo's Average setting. It keeps a zone alive through a shallow tag, at
+    /// the cost of calling a zone unused after price has already traded inside it.
+    /// </summary>
+    Midpoint,
+
+    /// <summary>
+    /// A candle closing beyond the zone's far side: the strictest reading, and the
+    /// one that keeps a zone longest. A fourth is taught — a full fill to the far
+    /// edge on a wick alone — and is not offered here.
+    /// </summary>
+    Close,
+}
+
 public sealed record MarketStructureResult(
     IReadOnlyList<StructureSwing> Swings,
     IReadOnlyList<StructureEvent> Events,
@@ -146,12 +263,20 @@ public sealed record MarketStructureResult(
     /// <summary>Whether this leg's inducement has been swept, which is what a break of structure waits for.</summary>
     bool InducementTaken,
     /// <summary>The inducement still standing, if any.</summary>
-    decimal? InducementLevel);
+    decimal? InducementLevel,
+    /// <summary>The order blocks, in the order the breaks that confirmed them fired.</summary>
+    IReadOnlyList<OrderBlock> OrderBlocks,
+    /// <summary>Fair-value gaps, in the order they were confirmed. The ones still open carry no <see cref="FairValueGap.FilledIndex"/>.</summary>
+    IReadOnlyList<FairValueGap> Gaps,
+    /// <summary>The delivery runs, oldest first. The last one is still running if it has no <see cref="OrderFlowRun.ToIndex"/>.</summary>
+    IReadOnlyList<OrderFlowRun> OrderFlowRuns);
 
 /// <summary>
 /// Reads market structure the way Smart Money Concepts teaches it: swing points
-/// labelled HH / HL / LH / LL, breaks of structure, changes of character, and the
-/// inducement inside the current leg. Pure: no clock, no database, no I/O.
+/// labelled HH / HL / LH / LL, breaks of structure, changes of character, the
+/// inducement inside the current leg, and the three marks read off the same pass
+/// — order blocks, fair-value gaps and the delivery runs. Pure: no clock, no
+/// database, no I/O.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -191,13 +316,29 @@ public sealed record MarketStructureResult(
 /// trend — the pullback the last break came out of. The trend turns and the leg
 /// starts again. The first break of all, before any trend is known, is recorded
 /// as a BOS.</item>
+/// <item><b>Order block.</b> The last candle that closed against a move, taken
+/// from between the swing that made the broken level and the candle that broke
+/// it, drawn wick to wick. It is only known at the break — usually several
+/// candles after the block's own candle, and often after price has already left
+/// the zone. That lag is the same bargain the swing rule makes, and it is what
+/// the popular scripts hide by drawing the box at its own candle.</item>
+/// <item><b>Fair-value gap.</b> Three candles whose first and third do not
+/// overlap, leaving a band the move ran through. Known at the third candle, and
+/// only between candles that really do sit next to each other in time — see
+/// <see cref="Contiguous"/> for why that has to be said out loud here.</item>
+/// <item><b>Order flow.</b> The run of candles one reading held for, break to
+/// break, stamped with the candle that swept the leg's inducement. Order flow in
+/// the narrative sense, inferred from price; not the footprint sense, which this
+/// reader has no data for.</item>
 /// </list>
 /// <para>
 /// Where the schools differ, the switches say so: <see cref="SwingMethod"/> picks
-/// how a swing is decided, <see cref="BreakTrigger"/> whether a wick counts, and
+/// how a swing is decided, <see cref="BreakTrigger"/> whether a wick counts,
 /// <see cref="InducementMode"/> whether the inducement is the leg's first
 /// pullback (as taught) or the one it is on now (what the popular indicators
-/// read, and what keeps working on a strong trend).
+/// read, and what keeps working on a strong trend), and
+/// <see cref="ZoneMitigation"/> how far into a block or a gap price has to come
+/// for the zone to count as used.
 /// </para>
 /// <para>
 /// Every level here comes from a candle this reader had already seen, so the
@@ -217,14 +358,17 @@ public static class MarketStructure
         SwingMethod method = SwingMethod.ValidPullback,
         int strength = DefaultStrength,
         BreakTrigger trigger = BreakTrigger.Close,
-        InducementMode inducement = InducementMode.Last)
+        InducementMode inducement = InducementMode.Last,
+        ZoneMitigation zones = ZoneMitigation.Touch,
+        TimeSpan? barInterval = null,
+        decimal fvgMinSize = 0m)
     {
         strength = Math.Clamp(strength, 1, MaxStrength);
         var found = method == SwingMethod.Fractal
             ? Alternate(FindSwingsByFractal(bars, strength))
             : FindSwingsByPullback(bars);
         Label(found);
-        return Walk(bars, found, trigger, inducement);
+        return Walk(bars, found, trigger, inducement, zones, barInterval, fvgMinSize);
     }
 
     /// <summary>
@@ -363,10 +507,21 @@ public static class MarketStructure
     /// levels are tested against the candle's own price. Nothing looks ahead.
     /// </summary>
     private static MarketStructureResult Walk(
-        IReadOnlyList<StructureBar> bars, List<StructureSwing> swings, BreakTrigger trigger, InducementMode mode)
+        IReadOnlyList<StructureBar> bars, List<StructureSwing> swings, BreakTrigger trigger, InducementMode mode,
+        ZoneMitigation zones, TimeSpan? barInterval, decimal fvgMinSize)
     {
         var events = new List<StructureEvent>();
         var inducements = new List<Inducement>();
+        var blocks = new List<OrderBlock>();
+        var gaps = new List<FairValueGap>();
+        var runs = new List<OrderFlowRun>();
+        // Which blocks and gaps are still standing, as positions in the two lists
+        // above. A zone is stamped where it lies rather than being closed and
+        // re-added, because unlike the inducement a zone is not owned by a leg: an
+        // order block outlives the break that made it and stays there to be come
+        // back for, so a single live slot would not do.
+        var liveBlocks = new List<int>();
+        var liveGaps = new List<int>();
         var major = new HashSet<int>();
         var byConfirmation = swings.ToLookup(s => s.ConfirmedIndex);
 
@@ -376,6 +531,7 @@ public static class MarketStructure
         StructureSwing? firstHigh = null, firstLow = null;   // the two live levels before any trend
         StructureSwing? lastHigh = null, lastLow = null;
         Inducement? inducement = null;
+        OrderFlowRun? run = null;                  // the delivery run the last break started
         var taken = false;                         // the leg's inducement has been swept
 
         for (var index = 0; index < bars.Count; index++)
@@ -403,6 +559,40 @@ public static class MarketStructure
             }
 
             var bar = bars[index];
+
+            // A fair-value gap: the candle two back and this one do not overlap,
+            // so the middle candle ran through a band nobody traded either side
+            // of. This sits in the walk rather than in either swing detector on
+            // purpose — a gap is raw candle geometry and has to read the same
+            // under ValidPullback and Fractal, and the walk is the only pass both
+            // share. It is knowable here and at no earlier candle, because it
+            // needs this candle's own extreme; the widely used Python package
+            // records the gap against the middle candle while reading the next one
+            // through shift(-1), so a consumer reading that row is using a price
+            // the chart had not yet shown. Ours is one candle later than theirs,
+            // and the cost is that you cannot act on the gap at the middle
+            // candle's close, which is where those scripts appear to let you in.
+            if (index >= 2 && Contiguous(bars, index, barInterval))
+            {
+                var first = bars[index - 2];
+                // The middle candle's body is not asked to agree: the gap is a
+                // fact about where price did not trade, and a body rule is a
+                // filter laid on top of it. That reading draws more gaps, which
+                // is why the chart prunes by hiding the filled ones.
+                if (bar.Low > first.High && bar.Low - first.High >= fvgMinSize)
+                {
+                    gaps.Add(new FairValueGap(TrendDirection.Bullish, bar.Low, first.High,
+                        index - 2, first.TimeUtc, index, bar.TimeUtc, null, null));
+                    liveGaps.Add(gaps.Count - 1);
+                }
+                else if (bar.High < first.Low && first.Low - bar.High >= fvgMinSize)
+                {
+                    gaps.Add(new FairValueGap(TrendDirection.Bearish, first.Low, bar.High,
+                        index - 2, first.TimeUtc, index, bar.TimeUtc, null, null));
+                    liveGaps.Add(gaps.Count - 1);
+                }
+            }
+
             if (inducement is { SweptIndex: null } live && index > live.Index)
             {
                 var swept = live.Kind == SwingKind.Low ? bar.Low < live.Level : bar.High > live.Level;
@@ -410,7 +600,36 @@ public static class MarketStructure
                 {
                     inducement = live with { SweptIndex = index, SweptTimeUtc = bar.TimeUtc };
                     taken = true;
+                    // The same fact, stamped on the run: a break of structure is
+                    // only armed once the leg's stops have been taken, so this is
+                    // the moment the delivery reading becomes something to act on
+                    // rather than something to watch. A latch, like Major — set
+                    // once and never unset, so a reader of the first n candles
+                    // sees exactly what a reader of all of them sees for those n.
+                    if (run is { InducedIndex: null })
+                        run = run with { InducedIndex = index, InducedTimeUtc = bar.TimeUtc };
                 }
+            }
+
+            // Both kinds of zone are come back for the same way, so both lists are
+            // swept here, and both are guarded on the candle that CONFIRMED the
+            // zone rather than the zone's own candle: price is still inside an
+            // order block's range while the impulse is leaving it, and a gap's
+            // near edge is drawn by the very wick of the candle that confirms it.
+            for (var i = liveBlocks.Count - 1; i >= 0; i--)
+            {
+                var block = blocks[liveBlocks[i]];
+                if (index <= block.ConfirmedIndex || !Used(bar, block.Direction, block.Top, block.Bottom, zones)) continue;
+                blocks[liveBlocks[i]] = block with { MitigatedIndex = index, MitigatedTimeUtc = bar.TimeUtc };
+                liveBlocks.RemoveAt(i);
+            }
+
+            for (var i = liveGaps.Count - 1; i >= 0; i--)
+            {
+                var gap = gaps[liveGaps[i]];
+                if (index <= gap.ConfirmedIndex || !Used(bar, gap.Direction, gap.Top, gap.Bottom, zones)) continue;
+                gaps[liveGaps[i]] = gap with { FilledIndex = index, FilledTimeUtc = bar.TimeUtc };
+                liveGaps.RemoveAt(i);
             }
 
             var up = trigger == BreakTrigger.Close ? bar.Close : bar.High;
@@ -440,12 +659,48 @@ public static class MarketStructure
 
             void Break(StructureEventKind kind, TrendDirection direction, decimal level, int levelIndex, DateTime levelTime)
             {
-                var turning = direction != trend;
                 // The first break of all is a continuation of nothing: it is a BOS.
                 if (kind == StructureEventKind.Choch && trend == TrendDirection.None) kind = StructureEventKind.Bos;
                 events.Add(new StructureEvent(kind, direction, level, levelIndex, levelTime, index, bar.TimeUtc,
                     direction == TrendDirection.Bullish ? up : down));
                 major.Add(levelIndex);
+
+                // The order block is knowable here and nowhere earlier: until the
+                // break fired, the candles behind the impulse were only candles.
+                // Scanning backwards from the break towards the swing that made
+                // the level keeps this inside what the reader has already seen —
+                // the same bounded backward scan Extreme() makes. The last candle
+                // that closed against the move is the block, wick to wick; if the
+                // range holds none, nothing is drawn, because saying nothing beats
+                // inventing a zone.
+                //
+                // The scan starts one candle behind the break rather than at it,
+                // because the teaching asks for the last opposing candle BEFORE
+                // the move and the break candle is part of the move. It would
+                // otherwise qualify more often than it looks: a break candle only
+                // has to close — or, under BreakTrigger.Wick, wick — through the
+                // level, and nothing stops it closing against the break's own
+                // direction while doing so. The block would then be the break
+                // candle's own range, which price has just finished trading
+                // through: true to the letter of the scan and of no use to anyone
+                // reading the chart. Excluding it costs nothing, since a candle
+                // inside the impulse is not a candle the impulse left behind.
+                for (var i = index - 1; i >= levelIndex; i--)
+                {
+                    var candle = bars[i];
+                    if (direction == TrendDirection.Bullish ? candle.Close >= candle.Open : candle.Close <= candle.Open)
+                        continue;
+                    blocks.Add(new OrderBlock(direction, candle.High, candle.Low, i, candle.TimeUtc,
+                        index, bar.TimeUtc, null, null));
+                    liveBlocks.Add(blocks.Count - 1);
+                    break;
+                }
+
+                // The break is the moment the delivery changed, so the run that
+                // held until now ends on this candle and the next one starts on
+                // it. Neither end is ever revised.
+                if (run is not null) runs.Add(run with { ToIndex = index, ToTimeUtc = bar.TimeUtc });
+                run = new OrderFlowRun(direction, index, bar.TimeUtc, null, null, null, null);
 
                 trend = direction;
                 // What the move came from now protects the trend: after a break it
@@ -460,18 +715,68 @@ public static class MarketStructure
                 // needs a fresh pullback taken before the next one counts.
                 inducement = Close(inducement, inducements, bar.TimeUtc);
                 taken = false;
-                _ = turning;
             }
         }
 
         if (inducement is not null) inducements.Add(inducement);
+        // The run in progress is kept with no right edge, the way an unswept
+        // inducement is: the reading held to the last candle we were given, and
+        // where it ends is not a fact yet. Blocks and gaps need no flush — they go
+        // into their lists at the candle that confirmed them, and the ones still
+        // standing simply carry no mitigation stamp.
+        if (run is not null) runs.Add(run);
         for (var i = 0; i < swings.Count; i++)
         {
             if (major.Contains(swings[i].Index)) swings[i] = swings[i] with { Major = true };
         }
 
         return new MarketStructureResult(swings, events, inducements, trend, guard?.Price, target?.Price, taken,
-            inducement is { SweptIndex: null } ? inducement.Level : null);
+            inducement is { SweptIndex: null } ? inducement.Level : null, blocks, gaps, runs);
+    }
+
+    /// <summary>
+    /// Whether the three candles ending at <paramref name="index"/> really do sit
+    /// next to each other in time.
+    /// </summary>
+    /// <remarks>
+    /// This is the one place the reader cannot take its own input at face value.
+    /// The candles it is handed are not contiguous: the API drops every row
+    /// stamped outside the 09:15-15:30 session, so on a five-minute chart the
+    /// candle two back from 09:20 is yesterday's 15:20. Any gap open then
+    /// satisfies the fair-value-gap inequality trivially, and a reader that did
+    /// not check would invent a zone the width of a night every single morning.
+    /// This module is pure and is handed no resolution, so it cannot work the
+    /// spacing out for itself — the caller passes the interval for intraday
+    /// candles and leaves it null for daily ones, where the overnight gap IS the
+    /// fair-value gap and must not be filtered away.
+    /// </remarks>
+    private static bool Contiguous(IReadOnlyList<StructureBar> bars, int index, TimeSpan? barInterval)
+        => barInterval is not { } interval || bars[index].TimeUtc - bars[index - 2].TimeUtc <= interval * 2;
+
+    /// <summary>
+    /// Whether this candle came back for a zone, by the reading asked for. A zone
+    /// is entered from the side the impulse left it on — a bullish one sits below
+    /// price and is come back down into, a bearish one sits above — so the near
+    /// edge is the top of the first and the bottom of the second.
+    /// </summary>
+    private static bool Used(StructureBar bar, TrendDirection direction, decimal top, decimal bottom, ZoneMitigation mode)
+    {
+        if (direction == TrendDirection.Bullish)
+        {
+            return mode switch
+            {
+                ZoneMitigation.Midpoint => bar.Low <= (top + bottom) / 2m,
+                ZoneMitigation.Close => bar.Close < bottom,
+                _ => bar.Low <= top,
+            };
+        }
+
+        return mode switch
+        {
+            ZoneMitigation.Midpoint => bar.High >= (top + bottom) / 2m,
+            ZoneMitigation.Close => bar.Close > top,
+            _ => bar.High >= bottom,
+        };
     }
 
     /// <summary>

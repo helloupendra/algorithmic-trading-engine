@@ -66,6 +66,86 @@ public sealed class SmcInducementDto
     public DateTime? EndedTimeUtc { get; set; }
 }
 
+/// <summary>The candle behind the impulse that broke a level: where price is said to have been left from.</summary>
+/// <remarks>
+/// The block is confirmed by the break, not by its own candle, so it appears
+/// several candles after it happened and often after price has already left the
+/// zone. That lag is the honest reading and it is the same bargain the swing lag
+/// makes; the popular scripts hide it by drawing the box at its own candle.
+/// </remarks>
+public sealed class SmcOrderBlockDto
+{
+    /// <summary>"bullish" or "bearish": the direction of the break that confirmed it.</summary>
+    public string Direction { get; set; } = string.Empty;
+
+    /// <summary>The higher edge of the zone, whichever way the block faces.</summary>
+    public decimal Top { get; set; }
+
+    /// <summary>The lower edge. Wick to wick, so the zone holds every price that candle traded.</summary>
+    public decimal Bottom { get; set; }
+
+    /// <summary>The block's own candle: where the box starts.</summary>
+    public DateTime TimeUtc { get; set; }
+
+    /// <summary>The candle that broke structure. Nothing is drawn before it.</summary>
+    public DateTime ConfirmedTimeUtc { get; set; }
+
+    /// <summary>When price came back for it and used it up, or null while it still stands.</summary>
+    public DateTime? MitigatedTimeUtc { get; set; }
+}
+
+/// <summary>A band of price the candles either side of a fast move left untouched.</summary>
+/// <remarks>
+/// Read geometrically — the three candles simply do not overlap — so no rule is
+/// imposed on the middle candle's body. Every fast three-bar move prints one, and
+/// no size threshold is applied unless <c>fvgMinSize</c> asks for one, so a chart
+/// that draws them all will be crowded; drawing only the unfilled ones prunes
+/// itself, because most gaps fill within a few candles.
+/// </remarks>
+public sealed class SmcFairValueGapDto
+{
+    /// <summary>"bullish" or "bearish": which way the move that left the gap ran.</summary>
+    public string Direction { get; set; } = string.Empty;
+
+    /// <summary>The higher edge of the band.</summary>
+    public decimal Top { get; set; }
+
+    /// <summary>The lower edge.</summary>
+    public decimal Bottom { get; set; }
+
+    /// <summary>The first of the three candles: where the band starts.</summary>
+    public DateTime TimeUtc { get; set; }
+
+    /// <summary>The third candle, the first that could know the gap. Nothing is drawn before it.</summary>
+    public DateTime ConfirmedTimeUtc { get; set; }
+
+    /// <summary>When price traded back into it, or null while it stands open.</summary>
+    public DateTime? FilledTimeUtc { get; set; }
+}
+
+/// <summary>The stretch of candles one reading of the market held for, break to break.</summary>
+/// <remarks>
+/// This is order flow in the sense the SMC and ICT material use the phrase: which
+/// way the market is being delivered, inferred from price alone. It is not
+/// footprint order flow — bid/ask delta, cumulative delta, volume at price — which
+/// needs trades classified by aggressor side that this platform's feed does not
+/// carry. A chart drawing this must say which of the two it means.
+/// </remarks>
+public sealed class SmcOrderFlowRunDto
+{
+    /// <summary>"bullish" or "bearish": the direction of the break that started the run.</summary>
+    public string Direction { get; set; } = string.Empty;
+
+    /// <summary>The break that started it. Nothing is drawn before it.</summary>
+    public DateTime FromTimeUtc { get; set; }
+
+    /// <summary>The break that ended it, or null while it still runs — draw it open to the right edge.</summary>
+    public DateTime? ToTimeUtc { get; set; }
+
+    /// <summary>When this leg's inducement was swept, which is where a break of structure became armed. Null until then.</summary>
+    public DateTime? InducedTimeUtc { get; set; }
+}
+
 /// <summary>The marks for one symbol and timeframe, with the candles they were read from.</summary>
 public sealed class SmcStructureResponse
 {
@@ -77,10 +157,27 @@ public sealed class SmcStructureResponse
     public int Strength { get; set; }
     public string BreakOn { get; set; } = string.Empty;
 
+    /// <summary>"touch" (default), "midpoint" or "close": when a zone counts as used.</summary>
+    public string Zones { get; set; } = string.Empty;
+
+    /// <summary>Gaps narrower than this were not reported. Zero — no threshold — is the default.</summary>
+    public decimal FvgMinSize { get; set; }
+
+    /// <summary>
+    /// True when only the zones still standing at the last candle were reported —
+    /// the blocks price has not come back for, and the gaps it has not filled.
+    /// Off by default, so the history comes back whole. Runs are never dropped by
+    /// it; see the endpoint for why.
+    /// </summary>
+    public bool StandingZonesOnly { get; set; }
+
     public List<SmcCandleDto> Candles { get; set; } = [];
     public List<SmcSwingDto> Swings { get; set; } = [];
     public List<SmcEventDto> Events { get; set; } = [];
     public List<SmcInducementDto> Inducements { get; set; } = [];
+    public List<SmcOrderBlockDto> OrderBlocks { get; set; } = [];
+    public List<SmcFairValueGapDto> Gaps { get; set; } = [];
+    public List<SmcOrderFlowRunDto> OrderFlowRuns { get; set; } = [];
 
     /// <summary>"none", "bullish" or "bearish" as at the last candle.</summary>
     public string Trend { get; set; } = string.Empty;
@@ -121,6 +218,9 @@ public sealed class SmcLadderResponse
     /// <summary>The timeframe being drawn: the only one that carries candles.</summary>
     public SmcStructureResponse? Chart { get; set; }
 
-    /// <summary>The timeframes above it, highest first, as state and marks only.</summary>
+    /// <summary>
+    /// The timeframes above it, highest first, as state and line marks only —
+    /// no candles, and no zones, which can only be drawn against candles of their own.
+    /// </summary>
     public List<SmcStructureResponse> Higher { get; set; } = [];
 }

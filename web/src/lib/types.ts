@@ -1942,11 +1942,57 @@ export interface SmcInducement {
   endedTimeUtc: string | null
 }
 
+/**
+ * The candle behind the impulse that broke a level. It is confirmed by the
+ * break, so it appears well after its own candle and often after price has left
+ * the zone — draw it from confirmedTimeUtc, never from timeUtc.
+ */
+export interface SmcOrderBlock {
+  direction: 'bullish' | 'bearish'
+  /** The higher edge, whichever way the block faces; bottom the lower. */
+  top: number
+  bottom: number
+  /** The block's own candle: where the box starts. */
+  timeUtc: string
+  /** The candle that broke structure: nothing is drawn before this. */
+  confirmedTimeUtc: string
+  /** When price came back and used it up; null while it still stands. */
+  mitigatedTimeUtc: string | null
+}
+
+/** A band of price the candles either side of a fast move left untouched. */
+export interface SmcFairValueGap {
+  direction: 'bullish' | 'bearish'
+  top: number
+  bottom: number
+  /** The first of the three candles: where the band starts. */
+  timeUtc: string
+  /** The third candle, the first that could know the gap: nothing is drawn before this. */
+  confirmedTimeUtc: string
+  /** When price traded back into it; null while it stands open. */
+  filledTimeUtc: string | null
+}
+
+/**
+ * The stretch of candles one reading held for, break to break. Order flow in
+ * the SMC sense — inferred from price — not footprint delta, which this
+ * platform's feed cannot give.
+ */
+export interface SmcOrderFlowRun {
+  direction: 'bullish' | 'bearish'
+  /** The break that started the run: nothing is drawn before this. */
+  fromTimeUtc: string
+  /** The break that ended it; null while it still runs, so it draws to the right edge. */
+  toTimeUtc: string | null
+  /** When this leg's inducement was swept; null until then. */
+  inducedTimeUtc: string | null
+}
+
 /** One chart's candles plus the structure of the timeframes above it. */
 export interface SmcLadder {
   symbol: string
   chart: SmcStructure | null
-  /** Highest first; these carry no candles, only their state and marks. */
+  /** Highest first; these carry no candles, and so no zones — only their state and line marks. */
   higher: SmcStructure[]
 }
 
@@ -1957,10 +2003,22 @@ export interface SmcStructure {
   strength: number
   breakOn: string
   inducement: string
+  /** "touch", "midpoint" or "close": when price back inside a zone counts as having used it. */
+  zones: string
+  /** Gaps narrower than this were not reported; zero, the default, applies no threshold. */
+  fvgMinSize: number
+  /**
+   * True when only the zones still standing at the last candle came back —
+   * unmitigated blocks and unfilled gaps. The runs are whole either way.
+   */
+  standingZonesOnly: boolean
   candles: SmcCandle[]
   swings: SmcSwing[]
   events: SmcEvent[]
   inducements: SmcInducement[]
+  orderBlocks: SmcOrderBlock[]
+  gaps: SmcFairValueGap[]
+  orderFlowRuns: SmcOrderFlowRun[]
   trend: 'none' | 'bullish' | 'bearish'
   protectedLevel: number | null
   breakLevel: number | null

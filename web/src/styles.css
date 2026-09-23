@@ -39,6 +39,32 @@
   --warn: #e3b341;
   --warn-soft: rgba(227, 179, 65, 0.11);
 
+  /* Zones painted behind the candles on the structure chart. Deliberately not
+     --pos-soft / --neg-soft: that alpha was tuned for a flat fill on a panel,
+     and a block and a gap routinely share the same band of price, where two of
+     them compound into a slab that hides the candles. Each pair is a weak fill
+     and a much stronger edge, so a zone still reads by its border once the fill
+     washes out. Read from JS by SmcChart, which falls back to these same
+     numbers if a token goes missing — a lost token costs the knob, never the
+     layer. They were chosen against the palette rather than against a live
+     chart, so this is the place to tune them. */
+  --zone-ob-bull: rgba(49, 196, 141, 0.1);
+  --zone-ob-bull-edge: rgba(49, 196, 141, 0.55);
+  --zone-ob-bear: rgba(244, 99, 94, 0.1);
+  --zone-ob-bear-edge: rgba(244, 99, 94, 0.55);
+  /* Fainter again: every fast three-candle move prints a gap, so this is the
+     layer that crowds the chart first. */
+  --zone-fvg-bull: rgba(49, 196, 141, 0.07);
+  --zone-fvg-bull-edge: rgba(49, 196, 141, 0.34);
+  --zone-fvg-bear: rgba(244, 99, 94, 0.07);
+  --zone-fvg-bear-edge: rgba(244, 99, 94, 0.34);
+  /* Stronger: the delivery band is a thin strip under the candles with nothing
+     behind it to obscure, so it can carry the alpha the others cannot. */
+  --zone-flow-bull: rgba(49, 196, 141, 0.2);
+  --zone-flow-bull-edge: rgba(49, 196, 141, 0.6);
+  --zone-flow-bear: rgba(244, 99, 94, 0.2);
+  --zone-flow-bear-edge: rgba(244, 99, 94, 0.6);
+
   --radius: 10px;
   --radius-sm: 7px;
   --sidebar-w: 240px;
