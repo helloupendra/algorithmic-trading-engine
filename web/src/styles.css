@@ -711,6 +711,25 @@ select.field__input { appearance: auto; }
   flex: 1;
 }
 
+/* Landscape on a notched iPhone is the one orientation the phone rules never
+   see: the viewport is ~852px wide, so the 760px breakpoint below does not
+   fire, while the notch still eats into whichever long edge is now the left
+   and the home indicator into the bottom. Installed to the home screen there
+   is no browser chrome to absorb either.
+   The insets are split by who actually touches which edge: above 760px the
+   sidebar is grid column one, so it is the only thing the left inset can reach
+   - .shell__main is column two and starts a whole sidebar in. Padding it left
+   as well would just take 35px off the chart. These collapse to the plain
+   24px/14px/10px anywhere the inset is zero, which is every desktop. */
+.shell__sidebar {
+  padding-left: max(10px, env(safe-area-inset-left));
+  padding-bottom: max(14px, env(safe-area-inset-bottom));
+}
+.topbar,
+.shell__main {
+  padding-right: max(24px, env(safe-area-inset-right));
+}
+
 /* --- pages ---------------------------------------------------------------- */
 .page > * + * { margin-top: 16px; }
 

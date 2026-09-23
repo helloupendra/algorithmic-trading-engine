@@ -13,7 +13,29 @@
          scrolling and around the status bar. -->
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#030406" />
+    <!-- iOS reads this in preference to the manifest's icons, so the 180px file
+         is what actually lands on the home screen; the manifest set is for
+         everyone else. -->
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!-- Installed, the console opens on /login: "/" is the marketing page, and
+         /login is the one route that knows where to send you — it bounces a
+         signed-in user to /admin or /trader and shows the form to everyone
+         else. The manifest's scope stays "/" so signing out (which navigates
+         home) does not fall out of the app and into Safari. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- Belt and braces. iOS 16.4+ opens a standalone window off the manifest's
+         display member alone, but this is the mechanism that still works on
+         older iPhones — and Apple's status bar style below is documented as
+         having no effect without it. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <!-- "black", not "black-translucent": translucent hands the status bar's
+         height to the page, and the console's topbar has no top inset to give
+         it, so the clock would sit on the health chips. Black is within a few
+         points of --bg0 anyway. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <!-- Without this iOS offers the <title> below as the home-screen name, and
+         the SEO title is a sentence. -->
+    <meta name="apple-mobile-web-app-title" content="OpenFNO" />
     <title>OpenFNO — open-source algo trading desk for Indian F&amp;O</title>
     <meta name="description" content="OpenFNO is a self-hosted, open-source desk for Indian F&amp;O: live paper runs on real ticks from four vendors, five years of stored index candles and minute-level option history, 25 strategies plus a setup you write in the console, and backtests with your own windows, exits, limits and costs." />
     <link rel="canonical" href="https://openfno.com/" />
