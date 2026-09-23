@@ -1,25 +1,16 @@
-import { Suspense, lazy, useMemo, useState } from 'react'
+import { Suspense, lazy, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { useLiveRunHistory, useStrategies } from '../../lib/queries'
+import { useStrategies } from '../../lib/queries'
 import { headingSlug, useStrategySpec } from '../../lib/specs'
 import type { SpecFacts } from '../../lib/specs'
 import { contractRequirementsOf, describeRequirement } from '../../lib/contracts'
 import { formatResolution } from '../../lib/symbols'
-import { formatDateTime, formatInrSigned, pnlClass } from '../../lib/format'
-import {
-  RUN_WINDOW_DAYS,
-  SIDE_LABEL,
-  builtInExit,
-  cadenceText,
-  recentPaperByStrategy,
-  shortLegs,
-  tradeSide,
-} from '../../lib/strategyLibrary'
+import { formatDateTime } from '../../lib/format'
+import { SIDE_LABEL, builtInExit, cadenceText, shortLegs, tradeSide } from '../../lib/strategyLibrary'
 import { Loading, QueryBoundary } from '../../components/ui'
 import { IconArrowRight, IconPlay } from '../../components/icons'
 import type { StrategyListItem } from '../../lib/types'
-import { addDays, todayIst } from '../backtesting/shared'
 import { CategoryBadge, LaunchDialog } from './shared'
 import { TrackRecordPanel } from './TrackRecordPanel'
 import './spec.css'
@@ -213,12 +204,19 @@ function Summary({ s, facts, headings, hasSpec }: { s: StrategyListItem; facts: 
   )
 }
 
-/** Running on which underlyings (each a link to its run), and the recent paper P&L. */
-function StateLine({ s, runHref, trader }: { s: StrategyListItem; runHref: (runId: number) => string; trader: boolean }) {
-  const fromDate = useMemo(() => addDays(todayIst(), -(RUN_WINDOW_DAYS - 1)), [])
-  // A trader's history holds only their own runs; the line is the operator's.
-  const history = useLiveRunHistory({ strategyId: s.id, fromDate, take: 500 }, !trader)
-  const recent = history.data && history.data.length < 500 ? recentPaperByStrategy(history.data).get(s.id) : undefined
+/**
+ * Which underlyings the strategy is running on right now, each a link to its
+ * run.
+ *
+ * It used to carry a seven-day paper P&L beside them. The track record below
+ * now answers the same question over every run there has ever been, and the
+ * two sat a screen apart saying different numbers — "7d paper +₹40,234 · 15
+ * runs" above "+₹2,08,752 · 65 runs" — with nothing to say why they differed.
+ * One of them had to go, and a window of seven days was never the one worth
+ * keeping. Dropping it also drops the five-hundred-row history request this
+ * line made on every visit.
+ */
+function StateLine({ s, runHref }: { s: StrategyListItem; runHref: (runId: number) => string }) {
   const runs = s.activeRuns
 
   return (
@@ -238,22 +236,6 @@ function StateLine({ s, runHref, trader }: { s: StrategyListItem; runHref: (runI
         </span>
       ) : (
         <span className="faint">Not running</span>
-      )}
-      {!trader && history.data && (
-        <span className="faint">
-          {recent && recent.runs + recent.alertRuns > 0 ? (
-            recent.runs > 0 ? (
-              <>
-                {RUN_WINDOW_DAYS}d paper <span className={`mono ${pnlClass(recent.netPnl)}`}>{formatInrSigned(recent.netPnl)}</span> ·{' '}
-                {recent.runs + recent.alertRuns} {recent.runs + recent.alertRuns === 1 ? 'run' : 'runs'}
-              </>
-            ) : (
-              `${RUN_WINDOW_DAYS}d · ${recent.alertRuns} alert ${recent.alertRuns === 1 ? 'run' : 'runs'}`
-            )
-          ) : history.data.length < 500 ? (
-            `No runs in ${RUN_WINDOW_DAYS}d`
-          ) : null}
-        </span>
       )}
     </div>
   )
@@ -299,7 +281,7 @@ export function StrategySpecPage({ mode = 'admin' }: { mode?: 'admin' | 'trader'
             {strategy?.name ?? spec.data?.name ?? `Strategy ${id}`}
             {strategy && <CategoryBadge category={strategy.category} />}
           </h1>
-          {strategy && <StateLine s={strategy} runHref={runHref} trader={trader} />}
+          {strategy && <StateLine s={strategy} runHref={runHref} />}
         </div>
         {strategy && (
           <div className="toolbar">
