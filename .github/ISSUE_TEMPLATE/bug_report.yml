@@ -1,0 +1,90 @@
+name: Bug report
+description: Something behaves differently from what it says it does.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do **not** report a security problem here — use the Security tab
+        ([how](https://github.com/helloupendra/algorithmic-trading-engine/security/policy)).
+
+        Never paste a broker key, a token, a `.env` file or a database URL into
+        an issue. Replace them with `…` before you paste a log.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where it happens
+      options:
+        - API (AlgoTrading.Api)
+        - Strategy engine (Python)
+        - Backtest / replay
+        - Live trading, risk or the runner
+        - Market data, feeds or connectors
+        - Console (web)
+        - Scripts, deployment, the desk supervisor
+        - Docs
+        - Somewhere else / not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected instead
+      description: One paragraph is plenty. The gap between the two is the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reach it
+      description: >
+        The smallest path you know of. For a backtest, the strategy, the
+        underlying, the resolution and the dates; for a live problem, roughly
+        when it happened in IST, which is what the logs are stamped with.
+      placeholder: |
+        1. …
+        2. …
+        3. …
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs, errors or a screenshot
+      description: >
+        `logs/api.log` and `logs/desk.log` hold most of it; a runner's output is
+        on its run page. Secrets removed, please.
+      render: text
+
+  - type: input
+    id: version
+    attributes:
+      label: Which build
+      description: The commit it was running (`git rev-parse --short HEAD`), or the deploy shown on the Deployments page.
+      placeholder: e.g. 329288d
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Where it runs
+      options:
+        - A local checkout
+        - A server deployment
+        - Docker Compose
+        - Not sure
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I have removed every credential, token and account identifier from what I pasted.
+          required: true
+        - label: This is not a security vulnerability (those go through the Security tab).
+          required: true
