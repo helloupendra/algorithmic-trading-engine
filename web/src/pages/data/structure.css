@@ -13,6 +13,21 @@
   gap: 8px;
 }
 
+/* The zone layers have a row to themselves because a .seg is inline-flex and
+   does not wrap: three more buttons in the Marks row would push it off the side
+   of a laptop rather than on to a second line. Pulled up against that row so
+   the two still read as one block of controls. */
+.smc__bar--zones {
+  margin-top: -4px;
+}
+
+/* "Unfilled only" is a filter on the gap layer, not a layer: with gaps off it
+   stays visible and readable, but says plainly that it is doing nothing. */
+.smc__bar--zones .seg__btn:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+
 .smc__symbol {
   min-width: 260px;
   flex: 0 1 320px;
@@ -121,6 +136,40 @@
 .smc__key--idm {
   border-top-color: var(--text-3);
   border-top-style: dotted;
+}
+
+/* The zones are boxes, so their keys need a box: .smc__key above is a rule with
+   no height, which renders as an empty cell for a mark that is a filled area.
+   Dashed where the chart draws dashed — a mark still waiting on something. Only
+   the bullish colour is shown; the bearish one is its mirror, and the legend
+   says so in words rather than doubling every swatch. */
+.smc__key--ob,
+.smc__key--fvg,
+.smc__key--flow {
+  margin-top: 4px;
+  height: 13px;
+  border-width: 1px;
+  border-style: dashed;
+}
+
+.smc__key--ob {
+  background: var(--zone-ob-bull);
+  border-color: var(--zone-ob-bull-edge);
+}
+
+.smc__key--fvg {
+  background: var(--zone-fvg-bull);
+  border-color: var(--zone-fvg-bull-edge);
+}
+
+/* Thin and solid-edged, and sitting low in its cell the way the band sits low
+   in the pane. */
+.smc__key--flow {
+  margin-top: 10px;
+  height: 7px;
+  border-style: solid;
+  background: var(--zone-flow-bull);
+  border-color: var(--zone-flow-bull-edge);
 }
 
 .smc__fineprint {

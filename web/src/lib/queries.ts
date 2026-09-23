@@ -694,6 +694,9 @@ export function useStoredCandles(
  * Market structure for one symbol and timeframe: the candles and the marks read
  * from them come back together, so the chart never draws a mark against a
  * different series than it was computed on.
+ *
+ * The Structure page reads the ladder below instead, so nothing calls this one
+ * today; it is kept in step with it rather than allowed to drift apart.
  */
 export function useSmcStructure(params: {
   symbol: string | null
@@ -703,16 +706,32 @@ export function useSmcStructure(params: {
   method: string
   breakOn: string
   inducement: string
+  /** Defaults mirror the endpoint's own, so a caller that does not care can leave them out. */
+  zones?: string
+  fvgMinSize?: number
+  /** Ask for the zones still standing only: unmitigated blocks and unfilled gaps. */
+  standingZonesOnly?: boolean
   includeLive: boolean
 }) {
   const { symbol, resolution, fromDate, toDate, method, breakOn, inducement, includeLive } = params
+  const { zones = 'touch', fvgMinSize = 0, standingZonesOnly = false } = params
   const range = (fromDate ? `&fromDate=${fromDate}` : '') + (toDate ? `&toDate=${toDate}` : '')
   return useQuery({
-    queryKey: ['smc', symbol, resolution, fromDate, toDate, method, breakOn, inducement, includeLive],
+    // Every setting that changes the reading — or what of it is reported —
+    // belongs in the key as well as the URL, or a switch flipped here is
+    // answered from a cache computed under the old one. `standingZonesOnly` is
+    // in for that second reason: asking for the history back has to go to the
+    // server rather than be served the pruned list it fetched a minute ago.
+    queryKey: [
+      'smc', symbol, resolution, fromDate, toDate, method, breakOn, inducement, zones, fvgMinSize,
+      standingZonesOnly, includeLive,
+    ],
     queryFn: () =>
       api.get<SmcStructure>(
         `/api/Smc/structure?symbol=${encodeURIComponent(symbol!)}&resolution=${resolution}` +
-          `${range}&method=${method}&breakOn=${breakOn}&inducement=${inducement}&includeLive=${includeLive}`,
+          `${range}&method=${method}&breakOn=${breakOn}&inducement=${inducement}` +
+          `&zones=${zones}&fvgMinSize=${fvgMinSize}&standingZonesOnly=${standingZonesOnly}` +
+          `&includeLive=${includeLive}`,
       ),
     enabled: !!symbol,
     staleTime: 30_000,
@@ -733,16 +752,29 @@ export function useSmcLadder(params: {
   method: string
   breakOn: string
   inducement: string
+  /** Defaults mirror the endpoint's own, so a caller that does not care can leave them out. */
+  zones?: string
+  fvgMinSize?: number
+  /** Ask for the zones still standing only: unmitigated blocks and unfilled gaps. */
+  standingZonesOnly?: boolean
   includeLive: boolean
 }) {
   const { symbol, timeframes, fromDate, toDate, method, breakOn, inducement, includeLive } = params
+  const { zones = 'touch', fvgMinSize = 0, standingZonesOnly = false } = params
   const range = (fromDate ? `&fromDate=${fromDate}` : '') + (toDate ? `&toDate=${toDate}` : '')
   return useQuery({
-    queryKey: ['smc-ladder', symbol, timeframes, fromDate, toDate, method, breakOn, inducement, includeLive],
+    // As above: the key carries every setting the reading, or the reporting of
+    // it, depends on.
+    queryKey: [
+      'smc-ladder', symbol, timeframes, fromDate, toDate, method, breakOn, inducement, zones, fvgMinSize,
+      standingZonesOnly, includeLive,
+    ],
     queryFn: () =>
       api.get<SmcLadder>(
         `/api/Smc/ladder?symbol=${encodeURIComponent(symbol!)}&timeframes=${encodeURIComponent(timeframes)}` +
-          `${range}&method=${method}&breakOn=${breakOn}&inducement=${inducement}&includeLive=${includeLive}`,
+          `${range}&method=${method}&breakOn=${breakOn}&inducement=${inducement}` +
+          `&zones=${zones}&fvgMinSize=${fvgMinSize}&standingZonesOnly=${standingZonesOnly}` +
+          `&includeLive=${includeLive}`,
       ),
     enabled: !!symbol,
     staleTime: 30_000,

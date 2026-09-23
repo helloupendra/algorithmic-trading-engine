@@ -12,6 +12,11 @@ a whole series at once for a chart; this one is incremental, because a live
 runner has one new candle at a time. `tests/test_market_structure.py` runs the
 schematic from the C# tests through this reader and asserts the same marks.
 
+It is the structure rules that match, and only those: the order blocks,
+fair-value gaps and order-flow runs the C# reader also emits are chart-side
+readings, not ported here, so a strategy cannot see them — the same way
+`method=fractal` has no equivalent on this side.
+
 The rules, and where the schools differ, are in docs/smart-money-concepts.md.
 In short:
 

@@ -51,14 +51,24 @@ function Toggle({
   onClick,
   children,
   title,
+  disabled,
 }: {
   on: boolean
   onClick: () => void
   children: React.ReactNode
   title?: string
+  /** For a toggle that only means something while another one is on. */
+  disabled?: boolean
 }) {
   return (
-    <button type="button" className={`seg__btn${on ? ' is-active' : ''}`} aria-pressed={on} onClick={onClick} title={title}>
+    <button
+      type="button"
+      className={`seg__btn${on ? ' is-active' : ''}`}
+      aria-pressed={on}
+      onClick={onClick}
+      title={title}
+      disabled={disabled}
+    >
       {children}
     </button>
   )
@@ -91,9 +101,18 @@ export function StructurePage() {
   const [search, setSearch] = useState('')
   const [resolution, setResolution] = useState<Resolution>('15')
   const [range, setRange] = useState('5D')
+  // The zone layers start on except the delivery band, which is the reading a
+  // chart can be read without.
   const [layers, setLayers] = useState<SmcLayers>({
     swings: true, breaks: true, inducements: true, minorSwings: false, higher: true,
+    orderBlocks: true, fvg: true, orderFlow: false,
   })
+  // Not a layer: this one changes what is FETCHED, because a zone the market has
+  // spent is history rather than a level, and on a month of 5-minute candles the
+  // spent ones are 99% of the gaps and 98% of the blocks. It starts on for that
+  // reason. Turning it off asks the server for the whole history and pays for it
+  // — which is the point of the switch.
+  const [standingZonesOnly, setStandingZonesOnly] = useState(true)
   const [breakOn, setBreakOn] = useState<'close' | 'wick'>('close')
   const [inducement, setInducement] = useState<'last' | 'first'>('last')
 
@@ -165,6 +184,7 @@ export function StructurePage() {
     method: 'validPullback',
     breakOn,
     inducement,
+    standingZonesOnly,
     includeLive: resolution !== 'D',
   })
 
@@ -266,6 +286,53 @@ export function StructurePage() {
             title="The leg's first pullback, as it is taught — stricter, and it can stall on a strong trend"
           >
             First pullback
+          </Toggle>
+        </div>
+      </div>
+
+      {/* The zones get a row of their own rather than three more buttons in the
+          Marks row: a .seg does not wrap, so the row would run off the side of a
+          laptop instead of on to a second line. Spelt out, not initialled — OB
+          and FVG are the jargon the legend below exists to unpack. */}
+      <div className="smc__bar smc__bar--marks smc__bar--zones">
+        <div className="seg" role="group" aria-label="Zones">
+          <Toggle
+            on={layers.orderBlocks}
+            onClick={() => setLayers((l) => ({ ...l, orderBlocks: !l.orderBlocks }))}
+            title="The last candle against the move before structure broke — drawn from that candle, but only once the break found it"
+          >
+            Order blocks
+          </Toggle>
+          <Toggle
+            on={layers.fvg}
+            onClick={() => setLayers((l) => ({ ...l, fvg: !l.fvg }))}
+            title="The band of price three candles stepped over without trading back through it"
+          >
+            Fair value gaps
+          </Toggle>
+          <Toggle
+            on={layers.orderFlow}
+            onClick={() => setLayers((l) => ({ ...l, orderFlow: !l.orderFlow }))}
+            title="Which way the market was being delivered, break to break — read from price, not measured flow"
+          >
+            Order flow
+          </Toggle>
+        </div>
+        {/* This one is not a layer — it changes the request, so both zone kinds
+            move together and there is nothing to draw for what was not asked
+            for. It is dead only while neither zone layer is on. */}
+        <div className="seg" role="group" aria-label="Which zones are fetched">
+          <Toggle
+            on={standingZonesOnly}
+            onClick={() => setStandingZonesOnly((on) => !on)}
+            disabled={!layers.fvg && !layers.orderBlocks}
+            title={
+              layers.fvg || layers.orderBlocks
+                ? 'Fetch only the blocks price has not come back for and the gaps it has not filled. Most are spent within a few candles, and on a month of 5-minute candles the spent ones are the bulk of the answer. Turn it off to load the history too'
+                : 'Only does anything while order blocks or fair value gaps are drawn'
+            }
+          >
+            Standing only
           </Toggle>
         </div>
       </div>
@@ -404,6 +471,38 @@ export function StructurePage() {
                   runs to the candle that took it, or to the right edge while it still stands.
                 </span>
               </li>
+              <li>
+                <span className="smc__key smc__key--ob" />
+                <span>
+                  <b>Order block</b> — the last candle that closed against the move before structure broke, drawn wick
+                  to wick. The box starts at that candle but appears only at the candle that broke structure and found
+                  it, which is usually several candles later. Dashed while the block still stands, solid from the
+                  candle that came back and used it, and it runs to that candle or to the right edge — so with
+                  "Standing only" on, every block on the chart is dashed. Green where the break was upward and red
+                  where it was down — the same for the two marks below.
+                </span>
+              </li>
+              <li>
+                <span className="smc__key smc__key--fvg" />
+                <span>
+                  <b>Fair value gap</b> — three candles where the third never traded back into the first's range, drawn
+                  across the band they stepped over. It appears at the third candle, which is the first one that can
+                  know it, and runs to the candle that filled it or to the right edge while it is still open.
+                  "Standing only" is on by default, for both this and the blocks above: most gaps fill within a few
+                  candles, and the spent ones bury the chart and are the bulk of what a refresh fetches. Turn it off
+                  to load the history as well — the delivery bands below are unaffected either way, since a finished
+                  run is context rather than a level that has been used up.
+                </span>
+              </li>
+              <li>
+                <span className="smc__key smc__key--flow" />
+                <span>
+                  <b>Order flow</b> — a band under the candles covering the run from one break of structure to the
+                  next: which way the market was being delivered, and for how long it held. Dashed until that leg's
+                  inducement is swept, which is the point at which the break behind the run becomes something to act
+                  on.
+                </span>
+              </li>
             </ul>
             <p className="smc__fineprint">
               Smart Money Concepts is taught rather than specified, and its teachers differ. These marks follow the
@@ -411,6 +510,18 @@ export function StructurePage() {
               break needs a close (a wick is a setting), and a break of structure waits for the inducement. Nothing is
               drawn before the candle that confirmed it, so no mark here moves once it is on the chart. The rules, with
               their sources, are in docs/smart-money-concepts.md.
+            </p>
+            <p className="smc__fineprint">
+              Two things the boxes are honest about, and the popular scripts are not. An order block is drawn from the
+              candle that broke structure, so it arrives late and often after price has already left the zone; drawing
+              it at its own candle instead would show a mark at a time the market could not have known it, which is
+              the one thing this page will not do. And "order flow" here is the narrative reading — which way price
+              says it is being delivered — not footprint order flow. This feed carries no aggressor side and its ticks
+              are a once-a-second snapshot, so bid/ask delta, cumulative delta and volume at price are not available at
+              any fidelity worth the name, and none of them is guessed at. A narrower ICT usage gives the name "order
+              flow" to the corrective candles around a break, which are the very candles the order block is cut from;
+              here the box marks that candle and the band marks the run it sits in, so the two layers describe the same
+              stretch of chart from different distances rather than disagreeing.
             </p>
           </Panel>
         </>
