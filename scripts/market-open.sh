@@ -334,10 +334,12 @@ fi
 
 # --- 5. market data ----------------------------------------------------------
 
+# A dry run skips every daemon but still walks the plan below: what it is for
+# is seeing which strategies would be deployed, into which accounts, before a
+# morning proves it the hard way.
 if [ "$DRY_RUN" = 1 ]; then
-  say "dry run: would start the ingestor, the chain poller, and the plan below for:$(printf ' %s' $ACCOUNTS)"
-  exit 0
-fi
+  say "dry run: would start the ingestor and the chain poller; the plan follows"
+else
 
 # Fresh daemons, never "already running": a feed that lived through the night
 # (the MCX session runs to 23:30) holds a token that expired at 06:00 and
@@ -464,6 +466,8 @@ fi
 if [ "${TICKS:-0}" -lt 1 ]; then
   fail "no fresh prices after the ingestor started — the feed is not flowing (check the broker token: FYERS expires it at 06:00 IST)."
 fi
+
+fi   # end of the live-only section a dry run skips
 
 # --- 7. the morning's plan ---------------------------------------------------
 # Every account in ACCOUNTS gets every line of PLAN. The script is signed in as
