@@ -285,11 +285,24 @@
 .spec-sum__state .pos { color: var(--pos); }
 .spec-sum__state .neg { color: var(--neg); }
 
-.spec-sum { max-width: 1120px; }
+/*
+ * The summary used to be capped at 1120px, which was really a way of asking
+ * for four columns: at 230px a track, that is what the width divided into. The
+ * cap did the arithmetic, and on a wide screen it left a gutter the rest of the
+ * console does not have — no other page here sets a page width at all. So the
+ * column count is stated outright now and the cap is gone: four cards, however
+ * wide the page is. Prose keeps its own measure (.spec-sum__text), because a
+ * readable line length is a property of the text, not of the page.
+ */
 .spec-sum__grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr));
   gap: 10px;
+}
+
+/* Below this the auto-fill above takes over and the cards stack down to one. */
+@media (min-width: 1000px) {
+  .spec-sum__grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 .spec-sum__item {
   min-width: 0;
