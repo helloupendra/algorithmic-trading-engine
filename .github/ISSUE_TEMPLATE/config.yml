@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/helloupendra/algorithmic-trading-engine/security/policy
+    about: Report privately through the Security tab — never as a public issue.
+  - name: Documentation
+    url: https://openfno.com/docs/
+    about: Architecture, risk, the connectors, and a specification for every strategy.
+  - name: The running desk
+    url: https://openfno.com
+    about: The console this repository builds.

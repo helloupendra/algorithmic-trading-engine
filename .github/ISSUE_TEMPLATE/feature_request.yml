@@ -1,0 +1,34 @@
+name: Idea or change
+description: Something that should exist, or should work differently.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: >
+        The situation, not the solution. "I cannot tell which of my runs paid
+        for itself" is more useful than "add a column".
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+      description: If you already have a shape for it, describe it here. If not, leave this empty — the problem is the valuable half.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried or considered
+      description: Including the workaround you are using today, if there is one.
+
+  - type: markdown
+    attributes:
+      value: |
+        **If this is about a trading result** — a strategy that should make more
+        money, a filter that should improve one — say which period and which
+        instrument you looked at, and whether costs were included. A result
+        measured on one stretch of market is a hypothesis, and this project
+        treats it as one until it survives data it has never seen.

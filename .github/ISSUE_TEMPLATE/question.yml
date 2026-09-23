@@ -1,0 +1,25 @@
+name: Question
+description: You read the docs and something is still unclear.
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The written material lives at [openfno.com/docs](https://openfno.com/docs/)
+        and in [`docs/`](https://github.com/helloupendra/algorithmic-trading-engine/tree/main/docs) —
+        every strategy has a specification, and the architecture and risk notes
+        are there too. If the answer should have been in one of those, say so:
+        that is a documentation bug worth fixing.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: What you have already read or tried
+      description: Links to the page or file, and what was missing from it.
