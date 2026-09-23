@@ -614,10 +614,13 @@ done
 # it back is the better check anyway: it counts what is actually running, not
 # what this script believes it started.
 FINAL="$(api_get '/api/Strategy/runs?status=Running&take=500' 2>/dev/null || echo '')"
-printf '%s' "$FINAL" | python3 - <<'PYEOF' | while read -r LINE; do say "$LINE"; done
-import json, sys
+# The list goes in through the environment, not a pipe: a heredoc IS the
+# script's stdin, so a piped body would be thrown away and every morning would
+# end with "could not read the running list back".
+FINAL="$FINAL" python3 - <<'PYEOF' | while read -r LINE; do say "$LINE"; done
+import json, os, sys
 try:
-    runs = json.load(sys.stdin)
+    runs = json.loads(os.environ.get("FINAL") or "[]")
 except Exception:
     print("could not read the running list back")
     sys.exit(0)
