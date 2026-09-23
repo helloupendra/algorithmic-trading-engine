@@ -11,12 +11,10 @@ import { ForbiddenPage, NotFoundPage } from './pages/Placeholders'
 import { OverviewPage } from './pages/trader/OverviewPage'
 import { WatchlistPage } from './pages/trader/WatchlistPage'
 import { ChartsPage } from './pages/trader/ChartsPage'
-import { OptionChainPage } from './pages/trader/OptionChainPage'
 import { PositionsPage } from './pages/trader/PositionsPage'
 import { OrdersPage } from './pages/trader/OrdersPage'
 import { MarketNewsPage } from './pages/data/MarketNewsPage'
 import { TopMoversPage } from './pages/trader/TopMoversPage'
-import { DeployPage } from './pages/trader/DeployPage'
 import { AccountPage } from './pages/trader/AccountPage'
 import { RunDetailPage } from './pages/trader/RunDetailPage'
 import { AdminHomePage } from './pages/admin/AdminHomePage'
@@ -112,13 +110,14 @@ export default function App() {
                 <Route path="/trader/structure" element={<StructurePage />} />
                 <Route path="/trader/news" element={<MarketNewsPage />} />
                 <Route path="/trader/movers" element={<TopMoversPage />} />
-                <Route path="/trader/option-chain" element={<OptionChainPage />} />
+                <Route path="/trader/market-movers" element={<MarketMoversPage />} />
+                <Route path="/trader/option-chain" element={<AdvancedOptionChainPage mode="trader" />} />
                 <Route path="/trader/positions" element={<PositionsPage />} />
                 <Route path="/trader/orders" element={<OrdersPage />} />
                 <Route path="/trader/trading" element={<ManualOrderPage />} />
                 <Route path="/trader/trading/lab" element={<FilterLabPage />} />
                 <Route path="/trader/strategies" element={<Navigate to="/trader/deploy" replace />} />
-                <Route path="/trader/deploy" element={<DeployPage />} />
+                <Route path="/trader/deploy" element={<StrategiesOverviewPage mode="trader" />} />
                 <Route path="/trader/account" element={<AccountPage />} />
                 <Route path="/trader/strategies/:id/how-it-works" element={<StrategySpecPage mode="trader" />} />
                 <Route path="/trader/runs/:id" element={<RunDetailPage />} />

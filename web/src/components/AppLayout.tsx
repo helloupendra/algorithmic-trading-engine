@@ -30,6 +30,7 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconClock,
+  IconActivity,
   IconDashboard,
   IconDatabase,
   IconFlask,
@@ -259,7 +260,8 @@ const TRADER_MARKET_SECTIONS = [
   { route: '/trader/charts', label: 'Charts', icon: IconCandles, end: false },
   { route: '/trader/structure', label: 'Market structure', icon: IconCandles, end: false },
   { route: '/trader/option-chain', label: 'Option chain', icon: IconLayers, end: false },
-  { route: '/trader/movers', label: 'Top movers', icon: IconArrowRight, end: false },
+  { route: '/trader/movers', label: 'Top movers', icon: IconArrowRight, end: true },
+  { route: '/trader/market-movers', label: 'Market movers', icon: IconActivity, end: false },
   { route: '/trader/news', label: 'Market news', icon: IconGlobe, end: false },
 ]
 
@@ -466,6 +468,7 @@ const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]>
   ['/trader/structure', 'Markets', 'Market structure'],
   ['/trader/option-chain', 'Markets', 'Option chain'],
   ['/trader/movers', 'Markets', 'Top movers'],
+  ['/trader/market-movers', 'Markets', 'Market movers'],
   ['/trader/news', 'Markets', 'Market news'],
   ['/trader/trading/lab', 'Tools', 'Filter lab'],
   ['/trader/trading', 'Tools', 'Manual order'],

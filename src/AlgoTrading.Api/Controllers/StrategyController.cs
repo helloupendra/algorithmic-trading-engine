@@ -1563,7 +1563,18 @@ public class StrategyController : ControllerBase
 
     private StrategyListItemResponse ToListItem(StrategyCatalogEntry entry)
     {
+        // A trader sees their own runs of this strategy, an admin sees every
+        // one. It mattered little while the whole desk was one account; from
+        // the day two accounts run the same plan, an unscoped list would show a
+        // trader somebody else's run — which they cannot open (the live view is
+        // owner-checked) and should not have been told about.
         var activeRuns = _registry.GetByStrategy(entry.Id);
+        if (!User.IsAdmin())
+        {
+            long? me = User.GetUserId();
+            activeRuns = activeRuns.Where(r => r.UserId == me).ToList();
+        }
+
         var recentExits = _registry.GetLastExits(entry.Id);
 
         // Legacy single-run fields describe the first (oldest) active run; the
