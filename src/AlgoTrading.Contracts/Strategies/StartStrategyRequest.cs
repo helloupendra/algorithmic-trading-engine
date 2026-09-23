@@ -33,4 +33,17 @@ public class StartStrategyRequest
 
     /// <summary>Paper capital for the run. Defaults to 10,00,000.</summary>
     public decimal? InitialCapital { get; set; }
+
+    /// <summary>
+    /// Start the run in another trader's account. Admins only; anyone else is
+    /// refused rather than quietly ignored.
+    /// </summary>
+    /// <remarks>
+    /// This is how the morning job deploys the same strategies into every
+    /// trading account without holding anyone's password. The run belongs to
+    /// this trader — their grants decide whether it may start at all, their
+    /// console shows it, and their P&amp;L carries it — while the audit trail
+    /// still records the admin who asked for it.
+    /// </remarks>
+    public long? OwnerUserId { get; set; }
 }

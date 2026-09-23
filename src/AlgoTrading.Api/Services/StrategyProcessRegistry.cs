@@ -318,10 +318,24 @@ public sealed class StrategyProcessRegistry
             .ToList();
 
     /// <summary>The active run of the strategy on the underlying, if any (case-insensitive).</summary>
-    public RunningStrategy? Find(int strategyId, string underlying)
+    /// <summary>
+    /// A run of this strategy on this underlying, for one owner or for anyone.
+    /// </summary>
+    /// <param name="ownerUserId">
+    /// When given, only that trader's run counts. Two traders running the same
+    /// strategy on the same underlying is the ordinary case once each has their
+    /// own account: the same signal, two books. Passing null asks the older
+    /// question — is anyone running it — which is still what stopping a
+    /// strategy by name needs.
+    /// </param>
+    public RunningStrategy? Find(int strategyId, string underlying, long? ownerUserId = null)
         => _running.Values.FirstOrDefault(x =>
             x.StrategyId == strategyId
-            && string.Equals(x.Underlying, underlying, StringComparison.OrdinalIgnoreCase));
+            && string.Equals(x.Underlying, underlying, StringComparison.OrdinalIgnoreCase)
+            && (ownerUserId is null || x.UserId == ownerUserId));
+
+    /// <summary>How many runs one trader has open.</summary>
+    public int CountFor(long userId) => _running.Values.Count(x => x.UserId == userId);
 
     /// <summary>Every active run, oldest first.</summary>
     public IReadOnlyList<RunningStrategy> List()

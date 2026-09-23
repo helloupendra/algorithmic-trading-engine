@@ -28,7 +28,16 @@ public class StrategyRunnerOptions
     /// Hard ceiling on concurrently running strategy processes, so a runaway
     /// dashboard cannot exhaust the host.
     /// </summary>
-    public int MaxConcurrentProcesses { get; set; } = 10;
+    /// <remarks>
+    /// Ten was right while one account ran one strategy per index. With every
+    /// trading account running its own copy of the morning's plan the honest
+    /// number is accounts times runs — five strategies over three indices plus
+    /// crude is thirteen a head — so the ceiling is what the machine can carry,
+    /// not what one desk used to need. Each runner is a Python process of
+    /// roughly 150 MB; forty is about 6 GB, which is why it is not higher on an
+    /// 8 GB box. Set <c>StrategyRunner:MaxConcurrentProcesses</c> to change it.
+    /// </remarks>
+    public int MaxConcurrentProcesses { get; set; } = 40;
 
     /// <summary>
     /// Hard ceiling on concurrently running backtest runner processes. A
