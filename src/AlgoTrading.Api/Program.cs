@@ -253,19 +253,40 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 // public domain it will be guessed at. Ten attempts a minute per address is
 // generous for a person and useless for a script; the same window covers
 // refresh so a stolen refresh token cannot be replayed in bulk.
+//
+// The machines on this host are counted separately, and generously. Every
+// strategy runner signs in as it boots, and on 2026-09-24 the morning job
+// started twenty-six of them: the eleventh onwards were refused, exited, and
+// fifteen runs never traded. A program on the loopback interface has already
+// passed the machine's own door — the password still has to be right — so it
+// gets a limit sized for the desk rather than for a stranger guessing.
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    // So a refused caller knows to wait rather than to give up. The window is a
+    // minute; the segments make the real wait shorter, and honest either way.
+    options.OnRejected = (context, cancellationToken) =>
+    {
+        context.HttpContext.Response.Headers.RetryAfter = "20";
+        return ValueTask.CompletedTask;
+    };
+
     options.AddPolicy(RateLimitPolicies.SignIn, context =>
-        RateLimitPartition.GetSlidingWindowLimiter(
-            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+    {
+        var address = context.Connection.RemoteIpAddress;
+        bool local = address is not null && IPAddress.IsLoopback(address);
+
+        return RateLimitPartition.GetSlidingWindowLimiter(
+            local ? "loopback" : address?.ToString() ?? "unknown",
             _ => new SlidingWindowRateLimiterOptions
             {
-                PermitLimit = 10,
+                PermitLimit = local ? 120 : 10,
                 Window = TimeSpan.FromMinutes(1),
                 SegmentsPerWindow = 6,
                 QueueLimit = 0,
-            }));
+            });
+    });
 });
 
 builder.Services.AddAuthorizationBuilder()

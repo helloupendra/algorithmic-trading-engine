@@ -22,16 +22,37 @@ or, for one-off calls in the operational tools:
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
+import time
 from typing import Any, Optional
 
 import requests
 
 from core.config import API_BASE_URL, VERIFY_SSL
 
+logger = logging.getLogger(__name__)
+
 # Requests that must never carry (or trigger) authentication.
 _AUTH_PATHS = ("/api/UserAuth/login", "/api/UserAuth/refresh")
+
+# How long a runner will wait for its turn at the sign-in limiter before giving
+# up. Long enough for a whole morning's worth of runners to file through ten a
+# minute, short enough that a genuinely broken API is still reported today.
+LOGIN_WAIT_SECONDS = float(os.getenv("ENGINE_LOGIN_WAIT_SECONDS", "300"))
+
+
+def _retry_after_seconds(response: requests.Response) -> Optional[float]:
+    """The server's own Retry-After, in seconds, when it sent a usable one."""
+    raw = response.headers.get("Retry-After")
+    if not raw:
+        return None
+    try:
+        return max(0.0, float(raw.strip()))
+    except ValueError:
+        # The header may be an HTTP date; the caller's backoff covers that.
+        return None
 
 
 class ServiceCredentialsError(RuntimeError):
@@ -73,12 +94,7 @@ class _TokenProvider:
                 return self._token
 
             username, password = self._credentials()
-            response = requests.post(
-                f"{API_BASE_URL}/api/UserAuth/login",
-                json={"userNameOrEmail": username, "password": password},
-                timeout=15,
-                verify=VERIFY_SSL,
-            )
+            response = self._sign_in(username, password)
 
             if response.status_code == 400 or response.status_code == 401:
                 hint = (
@@ -95,6 +111,49 @@ class _TokenProvider:
 
             self._token = token
             return token
+
+    def _sign_in(self, username: str, password: str) -> requests.Response:
+        """
+        Sign in, waiting out the API's sign-in limiter rather than dying on it.
+
+        The limiter allows ten sign-ins a minute, which is plenty for people and
+        was plenty for one strategy at a time. On 2026-09-24 the morning job
+        started twenty-six runners; each one signs in as it boots, and every
+        runner after the tenth was refused with 429 and exited — fifteen of the
+        day's runs never traded, and the log said "Too Many Requests" in a
+        stack trace nobody reads until the evening.
+
+        A refusal to start is not a failure to be reported; it is a queue. The
+        wait comes from the server's own Retry-After when it sends one.
+        """
+        deadline = time.monotonic() + LOGIN_WAIT_SECONDS
+        attempt = 0
+
+        while True:
+            response = requests.post(
+                f"{API_BASE_URL}/api/UserAuth/login",
+                json={"userNameOrEmail": username, "password": password},
+                timeout=15,
+                verify=VERIFY_SSL,
+            )
+
+            if response.status_code != 429 or time.monotonic() >= deadline:
+                return response
+
+            attempt += 1
+            wait = _retry_after_seconds(response)
+            if wait is None:
+                # No Retry-After: back off, but never sleep past the deadline.
+                wait = min(2 ** attempt, 20)
+            wait = max(1.0, min(wait, max(0.0, deadline - time.monotonic())))
+            if wait <= 0:
+                return response
+
+            logger.warning(
+                "The API is rate limiting sign-ins; waiting %.0fs before trying again (attempt %d).",
+                wait, attempt,
+            )
+            time.sleep(wait)
 
     def clear(self) -> None:
         with self._lock:
