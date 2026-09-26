@@ -129,9 +129,13 @@ class Config:
 # --------------------------------------------------------------------------- #
 def account_tag(run: dict) -> str:
     """
-    "[coderforchange] " — the account a run trades in, first in every title.
-    With the same plan in two accounts every alert arrived twice with an
-    identical title (1,173 of 1,419 on 25 Sep), which read as a double deploy.
+    "[coderforchange] " — the account a run trades in, first in every title
+    and on the first line of every run message. With the same plan in two
+    accounts every alert arrived twice with an identical title (1,173 of 1,419
+    on 25 Sep), which read as a double deploy. The title alone is not enough:
+    the forwarder (this script started by hand, without --no-forward) sends
+    the body and drops the title, so two accounts' stops still arrived as
+    identical twins there (found in review on 27 Sep).
     """
     name = (run or {}).get("userName")
     return f"[{name}] " if name else ""
@@ -372,6 +376,17 @@ SEVERITY_ICON = {
 }
 
 
+# A stop someone or something chose: the API's "Stopped by <user>" for a
+# person, the market-hours closes, and the risk guard's rules ("Stop loss hit:
+# …", "Leg target hit: …", "Stop-loss on NSE:…: …"). Any of these explains a
+# short run even when no one is recorded in stoppedBy.
+_DELIBERATE_STOP = re.compile(
+    r"^(Stopped by |Market closed|MCX closed)"
+    r"|\b(stop-loss|stop loss|trailing stop|target)( hit\b| on )",
+    re.IGNORECASE,
+)
+
+
 class Watcher:
     """
     Diffs successive API snapshots and publishes what changed.
@@ -415,6 +430,10 @@ class Watcher:
         self._last_detail: dict[int, float] = {}
         # connector key -> (display name, running) as last seen; None until read.
         self._feeds: dict[str, tuple[str, bool]] | None = None
+        # Runs known to be over: already stopped when first read, or whose stop
+        # was reported. None until a run list has been read at all, so a failed
+        # first read cannot make every old run look newly stopped.
+        self._stopped: set[int] | None = None
         self._baselined = False
         self.detail_calls = 0
 
@@ -479,7 +498,10 @@ class Watcher:
     # -- baseline ----------------------------------------------------------- #
     def baseline(self) -> dict[str, Any]:
         """Record the world as it is, alerting on nothing."""
-        runs = self._fetch_runs() or {}
+        runs = self._fetch_runs()
+        if runs is not None:
+            self._stopped = self._inactive(runs)
+        runs = runs or {}
         self._runs = runs
         for run_id, run in runs.items():
             self._counters[run_id] = self._counter_of(run)
@@ -530,11 +552,23 @@ class Watcher:
         self._runs = runs
 
     # -- runs --------------------------------------------------------------- #
+    @staticmethod
+    def _inactive(runs: dict[int, dict[str, Any]]) -> set[int]:
+        return {run_id for run_id, run in runs.items() if not run.get("isActive")}
+
     def _diff_runs(self, runs: dict[int, dict[str, Any]]) -> None:
+        if self._stopped is None:
+            # The baseline could not read the runs; this reading stands in for it.
+            self._stopped = self._inactive(runs)
+
         for run_id, run in runs.items():
             before = self._runs.get(run_id)
             was_active = bool(before and before.get("isActive"))
             is_active = bool(run.get("isActive"))
+
+            if is_active:
+                # Live again: a stopped wizard run can be deployed again under its id.
+                self._stopped.discard(run_id)
 
             if is_active and not was_active:
                 self._alert_run_started(run)
@@ -553,14 +587,37 @@ class Watcher:
                 self._alert_run_stopped(run)
                 self._positions.pop(run_id, None)
                 self._last_detail.pop(run_id, None)
+                self._stopped.add(run_id)
+            elif not is_active and self._ended_unseen(run_id, run):
+                # Started and ended between two polls, so it was never seen
+                # live. On 24 Sep sixteen runners died 1-5 s after starting;
+                # at one poll every 5 s most would have left no message at
+                # all, and while this process runs the API keeps its own
+                # "X started on Y" off Telegram. One stop message tells it whole.
+                self._alert_run_stopped(run)
+                self._stopped.add(run_id)
 
             self._counters[run_id] = self._counter_of(run)
+
+    def _ended_unseen(self, run_id: int, run: dict[str, Any]) -> bool:
+        """
+        True for a run that is over and was never reported: not one already
+        stopped when this process first looked, and not an alerts-only run,
+        which has no runner of its own and never had a start message either.
+        A row still being set up has no stop time yet and waits for one.
+        """
+        return (
+            self._stopped is not None
+            and run_id not in self._stopped
+            and bool(run.get("stoppedUtc"))
+            and run.get("role") != "alerts"
+        )
 
     def _alert_run_started(self, run: dict[str, Any]) -> None:
         name = run.get("strategyName", "?")
         underlying = run.get("underlying", "?")
         lines = [
-            f"▶️ <b>Strategy started</b> — <b>{esc(name)}</b>",
+            f"▶️ {esc(account_tag(run))}<b>Strategy started</b> — <b>{esc(name)}</b>",
             "",
             f"Underlying: <b>{esc(underlying)}</b>  ({esc(run.get('spotSymbol', '—'))})",
             f"Quantity:   {esc(qty_line(run.get('lots'), run.get('lotSize')))}",
@@ -594,7 +651,7 @@ class Watcher:
         # number twice. Unrealized is forced to 0 once a run is inactive, and
         # CapitalUsed goes null; neither is worth a line then.
         lines = [
-            f"⏹️ <b>Strategy stopped</b> — <b>{esc(name)}</b> · {esc(underlying)}",
+            f"⏹️ {esc(account_tag(run))}<b>Strategy stopped</b> — <b>{esc(name)}</b> · {esc(underlying)}",
             "",
             f"Net P&amp;L:   <b>{esc(money(net))}</b>  ({verdict}, realized)",
         ]
@@ -619,16 +676,24 @@ class Watcher:
             lines.append(f"Stopped by: {esc(run['stoppedBy'])}")
         lines.append(f"Run:        #{run.get('runId')}")
 
-        # A runner that died, or a run that lasted under a minute, is not a
-        # result: it is a missing run. On 24 Sep sixteen died 1-5 s after
-        # starting (a 429 on sign-in), and their "stopped · ₹0.00" at severity
-        # info sat among a hundred ordinary messages until 11:20.
-        died = str(run.get("stopReason") or "").startswith("Runner exited")
+        # A runner that died, or a run that lasted under a minute with nobody
+        # and no rule stopping it, is not a result: it is a missing run. On
+        # 24 Sep sixteen died 1-5 s after starting (a 429 on sign-in), and
+        # their "stopped · ₹0.00" at severity info sat among a hundred ordinary
+        # messages until 11:20. Short alone is not dead, though: a run a person
+        # stopped after 20 s, or one a risk rule closed at once, ended on
+        # purpose and must not be called missing.
+        reason = str(run.get("stopReason") or "")
+        died = reason.startswith("Runner exited")
         try:
             brief = run.get("durationSeconds") is not None and float(run["durationSeconds"]) < 60
         except (TypeError, ValueError):
             brief = False
-        if died or brief:
+        unexplained = (
+            str(run.get("stoppedBy") or "").strip().lower() in ("", "runner")
+            and not _DELIBERATE_STOP.search(reason)
+        )
+        if died or (brief and unexplained):
             severity = "warning"
             lines.insert(1, "⚠️ It ended by itself, not by a rule or a person — this run is missing, not finished.")
         else:
@@ -755,7 +820,7 @@ class Watcher:
             icon = "✅" if realized_now > 0 else ("🔻" if realized_now < 0 else "⚪")
             what = f"{total} leg{'s' if total != 1 else ''} closed"
 
-        lines = [f"{icon} <b>{esc(name)}</b> · {esc(underlying)} - {esc(what)}", ""]
+        lines = [f"{icon} {esc(account_tag(run))}<b>{esc(name)}</b> · {esc(underlying)} - {esc(what)}", ""]
 
         if closed:
             lines.append("<b>Closed</b>")
@@ -872,6 +937,13 @@ def is_superseded(payload: dict[str, Any]) -> bool:
     return bool(_SUPERSEDED_BY_POLLER.search(title))
 
 
+# The first character of every message this process formats. A heading missing
+# here is escaped as if it were backend plain text: through the forwarder a
+# roll ("🔁") and the startup summary ("🔔") arrived as literal "<b>" tags
+# (found in review on 27 Sep).
+OWN_HEADINGS = ("▶️", "⏹️", "🔁", "🟢", "🔴", "✅", "🔻", "⚪", "📡", "🛑", "🔔")
+
+
 def render_for_telegram(payload: dict[str, Any]) -> str:
     """
     Turn an alerts:new payload into a Telegram message.
@@ -885,7 +957,7 @@ def render_for_telegram(payload: dict[str, Any]) -> str:
     severity = str(payload.get("Severity") or payload.get("severity") or "info").lower()
 
     # Our own messages carry their own heading and markup.
-    if message.lstrip().startswith(("▶️", "⏹️", "🟢", "🔴", "✅", "🔻", "⚪", "📡", "🛑")):
+    if message.lstrip().startswith(OWN_HEADINGS):
         return message
 
     icon = SEVERITY_ICON.get(severity, "ℹ️")

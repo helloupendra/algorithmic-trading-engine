@@ -87,6 +87,16 @@ class RecordingPublisher:
         self.events.append(kwargs)
 
 
+def rendered(event):
+    """What the forwarder sends to Telegram for a published event."""
+    return tn.render_for_telegram({
+        "Title": event["title"],
+        "Message": event["message"],
+        "Source": event["source"],
+        "Severity": event["severity"],
+    })
+
+
 class FakeApi:
     """Serves whatever the test currently says the world looks like."""
 
@@ -249,6 +259,169 @@ class WatcherTransitionTests(unittest.TestCase):
         stopped = [e for e in self.publisher.events if "Strategy stopped" in e["title"]]
         self.assertEqual("info", stopped[0]["severity"])
 
+    def test_a_person_stopping_a_run_after_20_seconds_is_not_a_missing_run(self):
+        # Short is not dead: the warning blamed "ended by itself" on any run
+        # under a minute, even one its owner stopped on purpose.
+        self.api.runs = [make_run(2, True, 0, 0)]
+        self.api.live[2] = {"positions": []}
+        self.watcher.tick()
+        self.api.runs = [make_run(2, False, 0, 0, stoppedUtc="2026-09-28T03:50:20Z", durationSeconds=20,
+                                  stopReason="Stopped by admin", stoppedBy="admin")]
+        self.watcher.tick()
+        stopped = [e for e in self.publisher.events if "Strategy stopped" in e["title"]]
+        self.assertEqual(1, len(stopped))
+        self.assertEqual("success", stopped[0]["severity"])  # netPnl +100
+        self.assertNotIn("missing", stopped[0]["message"])
+
+    def test_a_risk_rule_that_closes_a_run_at_once_is_not_a_missing_run(self):
+        self.api.runs = [make_run(2, True, 0, 0)]
+        self.api.live[2] = {"positions": []}
+        self.watcher.tick()
+        self.api.runs = [make_run(2, False, 0, 1, stoppedUtc="2026-09-28T03:50:30Z", durationSeconds=30,
+                                  stopReason="Stop loss hit: P&L −₹5,120 ≤ −₹5,000", stoppedBy="risk-guard",
+                                  netPnl=-5120.0)]
+        self.watcher.tick()
+        stopped = [e for e in self.publisher.events if "Strategy stopped" in e["title"]]
+        self.assertEqual("warning", stopped[0]["severity"])  # a loss, said as one
+        self.assertNotIn("missing", stopped[0]["message"])
+
+    def test_a_short_run_nobody_stopped_is_still_missing(self):
+        # No RUN_STOPPED signal: nothing in stoppedBy, and a reason that names
+        # no person and no rule. That is the 24 Sep shape without the runner's
+        # exit record.
+        self.api.runs = [make_run(2, True, 0, 0)]
+        self.api.live[2] = {"positions": []}
+        self.watcher.tick()
+        self.api.runs = [make_run(2, False, 0, 0, stoppedUtc="2026-09-28T03:47:04Z", durationSeconds=4,
+                                  stopReason="Runner failed to start.")]
+        self.watcher.tick()
+        stopped = [e for e in self.publisher.events if "Strategy stopped" in e["title"]]
+        self.assertEqual("warning", stopped[0]["severity"])
+        self.assertIn("missing, not finished", stopped[0]["message"])
+
+    def test_a_person_named_only_in_the_reason_still_explains_a_short_run(self):
+        self.api.runs = [make_run(2, True, 0, 0)]
+        self.api.live[2] = {"positions": []}
+        self.watcher.tick()
+        self.api.runs = [make_run(2, False, 0, 0, stoppedUtc="2026-09-28T03:50:20Z", durationSeconds=20,
+                                  stopReason="Stopped by coderforchange")]
+        self.watcher.tick()
+        stopped = [e for e in self.publisher.events if "Strategy stopped" in e["title"]]
+        self.assertNotIn("missing", stopped[0]["message"])
+
+    # -- runs that start and end between two polls --------------------------- #
+    def test_a_run_that_started_and_died_between_two_polls_is_still_reported(self):
+        # The API keeps its own "X started on Y" off Telegram while the
+        # notifier runs, so a run the poller never saw live must not vanish.
+        died = make_run(5, False, 0, 0, stoppedUtc="2026-09-24T03:47:04Z", durationSeconds=3,
+                        stopReason="Runner exited (code 1)", stoppedBy="runner")
+        self.api.runs = [make_run(1, True, 1, 0), died]
+        self.watcher.tick()
+        stopped = [e for e in self.publisher.events if "Strategy stopped" in e["title"]]
+        self.assertEqual(1, len(stopped), self.titles())
+        self.assertEqual("warning", stopped[0]["severity"])
+        self.assertIn("missing, not finished", stopped[0]["message"])
+
+        self.watcher.tick()
+        self.assertEqual(1, len([t for t in self.titles() if "Strategy stopped" in t]))
+
+    def test_a_row_still_being_set_up_waits_for_its_stop(self):
+        # Start inserts the row before the runner is registered: inactive, no
+        # stop time. That is not a stop — until the runner dies unseen.
+        self.api.runs = [make_run(1, True, 1, 0), make_run(5, False, 0, 0)]
+        self.watcher.tick()
+        self.assertEqual([], self.titles())
+
+        self.api.runs = [make_run(1, True, 1, 0),
+                         make_run(5, False, 0, 0, stoppedUtc="2026-09-24T03:47:04Z", durationSeconds=2,
+                                  stopReason="Runner exited (code 1)", stoppedBy="runner")]
+        self.watcher.tick()
+        self.assertEqual(1, len([t for t in self.titles() if "Strategy stopped" in t]))
+
+    def test_a_stop_seen_live_is_reported_once_even_when_its_time_arrives_late(self):
+        self.api.runs = [make_run(1, True, 1, 0), make_run(2, True, 0, 0)]
+        self.api.live[2] = {"positions": []}
+        self.watcher.tick()
+        self.api.runs = [make_run(1, True, 1, 0), make_run(2, False, 0, 0)]  # no stoppedUtc yet
+        self.watcher.tick()
+        self.api.runs = [make_run(1, True, 1, 0), make_run(2, False, 0, 0, stoppedUtc="2026-09-28T04:00:00Z")]
+        self.watcher.tick()
+        self.assertEqual(1, len([t for t in self.titles() if "Strategy stopped" in t]))
+
+    def test_runs_already_over_and_alerts_only_runs_are_never_announced(self):
+        api = FakeApi()
+        api.runs = [make_run(3, False, 0, 2, stoppedUtc="2026-09-25T10:00:00Z")]
+        watcher = tn.Watcher(api, RecordingPublisher(), reconcile_seconds=10_000)
+        watcher.baseline()
+        api.runs = [make_run(3, False, 0, 2, stoppedUtc="2026-09-25T10:00:00Z"),
+                    make_run(4, False, 0, 0, stoppedUtc="2026-09-28T04:00:00Z", role="alerts")]
+        watcher.tick()
+        self.assertEqual([], watcher._publisher.events)
+
+    def test_a_failed_first_read_does_not_announce_every_old_run(self):
+        api = FakeApi()
+        api.runs = None  # the API did not answer the baseline
+        watcher = tn.Watcher(api, RecordingPublisher(), reconcile_seconds=10_000)
+        watcher.baseline()
+        api.runs = [make_run(n, False, 0, 1, stoppedUtc="2026-09-25T10:00:00Z") for n in (3, 4, 5)]
+        watcher.tick()
+        self.assertEqual([], watcher._publisher.events)
+
+    # -- what reaches Telegram ------------------------------------------------ #
+    def test_every_run_message_names_the_account_on_its_first_line(self):
+        """
+        The forwarder sends the body and drops the title, so the account has
+        to be in the body: two accounts running one plan otherwise read as one
+        run reported twice.
+        """
+        self.api.runs = [make_run(1, True, 1, 0), make_run(2, True, 0, 0, userName="coderforchange")]
+        self.api.live[2] = {"positions": []}
+        self.watcher.tick()                                        # started
+        self.api.runs = [make_run(1, True, 2, 1), make_run(2, True, 0, 0, userName="coderforchange")]
+        self.api.live[1] = {"positions": [make_leg(1, status="Closed", pnl=50.0), make_leg(7)]}
+        self.watcher.tick()                                        # rolled
+        self.api.runs = [make_run(1, True, 3, 1), make_run(2, True, 0, 0, userName="coderforchange")]
+        self.api.live[1] = {"positions": [make_leg(1, status="Closed", pnl=50.0), make_leg(7), make_leg(8)]}
+        self.watcher.tick()                                        # opened
+        self.api.runs = [make_run(1, True, 2, 2), make_run(2, True, 0, 0, userName="coderforchange")]
+        self.api.live[1] = {"positions": [make_leg(1, status="Closed", pnl=50.0), make_leg(7, status="Closed", pnl=-20.0), make_leg(8)]}
+        self.watcher.tick()                                        # closed
+        self.api.runs = [make_run(1, True, 2, 2),
+                         make_run(2, False, 0, 0, userName="coderforchange", stoppedUtc="2026-09-28T04:00:00Z",
+                                  stopReason="Stopped by admin", stoppedBy="admin")]
+        self.watcher.tick()                                        # stopped
+
+        kinds = [e["title"] for e in self.publisher.events]
+        self.assertTrue(any("Strategy started" in k for k in kinds), kinds)
+        self.assertTrue(any("rolled" in k for k in kinds), kinds)
+        self.assertTrue(any("opened" in k for k in kinds), kinds)
+        self.assertTrue(any("closed" in k for k in kinds), kinds)
+        self.assertTrue(any("Strategy stopped" in k for k in kinds), kinds)
+        for event in self.publisher.events:
+            text = rendered(event)
+            account = "[coderforchange]" if "coderforchange" in event["title"] else "[admin]"
+            self.assertIn(account, text.splitlines()[0], text)
+            # Passed through as the HTML it is, never escaped as plain text.
+            self.assertEqual(event["message"], text)
+            self.assertNotIn("&lt;b&gt;", text)
+
+    def test_two_accounts_stopping_the_same_plan_are_told_apart(self):
+        self.api.runs = [make_run(1, True, 1, 0), make_run(2, True, 0, 0), make_run(3, True, 0, 0, userName="coderforchange")]
+        self.api.live.update({2: {"positions": []}, 3: {"positions": []}})
+        self.watcher.tick()
+        self.clear()
+        self.api.runs = [make_run(1, True, 1, 0),
+                         make_run(2, False, 0, 0, stoppedUtc="2026-09-28T10:00:00Z", stoppedBy="market-hours",
+                                  stopReason="Market closed (15:30 IST)"),
+                         make_run(3, False, 0, 0, userName="coderforchange", stoppedUtc="2026-09-28T10:00:00Z",
+                                  stoppedBy="market-hours", stopReason="Market closed (15:30 IST)")]
+        self.watcher.tick()
+        first_lines = sorted(rendered(e).splitlines()[0] for e in self.publisher.events)
+        self.assertEqual(2, len(first_lines))
+        self.assertNotEqual(first_lines[0], first_lines[1])
+        self.assertIn("[admin]", first_lines[0])
+        self.assertIn("[coderforchange]", first_lines[1])
+
     def test_every_connectors_feed_is_announced_by_name(self):
         # 2026-09-15: stopping and starting Dhan's feed sent nothing, because
         # only the FYERS ingestor was watched.
@@ -335,6 +508,18 @@ class ForwarderSuppressionTests(unittest.TestCase):
             self.assertFalse(
                 tn.is_superseded({"Title": title, "Source": "strategyrun"}), title
             )
+
+
+class RenderTests(unittest.TestCase):
+    def test_the_startup_summary_passes_through_as_html(self):
+        summary = tn.startup_summary({"active": 0, "open_positions": 0, "active_runs": [], "feeds": {}})
+        text = tn.render_for_telegram({"Title": "Notifier online", "Message": summary, "Source": "process"})
+        self.assertEqual(summary, text)
+        self.assertTrue(text.startswith("🔔 <b>Notifier online</b>"))
+
+    def test_backend_plain_text_is_still_escaped(self):
+        text = tn.render_for_telegram({"Title": "Kill switch engaged", "Message": "P&L <floor>", "Source": "risk"})
+        self.assertIn("P&amp;L &lt;floor&gt;", text)
 
 
 class PayloadShapeTests(unittest.TestCase):

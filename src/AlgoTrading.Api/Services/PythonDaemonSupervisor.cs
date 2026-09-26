@@ -115,7 +115,13 @@ public abstract class PythonDaemonSupervisor
 
     public sealed record StartOutcome(bool Started, int StatusCode, string Message, int? ProcessId);
 
-    public sealed record StopOutcome(bool WasRunning, string Message, int? ProcessId, string Source);
+    /// <param name="ExitConfirmed">
+    /// False when the process may still be alive: the kill was sent but its
+    /// exit was never confirmed, or the pid could not be verified and was left
+    /// alone. The pid record is kept then, and nothing may start a second
+    /// instance on the strength of this stop.
+    /// </param>
+    public sealed record StopOutcome(bool WasRunning, string Message, int? ProcessId, string Source, bool ExitConfirmed = true);
 
     public async Task<Status> GetStatusAsync(CancellationToken cancellationToken = default)
     {
@@ -269,8 +275,18 @@ public abstract class PythonDaemonSupervisor
     /// <summary>
     /// Stops the managed process (SIGTERM, then the tree is killed) or, after
     /// an API restart, the adopted one found through its stored pid. Clears
-    /// the stored pid either way. Safe to call when nothing is running.
+    /// the stored pid once the exit is confirmed, and only then. Safe to call
+    /// when nothing is running.
     /// </summary>
+    /// <remarks>
+    /// The record used to be cleared whether or not the process died. A kill
+    /// that did not take then read as "not running" on the next status check,
+    /// and the next start put a second instance beside the first — found in
+    /// review on 27 Sep 2026, when the notifier began restarting itself on
+    /// new code. Kept, the record lets status report the survivor and Start
+    /// refuse; the exit monitor (managed) or the next probe (adopted) clears
+    /// it once the process is really gone.
+    /// </remarks>
     public async Task<StopOutcome> StopAsync(string reason, CancellationToken cancellationToken = default)
     {
         Process? managed;
@@ -290,7 +306,13 @@ public abstract class PythonDaemonSupervisor
             if (alive)
             {
                 AppendLog($"{DateTime.UtcNow:HH:mm:ss} | stopping: {reason}");
-                await ProcessTerminator.StopAsync(managed, managedPid, AppendLog, _logger, _daemon.Name);
+                bool stopped = await TerminateAsync(managed, managedPid, _daemon.Name);
+                if (!stopped)
+                {
+                    _logger.LogError("{Daemon} pid {Pid} did not confirm its exit; keeping its pid record.", _daemon.Name, managedPid);
+                    return new StopOutcome(true, $"{Sentence} kill signalled; the process has not confirmed its exit", managedPid, SourceManaged, ExitConfirmed: false);
+                }
+
                 await ClearStoredPidAsync(managedPid, cancellationToken);
                 return new StopOutcome(true, $"{Sentence} stopped", managedPid, SourceManaged);
             }
@@ -316,18 +338,34 @@ public abstract class PythonDaemonSupervisor
             _logger.LogWarning("Stop of {Daemon} pid {Pid} skipped: the process is alive but could not be verified ({Reason}).", _daemon.Name, stored.Value, reason);
             return new StopOutcome(false,
                 $"{Sentence} pid {stored.Value} is alive but could not be verified just now; retry in a moment.",
-                stored.Value, SourceAdopted);
+                stored.Value, SourceAdopted, ExitConfirmed: false);
         }
 
         using var handle = probe.Process!;
 
         AppendLog($"{DateTime.UtcNow:HH:mm:ss} | stopping adopted {_daemon.Name} pid {stored.Value}: {reason}");
         _logger.LogWarning("Stopping adopted {Daemon} pid {Pid} ({Reason}).", _daemon.Name, stored.Value, reason);
-        bool exited = await ProcessTerminator.StopAsync(handle, stored.Value, AppendLog, _logger, $"{_daemon.Name} (adopted)");
-        await ClearStoredPidAsync(stored.Value, cancellationToken);
+        bool exited = await TerminateAsync(handle, stored.Value, $"{_daemon.Name} (adopted)");
+        if (!exited)
+        {
+            _logger.LogError("Adopted {Daemon} pid {Pid} did not confirm its exit; keeping its pid record.", _daemon.Name, stored.Value);
+            return new StopOutcome(true, $"{Sentence} kill signalled; the process has not confirmed its exit", stored.Value, SourceAdopted, ExitConfirmed: false);
+        }
 
-        return new StopOutcome(true, exited ? $"{Sentence} stopped (adopted process)" : $"{Sentence} kill signalled; the process has not confirmed its exit", stored.Value, SourceAdopted);
+        await ClearStoredPidAsync(stored.Value, cancellationToken);
+        return new StopOutcome(true, $"{Sentence} stopped (adopted process)", stored.Value, SourceAdopted);
     }
+
+    /// <summary>
+    /// Ends <paramref name="process"/> through <see cref="ProcessTerminator"/>;
+    /// true once its exit is confirmed.
+    /// </summary>
+    /// <remarks>
+    /// Virtual for one reason: a test has to play a process that will not die,
+    /// and no real process can be made to survive SIGKILL on demand.
+    /// </remarks>
+    protected virtual Task<bool> TerminateAsync(Process process, int pid, string label)
+        => ProcessTerminator.StopAsync(process, pid, AppendLog, _logger, label);
 
     /// <summary>Recent stdout/stderr — the place to look when a start flips straight back to stopped.</summary>
     public IReadOnlyList<string> GetLogs(int take)
