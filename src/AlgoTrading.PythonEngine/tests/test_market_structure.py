@@ -169,6 +169,16 @@ class FramesAfterTests(unittest.TestCase):
         frames = [self.F(f"2026-09-25T0{h}:00:00Z") for h in (4, 5, 6)]
         self.assertEqual(frames, frames_after(frames, "2026-09-25T03:00:00Z"))
 
+    def test_a_frame_whose_time_cannot_be_read_is_left_out(self):
+        # Handed over, it left the caller nothing to record as seen, and a window
+        # of them was fed whole on every tick.
+        from strategies.market_structure import frames_after
+        good = [self.F("2026-09-25T03:45:00Z"), self.F("2026-09-25T03:50:00Z")]
+        frames = [self.F(""), good[0], self.F(None), good[1], self.F("not a time")]
+        self.assertEqual(good, frames_after(frames, None))
+        self.assertEqual(good[1:], frames_after(frames, "2026-09-25T03:45:00Z"))
+        self.assertEqual([], frames_after([self.F(""), self.F("")], None))
+
 
 if __name__ == "__main__":
     unittest.main()

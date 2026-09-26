@@ -27,6 +27,7 @@ docs/strategies/SmcStructureBreak.md. Read that before running it with money.
 
 from __future__ import annotations
 
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from core.resolutions import minutes_of, to_strategy_resolution
@@ -43,6 +44,13 @@ from strategies.market_structure import BEARISH, BOS, BULLISH, CHOCH, Bar, Marke
 TRADE_BOS = "bos"
 TRADE_CHOCH = "choch"
 TRADE_BOTH = "both"
+
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _session_date(instant: datetime) -> date:
+    """The trading session an instant belongs to: its date in IST."""
+    return instant.astimezone(IST).date()
 
 
 class SmcStructureBreakStrategy(BaseStrategy):
@@ -173,7 +181,9 @@ class SmcStructureBreakStrategy(BaseStrategy):
         # would mark swings that may never print. The replay is handed closed
         # candles only.
         closed = bars if inp.mode == "OfflineReplay" else bars[:-1]
+        fed_before = state["fed"]
         events = self._feed(state, closed)
+        new_candles = state["fed"] - fed_before
         state["structure_candles"] = state["fed"]
         state["structure_last"] = state["seen"]
         if not closed:
@@ -185,8 +195,10 @@ class SmcStructureBreakStrategy(BaseStrategy):
         signals: List[StrategySignal] = []
         last = closed[-1]
         self._sync(state, inp, last)
+        # Every event can close a position: a turn against it is a turn however
+        # late it was read. Only a fresh one can open one (see _current).
         self._exit(state, inp, events, signals)
-        self._enter(state, inp, events, last, signals)
+        self._enter(state, inp, events, new_candles, signals)
         return signals
 
     def _feed(self, state: Dict[str, Any], closed: List[Any]) -> List[Any]:
@@ -281,23 +293,61 @@ class SmcStructureBreakStrategy(BaseStrategy):
         state["position"] = None
         state["pending"] = None
 
-    def _enter(self, state: Dict[str, Any], inp: StrategyInput, events: List[Any], last: Any,
+    def _current(self, state: Dict[str, Any], inp: StrategyInput, new_candles: int) -> bool:
+        """
+        Whether this call may open a position on the newest candle the reader
+        holds: that candle was read in this call, and it belongs to the tick's
+        own session (IST date). Breaks on older candles read in the same call are
+        never current (see _enter).
+
+        One call can feed many candles. Live warm-up holds back the last stored
+        candle as if it were still forming, so at a normal 08:45 start
+        yesterday's 15:25 candle is first read at today's 09:15 tick; a run
+        started after the open reads the whole morning in one call. Opening on
+        the oldest break in such a batch bought today's ATM option on
+        yesterday's close, or on a morning break the market had since turned
+        away from — 3 of 40 synthetic 08:45 starts and 16 of 40 synthetic 11:00
+        starts in the 27 Sep review, trades the replay never makes. The replay
+        feeds one candle per call, so for it every break is current.
+        """
+        reader: MarketStructure = state["reader"]
+        if new_candles <= 0 or not reader.bars:
+            return False
+        candle = stamp_key(reader.bars[-1].time_utc)
+        # A tick with no readable time is happening now.
+        tick = stamp_key(inp.timestamp_utc) or datetime.now(timezone.utc)
+        return candle is not None and _session_date(candle) == _session_date(tick)
+
+    def _enter(self, state: Dict[str, Any], inp: StrategyInput, events: List[Any], new_candles: int,
                signals: List[StrategySignal]) -> None:
         if state["position"] is not None:
             return
+        reader: MarketStructure = state["reader"]
+        current = self._current(state, inp, new_candles)
 
         # A retest that was waiting: price has come back to the broken level.
+        # Judged only on candles that closed after the break, and counted in
+        # candles: live calls on_bar on every tick, and re-reading the breaking
+        # candle — whose own wick usually touches the level — filled the retest
+        # on the very candle that set it, while the countdown ran out in ticks.
         pending = state["pending"]
-        if pending is not None:
-            pending["bars"] -= 1
-            back = float(last.low) <= pending["level"] if pending["direction"] == BULLISH else float(last.high) >= pending["level"]
-            if back:
+        if pending is not None and new_candles > 0:
+            pending["bars"] -= new_candles
+            newest = reader.bars[-1]
+            back = newest.low <= pending["level"] if pending["direction"] == BULLISH else newest.high >= pending["level"]
+            if back and current:
                 self._open(state, inp, pending["direction"], pending["level"], f"retest of {pending['level']:g}", signals)
                 return
-            if pending["bars"] <= 0:
+            if back or pending["bars"] <= 0:
+                # Run out, or come back on a candle this tick is too late to act on.
                 state["pending"] = None
 
+        # Only a break on the newest candle can open a position; older breaks in
+        # the same batch have moved the structure all the same.
+        newest_index = len(reader.bars) - 1
         for event in events:
+            if not current or event.break_index != newest_index:
+                continue
             if not self._tradable(event) or not self._allowed(state, event.direction):
                 continue
             reason = (f"{event.kind} {event.direction} through {event.level:g} "

@@ -40,6 +40,14 @@ structure is read on the index alone.
   this strategy holds that candle back until it closes — a swing read on a
   forming candle can disappear. So a live signal fires on the first tick after a
   candle closes, not inside it.
+- **Buys only the newest break.** One call can read many candles: live warm-up
+  holds back the last stored candle, so yesterday's 15:25 candle is first read
+  at today's 09:15 tick, and a run started after the open reads the whole
+  morning at once. Every candle moves the structure, and a turn against an open
+  position closes it however late it is read, but only a break on the newest
+  candle, in the tick's own session, opens a position. The replay reads one
+  candle per call, so nothing changes there; live gives up a break on a
+  session's last candle, which the replay's 15:15 square-off skips anyway.
 - **Session window:** none of its own. It trades from the first closed candle
   the structure can read to the last.
 - **15:30:** `MarketHoursService` squares off every open position at the close,
@@ -74,7 +82,8 @@ underlying's own grid. `trade` chooses what counts as a signal: continuations
 With `entry: "retest"` the break is not bought at once: the level becomes an
 order that fills only if price comes back to it within `retest_bars` candles,
 which is what the method teaches and which passes up the breaks that never come
-back.
+back. The wait is counted in closed candles, not ticks, and the candle that
+broke the level is never its own retest.
 
 ## Position management
 
