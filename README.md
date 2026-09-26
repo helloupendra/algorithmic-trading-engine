@@ -12,6 +12,19 @@ and brokers it connects to, and who on the team may do what.
 > and educational use. Run it in paper/simulation mode until you have validated
 > it end to end. See [LICENSE](LICENSE) and [SECURITY.md](SECURITY.md).
 
+**In one minute**
+
+- **What it is:** a trading desk for Indian index and commodity options, from
+  the market data to the paper order: a .NET API, a Python strategy engine and
+  a React console, running on one server.
+- **What runs every trading day, unattended:** the data vendor signs itself in,
+  the morning job deploys each account's plan of strategies and reports how
+  many are live, the strategies trade on paper with statutory charges counted,
+  and a rules-based watchman opens an incident when something breaks.
+- **What is not proven:** no strategy here has shown an edge after costs. The
+  research that says so is in [What I found](#what-i-found), with its method.
+  Everything runs on paper.
+
 ---
 
 ## The console
@@ -134,8 +147,71 @@ worth reading.
 
 ---
 
+## What I found
+
+The platform is built to say when its own numbers should not be trusted. That
+applied to the ideas it was built to test as well.
+
+### Research: no edge, and it is written down
+
+Every test below uses real one-minute option premiums, slippage and statutory
+charges, a design period fixed before any result was read, and a later period
+held back and looked at once.
+
+- **Intraday at-the-money option buying** on NIFTY, BANKNIFTY and SENSEX, two
+  years of premiums: four candidate rules (trend, opening range, VWAP pullback,
+  regime momentum) lost on all three indices even before costs. A feature screen
+  passed 13 of 885 cells on gross returns, which is what chance gives, and none
+  after costs.
+- **Technical signals** on NIFTY option buying: 150 configurations of moving
+  averages, VWAP, opening range, Supertrend, RSI, MACD, put/call shifts, 61
+  candlestick patterns and 12 chart patterns. None passed.
+- **Market structure** (break of structure and change of character, the "smart
+  money" reading of a chart): on the index alone, a break moves NIFTY no more
+  than an average candle. A counter-trend variant that looked good on 2024-26
+  lost on the untouched 2020-23 period; over six years and 793 trades it was
+  break-even at best.
+- **Machine learning** (logistic regression and boosted trees, walk-forward):
+  0 of 8 configurations passed, with a test AUC of 0.50-0.56.
+- **Paper against costs:** one live paper day that showed a five-figure "net"
+  profit was a six-figure loss once statutory charges and the spread were
+  counted. Live P&L has been reported net of charges since.
+
+### Operations: the desk's own failures, and what each one changed
+
+The desk runs unattended, so most of its code exists because something went
+wrong on a real morning. Each fix below is pinned by a test.
+
+- **A rate limiter killed most of a morning.** At the open on 24 Sep the sign-in
+  limiter refused 16 of 26 strategy runners; they died within seconds and
+  nothing said so until 11:20. Runners now wait out a refusal, local calls have
+  their own limit, and the morning job counts live runs against the plan and
+  sends the answer to Telegram.
+- **A strategy that never traded.** A market-structure reader was fed the live
+  window by position; once the 500-bar window was full it froze. It is fed by
+  candle time now.
+- **A deploy that broke the feed.** A restart in the middle of the session cut
+  the data feed. No build or API restart now happens while runs are live on a
+  weekday.
+- **A dead token reported as authenticated** left strategies deaf for a morning.
+  Every token is now judged by its own expiry, and the data vendor's token is
+  taken by the desk itself each morning, never replaced mid-session.
+- **Ten-day-old alert code.** An API restart adopted the running alert process,
+  so it never picked up new code. It now restarts when its script changes.
+- **Candles after the close.** Flat bars kept forming from the closing price
+  until 20:00. A session guard now drops them at the source.
+
+[Sentinel](docs/modules/sentinel.md), the desk's own watchman, now checks for
+these every half minute with plain rules and no AI model, and attaches the
+deploy, commit and log lines around each incident. Its first scan found the
+generated settings file, which holds every secret, readable by every account on
+the machine.
+
+---
+
 ## Contents
 
+- [What I found](#what-i-found)
 - [The console](#the-console)
 - [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
@@ -154,9 +230,9 @@ worth reading.
 ## Architecture
 
 ```
-                    ┌──────────────────────┐
-   FYERS WebSocket  │  Python Engine       │
-   ───────────────► │  fyers_streamer      │
+   Dhan WebSocket   ┌──────────────────────┐
+   (FYERS fallback) │  Python Engine       │
+   ───────────────► │  live feed adapters  │
                     └──────────┬───────────┘
                                │ XADD market:ticks
                                ▼
@@ -190,7 +266,7 @@ worth reading.
 | `AlgoTrading.Api` | .NET 10 | REST API, auth and access control, instruments, expiry resolution, simulation, risk, and the connector registry that decides which vendor serves which job; serves the built web console from `wwwroot` |
 | `AlgoTrading.Worker.MarketData` | .NET 10 | Drains the Redis tick stream into TimescaleDB in batches |
 | `AlgoTrading.Worker.Strategy` | .NET 10 | Strategy host (placeholder — live strategies run in the Python engine) |
-| `AlgoTrading.PythonEngine` | Python 3.10+ | Live FYERS ingestion, option-chain tracking, strategy execution |
+| `AlgoTrading.PythonEngine` | Python 3.10+ | Live ingestion (Dhan, with FYERS as the fallback), option-chain tracking, strategy execution, and Sentinel, the rules-based watchman |
 | `web/` | React 19 + Vite + TypeScript | Web console: the admin modules plus the trader screens |
 
 The .NET solution follows a clean-architecture split: `Domain` → `Application`
@@ -785,6 +861,8 @@ rm -rf .venv data/instruments/*.csv
 | [docs/modules/backtesting_module.md](docs/modules/backtesting_module.md) | Replay engine and the coverage-first launcher |
 | [docs/modules/option_chain.md](docs/modules/option_chain.md) | The option chain and its open-interest history: where OI comes from, and why a session missed cannot be recovered |
 | [docs/modules/activity_log.md](docs/modules/activity_log.md) | Who did what, across every module — what is recorded, what deliberately is not |
+| [docs/modules/dhan_connector.md](docs/modules/dhan_connector.md) | The primary data vendor: its daily token (taken automatically with PIN + TOTP), live feed, option chain recording and expired-options history |
+| [docs/modules/sentinel.md](docs/modules/sentinel.md) | The desk's watchman: its agents and rules, how a finding becomes an incident, and what it will never do |
 | [docs/roadmap/broker-and-data-provider-module.md](docs/roadmap/broker-and-data-provider-module.md) | Multi-vendor architecture: decisions taken, phases delivered, what is left |
 
 ---
