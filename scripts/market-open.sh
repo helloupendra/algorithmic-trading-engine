@@ -585,7 +585,7 @@ if [ "${TICKS:-0}" -lt 1 ] && [ "$DHAN_PRIMARY" = 1 ]; then
 fi
 
 if [ "${TICKS:-0}" -lt 1 ]; then
-  fail "no fresh prices after the ingestor started — the feed is not flowing (check the broker token: FYERS expires it at 06:00 IST)."
+  fail "no fresh prices after the ingestor started — the feed is not flowing (check the broker token — FYERS expires it at 06:00 IST)."
 fi
 
 fi   # end of the live-only section a dry run skips

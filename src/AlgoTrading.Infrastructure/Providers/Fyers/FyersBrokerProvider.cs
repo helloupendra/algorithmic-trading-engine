@@ -128,7 +128,7 @@ public class FyersBrokerProvider : IBrokerProvider
         {
             // A refresh runs unattended before the open; a transport failure
             // must read as "could not renew", not take the caller down.
-            return BrokerTokenResult.Failed($"Could not reach FYERS to refresh the token: {ex.Message}");
+            return BrokerTokenResult.Failed($"Could not reach FYERS to refresh the token — {ex.Message}");
         }
 
         using JsonDocument doc = SafeParse(body);
