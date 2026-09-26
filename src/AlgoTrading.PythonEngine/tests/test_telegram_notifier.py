@@ -208,7 +208,8 @@ class WatcherTransitionTests(unittest.TestCase):
         self.api.runs = [make_run(1, True, 1, 0), make_run(2, True, 0, 0)]
         self.api.live[2] = {"positions": []}
         self.watcher.tick()
-        self.assertTrue(any(t.startswith("Strategy started") for t in self.titles()))
+        # The account comes first, so two accounts' identical runs are told apart.
+        self.assertTrue(any(t.startswith("[admin] Strategy started") for t in self.titles()))
 
         self.api.runs = [
             make_run(1, True, 1, 0),
@@ -220,7 +221,7 @@ class WatcherTransitionTests(unittest.TestCase):
             ),
         ]
         self.watcher.tick()
-        stopped = [t for t in self.titles() if t.startswith("Strategy stopped")]
+        stopped = [t for t in self.titles() if t.startswith("[admin] Strategy stopped")]
         self.assertEqual(len(stopped), 1, stopped)
 
     def test_every_connectors_feed_is_announced_by_name(self):

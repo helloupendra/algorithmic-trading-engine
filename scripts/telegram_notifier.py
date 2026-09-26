@@ -127,6 +127,16 @@ class Config:
 # --------------------------------------------------------------------------- #
 # formatting helpers
 # --------------------------------------------------------------------------- #
+def account_tag(run: dict) -> str:
+    """
+    "[coderforchange] " — the account a run trades in, first in every title.
+    With the same plan in two accounts every alert arrived twice with an
+    identical title (1,173 of 1,419 on 25 Sep), which read as a double deploy.
+    """
+    name = (run or {}).get("userName")
+    return f"[{name}] " if name else ""
+
+
 def esc(value: Any) -> str:
     """Escape for Telegram parse_mode=HTML. Only these three matter."""
     return (
@@ -564,7 +574,7 @@ class Watcher:
             lines.append(f"Risk:       SL {stop}  ·  target {target}")
 
         self._publisher.publish(
-            title=f"Strategy started · {name} · {underlying}",
+            title=f"{account_tag(run)}Strategy started · {name} · {underlying}",
             message="\n".join(lines),
             source="strategyrun",
             severity="success",
@@ -610,7 +620,7 @@ class Watcher:
         lines.append(f"Run:        #{run.get('runId')}")
 
         self._publisher.publish(
-            title=f"Strategy stopped · {name} · {underlying} · {money(net)}",
+            title=f"{account_tag(run)}Strategy stopped · {name} · {underlying} · {money(net)}",
             message="\n".join(lines),
             source="strategyrun",
             severity="success" if net > 0 else ("warning" if net < 0 else "info"),
@@ -767,7 +777,7 @@ class Watcher:
             severity = "success" if realized_now > 0 else ("warning" if realized_now < 0 else "info")
 
         self._publisher.publish(
-            title=f"{name} · {underlying} · {what}",
+            title=f"{account_tag(run)}{name} · {underlying} · {what}",
             message=chr(10).join(lines),
             source="strategyrun",
             severity=severity,

@@ -20,6 +20,16 @@ public class StrategyActiveRunResponse
     public RiskRulesDto Risk { get; set; } = RiskRulesDto.Empty();
 
     public string StartedBy { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Whose account the run trades in. Not always who started it: the morning
+    /// job starts every account's runs as the admin, and without the owner the
+    /// console showed two accounts' identical runs as one account's run twice.
+    /// </summary>
+    public long OwnerUserId { get; set; }
+
+    /// <summary>The owner's user name, for the card and the Telegram title.</summary>
+    public string? OwnerName { get; set; }
     public DateTime StartedUtc { get; set; }
     public int ProcessId { get; set; }
 

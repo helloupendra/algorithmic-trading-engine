@@ -29,7 +29,7 @@ import { IconClock, IconFlask, IconPlay } from '../../components/icons'
 import type { StrategyActiveRun, StrategyListItem, StrategyLiveView } from '../../lib/types'
 import { CategoryBadge, LaunchDialog, PnlValue, ReadinessStrip, StrategyCard } from './shared'
 import { RunStatusCell } from './RunHistoryPage'
-import { runningSummary } from '../../lib/strategyList'
+import { runOwner, runningSummary } from '../../lib/strategyList'
 import { todayIst } from '../backtesting/shared'
 
 interface RunRow {
@@ -168,7 +168,7 @@ export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 't
           label="Live P&L"
           value={<PnlValue value={livePnl} />}
           tone={livePnl > 0 ? 'pos' : livePnl < 0 ? 'neg' : undefined}
-          sub="realized + unrealized"
+          sub={trader ? 'realized + unrealized' : 'realized + unrealized · all accounts'}
           to={positionsLink}
         />
         <StatTile
@@ -225,6 +225,7 @@ export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 't
                   <thead>
                     <tr>
                       <th>Strategy</th>
+                      {!trader && <th>Account</th>}
                       <th>Underlying</th>
                       <th className="r">Open</th>
                       <th className="r">P&L</th>
@@ -241,6 +242,7 @@ export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 't
                             <b>{s.name}</b> <CategoryBadge category={s.category} />
                             <span className="faint"> · #{run.runId}</span>
                           </td>
+                          {!trader && <td>{runOwner(run)}</td>}
                           <td className="mono">{v?.underlying ?? run.underlying}</td>
                           <td className="r">
                             {v ? v.positions.filter((p) => p.status === 'Open').length : '—'}

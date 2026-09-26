@@ -138,7 +138,11 @@ export function LiveRunDetailPage({ basePath }: { basePath: '/admin/strategies' 
   const view = live.data
   const catalogue = view ? (strategies.data ?? []).find((s) => s.id === view.strategyId) ?? null : null
   const strategy = { name: view?.name ?? `Run #${runId}`, category: catalogue?.category ?? null }
-  const canControl = !!view && (isAdmin || (view.startedBy != null && view.startedBy === user?.userName))
+  // The API says whether this viewer may act on the run (its CanStop rule: an
+  // admin, whoever started it, or the account it trades in). Comparing only
+  // "started by" hid Stop from a trader looking at their own morning runs.
+  const canControl =
+    !!view && (view.canControl ?? (isAdmin || (view.startedBy != null && view.startedBy === user?.userName)))
   const duration = view
     ? runDurationSeconds(
         { durationSeconds: null, startedUtc: view.startedUtc, stoppedUtc: view.stoppedUtc, isActive: view.isActive },
@@ -162,6 +166,11 @@ export function LiveRunDetailPage({ basePath }: { basePath: '/admin/strategies' 
           <p className="page__subtitle">
             {view ? (
               <>
+                {view.ownerName && view.ownerName !== view.startedBy && (
+                  <>
+                    <b>{view.ownerName}</b>'s account ·{' '}
+                  </>
+                )}
                 Started by <b>{view.startedBy ?? 'unknown'}</b> · run #{runId} ·{' '}
                 <span title={view.isActive ? 'still running' : 'total run time'}>{formatDuration(duration)}</span>
                 <span className="faint">

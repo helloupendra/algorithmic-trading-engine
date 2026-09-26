@@ -31,6 +31,19 @@ public class StrategyLiveViewResponse
     public RiskRulesDto Risk { get; set; } = RiskRulesDto.Empty();
 
     public string? StartedBy { get; set; }
+
+    /// <summary>Whose account the run trades in (see StrategyActiveRunResponse.OwnerUserId).</summary>
+    public long? OwnerUserId { get; set; }
+
+    public string? OwnerName { get; set; }
+
+    /// <summary>
+    /// Whether the person reading this may stop the run, edit its risk rules or
+    /// close a leg — the same rule the API enforces. The page used to compare
+    /// "started by" with the viewer, so a trader could not control the runs the
+    /// morning job had started in their own account.
+    /// </summary>
+    public bool CanControl { get; set; }
     public DateTime? StartedUtc { get; set; }
     public DateTime? StoppedUtc { get; set; }
     public string? StopReason { get; set; }
