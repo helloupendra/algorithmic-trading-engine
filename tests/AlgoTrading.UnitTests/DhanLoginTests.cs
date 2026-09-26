@@ -58,7 +58,9 @@ public class DhanLoginTests
         var handler = new Handler("""{"dhanClientId":"9999999999","accessToken":"jwt-other"}""");
         var (flow, sessions) = Build(handler);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => flow.CompleteAsync("token-id-2"));
+        // Any InvalidOperationException, which is what the callback catches; it is
+        // a DhanSignInException now, so the PIN + TOTP path reads it as a refusal.
+        var ex = await Assert.ThrowsAnyAsync<InvalidOperationException>(() => flow.CompleteAsync("token-id-2"));
 
         Assert.Contains("Nothing was saved", ex.Message);
         Assert.DoesNotContain("9999999999", ex.Message);

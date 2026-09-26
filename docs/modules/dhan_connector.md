@@ -109,10 +109,19 @@ pick it up the same way. Connect keeps working alongside it.
 4. On **Connectors → Dhan**, the *Automatic sign-in* panel shows **On**. Press
    **Sign in now** once to prove it end to end.
 
-**When it signs in** (`DhanAutoSignInPolicy`, checked once a minute, weekdays IST):
+**When it signs in** (`DhanAutoSignInPolicy`, checked once a minute, weekdays
+IST, **never before 08:00**):
 - when there is no sign-in that is still valid, or it ends within 10 minutes;
-- between 08:00 and 08:40, when the token would end before 23:59 tonight. The
-  08:45 job starts the feeds, so nothing is streaming on Dhan yet.
+- between 08:00 and 08:40, when the token would end before 23:59 tonight plus
+  those 10 minutes. The 08:45 job starts the feeds, so nothing is streaming on
+  Dhan yet.
+
+Nothing happens before 08:00, even with no token at all: nothing streams on Dhan
+before the 08:45 job, and starting every automatic sign-in at 08:00 means each
+day's token is taken at the same hour and lasts the whole session. Before this
+rule, the sign-in crept ten minutes earlier every day, and a token that died at
+midnight was tried for at 00:00:30, which could use up the day's tries before
+the morning.
 
 It never replaces a working token in the middle of the session. Dhan's
 documentation says `RenewToken` ends the token it renews, and says nothing about
@@ -122,8 +131,23 @@ feed that was streaming.
 **When it stops:** Dhan refusing the PIN or code, or a value missing or
 malformed, stops the automatic tries for the rest of the IST day, with one
 Telegram message. A wrong PIN is wrong every time, and repeated wrong PINs can
-lock the account. Dhan unreachable is tried again after 15 minutes, three times
-a day. **Sign in now** on the page always tries.
+lock the account. Dhan unreachable (no answer, a 5xx, 408 or 429, or a token
+Dhan issued that could not be saved) is tried again after 15 minutes, three
+times a day.
+
+The stop **survives API restarts.** It is saved in `system_settings` under
+`dhan.autosignin.stopped` as the IST day and a fixed reason
+(`2026-09-29: Dhan refused the PIN or the code`, never the PIN). The worker
+reads it back at startup, and every automatic try (the worker's or the morning
+job's) reads it again first. When it was kept in memory only, the 08:45 restart
+and every deploy wiped it, and the next try would have sent the same wrong PIN
+again. A stop from an earlier day is ignored. If the setting cannot be read, no
+automatic try is made: that costs a morning of pressing Connect, where trying
+could lock the account.
+
+**Sign in now** on the page always tries, whatever is saved, and a sign-in that
+works clears the saved stop. To take the automatic sign-in off for longer, set
+`Dhan:AutoSignIn:Enabled` to false; the morning job's call then gets 409 too.
 
 **Safeguards:**
 - **Server only.** Two hosts holding the PIN would each take the account's token
@@ -132,6 +156,13 @@ a day. **Sign in now** on the page always tries.
   HTTP client for this call is registered with no request logging at all, and a
   refusal repeats only Dhan's reason fields, never the response body.
 - **Pinned account**, as for Connect: a token for any other client ID is refused.
+- **One code, one sign-in.** Sign-ins run one at a time. A machine that asks
+  within 2 minutes of a sign-in gets that one back without asking Dhan (the
+  worker and the morning job can both decide "no token" at the same moment).
+  No code is sent from the same 30-second TOTP step as the one before; it waits
+  for the next step.
+- **Not cancelled by the caller.** The morning job's `curl` gives up after 30
+  seconds; the sign-in carries on, so a token Dhan has issued is still saved.
 - Every attempt says what it did on Telegram (Connector category), and the panel
   shows the last try and when the token it took ends.
 
@@ -144,7 +175,7 @@ a day. **Sign in now** on the page always tries.
 | `GET /api/dhan/callback?tokenId=` | Where Dhan returns after the sign-in. Open to the browser, pinned to the configured account. |
 | `GET /api/Dhan/session` | The client id and token the live feed connects with (admin or Service account only). |
 | `GET /api/Dhan/auto-sign-in` | Is the automatic sign-in set up (names what is missing, never a value), its morning window, and what it last did. |
-| `POST /api/Dhan/auto-sign-in?trigger=console` | Sign in now with the PIN and a TOTP code. 200 with the token's end; 400 when Dhan refused or a value is missing; 502 when Dhan was not reached. `trigger=morning job` is held back once Dhan has refused today. |
+| `POST /api/Dhan/auto-sign-in?trigger=console` | Sign in now with the PIN and a TOTP code. 200 with the token's end; 400 when Dhan refused or a value is missing; 502 when Dhan was not reached. `trigger=morning job` gets 409 without asking Dhan when the automatic sign-in is switched off, stopped for today (including a stop saved before a restart), or pausing after a failure; within 2 minutes of a sign-in it gets 200 with that one. |
 | `POST /api/Providers/dhan/test` | History probe: BANKNIFTY index, 15-minute bars, last 7 days. It returned 100 bars in 0.6 s. |
 | `GET /api/Dhan/expiries?underlying=NIFTY` | Expiries Dhan lists, nearest first. |
 | `GET /api/Dhan/chain?underlying=BANKNIFTY&expiry=2026-09-29` | The whole chain, plus peak call and put OI strikes and put/call OI ratio. |
@@ -505,7 +536,7 @@ is.
 | `Api/Controllers/DhanController.cs` | The endpoints above, and `GET`/`POST /api/Dhan/auto-sign-in` |
 | `tests/AlgoTrading.UnitTests/DhanConnectorTests.cs` | Rules pinned against real answers and master rows |
 | `tests/AlgoTrading.UnitTests/DhanLoginTests.cs` | Sign-in, account pin, 24-hour expiry, and the FYERS session guard |
-| `tests/AlgoTrading.UnitTests/DhanAutoSignInTests.cs` | The PIN + TOTP call, refusals that never repeat the PIN, when to sign in, the day's tries, expired pasted tokens |
+| `tests/AlgoTrading.UnitTests/DhanAutoSignInTests.cs` | The PIN + TOTP call, refusals that never repeat the PIN, when to sign in, the day's tries, the stop across a restart, one code per TOTP step, the morning job's call, expired pasted tokens |
 | `tests/AlgoTrading.UnitTests/DhanOptionHistoryTests.cs` | Expired options mapping against real answers, windows, the resume plan, request validation, retry rules |
 | `tests/AlgoTrading.UnitTests/DhanChainPollerTests.cs` | Chain rows, expiry choice, closed markets, rejected tokens, the on/off switch across restarts and its warning, at-the-money selection |
 | `market_data/live/vendors/dhan.py`, `tests/test_dhan_feed.py` (Python engine) | Live feed adapter: binary packets, subscribe batching, credentials from the API, one update a second per contract, the universe |

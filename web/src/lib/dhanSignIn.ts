@@ -66,7 +66,9 @@ export function dhanAutoSignInView(status: DhanAutoSignInStatus | undefined): Dh
     }
   }
 
-  const window = `between ${status.morningFromIst} and ${status.morningUntilIst} IST on weekdays, and whenever the token has run out`
+  // Nothing signs in before the window opens: each day's token is taken at the
+  // same hour and lasts the session, and the night stays quiet.
+  const window = `on weekdays from ${status.morningFromIst} IST: between ${status.morningFromIst} and ${status.morningUntilIst} IST if the token would end before tonight's close, and whenever it has run out`
   if (status.lastOk === false) {
     return { tone: 'warn', label: 'Last try failed', detail: `${status.lastMessage ?? ''} It will try again by itself.`.trim() }
   }

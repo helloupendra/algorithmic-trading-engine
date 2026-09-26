@@ -75,6 +75,16 @@ public static class SystemSettingKeys
     public const string DhanChainPollerEnabled = "dhan.chainpoller.enabled";
 
     /// <summary>
+    /// The IST day the automatic Dhan sign-in stopped itself and why, e.g.
+    /// "2026-09-29: Dhan refused the PIN or the code". Never the PIN. While the
+    /// stop lived in memory only, the API restart the morning job makes at 08:45,
+    /// and every deploy, wiped it, and the next automatic try would have sent the
+    /// same wrong PIN again; repeated wrong PINs can lock the Dhan account. It
+    /// holds for that day only, and a successful sign-in removes it.
+    /// </summary>
+    public const string DhanAutoSignInStopped = "dhan.autosignin.stopped";
+
+    /// <summary>
     /// Set once the default candle-pattern rules have been seeded, so rules an
     /// admin deleted stay deleted across restarts.
     /// </summary>

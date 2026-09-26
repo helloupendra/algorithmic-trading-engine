@@ -134,7 +134,15 @@ public sealed class DhanLoginFlow : IProviderLoginFlow
     /// pick it up the same way.
     /// </summary>
     /// <exception cref="DhanSignInException">No token: not set up, refused, or Dhan not reached.</exception>
-    public async Task<DhanSignIn> SignInWithTotpAsync(CancellationToken cancellationToken = default)
+    public Task<DhanSignIn> SignInWithTotpAsync(CancellationToken cancellationToken = default) =>
+        SignInWithTotpAsync(lastCodeStep: null, codeSent: null, cancellationToken);
+
+    /// <summary>
+    /// <see cref="SignInWithTotpAsync(CancellationToken)"/>, never sending a code
+    /// from <paramref name="lastCodeStep"/> (the TOTP step of the code sent last)
+    /// and telling <paramref name="codeSent"/> which step it sends, just before it does.
+    /// </summary>
+    public async Task<DhanSignIn> SignInWithTotpAsync(long? lastCodeStep, Action<long>? codeSent, CancellationToken cancellationToken = default)
     {
         var settings = Settings;
         var creds = await _credentials.GetAsync(DhanProvider.Key, cancellationToken: cancellationToken);
@@ -165,15 +173,10 @@ public sealed class DhanLoginFlow : IProviderLoginFlow
                 DhanSignInFailure.NotSetUp);
         }
 
-        // A code read in the last seconds of its 30-second step can have rolled
-        // over by the time Dhan checks it, and a refused code is not retried.
+        // Not a code about to roll over, nor one from the step sent last (WaitBeforeCode).
+        var wait = WaitBeforeCode(_time.GetUtcNow(), lastCodeStep);
+        if (wait > TimeSpan.Zero) await Task.Delay(wait, _time, cancellationToken);
         var now = _time.GetUtcNow();
-        long intoStep = now.ToUnixTimeSeconds() % 30;
-        if (intoStep >= 26)
-        {
-            await Task.Delay(TimeSpan.FromSeconds(31 - intoStep), _time, cancellationToken);
-            now = _time.GetUtcNow();
-        }
 
         string url = $"{settings.AuthBaseUrl.TrimEnd('/')}/app/generateAccessToken" +
                      $"?dhanClientId={Uri.EscapeDataString(clientId)}&pin={Uri.EscapeDataString(pin)}&totp={Totp.Generate(secret, now)}";
@@ -185,6 +188,9 @@ public sealed class DhanLoginFlow : IProviderLoginFlow
         try
         {
             var http = _httpClientFactory.CreateClient(SignInClient);
+            // Counted as sent before it goes, even if it never arrives: one that
+            // did arrive must not be sent a second time.
+            codeSent?.Invoke(CodeStep(now));
             using var response = await http.SendAsync(request, cancellationToken);
             status = (int)response.StatusCode;
             body = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -212,7 +218,9 @@ public sealed class DhanLoginFlow : IProviderLoginFlow
             // Not JSON: judged by the status alone below.
         }
 
-        if (status >= 500)
+        // 408 and 429 say "not now", not "wrong PIN": marking them refused would
+        // end the day's automatic tries over a busy minute at Dhan.
+        if (status >= 500 || status is 408 or 429)
             throw new DhanSignInException($"Dhan's sign-in service failed ({status}). It will be tried again.", DhanSignInFailure.Unreachable);
 
         if (status >= 400 || string.IsNullOrWhiteSpace(token))
@@ -229,11 +237,52 @@ public sealed class DhanLoginFlow : IProviderLoginFlow
         {
             return await SaveAsync(clientId, signedInAs, token, "PIN + TOTP", cancellationToken);
         }
-        catch (InvalidOperationException ex)
+        catch (Exception ex) when (ex is not DhanSignInException && !(ex is OperationCanceledException && cancellationToken.IsCancellationRequested))
         {
-            throw new DhanSignInException(ex.Message, DhanSignInFailure.Refused);
+            // Dhan said yes; the database or the key ring said no. Not a refusal:
+            // it used to be one whenever the failure was an InvalidOperationException,
+            // which is how EF reports a transient database failure, so a blip
+            // stopped the day's tries as if the PIN were wrong. Any other type
+            // escaped with no failure recorded and no pause, and the worker would
+            // have taken a new token every minute. The exception is logged here,
+            // where it can only have come from the save (never near the PIN), and
+            // only its type goes on to Telegram.
+            _logger.LogError(ex, "Dhan issued a token (PIN + TOTP) but it could not be saved.");
+            throw new DhanSignInException(
+                $"Dhan issued a token but it could not be saved: {ex.GetType().Name}. It will be tried again.", DhanSignInFailure.Unreachable);
         }
     }
+
+    /// <summary>
+    /// How long to wait before reading the code, and so which 30-second TOTP
+    /// step it comes from. Pure, so the rule is tested without a clock.
+    /// </summary>
+    /// <remarks>
+    /// Two reasons to wait for the next step, each to one second into it:
+    /// <list type="bullet">
+    /// <item>the step is in its last seconds: the code can roll over by the time
+    /// Dhan checks it, and a refused code is not retried;</item>
+    /// <item>the code sent last came from this step. The worker and the morning
+    /// job, a moment apart, could each send the same code. A TOTP code is meant
+    /// to be accepted once (RFC 6238, section 5.2), so Dhan may refuse the second
+    /// as a wrong one, and a refusal stops the day.</item>
+    /// </list>
+    /// </remarks>
+    public static TimeSpan WaitBeforeCode(DateTimeOffset now, long? lastCodeStep)
+    {
+        long seconds = now.ToUnixTimeSeconds();
+        long at = seconds;
+        if (seconds % TotpStepSeconds >= 26) at = NextStepStart(seconds / TotpStepSeconds);
+        if (lastCodeStep is { } last && at / TotpStepSeconds == last) at = NextStepStart(last);
+        return TimeSpan.FromSeconds(at - seconds);
+
+        static long NextStepStart(long step) => (step + 1) * TotpStepSeconds + 1;
+    }
+
+    /// <summary>The TOTP step a code read at <paramref name="at"/> belongs to.</summary>
+    public static long CodeStep(DateTimeOffset at) => at.ToUnixTimeSeconds() / TotpStepSeconds;
+
+    private const int TotpStepSeconds = 30;
 
     /// <summary>
     /// Saves the token as the connector's session, refusing one for any Dhan
@@ -243,8 +292,11 @@ public sealed class DhanLoginFlow : IProviderLoginFlow
     {
         if (!string.Equals(signedInAs, clientId, StringComparison.Ordinal))
         {
-            throw new InvalidOperationException(
-                $"Signed in to Dhan as client {Mask(signedInAs)}, but this connector is set up for {Mask(clientId)}. Nothing was saved.");
+            // A DhanSignInException is still an InvalidOperationException, which
+            // is what the browser callback catches.
+            throw new DhanSignInException(
+                $"Signed in to Dhan as client {Mask(signedInAs)}, but this connector is set up for {Mask(clientId)}. Nothing was saved.",
+                DhanSignInFailure.Refused);
         }
 
         await _sessions.SaveAsync(new BrokerSession

@@ -1,9 +1,15 @@
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
+using AlgoTrading.Api.Controllers;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Providers;
 using AlgoTrading.Infrastructure.Providers.Dhan;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Infrastructure;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -120,6 +126,36 @@ public class DhanAutoSignInTests
         Assert.Empty(sessions.Saved);
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.RequestTimeout)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    public async Task Busy_or_timed_out_is_worth_another_try_not_a_refusal(HttpStatusCode status)
+    {
+        // A refusal ends the day's automatic tries; a busy minute at Dhan must not.
+        var (flow, _) = Build(new Handler("""{"errorMessage":"Too many requests"}""", status));
+
+        var ex = await Assert.ThrowsAsync<DhanSignInException>(() => flow.SignInWithTotpAsync());
+
+        Assert.Equal(DhanSignInFailure.Unreachable, ex.Failure);
+    }
+
+    [Theory]
+    [InlineData(typeof(InvalidOperationException))] // how EF reports a transient database failure
+    [InlineData(typeof(DbUpdateException))]
+    [InlineData(typeof(CryptographicException))]
+    public async Task A_token_that_could_not_be_saved_is_worth_another_try_and_names_only_the_type(Type failure)
+    {
+        var handler = new Handler($$"""{"dhanClientId":"{{ClientId}}","accessToken":"jwt-new"}""");
+        var sessions = new Sessions { FailSave = (Exception)Activator.CreateInstance(failure, "Host=db;Password=hunter2")! };
+        var (flow, _) = Build(handler, sessions: sessions);
+
+        var ex = await Assert.ThrowsAsync<DhanSignInException>(() => flow.SignInWithTotpAsync());
+
+        Assert.Equal(DhanSignInFailure.Unreachable, ex.Failure);
+        Assert.Contains($"could not be saved: {failure.Name}", ex.Message);
+        Assert.DoesNotContain("hunter2", ex.Message);
+    }
+
     // ------------------------------------------------------------ when to sign in
 
     private static readonly DhanAutoSignInSettings Window = new();
@@ -131,6 +167,32 @@ public class DhanAutoSignInTests
     public void Signs_in_when_there_is_no_valid_token_on_a_weekday()
     {
         Assert.NotNull(DhanAutoSignInPolicy.ReasonToSignIn(Ist(29, 13, 0), null, Window));
+    }
+
+    [Fact]
+    public void Never_before_eight_even_with_no_token()
+    {
+        // A token dead at midnight used to be tried for at 00:00:30, which could
+        // spend the day's tries before the morning; nothing streams before 08:45.
+        Assert.Null(DhanAutoSignInPolicy.ReasonToSignIn(Ist(29, 0, 0), null, Window));
+        Assert.Null(DhanAutoSignInPolicy.ReasonToSignIn(Ist(29, 7, 59), null, Window));
+    }
+
+    [Fact]
+    public void From_eight_with_no_token_it_signs_in()
+    {
+        Assert.NotNull(DhanAutoSignInPolicy.ReasonToSignIn(Ist(29, 8, 0), null, Window));
+    }
+
+    [Fact]
+    public void A_token_taken_at_eight_is_replaced_at_eight_the_next_day_not_earlier()
+    {
+        // Replaced ten minutes before its end at any hour, the sign-in crept ten
+        // minutes earlier every day.
+        var endsAtEight = Ist(30, 8, 0);
+
+        Assert.Null(DhanAutoSignInPolicy.ReasonToSignIn(Ist(30, 7, 50), endsAtEight, Window));
+        Assert.NotNull(DhanAutoSignInPolicy.ReasonToSignIn(Ist(30, 8, 0), endsAtEight, Window));
     }
 
     [Fact]
@@ -159,10 +221,19 @@ public class DhanAutoSignInTests
     }
 
     [Fact]
-    public void A_token_about_to_end_counts_as_gone_at_any_hour()
+    public void In_the_window_a_token_must_outlast_tonight_by_the_margin()
+    {
+        // Ending at 00:05 it would count as gone from 23:55, the MCX close in winter.
+        Assert.NotNull(DhanAutoSignInPolicy.ReasonToSignIn(Ist(29, 8, 5), Ist(30, 0, 5), Window));
+        Assert.Null(DhanAutoSignInPolicy.ReasonToSignIn(Ist(29, 8, 5), Ist(30, 0, 15), Window));
+    }
+
+    [Fact]
+    public void A_token_about_to_end_counts_as_gone_at_any_hour_from_eight_on()
     {
         Assert.NotNull(DhanAutoSignInPolicy.ReasonToSignIn(Ist(29, 13, 55), Ist(29, 14, 0), Window));
         Assert.Null(DhanAutoSignInPolicy.ReasonToSignIn(Ist(29, 13, 40), Ist(29, 14, 0), Window));
+        Assert.Null(DhanAutoSignInPolicy.ReasonToSignIn(Ist(29, 7, 55), Ist(29, 8, 0), Window));
     }
 
     // ------------------------------------------------------------ how often
@@ -173,9 +244,9 @@ public class DhanAutoSignInTests
         var state = new DhanAutoSignInState();
         var now = Ist(29, 8, 5);
 
-        bool dayOver = state.Failed(now, "automatic", "Invalid TOTP", DhanSignInFailure.Refused);
+        var stop = state.Failed(now, "automatic", "Invalid TOTP", DhanSignInFailure.Refused);
 
-        Assert.True(dayOver);
+        Assert.Equal(new DhanAutoSignInStop(new DateOnly(2026, 9, 29), "Dhan refused the PIN or the code"), stop);
         Assert.False(state.MayTryAutomatically(now.AddHours(3), out _));
         Assert.True(state.MayTryAutomatically(Ist(30, 8, 0), out _));
     }
@@ -186,12 +257,12 @@ public class DhanAutoSignInTests
         var state = new DhanAutoSignInState();
         var now = Ist(29, 8, 0);
 
-        Assert.False(state.Failed(now, "automatic", "down", DhanSignInFailure.Unreachable));
+        Assert.Null(state.Failed(now, "automatic", "down", DhanSignInFailure.Unreachable));
         Assert.False(state.MayTryAutomatically(now.AddMinutes(5), out _));
         Assert.True(state.MayTryAutomatically(now.AddMinutes(16), out _));
 
-        Assert.False(state.Failed(now.AddMinutes(16), "automatic", "down", DhanSignInFailure.Unreachable));
-        Assert.True(state.Failed(now.AddMinutes(32), "automatic", "down", DhanSignInFailure.Unreachable));
+        Assert.Null(state.Failed(now.AddMinutes(16), "automatic", "down", DhanSignInFailure.Unreachable));
+        Assert.NotNull(state.Failed(now.AddMinutes(32), "automatic", "down", DhanSignInFailure.Unreachable));
         Assert.False(state.MayTryAutomatically(now.AddHours(2), out _));
     }
 
@@ -240,6 +311,228 @@ public class DhanAutoSignInTests
         Assert.Equal(string.Empty, handler.LastUrl);
     }
 
+    [Fact]
+    public async Task An_unexpected_failure_is_recorded_so_the_pause_and_the_cap_apply()
+    {
+        // Anything but a DhanSignInException used to escape: nothing recorded,
+        // no pause, and the worker asked again a minute later.
+        var handler = new Handler("{}");
+        var notifier = new Notifier();
+        using var provider = Services(handler, AutoOn(), current: null, notifier,
+            credentials: new Credentials(ClientId) { Fail = new TimeoutException("Host=db;Password=hunter2") });
+
+        var result = await provider.GetRequiredService<DhanAutoSignInWorker>().CheckOnceAsync(default);
+
+        Assert.False(result!.Ok);
+        Assert.Equal(DhanSignInFailure.Unreachable, result.Failure);
+        Assert.DoesNotContain("hunter2", result.Message);
+        Assert.Equal(NotificationSeverity.Error, Assert.Single(notifier.Sent).Severity);
+        Assert.False(provider.GetRequiredService<DhanAutoSignInState>().MayTryAutomatically(TuesdayMorning.UtcDateTime.AddMinutes(5), out _));
+    }
+
+    // ------------------------------------------------------------ a stop outlives a restart
+
+    [Fact]
+    public async Task A_refusal_is_saved_without_the_PIN_and_holds_across_a_restart()
+    {
+        var store = new MemoryStore();
+        using (var before = Services(new Handler("""{"errorCode":"DH-905","errorMessage":"Invalid pin"}""", HttpStatusCode.BadRequest), AutoOn(), current: null, store: store))
+        {
+            var refused = await before.GetRequiredService<DhanAutoSignInWorker>().CheckOnceAsync(default);
+            Assert.Equal(DhanSignInFailure.Refused, refused!.Failure);
+        }
+
+        string saved = store.Values[SystemSettingKeys.DhanAutoSignInStopped];
+        Assert.StartsWith("2026-09-29: ", saved);
+        Assert.DoesNotContain(Pin, saved);
+
+        // The 08:45 restart: a new process, a new in-memory state, the same database.
+        var handler = new Handler($$"""{"dhanClientId":"{{ClientId}}","accessToken":"jwt-new"}""");
+        using var after = Services(handler, AutoOn(), current: null, store: store);
+        var result = await after.GetRequiredService<DhanAutoSignInWorker>().CheckOnceAsync(default);
+
+        Assert.False(result!.Tried);
+        Assert.Equal(0, handler.Calls);
+        Assert.True(after.GetRequiredService<DhanAutoSignInState>().StoppedFor(TuesdayMorning.UtcDateTime));
+    }
+
+    [Fact]
+    public async Task A_stop_saved_on_an_earlier_day_is_ignored()
+    {
+        var store = new MemoryStore { Values = { [SystemSettingKeys.DhanAutoSignInStopped] = "2026-09-28: Dhan refused the PIN or the code" } };
+        var handler = new Handler($$"""{"dhanClientId":"{{ClientId}}","accessToken":"jwt-new"}""");
+        using var provider = Services(handler, AutoOn(), current: null, store: store);
+
+        var result = await provider.GetRequiredService<DhanAutoSignInWorker>().CheckOnceAsync(default);
+
+        Assert.True(result!.Ok);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public async Task A_stop_that_cannot_be_read_holds_the_machine_back_but_not_a_person()
+    {
+        // Skipping costs a morning of pressing Connect; trying could lock the account.
+        var store = new MemoryStore { Broken = true };
+        var handler = new Handler($$"""{"dhanClientId":"{{ClientId}}","accessToken":"jwt-new"}""");
+        using var provider = Services(handler, AutoOn(), current: null, store: store);
+
+        var automatic = await provider.GetRequiredService<DhanAutoSignInWorker>().CheckOnceAsync(default);
+        Assert.False(automatic!.Tried);
+        Assert.Equal(0, handler.Calls);
+
+        using var scope = provider.CreateScope();
+        var console = await scope.ServiceProvider.GetRequiredService<DhanAutoSignInService>().SignInAsync("console", "test", default);
+        Assert.True(console.Ok);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public async Task Sign_in_now_after_a_refusal_clears_the_saved_stop()
+    {
+        var store = new MemoryStore { Values = { [SystemSettingKeys.DhanAutoSignInStopped] = "2026-09-29: Dhan refused the PIN or the code" } };
+        var handler = new Handler($$"""{"dhanClientId":"{{ClientId}}","accessToken":"jwt-new"}""");
+        using var provider = Services(handler, AutoOn(), current: null, store: store);
+
+        using var scope = provider.CreateScope();
+        var result = await scope.ServiceProvider.GetRequiredService<DhanAutoSignInService>().SignInAsync("console", "the PIN was corrected", default);
+
+        Assert.True(result.Ok);
+        Assert.False(store.Values.ContainsKey(SystemSettingKeys.DhanAutoSignInStopped));
+    }
+
+    [Theory]
+    [InlineData("2026-09-29: Dhan refused the PIN or the code", true)]
+    [InlineData("2026-09-28: Dhan refused the PIN or the code", false)]
+    public async Task The_stop_is_taken_back_at_startup_for_its_own_day_only(string stored, bool stopped)
+    {
+        var store = new MemoryStore { Values = { [SystemSettingKeys.DhanAutoSignInStopped] = stored } };
+        using var provider = Services(new Handler("{}"), AutoOn(), current: null, store: store);
+
+        await provider.GetRequiredService<DhanAutoSignInWorker>().RestoreAsync(default);
+
+        var state = provider.GetRequiredService<DhanAutoSignInState>();
+        Assert.Equal(stopped, state.StoppedFor(TuesdayMorning.UtcDateTime));
+        if (stopped) Assert.Contains("Dhan refused the PIN or the code", state.LastMessage);
+    }
+
+    // ------------------------------------------------------------ one code, one sign-in
+
+    [Theory]
+    [InlineData(10, null, 0)]      // early in the step, nothing sent before
+    [InlineData(27, null, 4)]      // about to roll over: one second into the next step
+    [InlineData(10, 0L, 21)]       // this step's code already went: the next step
+    [InlineData(27, 0L, 4)]        // both at once: still the next step
+    [InlineData(10, -1L, 0)]       // the last code was from the step before
+    public void A_code_is_read_early_in_a_step_the_last_code_did_not_come_from(int intoStep, long? lastRelative, int expectedWait)
+    {
+        var stepStart = DateTimeOffset.FromUnixTimeSeconds(DhanLoginFlow.CodeStep(TuesdayMorning) * 30);
+        long? last = lastRelative is { } r ? DhanLoginFlow.CodeStep(stepStart) + r : null;
+
+        var wait = DhanLoginFlow.WaitBeforeCode(stepStart.AddSeconds(intoStep), last);
+
+        Assert.Equal(TimeSpan.FromSeconds(expectedWait), wait);
+    }
+
+    [Fact]
+    public async Task Two_sign_ins_in_one_step_send_two_different_codes()
+    {
+        var clock = new JumpingClock(TuesdayMorning);
+        var handler = new Handler($$"""{"dhanClientId":"{{ClientId}}","accessToken":"jwt-new"}""");
+        using var provider = Services(handler, AutoOn(), current: null, clock: clock);
+
+        using var scope = provider.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<DhanAutoSignInService>();
+        await service.SignInAsync("console", "first", default);
+        await service.SignInAsync("console", "second", default);
+
+        Assert.Equal(2, handler.Urls.Count);
+        Assert.EndsWith($"totp={Totp.Generate(Secret, TuesdayMorning)}", handler.Urls[0]);
+        Assert.EndsWith($"totp={Totp.Generate(Secret, TuesdayMorning.AddSeconds(30))}", handler.Urls[1]);
+        Assert.Equal(TimeSpan.FromSeconds(21), clock.Waited);
+    }
+
+    [Fact]
+    public async Task A_machine_that_decided_before_a_sign_in_gets_that_one_not_a_new_code()
+    {
+        // The worker read "no token" before the morning job's sign-in finished;
+        // it must not send a second code on the strength of that stale look.
+        var handler = new Handler($$"""{"dhanClientId":"{{ClientId}}","accessToken":"jwt-new"}""");
+        using var provider = Services(handler, AutoOn(), current: null);
+        using (var scope = provider.CreateScope())
+            Assert.True((await scope.ServiceProvider.GetRequiredService<DhanAutoSignInService>().SignInAsync("morning job", "test", default)).Ok);
+
+        var result = await provider.GetRequiredService<DhanAutoSignInWorker>().CheckOnceAsync(default);
+
+        Assert.True(result!.Ok);
+        Assert.False(result.Tried);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest)] // refused: stopped for the day
+    [InlineData(HttpStatusCode.BadGateway)] // not reached: the 15-minute pause, which is not saved
+    public async Task A_machine_that_waited_while_a_sign_in_failed_does_not_try_again(HttpStatusCode status)
+    {
+        var handler = new Handler("""{"errorMessage":"Invalid pin"}""", status);
+        using var provider = Services(handler, AutoOn(), current: null);
+        using var scope = provider.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<DhanAutoSignInService>();
+
+        await service.SignInAsync("automatic", "test", default);
+        var second = await service.SignInAsync("morning job", "decided before the refusal", default);
+
+        Assert.False(second.Tried);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    // ------------------------------------------------------------ the morning job's call
+
+    [Fact]
+    public async Task The_morning_job_is_refused_when_the_automatic_sign_in_is_switched_off()
+    {
+        var handler = new Handler($$"""{"dhanClientId":"{{ClientId}}","accessToken":"jwt-new"}""");
+        var settings = AutoOn();
+        settings.AutoSignIn.Enabled = false;
+        using var provider = Services(handler, settings, current: null);
+
+        var morning = await SignInNow(provider, "morning job");
+        Assert.Equal(StatusCodes.Status409Conflict, morning.StatusCode);
+        Assert.Equal(0, handler.Calls);
+
+        // A person can still sign in with the switch off.
+        var console = await SignInNow(provider, "console");
+        Assert.Equal(StatusCodes.Status200OK, console.StatusCode);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public async Task The_morning_job_is_held_back_by_a_stop_saved_before_the_restart()
+    {
+        var store = new MemoryStore { Values = { [SystemSettingKeys.DhanAutoSignInStopped] = "2026-09-29: Dhan refused the PIN or the code" } };
+        var handler = new Handler($$"""{"dhanClientId":"{{ClientId}}","accessToken":"jwt-new"}""");
+        using var provider = Services(handler, AutoOn(), current: null, store: store);
+
+        var result = await SignInNow(provider, "morning job");
+
+        Assert.Equal(StatusCodes.Status409Conflict, result.StatusCode);
+        Assert.Equal(0, handler.Calls);
+    }
+
+    [Fact]
+    public async Task A_morning_job_that_hangs_up_does_not_cancel_the_sign_in()
+    {
+        // curl --max-time 30 gives up; the token Dhan issued must still be saved.
+        var handler = new Handler($$"""{"dhanClientId":"{{ClientId}}","accessToken":"jwt-new"}""");
+        var sessions = new Sessions();
+        using var provider = Services(handler, AutoOn(), current: null, sessions: sessions);
+
+        var result = await SignInNow(provider, "morning job", requestAborted: new CancellationToken(canceled: true));
+
+        Assert.Equal(StatusCodes.Status200OK, result.StatusCode);
+        Assert.Equal("jwt-new", Assert.Single(sessions.Saved).AccessToken);
+    }
+
     // ------------------------------------------------------------ a pasted token
 
     [Fact]
@@ -267,9 +560,9 @@ public class DhanAutoSignInTests
 
     // ---------------------------------------------------------------- fixtures
 
-    private static (DhanLoginFlow Flow, Sessions Sessions) Build(Handler handler, string pin = Pin, string secret = Secret)
+    private static (DhanLoginFlow Flow, Sessions Sessions) Build(Handler handler, string pin = Pin, string secret = Secret, Sessions? sessions = null)
     {
-        var sessions = new Sessions();
+        sessions ??= new Sessions();
         var flow = new DhanLoginFlow(
             new SettingsMonitor(new DhanSettings { Pin = pin, TotpSecret = secret }),
             new Credentials(ClientId),
@@ -280,15 +573,28 @@ public class DhanAutoSignInTests
         return (flow, sessions);
     }
 
-    private static ServiceProvider Services(Handler handler, DhanSettings settings, BrokerSession? current, Notifier? notifier = null)
+    private static DhanSettings AutoOn() => new() { Pin = Pin, TotpSecret = Secret };
+
+    private static ServiceProvider Services(
+        Handler handler,
+        DhanSettings settings,
+        BrokerSession? current,
+        Notifier? notifier = null,
+        MemoryStore? store = null,
+        TimeProvider? clock = null,
+        Credentials? credentials = null,
+        Sessions? sessions = null)
     {
+        sessions ??= new Sessions();
+        sessions.Current = current;
         var services = new ServiceCollection();
         services.AddSingleton<IOptionsMonitor<DhanSettings>>(new SettingsMonitor(settings));
-        services.AddSingleton<IBrokerCredentialsProvider>(new Credentials(ClientId));
-        services.AddSingleton<IBrokerSessionStore>(new Sessions { Current = current });
+        services.AddSingleton<IBrokerCredentialsProvider>(credentials ?? new Credentials(ClientId));
+        services.AddSingleton<IBrokerSessionStore>(sessions);
         services.AddSingleton<IHttpClientFactory>(new Factory(handler));
         services.AddSingleton<ISystemNotifier>(notifier ?? new Notifier());
-        services.AddSingleton<TimeProvider>(new FixedTime(TuesdayMorning));
+        services.AddSingleton<IProcessSettingsStore>(store ?? new MemoryStore());
+        services.AddSingleton<TimeProvider>(clock ?? new FixedTime(TuesdayMorning));
         services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
         services.AddSingleton<DhanAutoSignInState>();
         services.AddScoped(sp => new DhanLoginFlow(
@@ -297,11 +603,27 @@ public class DhanAutoSignInTests
             NullLogger<DhanLoginFlow>.Instance, sp.GetRequiredService<TimeProvider>()));
         services.AddScoped(sp => new DhanAutoSignInService(
             sp.GetRequiredService<DhanLoginFlow>(), sp.GetRequiredService<DhanAutoSignInState>(),
-            sp.GetRequiredService<ISystemNotifier>(), NullLogger<DhanAutoSignInService>.Instance, sp.GetRequiredService<TimeProvider>()));
+            sp.GetRequiredService<IProcessSettingsStore>(), sp.GetRequiredService<ISystemNotifier>(),
+            NullLogger<DhanAutoSignInService>.Instance, sp.GetRequiredService<TimeProvider>()));
         services.AddSingleton(sp => new DhanAutoSignInWorker(
             sp.GetRequiredService<IServiceScopeFactory>(), sp.GetRequiredService<IOptionsMonitor<DhanSettings>>(),
             sp.GetRequiredService<DhanAutoSignInState>(), NullLogger<DhanAutoSignInWorker>.Instance, sp.GetRequiredService<TimeProvider>()));
         return services.BuildServiceProvider();
+    }
+
+    /// <summary>POST /api/Dhan/auto-sign-in as the endpoint runs it; only the auto sign-in action is exercised.</summary>
+    private static async Task<IStatusCodeActionResult> SignInNow(ServiceProvider provider, string trigger, CancellationToken requestAborted = default)
+    {
+        var controller = new DhanController(null!, null!, null!, null!, null!, null!)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { RequestAborted = requestAborted } },
+        };
+        using var scope = provider.CreateScope();
+        var result = await controller.AutoSignInNow(
+            scope.ServiceProvider.GetRequiredService<DhanAutoSignInService>(),
+            provider.GetRequiredService<IOptionsMonitor<DhanSettings>>(),
+            trigger);
+        return Assert.IsAssignableFrom<IStatusCodeActionResult>(result);
     }
 
     private static DhanApiClient ApiWithConfiguredToken(string token) => new(
@@ -323,6 +645,37 @@ public class DhanAutoSignInTests
         public override DateTimeOffset GetUtcNow() => now;
     }
 
+    /// <summary>
+    /// A clock whose timers fire at once and move it on by their delay, so a
+    /// wait for the next TOTP step takes no real time and can be measured.
+    /// </summary>
+    private sealed class JumpingClock(DateTimeOffset start) : TimeProvider
+    {
+        private DateTimeOffset _now = start;
+
+        public TimeSpan Waited { get; private set; }
+
+        public override DateTimeOffset GetUtcNow() => _now;
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            if (dueTime != Timeout.InfiniteTimeSpan)
+            {
+                _now += dueTime;
+                Waited += dueTime;
+                callback(state);
+            }
+            return new NoTimer();
+        }
+
+        private sealed class NoTimer : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+            public void Dispose() { }
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
+    }
+
     private sealed class SettingsMonitor(DhanSettings value) : IOptionsMonitor<DhanSettings>
     {
         public DhanSettings CurrentValue => value;
@@ -332,12 +685,14 @@ public class DhanAutoSignInTests
 
     private sealed class Handler(string body, HttpStatusCode status = HttpStatusCode.OK) : HttpMessageHandler
     {
-        public string LastUrl { get; private set; } = string.Empty;
+        public List<string> Urls { get; } = new();
+        public int Calls => Urls.Count;
+        public string LastUrl => Urls.Count == 0 ? string.Empty : Urls[^1];
         public string LastMethod { get; private set; } = string.Empty;
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            LastUrl = request.RequestUri!.OriginalString;
+            Urls.Add(request.RequestUri!.OriginalString);
             LastMethod = request.Method.Method;
             return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") });
         }
@@ -350,8 +705,13 @@ public class DhanAutoSignInTests
 
     private sealed class Credentials(string clientId) : IBrokerCredentialsProvider
     {
+        /// <summary>Thrown by every read, like a credentials table that cannot be reached.</summary>
+        public Exception? Fail { get; init; }
+
         public Task<BrokerCredentials> GetAsync(string providerKey, long? brokerAccountId = null, CancellationToken cancellationToken = default)
-            => Task.FromResult(new BrokerCredentials(clientId, "secret-456", string.Empty, null, "test", null, null));
+            => Fail is not null
+                ? Task.FromException<BrokerCredentials>(Fail)
+                : Task.FromResult(new BrokerCredentials(clientId, "secret-456", string.Empty, null, "test", null, null));
 
         public Task SaveAsync(string providerKey, string clientId, string secretKey, string redirectUri, string updatedBy,
             string? tradingPin = null, long? brokerAccountId = null, CancellationToken cancellationToken = default)
@@ -363,12 +723,47 @@ public class DhanAutoSignInTests
         public List<BrokerSession> Saved { get; } = new();
         public BrokerSession? Current { get; set; }
 
+        /// <summary>Thrown by every save, like a database or key ring that fails after Dhan issued the token.</summary>
+        public Exception? FailSave { get; init; }
+
         public Task<BrokerSession?> GetCurrentAsync(CancellationToken cancellationToken = default) => Task.FromResult<BrokerSession?>(null);
         public Task<BrokerSession?> GetForAccountAsync(long brokerAccountId, CancellationToken cancellationToken = default) => Task.FromResult<BrokerSession?>(null);
         public Task ClearAccountAsync(long brokerAccountId, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<BrokerSession?> GetForProviderAsync(string providerKey, CancellationToken cancellationToken = default) => Task.FromResult(Current);
-        public Task SaveAsync(BrokerSession session, CancellationToken cancellationToken = default) { Saved.Add(session); return Task.CompletedTask; }
         public Task ClearAsync(string? providerKey = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task SaveAsync(BrokerSession session, CancellationToken cancellationToken = default)
+        {
+            if (FailSave is not null) return Task.FromException(FailSave);
+            Saved.Add(session);
+            return Task.CompletedTask;
+        }
+    }
+
+    /// <summary>system_settings in memory; <see cref="Broken"/> fails every call, like a database that is down.</summary>
+    private sealed class MemoryStore : IProcessSettingsStore
+    {
+        public Dictionary<string, string> Values { get; init; } = new();
+        public bool Broken { get; init; }
+
+        public Task<string?> GetAsync(string key, CancellationToken cancellationToken = default) =>
+            Broken ? Task.FromException<string?>(Down()) : Task.FromResult(Values.GetValueOrDefault(key));
+
+        public Task SetAsync(string key, string value, string? updatedBy = null, CancellationToken cancellationToken = default)
+        {
+            if (Broken) return Task.FromException(Down());
+            Values[key] = value;
+            return Task.CompletedTask;
+        }
+
+        public Task<bool> DeleteAsync(string key, CancellationToken cancellationToken = default) =>
+            Broken ? Task.FromException<bool>(Down()) : Task.FromResult(Values.Remove(key));
+
+        public Task<int?> GetPidAsync(string key, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task SetPidAsync(string key, int processId, string? updatedBy = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<bool> DeleteIfPidAsync(string key, int processId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        private static InvalidOperationException Down() => new("the database is down");
     }
 
     private sealed class Notifier : ISystemNotifier
