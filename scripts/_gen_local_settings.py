@@ -248,6 +248,10 @@ def main() -> int:
                           (WORKER_SETTINGS, worker_settings)):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        # Owner-only: the file holds the database password, the JWT key and
+        # every broker secret. Written with the default umask it was 0644 —
+        # readable by any account on the server (Sentinel's first scan, 27 Sep).
+        path.chmod(0o600)
         if not quiet:
             print(f"  wrote {path.relative_to(REPO_ROOT)}")
 
