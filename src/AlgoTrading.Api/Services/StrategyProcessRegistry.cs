@@ -149,7 +149,8 @@ public sealed record LastExit(
     decimal? Target,
     string StartedBy,
     DateTime StartedUtc,
-    RiskRulesDto Risk);
+    RiskRulesDto Risk,
+    long UserId = 0);
 
 /// <summary>
 /// In-process registry of running strategy processes, keyed by run id
@@ -162,8 +163,13 @@ public sealed record LastExit(
 /// </summary>
 public sealed class StrategyProcessRegistry
 {
-    /// <summary>Exits remembered per strategy, newest first.</summary>
-    public const int ExitsPerStrategy = 5;
+    /// <summary>
+    /// Exits remembered per strategy, newest first. Five was one account's
+    /// three indices with room to spare; with the plan in two accounts a
+    /// strategy ends six runs at the close, and the oldest fell off the
+    /// Stopped list and out of "Realized today".
+    /// </summary>
+    public const int ExitsPerStrategy = 20;
 
     /// <summary>The single log line an adopted entry starts with.</summary>
     public const string AdoptedLogLine = "adopted after API restart — output not captured";
@@ -399,7 +405,7 @@ public sealed class StrategyProcessRegistry
         var exit = new LastExit(
             entry.StrategyId, entry.Name, entry.RunId, reason, DateTime.UtcNow,
             entry.Underlying, entry.SpotSymbol, entry.Lots, current.StopLoss, current.Target,
-            entry.StartedBy, entry.StartedUtc, current.Risk);
+            entry.StartedBy, entry.StartedUtc, current.Risk, entry.UserId);
 
         var exits = _lastExits.GetOrAdd(entry.StrategyId, _ => new List<LastExit>());
         lock (exits)

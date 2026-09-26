@@ -74,12 +74,31 @@ public class StrategyLiveViewResponse
     public StrategyRunnerInfo? Runner { get; set; }
 }
 
-/// <summary>Realized + unrealized = total, in rupees, plus the capital the open legs tie up.</summary>
+/// <summary>
+/// Realized + unrealized = total (gross), charges, and total − charges = net, in
+/// rupees, plus the capital the open legs tie up.
+/// </summary>
 public class StrategyPnlSummary
 {
     public decimal Realized { get; set; }
     public decimal Unrealized { get; set; }
+
+    /// <summary>Realized + unrealized, before charges.</summary>
     public decimal Total { get; set; }
+
+    /// <summary>
+    /// Statutory charges of the run's fills so far, the figure the run history
+    /// takes off (RunCharges). The charges of closing the open legs are not in
+    /// it until they close.
+    /// </summary>
+    public decimal Charges { get; set; }
+
+    /// <summary>
+    /// <see cref="Total"/> − <see cref="Charges"/>. Until 28 Sep the run page and
+    /// the live tiles showed the gross beside a history that showed net: one run
+    /// read +₹3,000 on its page and +₹2,912 in the history.
+    /// </summary>
+    public decimal Net { get; set; }
 
     /// <summary>Portfolio UsedCapital: premium paid on open BUY legs + margin heuristic on open SELL legs.</summary>
     public decimal CapitalUsed { get; set; }

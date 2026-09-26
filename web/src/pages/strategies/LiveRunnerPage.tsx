@@ -23,7 +23,7 @@ import { IconClock, IconLayers, IconPlay } from '../../components/icons'
 import type { StrategyActiveRun, StrategyLastExit, StrategyListItem, StrategyLiveView } from '../../lib/types'
 import { LaunchDialog, PnlValue, ReadinessStrip, StrategyCard } from './shared'
 import { RunCard } from './RunCard'
-import { runOwner, runningSummary } from '../../lib/strategyList'
+import { liveNet, realizedNet, runOwner, runningSummary } from '../../lib/strategyList'
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -115,10 +115,12 @@ export function LiveRunnerPage() {
     (n, v) => n + v.positions.filter((p) => p.status === 'Open').length,
     0,
   )
-  const livePnl = activeViews.reduce((n, v) => n + v.pnl.total, 0)
+  // Net of charges, like the run history: the same runs read gross here and
+  // net there until 28 Sep.
+  const livePnl = activeViews.reduce((n, v) => n + liveNet(v.pnl), 0)
   const realizedToday = views
     .filter((v) => isToday(v.startedUtc))
-    .reduce((n, v) => n + v.pnl.realized, 0)
+    .reduce((n, v) => n + realizedNet(v.pnl), 0)
 
   // After a start, bring the new card into view once the list has caught up.
   const startedCardVisible = scrollTo != null && running.some((c) => c.runId === scrollTo)
@@ -180,13 +182,13 @@ export function LiveRunnerPage() {
               label="Live P&L"
               value={<PnlValue value={livePnl} />}
               tone={livePnl > 0 ? 'pos' : livePnl < 0 ? 'neg' : undefined}
-              sub="realized + unrealized of running runs"
+              sub="net of charges · realized + unrealized of running runs"
             />
             <StatTile
               label="Realized today"
               value={<PnlValue value={realizedToday} />}
               tone={realizedToday > 0 ? 'pos' : realizedToday < 0 ? 'neg' : undefined}
-              sub="runs started today, incl. stopped ones shown below"
+              sub="after charges · runs started today, incl. stopped ones shown below"
               to="/admin/strategies/history"
             />
           </>

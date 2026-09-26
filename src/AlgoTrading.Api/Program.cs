@@ -88,6 +88,7 @@ builder.Services.AddSingleton<AlgoTrading.Api.Services.StrategyProcessRegistry>(
 builder.Services.AddScoped<AlgoTrading.Api.Services.StrategyRunControl>();
 // The per-user history of live runs (list rows + per-user rollup).
 builder.Services.AddScoped<AlgoTrading.Api.Services.LiveRunHistoryBuilder>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.RunCharges>();
 // The live data ingestor process: launch, durable pid, adoption after a restart.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.IngestorSupervisor>();
 // One live feed per connector that declares live ticks, FYERS being the

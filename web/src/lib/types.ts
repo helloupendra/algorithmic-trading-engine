@@ -625,7 +625,12 @@ export interface StrategyLiveView {
   pnl: {
     realized: number
     unrealized: number
+    /** Realized + unrealized, before charges. */
     total: number
+    /** Statutory charges of the fills so far (absent from an API older than 28 Sep). */
+    charges?: number | null
+    /** total − charges: the figure the run history reports. */
+    net?: number | null
     /** Portfolio UsedCapital. */
     capitalUsed?: number | null
     /** Σ entryValue of open BUY legs. */

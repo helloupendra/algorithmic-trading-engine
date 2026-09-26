@@ -23,6 +23,7 @@ import { formatAge, formatInrWhole, formatLots, formatNumber, formatPrice, forma
 import { formatContract } from '../../lib/symbols'
 import { positionValues } from '../../lib/positions'
 import { effectiveRisk, isRiskEmpty, parseRiskDraft, riskChips, riskDraftFrom } from '../../lib/risk'
+import { liveNet } from '../../lib/strategyList'
 import type { RiskDraft, RiskDraftField } from '../../lib/risk'
 import { Badge, FlashPrice, InlineError, Loading } from '../../components/ui'
 import { RiskRulesForm } from '../../components/RiskRulesForm'
@@ -644,11 +645,18 @@ export function RunCard({
         <>
           <div className="metric-strip">
             <div className="metric">
-              <div className="metric__label">Total P&L</div>
+              <div className="metric__label">Net P&L</div>
               <div className="metric__value metric__value--lg">
-                <PnlValue value={view.pnl.total} />
+                <PnlValue value={liveNet(view.pnl)} />
               </div>
-              <div className="metric__sub">realized + unrealized</div>
+              {/* Net of the fills' charges, like the run history beside it:
+                  until 28 Sep this card said +₹3,000 for a run the history
+                  called +₹2,912. */}
+              <div className="metric__sub">
+                {view.pnl.charges != null
+                  ? `after ${formatInrWhole(view.pnl.charges)} charges · gross ${formatInrWhole(view.pnl.total)}`
+                  : 'realized + unrealized'}
+              </div>
             </div>
             <div className="metric">
               <div className="metric__label">Realized</div>
