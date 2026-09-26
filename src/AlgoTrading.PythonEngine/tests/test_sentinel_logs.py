@@ -363,8 +363,33 @@ class SignatureTests(LogsAgentTestCase):
     def test_a_reconnect_loop_with_every_market_shut_is_only_medium(self):
         self.clock[0] = datetime(2026, 9, 26, 6, 0, tzinfo=timezone.utc)  # Saturday
         self.start_watching("api.log")
-        self.write("engine/dhan-feed-2096838.log", DHAN_LOOP)
+        # 16 Sep: yesterday's feed on a dead token, reconnecting until Dhan blocked the account.
+        self.write("engine/dhan-feed-2096838.log", DHAN_LOOP.replace("2 reconnect(s)", "3 reconnect(s)"))
+        finding = self.check()["logs:feed-reconnect-loop:dhan"]
+        self.assertEqual(Severity.MEDIUM, finding.severity)
+        self.assertIn("No market is open right now", finding.summary)
+
+    def test_a_tickless_reconnect_or_two_with_every_market_shut_is_the_markets_silence(self):
+        self.clock[0] = datetime(2026, 9, 25, 18, 2, tzinfo=timezone.utc)  # Friday 23:32 IST, MCX just shut
+        self.start_watching("engine/dhan-feed-2096838.log")
+        for n in (1, 2):
+            self.append("engine/dhan-feed-2096838.log",
+                        f"[dhan] {n} reconnect(s) carried no ticks — waiting {5 * 2 ** (n - 1)}s before the next "
+                        "attempt so the vendor does not block the account.\n")
+            self.advance(30)
+            self.assertEqual({}, self.check())
+        self.append("engine/dhan-feed-2096838.log",
+                    "[dhan] 3 reconnect(s) carried no ticks — waiting 20s before the next attempt so the vendor "
+                    "does not block the account.\n")
+        self.advance(30)
         self.assertEqual(Severity.MEDIUM, self.check()["logs:feed-reconnect-loop:dhan"].severity)
+
+    def test_the_same_reconnect_with_a_market_open_is_a_loop_at_once(self):
+        self.start_watching("engine/dhan-feed-2096838.log")
+        self.append("engine/dhan-feed-2096838.log",
+                    "[dhan] 1 reconnect(s) carried no ticks — waiting 5s before the next attempt so the vendor does "
+                    "not block the account.\n")
+        self.assertEqual(Severity.CRITICAL, self.check()["logs:feed-reconnect-loop:dhan"].severity)
 
     def test_a_feed_loop_is_held_open_through_its_announced_wait(self):
         self.start_watching("engine/dhan-feed-1.log")
@@ -753,7 +778,7 @@ class QuietTests(LogsAgentTestCase):
             info(REG, "[strategy:G:NIFTY] exception token=abcdef123456 rejected"),
         ]
         self.append("api.log", "".join(secret_lines))
-        self.append("desk.log", "09:00:00  WARN: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N\n")
+        self.append("desk.log", "09:00:00  WARN: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N\n")  # pragma: allowlist secret
         self.assertEqual({}, self.check())
 
     def test_a_finding_carries_no_credential_even_from_a_traceback(self):

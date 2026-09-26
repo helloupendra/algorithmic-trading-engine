@@ -130,6 +130,9 @@ HOLD_SECONDS = {
 #: The archive runs once a day at 06:00 IST: its failure is true until the next run.
 ARCHIVE_HOLD_SECONDS = 25 * 3600
 WAIT_MARGIN_SECONDS = 90
+#: With every market shut, a reconnect carries no ticks because there are none
+#: to carry: this many in a row before it is called a loop at all.
+CLOSED_MARKET_LOOP = 3
 #: A death's runs listed in a finding's summary, and remembered while it is held.
 DEATHS_SHOWN = 8
 DEATHS_KEPT = 40
@@ -372,6 +375,7 @@ class _Hit:
     key: str = ""                      # what a clearing line is matched against
     deaths: list[str] = field(default_factory=list)   # runs this cause killed: "run 215 (Fulcrum on NIFTY)"
     seq: int = 0                       # when it was last added, against a clearing line's
+    loop: int = 0                      # feed-reconnect-loop: the most reconnects in a row one line reported
 
     def add_death(self, label: str) -> None:
         if label not in self.deaths:
@@ -1068,7 +1072,7 @@ class LogsAgent(Agent):
             if m := _TICKLESS.search(text):
                 wait = _WAITING.search(text)
                 hold = (int(wait["wait"]) + WAIT_MARGIN_SECONDS) if wait else WAIT_MARGIN_SECONDS
-                self._reconnect_loop(scan, vendor, raw, o.file, hold, t)
+                self._reconnect_loop(scan, vendor, raw, o.file, hold, t, int(m["n"]))
                 return True
             if _HOST_LOST.search(text):
                 scan.lost.setdefault(vendor, []).append((raw, o.file))
@@ -1255,7 +1259,8 @@ class LogsAgent(Agent):
             suggestion=advice, raw=raw, file=o.file, hold=hold, line_time=t)
 
     @staticmethod
-    def _reconnect_loop(scan: _Scan, vendor: str, raw: str, file: str, hold: float, t: Optional[str]) -> None:
+    def _reconnect_loop(scan: _Scan, vendor: str, raw: str, file: str, hold: float, t: Optional[str],
+                        in_a_row: int) -> None:
         scan.add(
             fingerprint=f"{AGENT}:feed-reconnect-loop:{vendor.lower()}",
             rule="feed-reconnect-loop", severity=Severity.CRITICAL,
@@ -1268,26 +1273,37 @@ class LogsAgent(Agent):
                         "Stop this feed and start the backup from Data → Feeds; check the vendor's status and "
                         "the credential."),
             raw=raw, file=file, hold=hold, line_time=t)
+        hit = scan.hits.get(f"{AGENT}:feed-reconnect-loop:{vendor.lower()}")
+        if hit is not None:
+            hit.loop = max(hit.loop, in_a_row)
 
     # -- from what was seen to findings -----------------------------------------
     def _findings(self, ctx: SentinelContext, scan: _Scan, data: dict[str, Any], now_ts: float) -> list[Finding]:
         for vendor, lost in scan.lost.items():
             if len(lost) >= 3:
                 for raw, file in lost:
-                    self._reconnect_loop(scan, vendor, raw, file, WAIT_MARGIN_SECONDS, None)
+                    self._reconnect_loop(scan, vendor, raw, file, WAIT_MARGIN_SECONDS, None, len(lost))
         self._desk_relaunches(ctx, scan, data)
         self._job_context(scan)
 
-        # A feed reconnecting in a loop is critical while a market is open.
-        for hit in scan.hits.values():
-            if hit.rule == "feed-reconnect-loop":
-                try:
-                    open_now = ctx.session().any_open
-                except Exception:
-                    open_now = True
-                if not open_now:
-                    hit.severity = Severity.MEDIUM
-                    hit.what += " (No market is open right now.)"
+        # A feed reconnecting in a loop is critical while a market is open. With every
+        # market shut, "carried no ticks" is the market's silence, not the feed's: a drop
+        # or two is a vendor closing its day and says nothing. A longer run still does —
+        # on 16 Sep yesterday's Dhan feed, left running on a dead token, reconnected every
+        # 20 s for an hour until Dhan blocked the account — so that stays, as medium.
+        loops = [fp for fp, hit in scan.hits.items() if hit.rule == "feed-reconnect-loop"]
+        try:
+            open_now = not loops or ctx.session().any_open
+        except Exception:
+            open_now = True
+        if not open_now:
+            for fingerprint in loops:
+                hit = scan.hits[fingerprint]
+                if hit.loop < CLOSED_MARKET_LOOP:
+                    del scan.hits[fingerprint]
+                    continue
+                hit.severity = Severity.MEDIUM
+                hit.what += " (No market is open right now.)"
 
         # A recovery is good news, but a feed that stalls and recovers every
         # half hour is still one problem: the incident closes an hour after

@@ -48,6 +48,24 @@ code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 12 "$PUBLIC/" 2>/dev/n
 running="$(docker compose ps --status running --format '{{.Service}}' 2>/dev/null | tr '\n' ' ')"
 case "$running" in *timescaledb*redis*|*redis*timescaledb*) ok "docker infra" "$running";; *) bad "docker infra" "${running:-nothing running} — need timescaledb + redis";; esac
 
+# Sentinel is its own systemd service (scripts/install-sentinel.sh), not a child
+# of the desk, so that it outlives what it watches. Its agents rewrite their
+# state files every round: the newest one's age is when it last looked.
+if command -v systemctl >/dev/null 2>&1; then
+  if systemctl is-active --quiet algotrading-sentinel 2>/dev/null; then
+    newest="$(ls -t logs/sentinel/state-*.json 2>/dev/null | head -1)"
+    secs=""; [ -n "$newest" ] && secs=$(( $(date +%s) - $(stat -c %Y "$newest" 2>/dev/null || date +%s) ))
+    if [ -n "$secs" ] && [ "$secs" -gt 180 ]; then meh "sentinel (watchman)" "active, but its last round was ${secs}s ago — tail logs/sentinel.log"
+    else ok "sentinel (watchman)" "active${secs:+, last round ${secs}s ago}"; fi
+  elif [ -f /etc/systemd/system/algotrading-sentinel.service ]; then
+    bad "sentinel (watchman)" "$(systemctl is-active algotrading-sentinel 2>/dev/null) — sudo systemctl start algotrading-sentinel; see logs/sentinel.log"
+  else
+    meh "sentinel (watchman)" "not installed — scripts/install-sentinel.sh"
+  fi
+else
+  meh "sentinel (watchman)" "not installed here (a systemd service on the server)"
+fi
+
 # --- daemons and runs ----------------------------------------------------------
 # Every vendor's feed is run_feed.py --vendor <key>; fyers_streamer is the old
 # name, still matched so a feed started before the rename is not missed.

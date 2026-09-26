@@ -297,7 +297,7 @@ describe('resolveConfirmText', () => {
 
 describe('maskSecrets', () => {
   it('hides tokens and passwords a crash traceback can carry', () => {
-    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MX0.c2lnbmF0dXJlLXZhbHVlLWhlcmU'
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MX0.c2lnbmF0dXJlLXZhbHVlLWhlcmU' // pragma: allowlist secret
     const cases = [
       `requests.exceptions.HTTPError: 401 headers={'Authorization': 'Bearer ${jwt}'}`,
       `token=${jwt}`,

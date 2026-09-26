@@ -16,9 +16,14 @@ from typing import Optional
 
 import requests
 
-from sentinel.model import Finding, Severity
+from sentinel.model import CONTEXT_PREFIX, Finding, Severity
 
 log = logging.getLogger("sentinel.notify")
+
+# Of an incident's context pack (sentinel/pack.py) a message carries the first
+# few lines — the deploy, the commit, the runs, the nearest log lines; the
+# console has all of it.
+CONTEXT_IN_MESSAGE = 5
 
 # Anything that looks like a credential is masked before a message is sent.
 # Deliberately broad: a masked harmless string costs nothing, a leaked token
@@ -38,7 +43,8 @@ def redact(text: str) -> str:
     return text
 
 
-def format_opened(finding: Finding, incident_id: int, escalated: bool = False) -> str:
+def format_opened(finding: Finding, incident_id: int, escalated: bool = False,
+                  context: Optional[list[str]] = None) -> str:
     head = "ESCALATED" if escalated else "NEW"
     lines = [
         f"{finding.severity.icon} {head} [{finding.severity.value.upper()}] {finding.title}",
@@ -50,6 +56,10 @@ def format_opened(finding: Finding, incident_id: int, escalated: bool = False) -
         lines += ["", "Evidence:"] + [f"• {e}" for e in finding.evidence[:6]]
         if len(finding.evidence) > 6:
             lines.append(f"• … {len(finding.evidence) - 6} more in the console")
+    if context:
+        lines += ["", "Around then:"] + [f"• {c.removeprefix(CONTEXT_PREFIX)}" for c in context[:CONTEXT_IN_MESSAGE]]
+        if len(context) > CONTEXT_IN_MESSAGE:
+            lines.append(f"• … {len(context) - CONTEXT_IN_MESSAGE} more in the console")
     if finding.suggestion:
         lines += ["", f"Likely fix: {finding.suggestion}"]
     return redact("\n".join(lines))[:3900]
