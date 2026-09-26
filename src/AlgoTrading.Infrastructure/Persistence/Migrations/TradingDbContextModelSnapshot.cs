@@ -702,6 +702,103 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.ToTable("expiry_rules", (string)null);
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.Incident", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("AcknowledgedBy")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime?>("AcknowledgedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Agent")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("EvidenceJson")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Fingerprint")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime>("FirstSeenUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("LastSeenUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Location")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<DateTime?>("NotifiedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Occurrences")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ResolvedBy")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime?>("ResolvedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Rule")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Severity")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Status")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Suggestion")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Summary")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Status", "LastSeenUtc")
+                        .IsDescending(false, true)
+                        .HasDatabaseName("IX_incidents_Status_LastSeenUtc");
+
+                    b.HasIndex(new[] { "Fingerprint" }, "IX_incidents_Fingerprint");
+
+                    b.HasIndex(new[] { "Fingerprint" }, "UX_incidents_Fingerprint_live")
+                        .IsUnique()
+                        .HasFilter("\"Status\" IN ('open', 'acknowledged')");
+
+                    b.ToTable("incidents", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_incidents_Severity", "\"Severity\" IN ('low', 'medium', 'high', 'critical')");
+
+                            t.HasCheckConstraint("CK_incidents_Status", "\"Status\" IN ('open', 'acknowledged', 'resolved')");
+                        });
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.Instrument", b =>
                 {
                     b.Property<long>("Id")
@@ -1969,6 +2066,22 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .IsDescending();
 
                     b.ToTable("risk_events", (string)null);
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.SentinelHeartbeat", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("LastCheckUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("sentinel_heartbeat", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_sentinel_heartbeat_single_row", "\"Id\" = 1");
+                        });
                 });
 
             modelBuilder.Entity("AlgoTrading.Domain.Entities.SimBrokerAccount", b =>

@@ -2389,3 +2389,59 @@ export function useSyncMarketFactors() {
     },
   })
 }
+
+// ---------- Sentinel incidents (admin) ----------
+
+import { incidentsQuery, readIncidentList } from './incidents'
+import type { IncidentFilters } from './incidents'
+import type { IncidentSummary } from './types'
+
+/**
+ * What Sentinel found. Every 15 s: its health agent checks every 30 s and the
+ * others every 60 s, so a new incident shows here within one of their checks.
+ */
+export function useIncidents(filters: IncidentFilters) {
+  const qs = incidentsQuery(filters)
+  return useQuery({
+    queryKey: ['incidents', 'list', qs],
+    queryFn: async () => readIncidentList(await api.get<unknown>(`/api/Incidents?${qs}`)),
+    refetchInterval: 15_000,
+  })
+}
+
+/** Live incidents counted by severity — the page header. */
+export function useIncidentSummary() {
+  return useQuery({
+    queryKey: ['incidents', 'summary'],
+    queryFn: () => api.get<IncidentSummary>('/api/Incidents/summary'),
+    refetchInterval: 15_000,
+  })
+}
+
+/**
+ * "Someone is on it": the incident stays live, with a name and a time against it.
+ *
+ * The list is re-read on failure as well as success: the usual failure is a
+ * 409 because Sentinel resolved the row first, and the row on screen should
+ * show that now rather than keep offering buttons until the next poll.
+ */
+export function useAcknowledgeIncident() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => api.post<unknown>(`/api/Incidents/${id}/acknowledge`),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['incidents'] }),
+  })
+}
+
+/**
+ * Closes it now. If the condition is still there, Sentinel opens a new
+ * incident on its next check and alerts again. Re-reads on failure too (see
+ * {@link useAcknowledgeIncident}).
+ */
+export function useResolveIncident() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => api.post<unknown>(`/api/Incidents/${id}/resolve`),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['incidents'] }),
+  })
+}

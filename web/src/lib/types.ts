@@ -2046,3 +2046,63 @@ export interface SmcStructure {
   droppedOutsideSession: number
   note: string | null
 }
+
+// ---------- Sentinel incidents (admin) ----------
+
+export type IncidentSeverity = 'low' | 'medium' | 'high' | 'critical'
+
+/** Open: nobody has touched it. Acknowledged: someone is on it, still tracked. */
+export type IncidentStatus = 'open' | 'acknowledged' | 'resolved'
+
+/** The watchers Sentinel runs; each owns a set of rules. */
+export type IncidentAgent = 'health' | 'trading' | 'logs' | 'security'
+
+/**
+ * One problem Sentinel found, with its history. A problem seen again on the
+ * next check is the same incident with one more occurrence, not a new row.
+ */
+export interface Incident {
+  id: number
+  /** The identity of the problem (rule + what it is about); stable across checks. */
+  fingerprint: string
+  agent: string
+  rule: string
+  severity: IncidentSeverity
+  status: IncidentStatus
+  title: string
+  summary: string
+  /** The component, file, symbol or run it concerns; may be empty. */
+  location: string
+  evidence: string[]
+  suggestion: string
+  occurrences: number
+  firstSeenUtc: string
+  lastSeenUtc: string
+  resolvedUtc: string | null
+  /** Who resolved it from the console; null when Sentinel resolved it or it is live. */
+  resolvedBy?: string | null
+  acknowledgedBy: string | null
+  acknowledgedUtc: string | null
+  /** When the alert for it was sent, if one was. */
+  notifiedUtc?: string | null
+}
+
+/** Live (open or acknowledged) incidents by severity, and the newest one. */
+export interface IncidentSummary {
+  counts: Record<IncidentSeverity, number>
+  /** Open plus acknowledged. */
+  live?: number
+  /** The loudest severity with a live incident; null when nothing is live. */
+  worstSeverity?: IncidentSeverity | null
+  newestId?: number | null
+  newestTitle: string | null
+  newestSeverity?: IncidentSeverity | null
+  /** When the newest live incident was first seen. */
+  newestUtc: string | null
+  /**
+   * When Sentinel last finished a round of checks (its newest agent's), null
+   * when it never has. Optional so an API without the heartbeat still reads.
+   * With it, an empty list can be told apart from a watchman that has stopped.
+   */
+  lastCheckUtc?: string | null
+}

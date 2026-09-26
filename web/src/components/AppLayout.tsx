@@ -43,6 +43,7 @@ import {
   IconSignOut,
   IconX,
   IconUsers,
+  IconWarning,
 } from './icons'
 
 /** "2h 14m", "6m", "48s" — short enough for a chip. */
@@ -243,6 +244,17 @@ function TopbarStatus() {
 const NOTEBOOK_SECTIONS = [{ route: '/admin/notebook', label: 'Whiteboards', icon: IconPen, end: false }]
 
 /**
+ * The System group, with Sentinel's incidents just before the activity log:
+ * both answer "what happened on this desk", one from the watchman and one from
+ * the people.
+ */
+const ADMIN_SYSTEM_SECTIONS = SYSTEM_SECTIONS.flatMap((section) =>
+  section.route === '/admin/system/logs'
+    ? [{ route: '/admin/incidents', label: 'Incidents', icon: IconWarning, end: false }, section]
+    : [section],
+)
+
+/**
  * The trader's sidebar, in the order a trading day is lived: what is running
  * and what it is making first, then the market to look at, then the tools
  * used now and then. Grouped like the operator's side so both feel like one
@@ -397,7 +409,7 @@ function AdminNav() {
       <NavGroup label="Strategies" sections={STRATEGIES_SECTIONS} />
       <NavGroup label="Backtesting" sections={BACKTESTING_SECTIONS} />
       <NavGroup label="Notebook" sections={NOTEBOOK_SECTIONS} />
-      <NavGroup label="System" sections={SYSTEM_SECTIONS} />
+      <NavGroup label="System" sections={ADMIN_SYSTEM_SECTIONS} />
 
     </>
   )
@@ -452,6 +464,7 @@ const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]>
   ['/admin/system/calendar', 'System', 'Market calendar'],
   ['/admin/system/logs', 'System', 'Activity log'],
   ['/admin/system/deployments', 'System', 'Deployments'],
+  ['/admin/incidents', 'System', 'Incidents'],
   ['/admin/broker', 'System', 'Connectors'],
   ['/admin/notebook/', 'Notebook', 'Whiteboard'],
   ['/admin/notebook', 'Notebook', 'Whiteboards'],
