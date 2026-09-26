@@ -18,7 +18,7 @@ import {
   useStrategies,
 } from '../../lib/queries'
 import type { LiveRunHistoryFilters } from '../../lib/queries'
-import { formatDateTime, formatDuration, formatInrSigned, formatLots, formatNumber } from '../../lib/format'
+import { formatDateTime, formatDuration, formatInr, formatInrSigned, formatLots, formatNumber } from '../../lib/format'
 import { riskChips } from '../../lib/risk'
 import { runDurationSeconds, runNetPnl, runStatusTone, runUserLabel, shortStopReason } from '../../lib/runHistory'
 import { DateField } from '../../components/DateField'
@@ -484,6 +484,11 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
                           </td>
                           <td className="r">
                             <PnlValue value={pnl} />
+                            {run.charges != null && run.charges > 0 && (
+                              <span className="cell-sub" title={`gross ${formatInrSigned(run.grossPnl ?? run.realizedPnl)}`}>
+                                after {formatInr(run.charges)} charges
+                              </span>
+                            )}
                             {run.isActive && run.unrealizedPnl !== 0 && (
                               <span className="cell-sub">unrealized {formatInrSigned(run.unrealizedPnl)}</span>
                             )}
@@ -521,7 +526,8 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
 
       <p className="small-note">
         Dates are IST calendar days on the run's start · Net P&L is the realized P&L of every position of
-        the run (plus the open book while it is live) · a run is never removed from this history.
+        the run after brokerage and statutory charges (plus the open book while it is live), and before the
+        bid–ask spread — paper fills are at the last price · a run is never removed from this history.
       </p>
     </div>
   )

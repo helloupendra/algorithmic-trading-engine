@@ -13,7 +13,7 @@
 
 import { Link, useNavigate } from 'react-router-dom'
 import { RUN_HISTORY_PAGE, useLiveRunHistoryPages, useStrategyTrackRecord } from '../../lib/queries'
-import { formatDateTime, formatDuration, formatInrSigned, formatLots, formatNumber } from '../../lib/format'
+import { formatDateTime, formatDuration, formatInr, formatInrSigned, formatLots, formatNumber } from '../../lib/format'
 import { runDurationSeconds, runNetPnl } from '../../lib/runHistory'
 import { InlineError, Loading, StatTile } from '../../components/ui'
 import type { StrategyTrackRecord, StrategyTrackRecordRunRef } from '../../lib/types'
@@ -67,6 +67,8 @@ function Rollup({ record, runHref }: { record: StrategyTrackRecord; runHref: (ru
               <>open {formatInrSigned(record.openPnl)}</>
             ) : record.pnlIsGrossOfCharges ? (
               <span className="faint">before charges</span>
+            ) : record.charges ? (
+              <span className="faint">after {formatInr(record.charges)} charges</span>
             ) : undefined
           }
         />
@@ -152,11 +154,17 @@ function Rollup({ record, runHref }: { record: StrategyTrackRecord; runHref: (ru
         {formatNumber(record.decidedRuns)} finished{' '}
         {record.decidedRuns === 1 ? 'run' : 'runs'} — a run still going has not won or lost yet
         {record.alertRuns > 0 && ' · alerter runs place no orders and carry no P&L'}
-        {record.pnlIsGrossOfCharges && (
+        {record.pnlIsGrossOfCharges ? (
           <>
             {' '}
             · <b>P&L is gross of brokerage, STT and slippage</b> — live runs carry no charges today, so these
             figures read better than the same trades would on a real account
+          </>
+        ) : (
+          <>
+            {' '}
+            · P&L is after brokerage and statutory charges, and before the bid–ask spread: paper fills are at the
+            last price, so a real account would do somewhat worse
           </>
         )}
         .

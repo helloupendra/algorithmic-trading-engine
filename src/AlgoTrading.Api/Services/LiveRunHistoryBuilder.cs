@@ -1,3 +1,4 @@
+using AlgoTrading.Application.Risk;
 ﻿// src/AlgoTrading.Api/Services/LiveRunHistoryBuilder.cs
 using AlgoTrading.Api.Controllers;
 using AlgoTrading.Application.Interfaces;
@@ -232,6 +233,7 @@ public sealed class LiveRunHistoryBuilder
         var liveMarks = await MarkActiveRunsAsync(activeRunIds, cancellationToken);
 
         var lotSizeByUnderlying = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var turnover = await LoadTurnoverAsync(runIds.AsQueryable(), cancellationToken);
         var now = DateTime.UtcNow;
         var rows = new List<LiveRunSummaryResponse>(runs.Count);
 
@@ -292,6 +294,8 @@ public sealed class LiveRunHistoryBuilder
                 }
             }
 
+            decimal charges = ChargesOf(turnover, run.Id, lotSize);
+
             rows.Add(new LiveRunSummaryResponse
             {
                 RunId = run.Id,
@@ -313,7 +317,9 @@ public sealed class LiveRunHistoryBuilder
                 StopReason = stopReason,
                 StoppedBy = stoppedBy,
                 DurationSeconds = DurationSeconds(startedUtc, isActive ? now : stoppedUtc ?? now),
-                NetPnl = realized,
+                NetPnl = realized - charges,
+                GrossPnl = realized,
+                Charges = charges,
                 RealizedPnl = realized,
                 UnrealizedPnl = unrealized,
                 Trades = s?.Closed ?? 0,
@@ -325,6 +331,58 @@ public sealed class LiveRunHistoryBuilder
         }
 
         return rows;
+    }
+
+    // ------------------------------------------------------------------
+    // Charges
+    // ------------------------------------------------------------------
+
+    /// <summary>Per run: premium × lots bought and sold, and how many orders were filled.</summary>
+    private sealed record RunTurnover(decimal BuyPremiumLots, decimal SellPremiumLots, int Orders);
+
+    private async Task<Dictionary<long, RunTurnover>> LoadTurnoverAsync(IQueryable<long> runIds, CancellationToken cancellationToken)
+    {
+        var rows = await _dbContext.PaperOrders.AsNoTracking()
+            .Where(o => runIds.Contains(o.SimulationRunId) && o.FillPrice != null)
+            .GroupBy(o => new { o.SimulationRunId, o.Side })
+            .Select(g => new
+            {
+                g.Key.SimulationRunId,
+                g.Key.Side,
+                PremiumLots = g.Sum(o => o.FillPrice!.Value * o.Quantity),
+                Orders = g.Count(),
+            })
+            .ToListAsync(cancellationToken);
+
+        return rows
+            .GroupBy(r => r.SimulationRunId)
+            .ToDictionary(
+                g => g.Key,
+                g => new RunTurnover(
+                    g.Where(r => string.Equals(r.Side, "BUY", StringComparison.OrdinalIgnoreCase)).Sum(r => r.PremiumLots),
+                    g.Where(r => string.Equals(r.Side, "SELL", StringComparison.OrdinalIgnoreCase)).Sum(r => r.PremiumLots),
+                    g.Sum(r => r.Orders)));
+    }
+
+    /// <summary>
+    /// A run's charges. Order quantity is in lots, so turnover is premium × lots
+    /// × the underlying's lot size (checked against paper_orders: 2 = two lots).
+    /// </summary>
+    private static decimal ChargesOf(Dictionary<long, RunTurnover> turnover, long runId, int lotSize)
+    {
+        if (lotSize <= 0 || !turnover.TryGetValue(runId, out var t)) return 0m;
+        return OptionCharges.For(t.BuyPremiumLots * lotSize, t.SellPremiumLots * lotSize, t.Orders).Total;
+    }
+
+    private async Task<int> LotSizeAsync(Dictionary<string, int> cache, string underlying, CancellationToken cancellationToken)
+    {
+        if (!cache.TryGetValue(underlying, out var lotSize))
+        {
+            var lot = await _lotSizeResolver.ResolveForUnderlyingAsync(underlying, cancellationToken);
+            lotSize = lot.LotSize;
+            cache[underlying] = lotSize;
+        }
+        return lotSize;
     }
 
     // ------------------------------------------------------------------
@@ -362,6 +420,25 @@ public sealed class LiveRunHistoryBuilder
                 group p by r.UserId into g
                 select new { UserId = g.Key, NetPnl = g.Sum(x => x.RealizedPnl) })
             .ToDictionaryAsync(x => x.UserId, x => x.NetPnl, cancellationToken);
+
+        // The rollup is net of charges like every run row it summarises.
+        var userTurnover = await LoadTurnoverAsync(runs.Select(r => r.Id), cancellationToken);
+        if (userTurnover.Count > 0)
+        {
+            var tradedIds = userTurnover.Keys.ToList();
+            var traded = await runs.Where(r => tradedIds.Contains(r.Id))
+                .Select(r => new { r.Id, r.UserId, r.ParametersJson, r.Symbol })
+                .ToListAsync(cancellationToken);
+            var lotSizes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var r in traded)
+            {
+                var running = _registry.Get(r.Id);
+                var exit = running is null ? _registry.GetExitByRun(r.Id) : null;
+                var underlying = DeriveUnderlying(running, exit, LiveRunParameters.Parse(r.ParametersJson), r.Symbol);
+                decimal charges = ChargesOf(userTurnover, r.Id, await LotSizeAsync(lotSizes, underlying, cancellationToken));
+                pnlByUser[r.UserId] = pnlByUser.GetValueOrDefault(r.UserId) - charges;
+            }
+        }
 
         var activeByUser = _registry.List()
             .Where(x => !userId.HasValue || x.UserId == userId.Value)
@@ -493,6 +570,9 @@ public sealed class LiveRunHistoryBuilder
         var activeRunIds = rows.Where(x => _registry.Contains(x.Id)).Select(x => x.Id).ToList();
         var liveMarks = await MarkActiveRunsAsync(activeRunIds, cancellationToken);
 
+        var recordTurnover = await LoadTurnoverAsync(runQuery.Select(x => x.Id), cancellationToken);
+        var recordLotSizes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
         var byUnderlying = new Dictionary<string, StrategyTrackRecordUnderlying>(StringComparer.OrdinalIgnoreCase);
         var byReason = new Dictionary<string, StrategyTrackRecordStopReason>(StringComparer.OrdinalIgnoreCase);
         var days = new HashSet<DateOnly>();
@@ -530,7 +610,12 @@ public sealed class LiveRunHistoryBuilder
             record.TradingRuns++;
 
             stats.TryGetValue(row.Id, out var s);
-            decimal realized = s?.Realized ?? 0m;
+            // Every figure below is after charges: a run whose charges ate its
+            // gross did not win, whatever its gross says.
+            decimal charges = ChargesOf(recordTurnover, row.Id,
+                await LotSizeAsync(recordLotSizes, underlying, cancellationToken));
+            decimal realized = (s?.Realized ?? 0m) - charges;
+            record.Charges += charges;
             record.NetPnl += realized;
             record.Trades += s?.Closed ?? 0;
 
