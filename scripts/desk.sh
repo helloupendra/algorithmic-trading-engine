@@ -196,7 +196,10 @@ deploy_if_behind() {
     local g_dow g_hhmm g_closed g_live
     g_dow="$(date +%u)"; g_hhmm="$(date +%H%M)"
     g_closed=0; [ "$closed_on" = "$(date +%F)" ] && g_closed=1
-    g_live="$(live_runs)"
+    # The API is asked only when the clock would allow a deploy; in the
+    # session the answer is no whatever the count.
+    g_live=0
+    if deploy_clock_allows "$g_dow" "$g_hhmm" "$g_closed" && ! deploy_now_requested; then g_live="$(live_runs)"; fi
     if ! deploy_allowed "$g_dow" "$g_hhmm" "$g_closed" "$g_live"; then
       if [ "$deferred_sha" != "$head" ]; then
         local why; why="$(deploy_block_reason "$g_dow" "$g_hhmm" "$g_closed" "$g_live")"
@@ -207,10 +210,10 @@ deploy_if_behind() {
       fi
       return
     fi
-    if [ -f "$DEPLOY_NOW_FILE" ]; then
+    if deploy_now_requested; then
       say "deploy-now requested — building $to_short despite the desk not being quiet"
-      rm -f "$DEPLOY_NOW_FILE"
     fi
+    rm -f "$DEPLOY_NOW_FILE"
   fi
 
   if [ "$web_changed" -gt 0 ]; then

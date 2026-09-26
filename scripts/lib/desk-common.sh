@@ -269,9 +269,25 @@ _api_call() {
 DEPLOY_NOW_FILE="$DESK_STATE_DIR/deploy-now"
 DEPLOY_MORNING_END="${DEPLOY_MORNING_END:-0840}"
 
+# deploy-now is honoured for an hour: touched when nothing was waiting, it
+# used to linger until the next web or API commit, days later perhaps, which
+# then went out in the middle of a session.
+DEPLOY_NOW_MINUTES="${DEPLOY_NOW_MINUTES:-60}"
+
+deploy_now_requested() {
+  [ -f "$DEPLOY_NOW_FILE" ] && [ -n "$(find "$DEPLOY_NOW_FILE" -mmin "-$DEPLOY_NOW_MINUTES" 2>/dev/null)" ]
+}
+
+# Whether the clock alone lets a deploy through, before anyone asks the API
+# how many runs are live: in the session the answer is no whatever the count.
+deploy_clock_allows() {
+  local dow="$1" hhmm="$2" closed="$3"
+  [ "$dow" -ge 6 ] || [ "$((10#$hhmm))" -lt "$((10#$DEPLOY_MORNING_END))" ] || [ "$closed" = "1" ]
+}
+
 deploy_allowed() {
   local dow="$1" hhmm="$2" closed="$3" live="$4"
-  [ -f "$DEPLOY_NOW_FILE" ] && return 0
+  deploy_now_requested && return 0
   [ "$dow" -ge 6 ] && return 0
   [ "$live" = "0" ] || return 1
   if [ "$((10#$hhmm))" -lt "$((10#$DEPLOY_MORNING_END))" ] || [ "$closed" = "1" ]; then
@@ -293,12 +309,27 @@ deploy_block_reason() {
 }
 
 live_runs() {
-  local tok body
-  tok="$(admin_token 2>/dev/null)" || { echo -1; return; }
-  body="$(curl -fsS --max-time 15 "$API/api/Strategy/runs?status=Running" -H "Authorization: Bearer $tok" 2>/dev/null)" || { echo -1; return; }
-  # Counted from the captured body, not through a pipeline: under pipefail a
-  # grep that matches nothing fails the pipe, and the `|| echo -1` fallback
-  # then printed "0" AND "-1" — zero live runs read as "cannot tell".
-  local n; n="$(printf '%s' "$body" | grep -o '"runId"' | wc -l)"
-  echo "${n// /}"
+  # Strategy runs with a runner behind them. Not every Running row: the manual
+  # order book is Running by design with no runner, and holds positions across
+  # days, so counting it kept the pre-open deploy window shut; a row whose
+  # runner is gone (isActive false) is not a run a restart could disturb.
+  # Through api_get, whose token is cached: a fresh admin sign-in on every
+  # two-minute check put ~430 "signed in" rows a day in the activity log.
+  local body
+  body="$(api_get '/api/Strategy/runs?status=Running&take=500' 2>/dev/null)" || { echo -1; return; }
+  # Counted from the captured body, not through a grep pipeline: under
+  # pipefail a grep that matches nothing fails the pipe, and the `|| echo -1`
+  # fallback then printed "0" AND "-1" — zero live runs read as "cannot tell".
+  BODY="$body" python3 -c '
+import json, os
+try:
+    rows = json.loads(os.environ["BODY"])
+except Exception:
+    print(-1)
+    raise SystemExit
+if isinstance(rows, dict):
+    rows = rows.get("items") or rows.get("runs") or []
+print(sum(1 for r in rows if isinstance(r, dict)
+          and r.get("isActive") is not False
+          and str(r.get("strategyName") or "") != "Manual"))' 2>/dev/null || echo -1
 }
