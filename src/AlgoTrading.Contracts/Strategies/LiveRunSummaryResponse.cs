@@ -63,8 +63,23 @@ public class LiveRunSummaryResponse
     /// <summary>Seconds from start to stop (to now while active).</summary>
     public long DurationSeconds { get; set; }
 
-    /// <summary>Σ realized P&amp;L of every position of the run (open ones included), minus charges (none for live runs today).</summary>
+    /// <summary>
+    /// Realized P&amp;L after the statutory charges of every fill:
+    /// <see cref="GrossPnl"/> − <see cref="Charges"/>. Until 27 Sep this was the
+    /// gross, labelled net — a run could read as a profit its charges had
+    /// already turned into a loss.
+    /// </summary>
     public decimal NetPnl { get; set; }
+
+    /// <summary>Σ realized P&amp;L of every position of the run, before any charge.</summary>
+    public decimal GrossPnl { get; set; }
+
+    /// <summary>
+    /// Brokerage, STT, exchange and SEBI fees, stamp duty and GST on the run's
+    /// fills (Application.Risk.OptionCharges, the engine's own model). Slippage
+    /// and the spread are not included: paper fills are at the last price.
+    /// </summary>
+    public decimal Charges { get; set; }
 
     public decimal RealizedPnl { get; set; }
 
@@ -79,7 +94,7 @@ public class LiveRunSummaryResponse
     /// <summary>Distinct position groups (OPEN_GROUP) the run created.</summary>
     public int Groups { get; set; }
 
-    /// <summary>Flat rupees per lot per fill netted into <see cref="NetPnl"/>; live runs carry no charges (0).</summary>
+    /// <summary>Kept for older consoles; always 0. <see cref="Charges"/> carries the charges now.</summary>
     public decimal ChargesPerLot { get; set; }
 
     /// <summary>Capital the open legs tie up while active; null when unknown (finished runs).</summary>

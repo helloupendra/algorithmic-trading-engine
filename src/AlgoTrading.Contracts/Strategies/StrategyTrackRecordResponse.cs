@@ -69,6 +69,13 @@ public class StrategyTrackRecordResponse
     /// <summary>Σ realized P&amp;L over every trading run in scope, finished or not.</summary>
     public decimal NetPnl { get; set; }
 
+    /// <summary>
+    /// Statutory charges on every fill of the trading runs. NetPnl, the win and
+    /// loss counts, and the best and worst run are all after these: a run whose
+    /// charges ate its gross did not win.
+    /// </summary>
+    public decimal Charges { get; set; }
+
     /// <summary>Σ unrealized P&amp;L of the runs still going, at the latest mark; 0 when none are.</summary>
     public decimal OpenPnl { get; set; }
 
@@ -90,12 +97,13 @@ public class StrategyTrackRecordResponse
     public StrategyTrackRecordRunRef? WorstRun { get; set; }
 
     /// <summary>
-    /// True while the P&amp;L above is gross of brokerage, STT and slippage —
-    /// live runs carry no charges today (LiveRunSummaryResponse.ChargesPerLot
-    /// is 0). The console shows its caveat from this flag alone, so the day
-    /// charges are netted in, the caveat goes away with them.
+    /// True while the P&amp;L above is gross of brokerage and statutory charges.
+    /// Since 27 Sep it is not: every fill is charged (Application.Risk.OptionCharges),
+    /// so this is false and the console's "before charges" caveat is gone. What
+    /// is still left out is the bid–ask spread — paper fills are at the last
+    /// price — and the console says that instead.
     /// </summary>
-    public bool PnlIsGrossOfCharges { get; set; } = true;
+    public bool PnlIsGrossOfCharges { get; set; }
 
     // ----------------------------------------------------------------- when
 

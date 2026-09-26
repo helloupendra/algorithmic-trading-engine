@@ -684,8 +684,12 @@ export interface LiveRunSummary {
   /** Who ended it: a user name, "runner", "api", "system" or "risk-guard". */
   stoppedBy: string | null
   durationSeconds: number | null
-  /** Σ realized P&L of every position of the run. */
+  /** Realized P&L after the statutory charges of every fill (grossPnl − charges). */
   netPnl: number
+  /** Realized P&L before any charge; absent on an older API. */
+  grossPnl?: number
+  /** Brokerage, STT, exchange and SEBI fees, stamp duty and GST on the run's fills. */
+  charges?: number
   realizedPnl: number
   /** Open positions at the last mark — only while the run is active, else 0. */
   unrealizedPnl: number
@@ -778,6 +782,8 @@ export interface StrategyTrackRecord {
 
   /** True while live runs carry no charges — the P&L above is then gross of brokerage, STT and slippage. */
   pnlIsGrossOfCharges: boolean
+  /** Statutory charges netted into the P&L above; absent on an older API. */
+  charges?: number
 
   firstRunUtc: string | null
   lastRunUtc: string | null
