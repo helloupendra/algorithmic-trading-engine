@@ -156,24 +156,42 @@ public class DhanController : ControllerBase
     /// <summary>
     /// Sign in to Dhan now with the PIN and a TOTP code. <paramref name="trigger"/>
     /// is "console" for the button (always tries) or "morning job" for the 08:45
-    /// script, which is held back like the worker once Dhan has refused today.
+    /// script, which is held back like the worker with a 409 (switched off,
+    /// stopped for today even across a restart, or pausing after a failure) and,
+    /// within two minutes of a sign-in, answered with that one, not a new code.
     /// A failure is an error status, not 200 with ok:false: a caller that only
     /// checks the status must not read a refused PIN as a sign-in.
     /// </summary>
+    /// <remarks>
+    /// Takes no cancellation token. The morning job's curl gives up after 30
+    /// seconds; hanging up after Dhan had issued the token would have cancelled
+    /// the save and lost it, and spent the code. The sign-in is bounded without
+    /// it: 30 seconds for Dhan's answer, at most one TOTP step of waiting for a
+    /// fresh code, and one sign-in at a time.
+    /// </remarks>
     [HttpPost("auto-sign-in")]
     [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
     public async Task<IActionResult> AutoSignInNow(
         [FromServices] DhanAutoSignInService service,
-        [FromServices] DhanAutoSignInState state,
-        [FromQuery] string? trigger,
-        CancellationToken cancellationToken)
+        [FromServices] IOptionsMonitor<DhanSettings> settings,
+        [FromQuery] string? trigger)
     {
         string who = trigger == "morning job" ? "morning job" : "console";
-        if (who != "console" && !state.MayTryAutomatically(DateTime.UtcNow, out string why))
-            return Conflict(new { ok = false, message = $"Not tried: {why}. Press Connect, or Sign in now on the Dhan page." });
 
-        var result = await service.SignInAsync(who, who == "console" ? $"asked from the console by {User.Identity?.Name ?? "an admin"}" : "asked by the morning job", cancellationToken);
+        // The worker obeys this switch; the morning job's call used to go
+        // straight past it and sign in with the PIN anyway.
+        if (who != "console" && !settings.CurrentValue.AutoSignIn.Enabled)
+        {
+            return Conflict(new
+            {
+                ok = false,
+                message = "Not tried: the automatic Dhan sign-in is switched off (Dhan:AutoSignIn:Enabled is false). Press Connect, or Sign in now on the Dhan page.",
+            });
+        }
+
+        var result = await service.SignInAsync(who, who == "console" ? $"asked from the console by {User.Identity?.Name ?? "an admin"}" : "asked by the morning job", CancellationToken.None);
         if (result.Ok) return Ok(new { ok = true, message = result.Message, expiresUtc = result.ExpiresUtc });
+        if (!result.Tried) return Conflict(new { ok = false, message = $"{result.Message} Press Connect, or Sign in now on the Dhan page." });
 
         // 400 when it is not set up or Dhan said no; 502 when Dhan was not reached.
         int status = result.Failure == DhanSignInFailure.Unreachable

@@ -110,6 +110,10 @@ public class DhanAutoSignInSettings
     /// session closes is replaced inside it, while nothing is streaming yet:
     /// the 08:45 job starts the feeds, so the window ends before it.
     /// </summary>
+    /// <remarks>
+    /// Also the earliest the worker signs in on any day, even with no token at
+    /// all, so each day's token is taken at the same hour (see <see cref="DhanAutoSignInPolicy"/>).
+    /// </remarks>
     public TimeSpan MorningFromIst { get; set; } = new(8, 0, 0);
 
     public TimeSpan MorningUntilIst { get; set; } = new(8, 40, 0);
