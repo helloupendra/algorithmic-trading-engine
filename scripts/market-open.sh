@@ -32,7 +32,10 @@ export CHAIN_UNDERLYINGS="$(printf '%s' "$UNDERLYINGS" | tr ' ' ',')"
 #
 #   Strategy  UNDERLYING[,UNDERLYING...]  lots  [legTargetPoints]
 #
-# The fourth column matters: the 20-point leg target below was written for
+# It lives in config/morning-plan.txt (overridable with MARKET_OPEN_PLAN_FILE, or
+# MARKET_OPEN_PLAN for the lines themselves).
+#
+# The fourth column matters: the 20-point default leg target was written for
 # Ghost, which buys a single option. A straddle's legs and a crude option's
 # premium are not the same animal, so a strategy that wants a different number
 # says so here rather than inheriting one that happens to be there. An empty
@@ -42,19 +45,34 @@ export CHAIN_UNDERLYINGS="$(printf '%s' "$UNDERLYINGS" | tr ' ' ',')"
 # Every account in MARKET_OPEN_ACCOUNTS gets the whole plan, so the number of
 # runners started is accounts x lines x underlyings. Each runner is its own
 # Python process; the API refuses to go past StrategyRunner:MaxConcurrentProcesses.
-PLAN="${MARKET_OPEN_PLAN:-$(cat <<'PLANEOF'
-GhostTangentCrossings BANKNIFTY,NIFTY,SENSEX 2
-ChainFlowBuy BANKNIFTY,NIFTY,SENSEX 2
-SmcStructureBreak BANKNIFTY,NIFTY,SENSEX 2
-Fulcrum BANKNIFTY,NIFTY,SENSEX 2 -
-CrudeMomentum CRUDEOIL 2 -
-PLANEOF
-)}"
+PLAN_FILE="${MARKET_OPEN_PLAN_FILE:-$REPO_ROOT/config/morning-plan.txt}"
+if [ -z "${MARKET_OPEN_PLAN:-}" ] && [ -f "$PLAN_FILE" ]; then
+  # The plan and its accounts come from one file, which Sentinel also reads to
+  # check afterwards that everything asked for is actually running.
+  PLAN="$(grep -v '^[[:space:]]*#' "$PLAN_FILE" | grep -v '^[[:space:]]*$' | grep -vi '^[[:space:]]*accounts:')"
+  PLAN_ACCOUNTS="$(grep -i '^[[:space:]]*accounts:' "$PLAN_FILE" | head -1 | cut -d: -f2-)"
+else
+  PLAN="${MARKET_OPEN_PLAN:-}"
+  PLAN_ACCOUNTS=""
+fi
+# A missing plan is a morning with no runs. That is said on the phone, not
+# left as one line in desk.log for the evening.
+if [ -z "$PLAN" ]; then
+  echo "market-open: no plan — $PLAN_FILE is missing or empty and MARKET_OPEN_PLAN is unset" >&2
+  notify "AlgoTrading" "Morning run FAILED: no plan ($PLAN_FILE is missing or empty). Nothing was started."
+  exit 1
+fi
 
 # Platform user names whose accounts the plan is deployed into. The script signs
 # in as the admin and names the owner on each start, so no trader's password is
 # held anywhere. A name that does not exist is reported and the rest still run.
-ACCOUNTS="${MARKET_OPEN_ACCOUNTS:-admin coderforchange}"
+# No accounts at all is refused rather than quietly read as "admin only".
+ACCOUNTS="${MARKET_OPEN_ACCOUNTS:-$PLAN_ACCOUNTS}"
+if [ -z "$(printf '%s' "$ACCOUNTS" | tr -d '[:space:]')" ]; then
+  echo "market-open: the plan names no accounts — add an 'accounts:' line to $PLAN_FILE" >&2
+  notify "AlgoTrading" "Morning run FAILED: the plan names no accounts. Nothing was started."
+  exit 1
+fi
 
 # Lots for a plan line that leaves them out.
 LOTS_DEFAULT="${MARKET_OPEN_LOTS:-2}"
@@ -83,7 +101,14 @@ if [ -z "$CONSOLE" ]; then
   if curl -sf -o /dev/null http://localhost:5173 2>/dev/null; then CONSOLE=http://localhost:5173; else CONSOLE="$API"; fi
 fi
 
-fail() { say "FAILED: $1"; say "--- stopping here; nothing further was started ---"; exit 1; }
+# A failed morning is said on the phone, not only in a log nobody reads until
+# the evening: on 11 and 14 Sep "no FYERS sign-in by 1430" was one WARN line.
+fail() {
+  say "FAILED: $1"
+  say "--- stopping here; nothing further was started ---"
+  notify "AlgoTrading" "Morning run FAILED: $1"
+  exit 1
+}
 
 say "=== market-open: $(date '+%A %d %B %Y') ==="
 [ "$DRY_RUN" = 1 ] && say "(dry run — nothing will be started)"
@@ -214,6 +239,18 @@ else:
 ' 2>/dev/null || echo "no|could not read the answer"
 }
 
+start_dhan_primary() {  # makes Dhan the day's feed: today's ids, a fresh feed, the chain recorder
+  # Today's contracts (a new weekly expiry, new strikes) get their Dhan ids.
+  say "  mapping today's instruments to Dhan ids (about a minute) ..."
+  IMPORT="$(API_MAX_TIME=240 api_post /api/Dhan/instruments/import '{}' 2>/dev/null || true)"
+  say "  $(printf '%s' "$IMPORT" | head -c 200)"
+
+  stop_daemon "Dhan feed" "/api/Feeds/dhan/stop"
+  start_daemon "Dhan feed" "/api/Feeds/dhan/start"
+  start_daemon "Dhan chain recorder" "/api/Dhan/chain-poller/start"
+  DHAN_PRIMARY=1
+}
+
 if [ "$DRY_RUN" = 1 ]; then
   say "dry run: would check Dhan ($(dhan_state)), map instruments, start the Dhan feed and chain recorder"
 else
@@ -241,15 +278,7 @@ else
          fi ;;
     esac
 
-    # Today's contracts (a new weekly expiry, new strikes) get their Dhan ids.
-    say "  mapping today's instruments to Dhan ids (about a minute) ..."
-    IMPORT="$(API_MAX_TIME=240 api_post /api/Dhan/instruments/import '{}' 2>/dev/null || true)"
-    say "  $(printf '%s' "$IMPORT" | head -c 200)"
-
-    stop_daemon "Dhan feed" "/api/Feeds/dhan/stop"
-    start_daemon "Dhan feed" "/api/Feeds/dhan/start"
-    start_daemon "Dhan chain recorder" "/api/Dhan/chain-poller/start"
-    DHAN_PRIMARY=1
+    start_dhan_primary
   else
     warn "no Dhan sign-in by $DHAN_WAIT_UNTIL IST — FYERS will be the feed today"
   fi
@@ -276,7 +305,16 @@ fyers_try_refresh() {  # exit 0 when the token is (now) valid
   return 1
 }
 
-wait_for_fyers() {  # blocks until FYERS is signed in; fails the run at LOGIN_WAIT_UNTIL
+# Dhan signed in after 09:12, while the morning waits for FYERS: that is
+# enough to trade on, so it ends the wait. On 23 Sep the sign-in came at 10:36
+# and the desk kept waiting for FYERS regardless.
+dhan_came_up() {
+  [ "${DHAN_PRIMARY:-0}" = 0 ] || return 1
+  [ "${DHAN_FAILED_TODAY:-0}" = 0 ] || return 1
+  [ "$(dhan_state 2>/dev/null | cut -d'|' -f1)" = ok ]
+}
+
+wait_for_fyers() {  # blocks until FYERS (or, late, Dhan) is signed in; fails the run at LOGIN_WAIT_UNTIL
   say "  waiting for the FYERS sign-in — will keep watching until ${LOGIN_WAIT_UNTIL} IST"
   say "  (the token expired at 06:00; FYERS fixes that hour and has disabled refresh)"
 
@@ -289,8 +327,14 @@ wait_for_fyers() {  # blocks until FYERS is signed in; fails the run at LOGIN_WA
   LAST_NUDGE=$(date +%s)
   while ! connected; do
     NOW="$(date +%H%M)"
+    if dhan_came_up; then
+      say "  Dhan came up at $(date '+%H:%M') — using Dhan as today's feed; FYERS stays the backup"
+      notify "AlgoTrading" "Dhan signed in at $(date '+%H:%M') — the morning run carries on with Dhan."
+      start_dhan_primary
+      return 0
+    fi
     if [ "$NOW" -ge "$LOGIN_WAIT_UNTIL" ]; then
-      fail "no FYERS sign-in by ${LOGIN_WAIT_UNTIL} IST; nothing was started."
+      fail "no FYERS or Dhan sign-in by ${LOGIN_WAIT_UNTIL} IST; nothing was started."
     fi
 
     # A louder reminder at the open itself, then one every ten minutes: the
@@ -462,6 +506,10 @@ if [ "${TICKS:-0}" -lt 1 ] && [ "$DHAN_PRIMARY" = 1 ]; then
   notify "AlgoTrading" "Dhan feed delivered no prices after the open. Switched to FYERS; Dhan's option chain keeps recording."
   stop_daemon "Dhan feed" "/api/Feeds/dhan/stop"
   DHAN_PRIMARY=0
+  # Dhan is signed in but silent: the wait below must not read "Dhan is signed
+  # in" as Dhan coming up, or it would hand the day straight back to the feed
+  # that just failed.
+  DHAN_FAILED_TODAY=1
   # The morning did not wait for FYERS while Dhan was the feed; now it is needed.
   if ! connected; then
     say "  the FYERS feed needs a FYERS sign-in first"
@@ -545,6 +593,30 @@ sys.exit(1)
 ' 2>/dev/null
 }
 
+# >>> plan-line (also loaded by scripts/tests/market-open-plan.test.sh)
+# One plan line, read for one account:
+#   Strategy  UNDERLYING[,UNDERLYING...]  lots  [legTargetPoints | -]  [@account[,account]]
+# Prints "NAME SYMBOLS LOTS TARGET" when the line applies to the account, and
+# nothing when it does not (a comment, a blank, or an @-list without it).
+parse_plan_line() {  # line account default_lots default_target
+  local name symbols lots rest field target="" only=""
+  read -r name symbols lots rest <<<"$1"
+  [ -n "${name:-}" ] || return 0
+  case "$name" in \#*) return 0 ;; esac
+  for field in ${rest:-}; do
+    case "$field" in
+      @*) only="${field#@}" ;;
+      *) target="$field" ;;
+    esac
+  done
+  if [ -n "$only" ] && ! printf ',%s,' "$only" | tr '[:upper:]' '[:lower:]' \
+      | grep -qF ",$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]'),"; then
+    return 0
+  fi
+  echo "$name ${symbols:-} ${lots:-$3} ${target:-$4}"
+}
+# <<< plan-line
+
 # The rules as the API's RiskRulesDto (camelCase; leg rules in premium points,
 # day rules in rupees with scope "day"). Built per plan line, because the leg
 # target is the one rule a strategy may want its own.
@@ -574,12 +646,10 @@ for ACCOUNT in $ACCOUNTS; do
 
   say "--- $ACCOUNT (user $OWNER_ID) ---"
 
-  printf '%s\n' "$PLAN" | while read -r NAME SYMBOLS PLAN_LOTS PLAN_TARGET; do
-    [ -n "$NAME" ] || continue
-    case "$NAME" in \#*) continue ;; esac
-    PLAN_LOTS="${PLAN_LOTS:-$LOTS_DEFAULT}"
-    # No fourth column means the default; "-" means no leg target at all.
-    [ -n "${PLAN_TARGET:-}" ] || PLAN_TARGET="$LEG_TARGET_PTS"
+  printf '%s\n' "$PLAN" | while IFS= read -r LINE; do
+    PARSED="$(parse_plan_line "$LINE" "$ACCOUNT" "$LOTS_DEFAULT" "$LEG_TARGET_PTS")"
+    [ -n "$PARSED" ] || continue
+    read -r NAME SYMBOLS PLAN_LOTS PLAN_TARGET <<<"$PARSED"
     RISK_JSON="$(risk_json "$PLAN_TARGET")"
     RISK_TEXT="leg target $([ "$PLAN_TARGET" = "-" ] && echo none || echo "$PLAN_TARGET pts")"
 

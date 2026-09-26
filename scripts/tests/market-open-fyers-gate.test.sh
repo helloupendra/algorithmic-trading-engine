@@ -12,13 +12,21 @@ check() {  # description, condition result (0 = pass)
   if [ "$2" = 0 ]; then echo "  ok   $1"; else echo "  FAIL $1"; FAILS=$((FAILS + 1)); fi
 }
 
-run_case() {  # name, dhan_primary, connected_after_sleeps (-1 = never, 0 = already), clock HHMM
+run_case() {  # name, dhan_primary, connected_after_sleeps (-1 = never, 0 = already), clock HHMM,
+              # [dhan_ok_after_sleeps (-1 = never, the default)], [dhan_failed_today (0/1)]
   (
     OUT="$(mktemp)"
     trap 'cat "$OUT"' EXIT   # fail() exits the case; its lines must still reach the checks
     SLEEPS=0
     CONNECT_AFTER="$3"
     FAKE_HHMM="$4"
+    DHAN_OK_AFTER="${5:--1}"
+    DHAN_FAILED_TODAY="${6:-0}"
+    DHAN_PRIMARY="$2"
+    dhan_state() {
+      if [ "$DHAN_OK_AFTER" -ge 0 ] && [ "$SLEEPS" -ge "$DHAN_OK_AFTER" ]; then echo "ok|20.0|09:30"; else echo "no|not signed in"; fi
+    }
+    start_dhan_primary() { echo "start_dhan_primary" >>"$OUT"; DHAN_PRIMARY=1; }
     LOGIN_WAIT_UNTIL=1430
     CONSOLE=http://console
     IS_MAC=false
@@ -67,10 +75,21 @@ check "no refresh, no wait" "$(grep -q 'already valid' <<<"$out" && ! grep -q 'a
 
 echo "FYERS is the feed and nobody signs in by 14:30:"
 out="$(run_case late 0 -1 1430)"
-check "fails the run" "$(grep -q 'fail: no FYERS sign-in by 1430' <<<"$out"; echo $?)"
+check "fails the run" "$(grep -q 'fail: no FYERS or Dhan sign-in by 1430' <<<"$out"; echo $?)"
 
 echo "Dhan went silent after the open (step 6) and FYERS is not signed in:"
 out="$(run_case fallback 0 1 0930)"
 check "waits for FYERS before its feed starts" "$(grep -q '^sleep' <<<"$out" && grep -q 'signed in at' <<<"$out"; echo $?)"
+
+echo "FYERS is the feed, but Dhan signs in during the wait (23 Sep: Dhan at 10:36):"
+out="$(run_case lateDhan 0 -1 0930 2)"
+check "ends the wait on Dhan" "$(grep -q 'Dhan came up' <<<"$out" && grep -q 'exit: 0' <<<"$out"; echo $?)"
+check "starts Dhan as the feed" "$(grep -q '^start_dhan_primary' <<<"$out"; echo $?)"
+check "tells the owner" "$(grep -q 'notify: Dhan signed in at' <<<"$out"; echo $?)"
+
+echo "Dhan was dropped after the open for delivering nothing, and is still 'signed in':"
+out="$(run_case silentDhan 0 1 0930 0 1)"
+check "does not hand the day back to Dhan" "$(! grep -q 'start_dhan_primary' <<<"$out"; echo $?)"
+check "waits for FYERS instead" "$(grep -q 'signed in at' <<<"$out"; echo $?)"
 
 if [ "$FAILS" = 0 ]; then echo "all passed"; else echo "$FAILS failed"; exit 1; fi
