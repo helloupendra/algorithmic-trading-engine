@@ -619,11 +619,26 @@ class Watcher:
             lines.append(f"Stopped by: {esc(run['stoppedBy'])}")
         lines.append(f"Run:        #{run.get('runId')}")
 
+        # A runner that died, or a run that lasted under a minute, is not a
+        # result: it is a missing run. On 24 Sep sixteen died 1-5 s after
+        # starting (a 429 on sign-in), and their "stopped · ₹0.00" at severity
+        # info sat among a hundred ordinary messages until 11:20.
+        died = str(run.get("stopReason") or "").startswith("Runner exited")
+        try:
+            brief = run.get("durationSeconds") is not None and float(run["durationSeconds"]) < 60
+        except (TypeError, ValueError):
+            brief = False
+        if died or brief:
+            severity = "warning"
+            lines.insert(1, "⚠️ It ended by itself, not by a rule or a person — this run is missing, not finished.")
+        else:
+            severity = "success" if net > 0 else ("warning" if net < 0 else "info")
+
         self._publisher.publish(
             title=f"{account_tag(run)}Strategy stopped · {name} · {underlying} · {money(net)}",
             message="\n".join(lines),
             source="strategyrun",
-            severity="success" if net > 0 else ("warning" if net < 0 else "info"),
+            severity=severity,
             underlying=underlying,
             symbol=run.get("spotSymbol"),
             run_id=run.get("runId"),

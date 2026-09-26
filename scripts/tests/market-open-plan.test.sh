@@ -37,4 +37,14 @@ count() {  # account -> runs the plan starts for it
 check "admin gets 13 runs (Fulcrum included)"       "13" "$(count admin)"
 check "coderforchange gets 10 runs (no Fulcrum)"    "10" "$(count coderforchange)"
 
+echo "the tally's expected runs (expected_runs), from the same parser"
+eval "$(sed -n '/^expected_runs() {/,/^}/p' scripts/market-open.sh)"
+ACCOUNTS="admin coderforchange" LOTS_DEFAULT=2 LEG_TARGET_PTS=20
+EXPECTED="$(expected_runs)"
+check "23 planned runs in all"                      "23" "$(printf '%s\n' "$EXPECTED" | grep -c .)"
+check "one line per account, strategy, underlying"  "0"  "$(printf '%s\n' "$EXPECTED" | grep -vc '^[^|]*|[^|]*|[^|]*$')"
+check "no Fulcrum for coderforchange"               "0"  "$(printf '%s\n' "$EXPECTED" | grep -c '^coderforchange|Fulcrum|')"
+check "Fulcrum on three indices for admin"          "3"  "$(printf '%s\n' "$EXPECTED" | grep -c '^admin|Fulcrum|')"
+check "crude in both accounts"                      "2"  "$(printf '%s\n' "$EXPECTED" | grep -c '|CrudeMomentum|CRUDEOIL$')"
+
 [ "$FAILS" -eq 0 ] && echo "all passed" || { echo "$FAILS failed"; exit 1; }

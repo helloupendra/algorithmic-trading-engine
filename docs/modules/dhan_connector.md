@@ -176,6 +176,12 @@ Service account behind the live feed may call too.
 7. After the open, the script counts fresh prices. If the Dhan feed delivered
    none, it stops it and starts the FYERS feed instead; Dhan's chain keeps
    recording.
+8. It deploys the plan (`config/morning-plan.txt`) into every account, then,
+   a minute later, **counts the live runs against the plan** and sends the
+   answer to Telegram: `Morning plan 23/23 live`, or `Morning plan SHORT 21/23
+   live — <account> <strategy> <underlying>: <why it ended>`. A short or unread
+   count exits 2. A runner that dies, or a run that lasts under a minute, is
+   also a warning on its own, not an ordinary "stopped" message.
 
 Only one live feed runs at a time. Bars and latest quotes are kept per symbol,
 not per vendor, so two feeds on one contract would build a bar from two vendors'

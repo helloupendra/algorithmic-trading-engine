@@ -717,20 +717,61 @@ for ACCOUNT in $ACCOUNTS; do
   done
 done
 
-# The counters above live in a subshell (the pipeline into `while`), so the
-# tally is read back from the API rather than carried out of it — and reading
-# it back is the better check anyway: it counts what is actually running, not
-# what this script believes it started.
-FINAL="$(api_get '/api/Strategy/runs?status=Running&take=500' 2>/dev/null || echo '')"
-# The list goes in through the environment, not a pipe: a heredoc IS the
-# script's stdin, so a piped body would be thrown away and every morning would
-# end with "could not read the running list back".
-FINAL="$FINAL" python3 - <<'PYEOF' | while read -r LINE; do say "$LINE"; done
+# --- 8. the tally: the plan against what is actually live -------------------
+# Until 27 Sep this printed the Running rows seconds after the last start and
+# compared them with nothing. On 24 Sep that read "10 run(s) live" against 26
+# planned — sixteen runners had died 1-5 s after starting — and the job exited
+# 0. The expected runs come from the same parser the deploy loop used, so the
+# two cannot disagree about what the plan says; scripts/lib/morning_tally.py
+# does the matching (tested in the engine's tests/test_morning_tally.py).
+expected_runs() {  # every planned run as "account|strategy|underlying"
+  local account line parsed name symbols u
+  for account in $ACCOUNTS; do
+    while IFS= read -r line; do
+      parsed="$(parse_plan_line "$line" "$account" "$LOTS_DEFAULT" "$LEG_TARGET_PTS")"
+      [ -n "$parsed" ] || continue
+      read -r name symbols _ _ <<<"$parsed"
+      for u in $(printf '%s' "$symbols" | tr ',' ' '); do echo "$account|$name|$u"; done
+    done <<<"$PLAN"
+  done
+}
+
+EXPECTED="$(expected_runs)"
+PLANNED_COUNT="$(printf '%s\n' "$EXPECTED" | grep -c . || true)"
+TALLY_RC=0
+
+if [ "$DRY_RUN" = 1 ]; then
+  say "dry run: the tally would expect $PLANNED_COUNT run(s) live"
+else
+  # A runner that dies does so within seconds (24 Sep: 1-5 s), so the first
+  # count waits a minute; a short count is taken again every 30 s, up to three
+  # minutes in all, for a slow start to catch up.
+  TALLY_FIRST="${MARKET_OPEN_TALLY_FIRST:-60}"
+  TALLY_UNTIL=$(( $(date +%s) + ${MARKET_OPEN_TALLY_WAIT:-180} ))
+  say "counting the live runs against the plan ($PLANNED_COUNT planned) in ${TALLY_FIRST} s ..."
+  sleep "$TALLY_FIRST"
+  while :; do
+    FINAL="$(api_get '/api/Strategy/runs?status=Running&take=500' 2>/dev/null)" || FINAL=""
+    TODAY_RUNS="$(api_get "/api/Strategy/runs?fromDate=$(date +%F)&take=500" 2>/dev/null)" || TODAY_RUNS=""
+    REPORT="$(EXPECTED="$EXPECTED" USERS="$USERS" RUNNING="$FINAL" TODAY="$TODAY_RUNS" \
+      python3 "$REPO_ROOT/scripts/lib/morning_tally.py")" && TALLY_RC=0 || TALLY_RC=$?
+    [ "$TALLY_RC" = 0 ] && break
+    [ "$(date +%s)" -ge "$TALLY_UNTIL" ] && break
+    sleep 30
+  done
+
+  printf '%s\n' "$REPORT" | tail -n +2 | while IFS= read -r LINE; do say "$LINE"; done
+  SUMMARY="$(printf '%s\n' "$REPORT" | head -1)"
+  [ "$TALLY_RC" = 0 ] || warn "$SUMMARY"
+  notify "AlgoTrading" "${SUMMARY:-Morning plan: the tally could not be taken}"
+
+  # Who runs what, per account, as before: the tally says what is missing,
+  # this says what is there.
+  FINAL="$FINAL" python3 - <<'PYEOF' | while read -r LINE; do say "$LINE"; done
 import json, os, sys
 try:
     runs = json.loads(os.environ.get("FINAL") or "[]")
 except Exception:
-    print("could not read the running list back")
     sys.exit(0)
 if isinstance(runs, dict):
     runs = runs.get("items") or runs.get("runs") or []
@@ -739,10 +780,13 @@ for run in runs if isinstance(runs, list) else []:
     who = str(run.get("userName") or run.get("userId") or "?")
     by_user.setdefault(who, []).append(
         str(run.get("strategyName")) + " on " + str(run.get("underlying")))
-total = sum(len(v) for v in by_user.values())
-print("=== " + str(total) + " run(s) live ===")
 for user, rows in sorted(by_user.items()):
     print("  " + user + ": " + str(len(rows)) + " - " + ", ".join(sorted(rows)))
 PYEOF
+fi
 
 say "Watch them at $CONSOLE/admin/strategies/live — or read this file."
+
+# Short (or unknown) is a failed morning for whoever reads the exit code: the
+# desk's log, and the once-a-day marker that is coming (audit fix 9).
+[ "$TALLY_RC" = 0 ] || exit 2
