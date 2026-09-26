@@ -81,6 +81,18 @@ jobs:
         run: |
           bash -n scripts/setup.sh
           bash -n scripts/load-data.sh
+          bash -n scripts/desk.sh
+          bash -n scripts/market-open.sh
+          bash -n scripts/market-close.sh
+
+      # The desk's own decisions — the deploy gate, the morning FYERS gate —
+      # are plain bash with their clock and API stubbed, so they run here.
+      - name: Script tests
+        run: |
+          for t in scripts/tests/*.test.sh; do
+            echo "== $t"
+            bash "$t"
+          done
 
       - name: ShellCheck
         uses: ludeeus/action-shellcheck@master

@@ -116,6 +116,7 @@ fails=0
 last_deploy_check=0
 opened_on=""
 closed_on=""
+deferred_sha=""   # the commit whose deferral was already announced (once per commit)
 last_commit="$(git rev-parse --short HEAD 2>/dev/null || echo '?')"
 last_deploy_note="none since desk started"
 
@@ -180,11 +181,37 @@ deploy_if_behind() {
 
   local web_changed api_changed engine_changed
   web_changed="$(printf '%s\n' "$changed" | grep -c '^web/' || true)"
-  api_changed="$(printf '%s\n' "$changed" | grep -cE '^src/AlgoTrading\.(Api|Application|Domain|Infrastructure|Contracts)/|^tests/' || true)"
+  api_changed="$(printf '%s\n' "$changed" | grep -cE '^src/AlgoTrading\.(Api|Application|Domain|Infrastructure|Contracts)/' || true)"
   engine_changed="$(printf '%s\n' "$changed" | grep -c '^src/AlgoTrading.PythonEngine/' || true)"
   local notes=() steps=()
   if [ "$how" = "pulled" ]; then steps+=("Pulled from GitHub|ok|$(git log --oneline "$deployed_sha..$head" | wc -l | tr -d ' ') commit(s), $(printf '%s\n' "$changed" | wc -l | tr -d ' ') file(s)")
   else steps+=("Committed on this machine|ok|$(git log --oneline "$deployed_sha..$head" | wc -l | tr -d ' ') commit(s), $(printf '%s\n' "$changed" | wc -l | tr -d ' ') file(s) - nothing to pull"); fi
+
+  # Build and restart only on a quiet desk (see deploy_allowed). The pull above
+  # already happened, so scripts and the Python engine are current for anything
+  # started from now on; what waits is the console build and the API restart.
+  # deployed_sha is left alone, so every check tries again and the deploy goes
+  # out by itself once the desk is quiet.
+  if [ "$web_changed" -gt 0 ] || [ "$api_changed" -gt 0 ]; then
+    local g_dow g_hhmm g_closed g_live
+    g_dow="$(date +%u)"; g_hhmm="$(date +%H%M)"
+    g_closed=0; [ "$closed_on" = "$(date +%F)" ] && g_closed=1
+    g_live="$(live_runs)"
+    if ! deploy_allowed "$g_dow" "$g_hhmm" "$g_closed" "$g_live"; then
+      if [ "$deferred_sha" != "$head" ]; then
+        local why; why="$(deploy_block_reason "$g_dow" "$g_hhmm" "$g_closed" "$g_live")"
+        say "deploy of $to_short deferred — $why; it goes out by itself when the desk is quiet (or: touch \"$DEPLOY_NOW_FILE\")"
+        record skipped "Deferred: $why" "${steps[@]}" "Build and restart|deferred|$why - retried every check"
+        notify "AlgoTrading deploy deferred" "$to_short waits: $why"
+        deferred_sha="$head"
+      fi
+      return
+    fi
+    if [ -f "$DEPLOY_NOW_FILE" ]; then
+      say "deploy-now requested — building $to_short despite the desk not being quiet"
+      rm -f "$DEPLOY_NOW_FILE"
+    fi
+  fi
 
   if [ "$web_changed" -gt 0 ]; then
     if ( cd web && npm ci --silent >>"$LOG" 2>&1 || true ) && web_build; then notes+=("console rebuilt"); steps+=("Console rebuilt|ok|New bundle is being served - no restart needed"); else notes+=("console build FAILED"); steps+=("Console rebuilt|failed|Build failed - the old bundle is still being served"); fi
