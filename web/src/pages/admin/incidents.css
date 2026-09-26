@@ -1,0 +1,84 @@
+/* Incidents (System → Incidents): the parts the shared table classes do not cover. */
+
+/* Critical reads louder than high without a new colour: the same red, filled. */
+.badge.incident-sev--critical {
+  background: var(--neg);
+  border-color: var(--neg);
+  color: var(--bg0);
+}
+
+/* The title cell is the row's toggle. Plain text that happens to be a button,
+   so keyboard users can open a row; the click itself is handled by the row. */
+.incident-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 550;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+  white-space: normal;
+  min-width: 240px;
+  max-width: 460px;
+}
+.incident-toggle:focus-visible { outline: 2px solid var(--brand-line); outline-offset: 2px; border-radius: 3px; }
+.incident-toggle__caret { color: var(--text-3); flex: none; width: 10px; }
+
+.incident-where {
+  display: inline-block;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
+.incident-row--open td { background: color-mix(in srgb, var(--surface2) 70%, transparent); }
+
+/* The expanded part: prose, so it wraps, unlike the rest of the table. */
+.incident-detail td {
+  white-space: normal;
+  background: var(--bg0);
+  padding: 12px 14px 14px 34px;
+}
+.table tbody tr.incident-detail:hover td { background: var(--bg0); }
+
+.incident-detail__body { max-width: 92ch; }
+.incident-detail__body > * + * { margin-top: 12px; }
+.incident-detail__summary { margin: 0; color: var(--text); font-size: 13px; line-height: 1.5; }
+.incident-detail__label { margin: 0 0 5px; }
+
+.incident-evidence {
+  list-style: none;
+  margin: 0;
+  padding: 8px 11px;
+  background: var(--bg1);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-2);
+}
+.incident-evidence li { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.incident-detail__suggestion { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-2); }
+
+.incident-detail__meta { font-size: 12px; color: var(--text-3); overflow-wrap: anywhere; }
+
+.incident-detail__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.incident-detail__actions .small-note { margin: 0; }
+
+/* The table has to fit the page, not scroll sideways: "acknowledged" is the
+   longest status and was being cut to "acknowl…" at the right edge. When a
+   problem was first seen lives in the opened row; the table shows how often
+   and how recently. */
+.incident-status, .incident-seen { white-space: nowrap; }

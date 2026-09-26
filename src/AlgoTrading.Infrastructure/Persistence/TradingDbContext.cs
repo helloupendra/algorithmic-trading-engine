@@ -84,6 +84,12 @@ public class TradingDbContext : DbContext
     public DbSet<RiskEvent> RiskEvents => Set<RiskEvent>();
     public DbSet<AlertEvent> AlertEvents => Set<AlertEvent>();
 
+    /// <summary>What Sentinel found wrong on the desk. Sentinel writes these rows directly; see <see cref="Incident"/>.</summary>
+    public DbSet<Incident> Incidents => Set<Incident>();
+
+    /// <summary>One row: when Sentinel last finished a round of checks. See <see cref="SentinelHeartbeat"/>.</summary>
+    public DbSet<SentinelHeartbeat> SentinelHeartbeats => Set<SentinelHeartbeat>();
+
     /// <summary>What the candle-pattern scanner watches and whether it notifies.</summary>
     public DbSet<CandlePatternRule> CandlePatternRules => Set<CandlePatternRule>();
 
