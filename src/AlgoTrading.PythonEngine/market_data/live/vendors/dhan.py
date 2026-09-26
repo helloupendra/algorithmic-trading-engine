@@ -24,13 +24,14 @@ handled: whether a trade time is true UTC or IST wall-clock, the index packet's
 layout, and whether one websocket frame can carry several packets.
 """
 
+import base64
 import json
 import math
 import os
 import struct
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 from urllib.parse import urlencode
 
@@ -341,6 +342,38 @@ def _looks_like_header(data, offset) -> bool:
     return size is None or len(data) - offset >= size
 
 
+_IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def token_expiry(token) -> datetime | None:
+    """
+    When a Dhan access token stops working, from its own `exp` claim: a Dhan
+    token is a JWT. None for anything that is not one, or names no expiry —
+    such a token is offered as it always was, and Dhan stays the judge. The
+    signature is not checked: this only decides whether a connect is worth
+    trying, never whether a token is genuine. (The API reads a configured
+    token's expiry the same way, in DhanJwt.)
+    """
+    parts = str(token or "").split(".")
+    if len(parts) != 3:
+        return None
+    payload = parts[1]
+    try:
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        exp = claims.get("exp") if isinstance(claims, dict) else None
+        if isinstance(exp, bool) or not isinstance(exp, (int, float)):
+            return None
+        return datetime.fromtimestamp(exp, tz=timezone.utc)
+    except (ValueError, OverflowError, OSError):
+        # Not base64, not JSON, or an exp no calendar holds: not a JWT we can read.
+        return None
+
+
+def _ist(moment: datetime) -> str:
+    """ "15 Sep 15:20 IST" — the desk's clock, in the form the API's own message uses."""
+    return f"{moment.astimezone(_IST):%d %b %H:%M} IST"
+
+
 def _credentials_from_env_file():
     """
     The Dhan credential as .env holds it now — the fallback when the API has no
@@ -381,6 +414,12 @@ class DhanFeed(VendorFeed):
     #: refused ones exist. Someone has to press Connect; a minute of slack
     #: either way is nothing, a request every second is noise in two logs.
     TOKEN_REPLACEMENT_POLL_SECONDS = 30
+
+    #: A token whose own expiry is this close is passed over as if it had
+    #: expired: it would be dropped moments after the connect, and a minute
+    #: covers the clocks on this box and Dhan's not agreeing. The API skips a
+    #: configured token by the same margin.
+    TOKEN_EXPIRY_MARGIN_SECONDS = 60
 
     #: How long the API's universe is used before asking again. It follows the
     #: money — strikes move as the index does — so it goes stale in minutes,
@@ -436,6 +475,8 @@ class DhanFeed(VendorFeed):
         self._reported_unresolved: set[str] = set()
 
         self._credentials_source = credentials_source or _credentials_from_env_file
+        # Wall-clock UTC, for reading trade times and token expiries.
+        # Injectable so the tests do not depend on what day they run.
         self._now = now or (lambda: datetime.now(timezone.utc))
         self._sleep = sleep
         # Monotonic seconds, for conflation and the universe cache. Injectable
@@ -523,9 +564,20 @@ class DhanFeed(VendorFeed):
 
         A Dhan token lasts a day, and reconnecting with one Dhan has refused
         would be refused again every few seconds. So a refused credential is
-        never offered again, from any source, and while nothing else exists this
-        asks the API and .env every TOKEN_REPLACEMENT_POLL_SECONDS, saying so
-        once. The same wait covers a first start with no credential anywhere.
+        never offered again, from any source. Nor is one past its own expiry
+        (or within TOKEN_EXPIRY_MARGIN_SECONDS of it), and that has to be read
+        from the token, because Dhan never says so: it accepts the socket from
+        a dead token and drops it without a disconnect code, so no refusal is
+        ever recorded. On 16 Sep that meant 238 reconnects on an expired token,
+        until Dhan answered 429 and blocked the client id. A drop alone is no
+        proof of a dead token — on 25-26 Sep a valid one was dropped 9 times
+        and recovered each time — its expiry is.
+
+        While nothing usable exists this asks the API and .env every
+        TOKEN_REPLACEMENT_POLL_SECONDS, saying so once. The same wait covers a
+        first start with no credential anywhere. A credential taken from a
+        later source is said with why each earlier one was passed over, so a
+        feed on its fallback shows what is wrong with the one it should be on.
         """
         if not_this:
             self._rejected.add(tuple(not_this))
@@ -533,14 +585,21 @@ class DhanFeed(VendorFeed):
         while True:
             reasons = []
             for credential, where in self._credentials(reasons):
+                expired = self._expired(credential[1])
+                if expired:
+                    reasons.append(f"the token from {where} {expired}")
+                    continue
                 if credential in self._rejected:
                     reasons.append(f"the one from {where} was already refused")
                     continue
                 self._client_id, self._access_token = credential
-                # Redacted although it names only a source and an expiry: the
-                # text comes from the API, and the token must not reach a log
-                # even if the API misbehaves.
-                print(f"[dhan] using the Dhan credential from {self._redact(where)}.", flush=True)
+                # Redacted although it names only sources, reasons and an
+                # expiry: some of the text comes from the API, and the token
+                # must not reach a log even if the API misbehaves.
+                said = f"using the Dhan credential from {where}"
+                if reasons:
+                    said = f"{'; '.join(reasons)} — {said}"
+                print(f"[dhan] {self._redact(said)}.", flush=True)
                 return credential
             if not waiting_said:
                 print(f"[dhan] no usable Dhan credential ({self._redact('; '.join(reasons)) or 'none found'}) — press Connect "
@@ -549,11 +608,26 @@ class DhanFeed(VendorFeed):
                 waiting_said = True
             self._sleep(self.TOKEN_REPLACEMENT_POLL_SECONDS)
 
+    def _expired(self, token):
+        """
+        "expired 15 Sep 15:20 IST" when a token's own expiry has passed or is
+        within TOKEN_EXPIRY_MARGIN_SECONDS; None while it is further off, or
+        when the token names none (not a JWT: offered as it always was).
+        """
+        end = token_expiry(token)
+        if end is None:
+            return None
+        now = self._now()
+        if (end - now).total_seconds() > self.TOKEN_EXPIRY_MARGIN_SECONDS:
+            return None
+        return f"{'expired' if end <= now else 'expires'} {_ist(end)}"
+
     def _credentials(self, reasons):
         """
         Yields (credential, where it came from), freshest source first, asking
         each only when the one before gave nothing usable. Why a source gave
-        nothing goes into `reasons`, for the one line said while waiting.
+        nothing goes into `reasons`, for the line said while waiting or with
+        the credential a later source gave.
         """
         from_api, detail = self._credentials_from_api()
         if from_api is not None:
@@ -578,14 +652,22 @@ class DhanFeed(VendorFeed):
         """
         ((client id, token), where) from GET /api/Dhan/session, or (None, why
         not). Anything short of both halves — the API down, 404 because nobody
-        has signed in and no token is configured, an odd body — is None, and
-        .env is asked next. `where` names the API's source and expiry (neither
-        is a secret) so the log says which token the feed is running on.
+        has signed in and no unexpired token is configured, an odd body — is
+        None, and .env is asked next. `where` names the API's source and expiry
+        (neither is a secret) so the log says which token the feed is running
+        on.
         """
         try:
             response = self._session().get(f"{self._api}/api/Dhan/session", verify=self._verify, timeout=15)
             if response.status_code == 404:
-                return None, "the API has no Dhan session"
+                # The API's message says why — nobody signed in today, or the
+                # token in its configuration has expired — and that is what
+                # someone reading a feed on its fallback needs to see.
+                try:
+                    message = str((response.json() or {}).get("message") or "").strip()
+                except Exception:
+                    message = ""
+                return None, "the API has no Dhan session (404" + (f": {message[:300]}" if message else "") + ")"
             response.raise_for_status()
             body = response.json()
             client_id = str(body.get("clientId") or "").strip()

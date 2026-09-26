@@ -198,9 +198,16 @@ The adapter is `market_data/live/vendors/dhan.py`, started from Live feeds like
 every other vendor.
 
 - **Credentials** come from `GET /api/Dhan/session`, so the daily Connect is
-  all it needs. `.env` (`DHAN_CLIENT_ID`, `DHAN_ACCESS_TOKEN`) is the fallback.
-  A refused token is remembered, and the feed waits, checking every 30 s, for a
-  different one.
+  all it needs. `.env` (`DHAN_CLIENT_ID`, `DHAN_ACCESS_TOKEN`) is the fallback,
+  then the environment the feed started with. A token whose own expiry (the
+  JWT's `exp`) has passed, or is under a minute away, is skipped from every
+  source: Dhan accepts a socket on a dead token and drops it without a reason,
+  which on 16 Sep meant 238 reconnects and a blocked client id. A refused token
+  is remembered and skipped too. When the feed runs on a fallback, its log says
+  why each earlier source was passed over, for example
+  `the API has no Dhan session (404: …); the token from .env expired 15 Sep 15:20 IST — using the Dhan credential from …`.
+  With nothing usable left it does not connect: it waits, checking every 30 s,
+  for a different token.
 - **What it streams:** the recording list, plus the universe from
   `GET /api/Dhan/universe`, asked again every 5 minutes so strikes follow the
   market:

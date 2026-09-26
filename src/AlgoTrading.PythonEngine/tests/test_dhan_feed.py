@@ -15,6 +15,7 @@ given its own credential source. A real token must never be able to appear in
 a failing assertion's diff.
 """
 
+import base64
 import importlib
 import json
 import os
@@ -22,7 +23,7 @@ import struct
 import threading
 import time
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 import requests
@@ -32,7 +33,7 @@ import _bootstrap  # noqa: F401
 from core.live.vendor_feed import FeedEvent
 from market_data.live.vendors import dhan
 from market_data.live.vendors.dhan import (DhanFeed, DhanInstrument, ltt_encodes_ist, ltt_to_utc,
-                                           parse_instrument)
+                                           parse_instrument, token_expiry)
 
 NOW = datetime(2026, 9, 14, 5, 0, 0, tzinfo=timezone.utc)          # 10:30 IST
 TRADE_UTC = int(datetime(2026, 9, 14, 4, 59, 58, tzinfo=timezone.utc).timestamp())
@@ -141,6 +142,17 @@ class FakeApi:
 
 def _session(client_id, token, source="sign-in", expires="2026-09-15T03:30:00Z"):
     return _response(200, {"clientId": client_id, "accessToken": token, "source": source, "expiresUtc": expires})
+
+
+def _jwt(claims, signature="signature-for-tests"):
+    """
+    A token shaped like Dhan's — a JWT — built here from `claims`, so no literal
+    one sits in the repository for the secret scanner to flag. Unsigned: the
+    feed reads the expiry and never checks a signature.
+    """
+    def part(value):
+        return base64.urlsafe_b64encode(json.dumps(value).encode()).rstrip(b"=").decode()
+    return ".".join([part({"typ": "JWT", "alg": "HS512"}), part(claims), signature])
 
 
 class Clock:
@@ -613,6 +625,113 @@ class ApiCredentialTests(unittest.TestCase):
         redacted = feed._redact(f"GET wss://x?token={self.API_TOKEN}&token=fresh-token-for-tests")
         self.assertNotIn(self.API_TOKEN, redacted)
         self.assertNotIn("fresh-token-for-tests", redacted)
+
+
+class ExpiredTokenTests(unittest.TestCase):
+    """
+    Dhan accepts the socket from an expired token and drops it without a
+    reason, so no refusal is ever recorded: on 16 Sep the feed reconnected 238
+    times on one, until Dhan blocked the client id. The token's own expiry is
+    read instead, a dead one is passed over from every source, and why is said.
+    """
+
+    # 08:45 IST on 16 Sep, when the morning job starts the feed.
+    NOW = datetime(2026, 9, 16, 3, 15, tzinfo=timezone.utc)
+    API_CLIENT = "api-client-for-tests"
+    # The token the server's .env still held on 27 Sep: expired 15 Sep 15:20 IST.
+    DEAD = _jwt({"exp": int(datetime(2026, 9, 15, 9, 50, 51, tzinfo=timezone.utc).timestamp())},
+                signature="dead-signature-for-tests")
+    FRESH = _jwt({"exp": int(datetime(2026, 9, 16, 23, 15, tzinfo=timezone.utc).timestamp())},
+                 signature="fresh-signature-for-tests")
+
+    def _feed(self, api, env_file=None, started_with=(None, None)):
+        self.sleeps, self.printed = [], []
+        feed = DhanFeed(*started_with, http=api, credentials_source=env_file or (lambda: None),
+                        sleep=self.sleeps.append, now=lambda: self.NOW)
+        patcher = mock.patch("builtins.print", side_effect=lambda *a, **_: self.printed.append(" ".join(map(str, a))))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return feed
+
+    def _assert_no_secret_printed(self, *secrets):
+        for line in self.printed:
+            for secret in secrets:
+                self.assertNotIn(secret, line)
+
+    def test_expired_env_token_is_skipped_with_reason(self):
+        api = FakeApi({"Dhan/session": [_response(404, {"message": "Dhan is not signed in."}),
+                                        _session(self.API_CLIENT, self.FRESH)]})
+        feed = self._feed(api, env_file=lambda: (FAKE_CLIENT_ID, self.DEAD))
+        self.assertEqual((self.API_CLIENT, self.FRESH), feed.acquire_credentials())
+        self.assertEqual([30], self.sleeps, "it waited for a sign-in rather than hand back the dead token")
+        waiting = [line for line in self.printed if "press Connect" in line]
+        self.assertEqual(1, len(waiting))
+        self.assertIn("the token from .env expired 15 Sep 15:20 IST", waiting[0])
+        self._assert_no_secret_printed(self.DEAD, self.FRESH, FAKE_CLIENT_ID, self.API_CLIENT)
+
+    def test_valid_api_token_preferred_over_expired_env(self):
+        env_asked = []
+        api = FakeApi({"Dhan/session": [_session(self.API_CLIENT, self.FRESH, expires="2026-09-16T23:15:00Z")]})
+        feed = self._feed(api, env_file=lambda: env_asked.append(".env") or (FAKE_CLIENT_ID, self.DEAD),
+                          started_with=(FAKE_CLIENT_ID, self.DEAD))
+        self.assertEqual((self.API_CLIENT, self.FRESH), feed.acquire_credentials(),
+                         "a JWT whose expiry is hours away is used")
+        self.assertEqual([], self.sleeps)
+        self.assertEqual([], env_asked, ".env is not read while the API has a live token")
+        self.assertEqual(["[dhan] using the Dhan credential from the API (sign-in, expires 2026-09-16T23:15:00Z)."],
+                         self.printed, "nothing was passed over, so no reasons")
+
+    def test_all_expired_waits_for_connect_without_connecting(self):
+        from _feed_fakes import runner_for
+        # The API's sign-in is 30 s from its end: inside the margin, so as dead
+        # as the other two.
+        closing = _jwt({"exp": int((self.NOW + timedelta(seconds=30)).timestamp())},
+                       signature="closing-signature-for-tests")
+        api = FakeApi({"Dhan/session": [_session(self.API_CLIENT, closing, expires="2026-09-16T03:15:30Z"),
+                                        _session(self.API_CLIENT, closing, expires="2026-09-16T03:15:30Z"),
+                                        _session(self.API_CLIENT, self.FRESH)]})
+        feed = self._feed(api, env_file=lambda: (FAKE_CLIENT_ID, self.DEAD), started_with=(FAKE_CLIENT_ID, self.DEAD))
+        feed.connect = mock.MagicMock()
+        runner = runner_for(feed)
+        runner._stop.set()          # one connect, then no watching
+
+        runner._connect_once_and_watch()
+
+        feed.connect.assert_called_once()
+        self.assertEqual((self.API_CLIENT, self.FRESH), feed.connect.call_args.args[0],
+                         "the only connect is on the token Connect brought")
+        self.assertEqual([30, 30], self.sleeps, "the API was asked every 30 s meanwhile")
+        self.assertEqual(["Dhan/session"] * 3, api.asked)
+        waiting = [line for line in self.printed if "no usable Dhan credential" in line]
+        self.assertEqual(1, len(waiting), "said once, not once per poll")
+        for why in ("the token from the API (sign-in, expires 2026-09-16T03:15:30Z) expires 16 Sep 08:45 IST",
+                    "the token from .env expired 15 Sep 15:20 IST",
+                    "the token from the environment the feed started with expired 15 Sep 15:20 IST"):
+            self.assertIn(why, waiting[0])
+        self._assert_no_secret_printed(closing, self.DEAD, self.FRESH, FAKE_CLIENT_ID, self.API_CLIENT)
+
+    def test_non_jwt_token_used_as_before(self):
+        # Not a JWT, a JWT with no expiry or an unreadable one: offered exactly
+        # as before this check existed, and Dhan is the judge.
+        for token in (FAKE_TOKEN, "plain-token-for-tests", "a.b!@#.c", _jwt({"sub": "no-expiry"}),
+                      _jwt({"exp": "tomorrow"}), _jwt({"exp": 10 ** 20}), _jwt(["not", "an", "object"])):
+            self.assertIsNone(token_expiry(token), token)
+            api = FakeApi({"Dhan/session": [ConnectionError("api down")]})
+            feed = self._feed(api, env_file=lambda: (FAKE_CLIENT_ID, token))
+            self.assertEqual((FAKE_CLIENT_ID, token), feed.acquire_credentials(), token)
+            self.assertEqual([], self.sleeps, token)
+        self.assertEqual(datetime(2026, 9, 15, 9, 50, 51, tzinfo=timezone.utc), token_expiry(self.DEAD))
+
+    def test_fallback_logs_skip_reasons(self):
+        said = ("Dhan is not signed in. Press Connect on the Dhan connector page (once a day), or set "
+                "Dhan:AccessToken. The token in the configuration (DHAN_ACCESS_TOKEN) expired on 15 Sep 15:20 IST.")
+        api = FakeApi({"Dhan/session": [_response(404, {"message": said})]})
+        feed = self._feed(api, env_file=lambda: (FAKE_CLIENT_ID, self.DEAD), started_with=(FAKE_CLIENT_ID, self.FRESH))
+        self.assertEqual((FAKE_CLIENT_ID, self.FRESH), feed.acquire_credentials())
+        self.assertEqual([f"[dhan] the API has no Dhan session (404: {said}); the token from .env expired "
+                          f"15 Sep 15:20 IST — using the Dhan credential from the environment the feed started with."],
+                         self.printed)
+        self._assert_no_secret_printed(self.DEAD, self.FRESH, FAKE_CLIENT_ID)
 
 
 class ConflationTests(unittest.TestCase):
