@@ -22,11 +22,15 @@ public class MarketSessionService : IMarketSessionService
 
     // MCX runs from 09:00 into the night. Its close tracks the US energy and
     // metals markets, so it moves with American daylight saving: 23:30 IST while
-    // New York is on standard time, 23:55 while it is on DST. Agricultural
+    // New York is on DST (MCX's circular for 9 Mar 2026: 23:55 until then,
+    // 23:30 from the day after the US clocks went forward), 23:55 while it is
+    // on standard time. Until 28 Sep this had the two the wrong way round, so
+    // on a summer evening the desk believed MCX was open to 23:55 and a feed
+    // that fell silent at the real close read as a failure. Agricultural
     // contracts close at 17:00 and are not modelled; nothing here trades them.
     private static readonly TimeOnly McxOpen = new(9, 0);
-    private static readonly TimeOnly McxCloseStandard = new(23, 30);
-    private static readonly TimeOnly McxCloseDaylight = new(23, 55);
+    private static readonly TimeOnly McxCloseUsDaylight = new(23, 30);
+    private static readonly TimeOnly McxCloseUsStandard = new(23, 55);
 
     // MCX publishes its holidays per session: a holiday can close the morning
     // half and still trade the evening, or the other way round.
@@ -218,12 +222,12 @@ public class MarketSessionService : IMarketSessionService
 
             var middayUtc = TimeZoneInfo.ConvertTimeToUtc(date.ToDateTime(new TimeOnly(12, 0)), IstTime.Zone);
             return newYork.IsDaylightSavingTime(TimeZoneInfo.ConvertTimeFromUtc(middayUtc, newYork))
-                ? McxCloseDaylight
-                : McxCloseStandard;
+                ? McxCloseUsDaylight
+                : McxCloseUsStandard;
         }
         catch (TimeZoneNotFoundException)
         {
-            return McxCloseStandard;
+            return McxCloseUsDaylight;
         }
     }
 }
