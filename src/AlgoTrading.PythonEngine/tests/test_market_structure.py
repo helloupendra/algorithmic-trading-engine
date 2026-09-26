@@ -140,5 +140,35 @@ class LiveReadingTests(unittest.TestCase):
         self.assertEqual(reader.describe()["trend"], "none")
 
 
+class FramesAfterTests(unittest.TestCase):
+    """Which candles a reader has not seen, by time."""
+
+    class F:
+        def __init__(self, stamp):
+            self.timestamp_utc = stamp
+
+    def test_nothing_seen_means_everything(self):
+        from strategies.market_structure import frames_after
+        frames = [self.F("2026-09-25T03:45:00Z"), self.F("2026-09-25T03:50:00Z")]
+        self.assertEqual(frames, frames_after(frames, None))
+
+    def test_only_what_is_newer_than_the_last_seen(self):
+        from strategies.market_structure import frames_after
+        frames = [self.F(f"2026-09-25T03:{m:02d}:00Z") for m in (45, 50, 55)]
+        self.assertEqual(frames[2:], frames_after(frames, "2026-09-25T03:50:00Z"))
+        self.assertEqual([], frames_after(frames, "2026-09-25T03:55:00+00:00"))
+
+    def test_naive_aware_and_string_stamps_compare_as_one_clock(self):
+        from datetime import datetime, timezone
+        from strategies.market_structure import frames_after
+        frames = [self.F(datetime(2026, 9, 25, 3, 45)), self.F(datetime(2026, 9, 25, 3, 50, tzinfo=timezone.utc))]
+        self.assertEqual(frames[1:], frames_after(frames, "2026-09-25T03:45:00Z"))
+
+    def test_a_window_that_slid_past_the_last_seen_candle_still_yields_the_new_ones(self):
+        from strategies.market_structure import frames_after
+        frames = [self.F(f"2026-09-25T0{h}:00:00Z") for h in (4, 5, 6)]
+        self.assertEqual(frames, frames_after(frames, "2026-09-25T03:00:00Z"))
+
+
 if __name__ == "__main__":
     unittest.main()

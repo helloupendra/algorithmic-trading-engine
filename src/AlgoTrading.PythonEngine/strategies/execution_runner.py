@@ -892,6 +892,10 @@ if __name__ == "__main__":
                 f"open_groups={count_open_groups(state)} ticks={ticks_processed} "
                 f"contracts={last_contract_count} last_tick={age}"
             )
+        # A structure reader says how far it has read, so one that has stopped
+        # reading shows here instead of as a quiet day (SMC, 22–25 Sep).
+        if isinstance(state, dict) and "structure_candles" in state:
+            status += f" | structure: {state.get('structure_candles')} candles, last {state.get('structure_last') or 'none'}"
         if isinstance(state, dict) and ("target_buy_trigger" in state or "target_sell_trigger" in state):
             buy_t = state.get("target_buy_trigger")
             sell_t = state.get("target_sell_trigger")

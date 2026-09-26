@@ -214,5 +214,65 @@ class ShapeTests(unittest.TestCase):
                                                       spot_price=1, bars={}, metadata={})), "5m")
 
 
+class LiveWindowTests(unittest.TestCase):
+    """
+    The live runner hands a strategy a window capped at 500 bars that slides,
+    with the forming candle last. Fed by position, the reader stopped at 499 and
+    read nothing for the rest of the day (22–25 Sep: fifteen runs, no orders).
+    """
+
+    def _step_live(self, strategy, frames, window=500):
+        state = strategy.initialize_state()
+        for i in range(2, len(frames) + 1):
+            visible = frames[max(0, i - (window + 1)):i]   # the last one is the forming candle
+            inp = StrategyInput(mode="LivePaper", timestamp_utc=visible[-1].timestamp_utc, underlying=UNDERLYING,
+                                spot_price=visible[-1].close, atm_strike=25000, strike_step=50, lot_size=75,
+                                contracts={"atm_ce": CE, "atm_pe": PE},
+                                bars={"5m": {"index": visible}}, metadata={"resolution": "5m"})
+            strategy.on_bar(state, inp)
+        return state
+
+    def test_the_reader_keeps_reading_after_the_window_stops_growing(self):
+        rows = [(100 + (i % 7), 101 + (i % 7), 99 + (i % 7), 100 + (i % 5)) for i in range(640)]
+        frames = [Frame(b) for b in bars(*rows)]
+        state = self._step_live(SmcStructureBreakStrategy(), frames)
+
+        # Every candle but the forming one was read: 639, not the old 500.
+        self.assertEqual(639, state["fed"])
+        self.assertEqual(state["structure_candles"], state["fed"])
+        self.assertTrue(state["seen"].startswith(frames[-2].timestamp_utc[:16]))
+
+    def test_the_same_candle_twice_is_read_once(self):
+        frames = [Frame(b) for b in schematic()]
+        strategy = SmcStructureBreakStrategy()
+        state = strategy.initialize_state()
+        for _ in range(3):  # the same window handed over three times, as between two ticks
+            inp = StrategyInput(mode="LivePaper", timestamp_utc=frames[-1].timestamp_utc, underlying=UNDERLYING,
+                                spot_price=frames[-1].close, atm_strike=25000, strike_step=50, lot_size=75,
+                                contracts={"atm_ce": CE, "atm_pe": PE},
+                                bars={"5m": {"index": frames}}, metadata={"resolution": "5m"})
+            strategy.on_bar(state, inp)
+        self.assertEqual(len(frames) - 1, state["fed"])
+
+    def test_live_and_replay_see_the_same_breaks(self):
+        """A break in a long live day is traded, as the replay of the same candles trades it."""
+        warmup = [(100, 100.5, 99.5, 100)] * 520
+        frames = [Frame(b) for b in bars(*(warmup + [(b.open, b.high, b.low, b.close) for b in schematic()]))]
+        strategy = SmcStructureBreakStrategy()
+        state = strategy.initialize_state()
+        opened = 0
+        for i in range(2, len(frames) + 2):
+            visible = frames[max(0, i - 501):i] + ([frames[-1]] if i > len(frames) else [])
+            visible = visible[-501:]
+            inp = StrategyInput(mode="LivePaper", timestamp_utc=visible[-1].timestamp_utc, underlying=UNDERLYING,
+                                spot_price=visible[-1].close, atm_strike=25000, strike_step=50, lot_size=75,
+                                contracts={"atm_ce": CE, "atm_pe": PE},
+                                bars={"5m": {"index": visible}}, metadata={"resolution": "5m"})
+            opened += sum(1 for sig in (strategy.on_bar(state, inp) or []) if sig.signal_type == "OPEN_GROUP")
+        replay = [f for f in run(SmcStructureBreakStrategy()) if f["type"] == "OPEN_GROUP"]
+        self.assertGreaterEqual(len(replay), 1)
+        self.assertGreaterEqual(opened, 1, "the live window never traded the break the replay trades")
+
+
 if __name__ == "__main__":
     unittest.main()

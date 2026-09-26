@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.resolutions import minutes_of, to_strategy_resolution
 from strategies.base_strategy import BaseStrategy, StrategyInput, StrategySignal, DataRequirement
-from strategies.market_structure import BEARISH, BULLISH, Bar, MarketStructure
+from strategies.market_structure import BEARISH, BULLISH, Bar, MarketStructure, frames_after, stamp_key
 
 
 class GhostTangentCrossingsStrategy(BaseStrategy):
@@ -446,9 +446,13 @@ class GhostTangentCrossingsStrategy(BaseStrategy):
         """
         reader: MarketStructure = state["smc"]
         closed = bars if mode == "OfflineReplay" else bars[:-1]
-        for frame in closed[state["smc_fed"]:]:
-            reader.push(Bar(getattr(frame, "timestamp_utc", ""), float(frame.open), float(frame.high),
-                            float(frame.low), float(frame.close)))
+        # By time, not by position: a live window is capped at 500 bars, and a
+        # reader fed closed[fed:] stops once it stops growing (see frames_after).
+        for frame in frames_after(closed, state.get("smc_seen")):
+            stamp = getattr(frame, "timestamp_utc", "")
+            reader.push(Bar(stamp, float(frame.open), float(frame.high), float(frame.low), float(frame.close)))
+            key = stamp_key(stamp)
+            state["smc_seen"] = key.isoformat() if key is not None else state.get("smc_seen")
             state["smc_fed"] += 1
 
     def _filter_by_structure(self, state: Dict[str, Any], signals: List[StrategySignal]) -> List[StrategySignal]:
