@@ -224,6 +224,31 @@ class WatcherTransitionTests(unittest.TestCase):
         stopped = [t for t in self.titles() if t.startswith("[admin] Strategy stopped")]
         self.assertEqual(len(stopped), 1, stopped)
 
+    def test_a_runner_that_died_is_a_warning_not_a_flat_result(self):
+        # 24 Sep: sixteen runners died seconds after starting, and read as
+        # "Strategy stopped · ₹0.00" at severity info.
+        self.api.runs = [make_run(2, True, 0, 0)]
+        self.api.live[2] = {"positions": []}
+        self.watcher.tick()
+        self.api.runs = [make_run(2, False, 0, 0, stoppedUtc="2026-09-24T03:47:04Z", durationSeconds=3,
+                                  stopReason="Runner exited (code 1)", stoppedBy="runner")]
+        self.watcher.tick()
+        stopped = [e for e in self.publisher.events if "Strategy stopped" in e["title"]]
+        self.assertEqual(1, len(stopped))
+        self.assertEqual("warning", stopped[0]["severity"])
+        self.assertIn("missing, not finished", stopped[0]["message"])
+
+    def test_an_ordinary_flat_stop_stays_info(self):
+        self.api.runs = [make_run(2, True, 0, 0)]
+        self.api.live[2] = {"positions": []}
+        self.watcher.tick()
+        self.api.runs = [make_run(2, False, 0, 0, stoppedUtc="2026-09-24T10:00:00Z", durationSeconds=21_600,
+                                  stopReason="Market closed (15:30 IST)", stoppedBy="market-hours",
+                                  netPnl=0.0, realizedPnl=0.0)]
+        self.watcher.tick()
+        stopped = [e for e in self.publisher.events if "Strategy stopped" in e["title"]]
+        self.assertEqual("info", stopped[0]["severity"])
+
     def test_every_connectors_feed_is_announced_by_name(self):
         # 2026-09-15: stopping and starting Dhan's feed sent nothing, because
         # only the FYERS ingestor was watched.
