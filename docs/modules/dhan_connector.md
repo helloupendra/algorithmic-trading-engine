@@ -152,7 +152,7 @@ a day. **Sign in now** on the page always tries.
 | `POST /api/Dhan/instruments/resolve` | Dhan ids for canonical symbols; the live feed subscribes with this. |
 | `GET /api/Dhan/universe` | What the live feed streams beyond the recording list, with the prices the strikes were centred on and any warnings. |
 | `GET /api/Dhan/chain-poller` | Is the chain recorder on, and what each underlying's last round did (recorded, idle because its market is closed, or failed and why). |
-| `POST /api/Dhan/chain-poller/start` and `/stop` | Turns the recorder on or off until the API restarts. |
+| `POST /api/Dhan/chain-poller/start` and `/stop` | Turns the recorder on or off until the end of the IST day, surviving API restarts. The next day starts from `Dhan:ChainPoller:Enabled` again. |
 | `POST /api/Dhan/chain-poller/capture?underlyings=CRUDEOIL` | One round now. Closed markets are skipped unless `evenIfClosed=true`. |
 
 All of them are admin-only, except `session`, `resolve` and `universe`, which the
@@ -239,6 +239,25 @@ Dhan allows one chain call every three seconds, so a round of eight takes about
 | `Enabled` | false | On only on the host that records. Dhan's chain limit is per account, so two hosts polling would starve each other. |
 | `IntervalSeconds` | 60 | Between the starts of two rounds. |
 | `Underlyings` | NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY, SENSEX, BANKEX, CRUDEOIL, NATURALGAS | An MCX commodity is chained on its nearest future. |
+
+**On and off across restarts.** `Enabled` is false on the server; the morning
+job switches the recorder on with `POST /api/Dhan/chain-poller/start`. A start
+or stop is saved in `system_settings` (`dhan.chainpoller.enabled`, e.g.
+`true on 2026-09-24`) and holds until the end of that IST day, so an API restart
+in the middle of the session carries on recording. The next day starts from
+`Enabled` again. If the saved value cannot be read at startup, the recorder
+starts as configured; if it cannot be saved, the switch still happens and a
+warning is logged.
+
+Before this, every API restart switched the recorder off without a word. On
+2026-09-24 a restart at 11:28 ended the day's chain at 11:27:49: ChainFlowBuy
+blocked on a stale chain on every candle until the close, and the evening's
+CRUDEOIL and NATURALGAS chains were lost. On 22 Sep nothing was recorded after
+14:58:40.
+
+As a backstop, while NSE is open and Dhan is signed in, a recorder that is off
+without anyone having stopped it today sends one Telegram warning a day
+(Process category): "Dhan chain recorder is off".
 
 First MCX capture, 2026-09-14 18:24 IST:
 - CRUDEOIL: 402 rows. 24 strikes Dhan lists had no platform contract and were skipped.
@@ -470,7 +489,7 @@ is.
 | `Providers/Dhan/DhanHistory.cs` | History request and response rules |
 | `Providers/Dhan/DhanMarketDataProvider.cs` | `IMarketDataProvider` for history |
 | `Providers/Dhan/DhanOptionChain.cs`, `DhanOptionChainClient.cs` | Chain model and client |
-| `Providers/Dhan/DhanChainPoller.cs` | Chain recorder: rows mapping, per-underlying rounds, the hosted loop and its state |
+| `Providers/Dhan/DhanChainPoller.cs` | Chain recorder: rows mapping, per-underlying rounds, the hosted loop, its state and the saved on/off switch |
 | `Providers/Dhan/DhanRollingOptions.cs` | Expired options request and response rules: strike strings, windows, mapping, offsets, coverage runs |
 | `Providers/Dhan/DhanOptionHistoryImporter.cs` | Trading days, stored days, one window fetched with retries, bulk insert, coverage query |
 | `Providers/Dhan/DhanOptionHistoryJobs.cs` | Import request validation, the resume plan, job state, the background worker |
@@ -481,6 +500,6 @@ is.
 | `tests/AlgoTrading.UnitTests/DhanLoginTests.cs` | Sign-in, account pin, 24-hour expiry, and the FYERS session guard |
 | `tests/AlgoTrading.UnitTests/DhanAutoSignInTests.cs` | The PIN + TOTP call, refusals that never repeat the PIN, when to sign in, the day's tries, expired pasted tokens |
 | `tests/AlgoTrading.UnitTests/DhanOptionHistoryTests.cs` | Expired options mapping against real answers, windows, the resume plan, request validation, retry rules |
-| `tests/AlgoTrading.UnitTests/DhanChainPollerTests.cs` | Chain rows, expiry choice, closed markets, rejected tokens, at-the-money selection |
+| `tests/AlgoTrading.UnitTests/DhanChainPollerTests.cs` | Chain rows, expiry choice, closed markets, rejected tokens, the on/off switch across restarts and its warning, at-the-money selection |
 | `market_data/live/vendors/dhan.py`, `tests/test_dhan_feed.py` (Python engine) | Live feed adapter: binary packets, subscribe batching, credentials from the API, one update a second per contract, the universe |
 | `scripts/market-open.sh` | The morning: Dhan status, import, feed and recorder; FYERS as the fallback |

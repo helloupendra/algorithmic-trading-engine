@@ -310,21 +310,41 @@ public class DhanController : ControllerBase
     [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
     public IActionResult ChainPollerStatus([FromServices] Microsoft.Extensions.Options.IOptions<DhanSettings> settings) => Ok(PollerView(settings.Value));
 
-    /// <summary>Turns the recorder on until the API restarts; Dhan:ChainPoller:Enabled decides after that.</summary>
+    /// <summary>
+    /// Turns the recorder on until the end of the IST day, across API restarts;
+    /// Dhan:ChainPoller:Enabled decides from the next day. The morning job calls
+    /// this every trading day.
+    /// </summary>
     [HttpPost("chain-poller/start")]
     [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
-    public IActionResult StartChainPoller([FromServices] Microsoft.Extensions.Options.IOptions<DhanSettings> settings)
+    public async Task<IActionResult> StartChainPoller([FromServices] Microsoft.Extensions.Options.IOptions<DhanSettings> settings)
     {
-        _pollerState.Enabled = true;
+        await _pollerState.SwitchAsync(on: true, User.Identity?.Name);
         return Ok(PollerView(settings.Value));
     }
 
+    /// <summary>Turns the recorder off until the end of the IST day, across API restarts.</summary>
     [HttpPost("chain-poller/stop")]
     [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
-    public IActionResult StopChainPoller([FromServices] Microsoft.Extensions.Options.IOptions<DhanSettings> settings)
+    public async Task<IActionResult> StopChainPoller([FromServices] Microsoft.Extensions.Options.IOptions<DhanSettings> settings)
     {
-        _pollerState.Enabled = false;
-        return Ok(PollerView(settings.Value));
+        // wasRunning, like the other daemons' stops: market-close.sh reads it,
+        // and without it the nightly report always said the recorder "was not
+        // running", including on the nights it was switched off.
+        bool wasRunning = _pollerState.Enabled;
+        await _pollerState.SwitchAsync(on: false, User.Identity?.Name);
+        var s = settings.Value;
+        return Ok(new
+        {
+            wasRunning,
+            enabled = _pollerState.Enabled,
+            configuredEnabled = s.ChainPoller.Enabled,
+            intervalSeconds = s.ChainPoller.IntervalSeconds,
+            underlyings = s.ChainPoller.UnderlyingList,
+            lastRoundStartedUtc = _pollerState.LastRoundStartedUtc,
+            lastRoundFinishedUtc = _pollerState.LastRoundFinishedUtc,
+            outcomes = _pollerState.Outcomes,
+        });
     }
 
     /// <summary>
