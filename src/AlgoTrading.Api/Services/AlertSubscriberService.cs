@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using StackExchange.Redis;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
@@ -12,16 +13,25 @@ public class AlertSubscriberService : BackgroundService
     private readonly IConnectionMultiplexer _redis;
     private readonly ILogger<AlertSubscriberService> _logger;
     private readonly TelegramSender _telegram;
+    private readonly NotifierSupervisor _notifier;
+
+    // The backend's one-line run start and stop: StrategyController's
+    // "X started on Y" and "X stopped on Y". The same rule as is_superseded()
+    // in scripts/telegram_notifier.py — deliberately narrow, so "Feed stalled
+    // — X on Y", "Feed recovered — X on Y" and the risk alerts still go out.
+    private static readonly Regex BackendRunStartStop = new(@"\b(started|stopped) on \b", RegexOptions.CultureInvariant);
 
     public AlertSubscriberService(
         IServiceProvider serviceProvider,
         IConnectionMultiplexer redis,
         TelegramSender telegram,
+        NotifierSupervisor notifier,
         ILogger<AlertSubscriberService> logger)
     {
         _serviceProvider = serviceProvider;
         _redis = redis;
         _telegram = telegram;
+        _notifier = notifier;
         _logger = logger;
     }
 
@@ -39,7 +49,18 @@ public class AlertSubscriberService : BackgroundService
                 var payload = JsonSerializer.Deserialize<AlertEventPayload>((string)message!);
                 if (payload == null) return;
 
-                bool delivered = _telegram.IsConfigured && await SendToTelegramAsync(payload);
+                bool delivered = false;
+                if (_telegram.IsConfigured)
+                {
+                    if (IsSupersededByNotifier(payload) && await NotifierIsRunningAsync(stoppingToken))
+                    {
+                        _logger.LogDebug("Not sent to Telegram; the notifier reports it in full: {Title}", payload.Title);
+                    }
+                    else
+                    {
+                        delivered = await SendToTelegramAsync(payload);
+                    }
+                }
 
                 await SaveToDatabaseAsync(payload, delivered);
             }
@@ -48,6 +69,50 @@ public class AlertSubscriberService : BackgroundService
                 _logger.LogError(ex, "Failed to process alert event from Redis.");
             }
         });
+    }
+
+    /// <summary>
+    /// True for the backend's own run start/stop line, which the notifier
+    /// reports in full ("[admin] Strategy started · …", with lots, risk, P&amp;L
+    /// and who stopped it).
+    /// </summary>
+    /// <remarks>
+    /// The supervised notifier runs with --no-forward, so its own filter never
+    /// runs: its messages come back through this subscriber like any other.
+    /// Every start and stop reached Telegram twice, once terse and once in
+    /// full, until 27 Sep 2026.
+    /// </remarks>
+    public static bool IsSupersededByNotifier(AlertEventPayload payload)
+    {
+        if (!string.Equals(payload.Source, "strategyrun", StringComparison.OrdinalIgnoreCase)) return false;
+
+        var title = payload.Title ?? string.Empty;
+        if (title.StartsWith("Strategy started", StringComparison.Ordinal)
+            || title.StartsWith("Strategy stopped", StringComparison.Ordinal))
+        {
+            return false; // the notifier's own
+        }
+
+        return BackendRunStartStop.IsMatch(title);
+    }
+
+    /// <summary>
+    /// True only while a notifier verified as ours is running. Anything less —
+    /// stopped, restarting, a pid that cannot be verified, a status that cannot
+    /// be read — sends the backend's line: a duplicate is noise, silence is
+    /// the failure this desk exists to prevent.
+    /// </summary>
+    private async Task<bool> NotifierIsRunningAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return _notifier.IsVerified(await _notifier.GetStatusAsync(cancellationToken));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not tell whether the Telegram notifier is running; sending the backend's message.");
+            return false;
+        }
     }
 
     /// <summary>

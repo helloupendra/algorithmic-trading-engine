@@ -144,6 +144,15 @@ public static class ProcessProbe
         return new ProbeResult(Outcome.Alive, process);
     }
 
+    /// <summary>
+    /// True only when the command line of <paramref name="pid"/> was read and
+    /// names one of <paramref name="markers"/>. <see cref="Probe"/> answers
+    /// Alive on Windows without reading it; this never does, so it is the
+    /// check for anything done to a pid that no person asked for.
+    /// </summary>
+    public static bool CommandLineNames(int pid, IReadOnlyList<string> markers, ILogger logger)
+        => ReadCommandLine(pid, logger) is { } commandLine && NamesAnyMarker(commandLine, markers);
+
     /// <summary>Full command line of the process on macOS/Linux, or null when it cannot be read.</summary>
     public static string? ReadCommandLine(int pid, ILogger logger)
     {
