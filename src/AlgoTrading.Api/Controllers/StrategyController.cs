@@ -103,10 +103,16 @@ public class StrategyController : ControllerBase
     /// be refused. The check that actually stops a deploy lives on the deploy
     /// endpoint.
     /// </remarks>
+    /// <summary>User id to user name, read once per request (the table is small).</summary>
+    private async Task<IReadOnlyDictionary<long, string>> UserNamesAsync(CancellationToken cancellationToken)
+        => await _dbContext.AppUsers.AsNoTracking()
+            .ToDictionaryAsync(u => u.Id, u => u.UserName, cancellationToken);
+
     [HttpGet]
     public async Task<ActionResult<List<StrategyListItemResponse>>> GetAll(CancellationToken cancellationToken)
     {
         var entries = await _catalog.GetAllAsync(cancellationToken);
+        var names = await UserNamesAsync(cancellationToken);
 
         var access = await _strategyAccess.GetAccessAsync(User.GetRequiredUserId(), cancellationToken);
 
@@ -115,7 +121,7 @@ public class StrategyController : ControllerBase
             entries = entries.Where(x => access.AllowsStrategy(x.Name)).ToList();
         }
 
-        return Ok(entries.Select(ToListItem).ToList());
+        return Ok(entries.Select(e => ToListItem(e, names)).ToList());
     }
 
     [HttpGet("{id:int}")]
@@ -123,7 +129,7 @@ public class StrategyController : ControllerBase
     {
         var entry = await _catalog.FindAsync(id, cancellationToken);
         if (entry is null) return NotFound(new { message = $"Strategy {id} not found." });
-        return Ok(ToListItem(entry));
+        return Ok(ToListItem(entry, await UserNamesAsync(cancellationToken)));
     }
 
     /// <summary>
@@ -828,7 +834,7 @@ public class StrategyController : ControllerBase
 
         var run = await _dbContext.SimulationRuns.AsNoTracking()
             .Where(x => x.Id == runId && x.Mode == LivePaperMode)
-            .Select(x => new { x.Id, x.Status, x.StrategyName, x.Symbol })
+            .Select(x => new { x.Id, x.Status, x.StrategyName, x.Symbol, x.UserId })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (run is null)
@@ -836,6 +842,15 @@ public class StrategyController : ControllerBase
 
         if (!StrategyRunControl.IsOpenStatus(run.Status))
             return NotFound(new { message = $"Strategy run {runId} is not running (status {run.Status})." });
+
+        // The account first, as in every run alert: with the plan in two
+        // accounts a stalled feed reports once per run, and without the name
+        // each pair read as one run reported twice.
+        string? owner = await _dbContext.AppUsers.AsNoTracking()
+            .Where(u => u.Id == run.UserId)
+            .Select(u => u.UserName)
+            .FirstOrDefaultAsync(cancellationToken);
+        string tag = string.IsNullOrWhiteSpace(owner) ? string.Empty : $"[{owner}] ";
 
         string underlying = request.Underlying ?? string.Empty;
         int seconds = Math.Max(0, request.SilentSeconds);
@@ -847,7 +862,7 @@ public class StrategyController : ControllerBase
             await _notifier.NotifyAsync(
                 NotificationCategory.StrategyRun,
                 NotificationSeverity.Warning,
-                $"Feed stalled — {run.StrategyName} on {underlying}",
+                $"{tag}Feed stalled — {run.StrategyName} on {underlying}",
                 $"Run #{runId} has had no ticks for {seconds}s while the market is open. "
                 + "The strategy is still running but is not seeing prices.",
                 underlying: underlying,
@@ -864,7 +879,7 @@ public class StrategyController : ControllerBase
             await _notifier.NotifyAsync(
                 NotificationCategory.StrategyRun,
                 NotificationSeverity.Success,
-                $"Feed recovered — {run.StrategyName} on {underlying}",
+                $"{tag}Feed recovered — {run.StrategyName} on {underlying}",
                 $"Run #{runId} is receiving ticks again after {seconds}s.",
                 underlying: underlying,
                 symbol: run.Symbol,
@@ -1210,6 +1225,13 @@ public class StrategyController : ControllerBase
             view.StartedUtc = run.StartedUtc ?? run.CreatedUtc;
             view.StoppedUtc = run.CompletedUtc;
         }
+
+        view.OwnerUserId = run.UserId;
+        view.OwnerName = await _dbContext.AppUsers.AsNoTracking()
+            .Where(x => x.Id == run.UserId)
+            .Select(x => x.UserName)
+            .FirstOrDefaultAsync(cancellationToken);
+        view.CanControl = CanStop(view.StartedBy, run.UserId);
 
         view.StopLoss = view.Risk.OverallStopLoss;
         view.Target = view.Risk.OverallTarget;
@@ -1561,7 +1583,7 @@ public class StrategyController : ControllerBase
     // Mapping helpers
     // ------------------------------------------------------------------
 
-    private StrategyListItemResponse ToListItem(StrategyCatalogEntry entry)
+    private StrategyListItemResponse ToListItem(StrategyCatalogEntry entry, IReadOnlyDictionary<long, string> names)
     {
         // A trader sees their own runs of this strategy, an admin sees every
         // one. It mattered little while the whole desk was one account; from
@@ -1598,7 +1620,7 @@ public class StrategyController : ControllerBase
             SourceFile = entry.SourceFile,
             CreatedUtc = entry.CreatedUtc,
 
-            ActiveRuns = activeRuns.Select(ToActiveRun).ToList(),
+            ActiveRuns = activeRuns.Select(r => ToActiveRun(r, names)).ToList(),
             RecentExits = recentExits.Select(ToLastExit).ToList(),
 
             IsActive = running is not null,
@@ -1615,9 +1637,11 @@ public class StrategyController : ControllerBase
         };
     }
 
-    private static StrategyActiveRunResponse ToActiveRun(RunningStrategy running) => new()
+    private static StrategyActiveRunResponse ToActiveRun(RunningStrategy running, IReadOnlyDictionary<long, string> names) => new()
     {
         RunId = running.RunId,
+        OwnerUserId = running.UserId,
+        OwnerName = names.TryGetValue(running.UserId, out var owner) ? owner : null,
         Underlying = running.Underlying,
         SpotSymbol = running.SpotSymbol,
         Lots = running.Lots,

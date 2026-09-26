@@ -534,6 +534,12 @@ export function RunCard({
   const underlying = view?.underlying ?? run?.underlying ?? exit?.underlying ?? null
   const stopReason = view?.stopReason ?? exit?.reason ?? null
   const startedBy = view?.startedBy ?? run?.startedBy ?? null
+  // Whose account this is. Said only when it differs from who started it —
+  // the morning job starts every account's runs as the admin.
+  const owner = view?.ownerName ?? run?.ownerName ?? null
+  const ownerNote = owner && owner !== startedBy ? `${owner} · ` : ''
+  // The API's own rule when it sent one; otherwise what the caller decided.
+  const mayControl = view?.canControl ?? canControl
   const startedUtc = view?.startedUtc ?? run?.startedUtc ?? null
   const stoppedUtc = view?.stoppedUtc ?? exit?.atUtc ?? null
 
@@ -591,13 +597,14 @@ export function RunCard({
           </span>
         )}
         <span className="run-card__meta">
+          {ownerNote && <b>{ownerNote}</b>}
           {startedBy ? `started by ${startedBy}` : 'started'} · {formatTime(startedUtc)}
           {!isActive && stoppedUtc && <> · stopped {formatTime(stoppedUtc)}</>}
           <span className="faint">· run #{runId}</span>
         </span>
         <div className="run-card__actions">
           {isActive ? (
-            canControl && allowStop && (
+            mayControl && allowStop && (
               <button
                 type="button"
                 className="btn btn--danger btn--sm"
@@ -677,10 +684,10 @@ export function RunCard({
             )}
           </div>
 
-          <RiskSection runId={runId} view={view} isActive={isActive} canEdit={canControl} />
+          <RiskSection runId={runId} view={view} isActive={isActive} canEdit={mayControl} />
 
           {positions.length > 0 ? (
-            <PositionsTable positions={positions} runId={runId} canClose={canControl} />
+            <PositionsTable positions={positions} runId={runId} canClose={mayControl} />
           ) : isActive ? (
             <div className="waiting" role="status">
               <span className="pulse-dot" aria-hidden="true" />

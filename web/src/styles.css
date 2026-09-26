@@ -1674,6 +1674,17 @@ a.pill:hover { border-color: var(--line-strong); }
 }
 .section-title svg { width: 14px; height: 14px; }
 
+/* Live runner: one heading per account when more than one account is trading
+   the plan, so two accounts' identical runs read as two books. */
+.run-account {
+  margin: 18px 0 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+  letter-spacing: 0.01em;
+}
+.stack-list > .run-account:first-child { margin-top: 0; }
+
 /* Run card: one running (or just-stopped) strategy. */
 .run-card {
   background: var(--surface);

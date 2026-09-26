@@ -14,7 +14,7 @@
  * Run history, attached to the user who started it.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useStrategies, useStrategyLives } from '../../lib/queries'
@@ -23,7 +23,7 @@ import { IconClock, IconLayers, IconPlay } from '../../components/icons'
 import type { StrategyActiveRun, StrategyLastExit, StrategyListItem, StrategyLiveView } from '../../lib/types'
 import { LaunchDialog, PnlValue, ReadinessStrip, StrategyCard } from './shared'
 import { RunCard } from './RunCard'
-import { runningSummary } from '../../lib/strategyList'
+import { runOwner, runningSummary } from '../../lib/strategyList'
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -53,6 +53,20 @@ function isToday(iso: string | null | undefined): boolean {
 const DISMISS_TITLE = 'Hide from this list (stays in Run history)'
 
 /* -------------------------------------------------------------------- page */
+
+/** Cards grouped by the account they trade in, in the order accounts first appear; stopped cards last. */
+function groupByAccount(cards: CardSpec[]): [string, CardSpec[]][] {
+  const groups = new Map<string, CardSpec[]>()
+  for (const c of cards) {
+    const key = c.run ? runOwner(c.run) : 'Stopped'
+    groups.set(key, [...(groups.get(key) ?? []), c])
+  }
+  const stopped = groups.get('Stopped')
+  groups.delete('Stopped')
+  const ordered = [...groups.entries()]
+  if (stopped) ordered.push(['Stopped', stopped])
+  return ordered
+}
 
 export function LiveRunnerPage() {
   const strategies = useStrategies()
@@ -210,22 +224,33 @@ export function LiveRunnerPage() {
           </div>
         ) : (
           <div className="stack-list">
-            {visible.map((c) => (
-              <RunCard
-                key={c.runId}
-                strategy={c.strategy}
-                runId={c.runId}
-                run={c.run}
-                exit={c.exit}
-                dismissTitle={DISMISS_TITLE}
-                onDismiss={() =>
-                  setDismissed((prev) => {
-                    const next = new Set(prev)
-                    next.add(c.runId)
-                    return next
-                  })
-                }
-              />
+            {groupByAccount(visible).map(([account, cards], _, groups) => (
+              <Fragment key={account}>
+                {/* One heading per account once there is more than one: the
+                    same plan in two accounts is two books, not one deployed twice. */}
+                {groups.length > 1 && (
+                  <h3 className="run-account">
+                    {account} <span className="faint">· {cards.length} run{cards.length === 1 ? '' : 's'}</span>
+                  </h3>
+                )}
+                {cards.map((c) => (
+                  <RunCard
+                    key={c.runId}
+                    strategy={c.strategy}
+                    runId={c.runId}
+                    run={c.run}
+                    exit={c.exit}
+                    dismissTitle={DISMISS_TITLE}
+                    onDismiss={() =>
+                      setDismissed((prev) => {
+                        const next = new Set(prev)
+                        next.add(c.runId)
+                        return next
+                      })
+                    }
+                  />
+                ))}
+              </Fragment>
             ))}
           </div>
         )}

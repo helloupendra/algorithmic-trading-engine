@@ -441,6 +441,12 @@ export interface StrategyActiveRun {
   startedBy: string
   startedUtc: string
   processId: number
+  /**
+   * Whose account the run trades in — not always who started it: the morning
+   * job starts every account's runs as the admin. Optional for an older API.
+   */
+  ownerUserId?: number
+  ownerName?: string | null
 }
 
 /**
@@ -584,6 +590,11 @@ export interface StrategyLiveView {
   strategyId: number
   name: string
   isActive: boolean
+  /** Whose account the run trades in (optional for an older API). */
+  ownerUserId?: number | null
+  ownerName?: string | null
+  /** Whether the viewer may stop it, edit its risk rules or close a leg — the API's own rule. */
+  canControl?: boolean
   runId: number | null
   underlying: string | null
   spotSymbol: string | null
