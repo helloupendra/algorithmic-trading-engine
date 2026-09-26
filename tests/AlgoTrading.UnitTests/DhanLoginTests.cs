@@ -132,12 +132,19 @@ public class DhanLoginTests
     {
         var sessions = new Sessions();
         var flow = new DhanLoginFlow(
-            Options.Create(new DhanSettings { ApiKey = apiKey }),
+            new SettingsMonitor(new DhanSettings { ApiKey = apiKey }),
             new Credentials(ClientId, "secret-456"),
             sessions,
             new Factory(handler),
             NullLogger<DhanLoginFlow>.Instance);
         return (flow, sessions);
+    }
+
+    private sealed class SettingsMonitor(DhanSettings value) : IOptionsMonitor<DhanSettings>
+    {
+        public DhanSettings CurrentValue => value;
+        public DhanSettings Get(string? name) => value;
+        public IDisposable? OnChange(Action<DhanSettings, string?> listener) => null;
     }
 
     private sealed class Handler(string body, HttpStatusCode status = HttpStatusCode.OK) : HttpMessageHandler

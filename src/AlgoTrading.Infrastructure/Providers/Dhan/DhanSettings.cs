@@ -41,6 +41,30 @@ public class DhanSettings
     /// </summary>
     public string AccessToken { get; set; } = string.Empty;
 
+    /// <summary>
+    /// The account's Dhan PIN. With <see cref="TotpSecret"/> it lets the platform
+    /// take the day's token itself (<see cref="DhanLoginFlow.SignInWithTotpAsync"/>)
+    /// instead of waiting for someone to press Connect.
+    /// </summary>
+    /// <remarks>
+    /// Set on the server only. Two hosts holding it would each sign the same
+    /// account in on their own schedule, and whichever came second would hand
+    /// the other a token it had not asked for.
+    /// </remarks>
+    public string Pin { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The base32 secret Dhan shows once when TOTP is set up for the account
+    /// (web.dhan.co → DhanHQ Trading APIs → Setup TOTP).
+    /// </summary>
+    public string TotpSecret { get; set; } = string.Empty;
+
+    /// <summary>When the automatic sign-in may run.</summary>
+    public DhanAutoSignInSettings AutoSignIn { get; set; } = new();
+
+    /// <summary>Everything the automatic sign-in needs besides the client id.</summary>
+    public bool HasAutoSignInSecrets => !string.IsNullOrWhiteSpace(Pin) && !string.IsNullOrWhiteSpace(TotpSecret);
+
     /// <summary>Recording Dhan's option chain into the platform's chain history.</summary>
     public DhanChainPollerSettings ChainPoller { get; set; } = new();
 
@@ -73,6 +97,22 @@ public class DhanChainPollerSettings
     public string Underlyings { get; set; } = "NIFTY,BANKNIFTY,FINNIFTY,MIDCPNIFTY,SENSEX,BANKEX,CRUDEOIL,NATURALGAS";
 
     public IReadOnlyList<string> UnderlyingList => DhanSettingsLists.Split(Underlyings);
+}
+
+/// <summary>"Dhan:AutoSignIn" in configuration.</summary>
+public class DhanAutoSignInSettings
+{
+    /// <summary>On whenever the PIN and TOTP secret are set; this turns it off without removing them.</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// The morning window, IST. A token that would end before today's evening
+    /// session closes is replaced inside it, while nothing is streaming yet:
+    /// the 08:45 job starts the feeds, so the window ends before it.
+    /// </summary>
+    public TimeSpan MorningFromIst { get; set; } = new(8, 0, 0);
+
+    public TimeSpan MorningUntilIst { get; set; } = new(8, 40, 0);
 }
 
 /// <summary>"Dhan:Universe" in configuration.</summary>

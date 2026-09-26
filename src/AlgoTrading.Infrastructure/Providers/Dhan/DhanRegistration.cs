@@ -25,6 +25,8 @@ public static class DhanRegistration
             // console cannot hold yet.
             if (string.IsNullOrWhiteSpace(s.ApiKey)) s.ApiKey = configuration["DHAN_API_KEY"] ?? string.Empty;
             if (string.IsNullOrWhiteSpace(s.AccessToken)) s.AccessToken = configuration["DHAN_ACCESS_TOKEN"] ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(s.Pin)) s.Pin = configuration["DHAN_PIN"] ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(s.TotpSecret)) s.TotpSecret = configuration["DHAN_TOTP_SECRET"] ?? string.Empty;
             if (bool.TryParse(configuration["DHAN_CHAIN_POLLER_ENABLED"], out bool poll) && section.GetSection("ChainPoller")["Enabled"] is null)
                 s.ChainPoller.Enabled = poll;
         });
@@ -43,6 +45,11 @@ public static class DhanRegistration
 
         services.AddHttpClient(DhanProvider.Key, client => client.Timeout = TimeSpan.FromMinutes(2));
 
+        // The PIN + TOTP call carries the PIN in its query string, so this
+        // client logs no request lines at all, whatever the log level is set to.
+        services.AddHttpClient(DhanLoginFlow.SignInClient, client => client.Timeout = TimeSpan.FromSeconds(30))
+            .RemoveAllLoggers();
+
         // One pacing budget for the process: Dhan's limits are per account.
         services.AddSingleton<DhanRateGate>();
 
@@ -53,6 +60,13 @@ public static class DhanRegistration
         // a login flow for the Connectors page's Connect button.
         services.AddScoped<DhanLoginFlow>();
         services.AddScoped<IProviderLoginFlow>(sp => sp.GetRequiredService<DhanLoginFlow>());
+
+        // The same token without the browser, taken by the desk itself when the
+        // PIN and TOTP secret are set (idle otherwise).
+        services.AddSingleton<DhanAutoSignInState>();
+        services.AddScoped<DhanAutoSignInService>();
+        services.AddSingleton<DhanAutoSignInWorker>();
+        services.AddHostedService(sp => sp.GetRequiredService<DhanAutoSignInWorker>());
 
         // Not part of the market-data seam (that interface is bars), so they are
         // injected where they are wanted by name.

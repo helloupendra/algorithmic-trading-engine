@@ -251,11 +251,42 @@ start_dhan_primary() {  # makes Dhan the day's feed: today's ids, a fresh feed, 
   DHAN_PRIMARY=1
 }
 
+# The automatic PIN + TOTP sign-in (DhanAutoSignIn.cs). The API's own worker
+# takes the token between 08:00 and 08:40; these are for a morning it could not
+# (the API restarted at 08:45, or a token that was fine at 08:40 and is not now).
+dhan_auto_configured() {
+  api_get /api/Dhan/auto-sign-in 2>/dev/null | grep -q '"configured":true'
+}
+
+dhan_auto_sign_in() {  # prints the API's one-line answer; exit 0 when Dhan is signed in
+  local out rc
+  out="$(api_post '/api/Dhan/auto-sign-in?trigger=morning%20job' '{}' 2>/dev/null)"; rc=$?
+  printf '%s' "$out" | python3 -c '
+import json, sys
+try:
+    print(json.load(sys.stdin).get("message") or "no message")
+except Exception:
+    print("the API did not answer")'
+  return $rc
+}
+
+dhan_token_short() {  # hours left -> exit 0 when the token will not last to the MCX close
+  case "$1" in '?'|'') return 1 ;; esac
+  python3 -c "import sys; sys.exit(0 if float('$1') < 14.5 else 1)" 2>/dev/null
+}
+
 if [ "$DRY_RUN" = 1 ]; then
   say "dry run: would check Dhan ($(dhan_state)), map instruments, start the Dhan feed and chain recorder"
+  dhan_auto_configured && say "dry run: the automatic PIN + TOTP sign-in is set up" \
+    || say "dry run: the automatic PIN + TOTP sign-in is not set up (DHAN_PIN / DHAN_TOTP_SECRET)"
 else
   say "checking Dhan ..."
   DHAN="$(dhan_state)"
+  if [ "${DHAN%%|*}" != ok ] && dhan_auto_configured; then
+    say "  Dhan is not usable (${DHAN#*|}); signing in with the PIN and a TOTP code ..."
+    say "  $(dhan_auto_sign_in)"
+    DHAN="$(dhan_state)"
+  fi
   if [ "${DHAN%%|*}" != ok ]; then
     say "  Dhan is not usable: ${DHAN#*|}"
     notify "AlgoTrading" "Dhan is not signed in — press Connect on Connectors > Dhan before 09:12. FYERS is the fallback."
@@ -269,14 +300,21 @@ else
     HOURS_LEFT="$(printf '%s' "$DHAN" | cut -d'|' -f2)"
     ENDS_AT="$(printf '%s' "$DHAN" | cut -d'|' -f3)"
     say "  Dhan signed in${ENDS_AT:+; token valid until $ENDS_AT IST}"
-    # The MCX session runs to 23:30, about 14.5 hours after this check.
-    case "$HOURS_LEFT" in
-      '?'|'') ;;
-      *) if python3 -c "import sys; sys.exit(0 if float('$HOURS_LEFT') < 14.5 else 1)" 2>/dev/null; then
-           warn "the Dhan token ends at $ENDS_AT IST, before the evening session closes"
-           notify "AlgoTrading" "Dhan token ends at $ENDS_AT IST. Press Connect on Connectors > Dhan for a full day; the feed picks the new token up by itself."
-         fi ;;
-    esac
+    # The MCX session runs to 23:30, about 14.5 hours after this check. Nothing
+    # streams on Dhan yet, so this is the one moment a new token cuts nothing off.
+    if dhan_token_short "$HOURS_LEFT" && dhan_auto_configured; then
+      say "  that is before the evening close; taking a fresh token with the PIN and a TOTP code ..."
+      say "  $(dhan_auto_sign_in)"
+      DHAN_AFTER="$(dhan_state)"
+      if [ "${DHAN_AFTER%%|*}" = ok ]; then
+        HOURS_LEFT="$(printf '%s' "$DHAN_AFTER" | cut -d'|' -f2)"
+        ENDS_AT="$(printf '%s' "$DHAN_AFTER" | cut -d'|' -f3)"
+      fi
+    fi
+    if dhan_token_short "$HOURS_LEFT"; then
+      warn "the Dhan token ends at $ENDS_AT IST, before the evening session closes"
+      notify "AlgoTrading" "Dhan token ends at $ENDS_AT IST. Press Connect on Connectors > Dhan for a full day; the feed picks the new token up by itself."
+    fi
 
     start_dhan_primary
   else

@@ -204,13 +204,23 @@ public sealed class DhanApiClient
             return (creds.ClientId.Trim(), new DhanToken(session.AccessToken, "sign-in", session.ExpiresAtUtc));
         }
 
-        if (!string.IsNullOrWhiteSpace(_settings.AccessToken))
+        string configured = _settings.AccessToken.Trim();
+        string expiredNote = string.Empty;
+        if (configured.Length > 0)
         {
-            return (creds.ClientId.Trim(), new DhanToken(_settings.AccessToken.Trim(), "configuration", null));
+            // A pasted token is a JWT with its own end. Past it, Dhan still
+            // accepts the feed's socket and then drops it without a reason, so a
+            // dead one served here looked like a flaky feed: on 16 Sep the feed
+            // reconnected on it 238 times, until Dhan blocked the client id.
+            var ends = DhanJwt.ExpiresUtc(configured);
+            if (ends is not { } end || end > DateTime.UtcNow.AddSeconds(60))
+                return (creds.ClientId.Trim(), new DhanToken(configured, "configuration", ends));
+
+            expiredNote = $" The token in the configuration (DHAN_ACCESS_TOKEN) expired on {end.AddMinutes(330):dd MMM HH:mm} IST.";
         }
 
         throw new DhanApiException(401, null,
-            "Dhan is not signed in. Press Connect on the Dhan connector page (once a day), or set Dhan:AccessToken.");
+            "Dhan is not signed in. Press Connect on the Dhan connector page (once a day), or set Dhan:AccessToken." + expiredNote);
     }
 
     /// <summary>
@@ -269,4 +279,32 @@ public sealed class DhanApiClient
 
     private static string Trim(string body) =>
         string.IsNullOrWhiteSpace(body) ? "no message" : (body.Length > 200 ? body[..200] : body);
+}
+
+/// <summary>The end of a Dhan token, read from the token itself.</summary>
+internal static class DhanJwt
+{
+    /// <summary>
+    /// The <c>exp</c> claim of a JWT, or null when the text is not one. The
+    /// signature is not checked: this only decides whether sending the token is
+    /// worth a call, and Dhan is still the judge of whether it is valid.
+    /// </summary>
+    public static DateTime? ExpiresUtc(string token)
+    {
+        string[] parts = token.Split('.');
+        if (parts.Length != 3) return null;
+        try
+        {
+            string payload = parts[1].Replace('-', '+').Replace('_', '/');
+            payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
+            using var doc = JsonDocument.Parse(Convert.FromBase64String(payload));
+            return doc.RootElement.TryGetProperty("exp", out var exp) && exp.TryGetInt64(out long seconds)
+                ? DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime
+                : null;
+        }
+        catch (Exception ex) when (ex is FormatException or JsonException or ArgumentException)
+        {
+            return null;
+        }
+    }
 }

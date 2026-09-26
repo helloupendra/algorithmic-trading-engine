@@ -118,7 +118,16 @@ api_start() {
     mv -f "$REPO_ROOT/logs/api.log" "$REPO_ROOT/logs/api-until-$(date '+%Y%m%d-%H%M%S').log"
     ls -t "$REPO_ROOT"/logs/api-until-*.log 2>/dev/null | tail -n +8 | xargs rm -f 2>/dev/null || true
   fi
-  ( cd "$REPO_ROOT" && nohup dotnet run --project src/AlgoTrading.Api --no-launch-profile >>"$REPO_ROOT/logs/api.log" 2>&1 & )
+  # Every API gets .env in its environment, whichever script starts it. The
+  # desk never loaded it, so an API it restarted (a deploy, a health restart)
+  # had no DHAN_CLIENT_ID: on 22 and 24 Sep that was "Dhan has no client id"
+  # and a feed on a dead token. market-open.sh loads .env itself, which is why
+  # mornings worked. The two settings above are put back after it, so nothing
+  # in .env can move the API off Production or its port.
+  ( cd "$REPO_ROOT" \
+    && if [ -f .env ]; then set -a; . ./.env; set +a; fi \
+    && export ASPNETCORE_ENVIRONMENT=Production ASPNETCORE_URLS="$API" \
+    && nohup dotnet run --project src/AlgoTrading.Api --no-launch-profile >>"$REPO_ROOT/logs/api.log" 2>&1 & )
   for _ in $(seq 1 60); do sleep 2; api_healthy && { say "  API up"; return 0; }; done
   warn "the API did not come up within two minutes (see logs/api.log)"
   return 1

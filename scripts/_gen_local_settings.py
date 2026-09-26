@@ -106,18 +106,44 @@ def split_csv(value: str) -> list[str]:
     return [part.strip() for part in value.split(",") if part.strip()]
 
 
-def main() -> int:
-    quiet = "--quiet" in sys.argv
+def only_set(pairs: dict[str, str]) -> dict[str, str]:
+    """The pairs whose value is not empty.
 
-    if not ENV_FILE.is_file():
-        print(f"ERROR: {ENV_FILE} not found. Copy .env.example to .env first.",
-              file=sys.stderr)
-        return 1
+    For sections whose C# registration falls back to the environment when a
+    key is absent: an empty "ClientId": "" is not absent, so it would hide the
+    DHAN_CLIENT_ID the API was started with.
+    """
+    return {key: value for key, value in pairs.items() if value}
 
-    env = read_env(ENV_FILE)
+
+def build_dhan_settings(env: dict[str, str]) -> dict:
+    """The Dhan section, with only the values .env sets.
+
+    Every deploy regenerates this file, and until 27 Sep it had no Dhan section:
+    an API the desk restarted had no Dhan client id, so /api/Dhan/session was a
+    404 and Connect could not work (24 Sep, 22 Sep). AccessToken is never
+    written. The daily sign-in owns the token, and a pasted one outlives its
+    day in .env: the feed ran on a dead one 238 times on 16 Sep.
+    """
+    dhan: dict = only_set({
+        "ClientId": env.get("DHAN_CLIENT_ID", ""),
+        "ApiKey": env.get("DHAN_API_KEY", ""),
+        "ApiSecret": env.get("DHAN_API_SECRET", ""),
+        # The automatic PIN + TOTP sign-in. Server only: two hosts holding
+        # these would each take the account's token on their own schedule.
+        "Pin": env.get("DHAN_PIN", ""),
+        "TotpSecret": env.get("DHAN_TOTP_SECRET", ""),
+    })
+    poller = env.get("DHAN_CHAIN_POLLER_ENABLED", "").strip().lower()
+    if poller in ("true", "false"):
+        dhan["ChainPoller"] = {"Enabled": poller == "true"}
+    return dhan
+
+
+def build_api_settings(env: dict[str, str]) -> dict:
+    """appsettings.Local.json for the API, from the parsed .env."""
     connection_string = build_connection_string(env)
-
-    api_settings = {
+    return {
         "//": BANNER,
         "ConnectionStrings": {"TradingDb": connection_string},
         "Jwt": {
@@ -186,7 +212,21 @@ def main() -> int:
             "TotpSecret": env.get("SIMBROKER_TOTP_SECRET", ""),
             "StaticIp": env.get("SIMBROKER_STATIC_IP", ""),
         },
+        "Dhan": build_dhan_settings(env),
     }
+
+
+def main() -> int:
+    quiet = "--quiet" in sys.argv
+
+    if not ENV_FILE.is_file():
+        print(f"ERROR: {ENV_FILE} not found. Copy .env.example to .env first.",
+              file=sys.stderr)
+        return 1
+
+    env = read_env(ENV_FILE)
+    connection_string = build_connection_string(env)
+    api_settings = build_api_settings(env)
 
     worker_settings = {
         "//": BANNER,
