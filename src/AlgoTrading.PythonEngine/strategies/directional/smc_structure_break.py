@@ -37,7 +37,7 @@ from strategies.base_strategy import (
     StrategyInput,
     StrategySignal,
 )
-from strategies.market_structure import BEARISH, BOS, BULLISH, CHOCH, Bar, MarketStructure
+from strategies.market_structure import BEARISH, BOS, BULLISH, CHOCH, Bar, MarketStructure, frames_after, stamp_key
 
 #: What the strategy may act on.
 TRADE_BOS = "bos"
@@ -157,6 +157,7 @@ class SmcStructureBreakStrategy(BaseStrategy):
             # The higher timeframe read the same way, when a bias is asked for.
             "bias": MarketStructure(break_on=self.break_on, inducement_mode=self.inducement),
             "bias_fed": 0,
+            "bias_seen": None,      # timestamp of the last higher-timeframe candle fed
             "position": None,       # {"group_id", "direction", "symbol", "level"}
             "pending": None,        # a retest waiting to happen
             "day": None,            # the session the position was opened in
@@ -173,6 +174,8 @@ class SmcStructureBreakStrategy(BaseStrategy):
         # candles only.
         closed = bars if inp.mode == "OfflineReplay" else bars[:-1]
         events = self._feed(state, closed)
+        state["structure_candles"] = state["fed"]
+        state["structure_last"] = state["seen"]
         if not closed:
             return []
 
@@ -187,15 +190,19 @@ class SmcStructureBreakStrategy(BaseStrategy):
         return signals
 
     def _feed(self, state: Dict[str, Any], closed: List[Any]) -> List[Any]:
-        """Push every candle the reader has not seen yet; returns the events they fired."""
+        """
+        Push every candle the reader has not seen yet, by time (see
+        frames_after — feeding by position froze every live run); returns the
+        events they fired.
+        """
         reader: MarketStructure = state["reader"]
         fired: List[Any] = []
-        for frame in closed[state["fed"]:]:
+        for frame in frames_after(closed, state["seen"]):
             stamp = getattr(frame, "timestamp_utc", None)
-            if stamp is not None and stamp == state["seen"]:
-                continue
             fired.extend(reader.push(Bar(stamp, float(frame.open), float(frame.high), float(frame.low), float(frame.close))))
-            state["seen"] = stamp
+            key = stamp_key(stamp)
+            # An ISO string, not a datetime: the state is saved as JSON.
+            state["seen"] = key.isoformat() if key is not None else state["seen"]
             state["fed"] += 1
         return fired
 
@@ -210,9 +217,11 @@ class SmcStructureBreakStrategy(BaseStrategy):
             return
         closed = bars if inp.mode == "OfflineReplay" else bars[:-1]
         reader: MarketStructure = state["bias"]
-        for frame in closed[state["bias_fed"]:]:
-            reader.push(Bar(getattr(frame, "timestamp_utc", ""), float(frame.open), float(frame.high),
-                            float(frame.low), float(frame.close)))
+        for frame in frames_after(closed, state.get("bias_seen")):
+            stamp = getattr(frame, "timestamp_utc", "")
+            reader.push(Bar(stamp, float(frame.open), float(frame.high), float(frame.low), float(frame.close)))
+            key = stamp_key(stamp)
+            state["bias_seen"] = key.isoformat() if key is not None else state.get("bias_seen")
             state["bias_fed"] += 1
 
     def _allowed(self, state: Dict[str, Any], direction: str) -> bool:

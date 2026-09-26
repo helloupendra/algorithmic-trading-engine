@@ -41,7 +41,8 @@ own spec.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Sequence
 
 HIGH = "high"
 LOW = "low"
@@ -315,3 +316,53 @@ class MarketStructure:
 def bars_from_frames(frames: List[Any]) -> List[Bar]:
     """BarFrame objects (backtest or live) to the reader's bars."""
     return [Bar(f.timestamp_utc, float(f.open), float(f.high), float(f.low), float(f.close)) for f in frames]
+
+
+# --------------------------------------------------------------- feeding it --
+def stamp_key(stamp: Any) -> Optional[datetime]:
+    """
+    A comparable UTC instant for a candle's timestamp, whatever form it came in:
+    a datetime (naive is read as UTC), a pandas Timestamp, or an ISO string.
+    None when it cannot be read.
+    """
+    if stamp is None:
+        return None
+    if hasattr(stamp, "to_pydatetime"):
+        stamp = stamp.to_pydatetime()
+    if isinstance(stamp, datetime):
+        return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+    text = str(stamp).strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def frames_after(frames: Sequence[Any], seen: Any) -> List[Any]:
+    """
+    The frames newer than ``seen`` (a timestamp in any form stamp_key reads),
+    oldest first — every candle a reader has not been fed yet.
+
+    By time, not by position. A reader fed ``closed[fed:]`` stops for good once
+    the list stops growing, and a live runner's window does stop growing: it is
+    capped at 500 bars and slides. From 22 to 25 Sep every live SmcStructureBreak
+    run fed its 500-bar warm-up, reached fed = 499, and was handed an empty slice
+    for the rest of the day — fifteen runs, no orders, no error.
+
+    Scans back from the newest frame, so the cost is the number of new frames.
+    """
+    seen_key = stamp_key(seen)
+    if seen_key is None:
+        return list(frames)
+    fresh: List[Any] = []
+    for frame in reversed(frames):
+        key = stamp_key(getattr(frame, "timestamp_utc", None))
+        if key is None or key <= seen_key:
+            break
+        fresh.append(frame)
+    fresh.reverse()
+    return fresh
+
