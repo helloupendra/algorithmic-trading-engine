@@ -68,7 +68,7 @@ def describe(consecutive_tickless: int, delay: float, detail: str | None = None)
     """The log line explaining the wait, in words the owner can act on."""
     if is_rate_limited(detail):
         return (f"the vendor is rate-limiting us ({(detail or '').strip()[:80]}) — waiting {int(delay)}s "
-                f"before reconnecting. Check the token: a dead session is the usual reason a feed "
+                f"before reconnecting. Check the token — a dead session is the usual reason a feed "
                 f"reconnects in a loop.")
     return (f"{consecutive_tickless} reconnect(s) carried no ticks — waiting {int(delay)}s before the next "
             f"attempt so the vendor does not block the account.")
