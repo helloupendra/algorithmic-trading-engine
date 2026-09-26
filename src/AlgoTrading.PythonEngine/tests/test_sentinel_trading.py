@@ -317,7 +317,8 @@ class RunMissingTests(TradingAgentTestCase):
         self.assertEqual("None of the 13 planned runs for coderforchange is running", f.title)
         self.assertTrue(any("13 of 13 were never started today" in e for e in f.evidence))
         self.assertIn("logs/market-open-2026-09-24.log", f.suggestion)
-        self.assertIn("scripts/market-open.sh", f.suggestion)
+        self.assertIn("Strategies → Live runner", f.suggestion)
+        self.assertIn("Do not run scripts/market-open.sh again once the market is open", f.suggestion)
 
     def test_two_missing_runs_are_one_incident_for_the_account(self):
         rows = without(without(full_day(), "admin", "Fulcrum", "SENSEX"), "admin", "ChainFlowBuy", "NIFTY")
@@ -607,8 +608,16 @@ class MassDeathTests(TradingAgentTestCase):
             self.assertIn(str(run_id), listed)
         self.assertIn("GhostTangentCrossings: 218 BANKNIFTY, 219 NIFTY, 220 SENSEX", f.evidence)
         self.assertIn("24 Sep", f.suggestion)
-        self.assertIn("scripts/market-open.sh", f.suggestion)
-        self.assertNotIn("Live runner", f.suggestion)  # every one of them is in the plan
+        self.assertNotIn("not in the morning plan", f.suggestion)  # every one of them is in the plan
+
+    def test_the_advice_is_the_live_runner_never_the_morning_job_mid_session(self):
+        # Until 27 Sep it said "run scripts/market-open.sh again … it leaves the live ones alone": the job
+        # restarts the API and the feeds under every live run, and from 28 Sep it refuses to after 09:15.
+        running, today = as_of(sep24(), ist(9, 19))
+        for f in self.check(running, today, now=ist(9, 19)):
+            self.assertIn("start the missing runs from Strategies → Live runner in the console", f.suggestion)
+            self.assertIn("Do not run scripts/market-open.sh again once the market is open", f.suggestion)
+            self.assertNotIn("leaves the live ones alone", f.suggestion)
 
     def test_a_planned_run_that_died_is_not_also_missing(self):
         running, today = self.limiter_morning()
@@ -673,7 +682,7 @@ class MassDeathTests(TradingAgentTestCase):
         self.assertEqual(["trading:run-stopped-early:admin:api-restarted"], [f.fingerprint for f in findings])
         self.assertEqual("13 admin runs died at 12:40: lost in an API restart", findings[0].title)
         self.assertIn("desk.log", findings[0].suggestion)
-        self.assertIn("scripts/market-open.sh", findings[0].suggestion)
+        self.assertIn("Strategies → Live runner", findings[0].suggestion)
 
     def test_the_whole_24_sep_session_through_the_engine(self):
         """Before: 34 messages (16 NEW + 16 RESOLVED for one cause, and the pair at 11:20). Now: 8."""
@@ -720,13 +729,78 @@ class ApiOutageTests(TradingAgentTestCase):
         self.assertEqual([(f.fingerprint, f.title, f.severity, f.evidence) for f in seen],
                          [(f.fingerprint, f.title, f.severity, f.evidence) for f in carried])
 
-    def test_a_long_outage_stops_carrying(self):
+    def failing(self, running, today, error=None, **session):
+        api = routes(running, today, **session)
+        api[RUNNING_PATH] = error or RuntimeError("500 Server Error: Internal Server Error for url: "
+                                                  "http://localhost:5025/api/Strategy/runs?status=Running&take=500")
+        return api
+
+    def test_a_long_outage_keeps_what_it_saw_and_says_it_is_blind(self):
+        # Until 27 Sep the last answer was dropped after 15 minutes: every open trading incident resolved
+        # ("none of the 13 planned runs is running" included) while Sentinel could see nothing.
         running, today = MassDeathTests.limiter_morning(self)
-        self.check(running, today, now=ist(9, 30))
+        seen = self.check(running, today, now=ist(9, 30))
+        api = self.failing(running, today)
+        for minute in range(31, 46):   # 09:31 … 09:45: carried, quietly
+            found = self.agent.check(make_context(self.tmp, api=api, now=ist(9, minute)))
+            self.assertEqual([f.fingerprint for f in seen], [f.fingerprint for f in found])
+        found = self.agent.check(make_context(self.tmp, api=api, now=ist(9, 46)))   # 15 min
+        self.assertEqual([f.fingerprint for f in seen] + ["trading:blind"], [f.fingerprint for f in found])
+        blind = found[-1]
+        self.assertEqual(("blind", Severity.HIGH), (blind.rule, blind.severity))
+        self.assertIn(f"GET {RUNNING_PATH}", blind.summary)
+        self.assertIn("500 Server Error", blind.summary)
+        self.assertIn("failing since 09:31:00 IST (15 min)", blind.evidence)
+        self.assertIn("last answer at 09:30:00 IST", blind.evidence)
+        self.assertTrue(any("13 coderforchange runs died" in e for e in blind.evidence), blind.evidence)
+        self.assertIn("held as they were", blind.summary)
+        moment = ist(9, 47)
+        while moment <= ist(13, 0):   # the whole outage, a check a minute: nothing resolves, nothing new
+            later = self.agent.check(make_context(self.tmp, api=api, now=moment))
+            self.assertEqual([f.fingerprint for f in seen] + ["trading:blind"], [f.fingerprint for f in later])
+            moment += timedelta(minutes=1)
+        back = self.check(running, today, now=ist(13, 1))
+        self.assertNotIn("trading:blind", [f.fingerprint for f in back])
+
+    def test_the_failing_get_and_its_answer_are_named(self):
+        running, today = MassDeathTests.limiter_morning(self)
         api = routes(running, today)
-        api[RUNNING_PATH] = ConnectionError("connection refused")
-        self.assertEqual(1, len(self.agent.check(make_context(self.tmp, api=api, now=ist(9, 45)))))
-        self.assertEqual([], self.agent.check(make_context(self.tmp, api=api, now=ist(9, 46))))
+        api[today_path(DAY)] = {"message": "Service Unavailable"}
+        for minute in range(0, 16):
+            found = self.agent.check(make_context(self.tmp, api=api, now=ist(10, minute)))
+        blind = [f for f in found if f.rule == "blind"][0]
+        self.assertEqual(f"GET {today_path(DAY)}", blind.where)
+        self.assertIn("answered with a dict, not a list of runs", blind.summary)
+        self.assertIn("no answer at all today", blind.evidence)
+
+    def test_blind_says_nothing_while_every_market_is_shut(self):
+        api = self.failing([], [], nse=False, mcx=False)
+        for minute in (0, 20, 40):
+            self.assertEqual([], self.agent.check(make_context(self.tmp, api=api, now=ist(8, minute))))
+
+    def test_a_failure_from_before_sentinel_stopped_does_not_start_the_clock(self):
+        api = self.failing([], [])
+        self.agent.check(make_context(self.tmp, api=api, now=ist(9, 31)))
+        for minute in range(0, 15):   # Sentinel was stopped from 09:31 to 11:00
+            self.assertEqual([], self.agent.check(make_context(self.tmp, api=api, now=ist(11, minute))))
+        self.assertEqual(["blind"], self.rules(self.agent.check(make_context(self.tmp, api=api, now=ist(11, 15)))))
+
+    def test_a_long_outage_through_the_engine_resolves_nothing_it_cannot_see(self):
+        """The review's replay: nothing running at 11:00, then the runs GET fails with a 500 until 11:40."""
+        desk = Desk(self.tmp)
+        desk.at(ist(11, 0), [])
+        self.assertEqual(2, len(desk.opened()))   # none of the 13 planned runs, for each account
+        for minute in range(1, 41):
+            desk.at(ist(11, minute), [], down=True)
+        self.assertEqual([], desk.resolved())
+        self.assertEqual(3, len(desk.opened()))
+        self.assertIn("Sentinel cannot see the strategy runs", desk.opened()[-1])
+        for minute in range(41, 45):
+            desk.at(ist(11, minute), [])
+        self.assertEqual(1, len(desk.resolved()))
+        self.assertIn("Sentinel cannot see the strategy runs", desk.resolved()[0])
+        self.assertEqual({"trading:run-missing:admin", "trading:run-missing:coderforchange"},
+                         {r["fingerprint"] for r in desk.store.rows() if r["status"] != "resolved"})
 
     def test_nothing_is_carried_into_the_next_day(self):
         running, today = MassDeathTests.limiter_morning(self)
@@ -873,6 +947,25 @@ class AccountLossTests(TradingAgentTestCase):
         a = self.check(self.losing_day(-4000.0))
         b = self.check(self.losing_day(-6000.0), now=ist(13, 0))
         self.assertEqual(a[0].fingerprint, b[0].fingerprint)
+
+    def test_a_loss_swinging_around_the_line_is_one_incident(self):
+        # Open positions are marked to the minute: past the line, back inside, past again is one problem.
+        desk = Desk(self.tmp)
+        for minute, booked_each in enumerate((-4000.0, -3700.0, -4000.0, -3500.0, -3200.0, -2900.0)):
+            desk.at(ist(12, minute), self.losing_day(booked_each))   # -52k, -48.1k, -52k, -45.5k, -41.6k, -37.7k
+        self.assertEqual(1, len(desk.opened()))
+        self.assertEqual([], desk.resolved())
+        desk.at(ist(12, 6), self.losing_day(-2900.0))
+        self.assertEqual(1, len(desk.resolved()), "under 80% of the line: -37,700 clears")
+
+    def test_back_inside_the_line_says_so(self):
+        self.check(self.losing_day(-4000.0), now=ist(12, 0))
+        f = self.only(self.check(self.losing_day(-3500.0), now=ist(12, 1)), "account-loss")[0]
+        self.assertIn("back inside the -₹50,000 day-loss line", f.summary)
+        self.assertIn("under ₹40,000", f.summary)
+
+    def test_a_loss_between_the_lines_that_was_never_reported_is_quiet(self):
+        self.assertEqual([], self.check(self.losing_day(-3500.0)))   # -45,500
 
     def test_a_booked_loss_after_the_close_is_not_an_open_incident_until_midnight(self):
         closed = [dict(r, status="Stopped", isActive=False, stoppedUtc=iso(ist(15, 30, 30)), stopReason=CLOSED,

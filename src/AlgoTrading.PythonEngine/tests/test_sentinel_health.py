@@ -9,6 +9,7 @@ from unittest import mock
 
 import sentinel.agents.health as health
 from sentinel.agents.health import HealthAgent
+from sentinel.agents.trading import RUNNING_PATH
 from sentinel.model import Severity
 from _sentinel_fakes import make_context
 
@@ -102,6 +103,7 @@ class HealthCase(unittest.TestCase):
         self.session = {"nse": True, "mcx": True, "trading_day": True, "holiday": None}
         self.api = {
             "/api/Feeds": feeds(),
+            RUNNING_PATH: [],
             "/api/MarketSession/check?exchange=NSE*": lambda _: self._market("nse"),
             "/api/MarketSession/check?exchange=MCX*": lambda _: self._market("mcx"),
         }
@@ -287,6 +289,38 @@ class ApiTests(HealthCase):
             self.assertNotIn("api-down", self.rules(self.check(NOW + timedelta(seconds=30 * i))))
         self.assertIn("api-down", self.rules(self.check(NOW + timedelta(seconds=90))))
 
+    def test_a_morning_job_run_by_hand_restarts_the_api_on_plan(self):
+        # scripts/market-open.sh run from a terminal writes only to its own log, not desk.log: its restart of
+        # the API read as a crash and paged CRITICAL api-down.
+        self.session.update(nse=False, mcx=False)   # the feed is not the subject here
+        self.files["market-open-2026-09-24.log"] = ("11:29:40  === market-open: Thursday 24 September 2026 ===\n"
+                                                    "11:29:55  stopping the API (pid 1692373)\n"
+                                                    "11:29:56  starting the API (Production, http://localhost:5025)\n")
+        self.api_down()
+        for i in range(6):   # to 11:32:30: within 180 s of the stop
+            self.assertEqual([], self.check(NOW + timedelta(seconds=30 * i)))
+        f = self.only(self.check(NOW + timedelta(seconds=180)), "api-down")   # 11:33:00: the desk gave up
+        self.assertIn("market-open-2026-09-24.log 11:29:56 IST: starting the API", " ".join(f.evidence))
+
+    def test_a_restart_the_job_finished_does_not_hold_a_later_crash(self):
+        self.session.update(nse=False, mcx=False)
+        self.files["desk.log"] = "11:29:50  stopping the API (pid 1)\n11:29:51  starting the API (Production)\n"
+        self.files["market-open-2026-09-24.log"] = ("11:29:50  stopping the API (pid 1)\n"
+                                                    "11:29:51  starting the API (Production)\n"
+                                                    "11:29:58  API up\n")
+        self.api_down()
+        for i in range(3):
+            self.check(NOW + timedelta(seconds=30 * i))
+        self.assertIn("api-down", self.rules(self.check(NOW + timedelta(seconds=90))))
+
+    def test_yesterdays_job_log_is_not_read(self):
+        self.session.update(nse=False, mcx=False)
+        self.files["market-open-2026-09-23.log"] = "11:29:55  stopping the API (pid 1)\n11:29:56  starting the API\n"
+        self.api_down()
+        for i in range(3):
+            self.check(NOW + timedelta(seconds=30 * i))
+        self.assertIn("api-down", self.rules(self.check(NOW + timedelta(seconds=90))))
+
     def test_an_old_restart_line_does_not_hold(self):
         self.files["desk.log"] = "11:28:02  stopping the API (pid 1)\n11:28:03  starting the API (Production)\n"
         late = datetime(2026, 9, 24, 10, 0, tzinfo=timezone.utc)   # 15:30 IST: 11:28 was hours ago
@@ -337,6 +371,33 @@ class ApiTests(HealthCase):
         self.assertEqual(Severity.HIGH, f.severity)
         self.assertIn("database", f.suggestion)
         self.assertNotIn("api-down", self.rules([f]))
+
+    def test_a_failing_runs_list_is_degraded_even_while_feeds_answer(self):
+        # The trading agent reads GET /api/Strategy/runs; when that alone fails, /health and /api/Feeds
+        # still answer and nothing here said so.
+        self.api[RUNNING_PATH] = RuntimeError("500 Server Error: Internal Server Error for url: "
+                                              "http://localhost:5025/api/Strategy/runs?status=Running&take=500")
+        self.assertEqual([], self.check(NOW))
+        f = self.only(self.check(NOW + timedelta(seconds=30)), "api-degraded")
+        self.assertEqual(Severity.HIGH, f.severity)
+        self.assertEqual("health:api-degraded", f.fingerprint)
+        self.assertIn("strategy runs", f.title)
+        self.assertTrue(f.evidence[0].startswith(f"GET {RUNNING_PATH}: RuntimeError: 500"), f.evidence)
+        self.api[RUNNING_PATH] = []
+        self.assertEqual([], self.check(NOW + timedelta(seconds=60)))
+
+    def test_a_runs_answer_that_is_not_a_list_counts_as_failing(self):
+        self.api[RUNNING_PATH] = {"message": "Service Unavailable"}
+        self.check(NOW)
+        self.assertIn("unexpected body (dict)", " ".join(self.only(self.check(NOW + timedelta(seconds=30)),
+                                                                   "api-degraded").evidence))
+
+    def test_the_runs_are_not_asked_for_when_the_feeds_call_already_failed(self):
+        asked = []
+        self.api[RUNNING_PATH] = lambda path: asked.append(path) or []
+        self.api["/api/Feeds"] = ConnectionError("Connection refused")
+        self.check(NOW)
+        self.assertEqual([], asked)
 
     def test_a_429_on_sign_in_points_at_the_limiter(self):
         self.api["/api/Feeds"] = RuntimeError("429 Client Error: Too Many Requests for url: "
@@ -707,12 +768,36 @@ class MachineTests(HealthCase):
                                        f"MemAvailable:    {available_mb * 1024} kB\n"
                                        "SwapTotal:       0 kB\nSwapFree:        0 kB\n")
 
-    def test_under_400_mb_is_critical_at_once(self):
+    def test_under_400_mb_is_critical_on_the_second_reading(self):
+        # One reading under 400 MB can be a dotnet build during a deploy; two in a row are the OOM killer's.
         self.meminfo(350)
-        f = self.only(self.check(NOW), "memory-low")
+        self.assertEqual([], self.check(NOW))
+        f = self.only(self.check(NOW + timedelta(seconds=30)), "memory-low")
         self.assertEqual(Severity.CRITICAL, f.severity)
         self.assertIn("MemAvailable 350 MB of 7776 MB", f.evidence)
         self.assertTrue(any("python3" in e for e in f.evidence))
+
+    def test_a_dip_under_400_mb_then_600_is_high_not_critical(self):
+        self.meminfo(350)
+        self.check(NOW)
+        self.meminfo(600)
+        self.assertEqual(Severity.HIGH, self.only(self.check(NOW + timedelta(seconds=30)), "memory-low").severity)
+
+    def test_memory_hovering_at_the_line_is_one_incident(self):
+        # Reported, it stays reported until more than 875 MB is free: 690/710 MB alternating is one problem.
+        self.session.update(nse=False, mcx=False)   # minutes pass; the feed is not the subject here
+        seen = []
+        for i, mb in enumerate((690, 690, 710, 690, 720, 860, 700)):
+            self.meminfo(mb)
+            seen.append(bool([f for f in self.check(NOW + timedelta(seconds=30 * i)) if f.rule == "memory-low"]))
+        self.assertEqual([False, True, True, True, True, True, True], seen)
+        self.meminfo(710)
+        f = self.only(self.check(NOW + timedelta(seconds=210)), "memory-low")
+        self.assertIn("stays open until more than 875 MB", f.summary)
+        self.meminfo(900)
+        self.assertEqual([], self.check(NOW + timedelta(seconds=240)))
+        self.meminfo(710)
+        self.assertEqual([], self.check(NOW + timedelta(seconds=270)), "cleared: 710 MB is above the line")
 
     def test_under_700_mb_is_high_on_the_second_check(self):
         self.meminfo(600)
@@ -766,6 +851,22 @@ class MachineTests(HealthCase):
         self.files["/proc/loadavg"] = "3.90 3.90 3.00 3/600 12345\n"
         for i in range(4):
             self.assertEqual([], self.check(NOW + timedelta(seconds=30 * i)))
+
+    def test_a_load_hovering_at_the_line_is_one_incident(self):
+        # Line 4.0 on 2 CPUs; reported, it clears only below 3.2.
+        self.session.update(nse=False, mcx=False)
+        seen = []
+        for i, value in enumerate(("4.5", "4.5", "4.5", "3.9", "4.1", "3.5", "3.3")):
+            self.files["/proc/loadavg"] = f"4.0 {value} 4.0 3/600 1\n"
+            seen.append(bool([f for f in self.check(NOW + timedelta(seconds=30 * i)) if f.rule == "load-high"]))
+        self.assertEqual([False, False, True, True, True, True, True], seen)
+        self.files["/proc/loadavg"] = "4.0 3.3 4.0 3/600 1\n"
+        f = self.only(self.check(NOW + timedelta(seconds=210)), "load-high")
+        self.assertIn("below 3.2", f.summary)
+        self.files["/proc/loadavg"] = "4.0 3.1 4.0 3/600 1\n"
+        self.assertEqual([], self.check(NOW + timedelta(seconds=240)))
+        self.files["/proc/loadavg"] = "4.0 3.9 4.0 3/600 1\n"
+        self.assertEqual([], self.check(NOW + timedelta(seconds=270)), "cleared: 3.9 is under the line")
 
     def test_a_dip_in_load_restarts_the_count(self):
         self.session.update(nse=False, mcx=False)
@@ -947,7 +1048,8 @@ class RobustnessTests(HealthCase):
                             disk_usage=broken, cpu_count=lambda: 2, device_of=lambda p: 1)
         self.files["/proc/meminfo"] = "MemTotal: 7962896 kB\nMemAvailable: 102400 kB\n"
         with self.assertLogs("sentinel.agents.health", level="ERROR"):
-            found = self.check(NOW, agent=agent)
+            self.check(NOW, agent=agent)
+            found = self.check(NOW + timedelta(seconds=30))
         self.assertEqual(["check-failed", "memory-low"], self.rules(found))
         failed = self.only(found, "check-failed")
         self.assertEqual("health:check-failed:disk", failed.fingerprint)

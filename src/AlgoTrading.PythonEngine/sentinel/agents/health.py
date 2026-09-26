@@ -6,7 +6,8 @@ feels wrong, each one a separate rule:
 
 * ``api-down``        the API has answered neither /health nor an authenticated
                       GET for 90 s — longer than the desk's own planned restarts
-* ``api-degraded``    /health answers but authenticated GETs fail (sign-in, DB)
+* ``api-degraded``    /health answers but authenticated GETs fail (sign-in, DB),
+                      or /api/Feeds answers but the live runs cannot be listed
 * ``public-down``     the API answers here but the public site does not — the
                       stale Cloudflare tunnel of 10 Sep
 * ``feed-silent``     no tick has reached Redis for 90 s while a market is open —
@@ -28,7 +29,9 @@ Most rules wait for a second (or third) sighting before they speak: a single
 failed probe during an API restart is ordinary, and a watchman that shouts at
 every restart is soon ignored. Each streak is kept in the agent's state with
 the time of its last sighting, so a streak left over from before a Sentinel
-restart does not count.
+restart does not count. Memory and load, once reported, clear only well past
+their line (875 MB free; 80% of the load line), so a reading hovering at the
+line is one incident rather than one every few minutes.
 
 Everything here reads: HTTP GETs, one Redis XREVRANGE, /proc, statvfs, and
 ``docker ps`` / ``ps`` through the context's allowlist. It proposes fixes in the
@@ -48,6 +51,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from sentinel.agents.base import Agent
+from sentinel.agents.trading import RUNNING_PATH
 from sentinel.clock import IST, MCX_OPEN, NSE_OPEN, to_ist
 from sentinel.context import SentinelContext
 from sentinel.model import Finding, Severity
@@ -82,9 +86,11 @@ STREAM_MAX_PAGES = 5           # never read more than 10 000 entries in one chec
 
 MEMORY_HIGH_MB = 700
 MEMORY_CRITICAL_MB = 400
+MEMORY_CLEAR_MB = 875          # a reported memory-low clears above this: the 700 MB line is 80% of it
 DISK_MIN_FREE_BYTES = 5 * 1024 ** 3
 DISK_MIN_FREE_FRACTION = 0.10
 LOAD_PER_CPU = 2.0
+LOAD_CLEAR_FRACTION = 0.8      # a reported load-high clears below 80% of its line
 
 STREAK_STALE = timedelta(minutes=5)   # a streak not extended for this long starts again
 
@@ -270,8 +276,8 @@ def _starts_api(args: str) -> bool:
     return exe in ("AlgoTrading.Api", "AlgoTrading.Api.dll")
 
 
-# What desk.sh / market-open.sh write to logs/desk.log around an API restart
-# (scripts/lib/desk-common.sh: api_stop, api_start).
+# What desk.sh / market-open.sh write around an API restart (scripts/lib/desk-common.sh:
+# api_stop, api_start) — to logs/desk.log, and to logs/market-open-<date>.log.
 _DESK_LINE = re.compile(r"^(\d{2}):(\d{2}):(\d{2})\s+(.*)$")
 _API_RESTARTING = ("stopping the API", "starting the API")
 _API_SETTLED = ("API up", "API already healthy", "the API did not come up")
@@ -279,12 +285,13 @@ _API_SETTLED = ("API up", "API already healthy", "the API did not come up")
 
 @dataclass
 class _DeskRestart:
-    """The desk's last word on the API in desk.log."""
+    """The desk's last word on the API, in desk.log or today's market-open / market-close log."""
 
     at: datetime                 # when that line was written
     line: str                    # the message, redacted
     in_progress: bool            # stopping/starting, with no "API up" (or failure) after it
     began: Optional[datetime]    # the first line of the restart still in progress
+    source: str = "desk.log"     # the file it was read from
 
 
 def _desk_line_time(hh: int, mm: int, ss: int, now: datetime) -> Optional[datetime]:
@@ -418,6 +425,18 @@ class HealthAgent(Agent):
         streaks[key] = {"n": count, "at": now.isoformat(), "since": since.isoformat()}
         return count, since
 
+    @staticmethod
+    def _streak_so_far(data: dict, key: str, now: datetime) -> int:
+        """The streak as the previous check left it (0 when there is none, or it went stale) — without extending it."""
+        prev = data.get("streaks", {}).get(key)
+        prev_at = _parse_time(prev.get("at")) if isinstance(prev, dict) else None
+        if prev_at is None or not timedelta(0) <= now - prev_at <= STREAK_STALE:
+            return 0
+        try:
+            return int(prev.get("n", 0))
+        except (TypeError, ValueError):
+            return 0
+
     # -------------------------------------------------------------- the API
 
     def _api_rules(self, ctx: SentinelContext, data: dict, now: datetime, probe: dict) -> list[Finding]:
@@ -443,6 +462,20 @@ class HealthAgent(Agent):
             probe["feeds"] = None
             probe["feeds_error"] = _short_error(exc)
 
+        # The strategy runs are asked for too: /api/Feeds reads no table, and on a day the runs query fails (a
+        # 500, a timeout) the trading agent is blind while every probe here says the API is fine. Asked only when
+        # /api/Feeds answered — otherwise the API is already down or degraded, and a hung API would cost this
+        # check another 15 s timeout for nothing.
+        runs_error = ""
+        if probe["feeds"] is not None:
+            try:
+                body = ctx.api_get(RUNNING_PATH)
+                if not isinstance(body, list):
+                    runs_error = f"unexpected body ({type(body).__name__})"
+            except Exception as exc:
+                runs_error = _short_error(exc)
+        probe["runs_error"] = runs_error
+
         health_ok = probe["health_ok"]
         auth_ok = probe["feeds"] is not None
         findings: list[Finding] = []
@@ -459,7 +492,7 @@ class HealthAgent(Agent):
                             f"GET /api/Feeds: {probe.get('feeds_error', '')}",
                             f"failing since {_ist(since, now)} ({down} checks)"]
                 if restart is not None and now - restart.at <= timedelta(minutes=30):
-                    evidence.append(f"desk.log {_ist(restart.at, now)}: {restart.line}"
+                    evidence.append(f"{restart.source} {_ist(restart.at, now)}: {restart.line}"
                                     + (" — no \"API up\" after it" if restart.in_progress else ""))
                 findings.append(Finding(
                     agent=self.name, rule="api-down", severity=Severity.CRITICAL,
@@ -477,19 +510,29 @@ class HealthAgent(Agent):
                                 "container is down the API will not start."),
                 ))
 
-        degraded, since = self._streak(data, "api-degraded", health_ok and not auth_ok, now)
+        degraded_now = (health_ok and not auth_ok) or (auth_ok and bool(runs_error))
+        degraded, since = self._streak(data, "api-degraded", degraded_now, now)
         if degraded >= 2:
-            error = probe.get("feeds_error", "")
+            if not auth_ok:
+                error = probe.get("feeds_error", "")
+                said = (f"GET /health answers, but authenticated GETs have failed for {degraded} checks in a row "
+                        f"since {_ist(since, now)} — the process is serving, the work behind it is not.")
+                lines = [f"GET {base}/health: {probe['health_note']}", f"GET /api/Feeds: {error}"]
+            else:
+                error = runs_error
+                said = (f"The API answers, but GET {RUNNING_PATH} — the live strategy runs — has failed for "
+                        f"{degraded} checks in a row since {_ist(since, now)}. The console's Live runner and "
+                        "Sentinel's trading checks read the same list, so neither can see the runs.")
+                lines = [f"GET {RUNNING_PATH}: {error}", "GET /api/Feeds: answered",
+                         f"GET {base}/health: {probe['health_note']}"]
             findings.append(Finding(
                 agent=self.name, rule="api-degraded", severity=Severity.HIGH,
-                title="The API is up but its signed-in requests fail",
-                summary=(f"GET /health answers, but authenticated GETs have failed for {degraded} checks in a row "
-                         f"since {_ist(since, now)} — the process is serving, the work behind it is not."),
+                title=("The API is up but its signed-in requests fail" if not auth_ok
+                       else "The API answers but cannot list the strategy runs"),
+                summary=said,
                 fingerprint="health:api-degraded",
                 where=f"AlgoTrading.Api ({base})",
-                evidence=[f"GET {base}/health: {probe['health_note']}",
-                          f"GET /api/Feeds: {error}",
-                          f"failing since {_ist(since, now)}"],
+                evidence=lines + [f"failing since {_ist(since, now)}"],
                 suggestion=self._degraded_advice(error),
             ))
         return findings
@@ -511,28 +554,38 @@ class HealthAgent(Agent):
 
     def _desk_restart(self, ctx: SentinelContext, now: datetime) -> Optional[_DeskRestart]:
         """
-        The desk's last API line in logs/desk.log ("stopping the API", "starting
-        the API", "API up", ...), and whether a restart is still in progress —
-        read only when the API has already been down long enough to report.
+        The desk's last API line ("stopping the API", "starting the API", "API
+        up", ...), and whether a restart is still in progress — read only when
+        the API has already been down long enough to report.
+
+        Read from logs/desk.log and from today's market-open and market-close
+        logs, in time order. desk.sh copies the 08:45 run of market-open.sh into
+        desk.log, but a morning job run by hand writes only to its own log: its
+        planned restart of the API was invisible here, and an ordinary
+        restart read as a crash (CRITICAL api-down).
         """
-        text = self.read_tail(str(ctx.logs_dir / "desk.log"))
-        if not text:
-            return None
+        day = to_ist(now).strftime("%Y-%m-%d")
+        lines: list[tuple[datetime, int, int, str, str, bool]] = []
+        for order, name in enumerate(("desk.log", f"market-open-{day}.log", f"market-close-{day}.log")):
+            text = self.read_tail(str(ctx.logs_dir / name))
+            for index, raw in enumerate((text or "").splitlines()):
+                m = _DESK_LINE.match(raw.strip())
+                if not m:
+                    continue
+                message = m.group(4).strip()
+                restarting = any(message.startswith(p) for p in _API_RESTARTING)
+                settled = any(message.startswith(p) for p in _API_SETTLED) or \
+                    message.startswith("WARN: the API did not come up")
+                if not restarting and not settled:
+                    continue
+                at = _desk_line_time(int(m.group(1)), int(m.group(2)), int(m.group(3)), now)
+                if at is not None:
+                    lines.append((at, order, index, name, message, restarting))
+
+        # One restart run by desk.sh is in two of these files, line for line; the order is what matters.
         last: Optional[_DeskRestart] = None
         began: Optional[datetime] = None
-        for raw in text.splitlines():
-            m = _DESK_LINE.match(raw.strip())
-            if not m:
-                continue
-            message = m.group(4).strip()
-            restarting = any(message.startswith(p) for p in _API_RESTARTING)
-            settled = any(message.startswith(p) for p in _API_SETTLED) or \
-                message.startswith("WARN: the API did not come up")
-            if not restarting and not settled:
-                continue
-            at = _desk_line_time(int(m.group(1)), int(m.group(2)), int(m.group(3)), now)
-            if at is None:
-                continue
+        for at, _, _, name, message, restarting in sorted(lines, key=lambda x: x[:3]):
             if restarting:
                 # "stopping" opens a restart; the "starting" right after it belongs to the same one.
                 if began is None or message.startswith("stopping the API"):
@@ -541,7 +594,7 @@ class HealthAgent(Agent):
                 began = None
             line = redact(message)
             last = _DeskRestart(at=at, line=line if len(line) <= 100 else line[:99] + "…",
-                                in_progress=restarting, began=began)
+                                in_progress=restarting, began=began, source=name)
         return last
 
     # ------------------------------------------------------- the public site
@@ -931,9 +984,15 @@ class HealthAgent(Agent):
         avail_mb = values["MemAvailable"] // 1024
         total_mb = values.get("MemTotal", 0) // 1024
 
-        low, since = self._streak(data, "memory-low", avail_mb < MEMORY_HIGH_MB, now)
-        if avail_mb < MEMORY_CRITICAL_MB:
-            severity = Severity.CRITICAL          # the OOM killer is close: no second look
+        # Once reported, it stays reported until memory is back above MEMORY_CLEAR_MB: a box hovering at
+        # 690–710 MB would otherwise open, resolve and reopen the incident every few minutes.
+        reported = self._streak_so_far(data, "memory-low", now) >= 2
+        recovering = reported and MEMORY_HIGH_MB <= avail_mb < MEMORY_CLEAR_MB
+        low, since = self._streak(data, "memory-low", avail_mb < MEMORY_HIGH_MB or recovering, now)
+        # Critical wants two readings too: a dotnet build during a deploy can dip under 400 MB for one.
+        critical, _ = self._streak(data, "memory-critical", avail_mb < MEMORY_CRITICAL_MB, now)
+        if critical >= 2:
+            severity = Severity.CRITICAL          # the OOM killer is close
         elif low >= 2:
             severity = Severity.HIGH              # a build can dip for a moment; twice is real
         else:
@@ -950,7 +1009,9 @@ class HealthAgent(Agent):
             agent=self.name, rule="memory-low", severity=severity,
             title="The server is running out of memory",
             summary=(f"Only {avail_mb} MB of {total_mb} MB is available (warning below {MEMORY_HIGH_MB} MB, "
-                     f"critical below {MEMORY_CRITICAL_MB} MB), low since {_ist(since, now)}."),
+                     f"critical below {MEMORY_CRITICAL_MB} MB), low since {_ist(since, now)}."
+                     + (f" Back above {MEMORY_HIGH_MB} MB, but this stays open until more than {MEMORY_CLEAR_MB} MB "
+                        "is free, so memory hovering at the line is one incident." if recovering else "")),
             fingerprint="health:memory-low",
             where="server memory (/proc/meminfo)",
             evidence=evidence[:6],
@@ -1004,11 +1065,17 @@ class HealthAgent(Agent):
             return []
         cpus = max(1, int(self.cpu_count() or 1))
         limit = LOAD_PER_CPU * cpus
-        count, since = self._streak(data, "load-high", load5 > limit, now)
+        clear = LOAD_CLEAR_FRACTION * limit
+        # Once reported, it stays until the load is under 80% of the line: the box runs near 100% CPU in the
+        # session (config/morning-plan.txt, 27 Sep), and a 5-minute load hovering at the line would otherwise
+        # resolve and reopen the incident every few minutes.
+        recovering = self._streak_so_far(data, "load-high", now) >= 3 and clear < load5 <= limit
+        count, since = self._streak(data, "load-high", load5 > limit or recovering, now)
         if count < 3:
             return []
         evidence = [f"load 1/5/15 min: {load1:.2f} / {load5:.2f} / {load15:.2f} on {cpus} CPU(s)",
-                    f"threshold {limit:.1f} (2 × CPUs), above it since {_ist(since, now)}"]
+                    f"threshold {limit:.1f} (2 × CPUs), above it since {_ist(since, now)}"
+                    + (f"; clears below {clear:.1f}" if recovering else "")]
         top = self._top_processes(ctx, "pcpu", "pcpu")
         if top:
             evidence.append("busiest (%CPU): " + "; ".join(top))
@@ -1016,7 +1083,9 @@ class HealthAgent(Agent):
             agent=self.name, rule="load-high", severity=Severity.MEDIUM,
             title="The server is overloaded",
             summary=(f"The 5-minute load has been above {limit:.1f} for {count} checks since {_ist(since, now)}; "
-                     "ticks and orders queue behind whatever is using the CPU."),
+                     "ticks and orders queue behind whatever is using the CPU."
+                     + (f" It is {load5:.2f} now: under the line, but this stays open until it is below "
+                        f"{clear:.1f}, so a load hovering at the line is one incident." if recovering else "")),
             fingerprint="health:load-high",
             where="server CPU (/proc/loadavg)",
             evidence=evidence,

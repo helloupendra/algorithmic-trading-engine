@@ -34,8 +34,10 @@ Every five minutes it reads the platform's own activity log and the machine:
   SENTINEL_SSH_ALLOWED (addresses or CIDR ranges) or from EC2 Instance
   Connect (13.233.177.0/29, a fresh key per session) are known. A log that
   exists but cannot be read is one LOW finding: SSH logins are unwatched.
-* ``open-port`` (HIGH): a TCP listener, or a Docker-published port, on a
-  public address and a port not in SENTINEL_PUBLIC_PORTS (default 22).
+* ``open-port`` (HIGH): TCP listeners, or Docker-published ports, on a
+  public address and not in SENTINEL_PUBLIC_PORTS (default 22; ranges such as
+  ``22,8000-8019`` work) — one finding listing every such port, so twenty
+  runners' metrics ports are one incident, not twenty.
 * ``secret-file-permissions`` (HIGH): .env or an appsettings.Local.json that
   other users on the machine can open.
 * ``secret-in-git`` (CRITICAL, once a day): a private key, AWS key, Telegram
@@ -48,8 +50,12 @@ Every five minutes it reads the platform's own activity log and the machine:
   secret`` on its line, or is listed in SENTINEL_SECRET_ALLOW (``path:line``
   or ``path``, comma separated).
 * ``vulnerable-dependency`` (MEDIUM, HIGH when critical; once a week, outside
-  market hours): ``dotnet list package --vulnerable`` for the API and
-  ``npm audit`` for the console, one finding per vulnerable package.
+  08:30–15:45 on a trading day): ``dotnet list package --vulnerable`` for the API and
+  ``npm audit`` for the console, one finding per vulnerable package. A change
+  to web/package*.json, a .csproj or Directory.*.props is rescanned at the
+  next check outside market hours, so a fix is not reported for another week.
+  The whole scan gets four minutes: the engine is single-threaded, and every
+  other agent waits while it runs.
 * ``fail2ban`` (LOW): more than 20 new sshd bans between two checks, when the
   jail is readable at all (it needs root; without it the rule is silent).
 
@@ -71,6 +77,7 @@ import json
 import os
 import re
 import stat
+import time as time_module
 import traceback
 import zlib
 from dataclasses import asdict, dataclass, replace
@@ -118,10 +125,31 @@ AUTH_LOG_MARGIN = timedelta(minutes=2)   # re-read a little of the last window; 
 EC2_INSTANCE_CONNECT = "13.233.177.0/29"  # ap-south-1's EC2 Instance Connect: a fresh key on every session
 KNOWN_KEYS_MAX = 1000
 
+OPEN_PORT_EVIDENCE = 6
+# core/metrics.py's AUTO_METRICS_PORT_RANGE: where each strategy runner serves its Prometheus metrics. Named here, not
+# imported — Sentinel imports nothing from the rest of the repository (it must keep watching whatever else breaks).
+RUNNER_METRICS_PORTS = range(8000, 8020)
+
 GIT_SCAN_MAX_FILES = 10
 DEPENDENCY_SCAN_EVERY = timedelta(days=7)
 DEPENDENCY_RETRY_AFTER = timedelta(hours=6)
-MARKET_WINDOW = (time(9, 0), time(15, 45))
+# No scan from the morning job (08:45, done by about 09:25) to the close: while a scan runs, no agent looks.
+MARKET_WINDOW = (time(8, 30), time(15, 45))
+# What decides the audits' answer. A change to any of them (a deploy that pins a patched package) is scanned at the
+# next check outside market hours instead of up to a week later: lodash-es and nanoid were fixed in f545822 on
+# 27 Sep and npm audit said 0, but the incidents from that morning's scan would have stayed open until 4 Oct.
+DEPENDENCY_INPUTS = ("web/package.json", "web/package-lock.json", "Directory.Packages.props", "Directory.Build.props",
+                     "src/Directory.Packages.props", "src/Directory.Build.props")
+DEPENDENCY_PROJECT_GLOBS = ("src/*/*.csproj", "tests/*/*.csproj")
+# The engine is single-threaded: while a scan runs, no agent looks at anything. Until 28 Sep a `dotnet list package`
+# that hung until its 300 s timeout was followed by a second full run for the table, then npm (180 s) — up to 13
+# minutes blind. The whole scan now gets this much, and a part with less than DEPENDENCY_MIN_CALL left is not started.
+DEPENDENCY_SCAN_BUDGET = 240.0
+DEPENDENCY_DOTNET_TIMEOUT = 180.0
+DEPENDENCY_NPM_TIMEOUT = 120.0
+DEPENDENCY_MIN_CALL = 20.0
+# ctx.run's answers for a command that never finished: timed out, could not be started, not installed.
+_DID_NOT_FINISH = (124, 126, 127)
 
 FAIL2BAN_JUMP = 20
 
@@ -219,7 +247,36 @@ def _in_networks(address: str, networks: list) -> bool:
 
 
 def _ports(spec: str) -> set[int]:
-    return {int(p) for p in re.split(r"[,\s]+", spec or "") if p.isdigit()}
+    """SENTINEL_PUBLIC_PORTS → ports: '22, 443' or '22,8000-8019'. A malformed or reversed item is ignored."""
+    ports: set[int] = set()
+    for item in re.split(r"[,\s]+", spec or ""):
+        m = re.fullmatch(r"(\d{1,5})(?:-(\d{1,5}))?", item)
+        if not m:
+            continue
+        first = int(m.group(1))
+        last = int(m.group(2) or first)
+        if first <= last <= 65535:
+            ports.update(range(first, last + 1))
+    return ports
+
+
+def _trim_list(text: str, limit: int) -> str:
+    """A comma-separated list cut at an item boundary: '8000-8019, 9000, …'."""
+    if len(text) <= limit:
+        return text
+    cut = text.rfind(", ", 0, limit)
+    return (text[:cut] if cut > 0 else text[:limit]) + ", …"
+
+
+def _port_ranges(ports: Iterable[int]) -> str:
+    """[8000, 8001, 8002, 9000] → '8000-8002, 9000'."""
+    out: list[str] = []
+    for port in sorted(set(ports)):
+        if out and int(out[-1].split("-")[-1]) == port - 1:
+            out[-1] = f"{out[-1].split('-')[0]}-{port}"
+        else:
+            out.append(str(port))
+    return ", ".join(out)
 
 
 # ─── privileged changes: what counts, and how to say it ───────────────────────
@@ -646,8 +703,10 @@ class SecurityAgent(Agent):
     interval_seconds = 300
     resolve_after = 1
 
-    def __init__(self, auth_logs: Optional[Iterable[str | Path]] = None) -> None:
+    def __init__(self, auth_logs: Optional[Iterable[str | Path]] = None,
+                 monotonic: Callable[[], float] = time_module.monotonic) -> None:
         self._auth_logs = tuple(Path(p) for p in (DEFAULT_AUTH_LOGS if auth_logs is None else auth_logs))
+        self._monotonic = monotonic   # the dependency scan's time budget
 
     def check(self, ctx: SentinelContext) -> list[Finding]:
         state = ctx.state(self.name)
@@ -1082,26 +1141,52 @@ class SecurityAgent(Agent):
             for port, line in parse_docker_ports(out):
                 exposed.setdefault(port, []).append(line)
 
-        findings = []
-        for port in sorted(p for p in exposed if p not in allowed):
-            evidence = list(dict.fromkeys(exposed[port]))[:6]
-            docker = any(e.startswith("container ") for e in evidence)
-            findings.append(Finding(
-                agent=self.name, rule="open-port", severity=Severity.HIGH,
-                title=f"Port {port} is open to the internet on the server",
-                summary=(f"TCP port {port} is bound to a public address, and {port} is not in "
-                         f"SENTINEL_PUBLIC_PORTS ({', '.join(map(str, sorted(allowed))) or 'none'}). Only the AWS "
-                         f"security group stands between it and the internet."),
-                fingerprint=f"{self.name}:open-port:tcp/{port}",
-                where=f"tcp/{port}", evidence=evidence,
-                suggestion=(("Publish it on loopback only — \"127.0.0.1:{p}:{p}\" in docker-compose, as the "
-                             "database, Redis and Grafana already are — then recreate the container.")
-                            if docker else
-                            "Bind the service to 127.0.0.1 (everything public goes through the Cloudflare "
-                            "tunnel), or add the port to SENTINEL_PUBLIC_PORTS if it is meant to be public."
-                            ).format(p=port),
-            ))
-        return _remember(st, "open_ports", findings)
+        unexpected = sorted(p for p in exposed if p not in allowed)
+        if not unexpected:
+            return _remember(st, "open_ports", [])
+        # One finding for all of them, whatever they are. Every strategy runner served its metrics on
+        # 0.0.0.0 at the first free port of 8000-8019 (core/metrics.py, until 28 Sep): a finding per port
+        # would have opened about twenty HIGH incidents at every morning's start and closed them at 15:30.
+        evidence: list[str] = []
+        shown: set[int] = set()
+        for port in unexpected:
+            for seen in list(dict.fromkeys(exposed[port]))[:2]:
+                if len(evidence) < OPEN_PORT_EVIDENCE:
+                    evidence.append(f"tcp/{port}: {seen}")
+                    shown.add(port)
+        if len(shown) < len(unexpected):
+            evidence.append(f"… and {len(unexpected) - len(shown)} more: "
+                            + _port_ranges(p for p in unexpected if p not in shown))
+        docker = [p for p in unexpected if any(e.startswith("container ") for e in exposed[p])]
+        runners = [p for p in unexpected if p in RUNNER_METRICS_PORTS and p not in docker]
+        others = [p for p in unexpected if p not in docker and p not in runners]
+        listing = _port_ranges(unexpected)
+        advice = []
+        if runners:
+            advice.append(f"{_port_ranges(runners)}: strategy runners' Prometheus metrics (core/metrics.py). They "
+                          "bind 127.0.0.1 unless METRICS_BIND_ADDRESS says otherwise; a runner started before "
+                          "that change keeps its public port until it is restarted.")
+        if docker:
+            advice.append(f"{_port_ranges(docker)}: publish on loopback only — \"127.0.0.1:{docker[0]}:{docker[0]}\" "
+                          "in docker-compose, as the database, Redis and Grafana already are — then recreate the "
+                          "container.")
+        if others:
+            advice.append(f"{_port_ranges(others)}: bind the service to 127.0.0.1 (everything public goes through "
+                          "the Cloudflare tunnel).")
+        advice.append("A port meant to be public goes in SENTINEL_PUBLIC_PORTS (ranges such as 8000-8019 work).")
+        one = len(unexpected) == 1
+        return _remember(st, "open_ports", [Finding(
+            agent=self.name, rule="open-port", severity=Severity.HIGH,
+            title=(f"Port {listing} is open to the internet on the server" if one else
+                   f"{len(unexpected)} ports are open to the internet on the server: {_trim_list(listing, 60)}"),
+            summary=(f"TCP {'port' if one else 'ports'} {_trim_list(listing, 200)} "
+                     f"{'is' if one else 'are'} bound to a public address and not in SENTINEL_PUBLIC_PORTS "
+                     f"({_port_ranges(allowed) or 'none'}). Only the AWS security group stands between "
+                     f"{'it' if one else 'them'} and the internet."),
+            fingerprint=f"{self.name}:open-port",
+            where=f"tcp/{_trim_list(listing, 60)}", evidence=evidence,
+            suggestion=" ".join(advice),
+        )])
 
     # ── secret-file-permissions ──
 
@@ -1195,14 +1280,21 @@ class SecurityAgent(Agent):
         memo = st.setdefault("deps", {})
         last_ok = _parse_time(memo.get("last_success"))
         last_try = _parse_time(memo.get("last_attempt"))
-        due = (last_ok is None or now - last_ok >= DEPENDENCY_SCAN_EVERY) and \
-              (last_try is None or now - last_try >= DEPENDENCY_RETRY_AFTER)
+        inputs = self._dependency_inputs_mtime(ctx)
+        scanned = memo.get("inputs_mtime")
+        # Changed since the last full scan read them — or never recorded (a scan from before this rule).
+        changed = inputs is not None and (not isinstance(scanned, (int, float)) or inputs > scanned)
+        # A failed attempt waits DEPENDENCY_RETRY_AFTER, unless the files changed again after it.
+        retry_ok = last_try is None or now - last_try >= DEPENDENCY_RETRY_AFTER or \
+            (inputs is not None and inputs > last_try.timestamp())
+        due = (last_ok is None or now - last_ok >= DEPENDENCY_SCAN_EVERY or changed) and retry_ok
         if not due or self._in_market_window(ctx, now):
             return _carry(memo, "findings")
         memo["last_attempt"] = _iso(now)
 
-        nuget = self._dotnet_audit(ctx)
-        npm = self._npm_audit(ctx)
+        deadline = self._monotonic() + DEPENDENCY_SCAN_BUDGET
+        nuget = self._dotnet_audit(ctx, deadline)
+        npm = self._npm_audit(ctx, deadline)
         if nuget is None and npm is None:
             return _carry(memo, "findings")   # neither ran; not a finding, and the old result stands
 
@@ -1214,8 +1306,34 @@ class SecurityAgent(Agent):
                      else [f for f in previous if ":npm:" in f.fingerprint])
         if nuget is not None and npm is not None:
             memo["last_success"] = _iso(now)
+            if inputs is not None:
+                memo["inputs_mtime"] = inputs
         _remember(memo, "findings", findings)
         return findings
+
+    @staticmethod
+    def _dependency_inputs_mtime(ctx: SentinelContext) -> Optional[float]:
+        """The newest modification time among the files the audits read; None when there are none."""
+        root = ctx.repo_root
+        paths = [root / rel for rel in DEPENDENCY_INPUTS]
+        for pattern in DEPENDENCY_PROJECT_GLOBS:
+            try:
+                paths += list(root.glob(pattern))
+            except OSError:
+                continue
+        newest: Optional[float] = None
+        for path in paths:
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            newest = mtime if newest is None else max(newest, mtime)
+        return newest
+
+    def _call_budget(self, deadline: float, cap: float) -> Optional[float]:
+        """The timeout for the next part of a scan, or None when too little of the budget is left to start it."""
+        left = deadline - self._monotonic()
+        return min(cap, left) if left >= DEPENDENCY_MIN_CALL else None
 
     def _in_market_window(self, ctx: SentinelContext, now: datetime) -> bool:
         t = to_ist(now).time()
@@ -1226,23 +1344,36 @@ class SecurityAgent(Agent):
         except Exception:
             return to_ist(now).weekday() < 5
 
-    def _dotnet_audit(self, ctx: SentinelContext) -> Optional[dict[str, dict]]:
+    def _dotnet_audit(self, ctx: SentinelContext, deadline: float) -> Optional[dict[str, dict]]:
         project = ctx.repo_root / "src" / "AlgoTrading.Api"
         if not project.is_dir():
             return {}   # nothing to audit is a clean audit, not a failed one
+        timeout = self._call_budget(deadline, DEPENDENCY_DOTNET_TIMEOUT)
+        if timeout is None:
+            return None
         # --no-restore: newer SDKs restore before listing, which writes obj/ — not a watchman's business.
         base = ["dotnet", "list", "package", "--vulnerable", "--include-transitive", "--no-restore"]
-        _, out = ctx.run(base + ["--format", "json"], timeout=300, cwd=project)
+        rc, out = ctx.run(base + ["--format", "json"], timeout=timeout, cwd=project)
         if out.lstrip().startswith("{"):
             return parse_dotnet_json(out)   # None when it reported a problem (no assets file, no network)
-        rc, out = ctx.run(base, timeout=300, cwd=project)   # an SDK without --format json: read the table
+        if rc in _DID_NOT_FINISH or rc < 0:
+            # It hung (or was killed): the same command without --format would hang the same way. Only an SDK
+            # that finished and refused --format json is worth asking for the table.
+            return None
+        timeout = self._call_budget(deadline, DEPENDENCY_DOTNET_TIMEOUT)
+        if timeout is None:
+            return None
+        rc, out = ctx.run(base, timeout=timeout, cwd=project)   # an SDK without --format json: read the table
         return parse_dotnet_table(out) if rc == 0 else None
 
-    def _npm_audit(self, ctx: SentinelContext) -> Optional[dict[str, dict]]:
+    def _npm_audit(self, ctx: SentinelContext, deadline: float) -> Optional[dict[str, dict]]:
         web = ctx.repo_root / "web"
         if not (web / "package-lock.json").is_file():
             return {}
-        _, out = ctx.run(["npm", "audit", "--omit=dev", "--json"], timeout=180, cwd=web)   # exits 1 when it finds any
+        timeout = self._call_budget(deadline, DEPENDENCY_NPM_TIMEOUT)
+        if timeout is None:
+            return None
+        _, out = ctx.run(["npm", "audit", "--omit=dev", "--json"], timeout=timeout, cwd=web)   # exits 1 when it finds any
         return parse_npm_audit(out)
 
     def _nuget_findings(self, found: dict[str, dict]) -> list[Finding]:

@@ -38,7 +38,9 @@ Each signature is one of this desk's own failures:
 Three habits keep it quiet. On its first check — and on the first check after
 Sentinel was down for more than ten minutes — it starts at the end of every
 file: what was written meanwhile is history, learned (its error lines count as
-already seen), not reported. A problem whose lines recur more slowly than the
+already seen), not reported. A long gap between two checks of one running
+Sentinel is not "down" (another agent held the engine): those lines are read
+as news. A problem whose lines recur more slowly than the
 two-minute resolve window — runners repeat "FEED STILL STALLED" every ten
 minutes, a feed waits up to five minutes between attempts — is held open that
 long, so one outage is one incident rather than a string of them. And a
@@ -86,6 +88,10 @@ FORGET_FILE_AFTER_SECONDS = 48 * 3600
 #: previous check is older than this (Sentinel was down), what every file
 #: gained meanwhile is history: learned, not reported.
 WATCHING_SECONDS = 600
+#: A longer gap still counts as watching when this same process made the
+#: previous check: Sentinel was not down, another agent held the engine. Past
+#: this (a machine that slept), it is history after all.
+SAME_PROCESS_GAP_SECONDS = 3600
 NEW_FILE_MAX_BYTES = 1024 * 1024
 #: Error signatures remembered for ``new-error``; the oldest is dropped first.
 SEEN_CAP = 2000
@@ -133,6 +139,8 @@ WAIT_MARGIN_SECONDS = 90
 #: With every market shut, a reconnect carries no ticks because there are none
 #: to carry: this many in a row before it is called a loop at all.
 CLOSED_MARKET_LOOP = 3
+#: With a market open, one tickless reconnect is a hiccup; this many in a row is a loop.
+OPEN_MARKET_LOOP = 2
 #: A death's runs listed in a finding's summary, and remembered while it is held.
 DEATHS_SHOWN = 8
 DEATHS_KEPT = 40
@@ -173,12 +181,39 @@ BENIGN_LINES: tuple[re.Pattern[str], ...] = (
 # A line carrying one of these is dropped whole: never matched, never evidence.
 # notify.redact masks what it recognises, but a log can hold a secret in a
 # shape it does not know (api.log prints the Telegram URL, bot token and all).
-_SECRET_MARKERS = ("bearer ", "password", "passwd", "token=", "secret=", "api_key", "apikey",
-                   "authorization:", "api.telegram.org/bot")
+#
+# The desk's one spec of "carries a secret" (28 Sep 2026) — the same six
+# patterns as notify.redact, the API's IncidentRedaction and the console's
+# maskSecrets: a line is dropped exactly when the redactor would mask part of
+# it (tests/test_sentinel_logs.py holds the two to each other). Until then this
+# was a list of markers that dropped any line saying "password" — "the broker
+# password was refused" never reached a rule — and let "DHAN_PIN=…" through.
 _SECRET_PATTERNS = (
-    re.compile(r"eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"),  # a JWT
-    re.compile(r"\d{8,10}:[A-Za-z0-9_\-]{30,}"),  # a Telegram bot token
+    # 1. Authorization: Bearer|Basic <value>
+    re.compile(r"(?i)authorization[\"']?[ \t]*[:=][ \t]*[\"']?(?:bearer|basic)[ \t]+[^\s\"'&,;]+"),
+    # 2. Bearer <12+ token characters> anywhere (a header quoted without its name)
+    re.compile(r"(?i)\bbearer[ \t]+[A-Za-z0-9._~+/=-]{12,}"),
+    # 3. scheme://user:password@ and scheme://:password@
+    re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s:/@]*:[^\s@/]+(?=@)"),
+    # 4. key=value (_KEY_VALUE, below)
+    # 5. a Telegram bot token, /bot<token>/ in a URL included
+    re.compile(r"(?<![0-9])[0-9]{8,10}:[A-Za-z0-9_-]{30,}"),
+    # 6. a JWT: eyJ….eyJ….<signature>
+    re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),
 )
+# 4. key=value / key: value / "key": "value", where a whole part of the key (underscore separated, or the end of
+#    a camelCase key) names a secret — FYERS_SECRET_KEY=, POSTGRES_PASSWORD=, DHAN_PIN=, accessToken:, X-Api-Key:
+#    — then an optional quote, spaces or tabs (never a newline) and ':' or '=' (not '=='). No leading word
+#    boundary. Prose ("tokens", "spinning", "Skipping:") passes. The costliest of the six, so it is tried only on
+#    a line that names a secret at all (_KEY_WORD): most lines do not.
+_KEY_VALUE = re.compile(r"(?i)(?<![A-Za-z0-9_])[A-Za-z0-9_]{0,64}?"
+                        r"(?:secret|password|passwd|pwd|token|api[_-]?key|private[_-]?key|totp|pin)"
+                        r"(?:_[A-Za-z0-9]{1,32}){0,8}[\"']?[ \t]*[:=](?!=)[ \t]*"
+                        r"(?:\"[^\"\r\n]+\"|'[^'\r\n]+'|[\"']?[^\s\"'&,;]+)")
+_KEY_WORD = re.compile(r"(?i)secret|passw|pwd|token|api[_-]?key|private[_-]?key|totp|pin")
+#: Only the start of a line is judged: nothing past the first few hundred
+#: characters of a line is ever shown, and a pattern must not read a megabyte.
+SECRET_SCAN_CHARS = 4000
 
 # --- shapes of the files -----------------------------------------------------
 _DOTNET_HEADER = re.compile(r"^(?P<level>trce|dbug|info|warn|fail|crit): (?P<category>[^\s\[]+)\[-?\d+\]\s*$")
@@ -278,8 +313,9 @@ def _digest(signature: str) -> str:
 
 
 def _may_hold_secret(line: str) -> bool:
-    low = line.lower()
-    return any(marker in low for marker in _SECRET_MARKERS) or any(p.search(line) for p in _SECRET_PATTERNS)
+    head = line[:SECRET_SCAN_CHARS]
+    return any(p.search(head) for p in _SECRET_PATTERNS) or \
+        (_KEY_WORD.search(head) is not None and _KEY_VALUE.search(head) is not None)
 
 
 def _benign(line: str) -> bool:
@@ -505,8 +541,11 @@ _API_DOWN = re.compile(r"(?i)restart FAILED|did not come up|API health check fai
 #: went wrong, the fix from this desk's history, and how long it stays true
 #: (None: the rule's own hold).
 _DESK_ADVICE: tuple[tuple[re.Pattern[str], str, Optional[float]], ...] = (
+    # Re-running the morning job is advice for before the open only: it restarts the API and
+    # the feeds under every live run, and from 28 Sep it refuses to after 09:15 while any is.
     (re.compile(r"no FYERS sign-in"),
-     "Nothing was started this morning. Sign in to FYERS from the Broker page, then run scripts/market-open.sh again.",
+     "Nothing was started this morning. Sign in to FYERS from the Broker page; before 09:15, run "
+     "scripts/market-open.sh again — after the open, start the runs from Strategies → Live runner in the console.",
      UNTIL_CLOSE),
     (_ARCHIVE_FAILED,
      "Nothing was deleted. Read logs/archive-<date>.log; \"couldn't find root directory ID\" means rclone's Drive "
@@ -534,9 +573,13 @@ _DESK_ADVICE: tuple[tuple[re.Pattern[str], str, Optional[float]], ...] = (
      "server.",
      4 * 3600),
     (re.compile(r"appsettings\.Local\.json"), _NOT_CONFIGURED_ADVICE, 4 * 3600),
-    (re.compile(r"market-(?:open|close)\.sh exited non-zero"),
-     "Read that day's logs/market-open-<date>.log (or market-close) from the top; the morning plan may be only "
-     "partly started.",
+    (re.compile(r"market-open\.sh exited non-zero"),
+     "Read that day's logs/market-open-<date>.log from the top; the morning plan may be only partly started — "
+     "start what is missing from Strategies → Live runner in the console.",
+     UNTIL_CLOSE),
+    (re.compile(r"market-close\.sh exited non-zero"),
+     "Read that day's logs/market-close-<date>.log from the top: a run or feed it could not stop may still be "
+     "running (scripts/status.sh).",
      UNTIL_CLOSE),
     (re.compile(r"API health check failed"),
      "The desk restarts the API after three failed checks. If this repeats, read the newest lines of logs/api.log.",
@@ -615,6 +658,7 @@ class LogsAgent(Agent):
         self._streams: dict[str, _Stream] = {}
         self._blocks: dict[str, Optional[_Block]] = {}
         self._check_no = 0
+        self._last_check: Optional[float] = None   # when this process last checked (state's last_check, if ours)
 
     # -- the check -----------------------------------------------------------
     def check(self, ctx: SentinelContext) -> list[Finding]:
@@ -626,7 +670,14 @@ class LogsAgent(Agent):
         files_state: dict[str, dict[str, Any]] = data.setdefault("files", {})
         seen = dict.fromkeys(data.get("seen") or [])
         last_check = data.get("last_check")
-        watching = isinstance(last_check, (int, float)) and 0 <= now_ts - last_check <= WATCHING_SECONDS
+        gap = now_ts - last_check if isinstance(last_check, (int, float)) else None
+        watching = gap is not None and 0 <= gap <= WATCHING_SECONDS
+        if not watching and gap is not None and last_check == self._last_check \
+                and 0 <= gap <= SAME_PROCESS_GAP_SECONDS:
+            # This process made the previous check, so Sentinel was not down: another agent held the
+            # single-threaded engine (a dependency scan could take 13 minutes before 28 Sep). What was
+            # written meanwhile happened while Sentinel was running — it is news, late, not history.
+            watching = True
 
         scan = _Scan(seen, now_hm=to_ist(now).strftime("%H:%M"), now_ts=now_ts)
         listed: set[str] = set()
@@ -651,6 +702,7 @@ class LogsAgent(Agent):
                     del files_state[label]
             data["seen"] = list(seen)
             data["last_check"] = now_ts
+            self._last_check = now_ts
             state.save()
         return findings
 
@@ -1286,22 +1338,27 @@ class LogsAgent(Agent):
         self._desk_relaunches(ctx, scan, data)
         self._job_context(scan)
 
-        # A feed reconnecting in a loop is critical while a market is open. With every
-        # market shut, "carried no ticks" is the market's silence, not the feed's: a drop
-        # or two is a vendor closing its day and says nothing. A longer run still does —
-        # on 16 Sep yesterday's Dhan feed, left running on a dead token, reconnected every
-        # 20 s for an hour until Dhan blocked the account — so that stays, as medium.
+        # A feed reconnecting in a loop is critical while a market is open — from the second
+        # tickless reconnect in a row. One is a vendor hiccup that the next attempt usually
+        # clears; it is not reported at all, because a MEDIUM would still open an incident and
+        # send a message, and a real outage does not need it: the health agent pages
+        # feed-silent after 90 s without ticks, and a loop's second line follows within about
+        # half a minute (core/live/reconnect_policy.py: a 5 s wait, then the next attempt
+        # failing the same way). With every market shut, "carried no ticks" is the
+        # market's silence, not the feed's: a drop or two is a vendor closing its day and says
+        # nothing. A longer run still does — on 16 Sep yesterday's Dhan feed, left running on
+        # a dead token, reconnected every 20 s for an hour until Dhan blocked the account — so
+        # that stays, as medium.
         loops = [fp for fp, hit in scan.hits.items() if hit.rule == "feed-reconnect-loop"]
         try:
             open_now = not loops or ctx.session().any_open
         except Exception:
             open_now = True
-        if not open_now:
-            for fingerprint in loops:
-                hit = scan.hits[fingerprint]
-                if hit.loop < CLOSED_MARKET_LOOP:
-                    del scan.hits[fingerprint]
-                    continue
+        for fingerprint in loops:
+            hit = scan.hits[fingerprint]
+            if hit.loop < (OPEN_MARKET_LOOP if open_now else CLOSED_MARKET_LOOP):
+                del scan.hits[fingerprint]
+            elif not open_now:
                 hit.severity = Severity.MEDIUM
                 hit.what += " (No market is open right now.)"
 
