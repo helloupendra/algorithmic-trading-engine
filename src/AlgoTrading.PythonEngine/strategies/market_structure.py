@@ -352,15 +352,23 @@ def frames_after(frames: Sequence[Any], seen: Any) -> List[Any]:
     run fed its 500-bar warm-up, reached fed = 499, and was handed an empty slice
     for the rest of the day — fifteen runs, no orders, no error.
 
+    A frame whose time cannot be read is left out: it cannot be placed after
+    ``seen``, and it would leave the caller nothing to record as seen. Before
+    27 Sep such frames were handed over whenever nothing had been seen yet, so a
+    window with no readable time at all (the recent-bars API renaming
+    barStartUtc would do it) was fed whole on every tick — the same breaks fired
+    again each time and the reader grew without end. Now it reads nothing, and
+    SmcStructureBreak's [STATUS] line shows a reader that has read no candles.
+
     Scans back from the newest frame, so the cost is the number of new frames.
     """
     seen_key = stamp_key(seen)
-    if seen_key is None:
-        return list(frames)
     fresh: List[Any] = []
     for frame in reversed(frames):
         key = stamp_key(getattr(frame, "timestamp_utc", None))
-        if key is None or key <= seen_key:
+        if key is None:
+            continue
+        if seen_key is not None and key <= seen_key:
             break
         fresh.append(frame)
     fresh.reverse()

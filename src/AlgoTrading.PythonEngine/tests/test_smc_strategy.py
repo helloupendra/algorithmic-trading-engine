@@ -7,12 +7,15 @@ structure behind every signal here is the one that test pins.
 """
 
 import unittest
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
 import _bootstrap  # noqa: F401
 
 from strategies.base_strategy import OptionContract, StrategyInput
 from strategies.directional.smc_structure_break import SmcStructureBreakStrategy
+from strategies.ghost_tangent_crossings import GhostTangentCrossingsStrategy
+from strategies.market_structure import BOS, Bar, stamp_key
 from test_market_structure import bars, schematic
 
 UNDERLYING = "NIFTY"
@@ -272,6 +275,209 @@ class LiveWindowTests(unittest.TestCase):
         replay = [f for f in run(SmcStructureBreakStrategy()) if f["type"] == "OPEN_GROUP"]
         self.assertGreaterEqual(len(replay), 1)
         self.assertGreaterEqual(opened, 1, "the live window never traded the break the replay trades")
+
+
+def rows(candles) -> list:
+    return [(b.open, b.high, b.low, b.close) for b in candles]
+
+
+def at(first_utc: datetime, candle_rows) -> List[Frame]:
+    """Frames five minutes apart, the first one starting at first_utc."""
+    return [Frame(Bar((first_utc + timedelta(minutes=5 * i)).isoformat().replace("+00:00", "Z"), o, h, l, c))
+            for i, (o, h, l, c) in enumerate(candle_rows)]
+
+
+def live_tick(strategy, state, window, when=None, contracts=True) -> List[Any]:
+    """One call as the live runner makes it: the window ends with the forming candle."""
+    forming = window[-1].timestamp_utc
+    inp = StrategyInput(mode="LivePaper", timestamp_utc=when or forming, underlying=UNDERLYING,
+                        spot_price=window[-1].close, atm_strike=25000, strike_step=50, lot_size=75,
+                        contracts={"atm_ce": CE, "atm_pe": PE} if contracts else {},
+                        bars={"5m": {"index": window}}, metadata={"source": "live-api"})
+    return strategy.on_bar(state, inp) or []
+
+
+def warm_up(strategy, history) -> Dict[str, Any]:
+    """execution_runner's warm-up: the stored candles one at a time, no contracts, the last one held back."""
+    state = strategy.initialize_state()
+    for i in range(1, len(history) + 1):
+        live_tick(strategy, state, history[:i], contracts=False)
+    return state
+
+
+def step_live(strategy, frames, ticks=1, state=None) -> List[Dict[str, Any]]:
+    """
+    Every candle in turn as the forming one, `ticks` calls each, a few seconds
+    apart inside it. Returns each signal with the index of the forming candle
+    and which tick of it fired.
+    """
+    state = state if state is not None else strategy.initialize_state()
+    fired = []
+    for j in range(1, len(frames)):
+        start = stamp_key(frames[j].timestamp_utc)
+        for t in range(ticks):
+            when = (start + timedelta(seconds=2 + 5 * t)).isoformat()
+            for signal in live_tick(strategy, state, frames[:j + 1], when=when):
+                fired.append({"forming": j, "tick": t, "type": signal.signal_type,
+                              "symbol": signal.legs[0]["symbol"], "reason": signal.reason})
+    return fired
+
+
+class LateReadTests(unittest.TestCase):
+    """
+    One call can hand the reader many candles, and only a break on the newest,
+    read in its own session, may open a position. Live warm-up holds back the
+    last stored candle, so yesterday's 15:25 break was first read at today's
+    09:15 tick and bought then; a run started after the open read the whole
+    morning in one call and bought its oldest break, even after the market had
+    turned (27 Sep review: 3 of 40 synthetic 08:45 starts, 16 of 40 at 11:00).
+    """
+
+    TODAY_0915 = datetime(2026, 9, 18, 3, 45, tzinfo=timezone.utc)
+
+    def test_a_break_on_yesterdays_last_candle_is_not_bought_at_todays_open(self):
+        # The schematic up to its first break, placed so that the breaking candle
+        # is yesterday's 15:25 IST — the one warm-up holds back.
+        yesterday = at(datetime(2026, 9, 17, 9, 10, tzinfo=timezone.utc), rows(schematic()[:10]))
+        today = at(self.TODAY_0915, [(110, 111, 109.5, 110.5)])
+        strategy = SmcStructureBreakStrategy()
+        state = warm_up(strategy, yesterday)
+
+        fired = live_tick(strategy, state, yesterday + today, when="2026-09-18T03:45:02+00:00")
+
+        self.assertEqual([s.signal_type for s in fired if s.signal_type == "OPEN_GROUP"], [])
+        # The break was read all the same: the structure knows it.
+        last = state["reader"].last_event
+        self.assertEqual((last.kind, last.level), (BOS, 109))
+
+    def test_a_late_start_buys_the_break_on_the_newest_candle_not_the_mornings_first(self):
+        # A run started at 10:55: the morning's candles arrive in one call. Bar 9
+        # broke 109 at 10:00; bar 19, the newest closed candle, broke 114.
+        morning = at(self.TODAY_0915, rows(schematic()[:21]))
+        strategy = SmcStructureBreakStrategy()
+        state = strategy.initialize_state()
+
+        opens = [s for s in live_tick(strategy, state, morning) if s.signal_type == "OPEN_GROUP"]
+
+        self.assertEqual(len(opens), 1)
+        self.assertIn("through 114", opens[0].reason)
+
+    def test_a_late_start_does_not_buy_a_morning_break_the_market_has_turned_from(self):
+        # Trading both kinds of break, the morning went up (bars 9, 19) and then
+        # turned down (bar 23, the newest). The old code bought the call on bar 9.
+        morning = at(self.TODAY_0915, rows(schematic()) + [(102, 103, 100, 101)])
+        strategy = SmcStructureBreakStrategy({"trade": "both"})
+        state = strategy.initialize_state()
+
+        opens = [s for s in live_tick(strategy, state, morning) if s.signal_type == "OPEN_GROUP"]
+
+        self.assertEqual([s.legs[0]["symbol"] for s in opens], [PE.symbol])
+
+    def test_a_late_start_whose_newest_candle_broke_nothing_buys_nothing(self):
+        morning = at(self.TODAY_0915, rows(schematic()[:23]))   # bars 0-21 closed, 22 forming
+        strategy = SmcStructureBreakStrategy()
+        state = strategy.initialize_state()
+
+        self.assertEqual(live_tick(strategy, state, morning), [])
+        self.assertEqual(len(state["reader"].events), 2)        # both of the morning's breaks were read
+
+    def test_one_candle_per_tick_still_buys_each_break_as_it_closes(self):
+        # The ordinary live day: three ticks a candle. Each break is bought once,
+        # on the first tick after its candle closed — the call on bar 9, and the
+        # put on the change of character at bar 23, which also closes the call.
+        frames = at(self.TODAY_0915, rows(schematic()) + [(102, 103, 100, 101)])
+
+        fired = step_live(SmcStructureBreakStrategy({"trade": "both"}), frames, ticks=3)
+
+        opens = [(f["forming"], f["tick"], f["symbol"]) for f in fired if f["type"] == "OPEN_GROUP"]
+        self.assertEqual(opens, [(10, 0, CE.symbol), (24, 0, PE.symbol)])
+        self.assertEqual([(f["forming"], f["tick"]) for f in fired if f["type"] == "CLOSE_GROUP"], [(24, 0)])
+
+    def test_an_old_turn_in_a_batch_still_closes_the_position(self):
+        # The call is bought on bar 9; then the runner misses ticks for an hour
+        # and one call reads bars 10-25. The turn at bar 23 is not the newest
+        # candle, so it opens nothing — but it is still a turn against the call.
+        frames = at(self.TODAY_0915, rows(schematic()) + [(102, 103, 100, 101), (101, 102, 99, 100),
+                                                          (100, 101, 98, 99)])
+        strategy = SmcStructureBreakStrategy({"trade": "both"})
+        state = strategy.initialize_state()
+        self.assertEqual([f["type"] for f in step_live(strategy, frames[:11], state=state)], ["OPEN_GROUP"])
+
+        fired = live_tick(strategy, state, frames)
+
+        self.assertEqual([s.signal_type for s in fired], ["CLOSE_GROUP"])
+        self.assertIn("turned bearish", fired[0].reason)
+
+
+class LiveRetestTests(unittest.TestCase):
+    """
+    entry="retest" live. on_bar runs on every tick; the retest used to be judged
+    on each of them, against the breaking candle itself, and counted in ticks.
+    """
+
+    def test_the_breaking_candles_own_wick_is_not_the_retest(self):
+        # Bar 9 closes through 109 with a low of 105, so its own wick is below
+        # the level. The retest is bar 10 coming back to 109, as in the replay.
+        frames = [Frame(b) for b in schematic()]
+
+        fired = step_live(SmcStructureBreakStrategy({"entry": "retest", "retest_bars": 8}), frames, ticks=3)
+
+        opens = [(f["forming"], f["tick"]) for f in fired if f["type"] == "OPEN_GROUP"]
+        self.assertEqual(opens, [(11, 0)])                      # first tick after bar 10 closed
+        self.assertIn("retest of 109", fired[0]["reason"])
+
+    def test_the_retest_waits_candles_not_ticks(self):
+        # The break at bar 9 leaves its low above 109; bar 10 stays up; bar 11
+        # comes back. With retest_bars 2 that is in time, however many ticks
+        # each candle had.
+        candles = bars(*(rows(schematic()[:9]) + [(106, 111, 109.5, 110), (110, 113, 110, 112),
+                                                  (112, 113, 108.5, 109), (109, 110, 108, 109)]))
+        replayed = run(SmcStructureBreakStrategy({"entry": "retest", "retest_bars": 2}), bars=candles)
+        self.assertEqual([f["bar"] for f in replayed if f["type"] == "OPEN_GROUP"], [11])
+
+        fired = step_live(SmcStructureBreakStrategy({"entry": "retest", "retest_bars": 2}),
+                          [Frame(b) for b in candles], ticks=4)
+
+        self.assertEqual([(f["forming"], f["tick"]) for f in fired if f["type"] == "OPEN_GROUP"], [(12, 0)])
+
+
+class UnreadableTimeTests(unittest.TestCase):
+    """
+    A candle whose time cannot be read is never fed. The live runner stamps a
+    frame with str(row.get("barStartUtc", "")), so an API that renamed the field
+    would hand over a window with no readable time at all; with nothing ever
+    recorded as seen, the whole window was fed again on every tick.
+    """
+
+    def window(self):
+        frames = [Frame(b) for b in schematic()]
+        for frame in frames:
+            frame.timestamp_utc = ""
+        return frames
+
+    def test_the_strategy_reads_nothing_rather_than_the_window_again(self):
+        strategy = SmcStructureBreakStrategy()
+        state = strategy.initialize_state()
+        fired = []
+        for _ in range(3):
+            fired += live_tick(strategy, state, self.window(), when="2026-09-18T05:45:02Z")
+
+        self.assertEqual(fired, [])
+        self.assertEqual(state["fed"], 0)
+        self.assertEqual(state["reader"].bars, [])
+
+    def test_ghosts_structure_filter_reads_nothing_rather_than_the_window_again(self):
+        strategy = GhostTangentCrossingsStrategy({"smc_filter": "with"})
+        state = strategy.initialize_state()
+        for _ in range(3):
+            inp = StrategyInput(mode="LivePaper", timestamp_utc="2026-09-18T05:45:02Z", underlying=UNDERLYING,
+                                spot_price=100, atm_strike=25000, strike_step=50, lot_size=75,
+                                contracts={"atm_ce": CE, "atm_pe": PE}, bars={"5m": {"index": self.window()}},
+                                metadata={"source": "live-api"})
+            strategy.on_bar(state, inp)
+
+        self.assertEqual(state["smc_fed"], 0)
+        self.assertEqual(state["smc"].bars, [])
 
 
 if __name__ == "__main__":
