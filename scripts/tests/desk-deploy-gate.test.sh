@@ -33,7 +33,16 @@ check "live count unknown (-1) counts as live"              1 "$(gate 3 0800 0 -
 check "a leading-zero clock is read as decimal (0859)"      1 "$(gate 1 0859 0 0)"
 touch "$DEPLOY_NOW_FILE"
 check "deploy-now overrides, even mid-session with runs"    0 "$(gate 4 1128 0 13)"
+touch -t "$(date -v-2H +%Y%m%d%H%M 2>/dev/null || date -d '2 hours ago' +%Y%m%d%H%M)" "$DEPLOY_NOW_FILE"
+check "a deploy-now two hours old is not honoured"          1 "$(gate 4 1128 0 13)"
 rm -f "$DEPLOY_NOW_FILE"
+
+echo "deploy_clock_allows (asked before the API is)"
+clock() { deploy_clock_allows "$@"; echo $?; }
+check "weekend"                                             0 "$(clock 7 1100 0)"
+check "weekday before 08:40"                                0 "$(clock 1 0830 0)"
+check "weekday in the session"                              1 "$(clock 1 1128 0)"
+check "weekday after the close"                             0 "$(clock 1 2340 1)"
 
 echo "deploy_block_reason"
 r="$(deploy_block_reason 4 1128 0 13)"; case "$r" in *"13 live run"*) check "names the live runs" 0 0 ;; *) check "names the live runs: $r" 0 1 ;; esac

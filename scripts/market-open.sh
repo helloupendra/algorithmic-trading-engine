@@ -123,7 +123,28 @@ fi
 # --- 1. credentials ----------------------------------------------------------
 load_env || fail ".env is missing or has no ADMIN_USERNAME / ADMIN_PASSWORD."
 
+# --- 1b. not a second time under live runs ------------------------------------
+# This job restarts the API and the feeds. At 08:45 nothing is running; once
+# the session is under way, a second run would restart them under the day's
+# runners, the failure of 22 and 24 Sep. It is exactly what a short morning
+# tally, or a Sentinel incident, tempts someone to do, so it is refused here;
+# a missing run is started from Strategies > Live runner instead.
+if [ "$DRY_RUN" != 1 ] && [ "$((10#$(date +%H%M)))" -ge 915 ] && [ -z "${MARKET_OPEN_FORCE:-}" ]; then
+  LIVE_NOW="$(live_runs)"
+  if [ "${LIVE_NOW:--1}" -gt 0 ] 2>/dev/null; then
+    say "$LIVE_NOW strategy run(s) are live — not running the morning job again under them"
+    say "start a missing run from Strategies > Live runner; MARKET_OPEN_FORCE=1 overrides (restarts the API and feeds)"
+    notify "AlgoTrading" "Morning job not re-run: $LIVE_NOW runs are live and it would restart the API and feeds under them. Start missing runs from Strategies > Live runner."
+    exit 0
+  fi
+fi
+
 # --- 2. infrastructure -------------------------------------------------------
+if [ "$DRY_RUN" = 1 ]; then
+  # A dry run starts nothing, and that includes the API: on 23 Sep five dry
+  # runs restarted it five times in ten minutes.
+  say "dry run: would start infra, rebuild the console and restart the API"
+else
 say "starting infra (TimescaleDB, Redis) ..."
 docker compose up -d --wait timescaledb redis >>"$LOG" 2>&1 \
   || fail "docker compose could not start the database or Redis."
@@ -134,6 +155,7 @@ say "  infra up"
 # it spawns and today's console bundle is what the domain serves.
 web_build || true
 api_restart || fail "the API did not come up."
+fi
 
 # Proves the credentials work now; every later call re-mints through
 # auth_token() rather than carrying this one. The admin JWT lives 60 minutes
