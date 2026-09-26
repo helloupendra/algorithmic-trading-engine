@@ -241,6 +241,48 @@ _api_call() {
 
 # Number of strategy runs currently Running; -1 when the API cannot be asked
 # (treated as "something may be live" by callers that care).
+# --- when a deploy may build and restart --------------------------------------
+# A deploy rebuilds and restarts the API. During a session that is not free:
+# on 22 Sep (14:58, 10 live runs) and 24 Sep (11:28, 13 live runs) the Dhan
+# socket went silent during the build and never came back, the restarted API
+# came up without its chain recorder, and each day lost NSE ticks and hours of
+# option-chain snapshots. A 2-vCPU box already near 100% with 26 runners takes
+# twice as long to build as it does at night.
+#
+# So the build and restart wait for a quiet desk: at weekends, or on weekdays
+# before the morning job and after the evening close — and only with no live
+# run. "Unknown" (-1, the API did not say) counts as live. A real hotfix can
+# still go out at once: `touch "$DESK_STATE_DIR/deploy-now"`, which one deploy
+# consumes.
+#
+# deploy_allowed DOW HHMM CLOSED_TODAY LIVE_RUNS  ->  exit 0 when it may build now.
+#   DOW 1..7 (date +%u), HHMM local IST, CLOSED_TODAY 1 once market-close ran today.
+DEPLOY_NOW_FILE="$DESK_STATE_DIR/deploy-now"
+DEPLOY_MORNING_END="${DEPLOY_MORNING_END:-0840}"
+
+deploy_allowed() {
+  local dow="$1" hhmm="$2" closed="$3" live="$4"
+  [ -f "$DEPLOY_NOW_FILE" ] && return 0
+  [ "$dow" -ge 6 ] && return 0
+  [ "$live" = "0" ] || return 1
+  if [ "$((10#$hhmm))" -lt "$((10#$DEPLOY_MORNING_END))" ] || [ "$closed" = "1" ]; then
+    return 0
+  fi
+  return 1
+}
+
+# Why deploy_allowed said no, in words for the log and the Deployments page.
+deploy_block_reason() {
+  local dow="$1" hhmm="$2" closed="$3" live="$4"
+  if [ "$live" = "-1" ]; then
+    echo "the live-run count is unknown (API did not answer), so runs are assumed live"
+  elif [ "$live" != "0" ]; then
+    echo "$live live run(s)"
+  else
+    echo "market day, $((10#$hhmm / 100)):$(printf '%02d' $((10#$hhmm % 100))) — waits until the evening close"
+  fi
+}
+
 live_runs() {
   local tok body
   tok="$(admin_token 2>/dev/null)" || { echo -1; return; }
