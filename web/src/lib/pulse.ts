@@ -254,6 +254,8 @@ export interface ConnectorLine {
   /** "feed running", "feed off", or null for a connector with no live feed. */
   feed: string | null
   feedRunning: boolean
+  /** Needs a person, or the desk, to sign it in each day (not an API key that signs itself in). */
+  signsInDaily: boolean
 }
 
 export interface ConnectorsSummary {
@@ -261,6 +263,13 @@ export interface ConnectorsSummary {
   lines: ConnectorLine[]
   /** Names of the feeds running now. */
   liveFeeds: string[]
+  /**
+   * The signed-in connector the desk's live data can run on, or null when
+   * none is. The first ready one with a live feed, preferring the one running.
+   */
+  dataOn: ConnectorLine | null
+  /** Connectors set up but not signed in while dataOn covers the data: backups, not outages. */
+  backupsDown: ConnectorLine[]
 }
 
 function dateTimeIst(iso: string): string {
@@ -321,6 +330,7 @@ export function connectorsSummary(
         session,
         feed: feed ? (feed.isRunning ? 'feed running' : 'feed off') : null,
         feedRunning: feed?.isRunning === true,
+        signsInDaily: p.auth !== 'ApiKey',
       }
     })
 
@@ -329,8 +339,26 @@ export function connectorsSummary(
   const liveFeeds = lines.filter((l) => l.feedRunning).map((l) => l.name)
   const detail = lines.map((l) => `${l.name}: ${l.session}${l.feed ? ` · ${l.feed}` : ''}`).join('\n')
 
+  // What the live data can run on: a signed-in connector with a live feed. An
+  // API-key vendor always reads "ready", so it does not count as cover — it
+  // would say the desk is covered on the strength of a login nobody checked.
+  // With Dhan signed in and feeding, FYERS unsigned is a missing backup, not
+  // a dark desk: it was drawn red, the same as having no data at all.
+  const candidates = lines.filter((l) => l.state === 'ready' && l.feed !== null && l.signsInDaily)
+  const dataOn = candidates.find((l) => l.feedRunning) ?? candidates[0] ?? null
+  const backupsDown = dataOn ? needHand.filter((l) => l.feed !== null) : []
+
   let pulse: Pulse
-  if (needHand.length > 0) {
+  if (needHand.length > 0 && backupsDown.length === needHand.length) {
+    const label = backupsDown.length === 1 ? `${backupsDown[0].name} backup not signed in` : `${backupsDown.length} backups not signed in`
+    pulse = {
+      key: 'connectors',
+      label,
+      // A backup is worth a sign-in, not an alarm: the data runs on dataOn.
+      tone: tradingDay ? 'warn' : 'idle',
+      title: `Live data runs on ${dataOn!.name}. ${backupsDown.map((l) => l.name).join(' and ')} ${backupsDown.length === 1 ? 'is' : 'are'} the fallback; sign in so it is ready if ${dataOn!.name} fails.\n${detail}`,
+    }
+  } else if (needHand.length > 0) {
     const label = needHand.length === 1 ? `${needHand[0].name} sign-in needed` : `${needHand.length} connectors need sign-in`
     // A missing sign-in is an alarm only on a day the market trades.
     pulse = { key: 'connectors', label, tone: tradingDay ? 'neg' : 'idle', title: detail }
@@ -352,5 +380,5 @@ export function connectorsSummary(
     }
   }
 
-  return { pulse, lines, liveFeeds }
+  return { pulse, lines, liveFeeds, dataOn, backupsDown }
 }
