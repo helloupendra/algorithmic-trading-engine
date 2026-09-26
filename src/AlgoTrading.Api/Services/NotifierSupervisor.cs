@@ -1,5 +1,6 @@
 // src/AlgoTrading.Api/Services/NotifierSupervisor.cs
 
+using System.Diagnostics;
 using AlgoTrading.Domain.Entities;
 
 namespace AlgoTrading.Api.Services;
@@ -48,7 +49,8 @@ public sealed class NotifierSupervisor : PythonDaemonSupervisor
 }
 
 /// <summary>
-/// Starts the notifier with the API and keeps it started.
+/// Starts the notifier with the API, keeps it started, and moves it onto new
+/// code when its script changes.
 /// </summary>
 /// <remarks>
 /// A plain start-once would leave the same hole open: if the notifier dies at
@@ -56,18 +58,48 @@ public sealed class NotifierSupervisor : PythonDaemonSupervisor
 /// check is safe to repeat because <see cref="PythonDaemonSupervisor.StartAsync"/>
 /// refuses when an instance is already alive — managed or adopted from a
 /// previous API process — so this never starts a second one.
+/// <para>
+/// Adoption had its own hole: an API restart adopts the running notifier, so
+/// nothing ever started it again after a deploy. On 27 Sep the one running
+/// dated from 17 Sep, and the account names added to its titles on 26 Sep had
+/// never reached Telegram. It keeps nothing worth keeping (a new one reads the
+/// runs as its baseline), and the desk deploys only outside the session, so a
+/// script newer than the process means a restart.
+/// </para>
 /// </remarks>
 public sealed class NotifierStartupService : BackgroundService
 {
     private static readonly TimeSpan CheckInterval = TimeSpan.FromMinutes(1);
 
     private readonly NotifierSupervisor _supervisor;
+    private readonly PythonEngineLocator _engine;
     private readonly ILogger<NotifierStartupService> _logger;
 
-    public NotifierStartupService(NotifierSupervisor supervisor, ILogger<NotifierStartupService> logger)
+    public NotifierStartupService(NotifierSupervisor supervisor, PythonEngineLocator engine, ILogger<NotifierStartupService> logger)
     {
         _supervisor = supervisor;
+        _engine = engine;
         _logger = logger;
+    }
+
+    /// <summary>True when the script was written after the process started: it runs older code.</summary>
+    public static bool RunsOlderCode(DateTime scriptWrittenUtc, DateTime processStartedUtc) =>
+        scriptWrittenUtc > processStartedUtc;
+
+    private bool IsStale(int pid)
+    {
+        try
+        {
+            var written = File.GetLastWriteTimeUtc(_engine.ScriptPath(_supervisor.Descriptor.ScriptParts));
+            using var process = Process.GetProcessById(pid);
+            return RunsOlderCode(written, process.StartTime.ToUniversalTime());
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException
+                                       or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            // Gone, or not ours to read: the next minute's check decides.
+            return false;
+        }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -77,6 +109,13 @@ public sealed class NotifierStartupService : BackgroundService
             try
             {
                 var status = await _supervisor.GetStatusAsync(stoppingToken);
+                if (status.IsRunning && status.ProcessId is int pid && IsStale(pid))
+                {
+                    _logger.LogInformation("Telegram notifier pid {Pid} runs older code than its script; restarting it.", pid);
+                    await _supervisor.StopAsync("its script changed; restarting it on the new code", stoppingToken);
+                    status = await _supervisor.GetStatusAsync(stoppingToken);
+                }
+
                 if (!status.IsRunning)
                 {
                     var outcome = await _supervisor.StartAsync(stoppingToken);
