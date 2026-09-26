@@ -73,8 +73,8 @@ public static class DhanRegistration
         services.AddScoped<DhanOptionChainClient>();
         services.AddScoped<DhanInstrumentImporter>();
 
-        // The chain recorder (off unless Dhan:ChainPoller:Enabled) and what the
-        // live feed streams beyond the watchlist.
+        // The chain recorder (off unless Dhan:ChainPoller:Enabled, or started
+        // today through the API) and what the live feed streams beyond the watchlist.
         services.AddSingleton<DhanChainPollerState>();
         services.AddScoped<DhanChainRecorder>();
         services.AddHostedService<DhanChainPoller>();

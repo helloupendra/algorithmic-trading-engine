@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.OptionChain;
+using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
@@ -109,22 +111,150 @@ public static class DhanChainRows
 }
 
 /// <summary>
+/// A start or stop of the recorder (<c>POST /api/Dhan/chain-poller/start</c> or
+/// <c>/stop</c>; the morning job calls start) and the IST day it was made on.
+/// Stored as "true on 2026-09-24" under <see cref="SystemSettingKeys.DhanChainPollerEnabled"/>.
+/// </summary>
+public sealed record DhanChainSwitch(bool On, DateOnly Day)
+{
+    public string Stored => $"{(On ? "true" : "false")} on {Day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}";
+
+    /// <summary>The stored value read back, or null when it is absent or not in that shape.</summary>
+    public static DhanChainSwitch? FromStored(string? stored)
+    {
+        var parts = (stored ?? string.Empty).Split(" on ", 2, StringSplitOptions.TrimEntries);
+        return parts.Length == 2
+               && bool.TryParse(parts[0], out bool on)
+               && DateOnly.TryParseExact(parts[1], "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var day)
+            ? new DhanChainSwitch(on, day)
+            : null;
+    }
+}
+
+/// <summary>
 /// Whether the poller is recording, and what each underlying's last round did.
 /// A singleton, so the console reads the same state the background loop writes.
 /// </summary>
+/// <remarks>
+/// A start or stop holds until the end of the IST day it was made on, across
+/// API restarts; the next day starts from configuration again.
+/// It used to be a field seeded from configuration, which is "off" on the
+/// server because the morning job switches the recorder on, so every restart
+/// switched it off without a word. On 2026-09-24 a restart at 11:28 ended the
+/// day's chain at 11:27:49: ChainFlowBuy on all three indices blocked on a stale
+/// chain for 47 of 47 candles until the close, and the evening's CRUDEOIL and
+/// NATURALGAS chains were never recorded. On 22 Sep nothing after 14:58:40.
+/// </remarks>
 public sealed class DhanChainPollerState
 {
     private readonly ConcurrentDictionary<string, DhanChainOutcome> _outcomes = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<(string Underlying, DateOnly Day), IReadOnlyList<DateOnly>> _expiries = new();
-    private volatile bool _enabled;
+    private readonly bool _configured;
+    private readonly IServiceScopeFactory _scopes;
+    private readonly ILogger<DhanChainPollerState> _logger;
+    private readonly TimeProvider _time;
 
-    public DhanChainPollerState(IOptions<DhanSettings> settings) => _enabled = settings.Value.ChainPoller.Enabled;
+    // One switch at a time, so the value saved is always the one in force: a
+    // start and a stop racing each other could otherwise be saved the other way round.
+    private readonly SemaphoreSlim _switching = new(1, 1);
+    private volatile DhanChainSwitch? _switch;
 
-    /// <summary>Starts as configured; start and stop from the console change it until the API restarts.</summary>
-    public bool Enabled
+    public DhanChainPollerState(
+        IOptions<DhanSettings> settings,
+        IServiceScopeFactory scopes,
+        ILogger<DhanChainPollerState> logger,
+        TimeProvider? time = null)
     {
-        get => _enabled;
-        set => _enabled = value;
+        _configured = settings.Value.ChainPoller.Enabled;
+        _scopes = scopes;
+        _logger = logger;
+        _time = time ?? TimeProvider.System;
+    }
+
+    /// <summary>Today's start or stop, or else configuration.</summary>
+    public bool Enabled => TodaysSwitch?.On ?? _configured;
+
+    /// <summary>The start or stop made today (IST); null while configuration decides.</summary>
+    public DhanChainSwitch? TodaysSwitch => _switch is { } decision && decision.Day == Today ? decision : null;
+
+    private DateOnly Today => IstTime.DateOf(_time.GetUtcNow().UtcDateTime);
+
+    /// <summary>
+    /// Switches the recorder on or off for the rest of the IST day and saves
+    /// that, so an API restart today finds it the same way. A save that fails is
+    /// logged and does not undo the switch: recording now matters more than
+    /// what a restart would remember.
+    /// </summary>
+    public async Task SwitchAsync(bool on, string? by)
+    {
+        await _switching.WaitAsync();
+        try
+        {
+            var decision = new DhanChainSwitch(on, Today);
+            _switch = decision;
+            try
+            {
+                await using var scope = _scopes.CreateAsyncScope();
+                var store = scope.ServiceProvider.GetRequiredService<IProcessSettingsStore>();
+                // Not the request's token: the switch has happened, and a client
+                // that hangs up must not leave the database saying otherwise.
+                await store.SetAsync(SystemSettingKeys.DhanChainPollerEnabled, decision.Stored, by, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Dhan chain recorder switched {State}, but that could not be saved; an API restart today would start it as configured ({Configured}).",
+                    on ? "on" : "off", _configured ? "on" : "off");
+            }
+        }
+        finally
+        {
+            _switching.Release();
+        }
+    }
+
+    /// <summary>
+    /// At startup: today's start or stop from before the restart, when there is
+    /// one. Another day's, none at all, or a read that failed leaves configuration
+    /// in charge; it never stops the API from starting.
+    /// </summary>
+    public async Task RestoreAsync(CancellationToken cancellationToken)
+    {
+        DhanChainSwitch? stored;
+        try
+        {
+            await using var scope = _scopes.CreateAsyncScope();
+            var store = scope.ServiceProvider.GetRequiredService<IProcessSettingsStore>();
+            stored = DhanChainSwitch.FromStored(await store.GetAsync(SystemSettingKeys.DhanChainPollerEnabled, cancellationToken));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Could not read whether the Dhan chain recorder was switched on today; starting it as configured ({Configured}).",
+                _configured ? "on" : "off");
+            return;
+        }
+
+        if (stored is null || stored.Day != Today) return;
+
+        await _switching.WaitAsync(CancellationToken.None);
+        try
+        {
+            // A start or stop that arrived while this was reading is newer than what it read.
+            if (_switch is not null) return;
+            _switch = stored;
+        }
+        finally
+        {
+            _switching.Release();
+        }
+
+        _logger.LogInformation("Dhan chain recorder kept {State} across the restart: it was switched so earlier today.",
+            stored.On ? "on" : "off");
     }
 
     public DateTime? LastRoundStartedUtc { get; set; }
@@ -345,33 +475,54 @@ public sealed class DhanChainRecorder
 /// </remarks>
 public sealed class DhanChainPoller : BackgroundService
 {
+    /// <summary>How often, while the recorder is off, the loop asks whether it should be on.</summary>
+    private static readonly TimeSpan OffCheckInterval = TimeSpan.FromMinutes(1);
+
     private readonly IServiceScopeFactory _scopes;
     private readonly DhanChainPollerState _state;
+    private readonly IMarketSessionService _sessions;
     private readonly DhanSettings _settings;
     private readonly ILogger<DhanChainPoller> _logger;
+    private readonly TimeProvider _time;
+    private DateOnly? _warnedOffOn;
 
     public DhanChainPoller(
         IServiceScopeFactory scopes,
         DhanChainPollerState state,
+        IMarketSessionService sessions,
         IOptions<DhanSettings> settings,
-        ILogger<DhanChainPoller> logger)
+        ILogger<DhanChainPoller> logger,
+        TimeProvider? time = null)
     {
         _scopes = scopes;
         _state = state;
+        _sessions = sessions;
         _settings = settings.Value;
         _logger = logger;
+        _time = time ?? TimeProvider.System;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Before the first round, so a restart in the middle of the session goes
+        // on recording what the morning job switched on.
+        await _state.RestoreAsync(stoppingToken);
+
         var interval = TimeSpan.FromSeconds(Math.Max(15, _settings.ChainPoller.IntervalSeconds));
         _logger.LogInformation(
             "Dhan chain poller {State}: {Underlyings} every {Seconds}s.",
             _state.Enabled ? "enabled" : "disabled", string.Join(", ", _settings.ChainPoller.UnderlyingList), interval.TotalSeconds);
 
+        var offCheckedUtc = DateTime.MinValue;
         while (!stoppingToken.IsCancellationRequested)
         {
             var started = DateTime.UtcNow;
+            if (!_state.Enabled && started - offCheckedUtc >= OffCheckInterval)
+            {
+                offCheckedUtc = started;
+                await WarnIfOffWhileNseTradesAsync(stoppingToken);
+            }
+
             if (_state.Enabled)
             {
                 try
@@ -415,6 +566,55 @@ public sealed class DhanChainPoller : BackgroundService
             {
                 break;
             }
+        }
+    }
+
+    /// <summary>
+    /// Says so, once a day, when NSE is trading and Dhan is signed in but the
+    /// recorder is off, and nobody stopped it today.
+    /// </summary>
+    /// <remarks>
+    /// The backstop for a switch lost some other way: the morning job never got
+    /// as far as starting it, Dhan was connected after the job gave up, or the
+    /// saved switch could not be read at a restart. On 2026-09-24 the chain was
+    /// off from 11:28 to the close, and the first sign of it was a strategy log
+    /// saying "chain BLOCKED" on every candle.
+    /// </remarks>
+    /// <returns>True when it said so.</returns>
+    public async Task<bool> WarnIfOffWhileNseTradesAsync(CancellationToken cancellationToken)
+    {
+        var now = _time.GetUtcNow().UtcDateTime;
+        var today = IstTime.DateOf(now);
+        if (_state.Enabled || _state.TodaysSwitch is not null || _warnedOffOn == today) return false;
+
+        try
+        {
+            if (!_sessions.IsMarketOpen(now, "NSE", "FO")) return false;
+
+            await using var scope = _scopes.CreateAsyncScope();
+            var dhan = await scope.ServiceProvider.GetRequiredService<IBrokerSessionStore>()
+                .GetForProviderAsync(DhanProvider.Key, cancellationToken);
+            if (dhan is null || !dhan.IsAuthenticatedAt(now)) return false;
+
+            _warnedOffOn = today;
+            await scope.ServiceProvider.GetRequiredService<ISystemNotifier>().NotifyAsync(
+                NotificationCategory.Process, NotificationSeverity.Warning,
+                "Dhan chain recorder is off",
+                "NSE is open and Dhan is signed in, but Dhan's option chain is not being recorded, and nobody stopped it today. " +
+                "Strategies that read the chain block on a stale one until it is. Start it: POST /api/Dhan/chain-poller/start.",
+                cancellationToken: cancellationToken);
+            return true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+        catch (Exception ex)
+        {
+            // A check that could not be made is a missing warning, never a reason
+            // to stop the loop that records.
+            _logger.LogWarning(ex, "Could not check whether the Dhan chain recorder should be on.");
+            return false;
         }
     }
 }

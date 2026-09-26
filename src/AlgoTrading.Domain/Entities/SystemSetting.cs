@@ -67,6 +67,14 @@ public static class SystemSettingKeys
     public const string NotifierPid = "notifier.pid";
 
     /// <summary>
+    /// The last start or stop of the Dhan chain recorder and the IST day it was
+    /// made, e.g. "true on 2026-09-24". It holds for that day only, so an API
+    /// restart in the middle of the session keeps recording what the morning job
+    /// switched on; the next day starts from configuration again.
+    /// </summary>
+    public const string DhanChainPollerEnabled = "dhan.chainpoller.enabled";
+
+    /// <summary>
     /// Set once the default candle-pattern rules have been seeded, so rules an
     /// admin deleted stay deleted across restarts.
     /// </summary>

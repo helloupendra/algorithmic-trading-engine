@@ -8,6 +8,7 @@ using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Providers.Dhan;
 using AlgoTrading.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -15,8 +16,9 @@ using Xunit;
 namespace AlgoTrading.UnitTests;
 
 /// <summary>
-/// Dhan's option chain recorded into the platform's chain history, and the
-/// universe the Dhan feed streams beyond the watchlist.
+/// Dhan's option chain recorded into the platform's chain history, the switch
+/// that keeps it recording across a restart, and the universe the Dhan feed
+/// streams beyond the watchlist.
 /// </summary>
 public class DhanChainPollerTests
 {
@@ -96,7 +98,7 @@ public class DhanChainPollerTests
                         "greeks":{"delta":-0.47,"theta":-8.0,"gamma":0.0011,"vega":12.0},"security_id":2}}}},"status":"success"}
                 """,
         };
-        var state = new DhanChainPollerState(Options.Create(new DhanSettings()));
+        var state = State();
         var recorder = Recorder(db, handler, state, marketOpen: true);
 
         var outcomes = await recorder.RecordAsync(new[] { "NIFTY" }, onlyOpenMarkets: true, CancellationToken.None);
@@ -132,7 +134,7 @@ public class DhanChainPollerTests
             // The figure Dhan sent on 2026-09-14 while the future traded 9,971.
             ["/optionchain"] = """{"data":{"last_price":9577,"oc":{"9950.000000":{"ce":{"last_price":302.3,"oi":1797,"security_id":7}}}},"status":"success"}""",
         };
-        var recorder = Recorder(db, handler, new DhanChainPollerState(Options.Create(new DhanSettings())), marketOpen: true);
+        var recorder = Recorder(db, handler, State(), marketOpen: true);
 
         var outcome = Assert.Single(await recorder.RecordAsync(new[] { "CRUDEOIL" }, onlyOpenMarkets: true, CancellationToken.None));
 
@@ -146,7 +148,7 @@ public class DhanChainPollerTests
     {
         await using var db = Db();
         var handler = new Routes();
-        var recorder = Recorder(db, handler, new DhanChainPollerState(Options.Create(new DhanSettings())), marketOpen: false);
+        var recorder = Recorder(db, handler, State(), marketOpen: false);
 
         var outcome = Assert.Single(await recorder.RecordAsync(new[] { "SENSEX" }, onlyOpenMarkets: true, CancellationToken.None));
 
@@ -163,7 +165,7 @@ public class DhanChainPollerTests
         {
             ["/optionchain/expirylist"] = """{"errorType":"Invalid_Authentication","errorCode":"DH-901","errorMessage":"Client ID or user generated access token is invalid or expired."}""",
         };
-        var recorder = Recorder(db, handler, new DhanChainPollerState(Options.Create(new DhanSettings())), marketOpen: true);
+        var recorder = Recorder(db, handler, State(), marketOpen: true);
 
         var outcomes = await recorder.RecordAsync(new[] { "NIFTY", "BANKNIFTY" }, onlyOpenMarkets: true, CancellationToken.None);
 
@@ -176,6 +178,149 @@ public class DhanChainPollerTests
     {
         var settings = new DhanChainPollerSettings { Underlyings = " nifty, CRUDEOIL ,,NIFTY" };
         Assert.Equal(new[] { "NIFTY", "CRUDEOIL" }, settings.UnderlyingList);
+    }
+
+    // ---------------------------------------------------------------- the switch
+
+    // 11:28 IST on Thursday 2026-09-24: the restart that ended that day's chain.
+    private static readonly DateTimeOffset RestartOn24Sep = new(2026, 9, 24, 5, 58, 0, TimeSpan.Zero);
+
+    [Fact]
+    public async Task Switched_on_today_it_survives_a_restart()
+    {
+        var store = new MemoryStore();
+        var clock = new Clock(RestartOn24Sep.AddHours(-2.5)); // 08:58 IST, the morning job
+        await State(store, clock).SwitchAsync(on: true, "morning job");
+
+        clock.Now = RestartOn24Sep;
+        var afterRestart = State(store, clock);
+        await afterRestart.RestoreAsync(CancellationToken.None);
+
+        Assert.True(afterRestart.Enabled);
+        Assert.Equal("true on 2026-09-24", store.Values[SystemSettingKeys.DhanChainPollerEnabled]);
+    }
+
+    [Fact]
+    public async Task Switched_on_yesterday_it_starts_as_configured()
+    {
+        var store = new MemoryStore { Values = { [SystemSettingKeys.DhanChainPollerEnabled] = "true on 2026-09-23" } };
+
+        var afterRestart = State(store, new Clock(RestartOn24Sep));
+        await afterRestart.RestoreAsync(CancellationToken.None);
+
+        Assert.False(afterRestart.Enabled);
+        Assert.Null(afterRestart.TodaysSwitch);
+    }
+
+    [Fact]
+    public async Task A_stop_clears_it()
+    {
+        var store = new MemoryStore();
+        var clock = new Clock(RestartOn24Sep);
+        var state = State(store, clock);
+        await state.SwitchAsync(on: true, "morning job");
+        await state.SwitchAsync(on: false, "admin");
+
+        var afterRestart = State(store, clock);
+        await afterRestart.RestoreAsync(CancellationToken.None);
+
+        Assert.False(state.Enabled);
+        Assert.False(afterRestart.Enabled);
+        Assert.Equal("false on 2026-09-24", store.Values[SystemSettingKeys.DhanChainPollerEnabled]);
+    }
+
+    [Fact]
+    public async Task A_stop_today_holds_across_a_restart_even_where_configuration_says_on()
+    {
+        var store = new MemoryStore();
+        var clock = new Clock(RestartOn24Sep);
+        await State(store, clock, configured: true).SwitchAsync(on: false, "admin");
+
+        var afterRestart = State(store, clock, configured: true);
+        await afterRestart.RestoreAsync(CancellationToken.None);
+
+        Assert.False(afterRestart.Enabled);
+    }
+
+    [Fact]
+    public async Task The_switch_ends_with_the_IST_day_restart_or_not()
+    {
+        var clock = new Clock(new DateTimeOffset(2026, 9, 24, 17, 55, 0, TimeSpan.Zero)); // 23:25 IST
+        var state = State(new MemoryStore(), clock);
+        await state.SwitchAsync(on: true, "admin");
+        Assert.True(state.Enabled);
+
+        clock.Now = clock.Now.AddMinutes(40); // 00:05 IST on the 25th
+        Assert.False(state.Enabled);
+    }
+
+    [Fact]
+    public async Task A_store_that_cannot_be_read_leaves_configuration_in_charge()
+    {
+        var store = new MemoryStore { Broken = true };
+        var configuredOn = State(store, new Clock(RestartOn24Sep), configured: true);
+        var configuredOff = State(store, new Clock(RestartOn24Sep), configured: false);
+
+        await configuredOn.RestoreAsync(CancellationToken.None);
+        await configuredOff.RestoreAsync(CancellationToken.None);
+
+        Assert.True(configuredOn.Enabled);
+        Assert.False(configuredOff.Enabled);
+    }
+
+    [Fact]
+    public async Task A_save_that_fails_does_not_fail_the_start()
+    {
+        var state = State(new MemoryStore { Broken = true }, new Clock(RestartOn24Sep));
+
+        await state.SwitchAsync(on: true, "morning job");
+
+        Assert.True(state.Enabled);
+    }
+
+    [Fact]
+    public async Task A_start_that_arrives_while_the_restart_is_reading_wins()
+    {
+        var store = new MemoryStore
+        {
+            Values = { [SystemSettingKeys.DhanChainPollerEnabled] = "false on 2026-09-24" },
+            HoldReads = new TaskCompletionSource(),
+        };
+        var state = State(store, new Clock(RestartOn24Sep));
+
+        var restoring = state.RestoreAsync(CancellationToken.None);
+        await state.SwitchAsync(on: true, "morning job");
+        store.HoldReads.SetResult();
+        await restoring;
+
+        Assert.True(state.Enabled);
+    }
+
+    [Fact]
+    public async Task Off_while_NSE_trades_and_Dhan_is_signed_in_is_said_once_a_day()
+    {
+        var clock = new Clock(RestartOn24Sep);
+        var notifier = new Notifier();
+        var poller = Poller(State(new MemoryStore(), clock), clock, notifier, signedIn: true);
+
+        Assert.True(await poller.WarnIfOffWhileNseTradesAsync(CancellationToken.None));
+        Assert.False(await poller.WarnIfOffWhileNseTradesAsync(CancellationToken.None));
+
+        var sent = Assert.Single(notifier.Sent);
+        Assert.Equal(NotificationCategory.Process, sent.Category);
+    }
+
+    [Fact]
+    public async Task Off_is_not_said_when_someone_stopped_it_today_or_Dhan_is_signed_out()
+    {
+        var clock = new Clock(RestartOn24Sep);
+        var notifier = new Notifier();
+        var stoppedToday = State(new MemoryStore(), clock);
+        await stoppedToday.SwitchAsync(on: false, "admin");
+
+        Assert.False(await Poller(stoppedToday, clock, notifier, signedIn: true).WarnIfOffWhileNseTradesAsync(CancellationToken.None));
+        Assert.False(await Poller(State(new MemoryStore(), clock), clock, notifier, signedIn: false).WarnIfOffWhileNseTradesAsync(CancellationToken.None));
+        Assert.Empty(notifier.Sent);
     }
 
     // ------------------------------------------------------------------ universe
@@ -242,6 +387,33 @@ public class DhanChainPollerTests
     private static TradingDbContext Db() =>
         new(new DbContextOptionsBuilder<TradingDbContext>().UseInMemoryDatabase($"dhan-chain-{Guid.NewGuid():N}").Options);
 
+    private static DhanChainPollerState State(MemoryStore? store = null, TimeProvider? clock = null, bool configured = false)
+    {
+        var scopes = new ServiceCollection()
+            .AddSingleton<IProcessSettingsStore>(store ?? new MemoryStore())
+            .BuildServiceProvider()
+            .GetRequiredService<IServiceScopeFactory>();
+        return new DhanChainPollerState(
+            Options.Create(new DhanSettings { ChainPoller = { Enabled = configured } }),
+            scopes,
+            NullLogger<DhanChainPollerState>.Instance,
+            clock);
+    }
+
+    private static DhanChainPoller Poller(DhanChainPollerState state, Clock clock, Notifier notifier, bool signedIn)
+    {
+        var dhan = signedIn
+            ? new BrokerSession { ProviderKey = "dhan", BrokerName = "Dhan", AccessToken = "token", UpdatedUtc = clock.Now.UtcDateTime.AddHours(-3) }
+            : null;
+        var scopes = new ServiceCollection()
+            .AddSingleton<IBrokerSessionStore>(new DhanSessions(dhan))
+            .AddSingleton<ISystemNotifier>(notifier)
+            .BuildServiceProvider()
+            .GetRequiredService<IServiceScopeFactory>();
+        return new DhanChainPoller(scopes, state, new Sessions(open: true), Options.Create(new DhanSettings()),
+            NullLogger<DhanChainPoller>.Instance, clock);
+    }
+
     private static DhanChainRecorder Recorder(TradingDbContext db, Routes handler, DhanChainPollerState state, bool marketOpen)
     {
         var api = new DhanApiClient(
@@ -307,5 +479,66 @@ public class DhanChainPollerTests
         public MarketSessionInfo GetSessionInfo(DateTime utcNow, string exchange, string segment) => throw new NotSupportedException();
         public bool IsMarketOpen(DateTime utcNow, string exchange, string segment) => open;
         public DateTime GetNextMarketOpenUtc(DateTime utcNow, string exchange, string segment) => throw new NotSupportedException();
+    }
+
+    private sealed class DhanSessions(BrokerSession? dhan) : IBrokerSessionStore
+    {
+        public Task<BrokerSession?> GetForProviderAsync(string providerKey, CancellationToken cancellationToken = default)
+            => Task.FromResult(providerKey == "dhan" ? dhan : null);
+        public Task<BrokerSession?> GetCurrentAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<BrokerSession?> GetForAccountAsync(long brokerAccountId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task ClearAccountAsync(long brokerAccountId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task SaveAsync(BrokerSession session, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task ClearAsync(string? providerKey = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    }
+
+    /// <summary>
+    /// system_settings in memory. <see cref="Broken"/> fails every read and write,
+    /// like a database that is down; <see cref="HoldReads"/> keeps a read waiting
+    /// after it has taken its value.
+    /// </summary>
+    private sealed class MemoryStore : IProcessSettingsStore
+    {
+        public Dictionary<string, string> Values { get; } = new();
+        public bool Broken { get; init; }
+        public TaskCompletionSource? HoldReads { get; init; }
+
+        public async Task<string?> GetAsync(string key, CancellationToken cancellationToken = default)
+        {
+            if (Broken) throw new InvalidOperationException("the database is down");
+            var value = Values.GetValueOrDefault(key);
+            if (HoldReads is not null) await HoldReads.Task;
+            return value;
+        }
+
+        public Task SetAsync(string key, string value, string? updatedBy = null, CancellationToken cancellationToken = default)
+        {
+            if (Broken) throw new InvalidOperationException("the database is down");
+            Values[key] = value;
+            return Task.CompletedTask;
+        }
+
+        public Task<int?> GetPidAsync(string key, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task SetPidAsync(string key, int processId, string? updatedBy = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<bool> DeleteAsync(string key, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<bool> DeleteIfPidAsync(string key, int processId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    }
+
+    private sealed class Notifier : ISystemNotifier
+    {
+        public List<(NotificationCategory Category, string Title)> Sent { get; } = new();
+
+        public Task NotifyAsync(NotificationCategory category, NotificationSeverity severity, string title, string message,
+            string? underlying = null, string? symbol = null, long? simulationRunId = null, CancellationToken cancellationToken = default)
+        {
+            Sent.Add((category, title));
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class Clock(DateTimeOffset now) : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = now;
+        public override DateTimeOffset GetUtcNow() => Now;
     }
 }
