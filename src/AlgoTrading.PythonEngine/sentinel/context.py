@@ -24,13 +24,14 @@ from sentinel.clock import Session, ask_calendar, now_utc, remember_day, session
 log = logging.getLogger("sentinel.context")
 
 # The only programs an agent may run, and nothing that changes state. Each is
-# resolved to an absolute path once, so a PATH change cannot swap one in.
+# resolved to an absolute path once per process (the first time it is run), so
+# a PATH change cannot swap one in later.
 READ_ONLY_TOOLS = {
     "ss", "df", "free", "uptime", "pgrep", "ps", "last", "who", "stat",
     "docker",  # only "docker ps" / "docker inspect" — enforced in run()
-    "git",     # only "git log", "git status", "git ls-files", "git grep", "git rev-parse" — enforced in run()
+    "git",     # only log, status, ls-files, grep, rev-parse and diff, without the options that run or write — enforced in run()
     "fail2ban-client",  # "status" only
-    "dotnet", "npm",    # only the vulnerability listings — enforced in run()
+    "dotnet", "npm",    # only "dotnet list" and "npm audit" (never "audit fix") — enforced in run()
 }
 
 _ALLOWED_SUBCOMMANDS = {
@@ -40,6 +41,50 @@ _ALLOWED_SUBCOMMANDS = {
     "dotnet": {"list"},
     "npm": {"audit"},
 }
+
+# An allowed git subcommand can still be told to run a program or write a
+# file: ``git grep -O<cmd>`` / ``--open-files-in-pager`` runs a pager on the
+# matches, ``--output=<file>`` writes one, ``--ext-diff`` runs a diff driver,
+# ``-c`` sets config. git accepts any unambiguous prefix of a long option
+# (``--open``, ``--out``), and bundles short ones (``-nO<cmd>``), so both forms
+# are checked. The value after ``-e`` is a pattern, not an option.
+_GIT_REFUSED_LONG = ("--open-files-in-pager", "--output", "--ext-diff")
+_GIT_REFUSED_SHORT = set("Oc")
+# ``npm audit`` reads; ``npm audit fix`` rewrites package-lock.json and
+# node_modules. Only the listing, with these flags.
+_NPM_AUDIT_FLAGS = ("--json", "--omit=")
+
+
+def _refusal(args: list[str]) -> Optional[str]:
+    """Why these arguments are not a read-only use of an allowed tool; None when they are."""
+    if not args or args[0] not in READ_ONLY_TOOLS:
+        return f"not a read-only tool: {args[:1]}"
+    allowed = _ALLOWED_SUBCOMMANDS.get(args[0])
+    if allowed is not None and (len(args) < 2 or args[1] not in allowed):
+        return f"{args[0]} {args[1:2]} is not allowed"
+    if args[0] == "git":
+        pattern_next = False
+        for arg in args[2:]:
+            if pattern_next:
+                pattern_next = False
+                continue
+            if arg in ("-e", "--regexp"):
+                pattern_next = True
+                continue
+            if arg.startswith("--"):
+                name = arg.split("=", 1)[0]
+                if len(name) > 2 and any(bad.startswith(name) or name.startswith(bad) for bad in _GIT_REFUSED_LONG):
+                    return f"git option {name} can run a program or write a file"
+            elif arg.startswith("-") and len(arg) > 1:
+                for i, flag in enumerate(arg[1:], start=1):
+                    if flag == "e":
+                        pattern_next = i == len(arg) - 1   # the rest of the cluster, or else the next argument, is the pattern
+                        break
+                    if flag in _GIT_REFUSED_SHORT:
+                        return f"git option -{flag} can run a program or change configuration"
+    if args[0] == "npm" and not all(a == "--json" or a.startswith("--omit=") for a in args[2:]):
+        return "only npm audit, with --json and --omit=, is allowed"
+    return None
 
 
 @dataclass(frozen=True)
@@ -123,10 +168,15 @@ class SentinelContext:
     api_get: Callable[[str], Any]
     redis_factory: Callable[[], Any]
     clock: Callable[[], datetime] = now_utc
+    # Where agents keep their memory between checks; logs/sentinel/ when None.
+    # A dry run gets a copy of its own (sentinel/__main__.py): the log offsets
+    # and events it consumes would otherwise be lost to the service.
+    state_root: Optional[Path] = None
     _session: Optional[Session] = None
     _calendar: Optional[AgentState] = None
     _redis: Any = None
     _states: dict[str, AgentState] = field(default_factory=dict)
+    _executables: dict[str, Optional[str]] = field(default_factory=dict)
 
     @property
     def logs_dir(self) -> Path:
@@ -134,7 +184,7 @@ class SentinelContext:
 
     @property
     def state_dir(self) -> Path:
-        return self.logs_dir / "sentinel"
+        return self.state_root if self.state_root is not None else self.logs_dir / "sentinel"
 
     def now(self) -> datetime:
         return self.clock()
@@ -181,19 +231,21 @@ class SentinelContext:
     def run(self, args: list[str], timeout: float = 20.0, cwd: Optional[Path] = None) -> tuple[int, str]:
         """
         Run one read-only tool and return (exit code, stdout). Refuses anything
-        off the allowlist rather than trying to be clever about it.
+        off the allowlist rather than trying to be clever about it. Output is
+        decoded leniently: a file name or a log line that is not UTF-8 is a
+        replacement character, not an exception out of a read-only helper.
         """
-        if not args or args[0] not in READ_ONLY_TOOLS:
-            raise PermissionError(f"not a read-only tool: {args[:1]}")
-        allowed = _ALLOWED_SUBCOMMANDS.get(args[0])
-        if allowed is not None and (len(args) < 2 or args[1] not in allowed):
-            raise PermissionError(f"{args[0]} {args[1:2]} is not allowed")
-        exe = shutil.which(args[0])
+        refusal = _refusal(list(args))
+        if refusal is not None:
+            raise PermissionError(refusal)
+        if args[0] not in self._executables:
+            self._executables[args[0]] = shutil.which(args[0])
+        exe = self._executables[args[0]]
         if exe is None:
             return 127, ""
         try:
-            done = subprocess.run([exe, *args[1:]], capture_output=True, text=True, timeout=timeout,
-                                  cwd=str(cwd or self.repo_root), check=False)
+            done = subprocess.run([exe, *args[1:]], capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=timeout, cwd=str(cwd or self.repo_root), check=False)
             return done.returncode, done.stdout
         except subprocess.TimeoutExpired:
             return 124, ""

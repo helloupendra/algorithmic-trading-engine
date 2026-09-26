@@ -427,10 +427,25 @@ public class IncidentsControllerTests
         Assert.Equal("Login failed with token=…", summary.NewestTitle);
     }
 
+    // The shared redaction spec as cases. The same table is in Sentinel's
+    // tests/test_sentinel_notify.py and web/src/lib/incidents.test.ts: a case
+    // added here is added there.
     [Theory]
+    [InlineData("Generate a new Dhan token before tomorrow's 08:45 start")]
+    [InlineData("SSH password guessing from 1.2.3.4 was banned")]
+    [InlineData("Fyers rejected the desk's credential (token expired or invalid)")]
     [InlineData("FYERS token expired at 08:45; strategies are running deaf.")]
+    [InlineData("Password reset for user coderforchange")]
+    [InlineData("Sentinel's secret scan found a key in config/x.json")]
+    [InlineData("Generate a new Dhan token\n\nEvidence:\n• feed silent")]
+    [InlineData("Skipping: 3 runners already stopped")]
+    [InlineData("input_tokens: 512")]
+    [InlineData("spinning=3")]
+    [InlineData("if token == expected:")]
     [InlineData("Dhan feed: 8 reconnect(s) carried no ticks — waiting 80s")]
     [InlineData("429 Client Error: Too Many Requests for url: http://localhost:5025/api/UserAuth/login")]
+    [InlineData("https://example.com:8443/path")]
+    [InlineData("NSE feed silent for 120 s; newest tick 11:27:35 IST on NSE:NIFTY50-INDEX")]
     [InlineData("SUBSCRIBED: 321 symbol(s)")]
     [InlineData("A setting added to .env did nothing until appsettings.Local.json was regenerated")]
     public void Ordinary_incident_text_is_left_alone(string text)
@@ -441,15 +456,42 @@ public class IncidentsControllerTests
     }
 
     [Theory]
+    [InlineData("POSTGRES_PASSWORD=hunter2hunter2", "POSTGRES_PASSWORD=…")]
+    [InlineData("TELEGRAM_BOT_TOKEN=abcdefghij", "TELEGRAM_BOT_TOKEN=…")]
+    [InlineData("DHAN_PIN=1234", "DHAN_PIN=…")]
+    [InlineData("FYERS_SECRET_KEY=ABCD1234XYZ", "FYERS_SECRET_KEY=…")]
+    [InlineData("JWT_SECRET_KEY=supersecretjwtkey", "JWT_SECRET_KEY=…")]
+    [InlineData("DHAN_API_SECRET=abcdef123", "DHAN_API_SECRET=…")]
+    [InlineData("ANGEL_API_KEY=abcdef12", "ANGEL_API_KEY=…")]
+    [InlineData("{\"trading_pin\": \"4821\"}", "{\"trading_pin\": \"…\"}")]
     [InlineData("\"access_token\": \"abcDEF123456\"", "\"access_token\": \"…\"")]
-    [InlineData("Host=db;Password=pa55word;Database=algotrading", "Host=db;Password=…")]
-    [InlineData("client_secret=XYZ987654", "client_secret=…")]
-    [InlineData("trading_pin: 4821", "trading_pin: …")]
+    [InlineData("refreshToken=Zm9vYmFyYmF6", "refreshToken=…")]
+    [InlineData("X-Api-Key: abcd1234", "X-Api-Key: …")]
+    [InlineData("Host=db;Password=pa55word;Database=algotrading", "Host=db;Password=…;Database=algotrading")]
+    [InlineData("GET /login?client_secret=XYZ987654&state=1", "GET /login?client_secret=…&state=1")]
     [InlineData("TOTP=123456", "TOTP=…")]
+    [InlineData("password=\"correct horse battery\"", "password=\"…\"")]
+    [InlineData("postgresql://postgres:S3cretPassw0rd@localhost:5432/algotrading", "postgresql://postgres:…@localhost:5432/algotrading")]
+    [InlineData("redis://:S3cretPassw0rd@localhost:6379/0", "redis://:…@localhost:6379/0")]
+    [InlineData("Authorization: Basic dXNlcjpTM2NyZXRQYXNzdzByZA==", "Authorization: Basic …")]
     [InlineData("curl -H 'Authorization: Bearer abcdefghijklmnop'", "curl -H 'Authorization: Bearer …'")]
+    [InlineData("headers={'Authorization': 'Bearer abc.def.ghi-jkl'}", "headers={'Authorization': 'Bearer …'}")]
+    [InlineData("Bearer abcdefghijklmnopqrstuvwxyz123", "Bearer …")]
+    [InlineData("url: /bot8123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw0/sendMessage", "url: /bot…/sendMessage")] // pragma: allowlist secret
+    [InlineData("chat 123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw0 said", "chat … said")] // pragma: allowlist secret
+    [InlineData("token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MX0.c2lnbmF0dXJlLXZhbHVlLWhlcmU expired", "token … expired")] // pragma: allowlist secret
     public void Credential_shapes_are_masked(string text, string expected)
     {
         Assert.Equal(expected, IncidentRedaction.Mask(text));
+        Assert.Equal(expected, IncidentRedaction.Mask(expected));   // masking twice is masking once
+    }
+
+    [Fact]
+    public void A_long_line_is_masked_in_time_not_hidden()
+    {
+        // Bounded lengths: a long identifier cannot make a pattern backtrack past its 250 ms.
+        string text = string.Concat(Enumerable.Repeat("token_", 20_000)) + " password=hunter22";
+        Assert.EndsWith(" password=…", IncidentRedaction.Mask(text));
     }
 
     [Theory]

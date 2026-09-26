@@ -455,19 +455,42 @@ public sealed record IncidentSummary(
 /// what it stores. But its evidence quotes log lines and the tail of a
 /// traceback, and one slip would otherwise be served to every admin's browser,
 /// screen recordings of the console included. A masked harmless string costs
-/// nothing; a leaked token costs a rotation.
+/// nothing; a leaked token costs a rotation. A mask that garbles the desk's own
+/// prose ("FYERS token expired at 08:45", "SSH password guessing from …") is a
+/// failure too, so a key counts only when <c>:</c> or <c>=</c> follows it on
+/// the same line.
 /// </para>
 /// <para>
-/// The same shapes Sentinel's <c>notify.py</c> masks for Telegram, with one
-/// difference: a key counts only when <c>:</c> or <c>=</c> follows it. Prose
-/// such as "FYERS token expired at 08:45" is exactly what this desk's incidents
-/// say, and it must stay readable; <c>token=…</c>, <c>"password": "…"</c> and
-/// <c>Password=…;</c> in a connection string are what leaks look like.
+/// One spec, identical in every layer that sends or shows incident text:
+/// Sentinel's <c>notify.py</c> (Telegram), this class (the API),
+/// <c>maskSecrets</c> in <c>web/src/lib/incidents.ts</c> (the console), and the
+/// logs agent's filter for lines that may hold a secret. Change one, change
+/// all; each has a table-driven test with the same cases.
 /// </para>
+/// <list type="number">
+/// <item><c>Authorization: Bearer|Basic &lt;value&gt;</c>: the value.</item>
+/// <item><c>Bearer</c> and 12 or more token characters anywhere.</item>
+/// <item><c>scheme://user:password@</c> and <c>scheme://:password@</c>: the password.</item>
+/// <item>
+/// <c>key=value</c>, <c>key: value</c>, <c>"key": "value"</c>, where the key is
+/// an identifier with a whole part (underscore separated, or the end of a
+/// camelCase key) that is secret, password, passwd, pwd, token, api_key,
+/// private_key, totp or pin: <c>DHAN_PIN</c>, <c>JWT_SECRET_KEY</c>,
+/// <c>access_token</c>, <c>accessToken</c>, <c>X-Api-Key</c>; not "tokens" or
+/// "Skipping". The separator is an optional quote, spaces or tabs (never a
+/// newline), then <c>:</c> or <c>=</c> but not <c>==</c>. The value runs to
+/// whitespace, a quote, <c>&amp;</c>, <c>,</c> or <c>;</c> — or, quoted, to its
+/// closing quote.
+/// </item>
+/// <item>Telegram bot tokens anywhere, <c>/bot&lt;token&gt;/</c> in a URL included.</item>
+/// <item>JSON Web Tokens: <c>eyJ….eyJ….&lt;signature&gt;</c>.</item>
+/// </list>
 /// </remarks>
 public static partial class IncidentRedaction
 {
     private const string Hidden = "…";
+
+    private const RegexOptions Options = RegexOptions.IgnoreCase | RegexOptions.CultureInvariant;
 
     /// <summary>The text with every secret-shaped part replaced by "…"; null becomes empty.</summary>
     public static string Mask(string? text)
@@ -479,11 +502,12 @@ public static partial class IncidentRedaction
 
         try
         {
+            text = AuthorizationHeader().Replace(text, m => m.Groups[1].Value + Hidden);
             text = Bearer().Replace(text, m => m.Groups[1].Value + Hidden);
-            text = KeyValue().Replace(text, m => m.Groups[1].Value + Hidden);
+            text = UrlPassword().Replace(text, m => m.Groups[1].Value + Hidden);
+            text = KeyValue().Replace(text, MaskValue);
             text = Jwt().Replace(text, Hidden);
             text = TelegramBotToken().Replace(text, Hidden);
-            text = UrlPassword().Replace(text, m => m.Groups[1].Value + Hidden);
             return text;
         }
         catch (RegexMatchTimeoutException)
@@ -493,29 +517,43 @@ public static partial class IncidentRedaction
         }
     }
 
-    /// <summary><c>Authorization: Bearer abc…</c>.</summary>
-    [GeneratedRegex(@"(?i)(\bbearer\s+)[A-Za-z0-9._\-]{12,}", RegexOptions.None, matchTimeoutMilliseconds: 250)]
+    /// <summary>The key and separator kept, the value hidden; a quoted value keeps its quotes.</summary>
+    private static string MaskValue(Match m)
+    {
+        string value = m.Groups[2].Value;
+        string lead = value[0] is '"' or '\'' ? value[..1] : string.Empty;
+        string tail = lead.Length > 0 && value.Length > 1 && value[^1] == lead[0] ? lead : string.Empty;
+        return m.Groups[1].Value + lead + Hidden + tail;
+    }
+
+    /// <summary><c>Authorization: Bearer abc…</c>, <c>{'Authorization': 'Basic abc…'}</c>.</summary>
+    [GeneratedRegex(@"(authorization[""']?[ \t]*[:=][ \t]*[""']?(?:bearer|basic)[ \t]+)[^\s""'&,;]+", Options, matchTimeoutMilliseconds: 250)]
+    private static partial Regex AuthorizationHeader();
+
+    /// <summary>A bearer token quoted without its header name.</summary>
+    [GeneratedRegex(@"(\bbearer[ \t]+)[A-Za-z0-9._~+/=-]{12,}", Options, matchTimeoutMilliseconds: 250)]
     private static partial Regex Bearer();
 
+    /// <summary>The password in <c>scheme://user:password@host</c> or <c>scheme://:password@host</c>.</summary>
+    [GeneratedRegex(@"\b([a-z][a-z0-9+.-]*://[^\s:/@]*:)[^\s@/]+(?=@)", Options, matchTimeoutMilliseconds: 250)]
+    private static partial Regex UrlPassword();
+
     /// <summary>
-    /// <c>password=…</c>, <c>"access_token": "…"</c>, <c>client_secret=…</c>,
-    /// <c>trading_pin: 1234</c>: a secret-named key, then <c>:</c> or <c>=</c>,
-    /// then a value.
+    /// A secret-named key, then <c>:</c> or <c>=</c> on the same line, then a
+    /// value. Lengths are bounded so a long identifier cannot make it backtrack.
     /// </summary>
     [GeneratedRegex(
-        @"(?i)((?:password|passwd|secret|token|api[_-]?key|access[_-]?key|app[_-]?secret|totp|(?<![a-z])pin)[""']?\s*[:=]\s*[""']?)[^\s""',}]{4,}",
-        RegexOptions.None, matchTimeoutMilliseconds: 250)]
+        @"(?<![A-Za-z0-9_])([A-Za-z0-9_]{0,64}?(?:secret|password|passwd|pwd|token|api[_-]?key|private[_-]?key|totp|pin)" +
+        @"(?:_[A-Za-z0-9]{1,32}){0,8}[""']?[ \t]*[:=](?!=)[ \t]*)" +
+        @"(""[^""\r\n]+""|'[^'\r\n]+'|[""']?[^\s""'&,;]+)",
+        Options, matchTimeoutMilliseconds: 250)]
     private static partial Regex KeyValue();
 
     /// <summary>A JSON Web Token on its own: header.payload.signature.</summary>
-    [GeneratedRegex(@"eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}", RegexOptions.None, matchTimeoutMilliseconds: 250)]
+    [GeneratedRegex(@"eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 250)]
     private static partial Regex Jwt();
 
-    /// <summary>A Telegram bot token: the bot id, a colon, the secret.</summary>
-    [GeneratedRegex(@"\b[0-9]{8,10}:[A-Za-z0-9_\-]{30,}\b", RegexOptions.None, matchTimeoutMilliseconds: 250)]
+    /// <summary>A Telegram bot token: the bot id, a colon, the secret — inside <c>/bot…/</c> too.</summary>
+    [GeneratedRegex(@"(?<![0-9])[0-9]{8,10}:[A-Za-z0-9_-]{30,}", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 250)]
     private static partial Regex TelegramBotToken();
-
-    /// <summary>The password in <c>scheme://user:password@host</c>.</summary>
-    [GeneratedRegex(@"(?i)\b([a-z][a-z0-9+.\-]*://[^/\s:@]+:)[^@\s/]+(?=@)", RegexOptions.None, matchTimeoutMilliseconds: 250)]
-    private static partial Regex UrlPassword();
 }
