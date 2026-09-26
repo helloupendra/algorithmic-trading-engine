@@ -19,9 +19,10 @@ feels wrong, each one a separate rule:
 The feed rules watch the desk's own schedule, not only the exchange calendar:
 a market counts as open while the calendar says so AND before MARKET_CLOSE_AT
 (desk.sh's close, 23:35 by default, when market-close.sh stops every feed),
-and on a day NSE does not trade — where market-open.sh deliberately starts
-nothing, even if MCX keeps its evening session — only while someone has
-started a feed on purpose.
+and on a day NSE does not trade, or on a Saturday or Sunday — where
+market-open.sh deliberately starts nothing, even if MCX keeps its evening
+session or the exchange holds a special weekend session — only while someone
+has started a feed on purpose.
 
 Most rules wait for a second (or third) sighting before they speak: a single
 failed probe during an API restart is ordinary, and a watchman that shouts at
@@ -658,10 +659,13 @@ class HealthAgent(Agent):
         # * after MARKET_CLOSE_AT market-close.sh has stopped every feed, although the
         #   API's calendar can keep MCX open until 23:55;
         # * on a day NSE does not trade, market-open.sh starts nothing on purpose, even
-        #   when MCX keeps its evening session — unless someone started a feed by hand.
+        #   when MCX keeps its evening session — unless someone started a feed by hand;
+        # * nor on a Saturday or Sunday (desk.sh runs it Monday to Friday, and it stops at
+        #   "Weekend"), even when the exchange calendar has a special session on one — a
+        #   Budget day, a disaster-recovery drill, Muhurat trading.
         close_at = _parse_close_at(ctx.env.get("MARKET_CLOSE_AT"))
         before_close = to_ist(now).time() < close_at
-        desk_trades_today = session.trading_day or bool(running)
+        desk_trades_today = (session.trading_day and to_ist(now).weekday() < 5) or bool(running)
         watched = {group: is_open and before_close and desk_trades_today
                    for group, is_open in (("NSE", session.nse_open), ("MCX", session.mcx_open))}
 
@@ -686,7 +690,12 @@ class HealthAgent(Agent):
             except Exception as exc:
                 redis_error = _short_error(exc)
 
-        calendar = "exchange calendar" if session.from_calendar else "weekday rule (API calendar unavailable)"
+        if not session.from_calendar:
+            calendar = "weekday rule (API calendar unavailable)"
+        elif session.remembered:
+            calendar = "exchange calendar as it answered earlier today; it is not answering now"
+        else:
+            calendar = "exchange calendar"
         open_label = ", ".join(GROUP_LABEL[g] for g in groups)
 
         # Silence per group, measured from the later of the newest tick and the open.

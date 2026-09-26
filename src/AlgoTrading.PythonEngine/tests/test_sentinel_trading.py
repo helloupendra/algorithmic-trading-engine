@@ -221,6 +221,28 @@ class QuietDayTests(TradingAgentTestCase):
         self.assertEqual([], self.check([], [], trading=False, nse=False, mcx=False))
         self.assertTrue(self.check([], []))  # the same empty desk on a trading day is news
 
+    def test_a_weekend_special_session_does_not_call_the_plan_missing(self):
+        # The exchange calendar has NSE trading on a Saturday; the morning job does not run on one.
+        saturday = datetime(2026, 9, 26, 5, 0, tzinfo=timezone.utc)   # 10:30 IST
+        ctx = make_context(self.tmp, api=routes([], [], day="2026-09-26"), now=saturday)
+        self.assertEqual([], self.agent.check(ctx))
+        friday = make_context(self.tmp, api=routes([], [], day="2026-09-25"), now=saturday - timedelta(days=1))
+        self.assertIn("run-missing", self.rules(self.agent.check(friday)))   # the same empty desk on a Friday
+
+    def test_a_holiday_stays_one_while_the_api_restarts(self):
+        asked = []
+        holiday = routes([], [], nse=False, mcx=False, trading=False)
+        ctx = make_context(self.tmp, api=holiday, now=ist(11, 0))
+        self.assertEqual([], self.agent.check(ctx))
+
+        def down(path):
+            asked.append(path)
+            raise ConnectionError("connection refused")
+
+        later = make_context(self.tmp, api={"/api/*": down}, now=ist(11, 2))   # Sentinel restarted with it
+        self.assertEqual([], self.agent.check(later))
+        self.assertFalse([p for p in asked if p.startswith("/api/Strategy/")])   # not even asked
+
     def test_an_api_that_does_not_answer_with_nothing_seen_before_reports_nothing(self):
         api = routes(full_day(), full_day())
         api[RUNNING_PATH] = ConnectionError("connection refused")

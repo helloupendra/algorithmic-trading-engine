@@ -1,7 +1,8 @@
 """
 Run Sentinel.
 
-    python -m sentinel              watch forever (what the desk supervisor runs)
+    python -m sentinel              watch until stopped (what the algotrading-sentinel service runs);
+                                    ends by itself when its code changes, for systemd to restart
     python -m sentinel --once       every agent once, then exit
     python -m sentinel --dry-run    store nothing, send nothing — log instead
     python -m sentinel --only health,trading
@@ -16,7 +17,11 @@ import argparse
 import logging
 import signal
 import sys
+import time
 from pathlib import Path
+from typing import Callable, Optional
+
+from sentinel.reload import CodeWatch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -45,6 +50,7 @@ def build(dry_run: bool, only: set[str] | None):
     from sentinel.context import SentinelContext
     from sentinel.engine import SentinelEngine
     from sentinel.notify import notifier_from_env
+    from sentinel.pack import ContextPack
     from sentinel.store import MemoryIncidentStore, PostgresIncidentStore, dsn_from_env
 
     env = {**_read_env(REPO_ROOT / ".env"), **{k: v for k, v in os.environ.items() if k.isupper()}}
@@ -92,7 +98,25 @@ def build(dry_run: bool, only: set[str] | None):
             store = PostgresIncidentStore(dsn, REPO_ROOT / "logs" / "sentinel" / "unstored-incidents.jsonl")
 
     agents = [a for a in all_agents() if only is None or a.name in only]
-    return SentinelEngine(agents, store, notifier_from_env(env, dry_run), ctx)
+    return SentinelEngine(agents, store, notifier_from_env(env, dry_run), ctx, pack=ContextPack(ctx))
+
+
+def watch(engine, code: CodeWatch, stopping: dict, sleep: Optional[Callable[[float], None]] = None) -> Optional[str]:
+    """
+    Run until stopped or until the code changes; what changed, or None. Both
+    are looked at only between rounds, so a round is never cut in half: its
+    state is saved and its heartbeat written.
+    """
+    changed: dict[str, Optional[str]] = {"why": None}
+
+    def should_stop() -> bool:
+        if stopping["flag"]:
+            return True
+        changed["why"] = code.changed()
+        return changed["why"] is not None
+
+    engine.run_forever(should_stop=should_stop, sleep=sleep or time.sleep)
+    return changed["why"]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -107,6 +131,9 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     only = {a.strip() for a in args.only.split(",") if a.strip()} or None
+    # The baseline is taken before the agents are imported: a pull that lands
+    # while this process starts is then a change, not the starting point.
+    code = None if args.once else CodeWatch(Path(__file__).resolve().parent)
     engine = build(args.dry_run, only)
 
     if args.once:
@@ -121,7 +148,9 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     logging.getLogger("sentinel").info("Sentinel watching.")
-    engine.run_forever(should_stop=lambda: stopping["flag"])
+    why = watch(engine, code, stopping)
+    if why is not None:
+        logging.getLogger("sentinel").info("code changed (%s) — exiting so the service restarts it", why)
     return 0
 
 

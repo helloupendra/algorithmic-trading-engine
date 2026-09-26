@@ -23,7 +23,10 @@ Rules, each one of this desk's own days:
     a recovery reads as one message when it is done, not a burst of new ones.
     While an account's newest run started less than three minutes ago the
     morning job (or a person) is still working through the plan: nothing new
-    is called missing, and what was already reported stays reported.
+    is called missing, and what was already reported stays reported. Never on
+    a Saturday or Sunday: the morning job runs Monday to Friday, so a special
+    weekend session in the exchange calendar is not one the plan was deployed
+    for.
 
 ``run-stopped-early`` (HIGH)
     A run started today that ended inside market hours for a reason nobody
@@ -727,7 +730,7 @@ class TradingAgent(Agent):
         previous = data.get("missing") if isinstance(data.get("missing"), dict) else {}
         data["missing"] = {}
         t = to_ist(now).time()
-        if not (PLAN_WINDOW[0] <= t < PLAN_WINDOW[1]) or plan is None:
+        if not (PLAN_WINDOW[0] <= t < PLAN_WINDOW[1]) or plan is None or to_ist(now).weekday() >= 5:
             return []
 
         mcx_seen = {r.underlying for r in [*running, *today] if r.spot.upper().startswith("MCX:")}

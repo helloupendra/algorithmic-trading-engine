@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from sentinel.clock import Session, now_utc, session_by_weekday, session_from_api
+from sentinel.clock import Session, ask_calendar, now_utc, remember_day, session_from_answers
 
 log = logging.getLogger("sentinel.context")
 
@@ -124,6 +124,7 @@ class SentinelContext:
     redis_factory: Callable[[], Any]
     clock: Callable[[], datetime] = now_utc
     _session: Optional[Session] = None
+    _calendar: Optional[AgentState] = None
     _redis: Any = None
     _states: dict[str, AgentState] = field(default_factory=dict)
 
@@ -139,10 +140,26 @@ class SentinelContext:
         return self.clock()
 
     def session(self) -> Session:
-        """The market session at this moment, from the API's calendar when it answers."""
+        """
+        The market session at this moment, from the API's calendar when it
+        answers, and from what it said earlier today when it does not.
+        """
         if self._session is None:
-            self._session = session_from_api(self.now(), self.api_get)
+            now = self.now()
+            answers = ask_calendar(self.api_get)
+            kept = self._calendar_state()
+            if answers:
+                today = remember_day(now, answers, kept.data)
+                if today != kept.data:
+                    kept.data = today
+                    kept.save()
+            self._session = session_from_answers(now, answers, kept.data)
         return self._session
+
+    def _calendar_state(self) -> AgentState:
+        if self._calendar is None:
+            self._calendar = AgentState(self.state_dir / "calendar.json")
+        return self._calendar
 
     def fresh_cycle(self) -> None:
         """Forget what was cached for the previous check."""

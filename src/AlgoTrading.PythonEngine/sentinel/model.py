@@ -26,6 +26,14 @@ class Severity(str, Enum):
 _RANK = {Severity.LOW: 0, Severity.MEDIUM: 1, Severity.HIGH: 2, Severity.CRITICAL: 3}
 _ICON = {Severity.LOW: "·", Severity.MEDIUM: "!", Severity.HIGH: "‼", Severity.CRITICAL: "🔴"}
 
+# Evidence lines that start with this are the incident's context pack (what
+# changed around it: the last deploy, the live commit, the runs, the logs; see
+# sentinel/pack.py), not the agent's own observations. They share the evidence
+# column because the incidents table is a contract with the API and has no
+# other place for them: the store keeps them across sightings, and replaces
+# them only with a newer pack.
+CONTEXT_PREFIX = "context: "
+
 
 @dataclass(frozen=True)
 class Finding:

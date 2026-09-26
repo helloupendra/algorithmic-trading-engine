@@ -170,7 +170,7 @@ class PlanTests(unittest.TestCase):
 class RedactionTests(unittest.TestCase):
     def test_tokens_and_passwords_never_leave_the_machine(self):
         text = ('Authorization: Bearer abcdefghijklmnopqrstuvwxyz123 password=hunter2hunter2 '
-                'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N '
+                'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N '  # pragma: allowlist secret
                 '1234567890:ABCdefGhIJKlmNoPQRsTUVwxyZ1234567890ab')
         out = redact(text)
         for secret in ("abcdefghijklmnopqrstuvwxyz123", "hunter2hunter2", "dozjgNryP4J3jVmNHl0w5N",

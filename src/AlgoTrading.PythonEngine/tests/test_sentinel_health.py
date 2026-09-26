@@ -614,6 +614,26 @@ class DeskScheduleTests(HealthCase):
         for i in range(3):
             self.assertNotIn("feed-silent", self.rules(self.check(at + timedelta(seconds=30 * i))))
 
+    SATURDAY_SESSION = datetime(2026, 9, 26, 5, 0, tzinfo=timezone.utc)   # 10:30 IST, a special live session
+
+    def test_a_weekend_special_session_is_not_a_missed_morning(self):
+        # The calendar says NSE is trading; market-open.sh said "Weekend — Nothing to do."
+        self.session.update(nse=True, mcx=False, trading_day=True)
+        self.api["/api/Feeds"] = feeds(running=())
+        self.stream = FakeStream().add(datetime(2026, 9, 25, 18, 4, tzinfo=timezone.utc), "MCX")
+        for i in range(6):
+            self.assertEqual([], self.check(self.SATURDAY_SESSION + timedelta(seconds=30 * i)))
+
+    def test_a_feed_started_by_hand_for_a_weekend_session_is_watched(self):
+        self.session.update(nse=True, mcx=False, trading_day=True)
+        self.api["/api/Feeds"] = feeds(running=())
+        self.stream = FakeStream()
+        self.assertEqual([], self.check(self.SATURDAY_SESSION))
+        self.api["/api/Feeds"] = feeds(running=("fyers",))
+        self.assertEqual([], self.check(self.SATURDAY_SESSION + timedelta(seconds=30)))
+        f = self.only(self.check(self.SATURDAY_SESSION + timedelta(seconds=150)), "feed-silent")
+        self.assertEqual("health:feed-silent:NSE", f.fingerprint)
+
     def test_a_feed_started_by_hand_on_an_nse_holiday_is_watched(self):
         at = self.dussehra_evening()
         self.api["/api/Feeds"] = feeds(running=())
@@ -622,6 +642,63 @@ class DeskScheduleTests(HealthCase):
         self.assertEqual([], self.check(at + timedelta(seconds=30)))   # the clock starts now
         f = self.only(self.check(at + timedelta(seconds=150)), "feed-silent")
         self.assertEqual("health:feed-silent:MCX", f.fingerprint)
+
+
+class CalendarOutageTests(HealthCase):
+    """An API that stops answering does not turn a holiday back into a weekday."""
+
+    GANDHI_JAYANTI = datetime(2026, 10, 2, 5, 30, tzinfo=timezone.utc)   # Friday 11:00 IST, NSE and MCX shut
+
+    def holiday(self):
+        self.session.update(nse=False, mcx=False, trading_day=False, holiday="Gandhi Jayanti")
+        self.api["/api/MarketSession/check?exchange=MCX*"] = lambda _: {
+            "isTradingDay": False, "isMarketOpen": False, "isHoliday": True, "holidayName": "Gandhi Jayanti"}
+        self.api["/api/Feeds"] = feeds(running=())
+        # Yesterday's last ticks, before market-close.sh stopped the feeds.
+        self.stream = FakeStream().add(datetime(2026, 10, 1, 18, 4, tzinfo=timezone.utc), "MCX") \
+            .add(datetime(2026, 10, 1, 10, 0, tzinfo=timezone.utc), "NSE")
+
+    def api_down(self):
+        # A deploy restarting the API: nothing answers, the calendar included.
+        self.http[LOCAL_HEALTH] = ConnectionError("connection refused")
+        for route in list(self.api):
+            self.api[route] = ConnectionError("connection refused")
+
+    def test_a_holiday_outage_reports_the_api_and_no_silent_feed(self):
+        self.holiday()
+        self.assertEqual([], self.check(self.GANDHI_JAYANTI))
+        self.api_down()
+        seen = set()
+        for i in range(1, 11):   # five minutes of outage
+            seen |= set(self.rules(self.check(self.GANDHI_JAYANTI + timedelta(seconds=30 * i))))
+        self.assertIn("api-down", seen)
+        self.assertNotIn("feed-silent", seen)
+        self.assertNotIn("redis-unreachable", seen)
+
+    def test_it_is_still_a_holiday_after_sentinel_restarts_mid_outage(self):
+        self.holiday()
+        self.check(self.GANDHI_JAYANTI)
+        self.api_down()
+        self.ctx, self._agent = None, None    # a deploy restarted Sentinel too
+        for i in range(1, 7):
+            self.assertNotIn("feed-silent", self.rules(self.check(self.GANDHI_JAYANTI + timedelta(seconds=30 * i))))
+
+    def test_a_trading_day_outage_still_watches_the_feed_and_says_how_it_knows(self):
+        self.check(NOW)                         # the calendar answered: a trading day
+        self.api_down()                         # and the stream stops where it was
+        found = [self.check(NOW + timedelta(seconds=30 * i)) for i in range(1, 6)]
+        silent = [f for batch in found for f in batch if f.rule == "feed-silent"]
+        self.assertTrue(silent)
+        self.assertIn("NSE/BSE session open (exchange calendar as it answered earlier today; it is not answering "
+                      "now)", silent[0].evidence)
+
+    def test_what_the_calendar_said_yesterday_is_not_todays_answer(self):
+        self.holiday()
+        self.check(self.GANDHI_JAYANTI)
+        self.api_down()
+        monday = datetime(2026, 10, 5, 5, 30, tzinfo=timezone.utc)   # 11:00 IST, a trading day
+        found = [self.check(monday + timedelta(seconds=30 * i)) for i in range(3)]
+        self.assertIn("feed-silent", {f.rule for batch in found for f in batch})   # the weekday rule, as before
 
 
 class MachineTests(HealthCase):

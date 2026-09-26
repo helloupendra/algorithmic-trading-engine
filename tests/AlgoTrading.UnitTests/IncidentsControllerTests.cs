@@ -392,14 +392,14 @@ public class IncidentsControllerTests
     {
         // The agent-crashed incident quotes an exception and a traceback tail;
         // whatever slipped into them must not reach the browser.
-        const string jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+        const string jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"; // pragma: allowlist secret
         await using var db = NewDb(NewName());
         var row = Row("trading:agent-crashed:HTTPError", evidence:
             "[\"Authorization: Bearer " + jwt + "\", \"password=hunter2xyz\", \"runner exited with code 1\"]");
         row.Title = "Login failed with token=abcd1234efgh";
         row.Summary = "HTTPError: 401 for url: https://api.example/login?access_token=" + jwt;
         row.Location = "postgres://algo:s3cretPw@localhost:5432/algotrading";
-        row.Suggestion = "Check that bot 1234567890:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsawx is still valid.";
+        row.Suggestion = "Check that bot 1234567890:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsawx is still valid."; // pragma: allowlist secret
         db.Incidents.Add(row);
         await db.SaveChangesAsync();
         var controller = Controller(db);

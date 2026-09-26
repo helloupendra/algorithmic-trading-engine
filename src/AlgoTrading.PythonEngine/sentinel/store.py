@@ -16,15 +16,35 @@ import json
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
-from sentinel.model import Finding, Severity, Status
+from sentinel.model import CONTEXT_PREFIX, Finding, Severity, Status
 
 # Statuses that mean "this problem is still being tracked": a new sighting of
 # the same fingerprint updates it rather than opening another.
 _LIVE = (Status.OPEN.value, Status.ACKNOWLEDGED.value)
+
+
+def _evidence_list(raw: Any) -> list[str]:
+    """The evidence column as a list. It is text, not jsonb: a value that does not parse is no evidence, not an error."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return []
+    return [str(e) for e in raw] if isinstance(raw, list) else []
+
+
+def _keep_context(evidence: list[str], before: list[str]) -> list[str]:
+    """A new sighting's evidence, followed by the context pack the incident already carries."""
+    return list(evidence) + [e for e in before if e.startswith(CONTEXT_PREFIX)]
+
+
+def _with_context(before: list[str], context: list[str]) -> list[str]:
+    """The incident's evidence with its context pack replaced by a newer one."""
+    return [e for e in before if not e.startswith(CONTEXT_PREFIX)] + list(context)
 
 
 @dataclass(frozen=True)
@@ -36,6 +56,7 @@ class Upserted:
     escalated: bool
     severity: Severity
     occurrences: int
+    first_seen_utc: Optional[datetime] = None
 
 
 @dataclass(frozen=True)
@@ -66,6 +87,14 @@ class IncidentStore(ABC):
         list cannot be told apart from a Sentinel that has stopped looking.
         """
 
+    def attach_context(self, incident_id: int, context: list[str]) -> None:
+        """
+        Put a context pack (sentinel/pack.py) in an incident's evidence, in
+        place of the one it carried. Later sightings replace the agent's own
+        evidence and keep the pack. A store that cannot keep one does nothing:
+        the pack is still in the message.
+        """
+
 
 class MemoryIncidentStore(IncidentStore):
     """For tests, and for ``--dry-run``: the same behaviour, nothing persisted."""
@@ -82,9 +111,10 @@ class MemoryIncidentStore(IncidentStore):
                     before = row["severity"]
                     after = max(before, finding.severity, key=lambda s: s.rank)
                     row.update(severity=after, title=finding.title, summary=finding.summary,
-                               evidence=list(finding.evidence), last_seen=now_utc,
+                               evidence=_keep_context(list(finding.evidence), row["evidence"]), last_seen=now_utc,
                                occurrences=row["occurrences"] + 1)
-                    return Upserted(row["id"], False, after.rank > before.rank, after, row["occurrences"])
+                    return Upserted(row["id"], False, after.rank > before.rank, after, row["occurrences"],
+                                    row["first_seen"])
             row = dict(id=self._next, fingerprint=finding.fingerprint, agent=finding.agent,
                        rule=finding.rule, severity=finding.severity, status=Status.OPEN.value,
                        title=finding.title, summary=finding.summary, where=finding.where,
@@ -93,7 +123,7 @@ class MemoryIncidentStore(IncidentStore):
                        resolved=None, notified=None)
             self._rows[self._next] = row
             self._next += 1
-            return Upserted(row["id"], True, False, finding.severity, 1)
+            return Upserted(row["id"], True, False, finding.severity, 1, now_utc)
 
     def live_for_agent(self, agent: str) -> list[LiveIncident]:
         with self._lock:
@@ -115,6 +145,12 @@ class MemoryIncidentStore(IncidentStore):
 
     def heartbeat(self, now_utc: datetime) -> None:
         self.last_check = now_utc
+
+    def attach_context(self, incident_id: int, context: list[str]) -> None:
+        with self._lock:
+            row = self._rows.get(incident_id)
+            if row is not None:
+                row["evidence"] = _with_context(row["evidence"], context)
 
     # Test helpers.
     last_check: Optional[datetime] = None
@@ -169,21 +205,26 @@ class PostgresIncidentStore(IncidentStore):
 
         def work(cur) -> Upserted:
             cur.execute(
-                'SELECT "Id", "Severity", "Occurrences" FROM incidents '
+                'SELECT "Id", "Severity", "Occurrences", "EvidenceJson", "FirstSeenUtc" FROM incidents '
                 'WHERE "Fingerprint" = %s AND "Status" IN %s ORDER BY "Id" DESC LIMIT 1 FOR UPDATE',
                 (finding.fingerprint, _LIVE),
             )
             row = cur.fetchone()
             if row is not None:
-                incident_id, before_raw, occurrences = row
+                incident_id, before_raw, occurrences, evidence_before, first_seen = row
                 before = Severity(before_raw)
                 after = max(before, finding.severity, key=lambda s: s.rank)
+                kept = json.dumps(_keep_context(list(finding.evidence), _evidence_list(evidence_before)),
+                                  ensure_ascii=False)
                 cur.execute(
                     'UPDATE incidents SET "Severity" = %s, "Title" = %s, "Summary" = %s, "EvidenceJson" = %s, '
                     '"LastSeenUtc" = %s, "Occurrences" = "Occurrences" + 1 WHERE "Id" = %s',
-                    (after.value, finding.title[:300], finding.summary, evidence, now_utc, incident_id),
+                    (after.value, finding.title[:300], finding.summary, kept, now_utc, incident_id),
                 )
-                return Upserted(incident_id, False, after.rank > before.rank, after, occurrences + 1)
+                if isinstance(first_seen, datetime) and first_seen.tzinfo is None:
+                    first_seen = first_seen.replace(tzinfo=timezone.utc)
+                return Upserted(incident_id, False, after.rank > before.rank, after, occurrences + 1,
+                                first_seen if isinstance(first_seen, datetime) else None)
 
             cur.execute(
                 'INSERT INTO incidents ("Fingerprint", "Agent", "Rule", "Severity", "Status", "Title", "Summary", '
@@ -193,7 +234,7 @@ class PostgresIncidentStore(IncidentStore):
                  finding.title[:300], finding.summary, finding.where[:300], evidence, finding.suggestion,
                  now_utc, now_utc),
             )
-            return Upserted(cur.fetchone()[0], True, False, finding.severity, 1)
+            return Upserted(cur.fetchone()[0], True, False, finding.severity, 1, now_utc)
 
         try:
             return self._run(work)
@@ -226,6 +267,18 @@ class PostgresIncidentStore(IncidentStore):
             'INSERT INTO sentinel_heartbeat ("Id", "LastCheckUtc") VALUES (1, %s) '
             'ON CONFLICT ("Id") DO UPDATE SET "LastCheckUtc" = EXCLUDED."LastCheckUtc"',
             (now_utc,)))
+
+    def attach_context(self, incident_id: int, context: list[str]) -> None:
+        def work(cur) -> None:
+            cur.execute('SELECT "EvidenceJson" FROM incidents WHERE "Id" = %s FOR UPDATE', (incident_id,))
+            row = cur.fetchone()
+            if row is None:
+                return
+            cur.execute('UPDATE incidents SET "EvidenceJson" = %s WHERE "Id" = %s',
+                        (json.dumps(_with_context(_evidence_list(row[0]), context), ensure_ascii=False),
+                         incident_id))
+
+        self._run(work)
 
     def _append_fallback(self, finding: Finding, now_utc: datetime) -> None:
         try:
