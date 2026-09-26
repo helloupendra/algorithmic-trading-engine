@@ -1,0 +1,24 @@
+# The morning plan: what scripts/market-open.sh deploys at 08:45 IST on every
+# trading day, and what Sentinel checks is actually running afterwards. One file,
+# so what is checked is what was asked for.
+#
+# accounts: platform user names that get the plan
+# then one line per strategy:
+#   Strategy  UNDERLYING[,UNDERLYING...]  lots  [legTargetPoints | -]  [@account[,account]]
+#
+# "-" means no leg target; leaving it off takes the job's default (20 points,
+# written for Ghost). "@admin" limits a line to the accounts named; without it a
+# line runs in every account above. Runners started = the sum over lines of
+# (its accounts x its underlyings).
+#
+# 2026-09-27: Fulcrum runs in admin only. After charges and spread it lost about
+# Rs 2.5 lakh across six runs on 25 Sep, and 388 trades a run load a box that is
+# already near 100% CPU; one account is enough to watch it with honest numbers.
+
+accounts: admin coderforchange
+
+GhostTangentCrossings  BANKNIFTY,NIFTY,SENSEX  2
+ChainFlowBuy           BANKNIFTY,NIFTY,SENSEX  2
+SmcStructureBreak      BANKNIFTY,NIFTY,SENSEX  2
+Fulcrum                BANKNIFTY,NIFTY,SENSEX  2  -  @admin
+CrudeMomentum          CRUDEOIL                2  -
