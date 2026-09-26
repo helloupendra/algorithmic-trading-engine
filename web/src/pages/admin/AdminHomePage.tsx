@@ -6,21 +6,24 @@
 import { Link } from 'react-router-dom'
 import { MODULES } from '../../lib/modules'
 import {
-  useBrokerSession,
+  useFeeds,
   useIngestorProcessStatus,
   useIngestorStatuses,
   useKillSwitch,
   useMarketSession,
+  useProviders,
   useWatchlist,
 } from '../../lib/queries'
 import { useAuth } from '../../lib/auth'
+import { connectorsSummary } from '../../lib/pulse'
 import { Badge, StatTile } from '../../components/ui'
 
 export function AdminHomePage() {
   const { user } = useAuth()
   const session = useMarketSession()
   const mcxSession = useMarketSession('MCX', 'COM')
-  const broker = useBrokerSession()
+  const providers = useProviders()
+  const feedList = useFeeds()
   const process = useIngestorProcessStatus()
   const ingestors = useIngestorStatuses()
   const watchlist = useWatchlist()
@@ -32,6 +35,14 @@ export function AdminHomePage() {
   const mcxOpen = mcxSession.data?.isMarketOpen ?? false
   const ksActive = killSwitch.data?.isActive ?? false
   const feedRunning = (process.data?.isRunning ?? false) || healthy > 0
+
+  // Which signed-in connector the day's data runs on, and which backups are
+  // not signed in. This tile read the FYERS session alone, so on a morning when
+  // Dhan had signed itself in and was feeding, it said "Not linked" in red.
+  const tradingDay = session.data?.isTradingDay !== false
+  const connectors = connectorsSummary(providers.data, feedList.data, tradingDay, Date.now())
+  const dataOn = connectors?.dataOn ?? null
+  const backups = connectors?.backupsDown.map((l) => l.name).join(' and ') ?? ''
 
   // These tiles are the first thing read each morning, so none of them may
   // answer before it has been told. Until a query returns, the tile says so:
@@ -82,10 +93,28 @@ export function AdminHomePage() {
           to="/admin/data/live"
         />
         <StatTile
-          label="Broker"
-          value={broker.isPending ? unknown : broker.data?.isAuthenticated ? 'Linked' : 'Not linked'}
-          tone={broker.isPending ? undefined : broker.data?.isAuthenticated ? 'pos' : 'neg'}
-          sub="FYERS session"
+          label="Market data"
+          value={!connectors || !feedList.data ? unknown : dataOn ? dataOn.name : 'Not signed in'}
+          tone={
+            !connectors || !feedList.data
+              ? undefined
+              : dataOn
+                ? backups
+                  ? 'warn'
+                  : 'pos'
+                : tradingDay
+                  ? 'neg'
+                  : undefined
+          }
+          sub={
+            !connectors || !feedList.data
+              ? 'connectors'
+              : dataOn
+                ? backups
+                  ? `signed in · ${backups} backup not signed in`
+                  : 'signed in'
+                : 'no data connector signed in'
+          }
           to="/admin/broker"
         />
         <StatTile

@@ -213,6 +213,26 @@ describe('connectorsSummary', () => {
     expect(connectorsSummary([never, expired], [], true, at)!.pulse.label).toBe('2 connectors need sign-in')
   })
 
+  it('calls an unsigned FYERS a backup, not an outage, while Dhan is signed in', () => {
+    // 27 Sep: Dhan signed itself in and fed the desk, and the front door still
+    // drew "Not linked · FYERS session" in red.
+    const fyersOut = provider('fyers', 'FYERS', { kind: 'Both', isBroker: true, session: { isConnected: false, connectedUtc: null, ageSeconds: null, needsReconnect: true } })
+    const s = connectorsSummary([fyersOut, dhanP, truedataP], [feed('fyers', false), feed('dhan', true), feed('truedata', false)], true, at)!
+    expect(s.pulse).toMatchObject({ label: 'FYERS backup not signed in', tone: 'warn' })
+    expect(s.pulse.title).toContain('Live data runs on Dhan')
+    expect(s.dataOn?.key).toBe('dhan')
+    expect(s.backupsDown.map((l) => l.key)).toEqual(['fyers'])
+    expect(connectorsSummary([fyersOut, dhanP], [feed('fyers', false), feed('dhan', false)], false, at)!.pulse.tone).toBe('idle')
+  })
+
+  it('is still an alarm when nothing that signs in daily is ready, whatever an API-key vendor says', () => {
+    const fyersOut = provider('fyers', 'FYERS', { kind: 'Both', session: { isConnected: false, connectedUtc: null, ageSeconds: null, needsReconnect: true } })
+    const dhanOut = provider('dhan', 'Dhan', { session: { isConnected: false, connectedUtc: null, ageSeconds: null, needsReconnect: true } })
+    const s = connectorsSummary([fyersOut, dhanOut, truedataP], [feed('fyers', false), feed('dhan', false), feed('truedata', false)], true, at)!
+    expect(s.pulse).toMatchObject({ label: '2 connectors need sign-in', tone: 'neg' })
+    expect(s.dataOn).toBeNull()
+  })
+
   it('warns when two feeds run at once, and ignores a vendor nobody set up', () => {
     const s = connectorsSummary([fyersP, dhanP], [feed('fyers', true), feed('dhan', true)], true, at)!
     expect(s.pulse).toMatchObject({ label: '2 feeds running', tone: 'warn' })
