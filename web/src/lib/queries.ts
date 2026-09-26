@@ -1780,6 +1780,28 @@ export function useAngelTest() {
   })
 }
 
+/** Dhan's automatic PIN + TOTP sign-in: set up or not, and what it last did. */
+export function useDhanAutoSignIn(enabled = true) {
+  return useQuery({
+    queryKey: ['dhan', 'auto-sign-in'],
+    queryFn: () => api.get<import('./dhanSignIn').DhanAutoSignInStatus>('/api/Dhan/auto-sign-in'),
+    enabled,
+    refetchInterval: 30_000,
+  })
+}
+
+/** Sign Dhan in now with the PIN and a TOTP code; the session and usage panels follow. */
+export function useDhanSignInNow() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.post<import('./dhanSignIn').DhanSignInNowResult>('/api/Dhan/auto-sign-in?trigger=console', {}),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['dhan', 'auto-sign-in'] })
+      qc.invalidateQueries({ queryKey: ['providers'] })
+    },
+  })
+}
+
 export function useTestProvider() {
   return useMutation({
     mutationFn: (providerKey: string) =>

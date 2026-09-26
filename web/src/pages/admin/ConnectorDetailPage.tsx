@@ -15,6 +15,8 @@ import { api } from '../../lib/api'
 import {
   useAngelStatus,
   useAngelTest,
+  useDhanAutoSignIn,
+  useDhanSignInNow,
   useDisconnectProvider,
   useProviderBindings,
   useProviderUsage,
@@ -28,6 +30,7 @@ import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components
 import { CAPABILITY_LABELS, kindLabel, signsInItself as signsInAutomatically } from '../../lib/providers'
 import { usageView } from '../../lib/usage'
 import { angelFailureHint, angelReadiness } from '../../lib/angel'
+import { dhanAutoSignInView } from '../../lib/dhanSignIn'
 
 /**
  * Angel One keeps its credentials in .env, not in the console: a SmartAPI
@@ -110,6 +113,68 @@ function AngelPanel() {
         </div>
       )}
       {test.isError && <InlineError error={test.error} />}
+    </Panel>
+  )
+}
+
+/**
+ * Dhan's automatic sign-in: the desk takes the day's token with the account's
+ * PIN and a TOTP code, so the morning no longer waits for Connect. The values
+ * live in the server's .env (DHAN_PIN, DHAN_TOTP_SECRET), never in the console.
+ */
+function DhanAutoSignInPanel() {
+  const status = useDhanAutoSignIn()
+  const signIn = useDhanSignInNow()
+  const view = dhanAutoSignInView(status.data)
+  const result = signIn.data
+
+  return (
+    <Panel title="Automatic sign-in">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <Badge tone={view.tone}>{view.label}</Badge>
+        <span className="muted small">{view.detail}</span>
+      </div>
+
+      {status.data?.lastAttemptUtc && (
+        <div className="kv-grid" style={{ marginTop: 12 }}>
+          <div>
+            <span>Last try</span>
+            <span>
+              {formatAge(status.data.lastAttemptUtc)} ({status.data.lastTrigger ?? 'automatic'})
+            </span>
+          </div>
+          {status.data.lastExpiresUtc && (
+            <div>
+              <span>Token it took ends</span>
+              <span>{formatDateTime(status.data.lastExpiresUtc)}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      <p className="muted small" style={{ marginTop: 10 }}>
+        It never replaces a token while one is working during the session: Dhan ends a renewed token at once,
+        so a new one is taken only before the 08:45 start or when the old one has run out. A refused PIN or code
+        is not retried by the machine, because repeated wrong PINs can lock the account.
+      </p>
+
+      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+        <button
+          className="btn"
+          onClick={() => signIn.mutate()}
+          disabled={signIn.isPending || status.data?.configured === false}
+          title={status.data?.configured === false ? 'Add DHAN_PIN and DHAN_TOTP_SECRET to .env first' : undefined}
+        >
+          {signIn.isPending ? 'Signing in…' : 'Sign in now'}
+        </button>
+      </div>
+
+      {result && (
+        <div className="alert alert--success" role="status" style={{ marginTop: 12 }}>
+          {result.message}
+        </div>
+      )}
+      {signIn.isError && <InlineError error={signIn.error} />}
     </Panel>
   )
 }
@@ -574,6 +639,7 @@ export function ConnectorDetailPage() {
               {provider.auth !== 'None' && <CredentialsForm provider={provider} />}
 
               <SessionPanel provider={provider} />
+              {provider.key === 'dhan' && <DhanAutoSignInPanel />}
             </>
           )}
 

@@ -5,6 +5,7 @@ using AlgoTrading.Domain.Constants;
 using AlgoTrading.Infrastructure.Providers.Dhan;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace AlgoTrading.Api.Controllers;
 
@@ -115,6 +116,70 @@ public class DhanController : ControllerBase
             // The problem is the answer: shown as state, not as a failed request.
             return Ok(new { ok = false, authFailure = ex.IsAuthFailure, notSubscribed = ex.IsNotSubscribed, error = ex.Message });
         }
+    }
+
+    /// <summary>
+    /// The automatic PIN + TOTP sign-in: whether it is set up, when it runs, and
+    /// what it last did. Names what is missing, never a value.
+    /// </summary>
+    [HttpGet("auto-sign-in")]
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    public async Task<IActionResult> AutoSignInStatus(
+        [FromServices] IOptionsMonitor<DhanSettings> settings,
+        [FromServices] IBrokerCredentialsProvider credentials,
+        [FromServices] DhanAutoSignInState state,
+        CancellationToken cancellationToken)
+    {
+        var s = settings.CurrentValue;
+        var creds = await credentials.GetAsync(DhanProvider.Key, cancellationToken: cancellationToken);
+        var missing = new List<string>();
+        if (string.IsNullOrWhiteSpace(creds.ClientId)) missing.Add("DHAN_CLIENT_ID");
+        if (string.IsNullOrWhiteSpace(s.Pin)) missing.Add("DHAN_PIN");
+        if (string.IsNullOrWhiteSpace(s.TotpSecret)) missing.Add("DHAN_TOTP_SECRET");
+
+        return Ok(new
+        {
+            configured = missing.Count == 0,
+            enabled = s.AutoSignIn.Enabled,
+            missing,
+            morningFromIst = s.AutoSignIn.MorningFromIst.ToString(@"hh\:mm", CultureInfo.InvariantCulture),
+            morningUntilIst = s.AutoSignIn.MorningUntilIst.ToString(@"hh\:mm", CultureInfo.InvariantCulture),
+            stoppedForToday = state.StoppedFor(DateTime.UtcNow),
+            lastAttemptUtc = state.LastAttemptUtc,
+            lastOk = state.LastOk,
+            lastTrigger = state.LastTrigger,
+            lastMessage = state.LastMessage,
+            lastExpiresUtc = state.LastExpiresUtc,
+        });
+    }
+
+    /// <summary>
+    /// Sign in to Dhan now with the PIN and a TOTP code. <paramref name="trigger"/>
+    /// is "console" for the button (always tries) or "morning job" for the 08:45
+    /// script, which is held back like the worker once Dhan has refused today.
+    /// A failure is an error status, not 200 with ok:false: a caller that only
+    /// checks the status must not read a refused PIN as a sign-in.
+    /// </summary>
+    [HttpPost("auto-sign-in")]
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    public async Task<IActionResult> AutoSignInNow(
+        [FromServices] DhanAutoSignInService service,
+        [FromServices] DhanAutoSignInState state,
+        [FromQuery] string? trigger,
+        CancellationToken cancellationToken)
+    {
+        string who = trigger == "morning job" ? "morning job" : "console";
+        if (who != "console" && !state.MayTryAutomatically(DateTime.UtcNow, out string why))
+            return Conflict(new { ok = false, message = $"Not tried: {why}. Press Connect, or Sign in now on the Dhan page." });
+
+        var result = await service.SignInAsync(who, who == "console" ? $"asked from the console by {User.Identity?.Name ?? "an admin"}" : "asked by the morning job", cancellationToken);
+        if (result.Ok) return Ok(new { ok = true, message = result.Message, expiresUtc = result.ExpiresUtc });
+
+        // 400 when it is not set up or Dhan said no; 502 when Dhan was not reached.
+        int status = result.Failure == DhanSignInFailure.Unreachable
+            ? StatusCodes.Status502BadGateway
+            : StatusCodes.Status400BadRequest;
+        return StatusCode(status, new { ok = false, message = result.Message });
     }
 
     /// <summary>Expiries Dhan lists for an index underlying.</summary>

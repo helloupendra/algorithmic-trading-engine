@@ -29,7 +29,7 @@ holiday, with an active data plan) unless it says otherwise.
 | Token and data-plan status | **Working** |
 | Expired options history import (into `option_history_bars`) | **Built**: unit-tested, migration applied locally; a full local import not yet run |
 | Daily sign-in with the API key (Connect, like FYERS) | **Working** |
-| Unattended daily sign-in (PIN + TOTP) | **Next** |
+| Unattended daily sign-in (PIN + TOTP) | **Built** 2026-09-27: runs once `DHAN_PIN` and `DHAN_TOTP_SECRET` are set on the server |
 | Orders | Not built |
 
 ## What the platform takes from Dhan
@@ -54,10 +54,16 @@ Trading APIs*):
 | Client ID | `Dhan:ClientId` or `DHAN_CLIENT_ID`; editable on the Connectors page | Shown on the Dhan profile. |
 | API key | `Dhan:ApiKey` or `DHAN_API_KEY` | Valid 12 months. Generated with the redirect URL below. |
 | API secret | `Dhan:ApiSecret` or `DHAN_API_SECRET`; editable on the Connectors page | Stored encrypted when saved from the console. |
-| Access token (optional) | `Dhan:AccessToken` or `DHAN_ACCESS_TOKEN` | A 24-hour token pasted from the console. Used only while nobody has signed in today. |
+| PIN (for the automatic sign-in) | `Dhan:Pin` or `DHAN_PIN` | The account's Dhan PIN. **Server only.** |
+| TOTP secret (for the automatic sign-in) | `Dhan:TotpSecret` or `DHAN_TOTP_SECRET` | The base32 secret Dhan shows once when TOTP is set up. **Server only.** |
+| Access token (optional) | `Dhan:AccessToken` or `DHAN_ACCESS_TOKEN` | A 24-hour token pasted from the console. Used only while nobody has signed in today, and never once the token's own expiry (read from the JWT) has passed. |
 
 The `Dhan:*` keys go in `appsettings.Local.json`, which is never committed. The
-`DHAN_*` names are environment variables.
+`DHAN_*` names are environment variables. On the server, put them in `.env`:
+every deploy regenerates `appsettings.Local.json` from it
+(`scripts/_gen_local_settings.py` writes the Dhan section, never the access
+token), and every API start, by the desk or by the morning job, loads `.env`
+into its environment.
 
 **Redirect URL** registered with the API key: `https://openfno.com/api/dhan/callback`.
 It must match character for character.
@@ -85,8 +91,49 @@ takes one click and one login:
   history sync and backtests) is scoped to FYERS. A Dhan sign-in can never be
   handed to them, and a FYERS disconnect no longer signs Dhan out.
 
-The unattended route that removes even this click is PIN + TOTP (see *Next
-steps*).
+### The automatic sign-in (PIN + TOTP)
+
+With the PIN and TOTP secret set, the desk takes the day's token itself, through
+Dhan's `POST https://auth.dhan.co/app/generateAccessToken?dhanClientId=…&pin=…&totp=…`.
+The token is saved exactly where Connect saves it, so the feed and every call
+pick it up the same way. Connect keeps working alongside it.
+
+**One-time setup, by the account holder:**
+1. On web.dhan.co, *DhanHQ Trading APIs* → **Setup TOTP**. Dhan shows a QR code
+   and the secret behind it. Add it to an authenticator app too, and confirm a
+   code, so the account can still be reached by hand.
+2. On the server, add to `.env` (never to the Mac's; see below):
+   `DHAN_PIN=…` and `DHAN_TOTP_SECRET=…`.
+3. Run `python3 scripts/_gen_local_settings.py`. The API reloads the file by
+   itself; no restart.
+4. On **Connectors → Dhan**, the *Automatic sign-in* panel shows **On**. Press
+   **Sign in now** once to prove it end to end.
+
+**When it signs in** (`DhanAutoSignInPolicy`, checked once a minute, weekdays IST):
+- when there is no sign-in that is still valid, or it ends within 10 minutes;
+- between 08:00 and 08:40, when the token would end before 23:59 tonight. The
+  08:45 job starts the feeds, so nothing is streaming on Dhan yet.
+
+It never replaces a working token in the middle of the session. Dhan's
+documentation says `RenewToken` ends the token it renews, and says nothing about
+whether a new sign-in ends the previous one; a sign-in at 11:00 could cut off a
+feed that was streaming.
+
+**When it stops:** Dhan refusing the PIN or code, or a value missing or
+malformed, stops the automatic tries for the rest of the IST day, with one
+Telegram message. A wrong PIN is wrong every time, and repeated wrong PINs can
+lock the account. Dhan unreachable is tried again after 15 minutes, three times
+a day. **Sign in now** on the page always tries.
+
+**Safeguards:**
+- **Server only.** Two hosts holding the PIN would each take the account's token
+  on their own schedule.
+- **The PIN never reaches a log.** Dhan takes it in the query string, so the
+  HTTP client for this call is registered with no request logging at all, and a
+  refusal repeats only Dhan's reason fields, never the response body.
+- **Pinned account**, as for Connect: a token for any other client ID is refused.
+- Every attempt says what it did on Telegram (Connector category), and the panel
+  shows the last try and when the token it took ends.
 
 ## Checking it
 
@@ -96,6 +143,8 @@ steps*).
 | `GET /api/Providers/dhan/auth-url` | Dhan's login page for today's sign-in. The Connect button calls this. |
 | `GET /api/dhan/callback?tokenId=` | Where Dhan returns after the sign-in. Open to the browser, pinned to the configured account. |
 | `GET /api/Dhan/session` | The client id and token the live feed connects with (admin or Service account only). |
+| `GET /api/Dhan/auto-sign-in` | Is the automatic sign-in set up (names what is missing, never a value), its morning window, and what it last did. |
+| `POST /api/Dhan/auto-sign-in?trigger=console` | Sign in now with the PIN and a TOTP code. 200 with the token's end; 400 when Dhan refused or a value is missing; 502 when Dhan was not reached. `trigger=morning job` is held back once Dhan has refused today. |
 | `POST /api/Providers/dhan/test` | History probe: BANKNIFTY index, 15-minute bars, last 7 days. It returned 100 bars in 0.6 s. |
 | `GET /api/Dhan/expiries?underlying=NIFTY` | Expiries Dhan lists, nearest first. |
 | `GET /api/Dhan/chain?underlying=BANKNIFTY&expiry=2026-09-29` | The whole chain, plus peak call and put OI strikes and put/call OI ratio. |
@@ -114,9 +163,11 @@ Service account behind the live feed may call too.
 `scripts/market-open.sh` runs at 08:45 IST on the server:
 
 1. Holiday check (System > Market calendar). On a holiday nothing starts.
-2. **Dhan status.** If Dhan is not signed in, a notification asks for Connect,
-   and the script waits until 09:12. If the token ends before the MCX close, it
-   says so.
+2. **Dhan status.** If Dhan is not signed in, the script asks the API for the
+   automatic sign-in first (when it is set up). If that fails too, a
+   notification asks for Connect, and the script waits until 09:12. If the token
+   ends before the MCX close, it takes a fresh one the same way (nothing streams
+   on Dhan yet), and otherwise says so.
 3. **Instrument import**, so the day's new strikes and expiries have Dhan ids.
 4. **Dhan feed** started from Live feeds, and the **chain recorder** switched on.
 5. FYERS sign-in wait, as before, for the strategies.
@@ -130,8 +181,10 @@ Only one live feed runs at a time. Bars and latest quotes are kept per symbol,
 not per vendor, so two feeds on one contract would build a bar from two vendors'
 volume counters.
 
-**Operator's one job:** press **Connect** on Connectors → Dhan before 09:00. The
-feed picks up a new token by itself; nothing needs restarting.
+**Operator's one job:** none, once the automatic sign-in is set up; the
+Telegram message at about 08:00 says it worked. Without it, press **Connect** on
+Connectors → Dhan before 09:00. Either way the feed picks up a new token by
+itself; nothing needs restarting.
 
 ## Live feed
 
@@ -394,15 +447,10 @@ is.
    - index packets in Quote mode;
    - the tick rate and database growth at about 200 contracts;
    - subscribing new strikes in place as the universe rolls.
-2. **Unattended sign-in.**
-   `POST https://auth.dhan.co/app/generateAccessToken?dhanClientId=&pin=&totp=`
-   returns a 24-hour token with no API key, once TOTP is enabled on the account.
-   The PIN and TOTP secret will be stored encrypted, and the token renewed before
-   the open.
-3. **Stock option chains**, using the mapped underlying ids.
-4. **More than one expiry per recorded chain.** The chain read assumes one
+2. **Stock option chains**, using the mapped underlying ids.
+3. **More than one expiry per recorded chain.** The chain read assumes one
    expiry per capture today.
-5. **Shadow comparison** against FYERS.
+4. **Shadow comparison** against FYERS.
 
 ## Code map
 
@@ -411,7 +459,8 @@ is.
 | `Providers/Dhan/DhanProvider.cs` | Descriptor: capabilities, limits, credential labels |
 | `Providers/Dhan/DhanRegistration.cs` | Registers everything below |
 | `Providers/Dhan/DhanApiClient.cs` | Headers, token choice (sign-in, then configuration), pacing (`DhanRateGate`), error reading |
-| `Providers/Dhan/DhanLogin.cs` | The daily sign-in: consent, login URL, callback exchange, account pin |
+| `Providers/Dhan/DhanLogin.cs` | The daily sign-in: consent, login URL, callback exchange, the PIN + TOTP call, account pin |
+| `Providers/Dhan/DhanAutoSignIn.cs` | The automatic sign-in: when (`DhanAutoSignInPolicy`), how often (`DhanAutoSignInState`), the Telegram message, the hosted worker |
 | `Providers/Dhan/DhanHistory.cs` | History request and response rules |
 | `Providers/Dhan/DhanMarketDataProvider.cs` | `IMarketDataProvider` for history |
 | `Providers/Dhan/DhanOptionChain.cs`, `DhanOptionChainClient.cs` | Chain model and client |
@@ -421,9 +470,10 @@ is.
 | `Providers/Dhan/DhanOptionHistoryJobs.cs` | Import request validation, the resume plan, job state, the background worker |
 | `Providers/Dhan/DhanUniverse.cs` | What the live feed streams beyond the recording list |
 | `Providers/Dhan/DhanInstruments.cs`, `DhanInstrumentMaster.cs`, `DhanInstrumentImporter.cs` | Symbol vocabulary, master parsing and matching, bulk import |
-| `Api/Controllers/DhanController.cs` | The endpoints above |
+| `Api/Controllers/DhanController.cs` | The endpoints above, and `GET`/`POST /api/Dhan/auto-sign-in` |
 | `tests/AlgoTrading.UnitTests/DhanConnectorTests.cs` | Rules pinned against real answers and master rows |
 | `tests/AlgoTrading.UnitTests/DhanLoginTests.cs` | Sign-in, account pin, 24-hour expiry, and the FYERS session guard |
+| `tests/AlgoTrading.UnitTests/DhanAutoSignInTests.cs` | The PIN + TOTP call, refusals that never repeat the PIN, when to sign in, the day's tries, expired pasted tokens |
 | `tests/AlgoTrading.UnitTests/DhanOptionHistoryTests.cs` | Expired options mapping against real answers, windows, the resume plan, request validation, retry rules |
 | `tests/AlgoTrading.UnitTests/DhanChainPollerTests.cs` | Chain rows, expiry choice, closed markets, rejected tokens, at-the-money selection |
 | `market_data/live/vendors/dhan.py`, `tests/test_dhan_feed.py` (Python engine) | Live feed adapter: binary packets, subscribe batching, credentials from the API, one update a second per contract, the universe |
