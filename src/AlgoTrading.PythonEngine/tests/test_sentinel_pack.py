@@ -239,14 +239,17 @@ class LogWindowTests(PackCase):
         self.pack.mark()   # the next round: its logs are read afresh
         self.assertEqual(["api.log: fail Y — Old news"], self.lines(starting="api.log"))
 
-    def test_lines_that_may_carry_a_secret_are_dropped_and_the_rest_redacted(self):
+    def test_lines_that_may_carry_a_secret_are_dropped_whole_and_prose_about_them_is_kept(self):
+        # One spec (sentinel/notify.py): a line the redactor would mask any part
+        # of is dropped whole, as the logs agent drops it; a line that only
+        # talks about a password or a token is context like any other.
         self.write("api.log", "      [Dhan feed] ERROR refused: access_token=eyJhbGciOi.eyJzdWIiOiIx.c2lnbmF0dXJl\n"
-                              "      [notifier] ERROR sendMessage via api.telegram.org/bot1234567890:AAAA failed\n"
-                              "      [Dhan feed] ERROR sign-in failed, totp: 482913 was not accepted\n")
+                              "      [notifier] ERROR sendMessage via api.telegram.org/bot1234567890:"
+                              "AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw0 failed\n"  # pragma: allowlist secret
+                              "      [Dhan feed] ERROR sign-in failed, totp: 482913 was not accepted\n"
+                              "      [Dhan feed] ERROR the broker password was refused\n")
         lines = self.lines(starting="api.log")
-        self.assertEqual(1, len(lines))
-        self.assertNotIn("482913", lines[0])
-        self.assertIn("totp: …", lines[0])
+        self.assertEqual(["api.log: [Dhan feed] ERROR the broker password was refused"], lines)
 
     def test_a_repeated_line_is_one_line_with_its_count(self):
         self.write("desk.log", "".join(f"11:27:{s:02d}  WARN: the API is not answering\n" for s in range(0, 30, 10)))
@@ -390,8 +393,9 @@ class EngineWithPackTests(PackCase):
         e.run_due()
         self.clock.move(60)
         e.run_due()
-        self.assertEqual(2, len(self.notes.sent))
-        self.assertNotIn("Around then:", self.notes.sent[1])
+        self.assertEqual(1, len(self.notes.sent))   # the low opening is the console's; the escalation is sent
+        self.assertIn("ESCALATED [MEDIUM]", self.notes.sent[0])
+        self.assertNotIn("Around then:", self.notes.sent[0])
         self.assertEqual(1, self.api_calls.count(RUNNING_PATH))
 
     def test_a_pack_that_fails_loses_nothing_but_itself(self):

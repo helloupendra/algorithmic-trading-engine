@@ -74,6 +74,40 @@ class CodeWatchTests(unittest.TestCase):
         self.time.sleep(61)
         self.assertIsNone(self.watch.changed())
 
+    def test_an_edited_env_is_a_change(self):
+        # POSTGRES_PASSWORD or TELEGRAM_BOT_TOKEN rotated: the values read at start are dead.
+        env = {"mtime": 500.0}
+        watch = CodeWatch(Path("."), monotonic=self.time.monotonic, every=60, newest=self.code.newest_mtime,
+                          env_mtime=lambda: env["mtime"])
+        self.time.sleep(61)
+        self.assertIsNone(watch.changed())
+        env["mtime"] = 400.0   # put back from a copy: older, and still an edit
+        self.time.sleep(61)
+        self.assertIn("settings changed: the repository's .env was edited", watch.changed())
+
+    def test_an_env_that_appears_is_a_change_and_one_that_goes_is_not(self):
+        env = {"mtime": None}
+        watch = CodeWatch(Path("."), monotonic=self.time.monotonic, every=60, newest=self.code.newest_mtime,
+                          env_mtime=lambda: env["mtime"])
+        env["mtime"] = 700.0
+        self.time.sleep(61)
+        self.assertIsNotNone(watch.changed())
+        gone = CodeWatch(Path("."), monotonic=self.time.monotonic, every=60, newest=self.code.newest_mtime,
+                         env_mtime=lambda: env["mtime"])
+        env["mtime"] = None
+        self.time.sleep(61)
+        self.assertIsNone(gone.changed())
+
+    def test_the_real_env_file_is_looked_at(self):
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / ".env").write_text("TELEGRAM_BOT_TOKEN=old\n")
+        os.utime(tmp / ".env", (100, 100))
+        watch = CodeWatch(tmp, monotonic=self.time.monotonic, every=60, newest=self.code.newest_mtime,
+                          env_file=tmp / ".env")
+        os.utime(tmp / ".env", (200, 200))
+        self.time.sleep(61)
+        self.assertIsNotNone(watch.changed())
+
     def test_a_file_from_the_future_at_start_does_not_restart_it_in_a_loop(self):
         # The baseline is the newest time seen at start, not the clock: a clock that moved back is not a change.
         self.code.newest = 9_999_999_999.0
@@ -154,17 +188,19 @@ class WatchLoopTests(unittest.TestCase):
     def test_main_exits_cleanly_and_says_why(self):
         code = self.code
 
-        def watch_factory(package_dir):
-            # The real package directory is what main() watches.
+        def watch_factory(package_dir, env_file=None):
+            # The real package directory is what main() watches, and the repository's .env.
             self.assertTrue((package_dir / "reload.py").is_file())
+            self.assertEqual(entry.REPO_ROOT / ".env", env_file)
             return CodeWatch(package_dir, monotonic=self.time.monotonic, every=60,
-                             newest=code.newest_mtime)
+                             newest=code.newest_mtime, env_mtime=lambda: 1.0)
 
         def sleep(seconds):
             self.time.sleep(seconds)
             code.newest = 5_000.0
 
         with mock.patch.object(entry, "build", return_value=self.engine), \
+                mock.patch.object(entry, "watch_lock", return_value=None), \
                 mock.patch.object(entry, "CodeWatch", side_effect=watch_factory), \
                 mock.patch.object(entry.time, "sleep", side_effect=sleep), \
                 mock.patch.object(entry.signal, "signal"), \
@@ -173,6 +209,44 @@ class WatchLoopTests(unittest.TestCase):
             self.assertEqual(0, entry.main([]))
         self.assertTrue(any("code changed" in line and "exiting so the service restarts it" in line
                             for line in logs.output), logs.output)
+
+    def test_a_second_watcher_exits_without_running_a_check(self):
+        class Taken:
+            def held_elsewhere(self):
+                return True
+
+        with mock.patch.object(entry, "build", return_value=self.engine) as build, \
+                mock.patch.object(entry, "watch_lock", return_value=Taken()), \
+                mock.patch.object(entry, "CodeWatch"), \
+                mock.patch.object(entry.logging, "basicConfig"), \
+                self.assertLogs("sentinel", level="ERROR") as logs:
+            self.assertNotEqual(0, entry.main([]))
+        self.assertEqual(0, self.agent.rounds)
+        build.assert_not_called()
+        self.assertIn("another Sentinel is already watching", logs.output[0])
+
+    def test_trying_it_next_to_the_service_takes_no_lock(self):
+        with mock.patch.object(entry, "build", return_value=self.engine), \
+                mock.patch.object(entry, "watch_lock", side_effect=AssertionError("locked in --once")), \
+                mock.patch.object(entry.logging, "basicConfig"):
+            self.assertEqual(0, entry.main(["--once", "--dry-run"]))
+            self.assertEqual(0, entry.main(["--once"]))
+
+    def test_a_watcher_that_loses_the_lock_to_another_stops(self):
+        class Lost:
+            def __init__(self):
+                self.looks = 0
+
+            def held_elsewhere(self):
+                self.looks += 1
+                return self.looks >= 2   # the database restarted and the other one took it
+
+        lock = Lost()
+        why = entry.watch(self.engine, self.watch, {"flag": False}, sleep=self.time.sleep, lock=lock,
+                          monotonic=self.time.monotonic)
+        self.assertIn("another Sentinel is watching now", why)
+        self.assertLessEqual(self.time.now, 2 * entry.LOCK_CHECK_SECONDS + 5)
+        self.assertEqual(2, lock.looks, "looked at about once a minute, not every round")
 
     def test_once_does_not_watch(self):
         with mock.patch.object(entry, "build", return_value=self.engine), \

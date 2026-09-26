@@ -26,29 +26,78 @@ log = logging.getLogger("sentinel.notify")
 CONTEXT_IN_MESSAGE = 5
 
 # Anything that looks like a credential is masked before a message is sent.
-# Deliberately broad: a masked harmless string costs nothing, a leaked token
-# in a chat history costs a rotation.
-_SECRET_PATTERNS = [
-    re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._\-]{12,}"),
-    re.compile(r"(?i)((?:password|passwd|secret|token|api[_-]?key|access[_-]?token|app[_-]?secret|totp)"
-               r"[\"'\s:=]+)[^\s\"',}]{4,}"),
-    re.compile(r"eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"),  # JWTs
-    re.compile(r"\b[0-9]{8,10}:[A-Za-z0-9_\-]{30,}\b"),  # Telegram bot tokens
-]
+# A masked harmless string costs nothing; a leaked token in a chat history
+# costs a rotation. But a mask that eats this desk's own prose is a failure
+# too: its incidents say "token expired", "password guessing", "credential
+# (token expired or invalid)" all day, so a key counts only when ':' or '='
+# follows it on the same line.
+#
+# ONE spec, identical in every layer that sends or shows incident text:
+# this redactor (Telegram), IncidentRedaction in IncidentsController.cs (the
+# API), maskSecrets in web/src/lib/incidents.ts (the console), and the logs
+# agent's filter for lines that may hold a secret. Change one, change all;
+# each has a table-driven test with the same cases.
+#
+# 1. Authorization: Bearer|Basic <value>  -> the value.
+# 2. Bearer <12+ token characters> anywhere (a header quoted without its name).
+# 3. scheme://user:password@ and scheme://:password@  -> the password.
+# 4. key=value / key: value / "key": "value", where the key is an identifier
+#    ([A-Za-z0-9_], or api-key/private-key) with a whole part (underscore
+#    separated, or the end of a camelCase key) that is secret, password,
+#    passwd, pwd, token, api_key, private_key, totp or pin: DHAN_PIN,
+#    trading_pin, JWT_SECRET_KEY, TELEGRAM_BOT_TOKEN, access_token,
+#    accessToken, X-Api-Key. Not "tokens", "spinning" or "Skipping". The
+#    separator is an optional quote, spaces or tabs (never a newline), then
+#    ':' or '=' (not '==', which is code). The value runs to whitespace, a
+#    quote, '&', ',' or ';' — or, quoted, to its closing quote.
+# 5. Telegram bot tokens anywhere, /bot<token>/ in a URL included.
+# 6. JWTs: eyJ….eyJ….<signature>.
+#
+# Lengths are bounded so a long line cannot make a pattern backtrack for
+# seconds (the API gives its regexes 250 ms, and a round must not stall).
+HIDDEN = "…"
+_AUTH_HEADER = re.compile(r"(?i)(authorization[\"']?[ \t]*[:=][ \t]*[\"']?(?:bearer|basic)[ \t]+)[^\s\"'&,;]+")
+_BEARER = re.compile(r"(?i)(\bbearer[ \t]+)[A-Za-z0-9._~+/=-]{12,}")
+_URL_PASSWORD = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^\s:/@]*:)[^\s@/]+(?=@)")
+_KEY_VALUE = re.compile(
+    r"(?i)(?<![A-Za-z0-9_])([A-Za-z0-9_]{0,64}?"
+    r"(?:secret|password|passwd|pwd|token|api[_-]?key|private[_-]?key|totp|pin)"
+    r"(?:_[A-Za-z0-9]{1,32}){0,8}[\"']?[ \t]*[:=](?!=)[ \t]*)"
+    r"(\"[^\"\r\n]+\"|'[^'\r\n]+'|[\"']?[^\s\"'&,;]+)")
+_TELEGRAM_BOT_TOKEN = re.compile(r"(?<![0-9])[0-9]{8,10}:[A-Za-z0-9_-]{30,}")
+_JWT = re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")
+
+#: Text longer than this is cut before it is redacted: a message carries 3,900
+#: characters, and no pattern should be asked to read a megabyte of traceback.
+REDACT_MAX_CHARS = 20_000
+
+
+def _mask_value(m: re.Match) -> str:
+    """The key and separator kept, the value hidden; a quoted value keeps its quotes."""
+    value = m.group(2)
+    lead = value[0] if value[0] in "\"'" else ""
+    tail = lead if lead and len(value) > 1 and value.endswith(lead) else ""
+    return m.group(1) + lead + HIDDEN + tail
 
 
 def redact(text: str) -> str:
-    for pattern in _SECRET_PATTERNS:
-        text = pattern.sub(lambda m: (m.group(1) if m.groups() else "") + "…", text)
-    return text
+    text = text[:REDACT_MAX_CHARS]
+    text = _AUTH_HEADER.sub(lambda m: m.group(1) + HIDDEN, text)
+    text = _BEARER.sub(lambda m: m.group(1) + HIDDEN, text)
+    text = _URL_PASSWORD.sub(lambda m: m.group(1) + HIDDEN, text)
+    text = _KEY_VALUE.sub(_mask_value, text)
+    text = _JWT.sub(HIDDEN, text)
+    return _TELEGRAM_BOT_TOKEN.sub(HIDDEN, text)
 
 
 def format_opened(finding: Finding, incident_id: int, escalated: bool = False,
                   context: Optional[list[str]] = None) -> str:
+    """The message for an incident that opened or escalated. ``incident_id`` 0: the database did not take it."""
     head = "ESCALATED" if escalated else "NEW"
+    number = f"#{incident_id}" if incident_id else "not stored (the database did not take it)"
     lines = [
         f"{finding.severity.icon} {head} [{finding.severity.value.upper()}] {finding.title}",
-        f"#{incident_id} · {finding.agent}/{finding.rule}" + (f" · {finding.where}" if finding.where else ""),
+        f"{number} · {finding.agent}/{finding.rule}" + (f" · {finding.where}" if finding.where else ""),
         "",
         finding.summary,
     ]
@@ -62,14 +111,32 @@ def format_opened(finding: Finding, incident_id: int, escalated: bool = False,
             lines.append(f"• … {len(context) - CONTEXT_IN_MESSAGE} more in the console")
     if finding.suggestion:
         lines += ["", f"Likely fix: {finding.suggestion}"]
-    return redact("\n".join(lines))[:3900]
+    return redact("\n".join(lines))[:MESSAGE_CHARS]
 
 
 def format_resolved(title: str, incident_id: int, severity: Severity) -> str:
-    return redact(f"✅ RESOLVED #{incident_id} [{severity.value.upper()}] {title}")[:3900]
+    number = f"#{incident_id}" if incident_id else "(never stored)"
+    return redact(f"✅ RESOLVED {number} [{severity.value.upper()}] {title}")[:MESSAGE_CHARS]
+
+
+#: What a message may carry: Telegram takes 4,096 characters, and a message
+#: delivered late gets one more line (see the engine).
+MESSAGE_CHARS = 3900
 
 
 class Notifier(ABC):
+    """
+    Sends one message; True when it was delivered. A send that returns False
+    leaves the message with the engine, which tries again later — so a send
+    must not wait long, and never sleeps through a service's "try again in N
+    seconds": it says so in ``retry_after`` and returns.
+    """
+
+    #: After a failed send: how long the service asked to be left alone, in seconds, or None.
+    retry_after: Optional[float] = None
+    #: After a failed send: True when the service refused this text as such (it cannot succeed on a retry).
+    refused: bool = False
+
     @abstractmethod
     def send(self, text: str) -> bool: ...
 
@@ -87,7 +154,9 @@ class TelegramNotifier(Notifier):
     The bot the desk already uses (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID).
 
     Telegram allows about one message a second to a chat; a burst — the feed
-    dying opens several incidents at once — is spaced rather than dropped.
+    dying opens several incidents at once — is spaced rather than dropped. A
+    429 is not slept through: its retry_after goes back to the engine, which
+    keeps the message and tries again after it, while the checks go on.
     """
 
     def __init__(self, token: str, chat_id: str, timeout: float = 10.0) -> None:
@@ -97,28 +166,47 @@ class TelegramNotifier(Notifier):
         self._last_sent = 0.0
 
     def send(self, text: str) -> bool:
+        self.retry_after = None
+        self.refused = False
         wait = 1.1 - (time.monotonic() - self._last_sent)
         if wait > 0:
             time.sleep(wait)
+        # A lone surrogate from a log line decoded leniently is not UTF-8, and
+        # Telegram refuses the whole message for it.
+        text = text.encode("utf-8", "replace").decode("utf-8")
         try:
             response = requests.post(
                 self._url,
                 json={"chat_id": self._chat_id, "text": text, "disable_web_page_preview": True},
                 timeout=self._timeout,
             )
-            self._last_sent = time.monotonic()
-            if response.status_code == 429:
-                retry = response.json().get("parameters", {}).get("retry_after", 5)
-                time.sleep(min(float(retry), 30.0))
-                response = requests.post(self._url, json={"chat_id": self._chat_id, "text": text},
-                                         timeout=self._timeout)
-            if not response.ok:
-                # The body can echo the request; never log the URL, it holds the token.
-                log.warning("Telegram refused a message: HTTP %s", response.status_code)
-            return response.ok
         except requests.RequestException as exc:
             log.warning("Telegram unreachable: %s", type(exc).__name__)
             return False
+        finally:
+            self._last_sent = time.monotonic()
+        if response.ok:
+            return True
+        body = _json_or_empty(response)
+        if response.status_code == 429:
+            retry = body.get("parameters", {}).get("retry_after") if isinstance(body.get("parameters"), dict) else None
+            self.retry_after = float(retry) if isinstance(retry, (int, float)) and retry > 0 else 5.0
+        elif response.status_code == 400:
+            # "Bad Request": this text, or the chat id. Sending the same again cannot work.
+            self.refused = True
+        # The body can echo the request; never log the URL, it holds the token.
+        description = body.get("description") if isinstance(body.get("description"), str) else ""
+        log.warning("Telegram refused a message: HTTP %s %s", response.status_code, redact(description)[:120])
+        return False
+
+
+def _json_or_empty(response) -> dict:
+    """A reply's JSON body, or {} — a proxy's HTML error page is not a reason to crash the round."""
+    try:
+        body = response.json()
+    except ValueError:
+        return {}
+    return body if isinstance(body, dict) else {}
 
 
 def notifier_from_env(env: dict[str, str], dry_run: bool) -> Notifier:

@@ -203,11 +203,35 @@ function capitalise(s: string): string {
 }
 
 /**
- * How long Sentinel may go without a check before its silence is itself news.
- * Its slowest agents look every 60 s and re-see every live incident on each
- * look, so five minutes is five missed checks: quiet on an ordinary day.
+ * How long Sentinel may go without finishing a round before its silence is
+ * itself news. The health agent looks every 30 s, so a round ends at least that
+ * often; five minutes is ten missed rounds.
  */
 export const SILENCE_MINUTES = 5
+
+/**
+ * How long one agent's live incident may go without being re-seen before the
+ * page says that agent may have stopped: at least two of its checks plus a
+ * margin, so one slow check (a scan, an API timeout) is not an alarm. Each
+ * agent re-sees every live incident it owns on every check, and one it stops
+ * reporting is resolved within a few checks, so a live row older than this
+ * means the agent is not checking. The cadences are the `interval_seconds` each
+ * declares in sentinel/agents/*.py: health 30 s, trading 60 s, logs 30 s,
+ * security 300 s — five minutes is ten, five and ten checks; security's twelve
+ * is two checks and two minutes.
+ */
+export const AGENT_SILENCE_MINUTES: Readonly<Record<string, number>> = {
+  health: 5,
+  trading: 5,
+  logs: 5,
+  security: 12,
+}
+
+/** An agent this page does not know is given the longest threshold: better late than a false alarm. */
+export function agentSilenceMinutes(agent: string | undefined): number {
+  const known = agent ? AGENT_SILENCE_MINUTES[agent] : undefined
+  return known ?? Math.max(...Object.values(AGENT_SILENCE_MINUTES))
+}
 
 /**
  * A warning when Sentinel itself has gone quiet, or null.
@@ -249,9 +273,9 @@ function listOf(labels: string[]): string {
  *   whole is alive, not that every agent is. `undefined` means the API does not
  *   send one; `null` means it does and Sentinel has never reported.
  * - The live incidents: Sentinel re-sees every live incident on every check
- *   and moves its last-seen time, so one not re-seen for
- *   {@link SILENCE_MINUTES} means the agent that owns it has stopped — the case
- *   the heartbeat cannot show.
+ *   and moves its last-seen time, so one not re-seen for its agent's
+ *   {@link agentSilenceMinutes} means that agent has stopped — the case the
+ *   heartbeat cannot show.
  *
  * With neither heartbeat nor live incident there is no evidence either way,
  * and the page says so instead of letting four zeros read as a quiet desk.
@@ -290,7 +314,7 @@ export function watchmanNote(input: {
     const t = Date.parse(r.lastSeenUtc)
     return Number.isNaN(t) ? [] : [{ r, min: Math.floor((liveAsOfMs - t) / 60_000) }]
   })
-  const stale = aged.filter((x) => x.min >= SILENCE_MINUTES)
+  const stale = aged.filter((x) => x.min >= agentSilenceMinutes(x.r.agent))
   if (stale.length === 0) return null
 
   // Without a heartbeat, every live incident gone quiet is the only sign that
@@ -336,31 +360,58 @@ export function occurrencesText(n: number): string {
 // ---------- secrets ----------
 
 /**
- * Patterns for secrets that must not be shown even if one reaches an
+ * Anything that looks like a secret is masked even if one reaches an
  * incident's text — a crash traceback can carry a request header or a
  * connection string. Sentinel is meant to redact before it stores (as its
  * notifier does for Telegram); this is the page's own second line, so a slip
- * there does not put a token on a screen or in a screen recording.
+ * there does not put a token on a screen or in a screen recording. A mask that
+ * garbles the desk's own prose ("FYERS token expired at 08:45") is a failure
+ * too, so a key counts only when ':' or '=' follows it on the same line.
  *
- * Each pattern keeps its first group (the label) and replaces the value.
+ * One spec, identical in every layer that sends or shows incident text:
+ * Sentinel's notify.py (Telegram), IncidentRedaction in IncidentsController.cs
+ * (the API), this (the console), and the logs agent's filter for lines that may
+ * hold a secret. Change one, change all; each has a table-driven test with the
+ * same cases.
+ *
+ * 1. `Authorization: Bearer|Basic <value>` → the value.
+ * 2. `Bearer` and 12+ token characters anywhere.
+ * 3. `scheme://user:password@` and `scheme://:password@` → the password.
+ * 4. `key=value`, `key: value`, `"key": "value"`, where the key is an identifier
+ *    with a whole part (underscore separated, or the end of a camelCase key)
+ *    that is secret, password, passwd, pwd, token, api_key, private_key, totp
+ *    or pin: DHAN_PIN, JWT_SECRET_KEY, access_token, accessToken, X-Api-Key —
+ *    not "tokens" or "Skipping". The separator is an optional quote, spaces or
+ *    tabs (never a newline), then ':' or '=' but not '=='. The value runs to
+ *    whitespace, a quote, '&', ',' or ';' — or, quoted, to its closing quote.
+ * 5. Telegram bot tokens anywhere, `/bot<token>/` in a URL included.
+ * 6. JWTs: `eyJ….eyJ….<signature>`.
+ *
+ * Lengths are bounded so a long line cannot make a pattern backtrack.
  */
-const SECRET_PATTERNS: readonly RegExp[] = [
-  /(bearer\s+)[A-Za-z0-9._~+/=-]{12,}/gi,
-  // JWTs anywhere, labelled or not.
-  /()eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
-  // Telegram bot tokens: 123456789:AA...
-  /()(?<![0-9])[0-9]{8,10}:[A-Za-z0-9_-]{30,}/g,
-  // Credentials in a URL: scheme://user:password@host
-  /(\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)[^\s@/]+(?=@)/gi,
-  // key=value, key: value, "key": "value", Password=...; in a connection string.
-  /(\b(?:password|passwd|pwd|secret|client[_-]?secret|app[_-]?secret|token|access[_-]?token|refresh[_-]?token|api[_-]?key|apikey|totp|pin)["']?\s*[:=]\s*["']?)[^\s"',;&}]{4,}/gi,
-]
+const HIDDEN = '…'
+const AUTH_HEADER = /(authorization["']?[ \t]*[:=][ \t]*["']?(?:bearer|basic)[ \t]+)[^\s"'&,;]+/gi
+const BEARER = /(\bbearer[ \t]+)[A-Za-z0-9._~+/=-]{12,}/gi
+const URL_PASSWORD = /\b([a-z][a-z0-9+.-]*:\/\/[^\s:/@]*:)[^\s@/]+(?=@)/gi
+const KEY_VALUE =
+  /(?<![A-Za-z0-9_])([A-Za-z0-9_]{0,64}?(?:secret|password|passwd|pwd|token|api[_-]?key|private[_-]?key|totp|pin)(?:_[A-Za-z0-9]{1,32}){0,8}["']?[ \t]*[:=](?!=)[ \t]*)("[^"\r\n]+"|'[^'\r\n]+'|["']?[^\s"'&,;]+)/gi
+const JWT = /eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g
+const TELEGRAM_BOT_TOKEN = /(?<![0-9])[0-9]{8,10}:[A-Za-z0-9_-]{30,}/g
+
+/** The key and separator kept, the value hidden; a quoted value keeps its quotes. */
+function maskValue(_match: string, label: string, value: string): string {
+  const lead = value[0] === '"' || value[0] === "'" ? value[0] : ''
+  const tail = lead && value.length > 1 && value.endsWith(lead) ? lead : ''
+  return `${label}${lead}${HIDDEN}${tail}`
+}
 
 /** The text with anything that looks like a secret replaced by "…". */
 export function maskSecrets(text: string): string {
-  let out = text
-  for (const pattern of SECRET_PATTERNS) {
-    out = out.replace(pattern, (_match, label: string) => `${label}…`)
-  }
-  return out
+  return text
+    .replace(AUTH_HEADER, (_m, label: string) => `${label}${HIDDEN}`)
+    .replace(BEARER, (_m, label: string) => `${label}${HIDDEN}`)
+    .replace(URL_PASSWORD, (_m, label: string) => `${label}${HIDDEN}`)
+    .replace(KEY_VALUE, maskValue)
+    .replace(JWT, HIDDEN)
+    .replace(TELEGRAM_BOT_TOKEN, HIDDEN)
 }

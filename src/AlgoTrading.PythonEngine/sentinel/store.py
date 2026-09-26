@@ -8,19 +8,29 @@ than through the API, because the moment it most needs to record something is
 the moment the API is not answering.
 
 When the database is unreachable too, incidents go to a JSON-lines file under
-``logs/sentinel/`` so nothing is lost; Telegram still gets the message.
+``logs/sentinel/`` so nothing is lost; Telegram still gets the message. The
+file is capped (FALLBACK_MAX_BYTES, then one older generation): a database
+down for a day must not fill the disk with the same sighting every 30 s.
+
+One watcher per database: the service takes a Postgres advisory lock
+(:class:`WatchLock`), so a second ``python3 -m sentinel`` started by hand
+while the service runs exits instead of sending every message twice.
 """
 from __future__ import annotations
 
 import json
+import logging
+import os
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from sentinel.model import CONTEXT_PREFIX, Finding, Severity, Status
+
+log = logging.getLogger("sentinel.store")
 
 # Statuses that mean "this problem is still being tracked": a new sighting of
 # the same fingerprint updates it rather than opening another.
@@ -35,6 +45,26 @@ def _evidence_list(raw: Any) -> list[str]:
         except ValueError:
             return []
     return [str(e) for e in raw] if isinstance(raw, list) else []
+
+
+def _text(value: Any) -> str:
+    """
+    A value psycopg2 can send. Log text can carry a NUL, which Postgres text
+    cannot hold and psycopg2 refuses before the query is even sent — the same
+    finding would then fail on every sighting, for good — and a lone
+    surrogate, which is not UTF-8 at all.
+    """
+    text = "" if value is None else str(value)
+    return text.replace("\x00", "\ufffd").encode("utf-8", "replace").decode("utf-8")
+
+
+def _json(value: Any) -> str:
+    return _text(json.dumps(value, ensure_ascii=False))
+
+
+def _unique_violation(exc: BaseException) -> bool:
+    """Postgres's unique_violation (23505), without importing psycopg2 where tests have none."""
+    return getattr(exc, "pgcode", None) == "23505"
 
 
 def _keep_context(evidence: list[str], before: list[str]) -> list[str]:
@@ -68,6 +98,23 @@ class LiveIncident:
     title: str
 
 
+@dataclass(frozen=True)
+class UnsentIncident:
+    """A live incident whose message never went out (its NotifiedUtc is empty): enough to send it now."""
+
+    incident_id: int
+    fingerprint: str
+    agent: str
+    rule: str
+    severity: Severity
+    title: str
+    summary: str
+    where: str
+    evidence: list[str]
+    suggestion: str
+    first_seen_utc: Optional[datetime] = None
+
+
 class IncidentStore(ABC):
     @abstractmethod
     def upsert(self, finding: Finding, now_utc: datetime) -> Upserted: ...
@@ -76,10 +123,23 @@ class IncidentStore(ABC):
     def live_for_agent(self, agent: str) -> list[LiveIncident]: ...
 
     @abstractmethod
-    def resolve(self, incident_id: int, now_utc: datetime) -> None: ...
+    def resolve(self, incident_id: int, now_utc: datetime) -> bool:
+        """
+        Resolve a live incident; True when this call changed it. False when it
+        was no longer live — a person resolved it from the console in the
+        meantime — so there is nothing to announce.
+        """
 
     @abstractmethod
     def mark_notified(self, incident_id: int, now_utc: datetime) -> None: ...
+
+    def unnotified_live(self, limit: int) -> list[UnsentIncident]:
+        """
+        Live incidents above low whose message never went out, oldest first:
+        a send that failed before Sentinel restarted. A store that cannot tell
+        returns none.
+        """
+        return []
 
     def heartbeat(self, now_utc: datetime) -> None:
         """
@@ -130,18 +190,28 @@ class MemoryIncidentStore(IncidentStore):
             return [LiveIncident(r["id"], r["fingerprint"], r["agent"], r["severity"], r["title"])
                     for r in self._rows.values() if r["agent"] == agent and r["status"] in _LIVE]
 
-    def resolve(self, incident_id: int, now_utc: datetime) -> None:
+    def resolve(self, incident_id: int, now_utc: datetime) -> bool:
         with self._lock:
             row = self._rows.get(incident_id)
-            if row is not None:
-                row["status"] = Status.RESOLVED.value
-                row["resolved"] = now_utc
+            if row is None or row["status"] not in _LIVE:
+                return False
+            row["status"] = Status.RESOLVED.value
+            row["resolved"] = now_utc
+            return True
 
     def mark_notified(self, incident_id: int, now_utc: datetime) -> None:
         with self._lock:
             row = self._rows.get(incident_id)
             if row is not None:
                 row["notified"] = now_utc
+
+    def unnotified_live(self, limit: int) -> list[UnsentIncident]:
+        with self._lock:
+            rows = [r for r in sorted(self._rows.values(), key=lambda r: r["id"])
+                    if r["status"] in _LIVE and r["notified"] is None and r["severity"] is not Severity.LOW]
+            return [UnsentIncident(r["id"], r["fingerprint"], r["agent"], r["rule"], r["severity"], r["title"],
+                                   r["summary"], r["where"], list(r["evidence"]), r["suggestion"], r["first_seen"])
+                    for r in rows[:limit]]
 
     def heartbeat(self, now_utc: datetime) -> None:
         self.last_check = now_utc
@@ -166,7 +236,8 @@ class PostgresIncidentStore(IncidentStore):
 
     One connection, reopened after any failure; every call is its own short
     transaction. A write that fails is appended to the fallback file and the
-    error is raised to the engine, which keeps running.
+    error is raised to the engine, which keeps running. Every text parameter
+    goes through :func:`_text` first.
     """
 
     def __init__(self, dsn: str, fallback: Path) -> None:
@@ -185,6 +256,7 @@ class PostgresIncidentStore(IncidentStore):
 
     def _run(self, work):
         with self._lock:
+            conn = None
             try:
                 conn = self._connection()
                 with conn.cursor() as cur:
@@ -192,34 +264,34 @@ class PostgresIncidentStore(IncidentStore):
                 conn.commit()
                 return result
             except Exception:
-                try:
-                    if self._conn is not None:
-                        self._conn.rollback()
-                except Exception:
-                    pass
                 self._conn = None
+                if conn is not None:
+                    for end in (conn.rollback, conn.close):   # closed, not just dropped: no leaked sessions
+                        try:
+                            end()
+                        except Exception:
+                            pass
                 raise
 
     def upsert(self, finding: Finding, now_utc: datetime) -> Upserted:
-        evidence = json.dumps(finding.evidence, ensure_ascii=False)
+        fingerprint = _text(finding.fingerprint)
 
         def work(cur) -> Upserted:
             cur.execute(
                 'SELECT "Id", "Severity", "Occurrences", "EvidenceJson", "FirstSeenUtc" FROM incidents '
                 'WHERE "Fingerprint" = %s AND "Status" IN %s ORDER BY "Id" DESC LIMIT 1 FOR UPDATE',
-                (finding.fingerprint, _LIVE),
+                (fingerprint, _LIVE),
             )
             row = cur.fetchone()
             if row is not None:
                 incident_id, before_raw, occurrences, evidence_before, first_seen = row
                 before = Severity(before_raw)
                 after = max(before, finding.severity, key=lambda s: s.rank)
-                kept = json.dumps(_keep_context(list(finding.evidence), _evidence_list(evidence_before)),
-                                  ensure_ascii=False)
+                kept = _json(_keep_context(list(finding.evidence), _evidence_list(evidence_before)))
                 cur.execute(
                     'UPDATE incidents SET "Severity" = %s, "Title" = %s, "Summary" = %s, "EvidenceJson" = %s, '
                     '"LastSeenUtc" = %s, "Occurrences" = "Occurrences" + 1 WHERE "Id" = %s',
-                    (after.value, finding.title[:300], finding.summary, kept, now_utc, incident_id),
+                    (after.value, _text(finding.title)[:300], _text(finding.summary), kept, now_utc, incident_id),
                 )
                 if isinstance(first_seen, datetime) and first_seen.tzinfo is None:
                     first_seen = first_seen.replace(tzinfo=timezone.utc)
@@ -230,14 +302,23 @@ class PostgresIncidentStore(IncidentStore):
                 'INSERT INTO incidents ("Fingerprint", "Agent", "Rule", "Severity", "Status", "Title", "Summary", '
                 '"Location", "EvidenceJson", "Suggestion", "Occurrences", "FirstSeenUtc", "LastSeenUtc") '
                 'VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1, %s, %s) RETURNING "Id"',
-                (finding.fingerprint, finding.agent, finding.rule, finding.severity.value, Status.OPEN.value,
-                 finding.title[:300], finding.summary, finding.where[:300], evidence, finding.suggestion,
-                 now_utc, now_utc),
+                (fingerprint, _text(finding.agent), _text(finding.rule), finding.severity.value, Status.OPEN.value,
+                 _text(finding.title)[:300], _text(finding.summary), _text(finding.where)[:300],
+                 _json(list(finding.evidence)), _text(finding.suggestion), now_utc, now_utc),
             )
             return Upserted(cur.fetchone()[0], True, False, finding.severity, 1, now_utc)
 
         try:
-            return self._run(work)
+            try:
+                return self._run(work)
+            except Exception as exc:
+                if not _unique_violation(exc):
+                    raise
+                # Another writer inserted this fingerprint's live row between
+                # the SELECT and the INSERT (the partial unique index refused
+                # the second). The row exists now: once more, and the SELECT
+                # finds it and takes the update path.
+                return self._run(work)
         except Exception:
             self._append_fallback(finding, now_utc)
             raise
@@ -247,20 +328,44 @@ class PostgresIncidentStore(IncidentStore):
             cur.execute(
                 'SELECT "Id", "Fingerprint", "Agent", "Severity", "Title" FROM incidents '
                 'WHERE "Agent" = %s AND "Status" IN %s',
-                (agent, _LIVE),
+                (_text(agent), _LIVE),
             )
             return [LiveIncident(r[0], r[1], r[2], Severity(r[3]), r[4]) for r in cur.fetchall()]
 
         return self._run(work)
 
-    def resolve(self, incident_id: int, now_utc: datetime) -> None:
-        self._run(lambda cur: cur.execute(
-            'UPDATE incidents SET "Status" = %s, "ResolvedUtc" = %s WHERE "Id" = %s AND "Status" IN %s',
-            (Status.RESOLVED.value, now_utc, incident_id, _LIVE)))
+    def resolve(self, incident_id: int, now_utc: datetime) -> bool:
+        def work(cur) -> bool:
+            cur.execute(
+                'UPDATE incidents SET "Status" = %s, "ResolvedUtc" = %s WHERE "Id" = %s AND "Status" IN %s',
+                (Status.RESOLVED.value, now_utc, incident_id, _LIVE))
+            return cur.rowcount == 1
+
+        return self._run(work)
 
     def mark_notified(self, incident_id: int, now_utc: datetime) -> None:
         self._run(lambda cur: cur.execute(
             'UPDATE incidents SET "NotifiedUtc" = %s WHERE "Id" = %s', (now_utc, incident_id)))
+
+    def unnotified_live(self, limit: int) -> list[UnsentIncident]:
+        def work(cur) -> list[UnsentIncident]:
+            cur.execute(
+                'SELECT "Id", "Fingerprint", "Agent", "Rule", "Severity", "Title", "Summary", "Location", '
+                '"EvidenceJson", "Suggestion", "FirstSeenUtc" FROM incidents '
+                'WHERE "Status" IN %s AND "NotifiedUtc" IS NULL AND "Severity" <> %s ORDER BY "Id" LIMIT %s',
+                (_LIVE, Severity.LOW.value, limit),
+            )
+            found = []
+            for r in cur.fetchall():
+                first_seen = r[10]
+                if isinstance(first_seen, datetime) and first_seen.tzinfo is None:
+                    first_seen = first_seen.replace(tzinfo=timezone.utc)
+                found.append(UnsentIncident(r[0], r[1], r[2], r[3], Severity(r[4]), r[5], r[6] or "", r[7] or "",
+                                            _evidence_list(r[8]), r[9] or "",
+                                            first_seen if isinstance(first_seen, datetime) else None))
+            return found
+
+        return self._run(work)
 
     def heartbeat(self, now_utc: datetime) -> None:
         self._run(lambda cur: cur.execute(
@@ -275,23 +380,42 @@ class PostgresIncidentStore(IncidentStore):
             if row is None:
                 return
             cur.execute('UPDATE incidents SET "EvidenceJson" = %s WHERE "Id" = %s',
-                        (json.dumps(_with_context(_evidence_list(row[0]), context), ensure_ascii=False),
-                         incident_id))
+                        (_json(_with_context(_evidence_list(row[0]), context)), incident_id))
 
         self._run(work)
 
     def _append_fallback(self, finding: Finding, now_utc: datetime) -> None:
+        """
+        Keep the finding on disk. Every failed sighting is appended, so the file
+        is capped: past FALLBACK_MAX_BYTES it becomes ``<name>.1`` (replacing
+        the one before) and a new file starts — at most twice the cap on disk.
+        """
         try:
             self._fallback.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                if self._fallback.stat().st_size >= FALLBACK_MAX_BYTES:
+                    os.replace(self._fallback, self._fallback.with_name(self._fallback.name + ".1"))
+            except FileNotFoundError:
+                pass
+            line = _json({
+                "at": now_utc.isoformat(), "fingerprint": finding.fingerprint, "agent": finding.agent,
+                "rule": finding.rule, "severity": finding.severity.value, "title": finding.title,
+                "summary": finding.summary, "where": finding.where, "evidence": list(finding.evidence),
+                "suggestion": finding.suggestion,
+            })
             with self._fallback.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps({
-                    "at": now_utc.isoformat(), "fingerprint": finding.fingerprint, "agent": finding.agent,
-                    "rule": finding.rule, "severity": finding.severity.value, "title": finding.title,
-                    "summary": finding.summary, "where": finding.where, "evidence": finding.evidence,
-                    "suggestion": finding.suggestion,
-                }, ensure_ascii=False) + "\n")
-        except OSError:
-            pass
+                fh.write(line + "\n")
+        except Exception as exc:   # a fallback must never hide the error it is keeping a record of
+            log.debug("could not append to %s: %s", self._fallback.name, exc)
+
+
+#: The fallback file's cap; one older generation is kept beside it.
+FALLBACK_MAX_BYTES = 5 * 1024 * 1024
+
+
+def _conninfo_value(value: str) -> str:
+    """A libpq connection-string value: quoted, with backslash and quote escaped (libpq reads both as escapes)."""
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
 def dsn_from_env(env: dict[str, str]) -> Optional[str]:
@@ -306,4 +430,72 @@ def dsn_from_env(env: dict[str, str]) -> Optional[str]:
         "user": env.get("POSTGRES_USER", "postgres"),
         "password": password,
     }
-    return " ".join(f"{k}='{v.replace(chr(39), chr(92) + chr(39))}'" for k, v in parts.items())
+    return " ".join(f"{k}={_conninfo_value(v)}" for k, v in parts.items())
+
+
+#: The advisory lock one watching Sentinel holds: the word SENTINEL in ASCII.
+WATCH_LOCK_KEY = 0x53454E54494E454C
+
+
+def _psycopg2_connect(dsn: str):
+    import psycopg2
+
+    return psycopg2.connect(dsn, connect_timeout=5)
+
+
+class WatchLock:
+    """
+    One watching Sentinel per database.
+
+    Two watchers — the service and a ``python3 -m sentinel`` someone started
+    by hand to try something — would each send every message, and race each
+    other's inserts. The service takes a session-level advisory lock on a
+    connection of its own and keeps that connection open; a second watcher
+    finds the lock taken and exits. Only watching takes it: ``--dry-run``
+    stores and sends nothing, and ``--once`` is one deliberate round.
+
+    A database that cannot be reached is not a reason to stop watching — that
+    is when watching matters most — so only "another session holds it" says
+    stop. A lock lost with its connection (the database restarted) is taken
+    again on the next look, unless someone else took it first.
+    """
+
+    def __init__(self, dsn: str, connect: Optional[Callable[[str], Any]] = None) -> None:
+        self._dsn = dsn
+        self._connect = connect or _psycopg2_connect
+        self._conn = None
+
+    def held_elsewhere(self) -> bool:
+        """Take the lock, or confirm it is still this process's; True only when another session holds it."""
+        if self._conn is not None:
+            try:
+                with self._conn.cursor() as cur:
+                    cur.execute("SELECT 1")   # the session is alive, so the lock it holds is too
+                return False
+            except Exception:
+                self.release()
+        try:
+            conn = self._connect(self._dsn)
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute("SELECT pg_try_advisory_lock(%s)", (WATCH_LOCK_KEY,))
+                taken = bool(cur.fetchone()[0])
+        except Exception as exc:
+            log.warning("could not ask the database whether another Sentinel is watching: %s", exc)
+            return False
+        if taken:
+            self._conn = conn
+            return False
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return True
+
+    def release(self) -> None:
+        conn, self._conn = self._conn, None
+        if conn is not None:
+            try:
+                conn.close()   # the session ends, and its advisory lock with it
+            except Exception:
+                pass

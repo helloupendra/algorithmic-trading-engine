@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  AGENT_SILENCE_MINUTES,
+  agentSilenceMinutes,
   countFor,
   countTone,
   emptyMessage,
@@ -277,12 +279,41 @@ describe('watchmanNote', () => {
     expect(note?.text).toMatch(/^The logs agent has not re-checked/)
   })
 
+  it('gives the security agent, which looks every five minutes, longer before it calls it stopped', () => {
+    // Re-seen on schedule every five minutes, it must not read as "may have crashed" at five.
+    const nineMinAgo = '2026-09-24T05:51:00Z'
+    const security = [incident({ id: 1, agent: 'security', lastSeenUtc: nineMinAgo })]
+    expect(watchmanNote({ lastCheckUtc: fresh, liveRows: security, asOfMs: asOf })).toBeNull()
+    const health = [incident({ id: 2, agent: 'health', lastSeenUtc: nineMinAgo })]
+    expect(watchmanNote({ lastCheckUtc: fresh, liveRows: health, asOfMs: asOf })?.text).toMatch(
+      /^The health agent has not re-checked 1 open incident for 9 min/,
+    )
+  })
+
   it('judges the rows by when they arrived, not by the wall clock', () => {
     // A tab asleep for 20 min wakes with the old answer still on screen.
     const rows = [incident({ id: 1, lastSeenUtc: fresh })]
     const answeredAt = asOf
     const wokeAt = asOf + 20 * 60_000
     expect(watchmanNote({ lastCheckUtc: undefined, liveRows: rows, asOfMs: wokeAt, liveAsOfMs: answeredAt })).toBeNull()
+  })
+})
+
+describe('agentSilenceMinutes', () => {
+  // The interval_seconds each agent declares in sentinel/agents/*.py.
+  const CADENCE_SECONDS: Record<string, number> = { health: 30, trading: 60, logs: 30, security: 300 }
+
+  it('allows every agent at least two checks and a minute before it is called stopped', () => {
+    for (const [agent, seconds] of Object.entries(CADENCE_SECONDS)) {
+      expect(agentSilenceMinutes(agent) * 60).toBeGreaterThanOrEqual(2 * seconds + 60)
+    }
+    expect(agentSilenceMinutes('security')).toBeGreaterThanOrEqual(11)
+    expect(Object.keys(AGENT_SILENCE_MINUTES).sort()).toEqual(Object.keys(CADENCE_SECONDS).sort())
+  })
+
+  it('gives an agent it does not know the longest wait, not a false alarm', () => {
+    expect(agentSilenceMinutes('newagent')).toBe(Math.max(...Object.values(AGENT_SILENCE_MINUTES)))
+    expect(agentSilenceMinutes(undefined)).toBe(Math.max(...Object.values(AGENT_SILENCE_MINUTES)))
   })
 })
 
@@ -295,7 +326,65 @@ describe('resolveConfirmText', () => {
   })
 })
 
+// The shared redaction spec as cases. The same table is in Sentinel's
+// tests/test_sentinel_notify.py and the API's IncidentsControllerTests.cs: a
+// case added here is added there.
+const MASKED: ReadonlyArray<[string, string]> = [
+  ['POSTGRES_PASSWORD=hunter2hunter2', 'POSTGRES_PASSWORD=…'],
+  ['TELEGRAM_BOT_TOKEN=abcdefghij', 'TELEGRAM_BOT_TOKEN=…'],
+  ['DHAN_PIN=1234', 'DHAN_PIN=…'],
+  ['FYERS_SECRET_KEY=ABCD1234XYZ', 'FYERS_SECRET_KEY=…'],
+  ['JWT_SECRET_KEY=supersecretjwtkey', 'JWT_SECRET_KEY=…'],
+  ['DHAN_API_SECRET=abcdef123', 'DHAN_API_SECRET=…'],
+  ['ANGEL_API_KEY=abcdef12', 'ANGEL_API_KEY=…'],
+  ['{"trading_pin": "4821"}', '{"trading_pin": "…"}'],
+  ['"access_token": "abcDEF123456"', '"access_token": "…"'],
+  ['refreshToken=Zm9vYmFyYmF6', 'refreshToken=…'],
+  ['X-Api-Key: abcd1234', 'X-Api-Key: …'],
+  ['Host=db;Password=pa55word;Database=algotrading', 'Host=db;Password=…;Database=algotrading'],
+  ['GET /login?client_secret=XYZ987654&state=1', 'GET /login?client_secret=…&state=1'],
+  ['TOTP=123456', 'TOTP=…'],
+  ['password="correct horse battery"', 'password="…"'],
+  ['postgresql://postgres:S3cretPassw0rd@localhost:5432/algotrading', 'postgresql://postgres:…@localhost:5432/algotrading'],
+  ['redis://:S3cretPassw0rd@localhost:6379/0', 'redis://:…@localhost:6379/0'],
+  ['Authorization: Basic dXNlcjpTM2NyZXRQYXNzdzByZA==', 'Authorization: Basic …'],
+  ["curl -H 'Authorization: Bearer abcdefghijklmnop'", "curl -H 'Authorization: Bearer …'"],
+  ["headers={'Authorization': 'Bearer abc.def.ghi-jkl'}", "headers={'Authorization': 'Bearer …'}"],
+  ['Bearer abcdefghijklmnopqrstuvwxyz123', 'Bearer …'],
+  ['url: /bot8123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw0/sendMessage', 'url: /bot…/sendMessage'], // pragma: allowlist secret
+  ['chat 123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw0 said', 'chat … said'], // pragma: allowlist secret
+  ['token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MX0.c2lnbmF0dXJlLXZhbHVlLWhlcmU expired', 'token … expired'], // pragma: allowlist secret
+]
+
+// The desk's own prose. A mask that garbles it is a failure too.
+const LEFT_ALONE: readonly string[] = [
+  "Generate a new Dhan token before tomorrow's 08:45 start",
+  'SSH password guessing from 1.2.3.4 was banned',
+  "Fyers rejected the desk's credential (token expired or invalid)",
+  'FYERS token expired at 08:45; strategies are running deaf.',
+  'Password reset for user coderforchange',
+  "Sentinel's secret scan found a key in config/x.json",
+  'Generate a new Dhan token\n\nEvidence:\n• feed silent',
+  'Skipping: 3 runners already stopped',
+  'input_tokens: 512',
+  'spinning=3',
+  'if token == expected:',
+  'Dhan feed: 8 reconnect(s) carried no ticks — waiting 80s',
+  '429 Client Error: Too Many Requests for url: http://localhost:5025/api/UserAuth/login',
+  'https://example.com:8443/path',
+  'NSE feed silent for 120 s; newest tick 11:27:35 IST on NSE:NIFTY50-INDEX',
+]
+
 describe('maskSecrets', () => {
+  it.each(MASKED)('masks %s and keeps its label', (text, expected) => {
+    expect(maskSecrets(text)).toBe(expected)
+    expect(maskSecrets(expected)).toBe(expected) // masking twice is masking once
+  })
+
+  it.each(LEFT_ALONE)('leaves the desk\'s own prose alone: %s', (text) => {
+    expect(maskSecrets(text)).toBe(text)
+  })
+
   it('hides tokens and passwords a crash traceback can carry', () => {
     const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MX0.c2lnbmF0dXJlLXZhbHVlLWhlcmU' // pragma: allowlist secret
     const cases = [
@@ -305,7 +394,7 @@ describe('maskSecrets', () => {
       'Host=db;Username=algo;Password=Sup3rS3cret!;Database=trading',
       'postgresql://algo:Sup3rS3cret!@localhost:5432/trading',
       '{"password": "Sup3rS3cret!"}',
-      'https://api.telegram.org/bot123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw0/sendMessage',
+      'https://api.telegram.org/bot123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw0/sendMessage', // pragma: allowlist secret
     ]
     for (const text of cases) {
       const masked = maskSecrets(text)
@@ -316,21 +405,10 @@ describe('maskSecrets', () => {
     }
   })
 
-  it('keeps the label, so the reader still knows what was there', () => {
-    expect(maskSecrets('Password=hunter22;')).toBe('Password=…;')
-    expect(maskSecrets('postgresql://algo:hunter22@db:5432/x')).toBe('postgresql://algo:…@db:5432/x')
-  })
-
-  it('leaves ordinary evidence alone', () => {
-    for (const line of [
-      '11:27:35 [dhan] error: Connection to remote host was lost.',
-      'FYERS token expired at 09:05 IST',
-      '429 Client Error: Too Many Requests for url: http://localhost:5025/api/UserAuth/login',
-      'runner exited with code 1',
-      'Fulcrum NIFTY: 388 trades today (Ghost 6-8)',
-    ]) {
-      expect(maskSecrets(line)).toBe(line)
-    }
+  it('stays quick on a long line', () => {
+    const started = performance.now()
+    maskSecrets('token_'.repeat(20_000) + ' ' + 'a'.repeat(100_000))
+    expect(performance.now() - started).toBeLessThan(500)
   })
 })
 
