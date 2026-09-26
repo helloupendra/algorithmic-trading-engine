@@ -29,7 +29,7 @@ import { IconClock, IconFlask, IconPlay } from '../../components/icons'
 import type { StrategyActiveRun, StrategyListItem, StrategyLiveView } from '../../lib/types'
 import { CategoryBadge, LaunchDialog, PnlValue, ReadinessStrip, StrategyCard } from './shared'
 import { RunStatusCell } from './RunHistoryPage'
-import { runOwner, runningSummary } from '../../lib/strategyList'
+import { liveNet, runOwner, runningSummary } from '../../lib/strategyList'
 import { todayIst } from '../backtesting/shared'
 
 interface RunRow {
@@ -67,7 +67,10 @@ export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 't
     (n, r) => n + (viewByRun.get(r.run.runId)?.positions.filter((p) => p.status === 'Open').length ?? 0),
     0,
   )
-  const livePnl = rows.reduce((n, r) => n + (viewByRun.get(r.run.runId)?.pnl.total ?? 0), 0)
+  const livePnl = rows.reduce((n, r) => {
+    const view = viewByRun.get(r.run.runId)
+    return n + (view ? liveNet(view.pnl) : 0)
+  }, 0)
 
   // Run history: today's runs for the tile, the newest six for the list.
   const today = todayIst()
@@ -168,7 +171,7 @@ export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 't
           label="Live P&L"
           value={<PnlValue value={livePnl} />}
           tone={livePnl > 0 ? 'pos' : livePnl < 0 ? 'neg' : undefined}
-          sub={trader ? 'realized + unrealized' : 'realized + unrealized · all accounts'}
+          sub={trader ? 'net of charges · open and closed' : 'net of charges · all accounts'}
           to={positionsLink}
         />
         <StatTile

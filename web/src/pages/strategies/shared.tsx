@@ -50,7 +50,7 @@ import {
   strikeParams,
   strikeValueInvalid,
 } from '../../lib/contracts'
-import { activeUnderlyings } from '../../lib/strategyList'
+import { activeUnderlyings, blockedUnderlyings } from '../../lib/strategyList'
 import { Badge, InlineError, Loading } from '../../components/ui'
 import { RiskRulesForm } from '../../components/RiskRulesForm'
 import { IconArrowRight, IconChevronDown, IconChevronRight, IconPlay, IconX } from '../../components/icons'
@@ -845,19 +845,17 @@ export function LaunchDialog({
   const underlyings = useFnoUnderlyings()
   const start = useStartStrategy()
   const readiness = useReadiness()
-  const { isAdmin } = useAuth()
+  const { isAdmin, user } = useAuth()
   const cardRef = useDialogChrome(onClose)
 
   const supported = useMemo(
     () => new Set(strategy.supportedUnderlyings.map((u) => u.toUpperCase())),
     [strategy.supportedUnderlyings],
   )
-  // Underlyings this strategy is already live on: the API answers 409 for
-  // them, so the rows are greyed out before the user gets that far.
-  const running = useMemo(
-    () => new Set(strategy.activeRuns.map((r) => r.underlying.toUpperCase())),
-    [strategy.activeRuns],
-  )
+  // Underlyings this account already runs the strategy on: the API answers
+  // 409 for them, so the rows are greyed out before the user gets that far.
+  // Another account's run is no clash (blockedUnderlyings).
+  const running = useMemo(() => blockedUnderlyings(strategy, user?.id), [strategy, user?.id])
 
   const [underlying, setUnderlying] = useState<string | null>(null)
   const [lots, setLots] = useState(String(Math.max(1, strategy.defaultLots || 1)))

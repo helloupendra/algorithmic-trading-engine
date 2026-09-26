@@ -51,6 +51,7 @@ public class StrategyController : ControllerBase
     private readonly ILotSizeResolver _lotSizeResolver;
     private readonly PositionViewBuilder _positionViews;
     private readonly LiveRunHistoryBuilder _history;
+    private readonly RunCharges _runCharges;
     private readonly GetPaperOrdersUseCase _getPaperOrders;
     private readonly UpsertWatchlistItemUseCase _upsertWatchlistItem;
     private readonly StrategyRunnerOptions _options;
@@ -66,6 +67,7 @@ public class StrategyController : ControllerBase
         ILotSizeResolver lotSizeResolver,
         PositionViewBuilder positionViews,
         LiveRunHistoryBuilder history,
+        RunCharges runCharges,
         GetPaperOrdersUseCase getPaperOrders,
         UpsertWatchlistItemUseCase upsertWatchlistItem,
         ISystemNotifier notifier,
@@ -82,6 +84,7 @@ public class StrategyController : ControllerBase
         _lotSizeResolver = lotSizeResolver;
         _positionViews = positionViews;
         _history = history;
+        _runCharges = runCharges;
         _getPaperOrders = getPaperOrders;
         _upsertWatchlistItem = upsertWatchlistItem;
         _notifier = notifier;
@@ -1255,6 +1258,10 @@ public class StrategyController : ControllerBase
             .Where(x => string.Equals(x.Status, "Open", StringComparison.OrdinalIgnoreCase))
             .Sum(x => x.UnrealizedPnl);
         view.Pnl.Total = view.Pnl.Realized + view.Pnl.Unrealized;
+        // The same charges the run history takes off, so the run page and the
+        // history row beside it can no longer disagree about one run's P&L.
+        view.Pnl.Charges = await _runCharges.ForRunAsync(run.Id, cancellationToken);
+        view.Pnl.Net = view.Pnl.Total - view.Pnl.Charges;
         view.Pnl.CapitalUsed = built.CapitalUsed;
         view.Pnl.PremiumOutlay = built.PremiumOutlay;
         view.Pnl.PremiumReceived = built.PremiumReceived;
@@ -1591,13 +1598,15 @@ public class StrategyController : ControllerBase
         // trader somebody else's run — which they cannot open (the live view is
         // owner-checked) and should not have been told about.
         var activeRuns = _registry.GetByStrategy(entry.Id);
+        var recentExits = _registry.GetLastExits(entry.Id);
         if (!User.IsAdmin())
         {
             long? me = User.GetUserId();
             activeRuns = activeRuns.Where(r => r.UserId == me).ToList();
+            // The same for exits: they carry another account's run ids,
+            // underlyings and stop reasons.
+            recentExits = recentExits.Where(x => x.UserId == me).ToList();
         }
-
-        var recentExits = _registry.GetLastExits(entry.Id);
 
         // Legacy single-run fields describe the first (oldest) active run; the
         // legacy lastExit is the newest exit.

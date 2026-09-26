@@ -91,6 +91,25 @@ public class StrategyRunOwnershipTests : IDisposable
         Assert.Equal(3, registry.Count);
     }
 
+    [Fact]
+    public void Exits_remember_the_whole_close_of_two_accounts_and_whose_run_it_was()
+    {
+        // 28 Sep: three indices in two accounts end six runs of one strategy at
+        // the close; with five remembered, one fell off the Stopped list.
+        var registry = NewRegistry();
+        for (long i = 1; i <= 6; i++)
+        {
+            var run = Run(runId: i, strategyId: 7, underlying: i % 3 == 0 ? "SENSEX" : i % 2 == 0 ? "NIFTY" : "BANKNIFTY", userId: i <= 3 ? 100 : 200);
+            registry.TryAdd(run);
+            registry.RecordExit(run, "Market closed (15:30 IST)");
+        }
+
+        var exits = registry.GetLastExits(7);
+        Assert.Equal(6, exits.Count);
+        Assert.Equal(3, exits.Count(x => x.UserId == 100));
+        Assert.Equal(3, exits.Count(x => x.UserId == 200));
+    }
+
     private StrategyProcessRegistry NewRegistry()
         => new(new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
             NullLogger<StrategyProcessRegistry>.Instance);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activeAccounts, activeUnderlyings, runOwner, runningSummary } from './strategyList'
+import { activeAccounts, activeUnderlyings, blockedUnderlyings, liveNet, realizedNet, runOwner, runningSummary } from './strategyList'
 import type { StrategyActiveRun, StrategyListItem } from './types'
 
 function run(underlying: string, ownerName: string | null, startedBy = 'admin'): StrategyActiveRun {
@@ -47,5 +47,33 @@ describe('runOwner', () => {
 
   it('falls back to who started it on an API without owners', () => {
     expect(runOwner({ ownerName: null, startedBy: 'admin' })).toBe('admin')
+  })
+})
+
+describe('what the launch dialog greys out', () => {
+  const owned = (underlying: string, ownerUserId: number | undefined) =>
+    ({ ...run(underlying, null), ownerUserId }) as StrategyActiveRun
+
+  it('blocks only the underlyings this account already runs', () => {
+    // The admin (1) lost its NIFTY runner; coderforchange (7) still runs NIFTY.
+    const s = strategy([owned('NIFTY', 7), owned('BANKNIFTY', 1)])
+    expect([...blockedUnderlyings(s, 1)]).toEqual(['BANKNIFTY'])
+    expect([...blockedUnderlyings(s, 7)]).toEqual(['NIFTY'])
+  })
+
+  it('still blocks a run whose owner the API did not name', () => {
+    expect([...blockedUnderlyings(strategy([owned('sensex', undefined)]), 1)]).toEqual(['SENSEX'])
+  })
+})
+
+describe('live P&L after charges', () => {
+  it('is the net when the API sends one, the gross from an older API', () => {
+    expect(liveNet({ total: 3000, net: 2911.67 })).toBe(2911.67)
+    expect(liveNet({ total: 3000 })).toBe(3000)
+  })
+
+  it('takes the charges off what was realized', () => {
+    expect(realizedNet({ realized: 3000, charges: 88.33 })).toBeCloseTo(2911.67, 2)
+    expect(realizedNet({ realized: -500 })).toBe(-500)
   })
 })
