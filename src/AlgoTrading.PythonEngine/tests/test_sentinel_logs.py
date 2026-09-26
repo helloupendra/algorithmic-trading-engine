@@ -7,9 +7,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-from sentinel.agents.logs import LogsAgent, normalise
+from sentinel.agents.logs import LogsAgent, _may_hold_secret, normalise
 from sentinel.engine import SentinelEngine
 from sentinel.model import Severity
+from sentinel.notify import redact
 from sentinel.store import MemoryIncidentStore
 from _sentinel_fakes import RecordingNotifier, clock_ticks, make_context
 
@@ -245,6 +246,21 @@ class TailingTests(LogsAgentTestCase):
         self.assertEqual(["job-failed"], [f.rule for f in self.idle(6 * 3600).values()], "15:10 IST: still true")
         self.assertEqual({}, self.idle(1800), "15:40 IST: the session is over")
 
+    def test_lines_written_while_another_agent_held_the_engine_are_news(self):
+        # The engine is single-threaded: a weekly dependency scan could hold it 13 minutes, and the
+        # morning's failure written meanwhile was learned as history — never reported.
+        self.start_watching("desk.log")
+        self.advance(13 * 60)
+        self.append("desk.log", "09:12:10  FAILED: no FYERS sign-in by 09:12 IST; nothing was started.\n")
+        self.assertEqual(["job-failed"], [f.rule for f in self.check().values()])
+
+    def test_the_same_gap_after_a_restart_is_history(self):
+        self.start_watching("desk.log")
+        self.advance(13 * 60)
+        self.append("desk.log", "09:12:10  FAILED: no FYERS sign-in by 09:12 IST; nothing was started.\n")
+        self.agent = LogsAgent()   # a new process: Sentinel was down
+        self.assertEqual({}, self.check())
+
     def test_lines_written_while_sentinel_was_down_are_history_not_news(self):
         self.start_watching("api.log", "desk.log")
         self.advance(6 * 3600)  # Sentinel was down; meanwhile:
@@ -384,12 +400,32 @@ class SignatureTests(LogsAgentTestCase):
         self.advance(30)
         self.assertEqual(Severity.MEDIUM, self.check()["logs:feed-reconnect-loop:dhan"].severity)
 
-    def test_the_same_reconnect_with_a_market_open_is_a_loop_at_once(self):
+    def test_with_a_market_open_the_second_tickless_reconnect_in_a_row_is_a_loop(self):
+        # Until 27 Sep one tickless reconnect in market hours paged CRITICAL "reconnecting in a loop".
         self.start_watching("engine/dhan-feed-2096838.log")
         self.append("engine/dhan-feed-2096838.log",
                     "[dhan] 1 reconnect(s) carried no ticks — waiting 5s before the next attempt so the vendor does "
                     "not block the account.\n")
+        self.assertEqual({}, self.check(), "one is a hiccup; health's feed-silent covers a real outage at 90 s")
+        self.append("engine/dhan-feed-2096838.log",
+                    "[dhan] 2 reconnect(s) carried no ticks — waiting 10s before the next attempt so the vendor does "
+                    "not block the account.\n")
+        self.advance(30)
         self.assertEqual(Severity.CRITICAL, self.check()["logs:feed-reconnect-loop:dhan"].severity)
+
+    def test_a_single_tickless_reconnect_that_recovers_is_never_reported(self):
+        store, notifier = MemoryIncidentStore(), RecordingNotifier()
+        engine = SentinelEngine([self.agent], store, notifier, self.ctx, monotonic=clock_ticks())
+        self.write("engine/dhan-feed-2096838.log")
+        engine.run_due()
+        self.append("engine/dhan-feed-2096838.log",
+                    "[dhan] WATCHDOG: socket down for 21s — forcing a full reconnect.\n"
+                    "[dhan] 1 reconnect(s) carried no ticks — waiting 5s before the next attempt so the vendor does "
+                    "not block the account.\n[dhan] connecting ...\n[dhan] connected: wss://api-feed.dhan.co\n")
+        for _ in range(6):
+            self.advance(30)
+            engine.run_due()
+        self.assertEqual([], notifier.sent)
 
     def test_a_feed_loop_is_held_open_through_its_announced_wait(self):
         self.start_watching("engine/dhan-feed-1.log")
@@ -779,6 +815,72 @@ class QuietTests(LogsAgentTestCase):
         ]
         self.append("api.log", "".join(secret_lines))
         self.append("desk.log", "09:00:00  WARN: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N\n")  # pragma: allowlist secret
+        self.assertEqual({}, self.check())
+
+    # The shared spec's cases (notify.redact, the API's IncidentRedaction, the console's maskSecrets, and this).
+    CARRIES_A_SECRET = [
+        "FYERS_SECRET_KEY=abc123",                    # no leading word boundary: the desk's own .env keys
+        "POSTGRES_PASSWORD=hunter2hunter2",
+        "DHAN_PIN=1234",
+        "trading_pin: 1234",
+        "JWT_SECRET_KEY=x",
+        "TELEGRAM_BOT_TOKEN=123",
+        "dhan_totp: 123456",
+        "accessToken: abc",
+        'config {"api_key": "sk-live-1"}',
+        "X-Api-Key=abc",
+        "private-key = abc",
+        "ENGINE_SERVICE_PASSWORD\t= x",
+        "refresh_token='abc'",
+        "passwd:x",
+        "db pwd = y",
+        "postgres://algo:s3cret@localhost:5432/trading",
+        "redis://:s3cret@localhost:6379",
+        "Authorization: Bearer abcdefghijklmnopqrstuvwxyz123",
+        "authorization=basic dXNlcjpwYXNz",
+        '"Authorization": "Bearer abc"',
+        "sent with Bearer abcdefghijklmnop",
+        "POST https://api.telegram.org/bot123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ1234567890ab/sendMessage",
+        "chat 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ1234567890ab",
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N",  # pragma: allowlist secret
+    ]
+    CARRIES_NONE = [
+        "spinning up the Dhan feed",
+        "fetched 5 tokens from the pool",
+        "tokens: 5 refreshed",
+        "Skipping: NIFTY has no expiry today",
+        "[RUNNER] stopping: SIGTERM",
+        "if token == expected:",
+        "ERROR the admin password was refused",
+        "Authorization failed for user admin",
+        "token expired for FYERS",
+        "a pin\n= not on the same line",
+        "run 1234567890123:ABCdefGhIJKlmNoPQRsTUVwxyZ1234567890ab",   # 13 digits: not a bot id
+        "eyJhbGciOiJIUzI1NiJ9.notapayload1.dozjgNryP4J3jVmNHl0w5N",
+    ]
+
+    def test_the_shared_secret_spec(self):
+        self.assertEqual([], [line for line in self.CARRIES_A_SECRET if not _may_hold_secret(line)])
+        self.assertEqual([], [line for line in self.CARRIES_NONE if _may_hold_secret(line)])
+
+    def test_a_line_is_dropped_exactly_when_the_redactor_would_mask_it(self):
+        # One spec in every layer: change notify.redact and this filter together, or this fails.
+        for line in self.CARRIES_A_SECRET + self.CARRIES_NONE:
+            self.assertEqual(redact(line) != line, _may_hold_secret(line), line)
+
+    def test_prose_about_passwords_and_tokens_is_still_read(self):
+        # The old markers dropped any line with "password" in it, so an error that only mentioned one
+        # never reached a rule.
+        self.start_watching("api.log")
+        self.append("api.log", info(REG, "[strategy:G:NIFTY] ERROR the broker password was refused by FYERS"))
+        [finding] = self.check().values()
+        self.assertEqual("new-error", finding.rule)
+        self.assertIn("password was refused", finding.title)
+
+    def test_a_desk_env_line_is_dropped_whole(self):
+        self.start_watching("desk.log")
+        self.append("desk.log", "09:00:00  FAILED: could not start with FYERS_SECRET_KEY=abcdef0123 set\n"
+                                "09:00:01  WARN: DHAN_PIN=4321 was rejected\n")
         self.assertEqual({}, self.check())
 
     def test_a_finding_carries_no_credential_even_from_a_traceback(self):

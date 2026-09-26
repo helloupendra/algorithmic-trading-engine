@@ -210,10 +210,12 @@ class SecurityTestCase(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.shell = FakeShell()
 
-    def check(self, api=None, now=THURSDAY_MARKET, env=None, auth_logs=()):
+    def check(self, api=None, now=THURSDAY_MARKET, env=None, auth_logs=(), monotonic=None):
         ctx = make_context(self.tmp, api=api if api is not None else activity_api(), now=now, env=env)
         ctx.run = self.shell
-        return SecurityAgent(auth_logs=auth_logs).check(ctx)
+        agent = SecurityAgent(auth_logs=auth_logs) if monotonic is None else \
+            SecurityAgent(auth_logs=auth_logs, monotonic=monotonic)
+        return agent.check(ctx)
 
     def engine(self, env=None, auth_logs=()):
         """
@@ -587,34 +589,80 @@ class OpenPortTests(SecurityTestCase):
                                                    "LISTEN 0 4096 [::]:5432 [::]:*\n")
         self.shell.outputs["docker"] = (0, "algotrading_db\t0.0.0.0:5432->5432/tcp, :::5432->5432/tcp\n")
         found = self.by_rule(self.check(), "open-port")
-        self.assertEqual(["security:open-port:tcp/5432"], [f.fingerprint for f in found])
+        self.assertEqual(["security:open-port"], [f.fingerprint for f in found])
         f = found[0]
         self.assertEqual(Severity.HIGH, f.severity)
-        self.assertIn("listening on 0.0.0.0:5432", f.evidence)
-        self.assertIn("container algotrading_db publishes 0.0.0.0:5432->5432/tcp", f.evidence)
+        self.assertEqual("Port 5432 is open to the internet on the server", f.title)
+        self.assertIn("tcp/5432: listening on 0.0.0.0:5432", f.evidence)
+        self.assertIn("tcp/5432: listening on [::]:5432", f.evidence)
         self.assertIn('"127.0.0.1:5432:5432"', f.suggestion)
 
     def test_a_port_only_docker_knows_about_still_counts(self):
         self.shell.outputs["docker"] = (0, "web\t0.0.0.0:8080->80/tcp\n")
-        self.assertEqual(["security:open-port:tcp/8080"],
-                         [f.fingerprint for f in self.by_rule(self.check(), "open-port")])
+        f = self.by_rule(self.check(), "open-port")[0]
+        self.assertIn("8080", f.title)
+        self.assertIn("tcp/8080: container web publishes 0.0.0.0:8080->80/tcp", f.evidence)
 
     def test_a_listener_on_the_private_interface_counts_as_public(self):
         self.shell.outputs["ss"] = (0, "LISTEN 0 128 172.31.20.148:9000 0.0.0.0:*\n")
-        self.assertEqual(["security:open-port:tcp/9000"],
-                         [f.fingerprint for f in self.by_rule(self.check(), "open-port")])
+        self.assertEqual(["Port 9000 is open to the internet on the server"],
+                         [f.title for f in self.by_rule(self.check(), "open-port")])
 
     def test_ports_declared_public_are_fine(self):
         self.shell.outputs["ss"] = (0, SERVER_SS + "LISTEN 0 511 0.0.0.0:443 0.0.0.0:*\n")
         self.assertEqual([], self.by_rule(self.check(env={"SENTINEL_PUBLIC_PORTS": "22, 443"}), "open-port"))
+
+    def test_a_trading_day_of_runner_metrics_ports_is_one_incident_not_twenty(self):
+        # Until 28 Sep every strategy runner served its metrics on 0.0.0.0 at the first free port of
+        # 8000-8019 (core/metrics.py): a finding per port was ~20 HIGH incidents every morning.
+        self.shell.outputs["ss"] = (0, SERVER_SS + "".join(f"LISTEN 0 5 0.0.0.0:{p} 0.0.0.0:*\n"
+                                                           for p in range(8000, 8020)))
+        found = self.by_rule(self.check(), "open-port")
+        self.assertEqual(1, len(found))
+        f = found[0]
+        self.assertEqual("security:open-port", f.fingerprint)
+        self.assertEqual("20 ports are open to the internet on the server: 8000-8019", f.title)
+        self.assertLessEqual(len(f.evidence), 7)
+        self.assertEqual("… and 14 more: 8006-8019", f.evidence[-1])
+        self.assertIn("core/metrics.py", f.suggestion)
+        self.assertIn("METRICS_BIND_ADDRESS", f.suggestion)
+
+    def test_a_port_that_comes_and_goes_keeps_one_fingerprint(self):
+        self.shell.outputs["ss"] = (0, "LISTEN 0 5 0.0.0.0:8000 0.0.0.0:*\n")
+        first = self.by_rule(self.check(), "open-port")
+        self.shell.outputs["ss"] = (0, "LISTEN 0 5 0.0.0.0:8000 0.0.0.0:*\nLISTEN 0 5 0.0.0.0:8001 0.0.0.0:*\n")
+        second = self.by_rule(self.check(), "open-port")
+        self.assertEqual([f.fingerprint for f in first], [f.fingerprint for f in second])
+        self.assertIn("8000-8001", second[0].title)
+
+    def test_a_range_of_ports_can_be_declared_public(self):
+        self.shell.outputs["ss"] = (0, SERVER_SS + "".join(f"LISTEN 0 5 0.0.0.0:{p} 0.0.0.0:*\n"
+                                                           for p in (8000, 8019, 9000)))
+        found = self.by_rule(self.check(env={"SENTINEL_PUBLIC_PORTS": "22,8000-8019"}), "open-port")
+        self.assertEqual(["Port 9000 is open to the internet on the server"], [f.title for f in found])
+        self.assertIn("(22, 8000-8019)", found[0].summary)
+
+    def test_a_malformed_public_ports_item_is_ignored_not_fatal(self):
+        self.shell.outputs["ss"] = (0, "LISTEN 0 5 0.0.0.0:443 0.0.0.0:*\nLISTEN 0 5 0.0.0.0:8080 0.0.0.0:*\n")
+        found = self.by_rule(self.check(env={"SENTINEL_PUBLIC_PORTS": "22, 9000-8000, abc, 443, 70000"}),
+                             "open-port")
+        self.assertEqual(["Port 8080 is open to the internet on the server"], [f.title for f in found])
 
     def test_when_ss_fails_the_open_port_stays_open(self):
         self.shell.outputs["ss"] = (0, "LISTEN 0 128 0.0.0.0:6379 0.0.0.0:*\n")
         first = self.by_rule(self.check(), "open-port")
         self.shell.outputs["ss"] = (1, "")
         again = self.by_rule(self.check(), "open-port")
-        self.assertEqual(["security:open-port:tcp/6379"], [f.fingerprint for f in first])
+        self.assertEqual(["security:open-port"], [f.fingerprint for f in first])
         self.assertEqual([f.fingerprint for f in first], [f.fingerprint for f in again])
+
+    def test_a_closed_port_clears_the_finding(self):
+        self.shell.outputs["ss"] = (0, "LISTEN 0 128 0.0.0.0:6379 0.0.0.0:*\n")
+        self.assertEqual(1, len(self.by_rule(self.check(), "open-port")))
+        self.shell.outputs["ss"] = (0, SERVER_SS)
+        self.assertEqual([], self.by_rule(self.check(), "open-port"))
+        self.shell.outputs["ss"] = (1, "")
+        self.assertEqual([], self.by_rule(self.check(), "open-port"), "nothing left to carry")
 
 
 class SecretFilePermissionTests(SecurityTestCase):
@@ -749,14 +797,45 @@ class SecretInGitTests(SecurityTestCase):
         self.assertTrue(is_literal_password("deploy/.env.prod", "DB_PASSWORD=k8sPr0dValue"))
 
 
+class TimedShell(FakeShell):
+    """A FakeShell whose audits take time on a clock the agent reads: a timed-out call used all of its timeout."""
+
+    def __init__(self, clock, **outputs):
+        super().__init__(**outputs)
+        self.clock = clock
+        self.timeouts = []
+
+    def __call__(self, args, timeout=20.0, cwd=None):
+        out = super().__call__(args, timeout, cwd)
+        if args[0] in ("dotnet", "npm"):
+            self.timeouts.append((args[0], timeout))
+            self.clock[0] += timeout if out[0] == 124 else 5.0
+        return out
+
+
+NPM_CLEAN = json.dumps({"auditReportVersion": 2, "vulnerabilities": {},
+                        "metadata": {"vulnerabilities": {"total": 0}}})
+MONDAY_MARKET = datetime(2026, 9, 28, 5, 30, tzinfo=timezone.utc)   # 11:00 IST
+
+
 class DependencyTests(SecurityTestCase):
     def setUp(self):
         super().setUp()
         (self.tmp / "src" / "AlgoTrading.Api").mkdir(parents=True)
         (self.tmp / "web").mkdir()
         (self.tmp / "web" / "package-lock.json").write_text("{}")
+        (self.tmp / "src" / "AlgoTrading.Api" / "AlgoTrading.Api.csproj").write_text("<Project />")
+        self.touch("web/package-lock.json", SUNDAY - timedelta(days=1))
+        self.touch("src/AlgoTrading.Api/AlgoTrading.Api.csproj", SUNDAY - timedelta(days=1))
         self.shell.outputs["dotnet"] = (0, DOTNET_JSON)
         self.shell.outputs["npm"] = (1, NPM_AUDIT)   # npm audit exits 1 when it finds anything
+
+    def touch(self, rel, moment):
+        """The file changed at ``moment`` (a pull, a deploy): its mtime, on the test's clock."""
+        os.utime(self.tmp / rel, (moment.timestamp(), moment.timestamp()))
+
+    def npm_packages(self, findings):
+        return sorted(f.fingerprint.split(":npm:")[1] for f in findings if ":npm:" in f.fingerprint)
 
     def test_never_during_market_hours(self):
         self.check(now=THURSDAY_MARKET)
@@ -818,6 +897,74 @@ class DependencyTests(SecurityTestCase):
         parsed = parse_npm_audit(NPM_AUDIT)
         self.assertNotIn("chevrotain", parsed)
         self.assertEqual(["@excalidraw/excalidraw"], parsed["lodash-es"]["via"])
+
+    def test_a_fix_that_is_pulled_is_rescanned_at_the_next_check_not_a_week_later(self):
+        # 27 Sep: the morning scan found lodash-es and nanoid; f545822 pinned patched versions (npm audit: 0)
+        # the same day, and the two incidents would have stayed open until 4 Oct.
+        before = self.by_rule(self.check(now=SUNDAY), "vulnerable-dependency")
+        self.assertEqual(["evil-critical", "lodash-es", "nanoid"], self.npm_packages(before))
+        self.shell.outputs["npm"] = (0, NPM_CLEAN)
+        self.touch("web/package-lock.json", SUNDAY + timedelta(hours=2))
+        after = self.by_rule(self.check(now=SUNDAY + timedelta(hours=2, minutes=5)), "vulnerable-dependency")
+        self.assertEqual(2, len(self.shell.ran("npm")))
+        self.assertEqual([], self.npm_packages(after))
+        self.assertIn("security:vulnerable-dependency:nuget:System.Text.Json", {f.fingerprint for f in after})
+        self.check(now=SUNDAY + timedelta(hours=2, minutes=10))
+        self.assertEqual(2, len(self.shell.ran("npm")), "the same checkout is not scanned twice")
+
+    def test_a_changed_project_file_is_rescanned_too(self):
+        self.check(now=SUNDAY)
+        self.touch("src/AlgoTrading.Api/AlgoTrading.Api.csproj", SUNDAY + timedelta(hours=3))
+        self.check(now=SUNDAY + timedelta(hours=3, minutes=5))
+        self.assertEqual(2, len(self.shell.ran("dotnet")))
+
+    def test_a_change_during_market_hours_waits_for_the_close(self):
+        self.check(now=SUNDAY)
+        self.touch("web/package-lock.json", MONDAY_MARKET - timedelta(minutes=30))
+        self.check(now=MONDAY_MARKET)
+        self.assertEqual(1, len(self.shell.ran("npm")))
+        self.check(now=MONDAY_MARKET + timedelta(hours=5, minutes=30))   # 16:30 IST
+        self.assertEqual(2, len(self.shell.ran("npm")))
+
+    def test_no_scan_while_the_morning_job_runs(self):
+        # 08:45 is when the API and the feeds restart: nothing may hold the engine then.
+        self.check(now=SUNDAY)
+        monday_0840 = datetime(2026, 9, 28, 3, 10, tzinfo=timezone.utc)
+        self.touch("web/package-lock.json", monday_0840 - timedelta(minutes=5))
+        self.check(now=monday_0840)
+        self.assertEqual(1, len(self.shell.ran("npm")))
+
+    def test_a_scan_recorded_before_this_rule_is_rescanned_once(self):
+        # The server's state from the 27 Sep scan has no record of the files it read.
+        state = self.tmp / "logs" / "sentinel" / "state-security.json"
+        state.parent.mkdir(parents=True, exist_ok=True)
+        state.write_text(json.dumps({"deps": {"last_success": SUNDAY.isoformat(), "last_attempt": SUNDAY.isoformat(),
+                                              "findings": []}}))
+        self.check(now=SUNDAY + timedelta(hours=7))
+        self.check(now=SUNDAY + timedelta(hours=7, minutes=5))
+        self.assertEqual(1, len(self.shell.ran("dotnet")))
+
+    def test_a_hung_dotnet_is_not_run_a_second_time_for_its_table(self):
+        clock = [1000.0]
+        self.shell = TimedShell(clock, dotnet=(124, ""), npm=(1, NPM_AUDIT))
+        found = self.by_rule(self.check(now=SUNDAY, monotonic=lambda: clock[0]), "vulnerable-dependency")
+        self.assertEqual(1, len(self.shell.ran("dotnet")))
+        self.assertEqual(["evil-critical", "lodash-es", "nanoid"], self.npm_packages(found))
+
+    def test_the_whole_scan_is_held_to_its_budget(self):
+        clock = [1000.0]
+        self.shell = TimedShell(clock, dotnet=(124, ""), npm=(124, ""))
+        self.check(now=SUNDAY, monotonic=lambda: clock[0])
+        self.assertLessEqual(clock[0] - 1000.0, 240.0)
+        self.assertLessEqual(sum(t for _, t in self.shell.timeouts), 240.0)
+        self.assertEqual(["dotnet", "npm"], [tool for tool, _ in self.shell.timeouts])
+
+    def test_a_part_with_too_little_budget_left_is_not_started(self):
+        clock = [1000.0]
+        self.shell = TimedShell(clock, npm=(1, NPM_AUDIT))
+        self.shell.outputs["dotnet"] = lambda args: (clock.__setitem__(0, clock[0] + 225.0), (0, DOTNET_JSON))[1]
+        self.check(now=SUNDAY, monotonic=lambda: clock[0])
+        self.assertEqual([], self.shell.ran("npm"))
 
 
 class Fail2banTests(SecurityTestCase):

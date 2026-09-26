@@ -45,8 +45,11 @@ Rules, each one of this desk's own days:
     of each other are one incident, not one per run: on 24 Sep the sign-in
     limiter killed 13 coderforchange runs and 3 admin runs in half a minute,
     and the useful message is "13 coderforchange runs died at 09:18: sign-in
-    limiter (429)", with the fix — run scripts/market-open.sh again — not
-    thirteen "restart it from the Live runner". A run once in such a group
+    limiter (429)", with the fix once, not thirteen "restart it from the Live
+    runner". The fix is never "run scripts/market-open.sh again" once the
+    market is open: that restarts the API and the feeds under every live run
+    (22 and 24 Sep), and from 28 Sep the script refuses to after 09:15 while
+    any run is live. A run once in such a group
     stays in it until it is restarted. Fewer than three are a run each; a pair
     that died less than a minute ago waits one check, in case it is the start
     of a larger one.
@@ -74,14 +77,23 @@ Rules, each one of this desk's own days:
     The day's P&L of an account — booked on today's runs plus what their open
     positions are marked at — below ``-SENTINEL_MAX_DAY_LOSS`` (₹50,000), while
     the account is still trading. Each run's own day stop-loss guards that
-    run; nothing guards the account.
+    run; nothing guards the account. Once reported it clears only when the
+    loss is back under 80% of the line, so a marked book swinging around the
+    line is one incident.
 
-Quiet by default: nothing is checked on a non-trading day. When the API does
-not answer, "the API is down" is the health agent's to say; this agent repeats
-what it last saw (for up to 15 minutes, the same day), because answering
-"nothing" would close every open trading incident and reopen it as new the
-moment the API came back. Alerter runs (a ``role``) and the manual order book
-are not strategy runs and are left out of every rule but the account's P&L.
+``blind`` (HIGH)
+    The runs could not be read — a 500 or a timeout on either GET — for 15
+    minutes while a market is open. Until then this agent quietly repeats what
+    it last saw (the same day), because answering "nothing" would close every
+    open trading incident — "none of the 13 planned runs is running" resolved
+    while Sentinel was not looking — and reopen it as new the moment the API
+    came back; "the API is down" is the health agent's to say. After 15 minutes
+    the last answer still stands, and this says it is only that, naming the GET
+    and its error, until the GET answers again.
+
+Quiet by default: nothing is checked on a non-trading day. Alerter runs (a
+``role``) and the manual order book are not strategy runs and are left out of
+every rule but the account's P&L.
 """
 from __future__ import annotations
 
@@ -132,11 +144,16 @@ MASS_DEATH_GAP = timedelta(minutes=5)
 # A smaller cluster younger than this waits a check: it may be the start of a mass death.
 DEATH_SETTLE = timedelta(seconds=60)
 
-# When the API does not answer, the last findings stand in for this long.
+# When the runs cannot be read, the last findings stand in quietly for this long; after it, they still
+# stand, and trading:blind says Sentinel is running on them (a 500 or a timeout on the runs GET).
 CARRY_FOR = timedelta(minutes=15)
+# A failure last seen longer ago than this (Sentinel was stopped) starts the blind clock again.
+BLIND_GAP = timedelta(minutes=5)
 
 DEFAULT_MAX_TRADES = 150
 DEFAULT_MAX_DAY_LOSS = 50_000.0
+# A reported account loss clears once it is back under this share of the line.
+LOSS_CLEAR_FRACTION = 0.8
 
 # A strategy's ordinary day: its median trades per book-day over this many trading days.
 HISTORY_TRADING_DAYS = 5
@@ -173,8 +190,12 @@ _CAUSE_LABELS = {
     "api-restarted": "lost in an API restart",
 }
 
-_RERUN = ("run scripts/market-open.sh again: it starts only the planned runs that are not running and leaves the "
-          "live ones alone (it restarts the feeds first, so those see a short gap in ticks)")
+# What to do about planned runs that are not running. Until 27 Sep this said "run scripts/market-open.sh again … it
+# leaves the live ones alone" — but the job restarts the API and the feeds first, under every live run (the
+# failure of 22 and 24 Sep), and from 28 Sep it refuses to after 09:15 while any run is live.
+_RERUN = ("start the missing runs from Strategies → Live runner in the console. Do not run scripts/market-open.sh "
+          "again once the market is open: it restarts the API and the feeds under the live runs (and refuses to "
+          "after 09:15 while any run is live) — re-running the morning job is only for before the open")
 
 _URL_QUERY = re.compile(r"(https?://[^\s?#]+)[?#]\S*")
 # What notify.redact does not catch in free text from a runner's stderr.
@@ -466,17 +487,28 @@ class TradingAgent(Agent):
         raw = state.data
         data = copy.deepcopy(raw) if isinstance(raw, dict) and raw.get("day") == day else {"day": day}
 
-        try:
-            running_body = ctx.api_get(RUNNING_PATH)
-            today_body = ctx.api_get(today_path(day))
-            answered = isinstance(running_body, list) and isinstance(today_body, list)
-        except Exception:
-            answered = False
-        if not answered:
-            # The health agent owns "the API is not answering". Saying "nothing" here
-            # would close every open trading incident and reopen it the minute the
-            # API is back — so, for a while, what was true a minute ago stands.
-            return self._carry(data, now)
+        failed: Optional[tuple[str, str]] = None   # (the GET that failed, how)
+        bodies: list[Any] = []
+        for path in (RUNNING_PATH, today_path(day)):
+            try:
+                body = ctx.api_get(path)
+            except Exception as exc:
+                failed = (path, _clean(f"{type(exc).__name__}: {exc}", 200))
+                break
+            if not isinstance(body, list):
+                failed = (path, f"answered with a {type(body).__name__}, not a list of runs")
+                break
+            bodies.append(body)
+        if failed is not None:
+            # Saying "nothing" here would close every open trading incident and reopen it
+            # the minute the API is back — so what was true when it last answered stands,
+            # and after a while it is said that it is only that (trading:blind).
+            findings = self._blind(session, now, data, *failed)
+            state.data = data
+            state.save()
+            return findings
+        data.pop("blind", None)
+        running_body, today_body = bodies
 
         running = _parse_runs(running_body)
         today = [r for r in _parse_runs(today_body) if r.started is None or ist_date(r.started) == day]
@@ -494,7 +526,7 @@ class TradingAgent(Agent):
         findings += self._missing(ctx, session, now, day, running, today, latest, live_keys, set(deaths), data, plan)
         findings += self._duplicated(running, day)
         findings += self._overtrading(ctx, session, now, day, today, data)
-        findings += self._account_loss(ctx.env, session, now, day, today)
+        findings += self._account_loss(ctx.env, session, now, day, today, data)
 
         data["last"] = {"at": now.isoformat(), "findings": [_dump(f) for f in findings]}
         if data != raw:
@@ -502,15 +534,55 @@ class TradingAgent(Agent):
             state.save()
         return findings
 
-    def _carry(self, data: dict, now: datetime) -> list[Finding]:
-        """The last check's findings, when they are from today and recent enough to still be believed."""
+    def _carry(self, data: dict) -> list[Finding]:
+        """The findings of the last check that could read the runs today (``data`` is today's)."""
         last = data.get("last")
         if not isinstance(last, dict) or not isinstance(last.get("findings"), list):
             return []
-        at = _parse_time(last.get("at"))
-        if at is None or not (timedelta(0) <= now - at <= CARRY_FOR):
-            return []
         return [f for f in (_load(d, self.name) for d in last["findings"]) if f is not None]
+
+    def _blind(self, session, now: datetime, data: dict, path: str, error: str) -> list[Finding]:
+        """
+        The runs could not be read. For CARRY_FOR the last answer stands, quietly: an API restart takes a minute
+        or two, and "the API is not answering" is the health agent's to say. After that the last answer still
+        stands — resolving "none of the 13 planned runs is running" because Sentinel stopped looking would be a
+        lie — and a HIGH ``trading:blind`` says the trading checks are running on it, until the GET answers again.
+        """
+        before = data.get("blind") if isinstance(data.get("blind"), dict) else {}
+        since, seen = _parse_time(before.get("since")), _parse_time(before.get("at"))
+        if since is None or seen is None or not timedelta(0) <= now - seen <= BLIND_GAP:
+            since = now   # a failure left from before Sentinel stopped does not count
+        data["blind"] = {"since": since.isoformat(), "at": now.isoformat()}
+        held = self._carry(data)
+        if now - since < CARRY_FOR or not session.any_open:
+            return held
+
+        last = data.get("last") if isinstance(data.get("last"), dict) else {}
+        answered = _parse_time(last.get("at"))
+        minutes = int((now - since).total_seconds() // 60)
+        evidence = [f"GET {path}: {error}", f"failing since {_hms(since)} IST ({minutes} min)",
+                    (f"last answer at {_hms(answered)} IST" if answered else "no answer at all today")]
+        if held:
+            evidence.append(f"held as they were then: {len(held)} trading incident(s) — "
+                            + "; ".join(_clean(f.title, 70) for f in held[:3]) + (" …" if len(held) > 3 else ""))
+        return held + [Finding(
+            agent=self.name,
+            rule="blind",
+            severity=Severity.HIGH,
+            title="Sentinel cannot see the strategy runs: the API's run list is failing",
+            summary=(f"GET {path} has failed on every check since {_hm(since)} IST ({minutes} min): {error}. "
+                     "Until it answers, Sentinel cannot tell whether planned runs are running, whether any died or "
+                     "whether an account is past its loss line; "
+                     + (f"the {len(held)} trading incident(s) open when it went blind are held as they were, "
+                        "not resolved." if held else "nothing was open when it went blind.")),
+            fingerprint="trading:blind",
+            where=f"GET {path}",
+            evidence=evidence[:6],
+            suggestion=("Open Strategies → Live runner in the console: if it lists the runs, only this GET fails — "
+                        "read logs/api.log for the error on /api/Strategy/runs; if it does not load, the API itself "
+                        "is failing (see the health agent's api-down or api-degraded incident). This closes when the "
+                        "GET answers again."),
+        )]
 
     # ------------------------------------------------------------------
     # run-stopped-early
@@ -853,13 +925,13 @@ class TradingAgent(Agent):
                      "prices (10 Sep, when an expired FYERS sign-in left the feed deaf) and skips an account whose "
                      f"user name is not active. Once the feed is live, {_RERUN}.")
         else:
-            first = f"To start what is missing, {_RERUN}."
+            first = f"{_RERUN[:1].upper()}{_RERUN[1:]}."
         if ended:
             first += (" For the runs that ended, read logs/api.log around the time they stopped first — started "
                       "into the same fault, they die again.")
         if orphaned:
             first += (" Stop " + ", ".join(f"run {o.run_id}" for _, _, o in orphaned[:5]) + " from the Live runner "
-                      "first: the job counts a row listed as Running as running, and would not replace it.")
+                      "first: it is listed as Running with no runner behind it, and stopping it closes its row.")
 
         title = (f"None of the {n} planned runs for {account} is running" if everything
                  else f"{n} of {expected} planned runs for {account} {_plural(n, 'is', 'are')} not running")
@@ -1050,7 +1122,8 @@ class TradingAgent(Agent):
     # account-loss
     # ------------------------------------------------------------------
 
-    def _account_loss(self, env: dict[str, str], session, now: datetime, day: str, today: list[_Run]) -> list[Finding]:
+    def _account_loss(self, env: dict[str, str], session, now: datetime, day: str, today: list[_Run],
+                      data: dict) -> list[Finding]:
         limit, source = day_loss_limit(env)
         if limit is None:
             return []
@@ -1058,6 +1131,11 @@ class TradingAgent(Agent):
         for run in today:
             if not run.role:
                 accounts[run.user_id or run.user.lower()].append(run)
+        # Reported on the last check that could read the runs: such an account clears only once its loss is back
+        # under 80% of the line. Open positions are marked to the minute, so a book near the line would otherwise
+        # open, resolve and reopen the incident as its mark crosses back and forth.
+        last = data.get("last") if isinstance(data.get("last"), dict) else {}
+        reported = {d.get("fingerprint") for d in last.get("findings") or [] if isinstance(d, dict)}
 
         findings: list[Finding] = []
         for _, rows in accounts.items():
@@ -1066,9 +1144,11 @@ class TradingAgent(Agent):
             booked = sum(r.net for r in rows)
             marked = sum(r.unrealized for r in rows if r.live)
             total = booked + marked
-            if total >= -limit:
-                continue
             user = rows[0].user
+            fingerprint = f"trading:account-loss:{_slug(user)}:{day}"
+            recovering = fingerprint in reported and -limit <= total < -limit * LOSS_CLEAR_FRACTION
+            if total >= -limit and not recovering:
+                continue
             worst = sorted(rows, key=lambda r: r.net + (r.unrealized if r.live else 0.0))[:3]
             evidence = [f"today: {_rupees(total)} ({_rupees(booked)} booked, {_rupees(marked)} open) over "
                         f"{len(rows)} run(s)"]
@@ -1082,8 +1162,11 @@ class TradingAgent(Agent):
                 severity=Severity.HIGH,
                 title=f"{user} is down {_rupees(-total)} today",
                 summary=(f"{user}'s runs today stand at {_rupees(total)} at {_hm(now)} IST ({_rupees(booked)} booked, "
-                         f"{_rupees(marked)} on open positions), past the {_rupees(-limit)} day-loss line."),
-                fingerprint=f"trading:account-loss:{_slug(user)}:{day}",
+                         f"{_rupees(marked)} on open positions), "
+                         + (f"back inside the {_rupees(-limit)} day-loss line; this stays open until the loss is "
+                            f"under {_rupees(limit * LOSS_CLEAR_FRACTION)}, so a book swinging around the line is one "
+                            "incident." if recovering else f"past the {_rupees(-limit)} day-loss line.")),
+                fingerprint=fingerprint,
                 where=f"Live runner · {user}",
                 evidence=evidence,
                 suggestion=("Each run's day stop-loss guards only that run; nothing stops the account as a whole. "
