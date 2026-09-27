@@ -67,6 +67,15 @@ public sealed class PythonEngineLocator
         }
     }
 
+    /// <summary>
+    /// Where the engine's processes write their own logs: &lt;repo&gt;/logs/engine,
+    /// two levels above the engine directory — the same place
+    /// core/safe_output.py's ENGINE_LOG_DIR derives from its own location, so
+    /// the two agree whichever of them is configured.
+    /// </summary>
+    public string EngineLogDirectory
+        => Path.GetFullPath(Path.Combine(EngineDirectory, "..", "..", "logs", "engine"));
+
     /// <summary>Absolute path of a script inside the engine directory.</summary>
     public string ScriptPath(params string[] relativeParts)
         => Path.Combine(new[] { EngineDirectory }.Concat(relativeParts).ToArray());

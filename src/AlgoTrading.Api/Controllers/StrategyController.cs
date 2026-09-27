@@ -1613,7 +1613,12 @@ public class StrategyController : ControllerBase
 
             var running = new RunningStrategy(
                 id, spec.Strategy.Name, process, spec.StartedBy, spec.UserId, DateTime.UtcNow,
-                spec.RunId, spec.Underlying, spec.SpotSymbol, spec.Lots, spec.Risk);
+                spec.RunId, spec.Underlying, spec.SpotSymbol, spec.Lots, spec.Risk)
+            {
+                // Where the runner writes its own output from its first line;
+                // the console is read from there (core/safe_output.py).
+                OutputLogPath = RunnerOutputLog.PathFor(_engine.EngineLogDirectory, spec.RunId, process.Id)
+            };
 
             if (!_registry.TryAdd(running))
             {

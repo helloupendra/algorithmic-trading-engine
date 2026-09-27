@@ -124,6 +124,7 @@ internal sealed class RunnerDesk : IDisposable
         Pids,
         Registry,
         null!,                                      // carry forward: only the market close uses it
+        _locator,
         NullLogger<StrategyRunControl>.Instance);
 
     /// <summary>A controller as <paramref name="callerId"/> sees it, for the endpoints other than start.</summary>
