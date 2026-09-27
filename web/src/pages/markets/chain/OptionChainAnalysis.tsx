@@ -10,9 +10,9 @@
 
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent, RefObject } from 'react'
-import type { OptionChain, OptionChainHeader, OptionChainTrend } from '../../lib/types'
-import { EmptyState } from '../../components/ui'
-import { compactIndian, compactSigned, istTime, price, strikeWindow } from '../../lib/optionChain'
+import type { OptionChain, OptionChainHeader, OptionChainTrend } from '../../../lib/types'
+import { EmptyState } from '../../../components/ui'
+import { compactIndian, compactSigned, istTime, price, strikeWindow } from '../../../lib/optionChain'
 
 const CALL = 'var(--neg)'
 const PUT = 'var(--pos)'

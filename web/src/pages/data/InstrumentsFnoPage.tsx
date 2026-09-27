@@ -1,21 +1,19 @@
 /**
- * Data module — Instruments & F&O. Searches the broker instrument master
- * (equity, futures, options, indices across NSE/BSE/MCX) and explores the
- * derivatives universe availability-first: underlying → the expiries that
- * actually exist → the full CE/PE chain for one expiry.
+ * Data → Instruments: the broker instrument master (equity, futures, options
+ * and indices across NSE, BSE and MCX). Search it, read a contract's lot size,
+ * tick size and expiry, and put it on the live feed.
+ *
+ * It also used to walk underlying → expiry → a CE/PE ladder of contract names.
+ * Markets → Option chain reads the same chains with prices, OI and greeks, so
+ * the ladder went; the chain is read in one place.
  */
 
-import { useMemo, useState } from 'react'
-import {
-  useAddWatchlistSymbol,
-  useExpiries,
-  useInstrumentSearch,
-  useOptionChain,
-} from '../../lib/queries'
+import { useState } from 'react'
+import { useAddWatchlistSymbol, useInstrumentSearch } from '../../lib/queries'
 import { formatNumber } from '../../lib/format'
 import { Badge, InlineError, Panel, QueryBoundary } from '../../components/ui'
-import { IconLayers, IconPlus, IconSearch } from '../../components/icons'
-import type { Instrument, OptionChainItem } from '../../lib/types'
+import { IconPlus, IconSearch } from '../../components/icons'
+import type { Instrument } from '../../lib/types'
 
 const TYPE_FILTERS = [
   { key: undefined, label: 'All' },
@@ -24,8 +22,6 @@ const TYPE_FILTERS = [
   { key: 'OPT', label: 'Options' },
   { key: 'INDEX', label: 'Index' },
 ] as const
-
-const COMMON_UNDERLYINGS = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX']
 
 function InstrumentDetail({ instrument }: { instrument: Instrument }) {
   const add = useAddWatchlistSymbol()
@@ -194,184 +190,20 @@ function MasterSearchPanel() {
   )
 }
 
-/** strike ladder: CE on the left, PE on the right. */
-function ChainTable({ chain }: { chain: OptionChainItem[] }) {
-  const add = useAddWatchlistSymbol()
-
-  const ladder = useMemo(() => {
-    const byStrike = new Map<number, { ce?: OptionChainItem; pe?: OptionChainItem }>()
-    for (const item of chain) {
-      if (item.strikePrice == null) continue
-      if (!byStrike.has(item.strikePrice)) byStrike.set(item.strikePrice, {})
-      const slot = byStrike.get(item.strikePrice)!
-      if (item.optionType === 'CE') slot.ce = item
-      else if (item.optionType === 'PE') slot.pe = item
-    }
-    return [...byStrike.entries()].sort((a, b) => a[0] - b[0])
-  }, [chain])
-
-  return (
-    <div className="tablewrap tablewrap--tall">
-      <table className="table table--center">
-        <thead>
-          <tr>
-            <th>Call (CE)</th>
-            <th></th>
-            <th className="c">Strike</th>
-            <th></th>
-            <th>Put (PE)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {ladder.map(([strike, { ce, pe }]) => (
-            <tr key={strike}>
-              <td className="mono muted">{ce ? ce.symbol.split(':')[1] : '—'}</td>
-              <td>
-                {ce && (
-                  <button
-                    className="btn btn--ghost btn--sm"
-                    title="Watch CE live"
-                    disabled={add.isPending}
-                    onClick={() => add.mutate({ symbol: ce.symbol, dataType: 'symbolUpdate' })}
-                  >
-                    <IconPlus style={{ width: 12, height: 12 }} />
-                  </button>
-                )}
-              </td>
-              <td className="strike">{formatNumber(strike)}</td>
-              <td>
-                {pe && (
-                  <button
-                    className="btn btn--ghost btn--sm"
-                    title="Watch PE live"
-                    disabled={add.isPending}
-                    onClick={() => add.mutate({ symbol: pe.symbol, dataType: 'symbolUpdate' })}
-                  >
-                    <IconPlus style={{ width: 12, height: 12 }} />
-                  </button>
-                )}
-              </td>
-              <td className="mono muted">{pe ? pe.symbol.split(':')[1] : '—'}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-function FnoExplorerPanel() {
-  const [underlying, setUnderlying] = useState('NIFTY')
-  const [expiry, setExpiry] = useState<string | null>(null)
-
-  const expiries = useExpiries(underlying)
-  const chain = useOptionChain(underlying, expiry)
-
-  const expiryList = expiries.data ?? []
-
-  return (
-    <Panel
-      title={
-        <>
-          <IconLayers /> F&O explorer
-        </>
-      }
-      actions={
-        <div className="inline-form">
-          {COMMON_UNDERLYINGS.map((u) => (
-            <button
-              key={u}
-              type="button"
-              className={`btn btn--sm ${underlying === u ? 'btn--primary' : 'btn--ghost'}`}
-              onClick={() => {
-                setUnderlying(u)
-                setExpiry(null)
-              }}
-            >
-              {u}
-            </button>
-          ))}
-          <input
-            className="field__input field__input--sm"
-            style={{ minWidth: 130 }}
-            placeholder="Other underlying…"
-            value={underlying}
-            onChange={(e) => {
-              setUnderlying(e.target.value.toUpperCase())
-              setExpiry(null)
-            }}
-          />
-        </div>
-      }
-    >
-      <p className="field__label" style={{ marginBottom: 6 }}>
-        Available expiries
-      </p>
-      {underlying.trim().length === 0 ? (
-        <p className="empty">Pick or type an underlying to see its expiries.</p>
-      ) : (
-      <QueryBoundary
-        query={expiries}
-        empty={`No derivative contracts found for “${underlying}” in the instrument master.`}
-      >
-        {() => (
-          <div className="chip-row" style={{ marginBottom: 14 }}>
-            {expiryList.map((e) => (
-              <button
-                key={e.expiryDate}
-                type="button"
-                className={`btn btn--sm ${expiry === e.expiryDate ? 'btn--primary' : ''}`}
-                onClick={() => setExpiry(e.expiryDate)}
-              >
-                {new Date(e.expiryDate).toLocaleDateString('en-IN', {
-                  day: '2-digit',
-                  month: 'short',
-                  year: '2-digit',
-                })}
-              </button>
-            ))}
-          </div>
-        )}
-      </QueryBoundary>
-      )}
-
-      {expiry &&
-        (chain.isPending ? (
-          <p className="empty">Loading chain…</p>
-        ) : chain.isError ? (
-          <InlineError error={chain.error} />
-        ) : (
-          <>
-            <p className="small-note" style={{ margin: '0 0 8px' }}>
-              {formatNumber((chain.data ?? []).length)} contracts for {underlying} ·{' '}
-              {new Date(expiry).toLocaleDateString('en-IN', {
-                day: '2-digit',
-                month: 'long',
-                year: 'numeric',
-              })}
-              . Use + to subscribe a leg to the live feed.
-            </p>
-            <ChainTable chain={chain.data ?? []} />
-          </>
-        ))}
-    </Panel>
-  )
-}
-
 export function InstrumentsFnoPage() {
   return (
     <div className="page">
       <header className="page__header">
         <div>
-          <h1 className="page__title">Instruments & F&O</h1>
+          <h1 className="page__title">Instruments</h1>
           <p className="page__subtitle">
-            The tradable universe: search the master, then walk underlying → expiry → chain.
+            The tradable universe: search the master, read a contract, and watch it live. Chains are read on
+            Markets → Option chain.
           </p>
         </div>
       </header>
 
       <MasterSearchPanel />
-      <FnoExplorerPanel />
     </div>
   )
 }

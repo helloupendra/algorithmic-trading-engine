@@ -2534,6 +2534,8 @@ a.pill:hover { border-color: var(--line-strong); }
 }
 .oc-tab:hover { color: var(--text); }
 .oc-tab--on { color: var(--text); border-bottom-color: var(--brand); }
+/* A tab that is its own URL is a link, and reads exactly like the button kind. */
+a.oc-tab { text-decoration: none; }
 
 .oc-toolbar {
   display: flex;

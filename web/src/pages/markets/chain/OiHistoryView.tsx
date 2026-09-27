@@ -1,5 +1,6 @@
 /**
- * How open interest moved at one strike through the session.
+ * Markets → Option chain → OI history: how open interest moved at one strike
+ * through the session.
  *
  * The chain says what a strike looks like now. This says how it got there —
  * and the two answer different questions. A strike carrying two lakh contracts
@@ -19,11 +20,10 @@
  */
 
 import { useMemo, useState } from 'react'
-import { useLiveOptionChain, useOptionChainSeries } from '../../lib/queries'
-import type { OptionChainSeries, OptionChainSeriesPoint } from '../../lib/types'
-import { EmptyState, InlineError, Panel, QueryBoundary } from '../../components/ui'
-// The same underlyings the option chain records, so every chain has its OI view.
-import { UNDERLYINGS } from '../../lib/optionChain'
+import { useSearchParams } from 'react-router-dom'
+import { useOptionChainSeries, useOptionChainView } from '../../../lib/queries'
+import type { OptionChainSeries, OptionChainSeriesPoint } from '../../../lib/types'
+import { EmptyState, InlineError, Loading, Panel, QueryBoundary } from '../../../components/ui'
 
 type View = 'oiChange' | 'oiLevel' | 'price' | 'volume'
 
@@ -170,143 +170,118 @@ function SeriesChart({ series, view }: { series: OptionChainSeries; view: View }
   )
 }
 
-export function OptionInterestPage({ asOfUtc }: { asOfUtc?: string } = {}) {
-  const [underlying, setUnderlying] = useState('BANKNIFTY')
+/** One strike's session, for the underlying the page is on and the expiry the chain view picked. */
+export function OiHistoryView({ underlying }: { underlying: string }) {
+  const [params] = useSearchParams()
+  const expiry = params.get('expiry') ?? undefined
   const [strike, setStrike] = useState<number | null>(null)
   const [view, setView] = useState<View>('oiChange')
 
-  const chain = useLiveOptionChain(underlying, undefined, asOfUtc)
+  // The chain view's own query, so switching tabs costs no request.
+  const chain = useOptionChainView(underlying, expiry)
+  // keepPreviousData must never show one underlying's strikes under another's name.
+  const data = chain.data && chain.data.underlying === underlying ? chain.data : undefined
 
-  // Default to the money: it is the strike anyone opens this page to look at.
-  // A strike picked earlier that is no longer listed (the chain moved on, or a
-  // new expiry) falls back to the money rather than showing nothing.
-  const strikes = chain.data?.strikes.map((s) => s.strikePrice) ?? []
-  const selected =
-    (strike != null && strikes.includes(strike) ? strike : null) ?? chain.data?.atTheMoneyStrike ?? strikes[0] ?? null
+  // Default to the money: it is the strike anyone opens this view to look at.
+  // A strike picked earlier that is no longer listed (the chain moved on, or
+  // another underlying) falls back to the money rather than showing nothing.
+  const strikes = data?.strikes.map((s) => s.strikePrice) ?? []
+  const selected = (strike != null && strikes.includes(strike) ? strike : null) ?? data?.atTheMoneyStrike ?? strikes[0] ?? null
   const selectedIndex = selected != null ? strikes.indexOf(selected) : -1
 
-  const series = useOptionChainSeries(underlying, selected, chain.data?.expiryDate, asOfUtc)
+  const series = useOptionChainSeries(underlying, selected, data?.expiryDate)
+
+  if (chain.isError && !data) return <InlineError error={chain.error} />
+  if (!data) return <Loading label={`Loading the ${underlying} chain…`} />
+  if (data.strikes.length === 0) {
+    return (
+      <EmptyState>
+        No chain has been captured for {underlying} yet. Open interest is only recorded while the chain recorder runs.
+      </EmptyState>
+    )
+  }
 
   return (
-    <div className="page">
-      <header className="page__header">
-        <h1 className="page__title">Open interest</h1>
-        <p className="page__subtitle">
-          How one strike moved through the session. Plotted as change since the open rather than as
-          the level — the level is dominated by whatever was already there at the bell and barely
-          moves on the scale of a day.
-        </p>
-      </header>
-
-      <div className="chip-row" style={{ marginBottom: 10 }}>
-        {UNDERLYINGS.map((name) => (
-          <button
-            key={name}
-            type="button"
-            className={`btn btn--sm ${underlying === name ? 'btn--primary' : 'btn--ghost'}`}
-            onClick={() => { setUnderlying(name); setStrike(null) }}
-          >
-            {name}
+    <>
+      {/* A dropdown, not a row of every strike: a BANKNIFTY chain lists a hundred-odd
+          strikes, and the row ran off the screen. The arrows step one strike either way. */}
+      <div className="oc-toolbar">
+        <span className="oc-control__label">Strike</span>
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          aria-label="Previous strike"
+          disabled={selectedIndex <= 0}
+          onClick={() => setStrike(strikes[selectedIndex - 1])}
+        >
+          ‹
+        </button>
+        <select
+          className="field__input field__input--sm oi-strike"
+          aria-label="Strike"
+          value={selected ?? ''}
+          onChange={(e) => setStrike(Number(e.target.value))}
+        >
+          {data.strikes.map((s) => (
+            <option key={s.strikePrice} value={s.strikePrice}>
+              {s.strikePrice.toLocaleString('en-IN')}
+              {s.isAtTheMoney ? ' · ATM' : ''}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          aria-label="Next strike"
+          disabled={selectedIndex < 0 || selectedIndex >= strikes.length - 1}
+          onClick={() => setStrike(strikes[selectedIndex + 1])}
+        >
+          ›
+        </button>
+        {data.atTheMoneyStrike != null && selected !== data.atTheMoneyStrike && (
+          <button type="button" className="btn btn--ghost btn--sm" onClick={() => setStrike(data.atTheMoneyStrike)}>
+            Back to ATM {data.atTheMoneyStrike.toLocaleString('en-IN')}
           </button>
-        ))}
+        )}
+        <span className="oc-toolbar__spacer" />
+        <div className="oc-seg" role="group" aria-label="Series">
+          {VIEWS.map((v) => (
+            <button key={v.key} type="button" title={v.hint} aria-pressed={view === v.key} onClick={() => setView(v.key)}>
+              {v.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {chain.isError && <InlineError error={chain.error} />}
-
-      <QueryBoundary query={chain}>
-        {(data) =>
-          data.strikes.length === 0 ? (
-            <EmptyState>
-              No chain has been captured for {underlying} yet. Open interest is only recorded while
-              the chain poller runs.
-            </EmptyState>
-          ) : (
-            <>
-              {/* A dropdown, not a row of every strike: a BANKNIFTY chain lists a hundred-odd
-                  strikes, and the row ran off the screen. The arrows step one strike either way. */}
-              <div className="oi-strike-picker">
-                <span className="oc-control__label">Strike</span>
-                <button
-                  type="button"
-                  className="btn btn--ghost btn--sm"
-                  aria-label="Previous strike"
-                  disabled={selectedIndex <= 0}
-                  onClick={() => setStrike(strikes[selectedIndex - 1])}
-                >
-                  ‹
-                </button>
-                <select
-                  className="field__input field__input--sm"
-                  aria-label="Strike"
-                  value={selected ?? ''}
-                  onChange={(e) => setStrike(Number(e.target.value))}
-                >
-                  {data.strikes.map((s) => (
-                    <option key={s.strikePrice} value={s.strikePrice}>
-                      {s.strikePrice.toLocaleString('en-IN')}
-                      {s.isAtTheMoney ? ' · ATM' : ''}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  className="btn btn--ghost btn--sm"
-                  aria-label="Next strike"
-                  disabled={selectedIndex < 0 || selectedIndex >= strikes.length - 1}
-                  onClick={() => setStrike(strikes[selectedIndex + 1])}
-                >
-                  ›
-                </button>
-                {data.atTheMoneyStrike != null && selected !== data.atTheMoneyStrike && (
-                  <button type="button" className="btn btn--ghost btn--sm" onClick={() => setStrike(data.atTheMoneyStrike)}>
-                    Back to ATM {data.atTheMoneyStrike.toLocaleString('en-IN')}
-                  </button>
-                )}
-                {data.spotPrice > 0 && (
-                  <span className="faint">
-                    {underlying} {data.spotPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                  </span>
-                )}
-              </div>
-
-              <Panel
-                title={`${underlying} · ${selected != null ? selected.toLocaleString('en-IN') : '—'}${selected === data.atTheMoneyStrike ? ' (ATM)' : ''}`}
-                actions={
-                  <div className="chip-row">
-                    {VIEWS.map((v) => (
-                      <button
-                        key={v.key}
-                        type="button"
-                        title={v.hint}
-                        className={`btn btn--sm ${view === v.key ? 'btn--primary' : 'btn--ghost'}`}
-                        onClick={() => setView(v.key)}
-                      >
-                        {v.label}
-                      </button>
-                    ))}
-                  </div>
-                }
-              >
-                {series.isError && <InlineError error={series.error} />}
-                <QueryBoundary query={series}>
-                  {(data2) =>
-                    data2.openInterestUnavailable && view.startsWith('oi') ? (
-                      <EmptyState>
-                        No open interest was recorded for this strike in this window. The broker's
-                        tick feed does not carry it, so it exists only where the chain poller was
-                        running — and it cannot be filled in afterwards. Premium and volume are
-                        still available above.
-                      </EmptyState>
-                    ) : (
-                      <SeriesChart series={data2} view={view} />
-                    )
-                  }
-                </QueryBoundary>
-              </Panel>
-            </>
-          )
+      <Panel
+        title={`${underlying} ${selected != null ? selected.toLocaleString('en-IN') : '—'}${selected === data.atTheMoneyStrike ? ' · ATM' : ''}`}
+        actions={
+          <span className="faint small">
+            {data.spotPrice > 0 && `spot ${data.spotPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })} · `}expiry{' '}
+            {data.expiryDate}
+          </span>
         }
-      </QueryBoundary>
-    </div>
+      >
+        {series.isError && <InlineError error={series.error} />}
+        <QueryBoundary query={series}>
+          {(points) =>
+            points.openInterestUnavailable && view.startsWith('oi') ? (
+              <EmptyState>
+                No open interest was recorded for this strike in this window. The broker's tick feed does not carry it,
+                so it exists only where the chain recorder was running, and it cannot be filled in afterwards. Premium
+                and volume are still available.
+              </EmptyState>
+            ) : (
+              <SeriesChart series={points} view={view} />
+            )
+          }
+        </QueryBoundary>
+      </Panel>
+      <p className="small-note muted">
+        Plotted as change since the open rather than as the level: the level is dominated by whatever was already
+        there at the bell and barely moves on the scale of a day. Above zero on Put − Call, puts are being written
+        faster than calls.
+      </p>
+    </>
   )
 }

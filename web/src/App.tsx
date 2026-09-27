@@ -46,8 +46,7 @@ import { BacktestRunsPage } from './pages/backtesting/BacktestRunsPage'
 import { BacktestRunPage } from './pages/backtesting/BacktestRunPage'
 import { AnalysisPage } from './pages/analysis/AnalysisPage'
 import { DataOverviewPage } from './pages/data/DataOverviewPage'
-import { AdvancedOptionChainPage } from './pages/data/AdvancedOptionChainPage'
-import { OptionInterestPage } from './pages/data/OptionInterestPage'
+import { OptionChainPage } from './pages/markets/chain/OptionChainPage'
 import { LiveFeedsPage } from './pages/data/LiveFeedsPage'
 import { CommodityPage } from './pages/data/CommodityPage'
 import { HistoricalDataPage } from './pages/data/HistoricalDataPage'
@@ -136,8 +135,10 @@ export default function App() {
                 {/* Markets. */}
                 <Route path="/markets" element={<WatchlistPage />} />
                 <Route path="/markets/chart" element={<ChartRoute />} />
-                <Route path="/markets/chain" element={<AdvancedOptionChainPage />} />
-                <Route path="/markets/chain/oi" element={<OptionInterestPage />} />
+                {/* One page, a URL per tab. */}
+                <Route path="/markets/chain" element={<OptionChainPage view="chain" />} />
+                <Route path="/markets/chain/oi" element={<OptionChainPage view="oi" />} />
+                <Route path="/markets/chain/levels" element={<OptionChainPage view="levels" />} />
                 <Route path="/markets/movers" element={<MarketMoversPage />} />
                 <Route path="/markets/factors" element={<MarketFactorsPage />} />
                 <Route path="/markets/news" element={<MarketNewsPage />} />
