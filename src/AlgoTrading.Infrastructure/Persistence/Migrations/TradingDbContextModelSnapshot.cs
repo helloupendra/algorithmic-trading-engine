@@ -2427,6 +2427,9 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
+                    b.Property<string>("MetadataJson")
+                        .HasColumnType("text");
+
                     b.Property<string>("OrderType")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -2657,6 +2660,42 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.ToTable("risk_events", (string)null);
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.RunPnlMinute", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("AtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal>("Charges")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("Net")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("Realized")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<long>("SimulationRunId")
+                        .HasColumnType("bigint");
+
+                    b.Property<decimal>("Unrealized")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "AtUtc" }, "IX_run_pnl_minutes_AtUtc");
+
+                    b.HasIndex(new[] { "SimulationRunId", "AtUtc" }, "UX_run_pnl_minutes_SimulationRunId_AtUtc")
+                        .IsUnique();
+
+                    b.ToTable("run_pnl_minutes", (string)null);
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.SentinelHeartbeat", b =>
                 {
                     b.Property<int>("Id")
@@ -2870,6 +2909,10 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
 
+                    b.Property<string>("ClientSignalId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<DateTime>("CreatedUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -2911,6 +2954,10 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.HasIndex("SimulationRunId");
 
                     b.HasIndex("TimestampUtc");
+
+                    b.HasIndex("SimulationRunId", "ClientSignalId")
+                        .IsUnique()
+                        .HasFilter("\"ClientSignalId\" IS NOT NULL");
 
                     b.ToTable("simulation_signals", (string)null);
                 });
