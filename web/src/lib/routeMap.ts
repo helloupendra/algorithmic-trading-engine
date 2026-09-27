@@ -68,6 +68,14 @@ export const ROUTE_MOVES: Readonly<Record<string, string>> = {
   // A board stays full-window, outside the shell.
   '/admin/notebook/:id': '/notebook/:id',
 
+  // Data.
+  '/admin/data': '/data',
+  '/admin/data/live': '/data/feeds',
+  '/admin/ingestion': '/data/feeds',
+  '/admin/data/historical': '/data/historical',
+  '/admin/data/instruments': '/data/instruments',
+  '/admin/instruments': '/data/instruments',
+
   // System.
   '/admin/system': '/system',
   '/admin/checkup': '/system/checkups',
@@ -76,13 +84,7 @@ export const ROUTE_MOVES: Readonly<Record<string, string>> = {
   '/admin/system/alerts': '/system/log?source=alerts',
   '/admin/live-alerts': '/system/log?source=alerts',
   '/admin/system/deployments': '/system/log?source=deploys',
-  '/admin/data': '/system/data',
-  '/admin/data/live': '/system/data/feeds',
-  '/admin/ingestion': '/system/data/feeds',
-  '/admin/data/historical': '/system/data/historical',
-  '/admin/data/instruments': '/system/data/instruments',
-  '/admin/instruments': '/system/data/instruments',
-  '/admin/system/calendar': '/system/data/calendar',
+  '/admin/system/calendar': '/system/calendar',
   '/admin/broker': '/system/connectors',
   // Stays routable as an alias until the OAuth callback, which redirects here,
   // is changed in the same PR.
