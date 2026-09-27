@@ -8,3 +8,14 @@ psycopg2-binary
 pandas
 pydantic
 py_vollib
+
+# The news scorer (python -m analysis news-score): FinBERT on the CPU.
+# PyPI's Linux torch is the CUDA build (~2 GB of nvidia-* packages); PyTorch's
+# CPU index serves the ~200 MB CPU wheel. torch 2.6+ because transformers
+# refuses to load a pytorch_model.bin (FinBERT's only format) with anything older.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.6
+transformers
+# fyers_apiv3's websockets import pkg_resources, which setuptools 81 removed,
+# and recent torch releases pull a newer setuptools in unless it is held here.
+setuptools<81

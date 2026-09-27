@@ -457,10 +457,12 @@ def load_market(conn, names: Sequence[str], start: Optional[date], end: date, wi
     return MarketData(series, vix, calendar, holidays)
 
 
-def connect():
+def connect(readonly: bool = True):
     """
     A read-only connection to the platform database, from the repo-root .env
-    (core.config loads it) the way Sentinel builds its DSN.
+    (core.config loads it) the way Sentinel builds its DSN. `readonly=False`
+    is for the news scorer alone, which writes its six score columns, one
+    transaction per table; every other command reads.
     """
     import psycopg2
 
@@ -477,7 +479,7 @@ def connect():
         raise DataError(f"cannot connect to PostgreSQL at {os.getenv('POSTGRES_HOST', 'localhost')}:"
                         f"{os.getenv('POSTGRES_PORT', '5432')} ({type(ex).__name__})") from None
     # Read-only at the session level: nothing here may write, and now nothing can.
-    conn.set_session(readonly=True, autocommit=True)
+    conn.set_session(readonly=readonly, autocommit=readonly)
     return conn
 
 

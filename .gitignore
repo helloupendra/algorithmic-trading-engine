@@ -26,6 +26,8 @@ private/
 data/instruments/*.csv
 data/**/*.parquet
 data/**/*.db
+# Model weights the news scorer downloads on its first run (FinBERT, ~440 MB).
+data/models/
 
 # ---------------------------------------------------------------------------
 # .NET / C#

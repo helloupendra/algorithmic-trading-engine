@@ -25,6 +25,13 @@ Numbers pool the three indices. They are not independent — NIFTY, BANKNIFTY
 and SENSEX have their big days together — so the confidence interval
 resamples session dates, keeping a day's three forecasts together, rather than
 forecasts.
+
+Version 2 (`python -m analysis backtest-v2`) runs v1 and v2 together, so both
+are scored on the sessions all seven models could forecast, and compares each
+v2 model with its v1 model session by session (`compare`). A v2 model is
+registered only when the 95% interval of v1's loss minus v2's on validation
+lies above zero (`beats_v1`). The holdout was looked at once, by v1's run; v2's
+holdout number is a second look, reported and never used to choose.
 """
 
 from __future__ import annotations
@@ -39,9 +46,10 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 import numpy as np
 
 from analysis import scoring
+from analysis import context as ctxmod
 from analysis.data import MarketData, SessionSeries
-from analysis.models import (MIN_TRAIN_SESSIONS, MODEL_VERSION, MODELS, ForecastUnavailable, ModelSpec, Table,
-                             build_table, features, fit, predict)
+from analysis.models import (MIN_TRAIN_SESSIONS, MODEL_VERSION, MODEL_VERSION_V2, SPECS, ForecastUnavailable,
+                             ModelSpec, Table, build_table, features, fit, predict)
 
 log = logging.getLogger("analysis.backtest")
 
@@ -58,6 +66,15 @@ SPLITS = ("design", "validation", "holdout")
 #: stays at 1 through five revisions is the multiple-comparisons problem
 #: hidden in a constant.
 CONFIGURATIONS_TRIED = {"range": 2, "trend": 1, "direction": 1}
+#: Version 2, counted the same way and cumulatively: v1's configurations plus
+#: one v2 model per target, its inputs written down before the tables it reads
+#: existed. No per-group variants were run; each would have been one more.
+CONFIGURATIONS_TRIED_V2 = {"range": 3, "trend": 2, "direction": 2}
+
+#: When v2's results could first be looked at, v1's run had already looked at
+#: the holdout once (2026-09-27).
+HOLDOUT_SECOND_LOOK = ("The 2026 holdout was first looked at by version 1's run on 2026-09-27; this is a second "
+                       "look, reported and not used to choose anything.")
 
 #: The confidence interval: 2,000 resamples with a fixed seed, as the scoreboard.
 BOOTSTRAP_RESAMPLES = 2000
@@ -120,14 +137,18 @@ def walk_forward(spec: ModelSpec, t: Table) -> List[Record]:
     return records
 
 
-def run(market: MarketData, model_keys: Sequence[str], underlyings: Sequence[str]) -> Dict[str, List[Record]]:
-    """Walk every model forward on every underlying; keep the sessions all models forecast."""
+def run(market: MarketData, model_keys: Sequence[str], underlyings: Sequence[str],
+        context: Optional[ctxmod.Context] = None) -> Dict[str, List[Record]]:
+    """
+    Walk every model forward on every underlying; keep the sessions all models
+    forecast. `context` is v2's inputs; without it a v2 model forecasts nothing.
+    """
     vix = market.vix.closes()
     by_model: Dict[str, List[Record]] = {k: [] for k in model_keys}
     for name in underlyings:
-        t = build_table(name, market.series[name].sessions, vix, market.is_expiry(name))
+        t = build_table(name, market.series[name].sessions, vix, market.is_expiry(name), context=context)
         for key in model_keys:
-            by_model[key].extend(walk_forward(MODELS[key], t))
+            by_model[key].extend(walk_forward(SPECS[key], t))
     common = None
     for key in model_keys:
         days = {(r.underlying, r.day) for r in by_model[key]}
@@ -150,7 +171,8 @@ def summarize(spec: ModelSpec, records: Sequence[Record]) -> Dict[str, Any]:
         loss, base = _mean(r.scores["loss"] for r in rows), _mean(r.scores["baselineLoss"] for r in rows)
         by_underlying[name] = {"n": len(rows), "loss": _r(loss), "baselineLoss": _r(base), "skill": _skill(loss, base)}
     out["byUnderlying"] = by_underlying
-    out["configurationsTried"] = CONFIGURATIONS_TRIED[spec.target]
+    tried = CONFIGURATIONS_TRIED_V2 if spec.version == MODEL_VERSION_V2 else CONFIGURATIONS_TRIED
+    out["configurationsTried"] = tried[spec.target]
     out["notes"] = notes(spec)
     return out
 
@@ -249,7 +271,43 @@ def geometric_baseline_check(records: Sequence[Record], market: MarketData) -> O
     return out
 
 
+def compare(v1: Sequence[Record], v2: Sequence[Record]) -> Dict[str, Optional[Dict[str, Any]]]:
+    """
+    v2 against v1, paired session by session: per period, both mean losses
+    and the 95% interval of mean(v1 loss − v2 loss), resampling session dates
+    as everywhere else. Positive means v2 was better. Only sessions both
+    forecast count; `run` already made those the same.
+    """
+    base = {(r.underlying, r.day): r for r in v1}
+    pairs = [(base[(r.underlying, r.day)], r) for r in v2 if (r.underlying, r.day) in base]
+    out: Dict[str, Optional[Dict[str, Any]]] = {}
+    for split in SPLITS:
+        rows = [(a, b) for a, b in pairs if a.split == split]
+        if not rows:
+            out[split] = None
+            continue
+        v1_loss, v2_loss = _mean(a.scores["loss"] for a, _ in rows), _mean(b.scores["loss"] for _, b in rows)
+        lo, hi = bootstrap_by_day([(a.day, a.scores["loss"] - b.scores["loss"]) for a, b in rows])
+        out[split] = {"n": len(rows), "v1Loss": _r(v1_loss), "v2Loss": _r(v2_loss),
+                      "skillVsV1": _skill(v2_loss, v1_loss), "diffCiLow": _r(lo), "diffCiHigh": _r(hi)}
+    return out
+
+
+def beats_v1(comparison: Mapping[str, Any]) -> bool:
+    """The registration rule: on validation, the whole 95% interval of v1 loss − v2 loss is above zero."""
+    v = comparison.get("validation")
+    return bool(v) and v.get("diffCiLow") is not None and v["diffCiLow"] > 0
+
+
 def notes(spec: ModelSpec) -> str:
+    if spec.version == MODEL_VERSION_V2:
+        return (
+            f"Version 2: {spec.compares_with}'s inputs plus the pre-open context (analysis/context.py), each "
+            "strictly from before the session. Walk-forward as v1, expanding window refitted monthly, scored on the "
+            "sessions all seven v1 and v2 models could forecast. Registered only because its validation loss beat "
+            f"{spec.compares_with}'s with a 95% interval above zero (versusV1). " + HOLDOUT_SECOND_LOOK
+            + " History is not what makes a model Proven: only live forecasts are."
+        )
     text = (
         "Walk-forward, expanding window refitted monthly; each session forecast from sessions before it. "
         f"At least {MIN_TRAIN_SESSIONS} training sessions. Scored only on sessions every v1 model could "
@@ -267,8 +325,17 @@ def notes(spec: ModelSpec) -> str:
 
 def registration(spec: ModelSpec, backtest: Mapping[str, Any]) -> Dict[str, Any]:
     """POST /api/Forecasts/models body."""
-    return {"key": spec.key, "version": MODEL_VERSION, "target": spec.target, "description": spec.description,
+    return {"key": spec.key, "version": spec.version, "target": spec.target, "description": spec.description,
             "backtest": dict(backtest)}
+
+
+def registration_v2(spec: ModelSpec, summary: Mapping[str, Any], comparison: Mapping[str, Any]) -> Dict[str, Any]:
+    """A v2 model's body: its own backtest against the baseline, and `versusV1`, the comparison it was chosen on."""
+    body = dict(summary)
+    body["versusV1"] = {"model": spec.compares_with, "version": MODEL_VERSION,
+                        **{split: comparison.get(split) for split in SPLITS},
+                        "chosenOn": "validation", "holdout": HOLDOUT_SECOND_LOOK}
+    return registration(spec, body)
 
 
 # --------------------------------------------------------------------- report --
@@ -280,8 +347,88 @@ def report(summaries: Mapping[str, Mapping[str, Any]], market: MarketData, gener
              f"Generated {generated:%Y-%m-%d %H:%M} IST. Walk-forward, expanding window, refitted monthly. "
              "Loss is lower-is-better; skill = 1 − loss / baseline loss; the CI is a 95% bootstrap of "
              "(baseline loss − loss) by session date. Nothing below makes a model Proven — only live, scored "
-             "forecasts do.", "", "## Data", "",
-             "| Series | Sessions | First | Last | Days left out |", "| --- | --- | --- | --- | --- |"]
+             "forecasts do.", ""]
+    lines += _data_section(market)
+    for key, summary in summaries.items():
+        lines += _model_section(key, summary, geometric.get(key))
+
+    lines += ["## Reading this honestly", "",
+              "- The three indices move together; pooled n overstates the independent evidence. The CI "
+              "resamples days, not forecasts, for that reason.",
+              "- The validation and holdout periods were not used to choose anything: every input, window and "
+              "penalty was fixed in code before the first run.",
+              "- A range model beating a 20-day average is the expected result — volatility clusters, and the "
+              "literature has shown it for decades. The question the live scoreboard answers is whether the "
+              "margin survives forecasts written before the open.",
+              "- Direction is a control. Skill there should be read as a possible leak before it is read as an "
+              "edge.", ""]
+    return "\n".join(lines)
+
+
+def report_v2(summaries: Mapping[str, Mapping[str, Any]], comparisons: Mapping[str, Mapping[str, Any]],
+              market: MarketData, coverage: Sequence[Tuple[str, int, Optional[date]]], sessions: int,
+              generated: datetime, geometric: Mapping[str, Any]) -> str:
+    """The version 2 report (logs/analysis/backtest-v2-<date>.md): v2 against v1, and what gets registered."""
+    lines = [f"# Analysis backtest — version 2 ({MODEL_VERSION_V2}) against version 1 ({MODEL_VERSION})", "",
+             f"Generated {generated:%Y-%m-%d %H:%M} IST. Both versions walked forward together and scored on the "
+             "same sessions (those all seven models could forecast). A v2 model is registered only when, on "
+             "validation (2025), the 95% interval of mean(v1 loss − v2 loss), resampling session dates, lies "
+             "above zero. " + HOLDOUT_SECOND_LOOK, ""]
+    lines += ["## Version 2 against version 1", "",
+              "| v2 model | v1 model | Period | n | v1 loss | v2 loss | Skill vs v1 | (v1 − v2) CI 95% |",
+              "| --- | --- | --- | --- | --- | --- | --- | --- |"]
+    decisions = []
+    for key, comparison in comparisons.items():
+        spec = SPECS[key]
+        for split in SPLITS:
+            c = comparison.get(split)
+            label = split + (" (second look)" if split == "holdout" else "")
+            if c is None:
+                lines.append(f"| {key} | {spec.compares_with} | {label} | 0 | — | — | — | — |")
+                continue
+            lines.append(f"| {key} | {spec.compares_with} | {label} | {c['n']} | {_f(c['v1Loss'])} | "
+                         f"{_f(c['v2Loss'])} | {_f(c['skillVsV1'])} | {_f(c['diffCiLow'])} to {_f(c['diffCiHigh'])} |")
+        v = comparison.get("validation")
+        if beats_v1(comparison):
+            decisions.append(f"- **{key}: registered.** On validation its loss beat {spec.compares_with}'s with the "
+                             f"whole interval above zero ({_f(v['diffCiLow'])} to {_f(v['diffCiHigh'])}).")
+        elif v is None:
+            decisions.append(f"- **{key}: not registered.** It forecast no validation session; "
+                             f"{spec.compares_with} stays.")
+        else:
+            decisions.append(f"- **{key}: not registered; version 2 added nothing here.** The validation interval "
+                             f"({_f(v['diffCiLow'])} to {_f(v['diffCiHigh'])}) does not exclude zero. "
+                             f"{spec.compares_with} stays.")
+    lines += ["", "## Decision", ""] + decisions
+    lines += ["", "Configurations tried, cumulative with version 1: " + ", ".join(
+        f"{t} {n}" for t, n in CONFIGURATIONS_TRIED_V2.items()) + ". Nothing was tuned: the v2 inputs, the "
+        "transforms, the windows and the ridge penalty were written down before the context tables existed.", ""]
+
+    lines += _data_section(market)
+    lines += ["### Context inputs", "",
+              f"Sessions with a value, of {sessions} NIFTY sessions (a model forecasts only where all its inputs "
+              "exist).", "", "| Input | Sessions | First |", "| --- | --- | --- |"]
+    lines += [f"| {name} | {n} | {first or '—'} |" for name, n, first in coverage]
+    lines.append("")
+    for key, summary in summaries.items():
+        lines += _model_section(key, summary, geometric.get(key))
+
+    lines += ["## Reading this honestly", "",
+              "- Registration is decided on validation alone. The holdout row is a second look: v1's run saw it "
+              "first, so it is evidence, not a test.",
+              "- More inputs fit noise more easily. The walk-forward refits monthly on the past only, so an input "
+              "that only fits noise shows up as a worse v2 loss, not a better one.",
+              "- The three indices move together and share every context input; the CI resamples days, not "
+              "forecasts.",
+              "- Direction is a control. A v2 direction model that beats v1 is a reason to look for a leak before "
+              "it is a finding.",
+              "- GIFT Nifty, news and the earnings load have no history and are in no model; they are recorded on "
+              "each live forecast (`liveOnly`) until there is enough to test them.", ""]
+    return "\n".join(lines)
+
+
+def _data_section(market: MarketData) -> List[str]:
+    lines = ["## Data", "", "| Series | Sessions | First | Last | Days left out |", "| --- | --- | --- | --- | --- |"]
     for name, series in list(market.series.items()) + [("INDIAVIX", market.vix)]:
         lines.append(f"| {name} | {len(series.sessions)} | {series.first or '—'} | {series.last or '—'} | "
                      f"{len(series.dropped)} |")
@@ -296,52 +443,44 @@ def report(summaries: Mapping[str, Mapping[str, Any]], market: MarketData, gener
         lines.append("- Sessions taken from live_bars (not archived to candles yet): "
                      + ", ".join(f"{k} {v}" for k, v in live.items() if v))
     lines.append("")
+    return lines
 
-    for key, summary in summaries.items():
-        spec = MODELS[key]
-        is_range = spec.target == "range"
-        lines += [f"## {key}", "", spec.description, "",
-                  "| Period | From | To | n | Loss | Baseline | Skill | Diff CI 95% |"
-                  + (" Coverage 80% | Baseline cov. | Bucket Brier | Baseline Brier |" if is_range else ""),
-                  "| --- | --- | --- | --- | --- | --- | --- | --- |"
-                  + (" --- | --- | --- | --- |" if is_range else "")]
-        for split in SPLITS:
-            s = summary[split]
-            if s is None:
-                lines.append(f"| {split} | — | — | 0 | — | — | — | — |" + (" — | — | — | — |" if is_range else ""))
-                continue
-            row = (f"| {split} | {s['from'] or '—'} | {s['to'] or '—'} | {s['n']} | {_f(s['loss'])} | "
-                   f"{_f(s['baselineLoss'])} | {_f(s['skill'])} | {_f(s.get('diffCiLow'))} to "
-                   f"{_f(s.get('diffCiHigh'))} |")
-            if is_range:
-                row += (f" {_f(s.get('coverage80'))} | {_f(s.get('baselineCoverage80'))} | "
-                        f"{_f(s.get('bucketBrier'))} | {_f(s.get('baselineBucketBrier'))} |")
-            lines.append(row)
-        lines += ["", "By underlying (all periods): " + ", ".join(
-            f"{k} n={v['n']} skill={_f(v['skill'])}" for k, v in summary["byUnderlying"].items()), ""]
-        for split in SPLITS:
-            cal = (summary[split] or {}).get("calibration") or []
-            if cal:
-                lines.append(f"Calibration, {split}: " + "; ".join(
-                    f"{c['from']:.1f}-{c['to']:.1f} n={c['n']} said {c['meanP']:.2f} happened {c['hitRate']:.2f}"
-                    for c in cal))
-        if key in geometric and geometric[key]:
-            lines += ["", "Against a 20-session geometric-mean baseline instead: " + "; ".join(
-                f"{split} skill {_f(v['skillVsGeometric'])} (geometric loss {_f(v['geometricLoss'])})"
-                for split, v in geometric[key].items())]
-        lines += ["", f"Configurations tried for `{spec.target}`: {summary['configurationsTried']}.", ""]
 
-    lines += ["## Reading this honestly", "",
-              "- The three indices move together; pooled n overstates the independent evidence. The CI "
-              "resamples days, not forecasts, for that reason.",
-              "- The validation and holdout periods were not used to choose anything: every input, window and "
-              "penalty was fixed in code before the first run.",
-              "- A range model beating a 20-day average is the expected result — volatility clusters, and the "
-              "literature has shown it for decades. The question the live scoreboard answers is whether the "
-              "margin survives forecasts written before the open.",
-              "- Direction is a control. Skill there should be read as a possible leak before it is read as an "
-              "edge.", ""]
-    return "\n".join(lines)
+def _model_section(key: str, summary: Mapping[str, Any], geometric: Optional[Mapping[str, Any]]) -> List[str]:
+    spec = SPECS[key]
+    is_range = spec.target == "range"
+    lines = [f"## {key} ({spec.version})", "", spec.description, "",
+             "| Period | From | To | n | Loss | Baseline | Skill | Diff CI 95% |"
+             + (" Coverage 80% | Baseline cov. | Bucket Brier | Baseline Brier |" if is_range else ""),
+             "| --- | --- | --- | --- | --- | --- | --- | --- |"
+             + (" --- | --- | --- | --- |" if is_range else "")]
+    for split in SPLITS:
+        s = summary[split]
+        if s is None:
+            empty = "| — " * (8 if is_range else 4)
+            lines.append(f"| {split} | — | — | 0 {empty}|")
+            continue
+        row = (f"| {split} | {s['from'] or '—'} | {s['to'] or '—'} | {s['n']} | {_f(s['loss'])} | "
+               f"{_f(s['baselineLoss'])} | {_f(s['skill'])} | {_f(s.get('diffCiLow'))} to "
+               f"{_f(s.get('diffCiHigh'))} |")
+        if is_range:
+            row += (f" {_f(s.get('coverage80'))} | {_f(s.get('baselineCoverage80'))} | "
+                    f"{_f(s.get('bucketBrier'))} | {_f(s.get('baselineBucketBrier'))} |")
+        lines.append(row)
+    lines += ["", "By underlying (all periods): " + ", ".join(
+        f"{k} n={v['n']} skill={_f(v['skill'])}" for k, v in summary["byUnderlying"].items()), ""]
+    for split in SPLITS:
+        cal = (summary[split] or {}).get("calibration") or []
+        if cal:
+            lines.append(f"Calibration, {split}: " + "; ".join(
+                f"{c['from']:.1f}-{c['to']:.1f} n={c['n']} said {c['meanP']:.2f} happened {c['hitRate']:.2f}"
+                for c in cal))
+    if geometric:
+        lines += ["", "Against a 20-session geometric-mean baseline instead: " + "; ".join(
+            f"{split} skill {_f(v['skillVsGeometric'])} (geometric loss {_f(v['geometricLoss'])})"
+            for split, v in geometric.items())]
+    lines += ["", f"Configurations tried for `{spec.target}`: {summary['configurationsTried']}.", ""]
+    return lines
 
 
 def _reason_counts(series: SessionSeries) -> List[Tuple[str, int]]:
