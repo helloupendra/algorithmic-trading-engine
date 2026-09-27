@@ -509,6 +509,13 @@ class ForwarderSuppressionTests(unittest.TestCase):
                 tn.is_superseded({"Title": title, "Source": "strategyrun"}), title
             )
 
+    def test_record_only_events_are_not_forwarded(self):
+        """The API keeps them off Telegram; a hand-started forwarder must too."""
+        self.assertTrue(tn.is_record_only(
+            {"Title": "Feed stalled — FulcrumBuy on NIFTY", "Source": "strategyrun", "RecordOnly": True}))
+        self.assertFalse(tn.is_record_only({"Title": "Feed stalled — FulcrumBuy on NIFTY", "Source": "strategyrun"}))
+        self.assertFalse(tn.is_record_only({"Title": "x", "RecordOnly": False}))
+
 
 class RenderTests(unittest.TestCase):
     def test_the_startup_summary_passes_through_as_html(self):

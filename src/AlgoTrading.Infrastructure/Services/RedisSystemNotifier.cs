@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using AlgoTrading.Application.Interfaces;
 using Microsoft.Extensions.Logging;
 using StackExchange.Redis;
@@ -24,7 +25,7 @@ public class RedisSystemNotifier : ISystemNotifier
         _logger = logger;
     }
 
-    public async Task NotifyAsync(
+    public Task NotifyAsync(
         NotificationCategory category,
         NotificationSeverity severity,
         string title,
@@ -33,25 +34,68 @@ public class RedisSystemNotifier : ISystemNotifier
         string? symbol = null,
         long? simulationRunId = null,
         CancellationToken cancellationToken = default)
-    {
-        var payload = new
-        {
-            Title = title,
-            Message = message,
+        => PublishAsync(Payload(category, severity, title, message, underlying, symbol, simulationRunId, recordOnly: false), title);
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// The same payload with <c>RecordOnly</c> set: the subscriber writes the
+    /// row and leaves Telegram alone.
+    /// </remarks>
+    public Task RecordAsync(
+        NotificationCategory category,
+        NotificationSeverity severity,
+        string title,
+        string message,
+        string? underlying = null,
+        string? symbol = null,
+        long? simulationRunId = null,
+        CancellationToken cancellationToken = default)
+        => PublishAsync(Payload(category, severity, title, message, underlying, symbol, simulationRunId, recordOnly: true), title);
+
+    /// <summary>
+    /// The JSON published on <c>alerts:new</c>, in the PascalCase shape
+    /// <c>AlertEventPayload</c> binds (the subscriber deserializes with no
+    /// options, so binding is case-sensitive).
+    /// </summary>
+    public static string Payload(
+        NotificationCategory category,
+        NotificationSeverity severity,
+        string title,
+        string message,
+        string? underlying,
+        string? symbol,
+        long? simulationRunId,
+        bool recordOnly)
+        => JsonSerializer.Serialize(new Published(
+            title,
+            message,
             // The stream shows this, so make it read like a place, not a class name.
-            Source = category.ToString().ToLowerInvariant(),
-            Underlying = underlying,
-            Symbol = symbol,
-            Severity = severity.ToString().ToLowerInvariant(),
-            SimulationRunId = simulationRunId,
-        };
+            category.ToString().ToLowerInvariant(),
+            underlying,
+            symbol,
+            severity.ToString().ToLowerInvariant(),
+            simulationRunId,
+            recordOnly));
 
+    /// <param name="RecordOnly">
+    /// Written only when true, so every message that goes to Telegram is
+    /// exactly what it was before record-only existed.
+    /// </param>
+    private sealed record Published(
+        string Title,
+        string Message,
+        string Source,
+        string? Underlying,
+        string? Symbol,
+        string Severity,
+        long? SimulationRunId,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool RecordOnly);
+
+    private async Task PublishAsync(string payload, string title)
+    {
         try
         {
-            await _redis.GetSubscriber().PublishAsync(
-                RedisChannel.Literal(Channel),
-                JsonSerializer.Serialize(payload));
+            await _redis.GetSubscriber().PublishAsync(RedisChannel.Literal(Channel), payload);
         }
         catch (Exception ex)
         {

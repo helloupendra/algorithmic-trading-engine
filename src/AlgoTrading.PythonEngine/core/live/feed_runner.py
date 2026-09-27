@@ -14,7 +14,8 @@ word for word; the difference is that a vendor now gets all of it by being a
     symbols the feed carries of its own (VendorFeed.extra_symbols);
   * the heartbeat, with an honest status;
   * the watchdogs: socket down, connected but silent, credential refused,
-    login refused.
+    login refused — each cause also told to the System channel, once per ten
+    minutes (core/live/watchdog_alerts.py).
 """
 
 import os
@@ -32,6 +33,8 @@ from core.live.greeks_enricher import GreeksEnricher
 from core.live.tick_pump import TickPump
 from core.live.reconnect_policy import describe, reconnect_delay
 from core.live.vendor_feed import FeedEvent
+from core.live import watchdog_alerts
+from core.live.watchdog_alerts import WatchdogAlerts
 
 
 def utc_now_iso() -> str:
@@ -154,6 +157,10 @@ class FeedRunner:
         self._publish_errors = 0
         self._market_open_cache = {"value": None, "checked_at": 0.0}
         self._stop = threading.Event()
+
+        # Each watchdog restart's cause, to the desk's System channel: at most
+        # once per cause per ten minutes (core/live/watchdog_alerts.py).
+        self.watchdog_alerts = WatchdogAlerts(feed.key, publisher)
 
     # ================================================================ ticks
 
@@ -607,6 +614,15 @@ class FeedRunner:
                 print(f"[{self._feed.key}] {describe(tickless_cycles, delay, self.last_error)}", flush=True)
                 self._stop.wait(delay)
 
+    def _watchdog(self, cause: str, text: str, cause_detail: str = "") -> None:
+        """
+        The WATCHDOG line in the feed's log, word for word as before (Sentinel's
+        logs agent reads it), and the same cause to the System channel.
+        """
+        print(f"[{self._feed.key}] WATCHDOG: {text}", flush=True)
+        detail = text if not cause_detail else f"{text} ({cause_detail})"
+        self.watchdog_alerts.report(cause, detail)
+
     def _connect_once_and_watch(self) -> None:
         self.restart_required = False
         self.socket_connected = False
@@ -630,15 +646,17 @@ class FeedRunner:
             self.check_pending_subscriptions()
 
             if self.refused_detail:
-                print(f"[{self._feed.key}] WATCHDOG: the vendor refused the login ({self.refused_detail}) — "
-                      f"trying again in {self.REFUSED_BACKOFF_SECONDS}s.", flush=True)
+                self._watchdog(watchdog_alerts.REFUSED,
+                               f"the vendor refused the login ({self.refused_detail}) — "
+                               f"trying again in {self.REFUSED_BACKOFF_SECONDS}s.")
                 self._stop.wait(self.REFUSED_BACKOFF_SECONDS)
                 self.restart_required = True
                 continue
 
             if self.rejected_credential is not None:
-                print(f"[{self._feed.key}] WATCHDOG: the credential was rejected — rebuilding once a "
-                      f"different one exists.", flush=True)
+                self._watchdog(watchdog_alerts.CREDENTIAL,
+                               "the credential was rejected — rebuilding once a different one exists.",
+                               cause_detail=self.last_error)
                 self.restart_required = True
                 continue
 
@@ -646,16 +664,21 @@ class FeedRunner:
                 down_base = self.disconnected_since if self.disconnected_since is not None else connect_started
                 down_for = time.monotonic() - down_base
                 if down_for > self.DISCONNECT_RESTART_SECONDS:
-                    print(f"[{self._feed.key}] WATCHDOG: socket down for {int(down_for)}s — "
-                          f"forcing a full reconnect.", flush=True)
+                    self._watchdog(watchdog_alerts.DISCONNECT,
+                                   f"socket down for {int(down_for)}s — forcing a full reconnect.",
+                                   cause_detail=self.last_error)
                     self.restart_required = True
                 continue
 
             if self.subscribed:
                 silent = feed_silent_for(time.monotonic(), self.socket_connected, self.connected_at, self.last_message)
                 if silent is not None and silent > self.STALL_AFTER_SECONDS and self.is_market_open() is True:
-                    print(f"[{self._feed.key}] WATCHDOG: connected but silent for {int(silent)}s in open "
-                          f"session — forcing a full reconnect.", flush=True)
+                    self._watchdog(watchdog_alerts.SILENT,
+                                   f"connected but silent for {int(silent)}s in open session — forcing a full "
+                                   f"reconnect.",
+                                   cause_detail=(f"{len(self.subscribed)} symbol(s) subscribed"
+                                                 + ("; not one message since the connect"
+                                                    if self.last_message is None else "")))
                     self.restart_required = True
 
         print(f"[{self._feed.key}] closing the connection", flush=True)

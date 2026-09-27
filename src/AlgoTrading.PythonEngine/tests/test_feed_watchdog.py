@@ -15,6 +15,7 @@ from core.feed_watchdog import assess_feed
 
 STALL = 90.0
 REPEAT = 600.0
+CONFIRM = 180.0
 
 
 def assess(**overrides):
@@ -27,6 +28,7 @@ def assess(**overrides):
         market_open=True,
         stall_after=STALL,
         repeat_after=REPEAT,
+        confirm_after=CONFIRM,
     )
     kwargs.update(overrides)
     return assess_feed(**kwargs)
@@ -64,10 +66,43 @@ class FeedWatchdogTests(unittest.TestCase):
         self.assertEqual(verdict.action, "quiet")
 
     def test_a_standing_stall_is_not_repeated_immediately(self):
+        # Reported at 185 s of silence, so the 180 s confirmation is already made.
         verdict = assess(
-            now=1000.0, last_tick_at=800.0, currently_stalled=True, last_report_at=900.0
+            now=1000.0, last_tick_at=800.0, currently_stalled=True, last_report_at=985.0
         )
         self.assertEqual(verdict.action, "quiet", "one alert per stall, not one per check")
+
+    def test_a_stall_reported_at_90s_is_reported_again_at_180s(self):
+        """
+        The API sends a stall to Telegram only at 180 s (after the feed's own
+        120 s reconnect). Without this report it would hear nothing more until
+        the ten-minute repeat, and a real outage would reach the desk late.
+        """
+        verdict = assess(
+            now=985.0, last_tick_at=800.0, currently_stalled=True, last_report_at=895.0
+        )
+        self.assertEqual(verdict.action, "still-stalled")
+        self.assertTrue(verdict.is_stalled)
+        self.assertEqual(verdict.silent_seconds, 185)
+
+    def test_the_180s_report_is_made_once(self):
+        verdict = assess(
+            now=1015.0, last_tick_at=800.0, currently_stalled=True, last_report_at=985.0
+        )
+        self.assertEqual(verdict.action, "quiet")
+
+    def test_not_before_180s(self):
+        verdict = assess(
+            now=970.0, last_tick_at=800.0, currently_stalled=True, last_report_at=895.0
+        )
+        self.assertEqual(verdict.action, "quiet")
+
+    def test_a_stall_first_seen_past_180s_is_not_reported_twice(self):
+        """A runner that starts into a long silence reports it once, not stall-then-confirm."""
+        verdict = assess(
+            now=1015.0, last_tick_at=None, listening_since=700.0, currently_stalled=True, last_report_at=1000.0
+        )
+        self.assertEqual(verdict.action, "quiet")
 
     def test_a_standing_stall_is_repeated_after_the_interval(self):
         verdict = assess(

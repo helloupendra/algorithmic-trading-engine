@@ -14,7 +14,14 @@ API: `GET/POST /api/Incidents` (admin only).
 
 - **It changes nothing in production.** It reads, and it writes only its own
   incidents and its heartbeat. A fix is proposed in the incident; a person
-  applies it.
+  applies it. The one feed fix that is automatic lives in the API, not here:
+  `FeedFailoverService` switches a silent Dhan feed to FYERS, once a day, and
+  ships as a dry run (see [Dhan connector](dhan_connector.md), "When Dhan goes
+  silent during the session"). It measures silence exactly as `feed-silent`
+  does — the newest live tick per exchange in `market:ticks`, from the later of
+  the tick and the open — but acts later: `feed-silent` opens at 90 s, the
+  feed rebuilds its own connection at 120 s, and the failover acts only on
+  150 s on two checks in a row.
 - **Nothing it reads is ever executed.** Logs carry text from outside — news
   headlines, vendor messages — and a watchman that acted on what it read could
   be told what to do by a headline. Agents can run only a fixed allowlist of

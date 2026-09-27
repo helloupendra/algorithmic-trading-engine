@@ -98,6 +98,16 @@ builder.Services.AddSingleton<AlgoTrading.Api.Services.FeedSupervisorRegistry>()
 // What each connector is delivering right now, for its page in the Connectors module.
 builder.Services.AddScoped<AlgoTrading.Api.Services.ProviderUsageService>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.ChainPollerSupervisor>();
+// The automatic switch from a silent Dhan feed to FYERS: what it reads (the tick
+// stream), what it drives (the supervisors above) and what it asks (FYERS's own
+// profile, Dhan's). Dry run unless FeedFailover:DryRun is false.
+builder.Services.Configure<AlgoTrading.Api.Configuration.FeedFailoverOptions>(
+    builder.Configuration.GetSection(AlgoTrading.Api.Configuration.FeedFailoverOptions.SectionName));
+builder.Services.AddSingleton<AlgoTrading.Api.Services.IFeedTickSource, AlgoTrading.Api.Services.RedisFeedTickSource>();
+builder.Services.AddSingleton<AlgoTrading.Api.Services.IFeedFailoverFeeds, AlgoTrading.Api.Services.SupervisedFeedFailoverFeeds>();
+builder.Services.AddSingleton<AlgoTrading.Api.Services.IFeedFailoverChecks, AlgoTrading.Api.Services.FeedFailoverChecks>();
+// Which runner feed-stall reports reach Telegram: one per underlying per ten minutes.
+builder.Services.AddSingleton<AlgoTrading.Api.Services.FeedStallAlertGate>();
 // The signal alerter process, same shape. It was never registered, so every call
 // to /api/Alerts/status, start and stop answered 500.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AlertsSupervisor>();
@@ -139,6 +149,8 @@ builder.Services.AddHostedService<AlgoTrading.Api.Services.LiveRunStartupReconci
 builder.Services.AddHostedService<AlgoTrading.Api.Services.StrategyRiskGuardService>();
 // Squares off each run at its market's close (NSE/BSE 15:30, MCX at the MCX close) and stops the feeds
 builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketHoursService>();
+// During the NSE session: a Dhan feed silent past its own reconnect is switched to FYERS (once a day), or in a dry run reported.
+builder.Services.AddHostedService<AlgoTrading.Api.Services.FeedFailoverService>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.NightlyArchiveService>();
 // Hand-placed positions held overnight: kept on the feed, settled at expiry
 // (after the close, and on start-up for anything that expired while down).

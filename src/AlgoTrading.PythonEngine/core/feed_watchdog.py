@@ -23,6 +23,15 @@ DEFAULT_STALL_AFTER_SECONDS = 90
 #: While it stays stalled, say so again only this often.
 DEFAULT_REPEAT_AFTER_SECONDS = 600
 
+#: A stall first reported before this age is reported once more when it gets
+#: here. The API sends a runner's stall to Telegram only at this age
+#: (FeedStallAlertGate, 180 s): the feed reconnects itself after 120 s of
+#: silence (core/live/feed_runner.py), and the 90 s report alone described
+#: blips that were already healing — 572 messages on 25 Sep 2026. Without
+#: this second report the API would hear nothing between 90 s and the
+#: ten-minute repeat, and a real outage would reach the desk ten minutes late.
+DEFAULT_CONFIRM_AFTER_SECONDS = 180
+
 
 class FeedVerdict(NamedTuple):
     """What to do about the feed, and how long it has been silent."""
@@ -50,6 +59,7 @@ def assess_feed(
     market_open: Optional[bool],
     stall_after: float = DEFAULT_STALL_AFTER_SECONDS,
     repeat_after: float = DEFAULT_REPEAT_AFTER_SECONDS,
+    confirm_after: float = DEFAULT_CONFIRM_AFTER_SECONDS,
 ) -> FeedVerdict:
     """
     Decide whether a feed has gone dry, stayed dry, or come back.
@@ -62,6 +72,10 @@ def assess_feed(
     only means something while the market is open, and an unanswerable question
     is not grounds to cry wolf — but a *recovery* is always worth reporting,
     since it closes a warning that has already gone out.
+
+    A stall reported before ``confirm_after`` seconds of silence is reported
+    once more ("still-stalled") when the silence reaches it, then every
+    ``repeat_after``.
     """
     silent_since = last_tick_at if last_tick_at is not None else listening_since
     silent_seconds = int(max(0.0, now - silent_since))
@@ -78,6 +92,11 @@ def assess_feed(
         return FeedVerdict("stalled", silent_seconds)
 
     if now - last_report_at >= repeat_after:
+        return FeedVerdict("still-stalled", silent_seconds)
+
+    # Stateless: the last report was made before the silence was confirm_after
+    # old, and now it is.
+    if silent_seconds >= confirm_after and last_report_at - silent_since < confirm_after:
         return FeedVerdict("still-stalled", silent_seconds)
 
     return FeedVerdict("quiet", silent_seconds)

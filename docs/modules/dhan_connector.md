@@ -223,6 +223,76 @@ Telegram message at about 08:00 says it worked. Without it, press **Connect** on
 Connectors → Dhan before 09:00. Either way the feed picks up a new token by
 itself; nothing needs restarting.
 
+### When Dhan goes silent during the session (automatic failover)
+
+Step 7 covers the open. For the rest of the session the API's
+`FeedFailoverService` does the same job: on 24 Sep the last Dhan tick was
+11:27:36 and FYERS took over at 11:34:06 only because someone switched by hand;
+unattended, all 26 runs would have stayed blind until the 15:30 square-off.
+
+**It ships as a dry run** (owner's decision, 27 Sep): it watches, logs what it
+would do and sends one message per incident, and changes nothing.
+
+- **When it looks.** Every 15 s from 09:20 IST while NSE is open, and only while
+  Dhan is the feed: the Dhan feed runs and the FYERS feed does not.
+- **What it measures.** The newest live tick per exchange (NSE with NFO, BSE
+  with BFO, MCX) in Redis `market:ticks`, the stream the strategies read. The
+  measurement is Sentinel's feed-silent rule: the tick's `receivedUtc`, replays
+  ignored, the age taken from the later of the tick and the 09:15 open.
+  `live_quotes_latest` is not used: it keeps every symbol's last price forever
+  (127 "prices" from the previous evening on 10 Sep).
+- **What counts as silent.** NSE, or BSE once it has ticked today, older than
+  **150 s on two checks in a row**, with the Dhan process up for more than
+  180 s. MCX is reported but never acted on. The thresholds are staged so each
+  layer gets its turn: at 90 s Sentinel opens an incident and the runners log
+  `FEED STALLED`; at 120 s the feed rebuilds its own connection (`WATCHDOG`); at
+  150 s on two checks the failover acts; a runner's stall reaches Telegram at
+  180 s.
+- **FYERS is checked with a real call**: `/api/v3/profile` with the token the
+  FYERS feed would be handed. "Authenticated" in our own table is not proof (10 Sep).
+- **Dry run.** Logs `FEED FAILOVER (dry run) would switch: <ages per exchange>;
+  <Dhan pid, uptime>; FYERS: <answer>; at HH:mm:ss IST` and sends **one**
+  System-channel message per incident, with Dhan's `/profile` answer and the
+  feed's last heartbeat. Writes nothing.
+- **Live** (`FeedFailover:DryRun` false). Records `feed.failover.<date>` in
+  system settings first, then does what `market-open.sh` does at the open: stops
+  the Dhan feed and starts the FYERS feed and the FYERS chain poller (Dhan's
+  chain recorder keeps running). It then expects fresh FYERS ticks within 90 s
+  and sends one critical alert with the cause and the result. **At most one
+  switch a day**, surviving API restarts; it **never switches back**. Return to
+  Dhan by hand on Data → Feeds.
+- **FYERS not signed in.** `Dhan silent and FYERS not signed in — sign in to
+  FYERS` every 10 minutes while the silence lasts; a live failover switches as
+  soon as the sign-in lands.
+- **An incident ends** when the ticks are fresh again: `FEED FAILOVER: recovered
+  after Ns` in the log, once. The recovery is not sent.
+
+**Turning the dry run off.** On the server, in
+`src/AlgoTrading.Api/appsettings.Local.json`:
+
+```json
+"FeedFailover": { "DryRun": false }
+```
+
+It is read at every check, so no restart is needed. `"Enabled": false` switches
+the service off entirely. To keep it from switching for the rest of one day,
+write any value to the `feed.failover.<yyyy-MM-dd>` system setting.
+
+**Judging a dry run.** All lines are in `logs/api.log`, prefixed
+`FEED FAILOVER`:
+
+| Line | Meaning |
+| --- | --- |
+| `FEED FAILOVER: dry run (logs and one message per incident; switches nothing) — checks every 15 s …` | The service started, and in which mode. |
+| `FEED FAILOVER: Dhan ticks stale on one check at HH:mm:ss IST — …` | One stale check. Followed by nothing when the feed's own reconnect fixed it. |
+| `FEED FAILOVER: Dhan feed silent at HH:mm:ss IST — …` | Two stale checks: an incident. |
+| `FEED FAILOVER (dry run) would switch: …` | FYERS answered, so a live run would have switched here. Once per incident. |
+| `FEED FAILOVER: Dhan says: …` | Dhan's `/profile` and the feed's last heartbeat at that moment. |
+| `FEED FAILOVER: Dhan silent and FYERS not signed in at …` | Would have switched but could not; repeats every 10 minutes. |
+| `FEED FAILOVER: recovered after Ns (silent since …, fresh at …)` | The incident's end. A short gap after a `would switch` line means the switch would not have been needed. |
+| `FEED FAILOVER: incident closed without a switch — …` | Someone switched by hand, Dhan was restarted, or the session closed. |
+| `FEED FAILOVER: not acting — today's one switch was already made (…)` | The day's switch is used. |
+
 ## Live feed
 
 The adapter is `market_data/live/vendors/dhan.py`, started from Live feeds like
@@ -255,6 +325,12 @@ every other vendor.
   state, and a contract's last change is always sent, even if it then goes quiet.
 - **Depth** (five levels) is stored with each tick in the database, but left
   out of the Redis stream that strategies read.
+- **Why it reconnected.** Each time the feed's watchdog rebuilds the connection
+  (the vendor refused the login, the credential was rejected, the socket stayed
+  down, or it stayed up and carried nothing), the cause goes to the System
+  channel as well as the feed's log, at most once per cause per 10 minutes
+  (`core/live/watchdog_alerts.py`). On 25 Sep the desk got 572 feed alerts and
+  none of them said why.
 
 Measured on MCX on 2026-09-14: 66 contracts, about 55 updates a second in total,
 with price, bid and ask with sizes, volume, OI and exchange time on every quote.
@@ -541,3 +617,5 @@ is.
 | `tests/AlgoTrading.UnitTests/DhanChainPollerTests.cs` | Chain rows, expiry choice, closed markets, rejected tokens, the on/off switch across restarts and its warning, at-the-money selection |
 | `market_data/live/vendors/dhan.py`, `tests/test_dhan_feed.py` (Python engine) | Live feed adapter: binary packets, subscribe batching, credentials from the API, one update a second per contract, the universe |
 | `scripts/market-open.sh` | The morning: Dhan status, import, feed and recorder; FYERS as the fallback |
+| `Api/Services/FeedFailoverService.cs` (+ `FeedFailoverPorts.cs`, `FeedFailoverAdapters.cs`) | The same fallback during the session: tick ages from `market:ticks`, the FYERS profile check, the once-a-day switch; dry run by default (`FeedFailover:DryRun`) |
+| `tests/AlgoTrading.UnitTests/FeedFailoverServiceTests.cs` | The failover under a fake clock, stream and feeds: fresh, grace, one stale check, dry run, the switch, the FYERS sign-in reminder, one switch a day across a restart, closed session, before 09:20, per-exchange silence, recovery |

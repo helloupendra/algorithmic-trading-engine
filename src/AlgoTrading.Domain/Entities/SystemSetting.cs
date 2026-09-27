@@ -104,6 +104,16 @@ public static class SystemSettingKeys
     /// </summary>
     public const string ForecastsLastScoredSession = "forecasts.score.lastSession";
 
+    /// <summary>
+    /// "feed.failover.yyyy-MM-dd": the IST day the automatic switch from Dhan to
+    /// FYERS was made, and what it saw, e.g. "11:30:05 IST: switched Dhan → FYERS
+    /// — NSE silent 212 s (…)". Written before the switch, so an API restart
+    /// that day finds it and never switches a second time. Any value blocks the
+    /// day's switch; nothing deletes it.
+    /// </summary>
+    public static string FeedFailover(DateOnly istDay)
+        => $"feed.failover.{istDay.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)}";
+
     private const string FeedPidPrefix = "feed.";
     private const string StrategyRunPidPrefix = "strategyrun.";
     private const string BacktestRunPidPrefix = "backtestrun.";
