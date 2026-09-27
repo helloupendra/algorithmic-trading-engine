@@ -13,8 +13,8 @@ const pagesOf = (nav: NavWorkspace[], key: string) => nav.find((w) => w.key === 
 const allUrls = (nav: NavWorkspace[]) => nav.flatMap((w) => w.pages.map((p) => p.to))
 
 describe('the registry', () => {
-  it('is the five workspaces, in order', () => {
-    expect(WORKSPACES.map((w) => w.label)).toEqual(['Desk', 'Markets', 'Trade', 'Research', 'System'])
+  it('is the six workspaces, in order', () => {
+    expect(WORKSPACES.map((w) => w.label)).toEqual(['Desk', 'Markets', 'Trade', 'Research', 'Data', 'System'])
   })
 
   it('uses only the grant keys the server knows', () => {
@@ -73,16 +73,17 @@ describe('accessFor and allows', () => {
 })
 
 describe('navFor', () => {
-  it('gives an admin all five workspaces, opening Markets on the chain', () => {
+  it('gives an admin all six workspaces, opening Markets on the chain', () => {
     const nav = navFor(admin)
-    expect(labels(nav)).toEqual(['Desk', 'Markets', 'Trade', 'Research', 'System'])
+    expect(labels(nav)).toEqual(['Desk', 'Markets', 'Trade', 'Research', 'Data', 'System'])
     expect(nav.find((w) => w.key === 'markets')!.to).toBe('/admin/data/chain')
     expect(nav[0].to).toBe('/desk')
   })
 
-  it('never shows a trader System, connectors, feeds or Sentinel pages', () => {
+  it('never shows a trader System, Data, connectors, feeds or Sentinel pages', () => {
     const nav = navFor(traderWith(...GRANT_KEYS))
     expect(labels(nav)).not.toContain('System')
+    expect(labels(nav)).not.toContain('Data')
     const urls = allUrls(nav)
     expect(urls.filter((u) => u.startsWith('/admin'))).toEqual([])
     expect(urls).toContain('/desk')
@@ -162,7 +163,7 @@ describe('locate', () => {
   })
 
   it('respects segment boundaries', () => {
-    expect(at(adminNav, '/admin/data/live')).toBe('System / Feeds')
+    expect(at(adminNav, '/admin/data/live')).toBe('Data / Feeds')
     expect(at(adminNav, '/admin/data/livestream')).toBeNull()
   })
 })

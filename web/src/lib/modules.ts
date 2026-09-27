@@ -2,8 +2,8 @@
  * Workspace registry: the single source of truth for what this console is made
  * of and who may see each part of it.
  *
- * The console is five workspaces (Desk, Markets, Trade, Research, System),
- * each holding tabs. A tab declares what it requires: the Admin role, or one of
+ * The console is six workspaces (Desk, Markets, Trade, Research, Data,
+ * System), each holding tabs. A tab declares what it requires: the Admin role, or one of
  * the module grants the API enforces (PlatformModules on the server). The top
  * bar, the tab strip, the phone's bottom bar and the ⌘K palette all read from
  * here, so a part the user may not use is absent everywhere at once rather
@@ -21,7 +21,7 @@
 
 import type { ComponentType, SVGProps } from 'react'
 import type { MeResponse } from './api'
-import { IconCandles, IconDashboard, IconFlask, IconServer, IconSwitch } from '../components/icons'
+import { IconCandles, IconDashboard, IconDatabase, IconFlask, IconServer, IconSwitch } from '../components/icons'
 
 /** The module keys the server grants to traders (PlatformModules.cs). */
 export const GRANT_KEYS = ['strategies', 'backtesting', 'market-data', 'notebook', 'analysis'] as const
@@ -30,7 +30,7 @@ export type GrantKey = (typeof GRANT_KEYS)[number]
 /** What a tab needs beyond being signed in: the Admin role, or one grant. */
 export type Requirement = 'admin' | GrantKey
 
-export type WorkspaceKey = 'desk' | 'markets' | 'trade' | 'research' | 'system'
+export type WorkspaceKey = 'desk' | 'markets' | 'trade' | 'research' | 'data' | 'system'
 
 /** One of today's pages. */
 export interface PageDef {
@@ -278,10 +278,49 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
     ],
   },
   {
+    // Its own workspace, not a System tab (owner, 27 Sep): what the desk
+    // records and holds is a subject in itself, not plumbing.
+    key: 'data',
+    label: 'Data',
+    home: '/data',
+    description: 'What the desk records and holds: coverage, live feeds, history and instruments.',
+    icon: IconDatabase,
+    tabs: [
+      {
+        key: 'overview',
+        label: 'Overview',
+        home: '/data',
+        requires: 'admin',
+        pages: [{ label: 'Overview', admin: '/admin/data', exact: true, keywords: ['data', 'coverage', 'inventory'] }],
+      },
+      {
+        key: 'feeds',
+        label: 'Feeds',
+        home: '/data/feeds',
+        requires: 'admin',
+        pages: [{ label: 'Feeds', admin: '/admin/data/live', keywords: ['live feeds', 'ingestor', 'watchlist'] }],
+      },
+      {
+        key: 'historical',
+        label: 'Historical',
+        home: '/data/historical',
+        requires: 'admin',
+        pages: [{ label: 'Historical', admin: '/admin/data/historical', keywords: ['backfill', 'candles'] }],
+      },
+      {
+        key: 'instruments',
+        label: 'Instruments',
+        home: '/data/instruments',
+        requires: 'admin',
+        pages: [{ label: 'Instruments', admin: '/admin/data/instruments', keywords: ['masters', 'f&o'] }],
+      },
+    ],
+  },
+  {
     key: 'system',
     label: 'System',
     home: '/system',
-    description: 'Is the platform behaving, and who may use it: health, incidents, data plumbing, people.',
+    description: 'Is the platform behaving, and who may use it: health, incidents, the calendar, connectors, people.',
     icon: IconServer,
     tabs: [
       {
@@ -313,17 +352,11 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         ],
       },
       {
-        key: 'data',
-        label: 'Data',
-        home: '/system/data',
+        key: 'calendar',
+        label: 'Calendar',
+        home: '/system/calendar',
         requires: 'admin',
-        pages: [
-          { label: 'Data', admin: '/admin/data', exact: true, keywords: ['coverage'] },
-          { label: 'Feeds', admin: '/admin/data/live', keywords: ['live feeds', 'ingestor', 'watchlist'] },
-          { label: 'Historical', admin: '/admin/data/historical', keywords: ['backfill', 'candles'] },
-          { label: 'Instruments', admin: '/admin/data/instruments', keywords: ['masters', 'f&o'] },
-          { label: 'Calendar', admin: '/admin/system/calendar', keywords: ['holidays', 'market calendar'] },
-        ],
+        pages: [{ label: 'Calendar', admin: '/admin/system/calendar', keywords: ['holidays', 'market calendar'] }],
       },
       {
         key: 'connectors',
