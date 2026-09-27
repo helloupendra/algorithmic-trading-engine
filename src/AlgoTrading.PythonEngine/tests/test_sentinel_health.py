@@ -266,6 +266,19 @@ class ApiTests(HealthCase):
         self.assertIn("desk.log 08:45:35 IST: starting the API", text)
         self.assertIn("no \"API up\" after it", text)
 
+    def test_a_planned_restart_in_dated_lines_holds_too(self):
+        # say() stamps "%F %T" since 28 Sep 2026; yesterday's restart in the same file must not hold today.
+        self.session.update(nse=False, mcx=False)
+        self.files["desk.log"] = ("2026-09-23 08:45:36  stopping the API (pid 1)\n"
+                                  "2026-09-24 08:45:34  stopping the API (pid 1692373 1692471)\n"
+                                  "2026-09-24 08:45:35  starting the API (Production, http://localhost:5025)\n")
+        start = datetime(2026, 9, 24, 3, 15, 40, tzinfo=timezone.utc)      # 08:45:40 IST
+        self.api_down()
+        for i in range(6):
+            self.assertEqual([], self.check(start + timedelta(seconds=30 * i)))
+        f = self.only(self.check(start + timedelta(seconds=180)), "api-down")
+        self.assertIn("desk.log 08:45:35 IST: starting the API", " ".join(f.evidence))
+
     def test_a_restart_that_failed_is_reported_at_once(self):
         self.session.update(nse=False, mcx=False)
         start = datetime(2026, 9, 24, 3, 15, 40, tzinfo=timezone.utc)      # 08:45:40 IST

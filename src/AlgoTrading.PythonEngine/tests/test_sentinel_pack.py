@@ -187,6 +187,14 @@ class LogWindowTests(PackCase):
                           "desk.log 11:26:41 starting the API (Production, http://localhost:5025)",
                           "desk.log 11:27:20 API up"], lines)
 
+    def test_dated_desk_lines_are_windowed_by_their_own_day(self):
+        # say() stamps "%F %T" since 28 Sep 2026. The date is believed: yesterday's 11:27 is not today's.
+        self.write("desk.log", "2026-09-23 11:27:00  stopping the API (pid 1)\n"
+                               "2026-09-24 11:26:40  stopping the API (pid 4411)\n"
+                               "2026-09-24 11:27:20    API up\n")
+        self.assertEqual(["desk.log 11:26:40 stopping the API (pid 4411)", "desk.log 11:27:20 API up"],
+                         self.lines(starting="desk.log"))
+
     def test_a_deploy_is_named_whether_or_not_it_went_well(self):
         self.write("desk.log", "11:26:10  origin/main moved: 25130f4 -> 3f2a1b9\n"
                                "11:26:50  deploy: 3f2a1b9 at 11:26 — console rebuilt; API rebuilt and restarted\n"

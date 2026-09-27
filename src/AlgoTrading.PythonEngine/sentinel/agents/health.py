@@ -46,7 +46,7 @@ import re
 import traceback
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -281,7 +281,8 @@ def _starts_api(args: str) -> bool:
 
 # What desk.sh / market-open.sh write around an API restart (scripts/lib/desk-common.sh:
 # api_stop, api_start) — to logs/desk.log, and to logs/market-open-<date>.log.
-_DESK_LINE = re.compile(r"^(\d{2}):(\d{2}):(\d{2})\s+(.*)$")
+# Stamped "2026-09-28 08:45:34  text" since 28 Sep 2026, "08:45:34  text" before: the date is optional.
+_DESK_LINE = re.compile(r"^(?:(?P<date>\d{4}-\d{2}-\d{2})[ T])?(?P<h>\d{2}):(?P<m>\d{2}):(?P<s>\d{2})\s+(?P<text>.*)$")
 _API_RESTARTING = ("stopping the API", "starting the API")
 _API_SETTLED = ("API up", "API already healthy", "the API did not come up")
 
@@ -297,10 +298,15 @@ class _DeskRestart:
     source: str = "desk.log"     # the file it was read from
 
 
-def _desk_line_time(hh: int, mm: int, ss: int, now: datetime) -> Optional[datetime]:
-    """desk.log stamps IST wall-clock time without a date: today's, or yesterday's if that is in the future."""
+def _desk_line_time(hh: int, mm: int, ss: int, now: datetime, day: Optional[str] = None) -> Optional[datetime]:
+    """
+    A desk.log stamp, IST wall-clock time. A dated line says its own day; an
+    undated one (before 28 Sep 2026) is today's, or yesterday's if that is in the future.
+    """
     try:
         stamp = time(hh, mm, ss)
+        if day:
+            return datetime.combine(date.fromisoformat(day), stamp, tzinfo=IST).astimezone(timezone.utc)
     except ValueError:
         return None
     local = to_ist(now)
@@ -575,13 +581,13 @@ class HealthAgent(Agent):
                 m = _DESK_LINE.match(raw.strip())
                 if not m:
                     continue
-                message = m.group(4).strip()
+                message = m["text"].strip()
                 restarting = any(message.startswith(p) for p in _API_RESTARTING)
                 settled = any(message.startswith(p) for p in _API_SETTLED) or \
                     message.startswith("WARN: the API did not come up")
                 if not restarting and not settled:
                     continue
-                at = _desk_line_time(int(m.group(1)), int(m.group(2)), int(m.group(3)), now)
+                at = _desk_line_time(int(m["h"]), int(m["m"]), int(m["s"]), now, m["date"])
                 if at is not None:
                     lines.append((at, order, index, name, message, restarting))
 
