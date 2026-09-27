@@ -63,7 +63,7 @@ are enforced in the **backtest only** (the live runner applies `filters`, not th
 
 Every blocked entry and every rule-driven exit is counted in the run summary (`limitBlocks`,
 `runExits`, `limitDayCloses`) and explained in its data notes, so "it traded less" is never mistaken
-for "it traded better". The console edits all of this on `/admin/backtesting/new`
+for "it traded better". The console edits all of this on `/research/backtests/new`
 (`web/src/lib/backtestRules.ts` holds the catalogue).
 
 ### 3c. Stocks, and strategies written in the console

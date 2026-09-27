@@ -200,7 +200,7 @@ Service account behind the live feed may call too.
    ends before the MCX close, it takes a fresh one the same way (nothing streams
    on Dhan yet), and otherwise says so.
 3. **Instrument import**, so the day's new strikes and expiries have Dhan ids.
-4. **Dhan feed** started from Live feeds, and the **chain recorder** switched on.
+4. **Dhan feed** started from Data → Feeds, and the **chain recorder** switched on.
 5. FYERS sign-in wait, as before, for the strategies.
 6. The FYERS feed and its chain poller are **not** started while Dhan is the
    feed.
@@ -295,7 +295,7 @@ write any value to the `feed.failover.<yyyy-MM-dd>` system setting.
 
 ## Live feed
 
-The adapter is `market_data/live/vendors/dhan.py`, started from Live feeds like
+The adapter is `market_data/live/vendors/dhan.py`, started from Data → Feeds like
 every other vendor.
 
 - **Credentials** come from `GET /api/Dhan/session`, so the daily Connect is

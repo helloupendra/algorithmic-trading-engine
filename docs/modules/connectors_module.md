@@ -1,7 +1,7 @@
 # Connectors module
 
-Data vendors and brokers, and the routing between them. Console page: **`/admin/broker`**
-(the route name is kept because the OAuth callback redirects there).
+Data vendors and brokers, and the routing between them. Console: **System → Connectors**
+(`/system/connectors`).
 
 ## What it is for
 
@@ -16,7 +16,7 @@ registers in both. Someone can take data from one vendor and execute at another.
 
 Two screens, because one long page hid the thing an operator actually wants — the list.
 
-**`/admin/broker` — the directory.** Compact cards in three groups:
+**`/system/connectors` — the directory.** Compact cards in three groups:
 
 1. **Active** — usable right now: either it needs no login, or its credentials are saved. Each card
    shows the vendor mark, name, status, what it can deliver in one line, and what it is currently
@@ -29,8 +29,10 @@ Two screens, because one long page hid the thing an operator actually wants — 
 
 Below the groups, the routing table (see below).
 
-**`/admin/broker/{key}` — one connector in full.** Reached by clicking a card, and by the OAuth callback,
-which redirects to this page so the operator lands where they pressed Connect.
+**`/system/connectors/{key}` — one connector in full.** Reached by clicking a card, and by the OAuth
+callback, which redirects to this page so the operator lands where they pressed Connect. The callback's
+old target, `/admin/broker/{key}`, still redirects here with its `?connected=` and `reason`, so a
+sign-in begun before a deploy lands in the right place after it.
 
 ## What the detail page shows
 
@@ -82,7 +84,7 @@ describes a hosted browser sign-in. The client holds the session, signs in again
 answers `401`, and reports a refusal with the broker's own code rather than throwing — including the
 one that is easy to misread, a `200` carrying an order that the risk checks rejected.
 
-Each trader gets their own account there, opened from `/admin/users` — see
+Each trader gets their own account there, opened from System → People (`/system/people`) — see
 [the Users module](users_module.md). Those accounts are read through the broker's back office with
 `SIMBROKER_ADMIN_KEY` rather than through each trader's own login, because a login costs a TOTP code,
 the broker refuses a code it has already seen, and a page showing twenty traders would spend its life

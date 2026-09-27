@@ -1,10 +1,12 @@
 # Option chain
 
-Two screens and one table behind them.
+One page, **Markets → Option chain**, with a tab per reading, and one table behind them.
 
-* **Data → Option chain** — every strike of one expiry, priced, with the open
+* **Chain** (`/markets/chain`) — every strike of one expiry, priced, with the open
   interest written behind it.
-* **Data → Open interest** — how one strike moved through the session.
+* **OI history** (`/markets/chain/oi`) — how one strike moved through the session.
+* **Levels** (`/markets/chain/levels`) — the OI walls, max pain, PCR, IV and the move
+  the straddle prices, read off the same chain.
 
 ## Where open interest comes from
 
@@ -30,7 +32,8 @@ open interest at 10:15 is knowable only because something wrote it down at
 
 ## The advanced chain screen
 
-**Data → Option chain** (`/admin/data/chain`) is laid out like a trader's chain,
+**Markets → Option chain** (`/markets/chain`, the Chain tab; OI history and Levels are the page's
+other tabs, at `/markets/chain/oi` and `/markets/chain/levels`) is laid out like a trader's chain,
 and every number on it says where it came from.
 
 * **Header:** spot with its day change, the nearest future and its premium, India
@@ -95,7 +98,7 @@ across every strike. Null on an empty chain rather than the lowest strike.
 
 ## Operating it
 
-Start and stop from **Data → Live feeds**, beside the ingestor's control. The
+Start and stop from **Data → Feeds**, beside the ingestor's control. The
 panel reports two things and they are not the same:
 
 * **Process** — is it running.
