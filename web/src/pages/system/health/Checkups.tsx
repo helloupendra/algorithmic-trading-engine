@@ -1,6 +1,7 @@
 /**
- * System → Desk checkup: Sentinel's scheduled health checklist, and a button
- * that asks for one now.
+ * System → Health → Checkups: Sentinel's scheduled health checklist, and a
+ * button that asks for one now. /system/checkups, the address Sentinel's
+ * Telegram report links to; ?id= opens one from the history.
  *
  * Sentinel runs the checklist before the open, after the close, at the end of
  * the day and weekly, and writes each report with a plain-English "what to do"
@@ -14,7 +15,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { MouseEvent, ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { useCheckup, useCheckupLatest, useCheckups, useRunCheckup } from '../../lib/queries'
+import { useCheckup, useCheckupLatest, useCheckups, useRunCheckup } from '../../../lib/queries'
 import {
   WAIT_POLL_MS,
   checkupIdParam,
@@ -29,11 +30,11 @@ import {
   verdictBadge,
   waitOutcome,
   waitTimeoutMessage,
-} from '../../lib/checkup'
-import type { CheckupDetail, CheckupItem, CheckupSummary } from '../../lib/checkup'
-import { maskSecrets } from '../../lib/incidents'
-import { formatAge, formatDateTime } from '../../lib/format'
-import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components/ui'
+} from '../../../lib/checkup'
+import type { CheckupDetail, CheckupItem, CheckupSummary } from '../../../lib/checkup'
+import { maskSecrets } from '../../../lib/incidents'
+import { formatAge, formatDateTime } from '../../../lib/format'
+import { Badge, EmptyState, InlineError, Loading, Panel } from '../../../components/ui'
 import './checkup.css'
 
 const PAGE = '/system/checkups'
@@ -275,7 +276,7 @@ function HistoryPanel({
   )
 }
 
-export function CheckupPage() {
+export function Checkups() {
   const [params, setParams] = useSearchParams()
   const selectedId = checkupIdParam(params.get('id'))
 
@@ -362,19 +363,16 @@ export function CheckupPage() {
   }
 
   return (
-    <div className="page">
-      <header className="page__header">
-        <div className="checkup-intro">
-          <h1 className="page__title">Desk checkup</h1>
-          <p className="page__subtitle">
-            Sentinel&apos;s health checklist for the desk: before the open, after the close, at the end of the day and
-            weekly, each item with what to do. It only reads the desk; asking for a checkup changes nothing.
-          </p>
-        </div>
-        <button type="button" className="btn btn--primary checkup-run" disabled={busy} onClick={onRun}>
+    <>
+      <div className="hp-bar">
+        <p className="hp-bar__lead muted">
+          Sentinel&apos;s checklist for the desk: before the open, after the close, at the end of the day and weekly, each
+          item with what to do. It only reads the desk; asking for one changes nothing.
+        </p>
+        <button type="button" className="btn btn--primary btn--sm checkup-run" disabled={busy} onClick={onRun}>
           {busy ? 'Waiting for Sentinel…' : 'Run a checkup now'}
         </button>
-      </header>
+      </div>
 
       {wait && (
         <p className="checkup-wait" role="status">
@@ -415,6 +413,6 @@ export function CheckupPage() {
         selectedId={selectedId}
         onSelect={(id) => setParams({ id: String(id) })}
       />
-    </div>
+    </>
   )
 }

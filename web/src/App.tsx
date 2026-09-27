@@ -17,7 +17,7 @@ import { OrdersPage } from './pages/trader/OrdersPage'
 import { MarketNewsPage } from './pages/data/MarketNewsPage'
 import { AccountPage } from './pages/trader/AccountPage'
 import { RunDetailPage } from './pages/trader/RunDetailPage'
-import { AdminOverviewPage } from './pages/admin/AdminOverviewPage'
+import { HealthPage } from './pages/system/health/HealthPage'
 import { UsersPage } from './pages/admin/UsersPage'
 import { StrategyPackagesPage } from './pages/admin/StrategyPackagesPage'
 import { RiskV2Page } from './pages/admin/RiskV2Page'
@@ -30,7 +30,6 @@ import MarketFactorsPage from './pages/data/MarketFactorsPage'
 import { ActivityLogPage } from './pages/admin/ActivityLogPage'
 import { DeploymentsPage } from './pages/admin/DeploymentsPage'
 import { IncidentsPage } from './pages/admin/IncidentsPage'
-import { CheckupPage } from './pages/admin/CheckupPage'
 import { MarketCalendarPage } from './pages/admin/MarketCalendarPage'
 import { StrategiesOverviewPage } from './pages/strategies/StrategiesOverviewPage'
 import { ManualOrderPage } from './pages/trading/ManualOrderPage'
@@ -184,8 +183,8 @@ export default function App() {
                   <Route path="/data/historical" element={<HistoricalDataPage />} />
                   <Route path="/data/instruments" element={<InstrumentsFnoPage />} />
 
-                  <Route path="/system" element={<AdminOverviewPage />} />
-                  <Route path="/system/checkups" element={<CheckupPage />} />
+                  <Route path="/system" element={<HealthPage view="overview" />} />
+                  <Route path="/system/checkups" element={<HealthPage view="checkups" />} />
                   <Route path="/system/incidents" element={<IncidentsPage />} />
                   <Route path="/system/log" element={<LogRoute />} />
                   <Route path="/system/calendar" element={<MarketCalendarPage />} />
