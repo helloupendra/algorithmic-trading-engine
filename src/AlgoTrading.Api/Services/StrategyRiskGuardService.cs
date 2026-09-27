@@ -95,8 +95,9 @@ public sealed class StrategyRiskGuardService : BackgroundService
                 using var scope = _scopeFactory.CreateScope();
                 var paperTrading = scope.ServiceProvider.GetRequiredService<IPaperTradingService>();
                 var control = scope.ServiceProvider.GetRequiredService<StrategyRunControl>();
+                var charges = scope.ServiceProvider.GetRequiredService<RunCharges>();
 
-                await SweepAsync(entry, paperTrading, control, cancellationToken);
+                await SweepAsync(entry, paperTrading, control, charges, cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -181,6 +182,7 @@ public sealed class StrategyRiskGuardService : BackgroundService
         RunningStrategy entry,
         IPaperTradingService paperTrading,
         StrategyRunControl control,
+        RunCharges charges,
         CancellationToken cancellationToken)
     {
         // The registry entry may have been replaced by a risk update since the
@@ -270,7 +272,8 @@ public sealed class StrategyRiskGuardService : BackgroundService
         if (rules.Overall is { HasAnyRule: true } overall)
         {
             var summary = await paperTrading.GetPortfolioSummaryAsync(runId, cancellationToken);
-            decimal totalPnl = summary.RealizedPnl + summary.UnrealizedPnl;
+            decimal chargesSoFar = await charges.ForRunAsync(runId, cancellationToken);
+            decimal totalPnl = OverallNet(summary.RealizedPnl, summary.UnrealizedPnl, chargesSoFar);
 
             var reason = EvaluateOverall(totalPnl, overall, trail);
             if (reason is null) return;
@@ -414,7 +417,30 @@ public sealed class StrategyRiskGuardService : BackgroundService
     }
 
     /// <summary>
-    /// Overall rule on the run's total P&amp;L (realized + unrealized), in the
+    /// The run's P&amp;L the overall rules are judged on: realized + unrealized,
+    /// less the charges of every fill so far (RunCharges, the figure the run
+    /// history and the run page call net).
+    /// </summary>
+    /// <remarks>
+    /// Until 28 Sep the rules saw the gross while the backtest judged the same
+    /// rules on net: a run 4,000 down with 6,000 of charges was 10,000 down and
+    /// not stopped at a 5,000 stop, and a 5,000 target on the gross said "hit"
+    /// with the run 1,000 down after charges. The owner chose net on 27 Sep.
+    /// Leg rules are in premium points and group rules stay gross: charges are
+    /// the run's, not a leg's or a group's.
+    /// </remarks>
+    public static decimal OverallNet(decimal realized, decimal unrealized, decimal charges) =>
+        realized + unrealized - Math.Max(0m, charges);
+
+    /// <summary>
+    /// Whether the overall rules trip for a run with this realized, unrealized
+    /// and charges: the reason, or null.
+    /// </summary>
+    public static string? EvaluateOverallNet(decimal realized, decimal unrealized, decimal charges, OverallRiskDto overall, RiskTrailState trail) =>
+        EvaluateOverall(OverallNet(realized, unrealized, charges), overall, trail);
+
+    /// <summary>
+    /// Overall rule on the run's net P&amp;L (<see cref="OverallNet"/>), in the
     /// fixed → trailing → target order. A trip flattens the run. Null when
     /// nothing trips.
     /// </summary>

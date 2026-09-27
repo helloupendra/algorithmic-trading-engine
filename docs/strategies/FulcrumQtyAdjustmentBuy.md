@@ -290,7 +290,7 @@ fixed order stop-loss → trailing stop → target:
 - `group` — rupees on a signal group's realized + unrealized P&L; closes
   every open leg of that group. Because every roll starts a new group, the
   rule measures one structure between two rolls.
-- `overall` — rupees on the run's total realized + unrealized P&L; a trip
+- `overall` — rupees on the run's net P&L (realized + unrealized, less the charges so far); a trip
   flattens everything and ends the run. The rule's `scope` (`"day"` by
   default, or `"run"`) is honoured by the backtest engine only.
 

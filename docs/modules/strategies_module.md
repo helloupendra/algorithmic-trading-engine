@@ -48,7 +48,7 @@ The module runs strictly in **LivePaper** mode: real ticks, simulated fills thro
 ### 3. Risk rules: overall, per group, per leg
 Every run carries a `risk` object (all fields optional, set at start or changed while running with
 `PATCH /api/Strategy/runs/{runId}/risk`; each change is recorded as a `RISK_UPDATED` activity row):
-- **Overall** (₹ on the run's total P&L, realized + unrealized): a trip squares off every position and ends the run.
+- **Overall** (₹ on the run's net P&L: realized + unrealized, less the statutory charges of its fills so far, the same net the run page and the history show; gross until 28 Sep): a trip squares off every position and ends the run. Group rules stay on the group's gross, since charges belong to the run.
 - **Per group** (₹ on one `OPEN_GROUP`, e.g. a straddle pair: realized of the group + unrealized of its open legs): a trip closes that group only; the run continues.
 - **Per leg** (premium points and/or % of the entry premium; BUY legs lose when the premium falls, SELL legs when it rises; when both are set the first to trip wins): a trip closes that leg only.
 
