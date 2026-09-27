@@ -1,4 +1,6 @@
 // src/AlgoTrading.Contracts/Simulator/CreateSimulationSignalRequest.cs
+using System.Text.Json.Serialization;
+
 namespace AlgoTrading.Contracts.Simulator;
 
 /// <summary>
@@ -51,6 +53,15 @@ public class CreateSimulationSignalRequest
     /// The legs (individual trades) that make up this signal.
     /// </summary>
     public List<SimulationSignalLegRequest>? Legs { get; set; }
+
+    /// <summary>
+    /// Set by a caller inside the API whose leg prices are already decided and
+    /// must be filled as given — the manual ticket's limit, or the bid or ask it
+    /// showed the person. Never read from a request body: a live strategy run's
+    /// legs are always priced from the live quote.
+    /// </summary>
+    [JsonIgnore]
+    public bool LegPricesAreFinal { get; set; }
 }
 
 /// <summary>

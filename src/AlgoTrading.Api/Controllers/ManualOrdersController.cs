@@ -411,7 +411,10 @@ public class ManualOrdersController : ControllerBase
             Legs = new List<SimulationSignalLegRequest>
             {
                 new() { Symbol = symbol, Side = side, Quantity = request.Quantity, Price = price }
-            }
+            },
+            // The ticket has decided the price — the limit, or the bid or ask
+            // it just showed the person — and the reply below quotes it.
+            LegPricesAreFinal = true
         };
 
         var result = await _paperTrading.CreateSignalAsync(signal, cancellationToken);
