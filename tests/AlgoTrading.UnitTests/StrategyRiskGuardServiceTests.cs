@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Hosting;
 using System.Diagnostics;
 using AlgoTrading.Api.Configuration;
 using AlgoTrading.Api.Services;
@@ -139,6 +140,10 @@ public class StrategyRiskGuardServiceTests
             services.AddSingleton<ISystemNotifier>(Notifier);
             services.AddScoped<IPaperTradingService, PaperTradingService>();
             services.AddSingleton<StrategyProcessRegistry>();
+            // What StrategyRunControl needs besides the above, as the carry-forward desk registers it.
+            services.AddSingleton<IWebHostEnvironment>(RecapClockTests.Inert<IWebHostEnvironment>.Create());
+            services.AddSingleton<PythonEngineLocator>();
+            services.AddSingleton<IProcessProbe, SystemProcessProbe>();
             services.AddScoped<PositionCarryForward>();
             services.AddScoped<StrategyRunControl>();
             services.AddScoped<RunCharges>();
