@@ -199,7 +199,8 @@ export function dayAxis(minutes: readonly number[], mcxClose: number = MCX_CLOSE
   }
   const from = first < NSE_OPEN ? Math.max(MCX_OPEN, first) : NSE_OPEN
   if (last > NSE_CLOSE + CLOSE_SLACK) return { from, to: Math.max(mcxClose, last), evening: true }
-  return { from, to: Math.max(NSE_CLOSE, last), evening: false }
+  // The last row a minute past the close is drawn at the close: the axis still reads 15:30.
+  return { from, to: NSE_CLOSE, evening: false }
 }
 
 /** The MCX close as the session answer states it, else the usual 23:30. */
@@ -262,6 +263,16 @@ export function valueTicks(domain: { lo: number; hi: number }, count = 3): numbe
   const out: number[] = []
   for (let v = Math.ceil(domain.lo / step) * step; v <= domain.hi + 1e-9; v += step) out.push(Math.abs(v) < step / 1e6 ? 0 : v)
   return out
+}
+
+/** A gridline's rupees, as short as they read: "0", "500", "−50k", "−1L", "1.5L" (the step is round, so is the label). */
+export function axisInr(v: number): string {
+  const a = Math.abs(v)
+  const sign = v < 0 ? '−' : ''
+  const trim = (n: number) => String(Number(n.toFixed(2)))
+  if (a >= 100_000) return `${sign}${trim(a / 100_000)}L`
+  if (a >= 1_000) return `${sign}${trim(a / 1_000)}k`
+  return `${sign}${Math.round(a)}`
 }
 
 /**

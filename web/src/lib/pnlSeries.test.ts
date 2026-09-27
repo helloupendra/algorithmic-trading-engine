@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   GAP_MINUTES,
+  axisInr,
   MCX_CLOSE,
   NSE_CLOSE,
   NSE_OPEN,
@@ -189,8 +190,8 @@ describe('dayAxis', () => {
     expect(dayAxis(span('09:18', '11:42'))).toEqual({ from: NSE_OPEN, to: NSE_CLOSE, evening: false })
   })
 
-  it('keeps a run the close stopped a minute late on the NSE day', () => {
-    expect(dayAxis([min('09:18'), min('15:31')])).toEqual({ from: NSE_OPEN, to: min('15:31'), evening: false })
+  it('keeps a run the close stopped a minute late on the NSE day, ending at 15:30', () => {
+    expect(dayAxis([min('09:18'), min('15:31')])).toEqual({ from: NSE_OPEN, to: NSE_CLOSE, evening: false })
   })
 
   it('starts at the MCX open when a crude run has points before 09:15', () => {
@@ -243,6 +244,12 @@ describe('value scale', () => {
   })
 })
 
+describe('axisInr', () => {
+  it('names a gridline as short as it reads', () => {
+    expect([0, 500, -50_000, 20_000, -100_000, 150_000, -2_500].map(axisInr)).toEqual(['0', '500', '−50k', '20k', '−1L', '1.5L', '−2.5k'])
+  })
+})
+
 describe('spreadLabels', () => {
   it('pushes labels apart, keeping their order', () => {
     expect(spreadLabels([50, 52, 120], 12)).toEqual([50, 62, 120])
@@ -288,7 +295,7 @@ describe('dayCurves', () => {
     expect(c.accounts[0].segments).toHaveLength(2)
     expect(c.accounts[0].last).toEqual({ m: min('15:31'), v: -(c.accounts[0].points.length - 1) * 5 })
     expect(c.gaps).toEqual([{ from: min('11:02'), to: min('11:40') }])
-    expect(c.axis).toEqual({ from: NSE_OPEN, to: min('15:31'), evening: false })
+    expect(c.axis).toEqual({ from: NSE_OPEN, to: NSE_CLOSE, evening: false })
     expect(c.any).toBe(true)
     // 16:07 is past this axis: no "now" on it.
     expect(c.now).toBeNull()
