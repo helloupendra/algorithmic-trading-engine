@@ -34,7 +34,7 @@ For NIFTY (`NSE:NIFTY50-INDEX`), BANKNIFTY (`NSE:NIFTYBANK-INDEX`) and SENSEX
 
 | Target | What | Models | Baseline | Loss (lower is better) |
 | --- | --- | --- | --- | --- |
-| `range` | The session's high − low, as % of the previous close | `range.har` (log-range on 1-, 5- and 22-day mean log ranges), `range.har-vix` (the same plus India VIX's previous close, an expiry-day and a Monday flag) | mean range of the last 20 sessions | \|ln(actual) − ln(predicted median)\| |
+| `range` | The session's high − low, as % of the previous close | `range.har` (log-range on the logs of the 1-, 5- and 22-day mean ranges), `range.har-vix` (the same plus India VIX's previous close, an expiry-day and a Monday flag) | mean range of the last 20 sessions | \|ln(actual) − ln(predicted median)\| |
 | `trend` | A trend day: \|close − open\| ≥ 0.6 × (high − low) | `trend.logit` | trailing 250-session base rate | Brier score |
 | `direction` | close > open | `direction.logit` | trailing 250-session base rate | Brier score |
 
@@ -59,7 +59,7 @@ admins; reads for admins (and later traders with the `analysis` module).
   "key": "range.har-vix",
   "version": "2026-09-27.1",
   "target": "range",
-  "description": "Log-range on 1-, 5- and 22-day mean log ranges, plus India VIX's previous close, expiry-day and Monday flags.",
+  "description": "Log-range on the logs of the 1-, 5- and 22-day mean ranges, plus India VIX's previous close, expiry-day and Monday flags.",
   "backtest": {
     "design":     { "from": "2021-08-04", "to": "2024-12-31", "n": 850, "loss": 0.231, "baselineLoss": 0.262, "skill": 0.118 },
     "validation": { "from": "2025-01-01", "to": "2025-12-31", "n": 247, "loss": 0.225, "baselineLoss": 0.251, "skill": 0.104 },
@@ -157,3 +157,169 @@ The API's `ForecastScheduler` runs `python -m analysis issue --session <date>`
 at 08:50 IST and `python -m analysis score` at 15:50 IST on NSE trading days,
 and `score` once at start-up to catch up. `python -m analysis backtest` refits
 the models on history and registers them (run by hand after a model change).
+
+## How the models work
+
+Code: `src/AlgoTrading.PythonEngine/analysis/`. One `fit` and one `predict`
+(`models.py`) produce every forecast — the walk-forward history and the
+morning's `issue` alike — and one `scoring.score` scores both, so a backtest
+number and a scoreboard number mean the same thing.
+
+### Sessions
+
+A session is one IST trading day, 09:15-15:30: the first bar's open, the
+highest high, the lowest low, the last bar's close. Postgres folds the bars
+(one query per symbol and source; the server moves ~1,500 rows an index, not
+~110,000), and Python decides which days count:
+
+| Source | Used for | A day counts when |
+| --- | --- | --- |
+| `candles`, resolution `5` | all history | ≥ 60 of 75 bars, first bar by 09:20, last bar from 15:15, ≤ 10% flat bars |
+| `live_bars`, `1m` | the last 14 days, only where candles have no complete day | ≥ 300 of 375 bars, first bar by 09:16, last bar from 15:25, ≤ 10% flat bars |
+
+`live_bars` matter because the nightly archive writes a day's candles at
+23:50 IST: at 15:50 today exists only there. Weekends are dropped (Budget
+Saturdays and Sundays, the 2024 disaster-recovery drills), and so is a
+Muhurat hour, by the bar count. "Flat" bars (high = low) are how a vendor
+fills a gap with the last price — Dhan's history runs flat through the 2021
+Muhurat day — so a day made mostly of them is not a quiet day and is dropped.
+India VIX is the exception: it is recomputed in small steps rather than with
+every trade, so only a VIX day with no movement at all is dropped. Every
+dropped day is listed with its reason in the backtest report.
+
+The previous close is the previous complete session's close. A day dropped
+for missing data makes the next day's range a percentage of a close two days
+old; the report's dropped-day count says how often that happens.
+
+An **expiry day** is a day an index option of that underlying expires: the
+exchanges' own bhavcopies (`SeedData/index_option_expiries.json`) up to the
+day they were read to, then the instrument master's listed expiries, then
+the weekday rule (NIFTY Tuesdays, SENSEX Thursdays, BANKNIFTY's last-Tuesday
+monthly, moved back over holidays). Refresh the seed file with
+`tools/option_expiry_calendar.py` now and then so the rule is rarely needed.
+
+### Inputs
+
+Everything a model sees for session *t* comes from sessions before *t*,
+plus two facts known in advance (expiry day, Monday). A test replaces every
+session from *t* on — including *t* itself — with nonsense and checks that
+the forecast for *t* does not move. Ranges are percentages of the previous
+close.
+
+| Input | Definition | Models |
+| --- | --- | --- |
+| `r1`, `r5`, `r22` | mean range of the last 1, 5 and 22 sessions | range.har, range.har-vix (as logs) |
+| `vixPrevClose` | India VIX's close on the previous session | range.har-vix (as log), the logits |
+| `expiryDay`, `monday` | 0/1 facts about the forecast session | range.har-vix, the logits |
+| `rangeRatio` | `r1` / mean range of the last 20 sessions | the logits (as log) |
+| `prevReturn` | previous close-to-close return, % | the logits |
+| `prevEfficiency` | previous \|close − open\| / (high − low) | the logits |
+| `vixChange5` | `vixPrevClose` − VIX's close five sessions earlier, points | the logits |
+
+The HAR regressors are the logs of the *mean ranges*, not means of log
+ranges as the table under Version 1 puts it; the code is the definition.
+`inputs` in each forecast also carries `prevSession`, `trainingSessions` and
+`trainedThrough`, so a stale input shows on the page.
+
+### Range: `range.har`, `range.har-vix`
+
+OLS with an intercept: ln(range) on ln r1, ln r5, ln r22 (plus ln VIX, the
+expiry and Monday dummies for `-vix`). The forecast is a log-normal: centre
+μ = the fitted log-range, spread σ = the training residuals' standard
+deviation. From it: median e^μ, 80% interval e^(μ ± 1.2816σ), and the
+probabilities of three buckets whose edges are the underlying's terciles of
+range in the training window (so each held a third of training days).
+
+The baseline in the same shape: median = the mean range of the last 20
+sessions; its 80% interval = that mean times the 10th and 90th percentiles of
+its own log errors in the training window; its bucket probabilities = the
+buckets' shares in the training window (about 1/3 each).
+
+A caveat the numbers must carry: ranges are skewed, so a 20-session *mean*
+sits above the median it is scored as. Part of any range model's skill is
+that gap alone. The backtest report measures it against a 20-session
+geometric mean (the same baseline in logs); that check is reported, not
+registered, and the contract's baseline is unchanged.
+
+### Trend and direction: `trend.logit`, `direction.logit`
+
+Logistic regression on the seven inputs above, standardised with the
+training window's mean and standard deviation, fitted by iteratively
+reweighted least squares with a ridge penalty of 1.0 on every coefficient
+but the intercept (it keeps the fit finite; with 250+ sessions it barely
+shrinks). The baseline is the trailing 250-session rate of trend days (or up
+days). Direction is a control: the desk's research found nothing that
+predicts it, so skill there is a reason to look for a leak.
+
+### Fitting, the backtest and what "configurations tried" counts
+
+A model forecasts only after 250 usable training sessions. `issue` fits on
+every session before the forecast day; the backtest refits on the first day
+of each month and forecasts that month's sessions (expanding window).
+Periods: design to 2024-12-31, validation 2025, holdout 2026 on; nothing was
+chosen on validation or holdout — the inputs, windows and penalty are fixed
+in code. Every model is scored on the same sessions (those all four could
+forecast; India VIX starts Aug 2021), pooled across the three indices, which
+are not independent: the 95% interval of mean(baselineLoss − loss) resamples
+session dates (2,000 resamples, fixed seed), keeping a day's three forecasts
+together.
+
+Each period in the registered `backtest` carries the contract's keys plus
+`diffCiLow`/`diffCiHigh`, `calibration` and `baselineCalibration` (tenths),
+and for range `coverage80`, `baselineCoverage80`, `bucketBrier` and
+`baselineBucketBrier` (the three-bucket Brier score summed over buckets, 0
+to 2 — the same sum live `metrics.brier` holds). A period with no forecasts
+is `null`, not a row of nulls. `byUnderlying` covers all three periods, and
+also carries `loss` and `baselineLoss`. `configurationsTried`
+counts the configurations evaluated per target, siblings included (range: 2,
+trend: 1, direction: 1). It is a constant in `backtest.py`; raise it, and the
+version, with every change made after looking at a result.
+
+### Scoring
+
+Range: loss |ln actual − ln median| for the model and the baseline,
+`covered80`, the three-bucket Brier scores, and one calibration entry per
+bucket. The range is measured against the previous close the forecast stated
+(`prediction.prevClose`). Trend and direction: Brier scores and one
+calibration entry; their `outcome.bucket` is `null`, because bucket edges
+belong to a range forecast and they state none (their `outcome.range` uses
+the previous stored session's close). Today's session is scored from the live
+1-minute bars, so its close is the last traded index value at 15:29, not the
+exchange's official close (an average of the last half hour); on a day whose
+body sits at the 0.6 trend threshold or near zero that can decide `trendDay`
+or `up`. A session whose bars are not complete waits for the next run and
+becomes an error after four days, so no forecast stays unscored quietly.
+
+## Running it
+
+From `src/AlgoTrading.PythonEngine`, with the repository's virtualenv
+(numpy, which pandas already brings, and psycopg2; nothing new). The API's
+scheduler runs `issue` and `score` the same way.
+
+```bash
+cd src/AlgoTrading.PythonEngine
+../../.venv/bin/python -m analysis backtest --dry-run            # report only: logs/analysis/backtest-<date>.md
+../../.venv/bin/python -m analysis backtest                      # report + register the four model versions
+../../.venv/bin/python -m analysis issue --session 2026-09-28 --dry-run   # print the payloads
+../../.venv/bin/python -m analysis issue --session 2026-09-28    # before 09:15 IST
+../../.venv/bin/python -m analysis score --dry-run               # print the scores
+../../.venv/bin/python -m analysis score [--from 2026-09-01 --to 2026-09-28]
+```
+
+- It reads the repo-root `.env`: `POSTGRES_*` (the connection is opened
+  read-only), `API_BASE_URL`, and `ENGINE_SERVICE_USERNAME` /
+  `ENGINE_SERVICE_PASSWORD` — it signs in as the engine service account, like
+  the strategy runners. The service account needs the Forecasts writes and
+  `GET /api/Forecasts` (the scorer reads the unscored forecasts).
+- Register first: `issue` gets **400** for a model version the API does not
+  know. Run `backtest` once after deploying a new `MODEL_VERSION`.
+- `backtest --models` / `--underlyings` narrow a run for a look; a narrowed
+  run registers nothing, because the sessions a model is scored on depend on
+  which models run together.
+- Exit status: 0 when everything was done or refused by the API as already
+  done / too late (409); 1 when anything failed — stale inputs (the last
+  complete session is not the previous trading day, or India VIX lacks it), an
+  API error, a session still unscored after four days; 2 for bad arguments.
+  The log line names what and why.
+- It is light: one aggregate query per symbol and source, then seconds of numpy
+  (~5 s for the full backtest on a laptop). Safe on the production server.
