@@ -412,7 +412,7 @@ public sealed class StrategyRunControl
                 run.Id, run.Status, pid);
             try
             {
-                await ProcessTerminator.StopAsync(process, pid.Value, _ => { }, _logger, $"stale strategy run {run.Id}");
+                await ProcessTerminator.StopAsync(process, pid.Value, _ => { }, _logger, $"stale strategy run {run.Id}", adopted: true);
             }
             finally
             {
@@ -697,7 +697,8 @@ public sealed class StrategyRunControl
     /// <summary>
     /// SIGTERM, graceful wait, then SIGKILL of the whole tree — shared with the
     /// backtest control through <see cref="ProcessTerminator"/>. Works on an
-    /// adopted handle too (the signals go by pid).
+    /// adopted handle too (the signals go by pid), and an adopted runner, not
+    /// being our child, is given longer and watched by pid.
     /// </summary>
     private Task StopProcessAsync(RunningStrategy entry)
         => ProcessTerminator.StopAsync(
@@ -705,7 +706,8 @@ public sealed class StrategyRunControl
             entry.ProcessId,
             line => _registry.AppendLog(entry.RunId, line),
             _logger,
-            $"strategy {entry.StrategyId} run {entry.RunId}");
+            $"strategy {entry.StrategyId} run {entry.RunId}",
+            adopted: entry.Adopted);
 
     /// <summary>
     /// Releases the Process (stdout/stderr readers, exit-event registration)

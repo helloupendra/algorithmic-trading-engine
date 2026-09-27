@@ -85,6 +85,40 @@ public class StrategyRunControlTests
     }
 
     [Fact]
+    public async Task An_adopted_runner_gets_longer_than_five_seconds_to_leave_after_SIGTERM()
+    {
+        // 24 Sep, 15:30: 10 of 13 adopted runners were killed after "ignoring"
+        // SIGTERM for 5 s. No SIGTERM on Windows, so nothing to wait for there.
+        if (OperatingSystem.IsWindows()) return;
+
+        // Not our child (its shell exits and it is handed to init), and slow to
+        // leave: it finishes its shutdown six seconds after SIGTERM, as a runner
+        // releasing its lock and joining its threads can.
+        var shell = Process.Start(new ProcessStartInfo("/bin/sh",
+            "-c \"(trap 'sleep 6; exit 0' TERM; while :; do sleep 1; done) >/dev/null 2>&1 & echo $!\"")
+        {
+            RedirectStandardOutput = true,
+            UseShellExecute = false
+        })!;
+        int pid = int.Parse(shell.StandardOutput.ReadLine()!.Trim());
+        shell.WaitForExit();
+
+        var steps = new List<string>();
+        var clock = Stopwatch.StartNew();
+        try
+        {
+            using var adopted = Process.GetProcessById(pid);
+            Assert.True(await ProcessTerminator.StopAsync(adopted, pid, steps.Add, NullLogger.Instance, "adopted test runner", adopted: true));
+            Assert.True(clock.Elapsed > ProcessTerminator.GracefulExitTimeout, $"it left after {clock.Elapsed.TotalSeconds:0.0}s");
+            Assert.DoesNotContain(steps, x => x.Contains("killing"));
+        }
+        finally
+        {
+            try { Process.GetProcessById(pid).Kill(entireProcessTree: true); } catch (ArgumentException) { /* gone, as it should be */ }
+        }
+    }
+
+    [Fact]
     public void A_proc_command_line_reads_like_ps()
     {
         var raw = Encoding.UTF8.GetBytes("/srv/.venv/bin/python\0/srv/strategies/execution_runner.py\0--strategy\0Fulcrum\0--run-id\0215\0");
