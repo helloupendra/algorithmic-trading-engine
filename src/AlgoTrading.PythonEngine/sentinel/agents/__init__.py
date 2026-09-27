@@ -9,7 +9,10 @@ from sentinel.agents.trading import TradingAgent
 
 
 def all_agents() -> list[Agent]:
-    return [HealthAgent(), TradingAgent(), LogsAgent(), SecurityAgent()]
+    # Imported here: the checkup builds on the trading agent's run parsing.
+    from sentinel.checkup.agent import CheckupAgent
+
+    return [HealthAgent(), TradingAgent(), LogsAgent(), SecurityAgent(), CheckupAgent()]
 
 
 __all__ = ["Agent", "all_agents", "HealthAgent", "TradingAgent", "LogsAgent", "SecurityAgent"]

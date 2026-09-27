@@ -90,6 +90,9 @@ public class TradingDbContext : DbContext
     /// <summary>One row: when Sentinel last finished a round of checks. See <see cref="SentinelHeartbeat"/>.</summary>
     public DbSet<SentinelHeartbeat> SentinelHeartbeats => Set<SentinelHeartbeat>();
 
+    /// <summary>Sentinel's scheduled and on-request desk checkups. Sentinel writes the reports; see <see cref="DeskCheckup"/>.</summary>
+    public DbSet<DeskCheckup> DeskCheckups => Set<DeskCheckup>();
+
     /// <summary>The Analysis module's forecasts: written before the open, scored after the close. See <see cref="Forecast"/>.</summary>
     public DbSet<Forecast> Forecasts => Set<Forecast>();
 

@@ -318,8 +318,8 @@ describe('watchmanNote', () => {
 })
 
 describe('agentSilenceMinutes', () => {
-  // The interval_seconds each agent declares in sentinel/agents/*.py.
-  const CADENCE_SECONDS: Record<string, number> = { health: 30, trading: 60, logs: 30, security: 300 }
+  // The interval_seconds each agent declares in sentinel/agents/*.py and sentinel/checkup/agent.py.
+  const CADENCE_SECONDS: Record<string, number> = { health: 30, trading: 60, logs: 30, security: 300, checkup: 60 }
 
   it('allows every agent at least two checks and a minute before it is called stopped', () => {
     for (const [agent, seconds] of Object.entries(CADENCE_SECONDS)) {

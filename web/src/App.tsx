@@ -31,6 +31,7 @@ import MarketFactorsPage from './pages/data/MarketFactorsPage'
 import { ActivityLogPage } from './pages/admin/ActivityLogPage'
 import { DeploymentsPage } from './pages/admin/DeploymentsPage'
 import { IncidentsPage } from './pages/admin/IncidentsPage'
+import { CheckupPage } from './pages/admin/CheckupPage'
 import { MarketCalendarPage } from './pages/admin/MarketCalendarPage'
 import { StrategiesOverviewPage } from './pages/strategies/StrategiesOverviewPage'
 import { ManualOrderPage } from './pages/trading/ManualOrderPage'
@@ -188,6 +189,7 @@ export default function App() {
                   <Route path="/admin/system/logs" element={<ActivityLogPage />} />
                   <Route path="/admin/system/deployments" element={<DeploymentsPage />} />
                   <Route path="/admin/incidents" element={<IncidentsPage />} />
+                  <Route path="/admin/checkup" element={<CheckupPage />} />
                   <Route path="/admin/live-alerts" element={<Navigate to="/admin/system/alerts" replace />} />
                   <Route path="/admin/broker" element={<BrokerPage />} />
                   <Route path="/admin/broker/:providerKey" element={<ConnectorDetailPage />} />

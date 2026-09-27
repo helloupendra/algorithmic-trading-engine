@@ -43,6 +43,7 @@ API (admin only): `GET /api/Incidents`, `/summary`, `/{id}`, `/history`;
 | `trading` | 60 s | every run the morning plan asks for is alive; no account runs the same strategy on the same underlying twice; runs that stopped early for a reason that is not a normal ending; unusual trade counts; an account's day loss; and that it can see at all: a runs list that has failed for 15 minutes during the session is itself an incident (`trading:blind`), its earlier findings still held rather than resolved |
 | `logs` | 30 s | `api.log`, `desk.log`, the morning job's log, runner and feed logs, tailed incrementally: sign-in 429s, runner crashes, `FEED STALLED`, the Dhan reconnect loop, tracebacks, .NET `fail:` lines, failed jobs, vendor auth errors, and error lines never seen before |
 | `security` | 5 min | failed sign-ins, privileged changes (users, roles, grants, password resets, kill switch), SSH logins from new addresses, public listeners (all unexpected ports in one incident), `.env` permissions, secrets in tracked files, vulnerable dependencies (weekly, outside 08:30-15:45, and again as soon as a lock file or project file changes, so a fixed dependency clears the same night) |
+| `checkup` | 1 min | not an alarm: runs the [desk checkup](checkup.md) — the checklist before the open, after the close, at the end of the day and on Sundays, or when the console asks — and keeps and sends its report; opens no incidents of its own |
 
 The plan it checks is `config/morning-plan.txt` — the same file
 `scripts/market-open.sh` deploys from.

@@ -80,18 +80,13 @@ def watch_lock(env: dict[str, str]):
     return WatchLock(dsn) if dsn is not None else None
 
 
-def build(dry_run: bool, only: set[str] | None, env: Optional[dict[str, str]] = None):
+def make_context(env: dict[str, str], dry_run: bool = False, state_root: Optional[Path] = None):
+    """What every agent is handed: the API as the admin (GETs only), Redis, the repository."""
     import redis
     import requests
 
-    from sentinel.agents import all_agents
     from sentinel.context import SentinelContext
-    from sentinel.engine import SentinelEngine
-    from sentinel.notify import notifier_from_env
-    from sentinel.pack import ContextPack
-    from sentinel.store import MemoryIncidentStore, PostgresIncidentStore, dsn_from_env
 
-    env = env if env is not None else load_env()
     base = env.get("API_BASE_URL", "http://localhost:5025").rstrip("/")
 
     session = requests.Session()
@@ -123,12 +118,23 @@ def build(dry_run: bool, only: set[str] | None, env: Optional[dict[str, str]] = 
                            password=env.get("REDIS_PASSWORD") or None, db=int(env.get("REDIS_DB", "0")),
                            socket_timeout=5, decode_responses=True)
 
+    return SentinelContext(repo_root=REPO_ROOT, env=env, api_get=api_get, redis_factory=redis_factory,
+                           state_root=state_root, dry_run=dry_run)
+
+
+def build(dry_run: bool, only: set[str] | None, env: Optional[dict[str, str]] = None):
+    from sentinel.agents import all_agents
+    from sentinel.engine import SentinelEngine
+    from sentinel.notify import notifier_from_env
+    from sentinel.pack import ContextPack
+    from sentinel.store import MemoryIncidentStore, PostgresIncidentStore, dsn_from_env
+
+    env = env if env is not None else load_env()
     live_state = REPO_ROOT / "logs" / "sentinel"
     state_root = dry_run_state(live_state) if dry_run else None
     if state_root is not None:
         logging.getLogger("sentinel").info("dry run: agents keep their state in %s, not in %s", state_root, live_state)
-    ctx = SentinelContext(repo_root=REPO_ROOT, env=env, api_get=api_get, redis_factory=redis_factory,
-                          state_root=state_root)
+    ctx = make_context(env, dry_run, state_root)
 
     if dry_run:
         store = MemoryIncidentStore()

@@ -1230,18 +1230,18 @@ public class IncidentsTableContractTests
     // ---------- helpers ----------
 
     /// <summary>The design-time model, which keeps check constraints and index filters.</summary>
-    private static IModel Model()
+    internal static IModel Model()
     {
         using var db = new TradingDbContext(
             new DbContextOptionsBuilder<TradingDbContext>().UseNpgsql("Host=unused").Options);
         return db.GetService<IDesignTimeModel>().Model;
     }
 
-    private static IEntityType? EntityFor(IModel model, string table) =>
+    internal static IEntityType? EntityFor(IModel model, string table) =>
         model.GetEntityTypes().SingleOrDefault(e => e.GetTableName() == table);
 
     /// <summary>The <c>NAME = "value"</c> members of one of model.py's enums, in order.</summary>
-    private static List<string> EnumValues(string source, string enumName)
+    internal static List<string> EnumValues(string source, string enumName)
     {
         var start = Regex.Match(source, $@"^class {enumName}\(str, Enum\):", RegexOptions.Multiline);
         Assert.True(start.Success, $"class {enumName} not found in model.py");
@@ -1253,7 +1253,7 @@ public class IncidentsTableContractTests
             .ToList();
     }
 
-    private static string ReadSentinel(string file)
+    internal static string ReadSentinel(string file)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "src")))

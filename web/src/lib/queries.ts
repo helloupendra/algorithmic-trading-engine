@@ -2531,6 +2531,65 @@ export function useIncidentHistory(days: number) {
   })
 }
 
+// ---------- Sentinel desk checkups (admin) ----------
+
+import { WAIT_POLL_MS, checkupsQuery, readCheckupLatest, readCheckupList } from './checkup'
+import type { CheckupDetail, CheckupRunAnswer } from './checkup'
+
+/**
+ * The newest finished checkup, the one in progress, and when the desk was last
+ * checked. Once a minute; every 5 s while the page waits for a checkup it
+ * asked for (`waiting`) or one is in progress, so the report shows as soon as
+ * Sentinel writes it. Pending lasts ten minutes at most, so neither can poll
+ * fast for long.
+ */
+export function useCheckupLatest(waiting = false) {
+  return useQuery({
+    queryKey: ['checkups', 'latest'],
+    queryFn: async () => readCheckupLatest(await api.get<unknown>('/api/Checkups/latest')),
+    refetchInterval: (query) => (waiting || query.state.data?.pending ? WAIT_POLL_MS : 60_000),
+  })
+}
+
+/** The last `take` checkups, newest first, each with its items counted; at the latest's pace while one is on its way. */
+export function useCheckups(take: number, fast = false) {
+  const qs = checkupsQuery(take)
+  return useQuery({
+    queryKey: ['checkups', 'list', qs],
+    queryFn: async () => readCheckupList(await api.get<unknown>(`/api/Checkups?${qs}`)),
+    refetchInterval: fast ? WAIT_POLL_MS : 60_000,
+  })
+}
+
+/**
+ * One checkup in full, for the history's `?id=`; not fetched without an id. A
+ * finished report never changes, so only one still in progress is re-read.
+ */
+export function useCheckup(id: number | null) {
+  return useQuery({
+    queryKey: ['checkups', 'detail', id],
+    queryFn: () => api.get<CheckupDetail>(`/api/Checkups/${id}`),
+    enabled: id != null,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status
+      return status === 'requested' || status === 'running' ? WAIT_POLL_MS : false
+    },
+  })
+}
+
+/**
+ * Asks Sentinel for a checkup now. The answer is the checkup to wait for: a new
+ * request, or the one already pending. Re-reads either way, so the page shows
+ * the pending checkup at once.
+ */
+export function useRunCheckup() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.post<CheckupRunAnswer>('/api/Checkups/run'),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['checkups'] }),
+  })
+}
+
 // ---------- Analysis: forecasts with proof ----------
 
 import { forecastsQuery, readForecastList, readForecastModels, readScoreboard } from './analysis'
