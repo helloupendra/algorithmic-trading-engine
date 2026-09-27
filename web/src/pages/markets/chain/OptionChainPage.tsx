@@ -14,7 +14,8 @@
  */
 
 import { useEffect, useRef } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
+import { PageTabs } from '../../../components/PageTabs'
 import { CHAIN_VIEWS, UNDERLYINGS, chainUnderlying, chainViewUrl } from '../../../lib/optionChain'
 import type { ChainViewKey } from '../../../lib/optionChain'
 import { ChainView } from './ChainView'
@@ -49,18 +50,12 @@ export function OptionChainPage({ view }: { view: ChainViewKey }) {
   return (
     <div className="page oc-page ocp">
       <div className="ocp-head">
-        <nav className="oc-tabs ocp-views" aria-label="Option chain views">
-          {CHAIN_VIEWS.map((v) => (
-            <Link
-              key={v.key}
-              to={chainViewUrl(v.key, params)}
-              className={`oc-tab ${v.key === view ? 'oc-tab--on' : ''}`}
-              aria-current={v.key === view ? 'page' : undefined}
-            >
-              {v.label}
-            </Link>
-          ))}
-        </nav>
+        <PageTabs
+          label="Option chain views"
+          className="ocp-views"
+          current={view}
+          tabs={CHAIN_VIEWS.map((v) => ({ key: v.key, label: v.label, to: chainViewUrl(v.key, params) }))}
+        />
         <div className="oc-seg ocp-unds" role="group" aria-label="Underlying" ref={undsRef}>
           {UNDERLYINGS.map((name) => (
             <button key={name} type="button" aria-pressed={underlying === name} onClick={() => pick(name)}>
