@@ -64,7 +64,9 @@ public class PaperPosition
     public decimal UnrealizedPnl { get; set; }
 
     /// <summary>
-    /// The lifecycle state of the position: "Open" or "Closed".
+    /// The lifecycle state of the position: "Open", "Closed", or "Carried" — a
+    /// strategy run's leg that was moved to the owner's manual book at the
+    /// close (its <see cref="Quantity"/> is what left, nothing was realized).
     /// </summary>
     public string Status { get; set; } = "Open";
 
@@ -98,6 +100,41 @@ public class PaperPosition
 
     /// <inheritdoc cref="StopLossPrice"/>
     public decimal? TargetPrice { get; set; }
+
+    /// <summary>
+    /// The owner's "carry forward" tick: hold this position overnight instead of
+    /// squaring it off at its market's close — a broker's carry-forward (NRML)
+    /// product, where false is intraday (MIS).
+    /// </summary>
+    /// <remarks>
+    /// Asked for on 27 Sep: "if I want to carry forward, there should be a tick
+    /// there and ticking it is enough. In strategies, even a single leg." In the
+    /// manual book an unticked position is squared off at its exchange's close;
+    /// in a strategy run a ticked leg is moved to the owner's manual book when
+    /// the run is stopped AT the close, and squared off like the rest by any
+    /// other stop. False by default, so nothing changes for a position nobody
+    /// ticked.
+    /// </remarks>
+    public bool CarryForward { get; set; }
+
+    /// <summary>
+    /// When <see cref="CarryForward"/> was last changed; null when it has kept
+    /// the value it was opened with.
+    /// </summary>
+    /// <remarks>
+    /// The manual book's intraday square-off counts from the later of this and
+    /// <see cref="OpenedUtc"/>: a position carried from yesterday and unticked
+    /// this morning is intraday for TODAY's close, not squared off the minute
+    /// the tick is cleared because yesterday's close lies after its opening.
+    /// </remarks>
+    public DateTime? CarryForwardChangedUtc { get; set; }
+
+    /// <summary>
+    /// On a manual-book position that a strategy run carried forward at the
+    /// close: the run's position it came from. That row stays in the run with
+    /// status "Carried" and the quantity that left.
+    /// </summary>
+    public long? CarriedFromPositionId { get; set; }
 
     public DateTime UpdatedUtc { get; set; } = DateTime.UtcNow;
 }

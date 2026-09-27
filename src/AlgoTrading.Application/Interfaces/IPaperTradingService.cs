@@ -107,6 +107,58 @@ public interface IPaperTradingService
         DateTime atUtc,
         CancellationToken cancellationToken = default);
 
+    // ---- Carry forward (intraday vs held overnight) ----
+
+    /// <summary>
+    /// Sets or clears one OPEN position's carry-forward tick under the run's
+    /// gate, stamping when it changed and recording a CARRY_FORWARD signal
+    /// that carries <paramref name="metadataJson"/> (its reason is what the
+    /// activity feed shows). Writes nothing unless the value actually changes,
+    /// the position is open and the run is still running.
+    /// </summary>
+    Task<CarryForwardUpdate> SetCarryForwardAsync(
+        long simulationRunId,
+        long positionId,
+        bool carryForward,
+        string metadataJson,
+        DateTime atUtc,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Squares off, like <see cref="ClosePositionsAsync"/>, those of the given
+    /// positions that are still open AND still intraday (carry forward not
+    /// ticked) — checked under the run's gate, so a tick that lands while the
+    /// close sweep is running is honoured rather than squared off.
+    /// </summary>
+    Task<int> CloseIntradayPositionsAsync(
+        long simulationRunId,
+        IEnumerable<long> positionIds,
+        string reason,
+        string by,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Moves one OPEN, carry-forward-ticked position of
+    /// <paramref name="fromRunId"/> into <paramref name="toRunId"/> (the
+    /// owner's manual book) at its own entry, without an order: the source row
+    /// becomes "Carried" (it keeps the quantity that left and whatever it had
+    /// realized; nothing more is realized in the run), and the destination
+    /// gets an open row with the same symbol, side, quantity and average price,
+    /// ticked to carry, pointing back at the source. A CARRY_OUT signal is
+    /// recorded in the run and a CARRY_IN in the book, all in one save. Returns
+    /// the new row, or null — writing nothing — when the position is no longer
+    /// open or no longer ticked.
+    /// </summary>
+    Task<PaperPositionResponse?> CarryPositionAsync(
+        long fromRunId,
+        long positionId,
+        long toRunId,
+        string toGroupId,
+        string fromMetadataJson,
+        string toMetadataJson,
+        DateTime atUtc,
+        CancellationToken cancellationToken = default);
+
     // ---- OfflineReplay (backtest runner) hooks ----
 
     /// <summary>

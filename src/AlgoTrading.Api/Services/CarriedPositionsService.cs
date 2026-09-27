@@ -10,8 +10,11 @@ namespace AlgoTrading.Api.Services;
 /// </summary>
 /// <remarks>
 /// The manual book is the one place positions are held overnight on purpose —
-/// the nightly market-close leaves it alone, the 15:30 sweep stops registered
-/// runners only, and the start-up reconciler skips it. Holding a position
+/// those ticked "carry forward", whether placed by hand or carried in from a
+/// strategy run at the close (<see cref="PositionCarryForward"/>); unticked
+/// ones are squared off at their exchange's close
+/// (<see cref="ManualIntradaySquareOff"/>). The nightly market-close leaves the
+/// book alone and the start-up reconciler skips it. Holding a position
 /// across days needs two things nothing else did: a quote for it the next
 /// morning, and a settlement when the contract expires (see
 /// <see cref="ExpirySettler"/>).

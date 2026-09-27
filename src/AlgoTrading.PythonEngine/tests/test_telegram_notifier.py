@@ -183,6 +183,42 @@ class WatcherTransitionTests(unittest.TestCase):
         self.assertIn("1 leg closed", events[0]["title"])
         self.assertIn("250", events[0]["message"])
 
+    def test_a_leg_carried_forward_is_not_reported_as_a_close(self):
+        """
+        27 Sep: a leg ticked "carry forward" moves to the owner's manual book
+        when the close stops its run. It was not sold; "closed · ₹0" would say
+        it was.
+        """
+        self.api.runs = [make_run(1, True, 0, 1)]
+        self.api.live = {
+            1: {
+                "positions": [
+                    make_leg(1, status="Carried", pnl=0.0),
+                    make_leg(2, status="Closed", pnl=250.0),
+                ]
+            }
+        }
+        self.watcher.tick()
+
+        events = self.publisher.events
+        self.assertEqual(len(events), 1, [e["title"] for e in events])
+        self.assertIn("1 leg closed, 1 leg carried forward", events[0]["title"])
+        self.assertIn("Carried forward</b> to the manual book", events[0]["message"])
+        self.assertIn("held overnight", events[0]["message"])
+        # Only the leg that was actually sold counts toward the realized line.
+        self.assertIn("250", events[0]["message"])
+
+    def test_a_close_that_only_carries_says_so(self):
+        self.api.runs = [make_run(1, True, 0, 0)]
+        self.api.live = {1: {"positions": [make_leg(1, status="Carried", pnl=0.0)]}}
+        self.watcher.tick()
+
+        events = self.publisher.events
+        self.assertEqual(len(events), 1)
+        self.assertIn("1 leg carried forward to the manual book", events[0]["title"])
+        self.assertNotIn("closed", events[0]["title"])
+        self.assertEqual(events[0]["severity"], "info")
+
     def test_a_roll_is_one_message_not_two(self):
         """
         Closing two legs and opening two others in the same tick is an

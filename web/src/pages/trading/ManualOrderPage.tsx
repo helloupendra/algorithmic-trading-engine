@@ -17,6 +17,12 @@
  * and Sell the bid it would hit. The book below is the same RunCard every
  * strategy run uses, so positions, P&L and per-position square-off are the
  * ones already understood elsewhere.
+ *
+ * Each order is intraday unless "Carry forward" is ticked (27 Sep, the owner:
+ * "if I want to carry forward, there should be a tick there and ticking it is
+ * enough"): intraday is squared off at its exchange's close, a carried
+ * position is held overnight. The tick can be changed on the position in the
+ * book afterwards.
  */
 
 import { useState } from 'react'
@@ -24,6 +30,7 @@ import { SymbolCombobox } from '../../components/SymbolCombobox'
 import { Badge, EmptyState, FlashPrice, InlineError, Loading, Panel } from '../../components/ui'
 import { RunCard } from '../strategies/RunCard'
 import { formatAge, formatDateTime, formatNumber, formatPrice } from '../../lib/format'
+import { ticketCarryHint } from '../../lib/carry'
 import { useManualBook, useManualInstrument, usePlaceManualOrder } from '../../lib/queries'
 import type { ManualInstrument } from '../../lib/queries'
 
@@ -120,6 +127,8 @@ export function ManualOrderPage() {
   const [orderType, setOrderType] = useState<'market' | 'limit'>('market')
   const [stopLoss, setStopLoss] = useState('')
   const [target, setTarget] = useState('')
+  // Off by default: a hand-placed order is intraday unless the owner says otherwise.
+  const [carryForward, setCarryForward] = useState(false)
 
   const instrumentQuery = useManualInstrument(symbol)
   const book = useManualBook()
@@ -150,7 +159,8 @@ export function ManualOrderPage() {
     const price = side === 'BUY' ? instrument.buyAt : instrument.sellAt
     const what = `${side} ${qty} ${instrument.quantityUnit === 'lots' ? (qty === 1 ? 'lot' : 'lots') : qty === 1 ? 'share' : 'shares'}`
     const at = limit != null ? `at your limit ${limit}` : `at the ${side === 'BUY' ? 'ask' : 'bid'} ${price ?? '—'}`
-    if (!window.confirm(`${what} of ${instrument.symbol} ${at}?`)) return
+    const product = carryForward ? 'carry forward (held overnight)' : 'intraday'
+    if (!window.confirm(`${what} of ${instrument.symbol} ${at}, ${product}?`)) return
 
     place.mutate({
       symbol: instrument.symbol,
@@ -159,6 +169,7 @@ export function ManualOrderPage() {
       limitPrice: limit,
       stopLossPrice: stopLoss.trim() === '' ? null : Number(stopLoss),
       targetPrice: target.trim() === '' ? null : Number(target),
+      carryForward,
     })
   }
 
@@ -345,7 +356,20 @@ export function ManualOrderPage() {
               </div>
             </div>
 
-            <div className="row" style={{ gap: 10, marginTop: 6, flexWrap: 'wrap' }}>
+            <label className="manual-carry" htmlFor="manual-carry">
+              <input
+                id="manual-carry"
+                type="checkbox"
+                checked={carryForward}
+                onChange={(e) => setCarryForward(e.target.checked)}
+              />
+              <span>
+                <span className="manual-carry__label">Carry forward (hold overnight)</span>
+                <span className="field__help">{ticketCarryHint(carryForward, instrument.symbol)}</span>
+              </span>
+            </label>
+
+            <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
               <button
                 type="button"
                 className="btn btn--pos"

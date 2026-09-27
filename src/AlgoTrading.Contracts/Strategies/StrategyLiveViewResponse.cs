@@ -44,6 +44,22 @@ public class StrategyLiveViewResponse
     /// morning job had started in their own account.
     /// </summary>
     public bool CanControl { get; set; }
+
+    /// <summary>
+    /// The owner's manual book rather than a strategy run. The carry-forward
+    /// tick means something different in each: in the book an unticked position
+    /// is squared off at its exchange's close; in a run a ticked leg moves to
+    /// the book at the close.
+    /// </summary>
+    public bool IsManualBook { get; set; }
+
+    /// <summary>
+    /// Whether a position's carry-forward tick can be changed now: the run is
+    /// running (or is the open manual book) and is not a recap, whose positions
+    /// are priced from a replayed session and must never reach the real book.
+    /// Who may change it is <see cref="CanControl"/>.
+    /// </summary>
+    public bool CanCarryForward { get; set; }
     public DateTime? StartedUtc { get; set; }
     public DateTime? StoppedUtc { get; set; }
     public string? StopReason { get; set; }
@@ -159,8 +175,25 @@ public class LivePositionResponse
     /// <summary>lots x lotSize.</summary>
     public int Quantity { get; set; }
 
-    /// <summary>"Open" or "Closed".</summary>
+    /// <summary>
+    /// "Open", "Closed", or "Carried": a strategy run's leg moved to the owner's
+    /// manual book at the close. A carried row keeps the lots that left and the
+    /// P&amp;L realized before it left (usually none); its value from then on is
+    /// the book's.
+    /// </summary>
     public string Status { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The carry-forward tick: held overnight rather than squared off at the
+    /// close. See PaperPosition.CarryForward.
+    /// </summary>
+    public bool CarryForward { get; set; }
+
+    /// <summary>On a manual-book row a strategy carried forward: the run it came from.</summary>
+    public long? CarriedFromRunId { get; set; }
+
+    /// <summary>The strategy of <see cref="CarriedFromRunId"/>.</summary>
+    public string? CarriedFromStrategy { get; set; }
 
     public decimal EntryPrice { get; set; }
 

@@ -2023,6 +2023,15 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.Property<decimal>("AveragePrice")
                         .HasColumnType("numeric(18,6)");
 
+                    b.Property<long?>("CarriedFromPositionId")
+                        .HasColumnType("bigint");
+
+                    b.Property<bool>("CarryForward")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("CarryForwardChangedUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTime?>("ClosedUtc")
                         .HasColumnType("timestamp with time zone");
 

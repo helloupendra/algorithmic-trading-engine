@@ -566,6 +566,8 @@ export interface ManualInstrument {
 
 export interface ManualOrderResponse {
   message: string
+  /** Held overnight (true) or intraday (false); absent on an API older than 28 Sep. */
+  carryForward?: boolean
   runId: number
   groupId: string
   symbol: string
@@ -619,6 +621,8 @@ export function usePlaceManualOrder() {
       limitPrice?: number | null
       stopLossPrice?: number | null
       targetPrice?: number | null
+      /** Hold overnight; false (the default) is intraday, squared off at the close. */
+      carryForward?: boolean
     }) =>
       api.post<ManualOrderResponse>('/api/ManualOrders', body),
     onSuccess: () => {
@@ -1000,6 +1004,34 @@ export function useClosePositions() {
       // The run keeps running, so only its position-level views change.
       qc.invalidateQueries({ queryKey: ['strategy', 'live'] })
       qc.invalidateQueries({ queryKey: ['strategies'] })
+    },
+  })
+}
+
+export interface SetCarryForwardResponse {
+  message: string
+  runId: number
+  positionId: number
+  carryForward: boolean
+  /** False when the position already had that tick. */
+  changed: boolean
+}
+
+/**
+ * Tick or untick "carry forward" on one open position (27 Sep: "if I want to
+ * carry forward, there should be a tick there and ticking it is enough").
+ * Only that run's live view changes; the change is also a CARRY_FORWARD row
+ * in its activity, which the same view carries.
+ */
+export function useSetCarryForward() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ runId, positionId, carryForward }: { runId: number; positionId: number; carryForward: boolean }) =>
+      api.put<SetCarryForwardResponse>(`/api/Strategy/runs/${runId}/positions/${positionId}/carry-forward`, {
+        carryForward,
+      }),
+    onSuccess: (_data, { runId }) => {
+      qc.invalidateQueries({ queryKey: ['strategy', 'live', runId] })
     },
   })
 }

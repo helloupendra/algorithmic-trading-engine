@@ -6,9 +6,11 @@
  * a screen must never show "—" for a number it can compute from the row.
  */
 
+import type { PositionStatus } from './types'
+
 interface PositionLike {
   side: 'BUY' | 'SELL'
-  status: 'Open' | 'Closed'
+  status: PositionStatus
   quantity: number
   entryPrice: number
   /** LTP (live) or exit price (backtest, closed rows). */
@@ -42,7 +44,9 @@ export function positionValues(p: PositionLike): PositionValues {
   let pnlPoints = p.pnlPoints ?? null
   if (pnlPoints == null) {
     if (mark != null) pnlPoints = p.side === 'BUY' ? mark - p.entryPrice : p.entryPrice - mark
-    else if (!open && qty != null) pnlPoints = p.pnl / qty
+    // A carried leg was not sold: its move belongs to the manual book now, and
+    // "+0.0 pts" here would read as a trade that went nowhere.
+    else if (p.status === 'Closed' && qty != null) pnlPoints = p.pnl / qty
   }
   const pnlPercent =
     p.pnlPercent ?? (pnlPoints != null && p.entryPrice > 0 ? (pnlPoints / p.entryPrice) * 100 : null)

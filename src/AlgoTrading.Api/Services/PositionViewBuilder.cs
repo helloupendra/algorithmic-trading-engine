@@ -18,6 +18,9 @@ namespace AlgoTrading.Api.Services;
 /// outlay / received) and the per-group P&amp;L, and — live views only — each
 /// open leg's greeks and the book's theta, vega and delta
 /// (<see cref="PositionGreeksBuilder"/>).
+/// A strategy leg carried forward at the close reads twice: in its run as a
+/// "Carried" row with the lots that left, and in the owner's manual book as an
+/// ordinary row at the same entry that names the run it came from.
 /// </summary>
 public sealed class PositionViewBuilder
 {
@@ -102,6 +105,7 @@ public sealed class PositionViewBuilder
         var lotSizes = await _lotSizeResolver.ResolveManyAsync(symbols, cancellationToken);
 
         var openedLots = await LoadOpenedLotsAsync(positions, cancellationToken);
+        var carriedFrom = await LoadCarriedFromAsync(positions, cancellationToken);
 
         decimal capitalUsed = 0m, premiumOutlay = 0m, premiumReceived = 0m;
 
@@ -109,6 +113,12 @@ public sealed class PositionViewBuilder
         foreach (var pos in positions)
         {
             bool isOpen = string.Equals(pos.Status, "Open", StringComparison.OrdinalIgnoreCase);
+            // Left for the owner's manual book at the close: not open here any
+            // more, and not closed either — nothing was sold or bought.
+            bool isCarried = string.Equals(pos.Status, PaperTradingService.CarriedStatus, StringComparison.OrdinalIgnoreCase);
+            CarriedSource? source = pos.CarriedFromPositionId is { } fromId && carriedFrom.TryGetValue(fromId, out var found)
+                ? found
+                : null;
             int lotSize = lotSizeOverride is > 0
                 ? lotSizeOverride.Value
                 : lotSizes.TryGetValue(pos.Symbol, out var ls) ? ls.LotSize : 1;
@@ -141,9 +151,15 @@ public sealed class PositionViewBuilder
             // the run's fills), so lots, quantity and value still read for
             // finished legs — a closed leg that traded 2 lots is not "0 lots".
             // Unknown (nothing to replay) reads as null, never as ₹0.
-            int? valuedLots = isOpen
+            //
+            // A carried row keeps the quantity that left the run; a book row
+            // that was carried in has no opening fill in the book to replay, so
+            // its size is the quantity that arrived.
+            int? valuedLots = isOpen || isCarried
                 ? pos.Quantity
-                : openedLots.TryGetValue(pos.Id, out var replayed) && replayed > 0 ? replayed : null;
+                : source is { Quantity: > 0 }
+                    ? source.Quantity
+                    : openedLots.TryGetValue(pos.Id, out var replayed) && replayed > 0 ? replayed : null;
             int? valuedQuantity = valuedLots.HasValue ? valuedLots.Value * lotSize : null;
             int lots = valuedLots ?? 0;
             int quantity = lots * lotSize;
@@ -156,7 +172,7 @@ public sealed class PositionViewBuilder
             {
                 if (ltp.HasValue) pnlPoints = isBuy ? ltp.Value - pos.AveragePrice : pos.AveragePrice - ltp.Value;
             }
-            else if (valuedQuantity is > 0)
+            else if (valuedQuantity is > 0 && !isCarried)
             {
                 pnlPoints = pos.RealizedPnl / valuedQuantity.Value;
             }
@@ -183,11 +199,12 @@ public sealed class PositionViewBuilder
                 Lots = lots,
                 LotSize = lotSize,
                 Quantity = quantity,
-                Status = isOpen ? "Open" : "Closed",
+                Status = isOpen ? "Open" : isCarried ? PaperTradingService.CarriedStatus : "Closed",
                 EntryPrice = pos.AveragePrice,
                 // The closing fill: PaperTradingService writes it as the last
                 // mark when it closes the row, so it is the price the leg left at.
-                ExitPrice = isOpen ? null : pos.LastMarkPrice,
+                // A carried leg left at no price: it was not sold.
+                ExitPrice = isOpen || isCarried ? null : pos.LastMarkPrice,
                 Ltp = ltp,
                 LtpUpdatedUtc = ltpUpdatedUtc,
                 Pnl = isOpen ? pos.UnrealizedPnl : pos.RealizedPnl,
@@ -198,7 +215,10 @@ public sealed class PositionViewBuilder
                 StopLossPrice = pos.StopLossPrice,
                 TargetPrice = pos.TargetPrice,
                 OpenedUtc = pos.OpenedUtc,
-                ClosedUtc = pos.ClosedUtc
+                ClosedUtc = pos.ClosedUtc,
+                CarryForward = pos.CarryForward,
+                CarriedFromRunId = source?.RunId,
+                CarriedFromStrategy = source?.StrategyName
             });
         }
 
@@ -259,6 +279,32 @@ public sealed class PositionViewBuilder
             .ToList();
 
         return new Result<T>(rows, spotLtp, spotUpdatedUtc, lotSizes, capitalUsed, premiumOutlay, premiumReceived, groups, greeksTotals);
+    }
+
+    /// <summary>The run position a manual-book row was carried forward from.</summary>
+    internal sealed record CarriedSource(long RunId, string StrategyName, int Quantity);
+
+    /// <summary>
+    /// The source rows of every carried-in position in the list, by id — one
+    /// query, and none at all for a list without one (every backtest).
+    /// </summary>
+    private async Task<Dictionary<long, CarriedSource>> LoadCarriedFromAsync(
+        IReadOnlyList<PaperPositionResponse> positions,
+        CancellationToken cancellationToken)
+    {
+        var ids = positions
+            .Where(x => x.CarriedFromPositionId.HasValue)
+            .Select(x => x.CarriedFromPositionId!.Value)
+            .Distinct()
+            .ToList();
+        if (ids.Count == 0) return new Dictionary<long, CarriedSource>();
+
+        return await _dbContext.PaperPositions.AsNoTracking()
+            .Where(x => ids.Contains(x.Id))
+            .ToDictionaryAsync(
+                x => x.Id,
+                x => new CarriedSource(x.SimulationRunId, x.StrategyName, x.Quantity),
+                cancellationToken);
     }
 
     /// <summary>
@@ -327,7 +373,11 @@ public sealed class PositionViewBuilder
                     var pos = keyPositions[i];
                     var sim = replayed[i];
                     bool directionMatches = string.Equals(pos.Direction, sim.Direction, StringComparison.OrdinalIgnoreCase);
-                    bool openStateMatches = string.Equals(pos.Status, "Open", StringComparison.OrdinalIgnoreCase) == sim.StillOpen;
+                    // A carried row was never closed by a fill: to the run's
+                    // own fills it is still open, and the replay must agree.
+                    bool storedOpen = string.Equals(pos.Status, "Open", StringComparison.OrdinalIgnoreCase)
+                                      || string.Equals(pos.Status, PaperTradingService.CarriedStatus, StringComparison.OrdinalIgnoreCase);
+                    bool openStateMatches = storedOpen == sim.StillOpen;
                     if (!directionMatches || !openStateMatches)
                     {
                         consistent = false;

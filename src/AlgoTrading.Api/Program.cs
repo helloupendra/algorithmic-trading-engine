@@ -86,6 +86,11 @@ builder.Services.AddSingleton<AlgoTrading.Api.Services.PythonEngineLocator>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.StrategyCatalogService>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.StrategyProcessRegistry>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.StrategyRunControl>();
+// Intraday vs carry forward (27 Sep): the per-position tick, the close's move of
+// a run's ticked legs into the owner's manual book, and the manual book's own
+// square-off of unticked positions at each exchange's close.
+builder.Services.AddScoped<AlgoTrading.Api.Services.PositionCarryForward>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.ManualIntradaySquareOff>();
 // The per-user history of live runs (list rows + per-user rollup).
 builder.Services.AddScoped<AlgoTrading.Api.Services.LiveRunHistoryBuilder>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.RunCharges>();

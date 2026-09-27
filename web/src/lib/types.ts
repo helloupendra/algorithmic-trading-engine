@@ -550,9 +550,13 @@ export interface LivePosition {
   lots: number
   lotSize: number
   quantity: number
-  status: 'Open' | 'Closed'
+  /**
+   * 'Carried': a strategy leg moved to its owner's manual book at the market
+   * close (its lots are what left; its P&L from then on is the book's).
+   */
+  status: PositionStatus
   entryPrice: number
-  /** Fill price of the closing order; null while open. */
+  /** Fill price of the closing order; null while open, and for a carried leg (it was not sold). */
   exitPrice: number | null
   ltp: number | null
   ltpUpdatedUtc: string | null
@@ -576,7 +580,18 @@ export interface LivePosition {
    * price; absent on an API older than 27 Sep.
    */
   greeks?: PositionGreeks | null
+  /**
+   * The carry-forward tick: held overnight rather than squared off at the
+   * close. Absent on an API older than 28 Sep (read as false).
+   */
+  carryForward?: boolean
+  /** On a manual-book row a strategy carried forward at the close: the run it came from. */
+  carriedFromRunId?: number | null
+  carriedFromStrategy?: string | null
 }
+
+/** A position's lifecycle: 'Carried' is a strategy leg that left for the manual book at the close. */
+export type PositionStatus = 'Open' | 'Closed' | 'Carried'
 
 /** Where a leg's greeks came from. */
 export type GreeksSource = 'feed' | 'chain' | 'computed' | 'delta-one'
@@ -643,6 +658,13 @@ export interface StrategyLiveView {
   ownerName?: string | null
   /** Whether the viewer may stop it, edit its risk rules or close a leg — the API's own rule. */
   canControl?: boolean
+  /** The owner's manual book rather than a strategy run (absent on an API older than 28 Sep). */
+  isManualBook?: boolean
+  /**
+   * Whether a position's carry-forward tick can be changed now: a live,
+   * non-recap run or the open manual book. Who may is canControl.
+   */
+  canCarryForward?: boolean
   runId: number | null
   underlying: string | null
   spotSymbol: string | null

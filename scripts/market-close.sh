@@ -61,9 +61,12 @@ failed=0
 # carried overnight on purpose (27 Sep, the owner: "if I want to carry forward
 # a position, it should carry"). This loop used to stop it like any strategy
 # run, with flatten=true, so every hand-placed position was squared off at
-# 23:35 each night and the book closed. Nothing else in the day touches it:
-# the 15:30 sweep stops registered runners only and the start-up reconciler
-# skips it. Its contracts are settled at expiry by the API instead
+# 23:35 each night and the book closed. Since the carry-forward tick (later
+# on 27 Sep) the API squares off the book's UNTICKED positions itself, each at
+# its own exchange's close (ManualIntradaySquareOff, every minute); this script
+# still leaves the book alone, because it cannot tell a carried position from
+# an intraday one and would square off both. The start-up reconciler skips the
+# book too, and its contracts are settled at expiry by the API
 # (CarriedPositionsService).
 # >>> live-runs
 # Reads GET /api/Strategy/runs and prints "stop <id>" or "keep <id>" per run.

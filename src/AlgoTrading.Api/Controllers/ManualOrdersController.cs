@@ -1,12 +1,12 @@
 ﻿// src/AlgoTrading.Api/Controllers/ManualOrdersController.cs
 
 using AlgoTrading.Api.Security;
+using AlgoTrading.Api.Services;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Application.UseCases.LiveData;
 using AlgoTrading.Contracts.LiveData;
 using AlgoTrading.Contracts.Simulator;
 using AlgoTrading.Domain.Constants;
-using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -43,6 +43,12 @@ namespace AlgoTrading.Api.Controllers;
 /// into a strategy's P&amp;L, and so every tool that already understands a run
 /// works on them unchanged: the position rows, the live P&amp;L, and the
 /// per-position square-off.
+///
+/// Each order is intraday or carry forward, like a broker's MIS and NRML
+/// (27 Sep: "if I want to carry forward, there should be a tick there and
+/// ticking it is enough"). Unticked, the default, it is squared off at its
+/// exchange's close; ticked, it is held overnight until closed or expired. The
+/// tick can be changed on the open position afterwards.
 /// </remarks>
 [RequireModule(PlatformModules.Strategies)]
 [ApiController]
@@ -227,7 +233,7 @@ public class ManualOrdersController : ControllerBase
     public async Task<IActionResult> GetBook(CancellationToken cancellationToken)
     {
         long userId = User.GetRequiredUserId();
-        var book = await FindBookAsync(userId, cancellationToken);
+        var book = await ManualBook.FindAsync(_dbContext, userId, cancellationToken);
 
         if (book is null)
             return Ok(new { runId = (long?)null, message = "No manual trades placed yet." });
@@ -246,13 +252,19 @@ public class ManualOrdersController : ControllerBase
     /// </param>
     /// <param name="StopLossPrice">Optional. A price level for THIS position only.</param>
     /// <param name="TargetPrice">Optional. A price level for THIS position only.</param>
+    /// <param name="CarryForward">
+    /// Hold the position overnight (a broker's carry-forward product). False,
+    /// the default, is intraday: squared off at its exchange's close — NSE and
+    /// BSE at 15:30 IST, MCX at its own close (<see cref="ManualIntradaySquareOff"/>).
+    /// </param>
     public sealed record PlaceManualOrderRequest(
         string Symbol,
         string Side,
         int Quantity,
         decimal? LimitPrice,
         decimal? StopLossPrice = null,
-        decimal? TargetPrice = null);
+        decimal? TargetPrice = null,
+        bool CarryForward = false);
 
     /// <summary>Books one paper order into the caller's manual book.</summary>
     [HttpPost]
@@ -367,8 +379,7 @@ public class ManualOrdersController : ControllerBase
         long userId = User.GetRequiredUserId();
         string userName = User.GetUserName() ?? "unknown";
 
-        var book = await FindBookAsync(userId, cancellationToken)
-                   ?? await CreateBookAsync(userId, cancellationToken);
+        var book = await ManualBook.FindOrCreateAsync(_dbContext, userId, _logger, cancellationToken);
 
         var groupId = $"MANUAL-{Guid.NewGuid():N}"[..20];
         var metadata = JsonSerializer.Serialize(new
@@ -406,9 +417,10 @@ public class ManualOrdersController : ControllerBase
         var result = await _paperTrading.CreateSignalAsync(signal, cancellationToken);
 
         // Written after the fill, because the position does not exist until the
-        // signal is booked. The guard reads these off the position on its next
-        // sweep, ahead of any rule the run carries.
-        if (request.StopLossPrice is not null || request.TargetPrice is not null)
+        // signal is booked. The guard reads the levels off the position on its
+        // next sweep, ahead of any rule the run carries; the close's intraday
+        // square-off reads the carry tick.
+        if (request.StopLossPrice is not null || request.TargetPrice is not null || request.CarryForward)
         {
             var booked = await _dbContext.PaperPositions
                 .Where(x => x.SimulationRunId == book.Id && x.GroupId == groupId)
@@ -416,9 +428,18 @@ public class ManualOrdersController : ControllerBase
 
             foreach (var position in booked)
             {
-                position.StopLossPrice = request.StopLossPrice;
-                position.TargetPrice = request.TargetPrice;
-                position.UpdatedUtc = DateTime.UtcNow;
+                if (request.StopLossPrice is not null || request.TargetPrice is not null)
+                {
+                    position.StopLossPrice = request.StopLossPrice;
+                    position.TargetPrice = request.TargetPrice;
+                    position.UpdatedUtc = DateTime.UtcNow;
+                }
+
+                // Either one asking to carry is enough. Each ticket order opens a
+                // group of its own today, so this only ever meets the position it
+                // just opened; should an order ever add to a held position, an
+                // unticked add must not quietly turn a carried position intraday.
+                position.CarryForward = position.CarryForward || request.CarryForward;
             }
 
             await _dbContext.SaveChangesAsync(cancellationToken);
@@ -428,13 +449,17 @@ public class ManualOrdersController : ControllerBase
         string unitWord = IsDerivative(instrument.InstrumentType) ? "lot" : "share";
 
         _logger.LogInformation(
-            "Manual {Side} {Quantity} {Unit}(s) of {Symbol} at {Price} ({Basis}) by {By} into book {RunId}.",
-            side, request.Quantity, unitWord, symbol, price, priceBasis, userName, book.Id);
+            "Manual {Side} {Quantity} {Unit}(s) of {Symbol} at {Price} ({Basis}) by {By} into book {RunId}, {Product}.",
+            side, request.Quantity, unitWord, symbol, price, priceBasis, userName, book.Id,
+            request.CarryForward ? "carry forward" : "intraday");
 
         return Ok(new
         {
             message = $"{side} {request.Quantity} {unitWord}{(request.Quantity == 1 ? "" : "s")} "
-                      + $"({units} qty) of {symbol} at {price} — filled on the {priceBasis}.",
+                      + $"({units} qty) of {symbol} at {price} — filled on the {priceBasis}. "
+                      + (request.CarryForward
+                          ? "Carried forward: held overnight until you close it."
+                          : $"Intraday: squared off at the {(symbol.StartsWith("MCX:", StringComparison.OrdinalIgnoreCase) ? "MCX close" : "close (15:30 IST)")}."),
             runId = book.Id,
             groupId,
             symbol,
@@ -446,51 +471,12 @@ public class ManualOrdersController : ControllerBase
             priceBasis,
             stopLossPrice = request.StopLossPrice,
             targetPrice = request.TargetPrice,
+            carryForward = request.CarryForward,
             signalId = result.Id
         });
     }
 
     // -------------------------------------------------------------- helpers --
-
-    private Task<SimulationRun?> FindBookAsync(long userId, CancellationToken cancellationToken) =>
-        _dbContext.SimulationRuns
-            .Where(x => x.UserId == userId
-                        && x.StrategyName == BookStrategyName
-                        && x.Status == "Running")
-            .OrderByDescending(x => x.Id)
-            .FirstOrDefaultAsync(cancellationToken);
-
-    /// <summary>
-    /// Opens the caller's book. One per user and long-lived: manual positions
-    /// are held across days, so a book per session would scatter one running
-    /// position history over many runs.
-    /// </summary>
-    private async Task<SimulationRun> CreateBookAsync(long userId, CancellationToken cancellationToken)
-    {
-        var now = DateTime.UtcNow;
-        var book = new SimulationRun
-        {
-            UserId = userId,
-            Mode = "LivePaper",
-            // Not one instrument: the book holds whatever is traded into it.
-            Symbol = "MANUAL",
-            Resolution = "1m",
-            ReplaySpeed = string.Empty,
-            Status = "Running",
-            StrategyName = BookStrategyName,
-            ParametersJson = "{}",
-            LastError = string.Empty,
-            InitialCapital = 1_000_000m,
-            CreatedUtc = now,
-            StartedUtc = now
-        };
-
-        _dbContext.SimulationRuns.Add(book);
-        await _dbContext.SaveChangesAsync(cancellationToken);
-
-        _logger.LogInformation("Opened manual book run {RunId} for user {UserId}.", book.Id, userId);
-        return book;
-    }
 
     private static bool IsDerivative(string? instrumentType) =>
         instrumentType is "CE" or "PE" or "FUT";
