@@ -316,6 +316,8 @@ public class BacktestController : ControllerBase
         var run = new SimulationRun
         {
             UserId = userId,
+            StartedByUserId = userId,
+            StartedByName = startedBy,
             Mode = OfflineReplayMode,
             Symbol = spotSymbol,
             Resolution = resolution,

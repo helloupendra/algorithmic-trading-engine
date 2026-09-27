@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Claims;
 using AlgoTrading.Api.Configuration;
 using AlgoTrading.Api.Controllers;
@@ -43,6 +44,7 @@ internal sealed class RunnerDesk : IDisposable
     private readonly string _name = $"runner-desk-{Guid.NewGuid():N}";
     private readonly PythonEngineLocator _locator;
     private readonly StrategyCatalogService _catalog;
+    private readonly List<Process> _processes = new();
 
     public RunnerDesk()
     {
@@ -112,22 +114,26 @@ internal sealed class RunnerDesk : IDisposable
             CancellationToken.None);
     }
 
+    /// <summary>The durable runner pids (system_settings), as the reconcile reads them.</summary>
+    public PidStore Pids { get; } = new();
+
+    /// <summary>The stop and adoption paths, on <paramref name="db"/>.</summary>
+    public StrategyRunControl RunControl(TradingDbContext db) => new(
+        db,
+        RecapClockTests.Inert<IPaperTradingService>.Create(),
+        Pids,
+        Registry,
+        null!,                                      // carry forward: only the market close uses it
+        NullLogger<StrategyRunControl>.Instance);
+
     /// <summary>A controller as <paramref name="callerId"/> sees it, for the endpoints other than start.</summary>
     public StrategyController Controller(TradingDbContext db, long callerId)
     {
-        var runControl = new StrategyRunControl(
-            db,
-            RecapClockTests.Inert<IPaperTradingService>.Create(),
-            RecapClockTests.Inert<IProcessSettingsStore>.Create(),
-            Registry,
-            null!,                                  // carry forward: no stop happens here
-            NullLogger<StrategyRunControl>.Instance);
-
         return new StrategyController(
             db,
             _catalog,
             Registry,
-            runControl,
+            RunControl(db),
             _locator,
             null!,                                  // paper trading
             null!,                                  // lot sizes
@@ -151,18 +157,54 @@ internal sealed class RunnerDesk : IDisposable
         return db.SimulationRuns.AsNoTracking().OrderBy(x => x.Id).ToList();
     }
 
-    public long SeedRun(long userId, string underlying, string status, string strategy = "Ghost")
+    /// <param name="startedBy">Who started it, as a row from 28 Sep on records it; null is an older row.</param>
+    public long SeedRun(long userId, string underlying, string status, string strategy = "Ghost",
+        (long Id, string Name)? startedBy = null)
     {
         using var db = Db();
         var run = new SimulationRun
         {
             UserId = userId, Mode = StrategyRunControl.LivePaperMode, Status = status, StrategyName = strategy,
+            StartedByUserId = startedBy?.Id, StartedByName = startedBy?.Name ?? string.Empty,
             Symbol = UnderlyingCatalog.SpotSymbolFor(underlying), ParametersJson = $"{{\"underlying\":\"{underlying}\"}}",
             CreatedUtc = DateTime.UtcNow.AddHours(-1), StartedUtc = DateTime.UtcNow.AddHours(-1)
         };
         db.SimulationRuns.Add(run);
         db.SaveChanges();
         return run.Id;
+    }
+
+    /// <summary>
+    /// A live process a probe recognises as the runner of <paramref name="runId"/>,
+    /// as one left behind by the previous API process would be.
+    /// </summary>
+    public Process RunnerFor(long runId)
+    {
+        ProcessStartInfo info;
+        if (OperatingSystem.IsWindows())
+        {
+            // Windows never reads the command line, so any live process will do.
+            info = TestSleeper.StartInfo();
+        }
+        else
+        {
+            // "; :" keeps the shell itself alive (a lone command would be exec'd),
+            // so its command line reads "/bin/sh -c sleep 30; : execution_runner --run-id <id>".
+            info = new ProcessStartInfo("/bin/sh");
+            info.ArgumentList.Add("-c");
+            info.ArgumentList.Add("sleep 30; :");
+            info.ArgumentList.Add(ProcessProbe.StrategyRunnerMarker);
+            info.ArgumentList.Add("--run-id");
+            info.ArgumentList.Add(runId.ToString());
+        }
+
+        info.RedirectStandardOutput = true;
+        info.RedirectStandardError = true;
+        info.UseShellExecute = false;
+
+        var process = Process.Start(info)!;
+        _processes.Add(process);
+        return process;
     }
 
     private static ClaimsPrincipal UserFor(long id)
@@ -180,11 +222,11 @@ internal sealed class RunnerDesk : IDisposable
 
     public void Dispose()
     {
-        foreach (var entry in Registry.List())
+        foreach (var process in Registry.List().Select(x => x.Process).Concat(_processes))
         {
             try
             {
-                if (!entry.Process.HasExited) entry.Process.Kill(entireProcessTree: true);
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
             }
             catch (InvalidOperationException)
             {
@@ -193,6 +235,38 @@ internal sealed class RunnerDesk : IDisposable
         }
 
         try { Directory.Delete(_engine, recursive: true); } catch (IOException) { }
+    }
+
+    /// <summary>system_settings' pid rows, in memory.</summary>
+    public sealed class PidStore : IProcessSettingsStore
+    {
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _values = new();
+
+        public Task<string?> GetAsync(string key, CancellationToken cancellationToken = default)
+            => Task.FromResult(_values.TryGetValue(key, out var value) ? value : null);
+
+        public Task<int?> GetPidAsync(string key, CancellationToken cancellationToken = default)
+            => Task.FromResult(_values.TryGetValue(key, out var value) && int.TryParse(value, out var pid) && pid > 0
+                ? pid
+                : (int?)null);
+
+        public Task SetAsync(string key, string value, string? updatedBy = null, CancellationToken cancellationToken = default)
+        {
+            _values[key] = value;
+            return Task.CompletedTask;
+        }
+
+        public Task SetPidAsync(string key, int processId, string? updatedBy = null, CancellationToken cancellationToken = default)
+            => SetAsync(key, processId.ToString(), updatedBy, cancellationToken);
+
+        public Task<bool> DeleteAsync(string key, CancellationToken cancellationToken = default)
+            => Task.FromResult(_values.TryRemove(key, out _));
+
+        public Task<bool> DeleteIfPidAsync(string key, int processId, CancellationToken cancellationToken = default)
+            => Task.FromResult(_values.TryGetValue(key, out var value) && value == processId.ToString()
+                               && _values.TryRemove(key, out _));
+
+        public bool Has(string key) => _values.ContainsKey(key);
     }
 
     private sealed class FixedLimits(int maxRuns) : IRiskLimitsStore

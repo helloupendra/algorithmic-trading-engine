@@ -345,10 +345,16 @@ public sealed class StrategyRunControl
                           ?? UnderlyingCatalog.InferUnderlying(run.Symbol)).Trim().ToUpperInvariant();
         var spotSymbol = string.IsNullOrWhiteSpace(run.Symbol) ? UnderlyingCatalog.SpotSymbolFor(underlying) : run.Symbol;
 
-        var startedBy = await _dbContext.AppUsers.AsNoTracking()
-            .Where(x => x.Id == run.UserId)
-            .Select(x => x.UserName)
-            .FirstOrDefaultAsync(cancellationToken) ?? "unknown";
+        // Who started it, as the row recorded at the start. Only rows from
+        // before 28 Sep have none and fall back to the owner — which is what
+        // every adopted run used to claim, and why runs #234 and #235 changed
+        // from admin to coderforchange at the 24 Sep restart.
+        var startedBy = !string.IsNullOrWhiteSpace(run.StartedByName)
+            ? run.StartedByName
+            : await _dbContext.AppUsers.AsNoTracking()
+                .Where(x => x.Id == run.UserId)
+                .Select(x => x.UserName)
+                .FirstOrDefaultAsync(cancellationToken) ?? "unknown";
 
         var entry = new RunningStrategy(
             StrategyCatalogService.StableId(run.StrategyName),

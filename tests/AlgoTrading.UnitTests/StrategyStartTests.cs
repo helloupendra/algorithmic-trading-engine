@@ -122,6 +122,24 @@ public class StrategyStartTests
     }
 
     [Fact]
+    public async Task A_start_records_who_pressed_it_and_whose_account_it_is()
+    {
+        using var desk = new RunnerDesk();
+
+        // The morning plan: admin starts the run in coderforchange's account.
+        Assert.IsType<OkObjectResult>(await desk.Start("NIFTY", RunnerDesk.AdminId, ownerUserId: RunnerDesk.TraderId));
+
+        var run = Assert.Single(desk.Runs());
+        Assert.Equal(RunnerDesk.TraderId, run.UserId);
+        Assert.Equal(RunnerDesk.AdminId, run.StartedByUserId);
+        Assert.Equal("admin", run.StartedByName);
+
+        // Only an admin may name another account.
+        var refused = Assert.IsType<ObjectResult>(await desk.Start("BANKNIFTY", RunnerDesk.TraderId, ownerUserId: RunnerDesk.OtherTraderId));
+        Assert.Equal(403, refused.StatusCode);
+    }
+
+    [Fact]
     public async Task Post_deploy_answers_404()
     {
         // A real host routing the API's own controllers: the question is what

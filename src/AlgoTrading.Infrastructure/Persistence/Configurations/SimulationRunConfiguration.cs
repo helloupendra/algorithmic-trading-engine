@@ -41,6 +41,13 @@ public class SimulationRunConfiguration : IEntityTypeConfiguration<SimulationRun
         builder.Property(x => x.StrategyName)
             .HasMaxLength(100);
 
+        // Rows from before these columns existed read as "not recorded":
+        // null id, empty name. The views then fall back to the owner.
+        builder.Property(x => x.StartedByName)
+            .IsRequired()
+            .HasMaxLength(100)
+            .HasDefaultValue(string.Empty);
+
         builder.Property(x => x.ParametersJson)
             .HasColumnType("text");
 
