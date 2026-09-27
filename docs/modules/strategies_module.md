@@ -116,6 +116,8 @@ Until 28 Sep a live run kept no P&L over time: its card and its history row said
 
 Scoped like the run list: a trader gets their own runs whatever `userId` they pass; an admin gets every account's, or one account's.
 
+In the console the series is drawn twice (`web/src/lib/pnlSeries.ts` turns it into points, gaps and a day axis). The Desk's **Day P&L** draws each account's net through the day on the IST axis, 09:15 to 15:30 and on to the MCX close once an MCX run has points in the evening, with now marked. **Trade → Runs → Tracks** (`/trade/runs?view=tracks`) draws every run of the day as a track on the same axis, under NIFTY's one-minute closes and the accounts' curves: a track is a grid cell (an account's runs of one strategy on one underlying, a restart adding to it), its line the net on one shared square-root scale, its ticks the fills from the runs' order ledgers, its end how the last run stopped (`web/src/lib/tracks.ts`). Where no strategy run has a point while one was live, both break the line and say when: a gap is the recorder's, never the market's.
+
 ### 10. Every open leg, on every underlying
 `GET /api/Positions/open` answers with every open leg of the live runs (Running or Stopping) and manual books in scope, whatever they are written on. The Desk used to ask `/api/OptionChain/positions` once per underlying it knew of, so a leg on anything else (a crude future carried into the book, a share) never reached it.
 
@@ -177,6 +179,7 @@ The runner saves the strategy's state to Redis (`strategy:state:{runId}`) once r
 ### React
 - `web/src/pages/strategies/LiveRunnerPage.tsx`, `StrategyLibraryPage.tsx`, `StrategiesOverviewPage.tsx`, `shared.tsx`
 - `web/src/pages/strategies/RunCard.tsx` — the run card, with the positions table's Carry column.
+- `web/src/pages/strategies/RunTracks.tsx` — the Tracks view of Trade → Runs; `web/src/lib/tracks.ts` (tracks, scale, ends) and `web/src/lib/pnlSeries.ts` (points, gaps, the day axis), shared with the Desk's `pages/desk/PnlChart.tsx`.
 - `web/src/pages/trade/PositionsPage.tsx`, `OrdersPage.tsx` — every open leg and the day's orders, across runs and books; `web/src/lib/openPositions.ts` (grouping, sums, mark age) and `web/src/lib/orders.ts` (which ledgers, merged).
 - `web/src/lib/queries.ts` (`useStrategies`, `useStartStrategy`, `useStopStrategy`, `useStrategyLive`, `useStrategyLogs`, `useFnoUnderlyings`, `useSetCarryForward`), `web/src/lib/symbols.ts` (`parseOptionSymbol`, `formatContract`), `web/src/lib/carry.ts` (what the tick does where, its tooltip and hints).
 
