@@ -49,6 +49,9 @@ public class TradingDbContext : DbContext
     public DbSet<PaperOrder> PaperOrders => Set<PaperOrder>();
     public DbSet<PaperPosition> PaperPositions => Set<PaperPosition>();
     public DbSet<SimulationEquitySnapshot> SimulationEquitySnapshots => Set<SimulationEquitySnapshot>();
+
+    /// <summary>Each live run's P&amp;L once a minute, for the Desk's day curve. See <see cref="RunPnlMinute"/>.</summary>
+    public DbSet<RunPnlMinute> RunPnlMinutes => Set<RunPnlMinute>();
     public DbSet<StrategyDefinition> Strategies => Set<StrategyDefinition>();
 
     public DbSet<ExpiryRule> ExpiryRules => Set<ExpiryRule>();
