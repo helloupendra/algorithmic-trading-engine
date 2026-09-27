@@ -14,7 +14,8 @@ check() {  # description, condition result (0 = pass)
 }
 
 run_case() {  # name, dhan_primary, connected_after_sleeps (-1 = never, 0 = already), clock HHMM,
-              # [dhan_ok_after_sleeps (-1 = never, the default)], [dhan_failed_today (0/1)]
+              # [dhan_ok_after_sleeps (-1 = never, the default)], [dhan_failed_today (0/1)],
+              # [the calendar: trading (the default) | unknown], [feed verdict: fail (the default) | pass]
   (
     OUT="$(mktemp)"
     trap 'cat "$OUT"' EXIT   # fail() exits the case; its lines must still reach the checks
@@ -23,6 +24,12 @@ run_case() {  # name, dhan_primary, connected_after_sleeps (-1 = never, 0 = alre
     FAKE_HHMM="$4"
     DHAN_OK_AFTER="${5:--1}"
     DHAN_FAILED_TODAY="${6:-0}"
+    DAY_STATE="${7:-trading}"
+    DAY_WHY="No NSE holiday calendar is loaded for 2026"
+    FEED_VERDICT_STUB="${8:-fail}"
+    FEED_JUDGE_AT=091630
+    feed_report() { echo "feed_report" >>"$OUT"; echo "$FEED_VERDICT_STUB"; }
+    probably_holiday() { echo "holiday: $1" >>"$OUT"; exit 0; }
     DHAN_PRIMARY="$2"
     dhan_state() {
       if [ "$DHAN_OK_AFTER" -ge 0 ] && [ "$SLEEPS" -ge "$DHAN_OK_AFTER" ]; then echo "ok|20.0|09:30"; else echo "no|not signed in"; fi
@@ -47,6 +54,7 @@ run_case() {  # name, dhan_primary, connected_after_sleeps (-1 = never, 0 = alre
     date() {
       case "${1:-}" in
         +%H%M) echo "$FAKE_HHMM" ;;
+        +%H%M%S) echo "${FAKE_HHMM}00" ;;
         +%s) echo 1000 ;;
         *) echo "09:20" ;;
       esac
@@ -92,5 +100,23 @@ echo "Dhan was dropped after the open for delivering nothing, and is still 'sign
 out="$(run_case silentDhan 0 1 0930 0 1)"
 check "does not hand the day back to Dhan" "$(! grep -q 'start_dhan_primary' <<<"$out"; echo $?)"
 check "waits for FYERS instead" "$(grep -q 'signed in at' <<<"$out"; echo $?)"
+
+echo "The calendar cannot vouch for today, nobody signs in, nothing priced after the open:"
+out="$(run_case unknownDay 0 -1 0917 -1 0 unknown fail)"
+check "stops as a probable holiday" "$(grep -q 'holiday: no FYERS or Dhan sign-in and no price since the 09:15 open' <<<"$out"; echo $?)"
+check "without waiting for the sign-in until 14:30" "$(! grep -q 'fail:' <<<"$out" && ! grep -q '^sleep' <<<"$out"; echo $?)"
+
+echo "The same, before 09:16:30 — the open's grace — and FYERS signs in at 09:05:"
+out="$(run_case unknownEarly 0 1 0905 -1 0 unknown fail)"
+check "keeps waiting, then carries on" "$(! grep -q 'holiday:' <<<"$out" && grep -q 'signed in at' <<<"$out"; echo $?)"
+check "does not even look at the feed yet" "$(! grep -q 'feed_report' <<<"$out"; echo $?)"
+
+echo "The calendar cannot vouch for today, but prices are arriving:"
+out="$(run_case unknownPriced 0 2 0930 -1 0 unknown pass)"
+check "keeps waiting for the sign-in" "$(! grep -q 'holiday:' <<<"$out" && grep -q 'signed in at' <<<"$out"; echo $?)"
+
+echo "A known trading day never asks the feed while it waits:"
+out="$(run_case knownDay 0 2 0930)"
+check "no feed check, no holiday" "$(! grep -q 'feed_report' <<<"$out" && ! grep -q 'holiday:' <<<"$out"; echo $?)"
 
 if [ "$FAILS" = 0 ]; then echo "all passed"; else echo "$FAILS failed"; exit 1; fi
