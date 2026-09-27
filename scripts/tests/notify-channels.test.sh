@@ -2,7 +2,7 @@
 # Which Telegram chat scripts/lib/desk-common.sh's notify and notify_trades use.
 # Run: bash scripts/tests/notify-channels.test.sh
 set -uo pipefail
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/../.." || exit 1
 
 FAILS=0
 check() {  # description, expected, actual

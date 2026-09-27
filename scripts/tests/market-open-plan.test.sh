@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034  # variables here are read by the functions eval'd from market-open.sh
 # How the morning job reads a plan line for one account (scripts/market-open.sh,
 # parse_plan_line). Run: bash scripts/tests/market-open-plan.test.sh
 set -uo pipefail
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/../.." || exit 1
 
 FAILS=0
 check() {  # description, expected, actual

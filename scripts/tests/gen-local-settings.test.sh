@@ -3,7 +3,7 @@
 # every deploy rewrites that file, so what it leaves out, every restarted API lacks.
 # Run: bash scripts/tests/gen-local-settings.test.sh
 set -uo pipefail
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/../.." || exit 1
 
 FAILS=0
 check() {  # description, expected, actual

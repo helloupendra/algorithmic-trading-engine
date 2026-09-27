@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034,SC2319  # variables are read by the functions under test; "$(cond; echo $?)" is how check() takes a result
 # The morning's FYERS gate (scripts/market-open.sh, step 4): when Dhan is the
 # day's feed the strategies must not wait for the FYERS sign-in; when it is not,
 # they must. The gate's functions are loaded from the script itself, between its
 # ">>> fyers-gate" and "<<< fyers-gate" markers, with the API, the clock and the
 # notifications replaced by stubs. Run: bash scripts/tests/market-open-fyers-gate.test.sh
 set -uo pipefail
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/../.." || exit 1
 
 FAILS=0
 check() {  # description, condition result (0 = pass)

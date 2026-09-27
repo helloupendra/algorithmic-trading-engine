@@ -12,7 +12,7 @@
 # Usage: ./scripts/market-open.sh [--dry-run]
 
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 REPO_ROOT="$PWD"
 LOG="$REPO_ROOT/logs/market-open-$(date +%F).log"
 . scripts/lib/desk-common.sh
@@ -24,7 +24,8 @@ DRY_RUN=0
 # chain poller covers the same set (CHAIN_UNDERLYINGS, set for the API by the
 # library). Commodities are not in here: the chain poller does not follow them.
 UNDERLYINGS="${MARKET_OPEN_UNDERLYINGS:-BANKNIFTY NIFTY SENSEX}"
-export CHAIN_UNDERLYINGS="$(printf '%s' "$UNDERLYINGS" | tr ' ' ',')"
+CHAIN_UNDERLYINGS="$(printf '%s' "$UNDERLYINGS" | tr ' ' ',')"
+export CHAIN_UNDERLYINGS
 
 # The morning's plan: what to run, on what, at how many lots, and — where it
 # should differ from the default — that strategy's own leg target in premium

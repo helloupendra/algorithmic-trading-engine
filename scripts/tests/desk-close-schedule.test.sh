@@ -4,7 +4,7 @@
 # and after midnight for the day before when the evening's was missed.
 # Run: bash scripts/tests/desk-close-schedule.test.sh
 set -uo pipefail
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/../.." || exit 1
 
 FAILS=0
 check() {  # description, expected, actual
