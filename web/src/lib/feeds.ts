@@ -10,7 +10,7 @@
  * latest attempt.
  */
 
-import { heartbeatFeed } from './pulse'
+import { heartbeatFeed, meaningfulError } from './pulse'
 import type { IngestorStatus, LiveFeed } from './types'
 
 /** The one action a row may offer; `none` whenever its state is not a current answer. */
@@ -93,16 +93,6 @@ export interface FeedDiagnostics {
   rows: FeedDiagnosticRow[]
   /** Heartbeats too old to describe anything running now, listed so nothing is hidden. */
   older: { sourceName: string; status: string; lastHeartbeatUtc: string }[]
-}
-
-/**
- * An error text worth showing. Python wrote a dropped socket's missing code and
- * reason as "None None", which the page showed in red with nothing to act on.
- */
-export function meaningfulError(text: string | null | undefined): string | null {
-  const t = (text ?? '').trim()
-  if (!t) return null
-  return /^((none|null|undefined|nan)\s*)+$/i.test(t) ? null : t
 }
 
 /**

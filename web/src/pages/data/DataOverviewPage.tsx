@@ -21,6 +21,7 @@ import {
 import { formatAge, formatDateTime, formatNumber, shortSymbol } from '../../lib/format'
 import { Badge, Panel, QueryBoundary, StatTile } from '../../components/ui'
 import { SymbolMastersPanel } from './SymbolMastersPanel'
+import { meaningfulError } from '../../lib/pulse'
 import { IconArrowRight, IconDatabase, IconPulse, IconWarning } from '../../components/icons'
 import {
   CATEGORY_ORDER,
@@ -53,6 +54,12 @@ function buildMatrix(rows: CoverageRow[]) {
 
   const categories = CATEGORY_ORDER.filter((c) => matrix.has(c))
   return { resolutions, matrix, categories }
+}
+
+/** A heartbeat's last error, in red only when it says something ("None None" does not). */
+function HeartbeatError({ text }: { text: string | null }) {
+  const error = meaningfulError(text)
+  return error ? <p className="neg" style={{ margin: '6px 0 0', fontSize: 12.5 }}>{error}</p> : null
 }
 
 /** Renders only when something genuinely needs an operator's eyes. */
@@ -262,9 +269,7 @@ function LivePipelinePanel() {
                     <span>{s.currentSubscribedSymbols.length}</span>
                   </div>
                 </div>
-                {s.lastError && (
-                  <p className="neg" style={{ margin: '6px 0 0', fontSize: 12.5 }}>{s.lastError}</p>
-                )}
+                <HeartbeatError text={s.lastError} />
               </div>
             ))}
           </div>
