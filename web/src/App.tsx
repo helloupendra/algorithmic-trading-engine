@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes, useSearchParams } from 'react-router-dom'
+import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider } from './lib/auth'
 import { useLiveFeedSignalR } from './lib/queries'
@@ -23,12 +23,10 @@ import { StrategyPackagesPage } from './pages/admin/StrategyPackagesPage'
 import { RiskV2Page } from './pages/admin/RiskV2Page'
 import { BrokerPage } from './pages/admin/BrokerPage'
 import { ConnectorDetailPage } from './pages/admin/ConnectorDetailPage'
-import { LiveAlertsV2Page } from './pages/admin/LiveAlertsV2Page'
 import { PatternAlertsPage } from './pages/data/PatternAlertsPage'
 import { MoversPage } from './pages/markets/movers/MoversPage'
 import MarketFactorsPage from './pages/data/MarketFactorsPage'
-import { ActivityLogPage } from './pages/admin/ActivityLogPage'
-import { DeploymentsPage } from './pages/admin/DeploymentsPage'
+import { SystemLogPage } from './pages/system/log/SystemLogPage'
 import { IncidentsPage } from './pages/admin/IncidentsPage'
 import { MarketCalendarPage } from './pages/admin/MarketCalendarPage'
 import { StrategiesOverviewPage } from './pages/strategies/StrategiesOverviewPage'
@@ -73,13 +71,6 @@ const queryClient = new QueryClient({
 function GlobalSignalR() {
   useLiveFeedSignalR()
   return null
-}
-
-/** Until the one timeline: the log's source picks which of the three pages shows. */
-function LogRoute() {
-  const [params] = useSearchParams()
-  const source = params.get('source')
-  return source === 'alerts' ? <LiveAlertsV2Page /> : source === 'deploys' ? <DeploymentsPage /> : <ActivityLogPage />
 }
 
 export default function App() {
@@ -186,7 +177,7 @@ export default function App() {
                   <Route path="/system" element={<HealthPage view="overview" />} />
                   <Route path="/system/checkups" element={<HealthPage view="checkups" />} />
                   <Route path="/system/incidents" element={<IncidentsPage />} />
-                  <Route path="/system/log" element={<LogRoute />} />
+                  <Route path="/system/log" element={<SystemLogPage />} />
                   <Route path="/system/calendar" element={<MarketCalendarPage />} />
                   <Route path="/system/connectors" element={<BrokerPage />} />
                   <Route path="/system/connectors/:providerKey" element={<ConnectorDetailPage />} />
