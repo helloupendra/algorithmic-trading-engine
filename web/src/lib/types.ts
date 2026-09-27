@@ -2382,14 +2382,16 @@ export interface DeployStep {
   name: string
   status: 'ok' | 'skipped' | 'failed'
   detail: string
-  atUtc: string
+  /** Written by the Windows script only; desk.sh records no time per step. */
+  atUtc?: string
 }
 
 /** One pass of the desk's deploy script over the latest push. */
 export interface DeployRecord {
   startedUtc: string
   finishedUtc: string
-  outcome: 'applied' | 'skipped' | 'failed'
+  /** "applied" from the Windows script, "ok" from desk.sh: both went live (lib/deploys.ts). */
+  outcome: 'applied' | 'ok' | 'skipped' | 'failed'
   summary: string
   fromCommit: string
   toCommit: string

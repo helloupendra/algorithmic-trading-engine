@@ -1582,9 +1582,13 @@ export function useDataCoverage() {
 
 // ---------- Telegram Alerter ----------
 
+/** GET /api/Alerts/status: the signal alerter's processes, and whether Telegram delivery is set up. */
 export interface AlerterStatus {
   isRunning: boolean
   startedUtc: string | null
+  managed: boolean
+  processes: { underlying: string; processId: number | null; source: string; startedUtc: string | null }[]
+  telegramConfigured: boolean
 }
 
 export function useAlerterStatus() {
