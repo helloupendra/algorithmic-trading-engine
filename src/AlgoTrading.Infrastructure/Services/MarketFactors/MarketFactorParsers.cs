@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using AlgoTrading.Domain.Entities;
 
 namespace AlgoTrading.Infrastructure.Services.MarketFactors;
@@ -32,7 +33,7 @@ public sealed record GlobalQuote(
 /// <see cref="FormatException"/> with what was wrong, because a page that shows
 /// a wrongly-read FII position is worse than one that says the read failed.
 /// </remarks>
-public static class MarketFactorParsers
+public static partial class MarketFactorParsers
 {
     private static readonly string[] ParticipantColumns =
     [
@@ -48,10 +49,20 @@ public static class MarketFactorParsers
     /// NSE's participant-wise open interest file for one day.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Line 1 is a title naming the date ("... as on Sep 16, 2026"), line 2 the
     /// header, then Client, DII, FII, Pro and TOTAL. The title's date must be
     /// the one asked for: NSE has served a previous day's file under a new name
     /// before, and storing it under the wrong date would double a day.
+    /// </para>
+    /// <para>
+    /// The archive back to 2020 is the same file, hand-made each day, so its
+    /// punctuation wanders: the title reads <c>as on Jan 02 2020</c>, <c>as on
+    /// Feb 01,2021</c> and <c>as on Jan 03,"2023""""</c> across the years, and a
+    /// header cell can be quoted with a tab inside the quotes. Quotes and
+    /// whitespace are dropped before anything is compared; the column names and
+    /// their order have never changed, and are still checked.
+    /// </para>
     /// </remarks>
     public static IReadOnlyList<MarketParticipantOpenInterest> ParseParticipantOpenInterest(string csv, DateOnly expectedDate, string source)
     {
@@ -59,15 +70,15 @@ public static class MarketFactorParsers
         if (lines.Length < 7) throw new FormatException($"participant OI file has {lines.Length} lines, expected at least 7");
 
         string title = lines[0].Replace("\"", string.Empty);
-        int at = title.IndexOf("as on", StringComparison.OrdinalIgnoreCase);
-        if (at < 0) throw new FormatException("participant OI title does not name its date");
-        string dateText = title[(at + 5)..].Split(',').Take(2).Aggregate((a, b) => a + "," + b).Trim();
-        if (!DateOnly.TryParseExact(dateText, ["MMM d, yyyy", "MMM dd, yyyy"], CultureInfo.InvariantCulture, DateTimeStyles.None, out var fileDate))
+        var dated = ParticipantTitleDate().Match(title);
+        if (!dated.Success) throw new FormatException("participant OI title does not name its date");
+        string dateText = $"{dated.Groups[1].Value} {dated.Groups[2].Value} {dated.Groups[3].Value}";
+        if (!DateOnly.TryParseExact(dateText, ["MMM d yyyy", "MMM dd yyyy"], CultureInfo.InvariantCulture, DateTimeStyles.None, out var fileDate))
             throw new FormatException($"participant OI title date '{dateText}' does not parse");
         if (fileDate != expectedDate)
             throw new FormatException($"participant OI file is dated {fileDate:yyyy-MM-dd}, expected {expectedDate:yyyy-MM-dd}");
 
-        var header = lines[1].Split(',').Select(h => h.Trim()).ToArray();
+        var header = lines[1].Split(',').Select(h => h.Replace("\"", string.Empty).Trim()).ToArray();
         for (int i = 0; i < ParticipantColumns.Length; i++)
         {
             if (i >= header.Length || !string.Equals(header[i], ParticipantColumns[i], StringComparison.OrdinalIgnoreCase))
@@ -77,7 +88,7 @@ public static class MarketFactorParsers
         var rows = new List<MarketParticipantOpenInterest>();
         foreach (var line in lines.Skip(2))
         {
-            var cells = line.Split(',').Select(c => c.Trim()).ToArray();
+            var cells = line.Split(',').Select(c => c.Replace("\"", string.Empty).Trim()).ToArray();
             if (cells.Length < ParticipantColumns.Length || string.IsNullOrEmpty(cells[0])) continue;
             string type = ParticipantTypes.FirstOrDefault(t => string.Equals(t, cells[0], StringComparison.OrdinalIgnoreCase))
                 ?? throw new FormatException($"unknown participant type '{cells[0]}'");
@@ -239,6 +250,10 @@ public static class MarketFactorParsers
         return new GlobalQuote(Text(meta, "symbol"), name, meta.TryGetProperty("currency", out var cur) ? cur.GetString() : null,
             price.Value, previous, asOf);
     }
+
+    // "as on Sep 16, 2026", "as on Jan 02 2020", "as on Feb 01,2021".
+    [GeneratedRegex(@"as on\s+([A-Za-z]{3})\s*(\d{1,2})\s*,?\s*(\d{4})", RegexOptions.IgnoreCase)]
+    private static partial Regex ParticipantTitleDate();
 
     private static string Text(JsonElement item, string name) =>
         item.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()!.Trim() : string.Empty;

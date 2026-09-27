@@ -105,6 +105,21 @@ public static class SystemSettingKeys
     public const string ForecastsLastScoredSession = "forecasts.score.lastSession";
 
     /// <summary>
+    /// The IST day, "yyyy-MM-dd", the news scorer's failure was last sent to
+    /// the System channel. It runs every ten minutes; a broken scorer is worth
+    /// one message a day, not ninety.
+    /// </summary>
+    public const string NewsScoringLastFailureNotice = "marketintel.newsscore.lastFailureNotice";
+
+    /// <summary>
+    /// "marketintel.nofile.&lt;dataset&gt;": the days a market-intelligence
+    /// backfill found no file for, once they were old enough that none will
+    /// come (holidays the exchange calendar does not hold), as comma-separated
+    /// yyyyMMdd. They are not asked for again and do not count as missing.
+    /// </summary>
+    public static string MarketIntelligenceNoFile(string dataset) => $"marketintel.nofile.{dataset}";
+
+    /// <summary>
     /// "feed.failover.yyyy-MM-dd": the IST day the automatic switch from Dhan to
     /// FYERS was made, and what it saw, e.g. "11:30:05 IST: switched Dhan → FYERS
     /// — NSE silent 212 s (…)". Written before the switch, so an API restart

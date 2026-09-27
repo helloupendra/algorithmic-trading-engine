@@ -81,6 +81,15 @@ public class TradingDbContext : DbContext
     public DbSet<MarketFuturesDaily> MarketFuturesDaily => Set<MarketFuturesDaily>();
     public DbSet<MarketEvent> MarketEvents => Set<MarketEvent>();
 
+    // Market intelligence: what moves the Indian market, recorded with when the
+    // desk first knew it (news, filings, global cues, breadth). See docs/modules/market_intelligence.md.
+    public DbSet<NewsItem> NewsItems => Set<NewsItem>();
+    public DbSet<CorporateAnnouncement> CorporateAnnouncements => Set<CorporateAnnouncement>();
+    public DbSet<CorporateCalendarEvent> CorporateCalendar => Set<CorporateCalendarEvent>();
+    public DbSet<MarketGlobalDaily> MarketGlobalDaily => Set<MarketGlobalDaily>();
+    public DbSet<MarketQuoteSnapshot> MarketQuoteSnapshots => Set<MarketQuoteSnapshot>();
+    public DbSet<MarketBreadthDaily> MarketBreadthDaily => Set<MarketBreadthDaily>();
+
     public DbSet<RiskEvent> RiskEvents => Set<RiskEvent>();
     public DbSet<AlertEvent> AlertEvents => Set<AlertEvent>();
 

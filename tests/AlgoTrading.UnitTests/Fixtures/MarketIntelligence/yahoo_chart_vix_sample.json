@@ -1,0 +1,58 @@
+{
+ "chart": {
+  "result": [
+   {
+    "meta": {
+     "currency": "USD",
+     "symbol": "^VIX",
+     "exchangeName": "CXI",
+     "instrumentType": "INDEX",
+     "regularMarketTime": 1790367301,
+     "gmtoffset": -18000,
+     "timezone": "CDT",
+     "exchangeTimezoneName": "America/Chicago",
+     "regularMarketPrice": 14.87,
+     "chartPreviousClose": 13.78,
+     "dataGranularity": "1d"
+    },
+    "timestamp": [
+     1782975600,
+     1783062000,
+     1783321200
+    ],
+    "indicators": {
+     "quote": [
+      {
+       "open": [
+        17.049999237060547,
+        null,
+        16.399999618530273
+       ],
+       "high": [
+        17.209999084472656,
+        null,
+        16.5
+       ],
+       "low": [
+        15.789999961853027,
+        null,
+        15.5600004196167
+       ],
+       "close": [
+        16.149999618530273,
+        null,
+        15.569999694824219
+       ],
+       "volume": [
+        0,
+        null,
+        0
+       ]
+      }
+     ]
+    }
+   }
+  ],
+  "error": null
+ }
+}

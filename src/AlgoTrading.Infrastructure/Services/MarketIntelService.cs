@@ -1,10 +1,9 @@
 using System.Collections.Concurrent;
-using System.Globalization;
 using System.Text.Json;
-using System.Xml.Linq;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.MarketIntel;
 using AlgoTrading.Infrastructure.Persistence;
+using AlgoTrading.Infrastructure.Services.MarketIntelligence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
@@ -22,80 +21,14 @@ public class MarketIntelService : IMarketIntelService
     private static readonly TimeSpan NewsCacheTtl = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan MoversCacheTtl = TimeSpan.FromMinutes(5);
 
-    private sealed record Feed(string Source, string Url);
+    /// <summary>What the desk calls itself to the publishers; the recorder sends the same.</summary>
+    public const string UserAgent = "AlgoTradingEngine/1.0 (+local dashboard)";
 
-    private sealed record Category(string Key, string Label, string Group, Feed[] Feeds);
-
-    /// <summary>
-    /// The categories the news section offers, in the order the console shows
-    /// them. All feeds are the publishers' own public RSS endpoints, which is
-    /// what they are published for — an aggregator's feed would read the same
-    /// but carries terms that forbid using it inside a product.
-    /// </summary>
-    /// <remarks>
-    /// The sector feeds are Economic Times' industry sections, one per sector,
-    /// so a category is the publisher's own idea of "pharma" rather than a
-    /// keyword match over general news that would file every mention of the
-    /// word under it. IT is the exception: ET's technology feed carries barely
-    /// a headline at a time, so that one is Business Standard and Mint, both of
-    /// which keep a full section.
-    /// </remarks>
-    private static readonly Category[] Categories =
-    [
-        new("india", "India markets", NewsCategoryGroups.Markets,
-        [
-            new("Economic Times · Markets", "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms"),
-            new("Economic Times · Stocks", "https://economictimes.indiatimes.com/markets/stocks/rssfeeds/2146842.cms"),
-            new("Business Standard · Markets", "https://www.business-standard.com/rss/markets-106.rss"),
-            new("Mint · Markets", "https://www.livemint.com/rss/markets"),
-        ]),
-        new("global", "Global", NewsCategoryGroups.Markets,
-        [
-            new("BBC Business", "https://feeds.bbci.co.uk/news/business/rss.xml"),
-            new("Economic Times · Forex", "https://economictimes.indiatimes.com/markets/forex/rssfeeds/1150221130.cms"),
-        ]),
-        new("commodities", "Commodities", NewsCategoryGroups.Markets,
-        [
-            new("Economic Times · Commodities", "https://economictimes.indiatimes.com/markets/commodities/rssfeeds/1808152121.cms"),
-        ]),
-
-        new("banking", "Banking & financials", NewsCategoryGroups.Sectors,
-        [
-            new("Economic Times · Banking/Finance", "https://economictimes.indiatimes.com/rssfeeds/13358259.cms"),
-        ]),
-        new("pharma", "Pharma & healthcare", NewsCategoryGroups.Sectors,
-        [
-            new("Economic Times · Healthcare/Biotech", "https://economictimes.indiatimes.com/rssfeeds/13358050.cms"),
-        ]),
-        new("it", "IT & technology", NewsCategoryGroups.Sectors,
-        [
-            new("Business Standard · Technology", "https://www.business-standard.com/rss/technology-108.rss"),
-            new("Mint · Technology", "https://www.livemint.com/rss/technology"),
-        ]),
-        new("auto", "Auto", NewsCategoryGroups.Sectors,
-        [
-            new("Economic Times · Auto", "https://economictimes.indiatimes.com/rssfeeds/13359412.cms"),
-        ]),
-        new("energy", "Energy & power", NewsCategoryGroups.Sectors,
-        [
-            new("Economic Times · Energy", "https://economictimes.indiatimes.com/rssfeeds/13358350.cms"),
-        ]),
-        new("fmcg", "FMCG & consumer", NewsCategoryGroups.Sectors,
-        [
-            new("Economic Times · Cons. Products", "https://economictimes.indiatimes.com/rssfeeds/13358759.cms"),
-        ]),
-        new("metals", "Metals & mining", NewsCategoryGroups.Sectors,
-        [
-            new("Economic Times · Metals & Mining", "https://economictimes.indiatimes.com/rssfeeds/13357828.cms"),
-        ]),
-        new("realty", "Realty & construction", NewsCategoryGroups.Sectors,
-        [
-            new("Economic Times · Property/Construction", "https://economictimes.indiatimes.com/rssfeeds/13357019.cms"),
-        ]),
-    ];
-
-    private static readonly IReadOnlyDictionary<string, Category> CategoriesByKey =
-        Categories.ToDictionary(c => c.Key, StringComparer.OrdinalIgnoreCase);
+    // The categories and their feeds live in NewsFeedCatalog, which the news
+    // recorder reads too, so the console and the recorded history can never be
+    // reading two different lists of feeds.
+    private static readonly IReadOnlyDictionary<string, NewsFeedCategory> CategoriesByKey =
+        NewsFeedCatalog.ConsoleCategories.ToDictionary(c => c.Key, StringComparer.OrdinalIgnoreCase);
 
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IMemoryCache _cache;
@@ -115,7 +48,7 @@ public class MarketIntelService : IMarketIntelService
     }
 
     public IReadOnlyList<NewsCategoryDto> GetNewsCategories()
-        => Categories.Select(c => new NewsCategoryDto(c.Key, c.Label, c.Group)).ToList();
+        => NewsFeedCatalog.ConsoleCategories.Select(c => new NewsCategoryDto(c.Key, c.Label, c.Group)).ToList();
 
     public async Task<NewsResponse> GetNewsAsync(string category, CancellationToken cancellationToken = default)
     {
@@ -138,7 +71,7 @@ public class MarketIntelService : IMarketIntelService
         {
             try
             {
-                return await FetchFeedAsync(feed.Source, feed.Url, cancellationToken);
+                return await FetchFeedAsync(feed, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -232,27 +165,26 @@ public class MarketIntelService : IMarketIntelService
 
     // ---------- helpers ----------
 
-    private async Task<List<NewsItemDto>> FetchFeedAsync(
-        string source, string url, CancellationToken cancellationToken)
+    private async Task<List<NewsItemDto>> FetchFeedAsync(NewsFeed feed, CancellationToken cancellationToken)
     {
         var client = _httpClientFactory.CreateClient(nameof(MarketIntelService));
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.UserAgent.ParseAdd("AlgoTradingEngine/1.0 (+local dashboard)");
+        using var request = new HttpRequestMessage(HttpMethod.Get, feed.Url);
+        request.Headers.UserAgent.ParseAdd(UserAgent);
 
         using var httpResponse = await client.SendAsync(request, cancellationToken);
         httpResponse.EnsureSuccessStatusCode();
 
-        var xml = XDocument.Parse(await httpResponse.Content.ReadAsStringAsync(cancellationToken));
+        var items = RssFeedParser.Parse(await httpResponse.Content.ReadAsStringAsync(cancellationToken), feed.ZoneIfUnstated);
 
-        return xml.Descendants("item")
-            .Select(item => new NewsItemDto(
-                Title: item.Element("title")?.Value.Trim() ?? "(untitled)",
-                Link: item.Element("link")?.Value.Trim() ?? "",
-                Source: source,
-                PublishedUtc: ParseRssDate(item.Element("pubDate")?.Value),
-                Summary: Truncate(StripHtml(item.Element("description")?.Value), 220)))
+        return items
             .Where(i => i.Link.Length > 0)
             .Take(15)
+            .Select(i => new NewsItemDto(
+                Title: i.Title,
+                Link: i.Link,
+                Source: feed.Source,
+                PublishedUtc: i.PublishedUtc,
+                Summary: i.Summary.Length > 0 ? Truncate(i.Summary, 220) : null))
             .ToList();
     }
 
@@ -307,22 +239,6 @@ public class MarketIntelService : IMarketIntelService
         => element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.Number
             ? value.GetDecimal()
             : null;
-
-    private static DateTime? ParseRssDate(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return null;
-        return DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture,
-            DateTimeStyles.AdjustToUniversal, out var parsed)
-            ? parsed.UtcDateTime
-            : null;
-    }
-
-    private static string? StripHtml(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return null;
-        var text = System.Text.RegularExpressions.Regex.Replace(value, "<[^>]+>", " ");
-        return System.Net.WebUtility.HtmlDecode(text).Trim();
-    }
 
     private static string? Truncate(string? value, int max)
         => value is null || value.Length <= max ? value : value[..max].TrimEnd() + "…";

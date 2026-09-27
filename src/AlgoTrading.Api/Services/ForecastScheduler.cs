@@ -295,7 +295,9 @@ public sealed record ForecastRunResult(string? Failure, string? LastLine)
 /// <summary>
 /// Runs one <c>python -m analysis</c> job to completion: from the engine
 /// directory, with the interpreter and environment the strategy runners get,
-/// its output drained into the API log, and stopped after ten minutes.
+/// its output drained into the API log, and stopped after a time limit. The
+/// forecasts' issue and score jobs use it, and so does the news scorer
+/// (<see cref="NewsScoringScheduler"/>).
 /// </summary>
 /// <remarks>
 /// The environment is the runners': <c>PYTHONPATH</c> is the engine
@@ -320,16 +322,32 @@ public sealed class ForecastJobRunner
         _logger = logger;
     }
 
-    public async Task<ForecastRunResult> RunAsync(ForecastJob job, CancellationToken cancellationToken)
+    /// <summary>The engine directory the jobs run from, where the <c>analysis</c> package lives.</summary>
+    public string EngineDirectory => _engine.EngineDirectory;
+
+    public Task<ForecastRunResult> RunAsync(ForecastJob job, CancellationToken cancellationToken)
+        => RunAsync($"forecasts {job.Kind}", ForecastSchedule.Arguments(job), Timeout, lowPriority: false, cancellationToken);
+
+    /// <summary>
+    /// Runs <c>python</c> with <paramref name="arguments"/> (a <c>-m analysis</c>
+    /// command) and waits for it.
+    /// </summary>
+    /// <param name="label">How the job is named in the log, e.g. "forecasts Issue" or "news-score".</param>
+    /// <param name="timeout">How long it may run before it is stopped.</param>
+    /// <param name="lowPriority">
+    /// Run it below normal priority (nice 10 on Linux): for background work
+    /// that must never slow down the strategies sharing the machine.
+    /// </param>
+    public async Task<ForecastRunResult> RunAsync(string label, IReadOnlyList<string> arguments, TimeSpan timeout, bool lowPriority, CancellationToken cancellationToken)
     {
-        string command = ForecastSchedule.Describe(job);
+        string command = "python " + string.Join(' ', arguments);
         string engineDirectory = _engine.EngineDirectory;
 
         // Said plainly rather than left to Python's "No module named analysis".
         string package = Path.Combine(engineDirectory, "analysis");
         if (!Directory.Exists(package))
         {
-            _logger.LogError("Forecast job not run: {Command} needs the analysis package at {Path}, and it is not there.", command, package);
+            _logger.LogError("Analysis job not run: {Command} needs the analysis package at {Path}, and it is not there.", command, package);
             return new ForecastRunResult($"was not run: the analysis package is not at {package}", null);
         }
 
@@ -343,7 +361,7 @@ public sealed class ForecastJobRunner
             CreateNoWindow = true,
         };
 
-        foreach (string argument in ForecastSchedule.Arguments(job))
+        foreach (string argument in arguments)
         {
             info.ArgumentList.Add(argument);
         }
@@ -372,18 +390,18 @@ public sealed class ForecastJobRunner
         {
             if (e.Data is null) return;
             Remember(e.Data);
-            _logger.LogInformation("[forecasts {Kind}] {Line}", job.Kind, e.Data);
+            _logger.LogInformation("[{Label}] {Line}", label, e.Data);
         };
         process.ErrorDataReceived += (_, e) =>
         {
             if (e.Data is null) return;
             Remember(e.Data);
             // Python's logging writes to stderr, so this is the log, not only errors.
-            _logger.LogWarning("[forecasts {Kind}:err] {Line}", job.Kind, e.Data);
+            _logger.LogWarning("[{Label}:err] {Line}", label, e.Data);
         };
 
         var stopwatch = Stopwatch.StartNew();
-        _logger.LogInformation("Forecast job starting: {Command} (in {Directory}).", command, engineDirectory);
+        _logger.LogInformation("Analysis job starting: {Command} (in {Directory}).", command, engineDirectory);
 
         try
         {
@@ -397,17 +415,31 @@ public sealed class ForecastJobRunner
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Forecast job could not be started: {Command}.", command);
+            _logger.LogError(ex, "Analysis job could not be started: {Command}.", command);
             return new ForecastRunResult($"could not be started ({ex.Message})", null);
         }
 
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(Timeout);
+        if (lowPriority)
+        {
+            try
+            {
+                // Set a moment after the start, which is harmless: the job's
+                // first second is imports, not the heavy part.
+                process.PriorityClass = ProcessPriorityClass.BelowNormal;
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or PlatformNotSupportedException)
+            {
+                _logger.LogWarning("Could not lower the priority of {Command}: {Error}. It runs at normal priority.", command, ex.Message);
+            }
+        }
+
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        limit.CancelAfter(timeout);
 
         try
         {
             // Also waits for both pipes to reach their end, so the last line is in.
-            await process.WaitForExitAsync(timeout.Token);
+            await process.WaitForExitAsync(limit.Token);
         }
         catch (OperationCanceledException)
         {
@@ -415,22 +447,22 @@ public sealed class ForecastJobRunner
 
             if (cancellationToken.IsCancellationRequested)
             {
-                _logger.LogWarning("Forecast job stopped because the API is shutting down: {Command}.", command);
+                _logger.LogWarning("Analysis job stopped because the API is shutting down: {Command}.", command);
                 throw;
             }
 
-            _logger.LogError("Forecast job did not finish in {Minutes} minutes and was stopped: {Command}.", Timeout.TotalMinutes, command);
-            return new ForecastRunResult($"did not finish in {Timeout.TotalMinutes:0} minutes and was stopped", lastLine);
+            _logger.LogError("Analysis job did not finish in {Minutes} minutes and was stopped: {Command}.", timeout.TotalMinutes, command);
+            return new ForecastRunResult($"did not finish in {timeout.TotalMinutes:0} minutes and was stopped", lastLine);
         }
 
         int exitCode = process.ExitCode;
         if (exitCode == 0)
         {
-            _logger.LogInformation("Forecast job finished in {Seconds:0.0} s: {Command}.", stopwatch.Elapsed.TotalSeconds, command);
+            _logger.LogInformation("Analysis job finished in {Seconds:0.0} s: {Command}.", stopwatch.Elapsed.TotalSeconds, command);
             return new ForecastRunResult(null, lastLine);
         }
 
-        _logger.LogError("Forecast job exited with code {Code} after {Seconds:0.0} s: {Command}.", exitCode, stopwatch.Elapsed.TotalSeconds, command);
+        _logger.LogError("Analysis job exited with code {Code} after {Seconds:0.0} s: {Command}.", exitCode, stopwatch.Elapsed.TotalSeconds, command);
         return new ForecastRunResult($"exited with code {exitCode}", lastLine);
     }
 }

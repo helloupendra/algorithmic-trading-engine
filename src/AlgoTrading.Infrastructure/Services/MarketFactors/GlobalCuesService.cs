@@ -173,6 +173,30 @@ public sealed class GlobalCuesService
         }
     }
 
+    /// <summary>
+    /// GIFT Nifty's nearest future now, bypassing the panel's cache: the
+    /// market-intelligence snapshots need the price at the minute they are
+    /// taken. Shares the NSE IX token with the panel.
+    /// </summary>
+    public async Task<GiftNiftyQuote?> GiftNiftyNowAsync(CancellationToken ct)
+    {
+        await _gate.WaitAsync(ct);
+        try
+        {
+            return await GiftNiftyAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // A refused token is the likeliest cause; the next call fetches a new one.
+            _nseIxToken = null;
+            throw;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     private async Task<GiftNiftyQuote?> GiftNiftyAsync(CancellationToken ct)
     {
         var client = _http.CreateClient(HttpClientName);
