@@ -36,6 +36,9 @@ for arg in "$@"; do
     *) say "unknown argument: $arg"; exit 2 ;;
   esac
 done
+# The pid and, on the way out, the outcome go into the day's marker when the
+# desk started this run (daily_job in lib/desk-common.sh).
+[ "$DRY_RUN" = 1 ] || job_marker_attach
 
 say "=== market-close: $(date '+%A %d %B %Y %H:%M') ==="
 load_env
