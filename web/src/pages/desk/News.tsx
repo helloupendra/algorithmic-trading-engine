@@ -31,6 +31,8 @@ export function News({ view, links, limit = 6 }: { view: DeskView; links: DeskLi
   )
   const lines = newsLines(news.data?.items, filings.data?.items, tab, names).slice(0, limit)
   const waiting = !news.data && !filings.data && !news.isError && !filings.isError
+  // "Nothing recorded" is said only when every source the tab reads has answered.
+  const readAll = filings.data !== undefined && (tab === 'filings' || news.data !== undefined)
   return (
     <>
       <PanelHead title="News & filings" meta="sentiment: model reading, not a signal" more={links.news ? { to: links.news, label: 'All news' } : null} />
@@ -45,7 +47,7 @@ export function News({ view, links, limit = 6 }: { view: DeskView; links: DeskLi
       {filings.isError && !filings.data && <Failed what="Filings" error={filings.error} />}
       {waiting ? (
         <Waiting>Reading the news…</Waiting>
-      ) : lines.length === 0 ? (
+      ) : lines.length === 0 && !readAll ? null : lines.length === 0 ? (
         <Waiting>{tab === 'held' ? 'Nothing on held or watched names.' : tab === 'results' ? 'No results news.' : 'Nothing recorded since yesterday.'}</Waiting>
       ) : (
         <ul className="dk-list dk-news">
