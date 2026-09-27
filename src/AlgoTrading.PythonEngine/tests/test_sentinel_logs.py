@@ -649,6 +649,26 @@ class ErrorGroupingTests(LogsAgentTestCase):
         self.assertEqual("Python error in run 300: KeyError", finding.title)
         self.assertIn("KeyError: 'ltp'", finding.evidence)
 
+    def test_a_runners_own_stamped_log_is_read_stream_by_stream(self):
+        # From 28 Sep a runner keeps its log from the first line, each line
+        # stamped with a UTC time and the console's "|" / "!" stream marks,
+        # and ends it with an EXIT line that restates the crash.
+        self.start_watching("api.log")
+        self.write("engine/runner-302-1.log",
+                   "2026-09-28T04:00:00.000Z | [STATUS] NIFTY spot=25010 atm=25000 open_groups=1\n"
+                   "2026-09-28T04:00:01.000Z ! Traceback (most recent call last):\n"
+                   "2026-09-28T04:00:01.001Z | [STATUS] NIFTY spot=25012 atm=25000 open_groups=1\n"
+                   '2026-09-28T04:00:01.002Z !   File "/srv/strategies/fulcrum.py", line 10, in on_tick\n'
+                   "2026-09-28T04:00:01.003Z !     ltp = quote['ltp']\n"
+                   "2026-09-28T04:00:01.004Z ! KeyError: 'ltp'\n"
+                   "2026-09-28T04:00:01.005Z | EXIT code=1 reason=uncaught KeyError: 'ltp'\n")
+        # The EXIT line is on stdout, so it does not close the stderr traceback:
+        # a chained one may still follow, as on the API's console.
+        self.assertEqual({}, self.check())
+        [finding] = self.check().values()
+        self.assertEqual("python-traceback", finding.rule)
+        self.assertEqual("Python error in run 302: KeyError", finding.title)
+
     def test_interleaved_tracebacks_from_two_runners_are_put_back_together(self):
         self.start_watching("api.log")
         a, b = "[strategy:Fulcrum:NIFTY:err]", "[strategy:Ghost:SENSEX:err]"

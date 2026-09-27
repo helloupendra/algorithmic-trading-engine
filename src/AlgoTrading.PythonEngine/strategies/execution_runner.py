@@ -30,10 +30,16 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Before anything prints: the API that spawned us may die (restart, crash);
 # then stdout is a closed pipe and a plain print() raises BrokenPipeError.
-# Output continues in logs/engine/runner-<run_id>-<pid>.log (renamed once the
-# run id is known below).
-from core.safe_output import install_safe_stdio
-install_safe_stdio(name="runner")
+# Every line also goes to logs/engine/runner-<run_id>-<pid>.log from the first
+# one, stamped with its time and stream: the API reads a run's console from
+# that file, and a runner it adopted after a restart has no pipes at all. The
+# log ends with an "EXIT code=… reason=…" line saying how the runner ended.
+# Only when run as the runner: importing this module must not take over the
+# importer's streams and sys.exit.
+from core.safe_output import install_exit_line, install_safe_stdio, log_name_for_run, note_exit
+if __name__ == "__main__":
+    install_safe_stdio(name=log_name_for_run("runner", sys.argv), tee=True)
+    install_exit_line()
 
 import threading
 import redis
@@ -182,6 +188,7 @@ def install_signal_handlers() -> None:
         except ValueError:
             name = str(signum)
         print(f"[RUNNER] stopping: {name}", flush=True)
+        note_exit(0, f"signal {name}")
         raise SystemExit(0)
 
     for sig in (signal.SIGTERM, signal.SIGINT):

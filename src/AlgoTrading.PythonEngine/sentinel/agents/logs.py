@@ -159,6 +159,10 @@ BENIGN_LINES: tuple[re.Pattern[str], ...] = (
     # core.safe_output: the API that held a child's stdout went away and the
     # child carries on into logs/engine/. Expected after every API restart.
     re.compile(r"^\[safe_output\] sys\.std(?:out|err) lost"),
+    # core.safe_output: a runner's last line, "EXIT code=1 reason=uncaught
+    # KeyError: 'ltp'", restates how it ended. The traceback above it and the
+    # API's "exited on its own" line are what get reported; this is not news.
+    re.compile(r"^EXIT code=-?\d+ reason="),
     # Two processes adding the same symbol race on live_watchlist's unique
     # index; the loser's INSERT fails but the row is there (~200 a day).
     re.compile(r"IX_live_watchlist_Symbol"),
@@ -223,7 +227,11 @@ _DAEMON_PREFIX = re.compile(r"^\[(?P<label>[A-Za-z][A-Za-z0-9 ._-]{1,30}?)(?P<er
 _DAEMON_LABELS = ("ingestor", "chain poller", "notifier")  # and anything called "… feed"
 _INNER_VENDOR = re.compile(r"^\[(?P<vendor>dhan|fyers|truedata|angel)\]", re.I)
 _DESK_LINE = re.compile(r"^(?P<time>\d{2}:\d{2}:\d{2})\s+(?P<text>.*)$")
-_REGISTRY_LINE = re.compile(r"^\d{2}:\d{2}:\d{2} (?P<stream>[|!]) (?P<text>.*)$")
+# The API's run console ("09:15:01 | …") and, from 28 Sep, a runner's own log,
+# which stamps every line the same way with a full UTC time
+# ("2026-09-28T03:45:01.123Z ! …"). "!" is stderr: a traceback is assembled
+# from its own stream, not from whatever stdout printed in between.
+_REGISTRY_LINE = re.compile(r"^(?:\d{4}-\d{2}-\d{2}T)?\d{2}:\d{2}:\d{2}(?:\.\d+)?Z? (?P<stream>[|!]) (?P<text>.*)$")
 _RUNNER_FILE = re.compile(r"^runner-(?P<run>\d+)-\d+\.log$")
 _BACKTEST_FILE = re.compile(r"^backtest-(?P<run>\d+)-\d+\.log$")
 _FEED_FILE = re.compile(r"^(?P<vendor>[a-z]+)-feed-\d+\.log$")
