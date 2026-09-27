@@ -766,6 +766,8 @@ public class CarryForwardTests
             });
             services.AddSingleton<IWebHostEnvironment>(RecapClockTests.Inert<IWebHostEnvironment>.Create());
             services.AddSingleton<PythonEngineLocator>();
+            services.AddSingleton<IProcessProbe, SystemProcessProbe>();
+            services.AddSingleton<ISystemNotifier>(RecapClockTests.Inert<ISystemNotifier>.Create());
             _provider = services.BuildServiceProvider();
             Registry = _provider.GetRequiredService<StrategyProcessRegistry>();
         }

@@ -86,6 +86,8 @@ builder.Services.AddSingleton<AlgoTrading.Api.Services.PythonEngineLocator>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.StrategyCatalogService>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.StrategyProcessRegistry>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.StrategyRunControl>();
+// Whether a stored pid is still the runner it was: alive, gone, or cannot tell.
+builder.Services.AddSingleton<AlgoTrading.Api.Services.IProcessProbe, AlgoTrading.Api.Services.SystemProcessProbe>();
 // Read before every start: a runner is refused on a host short of memory.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.IHostMemory, AlgoTrading.Api.Services.ProcHostMemory>();
 // Intraday vs carry forward (27 Sep): the per-position tick, the close's move of
