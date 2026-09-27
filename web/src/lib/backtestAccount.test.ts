@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { readAccount, summariseYears } from './backtestAccount'
 import type { BacktestDailyPnl, BacktestEquityPoint } from './types'
 
-function point(atUtc: string, equity: number): BacktestEquityPoint {
-  return { atUtc, equity, realized: equity, unrealized: 0 }
+/** A curve point as the API sends it: equity is the balance, capital plus P&L. */
+function point(atUtc: string, pnl: number, capital = 200_000): BacktestEquityPoint {
+  return { atUtc, equity: capital + pnl, realized: pnl, unrealized: 0 }
 }
 
 describe('the account reading', () => {
@@ -31,6 +32,17 @@ describe('the account reading', () => {
     )!
     expect(reading.ranOutAtUtc).toBe('2026-01-02T04:00:00Z')
     expect(reading.lowest).toBe(-60_000)
+  })
+
+  it('reads the balance the API sends rather than adding the capital to it again', () => {
+    // Run 164: ₹10,00,000 at the start, ₹8,94,608.50 at the end, ₹8,80,001.50 at its lowest.
+    const reading = readAccount(
+      [point('2026-01-01T03:45:00Z', 0, 1_000_000), point('2026-03-02T09:59:00Z', -119_998.5, 1_000_000),
+       point('2026-09-17T09:59:00Z', -105_391.5, 1_000_000)],
+      1_000_000,
+    )!
+    expect(reading.lowest).toBe(880_001.5)
+    expect(reading.final).toBe(894_608.5)
   })
 
   it('has nothing to say without a curve or without capital', () => {
