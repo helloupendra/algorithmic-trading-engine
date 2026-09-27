@@ -188,6 +188,46 @@ else
   say "no feed processes left running"
 fi
 
+# Strategy runners the same way. A runner behind no open run trades a book
+# nothing watches: a run the API closed under a runner it could not verify
+# after a restart, or one left behind by an API that crashed.
+# >>> stray-runners
+# Prints the "pid command" lines (pgrep -fa) of execution_runner processes
+# whose --run-id is not an open run in the API's list, or "unreadable" when the
+# list does not parse — then none can be told apart from a stray.
+stray_runners() {  # $1 = pgrep -fa lines, $2 = GET /api/Strategy/runs?status=Running body
+  PROCS="$1" BODY="$2" python3 -c '
+import json, os, re
+try:
+    rows = json.loads(os.environ["BODY"])
+except Exception:
+    print("unreadable")
+    raise SystemExit
+if isinstance(rows, dict):
+    rows = rows.get("items") or rows.get("runs") or []
+open_ids = {str(r["runId"]) for r in rows if isinstance(r, dict) and r.get("runId") is not None}
+for line in os.environ["PROCS"].splitlines():
+    run = re.search(r"--run-id[= ](\d+)", line)
+    if line.strip() and (run is None or run.group(1) not in open_ids):
+        print(line)' 2>/dev/null
+}
+# <<< stray-runners
+runners="$(pgrep -fa "execution_runner.py" 2>/dev/null || true)"
+if [ -n "$runners" ]; then
+  open_runs=""
+  [ "$API_UP" = 1 ] && open_runs="$(api_get "/api/Strategy/runs?status=Running&take=500" 2>/dev/null || true)"
+  stray="$(stray_runners "$runners" "$open_runs")"
+  if [ "$stray" = "unreadable" ]; then
+    warn "strategy runners are alive and the open-run list could not be read to check them"
+    stray="$runners"
+  fi
+  if [ -n "$stray" ]; then
+    say "strategy runners with no open run behind them:"
+    printf '%s\n' "$stray" | while IFS= read -r line; do say "  $line"; done
+    notify "Stray strategy runners" "$(printf '%s\n' "$stray" | wc -l | tr -d ' ') execution_runner process(es) alive with no open run (pids $(printf '%s\n' "$stray" | awk '{print $1}' | tr '\n' ' ')). See logs/market-close-$(date +%F).log."
+  fi
+fi
+
 if [ "$DRY_RUN" = 1 ]; then
   say "=== dry run: nothing was stopped ==="
   exit 0
