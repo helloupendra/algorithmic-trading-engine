@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034  # variables here are read by the functions under test
 # The desk's deploy gate (scripts/lib/desk-common.sh, deploy_allowed): a build
 # and API restart only on a quiet desk. Run: bash scripts/tests/desk-deploy-gate.test.sh
 set -uo pipefail
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/../.." || exit 1
 
 FAILS=0
 check() {  # description, expected (0 allowed / 1 refused), actual

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034,SC2319  # variables are read by the stubbed functions; "$(cond; echo $?)" is how check() takes a result
 # The nightly close (scripts/market-close.sh, step 1) stops every live run but
 # the manual book: hand-placed positions are carried overnight (27 Sep). The
 # step's functions are loaded from the script itself, between its
 # ">>> live-runs" and "<<< live-runs" markers, with the API replaced by stubs
 # that record every stop asked for. Run: bash scripts/tests/market-close-manual-book.test.sh
 set -uo pipefail
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/../.." || exit 1
 
 FAILS=0
 check() {  # description, condition result (0 = pass)

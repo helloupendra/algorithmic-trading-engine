@@ -7,7 +7,7 @@
 # ARCHIVE_DROP_OLDER_THAN_DAYS in .env, when set, also frees the server's disk
 # of verified days older than that; unset, nothing is ever deleted.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 REPO_ROOT="$PWD"
 LOG="$REPO_ROOT/logs/archive-$(date +%F).log"
 . scripts/lib/desk-common.sh

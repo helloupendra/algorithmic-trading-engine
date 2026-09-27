@@ -40,7 +40,7 @@
 #        (--daemon is the detached copy; the launcher and --headless use it)
 
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 REPO_ROOT="$PWD"
 LOG="$REPO_ROOT/logs/desk.log"
 . scripts/lib/desk-common.sh
@@ -311,7 +311,7 @@ while true; do
     say "=== $OPEN_AT — running market-open.sh ==="
     # market-open keeps its own dated log; its lines are mirrored here through
     # stdout, so the log-only flag is lifted for it.
-    DESK_LOG_ONLY= ./scripts/market-open.sh >>"$LOG" 2>&1 || warn "market-open.sh exited non-zero (see logs/market-open-$today.log)"
+    DESK_LOG_ONLY='' ./scripts/market-open.sh >>"$LOG" 2>&1 || warn "market-open.sh exited non-zero (see logs/market-open-$today.log)"
     opened_on="$today"
   fi
 
@@ -324,7 +324,7 @@ while true; do
     else
       say "=== market-close.sh for $close_day did not run at $CLOSE_AT — running it now ==="
     fi
-    DESK_LOG_ONLY= ./scripts/market-close.sh >>"$LOG" 2>&1 || warn "market-close.sh exited non-zero (see logs/market-close-$today.log)"
+    DESK_LOG_ONLY='' ./scripts/market-close.sh >>"$LOG" 2>&1 || warn "market-close.sh exited non-zero (see logs/market-close-$today.log)"
     closed_on="$close_day"
   fi
 

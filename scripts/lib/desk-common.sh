@@ -97,7 +97,7 @@ infra_up() {
       say "Docker daemon is not running — starting the docker service"
       sudo -n systemctl start docker 2>>"$LOG" || { warn "could not start docker (systemctl)"; return 1; }
     fi
-    local i; for i in $(seq 1 40); do sleep 3; docker info >/dev/null 2>&1 && break; done
+    for _ in $(seq 1 40); do sleep 3; docker info >/dev/null 2>&1 && break; done
     docker info >/dev/null 2>&1 || { warn "Docker daemon did not come up in two minutes"; return 1; }
   fi
   ( cd "$REPO_ROOT" && docker compose up -d --wait timescaledb redis >>"$LOG" 2>&1 ) && say "  infra up" || { warn "docker compose failed (see desk.log)"; return 1; }
@@ -113,6 +113,7 @@ api_stop() {
   # supervises get their stdio closed cleanly.
   kill $pids 2>/dev/null || true
   for _ in $(seq 1 15); do sleep 1; [ -z "$(api_pids)" ] && return 0; done
+  # shellcheck disable=SC2046  # one PID per word, on purpose
   kill -9 $(api_pids) 2>/dev/null || true
   sleep 1
 }

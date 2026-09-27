@@ -21,7 +21,7 @@
 #              orphaned ones it cannot stop)
 
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 REPO_ROOT="$PWD"
 LOG="$REPO_ROOT/logs/market-close-$(date +%F).log"
 . scripts/lib/desk-common.sh

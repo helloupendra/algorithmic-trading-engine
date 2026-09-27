@@ -6,7 +6,7 @@
 # Usage: ./scripts/status.sh          # once
 #        watch -n 10 ./scripts/status.sh   # keep it on screen
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 API="${API_BASE_URL:-http://localhost:5025}"
 PUBLIC="${PUBLIC_URL:-https://openfno.com}"
 if [ "$(uname -s)" = "Darwin" ]; then PIDFILE="$HOME/Library/Application Support/algotrading/desk.pid"; else PIDFILE="${XDG_STATE_HOME:-$HOME/.local/state}/algotrading/desk.pid"; fi
