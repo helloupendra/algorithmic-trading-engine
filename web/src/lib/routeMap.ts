@@ -2,15 +2,16 @@
  * Every route App.tsx serves today, and where it lives once the URLs move to
  * the workspaces (/desk, /markets, /trade, /research, /system).
  *
- * Nothing redirects yet: this is the table the URL move will be generated
- * from, kept now so that no bookmark, Telegram link or checkup link
+ * Only the two home pages redirect so far (to /desk); the rest of this is
+ * the table the URL move will be generated from, kept now so that no
+ * bookmark, Telegram link or checkup link
  * (CheckupItem.link) is forgotten when it happens. The redirect keeps the
  * query string and fills `:params` by name. routeMap.test.ts fails if App.tsx
  * gains a route this table does not place, or if an entry outlives its route.
  */
 
 export const ROUTE_MOVES: Readonly<Record<string, string>> = {
-  // Home pages: both consoles open on the Desk.
+  // The two home pages, retired: both consoles open on the Desk.
   '/admin': '/desk',
   '/trader': '/desk',
 
@@ -93,8 +94,8 @@ export const ROUTE_MOVES: Readonly<Record<string, string>> = {
   '/trader/account': '/account',
 }
 
-/** Routes that keep their URL: the public pages and the fallbacks. */
-export const ROUTES_THAT_STAY: readonly string[] = ['/', '/login', '/invite/:token', '/forbidden', '*']
+/** Routes that keep their URL: the public pages, the fallbacks, and pages already at their new home. */
+export const ROUTES_THAT_STAY: readonly string[] = ['/', '/login', '/invite/:token', '/forbidden', '*', '/desk']
 
 /** New homes outside every workspace tab. */
 export const HOMES_OUTSIDE_WORKSPACES: readonly string[] = ['/account', '/notebook/:id']

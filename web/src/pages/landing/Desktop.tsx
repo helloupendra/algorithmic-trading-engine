@@ -61,13 +61,13 @@ function Chapter({ c, heading, children }: { c: ChapterCopy; heading: 'h1' | 'h2
 /* --------------------------------------------------------------------- page */
 
 export function LandingDesktop() {
-  const { isAuthenticated, isAdmin, isLoading } = useAuth()
+  const { isAuthenticated, isLoading } = useAuth()
   // isLoading is only true while a stored token is verified against /me
   // (anonymous visitors never see it). During that probe the CTA already reads
   // as the signed-in variant and points at /login, which bounces a valid session
   // to its role home — so nothing visibly flips once the probe resolves.
   const sessionLikely = isLoading || isAuthenticated
-  const consoleHref = isAuthenticated ? (isAdmin ? '/admin' : '/trader') : '/login'
+  const consoleHref = isAuthenticated ? '/desk' : '/login'
   const consoleLabel = sessionLikely ? 'Go to console' : 'Open the console'
 
   const clock = useMarketClock()

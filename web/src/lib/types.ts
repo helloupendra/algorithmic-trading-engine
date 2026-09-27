@@ -2271,3 +2271,137 @@ export interface IncidentSummary {
    */
   lastCheckUtc?: string | null
 }
+
+/* --- market intelligence (admin-only for now) ---------------------------- */
+
+/** GET /api/MarketIntelligence/news and /announcements: a page of rows and the total the filter matched. */
+export interface IntelPage<T> {
+  total: number
+  skip: number
+  take: number
+  items: T[]
+}
+
+/**
+ * The local news model's reading of an item, written by the scorer after the
+ * recorder stores it. Every field is empty until it has been scored.
+ */
+export interface IntelScore {
+  /** −1 … +1; null until scored. A model's reading of the words, not a signal. */
+  sentiment: number | null
+  /** 0–3; null until scored. */
+  importance: number | null
+  /** NSE tickers the item names, comma-separated ("RELIANCE,TCS"); '' when none. */
+  symbols: string
+  /** The scorer's topics, comma-separated ("results,guidance"); '' when none. */
+  topics: string
+  scoredUtc: string | null
+  scoreModel: string
+}
+
+/** A recorded headline. `firstSeenUtc` is when the desk first saw it. */
+export interface IntelHeadline extends IntelScore {
+  id: number
+  source: string
+  category: string
+  title: string
+  summary: string
+  link: string
+  publishedUtc: string | null
+  firstSeenUtc: string
+}
+
+/** A recorded exchange filing. */
+export interface IntelAnnouncement extends IntelScore {
+  id: number
+  exchange: string
+  /** The NSE symbol ("RELIANCE"). */
+  symbol: string
+  company: string
+  subject: string
+  details: string
+  attachmentUrl: string
+  announcedUtc: string | null
+  firstSeenUtc: string
+}
+
+/** GET /api/MarketIntelligence/calendar: a board meeting announced in advance. */
+export interface IntelBoardMeeting {
+  id: number
+  exchange: string
+  symbol: string
+  company: string
+  purpose: string
+  /** IST date, yyyy-MM-dd. */
+  eventDate: string
+  firstSeenUtc: string
+}
+
+/** GET /api/MarketIntelligence/global/snapshots: one price in one morning snapshot. */
+export interface IntelSnapshot {
+  /** "GIFTNIFTY", or a global market key ("SPX", "BRENT"…). */
+  key: string
+  price: number
+  previousClose: number | null
+  changePct: number | null
+  /** When the source priced it; null when it did not say. */
+  asOfUtc: string | null
+  fetchedUtc: string
+  source: string
+}
+
+/** GET /api/MarketIntelligence/global/daily: one overseas daily bar, dated in its own market's zone. */
+export interface IntelDailyBar {
+  symbol: string
+  date: string
+  open: number | null
+  high: number | null
+  low: number | null
+  close: number
+  volume: number | null
+  source: string
+  fetchedUtc: string
+}
+
+/** GET /api/MarketIntelligence/breadth: one NSE session's breadth, from the evening's files. */
+export interface IntelBreadthDay {
+  date: string
+  advances: number
+  declines: number
+  unchanged: number
+  traded: number
+  turnoverCr: number | null
+  highs52w: number | null
+  lows52w: number | null
+  source: string
+}
+
+/* --- deploys ---------------------------------------------------------------- */
+
+export interface DeployStep {
+  name: string
+  status: 'ok' | 'skipped' | 'failed'
+  detail: string
+  atUtc: string
+}
+
+/** One pass of the desk's deploy script over the latest push. */
+export interface DeployRecord {
+  startedUtc: string
+  finishedUtc: string
+  outcome: 'applied' | 'skipped' | 'failed'
+  summary: string
+  fromCommit: string
+  toCommit: string
+  commits: string[]
+  filesChanged: number
+  steps: DeployStep[]
+  machine: string
+}
+
+/** GET /api/Deploy/history. */
+export interface DeployHistory {
+  file: string | null
+  entries: DeployRecord[]
+  unreadable?: boolean
+}

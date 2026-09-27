@@ -304,6 +304,8 @@ button.pop__row:focus-visible { background: var(--surface2); outline: none; }
 }
 .shell__tabs-title { font-size: 13px; font-weight: 600; white-space: nowrap; }
 .shell__tabs-meta { color: var(--text-3); font-size: var(--fs-s); white-space: nowrap; }
+/* Where a page puts its own switches (the Desk's phase and account). */
+.shell__tabs-tools { flex: 1; min-width: 0; display: flex; align-items: center; }
 
 /* Scrolls sideways inside itself on a narrow screen; the page never does. */
 .shell__tablist {
@@ -480,6 +482,9 @@ button.pop__row:focus-visible { background: var(--surface2); outline: none; }
   .shell__avatar { width: 28px; height: 28px; }
 
   .shell__tabs { padding: 0 max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left)); gap: 10px; }
+  /* The Desk's switches wrap under its title rather than off the edge. */
+  .shell__tabs--desk { height: auto; min-height: var(--tabbar-h); flex-wrap: wrap; padding-top: 7px; padding-bottom: 7px; row-gap: 7px; }
+  .shell__tabs--desk .shell__tabs-tools { flex-basis: 100%; }
   /* The strip runs off the edge on a phone; the fade says there is more. */
   .shell__tablist { mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); padding-right: 20px; }
 

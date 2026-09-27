@@ -88,14 +88,13 @@ export function AdminHome() {
 }
 
 export function ForbiddenPage() {
-  const { isAdmin } = useAuth()
   return (
     <div className="page page--centered">
       <h1 className="page__title">Not permitted</h1>
       <p className="page__subtitle">
         Your account does not have access to that area.
       </p>
-      <Link className="btn btn--primary" to={isAdmin ? '/admin' : '/trader'}>
+      <Link className="btn btn--primary" to="/desk">
         Back to safety
       </Link>
     </div>
@@ -103,14 +102,14 @@ export function ForbiddenPage() {
 }
 
 export function NotFoundPage() {
-  const { isAuthenticated, isAdmin } = useAuth()
+  const { isAuthenticated } = useAuth()
   return (
     <div className="page page--centered">
       <h1 className="page__title">Page not found</h1>
       <p className="page__subtitle">That route does not exist.</p>
       <Link
         className="btn btn--primary"
-        to={isAuthenticated ? (isAdmin ? '/admin' : '/trader') : '/'}
+        to={isAuthenticated ? '/desk' : '/'}
       >
         Go home
       </Link>

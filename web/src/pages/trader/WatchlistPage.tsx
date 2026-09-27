@@ -1,5 +1,7 @@
 /**
- * The trader's own watchlist.
+ * Pulse & watchlist: the market pulse everyone shares (indices, the large
+ * caps that move them, MCX), then the trader's own list on top of it. The
+ * pulse lived on the trader overview until the Desk replaced that page.
  *
  * Removing a row here removes it from *this trader's* list only. The live feed
  * keeps carrying the symbol — another trader or a running strategy may still
@@ -17,6 +19,7 @@ import type { MyWatchlistItem } from '../../lib/types'
 import { formatAge, formatPrice, pnlClass } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Panel, QueryBoundary } from '../../components/ui'
 import { SymbolCombobox } from '../../components/SymbolCombobox'
+import { MarketPulse } from '../../components/MarketPulse'
 
 function change(item: MyWatchlistItem): { text: string; cls: string } {
   if (item.lastTradedPrice == null || item.close == null || item.close === 0) {
@@ -45,10 +48,12 @@ export function WatchlistPage() {
         <h1 className="page__title">Watchlist</h1>
         <p className="page__subtitle">
           Your own list of symbols, with the last saved quote for each. It is stored against your
-          account, so it is the same on every device. The indices, large caps and commodities are
-          always on the overview; this list is for what you want on top of them.
+          account, so it is the same on every device. The indices, large caps and commodities
+          first are the same for everyone; your list, under them, is for what you want on top.
         </p>
       </header>
+
+      <MarketPulse />
 
       {add.isError && <InlineError error={add.error} />}
       {remove.isError && <InlineError error={remove.error} />}

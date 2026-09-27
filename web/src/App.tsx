@@ -8,7 +8,7 @@ import { LoginPage } from './pages/LoginPage'
 import { AcceptInvitePage } from './pages/AcceptInvitePage'
 import { LandingPage } from './pages/LandingPage'
 import { ForbiddenPage, NotFoundPage } from './pages/Placeholders'
-import { OverviewPage } from './pages/trader/OverviewPage'
+import { DeskPage } from './pages/desk/DeskPage'
 import { WatchlistPage } from './pages/trader/WatchlistPage'
 import { ChartsPage } from './pages/trader/ChartsPage'
 import { PositionsPage } from './pages/trader/PositionsPage'
@@ -17,7 +17,6 @@ import { MarketNewsPage } from './pages/data/MarketNewsPage'
 import { TopMoversPage } from './pages/trader/TopMoversPage'
 import { AccountPage } from './pages/trader/AccountPage'
 import { RunDetailPage } from './pages/trader/RunDetailPage'
-import { AdminHomePage } from './pages/admin/AdminHomePage'
 import { AdminOverviewPage } from './pages/admin/AdminOverviewPage'
 import { UsersPage } from './pages/admin/UsersPage'
 import { StrategyPackagesPage } from './pages/admin/StrategyPackagesPage'
@@ -105,9 +104,15 @@ export default function App() {
                 <Route path="/admin/notebook/:id" element={<WhiteboardPage />} />
               </Route>
 
+              {/* The two home pages the Desk replaced. */}
+              <Route path="/admin" element={<Navigate to="/desk" replace />} />
+              <Route path="/trader" element={<Navigate to="/desk" replace />} />
+
               <Route element={<AppLayout />}>
+                {/* Everyone's home: one sheet for the day; each panel checks its own grant. */}
+                <Route path="/desk" element={<DeskPage />} />
+
                 {/* Trader area — any signed-in user. v1 pages, rebuild queued. */}
-                <Route path="/trader" element={<OverviewPage />} />
                 <Route path="/trader/watchlist" element={<WatchlistPage />} />
                 <Route path="/trader/charts" element={<ChartsPage />} />
                 <Route path="/trader/structure" element={<StructurePage />} />
@@ -133,8 +138,6 @@ export default function App() {
 
                 {/* Admin area — Admin role only. */}
                 <Route element={<RequireRole role="Admin" />}>
-                  <Route path="/admin" element={<AdminHomePage />} />
-
                   {/* Data module (v2). */}
                   <Route path="/admin/data" element={<DataOverviewPage />} />
                   <Route path="/admin/data/live" element={<LiveFeedsPage />} />

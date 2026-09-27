@@ -60,10 +60,10 @@ function Panel({ c, n }: { c: ChapterCopy; n: number }) {
 }
 
 export function LandingMobile() {
-  const { isAuthenticated, isAdmin, isLoading } = useAuth()
+  const { isAuthenticated, isLoading } = useAuth()
   // See landing/Desktop: during the /me probe the CTA already reads as signed in.
   const sessionLikely = isLoading || isAuthenticated
-  const consoleHref = isAuthenticated ? (isAdmin ? '/admin' : '/trader') : '/login'
+  const consoleHref = isAuthenticated ? '/desk' : '/login'
   const consoleLabel = sessionLikely ? 'Go to console' : 'Open the console'
 
   const clock = useMarketClock()

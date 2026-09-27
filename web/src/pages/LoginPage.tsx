@@ -100,12 +100,12 @@ export function LoginPage() {
     setIsSubmitting(true)
     machineRef.current?.fire('open')
     try {
-      const me = await login(name, pass)
+      await login(name, pass)
       // RequireAuth stores the full Location; keep search and hash so deep links
       // such as /trader/charts?symbol=NIFTY survive the sign-in detour.
       const from = (location.state as { from?: { pathname: string; search?: string; hash?: string } } | null)?.from
       const target = from ? `${from.pathname}${from.search ?? ''}${from.hash ?? ''}` : null
-      navigate(target ?? (me.role === 'Admin' ? '/admin' : '/trader'), { replace: true })
+      navigate(target ?? '/desk', { replace: true })
     } catch (err) {
       // An ApiError carries a message the server chose to show a user ("wrong
       // password"). Anything else is the request never completing - a dropped

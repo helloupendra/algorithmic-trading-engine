@@ -603,10 +603,11 @@ export function useManualInstrument(symbol: string) {
 }
 
 /** The caller's manual book, or null before their first order. */
-export function useManualBook() {
+export function useManualBook(enabled = true) {
   return useQuery({
     queryKey: ['manual', 'book'],
     queryFn: () => api.get<{ runId: number | null; status?: string; startedUtc?: string }>('/api/ManualOrders/book'),
+    enabled,
     refetchInterval: POLL_SLOW,
   })
 }
@@ -1388,12 +1389,13 @@ export function useSetKillSwitch() {
   })
 }
 
+const riskLimitsQuery = {
+  queryKey: ['risk', 'limits'] as const,
+  queryFn: () => api.get<RiskLimits>('/api/Risk/limits'),
+}
+
 export function useRiskLimits() {
-  return useQuery({
-    queryKey: ['risk', 'limits'],
-    queryFn: () => api.get<RiskLimits>('/api/Risk/limits'),
-    refetchInterval: POLL_FAST,
-  })
+  return useQuery({ ...riskLimitsQuery, refetchInterval: POLL_FAST })
 }
 
 export function useUpdateRiskLimits() {
@@ -2017,12 +2019,13 @@ export function useMarketPulse() {
   })
 }
 
+const myWatchlistQuery = {
+  queryKey: ['watchlist', 'me'] as const,
+  queryFn: () => api.get<import('./types').MyWatchlistItem[]>('/api/Watchlist/me'),
+}
+
 export function useMyWatchlist() {
-  return useQuery({
-    queryKey: ['watchlist', 'me'],
-    queryFn: () => api.get<import('./types').MyWatchlistItem[]>('/api/Watchlist/me'),
-    refetchInterval: POLL_FAST,
-  })
+  return useQuery({ ...myWatchlistQuery, refetchInterval: POLL_FAST })
 }
 
 export function useAddToMyWatchlist() {
@@ -2258,22 +2261,28 @@ export function useOptionChainExpiries(underlying: string) {
  * Open paper positions on the underlying's contracts — strategy legs and manual
  * trades — polled with the chain so a new fill shows within seconds.
  */
-export function useOptionChainPositions(underlying: string, live: boolean) {
-  return useQuery({
-    queryKey: ['optionChainPositions', underlying],
+function chainPositionsQuery(underlying: string) {
+  return {
+    queryKey: ['optionChainPositions', underlying] as const,
     queryFn: () =>
       api.get<import('./types').OptionChainPosition[]>(
         `/api/OptionChain/positions?${new URLSearchParams({ underlying })}`,
       ),
     enabled: Boolean(underlying),
+  }
+}
+
+export function useOptionChainPositions(underlying: string, live: boolean) {
+  return useQuery({
+    ...chainPositionsQuery(underlying),
     refetchInterval: live ? 3_000 : 30_000,
     placeholderData: keepPreviousData,
   })
 }
 
-export function useOptionChainView(underlying: string, expiry?: string, asOfUtc?: string) {
-  return useQuery({
-    queryKey: ['optionChainView', underlying, expiry ?? null, asOfUtc ?? null],
+function chainViewQuery(underlying: string, expiry?: string, asOfUtc?: string) {
+  return {
+    queryKey: ['optionChainView', underlying, expiry ?? null, asOfUtc ?? null] as const,
     queryFn: () => {
       const params = new URLSearchParams({ underlying })
       if (expiry) params.set('expiry', expiry)
@@ -2281,6 +2290,12 @@ export function useOptionChainView(underlying: string, expiry?: string, asOfUtc?
       return api.get<OptionChain>(`/api/OptionChain/view?${params}`)
     },
     enabled: Boolean(underlying),
+  }
+}
+
+export function useOptionChainView(underlying: string, expiry?: string, asOfUtc?: string) {
+  return useQuery({
+    ...chainViewQuery(underlying, expiry, asOfUtc),
     refetchInterval: (query) => (asOfUtc ? false : query.state.data?.header?.marketOpen ? 3_000 : 60_000),
     placeholderData: keepPreviousData,
   })
@@ -2654,5 +2669,168 @@ export function useForecastModels() {
     queryFn: async () => readForecastModels(await forecastsGet('/api/Forecasts/models')),
     refetchInterval: 60_000,
     retry: forecastsRetry,
+  })
+}
+
+// ---------- Deploys (admin) ----------
+
+import type {
+  DeployHistory,
+  IntelAnnouncement,
+  IntelBoardMeeting,
+  IntelBreadthDay,
+  IntelDailyBar,
+  IntelHeadline,
+  IntelPage,
+  IntelSnapshot,
+} from './types'
+
+/**
+ * What this machine did with the last pushes. Every 10 s on the Deployments
+ * page, often enough that watching a deploy land feels live; the Desk, open
+ * all day, asks once a minute.
+ */
+export function useDeployHistory(pollMs = 10_000, enabled = true) {
+  return useQuery({
+    queryKey: ['deploy', 'history'],
+    queryFn: () => api.get<DeployHistory>('/api/Deploy/history?limit=20'),
+    enabled,
+    refetchInterval: pollMs,
+  })
+}
+
+// ---------- Market intelligence (admin-only endpoints) ----------
+
+/**
+ * What the market-intelligence recorders stored: headlines and filings (with
+ * the local model's reading once scored), board meetings, the morning
+ * snapshots of GIFT Nifty and overseas markets, their daily bars, and NSE
+ * breadth. The API serves them to admins only for now, so every hook takes
+ * `enabled` and a trader's console never asks.
+ */
+const INTEL_TAKE = 60
+
+/** Headlines first seen since `from` (an IST date), newest first. The recorder polls its feeds every few minutes. */
+export function useIntelNews(from: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['intel', 'news', from],
+    queryFn: () => api.get<IntelPage<IntelHeadline>>(`/api/MarketIntelligence/news?${new URLSearchParams({ from, take: String(INTEL_TAKE) })}`),
+    enabled,
+    refetchInterval: 120_000,
+  })
+}
+
+/** NSE filings broadcast since `from`, newest first. */
+export function useIntelAnnouncements(from: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['intel', 'announcements', from],
+    queryFn: () =>
+      api.get<IntelPage<IntelAnnouncement>>(`/api/MarketIntelligence/announcements?${new URLSearchParams({ from, take: String(INTEL_TAKE) })}`),
+    enabled,
+    refetchInterval: 120_000,
+  })
+}
+
+/** Board meetings between two IST dates; announced days ahead, so read rarely. */
+export function useIntelCalendar(from: string, to: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['intel', 'calendar', from, to],
+    queryFn: () => api.get<IntelBoardMeeting[]>(`/api/MarketIntelligence/calendar?${new URLSearchParams({ from, to })}`),
+    enabled,
+    refetchInterval: 30 * 60_000,
+  })
+}
+
+/** Every snapshot of one IST date. The recorder takes one every 15 minutes from 06:00, plus one at 08:45. */
+export function useIntelSnapshots(date: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['intel', 'snapshots', date],
+    queryFn: () => api.get<IntelSnapshot[]>(`/api/MarketIntelligence/global/snapshots?${new URLSearchParams({ date })}`),
+    enabled,
+    refetchInterval: 5 * 60_000,
+  })
+}
+
+/** Overseas daily bars since `from`: the last close of a market no morning snapshot has priced yet. */
+export function useIntelGlobalDaily(from: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['intel', 'global-daily', from],
+    queryFn: () => api.get<IntelDailyBar[]>(`/api/MarketIntelligence/global/daily?${new URLSearchParams({ from })}`),
+    enabled,
+    refetchInterval: 30 * 60_000,
+  })
+}
+
+/** NSE breadth per session since `from`; written once each evening from NSE's files. */
+export function useIntelBreadth(from: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['intel', 'breadth', from],
+    queryFn: () => api.get<IntelBreadthDay[]>(`/api/MarketIntelligence/breadth?${new URLSearchParams({ from })}`),
+    enabled,
+    refetchInterval: 30 * 60_000,
+  })
+}
+
+// ---------- The Desk: the same questions, at the pace of a screen open all day ----------
+
+/**
+ * The Desk asks what the owning pages ask, under the same query keys, so a
+ * visit to either finds the answer already there. It does not ask as often:
+ * it stays open from before the open to after the close, and a level on the
+ * chain or a leg's mark does not need the 1–3 s those pages use while someone
+ * trades from them.
+ */
+const DESK_CHAIN_LIVE = 30_000
+const DESK_LEGS_LIVE = 15_000
+const DESK_IDLE = 5 * 60_000
+
+/** The chain view's header (walls, PCR, max pain, IV, straddle) for each underlying. */
+export function useDeskChainViews(underlyings: readonly string[], live: boolean) {
+  return useQueries({
+    queries: underlyings.map((u) => ({
+      ...chainViewQuery(u),
+      refetchInterval: live ? DESK_CHAIN_LIVE : DESK_IDLE,
+      placeholderData: keepPreviousData,
+    })),
+  })
+}
+
+/** Open legs on each underlying's contracts, strategy runs and manual books alike, marked at the live price. */
+export function useDeskPositions(underlyings: readonly string[], live: boolean, enabled = true) {
+  return useQueries({
+    queries: underlyings.map((u) => ({
+      ...chainPositionsQuery(u),
+      enabled: enabled && Boolean(u),
+      refetchInterval: live ? DESK_LEGS_LIVE : 60_000,
+    })),
+  })
+}
+
+/** The platform limits (admin-only on the API). They change when an admin saves them, not with the market. */
+export function useDeskRiskLimits(enabled: boolean) {
+  return useQuery({ ...riskLimitsQuery, enabled, refetchInterval: DESK_IDLE })
+}
+
+/** The viewer's own watchlist, for "held and watched"; its symbols change by hand, not by the minute. */
+export function useDeskWatchlist(enabled: boolean) {
+  return useQuery({ ...myWatchlistQuery, enabled, refetchInterval: DESK_IDLE })
+}
+
+/**
+ * The viewer's manual book, in full: which legs were carried and from which
+ * run. The Live runner reads a book once (it has no runner, so its view is
+ * never "active"); the Desk re-reads it every minute, because a carry at the
+ * close changes it while the page stays open.
+ */
+export function useDeskBookView(runId: number | null) {
+  return useQuery({ ...liveViewQuery(runId ?? 0, runId != null), refetchInterval: 60_000 })
+}
+
+/** Today's one-minute bars for a small trace; the latest 375 cover a whole NSE session. */
+export function useIntradayTrace(symbol: string, live: boolean) {
+  return useQuery({
+    queryKey: ['bars', symbol, 375],
+    queryFn: () => api.get<LiveBar[]>(`/api/LiveData/bars?${new URLSearchParams({ symbol, take: '375' })}`),
+    refetchInterval: live ? 60_000 : false,
   })
 }

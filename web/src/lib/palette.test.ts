@@ -40,7 +40,7 @@ describe('pageItems', () => {
   it('lists every page the user can open, in registry order, on an empty query', () => {
     const items = pageItems(adminNav, '')
     expect(items.length).toBe(adminNav.flatMap((w) => w.pages).length)
-    expect(items[0]).toMatchObject({ label: 'Desk', to: '/admin' })
+    expect(items[0]).toMatchObject({ label: 'Desk', to: '/desk' })
   })
 
   it('finds a page by a keyword and says where it lives', () => {
@@ -53,7 +53,9 @@ describe('pageItems', () => {
 
   it("never offers a trader an admin page, and adds the trader's account", () => {
     const items = pageItems(traderNav, '', [{ label: 'Account', to: '/trader/account' }])
-    expect(items.every((i) => i.to.startsWith('/trader'))).toBe(true)
+    // The Desk is the one URL both consoles share.
+    expect(items.every((i) => i.to.startsWith('/trader') || i.to === '/desk')).toBe(true)
+    expect(items.some((i) => i.to.startsWith('/admin'))).toBe(false)
     expect(labels(pageItems(traderNav, 'connectors'))).toEqual([])
     expect(labels(pageItems(traderNav, 'acc', [{ label: 'Account', to: '/trader/account' }]))).toEqual(['Account'])
   })
