@@ -143,6 +143,10 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.PositionViewBuilder>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.BacktestRunViewBuilder>();
 // Every open leg across runs and manual books, for the Desk (GET /api/Positions/open).
 builder.Services.AddScoped<AlgoTrading.Api.Services.OpenPositionsBuilder>();
+// The morning plan against what is live (GET /api/Desk/plan); Desk:PlanFile overrides where it is read from.
+builder.Services.Configure<AlgoTrading.Api.Configuration.DeskOptions>(
+    builder.Configuration.GetSection(AlgoTrading.Api.Configuration.DeskOptions.SectionName));
+builder.Services.AddScoped<AlgoTrading.Api.Services.DeskPlanBuilder>();
 // Settles the manual book's expired contracts (CarriedPositionsService runs it).
 builder.Services.AddScoped<AlgoTrading.Api.Services.ExpirySettler>();
 
