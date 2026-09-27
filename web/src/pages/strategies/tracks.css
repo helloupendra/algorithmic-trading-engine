@@ -1,0 +1,106 @@
+/*
+ * Trade → Runs → Tracks: one board, every lane on one time axis. Three
+ * columns throughout (a label, the lane, the figures), so the lanes line up;
+ * rows are hairlines on one surface, the Desk's tokens and 12.5px data.
+ */
+
+/* The view switch in the Runs header, beside the readiness pills on the cards. */
+.runs-head__tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 12px; }
+.runs-view { align-self: flex-end; }
+.page__header.runs-head { margin-bottom: 4px; }
+
+.tk {
+  --tk-lab: 196px;
+  --tk-num: 176px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: var(--fs-s); }
+.tk-hover { font-variant-numeric: tabular-nums; }
+.tk-empty { margin: 0; padding: 18px 14px; border: 1px dashed var(--line); border-radius: var(--radius); color: var(--text-3); font-size: var(--fs-s); }
+
+.tk-board {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.tk-row { display: grid; grid-template-columns: var(--tk-lab) minmax(0, 1fr) var(--tk-num); align-items: stretch; }
+.tk-row > div { min-width: 0; }
+.tk-lab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 0 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--fs-s);
+  color: var(--text-2);
+}
+.tk-lab--wide { grid-column: 1 / 3; }
+.tk-board .tk-lab a { color: var(--text-2); text-decoration: none; overflow: hidden; text-overflow: ellipsis; }
+.tk-board .tk-lab a:hover { color: var(--brand-hi); }
+.tk-u { color: var(--text-3); font-size: var(--fs-xs); }
+.tk-lane { position: relative; display: flex; align-items: center; }
+.tk-lane-note { padding-left: 8px; }
+.tk-num {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 0 12px 0 10px;
+  white-space: nowrap;
+  font-size: var(--fs-s);
+}
+
+.tk-price { height: 72px; border-bottom: 1px solid var(--line-soft); }
+.tk-price .tk-lab, .tk-price .tk-num { flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; }
+.tk-price .tk-num { align-items: flex-end; }
+.tk-big { font-size: 14px; font-weight: 500; color: var(--text); }
+
+.tk-pnl { height: 64px; border-bottom: 1px solid var(--line); }
+.tk-pnl .tk-lab { flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; }
+.tk-pnl .tk-num { flex-direction: column; align-items: stretch; justify-content: center; gap: 2px; }
+.tk-legend { display: inline-flex; align-items: center; color: var(--text-2); }
+.tk-kv { display: flex; justify-content: space-between; gap: 10px; }
+
+.tk-grp { height: 26px; background: var(--bg1); border-bottom: 1px solid var(--line-soft); }
+.tk-grp .tk-lab { color: var(--text); }
+.tk-grp .tk-num { font-weight: 500; }
+
+.tk-run { height: 22px; }
+.tk-run:hover { background: var(--surface2); }
+.tk-run .tk-tn { min-width: 44px; text-align: right; color: var(--text-3); font-size: var(--fs-xs); }
+.tk-run .tk-net { min-width: 48px; text-align: right; font-weight: 500; }
+.tk-run .tk-st { min-width: 56px; text-align: right; font-size: 10.5px; }
+.tk-live { color: var(--live); }
+.tk-short, .tk-only-s { display: none; }
+
+.tk-axis { height: 22px; border-top: 1px solid var(--line-soft); }
+
+.tk-svg { display: block; overflow: visible; }
+.tk-svg text { fill: var(--text-3); font-size: 10px; font-family: var(--sans); font-variant-numeric: tabular-nums; }
+.tk-svg text.tk-strong { fill: var(--text-2); }
+.tk-svg .tk-mark { font-size: 10px; }
+.tk-svg .tk-mark--warn { fill: var(--warn); }
+.tk-off { fill: var(--text); opacity: 0.018; }
+.tk-gap { fill: var(--text-3); opacity: 0.08; }
+.tk-now { stroke: var(--brand); stroke-opacity: 0.6; stroke-dasharray: 2 2; }
+.tk-fill { stroke: var(--text-2); stroke-opacity: 0.5; }
+.tk-cursor { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--text-3); opacity: 0.6; pointer-events: none; }
+
+.tk-read { max-width: 120ch; }
+
+@media (max-width: 760px) {
+  .tk { --tk-lab: 92px; --tk-num: 66px; }
+  .tk-lab { padding: 0 6px 0 10px; font-size: var(--fs-xs); }
+  .tk-num { padding: 0 10px 0 4px; gap: 4px; font-size: var(--fs-xs); }
+  .tk-run .tk-tn, .tk-run .tk-st, .tk-hide-s, .tk-long { display: none; }
+  .tk-short, .tk-only-s { display: inline; }
+  .tk-run .tk-net { min-width: 0; }
+  .tk-price { height: 60px; }
+  .tk-grp .tk-lab .dk-xs { display: none; }
+  .tk-hover { display: none; }
+}
