@@ -457,7 +457,7 @@ app.Use(async (context, next) =>
 
 // Signed-in console paths: never indexed (X-Robots-Tag below).
 string[] ConsolePrefixes = ["/admin", "/trader", "/desk", "/markets", "/trade", "/research", "/data", "/system", "/account",
-    "/login", "/invite", "/api", "/hubs"];
+    "/notebook", "/login", "/invite", "/api", "/hubs"];
 app.Use(async (context, next) =>
 {
     var p = context.Request.Path.Value ?? string.Empty;
@@ -469,8 +469,9 @@ app.Use(async (context, next) =>
         return;
     }
     // The console is behind a sign-in and is not a page to index; the landing
-    // page and the docs are the public face. The workspaces' prefixes are here
-    // before their pages move to them (web/src/lib/routeMap.ts).
+    // page and the docs are the public face. The workspaces' paths are the
+    // console's pages (web/src/lib/routeMap.ts); /admin and /trader stay listed
+    // for the old links that redirect from them.
     if (ConsolePrefixes.Any(prefix => p.StartsWith(prefix, StringComparison.Ordinal)))
     {
         context.Response.Headers["X-Robots-Tag"] = "noindex, nofollow";
