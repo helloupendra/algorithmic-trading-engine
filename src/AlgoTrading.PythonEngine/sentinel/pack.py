@@ -38,7 +38,7 @@ import re
 import time
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, time as clock_time, timedelta, timezone
+from datetime import date, datetime, time as clock_time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -73,7 +73,9 @@ RUNS_FRESH_SECONDS = 30.0
 RUNS_RETRY_SECONDS = 300.0
 HEAD_FRESH_SECONDS = 60.0
 
-_DESK_STAMP = re.compile(r"^(\d{2}):(\d{2}):(\d{2})\s+(.*)$")
+# "2026-09-28 08:45:03  text" since 28 Sep 2026 (say() in scripts/lib/desk-common.sh),
+# "08:45:03  text" before: the date is optional.
+_DESK_STAMP = re.compile(r"^(?:(?P<date>\d{4}-\d{2}-\d{2})[ T])?(?P<h>\d{2}):(?P<m>\d{2}):(?P<s>\d{2})\s+(?P<text>.*)$")
 #: What desk.sh says when it changes something: a restart, a deploy, a job.
 _DESK_EVENT = re.compile(r"^(?:=== |stopping the API|starting the API|API up\b|API is down|origin/main moved"
                          r"|building \S+ -> |deploy(?::| of) \S+)")
@@ -158,10 +160,15 @@ def _read_range(path: Path, start: int, end: int) -> list[str]:
     return data.decode("utf-8", "replace").splitlines()
 
 
-def _desk_time(hh: int, mm: int, ss: int, now: datetime) -> Optional[datetime]:
-    """desk.log stamps IST wall-clock time without a date: today's, or yesterday's if that is in the future."""
+def _desk_time(hh: int, mm: int, ss: int, now: datetime, day: Optional[str] = None) -> Optional[datetime]:
+    """
+    A desk.log stamp, IST wall-clock time. A dated line says its own day; an
+    undated one (before 28 Sep 2026) is today's, or yesterday's if that is in the future.
+    """
     try:
         stamp = clock_time(hh, mm, ss)
+        if day:
+            return datetime.combine(date.fromisoformat(day), stamp, tzinfo=IST).astimezone(timezone.utc)
     except ValueError:
         return None
     local = to_ist(now)
@@ -377,8 +384,8 @@ class ContextPack:
         for raw in _read_range(window.path, window.start, window.end):
             m = _DESK_STAMP.match(raw.strip())
             if m:
-                stamp = _desk_time(int(m.group(1)), int(m.group(2)), int(m.group(3)), now)
-                text, hms = m.group(4).strip(), f"{m.group(1)}:{m.group(2)}:{m.group(3)}"
+                stamp = _desk_time(int(m["h"]), int(m["m"]), int(m["s"]), now, m["date"])
+                text, hms = m["text"].strip(), f"{m['h']}:{m['m']}:{m['s']}"
             else:
                 text, hms = raw.strip(), None   # build output: it belongs to the last stamped line
             if stamp is None or not (low <= stamp <= high):

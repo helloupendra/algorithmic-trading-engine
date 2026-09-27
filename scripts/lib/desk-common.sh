@@ -62,9 +62,13 @@ _notify_to() {  # system|trades, title, message
 # Every line goes to the log; it is echoed to the screen too unless
 # DESK_LOG_ONLY is set (the headless desk's stdout IS the log, and a tee
 # there would write each line twice).
+#
+# Stamped with the date as well as the time: desk.log runs for weeks, and a
+# bare 11:27 could be any day's. Sentinel reads both this stamp and the older
+# time-only one (sentinel/agents/logs.py, agents/health.py, pack.py).
 say() {
-  if [ -n "${DESK_LOG_ONLY:-}" ]; then printf '%s  %s\n' "$(date '+%H:%M:%S')" "$1" >>"$LOG"
-  else printf '%s  %s\n' "$(date '+%H:%M:%S')" "$1" | tee -a "$LOG"; fi
+  if [ -n "${DESK_LOG_ONLY:-}" ]; then printf '%s  %s\n' "$(date '+%F %T')" "$1" >>"$LOG"
+  else printf '%s  %s\n' "$(date '+%F %T')" "$1" | tee -a "$LOG"; fi
 }
 warn() { say "WARN: $1"; }
 
