@@ -141,26 +141,7 @@ export interface Instrument {
   optionType: string | null
 }
 
-// ---------- Simulator ----------
-
-export interface SimulationRun {
-  id: number
-  userId: number
-  mode: string
-  symbol: string
-  resolution: string
-  fromUtc: string | null
-  toUtc: string | null
-  replaySpeed: string
-  status: string
-  strategyName: string
-  parametersJson: string
-  initialCapital: number
-  createdUtc: string
-  startedUtc: string | null
-  completedUtc: string | null
-  lastError: string | null
-}
+// ---------- Paper runs ----------
 
 export interface RiskExposureResponse {
   totalUnrealizedPnL: number
@@ -178,19 +159,6 @@ export interface ActiveRunExposure {
   riskRules: RiskRules
 }
 
-export interface SimulationSignal {
-  id: number
-  simulationRunId: number
-  strategyName: string
-  signalType: string
-  timestampUtc: string
-  symbol: string
-  price: number | null
-  groupId: string
-  metadataJson: string
-  createdUtc: string
-}
-
 export interface PaperOrder {
   id: number
   simulationRunId: number
@@ -206,85 +174,6 @@ export interface PaperOrder {
   fillPrice: number | null
   createdUtc: string
   filledUtc: string | null
-}
-
-export interface PaperPosition {
-  id: number
-  simulationRunId: number
-  strategyName: string
-  groupId: string
-  symbol: string
-  direction: string
-  quantity: number
-  averagePrice: number
-  lastMarkPrice: number | null
-  realizedPnl: number
-  unrealizedPnl: number
-  status: string
-  openedUtc: string
-  closedUtc: string | null
-  updatedUtc: string
-}
-
-export interface PortfolioGroup {
-  groupId: string
-  strategyName: string
-  openPositionCount: number
-  closedPositionCount: number
-  usedCapital: number
-  realizedPnl: number
-  unrealizedPnl: number
-  status: string
-}
-
-export interface SimulationPortfolio {
-  simulationRunId: number
-  strategyName: string
-  runStatus: string
-  initialCapital: number
-  usedCapital: number
-  availableCapital: number
-  realizedPnl: number
-  unrealizedPnl: number
-  totalPnl: number
-  currentEquity: number
-  returnPercent: number
-  totalOrders: number
-  filledOrders: number
-  openPositions: number
-  closedPositions: number
-  groups: PortfolioGroup[]
-}
-
-export interface EquitySnapshot {
-  snapshotUtc: string
-  initialCapital: number
-  usedCapital: number
-  availableCapital: number
-  realizedPnl: number
-  unrealizedPnl: number
-  totalPnl: number
-  currentEquity: number
-  openPositions: number
-  closedPositions: number
-}
-
-export interface PerformanceMetrics {
-  simulationRunId: number
-  initialCapital: number
-  currentEquity: number
-  totalReturnPercent: number
-  maxDrawdownPercent: number
-  totalClosedPositions: number
-  winningPositions: number
-  losingPositions: number
-  winRatePercent: number
-  averageWin: number
-  averageLoss: number
-  grossProfit: number
-  grossLoss: number
-  profitFactor: number
-  expectancy: number
 }
 
 // ---------- Risk rules (live runs and backtests) ----------

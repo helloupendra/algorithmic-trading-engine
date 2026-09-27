@@ -8,7 +8,6 @@
 
 import { useEffect, useRef } from 'react'
 import {
-  AreaSeries,
   CandlestickSeries,
   ColorType,
   createChart,
@@ -16,7 +15,6 @@ import {
   type IChartApi,
   type UTCTimestamp,
 } from 'lightweight-charts'
-import type { EquitySnapshot } from '../lib/types'
 
 function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
@@ -55,51 +53,6 @@ function useResize(chartRef: React.RefObject<IChartApi | null>, ref: React.RefOb
   }, [chartRef, ref])
 }
 
-export function EquityChart({ snapshots }: { snapshots: EquitySnapshot[] }) {
-  const ref = useRef<HTMLDivElement | null>(null)
-  const chartRef = useRef<IChartApi | null>(null)
-
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-
-    const chart = createChart(el, baseOptions(el))
-    chartRef.current = chart
-
-    const last = snapshots[snapshots.length - 1]
-    const gaining = last ? last.currentEquity >= last.initialCapital : true
-    const line = gaining ? cssVar('--success') : cssVar('--danger')
-
-    const series = chart.addSeries(AreaSeries, {
-      lineColor: line,
-      lineWidth: 2,
-      topColor: `${line}33`,
-      bottomColor: `${line}05`,
-    })
-
-    // Snapshots can share a second; lightweight-charts requires strictly
-    // ascending unique times, so collapse duplicates keeping the last value.
-    const byTime = new Map<number, number>()
-    for (const s of [...snapshots].sort((a, b) => a.snapshotUtc.localeCompare(b.snapshotUtc))) {
-      byTime.set(Math.floor(new Date(s.snapshotUtc).getTime() / 1000), s.currentEquity)
-    }
-    series.setData(
-      [...byTime.entries()].map(([time, value]) => ({ time: time as UTCTimestamp, value })),
-    )
-    chart.timeScale().fitContent()
-
-    return () => {
-      chart.remove()
-      chartRef.current = null
-    }
-  }, [snapshots])
-
-  useResize(chartRef, ref)
-
-  return <div ref={ref} className="chart" />
-}
-
-/** A normalized candle any source (stored history, live bars) can map into. */
 /**
  * lightweight-charts labels its axis in UTC. Every bar here is an Indian
  * session, so the timestamps are shifted by the fixed IST offset (no daylight
@@ -111,6 +64,7 @@ function istTime(iso: string): UTCTimestamp {
   return (Math.floor(new Date(iso).getTime() / 1000) + IST_OFFSET_SECONDS) as UTCTimestamp
 }
 
+/** A normalized candle any source (stored history, live bars) can map into. */
 export interface PriceCandle {
   timeUtc: string
   open: number
