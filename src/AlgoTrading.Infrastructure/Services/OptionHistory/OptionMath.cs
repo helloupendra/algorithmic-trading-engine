@@ -1,3 +1,5 @@
+using AlgoTrading.Infrastructure.Providers.Dhan;
+
 namespace AlgoTrading.Infrastructure.Services.OptionHistory;
 
 /// <summary>
@@ -48,6 +50,35 @@ public static class OptionMath
 
     /// <summary>The narrowest IV the solver searches from (0.1%).</summary>
     private const double MinVolatility = 0.001;
+
+    /// <summary>
+    /// Implied volatility in percent from a stored figure; null when there is
+    /// none (zero means "not priced"). The feed's enricher and the FYERS chain
+    /// poller store a fraction (py_vollib: 0.136 is 13.6%); Dhan's chain sends a
+    /// percent, and the Dhan recorder stores it as it came. A fraction above
+    /// <see cref="MaxVolatility"/> is past what the poller would ever store, so
+    /// such a number is already a percent.
+    /// </summary>
+    /// <remarks>
+    /// One rule for every reader of a stored IV: the position view's greeks, and
+    /// the option chain responses, which until 27 Sep 2026 passed the stored
+    /// number through, so a FYERS capture's IV showed as "0.1" where a Dhan
+    /// capture's showed "14.2". Stored rows are left as they were written.
+    /// </remarks>
+    public static decimal? IvPercent(decimal? raw, bool storedAsPercent)
+    {
+        if (raw is not > 0m) return null;
+        if (storedAsPercent || raw.Value > (decimal)MaxVolatility) return raw.Value;
+        return raw.Value * 100m;
+    }
+
+    /// <summary>
+    /// Whether a chain snapshot from <paramref name="sourceKey"/> holds IV as a
+    /// percent: Dhan's recorder does; the FYERS poller (and a row with no source,
+    /// which the store stamps "fyers") holds a fraction.
+    /// </summary>
+    public static bool ChainSourceStoresPercent(string? sourceKey) =>
+        string.Equals(sourceKey?.Trim(), DhanProvider.Key, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Black-Scholes delta of a call (+) or a put (−). Null when the inputs

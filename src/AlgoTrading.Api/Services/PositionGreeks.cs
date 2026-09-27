@@ -66,20 +66,12 @@ public static class PositionGreeks
     }
 
     /// <summary>
-    /// Implied volatility in percent from a stored figure. The enricher and the
-    /// FYERS chain poller store a fraction (py_vollib: 0.136 is 13.6%); Dhan's
-    /// chain sends a percent, and the Dhan recorder stores it as it came. A
-    /// fraction above <see cref="OptionMath.MaxVolatility"/> is past what the
-    /// poller would ever store, so such a number is already a percent.
+    /// Implied volatility in percent from a stored figure, to two places: the
+    /// rule every reader of a stored IV shares (<see cref="OptionMath.IvPercent"/>),
+    /// which the option chain responses use too.
     /// </summary>
-    public static decimal? IvPercent(decimal? raw, bool vendorSendsPercent)
-    {
-        if (raw is not > 0m) return null;
-        if (vendorSendsPercent) return Math.Round(raw.Value, 2);
-        return raw.Value <= (decimal)OptionMath.MaxVolatility
-            ? Math.Round(raw.Value * 100m, 2)
-            : Math.Round(raw.Value, 2);
-    }
+    public static decimal? IvPercent(decimal? raw, bool vendorSendsPercent) =>
+        OptionMath.IvPercent(raw, vendorSendsPercent) is { } percent ? Math.Round(percent, 2) : null;
 
     /// <summary>
     /// Black-Scholes figures for one option from its own price: IV solved from
@@ -200,28 +192,51 @@ public static class PositionGreeks
     /// against its real expiry.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The enricher reads a weekly symbol's expiry from the symbol itself,
     /// exactly. A MONTHLY symbol (NIFTY26SEP…) carries only the month, and the
-    /// enricher takes the month's last THURSDAY (core/option_symbol.py) — the
-    /// NSE rule until 2025. NSE's monthlies now expire on the last Tuesday, so
-    /// for those the feed's IV and theta are computed two days off, and a leg
-    /// in its last week would show the wrong decay. Such figures are skipped
-    /// and the leg is priced from the chain or computed against the master's
-    /// expiry instead.
+    /// enricher dates it by <c>monthly_expiry</c> in core/option_symbol.py: the
+    /// last Tuesday on NSE (the last Thursday before Sep 2025), the last
+    /// Thursday on BSE, moved back over a holiday in the calendar it reads.
+    /// Until 27 Sep 2026 it took the last Thursday everywhere, so every NSE
+    /// monthly's feed IV and theta were computed two days off; this check was
+    /// written to catch that, and now mirrors the fixed rule.
+    /// </para>
+    /// <para>
+    /// A holiday-shifted expiry is not trusted (NIFTY's November 2026 monthly
+    /// expires on the 23rd because the 24th is Guru Nanak Jayanti). The
+    /// enricher gets it right only when its seed calendar lists that holiday,
+    /// and a year not seeded yet does not. Such a leg is priced from the chain
+    /// or computed against the master's expiry instead, which loses nothing
+    /// but the feed's freshness.
+    /// </para>
     /// </remarks>
     public static bool FeedExpiryMatches(string symbol, DateOnly? expiry)
     {
         if (expiry is null) return true;
         var parsed = UnderlyingCatalog.ParseOptionSymbol(symbol);
         if (parsed is null || parsed.IsWeekly || parsed.Expiry is not { } monthEnd) return true;
-        return LastThursday(monthEnd.Year, monthEnd.Month) == expiry.Value;
+        return MonthlyRuleDay(ExchangeOfSymbol(symbol), monthEnd.Year, monthEnd.Month) == expiry.Value;
     }
 
-    private static DateOnly LastThursday(int year, int month)
+    /// <summary>SEBI's one expiry day per exchange, for contracts expiring from this date: NSE Tuesday, BSE Thursday.</summary>
+    private static readonly DateOnly NseTuesdayFrom = new(2025, 9, 1);
+
+    /// <summary>The weekday rule of <c>monthly_expiry</c>, before any holiday shift.</summary>
+    private static DateOnly MonthlyRuleDay(string exchange, int year, int month)
     {
+        var weekday = exchange == "NSE" && new DateOnly(year, month, 1) >= NseTuesdayFrom
+            ? DayOfWeek.Tuesday
+            : DayOfWeek.Thursday;
         var day = new DateOnly(year, month, DateTime.DaysInMonth(year, month));
-        while (day.DayOfWeek != DayOfWeek.Thursday) day = day.AddDays(-1);
+        while (day.DayOfWeek != weekday) day = day.AddDays(-1);
         return day;
+    }
+
+    private static string ExchangeOfSymbol(string symbol)
+    {
+        int colon = symbol.IndexOf(':');
+        return colon > 0 ? symbol[..colon].Trim().ToUpperInvariant() : "NSE";
     }
 }
 
@@ -361,7 +376,7 @@ public sealed class PositionGreeksBuilder
         {
             chain = new PositionGreeks.Figures(
                 PositionGreeks.SourceChain, s.CapturedUtc,
-                PositionGreeks.IvPercent(s.Iv, vendorSendsPercent: string.Equals(s.SourceKey, "dhan", StringComparison.OrdinalIgnoreCase)),
+                PositionGreeks.IvPercent(s.Iv, vendorSendsPercent: OptionMath.ChainSourceStoresPercent(s.SourceKey)),
                 s.Delta.Value, s.Gamma ?? 0m, s.Theta.Value, s.Vega.Value,
                 s.SpotPrice > 0m ? s.SpotPrice : null);
         }

@@ -160,10 +160,17 @@ public class PositionGreeksTests
     [Fact]
     public void The_feed_is_not_trusted_on_a_monthly_symbol_it_dates_to_the_wrong_day()
     {
-        // The enricher dates NIFTY26SEP… to the last THURSDAY (24 Sep); NSE's
-        // September monthly expires on Tuesday the 29th.
-        Assert.False(PositionGreeks.FeedExpiryMatches("NSE:NIFTY26SEP24500CE", new DateOnly(2026, 9, 29)));
-        Assert.True(PositionGreeks.FeedExpiryMatches("NSE:NIFTY26SEP24500CE", new DateOnly(2026, 9, 24)));
+        // Until 27 Sep 2026 the enricher dated NIFTY26SEP… to the last THURSDAY
+        // (24 Sep). It now dates NSE monthlies to the last Tuesday, as NSE does.
+        Assert.True(PositionGreeks.FeedExpiryMatches("NSE:NIFTY26SEP24500CE", new DateOnly(2026, 9, 29)));
+        Assert.False(PositionGreeks.FeedExpiryMatches("NSE:NIFTY26SEP24500CE", new DateOnly(2026, 9, 24)));
+        // BSE's monthlies are the last Thursday; NSE's were too before Sep 2025.
+        Assert.True(PositionGreeks.FeedExpiryMatches("BSE:SENSEX26OCT81000CE", new DateOnly(2026, 10, 29)));
+        Assert.False(PositionGreeks.FeedExpiryMatches("BSE:SENSEX26OCT81000CE", new DateOnly(2026, 10, 27)));
+        Assert.True(PositionGreeks.FeedExpiryMatches("NSE:NIFTY25AUG24500CE", new DateOnly(2025, 8, 28)));
+        // Moved by a holiday (Tue 24 Nov 2026): right only if the enricher's
+        // calendar knew it, so not taken on trust.
+        Assert.False(PositionGreeks.FeedExpiryMatches("NSE:NIFTY26NOV24500CE", new DateOnly(2026, 11, 23)));
         // A weekly carries its own date.
         Assert.True(PositionGreeks.FeedExpiryMatches("NSE:NIFTY2692924500CE", new DateOnly(2026, 9, 29)));
     }

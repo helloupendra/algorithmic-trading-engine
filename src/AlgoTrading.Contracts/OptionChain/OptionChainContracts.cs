@@ -77,6 +77,11 @@ public class OptionChainLegResponse
     public long? OpenInterestChange { get; set; }
     public decimal? OpenInterestChangePercent { get; set; }
 
+    /// <summary>
+    /// Implied volatility in percent (14.2 is 14.2%), whichever vendor recorded
+    /// it; null when unpriced. The stored snapshot keeps the vendor's unit (a
+    /// fraction from the FYERS poller), so the response converts on the way out.
+    /// </summary>
     public decimal? ImpliedVolatility { get; set; }
     public decimal? Delta { get; set; }
     public decimal? Gamma { get; set; }

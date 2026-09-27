@@ -134,6 +134,10 @@ def normalise_chain_row(row: Dict[str, Any], spot: float) -> Optional[Dict[str, 
     last = _first_number(row, "ltp", "last_price", "lastPrice")
     snapshot = {
         "underlying": contract.underlying,
+        # A monthly symbol's date comes from core/option_symbol.monthly_expiry.
+        # Until 27 Sep 2026 that was the month's last Thursday, so FYERS
+        # snapshots stored before then carry NSE monthlies two days early
+        # (NSE expires on Tuesdays since Sep 2025). They were not rewritten.
         "expiryDate": contract.expiry.isoformat(),
         "strikePrice": contract.strike,
         "optionType": contract.kind,

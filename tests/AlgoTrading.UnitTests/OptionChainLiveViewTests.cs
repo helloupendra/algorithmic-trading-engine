@@ -4,6 +4,7 @@ using AlgoTrading.Domain.Entities;
 using AlgoTrading.Domain.ValueObjects;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Services;
+using AlgoTrading.Infrastructure.Services.OptionHistory;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 
@@ -357,7 +358,84 @@ public class OptionChainLiveViewTests
         Assert.Equal(270m, replay.Strikes.Single(s => s.StrikePrice == 10000m).Call!.LastTradedPrice);
     }
 
+    // ------------------------------------------------------------- IV units
+
+    [Theory]
+    [InlineData("dhan", 14.2, 14.2)]      // Dhan's chain sends a percent and is stored as it came
+    [InlineData("DHAN", 14.2, 14.2)]
+    [InlineData("fyers", 0.142, 14.2)]    // the FYERS poller stores py_vollib's fraction
+    [InlineData(null, 0.142, 14.2)]       // no source: the store stamps "fyers"
+    [InlineData("fyers", 18.2, 18.2)]     // past any fraction the poller would store: already a percent
+    public void A_stored_chain_iv_reads_in_percent_by_its_source(string? source, double raw, double expected)
+    {
+        Assert.Equal((decimal)expected,
+            OptionMath.IvPercent((decimal)raw, OptionMath.ChainSourceStoresPercent(source)));
+    }
+
+    [Fact]
+    public void An_unpriced_iv_reads_as_none_whatever_the_source()
+    {
+        Assert.Null(OptionMath.IvPercent(0m, storedAsPercent: false));
+        Assert.Null(OptionMath.IvPercent(0m, storedAsPercent: true));
+        Assert.Null(OptionMath.IvPercent(null, storedAsPercent: false));
+    }
+
+    [Fact]
+    public async Task A_fyers_chain_shows_iv_in_percent_like_a_dhan_chain()
+    {
+        // 27 Sep 2026: the chain page printed the stored number, so a FYERS
+        // capture (0.142) showed IV "0.1" where a Dhan one (14.2) showed "14.2".
+        await using var db = Db();
+        var captured = new DateTime(2026, 9, 25, 5, 0, 0, DateTimeKind.Utc);
+        var expiry = new DateOnly(2026, 9, 29);
+        foreach (var (underlying, source, callIv, putIv) in new[]
+                 {
+                     ("NIFTY", "fyers", 0.142m, 0.156m),
+                     ("BANKNIFTY", "dhan", 14.2m, 15.6m),
+                 })
+        {
+            foreach (var strike in new[] { 24400m, 24500m, 24600m })
+            {
+                db.OptionChainSnapshots.Add(IvRow(underlying, "CE", strike, callIv, source, captured, expiry));
+                db.OptionChainSnapshots.Add(IvRow(underlying, "PE", strike, putIv, source, captured, expiry));
+            }
+        }
+        await db.SaveChangesAsync();
+
+        var service = new OptionChainService(db);
+        foreach (var underlying in new[] { "NIFTY", "BANKNIFTY" })
+        {
+            var chain = await service.GetChainAsync(underlying, expiry, null);
+            var atm = chain.Strikes.Single(x => x.IsAtTheMoney);
+
+            Assert.Equal(24500m, atm.StrikePrice);
+            Assert.Equal(14.2m, atm.Call!.ImpliedVolatility);
+            Assert.Equal(15.6m, atm.Put!.ImpliedVolatility);
+            Assert.Equal(14.9m, OptionChainLiveView.AtTheMoneyIv(chain));
+        }
+        // What was stored is left as it was written.
+        Assert.All(db.OptionChainSnapshots.Where(x => x.Underlying == "NIFTY"), x => Assert.True(x.ImpliedVolatility < 1m));
+    }
+
     // ------------------------------------------------------------- helpers
+
+    private static OptionChainSnapshot IvRow(
+        string underlying, string type, decimal strike, decimal iv, string source, DateTime captured, DateOnly expiry) => new()
+    {
+        Underlying = underlying,
+        ExpiryDate = expiry,
+        StrikePrice = strike,
+        OptionType = type,
+        Symbol = $"NSE:{underlying}26SEP{strike:0}{type}",
+        CapturedUtc = captured,
+        SpotPrice = 24510m,
+        LastTradedPrice = 120m,
+        PriceChange = 5m,
+        OpenInterest = 6_000,
+        OpenInterestAtOpen = 5_000,
+        ImpliedVolatility = iv,
+        SourceKey = source,
+    };
 
     private static OptionChainLegResponse Leg(string symbol, decimal ltp, decimal change, long oi, long baseline) => new()
     {
