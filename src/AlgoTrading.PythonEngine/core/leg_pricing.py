@@ -25,7 +25,11 @@ from core.tick_age import tick_age_seconds
 #: A quote older than this is not evidence of a current price. LiveQuotesLatest
 #: is never purged, so a strike re-added on Monday still carries Friday's close —
 #: which would look perfectly valid and price the entry hundreds of points wrong.
-MAX_QUOTE_AGE_SECONDS = 900.0
+#: It was 900 s until 28 Sep; a feed stalled for minutes (24 Sep, 11:27–11:34)
+#: froze every quote well inside that. The API now refuses a fill from a quote
+#: older than a minute while the market is open, and this matches it, so the
+#: runner waits for a fresh quote instead of sending one the API will refuse.
+MAX_QUOTE_AGE_SECONDS = 60.0
 
 #: Total wait for ALL legs of one signal, not per leg.
 DEFAULT_WAIT_SECONDS = 10.0
