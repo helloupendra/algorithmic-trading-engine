@@ -1,0 +1,142 @@
+/* Desk checkup (System → Desk checkup): the parts the shared classes do not cover. */
+
+/* The title and what the page is take the room, and the run button stays
+   beside them rather than wrapping under a long subtitle. Below 760px the
+   shared header stacks, and the button goes full width on its own. */
+@media (min-width: 761px) {
+  .checkup-intro { flex: 1 1 0; min-width: 0; }
+  .checkup-run { flex: none; }
+}
+
+/* The report: its header, then the sections, in one panel. */
+.checkup-report > * + * { margin-top: 16px; }
+
+.checkup-head > * + * { margin-top: 8px; }
+.checkup-head__title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+.checkup-head__headline {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.checkup-head__meta { margin: 0; font-size: 12.5px; color: var(--text-2); overflow-wrap: anywhere; }
+.checkup-head__back { margin: 0; font-size: 12.5px; color: var(--text-3); }
+.checkup-head__back a, .checkup-item__link, .checkup-history__link { color: var(--brand-hi); }
+
+/* "Waiting for Sentinel…" and a checkup in progress: news, not a warning. */
+.checkup-wait {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--brand-soft);
+  border: 1px solid var(--brand-line);
+  border-radius: var(--radius-sm);
+}
+
+.checkup-sections > * + * { margin-top: 18px; }
+.checkup-none { margin: 0; font-size: 13px; color: var(--text-2); }
+
+/* One item: what was checked, what was found, and what to do, edged in the
+   colour of its state so the To do list reads at a glance. */
+.checkup-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.checkup-item {
+  padding: 10px 12px;
+  background: var(--bg1);
+  border: 1px solid var(--line-soft);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+}
+.checkup-item--neg { border-left-color: var(--neg); }
+.checkup-item--warn { border-left-color: var(--warn); }
+.checkup-item--accent { border-left-color: var(--brand-line); }
+.checkup-item--pos { border-left-color: color-mix(in srgb, var(--pos) 45%, transparent); }
+
+.checkup-item__head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
+.checkup-item__title { font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.checkup-item__area { font-size: 11.5px; color: var(--text-3); }
+.checkup-item__detail {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The line a person acts on: set apart from what was found, and tinted with
+   the item's state in the To do list. */
+.checkup-item__action {
+  margin: 8px 0 0;
+  padding: 7px 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--surface2);
+  border-radius: var(--radius-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.checkup-item--neg .checkup-item__action { background: var(--neg-soft); }
+.checkup-item--warn .checkup-item__action { background: var(--warn-soft); }
+.checkup-item__action-label { font-weight: 650; }
+.checkup-item__link { display: inline-block; margin-top: 7px; font-size: 12px; overflow-wrap: anywhere; text-decoration: none; }
+.checkup-item__link:hover { text-decoration: underline; }
+
+/* "All good (12)" and "Not checked (1)": folded by default, opened by the title. */
+.checkup-fold__summary { cursor: pointer; list-style: none; width: fit-content; margin-bottom: 0; }
+.checkup-fold__summary::-webkit-details-marker { display: none; }
+.checkup-fold__summary::before { content: '▸'; width: 10px; color: var(--text-3); }
+.checkup-fold[open] > .checkup-fold__summary { margin-bottom: 10px; }
+.checkup-fold[open] > .checkup-fold__summary::before { content: '▾'; }
+.checkup-fold__summary:hover { color: var(--text-2); }
+.checkup-fold__summary:focus-visible { outline: 2px solid var(--brand-line); outline-offset: 2px; border-radius: 3px; }
+
+/* History: the headline wraps; everything else stays on one line. */
+.checkup-history td.checkup-history__headline {
+  white-space: normal;
+  min-width: 220px;
+  overflow-wrap: anywhere;
+}
+.checkup-history__link { text-decoration: none; }
+.checkup-history__link:hover { text-decoration: underline; }
+
+/* On a phone each checkup is a short block instead of a table row: when,
+   which and the verdict on one line, the headline under them. As a table the
+   verdict sat off the right edge, which is the one column that matters. The
+   counts are left to the report itself. */
+@media (max-width: 760px) {
+  /* Prefixed with .table so they outrank the shared table rules whatever
+     order the stylesheets land in. */
+  .table.checkup-history thead { display: none; }
+  .table.checkup-history, .table.checkup-history tbody { display: block; }
+  .table.checkup-history tbody tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .table.checkup-history tbody tr:last-child { border-bottom: 0; }
+  .table.checkup-history tbody tr.row--selected { background: var(--brand-soft); }
+  .table.checkup-history tbody td { display: block; padding: 0; border: 0; }
+  .table.checkup-history tbody tr:hover td,
+  .table.checkup-history tbody tr.row--selected td { background: transparent; }
+  .table.checkup-history tbody td.checkup-history__headline { flex-basis: 100%; min-width: 0; }
+  .table.checkup-history tbody td.checkup-history__counts,
+  .table.checkup-history tbody td.checkup-history__headline--none { display: none; }
+}

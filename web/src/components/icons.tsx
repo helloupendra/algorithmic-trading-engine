@@ -235,6 +235,15 @@ export const IconWarning = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 )
 
+/** A clipboard with a tick: the desk checkup. */
+export const IconChecklist = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M9 4.5H7A1.5 1.5 0 005.5 6v13.5A1.5 1.5 0 007 21h10a1.5 1.5 0 001.5-1.5V6A1.5 1.5 0 0017 4.5h-2" />
+    <rect x="9" y="3" width="6" height="3" rx="1" />
+    <path d="M9 13.5l2 2 4-4.5" />
+  </Icon>
+)
+
 export const IconSignOut = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p}>
     <path d="M9.5 3.5H5A1.5 1.5 0 003.5 5v14A1.5 1.5 0 005 20.5h4.5" />

@@ -172,6 +172,9 @@ class SentinelContext:
     # A dry run gets a copy of its own (sentinel/__main__.py): the log offsets
     # and events it consumes would otherwise be lost to the service.
     state_root: Optional[Path] = None
+    # --dry-run: an agent that keeps or sends anything of its own (the
+    # checkup) keeps it in memory and logs it instead.
+    dry_run: bool = False
     _session: Optional[Session] = None
     _calendar: Optional[AgentState] = None
     _redis: Any = None

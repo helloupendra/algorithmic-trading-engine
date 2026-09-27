@@ -124,6 +124,7 @@ export const INCIDENT_AGENTS: ReadonlyArray<{ key: string; label: string }> = [
   { key: 'trading', label: 'Trading' },
   { key: 'logs', label: 'Logs' },
   { key: 'security', label: 'Security' },
+  { key: 'checkup', label: 'Checkup' },
 ]
 
 export interface IncidentFilters {
@@ -226,15 +227,17 @@ export const SILENCE_MINUTES = 5
  * agent re-sees every live incident it owns on every check, and one it stops
  * reporting is resolved within a few checks, so a live row older than this
  * means the agent is not checking. The cadences are the `interval_seconds` each
- * declares in sentinel/agents/*.py: health 30 s, trading 60 s, logs 30 s,
- * security 300 s — five minutes is ten, five and ten checks; security's twelve
- * is two checks and two minutes.
+ * declares in sentinel/agents/*.py and sentinel/checkup/agent.py: health 30 s,
+ * trading 60 s, logs 30 s, security 300 s, checkup 60 s — five minutes is ten,
+ * five, ten and five checks; security's twelve is two checks and two minutes.
+ * The checkup opens an incident only when it crashes, about itself.
  */
 export const AGENT_SILENCE_MINUTES: Readonly<Record<string, number>> = {
   health: 5,
   trading: 5,
   logs: 5,
   security: 12,
+  checkup: 5,
 }
 
 /** An agent this page does not know is given the longest threshold: better late than a false alarm. */

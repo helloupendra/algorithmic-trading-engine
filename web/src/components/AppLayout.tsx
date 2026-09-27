@@ -28,6 +28,7 @@ import {
 import {
   IconArrowRight,
   IconCandles,
+  IconChecklist,
   IconChevronDown,
   IconChevronRight,
   IconClock,
@@ -245,13 +246,18 @@ function TopbarStatus() {
 const NOTEBOOK_SECTIONS = [{ route: '/admin/notebook', label: 'Whiteboards', icon: IconPen, end: false }]
 
 /**
- * The System group, with Sentinel's incidents just before the activity log:
- * both answer "what happened on this desk", one from the watchman and one from
- * the people.
+ * The System group, with Sentinel's two pages just before the activity log:
+ * the desk checkup (is the desk ready?) and the incidents (what went wrong).
+ * With the log they answer "what is happening on this desk", from the
+ * watchman and from the people.
  */
 const ADMIN_SYSTEM_SECTIONS = SYSTEM_SECTIONS.flatMap((section) =>
   section.route === '/admin/system/logs'
-    ? [{ route: '/admin/incidents', label: 'Incidents', icon: IconWarning, end: false }, section]
+    ? [
+        { route: '/admin/checkup', label: 'Desk checkup', icon: IconChecklist, end: false },
+        { route: '/admin/incidents', label: 'Incidents', icon: IconWarning, end: false },
+        section,
+      ]
     : [section],
 )
 
@@ -468,6 +474,7 @@ const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]>
   ['/admin/system/logs', 'System', 'Activity log'],
   ['/admin/system/deployments', 'System', 'Deployments'],
   ['/admin/incidents', 'System', 'Incidents'],
+  ['/admin/checkup', 'System', 'Desk checkup'],
   ['/admin/broker', 'System', 'Connectors'],
   ['/admin/notebook/', 'Notebook', 'Whiteboard'],
   ['/admin/notebook', 'Notebook', 'Whiteboards'],
