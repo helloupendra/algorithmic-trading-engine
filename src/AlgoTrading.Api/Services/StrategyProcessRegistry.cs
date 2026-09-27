@@ -197,11 +197,13 @@ public sealed class StrategyProcessRegistry
     }
 
     /// <summary>
-    /// Serializes start attempts so two overlapping POSTs cannot both spawn a
-    /// process for the same strategy + underlying (the second would be untracked)
-    /// or overrun the concurrency cap.
+    /// One start at a time, from its duplicate and capacity checks to the
+    /// registered runner, so two overlapping POSTs cannot both pass the checks
+    /// and both launch. A semaphore rather than <c>lock</c>: the steps in
+    /// between await the database (the open-row check, the run row's insert),
+    /// and a lock cannot be held across an await.
     /// </summary>
-    public object StartLock { get; } = new();
+    public SemaphoreSlim StartGate { get; } = new(1, 1);
 
     public int Count => _running.Count;
 
