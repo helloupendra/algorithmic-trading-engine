@@ -18,8 +18,7 @@ import { MarketNewsPage } from './pages/data/MarketNewsPage'
 import { AccountPage } from './pages/trader/AccountPage'
 import { RunDetailPage } from './pages/trader/RunDetailPage'
 import { HealthPage } from './pages/system/health/HealthPage'
-import { UsersPage } from './pages/admin/UsersPage'
-import { StrategyPackagesPage } from './pages/admin/StrategyPackagesPage'
+import { PeoplePage } from './pages/system/people/PeoplePage'
 import { RiskV2Page } from './pages/admin/RiskV2Page'
 import { BrokerPage } from './pages/admin/BrokerPage'
 import { ConnectorDetailPage } from './pages/admin/ConnectorDetailPage'
@@ -181,8 +180,9 @@ export default function App() {
                   <Route path="/system/calendar" element={<MarketCalendarPage />} />
                   <Route path="/system/connectors" element={<BrokerPage />} />
                   <Route path="/system/connectors/:providerKey" element={<ConnectorDetailPage />} />
-                  <Route path="/system/people" element={<UsersPage />} />
-                  <Route path="/system/people/packages" element={<StrategyPackagesPage />} />
+                  <Route path="/system/people" element={<PeoplePage view="users" />} />
+                  <Route path="/system/people/packages" element={<PeoplePage view="packages" />} />
+                  <Route path="/system/people/invites" element={<PeoplePage view="invites" />} />
                 </Route>
               </Route>
             </Route>

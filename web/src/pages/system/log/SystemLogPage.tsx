@@ -194,7 +194,7 @@ function AlertsStrip({ status }: { status: AlerterStatus | undefined }) {
           <code>Telegram:BotToken</code> and <code>Telegram:ChatId</code> to turn delivery on.
         </p>
       )}
-      <details className="log-sent small">
+      <details className="hp-details log-sent small">
         <summary>What is sent without anyone asking</summary>
         <ul>
           {WHAT_GETS_SENT.map((row) => (

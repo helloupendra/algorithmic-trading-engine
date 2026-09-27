@@ -27,8 +27,6 @@
 }
 .log-strip__tools { margin-left: auto; display: inline-flex; flex-wrap: wrap; gap: 6px; }
 
-.log-sent { color: var(--text-2); }
-.log-sent summary { cursor: pointer; width: fit-content; color: var(--text-3); }
 .log-sent ul { margin: 6px 0; padding-left: 18px; }
 .log-sent p { margin: 0; }
 

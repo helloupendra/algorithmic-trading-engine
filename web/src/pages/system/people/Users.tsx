@@ -1,5 +1,6 @@
 /**
- * Users — accounts, what each may do, and how much rope they have.
+ * System → People → Users and Invites: accounts, what each may do, how much
+ * rope they have, and who may join.
  *
  * The important idea on this page: **grants are deny-by-default and enforced on
  * the server**. Unticking a module here is not cosmetic — the matching endpoints
@@ -28,10 +29,10 @@ import {
   useUpdateUser,
   useUserAccounts,
   useUserRoles,
-} from '../../lib/queries'
-import type { PlatformModuleInfo, SimBrokerCredentials, UserAdmin } from '../../lib/types'
-import { formatAge, formatInr } from '../../lib/format'
-import { Badge, EmptyState, InlineError, Panel, QueryBoundary } from '../../components/ui'
+} from '../../../lib/queries'
+import type { PlatformModuleInfo, SimBrokerCredentials, UserAdmin } from '../../../lib/types'
+import { formatAge, formatInr } from '../../../lib/format'
+import { Badge, EmptyState, InlineError, Panel, QueryBoundary } from '../../../components/ui'
 
 function RoleBadge({ role }: { role: string }) {
   if (role === 'Admin') return <Badge tone="accent">Admin</Badge>
@@ -962,21 +963,21 @@ function InvitesPanel({ onError }: { onError: (e: unknown) => void }) {
   )
 }
 
-export function UsersPage() {
+/** System → People → Users: every account, one to open per row, and a new one by hand. */
+export function Users() {
   const accounts = useUserAccounts()
   const modules = usePlatformModules()
   const roles = useUserRoles()
   const [error, setError] = useState<unknown>(null)
 
   return (
-    <div className="page">
-      <header className="page__header">
-        <h1 className="page__title">Users</h1>
-        <p className="page__subtitle">
-          Accounts, the modules each may use, and how much they may put at risk. Grants are enforced
-          on the server — a trader without a module gets 403, not a hidden menu entry.
+    <>
+      <div className="hp-bar">
+        <p className="hp-bar__lead muted">
+          Accounts, the modules each may use and how much they may put at risk. Grants are enforced on the server: a
+          trader without a module gets 403, not a hidden menu entry.
         </p>
-      </header>
+      </div>
 
       {error != null && <InlineError error={error} />}
 
@@ -1015,16 +1016,15 @@ export function UsersPage() {
           }
         </QueryBoundary>
         <p className="small-note muted">
-          Open an account to change its role, capital, run cap and modules. Accounts are disabled
-          rather than deleted, so the runs and orders they made keep their owner.
+          Open an account to change its role, capital, run cap and modules. Accounts are disabled rather than deleted, so
+          the runs and orders they made keep their owner.
         </p>
       </Panel>
 
-      <InvitesPanel onError={setError} />
-
       <CreateAccountPanel onError={setError} />
 
-      <Panel title="What each module allows">
+      <details className="hp-details small">
+        <summary>What each module allows</summary>
         <QueryBoundary query={modules}>
           {(list) => (
             <div className="tablewrap">
@@ -1057,11 +1057,18 @@ export function UsersPage() {
             </div>
           )}
         </QueryBoundary>
-        <p className="small-note muted">
-          Signing up is not open yet — an admin creates accounts here. Invite links are the next step,
-          and they are safe to add precisely because a new account holds nothing until it is granted.
-        </p>
-      </Panel>
-    </div>
+      </details>
+    </>
+  )
+}
+
+/** System → People → Invites: who may join, each setting their own password. */
+export function Invites() {
+  const [error, setError] = useState<unknown>(null)
+  return (
+    <>
+      {error != null && <InlineError error={error} />}
+      <InvitesPanel onError={setError} />
+    </>
   )
 }
