@@ -19,9 +19,18 @@ import {
   useStrategyLogs,
   useUpdateRunRisk,
 } from '../../lib/queries'
-import { formatAge, formatInrWhole, formatLots, formatNumber, formatPrice, formatTime } from '../../lib/format'
+import { formatAge, formatInrSigned, formatInrWhole, formatLots, formatNumber, formatPrice, formatTime } from '../../lib/format'
 import { formatContract } from '../../lib/symbols'
 import { positionValues } from '../../lib/positions'
+import {
+  formatDelta,
+  formatThetaPerDay,
+  greeksNote,
+  greeksTitle,
+  ltpAgeNote,
+  thetaTone,
+  totalsNote,
+} from '../../lib/greeks'
 import { effectiveRisk, isRiskEmpty, parseRiskDraft, riskChips, riskDraftFrom } from '../../lib/risk'
 import { liveNet } from '../../lib/strategyList'
 import type { RiskDraft, RiskDraftField } from '../../lib/risk'
@@ -306,6 +315,8 @@ function repriced(p: LivePosition, quote: LiveQuote | undefined): LivePosition {
   return {
     ...p,
     ltp: mark,
+    // The price's age travels with it: the row says "as of …" from this.
+    ltpUpdatedUtc: quote?.updatedUtc ?? p.ltpUpdatedUtc,
     pnl: points * p.quantity,
     // Cleared so positionValues() derives these from the new mark rather than
     // reusing the ones computed against the old one.
@@ -313,6 +324,70 @@ function repriced(p: LivePosition, quote: LiveQuote | undefined): LivePosition {
     pnlPoints: null,
     pnlPercent: null,
   }
+}
+
+/**
+ * The greeks column group of one row: delta (IV and source under it), theta
+ * in rupees a day for THIS position, and vega in rupees per point of IV.
+ * Rupees carry the P&L colours: a bought option's theta is a cost (red), a
+ * written one's income (green). Stale figures dim and say "as of" rather than
+ * pass for now. A closed leg has none; an open option nothing could price
+ * says so on hover instead of showing zeros.
+ */
+function GreeksCells({ p }: { p: LivePosition }) {
+  const g = p.greeks
+  if (p.status !== 'Open' || !g) {
+    const why =
+      p.status === 'Open'
+        ? 'Not priced: no live quote for this contract or its underlying yet'
+        : undefined
+    return (
+      <>
+        <td className="r greeks-first" title={why}>
+          <span className="faint">—</span>
+        </td>
+        <td className="r" title={why}>
+          <span className="faint">—</span>
+        </td>
+        <td className="r" title={why}>
+          <span className="faint">—</span>
+        </td>
+      </>
+    )
+  }
+  const title = greeksTitle(g)
+  const dim = g.stale ? 'muted' : ''
+  const deltaOne = g.source === 'delta-one'
+  return (
+    <>
+      <td className={`r mono greeks-first ${dim}`} title={title}>
+        {formatDelta(g.delta)}
+        <span className="cell-sub">{greeksNote(g)}</span>
+      </td>
+      <td className="r mono" title={title}>
+        {deltaOne ? (
+          <span className="faint">—</span>
+        ) : (
+          <>
+            <span className={g.stale ? 'muted' : thetaTone(g.thetaRupeesPerDay)}>
+              {formatThetaPerDay(g.thetaRupeesPerDay)}
+            </span>
+            <span className="cell-sub">{g.theta.toFixed(2)} pts/unit</span>
+          </>
+        )}
+      </td>
+      <td className={`r mono ${dim}`} title={title}>
+        {deltaOne ? (
+          <span className="faint">—</span>
+        ) : (
+          <>
+            {formatInrSigned(g.vegaRupeesPerIvPoint)}
+            <span className="cell-sub">per 1% IV</span>
+          </>
+        )}
+      </td>
+    </>
+  )
 }
 
 function PositionsTable({
@@ -333,6 +408,9 @@ function PositionsTable({
   const { data: quotes } = useLatestQuotes()
   const bySymbol = new Map((quotes ?? []).map((q) => [q.symbol, q]))
   positions = positions.map((p) => repriced(p, bySymbol.get(p.symbol)))
+  // The greeks columns appear once any open leg has figures (an API older
+  // than 27 Sep sends none, and a finished run has no open leg to price).
+  const showGreeks = positions.some((p) => p.status === 'Open' && p.greeks != null)
 
   const close = useClosePositions()
   // Which row was asked for, so only that row shows "Closing…" while several
@@ -369,6 +447,25 @@ function PositionsTable({
               Value
             </th>
             <th className="r">P&L</th>
+            {showGreeks && (
+              <>
+                <th
+                  className="r greeks-first"
+                  title="Delta per unit (the option's move per 1-point move in the underlying), with IV and where the figures came from"
+                >
+                  Δ · IV
+                </th>
+                <th
+                  className="r"
+                  title="Theta for this position: rupees a day of time is worth to it — negative when you bought (time costs you), positive when you sold (time pays you)"
+                >
+                  Θ ₹/day
+                </th>
+                <th className="r" title="Vega for this position: rupees it makes or loses on a one-point rise in implied volatility">
+                  Vega ₹
+                </th>
+              </>
+            )}
             <th className="r" title="Stop-loss and target set on this position when it was opened">
               SL / Target
             </th>
@@ -380,6 +477,9 @@ function PositionsTable({
           {positions.map((p) => {
             const open = p.status === 'Open'
             const values = positionValues({ ...p, mark: p.ltp })
+            // A carried leg before today's first tick is still on the last
+            // session's price: say how old it is rather than let it read as now.
+            const ltpAge = open ? ltpAgeNote(p.ltpUpdatedUtc) : null
             return (
               <tr key={p.id} className={open ? '' : 'pos-row--closed'}>
                 <td className="mono" title={`${p.symbol} · group ${p.groupId}`}>
@@ -405,9 +505,19 @@ function PositionsTable({
                     </>
                   )}
                 </td>
-                <td className="r">{open ? <FlashPrice value={p.ltp} /> : <span className="muted">—</span>}</td>
+                <td className="r">
+                  {open ? (
+                    <>
+                      <FlashPrice value={p.ltp} />
+                      {ltpAge && <span className="cell-sub">{ltpAge}</span>}
+                    </>
+                  ) : (
+                    <span className="muted">—</span>
+                  )}
+                </td>
                 <PositionValueCell values={values} open={open} />
                 <PositionPnlCell pnl={p.pnl} values={values} />
+                {showGreeks && <GreeksCells p={p} />}
                 <td className="r mono" style={{ whiteSpace: 'nowrap' }}>
                   {p.stopLossPrice == null && p.targetPrice == null ? (
                     <span className="faint">—</span>
@@ -681,6 +791,26 @@ export function RunCard({
                 {view.lotSizeSource && view.lotSizeSource !== 'master' ? ` · lot size ${view.lotSizeSource}` : ''}
               </div>
             </div>
+            {view.greeks && (
+              <div className="metric">
+                <div className="metric__label">Greeks · open legs</div>
+                {/* The owner's words, 27 Sep: "like theta shows when you buy".
+                    Red when the book pays for time, green when it collects —
+                    stale or not: the colour is the question he asked, and the
+                    line below says "as of" when any leg is old. Wraps rather
+                    than truncates: in a half-width phone tile the rupees were
+                    the part cut off. */}
+                <div
+                  className={`metric__value ${thetaTone(view.greeks.thetaRupeesPerDay)}`}
+                  style={{ whiteSpace: 'normal' }}
+                  title="Theta ₹/day: what one more day is worth to the open legs if nothing else moves — a bought option pays it, a sold one collects it"
+                >
+                  {/* The rupees never split across lines ("+" / "₹223/day"). */}
+                  Theta <span style={{ whiteSpace: 'nowrap' }}>{formatThetaPerDay(view.greeks.thetaRupeesPerDay)}</span>
+                </div>
+                <div className="metric__sub">{totalsNote(view.greeks)}</div>
+              </div>
+            )}
             {view.pnl.capitalUsed != null && (
               <div className="metric">
                 <div className="metric__label">Capital used</div>

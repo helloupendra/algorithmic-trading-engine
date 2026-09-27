@@ -55,13 +55,59 @@ failed=0
 # Equity and index runs square off at 15:30 on their own; a commodity run holds
 # until MCX closes. Stopping with flatten=true asks the platform to close what
 # is still open, through the same path the console's Stop button uses.
-runs=""
-[ "$API_UP" = 1 ] && runs="$(api_get "/api/Strategy/runs?status=Running" 2>/dev/null || true)"
-run_ids="$(printf '%s' "$runs" | grep -o '"runId":[0-9]*' | cut -d: -f2 | tr '\n' ' ')"
-if [ -z "${run_ids// /}" ]; then
-  say "live runs: none open"
-else
-  say "live runs still open:${run_ids% }"
+#
+# Every run but the manual book. The book is Running by design with no runner
+# behind it — the container for orders placed by hand — and its positions are
+# carried overnight on purpose (27 Sep, the owner: "if I want to carry forward
+# a position, it should carry"). This loop used to stop it like any strategy
+# run, with flatten=true, so every hand-placed position was squared off at
+# 23:35 each night and the book closed. Nothing else in the day touches it:
+# the 15:30 sweep stops registered runners only and the start-up reconciler
+# skips it. Its contracts are settled at expiry by the API instead
+# (CarriedPositionsService).
+# >>> live-runs
+# Reads GET /api/Strategy/runs and prints "stop <id>" or "keep <id>" per run.
+# A body that does not parse prints "unreadable" and nothing else: stopping
+# nothing is the safe failure, where guessing at ids could stop the book —
+# but it is said, never passed off as "none open".
+classify_runs() {
+  BODY="$1" python3 -c '
+import json, os
+try:
+    rows = json.loads(os.environ["BODY"])
+except Exception:
+    print("unreadable")
+    raise SystemExit
+if isinstance(rows, dict):
+    rows = rows.get("items") or rows.get("runs") or []
+for r in rows:
+    if not isinstance(r, dict) or r.get("runId") is None:
+        continue
+    keep = str(r.get("strategyName") or "") == "Manual"
+    print(("keep " if keep else "stop ") + str(r["runId"]))' 2>/dev/null
+}
+
+stop_live_runs() {
+  local runs verdicts run_ids kept id
+  runs=""
+  [ "$API_UP" = 1 ] && runs="$(api_get "/api/Strategy/runs?status=Running&take=500" 2>/dev/null || true)"
+  verdicts="$(classify_runs "$runs")"
+  if [ "$verdicts" = "unreadable" ]; then
+    # The API closes every strategy run at its own exchange's close by
+    # itself (MarketHoursService); this step is the backstop, so a list it
+    # cannot read is a warning in the report, not a silent "none open".
+    warn "could not read the running list — no run stopped here; check Strategies > Live runner"
+    failed=$((failed + 1))
+    return 0
+  fi
+  run_ids="$(printf '%s\n' "$verdicts" | sed -n 's/^stop //p' | tr '\n' ' ')"
+  kept="$(printf '%s\n' "$verdicts" | sed -n 's/^keep //p' | tr '\n' ' ')"
+  [ -n "${kept// /}" ] && say "manual book(s) left open — hand-placed positions carry overnight: ${kept% }"
+  if [ -z "${run_ids// /}" ]; then
+    say "live runs: none open"
+    return 0
+  fi
+  say "live runs still open: ${run_ids% }"
   for id in $run_ids; do
     if [ "$DRY_RUN" = 1 ]; then
       say "  dry run: would stop run $id (flatten)"
@@ -75,7 +121,9 @@ else
       failed=$((failed + 1))
     fi
   done
-fi
+}
+# <<< live-runs
+stop_live_runs
 
 # --- 2. recorders ------------------------------------------------------------
 # Before the feeds: a chain poller left running would keep asking a vendor for

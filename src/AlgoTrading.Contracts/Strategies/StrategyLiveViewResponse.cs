@@ -67,6 +67,13 @@ public class StrategyLiveViewResponse
     /// <summary>One row per position group (OPEN_GROUP), groups with open legs first.</summary>
     public List<LiveGroupResponse> Groups { get; set; } = new();
 
+    /// <summary>
+    /// What the open legs add up to — theta ₹/day, vega ₹ per 1% IV and net
+    /// delta per underlying. Null when nothing open carries a greek (no open
+    /// leg, or only legs no source could price).
+    /// </summary>
+    public RunGreeksTotals? Greeks { get; set; }
+
     /// <summary>Newest first, at most 60 rows.</summary>
     public List<LiveActivityResponse> Activity { get; set; } = new();
 
@@ -192,6 +199,107 @@ public class LivePositionResponse
 
     public DateTime OpenedUtc { get; set; }
     public DateTime? ClosedUtc { get; set; }
+
+    /// <summary>
+    /// IV and greeks of an OPEN leg and what they mean for this position in
+    /// rupees. Null for a closed leg, in a backtest, and for an open option no
+    /// source could price (no quote for it or its underlying).
+    /// </summary>
+    public PositionGreeksResponse? Greeks { get; set; }
+}
+
+/// <summary>
+/// The greeks of one open leg, per unit and for the position.
+/// </summary>
+/// <remarks>
+/// Per unit, in premium points, in the conventions every source on the
+/// platform already publishes: theta per calendar day, vega per one point of
+/// IV (per 1%). The position figures multiply by the quantity (lots × lot
+/// size) and by the side: a long option pays its theta, a short one collects
+/// it, so ThetaRupeesPerDay is negative for a buyer and positive for a writer.
+/// </remarks>
+public class PositionGreeksResponse
+{
+    /// <summary>
+    /// Where the figures came from: "feed" (carried by the contract's live
+    /// quote), "chain" (the option-chain recorder's latest snapshot),
+    /// "computed" (Black-Scholes, IV solved from the option's own price), or
+    /// "delta-one" (a future or a share: delta 1, nothing else).
+    /// </summary>
+    public string Source { get; set; } = string.Empty;
+
+    /// <summary>The moment the figures describe: the quote, the snapshot, or the older of the two prices a computation used.</summary>
+    public DateTime? AsOfUtc { get; set; }
+
+    /// <summary>True when <see cref="AsOfUtc"/> is too old to be read as now (see PositionGreeks.FreshFor).</summary>
+    public bool Stale { get; set; }
+
+    /// <summary>Implied volatility in percent (13.6 is 13.6%).</summary>
+    public decimal? IvPercent { get; set; }
+
+    public decimal Delta { get; set; }
+    public decimal Gamma { get; set; }
+
+    /// <summary>Premium points per calendar day, per unit (negative: time costs the holder).</summary>
+    public decimal Theta { get; set; }
+
+    /// <summary>Premium points per one point of IV, per unit.</summary>
+    public decimal Vega { get; set; }
+
+    /// <summary>The underlying price a computation used (source "computed" only).</summary>
+    public decimal? UnderlyingPrice { get; set; }
+
+    /// <summary>delta × quantity × side: the position's size in units of the underlying.</summary>
+    public decimal DeltaQuantity { get; set; }
+
+    /// <summary>Rupees the position makes on a one-point rise in the underlying (numerically the same as DeltaQuantity).</summary>
+    public decimal DeltaRupeesPerPoint { get; set; }
+
+    /// <summary>theta × quantity × side: rupees a day of time is worth to this position.</summary>
+    public decimal ThetaRupeesPerDay { get; set; }
+
+    /// <summary>vega × quantity × side: rupees one point of IV is worth to this position.</summary>
+    public decimal VegaRupeesPerIvPoint { get; set; }
+}
+
+/// <summary>The open legs' greeks, summed for a run or the manual book.</summary>
+public class RunGreeksTotals
+{
+    /// <summary>Σ theta ₹/day — negative when the book pays for time, positive when it collects.</summary>
+    public decimal ThetaRupeesPerDay { get; set; }
+
+    /// <summary>Σ vega ₹ per one point of IV.</summary>
+    public decimal VegaRupeesPerIvPoint { get; set; }
+
+    /// <summary>
+    /// Net delta of the whole book in units of its underlying; null when the
+    /// book holds more than one underlying, where units do not add up (a
+    /// NIFTY point and a crude rupee are not the same move). See ByUnderlying.
+    /// </summary>
+    public decimal? NetDeltaQuantity { get; set; }
+
+    /// <summary>Net delta per underlying, largest exposure first.</summary>
+    public List<UnderlyingDeltaTotal> ByUnderlying { get; set; } = new();
+
+    /// <summary>Open legs whose greeks are in the sums.</summary>
+    public int Legs { get; set; }
+
+    /// <summary>Open option legs no source could price: the sums leave them out.</summary>
+    public int Unpriced { get; set; }
+
+    /// <summary>True when any leg in the sums is stale.</summary>
+    public bool Stale { get; set; }
+
+    /// <summary>The oldest AsOfUtc among the legs in the sums.</summary>
+    public DateTime? OldestAsOfUtc { get; set; }
+}
+
+/// <summary>Net delta of one underlying's legs.</summary>
+public class UnderlyingDeltaTotal
+{
+    public string Underlying { get; set; } = string.Empty;
+    public decimal DeltaQuantity { get; set; }
+    public decimal DeltaRupeesPerPoint { get; set; }
 }
 
 /// <summary>Decoded option contract for display.</summary>
