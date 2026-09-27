@@ -184,7 +184,7 @@ export function BacktestRunPage() {
   function confirmDelete() {
     if (!view) return
     if (window.confirm(`Delete backtest #${view.runId} and all its results? This cannot be undone.`))
-      remove.mutate(view.runId, { onSuccess: () => navigate('/admin/backtesting/runs') })
+      remove.mutate(view.runId, { onSuccess: () => navigate('/research/backtests/runs') })
   }
 
   const m = view?.metrics
@@ -471,7 +471,7 @@ export function BacktestRunPage() {
             Range {formatDayRange(view.fromDate, view.toDate)} in IST days · fills at the option candle
             close of the signal bar · P&L = Δprice × lots × lot size · risk rules checked every bar, leg
             (closes that leg) → group (closes that group) → overall (ends the run).{' '}
-            <Link to="/admin/backtesting/runs">All runs</Link>
+            <Link to="/research/backtests/runs">All runs</Link>
           </p>
         </>
       )}
@@ -494,7 +494,7 @@ export function BacktestRunPage() {
             parametersJson: view.parametersJson,
           }}
           onClose={() => setRerun(false)}
-          onStarted={(response) => navigate(`/admin/backtesting/runs/${response.runId}`)}
+          onStarted={(response) => navigate(`/research/backtests/runs/${response.runId}`)}
         />
       )}
     </div>

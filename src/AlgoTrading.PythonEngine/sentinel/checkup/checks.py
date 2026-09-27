@@ -33,14 +33,14 @@ DATA, STRATEGIES, POSITIONS, ANALYSIS, DESK, CALENDAR = (
     "Brokers & data", "Strategies", "Positions", "Analysis", "Desk", "Calendar")
 
 # Console pages an item can point to.
-CONNECTORS = "/admin/broker"
-FEEDS = "/admin/data/live"
-LIVE_RUNS = "/admin/strategies"
-POSITIONS_PAGE = "/trader/positions"
-FORECASTS = "/admin/analysis"
-INCIDENTS = "/admin/incidents"
-DEPLOYMENTS = "/admin/system/deployments"
-MARKET_CALENDAR = "/admin/system/calendar"
+CONNECTORS = "/system/connectors"
+FEEDS = "/data/feeds"
+LIVE_RUNS = "/trade/runs"
+POSITIONS_PAGE = "/trade/positions"
+FORECASTS = "/research/forecasts"
+INCIDENTS = "/system/incidents"
+DEPLOYMENTS = "/system/log?source=deploys"
+MARKET_CALENDAR = "/system/calendar"
 
 #: How many names a detail lists before "and N more".
 LISTED = 6

@@ -45,27 +45,26 @@ describe('pageItems', () => {
 
   it('finds a page by a keyword and says where it lives', () => {
     const [hit] = pageItems(adminNav, 'kill switch')
-    expect(hit).toMatchObject({ label: 'Risk', detail: 'Trade', to: '/admin/system/risk' })
+    expect(hit).toMatchObject({ label: 'Risk', detail: 'Trade', to: '/trade/risk' })
     const [oi] = pageItems(adminNav, 'open interest')
     expect(oi.detail).toBe('Markets')
     expect(pageItems(adminNav, '')[0].detail).toBeUndefined()
   })
 
   it("never offers a trader an admin page, and adds the trader's account", () => {
-    const items = pageItems(traderNav, '', [{ label: 'Account', to: '/trader/account' }])
-    // The Desk is the one URL both consoles share.
-    expect(items.every((i) => i.to.startsWith('/trader') || i.to === '/desk')).toBe(true)
-    expect(items.some((i) => i.to.startsWith('/admin'))).toBe(false)
+    const items = pageItems(traderNav, '', [{ label: 'Account', to: '/account' }])
+    expect(items.some((i) => i.to.startsWith('/system') || i.to.startsWith('/data'))).toBe(false)
+    expect(items.some((i) => i.to === '/trade/risk' || i.to === '/markets/patterns')).toBe(false)
     expect(labels(pageItems(traderNav, 'connectors'))).toEqual([])
-    expect(labels(pageItems(traderNav, 'acc', [{ label: 'Account', to: '/trader/account' }]))).toEqual(['Account'])
+    expect(labels(pageItems(traderNav, 'acc', [{ label: 'Account', to: '/account' }]))).toEqual(['Account'])
   })
 
-  it("offers an index's chain directly, on the user's own chain page", () => {
+  it("offers an index's chain directly", () => {
     expect(pageItems(adminNav, 'bank').slice(0, 2)).toMatchObject([
-      { label: 'BANKNIFTY option chain', to: '/admin/data/chain?u=BANKNIFTY' },
-      { label: 'BANKEX option chain', to: '/admin/data/chain?u=BANKEX' },
+      { label: 'BANKNIFTY option chain', to: '/markets/chain?u=BANKNIFTY' },
+      { label: 'BANKEX option chain', to: '/markets/chain?u=BANKEX' },
     ])
-    expect(pageItems(traderNav, 'nifty')[0].to).toBe('/trader/option-chain?u=NIFTY')
+    expect(pageItems(traderNav, 'nifty')[0].to).toBe('/markets/chain?u=NIFTY')
     // One letter matches half the list; the shortcut waits for two.
     expect(pageItems(adminNav, 'n').some((i) => i.label.endsWith('option chain'))).toBe(false)
   })
@@ -95,17 +94,16 @@ const instrument = (over: Partial<Instrument>): Instrument => ({
 })
 
 describe('symbolItems', () => {
-  it("opens a symbol on the console's own chart", () => {
-    const [admin] = symbolItems([instrument({})], 'admin')
-    expect(admin).toMatchObject({ label: 'NSE:NIFTY50-INDEX', detail: 'NIFTY 50', meta: 'NSE · INDEX' })
-    expect(admin.to).toBe('/admin/data/historical?symbol=NSE%3ANIFTY50-INDEX')
-    expect(symbolItems([instrument({})], 'trader')[0].to).toBe('/trader/charts?symbol=NSE%3ANIFTY50-INDEX')
+  it('opens a symbol on the Markets chart', () => {
+    const [hit] = symbolItems([instrument({})])
+    expect(hit).toMatchObject({ label: 'NSE:NIFTY50-INDEX', detail: 'NIFTY 50', meta: 'NSE · INDEX' })
+    expect(hit.to).toBe('/markets/chart?symbol=NSE%3ANIFTY50-INDEX')
   })
 
   it('caps the list and says nothing before the search answers', () => {
     const many = Array.from({ length: 20 }, (_, i) => instrument({ id: i, symbol: `NSE:S${i}-EQ` }))
-    expect(symbolItems(many, 'admin')).toHaveLength(8)
-    expect(symbolItems(undefined, 'admin')).toEqual([])
+    expect(symbolItems(many)).toHaveLength(8)
+    expect(symbolItems(undefined)).toEqual([])
   })
 })
 
@@ -115,14 +113,14 @@ const strategy = (id: number, name: string, activeRuns = 0): StrategyListItem =>
 describe('strategyItems', () => {
   const list = [strategy(1, 'Ghost Tangent Crossings', 2), strategy(2, 'Chain Flow Buy'), strategy(3, 'SMC Structure Break')]
 
-  it('matches by name and links to the spec in each console', () => {
-    expect(strategyItems(list, 'admin', 'chain')).toMatchObject([{ label: 'Chain Flow Buy', to: '/admin/strategies/library/2' }])
-    expect(strategyItems(list, 'trader', 'ghost')[0]).toMatchObject({ to: '/trader/strategies/1/how-it-works', meta: '2 live', tone: 'live' })
+  it('matches by name and links to the spec', () => {
+    expect(strategyItems(list, 'chain')).toMatchObject([{ label: 'Chain Flow Buy', to: '/trade/library/2' }])
+    expect(strategyItems(list, 'ghost')[0]).toMatchObject({ to: '/trade/library/1', meta: '2 live', tone: 'live' })
   })
 
   it('stays out of the way on an empty query, and on an underlying every strategy trades', () => {
-    expect(strategyItems(list, 'admin', '')).toEqual([])
-    expect(strategyItems(list, 'admin', 'nifty')).toEqual([])
+    expect(strategyItems(list, '')).toEqual([])
+    expect(strategyItems(list, 'nifty')).toEqual([])
   })
 })
 
@@ -149,20 +147,20 @@ describe('runItems', () => {
   it('puts running runs first and shows the net', () => {
     const items = runItems(runs, 'admin', 'fulcrum')
     expect(items.map((i) => i.id)).toEqual(['run:412', 'run:410'])
-    expect(items[0]).toMatchObject({ meta: '−₹8,200', tone: 'neg', detail: 'admin · running · #412', to: '/admin/strategies/runs/412' })
+    expect(items[0]).toMatchObject({ meta: '−₹8,200', tone: 'neg', detail: 'admin · running · #412', to: '/trade/runs/412' })
     expect(items[1].detail).toBe('admin · stopped · #410')
   })
 
   it('finds a run by its number or its owner, and hides the owner from a trader', () => {
     expect(runItems(runs, 'admin', '415')[0].label).toBe('Chain Flow Buy · NIFTY')
     expect(runItems(runs, 'admin', 'coderfor')[0].id).toBe('run:415')
-    expect(runItems(runs, 'trader', '415')[0]).toMatchObject({ detail: 'running · #415', to: '/trader/strategies/runs/415' })
+    expect(runItems(runs, 'trader', '415')[0]).toMatchObject({ detail: 'running · #415', to: '/trade/runs/415' })
   })
 })
 
 describe('paletteGroups', () => {
   it('keeps a fixed order and drops empty groups', () => {
-    const groups = paletteGroups({ symbol: symbolItems([instrument({})], 'admin'), page: pageItems(adminNav, 'news'), run: [] })
+    const groups = paletteGroups({ symbol: symbolItems([instrument({})]), page: pageItems(adminNav, 'news'), run: [] })
     expect(groups.map((g) => g.label)).toEqual(['Go to', 'Symbols'])
   })
 })

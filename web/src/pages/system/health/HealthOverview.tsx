@@ -1,9 +1,11 @@
 /**
- * System — Overview: is the platform healthy?
+ * System → Health → Overview: is the platform healthy?
  *
  * One screen for the machine and what runs on it: the trading switches an
- * operator checks first, the server (disk, memory, CPU, how fast the disk is
- * filling), the database on it, the processes, and the Drive archive.
+ * operator checks first, Sentinel's latest verdict, the server (disk, memory,
+ * CPU, how fast the disk is filling), the database on it, the processes, and
+ * the Drive archive. It no longer ends in a row of links to the other System
+ * pages: the tab strip above is that row.
  *
  * It used to carry a "Data freshness" note and a live quotes table. Those are
  * market data, not system state, and they live in the Data module (Overview
@@ -19,16 +21,17 @@ import {
   useAlerterStatus,
   useBackendStatus,
   useChainPollerStatus,
+  useCheckupLatest,
   useFeeds,
   useIngestorStatuses,
   useKillSwitch,
   useMarketSession,
   useProviders,
   useSystemHost,
-} from '../../lib/queries'
-import { connectorsSummary } from '../../lib/pulse'
-import { feedDiagnostics } from '../../lib/feeds'
-import { formatAge, formatDateTime, formatTime } from '../../lib/format'
+} from '../../../lib/queries'
+import { connectorsSummary } from '../../../lib/pulse'
+import { feedDiagnostics } from '../../../lib/feeds'
+import { formatAge, formatDateTime, formatTime } from '../../../lib/format'
 import {
   describePolicy,
   ec2Line,
@@ -38,10 +41,12 @@ import {
   growthLine,
   policyJobProblem,
   usageTone,
-} from '../../lib/system'
-import type { SystemHostReport, Tone } from '../../lib/system'
-import { Badge, InlineError, Loading, Panel, StatTile } from '../../components/ui'
-import { IconDatabase, IconPulse, IconRefresh, IconServer } from '../../components/icons'
+} from '../../../lib/system'
+import type { SystemHostReport, Tone } from '../../../lib/system'
+import { countsText, slotLabel, staleNote, verdictBadge } from '../../../lib/checkup'
+import { maskSecrets } from '../../../lib/incidents'
+import { Badge, InlineError, Loading, Panel, StatTile } from '../../../components/ui'
+import { IconDatabase, IconPulse, IconRefresh, IconServer } from '../../../components/icons'
 
 const NOT_AVAILABLE = 'not available on this host'
 
@@ -405,9 +410,47 @@ function ServicesPanel({ host }: { host: SystemHostReport | undefined }) {
   )
 }
 
-/* -------------------------------------------------------------------- page */
+/** Sentinel's newest verdict on the desk, one line: the Checkups tab has it in full. */
+function LatestCheckup() {
+  const latest = useCheckupLatest()
+  const c = latest.data?.latest ?? null
+  const now = Date.now()
+  const stale = staleNote(latest.data?.lastCompletedUtc, now, formatDateTime)
+  if (latest.isPending) return null
+  if (!c) {
+    return (
+      <Link className="hp-checkup" to="/system/checkups">
+        <Badge tone="neutral">No checkup yet</Badge>
+        <span className="hp-checkup__text muted">
+          {latest.isError ? 'The checkups could not be read.' : 'Sentinel has not finished a checkup on this desk.'}
+        </span>
+        <span className="hp-checkup__more">Checkups →</span>
+      </Link>
+    )
+  }
+  const badge = verdictBadge(c)
+  return (
+    <Link className="hp-checkup" to="/system/checkups">
+      <Badge tone={badge.tone}>{badge.label}</Badge>
+      <span className="hp-checkup__text">
+        <b>{maskSecrets(c.headline) || slotLabel(c.slot)}</b>
+        <span className="muted">
+          {' '}
+          · {slotLabel(c.slot)} checkup {formatAge(c.completedUtc ?? c.startedUtc ?? c.requestedUtc)} · {countsText(c.counts)}
+        </span>
+        {stale && <span className="warn"> · {stale}</span>}
+      </span>
+      <span className="hp-checkup__more">Checkups →</span>
+    </Link>
+  )
+}
 
-export function AdminOverviewPage() {
+/**
+ * System → Health → Overview: the switches an operator checks first, the
+ * latest checkup's verdict, the server, its database, the processes and the
+ * Drive archive.
+ */
+export function HealthOverview() {
   const session = useMarketSession()
   const killSwitch = useKillSwitch()
   const providers = useProviders()
@@ -422,28 +465,27 @@ export function AdminOverviewPage() {
   const feedsBeating = running.length > 0 && running.every((r) => r.heartbeatTone === 'pos')
 
   return (
-    <div className="page">
-      <header className="page__header">
-        <div>
-          <h1 className="page__title">System</h1>
-          <p className="page__subtitle">Is the platform healthy: the trading switches, the server, its database and the processes on it.</p>
-        </div>
-        <div className="sys-asof">
+    <>
+      <div className="hp-bar">
+        <p className="hp-bar__lead muted">The trading switches, the server, its database and the processes on it.</p>
+        <span className="sys-asof">
           {host.data && (
             <span className="faint" title={formatDateTime(host.data.generatedUtc)}>
-              as of {formatTime(host.data.generatedUtc)} · refreshes every 15 s
+              as of {formatTime(host.data.generatedUtc)} · every 15 s
             </span>
           )}
           {host.isError && host.data && <span className="warn">Refresh failed — showing the last reading.</span>}
-        </div>
-      </header>
+        </span>
+      </div>
+
+      <LatestCheckup />
 
       <div className="stat-grid">
         <StatTile
           label="Kill switch"
           value={killSwitch.data ? (killSwitch.data.isActive ? 'ACTIVE' : 'Off') : '…'}
           tone={killSwitch.data ? (killSwitch.data.isActive ? 'neg' : 'pos') : undefined}
-          to="/admin/system/risk"
+          to="/trade/risk"
           sub={
             killSwitch.data?.updatedUtc
               ? `${killSwitch.data.isActive ? 'halted' : 'last set'} by ${killSwitch.data.updatedBy ?? 'unknown'} ${formatAge(killSwitch.data.updatedUtc)}`
@@ -454,7 +496,7 @@ export function AdminOverviewPage() {
           label="Connectors"
           value={connectors ? connectors.pulse.label.replace(/^Connectors /, '') : '…'}
           tone={connectors ? (connectors.pulse.tone === 'idle' || connectors.pulse.tone === 'live' ? undefined : connectors.pulse.tone) : undefined}
-          to="/admin/broker"
+          to="/system/connectors"
           sub={connectors ? connectors.lines.filter((l) => l.state !== 'not-set-up').map((l) => `${l.name} ${l.state === 'ready' ? '✓' : '✗'}`).join(' · ') : undefined}
         />
         <StatTile
@@ -467,20 +509,20 @@ export function AdminOverviewPage() {
                 ? session.data?.isMarketOpen ? 'neg' : undefined
                 : feedsBeating && running.length === 1 ? 'pos' : 'warn'
           }
-          to="/admin/data/live"
+          to="/data/feeds"
           sub={
             running.length > 1
               ? 'more than one feed running'
               : running[0]?.heartbeatUtc
                 ? `heartbeat ${formatAge(running[0].heartbeatUtc)} · ${running[0].symbols ?? 0} symbols`
-                : running.length ? 'no heartbeat yet' : 'start one from Live feeds →'
+                : running.length ? 'no heartbeat yet' : 'start one from Data → Feeds'
           }
         />
         <StatTile
           label="Market (NSE)"
           value={session.data ? (session.data.isMarketOpen ? 'OPEN' : 'CLOSED') : '…'}
           tone={session.data?.isMarketOpen ? 'pos' : undefined}
-          to="/admin/system/calendar"
+          to="/system/calendar"
           sub={session.data && `next open ${formatDateTime(session.data.nextMarketOpenUtc)}`}
         />
       </div>
@@ -514,8 +556,8 @@ export function AdminOverviewPage() {
               </>
             }
             actions={
-              <Link className="btn btn--sm btn--ghost" to="/admin/data/live">
-                Live feeds →
+              <Link className="btn btn--sm btn--ghost" to="/data/feeds">
+                Feeds →
               </Link>
             }
           >
@@ -533,18 +575,6 @@ export function AdminOverviewPage() {
           </Panel>
         </div>
       </div>
-
-      <Panel title="Operations">
-        <div className="chip-row">
-          <Link className="btn btn--sm" to="/admin/system/risk">Risk &amp; kill switch →</Link>
-          <Link className="btn btn--sm" to="/admin/system/alerts">Alerts →</Link>
-          <Link className="btn btn--sm" to="/admin/system/calendar">Market calendar →</Link>
-          <Link className="btn btn--sm" to="/admin/system/logs">Activity log →</Link>
-          <Link className="btn btn--sm" to="/admin/system/deployments">Deployments →</Link>
-          <Link className="btn btn--sm" to="/admin/broker">Connectors →</Link>
-          <Link className="btn btn--sm" to="/admin/users">Users &amp; access →</Link>
-        </div>
-      </Panel>
-    </div>
+    </>
   )
 }

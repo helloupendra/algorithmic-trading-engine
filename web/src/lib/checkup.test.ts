@@ -137,8 +137,9 @@ describe('groupItems', () => {
 
 describe('itemLink', () => {
   it('links console paths only', () => {
-    expect(itemLink('/admin/incidents')).toBe('/admin/incidents')
-    expect(itemLink(' /admin/broker ')).toBe('/admin/broker')
+    expect(itemLink('/system/incidents')).toBe('/system/incidents')
+    expect(itemLink(' /system/connectors ')).toBe('/system/connectors')
+    expect(itemLink('/system/log?source=deploys')).toBe('/system/log?source=deploys')
     expect(itemLink(null)).toBeNull()
     expect(itemLink('')).toBeNull()
     expect(itemLink('admin/incidents')).toBeNull()
@@ -146,6 +147,13 @@ describe('itemLink', () => {
     expect(itemLink('/\\evil.example')).toBeNull()
     expect(itemLink('https://example.com')).toBeNull()
     expect(itemLink('javascript:alert(1)')).toBeNull()
+  })
+
+  it("shows a report from before the workspaces with the link's new home", () => {
+    expect(itemLink('/admin/broker')).toBe('/system/connectors')
+    expect(itemLink('/admin/broker/dhan')).toBe('/system/connectors/dhan')
+    expect(itemLink('/admin/system/deployments')).toBe('/system/log?source=deploys')
+    expect(itemLink('/trader/positions')).toBe('/trade/positions')
   })
 })
 

@@ -68,7 +68,7 @@ export function NewBacktestPage() {
           inline
           strategy={chosen}
           onClose={() => setChosen(null)}
-          onStarted={(response) => navigate(`/admin/backtesting/runs/${response.runId}`)}
+          onStarted={(response) => navigate(`/research/backtests/runs/${response.runId}`)}
         />
       ) : (
         <section aria-labelledby="pick-a-strategy">

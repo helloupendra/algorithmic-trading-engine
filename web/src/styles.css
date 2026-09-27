@@ -278,14 +278,10 @@ a.btn, a.btn:hover, a.btn:visited { text-decoration: none; }
   border-color: transparent;
 }
 
-.btn--secondary { background: transparent; }
-
 .btn--sm {
   padding: 4px 10px;
   font-size: 12.5px;
 }
-
-.btn--block { width: 100%; }
 
 /* --- fields --------------------------------------------------------------- */
 .field {
@@ -648,7 +644,6 @@ select.field__input { appearance: auto; }
 
 .table--hover tbody tr { cursor: pointer; }
 .table--hover tbody tr:hover td { background: var(--brand-soft); }
-.table--center th, .table--center td { text-align: center; }
 .row--selected td { background: var(--brand-soft); }
 
 .table .r { text-align: right; }
@@ -814,15 +809,6 @@ select.field__input { appearance: auto; }
   font-size: 13px;
 }
 
-.endpoint-list {
-  margin: 0;
-  padding-left: 18px;
-  color: var(--text-3);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
 /* --- module grid (home / overview) ---------------------------------------- */
 .module-grid {
   display: grid;
@@ -850,18 +836,6 @@ a.module-card:hover {
 }
 
 .module-card--off { opacity: 0.6; }
-
-.module-card__icon {
-  width: 34px;
-  height: 34px;
-  border-radius: 9px;
-  background: var(--brand-soft);
-  color: var(--brand-hi);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.module-card__icon svg { width: 17px; height: 17px; }
 
 .module-card__name {
   font-weight: 650;
@@ -1016,9 +990,6 @@ a.module-card:hover {
   word-break: break-word;
 }
 
-.console__body--short { height: 180px; }
-.console__line--time { color: var(--text-3); margin-right: 8px; }
-
 /* --- splash / loading ------------------------------------------------------ */
 .splash {
   min-height: 60vh;
@@ -1078,12 +1049,6 @@ a.checklist__item:hover { background: var(--brand-soft); }
   background: var(--bg1);
 }
 
-.checklist__state--done {
-  color: var(--pos);
-  border-color: color-mix(in srgb, var(--pos) 45%, transparent);
-  background: var(--pos-soft);
-}
-
 .checklist__state--todo {
   color: var(--warn);
   border-color: color-mix(in srgb, var(--warn) 45%, transparent);
@@ -1091,9 +1056,7 @@ a.checklist__item:hover { background: var(--brand-soft); }
 }
 
 .checklist__body { flex: 1; min-width: 0; }
-.checklist__label { font-weight: 600; }
 .checklist__hint { color: var(--text-2); font-size: 12px; }
-.checklist__go { color: var(--brand-hi); font-size: 12.5px; white-space: nowrap; }
 
 /* --- killswitch / risk ------------------------------------------------------ */
 .killswitch {
@@ -1131,38 +1094,6 @@ a.checklist__item:hover { background: var(--brand-soft); }
 .broker-steps { font-size: 13px; }
 .broker-steps li { margin-bottom: 10px; }
 .broker-steps code { display: inline-block; margin: 4px 0 0 6px; }
-
-/* --- deploy wizard ----------------------------------------------------------- */
-.deploy-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  gap: 10px;
-}
-
-.deploy-card {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 13px 15px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  text-align: left;
-  border: 1px solid var(--line);
-  background: var(--bg1);
-  color: var(--text);
-  font-family: inherit;
-  font-size: 13px;
-  transition: border-color 0.14s ease;
-}
-.deploy-card span { color: var(--text-2); font-size: 12px; line-height: 1.45; }
-.deploy-card:hover:not(:disabled) { border-color: var(--brand-line); }
-.deploy-card.is-selected {
-  border-color: var(--brand);
-  background: var(--brand-soft);
-  box-shadow: 0 0 0 1px var(--brand);
-}
-.deploy-card:disabled { opacity: 0.5; cursor: default; }
 
 .param-grid { display: grid; gap: 8px; margin-bottom: 10px; }
 .param-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: center; }
@@ -2040,14 +1971,6 @@ a.pill:hover { border-color: var(--line-strong); }
 /* Coverage table on the overview: index × resolution rows. */
 .coverage-table td.coverage-table__none { color: var(--text-3); }
 .coverage-table__underlying { font-weight: 650; }
-
-/* Coverage chips on the New backtest page — what exists, before the picker. */
-.coverage-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-}
 .coverage-chip {
   display: inline-flex;
   align-items: center;
@@ -2226,6 +2149,9 @@ a.pill:hover { border-color: var(--line-strong); }
 
 .status-cell { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 1px; }
 .status-cell .cell-sub { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* One cell for when a run ran and for how long, in place of three columns. */
+.run-when { white-space: nowrap; }
+.run-link { text-decoration: none; }
 
 .live-dot {
   display: inline-block;
@@ -2402,7 +2328,6 @@ a.pill:hover { border-color: var(--line-strong); }
   overflow: hidden;
 }
 
-
 /* --- option chain ----------------------------------------------------------- */
 /* Dense by design. A chain is read by shape before it is read by number, so the
    bars carry the meaning and the digits are the detail underneath them. */
@@ -2494,7 +2419,6 @@ a.pill:hover { border-color: var(--line-strong); }
 /* Struck through the tone, not coloured over it: which side the number belongs
    to still matters, so the bar keeps its call/put colour and only dims. */
 .oc-bar--negative { opacity: 0.14; }
-.oc-value--negative { color: var(--warn); }
 .oc-ltp { font-weight: 600; }
 
 .oc-analysis {
@@ -2509,8 +2433,7 @@ a.pill:hover { border-color: var(--line-strong); }
 .oc-build-cover { color: var(--text-2); }
 .oc-build-unwind { color: var(--text-2); }
 
-/* --- advanced option chain (live view) ---------------------------------------- */
-.oc-page > .page__header { margin-bottom: 4px; }
+/* --- option chain (Markets → Option chain) and the page tabs it shares ---------- */
 
 .oc-tabs {
   display: flex;
@@ -2534,6 +2457,8 @@ a.pill:hover { border-color: var(--line-strong); }
 }
 .oc-tab:hover { color: var(--text); }
 .oc-tab--on { color: var(--text); border-bottom-color: var(--brand); }
+/* A tab that is its own URL is a link, and reads exactly like the button kind. */
+a.oc-tab { text-decoration: none; }
 
 .oc-toolbar {
   display: flex;
@@ -2775,7 +2700,6 @@ a.pill:hover { border-color: var(--line-strong); }
   pointer-events: none;
 }
 
-
 /* --- open interest series --------------------------------------------------- */
 .oi-chart { width: 100%; height: auto; display: block; overflow: visible; }
 .oi-grid { stroke: var(--line-soft); stroke-width: 1; }
@@ -2793,72 +2717,6 @@ a.pill:hover { border-color: var(--line-strong); }
   color: var(--text-2);
 }
 .oi-swatch { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
-
-/* --- deployments ---------------------------------------------------------- */
-/* One card per deploy, each a short list of steps. Deliberately not a table:
-   the interesting column is the last one that failed, and a table hides that
-   among eight that did not. */
-.deploy-list > * + * { margin-top: 12px; }
-
-.deploy-card {
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius-sm);
-  background: var(--bg1);
-  padding: 12px 14px;
-}
-
-.deploy-card__head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.deploy-card__summary { font-weight: 600; font-size: 13.5px; }
-.deploy-card__when { margin-left: auto; font-size: 12px; }
-
-.deploy-card__meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 6px;
-  font-size: 12px;
-}
-
-.deploy-card__commits {
-  margin: 8px 0 0;
-  padding-left: 16px;
-  font-size: 12px;
-  color: var(--text-2);
-}
-
-.deploy-card__steps {
-  margin-top: 10px;
-  border-top: 1px dashed var(--line-soft);
-  padding-top: 8px;
-}
-
-.deploy-step {
-  display: grid;
-  grid-template-columns: 16px minmax(150px, auto) 1fr auto;
-  align-items: baseline;
-  gap: 8px;
-  padding: 3px 0;
-  font-size: 12.5px;
-}
-
-.deploy-step__mark { font-weight: 700; text-align: center; }
-.deploy-step__name { font-weight: 550; }
-.deploy-step__detail { min-width: 0; overflow-wrap: anywhere; }
-.deploy-step__time { font-variant-numeric: tabular-nums; font-size: 11.5px; }
-
-@media (max-width: 760px) {
-  /* Four columns will not fit a phone; the detail wraps under its own step. */
-  .deploy-step {
-    grid-template-columns: 16px 1fr auto;
-  }
-  .deploy-step__detail { grid-column: 2 / -1; }
-}
 
 /* Manual order ticket: the live price, given the room it deserves. The last
    trade is what tells the operator whether the instrument is moving at all, so
@@ -2897,7 +2755,6 @@ a.pill:hover { border-color: var(--line-strong); }
   .manual-price__ltp { font-size: 27px; }
   .manual-price__meta { gap: 10px; }
 }
-
 
 /* --------------------------------------------------------------- filter lab */
 /*
@@ -2972,17 +2829,6 @@ tr:hover .calendar-remove,
 .oc-pos-table td { font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 .diag-table td { vertical-align: middle; }
-
-/* Open interest: the strike picker (a dropdown with one-step arrows). */
-.oi-strike-picker {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin: 0 0 12px;
-}
-.oi-strike-picker select { min-width: 140px; }
-
 
 /* --- System overview: server meters, database sizes, processes ------------ */
 .sys-asof {

@@ -1,19 +1,11 @@
-/* Market factors: five sections behind tabs, each a column of cards.
-   The page flows with the window (unlike the movers page, which pins its
-   height): sections differ a lot in length, and the events list reads best
-   as one scroll. */
+/* Market factors: three sections behind tabs, each a column of cards. The
+   page flows with the window: sections differ a lot in length, and the events
+   list reads best as one scroll. The metric, research note and status line
+   are shared with the chain's Levels tab and the Movers page (factorParts). */
 
 .mf { display: flex; flex-direction: column; gap: 12px; }
 .page.mf > * + * { margin-top: 0; }
 .mf-body { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-
-.mf-tools {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px 16px;
-}
 
 /* What our tests found, under every section's controls. */
 .mf-research {
@@ -49,18 +41,14 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
 }
-.mf-grid--four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-@media (max-width: 1200px) { .mf-grid--four { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 900px) {
-  .mf-grid, .mf-grid--four { grid-template-columns: minmax(0, 1fr); }
+  .mf-grid { grid-template-columns: minmax(0, 1fr); }
 }
 .mf-stack { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 
 .mf-card { min-width: 0; overflow-x: auto; }
 .mf-card table { margin: 0; }
 .mf-card p.small { margin: 10px 0 0; }
-
-.mf-h2 { font-size: 14px; font-weight: 600; margin: 4px 0 0; }
 
 /* Ten sessions of build-up as a row of coloured squares, newest first. */
 .mf-strip { display: flex; gap: 3px; }

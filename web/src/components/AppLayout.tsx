@@ -44,9 +44,9 @@ function DeskTitle({ slotRef }: { slotRef: (el: HTMLDivElement | null) => void }
 }
 
 /**
- * The current workspace's pages. A thin rule separates the pages that will
- * merge into one tab from the next group, so the strip already reads as the
- * tabs it is becoming.
+ * The current workspace's pages, one per tab but for the few tabs that hold
+ * more than one (Backtests' overview, new backtest and runs); a thin rule
+ * separates one tab's pages from the next.
  */
 function TabStrip({ workspace, current }: { workspace: NavWorkspace; current: NavPage }) {
   const listRef = useRef<HTMLElement>(null)
@@ -89,10 +89,10 @@ export function AppLayout() {
   const onDesk = here?.workspace.key === 'desk'
 
   const extras = useMemo(
-    () => (isAdmin ? [] : [{ label: ACCOUNT_PAGE.label, to: ACCOUNT_PAGE.trader, keywords: ['broker', 'capital', 'profile'] }]),
+    () => (isAdmin ? [] : [{ label: ACCOUNT_PAGE.label, to: ACCOUNT_PAGE.to, keywords: ['broker', 'capital', 'profile'] }]),
     [isAdmin],
   )
-  const onAccount = !isAdmin && pathname === ACCOUNT_PAGE.trader
+  const onAccount = !isAdmin && pathname === ACCOUNT_PAGE.to
 
   // ⌘K / Ctrl-K from anywhere in the console, even from inside a field.
   useEffect(() => {

@@ -21,12 +21,14 @@ import {
 import { formatAge, formatDateTime, formatNumber, shortSymbol } from '../../lib/format'
 import { Badge, Panel, QueryBoundary, StatTile } from '../../components/ui'
 import { SymbolMastersPanel } from './SymbolMastersPanel'
+import { meaningfulError } from '../../lib/pulse'
 import { IconArrowRight, IconDatabase, IconPulse, IconWarning } from '../../components/icons'
 import {
   CATEGORY_ORDER,
   classifySymbol,
+  coverageColumnKey,
+  coverageColumns,
   formatResolution,
-  resolutionRank,
   type SymbolCategory,
 } from '../../lib/symbols'
 
@@ -36,23 +38,30 @@ interface MatrixCell {
 }
 
 function buildMatrix(rows: CoverageRow[]) {
-  const resolutions = [...new Set(rows.map((r) => r.resolution))].sort(
-    (a, b) => resolutionRank(a) - resolutionRank(b),
-  )
+  // A column per source and resolution: the stored 1-minute candles and the
+  // live 1-minute bars are different data, and used to share a "1M" heading.
+  const columns = coverageColumns(rows)
   const matrix = new Map<SymbolCategory, Map<string, MatrixCell>>()
 
   for (const row of rows) {
     const cat = classifySymbol(row.symbol)
     if (!matrix.has(cat)) matrix.set(cat, new Map())
-    const byRes = matrix.get(cat)!
-    if (!byRes.has(row.resolution)) byRes.set(row.resolution, { symbols: new Set(), bars: 0 })
-    const cell = byRes.get(row.resolution)!
+    const byColumn = matrix.get(cat)!
+    const key = coverageColumnKey(row)
+    if (!byColumn.has(key)) byColumn.set(key, { symbols: new Set(), bars: 0 })
+    const cell = byColumn.get(key)!
     cell.symbols.add(row.symbol)
     cell.bars += row.barCount
   }
 
   const categories = CATEGORY_ORDER.filter((c) => matrix.has(c))
-  return { resolutions, matrix, categories }
+  return { columns, matrix, categories }
+}
+
+/** A heartbeat's last error, in red only when it says something ("None None" does not). */
+function HeartbeatError({ text }: { text: string | null }) {
+  const error = meaningfulError(text)
+  return error ? <p className="neg" style={{ margin: '6px 0 0', fontSize: 12.5 }}>{error}</p> : null
 }
 
 /** Renders only when something genuinely needs an operator's eyes. */
@@ -71,7 +80,7 @@ function NeedsAttention() {
   if (broker.data && !broker.data.isAuthenticated) {
     items.push({
       text: 'FYERS is not linked — the live stream and history sync cannot work without a broker session.',
-      to: '/admin/broker',
+      to: '/system/connectors',
       action: 'Connect broker',
     })
   }
@@ -84,7 +93,7 @@ function NeedsAttention() {
   if (process.data && !isRunning && marketOpen) {
     items.push({
       text: 'Market is open but the live ingestor is not running — no ticks are being captured.',
-      to: '/admin/data/live',
+      to: '/data/feeds',
       action: 'Start feed',
     })
   }
@@ -94,7 +103,7 @@ function NeedsAttention() {
       text: `${unhealthy.length} feed source${unhealthy.length > 1 ? 's' : ''} unhealthy: ${unhealthy
         .map((s) => `${s.sourceName} (${s.status})`)
         .join(', ')}.`,
-      to: '/admin/data/live',
+      to: '/data/feeds',
       action: 'Diagnostics',
     })
   }
@@ -102,7 +111,7 @@ function NeedsAttention() {
   if (marketOpen && (stale.data?.length ?? 0) > 0) {
     items.push({
       text: `${stale.data!.length} watched symbol${stale.data!.length > 1 ? 's' : ''} stopped ticking over 2 minutes ago during market hours.`,
-      to: '/admin/data/live',
+      to: '/data/feeds',
       action: 'View',
     })
   }
@@ -113,7 +122,7 @@ function NeedsAttention() {
     if (neverTicked.length > 0) {
       items.push({
         text: `${neverTicked.length} watchlist symbol${neverTicked.length > 1 ? 's have' : ' has'} never received a tick.`,
-        to: '/admin/data/live',
+        to: '/data/feeds',
         action: 'View',
       })
     }
@@ -163,7 +172,7 @@ function RecentlyUpdated({ rows }: { rows: CoverageRow[] }) {
         </>
       }
       actions={
-        <Link className="btn btn--ghost btn--sm" to="/admin/data/historical">
+        <Link className="btn btn--ghost btn--sm" to="/data/historical">
           All ranges <IconArrowRight style={{ width: 12, height: 12 }} />
         </Link>
       }
@@ -221,7 +230,7 @@ function LivePipelinePanel() {
         </>
       }
       actions={
-        <Link className="btn btn--ghost btn--sm" to="/admin/data/live">
+        <Link className="btn btn--ghost btn--sm" to="/data/feeds">
           Manage <IconArrowRight style={{ width: 12, height: 12 }} />
         </Link>
       }
@@ -262,9 +271,7 @@ function LivePipelinePanel() {
                     <span>{s.currentSubscribedSymbols.length}</span>
                   </div>
                 </div>
-                {s.lastError && (
-                  <p className="neg" style={{ margin: '6px 0 0', fontSize: 12.5 }}>{s.lastError}</p>
-                )}
+                <HeartbeatError text={s.lastError} />
               </div>
             ))}
           </div>
@@ -322,19 +329,19 @@ export function DataOverviewPage() {
               ? `${healthy}/${feeds.length} sources healthy · beat ${formatAge(feeds[0]?.lastHeartbeatUtc)}`
               : 'no heartbeat recorded yet'
           }
-          to="/admin/data/live"
+          to="/data/feeds"
         />
         <StatTile
           label="Database saving"
           value={formatNumber(watchlist.data?.length ?? 0)}
           sub={`${formatNumber(quotes.data?.length ?? 0)} symbols actively recording`}
-          to="/admin/data/live"
+          to="/data/feeds"
         />
         <StatTile
           label="Stored history"
           value={formatNumber(totalBars)}
           sub={`bars across ${coveredSymbols} symbols`}
-          to="/admin/data/historical"
+          to="/data/historical"
         />
         <StatTile
           label="Stale quotes"
@@ -351,7 +358,7 @@ export function DataOverviewPage() {
           </>
         }
         actions={
-          <Link className="btn btn--sm" to="/admin/data/historical">
+          <Link className="btn btn--sm" to="/data/historical">
             Browse historical <IconArrowRight style={{ width: 13, height: 13 }} />
           </Link>
         }
@@ -361,16 +368,16 @@ export function DataOverviewPage() {
           empty="No stored candles yet. Use Historical → Backfill to pull data from FYERS."
         >
           {(rows) => {
-            const { resolutions, matrix, categories } = buildMatrix(rows)
+            const { columns, matrix, categories } = buildMatrix(rows)
             return (
               <div className="tablewrap">
                 <table className="table">
                   <thead>
                     <tr>
                       <th>Category</th>
-                      {resolutions.map((r) => (
-                        <th key={r} className="r">
-                          {formatResolution(r)}
+                      {columns.map((c) => (
+                        <th key={c.key} className="r">
+                          {c.label}
                         </th>
                       ))}
                     </tr>
@@ -381,10 +388,10 @@ export function DataOverviewPage() {
                         <td>
                           <Badge tone={cat === 'Options' ? 'accent' : 'neutral'}>{cat}</Badge>
                         </td>
-                        {resolutions.map((res) => {
-                          const cell = matrix.get(cat)?.get(res)
+                        {columns.map((c) => {
+                          const cell = matrix.get(cat)?.get(c.key)
                           return (
-                            <td key={res} className="r">
+                            <td key={c.key} className="r">
                               {cell ? (
                                 <>
                                   <b>{formatNumber(cell.symbols.size)}</b>{' '}
@@ -406,8 +413,8 @@ export function DataOverviewPage() {
           }}
         </QueryBoundary>
         <p className="small-note">
-          Counts combine broker backfill (candles) and live-captured 1m bars. Tick-level capture is
-          visible per symbol under Live feeds.
+          Stored candles from broker backfills and the nightly archive, with the live-captured 1-minute bars
+          in a column of their own. Tick-level capture is per symbol under Data → Feeds.
         </p>
       </Panel>
 

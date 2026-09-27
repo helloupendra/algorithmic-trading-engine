@@ -20,7 +20,7 @@ import {
 import type { LiveRunHistoryFilters } from '../../lib/queries'
 import { formatDateTime, formatDuration, formatInr, formatInrSigned, formatLots, formatNumber } from '../../lib/format'
 import { riskChips } from '../../lib/risk'
-import { runDurationSeconds, runNetPnl, runStatusTone, runUserLabel, shortStopReason } from '../../lib/runHistory'
+import { runDurationSeconds, runNetPnl, runSpan, runStatusTone, runUserLabel, shortStopReason } from '../../lib/runHistory'
 import { DateField } from '../../components/DateField'
 import { isoToDmy } from '../../lib/dates'
 import { Badge, InlineError, Loading, Panel, StatTile } from '../../components/ui'
@@ -36,11 +36,12 @@ const DEFAULT_RANGE_DAYS = 30
 /** Rows per request; a range with more runs than this is paged with "Load older". */
 const TAKE = RUN_HISTORY_PAGE
 
-/** Where a row's detail lives and where "start one" points, per mode. */
+/** Where a row's detail lives and where "start one" points: the run cards for an admin, the library for a trader. */
 function routesFor(mode: RunHistoryMode) {
+  const detail = (runId: number) => `/trade/runs/${runId}`
   return mode === 'admin'
-    ? { detail: (runId: number) => `/admin/strategies/runs/${runId}`, start: '/admin/strategies/live', startLabel: 'Live runner' }
-    : { detail: (runId: number) => `/trader/strategies/runs/${runId}`, start: '/trader/deploy', startLabel: 'Deploy' }
+    ? { detail, start: '/trade/runs', startLabel: 'Live runner' }
+    : { detail, start: '/trade/library', startLabel: 'Library' }
 }
 
 /* ------------------------------------------------------------ status cell */
@@ -436,13 +437,10 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
                       <th>Underlying</th>
                       <th className="r">Lots × lot size</th>
                       <th>Risk</th>
-                      <th>Started</th>
-                      <th>Stopped</th>
-                      <th className="r">Duration</th>
+                      <th>When (IST)</th>
                       <th className="r">Trades</th>
                       <th className="r">Net P&L</th>
                       <th>Status</th>
-                      <th />
                     </tr>
                   </thead>
                   <tbody>
@@ -461,7 +459,12 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
                             navigate(to)
                           }}
                         >
-                          <td className="mono muted">#{run.runId}</td>
+                          {/* The row opens the run on a click; the number is the same target for a keyboard. */}
+                          <td className="mono">
+                            <Link to={to} className="run-link">
+                              #{run.runId}
+                            </Link>
+                          </td>
                           {isAdmin && <td>{run.userName || <span className="faint">user {run.userId}</span>}</td>}
                           <td>
                             <b>{run.strategyName}</b> <CategoryBadge category={run.category} />
@@ -473,11 +476,10 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
                           <td>
                             <RiskChips run={run} />
                           </td>
-                          <td className="muted">{formatDateTime(run.startedUtc)}</td>
-                          <td className="muted">
-                            {run.isActive ? <span className="faint">—</span> : formatDateTime(run.stoppedUtc)}
+                          <td className="muted run-when" title={`${formatDateTime(run.startedUtc)} → ${run.isActive ? 'running' : formatDateTime(run.stoppedUtc)}`}>
+                            {runSpan(run)}
+                            <span className="cell-sub">{formatDuration(runDurationSeconds(run))}</span>
                           </td>
-                          <td className="r mono muted">{formatDuration(runDurationSeconds(run))}</td>
                           <td className="r" title={run.openPositions > 0 ? `${run.openPositions} open` : undefined}>
                             {formatNumber(run.trades)}
                             {run.openPositions > 0 && <span className="cell-sub">{run.openPositions} open</span>}
@@ -495,9 +497,6 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
                           </td>
                           <td>
                             <RunStatusCell run={run} />
-                          </td>
-                          <td className="r">
-                            <Link to={to}>Detail →</Link>
                           </td>
                         </tr>
                       )

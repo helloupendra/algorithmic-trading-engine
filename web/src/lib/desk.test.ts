@@ -812,6 +812,8 @@ describe('deskTimeline', () => {
   const deploys: DeployRecord[] = [
     { startedUtc: istIso('07:59'), finishedUtc: istIso('08:01'), outcome: 'applied', summary: '', fromCommit: 'aaaaaaa1', toCommit: 'bbbbbbb2', commits: ['x', 'y'], filesChanged: 3, steps: [], machine: 'm' },
     { startedUtc: istIso('08:05'), finishedUtc: istIso('08:05'), outcome: 'skipped', summary: 'nothing new', fromCommit: 'b', toCommit: 'b', commits: [], filesChanged: 0, steps: [], machine: 'm' },
+    // The Linux desk's desk.sh says "ok" where the Windows script says "applied".
+    { startedUtc: istIso('09:00'), finishedUtc: istIso('09:01'), outcome: 'ok', summary: 'console rebuilt;API rebuilt', fromCommit: 'b', toCommit: 'ccccccc3', commits: ['z'], filesChanged: 2, steps: [], machine: 'm' },
     { startedUtc: istIso('22:00', '2026-09-27'), finishedUtc: istIso('22:14', '2026-09-27'), outcome: 'applied', summary: '', fromCommit: 'a', toCommit: 'c', commits: [], filesChanged: 1, steps: [], machine: 'm' },
   ]
   const events = deskTimeline({
@@ -847,7 +849,8 @@ describe('deskTimeline', () => {
     expect(texts).toContain('10:02 High · coderforchange · SMC break on NIFTY runner exited · resolved 10:04')
     expect(texts).toContain('08:47 Checkup before the open: attention · FYERS backup signed out')
     expect(texts).toContain('08:01 Deployed bbbbbbb · 2 commits')
-    expect(texts.join('\n')).not.toMatch(/old one|nothing new|22:14/)
+    expect(texts).toContain('09:01 Deployed ccccccc · 1 commit')
+    expect(texts.join('\n')).not.toMatch(/old one|nothing new|22:14|Deploy failed/)
   })
 
   it('leads with the live incidents, newest first', () => {

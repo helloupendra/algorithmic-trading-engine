@@ -49,6 +49,18 @@ function secondsSince(iso: string, nowMs: number): number {
 }
 
 /**
+ * A heartbeat's error, when it says something. The Python feeds once wrote a
+ * dropped socket's missing close code and reason as "None None" (vendor_feed.py
+ * words it since), and the API keeps a stopped feed's last heartbeat for good,
+ * so the old text is still read back and was shown in red with nothing to act on.
+ */
+export function meaningfulError(text: string | null | undefined): string | null {
+  const t = (text ?? '').trim()
+  if (!t) return null
+  return /^((none|null|undefined|nan)\s*)+$/i.test(t) ? null : t
+}
+
+/**
  * The feed a heartbeat row belongs to. The names are set by the Python feeds:
  * FYERS keeps the name it had before there was a second vendor, and every
  * other vendor reports "python-<key>-feed", or "python-<key>-recap" while it
@@ -219,7 +231,7 @@ export function feedPulses(
         key: feed.key,
         label: `${name} ${beat.row.status.toLowerCase()}`,
         tone: beat.row.status === 'Refused' ? 'neg' : 'warn',
-        title: `${beat.row.lastError ?? beat.row.status}${pid}`,
+        title: `${meaningfulError(beat.row.lastError) ?? beat.row.status}${pid}`,
       })
     } else {
       pulses.push({

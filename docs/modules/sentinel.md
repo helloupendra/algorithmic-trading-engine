@@ -7,7 +7,7 @@ evidence already gathered and the first thing to try. It sends that to
 Telegram, shows it under **System → Incidents**, and closes it again when the
 condition clears.
 
-Code: `src/AlgoTrading.PythonEngine/sentinel/`. Console: `/admin/incidents`.
+Code: `src/AlgoTrading.PythonEngine/sentinel/`. Console: **System → Incidents** (`/system/incidents`).
 API (admin only): `GET /api/Incidents`, `/summary`, `/{id}`, `/history`;
 `POST /api/Incidents/{id}/acknowledge`, `/resolve`, `/notes`.
 
@@ -119,8 +119,8 @@ own advice keeps saying "read logs/api.log around the time above" and "check
 logs/desk.log for a deploy or restart at that time". So Sentinel does that
 looking itself, with rules and nothing else, and attaches what it found:
 
-- **the last deploy** from `data/deploy-history.json` (what the Deployments page
-  shows): commit, time, outcome — and, when it went out within 30 minutes of the
+- **the last deploy** from `data/deploy-history.json` (what System → Log
+  shows under Deploys): commit, time, outcome — and, when it went out within 30 minutes of the
   first sighting, plainly *"deployed 4 min before this was first seen"*;
 - **the commit checked out**, from `git log -1` through the read-only allowlist;
 - **how many strategy runs were live**, per account (the trading agent's GET);

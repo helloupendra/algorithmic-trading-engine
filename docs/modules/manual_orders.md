@@ -129,8 +129,8 @@ An open option that nothing can price (no quote for it or its underlying) shows 
 ---
 
 ## 4. In the console
-- **Manual order** (`/trader/trading`, `/admin/trading`): the ticket, with the **Carry forward (hold overnight)** tick above Buy/Sell and a line under it that says what happens to the order (`Intraday: squared off at the close (15:30 IST)…`, or the MCX close for a commodity), and under the ticket the **Manual book** run card.
-- **Strategies › Live runner** (`/admin/strategies/live`) and the run detail pages (`/admin/strategies/runs/{runId}`, `/trader/strategies/runs/{runId}`): one run card per run.
+- **Trade → Ticket** (`/trade/ticket`, the same page for every role): the ticket, with the **Carry forward (hold overnight)** tick above Buy/Sell and a line under it that says what happens to the order (`Intraday: squared off at the close (15:30 IST)…`, or the MCX close for a commodity), and under the ticket the **Manual book** run card.
+- **Trade → Runs** (`/trade/runs`) and a run's own page (`/trade/runs/{runId}`, which the API refuses for someone else's run): one run card per run.
 
 On every run card:
 - the positions table has a **Carry** column: a tick on each open row, and a line under the table saying what the ticks do there. The tick is disabled, with a tooltip saying why, for someone who may not change it (only the owner of the run or an admin may) and on a run that is no longer live. An open row with the tick shows a **Carry forward** badge beside **Open**; a strategy leg that moved to the book reads **Carried** with `→ book` in its exit cell; a book row that came from a run says `from run #N · Strategy` under its contract;

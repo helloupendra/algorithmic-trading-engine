@@ -23,7 +23,7 @@ import './notebook.css'
 
 /** Boards are full-window routes; every way in opens a new tab. */
 function boardUrl(id: number): string {
-  return `${window.location.origin}/admin/notebook/${id}`
+  return `${window.location.origin}/notebook/${id}`
 }
 
 const DEFAULT_NAME = 'Untitled board'
@@ -147,7 +147,7 @@ export function NotebookPage() {
       {
         onSuccess: (board) => {
           if (tab && !tab.closed) tab.location.href = boardUrl(board.id)
-          else navigate(`/admin/notebook/${board.id}`)
+          else navigate(`/notebook/${board.id}`)
         },
         onError: () => tab?.close(),
       },

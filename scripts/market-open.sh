@@ -509,7 +509,7 @@ wait_for_fyers() {  # blocks until FYERS (or, late, Dhan) is signed in; fails th
 
   # Put the login in front of the operator rather than in a log they have to
   # go looking for: raise a notification, and on the Mac open the page too.
-  if $IS_MAC; then open "$CONSOLE/admin/data/connectors" 2>/dev/null || true; fi
+  if $IS_MAC; then open "$CONSOLE/system/connectors/fyers" 2>/dev/null || true; fi
   notify "AlgoTrading" "Sign in to FYERS at $CONSOLE — the morning run is waiting."
 
   NUDGED_OPEN=0
@@ -952,7 +952,7 @@ fi
 # killed for memory looks like one that died for no reason.
 say "host: $(python3 "$REPO_ROOT/scripts/lib/host_vitals.py" 2>/dev/null || true); OOM killer: $(python3 "$REPO_ROOT/scripts/lib/host_vitals.py" --oom 2>/dev/null || true)"
 
-say "Watch them at $CONSOLE/admin/strategies/live — or read this file."
+say "Watch them at $CONSOLE/trade/runs — or read this file."
 
 # Short (or unknown) is a failed morning for whoever reads the exit code: the
 # desk's log, and the day's marker (done=... exit=2).

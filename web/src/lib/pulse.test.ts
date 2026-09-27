@@ -167,6 +167,10 @@ describe('feedPulses', () => {
 
     const refused = feedPulses([truedata], [beat('python-truedata-feed', 3, { status: 'Refused', isHealthy: false, lastError: 'User Already Connected' })], false, NOW)
     expect(refused.map((p) => [p.label, p.tone, p.title])).toEqual([['TrueData refused', 'neg', 'User Already Connected · pid 22']])
+
+    // An old heartbeat's "None None" is no reason: the status stands in for it.
+    const dropped = feedPulses([truedata], [beat('python-truedata-feed', 3, { status: 'Disconnected', isHealthy: false, lastError: 'None None' })], false, NOW)
+    expect(dropped[0].title).toBe('Disconnected · pid 22')
   })
 
   it('flags a live heartbeat the API has no process for', () => {

@@ -1,5 +1,6 @@
 /**
- * Strategy packages — what a trader may run, and the ceilings that come with it.
+ * System → People → Packages: what a trader may run, and the ceilings that
+ * come with it.
  *
  * A package that only listed strategies would barely beat a row of checkboxes.
  * It carries limits because every trader here runs on the same broker connection
@@ -16,10 +17,10 @@ import {
   useStrategyCatalogNames,
   useStrategyPackages,
   useUpdateStrategyPackage,
-} from '../../lib/queries'
-import type { SaveStrategyPackageInput, StrategyPackage } from '../../lib/types'
-import { formatAge } from '../../lib/format'
-import { Badge, EmptyState, InlineError, Panel, QueryBoundary } from '../../components/ui'
+} from '../../../lib/queries'
+import type { SaveStrategyPackageInput, StrategyPackage } from '../../../lib/types'
+import { formatAge } from '../../../lib/format'
+import { Badge, EmptyState, InlineError, Panel, QueryBoundary } from '../../../components/ui'
 
 const EMPTY_FORM: SaveStrategyPackageInput = {
   key: '',
@@ -462,23 +463,19 @@ function CreatePanel() {
   )
 }
 
-export function StrategyPackagesPage() {
+/** System → People → Packages. */
+export function Packages() {
   const packages = useStrategyPackages()
   const [openId, setOpenId] = useState<number | null>(null)
 
   return (
-    <div className="page">
-      <header className="page__header">
-        <h1 className="page__title">Strategy packages</h1>
-        <p className="page__subtitle">
-          What a trader may run, and the ceilings that come with it. Enforced when a run is deployed —
-          a trader outside their package gets a 403 with the reason, not a hidden button.
+    <>
+      <div className="hp-bar">
+        <p className="hp-bar__lead muted">
+          What a trader may run, and the ceilings that come with it. Enforced when a run is deployed: a trader outside
+          their package gets a 403 with the reason, not a hidden button.
         </p>
-      </header>
-
-      <p className="small-note">
-        <Link to="/admin/users">← Users</Link>
-      </p>
+      </div>
 
       <Panel title="Packages">
         <QueryBoundary query={packages}>
@@ -516,11 +513,11 @@ export function StrategyPackagesPage() {
         </QueryBoundary>
         <p className="small-note muted">
           Updated {packages.data?.[0] ? formatAge(packages.data[0].updatedUtc) : '—'}. Assign a package
-          to a trader on the <Link to="/admin/users">Users</Link> page.
+          to a trader on the <Link to="/system/people">Users</Link> tab.
         </p>
       </Panel>
 
       <CreatePanel />
-    </div>
+    </>
   )
 }

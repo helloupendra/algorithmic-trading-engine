@@ -399,7 +399,7 @@ export function BacktestConfigurator({
     notes.push(
       <li key="broker">
         Broker not linked: only contracts already stored can be priced. Restore the{' '}
-        <Link to="/admin/broker">broker session</Link> to fetch missing premiums.
+        <Link to="/system/connectors">broker session</Link> to fetch missing premiums.
       </li>,
     )
   if (cov)
@@ -497,7 +497,7 @@ export function BacktestConfigurator({
               <div className="alert alert--warn" role="status">
                 <span>
                   No F&O contracts loaded — import the instrument master first on{' '}
-                  <Link to="/admin/data/instruments">Data › Instruments & F&O</Link>.
+                  <Link to="/data/instruments">Data › Instruments</Link>.
                 </span>
               </div>
             ) : (

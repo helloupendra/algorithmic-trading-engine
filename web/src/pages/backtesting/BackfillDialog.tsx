@@ -88,7 +88,7 @@ export function BackfillDialog({
             <div className="alert alert--warn" role="status">
               <span>
                 FYERS is not linked — history cannot be fetched until the{' '}
-                <Link to="/admin/broker">broker session</Link> is restored.
+                <Link to="/system/connectors">broker session</Link> is restored.
               </span>
             </div>
           )}

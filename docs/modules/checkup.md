@@ -17,7 +17,7 @@ after the close:
 Each answer that needs a person comes with its next step.
 
 Code: `src/AlgoTrading.PythonEngine/sentinel/checkup/`. Console: **System →
-Checkup** (`/admin/checkup`). API (admin only): `GET /api/Checkups`,
+Health → Checkups** (`/system/checkups`). API (admin only): `GET /api/Checkups`,
 `/latest`, `/{id}`; `POST /api/Checkups/run`.
 
 ## When it runs

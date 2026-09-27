@@ -20,6 +20,7 @@
  */
 
 import { useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import { useQueries } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { useAddWatchlistSymbol, useLatestQuotes, useWatchlist } from '../../lib/queries'
@@ -302,7 +303,7 @@ export function CommodityPage() {
               the exchange's own clock, so a quiet contract can read minutes old while the
               feed is perfectly healthy — the full-size gold and silver futures print far
               less often than their minis. Feed health is the chip in the topbar and{' '}
-              <a href="/admin/data/live">Live feeds</a>.
+              <Link to="/data/feeds">Data › Feeds</Link>.
             </p>
           </Panel>
         </>

@@ -4,7 +4,7 @@
  * real bars so "saved" and "working" are never confused.
  *
  * Reached from the Connectors directory, and from the OAuth callback — the API
- * redirects to /admin/broker/{key} so the operator lands where they pressed
+ * redirects to /system/connectors/{key} so the operator lands where they pressed
  * Connect.
  */
 
@@ -512,7 +512,7 @@ export function ConnectorDetailPage() {
         </header>
         <EmptyState>
           No connector is registered under <code>{providerKey}</code>.{' '}
-          <Link to="/admin/broker">Back to connectors</Link>.
+          <Link to="/system/connectors">Back to connectors</Link>.
         </EmptyState>
       </div>
     )
@@ -534,7 +534,7 @@ export function ConnectorDetailPage() {
       </header>
 
       <p className="small-note">
-        <Link to="/admin/broker">← All connectors</Link>
+        <Link to="/system/connectors">← All connectors</Link>
       </p>
 
       {connected === '1' && (

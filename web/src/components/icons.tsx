@@ -92,16 +92,6 @@ export const IconLayers = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 )
 
-export const IconBot = (p: SVGProps<SVGSVGElement>) => (
-  <Icon {...p}>
-    <rect x="5" y="8" width="14" height="11" rx="2.5" />
-    <path d="M12 8V4.5M9.5 4.5h5" />
-    <circle cx="9" cy="13" r="1" fill="currentColor" stroke="none" />
-    <circle cx="15" cy="13" r="1" fill="currentColor" stroke="none" />
-    <path d="M9.5 16.5h5" />
-  </Icon>
-)
-
 export const IconFlask = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p}>
     <path d="M9.5 3h5M10.5 3v5.2L5 18a2 2 0 001.8 3h10.4A2 2 0 0019 18L13.5 8.2V3" />
@@ -122,21 +112,6 @@ export const IconUsers = (p: SVGProps<SVGSVGElement>) => (
     <path d="M3.5 19.5c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5" />
     <circle cx="16.8" cy="9.5" r="2.5" />
     <path d="M16.5 14.6c2.2.2 3.7 1.7 4.2 4.4" />
-  </Icon>
-)
-
-export const IconPlug = (p: SVGProps<SVGSVGElement>) => (
-  <Icon {...p}>
-    <path d="M9 7V3.5M15 7v-3.5" />
-    <path d="M6.5 7h11v4a5.5 5.5 0 01-11 0V7z" />
-    <path d="M12 16.5V21" />
-  </Icon>
-)
-
-export const IconBell = (p: SVGProps<SVGSVGElement>) => (
-  <Icon {...p}>
-    <path d="M18 10a6 6 0 10-12 0c0 5-2 6-2 6h16s-2-1-2-6" />
-    <path d="M10 19.5a2.2 2.2 0 004 0" />
   </Icon>
 )
 
@@ -221,26 +196,10 @@ export const IconClock = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 )
 
-export const IconGlobe = (p: SVGProps<SVGSVGElement>) => (
-  <Icon {...p}>
-    <circle cx="12" cy="12" r="8.5" />
-    <path d="M3.5 12h17M12 3.5c2.6 2.3 3.9 5.2 3.9 8.5s-1.3 6.2-3.9 8.5c-2.6-2.3-3.9-5.2-3.9-8.5s1.3-6.2 3.9-8.5z" />
-  </Icon>
-)
-
 export const IconWarning = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p}>
     <path d="M12 4L2.5 20h19L12 4z" />
     <path d="M12 10v4.5M12 17.2v.3" />
-  </Icon>
-)
-
-/** A clipboard with a tick: the desk checkup. */
-export const IconChecklist = (p: SVGProps<SVGSVGElement>) => (
-  <Icon {...p}>
-    <path d="M9 4.5H7A1.5 1.5 0 005.5 6v13.5A1.5 1.5 0 007 21h10a1.5 1.5 0 001.5-1.5V6A1.5 1.5 0 0017 4.5h-2" />
-    <rect x="9" y="3" width="6" height="3" rx="1" />
-    <path d="M9 13.5l2 2 4-4.5" />
   </Icon>
 )
 
@@ -264,12 +223,6 @@ export const IconChevronDown = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 )
 
-export const IconChevronUp = (p: SVGProps<SVGSVGElement>) => (
-  <Icon {...p}>
-    <path d="M18.5 15.5l-6.5-6.5-6.5 6.5" />
-  </Icon>
-)
-
 export const IconX = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p}>
     <path d="M6 6l12 12M18 6L6 18" />
@@ -277,30 +230,11 @@ export const IconX = (p: SVGProps<SVGSVGElement>) => (
 )
 
 
-/** Hamburger — opens the navigation drawer on narrow screens. */
-export const IconMenu = (p: SVGProps<SVGSVGElement>) => (
-  <Icon {...p}>
-    <path d="M4 7h16M4 12h16M4 17h16" />
-  </Icon>
-)
-
 /** Pen on a page — the Notebook module and its whiteboards. */
 export const IconPen = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p}>
     <path d="M4 20l4.3-1.1L18.6 8.6a2 2 0 000-2.8l-.4-.4a2 2 0 00-2.8 0L5.1 15.7 4 20z" />
     <path d="M13.5 6.9l3.6 3.6" />
-  </Icon>
-)
-
-/**
- * A candle beside the range forecast for it: the band with its caps and the
- * median tick — the Analysis module, whose first forecast is the day's range.
- */
-export const IconForecast = (p: SVGProps<SVGSVGElement>) => (
-  <Icon {...p}>
-    <path d="M5 5h4M7 5v14M5 19h4M5.5 11h3" />
-    <path d="M16.5 5v3M16.5 16v3" />
-    <rect x="14.25" y="8" width="4.5" height="8" rx="1" />
   </Icon>
 )
 

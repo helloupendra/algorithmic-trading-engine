@@ -20,7 +20,6 @@ import {
   setSessionExpiredHandler,
   tokenStore,
   type MeResponse,
-  type UserRole,
 } from './api'
 
 interface AuthContextValue {
@@ -111,8 +110,4 @@ export function useAuth(): AuthContextValue {
     throw new Error('useAuth must be used inside an <AuthProvider>')
   }
   return context
-}
-
-export function hasRole(user: MeResponse | null, role: UserRole): boolean {
-  return user?.role === role
 }

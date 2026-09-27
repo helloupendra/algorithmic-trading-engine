@@ -63,28 +63,26 @@ export function toneClass(value: number | null | undefined): string {
 }
 
 /**
- * Where a panel's "more" link goes, from the workspace registry: the page
- * this viewer's console has for that tab, or none. URLs move in the next
- * step; reading them here means the links move with them.
+ * Where a panel's "more" link goes, from the workspace registry: the tab's
+ * page when this viewer has it, or none, so a panel never links to a page
+ * its reader would be refused.
  */
 export function useDeskLinks(access: Access) {
   return useMemo(() => {
     const pages = navFor(access).flatMap((w) => w.pages)
-    const to = (tab: string, label?: string) => {
-      const hit = pages.find((p) => p.tab.key === tab && (!label || p.label === label))
-      return hit ? hit.to : null
-    }
+    const to = (tab: string) => pages.find((p) => p.tab.key === tab)?.to ?? null
     return {
-      runs: to('runs', 'Live runner') ?? to('history'),
+      runs: to('runs') ?? to('history'),
       history: to('history'),
-      runBase: access.isAdmin ? '/admin/strategies/runs' : '/trader/strategies/runs',
-      chain: to('chain', 'Option chain'),
-      movers: to('movers', 'Movers'),
+      // A run's page is one URL for everyone; the API refuses someone else's.
+      runBase: '/trade/runs',
+      chain: to('chain'),
+      movers: to('movers'),
       news: to('news'),
       factors: to('factors'),
       forecasts: to('forecasts'),
       incidents: to('incidents'),
-      checkups: to('health', 'Checkup'),
+      checkups: to('health') ? '/system/checkups' : null,
       risk: to('risk'),
       book: to('ticket'),
     }
