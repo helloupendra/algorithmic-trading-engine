@@ -247,6 +247,17 @@ public class MarketIntelligenceParserTests
     }
 
     [Fact]
+    public void A_legacy_bhavcopy_with_a_two_digit_year_reads_its_date()
+    {
+        // The file for 13 Jul 2020 stamps its rows "13-Jul-20".
+        string csv = Fixture("cm_bhavcopy_legacy_20240705_sample.csv").Replace("05-JUL-2024", "13-Jul-20");
+
+        var bhav = NseBreadthParsers.ParseCmBhavcopy(csv, minimumEquities: 5);
+
+        Assert.Equal(new DateOnly(2020, 7, 13), bhav.Date);
+    }
+
+    [Fact]
     public void A_real_session_file_is_not_mistaken_for_a_stub()
     {
         // The default minimum: a 10-line file is not a session.
