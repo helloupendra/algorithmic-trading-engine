@@ -117,7 +117,15 @@ internal sealed class RunnerDesk : IDisposable
     /// <summary>The durable runner pids (system_settings), as the reconcile reads them.</summary>
     public PidStore Pids { get; } = new();
 
-    /// <summary>The stop and adoption paths, on <paramref name="db"/>.</summary>
+    /// <summary>How the adoption path checks a stored pid; the real probe unless a test says otherwise.</summary>
+    public IProcessProbe Probe { get; set; } = new SystemProcessProbe(NullLogger<SystemProcessProbe>.Instance);
+
+    /// <summary>What the desk told its operator (alert titles).</summary>
+    public List<string> Alerts => _notifier.Titles;
+
+    private readonly RecordingNotifier _notifier = new();
+
+    /// <summary>The stop and adoption paths, on <paramref name="db"/>. No waits between re-probes.</summary>
     public StrategyRunControl RunControl(TradingDbContext db) => new(
         db,
         RecapClockTests.Inert<IPaperTradingService>.Create(),
@@ -125,7 +133,12 @@ internal sealed class RunnerDesk : IDisposable
         Registry,
         null!,                                      // carry forward: only the market close uses it
         _locator,
-        NullLogger<StrategyRunControl>.Instance);
+        Probe,
+        _notifier,
+        NullLogger<StrategyRunControl>.Instance)
+    {
+        UnknownProbeRetryDelays = new[] { TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero }
+    };
 
     /// <summary>A controller as <paramref name="callerId"/> sees it, for the endpoints other than start.</summary>
     public StrategyController Controller(TradingDbContext db, long callerId)
@@ -268,6 +281,18 @@ internal sealed class RunnerDesk : IDisposable
                                && _values.TryRemove(key, out _));
 
         public bool Has(string key) => _values.ContainsKey(key);
+    }
+
+    private sealed class RecordingNotifier : ISystemNotifier
+    {
+        public List<string> Titles { get; } = new();
+
+        public Task NotifyAsync(NotificationCategory category, NotificationSeverity severity, string title, string message,
+            string? underlying = null, string? symbol = null, long? simulationRunId = null, CancellationToken cancellationToken = default)
+        {
+            lock (Titles) Titles.Add(title);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FixedLimits(int maxRuns) : IRiskLimitsStore
