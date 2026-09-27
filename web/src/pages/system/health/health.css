@@ -30,6 +30,12 @@
 .hp-checkup__text { flex: 1 1 auto; min-width: 0; }
 .hp-checkup__more { flex: 0 0 auto; color: var(--text-3); }
 
+/* Reference a tab keeps folded: read once, then out of the way. */
+.hp-details { color: var(--text-2); }
+.hp-details > summary { cursor: pointer; width: fit-content; color: var(--text-3); padding: 2px 0; }
+.hp-details > summary:hover { color: var(--text-2); }
+.hp-details[open] > summary { margin-bottom: 8px; }
+
 @media (max-width: 640px) {
   .hp-checkup { flex-wrap: wrap; }
   .hp-checkup__more { display: none; }
