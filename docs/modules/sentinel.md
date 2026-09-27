@@ -8,7 +8,8 @@ Telegram, shows it under **System → Incidents**, and closes it again when the
 condition clears.
 
 Code: `src/AlgoTrading.PythonEngine/sentinel/`. Console: `/admin/incidents`.
-API: `GET/POST /api/Incidents` (admin only).
+API (admin only): `GET /api/Incidents`, `/summary`, `/{id}`, `/history`;
+`POST /api/Incidents/{id}/acknowledge`, `/resolve`, `/notes`.
 
 ## What it will not do
 
@@ -133,6 +134,60 @@ Every part is best-effort. A missing file, an API that does not answer (it is
 then not asked again for five minutes), a machine without git — each makes the
 pack shorter, never the incident late or lost. Log lines are redacted like any
 evidence, and a line that may carry a credential is dropped whole.
+
+## Has this happened before? The incident record
+
+Every incident is kept, resolved ones included, one row per **episode** of a
+problem: the fingerprint is the problem, and it opens a new row each time it
+comes back after being resolved. So the table is the desk's own record of what
+went wrong, how often, and what was done about it.
+
+**Notes on each incident.** Three columns a person fills from the console —
+**root cause**, **what was done**, and a **fix reference** (a commit sha, a pull
+request or a doc link). The Resolve button opens a small form for them, all
+optional, before closing the record; **Edit notes** writes or corrects them at
+any time, on an open incident or one long resolved, because the cause is often
+understood only after the incident has cleared itself. Each field is trimmed,
+masked with the same redaction spec as the rest of an incident's text *before*
+it is stored, and cut to 2,000 characters (300 for the reference). A field left
+out is left alone; an emptied field is cleared. Sentinel never writes these
+columns and its sightings never overwrite them. A notes save that races a
+status change Sentinel made is refused with a 409, like acknowledge and resolve.
+
+**"Seen before" on every incident.** The list and the detail say, for each
+incident, how many earlier episodes of the same fingerprint there were, when the
+problem was first seen at all, and how the episode just before this one ended:
+when, who closed it (or that Sentinel's checks came back clean), and its notes.
+The console shows it as *"Seen before: 3 times, first on 2 Sept 2026; last
+time: closed the sixth Dhan socket (24 Sept 2026)"*, and the list marks a
+recurring problem beside its title. It is computed from one query per page, not
+one per row.
+
+**In the Telegram message.** When Sentinel opens a new incident whose
+fingerprint has earlier resolved episodes, the message says so under the
+summary — *"Seen before: 3 times, last on 24 Sep 2026, 11:27 IST"* and, when
+someone wrote what was done, *"Last time: closed the sixth Dhan socket"* — and
+the same lines go into the incident's evidence, beginning `history: `, kept
+across later sightings like the context pack. `store.py` reads them from the
+`Resolution` and `LastSeenUtc` columns after the incident is stored; a read that
+fails costs these lines and nothing else — the incident and its message go out
+as before. An escalation is not a new episode and does not repeat them.
+
+**The History tab.** System → Incidents → **History** (`GET
+/api/Incidents/history?days=90`, 30 days to a year in the console, up to ten
+years by the API) is one row per fingerprint over the window: the loudest
+severity it reached, how many episodes and sightings, when it was last seen,
+the **mean time to resolve** (first sighting to resolve, over the episodes that
+ended — shown with how many that is, since a mean of one is an anecdote), and
+whether it is open now. The problems that keep coming back come first. A row
+opens to its latest notes and every episode (the latest 50), each with its
+dates, how long it lasted, how it ended — resolved by a named person or cleared
+because Sentinel's checks came back clean — and its notes. An episode counts in
+the window when it was seen in it, or is live now however old.
+
+The columns were added as nullable, so a Sentinel still running an older
+`store.py` inserts exactly as before; `IncidentsTableContractTests` checks that,
+and that every column `store.py` names exists.
 
 ## Weekends, holidays and after the close
 

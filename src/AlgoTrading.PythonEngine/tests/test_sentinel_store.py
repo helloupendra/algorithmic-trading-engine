@@ -8,8 +8,8 @@ from pathlib import Path
 from unittest import mock
 
 from sentinel.model import Finding, Severity
-from sentinel.store import (FALLBACK_MAX_BYTES, WATCH_LOCK_KEY, MemoryIncidentStore, PostgresIncidentStore,
-                            WatchLock, dsn_from_env)
+from sentinel.store import (FALLBACK_MAX_BYTES, WATCH_LOCK_KEY, EarlierEpisodes, MemoryIncidentStore,
+                            PostgresIncidentStore, WatchLock, dsn_from_env)
 
 try:
     import psycopg2
@@ -221,6 +221,56 @@ class UnsentTests(unittest.TestCase):
         self.assertEqual(("low", 20), params[1:])
         self.assertEqual((5, Severity.HIGH, "", [], NOW), (row.incident_id, row.severity, row.summary,
                                                           row.evidence, row.first_seen_utc))
+
+
+class EarlierEpisodesTests(unittest.TestCase):
+    """What the store says about a fingerprint's resolved episodes, for the "seen before" lines."""
+
+    def test_one_query_counts_every_earlier_episode_and_returns_the_latest(self):
+        cur = Cursor(rows=[(3, NOW.replace(tzinfo=None), "Restarted the feed")])   # the column comes back naive: UTC
+        store, _ = store_with(cur)
+        earlier = store.earlier_episodes("health:feed-silent:NSE", 12)
+        sql, params = cur.executed[0]
+        # The window count is taken before the LIMIT: all of them, and the latest one's row.
+        self.assertIn('SELECT COUNT(*) OVER (), "LastSeenUtc", "Resolution" FROM incidents', sql)
+        self.assertIn('"Fingerprint" = %s AND "Status" = %s AND "Id" <> %s', sql)
+        self.assertIn('ORDER BY "FirstSeenUtc" DESC, "Id" DESC LIMIT 1', sql)
+        self.assertEqual(("health:feed-silent:NSE", "resolved", 12), params)
+        self.assertEqual(EarlierEpisodes(3, NOW, "Restarted the feed"), earlier)
+
+    def test_none_before_is_none_and_no_resolution_is_empty(self):
+        store, _ = store_with(Cursor(rows=[]))
+        self.assertIsNone(store.earlier_episodes("x", 1))
+        store, _ = store_with(Cursor(rows=[(1, NOW, None)]))
+        self.assertEqual(EarlierEpisodes(1, NOW, ""), store.earlier_episodes("x", 2))
+
+    def test_a_failed_read_is_raised_for_the_engine_and_kept_out_of_the_fallback_file(self):
+        # It is not a finding: nothing to keep on disk, and the engine decides what it costs.
+        store, _ = store_with(Cursor(raise_on={"SELECT": ConnectionError("down")}))
+        with self.assertRaises(ConnectionError):
+            store.earlier_episodes("x", 1)
+        self.assertFalse(store._fallback.exists())
+
+    def test_the_memory_store_agrees(self):
+        store = MemoryIncidentStore()
+        self.assertIsNone(store.earlier_episodes("logs:new-error:abc", 1))
+        first = store.upsert(finding(), NOW).incident_id
+        store.resolve(first, NOW)
+        store.write_resolution(first, "Fixed the log format")
+        second = store.upsert(finding(), NOW).incident_id
+        self.assertEqual(EarlierEpisodes(1, NOW, "Fixed the log format"), store.earlier_episodes("logs:new-error:abc", second))
+        self.assertIsNone(store.earlier_episodes("logs:new-error:other", second))
+
+
+class KeptLinesTests(unittest.TestCase):
+    def test_seen_before_lines_survive_later_sightings_and_a_newer_pack(self):
+        store = MemoryIncidentStore()
+        incident_id = store.upsert(finding(), NOW).incident_id
+        store.attach_context(incident_id, ["history: Seen before: once", "context: deployed 3 min before"])
+        store.attach_context(incident_id, ["context: then desk.log API up"])   # the lines after, two minutes on
+        store.upsert(finding(evidence=["a newer sighting"]), NOW)
+        self.assertEqual(["a newer sighting", "history: Seen before: once", "context: then desk.log API up"],
+                         store.rows()[0]["evidence"])
 
 
 class DsnTests(unittest.TestCase):

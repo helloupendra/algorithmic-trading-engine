@@ -4,39 +4,66 @@
  * Sentinel runs four agents against the live desk — health, trading, logs and
  * security — and records each problem once, however many checks see it again.
  * This page is where those problems are read, acknowledged ("someone is on it")
- * and resolved. The buttons change the incident's own status and nothing else:
- * Sentinel never touches production, and neither does this page.
+ * and resolved. The buttons change the incident's own status and notes and
+ * nothing else: Sentinel never touches production, and neither does this page.
+ *
+ * It is also the desk's memory of its own failures. Each incident says whether
+ * the problem has happened before and what was done the last time; resolving
+ * asks what caused it and what fixed it; and the History tab lays every
+ * problem out by how often it came back, how long it took to clear, and what
+ * was learnt — so "has this happened before?" is answered from the record.
  *
  * Admin-only, like the activity log: evidence names runs, accounts and files.
  */
 
 import { useEffect, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { FormEvent, ReactNode } from 'react'
 import {
   useAcknowledgeIncident,
+  useIncidentHistory,
+  useIncidentNotes,
   useIncidentSummary,
   useIncidents,
   useResolveIncident,
 } from '../../lib/queries'
-import type { Incident, IncidentSummary } from '../../lib/types'
+import type {
+  Incident,
+  IncidentEpisode,
+  IncidentHistoryRow,
+  IncidentNotes,
+  IncidentSummary,
+} from '../../lib/types'
 import {
+  FIX_REF_MAX_CHARS,
+  HISTORY_WINDOWS,
   INCIDENT_AGENTS,
   INCIDENT_VIEWS,
+  NOTE_MAX_CHARS,
+  RESOLVE_WARNING,
   SEVERITY_LABEL,
   SEVERITY_ORDER,
   STATUS_TONE,
   countFor,
   countTone,
+  dayText,
   emptyMessage,
+  endedText,
+  episodesText,
+  fixRefLink,
+  hasNotes,
+  lastedText,
   listState,
   maskSecrets,
+  mttrText,
+  notesBody,
+  notesFormFrom,
   occurrencesText,
-  resolveConfirmText,
+  seenBeforeText,
   severityTone,
   sortNewestFirst,
   watchmanNote,
 } from '../../lib/incidents'
-import type { IncidentView, WatchmanNote } from '../../lib/incidents'
+import type { IncidentView, NotesForm, WatchmanNote } from '../../lib/incidents'
 import { formatAge, formatDateTime } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Loading, Panel, StatTile } from '../../components/ui'
 import './incidents.css'
@@ -110,18 +137,153 @@ function SummaryTiles({ summary }: { summary: IncidentSummary }) {
   )
 }
 
+/**
+ * Root cause, what was done, where the fix is. The same three fields on
+ * Resolve and on "Edit notes", started from what is already written so a
+ * resolve never wipes notes made while the incident was open.
+ */
+function NotesFormFields({
+  id,
+  initial,
+  submitLabel,
+  pendingLabel,
+  pending,
+  note,
+  onSubmit,
+  onCancel,
+}: {
+  id: number
+  initial: NotesForm
+  submitLabel: string
+  pendingLabel: string
+  pending: boolean
+  note?: ReactNode
+  onSubmit: (notes: IncidentNotes) => void
+  onCancel: () => void
+}) {
+  const [form, setForm] = useState<NotesForm>(initial)
+  const set = (key: keyof NotesForm) => (e: { target: { value: string } }) =>
+    setForm((f) => ({ ...f, [key]: e.target.value }))
+
+  function submit(e: FormEvent) {
+    e.preventDefault()
+    onSubmit(notesBody(form))
+  }
+
+  return (
+    <form className="incident-notes-form" onSubmit={submit}>
+      <label className="field" htmlFor={`incident-${id}-cause`}>
+        <span className="field__label">Root cause</span>
+        <textarea
+          id={`incident-${id}-cause`}
+          className="field__input"
+          rows={2}
+          maxLength={NOTE_MAX_CHARS}
+          value={form.rootCause}
+          onChange={set('rootCause')}
+          placeholder="Why it happened, if known"
+        />
+      </label>
+      <label className="field" htmlFor={`incident-${id}-done`}>
+        <span className="field__label">What was done</span>
+        <textarea
+          id={`incident-${id}-done`}
+          className="field__input"
+          rows={2}
+          maxLength={NOTE_MAX_CHARS}
+          value={form.resolution}
+          onChange={set('resolution')}
+          placeholder="What fixed it, or what to do next time"
+        />
+      </label>
+      <label className="field" htmlFor={`incident-${id}-ref`}>
+        <span className="field__label">Fix reference</span>
+        <input
+          id={`incident-${id}-ref`}
+          className="field__input mono"
+          maxLength={FIX_REF_MAX_CHARS}
+          value={form.fixRef}
+          onChange={set('fixRef')}
+          placeholder="Commit sha, pull request or doc link"
+          autoComplete="off"
+          spellCheck={false}
+        />
+      </label>
+      {note && <p className="small-note muted">{note}</p>}
+      <div className="incident-detail__actions">
+        <button type="submit" className="btn btn--sm btn--primary" disabled={pending}>
+          {pending ? pendingLabel : submitLabel}
+        </button>
+        <button type="button" className="btn btn--sm" disabled={pending} onClick={onCancel}>
+          Cancel
+        </button>
+        <span className="small-note muted">All optional. Anything that looks like a secret is masked when saved.</span>
+      </div>
+    </form>
+  )
+}
+
+/** The fix reference: a link when it is an http(s) URL, otherwise text. */
+function FixRef({ value }: { value: string }) {
+  const href = fixRefLink(value)
+  const text = maskSecrets(value)
+  return href ? (
+    <a className="mono incident-fixref" href={href} target="_blank" rel="noreferrer noopener">
+      {text}
+    </a>
+  ) : (
+    <span className="mono incident-fixref">{text}</span>
+  )
+}
+
+/** What was learnt from one episode, or nothing when nobody wrote anything. */
+function NotesList({ notes }: { notes: { rootCause?: string | null; resolution?: string | null; fixRef?: string | null } }) {
+  if (!hasNotes(notes)) return null
+  return (
+    <dl className="incident-notes">
+      {notes.rootCause && (
+        <>
+          <dt>Root cause</dt>
+          <dd>{maskSecrets(notes.rootCause)}</dd>
+        </>
+      )}
+      {notes.resolution && (
+        <>
+          <dt>What was done</dt>
+          <dd>{maskSecrets(notes.resolution)}</dd>
+        </>
+      )}
+      {notes.fixRef && (
+        <>
+          <dt>Fix</dt>
+          <dd>
+            <FixRef value={notes.fixRef} />
+          </dd>
+        </>
+      )}
+    </dl>
+  )
+}
+
 function IncidentRow({ incident }: { incident: Incident }) {
   const [open, setOpen] = useState(false)
+  // Resolve and "Edit notes" open the notes form in place of the buttons.
+  const [editing, setEditing] = useState<'resolve' | 'notes' | null>(null)
   const acknowledge = useAcknowledgeIncident()
   const resolve = useResolveIncident()
-  const busy = acknowledge.isPending || resolve.isPending
-  const actionError = acknowledge.error ?? resolve.error
+  const saveNotes = useIncidentNotes()
+  const busy = acknowledge.isPending || resolve.isPending || saveNotes.isPending
+  const actionError = acknowledge.error ?? resolve.error ?? saveNotes.error
   const title = maskSecrets(incident.title)
+  const seenBefore = seenBeforeText(incident)
+  const recurring = (incident.previousEpisodes ?? 0) > 0
 
-  function onResolve() {
-    // Closing a record whose problem is still there buys a new incident and a
-    // new alert on the next check; say so before, not after.
-    if (window.confirm(resolveConfirmText({ id: incident.id, title }))) resolve.mutate(incident.id)
+  function onResolve(notes: IncidentNotes) {
+    resolve.mutate({ id: incident.id, notes }, { onSuccess: () => setEditing(null) })
+  }
+
+  function onSaveNotes(notes: IncidentNotes) {
+    saveNotes.mutate({ id: incident.id, notes }, { onSuccess: () => setEditing(null) })
   }
 
   return (
@@ -140,7 +302,15 @@ function IncidentRow({ incident }: { incident: Incident }) {
             <span className="incident-toggle__caret" aria-hidden="true">
               {open ? '▾' : '▸'}
             </span>
-            <span>{title}</span>
+            <span>
+              {title}
+              {recurring && (
+                <span className="incident-again" title={seenBefore ?? undefined}>
+                  {' '}
+                  · seen {occurrencesText(incident.previousEpisodes ?? 0)} before
+                </span>
+              )}
+            </span>
           </button>
         </td>
         <td>
@@ -180,6 +350,17 @@ function IncidentRow({ incident }: { incident: Incident }) {
             <div className="incident-detail__body">
               <p className="incident-detail__summary">{maskSecrets(incident.summary)}</p>
 
+              {seenBefore && (
+                <p className={`incident-seen-before${recurring ? ' incident-seen-before--again' : ''}`}>
+                  {seenBefore}
+                  {incident.lastResolution?.fixRef && (
+                    <>
+                      {' '}· fix <FixRef value={incident.lastResolution.fixRef} />
+                    </>
+                  )}
+                </p>
+              )}
+
               {incident.evidence?.length > 0 && (
                 <div>
                   <h3 className="section-title incident-detail__label">What Sentinel saw</h3>
@@ -195,6 +376,13 @@ function IncidentRow({ incident }: { incident: Incident }) {
                 <div>
                   <h3 className="section-title incident-detail__label">First thing to do</h3>
                   <p className="incident-detail__suggestion">{maskSecrets(incident.suggestion)}</p>
+                </div>
+              )}
+
+              {hasNotes(incident) && editing === null && (
+                <div>
+                  <h3 className="section-title incident-detail__label">What was learnt</h3>
+                  <NotesList notes={incident} />
                 </div>
               )}
 
@@ -218,7 +406,32 @@ function IncidentRow({ incident }: { incident: Incident }) {
                 </div>
               </div>
 
-              {incident.status !== 'resolved' && (
+              {editing === 'resolve' && (
+                <NotesFormFields
+                  id={incident.id}
+                  initial={notesFormFrom(incident)}
+                  submitLabel={`Resolve #${incident.id}`}
+                  pendingLabel="Resolving…"
+                  pending={resolve.isPending}
+                  note={RESOLVE_WARNING}
+                  onSubmit={onResolve}
+                  onCancel={() => setEditing(null)}
+                />
+              )}
+
+              {editing === 'notes' && (
+                <NotesFormFields
+                  id={incident.id}
+                  initial={notesFormFrom(incident)}
+                  submitLabel="Save notes"
+                  pendingLabel="Saving…"
+                  pending={saveNotes.isPending}
+                  onSubmit={onSaveNotes}
+                  onCancel={() => setEditing(null)}
+                />
+              )}
+
+              {editing === null && (
                 <div className="incident-detail__actions">
                   {incident.status === 'open' && (
                     <button
@@ -230,18 +443,25 @@ function IncidentRow({ incident }: { incident: Incident }) {
                       {acknowledge.isPending ? 'Acknowledging…' : 'Acknowledge'}
                     </button>
                   )}
-                  <button
-                    type="button"
-                    className="btn btn--sm btn--primary"
-                    disabled={busy}
-                    onClick={onResolve}
-                  >
-                    {resolve.isPending ? 'Resolving…' : 'Resolve'}
+                  {incident.status !== 'resolved' && (
+                    <button
+                      type="button"
+                      className="btn btn--sm btn--primary"
+                      disabled={busy}
+                      onClick={() => setEditing('resolve')}
+                    >
+                      Resolve…
+                    </button>
+                  )}
+                  <button type="button" className="btn btn--sm" disabled={busy} onClick={() => setEditing('notes')}>
+                    {hasNotes(incident) ? 'Edit notes' : 'Add notes'}
                   </button>
-                  <p className="small-note muted">
-                    Resolve only closes the record. If the problem is still there, Sentinel opens a new
-                    incident on its next check and alerts again.
-                  </p>
+                  {incident.status !== 'resolved' && (
+                    <p className="small-note muted">
+                      Resolve only closes the record. If the problem is still there, Sentinel opens a new
+                      incident on its next check and alerts again.
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -256,7 +476,7 @@ function IncidentRow({ incident }: { incident: Incident }) {
 
 function IncidentTable({ incidents }: { incidents: Incident[] }) {
   return (
-    <div className="tablewrap tablewrap--tall">
+    <div className="tablewrap tablewrap--tall incident-tablewrap">
       <table className="table">
         <thead>
           <tr>
@@ -278,7 +498,202 @@ function IncidentTable({ incidents }: { incidents: Incident[] }) {
   )
 }
 
+// ---------- history ----------
+
+const HISTORY_COLUMNS = 6
+
+/** One episode of a problem: when, for how long, how it ended, and what was written. */
+function EpisodeItem({ episode }: { episode: IncidentEpisode }) {
+  const live = episode.status !== 'resolved'
+  return (
+    <li className="incident-episode">
+      <div className="incident-episode__head">
+        <SeverityBadge severity={episode.severity} />
+        <span className="mono">#{episode.id}</span>
+        <span className="mono">{formatDateTime(episode.firstSeenUtc)} IST</span>
+        <span className="muted">
+          {lastedText(episode)} · seen {occurrencesText(episode.occurrences)}
+        </span>
+      </div>
+      <div className={live ? 'incident-episode__end warn' : 'incident-episode__end'}>
+        {endedText(episode)}
+        {episode.resolvedUtc && <span className="muted"> · {formatDateTime(episode.resolvedUtc)} IST</span>}
+      </div>
+      <div className="incident-episode__title">{maskSecrets(episode.title)}</div>
+      <NotesList notes={episode} />
+    </li>
+  )
+}
+
+function HistoryRow({ row }: { row: IncidentHistoryRow }) {
+  const [open, setOpen] = useState(false)
+  const latest = row.latestResolution
+  return (
+    <>
+      <tr
+        className={open ? 'incident-row--open' : undefined}
+        onClick={() => setOpen((o) => !o)}
+        style={{ cursor: 'pointer' }}
+      >
+        <td>
+          <SeverityBadge severity={row.severity} />
+        </td>
+        <td>
+          {/* No handler of its own: Enter/Space fire a click that bubbles to the row. */}
+          <button type="button" className="incident-toggle" aria-expanded={open}>
+            <span className="incident-toggle__caret" aria-hidden="true">
+              {open ? '▾' : '▸'}
+            </span>
+            <span>
+              {maskSecrets(row.title)}
+              <span className="small-note muted mono incident-history__fp">{row.fingerprint}</span>
+            </span>
+          </button>
+        </td>
+        <td className="mono incident-seen">{episodesText(row)}</td>
+        <td
+          className="mono incident-seen"
+          title={`first ${formatDateTime(row.firstSeenUtc)} · last ${formatDateTime(row.lastSeenUtc)} IST`}
+        >
+          {formatAge(row.lastSeenUtc)}
+        </td>
+        <td className="incident-seen">{mttrText(row)}</td>
+        <td className="incident-status">
+          {row.openNow ? <Badge tone="warn">open now</Badge> : <span className="faint">—</span>}
+        </td>
+      </tr>
+
+      {open && (
+        <tr className="incident-detail">
+          <td colSpan={HISTORY_COLUMNS}>
+            <div className="incident-detail__body">
+              {latest && hasNotes(latest) ? (
+                <div>
+                  <h3 className="section-title incident-detail__label">
+                    Latest notes · #{latest.id}
+                    {latest.resolvedUtc ? ` · ${dayText(latest.resolvedUtc)}` : ''}
+                  </h3>
+                  <NotesList notes={latest} />
+                </div>
+              ) : (
+                <p className="small-note muted" style={{ margin: 0 }}>
+                  Nobody has written down a cause or a fix for this yet. Resolve the next episode with notes, or
+                  open an incident below and add them.
+                </p>
+              )}
+
+              <div>
+                <h3 className="section-title incident-detail__label">
+                  {row.episodes > row.episodeList.length
+                    ? `The latest ${row.episodeList.length} of ${row.episodes} episodes`
+                    : row.episodes === 1
+                      ? 'The one episode'
+                      : `All ${row.episodes} episodes`}
+                  , newest first
+                </h3>
+                <ul className="incident-episodes">
+                  {row.episodeList.map((e) => (
+                    <EpisodeItem key={e.id} episode={e} />
+                  ))}
+                </ul>
+              </div>
+
+              <div className="incident-detail__meta">
+                {agentLabel(row.agent)} · <span className="mono">{row.rule}</span> · first in this window{' '}
+                {formatDateTime(row.firstSeenUtc)} IST · last {formatDateTime(row.lastSeenUtc)} IST
+              </div>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  )
+}
+
+/**
+ * Every problem of the window, one row per fingerprint, most recurrent first:
+ * what a fix is worth most on. A row opens to every episode with its dates,
+ * how it ended and the notes, which is the answer to "has this happened
+ * before, and what did we do?".
+ */
+function HistoryPanel() {
+  const [days, setDays] = useState(90)
+  const history = useIncidentHistory(days)
+  const data = history.data
+
+  let body: ReactNode
+  if (history.isPending) {
+    body = <Loading label="Reading the history…" />
+  } else if (!data) {
+    body = <InlineError error={history.error} />
+  } else if (data.items.length === 0) {
+    body = <EmptyState>No incidents were recorded in the last {data.days} days.</EmptyState>
+  } else {
+    body = (
+      <>
+        {history.isError && (
+          <p className="small-note warn" role="status" style={{ margin: '0 0 8px' }}>
+            Refresh failed — showing the history as it was {formatAge(new Date(history.dataUpdatedAt).toISOString())}.
+          </p>
+        )}
+        <div className="tablewrap tablewrap--tall incident-tablewrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Worst</th>
+                <th>Problem</th>
+                <th>How often</th>
+                <th>Last seen</th>
+                <th>Time to resolve</th>
+                <th className="incident-status">Now</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.items.map((row) => (
+                <HistoryRow key={row.fingerprint} row={row} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </>
+    )
+  }
+
+  return (
+    <Panel
+      title={
+        <span className="chip-row">
+          History{data ? ` — since ${dayText(data.sinceUtc)}` : ''}
+          {data && data.items.length > 0 && <span className="faint">{data.items.length}</span>}
+        </span>
+      }
+      actions={
+        <div className="seg" role="group" aria-label="Window">
+          {HISTORY_WINDOWS.map((w) => (
+            <button
+              key={w.days}
+              type="button"
+              className={`seg__btn ${days === w.days ? 'is-active' : ''}`}
+              aria-pressed={days === w.days}
+              onClick={() => setDays(w.days)}
+            >
+              {w.label}
+            </button>
+          ))}
+        </div>
+      }
+    >
+      {body}
+      <p className="small-note muted">
+        One row per problem (its fingerprint), most episodes first. An episode is one incident, from its first
+        sighting to its resolve; time to resolve is the mean over the episodes that ended. Times are IST.
+      </p>
+    </Panel>
+  )
+}
+
 export function IncidentsPage() {
+  const [tab, setTab] = useState<'incidents' | 'history'>('incidents')
   const [view, setView] = useState<IncidentView>('live')
   const [agent, setAgent] = useState('')
   // Only to keep "3m ago" moving between polls that change nothing.
@@ -336,7 +751,7 @@ export function IncidentsPage() {
           <p className="page__subtitle">
             What Sentinel has found on this desk. Each problem is one row however often it is seen;
             it resolves itself after enough clean checks. Sentinel only watches — nothing here changes
-            production.
+            production. History shows every problem by how often it came back and what fixed it.
           </p>
         </div>
       </header>
@@ -357,6 +772,28 @@ export function IncidentsPage() {
         <InlineError error={summary.error} />
       )}
 
+      <div className="seg incident-tabs" role="group" aria-label="View">
+        <button
+          type="button"
+          className={`seg__btn ${tab === 'incidents' ? 'is-active' : ''}`}
+          aria-pressed={tab === 'incidents'}
+          onClick={() => setTab('incidents')}
+        >
+          Incidents
+        </button>
+        <button
+          type="button"
+          className={`seg__btn ${tab === 'history' ? 'is-active' : ''}`}
+          aria-pressed={tab === 'history'}
+          onClick={() => setTab('history')}
+        >
+          History
+        </button>
+      </div>
+
+      {tab === 'history' ? (
+        <HistoryPanel />
+      ) : (
       <Panel
         title={
           <span className="chip-row">
@@ -407,9 +844,10 @@ export function IncidentsPage() {
         {body}
         <p className="small-note muted">
           Newest first · refreshes every 15 s. Acknowledge says someone is on it and keeps it live;
-          Resolve closes it. Times are IST.
+          Resolve closes it, with what caused it and what was done if you know. Times are IST.
         </p>
       </Panel>
+      )}
     </div>
   )
 }

@@ -11,13 +11,31 @@ import {
   maskSecrets,
   occurrencesText,
   readIncidentList,
-  resolveConfirmText,
+  FIX_REF_MAX_CHARS,
+  HISTORY_WINDOWS,
+  NOTE_MAX_CHARS,
+  QUOTE_CHARS,
+  RESOLVE_WARNING,
+  dayText,
+  durationText,
+  endedText,
+  episodesText,
+  fixRefLink,
+  hasNotes,
+  historyQuery,
+  lastTimeText,
+  lastedText,
+  mttrText,
+  notesBody,
+  notesFormFrom,
+  readIncidentHistory,
+  seenBeforeText,
   severityRank,
   silenceNote,
   sortNewestFirst,
   watchmanNote,
 } from './incidents'
-import type { Incident, IncidentSummary } from './types'
+import type { Incident, IncidentResolution, IncidentSummary } from './types'
 
 /**
  * The Incidents page's rules, pinned: loudest first, newest first without the
@@ -317,12 +335,177 @@ describe('agentSilenceMinutes', () => {
   })
 })
 
-describe('resolveConfirmText', () => {
+describe('RESOLVE_WARNING', () => {
   it('warns that a problem still present comes back as a new incident with a new alert', () => {
-    const text = resolveConfirmText({ id: 12, title: 'Dhan feed silent' })
-    expect(text).toMatch(/#12/)
-    expect(text).toMatch(/new incident/)
-    expect(text).toMatch(/alert/)
+    expect(RESOLVE_WARNING).toMatch(/fixes nothing/)
+    expect(RESOLVE_WARNING).toMatch(/new incident/)
+    expect(RESOLVE_WARNING).toMatch(/alert/)
+  })
+})
+
+// ---------- the knowledge record ----------
+
+function resolution(over: Partial<IncidentResolution>): IncidentResolution {
+  return {
+    id: 7,
+    status: 'resolved',
+    resolvedUtc: '2026-09-24T06:05:00Z',
+    resolvedBy: null,
+    rootCause: null,
+    resolution: null,
+    fixRef: null,
+    ...over,
+  }
+}
+
+describe('seenBeforeText', () => {
+  it('says nothing when the API did not say: not known is never "first time"', () => {
+    expect(seenBeforeText({})).toBeNull()
+    expect(seenBeforeText({ previousEpisodes: Number.NaN })).toBeNull()
+  })
+
+  it('says so the first time', () => {
+    expect(seenBeforeText({ previousEpisodes: 0, firstEverUtc: '2026-09-24T05:57:35Z', lastResolution: null })).toBe(
+      'First time Sentinel has seen this problem.',
+    )
+  })
+
+  it('counts, dates the first time, and quotes what was done last time with its date', () => {
+    const text = seenBeforeText({
+      previousEpisodes: 3,
+      firstEverUtc: '2026-09-02T04:00:00Z',
+      lastResolution: resolution({ resolution: 'Closed the sixth Dhan socket', resolvedBy: 'upendra' }),
+    })
+    expect(text).toBe(
+      `Seen before: 3 times, first on ${dayText('2026-09-02T04:00:00Z')}; ` +
+        `last time: Closed the sixth Dhan socket (${dayText('2026-09-24T06:05:00Z')})`,
+    )
+  })
+
+  it('says once, not 1 times', () => {
+    expect(seenBeforeText({ previousEpisodes: 1, firstEverUtc: '2026-09-24T05:57:35Z', lastResolution: null })).toMatch(
+      /^Seen before: once, first on /,
+    )
+  })
+})
+
+describe('lastTimeText', () => {
+  it('prefers what was done, then the cause, then who closed it', () => {
+    expect(lastTimeText(resolution({ resolution: 'Restarted', rootCause: 'Token' }))).toBe('Restarted')
+    expect(lastTimeText(resolution({ rootCause: 'Token expired' }))).toBe('cause: Token expired')
+    expect(lastTimeText(resolution({ resolvedBy: 'upendra' }))).toBe('closed by upendra, no notes')
+    expect(lastTimeText(resolution({}))).toBe('cleared on its own, no notes')
+    expect(lastTimeText(resolution({ status: 'acknowledged', resolvedUtc: null }))).toBe('still acknowledged')
+  })
+
+  it('quotes a long note on one line, cut, and masked', () => {
+    const text = lastTimeText(resolution({ resolution: `Set DHAN_PIN=1234\nthen ${'x'.repeat(400)}` }))
+    expect(text).not.toContain('1234')
+    expect(text).not.toContain('\n')
+    expect(text.startsWith('Set DHAN_PIN=… then x')).toBe(true)
+    expect(text.length).toBe(QUOTE_CHARS)
+    expect(text.endsWith('…')).toBe(true)
+  })
+})
+
+describe('endedText and lastedText', () => {
+  it('tells "it cleared" from "someone closed it"', () => {
+    expect(endedText({ status: 'resolved', resolvedBy: null })).toMatch(/^Cleared: Sentinel/)
+    expect(endedText({ status: 'resolved', resolvedBy: 'upendra' })).toBe('Resolved by upendra')
+    expect(endedText({ status: 'open', resolvedBy: null })).toBe('Open now')
+    expect(endedText({ status: 'acknowledged', resolvedBy: null })).toMatch(/still live/)
+  })
+
+  it('says how long an episode lasted, or that it still is', () => {
+    const first = '2026-09-24T05:57:35Z'
+    expect(lastedText({ status: 'resolved', firstSeenUtc: first, resolvedUtc: '2026-09-24T06:05:35Z' })).toBe(
+      'lasted 8 min',
+    )
+    expect(lastedText({ status: 'open', firstSeenUtc: first, resolvedUtc: null })).toBe('still live')
+  })
+})
+
+describe('durationText and mttrText', () => {
+  it('rounds to what a reader needs', () => {
+    expect(durationText(null)).toBe('—')
+    expect(durationText(-1)).toBe('—')
+    expect(durationText(30)).toBe('< 1 min')
+    expect(durationText(12 * 60 + 59)).toBe('12 min')
+    expect(durationText(2 * 3600)).toBe('2 h')
+    expect(durationText(2 * 3600 + 5 * 60)).toBe('2 h 5 min')
+    expect(durationText(3 * 86400 + 4 * 3600)).toBe('3 d 4 h')
+    expect(durationText(2 * 86400)).toBe('2 d')
+  })
+
+  it('says what the mean is over, and that none ended is not a zero', () => {
+    expect(mttrText({ meanTimeToResolveSeconds: null, resolvedEpisodes: 0 })).toBe('none ended yet')
+    expect(mttrText({ meanTimeToResolveSeconds: 1200, resolvedEpisodes: 1 })).toBe('20 min (one episode)')
+    expect(mttrText({ meanTimeToResolveSeconds: 1200, resolvedEpisodes: 4 })).toBe('20 min (mean of 4)')
+  })
+})
+
+describe('fixRefLink', () => {
+  it('links only http(s) URLs; a sha, a path or a script stays text', () => {
+    expect(fixRefLink('https://github.com/x/y/commit/4c8eaba')).toBe('https://github.com/x/y/commit/4c8eaba')
+    expect(fixRefLink('  http://example.com/doc  ')).toBe('http://example.com/doc')
+    expect(fixRefLink('4c8eaba')).toBeNull()
+    expect(fixRefLink('docs/modules/sentinel.md')).toBeNull()
+    expect(fixRefLink('javascript:alert(1)')).toBeNull()
+    expect(fixRefLink('data:text/html,<script>1</script>')).toBeNull()
+    expect(fixRefLink(null)).toBeNull()
+  })
+})
+
+describe('the notes form', () => {
+  it('starts from what is written, so resolving never wipes earlier notes', () => {
+    expect(notesFormFrom({ rootCause: 'Token expired', resolution: null })).toEqual({
+      rootCause: 'Token expired',
+      resolution: '',
+      fixRef: '',
+    })
+    expect(notesFormFrom(undefined)).toEqual({ rootCause: '', resolution: '', fixRef: '' })
+  })
+
+  it('sends all three, trimmed and within the limits, so an emptied field is cleared', () => {
+    const body = notesBody({ rootCause: '  cause  ', resolution: '', fixRef: 'f'.repeat(FIX_REF_MAX_CHARS + 9) })
+    expect(body).toEqual({ rootCause: 'cause', resolution: '', fixRef: 'f'.repeat(FIX_REF_MAX_CHARS) })
+    expect(notesBody({ rootCause: 'x'.repeat(NOTE_MAX_CHARS + 1), resolution: '', fixRef: '' }).rootCause).toHaveLength(
+      NOTE_MAX_CHARS,
+    )
+  })
+
+  it('knows whether anything is written', () => {
+    expect(hasNotes({ rootCause: '  ', resolution: null, fixRef: '' })).toBe(false)
+    expect(hasNotes({ fixRef: 'abc1234' })).toBe(true)
+    expect(hasNotes(null)).toBe(false)
+  })
+})
+
+describe('the history', () => {
+  it('asks for its window', () => {
+    expect(historyQuery(90)).toBe('days=90')
+    expect(historyQuery(Number.NaN)).toBe('days=90')
+    expect(HISTORY_WINDOWS.map((w) => w.days)).toEqual([30, 90, 365])
+  })
+
+  it('reads the body strictly: a shape it cannot read is an error, not an empty history', () => {
+    const body = { days: 90, sinceUtc: '2026-06-29T00:00:00Z', items: [] }
+    expect(readIncidentHistory(body)).toBe(body)
+    expect(() => readIncidentHistory([])).toThrow()
+    expect(() => readIncidentHistory({ days: 90 })).toThrow()
+    expect(() => readIncidentHistory(null)).toThrow()
+  })
+
+  it('says how much of a problem there has been', () => {
+    expect(episodesText({ episodes: 1, occurrences: 1 })).toBe('1 episode · 1 sighting')
+    expect(episodesText({ episodes: 3, occurrences: 1284 })).toBe('3 episodes · 1,284 sightings')
+  })
+
+  it('dates in IST, so a late-evening UTC stamp is the next day', () => {
+    // 20:00 UTC on the 23rd is 01:30 IST on the 24th.
+    expect(dayText('2026-09-23T20:00:00Z')).toBe(dayText('2026-09-24T06:00:00Z'))
+    expect(dayText(null)).toBe('—')
+    expect(dayText('not a date')).toBe('—')
   })
 })
 

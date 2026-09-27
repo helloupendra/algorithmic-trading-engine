@@ -840,6 +840,10 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("FirstSeenUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("FixRef")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
                     b.Property<DateTime>("LastSeenUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -853,12 +857,18 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.Property<int>("Occurrences")
                         .HasColumnType("integer");
 
+                    b.Property<string>("Resolution")
+                        .HasColumnType("text");
+
                     b.Property<string>("ResolvedBy")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
                     b.Property<DateTime?>("ResolvedUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("RootCause")
+                        .HasColumnType("text");
 
                     b.Property<string>("Rule")
                         .IsRequired()

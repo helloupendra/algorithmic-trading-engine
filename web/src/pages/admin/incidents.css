@@ -82,3 +82,95 @@
    problem was first seen lives in the opened row; the table shows how often
    and how recently. */
 .incident-status, .incident-seen { white-space: nowrap; }
+
+/* --- the knowledge record ------------------------------------------------ */
+
+/* "seen 3 times before" beside a title: quiet, but there on every row, so a
+   problem that keeps coming back is visible before anyone opens it. */
+.incident-again { color: var(--warn); font-weight: 500; font-size: 12px; }
+
+/* The one line that answers "has this happened before?". A recurrence is
+   tinted; the first time is plain text. */
+.incident-seen-before {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.incident-seen-before--again {
+  color: var(--text);
+  padding: 7px 10px;
+  background: var(--warn-soft);
+  border-left: 2px solid var(--warn);
+  border-radius: var(--radius-sm);
+}
+
+/* Root cause / what was done / fix: a label column and prose beside it. */
+.incident-notes {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.incident-notes dt { color: var(--text-3); font-size: 12px; }
+.incident-notes dd { margin: 0; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.incident-fixref { font-size: 12px; overflow-wrap: anywhere; }
+
+/* The Resolve / Edit notes form: stacked fields, as wide as the prose above. */
+.incident-notes-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 11px 12px;
+  background: var(--bg1);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+}
+.incident-notes-form textarea { resize: vertical; min-height: 52px; line-height: 1.45; }
+.incident-notes-form .small-note { margin: 0; }
+
+/* History: the fingerprint under the problem's title, then one card per episode. */
+.incident-history__fp { display: block; margin-top: 2px; font-weight: 400; overflow-wrap: anywhere; }
+
+.incident-episodes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.incident-episode {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 11px;
+  background: var(--bg1);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+}
+.incident-episode__head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.incident-episode__end { font-size: 12px; color: var(--text-2); }
+.incident-episode__title { color: var(--text); overflow-wrap: anywhere; }
+
+
+/* On a phone the table scrolls sideways, and an opened row's prose and form
+   would scroll with it, half off the screen. Pinned to the left edge at the
+   width of the visible table (the wrapper is the size container, so 100cqw is
+   what shows, not the scrolled width), they stay readable while the columns
+   scroll behind. */
+@media (max-width: 760px) {
+  .incident-tablewrap { container-type: inline-size; }
+  .incident-detail td { padding: 12px 10px 14px; }
+  .incident-detail__body {
+    position: sticky;
+    left: 10px;
+    max-width: calc(100cqw - 20px);
+  }
+  .incident-notes { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .incident-notes dd + dt { margin-top: 6px; }
+}
