@@ -66,6 +66,13 @@ class RememberedCalendarTests(unittest.TestCase):
         self.assertTrue(session_from_answers(ist(10, 0, day=19), {}, kept).nse_open)
         self.assertFalse(session_from_answers(ist(16, 0, day=19), {}, kept).nse_open)
 
+    def test_the_mcx_close_comes_with_the_session_answered_or_remembered(self):
+        # The trading agent holds crude to the plan until just before it (23:30 or 23:55).
+        kept = remember_day(ist(11, 0), DUSSEHRA, None)
+        self.assertEqual(ist(23, 55), session_from_answers(ist(18, 0), DUSSEHRA, kept).mcx_close)
+        self.assertEqual(ist(23, 55), session_from_answers(ist(18, 0), {}, kept).mcx_close)
+        self.assertIsNone(session_from_answers(ist(18, 0), {}, None).mcx_close)   # the weekday rule knows none
+
     def test_a_damaged_memory_is_the_weekday_rule(self):
         for kept in ("nonsense", {"day": "2026-10-20", "markets": "x"},
                      {"day": "2026-10-20", "markets": {"NSE": {"tradingDay": "no"}}}):

@@ -6,8 +6,9 @@
 #     and deploys — console rebuilt in place, API rebuilt and restarted when
 #     its code changed;
 #   - at 08:45 on weekdays runs scripts/market-open.sh once;
-#   - at 23:35 on weekdays, after the MCX close, runs scripts/market-close.sh
-#     once, so no feed, recorder or run is left holding a session overnight;
+#   - at 23:58 on weekdays, after the MCX close (23:30 or 23:55), runs
+#     scripts/market-close.sh once — after midnight if it was missed — so no
+#     feed, recorder or run is left holding a session overnight;
 #   - writes logs/desk.status every loop so scripts/status.sh can answer
 #     "is it running?" without guessing.
 #
@@ -50,10 +51,13 @@ PIDFILE="$DESK_STATE_DIR/desk.pid"
 HEALTH_EVERY=30          # seconds between health checks
 DEPLOY_EVERY=120         # seconds between git checks
 OPEN_AT="${MARKET_OPEN_AT:-0845}"   # HHMM, weekdays
-# HHMM, weekdays: after MCX closes at 23:30, stop every feed, recorder and run.
-# A feed left alive overnight wakes up with a dead token and reconnects in a
-# loop — on 2026-09-16 that got the Dhan account blocked (scripts/market-close.sh).
-CLOSE_AT="${MARKET_CLOSE_AT:-2335}"
+# HHMM, weekdays: after the MCX close — 23:30 in the US summer, 23:55 in its
+# winter — stop every feed, recorder and run (market_close_due in
+# desk-common.sh has why 23:58, and the catch-up after midnight). Any value set
+# here must fall after 23:55 and before midnight. A feed left alive overnight
+# wakes up with a dead token and reconnects in a loop — on 2026-09-16 that got
+# the Dhan account blocked (scripts/market-close.sh).
+CLOSE_AT="${MARKET_CLOSE_AT:-$MARKET_CLOSE_AT_DEFAULT}"
 
 desk_pid() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null && cat "$PIDFILE"; }
 
@@ -311,11 +315,17 @@ while true; do
     opened_on="$today"
   fi
 
-  # 4. market close, once per weekday, after the MCX session
-  if [ "$dow" -le 5 ] && [ "$hhmm" -ge "$CLOSE_AT" ] && [ "$closed_on" != "$today" ]; then
-    say "=== $CLOSE_AT — running market-close.sh ==="
+  # 4. market close, once per weekday, after the MCX session — or, when that
+  #    was missed, after midnight for the day before (market_close_due)
+  yesterday="$(date -v-1d +%F 2>/dev/null || date -d yesterday +%F)"
+  if close_day="$(market_close_due "$dow" "$hhmm" "$today" "$yesterday" "$closed_on" "$CLOSE_AT")"; then
+    if [ "$close_day" = "$today" ]; then
+      say "=== $CLOSE_AT — running market-close.sh ==="
+    else
+      say "=== market-close.sh for $close_day did not run at $CLOSE_AT — running it now ==="
+    fi
     DESK_LOG_ONLY= ./scripts/market-close.sh >>"$LOG" 2>&1 || warn "market-close.sh exited non-zero (see logs/market-close-$today.log)"
-    closed_on="$today"
+    closed_on="$close_day"
   fi
 
   write_status

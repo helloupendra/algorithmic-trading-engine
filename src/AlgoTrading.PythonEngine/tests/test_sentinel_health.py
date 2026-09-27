@@ -3,7 +3,7 @@ import _bootstrap  # noqa: F401
 import json
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -617,8 +617,10 @@ class DeskScheduleTests(HealthCase):
 
     def mcx_evening(self):
         # The API's calendar keeps MCX open to 23:55; market-close.sh stopped every feed
-        # at 23:35:12 and the last closing-price tick reached Redis at 23:35:11.
+        # at 23:35:12 and the last closing-price tick reached Redis at 23:35:11. The desk
+        # closed at 23:35 then; since 27 Sep that takes MARKET_CLOSE_AT=2335.
         self.session.update(nse=False, mcx=True)
+        self.env["MARKET_CLOSE_AT"] = "2335"
         self.stream = FakeStream().add(self.CLOSE_2335 + timedelta(seconds=11), "MCX", "MCX:CRUDEOILM26OCTFUT")
 
     def test_mcx_is_not_watched_after_the_desks_close(self):
@@ -647,7 +649,19 @@ class DeskScheduleTests(HealthCase):
         self.assertEqual([], self.check(early))
         self.assertEqual([], self.check(early + timedelta(seconds=30)))
 
-    def test_a_malformed_market_close_at_falls_back_to_2335(self):
+    def test_by_default_a_winter_mcx_evening_is_watched_to_its_close(self):
+        # Monday 7 Dec 2026: MCX trades to 23:55, and the desk's market-close.sh now runs
+        # at 23:58, so a feed missing at 23:40 is a crude run trading blind — not, as
+        # with the old 23:35 default, the desk's own close.
+        self.session.update(nse=False, mcx=True)
+        self.stream = FakeStream()
+        self.api["/api/Feeds"] = feeds(running=())
+        winter = datetime(2026, 12, 7, 18, 10, tzinfo=timezone.utc)   # 23:40 IST
+        self.check(winter)
+        self.assertIn("no-feed-running", self.rules(self.check(winter + timedelta(seconds=30))))
+        self.assertEqual(time(23, 58), health._parse_close_at(None))
+
+    def test_a_malformed_market_close_at_falls_back_to_the_default(self):
         self.mcx_evening()
         self.stream = FakeStream()
         self.api["/api/Feeds"] = feeds(running=())

@@ -131,13 +131,21 @@ evidence, and a line that may carry a credential is dropped whole.
 
 Nothing is reported merely because the market is shut. The feed rules follow
 the desk's own schedule: a feed is expected only on a weekday the exchange
-calendar trades, and only until `market-close.sh` stops everything at 23:35 —
-not on a Saturday or Sunday special session, nor on an NSE holiday with an MCX
-evening, unless someone starts a feed by hand. The plan is checked only on
-weekdays between 09:25 and 15:25. With every market shut, a feed reconnecting
-without ticks is the market's silence: it becomes an incident only after three
-reconnects in a row (on 16 Sep a feed left running overnight reconnected in a
-loop until Dhan blocked the account), and then as medium. With a market open
+calendar trades, and only until `market-close.sh` stops everything at 23:58,
+after the MCX close — not on a Saturday or Sunday special session, nor on an
+NSE holiday with an MCX evening, unless someone starts a feed by hand. The
+plan is checked only on weekdays from 09:25, and each line until five minutes
+before its own market's close: the NSE and BSE lines until 15:25, the crude
+lines until five minutes before the MCX close the calendar gives (23:25 while
+the US is on daylight saving, 23:50 while it is not). That follows the desk,
+which since 27 Sep stops the NSE and BSE runs at 15:30 and the crude runs at
+the MCX close; a crude run's "MCX closed (23:30 IST)" is an ending on purpose,
+and one that dies in the afternoon stays reported through the evening rather
+than being let go at 15:30 with the index runs. With every market shut, a
+feed reconnecting without ticks is the market's silence: it becomes an
+incident only after three reconnects in a row (on 16 Sep a feed left running
+overnight reconnected in a loop until Dhan blocked the account), and then as
+medium. With a market open
 it takes two in a row, not one: a single reconnect that carried nothing is a
 blip, and a real outage is caught by the 90-second silent-feed rule anyway.
 

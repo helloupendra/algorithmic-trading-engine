@@ -19,7 +19,7 @@ feels wrong, each one a separate rule:
 
 The feed rules watch the desk's own schedule, not only the exchange calendar:
 a market counts as open while the calendar says so AND before MARKET_CLOSE_AT
-(desk.sh's close, 23:35 by default, when market-close.sh stops every feed),
+(desk.sh's close, 23:58 by default, when market-close.sh stops every feed),
 and on a day NSE does not trade, or on a Saturday or Sunday — where
 market-open.sh deliberately starts nothing, even if MCX keeps its evening
 session or the exchange holds a special weekend session — only while someone
@@ -76,8 +76,11 @@ API_DOWN_SECONDS = 90
 API_RESTART_GRACE = timedelta(seconds=180)   # api_stop waits 16 s, api_start 120 s
 DESK_LOG_TAIL = 64 * 1024
 
-# desk.sh's own close: market-close.sh stops every feed at this IST time.
-DEFAULT_MARKET_CLOSE_AT = time(23, 35)
+# desk.sh's own close: market-close.sh stops every feed at this IST time. 23:58,
+# after MCX's latest close (23:55 while the US is on standard time); until 27 Sep
+# it was 23:35, which from 1 Nov would have cut the MCX evening, and its watch
+# here, twenty minutes short.
+DEFAULT_MARKET_CLOSE_AT = time(23, 58)
 
 STREAM = "market:ticks"
 FEED_SILENT_SECONDS = 90       # the runners log "FEED STALLED" at the same age
@@ -308,7 +311,7 @@ def _desk_line_time(hh: int, mm: int, ss: int, now: datetime) -> Optional[dateti
 
 
 def _parse_close_at(value: Optional[str]) -> time:
-    """MARKET_CLOSE_AT as desk.sh reads it: HHMM ("2335"). Anything else means the default."""
+    """MARKET_CLOSE_AT as desk.sh reads it: HHMM ("2358"). Anything else means the default."""
     text = (value or "").strip()
     if len(text) == 4 and text.isdigit():
         try:
@@ -709,8 +712,8 @@ class HealthAgent(Agent):
         running = [f for f in feeds if f.get("isRunning") is True] if feeds is not None else None
 
         # Watch what the desk means to run, not only what the exchange calendar says:
-        # * after MARKET_CLOSE_AT market-close.sh has stopped every feed, although the
-        #   API's calendar can keep MCX open until 23:55;
+        # * after MARKET_CLOSE_AT market-close.sh has stopped every feed — by default
+        #   after the MCX close, but a desk told to close earlier stops them sooner;
         # * on a day NSE does not trade, market-open.sh starts nothing on purpose, even
         #   when MCX keeps its evening session — unless someone started a feed by hand;
         # * nor on a Saturday or Sunday (desk.sh runs it Monday to Friday, and it stops at

@@ -11,16 +11,21 @@ Rules, each one of this desk's own days:
 
 ``run-missing`` (HIGH)
     A run the plan asked for (account x strategy x underlying) that is not
-    running between 09:25 and 15:25 IST while its market is open. 09:25,
-    because the morning job deploys from 09:16 and a fallback to FYERS pushes
-    the last start towards 09:23; 15:25, because the desk stops every run at
-    15:30 — CRUDEOIL ones included — and the close must not read as 26 deaths.
-    Not reported when the key's last run today was ended on purpose (its day
-    target or stop-loss, a person's stop): nobody wants to hear that a run they
-    stopped is stopped. One run missing is one incident for that run; two or
-    more are one incident for the account ("3 of 13 planned runs for admin are
-    not running"), and it stays that one incident while the runs come back, so
-    a recovery reads as one message when it is done, not a burst of new ones.
+    running while its market is open: an NSE or BSE line between 09:25 and
+    15:25 IST, an MCX line (CRUDEOIL) from 09:25 until five minutes before the
+    MCX close the API's calendar gives — 23:25 while the US is on daylight
+    saving, 23:50 while it is not. 09:25, because the morning job deploys from
+    09:16 and a fallback to FYERS pushes the last start towards 09:23; five
+    minutes before each close, because the desk stops the NSE and BSE runs at
+    15:30 and the MCX ones at the MCX close, and neither stop may read as a
+    run gone missing. (Until 27 Sep the desk stopped crude at 15:30 as well,
+    and every line was let go at 15:25.) Not reported when the key's last run
+    today was ended on purpose (its day target or stop-loss, a person's stop,
+    the desk's close): nobody wants to hear that a run they stopped is
+    stopped. One run missing is one incident for that run; two or more are one
+    incident for the account ("3 of 13 planned runs for admin are not
+    running"), and it stays that one incident while the runs come back, so a
+    recovery reads as one message when it is done, not a burst of new ones.
     While an account's newest run started less than three minutes ago the
     morning job (or a person) is still working through the plan: nothing new
     is called missing, and what was already reported stays reported. Never on
@@ -37,9 +42,11 @@ Rules, each one of this desk's own days:
     the run again (a newer run supersedes it) or at the close. A run id, once
     finished with, is kept in the agent's state for the day and never reported
     again. A planned run that died this way is reported here, with its reason,
-    and not a second time as run-missing. A run that died before 15:30 is let
-    go at 15:30, when the desk stops every run anyway; an MCX run started by
-    hand for the evening is watched until the MCX close.
+    and not a second time as run-missing. An NSE or BSE run that died before
+    15:30 is let go at 15:30, when the desk stops every such run anyway; an MCX
+    run, planned or started by hand for the evening, is watched until the MCX
+    close, when the desk stops it ("MCX closed (23:30 IST)" — an ending on
+    purpose, like "Market closed").
 
     Three or more runs of one account dying of one cause within five minutes
     of each other are one incident, not one per run: on 24 Sep the sign-in
@@ -107,7 +114,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Optional
 
 from sentinel.agents.base import Agent
-from sentinel.clock import ist_date, to_ist
+from sentinel.clock import IST, MCX_CLOSE, ist_date, to_ist
 from sentinel.context import MorningPlan, SentinelContext
 from sentinel.model import Finding, Severity
 from sentinel.notify import redact
@@ -126,14 +133,20 @@ def history_path(first_day: str, last_day: str) -> str:
 
 
 NSE_HOURS = (time(9, 15), time(15, 30))
-MCX_HOURS = (time(9, 0), time(23, 30))
+# To the latest close MCX has (23:55, while the US is on standard time); whether
+# it is still open tonight is the calendar's to say (session.mcx_open).
+MCX_HOURS = (time(9, 0), time(23, 55))
 
-# The window the plan is held to: the morning job's starts are done by 09:25,
-# and the desk's own 15:30 stop of every run must not read as missing runs.
-PLAN_WINDOW = (time(9, 25), time(15, 25))
+# The plan is held to it from 09:25, when the morning job's starts are done,
+# until five minutes before each market's close: the desk's own stop of that
+# market's runs at the close must not read as missing runs.
+PLAN_START = time(9, 25)
+PLAN_NSE_END = time(15, 25)
+PLAN_CLOSE_MARGIN = timedelta(minutes=5)
 
-# MarketHoursService stops every strategy run at 15:30 IST, MCX ones too.
-DESK_STOPS_RUNS_AT = time(15, 30)
+# MarketHoursService stops the NSE and BSE runs at 15:30 IST, and the MCX runs
+# at the MCX close. Until 27 Sep it stopped every run at 15:30, crude included.
+DESK_STOPS_NSE_RUNS_AT = time(15, 30)
 
 # An account whose newest run started this recently is still being deployed.
 DEPLOY_QUIET = timedelta(minutes=3)
@@ -391,12 +404,37 @@ def _within(moment: Optional[datetime], hours: tuple[time, time], day: str) -> b
     return ist.strftime("%Y-%m-%d") == day and hours[0] <= ist.time() < hours[1]
 
 
+def _closed_by_the_desk(run: _Run) -> bool:
+    """Ended by the desk's own close of its market: "Market closed (15:30 IST)", "MCX closed (23:30 IST)"."""
+    return run.by.lower() == "market-hours" and run.reason.lower().startswith(("market closed", "mcx closed"))
+
+
 def _run_trading(session, now: datetime, run: _Run) -> bool:
-    """Whether a run's book is still trading: it is live, or its market is open and the desk has not stopped runs."""
+    """
+    Whether a run's book is still trading: it is live, or it could still be
+    started again today — its market is open and the desk has not closed it
+    for the day. NSE and BSE runs are closed at 15:30, MCX runs at the MCX
+    close, which is when the calendar stops calling MCX open.
+    """
     if run.live:
         return True
-    market_open = session.mcx_open if run.exchange == "MCX" else session.nse_open
-    return bool(market_open) and to_ist(now).time() < DESK_STOPS_RUNS_AT
+    if _closed_by_the_desk(run):
+        return False
+    if run.exchange == "MCX":
+        return bool(session.mcx_open)
+    return bool(session.nse_open) and to_ist(now).time() < DESK_STOPS_NSE_RUNS_AT
+
+
+def _mcx_plan_end(session, now: datetime) -> datetime:
+    """
+    Five minutes before today's MCX close: the calendar's close when the API
+    gave one today, else 23:30 IST — the earlier of its two closes, so without
+    the calendar the plan is let go too early rather than too late.
+    """
+    close = getattr(session, "mcx_close", None)
+    if close is None or ist_date(close) != ist_date(now):
+        close = datetime.combine(to_ist(now).date(), MCX_CLOSE, tzinfo=IST).astimezone(timezone.utc)
+    return close - PLAN_CLOSE_MARGIN
 
 
 def _env_name(strategy: str) -> str:
@@ -592,7 +630,7 @@ class TradingAgent(Agent):
     def _deaths(session, now: datetime, day: str, today: list[_Run], latest: dict, live_keys: set,
                 done: set[int]) -> dict[int, _Run]:
         """Every run that ended in the session for a reason nobody chose and has not been started again."""
-        after_desk_stop = to_ist(now).time() >= DESK_STOPS_RUNS_AT
+        after_nse_stop = to_ist(now).time() >= DESK_STOPS_NSE_RUNS_AT
         deaths: dict[int, _Run] = {}
         for run in today:
             if run.not_a_strategy or run.run_id in done or not run.ended or ended_on_purpose(run):
@@ -604,8 +642,8 @@ class TradingAgent(Agent):
                 continue  # someone has started it again
             if not market_open:
                 continue  # nothing left to trade today
-            if after_desk_stop and to_ist(run.when).time() < DESK_STOPS_RUNS_AT:
-                continue  # the desk stops every run at 15:30: this one would be stopped by now anyway
+            if run.exchange != "MCX" and after_nse_stop and to_ist(run.when).time() < DESK_STOPS_NSE_RUNS_AT:
+                continue  # the desk stops NSE and BSE runs at 15:30: this one would be stopped by now anyway
             deaths[run.run_id] = run
         return deaths
 
@@ -802,7 +840,12 @@ class TradingAgent(Agent):
         previous = data.get("missing") if isinstance(data.get("missing"), dict) else {}
         data["missing"] = {}
         t = to_ist(now).time()
-        if not (PLAN_WINDOW[0] <= t < PLAN_WINDOW[1]) or plan is None or to_ist(now).weekday() >= 5:
+        if plan is None or to_ist(now).weekday() >= 5 or t < PLAN_START:
+            return []
+        # Each market's lines are held to the plan until five minutes before its own close.
+        judge_nse = t < PLAN_NSE_END
+        judge_mcx = now < _mcx_plan_end(session, now)
+        if not (judge_nse or judge_mcx):
             return []
 
         mcx_seen = {r.underlying for r in [*running, *today] if r.spot.upper().startswith("MCX:")}
@@ -821,7 +864,8 @@ class TradingAgent(Agent):
         for account, strategy, underlying in plan.expected_runs():
             u = underlying.upper()
             is_mcx = u in MCX_UNDERLYINGS or u in mcx_seen
-            if not (session.mcx_open if is_mcx else session.nse_open):
+            judged = (judge_mcx and session.mcx_open) if is_mcx else (judge_nse and session.nse_open)
+            if not judged:
                 continue
             expected[account] += 1
             key = (account.lower(), strategy.lower(), u)
