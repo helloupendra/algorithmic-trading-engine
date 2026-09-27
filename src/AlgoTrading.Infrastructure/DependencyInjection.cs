@@ -181,6 +181,8 @@ public static class DependencyInjection
         services.AddSingleton(LotSizeOptions.FromConfiguration(configuration));
         services.AddScoped<ILotSizeResolver, LotSizeResolver>();
 
+        // How live paper fills cross the spread, and how old a quote may be.
+        services.Configure<PaperFillOptions>(configuration.GetSection(PaperFillOptions.SectionName));
         services.AddScoped<IPaperTradingService, PaperTradingService>();
 
         services.AddScoped<CreateSimulationSignalUseCase>();

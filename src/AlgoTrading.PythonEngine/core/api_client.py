@@ -400,12 +400,17 @@ class PlatformApiClient:
         resp.raise_for_status()
         return resp.json()
 
-    def create_simulation_signal(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def create_simulation_signal(self, payload: dict[str, Any], timeout: float = 30) -> dict[str, Any]:
+        """
+        POST /api/Simulator/signals. A payload with a `clientSignalId` the run
+        already holds books nothing and answers with the booked row, so a post
+        whose answer was lost can be sent again (strategies/signal_booking.py).
+        """
         resp = self.http.post(
             f"{self.base_url}/api/Simulator/signals",
             json=payload,
             verify=self.verify_ssl,
-            timeout=30,
+            timeout=timeout,
         )
         resp.raise_for_status()
         return resp.json()

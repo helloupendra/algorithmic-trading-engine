@@ -751,6 +751,10 @@ public class CarryForwardTests
             services.AddSingleton<ILotSizeResolver>(new PositionGreeksTests.FixedLots(LotSize));
             services.AddSingleton<IMarketSessionService>(PositionGreeksTests.Sessions());
             services.AddScoped<IPaperTradingService, PaperTradingService>();
+            // These tests are about who holds a leg and what it is charged, in
+            // round numbers: fills land on the quote exactly. The spread has
+            // tests of its own (PaperTradingServiceTests).
+            services.Configure<PaperFillOptions>(o => o.HalfSpreadFraction = 0m);
             services.AddSingleton<StrategyProcessRegistry>();
             services.AddScoped<PositionCarryForward>();
             services.AddScoped<StrategyRunControl>();

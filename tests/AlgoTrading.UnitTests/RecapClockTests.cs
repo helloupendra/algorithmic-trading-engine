@@ -92,7 +92,8 @@ public class RecapClockTests
         var exit = db.PaperOrders.AsNoTracking().Single(x => x.Side == "SELL");
         var position = db.PaperPositions.AsNoTracking().Single();
         var close = db.SimulationSignals.AsNoTracking().Single(x => x.SignalType == "CLOSE_GROUP");
-        Assert.Equal(137.75m, exit.FillPrice);
+        // The replay's quote, less the half-spread any live market fill pays.
+        Assert.Equal(137.75m * (1m - new PaperFillOptions().HalfSpreadFraction), exit.FillPrice);
         Assert.Equal(ReplayAtExit, exit.FilledUtc);
         Assert.Equal(ReplayAtExit, position.ClosedUtc);
         Assert.Equal(ReplayAtExit, close.TimestampUtc);

@@ -2,11 +2,21 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 import redis
 
 from .state_models import StrategyState
+
+#: How long a saved state outlives its last save. A run lasts one session at
+#: most (the close stops it), and the runner deletes its keys when it exits;
+#: this only reaps the state of a runner that was killed before it could.
+STATE_TTL_SECONDS = 3 * 24 * 3600
+
+#: Key in a saved payload naming the value types JSON could not hold and that
+#: were written as their text instead. Such a state cannot be read back as it
+#: was, so it is not recovered.
+STRINGIFIED_KEY = "stringified"
 
 
 def utc_now_iso() -> str:
@@ -35,22 +45,53 @@ class StrategyStateStore:
     # State persistence
     # ---------------------------------------------------------------------
     def save(self, state: StrategyState) -> None:
+        """
+        Saves the state as JSON. A value JSON cannot hold is still written as
+        its text, so a save never fails, but the payload then names what was
+        lost (see STRINGIFIED_KEY): until 28 Sep SmcStructureBreak's structure
+        reader went in as its repr and came back a string, and every tick after
+        a reload raised AttributeError.
+        """
         state.version += 1
         state.last_updated_utc = utc_now_iso()
 
-        payload = json.dumps(state.to_dict(), separators=(",", ":"), default=str)
-        self.redis.set(self.state_key, payload)
+        data = state.to_dict()
+        stringified: List[str] = []
 
-    def load(self) -> Optional[StrategyState]:
+        def as_text(value: Any) -> str:
+            stringified.append(type(value).__name__)
+            return str(value)
+
+        payload = json.dumps(data, separators=(",", ":"), default=as_text)
+        if stringified:
+            data[STRINGIFIED_KEY] = sorted(set(stringified))
+            payload = json.dumps(data, separators=(",", ":"), default=str)
+
+        self.redis.set(self.state_key, payload, ex=STATE_TTL_SECONDS)
+
+    def load_payload(self) -> Optional[Dict[str, Any]]:
+        """The saved payload as it was written, or None when there is none."""
         raw = self.redis.get(self.state_key)
         if not raw:
             return None
-
         data = json.loads(raw)
-        return StrategyState.from_dict(data)
+        return data if isinstance(data, dict) else None
+
+    def load(self) -> Optional[StrategyState]:
+        data = self.load_payload()
+        return StrategyState.from_dict(data) if data is not None else None
 
     def clear(self) -> None:
         self.redis.delete(self.state_key)
+
+    def forget(self, owner_id: str) -> None:
+        """
+        Everything this run kept in Redis: its state, its heartbeat and — when
+        this runner holds it — its lock. For when the run stops: a runner that
+        exits leaves a stopped run, and nothing will read its state again.
+        """
+        self.redis.delete(self.state_key, self.heartbeat_key)
+        self.release_lock(owner_id)
 
     # ---------------------------------------------------------------------
     # Locking

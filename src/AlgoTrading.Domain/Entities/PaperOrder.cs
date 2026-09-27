@@ -68,6 +68,15 @@ public class PaperOrder
     public decimal? FillPrice { get; set; }
 
     /// <summary>
+    /// How the fill price was chosen, as JSON: the rule (the bid, the ask, the
+    /// last trade less or plus the half-spread, the price the signal carried,
+    /// the position's last mark), the quote it came from and its age, and a
+    /// sentence the run views can show as it is ("filled at the bid", "priced
+    /// on a stale quote (95 s old)"). Null on orders filled before it existed.
+    /// </summary>
+    public string? MetadataJson { get; set; }
+
+    /// <summary>
     /// When the order was initially created by the strategy.
     /// </summary>
     public DateTime CreatedUtc { get; set; } = DateTime.UtcNow;
