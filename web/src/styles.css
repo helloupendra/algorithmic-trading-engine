@@ -2226,6 +2226,9 @@ a.pill:hover { border-color: var(--line-strong); }
 
 .status-cell { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 1px; }
 .status-cell .cell-sub { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* One cell for when a run ran and for how long, in place of three columns. */
+.run-when { white-space: nowrap; }
+.run-link { text-decoration: none; }
 
 .live-dot {
   display: inline-block;
