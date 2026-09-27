@@ -477,7 +477,7 @@ export function StrategyPackagesPage() {
       </header>
 
       <p className="small-note">
-        <Link to="/admin/users">← Users</Link>
+        <Link to="/system/people">← Users</Link>
       </p>
 
       <Panel title="Packages">
@@ -516,7 +516,7 @@ export function StrategyPackagesPage() {
         </QueryBoundary>
         <p className="small-note muted">
           Updated {packages.data?.[0] ? formatAge(packages.data[0].updatedUtc) : '—'}. Assign a package
-          to a trader on the <Link to="/admin/users">Users</Link> page.
+          to a trader on the <Link to="/system/people">Users</Link> page.
         </p>
       </Panel>
 

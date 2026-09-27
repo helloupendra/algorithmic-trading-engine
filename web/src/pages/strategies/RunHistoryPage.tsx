@@ -36,11 +36,12 @@ const DEFAULT_RANGE_DAYS = 30
 /** Rows per request; a range with more runs than this is paged with "Load older". */
 const TAKE = RUN_HISTORY_PAGE
 
-/** Where a row's detail lives and where "start one" points, per mode. */
+/** Where a row's detail lives and where "start one" points: the run cards for an admin, the library for a trader. */
 function routesFor(mode: RunHistoryMode) {
+  const detail = (runId: number) => `/trade/runs/${runId}`
   return mode === 'admin'
-    ? { detail: (runId: number) => `/admin/strategies/runs/${runId}`, start: '/admin/strategies/live', startLabel: 'Live runner' }
-    : { detail: (runId: number) => `/trader/strategies/runs/${runId}`, start: '/trader/deploy', startLabel: 'Deploy' }
+    ? { detail, start: '/trade/runs', startLabel: 'Live runner' }
+    : { detail, start: '/trade/library', startLabel: 'Library' }
 }
 
 /* ------------------------------------------------------------ status cell */

@@ -384,7 +384,7 @@ function InsertToolbar({ onInsert, disabled }: { onInsert: (card: CardSpec) => v
     onInsert({
       title: shortSymbol(value),
       subtitle: `${value} · tap to open in Historical data`,
-      link: `/admin/data/historical?symbol=${encodeURIComponent(value)}`,
+      link: `/data/historical?symbol=${encodeURIComponent(value)}`,
       fill: FILL_SYMBOL,
     })
   }
@@ -395,7 +395,7 @@ function InsertToolbar({ onInsert, disabled }: { onInsert: (card: CardSpec) => v
     onInsert({
       title: strategy.name,
       subtitle: `${strategy.category} · tap to open the Strategy library`,
-      link: `/admin/strategies/library/${strategy.id}`,
+      link: `/trade/library/${strategy.id}`,
       fill: FILL_STRATEGY,
     })
   }
@@ -406,7 +406,7 @@ function InsertToolbar({ onInsert, disabled }: { onInsert: (card: CardSpec) => v
     onInsert({
       title: `Run #${runNumber}`,
       subtitle: run ? `${run.strategyName} on ${run.underlying} · tap to open the run` : 'tap to open the run',
-      link: `/admin/strategies/runs/${runNumber}`,
+      link: `/trade/runs/${runNumber}`,
       fill: FILL_RUN,
     })
   }
@@ -563,7 +563,7 @@ function BoardEditor({ board, onReload }: { board: WhiteboardDetail; onReload: (
       <header className="wb__head">
         <Link
           className="wb__back"
-          to="/admin/notebook"
+          to="/research/notebook"
           onClick={(e) => {
             if (!autosave.confirmLeave()) e.preventDefault()
           }}
@@ -688,7 +688,7 @@ export function WhiteboardPage() {
   const [generation, setGeneration] = useState(0)
 
   const backLink = (
-    <Link className="wb__back" to="/admin/notebook">
+    <Link className="wb__back" to="/research/notebook">
       <IconArrowRight /> Whiteboards
     </Link>
   )

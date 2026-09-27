@@ -70,7 +70,7 @@ function RecentRunRow({ run }: { run: BacktestRunSummary }) {
   return (
     <tr>
       <td>
-        <Link to={`/admin/backtesting/runs/${run.runId}`}>
+        <Link to={`/research/backtests/runs/${run.runId}`}>
           <b>{run.strategyName}</b>
         </Link>
         <span className="faint"> · #{run.runId}</span>
@@ -123,7 +123,7 @@ export function BacktestOverviewPage() {
             live runner, position-based results.
           </p>
         </div>
-        <Link className="btn btn--primary" to="/admin/backtesting/new">
+        <Link className="btn btn--primary" to="/research/backtests/new">
           <IconPlus style={{ width: 14, height: 14 }} /> New backtest
         </Link>
       </header>
@@ -133,7 +133,7 @@ export function BacktestOverviewPage() {
           label="Backtests run"
           value={runs.data ? formatNumber(runList.length) : '—'}
           sub={runs.data ? `${formatNumber(runList.filter((r) => r.status === 'Completed').length)} completed` : 'loading runs…'}
-          to="/admin/backtesting/runs"
+          to="/research/backtests/runs"
         />
         <StatTile
           label="Running now"
@@ -144,20 +144,20 @@ export function BacktestOverviewPage() {
               ? running.map((r) => `${r.strategyName} ${Math.round(r.progressPercent)}%`).join(', ')
               : 'nothing replaying'
           }
-          to="/admin/backtesting/runs"
+          to="/research/backtests/runs"
         />
         <StatTile
           label="Best net P&L"
           value={best ? <PnlValue value={best.netPnl} /> : '—'}
           tone={best ? (best.netPnl > 0 ? 'pos' : best.netPnl < 0 ? 'neg' : undefined) : undefined}
           sub={best ? `${best.strategyName} · ${best.underlying} · ${formatDayRange(best.fromDate, best.toDate)}` : 'no finished run with trades yet'}
-          to={best ? `/admin/backtesting/runs/${best.runId}` : undefined}
+          to={best ? `/research/backtests/runs/${best.runId}` : undefined}
         />
         <StatTile
           label="Data sessions available"
           value={coverage.data ? `≈ ${formatNumber(sessionsAvailable)}` : '—'}
           sub={`index candles at any resolution · estimated from ${formatNumber(lines.filter((l) => l.row).length)} stored ranges`}
-          to="/admin/data/historical"
+          to="/data/historical"
         />
       </div>
 
@@ -168,7 +168,7 @@ export function BacktestOverviewPage() {
           </>
         }
         actions={
-          <Link className="btn btn--ghost btn--sm" to="/admin/data/historical">
+          <Link className="btn btn--ghost btn--sm" to="/data/historical">
             All ranges <IconArrowRight style={{ width: 12, height: 12 }} />
           </Link>
         }
@@ -179,7 +179,7 @@ export function BacktestOverviewPage() {
               <p className="empty">
                 No index candles are stored yet, and no F&O index underlying is loaded to backfill
                 for. Import the instrument master on{' '}
-                <Link to="/admin/data/instruments">Data › Instruments & F&O</Link> first.
+                <Link to="/data/instruments">Data › Instruments</Link> first.
               </p>
             ) : (
               <div className="tablewrap">
@@ -270,7 +270,7 @@ export function BacktestOverviewPage() {
           </>
         }
         actions={
-          <Link className="btn btn--ghost btn--sm" to="/admin/backtesting/runs">
+          <Link className="btn btn--ghost btn--sm" to="/research/backtests/runs">
             All runs <IconArrowRight style={{ width: 12, height: 12 }} />
           </Link>
         }
@@ -279,7 +279,7 @@ export function BacktestOverviewPage() {
           {() =>
             recent.length === 0 ? (
               <p className="empty">
-                No backtests yet. <Link to="/admin/backtesting/new">Start one</Link> from the strategy
+                No backtests yet. <Link to="/research/backtests/new">Start one</Link> from the strategy
                 catalogue.
               </p>
             ) : (

@@ -189,7 +189,7 @@ export function LiveRunnerPage() {
               value={<PnlValue value={realizedToday} />}
               tone={realizedToday > 0 ? 'pos' : realizedToday < 0 ? 'neg' : undefined}
               sub="after charges · runs started today, incl. stopped ones shown below"
-              to="/admin/strategies/history"
+              to="/trade/history"
             />
           </>
         )}
@@ -200,7 +200,7 @@ export function LiveRunnerPage() {
           <IconPlay /> Running now
           <Link
             className="section-title__link"
-            to="/admin/strategies/history"
+            to="/trade/history"
             title="Every run ever started, with its result — nothing there is dismissed"
           >
             <IconClock /> View history →
@@ -221,7 +221,7 @@ export function LiveRunnerPage() {
             <p className="card__muted" style={{ margin: 0 }}>
               Nothing is running. Start a strategy from the catalogue below — it will appear here with
               its live positions and P&L. Earlier runs are in{' '}
-              <Link to="/admin/strategies/history">Run history</Link>.
+              <Link to="/trade/history">Run history</Link>.
             </p>
           </div>
         ) : (

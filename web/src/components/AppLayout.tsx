@@ -89,10 +89,10 @@ export function AppLayout() {
   const onDesk = here?.workspace.key === 'desk'
 
   const extras = useMemo(
-    () => (isAdmin ? [] : [{ label: ACCOUNT_PAGE.label, to: ACCOUNT_PAGE.trader, keywords: ['broker', 'capital', 'profile'] }]),
+    () => (isAdmin ? [] : [{ label: ACCOUNT_PAGE.label, to: ACCOUNT_PAGE.to, keywords: ['broker', 'capital', 'profile'] }]),
     [isAdmin],
   )
-  const onAccount = !isAdmin && pathname === ACCOUNT_PAGE.trader
+  const onAccount = !isAdmin && pathname === ACCOUNT_PAGE.to
 
   // ⌘K / Ctrl-K from anywhere in the console, even from inside a field.
   useEffect(() => {

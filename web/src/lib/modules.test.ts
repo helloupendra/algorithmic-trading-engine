@@ -22,13 +22,20 @@ describe('the registry', () => {
     expect(used.every((r) => (GRANT_KEYS as readonly string[]).includes(r!))).toBe(true)
   })
 
-  it('has unique tab keys and homes, and one URL per page per console', () => {
+  it('has unique tab keys, homes and page URLs', () => {
     const tabs = WORKSPACES.flatMap((w) => w.tabs)
     expect(new Set(tabs.map((t) => t.key)).size).toBe(tabs.length)
     expect(new Set(tabs.map((t) => t.home)).size).toBe(tabs.length)
-    for (const side of ['admin', 'trader'] as const) {
-      const urls = tabs.flatMap((t) => t.pages.map((p) => p[side])).filter(Boolean)
-      expect(new Set(urls).size).toBe(urls.length)
+    const urls = tabs.flatMap((t) => t.pages.map((p) => p.to))
+    expect(new Set(urls).size).toBe(urls.length)
+  })
+
+  it('keeps every page at its tab home or under it, and every tab under its workspace', () => {
+    for (const ws of WORKSPACES) {
+      for (const tab of ws.tabs) {
+        expect(tab.home === ws.home || tab.home.startsWith(`${ws.home}/`)).toBe(true)
+        for (const page of tab.pages) expect(page.to === tab.home || page.to.startsWith(`${tab.home}/`)).toBe(true)
+      }
     }
   })
 
@@ -38,9 +45,11 @@ describe('the registry', () => {
     }
   })
 
-  it('keeps every System tab admin-only', () => {
-    const system = WORKSPACES.find((w) => w.key === 'system')!
-    expect(system.tabs.every((t) => t.requires === 'admin')).toBe(true)
+  it('keeps every System and Data tab admin-only', () => {
+    for (const key of ['system', 'data']) {
+      const ws = WORKSPACES.find((w) => w.key === key)!
+      expect(ws.tabs.every((t) => t.requires === 'admin')).toBe(true)
+    }
   })
 })
 
@@ -76,8 +85,16 @@ describe('navFor', () => {
   it('gives an admin all six workspaces, opening Markets on the chain', () => {
     const nav = navFor(admin)
     expect(labels(nav)).toEqual(['Desk', 'Markets', 'Trade', 'Research', 'Data', 'System'])
-    expect(nav.find((w) => w.key === 'markets')!.to).toBe('/admin/data/chain')
+    expect(nav.find((w) => w.key === 'markets')!.to).toBe('/markets/chain')
     expect(nav[0].to).toBe('/desk')
+  })
+
+  it('gives an admin one page per tab, the backtests aside', () => {
+    const nav = navFor(admin)
+    expect(pagesOf(nav, 'markets')).toEqual(['Watchlist', 'Commodity', 'Chart', 'Option chain', 'Movers', 'Factors', 'News', 'Patterns'])
+    expect(pagesOf(nav, 'trade')).toEqual(['Runs', 'Library', 'History', 'Manual order', 'Risk'])
+    expect(pagesOf(nav, 'research')).toEqual(['Backtests', 'New backtest', 'Runs', 'Forecasts', 'Filter lab', 'Notebook'])
+    expect(pagesOf(nav, 'system')).toEqual(['Health', 'Incidents', 'Log', 'Calendar', 'Connectors', 'People'])
   })
 
   it('never shows a trader System, Data, connectors, feeds or Sentinel pages', () => {
@@ -85,18 +102,18 @@ describe('navFor', () => {
     expect(labels(nav)).not.toContain('System')
     expect(labels(nav)).not.toContain('Data')
     const urls = allUrls(nav)
-    expect(urls.filter((u) => u.startsWith('/admin'))).toEqual([])
+    expect(urls.filter((u) => u.startsWith('/system') || u.startsWith('/data'))).toEqual([])
     expect(urls).toContain('/desk')
-    for (const hidden of ['Connectors', 'Feeds', 'Checkup', 'Incidents', 'Patterns', 'Risk']) {
+    for (const hidden of ['Connectors', 'Feeds', 'Health', 'Incidents', 'Patterns', 'Risk', 'Commodity', 'Runs']) {
       expect(nav.flatMap((w) => w.pages.map((p) => p.label))).not.toContain(hidden)
     }
   })
 
-  it("shows a trader today's trader pages when the grants are not known", () => {
+  it("shows a trader their pages when the grants are not known", () => {
     const nav = navFor(traderUnknown)
     expect(labels(nav)).toEqual(['Desk', 'Markets', 'Trade', 'Research'])
-    expect(pagesOf(nav, 'markets')).toEqual(['Watchlist', 'Charts', 'Structure', 'Option chain', 'Movers', 'Index movers', 'News'])
-    expect(pagesOf(nav, 'trade')).toEqual(['Strategies', 'History', 'Positions', 'Orders', 'Manual order'])
+    expect(pagesOf(nav, 'markets')).toEqual(['Watchlist', 'Chart', 'Option chain', 'Movers', 'Factors', 'News'])
+    expect(pagesOf(nav, 'trade')).toEqual(['Library', 'History', 'Positions', 'Orders', 'Manual order'])
     expect(pagesOf(nav, 'research')).toEqual(['Filter lab'])
   })
 
@@ -112,12 +129,11 @@ describe('navFor', () => {
     expect(nav[0].pages.map((p) => p.to)).toEqual(['/desk'])
   })
 
-  it('shows no tab the admin console lacks a page for (and the reverse)', () => {
-    // The Desk is the one URL both consoles share.
-    const own = (nav: NavWorkspace[]) => allUrls(nav).filter((u) => u !== '/desk')
-    expect(own(navFor(admin)).every((u) => u.startsWith('/admin'))).toBe(true)
-    expect(own(navFor(traderUnknown)).every((u) => u.startsWith('/trader'))).toBe(true)
-    expect(navFor(admin)[0].to).toBe(navFor(traderUnknown)[0].to)
+  it('gives both consoles the same URL for a page both have', () => {
+    const adminUrls = new Set(allUrls(navFor(admin)))
+    const shared = allUrls(navFor(traderUnknown)).filter((u) => adminUrls.has(u))
+    expect(shared).toEqual(['/desk', '/markets', '/markets/chart', '/markets/chain', '/markets/movers', '/markets/factors', '/markets/news',
+      '/trade/library', '/trade/history', '/trade/ticket', '/research/lab'])
   })
 })
 
@@ -130,40 +146,48 @@ describe('locate', () => {
   }
 
   it('finds the page for its own URL', () => {
-    expect(at(adminNav, '/admin/data/chain')).toBe('Markets / Option chain')
-    expect(at(adminNav, '/admin/incidents')).toBe('System / Incidents')
-    expect(at(traderNav, '/trader/option-chain')).toBe('Markets / Option chain')
+    expect(at(adminNav, '/markets/chain')).toBe('Markets / Option chain')
+    expect(at(adminNav, '/system/incidents')).toBe('System / Incidents')
+    expect(at(traderNav, '/markets/chain')).toBe('Markets / Option chain')
   })
 
-  it('prefers the longest match', () => {
-    expect(at(adminNav, '/admin/strategies')).toBe('Trade / Overview')
-    expect(at(adminNav, '/admin/strategies/live')).toBe('Trade / Live runner')
-    expect(at(adminNav, '/admin/trading/lab')).toBe('Research / Filter lab')
-    expect(at(adminNav, '/admin/trading')).toBe('Trade / Manual order')
+  it('prefers the longest match, and holds an exact page to its own path', () => {
+    expect(at(adminNav, '/markets')).toBe('Markets / Watchlist')
+    expect(at(adminNav, '/markets/mcx')).toBe('Markets / Commodity')
+    expect(at(adminNav, '/research/backtests')).toBe('Research / Backtests')
+    expect(at(adminNav, '/research/backtests/new')).toBe('Research / New backtest')
+    expect(at(adminNav, '/data')).toBe('Data / Overview')
+    expect(at(adminNav, '/data/feeds')).toBe('Data / Feeds')
   })
 
   it('lights up the tab a detail page belongs to', () => {
-    expect(at(adminNav, '/admin/strategies/runs/412')).toBe('Trade / Live runner')
-    expect(at(adminNav, '/admin/strategies/library/9')).toBe('Trade / Library')
-    expect(at(adminNav, '/admin/backtesting/runs/31')).toBe('Research / Runs')
-    expect(at(adminNav, '/admin/broker/dhan')).toBe('System / Connectors')
-    expect(at(adminNav, '/admin/users/packages')).toBe('System / Users')
-    expect(at(traderNav, '/trader/strategies/7/how-it-works')).toBe('Trade / Strategies')
-    expect(at(traderNav, '/trader/strategies/runs/88')).toBe('Trade / History')
-    expect(at(traderNav, '/trader/runs/3')).toBe('Trade / Positions')
+    expect(at(adminNav, '/markets/chain/oi')).toBe('Markets / Option chain')
+    expect(at(adminNav, '/trade/library/9')).toBe('Trade / Library')
+    expect(at(adminNav, '/research/backtests/runs/31')).toBe('Research / Runs')
+    expect(at(adminNav, '/system/connectors/dhan')).toBe('System / Connectors')
+    expect(at(adminNav, '/system/people/packages')).toBe('System / People')
+    expect(at(adminNav, '/system/checkups')).toBe('System / Health')
+    expect(at(traderNav, '/trade/positions/runs/3')).toBe('Trade / Positions')
+  })
+
+  it("files a run's page under Runs for an admin and under History for a trader", () => {
+    expect(at(adminNav, '/trade/runs/412')).toBe('Trade / Runs')
+    expect(at(traderNav, '/trade/runs/412')).toBe('Trade / History')
+    // The run cards themselves are not a trader's page.
+    expect(at(traderNav, '/trade/runs')).toBeNull()
   })
 
   it('holds the Desk to its exact path', () => {
     expect(at(adminNav, '/desk')).toBe('Desk / Desk')
     expect(at(traderNav, '/desk/')).toBe('Desk / Desk')
     expect(at(adminNav, '/desk/nowhere')).toBeNull()
-    // The old home pages only redirect now; nothing claims them.
+    // The old URLs only redirect now; nothing claims them.
     expect(at(adminNav, '/admin')).toBeNull()
-    expect(at(traderNav, '/trader/account')).toBeNull()
+    expect(at(traderNav, '/account')).toBeNull()
   })
 
   it('respects segment boundaries', () => {
-    expect(at(adminNav, '/admin/data/live')).toBe('Data / Feeds')
-    expect(at(adminNav, '/admin/data/livestream')).toBeNull()
+    expect(at(adminNav, '/data/feeds')).toBe('Data / Feeds')
+    expect(at(adminNav, '/data/feedsx')).toBeNull()
   })
 })

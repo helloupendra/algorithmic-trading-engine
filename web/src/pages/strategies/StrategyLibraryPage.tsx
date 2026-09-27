@@ -261,7 +261,7 @@ function Library({ items }: { items: StrategyListItem[] }) {
       )}
 
       {launch && (
-        <LaunchDialog strategy={launch} onClose={() => setLaunchId(null)} onStarted={() => navigate('/admin/strategies/live')} />
+        <LaunchDialog strategy={launch} onClose={() => setLaunchId(null)} onStarted={() => navigate('/trade/runs')} />
       )}
     </>
   )
@@ -296,7 +296,7 @@ export function StrategyLibraryPage() {
   const [params] = useSearchParams()
   useEffect(() => {
     const wanted = Number(params.get('strategy'))
-    if (Number.isInteger(wanted) && wanted > 0) navigate(`/admin/strategies/library/${wanted}`, { replace: true })
+    if (Number.isInteger(wanted) && wanted > 0) navigate(`/trade/library/${wanted}`, { replace: true })
   }, [params, navigate])
 
   return (

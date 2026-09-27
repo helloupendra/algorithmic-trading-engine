@@ -71,7 +71,7 @@ function NeedsAttention() {
   if (broker.data && !broker.data.isAuthenticated) {
     items.push({
       text: 'FYERS is not linked — the live stream and history sync cannot work without a broker session.',
-      to: '/admin/broker',
+      to: '/system/connectors',
       action: 'Connect broker',
     })
   }
@@ -84,7 +84,7 @@ function NeedsAttention() {
   if (process.data && !isRunning && marketOpen) {
     items.push({
       text: 'Market is open but the live ingestor is not running — no ticks are being captured.',
-      to: '/admin/data/live',
+      to: '/data/feeds',
       action: 'Start feed',
     })
   }
@@ -94,7 +94,7 @@ function NeedsAttention() {
       text: `${unhealthy.length} feed source${unhealthy.length > 1 ? 's' : ''} unhealthy: ${unhealthy
         .map((s) => `${s.sourceName} (${s.status})`)
         .join(', ')}.`,
-      to: '/admin/data/live',
+      to: '/data/feeds',
       action: 'Diagnostics',
     })
   }
@@ -102,7 +102,7 @@ function NeedsAttention() {
   if (marketOpen && (stale.data?.length ?? 0) > 0) {
     items.push({
       text: `${stale.data!.length} watched symbol${stale.data!.length > 1 ? 's' : ''} stopped ticking over 2 minutes ago during market hours.`,
-      to: '/admin/data/live',
+      to: '/data/feeds',
       action: 'View',
     })
   }
@@ -113,7 +113,7 @@ function NeedsAttention() {
     if (neverTicked.length > 0) {
       items.push({
         text: `${neverTicked.length} watchlist symbol${neverTicked.length > 1 ? 's have' : ' has'} never received a tick.`,
-        to: '/admin/data/live',
+        to: '/data/feeds',
         action: 'View',
       })
     }
@@ -163,7 +163,7 @@ function RecentlyUpdated({ rows }: { rows: CoverageRow[] }) {
         </>
       }
       actions={
-        <Link className="btn btn--ghost btn--sm" to="/admin/data/historical">
+        <Link className="btn btn--ghost btn--sm" to="/data/historical">
           All ranges <IconArrowRight style={{ width: 12, height: 12 }} />
         </Link>
       }
@@ -221,7 +221,7 @@ function LivePipelinePanel() {
         </>
       }
       actions={
-        <Link className="btn btn--ghost btn--sm" to="/admin/data/live">
+        <Link className="btn btn--ghost btn--sm" to="/data/feeds">
           Manage <IconArrowRight style={{ width: 12, height: 12 }} />
         </Link>
       }
@@ -322,19 +322,19 @@ export function DataOverviewPage() {
               ? `${healthy}/${feeds.length} sources healthy · beat ${formatAge(feeds[0]?.lastHeartbeatUtc)}`
               : 'no heartbeat recorded yet'
           }
-          to="/admin/data/live"
+          to="/data/feeds"
         />
         <StatTile
           label="Database saving"
           value={formatNumber(watchlist.data?.length ?? 0)}
           sub={`${formatNumber(quotes.data?.length ?? 0)} symbols actively recording`}
-          to="/admin/data/live"
+          to="/data/feeds"
         />
         <StatTile
           label="Stored history"
           value={formatNumber(totalBars)}
           sub={`bars across ${coveredSymbols} symbols`}
-          to="/admin/data/historical"
+          to="/data/historical"
         />
         <StatTile
           label="Stale quotes"
@@ -351,7 +351,7 @@ export function DataOverviewPage() {
           </>
         }
         actions={
-          <Link className="btn btn--sm" to="/admin/data/historical">
+          <Link className="btn btn--sm" to="/data/historical">
             Browse historical <IconArrowRight style={{ width: 13, height: 13 }} />
           </Link>
         }

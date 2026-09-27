@@ -1,9 +1,10 @@
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Route, Routes, useSearchParams } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider } from './lib/auth'
 import { useLiveFeedSignalR } from './lib/queries'
+import { ROUTE_MOVES } from './lib/routeMap'
 import { AppLayout } from './components/AppLayout'
-import { RedirectIfAuthenticated, RequireAuth, RequireRole } from './components/RouteGuards'
+import { ByRole, MovedTo, RedirectIfAuthenticated, RequireAuth, RequireRole, WorkspaceLanding } from './components/RouteGuards'
 import { LoginPage } from './pages/LoginPage'
 import { AcceptInvitePage } from './pages/AcceptInvitePage'
 import { LandingPage } from './pages/LandingPage'
@@ -14,7 +15,6 @@ import { ChartsPage } from './pages/trader/ChartsPage'
 import { PositionsPage } from './pages/trader/PositionsPage'
 import { OrdersPage } from './pages/trader/OrdersPage'
 import { MarketNewsPage } from './pages/data/MarketNewsPage'
-import { TopMoversPage } from './pages/trader/TopMoversPage'
 import { AccountPage } from './pages/trader/AccountPage'
 import { RunDetailPage } from './pages/trader/RunDetailPage'
 import { AdminOverviewPage } from './pages/admin/AdminOverviewPage'
@@ -78,6 +78,19 @@ function GlobalSignalR() {
   return null
 }
 
+/** Until the chart and structure merge: the structure page is the chart's structure layer. */
+function ChartRoute() {
+  const [params] = useSearchParams()
+  return params.get('layer') === 'structure' ? <StructurePage /> : <ChartsPage />
+}
+
+/** Until the one timeline: the log's source picks which of the three pages shows. */
+function LogRoute() {
+  const [params] = useSearchParams()
+  const source = params.get('source')
+  return source === 'alerts' ? <LiveAlertsV2Page /> : source === 'deploys' ? <DeploymentsPage /> : <ActivityLogPage />
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -86,7 +99,7 @@ export default function App() {
         <AuthProvider>
           <Routes>
             {/* Public homepage. Signing out lands here; "Open console" goes to
-                /login, which bounces authenticated users to their role's home. */}
+                /login, which bounces authenticated users to the Desk. */}
             <Route path="/" element={<LandingPage />} />
 
             <Route element={<RedirectIfAuthenticated />}>
@@ -96,113 +109,96 @@ export default function App() {
               <Route path="/invite/:token" element={<AcceptInvitePage />} />
             </Route>
 
+            {/* Every URL from before the workspaces, sent on to its new home. */}
+            {Object.keys(ROUTE_MOVES).map((from) => (
+              <Route key={from} path={from} element={<MovedTo />} />
+            ))}
+
             <Route element={<RequireAuth />}>
-              {/* Full-window pages: no sidebar, no top bar. A whiteboard inside
-                  the console shell was a canvas the size of a postcard; it
-                  opens in its own tab and takes the whole viewport. */}
+              {/* Full-window pages: no top bar. A whiteboard inside the console
+                  shell was a canvas the size of a postcard; it opens in its own
+                  tab and takes the whole viewport. */}
               <Route element={<RequireRole role="Admin" />}>
-                <Route path="/admin/notebook/:id" element={<WhiteboardPage />} />
+                <Route path="/notebook/:id" element={<WhiteboardPage />} />
               </Route>
 
-              {/* The two home pages the Desk replaced. */}
-              <Route path="/admin" element={<Navigate to="/desk" replace />} />
-              <Route path="/trader" element={<Navigate to="/desk" replace />} />
+              {/* A workspace with no page at its own address opens its first tab. */}
+              <Route path="/trade" element={<WorkspaceLanding />} />
+              <Route path="/research" element={<WorkspaceLanding />} />
 
+              {/* The console. The URLs are the workspace registry's
+                  (lib/modules.ts); a page it hides from traders sits in the
+                  Admin block below, and routeMap.test.ts checks both. */}
               <Route element={<AppLayout />}>
                 {/* Everyone's home: one sheet for the day; each panel checks its own grant. */}
                 <Route path="/desk" element={<DeskPage />} />
 
-                {/* Trader area — any signed-in user. v1 pages, rebuild queued. */}
-                <Route path="/trader/watchlist" element={<WatchlistPage />} />
-                <Route path="/trader/charts" element={<ChartsPage />} />
-                <Route path="/trader/structure" element={<StructurePage />} />
-                <Route path="/trader/news" element={<MarketNewsPage />} />
-                <Route path="/trader/movers" element={<TopMoversPage />} />
-                <Route path="/trader/market-movers" element={<MarketMoversPage />} />
-                <Route path="/trader/option-chain" element={<AdvancedOptionChainPage mode="trader" />} />
-                <Route path="/trader/positions" element={<PositionsPage />} />
-                <Route path="/trader/orders" element={<OrdersPage />} />
-                <Route path="/trader/trading" element={<ManualOrderPage />} />
-                <Route path="/trader/trading/lab" element={<FilterLabPage />} />
-                <Route path="/trader/strategies" element={<Navigate to="/trader/deploy" replace />} />
-                <Route path="/trader/deploy" element={<StrategiesOverviewPage mode="trader" />} />
-                <Route path="/trader/account" element={<AccountPage />} />
-                <Route path="/trader/strategies/:id/how-it-works" element={<StrategySpecPage mode="trader" />} />
-                <Route path="/trader/runs/:id" element={<RunDetailPage />} />
-                {/* Live run history — own runs only (the API enforces it). */}
-                <Route path="/trader/strategies/history" element={<RunHistoryPage mode="trader" />} />
+                {/* Markets. */}
+                <Route path="/markets" element={<WatchlistPage />} />
+                <Route path="/markets/chart" element={<ChartRoute />} />
+                <Route path="/markets/chain" element={<AdvancedOptionChainPage />} />
+                <Route path="/markets/chain/oi" element={<OptionInterestPage />} />
+                <Route path="/markets/movers" element={<MarketMoversPage />} />
+                <Route path="/markets/factors" element={<MarketFactorsPage />} />
+                <Route path="/markets/news" element={<MarketNewsPage />} />
+
+                {/* Trade. A trader deploys from the library and follows runs in History. */}
                 <Route
-                  path="/trader/strategies/runs/:runId"
-                  element={<LiveRunDetailPage basePath="/trader/strategies" />}
+                  path="/trade/library"
+                  element={<ByRole admin={<StrategyLibraryPage />} trader={<StrategiesOverviewPage mode="trader" />} />}
                 />
+                <Route
+                  path="/trade/library/:id"
+                  element={<ByRole admin={<StrategySpecPage />} trader={<StrategySpecPage mode="trader" />} />}
+                />
+                <Route
+                  path="/trade/history"
+                  element={<ByRole admin={<RunHistoryPage mode="admin" />} trader={<RunHistoryPage mode="trader" />} />}
+                />
+                {/* Any run the API lets the viewer read: it answers 403 for someone else's. */}
+                <Route path="/trade/runs/:runId" element={<LiveRunDetailPage />} />
+                <Route path="/trade/positions" element={<PositionsPage />} />
+                <Route path="/trade/positions/runs/:id" element={<RunDetailPage />} />
+                <Route path="/trade/orders" element={<OrdersPage />} />
+                <Route path="/trade/ticket" element={<ManualOrderPage />} />
 
-                {/* Admin area — Admin role only. */}
+                {/* Research. */}
+                <Route path="/research/lab" element={<FilterLabPage />} />
+
+                {/* Outside the workspaces: the trader's own account, from the avatar menu. */}
+                <Route path="/account" element={<AccountPage />} />
+
+                {/* Admin only. */}
                 <Route element={<RequireRole role="Admin" />}>
-                  {/* Data module (v2). */}
-                  <Route path="/admin/data" element={<DataOverviewPage />} />
-                  <Route path="/admin/data/live" element={<LiveFeedsPage />} />
-                  <Route path="/admin/data/commodity" element={<CommodityPage />} />
-                  <Route path="/admin/data/chain" element={<AdvancedOptionChainPage />} />
-                  <Route path="/admin/data/open-interest" element={<OptionInterestPage />} />
-                  <Route path="/admin/data/patterns" element={<PatternAlertsPage />} />
-                  <Route path="/admin/data/movers" element={<MarketMoversPage />} />
-                  <Route path="/admin/data/factors" element={<MarketFactorsPage />} />
-                  {/* The same page both consoles read; the news is the news. */}
-                  <Route path="/admin/data/news" element={<MarketNewsPage />} />
-                  <Route path="/admin/data/historical" element={<HistoricalDataPage />} />
-                  <Route path="/admin/data/structure" element={<StructurePage />} />
-                  <Route path="/admin/data/instruments" element={<InstrumentsFnoPage />} />
+                  <Route path="/markets/mcx" element={<CommodityPage />} />
+                  <Route path="/markets/patterns" element={<PatternAlertsPage />} />
 
-                  {/* v1 modules, awaiting their rebuild. */}
-                  <Route path="/admin/system" element={<AdminOverviewPage />} />
-                  <Route path="/admin/users" element={<UsersPage />} />
-                  <Route path="/admin/users/packages" element={<StrategyPackagesPage />} />
-                  <Route path="/admin/system/risk" element={<RiskV2Page />} />
-                  <Route path="/admin/risk" element={<Navigate to="/admin/system/risk" replace />} />
-                  {/* Trading module: orders placed by hand, in any segment. */}
-                  <Route path="/admin/trading" element={<ManualOrderPage />} />
-                  <Route path="/admin/trading/lab" element={<FilterLabPage />} />
-                  <Route path="/admin/strategies" element={<StrategiesOverviewPage />} />
-                  <Route path="/admin/strategies/live" element={<LiveRunnerPage />} />
-                  <Route path="/admin/strategies/history" element={<RunHistoryPage mode="admin" />} />
-                  <Route
-                    path="/admin/strategies/runs/:runId"
-                    element={<LiveRunDetailPage basePath="/admin/strategies" />}
-                  />
-                  <Route path="/admin/strategies/library" element={<StrategyLibraryPage />} />
-                  <Route path="/admin/strategies/library/:id" element={<StrategySpecPage />} />
+                  <Route path="/trade/runs" element={<LiveRunnerPage />} />
+                  <Route path="/trade/risk" element={<RiskV2Page />} />
 
-                  {/* Backtesting module (v2). */}
-                  <Route path="/admin/backtesting" element={<BacktestOverviewPage />} />
-                  <Route path="/admin/backtesting/new" element={<NewBacktestPage />} />
-                  <Route path="/admin/backtesting/runs" element={<BacktestRunsPage />} />
-                  <Route path="/admin/backtesting/runs/:id" element={<BacktestRunPage />} />
+                  <Route path="/research/backtests" element={<BacktestOverviewPage />} />
+                  <Route path="/research/backtests/new" element={<NewBacktestPage />} />
+                  <Route path="/research/backtests/runs" element={<BacktestRunsPage />} />
+                  <Route path="/research/backtests/runs/:id" element={<BacktestRunPage />} />
+                  {/* Forecasts with proof; its sections are tabs on the one page (?section=). */}
+                  <Route path="/research/forecasts" element={<AnalysisPage />} />
+                  {/* The board list; a board itself is the full-window route above. */}
+                  <Route path="/research/notebook" element={<NotebookPage />} />
 
-                  {/* Analysis module: forecasts with proof. Its sections are
-                      tabs on the one page (?section=). */}
-                  <Route path="/admin/analysis" element={<AnalysisPage />} />
+                  <Route path="/data" element={<DataOverviewPage />} />
+                  <Route path="/data/feeds" element={<LiveFeedsPage />} />
+                  <Route path="/data/historical" element={<HistoricalDataPage />} />
+                  <Route path="/data/instruments" element={<InstrumentsFnoPage />} />
 
-                  {/* Notebook module: the board list. The boards themselves are
-                      full-window routes above; the canvas is a lazy chunk. */}
-                  <Route path="/admin/notebook" element={<NotebookPage />} />
-
-                  <Route path="/admin/system/alerts" element={<LiveAlertsV2Page />} />
-                  <Route path="/admin/system/patterns" element={<Navigate to="/admin/data/patterns" replace />} />
-                  <Route path="/admin/system/calendar" element={<MarketCalendarPage />} />
-                  <Route path="/admin/system/logs" element={<ActivityLogPage />} />
-                  <Route path="/admin/system/deployments" element={<DeploymentsPage />} />
-                  <Route path="/admin/incidents" element={<IncidentsPage />} />
-                  <Route path="/admin/checkup" element={<CheckupPage />} />
-                  <Route path="/admin/live-alerts" element={<Navigate to="/admin/system/alerts" replace />} />
-                  <Route path="/admin/broker" element={<BrokerPage />} />
-                  <Route path="/admin/broker/:providerKey" element={<ConnectorDetailPage />} />
-
-                  {/* Old bookmarks from the v1 layout. */}
-                  <Route path="/admin/ingestion" element={<Navigate to="/admin/data/live" replace />} />
-                  <Route
-                    path="/admin/instruments"
-                    element={<Navigate to="/admin/data/instruments" replace />}
-                  />
+                  <Route path="/system" element={<AdminOverviewPage />} />
+                  <Route path="/system/checkups" element={<CheckupPage />} />
+                  <Route path="/system/incidents" element={<IncidentsPage />} />
+                  <Route path="/system/log" element={<LogRoute />} />
+                  <Route path="/system/calendar" element={<MarketCalendarPage />} />
+                  <Route path="/system/connectors" element={<BrokerPage />} />
+                  <Route path="/system/connectors/:providerKey" element={<ConnectorDetailPage />} />
+                  <Route path="/system/people" element={<UsersPage />} />
+                  <Route path="/system/people/packages" element={<StrategyPackagesPage />} />
                 </Route>
               </Route>
             </Route>

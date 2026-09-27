@@ -36,7 +36,7 @@ import { formatAge, formatDateTime } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components/ui'
 import './checkup.css'
 
-const PAGE = '/admin/checkup'
+const PAGE = '/system/checkups'
 const HISTORY_TAKE = 30
 
 /** Re-renders on a clock, so ages and the wait's timeout move between polls that change nothing. */

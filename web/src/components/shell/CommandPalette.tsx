@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { allows } from '../../lib/modules'
-import type { Access, NavWorkspace } from '../../lib/modules'
+import type { Access, NavWorkspace, Side } from '../../lib/modules'
 import { useInstrumentSearch, useLiveRunHistory, useStrategies } from '../../lib/queries'
 import {
   SYMBOL_MIN_CHARS,
@@ -22,7 +22,7 @@ import {
   strategyItems,
   symbolItems,
 } from '../../lib/palette'
-import type { PaletteItem, Side } from '../../lib/palette'
+import type { PaletteItem } from '../../lib/palette'
 import { istDate } from '../../lib/factors'
 import { IconSearch } from '../icons'
 
@@ -70,9 +70,9 @@ export function CommandPalette({
       paletteGroups({
         page: pageItems(nav, query, extras),
         run: runItems(runs.data, side, query),
-        strategy: strategyItems(strategies.data, side, query),
+        strategy: strategyItems(strategies.data, query),
         // Only the answer for what is in the field now, never the last query's.
-        symbol: query.trim().length >= SYMBOL_MIN_CHARS && settled === query.trim() ? symbolItems(symbols.data, side) : [],
+        symbol: query.trim().length >= SYMBOL_MIN_CHARS && settled === query.trim() ? symbolItems(symbols.data) : [],
       }),
     [nav, query, extras, runs.data, side, strategies.data, settled, symbols.data],
   )
