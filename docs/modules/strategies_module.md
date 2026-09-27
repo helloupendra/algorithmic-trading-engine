@@ -100,6 +100,29 @@ In the book it is held overnight (ticked there too), marked against tomorrow's q
 - The **book** owns the leg **from its entry**: the whole P&L of the trade, entry to exit, lands there, and so do the exit fill's charges.
 - Across the two, the trade is counted once and charged once — the run's entry charges plus the book's exit charges equal what the round trip costs in one run (to the paisa; `CarryForwardTests.After_a_move_the_run_keeps_its_entry_charges_and_the_book_the_trade`). The run history, the run page and `RunCharges` read the same figures.
 
+### 9. P&L over the day, minute by minute
+Until 28 Sep a live run kept no P&L over time: its card and its history row said where it stood, never how it got there, so the Desk's Day P&L was one number. `RunPnlRecorderService` now writes `run_pnl_minutes` fifty seconds into every minute.
+
+- **Which runs.** Every LivePaper run whose row says Running or Stopping, manual books included. A strategy run gets a row every minute it is live, whether anything moved or not, so a gap in its series means the recorder was not running, never "flat". A manual book is open for good, so it gets a row only when its figures moved; otherwise it would store the same number all night.
+- **The last row.** A run that ended in the last ten minutes is written at the minute of its `CompletedUtc`, with its figures after the stop (the flatten realized its open legs). If the live pass wrote that minute seconds before the stop, the row is updated. No state is kept between passes, so an API restart loses nothing but the minutes it was down.
+- **The figures.** Realized over every position; unrealized over the open legs at the latest live quote (the stored mark when no quote is known), valued with `PaperPnl.Unrealized` at the lot size the fills were booked at; the statutory charges of every fill so far (`RunCharges`); net = realized + unrealized − charges, in rupees to the paisa. They come from `RunPnl`, the code the run history marks with, so a minute's net is what the run card said at that minute (`RunPnlSeriesTests` checks it against `GET /api/Strategy/runs/{runId}/live`). Since the same change the history marks an open manual book at the latest quote too; it used to read the book at its stored mark while the book's own page marked it live.
+- **Cost.** Per pass, whatever the number of runs: one query for the runs, one for all their positions, one for the open legs' quotes, one for their fills, one for the minutes already written, one save.
+- **One row per run per minute.** `(SimulationRunId, AtUtc)` is unique; a minute written twice is updated, never doubled.
+
+`GET /api/Strategy/runs/pnl-series?date=yyyy-MM-dd` (an IST day, default today; `userId` filters for an admin) returns that day:
+- `runs[]`: run id, account (`userId`, `userName`), strategy, underlying, `isManualBook`, status, `startedUtc`, `inAccountTotals`, and parallel arrays `minutes` (counted from 00:00 IST, so 555 is 09:15; `dayStartUtc` is that midnight), `realized`, `unrealized`, `charges` and `net`;
+- `accounts[]`: per account, the same arrays summed over its runs in the totals at every minute any of them has a point. A run counts from its first point, holds its last value between points and keeps its final value after it ends: a run that stopped at 11:02 still owns what it made.
+- The totals are the day's trading runs: the ones `GET /api/Strategy/runs?fromDate=…&toDate=…` lists for that day, which the Desk's day figures are summed from, so the curve ends where the figure stands. A manual book opened on an earlier day is returned, but left out of the totals (its net is its whole life, not the day), and so is an alert-only run.
+
+Scoped like the run list: a trader gets their own runs whatever `userId` they pass; an admin gets every account's, or one account's.
+
+### 10. Every open leg, on every underlying
+`GET /api/Positions/open` answers with every open leg of the live runs (Running or Stopping) and manual books in scope, whatever they are written on. The Desk used to ask `/api/OptionChain/positions` once per underlying it knew of, so a leg on anything else (a crude future carried into the book, a share) never reached it.
+
+Each leg goes through `PositionViewBuilder`, the run card's builder: run id, strategy, `isManualBook`, account, symbol, underlying, expiry, strike, option type and contract label, direction (`LONG`/`SHORT`), lots, lot size and quantity, entry, the mark (latest live quote, else the stored mark) with `markUtc` and `markAgeSeconds` to the answer's `asOfUtc`, the unrealized P&L at that mark (null while no mark exists), the carry tick and `carriedFromRunId`/`carriedFromStrategy`, the leg's own stop-loss and target, when it was opened, and its `greeks` (see section 6; null when no source can price it). The greeks are worked out in one batch for all the legs; an MCX option costs one more lookup, for the future it is written on.
+
+Behind the strategies grant. A trader sees their own legs whatever `userId` they pass; an admin sees every account's, or one account's with `userId`.
+
 ## Module Components
 
 ### Python
@@ -108,8 +131,10 @@ In the book it is held overnight (ticked there too), marked against tomorrow's q
 - `src/AlgoTrading.PythonEngine/strategies/execution_runner.py` — the live runner.
 
 ### .NET
-- `src/AlgoTrading.Api/Controllers/StrategyController.cs`, `InstrumentsController.cs`
+- `src/AlgoTrading.Api/Controllers/StrategyController.cs`, `InstrumentsController.cs`, `PositionsController.cs`
 - `src/AlgoTrading.Api/Services/StrategyCatalogService.cs`, `StrategyProcessRegistry.cs`, `StrategyRunControl.cs`, `StrategyRiskGuardService.cs`, `PythonEngineLocator.cs`, `MarketHoursService.cs`, `PositionCarryForward.cs`, `ManualBook.cs`
+- `src/AlgoTrading.Api/Services/RunPnl.cs` (a run's realized, unrealized, charges and net), `RunPnlRecorder.cs` (the minute recorder and its hosted service), `RunPnlSeriesBuilder.cs` (the day's series), `OpenPositionsBuilder.cs` (every open leg)
+- `src/AlgoTrading.Domain/Entities/RunPnlMinute.cs` — one run's P&L at one minute (`run_pnl_minutes`).
 - `src/AlgoTrading.Contracts/Strategies/*.cs` — request/response DTOs.
 - `src/AlgoTrading.Infrastructure/Services/LotSizeResolver.cs`, `UnderlyingCatalog.cs`, `PaperTradingService.cs`, `LocalCsvInstrumentImportService.cs`
 

@@ -94,6 +94,11 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.ManualIntradaySquareOff>();
 // The per-user history of live runs (list rows + per-user rollup).
 builder.Services.AddScoped<AlgoTrading.Api.Services.LiveRunHistoryBuilder>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.RunCharges>();
+// A live run's P&L as every screen states it (realized, marked open legs,
+// charges, net), and the minute-by-minute record of it the Desk draws.
+builder.Services.AddScoped<AlgoTrading.Api.Services.RunPnl>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.RunPnlRecorder>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.RunPnlSeriesBuilder>();
 // The live data ingestor process: launch, durable pid, adoption after a restart.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.IngestorSupervisor>();
 // One live feed per connector that declares live ticks, FYERS being the
@@ -136,6 +141,12 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.BacktestDataService>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.PositionGreeksBuilder>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.PositionViewBuilder>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.BacktestRunViewBuilder>();
+// Every open leg across runs and manual books, for the Desk (GET /api/Positions/open).
+builder.Services.AddScoped<AlgoTrading.Api.Services.OpenPositionsBuilder>();
+// The morning plan against what is live (GET /api/Desk/plan); Desk:PlanFile overrides where it is read from.
+builder.Services.Configure<AlgoTrading.Api.Configuration.DeskOptions>(
+    builder.Configuration.GetSection(AlgoTrading.Api.Configuration.DeskOptions.SectionName));
+builder.Services.AddScoped<AlgoTrading.Api.Services.DeskPlanBuilder>();
 // Settles the manual book's expired contracts (CarriedPositionsService runs it).
 builder.Services.AddScoped<AlgoTrading.Api.Services.ExpirySettler>();
 
@@ -154,6 +165,8 @@ builder.Services.AddHostedService<AlgoTrading.Api.Services.LiveRunStartupReconci
 builder.Services.AddHostedService<AlgoTrading.Api.Services.StrategyRiskGuardService>();
 // Squares off each run at its market's close (NSE/BSE 15:30, MCX at the MCX close) and stops the feeds
 builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketHoursService>();
+// Once a minute: each live run's P&L (and a last row for a run that just ended).
+builder.Services.AddHostedService<AlgoTrading.Api.Services.RunPnlRecorderService>();
 // During the NSE session: a Dhan feed silent past its own reconnect is switched to FYERS (once a day), or in a dry run reported.
 builder.Services.AddHostedService<AlgoTrading.Api.Services.FeedFailoverService>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.NightlyArchiveService>();
@@ -327,12 +340,7 @@ builder.Services.AddRateLimiter(options =>
     });
 });
 
-builder.Services.AddAuthorizationBuilder()
-    .SetFallbackPolicy(new AuthorizationPolicyBuilder()
-        .RequireAuthenticatedUser()
-        .Build())
-    .AddPolicy(AuthorizationPolicies.AdminOnly, policy =>
-        policy.RequireRole(UserRoles.Admin));
+builder.Services.AddAuthorizationBuilder().AddPlatformPolicies();
 
 // The browser client sends its bearer token from a different origin, so the allowed
 // origins are explicit and configurable. AllowAnyOrigin is never used: combined with

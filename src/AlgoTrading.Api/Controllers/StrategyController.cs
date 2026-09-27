@@ -1051,6 +1051,31 @@ public class StrategyController : ControllerBase
     }
 
     /// <summary>
+    /// One IST day of live runs' P&amp;L minute by minute (date yyyy-MM-dd,
+    /// default today): each run's realized, unrealized, charges and net as
+    /// compact arrays, and each account's total at every minute. Written by
+    /// the API's minute recorder while runs are live; see
+    /// <see cref="RunPnlSeriesResponse"/> for how the totals are summed.
+    /// </summary>
+    /// <remarks>
+    /// Scoped as the run list is: a trader gets their own runs whatever userId
+    /// they pass; an admin gets everyone's, or one user's with userId.
+    /// </remarks>
+    [HttpGet("runs/pnl-series")]
+    public async Task<ActionResult<RunPnlSeriesResponse>> GetPnlSeries(
+        [FromQuery] string? date,
+        [FromQuery] long? userId,
+        [FromServices] RunPnlSeriesBuilder series,
+        CancellationToken cancellationToken)
+    {
+        if (!TryParseIstDate(date, out var day))
+            return BadRequest(new { message = "date must be an IST calendar day in yyyy-MM-dd form." });
+
+        long? scopeUserId = User.IsAdmin() ? userId : User.GetRequiredUserId();
+        return Ok(await series.BuildAsync(day ?? IstTime.DateOf(DateTime.UtcNow), scopeUserId, cancellationToken));
+    }
+
+    /// <summary>
     /// The lifetime record of one strategy — every live run it has ever had,
     /// rolled up into counts, P&amp;L, its best and worst run, and breakdowns by
     /// underlying and by how the runs ended. The runs themselves still come from

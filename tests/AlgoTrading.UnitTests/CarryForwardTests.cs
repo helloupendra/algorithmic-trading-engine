@@ -756,6 +756,7 @@ public class CarryForwardTests
             services.AddScoped<StrategyRunControl>();
             services.AddScoped<ManualIntradaySquareOff>();
             services.AddScoped<RunCharges>();
+            services.AddScoped<RunPnl>();
             services.AddScoped<PositionGreeksBuilder>();
             services.AddScoped<PositionViewBuilder>();
             services.AddScoped<ExpirySettler>();
@@ -1067,7 +1068,8 @@ public class CarryForwardTests
                     NullLogger<StrategyCatalogService>.Instance);
                 var history = new LiveRunHistoryBuilder(
                     sp.GetRequiredService<TradingDbContext>(), Registry, catalog,
-                    sp.GetRequiredService<ILotSizeResolver>(), sp.GetRequiredService<RunCharges>());
+                    sp.GetRequiredService<ILotSizeResolver>(), sp.GetRequiredService<RunCharges>(),
+                    sp.GetRequiredService<RunPnl>());
                 return await history.ListAsync(
                     new LiveRunHistoryFilter(Owner, null, null, null, null, null, 50, 0), CancellationToken.None);
             });
