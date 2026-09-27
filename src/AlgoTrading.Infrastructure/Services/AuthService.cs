@@ -6,6 +6,7 @@ using System.Text;
 using AlgoTrading.Application.Configuration;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.Auth;
+using AlgoTrading.Domain.Constants;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Identity;
@@ -177,6 +178,20 @@ public class AuthService : IAuthService
         if (user is null)
             return null;
 
+        // Admins (and the Service user) hold every module by role; a trader
+        // holds what was granted, the same rows RequireModule checks.
+        List<string>? grants = null;
+        if (!string.Equals(user.Role, UserRoles.Admin, StringComparison.Ordinal) &&
+            !string.Equals(user.Role, UserRoles.Service, StringComparison.Ordinal))
+        {
+            grants = await _dbContext.UserModuleGrants
+                .AsNoTracking()
+                .Where(x => x.UserId == user.Id)
+                .Select(x => x.ModuleKey)
+                .OrderBy(x => x)
+                .ToListAsync(cancellationToken);
+        }
+
         return new MeResponse
         {
             Id = user.Id,
@@ -186,7 +201,8 @@ public class AuthService : IAuthService
             TotalCapital = user.TotalCapital,
             IsActive = user.IsActive,
             CreatedUtc = user.CreatedUtc,
-            LastLoginUtc = user.LastLoginUtc
+            LastLoginUtc = user.LastLoginUtc,
+            ModuleGrants = grants
         };
     }
 
@@ -217,6 +233,20 @@ public class AuthService : IAuthService
         if (user is null)
             return null;
 
+        // Admins (and the Service user) hold every module by role; a trader
+        // holds what was granted, the same rows RequireModule checks.
+        List<string>? grants = null;
+        if (!string.Equals(user.Role, UserRoles.Admin, StringComparison.Ordinal) &&
+            !string.Equals(user.Role, UserRoles.Service, StringComparison.Ordinal))
+        {
+            grants = await _dbContext.UserModuleGrants
+                .AsNoTracking()
+                .Where(x => x.UserId == user.Id)
+                .Select(x => x.ModuleKey)
+                .OrderBy(x => x)
+                .ToListAsync(cancellationToken);
+        }
+
         return new MeResponse
         {
             Id = user.Id,
@@ -226,7 +256,8 @@ public class AuthService : IAuthService
             TotalCapital = user.TotalCapital,
             IsActive = user.IsActive,
             CreatedUtc = user.CreatedUtc,
-            LastLoginUtc = user.LastLoginUtc
+            LastLoginUtc = user.LastLoginUtc,
+            ModuleGrants = grants
         };
     }
 

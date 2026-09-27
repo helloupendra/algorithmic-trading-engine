@@ -27,5 +27,13 @@ namespace AlgoTrading.Contracts.Auth
 
         public DateTime CreatedUtc { get; set; }
         public DateTime? LastLoginUtc { get; set; }
+
+        /// <summary>
+        /// The module keys (<c>PlatformModules</c>) a trader has been granted,
+        /// so the console shows exactly the workspaces and tabs the API will
+        /// answer. Null for an admin, who holds every module by role, and on
+        /// the user list, which does not read grants.
+        /// </summary>
+        public List<string>? ModuleGrants { get; set; }
     }
 }
