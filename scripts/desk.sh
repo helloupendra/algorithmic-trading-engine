@@ -305,27 +305,29 @@ while true; do
     last_deploy_check=$now
   fi
 
-  # 3. market open, once per weekday
+  # 3. market open, once per weekday — once per DAY, even across desk
+  #    restarts: the day's marker file decides, not opened_on (daily_job in
+  #    lib/desk-common.sh). opened_on only spares re-reading it every loop.
   today="$(date +%F)"; dow="$(date +%u)"; hhmm="$(date +%H%M)"
   if [ "$dow" -le 5 ] && [ "$hhmm" -ge "$OPEN_AT" ] && [ "$hhmm" -lt 1500 ] && [ "$opened_on" != "$today" ]; then
-    say "=== $OPEN_AT — running market-open.sh ==="
-    # market-open keeps its own dated log; its lines are mirrored here through
-    # stdout, so the log-only flag is lifted for it.
-    DESK_LOG_ONLY='' ./scripts/market-open.sh >>"$LOG" 2>&1 || warn "market-open.sh exited non-zero (see logs/market-open-$today.log)"
-    opened_on="$today"
+    if daily_job market-open "$today" fg "=== $OPEN_AT — running market-open.sh ===" ./scripts/market-open.sh; then
+      opened_on="$today"
+    fi
   fi
 
   # 4. market close, once per weekday, after the MCX session — or, when that
-  #    was missed, after midnight for the day before (market_close_due)
+  #    was missed, after midnight for the day before (market_close_due). Once
+  #    per day across restarts too, by the same kind of marker.
   yesterday="$(date -v-1d +%F 2>/dev/null || date -d yesterday +%F)"
   if close_day="$(market_close_due "$dow" "$hhmm" "$today" "$yesterday" "$closed_on" "$CLOSE_AT")"; then
     if [ "$close_day" = "$today" ]; then
-      say "=== $CLOSE_AT — running market-close.sh ==="
+      close_banner="=== $CLOSE_AT — running market-close.sh ==="
     else
-      say "=== market-close.sh for $close_day did not run at $CLOSE_AT — running it now ==="
+      close_banner="=== market-close.sh for $close_day did not run at $CLOSE_AT — running it now ==="
     fi
-    DESK_LOG_ONLY='' ./scripts/market-close.sh >>"$LOG" 2>&1 || warn "market-close.sh exited non-zero (see logs/market-close-$today.log)"
-    closed_on="$close_day"
+    if daily_job market-close "$close_day" fg "$close_banner" ./scripts/market-close.sh; then
+      closed_on="$close_day"
+    fi
   fi
 
   write_status

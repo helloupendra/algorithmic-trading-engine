@@ -9,7 +9,15 @@
 # It writes one report per day to logs/market-open-YYYY-MM-DD.log and prints the
 # same lines, so the overnight result is readable in one place.
 #
-# Usage: ./scripts/market-open.sh [--dry-run]
+# Usage: ./scripts/market-open.sh [--dry-run] [--redeploy-only]
+#   --dry-run        say what would be done; start, stop and restart nothing
+#   --redeploy-only  the plan and the tally only: no API restart, no feed
+#                    stopped or started. For a morning job that was
+#                    interrupted after the feeds were up; plan lines already
+#                    running are left alone, as always.
+#
+# The desk (scripts/desk.sh) runs this once a day and records it in a marker
+# file (daily_job in lib/desk-common.sh); a run by hand leaves no marker.
 
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -18,7 +26,19 @@ LOG="$REPO_ROOT/logs/market-open-$(date +%F).log"
 . scripts/lib/desk-common.sh
 
 DRY_RUN=0
-[ "${1:-}" = "--dry-run" ] && DRY_RUN=1
+REDEPLOY_ONLY=0
+# Unknown arguments are refused: a mistyped --dry-run used to run the whole
+# live morning.
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=1 ;;
+    --redeploy-only) REDEPLOY_ONLY=1 ;;
+    *) echo "usage: scripts/market-open.sh [--dry-run] [--redeploy-only]" >&2; exit 2 ;;
+  esac
+done
+# The pid and, on the way out, the outcome go into the day's marker when the
+# desk started this run (DESK_JOB_MARKER).
+[ "$DRY_RUN" = 1 ] || job_marker_attach
 
 # Space-separated: the underlyings the feed and the chain poller cover. The
 # chain poller covers the same set (CHAIN_UNDERLYINGS, set for the API by the
@@ -113,6 +133,7 @@ fail() {
 
 say "=== market-open: $(date '+%A %d %B %Y') ==="
 [ "$DRY_RUN" = 1 ] && say "(dry run — nothing will be started)"
+[ "$REDEPLOY_ONLY" = 1 ] && say "(redeploy only — the API and the feeds are left as they are; the plan and the tally follow)"
 
 # --- 0. is it even a trading day? -------------------------------------------
 DOW="$(date +%u)"   # 1=Mon .. 7=Sun
@@ -130,7 +151,9 @@ load_env || fail ".env is missing or has no ADMIN_USERNAME / ADMIN_PASSWORD."
 # runners, the failure of 22 and 24 Sep. It is exactly what a short morning
 # tally, or a Sentinel incident, tempts someone to do, so it is refused here;
 # a missing run is started from Strategies > Live runner instead.
-if [ "$DRY_RUN" != 1 ] && [ "$((10#$(date +%H%M)))" -ge 915 ] && [ -z "${MARKET_OPEN_FORCE:-}" ]; then
+# --redeploy-only restarts nothing, so it is not refused: the plan step leaves
+# every run that is already live alone.
+if [ "$DRY_RUN" != 1 ] && [ "$REDEPLOY_ONLY" != 1 ] && [ "$((10#$(date +%H%M)))" -ge 915 ] && [ -z "${MARKET_OPEN_FORCE:-}" ]; then
   LIVE_NOW="$(live_runs)"
   if [ "${LIVE_NOW:--1}" -gt 0 ] 2>/dev/null; then
     say "$LIVE_NOW strategy run(s) are live — not running the morning job again under them"
@@ -145,6 +168,8 @@ if [ "$DRY_RUN" = 1 ]; then
   # A dry run starts nothing, and that includes the API: on 23 Sep five dry
   # runs restarted it five times in ten minutes.
   say "dry run: would start infra, rebuild the console and restart the API"
+elif [ "$REDEPLOY_ONLY" = 1 ]; then
+  say "redeploy only: infra, the console and the API are left as they are"
 else
 say "starting infra (TimescaleDB, Redis) ..."
 docker compose up -d --wait timescaledb redis >>"$LOG" 2>&1 \
@@ -303,7 +328,9 @@ dhan_token_short() {  # hours left -> exit 0 when the token will not last to the
   python3 -c "import sys; sys.exit(0 if float('$1') < 15.5 else 1)" 2>/dev/null
 }
 
-if [ "$DRY_RUN" = 1 ]; then
+if [ "$REDEPLOY_ONLY" = 1 ]; then
+  say "redeploy only: Dhan is not checked, and the feeds that are running stay as they are"
+elif [ "$DRY_RUN" = 1 ]; then
   say "dry run: would check Dhan ($(dhan_state)), map instruments, start the Dhan feed and chain recorder"
   dhan_auto_configured && say "dry run: the automatic PIN + TOTP sign-in is set up" \
     || say "dry run: the automatic PIN + TOTP sign-in is not set up (DHAN_PIN / DHAN_TOTP_SECRET)"
@@ -442,8 +469,14 @@ fyers_gate() {  # $1 = 1 when Dhan is the day's feed
 }
 # <<< fyers-gate
 
-if [ "$DRY_RUN" = 1 ] && ! connected; then
-  if [ "$DHAN_PRIMARY" = 1 ]; then
+if [ "$REDEPLOY_ONLY" = 1 ]; then
+  : # nothing waits for a sign-in: the feeds are whatever is running already
+elif [ "$DRY_RUN" = 1 ]; then
+  # Asked once and never handed to the gate: a session that lapsed between
+  # two checks sent a dry run into the real wait, up to 14:30.
+  if connected; then
+    say "dry run: FYERS session already valid"
+  elif [ "$DHAN_PRIMARY" = 1 ]; then
     say "dry run: FYERS is not signed in; would carry on without it (Dhan is the feed)"
   else
     say "dry run: FYERS is not signed in; would wait for the sign-in until ${LOGIN_WAIT_UNTIL} IST"
@@ -459,6 +492,8 @@ fi
 # morning proves it the hard way.
 if [ "$DRY_RUN" = 1 ]; then
   say "dry run: would start the ingestor and the chain poller; the plan follows"
+elif [ "$REDEPLOY_ONLY" = 1 ]; then
+  say "redeploy only: no feed is stopped or started and the feed check is skipped; the plan follows"
 else
 
 # Fresh daemons, never "already running": a feed that lived through the night
@@ -817,5 +852,8 @@ fi
 say "Watch them at $CONSOLE/admin/strategies/live — or read this file."
 
 # Short (or unknown) is a failed morning for whoever reads the exit code: the
-# desk's log, and the once-a-day marker that is coming (audit fix 9).
+# desk's log, and the day's marker (done=... exit=2).
 [ "$TALLY_RC" = 0 ] || exit 2
+# Said, not fallen off the end: the marker counts only the job's own exits
+# as finished (job_marker_attach).
+exit 0

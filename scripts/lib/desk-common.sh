@@ -350,6 +350,234 @@ print(sum(1 for r in rows if isinstance(r, dict)
           and str(r.get("strategyName") or "") != "Manual"))' 2>/dev/null || echo -1
 }
 
+# --- the day's jobs: once a day, even across desk restarts --------------------
+# market-open.sh and market-close.sh run once a day. Until 28 Sep "once" lived
+# only in the desk's memory (opened_on and closed_on in desk.sh). systemd
+# restarts the desk (Restart=always), and a restart between 08:45 and 15:00
+# ran the morning job again: the API and the feeds restarted under the day's
+# runs, a hand switch to FYERS was undone, and every plan line not Running was
+# deployed again, runs stopped on purpose included. A restart DURING the job
+# left the first copy running beside the second (KillMode=process).
+#
+# The day's record is now a file in DESK_STATE_DIR, one per job and day:
+#
+#   market-open-2026-09-28   started=2026-09-28 08:45:03      the desk, before it starts the job
+#                            pid=41822                        the job, as it starts
+#                            done=2026-09-28 09:21:07 exit=0  the job, on its way out
+#
+# Any marker for the day means the job is not started again. One whose job
+# died without a done line is reported once (notified=) and left to a person:
+# rerunning half a morning unattended is exactly what went wrong.
+#
+# The job also runs under flock, so two copies never overlap whatever the
+# markers say. The lock is taken here, around the job, never inside it: the
+# API the morning job starts would inherit the descriptor and hold the lock
+# for as long as it lives. For the same reason nothing here looks for the job
+# with pgrep: the shell the API is started from carries the job's command line.
+# >>> daily-job
+JOB_LOCK_CONFLICT=75       # flock's exit status when another copy holds the lock
+JOB_START_GRACE_MIN=2      # minutes a marker may wait for its job's pid
+JOB_MARKERS_KEPT_DAYS=14
+_JOB_WATCHED=" "           # jobs this desk has seen start or run, so it reports how they end
+_JOB_BG_NAME=""            # the job started in the background (DESK_BACKGROUND_OPEN), and its pid
+_JOB_BG_PID=""
+
+job_marker() { printf '%s/%s-%s' "$DESK_STATE_DIR" "$1" "$2"; }   # name day -> path
+
+job_field() {  # file key -> the last value written for key
+  sed -n "s/^$2=//p" "$1" 2>/dev/null | tail -1
+}
+
+job_pid_alive() {  # pid name -> 0 while that pid is still the job
+  local pid="$1" name="$2" args
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  kill -0 "$pid" 2>/dev/null || return 1
+  # A pid can come round again within a day; it counts only while it is still
+  # the job. When ps cannot say, it is taken as alive: that can only withhold
+  # a notice, never start a second job.
+  args="$(ps -p "$pid" -o args= 2>/dev/null)" || return 0
+  case "$args" in *"$name"*) return 0 ;; *) return 1 ;; esac
+}
+
+job_state() {  # marker name -> none | done | running | starting | notified | interrupted
+  local marker="$1" name="$2" pid
+  if [ ! -f "$marker" ]; then echo none; return; fi
+  if [ -n "$(job_field "$marker" "done")" ]; then echo "done"; return; fi
+  pid="$(job_field "$marker" pid)"
+  if [ -n "$pid" ] && job_pid_alive "$pid" "$name"; then echo running; return; fi
+  if [ -n "$(job_field "$marker" notified)" ]; then echo notified; return; fi
+  # No pid yet: started a moment ago, or it never got that far.
+  if [ -z "$pid" ] && [ -n "$(find "$marker" -mmin "-$JOB_START_GRACE_MIN" 2>/dev/null)" ]; then
+    echo starting; return
+  fi
+  echo interrupted
+}
+
+job_in_progress() {  # name day -> 0 while that day's job is starting or running
+  case "$(job_state "$(job_marker "$1" "$2")" "$1")" in running|starting) return 0 ;; *) return 1 ;; esac
+}
+
+# daily_job NAME DAY fg|bg BANNER COMMAND [ARGS...]
+#   Runs COMMAND once for DAY: fg waits for it; bg starts it and returns, and
+#   the caller asks again on each loop (DESK_BACKGROUND_OPEN, desk.sh).
+#   -> 0 when the day's job is settled: it ran, it had already run, or its
+#      interruption has been reported. 1 while it is starting or running: ask
+#      again on the next loop.
+daily_job() {
+  local name="$1" day="$2" mode="$3" banner="$4" marker state
+  shift 4
+  marker="$(job_marker "$name" "$day")"
+  _job_reap_background "$name" "$marker"
+  state="$(job_state "$marker" "$name")"
+  if [ "$state" = none ]; then
+    _job_start "$name" "$day" "$mode" "$banner" "$marker" "$@" || return 0
+    [ "$mode" = bg ] && return 1
+    state="$(job_state "$marker" "$name")"   # the foreground run is over
+  fi
+  case "$state" in
+    done)
+      if _job_watched "$name"; then _job_report "$name" "$marker"
+      else say "$name already ran $(_job_day_words "$day") ($(job_field "$marker" "done")) — not running it again"; fi
+      _job_unwatch "$name"
+      return 0 ;;
+    running)
+      if ! _job_watched "$name"; then
+        say "$name for $day is still running (pid $(job_field "$marker" pid), started $(job_field "$marker" started)) — not starting a second one"
+        _job_watch "$name"
+      fi
+      return 1 ;;
+    starting)
+      return 1 ;;
+    notified)
+      say "$name for $day was interrupted and has been reported — it is not rerun automatically"
+      return 0 ;;
+    *)
+      _job_interrupted "$name" "$day" "$marker"
+      _job_unwatch "$name"
+      return 0 ;;
+  esac
+}
+
+_job_start() {  # name day mode banner marker command... -> 1 when another desk made the marker first
+  local name="$1" day="$2" mode="$3" banner="$4" marker="$5" rc=0
+  local -a cmd
+  shift 5
+  # noclobber: of two desks racing here, exactly one creates the file.
+  if ! ( set -C; printf 'started=%s\n' "$(date '+%F %T')" >"$marker" ) 2>/dev/null; then
+    say "$name for $day was started by another desk a moment ago — not starting a second one"
+    return 1
+  fi
+  find "$DESK_STATE_DIR" -maxdepth 1 -type f -name "$name-????-??-??" -mtime "+$JOB_MARKERS_KEPT_DAYS" -delete 2>/dev/null || true
+  say "$banner"
+  _job_watch "$name"
+  cmd=("$@")
+  if command -v flock >/dev/null 2>&1; then
+    # -o: the lock's descriptor is closed in the job, so nothing it starts holds it.
+    cmd=(flock -n -o -E "$JOB_LOCK_CONFLICT" "$DESK_STATE_DIR/$name.lock" "$@")
+  else
+    say "  (flock is not installed here: $name runs without its lock; the day's marker still stops a second run)"
+  fi
+  # The job keeps its own dated log; its lines are mirrored into this one
+  # through stdout, so the log-only flag is lifted for it.
+  if [ "$mode" = bg ]; then
+    DESK_LOG_ONLY='' DESK_JOB_MARKER="$marker" "${cmd[@]}" >>"$LOG" 2>&1 &
+    _JOB_BG_NAME="$name"
+    _JOB_BG_PID=$!
+    say "  $name runs in the background (pid $_JOB_BG_PID); the desk keeps watching the API meanwhile"
+    return 0
+  fi
+  DESK_LOG_ONLY='' DESK_JOB_MARKER="$marker" "${cmd[@]}" >>"$LOG" 2>&1 || rc=$?
+  _job_ended "$name" "$marker" "$rc"
+  return 0
+}
+
+_job_ended() {  # name marker exit-status, as the desk saw the job end
+  # A job that never got as far as recording itself (refused by the lock, or
+  # it could not start at all) wrote nothing: the desk says why, so the marker
+  # does not read as a job killed halfway.
+  [ -z "$(job_field "$2" pid)" ] || return 0
+  if [ "$3" = "$JOB_LOCK_CONFLICT" ]; then
+    printf 'done=%s exit=%s not started: another %s held the lock\n' "$(date '+%F %T')" "$3" "$1" >>"$2"
+  else
+    printf 'done=%s exit=%s it ended before it recorded itself\n' "$(date '+%F %T')" "$3" >>"$2"
+  fi
+}
+
+_job_reap_background() {  # name marker: collects the background job once it has ended
+  local rc=0
+  if [ "$_JOB_BG_NAME" != "$1" ] || [ -z "$_JOB_BG_PID" ]; then return 0; fi
+  if kill -0 "$_JOB_BG_PID" 2>/dev/null; then return 0; fi
+  wait "$_JOB_BG_PID" 2>/dev/null || rc=$?
+  _job_ended "$1" "$2" "$rc"
+  _JOB_BG_NAME=""
+  _JOB_BG_PID=""
+}
+
+_job_report() {  # name marker: how a job this desk watched ended
+  local name="$1" marker="$2" line code
+  line="$(job_field "$marker" "done")"
+  code="$(printf '%s' "$line" | sed -n 's/.* exit=\([0-9][0-9]*\).*/\1/p')"
+  case "$code" in
+    0|'') say "$name.sh finished ($line)" ;;
+    "$JOB_LOCK_CONFLICT") say "another $name is running — this one was not started (lock: $DESK_STATE_DIR/$name.lock)" ;;
+    *) warn "$name.sh exited non-zero (see logs/$name-$(job_field "$marker" started | cut -d' ' -f1).log)" ;;
+  esac
+}
+
+_job_interrupted() {  # name day marker: said once, then left to a person
+  local name="$1" day="$2" marker="$3" log at msg
+  log="$REPO_ROOT/logs/$name-$(job_field "$marker" started | cut -d' ' -f1).log"
+  # When it last wrote anything: its own log, or the marker if that is newer.
+  at="$(date -r "$marker" +%H:%M 2>/dev/null)"
+  if [ -f "$log" ] && [ "$log" -nt "$marker" ]; then at="$(date -r "$log" +%H:%M 2>/dev/null)"; fi
+  case "$name" in
+    market-open)
+      msg="Today's morning job was interrupted at ${at:-an unknown time} — rerun by hand with scripts/market-open.sh --redeploy-only (it only deploys the plan; if no feed is running, run scripts/market-open.sh without it)" ;;
+    market-close)
+      msg="The evening close for $day was interrupted at ${at:-an unknown time} — rerun by hand with scripts/market-close.sh" ;;
+    *)
+      msg="$name for $day was interrupted at ${at:-an unknown time} — rerun it by hand" ;;
+  esac
+  warn "$msg"
+  notify "AlgoTrading" "$msg"
+  printf 'notified=%s\n' "$(date '+%F %T')" >>"$marker"
+}
+
+_job_watch() { _job_watched "$1" || _JOB_WATCHED="$_JOB_WATCHED$1 "; }
+_job_watched() { case "$_JOB_WATCHED" in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+_job_unwatch() { _JOB_WATCHED="${_JOB_WATCHED/ $1 / }"; }
+_job_day_words() { if [ "$1" = "$(date +%F)" ]; then echo today; else echo "for $1"; fi; }
+# <<< daily-job
+
+# >>> job-marker
+# The job's side of the day's marker (above): its pid as it starts, and on its
+# way out its exit status. Only a job the desk started has a marker
+# (DESK_JOB_MARKER); a run by hand or a dry run leaves none.
+#
+# A job that dies to a signal must write no done line: that is how the desk
+# tells "interrupted" from "finished". bash runs the EXIT trap on SIGTERM and
+# SIGHUP too, with nothing in $? to tell them from an exit 0, so the job's own
+# exits are counted by shadowing the exit builtin. Subshells never run the
+# EXIT trap, so an exit inside $(...) records nothing.
+job_marker_attach() {
+  JOB_MARKER="${DESK_JOB_MARKER:-}"
+  unset DESK_JOB_MARKER   # not handed on to the API and the daemons the job starts
+  if [ -z "$JOB_MARKER" ] || [ ! -f "$JOB_MARKER" ]; then JOB_MARKER=""; return 0; fi
+  printf 'pid=%s\n' "$$" >>"$JOB_MARKER"
+  exit() { _JOB_EXIT="${1-$?}"; builtin exit "$_JOB_EXIT"; }
+  trap '_job_marker_exit' EXIT
+}
+
+_job_marker_exit() {
+  [ -n "${JOB_MARKER:-}" ] || return 0
+  if [ -n "${_JOB_EXIT:-}" ]; then
+    printf 'done=%s exit=%s\n' "$(date '+%F %T')" "$_JOB_EXIT" >>"$JOB_MARKER"
+  else
+    printf 'ended=%s without finishing (killed by a signal?)\n' "$(date '+%F %T')" >>"$JOB_MARKER"
+  fi
+}
+# <<< job-marker
+
 # --- when the evening close runs ----------------------------------------------
 # market-close.sh stops every run, feed and recorder, so it must run after the
 # LAST market of the day has closed: MCX, at 23:30 IST while the US is on
