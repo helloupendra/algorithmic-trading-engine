@@ -25,6 +25,7 @@
 .tr-acct { background: var(--surface); padding: 10px 12px 12px; min-width: 0; }
 .tr-acct__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
 .tr-acct__head h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
+.tr-acct__head .dk-sw { align-self: center; margin-right: -4px; }
 .tr-acct__pnl { font-size: 14px; font-weight: 500; }
 
 .tr-run + .tr-run { margin-top: 12px; }
@@ -34,13 +35,23 @@
 .tr-run__pnl { font-weight: 500; }
 .tr-run__note { margin: 4px 0 0; }
 
-.tr-legs td { height: 30px; }
-.tr-legs .c { text-align: center; width: 48px; }
+/* One set of column widths for every run's table, so the columns line up down the page. */
+.tr-legs { table-layout: fixed; }
+.tr-legs .tr-c-side { width: 64px; }
+.tr-legs .tr-c-lots, .tr-legs .tr-c-entry, .tr-legs .tr-c-delta, .tr-legs .tr-c-vega { width: 86px; }
+.tr-legs .tr-c-mark, .tr-legs .tr-c-pnl { width: 100px; }
+.tr-legs .tr-c-lv { width: 136px; }
+.tr-legs .tr-c-theta { width: 112px; }
+.tr-legs .tr-c-carry { width: 52px; }
+.tr-legs .tr-c-act { width: 96px; }
+.tr-legs td { height: 30px; overflow: hidden; text-overflow: ellipsis; }
+.tr-legs .c { text-align: center; }
 .tr-leg { white-space: normal !important; line-height: 1.45; }
 .tr-legname { color: var(--text); }
 .tr-sub { display: block; font-size: var(--fs-xs); line-height: 1.3; white-space: nowrap; }
 .tr-legs td.r .tr-sub { text-align: right; }
 .tr-only-s { display: none; }
+.tr-nw { white-space: nowrap; }
 .tr-leg .dk-chip { text-decoration: none; }
 .tr-carry { width: 14px; height: 14px; margin: 0; accent-color: var(--brand); cursor: pointer; }
 .tr-carry:disabled { cursor: default; }
@@ -86,7 +97,11 @@
 }
 @media (max-width: 760px) {
   .tr-hide-s, .tr-hide-m { display: none !important; }
-  .tr-only-s { display: block; }
+  .tr-only-s { display: block; white-space: normal; }
+  .tr-close--s { margin-top: 4px; }
+  .tr-legs .tr-c-mark { width: 78px; }
+  .tr-legs .tr-c-pnl { width: 70px; }
+  .tr-legs .tr-c-carry { width: 40px; }
   .tr-acct { padding: 8px 10px 10px; }
   .tr-legs td { height: auto; padding-top: 5px; padding-bottom: 5px; vertical-align: top; }
   .tr-legs td.c { vertical-align: middle; }

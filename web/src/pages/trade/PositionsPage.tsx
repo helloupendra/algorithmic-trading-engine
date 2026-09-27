@@ -94,9 +94,20 @@ function LegRow({ p, run }: { p: OpenPosition; run: PositionRun }) {
           </>
         )}
         <span className="tr-sub dk-t3 tr-only-s">
-          {p.direction === 'SHORT' ? 'short' : 'long'} {p.lots} × {p.lotSize} · entry {formatPrice(p.entryPrice)}
-          {g ? ` · θ ${formatThetaPerDay(g.thetaRupeesPerDay)}` : ''}
+          <span className="tr-nw">
+            {p.direction === 'SHORT' ? 'short' : 'long'} {p.lots} × {p.lotSize}
+          </span>{' '}
+          · <span className="tr-nw">entry {formatPrice(p.entryPrice)}</span>
+          {g && (
+            <>
+              {' '}
+              · <span className="tr-nw">θ {formatThetaPerDay(g.thetaRupeesPerDay)}</span>
+            </>
+          )}
         </span>
+        <button type="button" className="tr-close tr-only-s tr-close--s" disabled={close.isPending} onClick={squareOff}>
+          {close.isPending ? 'Closing…' : 'Square off'}
+        </button>
         {(setCarry.isError || close.isError) && <InlineError error={setCarry.error ?? close.error} />}
       </td>
       <td className="tr-hide-s">
@@ -164,25 +175,25 @@ function RunBlock({ run }: { run: PositionRun }) {
         <thead>
           <tr>
             <th>Leg</th>
-            <th className="tr-hide-s">Side</th>
-            <th className="r tr-hide-s">Lots × size</th>
-            <th className="r tr-hide-s">Entry</th>
-            <th className="r">Mark</th>
-            <th className="r">P&L</th>
-            <th className="r tr-hide-s">SL / target</th>
-            <th className="r tr-hide-m" title="Delta per unit, with IV">
+            <th className="tr-hide-s tr-c-side">Side</th>
+            <th className="r tr-hide-s tr-c-lots">Lots × size</th>
+            <th className="r tr-hide-s tr-c-entry">Entry</th>
+            <th className="r tr-c-mark">Mark</th>
+            <th className="r tr-c-pnl">P&L</th>
+            <th className="r tr-hide-s tr-c-lv">SL / target</th>
+            <th className="r tr-hide-m tr-c-delta" title="Delta per unit, with IV">
               Δ
             </th>
-            <th className="r tr-hide-m" title="Theta for this leg: rupees a day of time is worth to it">
+            <th className="r tr-hide-m tr-c-theta" title="Theta for this leg: rupees a day of time is worth to it">
               Θ ₹/day
             </th>
-            <th className="r tr-hide-m" title="Rupees this leg makes on a one-point rise in IV">
+            <th className="r tr-hide-m tr-c-vega" title="Rupees this leg makes on a one-point rise in IV">
               Vega ₹
             </th>
-            <th className="c" title={carryHint(run.isManualBook)}>
+            <th className="c tr-c-carry" title={carryHint(run.isManualBook)}>
               Carry
             </th>
-            <th className="tr-hide-s" aria-label="Actions" />
+            <th className="tr-hide-s tr-c-act" aria-label="Actions" />
           </tr>
         </thead>
         <tbody>
@@ -209,10 +220,10 @@ function AccountBlock({ account, tone, multi }: { account: PositionAccount; tone
         <span className="dk-t3 dk-xs">
           {account.legs} open leg{account.legs === 1 ? '' : 's'} in {account.runs.length} book{account.runs.length === 1 ? '' : 's'}
           {account.thetaPerDay != null && (
-            <>
+            <span className="tr-hide-s">
               {' · θ '}
               <span className={thetaTone(account.thetaPerDay)}>{formatThetaPerDay(account.thetaPerDay)}</span>
-            </>
+            </span>
           )}
         </span>
         <span className="tr-grow" />
@@ -269,8 +280,8 @@ export function PositionsPage() {
                 <span className="dk-t3"> before exit charges</span>
                 {totals.thetaPerDay != null && (
                   <>
-                    {' · θ '}
-                    <span className={thetaTone(totals.thetaPerDay)}>{formatThetaPerDay(totals.thetaPerDay)}</span>
+                    {' · '}
+                    <span className={`tr-nw ${thetaTone(totals.thetaPerDay)}`}>θ {formatThetaPerDay(totals.thetaPerDay)}</span>
                   </>
                 )}
               </>

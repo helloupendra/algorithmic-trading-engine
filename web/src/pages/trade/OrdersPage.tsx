@@ -71,7 +71,7 @@ function Row({ line, multi, toneOf }: { line: OrderLine; multi: boolean; toneOf:
       </td>
       <td className="r dk-n">{o.quantity.toLocaleString('en-IN')}</td>
       <td className="dk-t3 tr-hide-s">{o.orderType.toLowerCase()}</td>
-      <td className="r dk-n tr-hide-s dk-t3">{o.requestedPrice != null ? formatPrice(o.requestedPrice) : 'market'}</td>
+      <td className="r dk-n tr-hide-s dk-t3">{o.requestedPrice != null ? formatPrice(o.requestedPrice) : '—'}</td>
       <td className="r dk-n">{o.fillPrice != null ? formatPrice(o.fillPrice) : <span className="dk-t3">—</span>}</td>
       <td className="r">
         <Chip tone={statusTone(o.status)}>{o.status}</Chip>
@@ -195,7 +195,9 @@ export function OrdersPage() {
                     <th>Side</th>
                     <th className="r">Qty</th>
                     <th className="tr-hide-s">Type</th>
-                    <th className="r tr-hide-s">Asked</th>
+                    <th className="r tr-hide-s" title="The limit price asked for; a market order asks none">
+                      Limit
+                    </th>
                     <th className="r">Fill</th>
                     <th className="r">Status</th>
                   </tr>
