@@ -9,7 +9,11 @@
 cd "$(dirname "$0")/.." || exit 1
 API="${API_BASE_URL:-http://localhost:5025}"
 PUBLIC="${PUBLIC_URL:-https://openfno.com}"
-if [ "$(uname -s)" = "Darwin" ]; then PIDFILE="$HOME/Library/Application Support/algotrading/desk.pid"; else PIDFILE="${XDG_STATE_HOME:-$HOME/.local/state}/algotrading/desk.pid"; fi
+if [ "$(uname -s)" = "Darwin" ]; then STATE_DIR="$HOME/Library/Application Support/algotrading"; else STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/algotrading"; fi
+PIDFILE="$STATE_DIR/desk.pid"
+# On the server the desk is this systemd unit (scripts/aws/bootstrap.sh).
+UNIT=algotrading-desk
+HAS_UNIT=""; command -v systemctl >/dev/null 2>&1 && [ -f "/etc/systemd/system/$UNIT.service" ] && HAS_UNIT=1
 G='\033[32m'; R='\033[31m'; Y='\033[33m'; D='\033[2m'; N='\033[0m'
 ok()   { printf "  ${G}●${N} %-28s %s\n" "$1" "$2"; }
 bad()  { printf "  ${R}●${N} %-28s %s\n" "$1" "$2"; }
@@ -29,8 +33,21 @@ if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
   fi
   host="in the background"; [ "$(ps -o tty= -p "$(cat "$PIDFILE")" 2>/dev/null | tr -d ' ')" != "??" ] && host="in a Terminal window"
   ok "desk supervisor" "running $host, pid $(cat "$PIDFILE") $age"
+elif [ -n "$HAS_UNIT" ]; then
+  bad "desk supervisor" "NOT running — sudo systemctl start $UNIT; see logs/desk.log"
 else
   bad "desk supervisor" "NOT running — start: ./scripts/desk.sh --headless  (or wait ≤10 min for the keepalive)"
+fi
+# The unit's own view: whether systemd has it running, and how often it has
+# restarted it since it was last started by hand (Restart=always hides crashes).
+if [ -n "$HAS_UNIT" ]; then
+  u_active="$(systemctl show "$UNIT" -p ActiveState --value 2>/dev/null)"
+  u_sub="$(systemctl show "$UNIT" -p SubState --value 2>/dev/null)"
+  u_restarts="$(systemctl show "$UNIT" -p NRestarts --value 2>/dev/null)"
+  u_text="$u_active ($u_sub), restarted ${u_restarts:-?} time(s) by systemd since it was started"
+  if [ "$u_active" != active ]; then bad "desk unit ($UNIT)" "$u_text"
+  elif [ "${u_restarts:-0}" != 0 ]; then meh "desk unit ($UNIT)" "$u_text — journalctl -u $UNIT, logs/desk.log"
+  else ok "desk unit ($UNIT)" "$u_text"; fi
 fi
 
 # --- services -----------------------------------------------------------------
@@ -102,6 +119,17 @@ if [ -f logs/desk.status ]; then
   printf "  ${D}live commit      %s${N}\n" "$(grep '^commit=' logs/desk.status | cut -d= -f2-)"
   printf "  ${D}last deploy      %s${N}\n" "$(grep '^last_deploy=' logs/desk.status | cut -d= -f2-)"
   printf "  ${D}market-open ran  %s${N}\n" "$(grep '^market_open_ran_on=' logs/desk.status | cut -d= -f2-)"
+fi
+# Today's record of the morning job (lib/desk-common.sh, daily_job), read
+# straight from its marker so it answers with the desk down too.
+m="$STATE_DIR/market-open-$(date +%F)"
+if [ -f "$m" ]; then
+  m_done="$(sed -n 's/^done=//p' "$m" | tail -1)"; m_pid="$(sed -n 's/^pid=//p' "$m" | tail -1)"
+  if [ -n "$m_done" ]; then m_text="done $m_done"
+  elif [ -n "$m_pid" ] && kill -0 "$m_pid" 2>/dev/null; then m_text="running (pid $m_pid, started $(sed -n 's/^started=//p' "$m" | tail -1))"
+  elif grep -q '^notified=' "$m"; then m_text="INTERRUPTED — reported; rerun by hand: scripts/market-open.sh --redeploy-only"
+  else m_text="INTERRUPTED — rerun by hand: scripts/market-open.sh --redeploy-only"; fi
+  printf "  ${D}morning job      %s${N}\n" "$m_text"
 fi
 # --- what the desk did last -------------------------------------------------------
 if [ -f logs/desk.log ]; then
