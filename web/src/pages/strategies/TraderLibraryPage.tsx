@@ -1,15 +1,12 @@
 /**
- * Strategies module — Overview. Tiles and a compact table of what is running
- * right now — one row per RUN, since a strategy may be live on several
- * underlyings at once; every row leads to where the positions live. Under it,
- * the last six runs from Run history, whatever ended them.
+ * Trade → Library, as a trader sees it: what they have running and how it is
+ * doing, their last few runs, and the strategies their package allows, each
+ * with Deploy and its "How it works" page. The API scopes every list to the
+ * trader asking.
  *
- * One page, two readers. An admin sees the whole desk and links into the live
- * runner and the library; a trader sees their own runs (the API scopes them),
- * links into their own pages, and gets the strategy cards to deploy from —
- * which is the whole of what their Strategies page used to be. The numbers,
- * the tables and the layout are the same, because there was never a reason for
- * a trader to read a worse version of the same thing.
+ * An admin's Library is the full catalogue (StrategyLibraryPage). This page
+ * was also the admin's Strategies overview once; the Desk's runs grid and
+ * Trade → Runs replaced that, and its admin half went with it.
  */
 
 import { useEffect, useMemo, useState } from 'react'
@@ -23,13 +20,13 @@ import {
   useStrategyLives,
 } from '../../lib/queries'
 import { formatDateTime, formatDuration, formatNumber } from '../../lib/format'
-import { runDurationSeconds, runNetPnl, runUserLabel } from '../../lib/runHistory'
+import { runDurationSeconds, runNetPnl } from '../../lib/runHistory'
 import { Panel, QueryBoundary, StatTile } from '../../components/ui'
 import { IconClock, IconFlask, IconPlay } from '../../components/icons'
 import type { StrategyActiveRun, StrategyListItem, StrategyLiveView } from '../../lib/types'
-import { CategoryBadge, LaunchDialog, PnlValue, ReadinessStrip, StrategyCard } from './shared'
+import { CategoryBadge, LaunchDialog, PnlValue, StrategyCard } from './shared'
 import { RunStatusCell } from './RunHistoryPage'
-import { liveNet, runOwner, runningSummary } from '../../lib/strategyList'
+import { liveNet, runningSummary } from '../../lib/strategyList'
 import { todayIst } from '../backtesting/shared'
 
 interface RunRow {
@@ -38,18 +35,11 @@ interface RunRow {
 }
 
 const RECENT_RUNS = 6
+const HISTORY = '/trade/history'
+const POSITIONS = '/trade/positions'
+const runLink = (runId: number) => `/trade/runs/${runId}`
 
-export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 'trader' } = {}) {
-  const trader = mode === 'trader'
-
-  // Where each link goes. A trader has no live runner and no library: their
-  // positions live on the run's own page, and each strategy explains itself
-  // through "How it works".
-  const positionsLink = trader ? '/trade/positions' : '/trade/runs'
-  const historyLink = '/trade/history'
-  const runLink = (runId: number) =>
-    `/trade/runs/${runId}`
-
+export function TraderLibraryPage() {
   const strategies = useStrategies()
   const list = useMemo(() => strategies.data ?? [], [strategies.data])
   const runningStrategies = useMemo(() => list.filter((s) => s.activeRuns.length > 0), [list])
@@ -89,10 +79,9 @@ export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 't
   const exposure = useRiskExposure()
   const riskLimits = useRiskLimits()
   const blockers: { text: string; to: string }[] = []
-  if (trader && killSwitch.data?.isActive)
+  if (killSwitch.data?.isActive)
     blockers.push({ text: 'Trading is halted by the operator (kill switch) — new runs are refused', to: '/desk' })
   if (
-    trader &&
     exposure.data &&
     riskLimits.data &&
     riskLimits.data.maxConcurrentRuns > 0 &&
@@ -100,7 +89,7 @@ export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 't
   )
     blockers.push({
       text: `Concurrent runs limit reached (${exposure.data.activeRunsCount}/${riskLimits.data.maxConcurrentRuns}) — stop a run first`,
-      to: historyLink,
+      to: HISTORY,
     })
 
   const navigate = useNavigate()
@@ -111,26 +100,20 @@ export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 't
   // and the address is cleaned so a refresh does not reopen it.
   const [search, setSearch] = useSearchParams()
   useEffect(() => {
-    if (!trader) return
     const wanted = Number(search.get('strategy'))
     if (!Number.isInteger(wanted) || wanted <= 0 || !strategies.data) return
     const found = strategies.data.find((s) => s.id === wanted)
     if (found) setLaunching(found)
     setSearch({}, { replace: true })
-  }, [trader, search, setSearch, strategies.data])
+  }, [search, setSearch, strategies.data])
 
   return (
     <div className="page">
       <header className="page__header">
         <div>
           <h1 className="page__title">Strategies</h1>
-          <p className="page__subtitle">
-            {trader
-              ? 'What you have running, how it is doing, and the strategies your package allows.'
-              : 'What is running, how it is doing, and the catalogue it was started from.'}
-          </p>
+          <p className="page__subtitle">What you have running, how it is doing, and the strategies your package allows.</p>
         </div>
-        {!trader && <ReadinessStrip />}
       </header>
 
       {blockers.length > 0 && (
@@ -159,20 +142,15 @@ export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 't
                 ))
               : 'nothing running'
           }
-          to={positionsLink}
+          to={POSITIONS}
         />
-        <StatTile
-          label="Open positions"
-          value={openPositions}
-          sub="across running runs"
-          to={positionsLink}
-        />
+        <StatTile label="Open positions" value={openPositions} sub="across running runs" to={POSITIONS} />
         <StatTile
           label="Live P&L"
           value={<PnlValue value={livePnl} />}
           tone={livePnl > 0 ? 'pos' : livePnl < 0 ? 'neg' : undefined}
-          sub={trader ? 'net of charges · open and closed' : 'net of charges · all accounts'}
-          to={positionsLink}
+          sub="net of charges · open and closed"
+          to={POSITIONS}
         />
         <StatTile
           label="Runs today"
@@ -181,20 +159,15 @@ export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 't
           sub={
             todayRuns.data
               ? todayList.length > 0
-                ? <>net <PnlValue value={todayPnl} /> · {trader ? 'your runs' : 'every user'} · incl. stopped</>
+                ? <>net <PnlValue value={todayPnl} /> · your runs · incl. stopped</>
                 : 'none started yet — all in Run history'
               : todayRuns.isError
                 ? 'history unavailable'
                 : 'loading…'
           }
-          to={historyLink}
+          to={HISTORY}
         />
-        <StatTile
-          label={trader ? 'In my package' : 'Library size'}
-          value={list.length}
-          sub={trader ? 'strategies you may deploy' : 'strategies discovered'}
-          to={trader ? undefined : '/trade/library'}
-        />
+        <StatTile label="In my package" value={list.length} sub="strategies you may deploy" />
       </div>
 
       <Panel
@@ -204,31 +177,21 @@ export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 't
           </>
         }
         actions={
-          <Link className="btn btn--sm" to={trader ? historyLink : '/trade/runs'}>
-            {trader ? 'My runs' : 'Open live runner'}
+          <Link className="btn btn--sm" to={HISTORY}>
+            My runs
           </Link>
         }
       >
         <QueryBoundary query={strategies}>
           {() =>
             rows.length === 0 ? (
-              <p className="empty">
-                {trader ? (
-                  <>Nothing of yours is running. Pick a strategy below and press Deploy.</>
-                ) : (
-                  <>
-                    Nothing is running. Start one from the{' '}
-                    <Link to="/trade/runs">Live runner</Link>.
-                  </>
-                )}
-              </p>
+              <p className="empty">Nothing of yours is running. Pick a strategy below and press Deploy.</p>
             ) : (
               <div className="tablewrap">
                 <table className="table">
                   <thead>
                     <tr>
                       <th>Strategy</th>
-                      {!trader && <th>Account</th>}
                       <th>Underlying</th>
                       <th className="r">Open</th>
                       <th className="r">P&L</th>
@@ -245,18 +208,15 @@ export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 't
                             <b>{s.name}</b> <CategoryBadge category={s.category} />
                             <span className="faint"> · #{run.runId}</span>
                           </td>
-                          {!trader && <td>{runOwner(run)}</td>}
                           <td className="mono">{v?.underlying ?? run.underlying}</td>
-                          <td className="r">
-                            {v ? v.positions.filter((p) => p.status === 'Open').length : '—'}
-                          </td>
+                          <td className="r">{v ? v.positions.filter((p) => p.status === 'Open').length : '—'}</td>
                           <td className="r">{v ? <PnlValue value={v.pnl.total} /> : '—'}</td>
                           <td className="muted">
                             {run.startedBy ? `${run.startedBy} · ` : ''}
                             {formatDateTime(run.startedUtc)}
                           </td>
                           <td className="r">
-                            <Link to={trader ? runLink(run.runId) : '/trade/runs'}>Positions →</Link>
+                            <Link to={runLink(run.runId)}>Positions →</Link>
                           </td>
                         </tr>
                       )
@@ -276,33 +236,18 @@ export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 't
           </>
         }
         actions={
-          <Link className="btn btn--sm" to={historyLink}>
+          <Link className="btn btn--sm" to={HISTORY}>
             All history →
           </Link>
         }
       >
-        <QueryBoundary
-          query={recent}
-          empty={
-            <>
-              {trader ? (
-                <>No runs yet — deploy a strategy below and it will appear here.</>
-              ) : (
-                <>
-                  No live runs yet — start one from the{' '}
-                  <Link to="/trade/runs">Live runner</Link>.
-                </>
-              )}
-            </>
-          }
-        >
+        <QueryBoundary query={recent} empty="No runs yet — deploy a strategy below and it will appear here.">
           {(runs) => (
             <div className="tablewrap">
               <table className="table">
                 <thead>
                   <tr>
                     <th>Run #</th>
-                    {!trader && <th>User</th>}
                     <th>Strategy</th>
                     <th>Underlying</th>
                     <th>Started</th>
@@ -317,9 +262,6 @@ export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 't
                   {runs.slice(0, RECENT_RUNS).map((run) => (
                     <tr key={run.runId} className={run.isActive ? 'row--live' : ''}>
                       <td className="mono muted">#{run.runId}</td>
-                      {!trader && (
-                        <td>{run.userName || <span className="faint">{runUserLabel(run.userName, run.userId)}</span>}</td>
-                      )}
                       <td>
                         <b>{run.strategyName}</b> <CategoryBadge category={run.category} />
                       </td>
@@ -345,38 +287,32 @@ export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 't
         </QueryBoundary>
       </Panel>
 
-      {trader && (
-        <Panel
-          title={
-            <>
-              <IconFlask /> Deploy a strategy
-            </>
-          }
-        >
-          <QueryBoundary query={strategies} empty="No strategies in your package yet — ask the operator.">
-            {(all) => (
-              <div className="strategy-grid">
-                {all.map((s) => (
-                  <StrategyCard
-                    key={s.id}
-                    strategy={s}
-                    actionLabel="Deploy…"
-                    specHref={`/trade/library/${s.id}`}
-                    onStart={(st) => setLaunching(st)}
-                  />
-                ))}
-              </div>
-            )}
-          </QueryBoundary>
-        </Panel>
-      )}
+      <Panel
+        title={
+          <>
+            <IconFlask /> Deploy a strategy
+          </>
+        }
+      >
+        <QueryBoundary query={strategies} empty="No strategies in your package yet — ask the operator.">
+          {(all) => (
+            <div className="strategy-grid">
+              {all.map((s) => (
+                <StrategyCard
+                  key={s.id}
+                  strategy={s}
+                  actionLabel="Deploy…"
+                  specHref={`/trade/library/${s.id}`}
+                  onStart={(st) => setLaunching(st)}
+                />
+              ))}
+            </div>
+          )}
+        </QueryBoundary>
+      </Panel>
 
       {launching && (
-        <LaunchDialog
-          strategy={launching}
-          onClose={() => setLaunching(null)}
-          onStarted={(r) => navigate(runLink(r.runId))}
-        />
+        <LaunchDialog strategy={launching} onClose={() => setLaunching(null)} onStarted={(r) => navigate(runLink(r.runId))} />
       )}
     </div>
   )

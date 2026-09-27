@@ -61,7 +61,7 @@ export function CommandPalette({
   const settled = useSettled(query.trim(), 150)
   const symbols = useInstrumentSearch(markets ? settled : '')
   const strategies = useStrategies({ enabled: trading })
-  // The same filters as the Strategies overview, so the two share one cached list.
+  // The same filters as the trader's Library page, so the two share one cached list.
   const today = istDate()
   const runs = useLiveRunHistory({ fromDate: today, toDate: today, take: 500 }, trading)
 

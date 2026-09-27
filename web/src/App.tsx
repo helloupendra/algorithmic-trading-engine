@@ -28,7 +28,7 @@ import MarketFactorsPage from './pages/data/MarketFactorsPage'
 import { SystemLogPage } from './pages/system/log/SystemLogPage'
 import { IncidentsPage } from './pages/admin/IncidentsPage'
 import { MarketCalendarPage } from './pages/admin/MarketCalendarPage'
-import { StrategiesOverviewPage } from './pages/strategies/StrategiesOverviewPage'
+import { TraderLibraryPage } from './pages/strategies/TraderLibraryPage'
 import { ManualOrderPage } from './pages/trading/ManualOrderPage'
 import { FilterLabPage } from './pages/trading/FilterLabPage'
 import { LiveRunnerPage } from './pages/strategies/LiveRunnerPage'
@@ -128,7 +128,7 @@ export default function App() {
                 {/* Trade. A trader deploys from the library and follows runs in History. */}
                 <Route
                   path="/trade/library"
-                  element={<ByRole admin={<StrategyLibraryPage />} trader={<StrategiesOverviewPage mode="trader" />} />}
+                  element={<ByRole admin={<StrategyLibraryPage />} trader={<TraderLibraryPage />} />}
                 />
                 <Route
                   path="/trade/library/:id"

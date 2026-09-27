@@ -26,6 +26,8 @@ import {
   useAlerterStatus,
   useDeployHistory,
   useRiskEvents,
+  useStartAlerter,
+  useStopAlerter,
 } from '../../../lib/queries'
 import type { AlerterStatus } from '../../../lib/queries'
 import {
@@ -139,14 +141,13 @@ function errorText(err: unknown): string {
 function AlertsStrip({ status }: { status: AlerterStatus | undefined }) {
   const qc = useQueryClient()
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
-  const control = useMutation({
-    mutationFn: (action: 'start' | 'stop') => api.post<{ message: string }>(`/api/Alerts/${action}`),
-    onSuccess: (res) => {
-      setNotice({ ok: true, text: res.message })
-      qc.invalidateQueries({ queryKey: ['alerts'] })
-    },
-    onError: (err) => setNotice({ ok: false, text: errorText(err) }),
-  })
+  const start = useStartAlerter()
+  const stop = useStopAlerter()
+  const said = {
+    onSuccess: (res: { message: string }) => setNotice({ ok: true, text: res.message }),
+    onError: (err: unknown) => setNotice({ ok: false, text: errorText(err) }),
+  }
+  const switching = start.isPending || stop.isPending
   const test = useMutation({
     mutationFn: (instrument: string) => api.post<{ message: string }>('/api/Alerts/test-e2e', { instrument }),
     onSuccess: (res) => {
@@ -171,10 +172,10 @@ function AlertsStrip({ status }: { status: AlerterStatus | undefined }) {
           {running.length > 0 && <span className="muted"> {running.map((p) => `${p.underlying}${p.processId ? ` pid ${p.processId}` : ''}`).join(', ')}</span>}
         </span>
         <span className="log-strip__tools">
-          <button type="button" className="btn btn--sm btn--ghost" disabled={control.isPending || status.isRunning} onClick={() => control.mutate('start')}>
+          <button type="button" className="btn btn--sm btn--ghost" disabled={switching || status.isRunning} onClick={() => start.mutate(undefined, said)}>
             Start
           </button>
-          <button type="button" className="btn btn--sm btn--ghost" disabled={control.isPending || !status.isRunning} onClick={() => control.mutate('stop')}>
+          <button type="button" className="btn btn--sm btn--ghost" disabled={switching || !status.isRunning} onClick={() => stop.mutate(undefined, said)}>
             Stop
           </button>
           <button
