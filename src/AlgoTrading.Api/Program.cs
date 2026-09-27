@@ -145,6 +145,10 @@ builder.Services.AddHostedService<AlgoTrading.Api.Services.NightlyArchiveService
 builder.Services.AddHostedService<AlgoTrading.Api.Services.CarriedPositionsService>();
 // NSE's evening market-factor files (participant OI, F&O bhavcopy, FII/DII), fetched after 18:00 IST.
 builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketFactorsSyncService>();
+// The Analysis module's forecasts: `python -m analysis issue` at 08:50 IST and
+// `score` at 15:50 IST on NSE trading days, plus a catch-up score after start-up.
+builder.Services.AddSingleton<AlgoTrading.Api.Services.ForecastJobRunner>();
+builder.Services.AddHostedService<AlgoTrading.Api.Services.ForecastScheduler>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketPulseSubscriptionService>();
 // Alert Subscriber Service for logic engine pub/sub
 builder.Services.AddHostedService<AlgoTrading.Api.Services.AlertSubscriberService>();

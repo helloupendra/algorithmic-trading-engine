@@ -702,6 +702,113 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.ToTable("expiry_rules", (string)null);
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.Forecast", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("BaselineJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<double?>("BaselineLoss")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("InputsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("IssuedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double?>("Loss")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("ModelKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ModelVersion")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("OutcomeJson")
+                        .HasColumnType("text");
+
+                    b.Property<string>("PredictionJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("ScoredUtc")
+                        .IsConcurrencyToken()
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ScoresJson")
+                        .HasColumnType("text");
+
+                    b.Property<DateOnly>("SessionDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("Target")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Underlying")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SessionDate")
+                        .HasDatabaseName("IX_forecasts_SessionDate");
+
+                    b.HasIndex("ModelKey", "ModelVersion", "Target", "Underlying", "SessionDate")
+                        .IsUnique()
+                        .HasDatabaseName("UX_forecasts_model_target_underlying_session");
+
+                    b.ToTable("forecasts", (string)null);
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.ForecastModel", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Version")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("BacktestJson")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("RegisteredUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Target")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Key", "Version");
+
+                    b.ToTable("forecast_models", (string)null);
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.Incident", b =>
                 {
                     b.Property<long>("Id")
@@ -2789,6 +2896,15 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("EquityGroup");
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.Forecast", b =>
+                {
+                    b.HasOne("AlgoTrading.Domain.Entities.ForecastModel", null)
+                        .WithMany()
+                        .HasForeignKey("ModelKey", "ModelVersion")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("AlgoTrading.Domain.Entities.StrategyPackageItem", b =>

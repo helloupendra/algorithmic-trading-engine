@@ -35,6 +35,9 @@ public static class PlatformModules
     /// <summary>Whiteboards: an infinite canvas for notes, with cards that link back into the console.</summary>
     public const string Notebook = "notebook";
 
+    /// <summary>Analysis: the desk's forecasts, each scored against a baseline, and the scoreboard.</summary>
+    public const string Analysis = "analysis";
+
     public static readonly IReadOnlyList<PlatformModule> All = new[]
     {
         new PlatformModule(
@@ -53,6 +56,14 @@ public static class PlatformModules
             Notebook,
             "Notebook",
             "Whiteboards: an infinite canvas for notes, with symbol, strategy and run cards that link back into the console.",
+            AdminOnly: true),
+        // Admin-only until the page has a trader view. The endpoints already
+        // check the grant, so offering it later is a flag here, not a change
+        // to any controller.
+        new PlatformModule(
+            Analysis,
+            "Analysis",
+            "The desk's forecasts of range, trend days and direction, each written before the open, scored after the close and measured against a baseline. Read-only.",
             AdminOnly: true),
     };
 
