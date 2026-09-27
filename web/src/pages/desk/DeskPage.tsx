@@ -25,22 +25,19 @@ import {
   dayLabel,
   dayOf,
   deskAccounts,
-  deskDay,
   deskLayout,
   isTradingRun,
-  istDay,
   readPin,
   scopeRuns,
-  shiftDay,
   shownPhase,
   validScope,
   writePin,
 } from '../../lib/desk'
-import { RUN_HISTORY_PAGE, useDeskBookView, useLiveRunHistory, useManualBook, useMarketSession } from '../../lib/queries'
+import { deskLegsPoll, useMarketSession, useOpenPositions } from '../../lib/queries'
 import { IconPin } from '../../components/icons'
 import { useStripSlot } from '../../components/shell/stripSlot'
 import type { DeskLinks, DeskView } from './data'
-import { useDeskLinks, useNow } from './data'
+import { useDeskLinks, useNow, useShownDay } from './data'
 import { StatusStrip } from './StatusStrip'
 import { PlanGrid, RunsGrid } from './RunsGrid'
 import { DayPnl } from './DayPnl'
@@ -148,7 +145,9 @@ export function DeskPage() {
   const slot = useStripSlot()
   // Fifteen seconds is soon enough to reorder the Desk at 09:15 and 15:30.
   const nowMs = useNow(15_000)
-  const today = istDay(nowMs)
+  const strategies = allows(access, 'strategies')
+  const shownDay = useShownDay(nowMs, strategies)
+  const { today, day } = shownDay
   const nse = useMarketSession()
   const mcx = useMarketSession('MCX', 'COM')
   const clock = clockPhase(nowMs, nse.data)
@@ -161,13 +160,7 @@ export function DeskPage() {
     if (pick && pick.from !== clock) setPick(null)
   }, [pick, clock])
 
-  const strategies = allows(access, 'strategies')
-  const todayRuns = useLiveRunHistory({ fromDate: today, toDate: today, take: RUN_HISTORY_PAGE }, strategies)
-  const noSession = nse.data?.isTradingDay === false && todayRuns.data?.length === 0
-  const recent = useLiveRunHistory({ fromDate: shiftDay(today, -7), toDate: shiftDay(today, -1), take: RUN_HISTORY_PAGE }, strategies && noSession)
-  const day = deskDay(today, nse.data?.isTradingDay, todayRuns.data?.length ?? 0, recent.data)
-  const dayRuns = day === today ? todayRuns.data : recent.data?.filter((r) => dayOf(r.startedUtc) === day)
-
+  const dayRuns = shownDay.runs
   const trading = useMemo(() => dayRuns?.filter(isTradingRun), [dayRuns])
   const allAccounts = useMemo(() => deskAccounts(trading ?? []), [trading])
   const [scopeWanted, setScope] = useState<Scope>('all')
@@ -175,12 +168,11 @@ export function DeskPage() {
   const accounts = useMemo(() => (scope === 'all' ? allAccounts : allAccounts.filter((a) => a.id === scope)), [scope, allAccounts])
   const runs = useMemo(() => (trading ? scopeRuns(trading, scope) : undefined), [trading, scope])
 
-  // Which runs carried a leg into the manual book: read off the book after the close and before the open.
-  const book = useManualBook(strategies)
-  const bookView = useDeskBookView(clock !== 'live' && book.data?.runId ? book.data.runId : null)
+  // Which runs carried a leg into a manual book, in any account: a carried leg names its run.
+  const open = useOpenPositions(deskLegsPoll(clock === 'live'), strategies)
   const grid = useMemo(
-    () => (runs ? buildGrid(runs, accounts, carriedRunIds(bookView.data?.positions)) : null),
-    [runs, accounts, bookView.data],
+    () => (runs ? buildGrid(runs, accounts, carriedRunIds(open.data?.positions)) : null),
+    [runs, accounts, open.data],
   )
 
   const view: DeskView = {
@@ -195,7 +187,7 @@ export function DeskPage() {
     accounts,
     allAccounts,
     runs,
-    runsError: todayRuns.isError ? todayRuns.error : recent.isError ? recent.error : null,
+    runsError: shownDay.error,
     grid,
     scopeName: scope === 'all' ? null : (accounts[0]?.name ?? null),
     nse: nse.data,
@@ -228,7 +220,7 @@ export function DeskPage() {
       onPick={pickPhase}
       onPin={togglePin}
       onScope={setScope}
-      updatedAt={todayRuns.dataUpdatedAt}
+      updatedAt={shownDay.updatedAt}
     />
   )
 
