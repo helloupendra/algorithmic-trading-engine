@@ -71,7 +71,7 @@ All times are IST, which has no daylight saving.
 | Overseas daily bars | `market_global_daily` | Yahoo chart, daily | once a day from 07:00 | from 2020-01-01 |
 | Breadth | `market_breadth_daily` | NSE CM bhavcopy + 52-week file | every 30 minutes, 18:00-23:30, the last 10 sessions | from 2020-01-01 |
 | Participant OI | `market_participant_oi` (Market factors) | NSE `fao_participant_oi_DDMMYYYY.csv` | the evening sync as before | from 2020-01-01 |
-| Scores | the six scoring columns | `python -m analysis news-score` | every 10 minutes, 06:00-23:30, not 09:00-15:40 on trading days | scores what is recorded |
+| Scores | the six scoring columns | `python -m analysis news-score` | every 10 minutes, 06:00-23:30, not 08:40-15:40 on trading days | scores what is recorded |
 
 Filings are polled on weekends and holidays too. By the evening of Sunday
 27 Sep 2026 NSE had broadcast 33, the latest at 18:47, and a Sunday filing is
@@ -252,15 +252,17 @@ Inside market hours the answer says it is queued and starts after 15:40.
 `NewsScoringScheduler` runs `python -m analysis news-score` every 10 minutes
 from 06:00 to 23:30 IST. The scorer is a local model on the CPU (FinBERT),
 with no paid API and no key. See `analysis/news.py`.
-- **Not during the session.** It needs about 800 MB while it runs, so on a
-  trading day it keeps out of 09:00-15:40, like the backfills. Nothing waits
-  for it there: the 08:50 forecast reads the headlines from the previous close
-  to 08:50, all scored before 09:00, and the session's headlines are scored
-  from 15:40.
-- **Switched off until the server has its packages.** `NewsScoringEnabled` is
-  false in appsettings.json until torch and transformers are installed in the
-  server's `.venv` (`pip install -r src/AlgoTrading.PythonEngine/requirements.txt`);
-  the desk's deploy does not install Python packages.
+- **Not during the session.** A run peaked at 1.25 GB on the server, so on a
+  trading day it keeps out of 08:40-15:40: the morning job starts every
+  strategy runner at 08:45. The 08:50 forecast uses the scores that exist by
+  then (a headline first seen after 08:40 counts as unscored), and the
+  session's headlines are scored from 15:40.
+- **The server needs its packages.** The desk's deploy does not install
+  Python packages: torch (the CPU build) and transformers were installed by
+  hand on 27 Sep (`pip install "torch>=2.6" --index-url
+  https://download.pytorch.org/whl/cpu`, then `pip install -r
+  src/AlgoTrading.PythonEngine/requirements.txt`). The first run downloads
+  FinBERT (~440 MB) into `data/models/`.
 - **One run at a time.** The next is counted from the start of the last, and
   never begins while one runs. A run is stopped after 20 minutes.
 - **Below normal priority.** The API starts it at nice 10 and the script

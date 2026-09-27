@@ -9,18 +9,18 @@ namespace AlgoTrading.Api.Services;
 
 /// <summary>
 /// Runs the news scorer, <c>python -m analysis news-score</c>, every ten
-/// minutes from 06:00 to 23:30 IST, except 09:00–15:40 on a trading day. It
+/// minutes from 06:00 to 23:30 IST, except 08:40–15:40 on a trading day. It
 /// fills the scoring columns of the headlines and filings nobody has scored
 /// yet (<see cref="IScoredText"/>).
 /// </summary>
 /// <remarks>
 /// <para>
 /// The scorer is a local model on the CPU (no paid API, no key) that needs
-/// about 800 MB while it runs, so it keeps out of the session, like the
-/// backfills (<see cref="MarketIntelligenceSchedule.InQuietWindow"/>): the box
-/// runs the strategies then. Nothing waits for it there — the 08:50 forecast
-/// reads the headlines from the previous close to 08:50, all scored before
-/// 09:00 — and what arrives during the session is scored from 15:40. It also
+/// over a gigabyte while it runs, so it keeps out of the session and the
+/// runners' start (<see cref="QuietFrom"/>): the box runs the strategies then.
+/// The 08:50 forecast uses the scores that exist by then (a headline of 08:41
+/// counts as not yet scored), and what arrives during the session is scored
+/// from 15:40. It also
 /// runs below normal priority. One run at a
 /// time: the loop waits for each run to end before it counts ten minutes to
 /// the next, so a slow run is never joined by a second.
@@ -61,13 +61,26 @@ public sealed class NewsScoringScheduler : MarketIntelligenceLoop
     private bool IsTradingDay(DateOnly date) => _sessions.GetSessionInfo(IstTime.MiddayUtc(date), "NSE", "CM").IsTradingDay;
 
     /// <summary>
-    /// Whether a run is due: inside 06:00–23:30 IST, outside the session's quiet
-    /// window on a trading day, and ten minutes after the last one started.
+    /// On a trading day the scorer also keeps out of the twenty minutes before
+    /// the session: the morning job starts every strategy runner at 08:45, and
+    /// on the server a scoring run peaked at 1.25 GB (27 Sep).
+    /// </summary>
+    public static readonly TimeSpan QuietFrom = new(8, 40, 0);
+
+    /// <summary>
+    /// Whether a run is due: inside 06:00–23:30 IST, outside 08:40–15:40 on a
+    /// trading day, and ten minutes after the last one started.
     /// </summary>
     public static bool Due(DateTime nowUtc, DateTime? lastStartedUtc, Func<DateOnly, bool> isTradingDay) =>
         MarketIntelligenceSchedule.InFilingsWindow(nowUtc)
-        && !MarketIntelligenceSchedule.InQuietWindow(nowUtc, isTradingDay)
+        && !InSessionQuiet(nowUtc, isTradingDay)
         && (lastStartedUtc is null || nowUtc - lastStartedUtc >= MarketIntelligenceSchedule.ScoringEvery);
+
+    private static bool InSessionQuiet(DateTime nowUtc, Func<DateOnly, bool> isTradingDay)
+    {
+        var time = IstTime.ToIst(nowUtc).TimeOfDay;
+        return time >= QuietFrom && time < MarketIntelligenceSchedule.QuietUntil && isTradingDay(IstTime.DateOf(nowUtc));
+    }
 
     /// <summary>Whether a failure today should go to the System channel: only the first of the IST day.</summary>
     public static bool ShouldNotify(DateTime nowUtc, string? lastNoticeDay) =>
