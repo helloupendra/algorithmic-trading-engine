@@ -266,7 +266,14 @@ public class OptionChainService
             OpenInterestChangePercent = row.OpenInterestAtOpen is > 0 && change is not null
                 ? OptionChainAnalytics.ChangePercent(row.OpenInterest ?? 0, row.OpenInterestAtOpen.Value)
                 : null,
-            ImpliedVolatility = row.ImpliedVolatility,
+            // In percent whichever vendor recorded it. Dhan stores a percent, the
+            // FYERS poller a fraction, and until 27 Sep 2026 this passed either
+            // through: a FYERS chain showed IV "0.1". ChainFlowBuy compares the
+            // ATM IV it reads from this response with its session low, so a
+            // chain switching source mid-session would have read as a
+            // hundredfold move in IV.
+            ImpliedVolatility = OptionHistory.OptionMath.IvPercent(
+                row.ImpliedVolatility, OptionHistory.OptionMath.ChainSourceStoresPercent(row.SourceKey)),
             Delta = row.Delta,
             Gamma = row.Gamma,
             Theta = row.Theta,
