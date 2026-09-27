@@ -1,74 +1,21 @@
-/* Market structure (SMC): a chart-first page — toolbar, chart, the state it
-   reads, then the legend that says what each mark means. */
+/* The chart's structure layer (SMC): its switches, the ladder of timeframes
+   above the chart, and the folded legend that says what each mark means. The
+   stage, the head and the stats row are the chart's own (chart.css). */
 
+/* Each .seg is inline-flex and does not wrap; the row they sit in does, so a
+   laptop gets a second line of switches rather than a row off its edge. */
 .smc__bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-
-.smc__bar--marks {
   gap: 8px;
 }
 
-/* The zone layers have a row to themselves because a .seg is inline-flex and
-   does not wrap: three more buttons in the Marks row would push it off the side
-   of a laptop rather than on to a second line. Pulled up against that row so
-   the two still read as one block of controls. */
-.smc__bar--zones {
-  margin-top: -4px;
-}
-
-/* "Unfilled only" is a filter on the gap layer, not a layer: with gaps off it
+/* "Standing only" is a filter on the zone layers, not a layer: with both off it
    stays visible and readable, but says plainly that it is doing nothing. */
-.smc__bar--zones .seg__btn:disabled {
+.smc__bar .seg__btn:disabled {
   color: var(--text-3);
   cursor: default;
-}
-
-.smc__symbol {
-  min-width: 260px;
-  flex: 0 1 320px;
-}
-
-.smc__stage {
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-  padding: 8px 8px 4px;
-  margin-bottom: 12px;
-}
-
-.smc__stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.smc__stat {
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-  padding: 8px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.smc__stat-label {
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-3);
-}
-
-.smc__stat-value {
-  font-variant-numeric: tabular-nums;
-  font-size: 15px;
-  color: var(--text);
 }
 
 .smc__stat-note {
@@ -87,12 +34,12 @@
 .smc__note {
   color: var(--text-2);
   font-size: 12px;
-  margin: 0 0 12px;
+  margin: 0;
 }
 
 .smc__legend {
   list-style: none;
-  margin: 0;
+  margin: 8px 0 0;
   padding: 0;
   display: grid;
   gap: 8px;
@@ -179,64 +126,21 @@
   line-height: 1.6;
 }
 
-.smc__head {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin: 2px 0 10px;
-}
-
-.smc__title {
-  margin: 0;
-  font-size: 18px;
-  letter-spacing: 0.01em;
-}
-
-.smc__subtitle {
-  margin: 2px 0 0;
-  font-size: 12px;
-  color: var(--text-3);
-}
-
-.smc__last {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-}
-
-.smc__last-price {
-  font-size: 20px;
-  font-variant-numeric: tabular-nums;
-}
-
-.smc__last-change {
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-}
-
-.smc__last-time {
-  font-size: 11px;
-  color: var(--text-3);
-}
-
 /* The ladder: one rung per timeframe, highest first. The chart's own timeframe
    is marked, because everything above it is context rather than what is drawn. */
 .smc__ladder {
   display: grid;
   gap: 4px;
-  margin-bottom: 10px;
 }
 
 .smc__rung {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 14px;
-  padding: 7px 12px;
+  gap: 4px 14px;
+  padding: 6px 12px;
   border: 1px solid var(--line-soft);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   font-size: 12.5px;
   color: var(--text-2);
