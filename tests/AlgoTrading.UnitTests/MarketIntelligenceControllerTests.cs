@@ -178,7 +178,7 @@ public class MarketIntelligenceControllerTests
                         parts.FeatureProviders.Remove(provider);
                     parts.FeatureProviders.Add(new Only<MarketIntelligenceController>());
                 });
-            builder.Services.AddAuthentication(HeaderAuth.Scheme).AddScheme<AuthenticationSchemeOptions, HeaderAuth>(HeaderAuth.Scheme, null);
+            builder.Services.AddAuthentication(HeaderAuth.SchemeName).AddScheme<AuthenticationSchemeOptions, HeaderAuth>(HeaderAuth.SchemeName, null);
             builder.Services.AddAuthorizationBuilder().AddPlatformPolicies();
             builder.Services.AddSingleton<IUserAdminService>(new UserAdminService(
                 setup.Db, new PasswordHasher<AppUser>(), RecapClockTests.Inert<ITokenValidityService>.Create(), NullLogger<UserAdminService>.Instance));
@@ -223,7 +223,7 @@ public class MarketIntelligenceControllerTests
     private sealed class HeaderAuth(IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder)
         : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
     {
-        public const string Scheme = "Test";
+        public const string SchemeName = "Test";
         public const string UserHeader = "X-Test-User";
 
         protected override Task<AuthenticateResult> HandleAuthenticateAsync()
@@ -233,8 +233,8 @@ public class MarketIntelligenceControllerTests
 
             var claims = new List<Claim> { new(ClaimTypes.NameIdentifier, userId.ToString(System.Globalization.CultureInfo.InvariantCulture)) };
             if (userId == AdminId) claims.Add(new Claim(ClaimTypes.Role, UserRoles.Admin));
-            var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, Scheme));
-            return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(principal, Scheme)));
+            var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, SchemeName));
+            return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(principal, SchemeName)));
         }
     }
 
