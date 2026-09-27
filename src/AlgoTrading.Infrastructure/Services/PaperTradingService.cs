@@ -5,6 +5,7 @@ using AlgoTrading.Contracts.Simulator;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace AlgoTrading.Infrastructure.Services;
 
@@ -25,6 +26,12 @@ namespace AlgoTrading.Infrastructure.Services;
 /// the writers come from different scopes (runner requests, the risk guard,
 /// the stop pipeline) and PaperPosition has no concurrency token.
 /// CLOSE_GROUP legs are reduce-only, as in the backtest ledger.
+///
+/// A live fill is priced here, from the latest quote, never taken as the
+/// runner sent it: the bid for a SELL, the ask for a BUY, else the last trade
+/// less or plus half the spread (<see cref="PaperFillOptions"/>), and never
+/// from a quote too old to be a price while the market is open. Each order
+/// row records which rule priced it.
 /// </summary>
 public class PaperTradingService : IPaperTradingService
 {
@@ -54,16 +61,32 @@ public class PaperTradingService : IPaperTradingService
     private readonly TradingDbContext _dbContext;
     private readonly IRiskManagementService _riskManagementService;
     private readonly ILotSizeResolver _lotSizeResolver;
+    private readonly IMarketSessionService? _marketSessions;
+    private readonly PaperFillOptions _fills;
+    private readonly TimeProvider _time;
 
+    /// <param name="marketSessions">
+    /// Says whether a contract's market is open, which is when a quote's age
+    /// is judged. Always registered in the API; null only in tests that
+    /// predate it, where no quote is refused for its age.
+    /// </param>
     public PaperTradingService(
         TradingDbContext dbContext,
         IRiskManagementService riskManagementService,
-        ILotSizeResolver lotSizeResolver)
+        ILotSizeResolver lotSizeResolver,
+        IMarketSessionService? marketSessions = null,
+        IOptions<PaperFillOptions>? fillOptions = null,
+        TimeProvider? time = null)
     {
         _dbContext = dbContext;
         _riskManagementService = riskManagementService;
         _lotSizeResolver = lotSizeResolver;
+        _marketSessions = marketSessions;
+        _fills = fillOptions?.Value ?? new PaperFillOptions();
+        _time = time ?? TimeProvider.System;
     }
+
+    private DateTime UtcNow => _time.GetUtcNow().UtcDateTime;
 
     public static bool IsReplay(string? mode)
         => string.Equals(mode, OfflineReplayMode, StringComparison.OrdinalIgnoreCase);
@@ -102,6 +125,7 @@ public class PaperTradingService : IPaperTradingService
 
         bool replay = IsReplay(run.Mode);
         var timestampUtc = request.TimestampUtc.ToUniversalTime();
+        var legs = request.Legs ?? new List<SimulationSignalLegRequest>();
 
         var signal = new SimulationSignal
         {
@@ -111,103 +135,120 @@ public class PaperTradingService : IPaperTradingService
             TimestampUtc = timestampUtc,
             GroupId = request.GroupId,
             MetadataJson = string.IsNullOrWhiteSpace(request.MetadataJson) ? "{}" : request.MetadataJson,
-            CreatedUtc = DateTime.UtcNow
+            CreatedUtc = UtcNow
         };
 
-        await _dbContext.SimulationSignals.AddAsync(signal, cancellationToken);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        // A CLOSE_GROUP (or any square-off / risk-rule signal) may only shrink
+        // or close what is open — exactly like the backtest ledger. The strategy
+        // builds its closing legs from its own state, so after the risk guard
+        // has already closed a leg the strategy's later CLOSE_GROUP for that leg
+        // must be skipped, not filled as a fresh reverse position.
+        bool reduceOnly = IsReduceOnlySignal(request.SignalType, signal.MetadataJson);
 
-        // Convert signal -> orders -> positions. Replays are clocked by the bar
-        // time and skip the wall-clock risk gate (rate limit / daily loss). A
-        // recap is clocked by the replayed session the runner stamped the signal
-        // with, but keeps the gate: it trades in real time, like a live run.
-        if (request.Legs is not null && request.Legs.Count > 0)
+        // Every leg gets a real price before ANY of them fills. Done inside the
+        // loop instead, a group could half-fill — leg one booked, leg two
+        // rejected — and a one-legged "straddle" is a worse position to wake up
+        // to than no position at all. A replay's bar closes and the manual
+        // ticket's prices are filled as given; a live run's legs are priced
+        // from the latest quote.
+        var fills = await PriceLegsAsync(legs, signal, reduceOnly,
+            pricesAreFinal: replay || request.LegPricesAreFinal, cancellationToken);
+
+        // The signal and all its legs commit together or none of them do.
+        //
+        // Each leg used to SaveChanges on its own, so a group that failed half
+        // way — a risk refusal, a lost connection, an unpriceable strike — left
+        // the legs before it filled and the legs after it absent. A one-legged
+        // "straddle" is naked risk that nobody chose, and it survives in the
+        // database looking like a real position. The signal row is inside too:
+        // a refused signal is not one the run made.
+        //
+        // Cheap to hold: the legs of one signal are a handful of rows, and the
+        // per-run lock above already serialises every other writer.
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        try
         {
+            await _dbContext.SimulationSignals.AddAsync(signal, cancellationToken);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+            // Convert signal -> orders -> positions. Replays are clocked by the
+            // bar time and skip the wall-clock risk gate (rate limit / daily
+            // loss). A recap is clocked by the replayed session the runner
+            // stamped the signal with, but keeps the gate: it trades in real
+            // time, like a live run.
             bool recap = !replay && RecapClock.IsRecap(run.ParametersJson);
             DateTime? clock = replay || recap ? timestampUtc : null;
 
-            // A CLOSE_GROUP (or any square-off / risk-rule signal) may only
-            // shrink or close what is open — exactly like the backtest ledger.
-            // The strategy builds its closing legs from its own state, so after
-            // the risk guard has already closed a leg the strategy's later
-            // CLOSE_GROUP for that leg must be skipped, not filled as a fresh
-            // reverse position.
-            bool reduceOnly = IsReduceOnlySignal(request.SignalType, signal.MetadataJson);
-
-            // Every leg gets a real price before ANY of them fills. Done inside
-            // the loop instead, a group could half-fill — leg one booked, leg
-            // two rejected — and a one-legged "straddle" is a worse position to
-            // wake up to than no position at all.
-            await ResolveLegPricesAsync(request.Legs, signal, reduceOnly, cancellationToken);
-
-            // All the legs commit together or none of them do.
-            //
-            // Each leg used to SaveChanges on its own, so a group that failed
-            // half way — a risk refusal, a lost connection, an unpriceable
-            // strike — left the legs before it filled and the legs after it
-            // absent. A one-legged "straddle" is naked risk that nobody chose,
-            // and it survives in the database looking like a real position.
-            //
-            // Cheap to hold: the legs of one signal are a handful of rows, and
-            // the per-run lock above already serialises every other writer.
-            await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
-            try
+            for (int i = 0; i < legs.Count; i++)
             {
-                foreach (var leg in request.Legs)
-                {
-                    await CreateOrderAndApplyPositionAsync(signal, leg, cancellationToken, bypassRiskCheck: replay, reduceOnly: reduceOnly, atUtc: clock);
-                }
+                await CreateOrderAndApplyPositionAsync(signal, legs[i], fills[i], cancellationToken,
+                    bypassRiskCheck: replay, reduceOnly: reduceOnly, atUtc: clock);
+            }
 
-                await transaction.CommitAsync(cancellationToken);
-            }
-            catch
-            {
-                await transaction.RollbackAsync(CancellationToken.None);
-                throw;
-            }
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
         }
 
         return MapSignal(signal);
     }
 
     /// <summary>
-    /// Gives every leg a real price, or refuses the whole signal.
+    /// A fill price for every leg, in order, or the whole signal is refused.
     /// </summary>
     /// <remarks>
-    /// A leg can arrive without one: the runner asks the platform for the
-    /// contract's latest quote and gives up after a timeout, which is exactly
-    /// what happens when a strike was subscribed moments earlier. Filled at the
-    /// zero that a null used to become, a sold straddle books no premium and the
-    /// run's entire P&amp;L is fiction — silently, since the order still says
-    /// "Filled".
     /// <para>
-    /// A closing leg may fall back the way the square-off path already does
-    /// (live quote, then the position's last mark, then what it was opened at) —
-    /// closing at a stale price is worth it to get flat. An opening leg has no
-    /// such history, so there is nothing honest to fall back to and the signal is
-    /// refused. The runner logs the refusal and keeps running; the strategy can
-    /// enter on the next tick, by which time the quote has almost certainly
-    /// arrived.
+    /// A live leg is priced from the contract's latest quote whether or not the
+    /// runner sent a price: the bid for a SELL, the ask for a BUY, else the last
+    /// trade less or plus the half-spread (<see cref="PaperFillPricing"/>). What
+    /// the runner sent is kept as the order's requested price, and used only
+    /// when there is no quote at all.
+    /// </para>
+    /// <para>
+    /// While the contract's market is open, a quote older than
+    /// <see cref="PaperFillOptions.MaxQuoteAgeSeconds"/> is not a price. On 24
+    /// Sep the feed stalled from 11:27:36 to 11:34:06 and every quote in the
+    /// table froze with it, still looking current. Such a leg is left unpriced
+    /// and the signal refused with the quote's age; the runner puts the
+    /// strategy back as it was and it asks again on a later tick. The stops a
+    /// person or the close asks for do not come through here — they always
+    /// close (<see cref="CloseOpenPositionsAsync"/>).
+    /// </para>
+    /// <para>
+    /// Never zero: filled at the zero a null used to become, a sold straddle
+    /// booked no premium and the run's entire P&amp;L was fiction, silently.
+    /// An opening leg with no price has nothing honest to fall back to. A
+    /// closing leg outside market hours may still fall back to the position's
+    /// last mark, then its entry — getting flat is worth a stale price when
+    /// there is no market to be wrong against.
     /// </para>
     /// </remarks>
-    private async Task ResolveLegPricesAsync(
+    private async Task<List<PaperFill>> PriceLegsAsync(
         List<SimulationSignalLegRequest> legs,
         SimulationSignal signal,
         bool reduceOnly,
+        bool pricesAreFinal,
         CancellationToken cancellationToken)
     {
-        var missing = legs
-            .Where(x => x.Price is null or <= 0m && !string.IsNullOrWhiteSpace(x.Symbol))
+        if (legs.Count == 0) return new List<PaperFill>();
+
+        foreach (var leg in legs) ValidateLeg(leg);
+
+        var symbols = legs
+            .Where(x => !pricesAreFinal || x.Price is null or <= 0m)
+            .Select(x => x.Symbol)
+            .Distinct(StringComparer.Ordinal)
             .ToList();
 
-        if (missing.Count == 0) return;
-
-        var symbols = missing.Select(x => x.Symbol).Distinct(StringComparer.Ordinal).ToList();
         var quotes = await LoadLiveQuotesAsync(symbols, cancellationToken);
 
         // Only a closing leg may look to the position it is closing.
-        Dictionary<string, PaperPosition> openBySymbol = reduceOnly
+        Dictionary<string, PaperPosition> openBySymbol = reduceOnly && symbols.Count > 0
             ? await _dbContext.PaperPositions
+                .AsNoTracking()
                 .Where(x => x.SimulationRunId == signal.SimulationRunId
                             && x.GroupId == signal.GroupId
                             && x.Status == "Open"
@@ -215,33 +256,142 @@ public class PaperTradingService : IPaperTradingService
                 .ToDictionaryAsync(x => x.Symbol, StringComparer.Ordinal, cancellationToken)
             : new Dictionary<string, PaperPosition>(StringComparer.Ordinal);
 
+        var now = UtcNow;
+        var fills = new List<PaperFill>(legs.Count);
         var unpriced = new List<string>();
 
-        foreach (var leg in missing)
+        foreach (var leg in legs)
         {
-            decimal? price = quotes.TryGetValue(leg.Symbol, out var quoted) && quoted > 0m ? quoted : null;
+            QuoteSnapshot? quote = quotes.TryGetValue(leg.Symbol, out var q) ? q : null;
+            openBySymbol.TryGetValue(leg.Symbol, out var open);
 
-            if (price is null && openBySymbol.TryGetValue(leg.Symbol, out var open))
-            {
-                price = open.LastMarkPrice > 0m ? open.LastMarkPrice : open.AveragePrice;
-            }
+            string? why = "no live quote";
+            var fill = pricesAreFinal
+                ? PriceAsGiven(leg, quote, open)
+                : PriceLive(leg, quote, open, now, out why);
 
-            if (price is null or <= 0m)
+            if (fill is null)
             {
-                unpriced.Add(leg.Symbol);
+                unpriced.Add($"{leg.Symbol} ({why})");
                 continue;
             }
 
-            leg.Price = price;
+            fills.Add(fill);
         }
 
         if (unpriced.Count > 0)
         {
             throw new InvalidOperationException(
-                $"No price is available for {string.Join(", ", unpriced)}; the {signal.SignalType} signal was rejected "
-                + "rather than filled at zero. The contract has no live quote yet — check that the ingestor is running "
-                + "and subscribed to it.");
+                $"No fill price for {string.Join(", ", unpriced)}; the {signal.SignalType} signal was rejected rather "
+                + "than filled at a stale or invented price. Check that the feed is running and subscribed to the contract.");
         }
+
+        return fills;
+    }
+
+    /// <summary>A live leg's fill from the latest quote; null, with the reason, when there is none it may use.</summary>
+    private PaperFill? PriceLive(
+        SimulationSignalLegRequest leg,
+        QuoteSnapshot? quote,
+        PaperPosition? open,
+        DateTime nowUtc,
+        out string? why)
+    {
+        why = null;
+        bool judged = QuoteAgeApplies(leg.Symbol, nowUtc);
+
+        if (quote is { } q)
+        {
+            double age = q.AgeSeconds(nowUtc);
+            if (judged && age > _fills.MaxQuoteAgeSeconds)
+            {
+                why = $"its latest quote is {PaperFillPricing.Seconds(age)} s old; while the market is open a fill "
+                      + $"needs one under {_fills.MaxQuoteAgeSeconds} s";
+                return null;
+            }
+
+            if (PaperFillPricing.FromQuote(leg.Side, q, _fills, nowUtc) is { } fromQuote)
+                return fromQuote;
+        }
+
+        // No usable quote: a price the strategy put on the leg itself is not a
+        // quote whose age can be judged, and it is what it asked for.
+        if (leg.Price is > 0m)
+            return PaperFillPricing.FromReference(leg.Side, leg.Price.Value, "signal", _fills);
+
+        if (!judged && open is not null)
+        {
+            if (open.LastMarkPrice is > 0m)
+                return PaperFillPricing.FromReference(leg.Side, open.LastMarkPrice.Value, "mark", _fills);
+            if (open.AveragePrice > 0m)
+                return PaperFillPricing.FromReference(leg.Side, open.AveragePrice, "entry", _fills);
+        }
+
+        why = "no live quote";
+        return null;
+    }
+
+    /// <summary>
+    /// A replay's or the manual ticket's leg: its own price as it came. One
+    /// sent without a price takes the last trade, then (closing only) the
+    /// position's last mark, then its entry — as before fills had a spread.
+    /// </summary>
+    private static PaperFill? PriceAsGiven(SimulationSignalLegRequest leg, QuoteSnapshot? quote, PaperPosition? open)
+    {
+        if (leg.Price is > 0m) return PaperFillPricing.AsGiven(leg.Price.Value);
+
+        if (quote?.LastTradedPrice is { } ltp && ltp > 0m)
+            return PaperFillPricing.AsGiven(ltp, "ltp", "no price with the signal: filled at the last trade");
+
+        if (open?.LastMarkPrice is { } mark && mark > 0m)
+            return PaperFillPricing.AsGiven(mark, "mark", "no price with the signal: filled at the position's last mark");
+
+        if (open is { AveragePrice: > 0m })
+            return PaperFillPricing.AsGiven(open.AveragePrice, "entry", "no price with the signal: filled at the entry price");
+
+        return null;
+    }
+
+    /// <summary>
+    /// Whether a quote's age decides if it may price a fill of this contract:
+    /// while its market is open. Out of hours every quote is old and the last
+    /// one is the only price there is. A contract whose market this desk keeps
+    /// no hours for is judged, since nothing says its quote may be old.
+    /// </summary>
+    private bool QuoteAgeApplies(string symbol, DateTime nowUtc)
+    {
+        if (_marketSessions is null) return false;
+
+        int colon = symbol.IndexOf(':');
+        string exchange = colon > 0 ? symbol[..colon].Trim().ToUpperInvariant() : string.Empty;
+
+        try
+        {
+            return _marketSessions.IsMarketOpen(nowUtc, exchange, exchange == "MCX" ? "COM" : "FO");
+        }
+        catch (Exception ex) when (ex is NotSupportedException or ArgumentException)
+        {
+            return true;
+        }
+    }
+
+    /// <summary>The checks every leg must pass before anything is priced or written; returns its side, upper case.</summary>
+    private static string ValidateLeg(SimulationSignalLegRequest leg)
+    {
+        if (string.IsNullOrWhiteSpace(leg.Symbol))
+            throw new InvalidOperationException("Paper leg symbol is required.");
+
+        if (string.IsNullOrWhiteSpace(leg.Side))
+            throw new InvalidOperationException("Paper leg side is required.");
+
+        if (leg.Quantity <= 0)
+            throw new InvalidOperationException("Paper leg quantity must be greater than zero.");
+
+        string side = leg.Side.Trim().ToUpperInvariant();
+        if (side != "BUY" && side != "SELL")
+            throw new InvalidOperationException("Paper leg side must be BUY or SELL.");
+
+        return side;
     }
 
     /// <summary>
@@ -334,22 +484,7 @@ public class PaperTradingService : IPaperTradingService
             var latestQuotes = await LoadLiveQuotesAsync(symbols, cancellationToken);
             var lotSizes = await _lotSizeResolver.ResolveManyAsync(symbols, cancellationToken);
 
-            foreach (var pos in rows.Where(x => x.Status == "Open"))
-            {
-                if (latestQuotes.TryGetValue(pos.Symbol, out var lastPrice) && lastPrice.HasValue)
-                {
-                    int lotSize = LotSizeOf(lotSizes, pos.Symbol);
-                    pos.LastMarkPrice = lastPrice.Value;
-                    pos.UnrealizedPnl = CalculateUnrealizedPnl(
-                        pos.Direction,
-                        pos.AveragePrice,
-                        lastPrice.Value,
-                        pos.Quantity,
-                        lotSize);
-
-                    pos.UpdatedUtc = DateTime.UtcNow;
-                }
-            }
+            MarkOpenPositions(rows, latestQuotes, lotSizes);
 
             await _dbContext.SaveChangesAsync(cancellationToken);
         }
@@ -397,7 +532,7 @@ public class PaperTradingService : IPaperTradingService
                 .ToList();
 
             var latestQuotes = await LoadLiveQuotesAsync(symbols, cancellationToken);
-            MarkOpenPositions(positions, latestQuotes, lotSizes, DateTime.UtcNow);
+            MarkOpenPositions(positions, latestQuotes, lotSizes);
         }
 
         return BuildPortfolio(run, positions, orders, lotSizes);
@@ -441,7 +576,7 @@ public class PaperTradingService : IPaperTradingService
                 .ToList();
 
             var latestQuotes = await LoadLiveQuotesAsync(symbols, cancellationToken);
-            MarkOpenPositions(positions, latestQuotes, lotSizes, DateTime.UtcNow);
+            MarkOpenPositions(positions, latestQuotes, lotSizes);
             await _dbContext.SaveChangesAsync(cancellationToken);
         }
 
@@ -455,7 +590,7 @@ public class PaperTradingService : IPaperTradingService
             var snapshot = new SimulationEquitySnapshot
             {
                 SimulationRunId = run.Id,
-                SnapshotUtc = DateTime.UtcNow,
+                SnapshotUtc = UtcNow,
                 InitialCapital = run.InitialCapital,
                 UsedCapital = portfolio.UsedCapital,
                 AvailableCapital = portfolio.AvailableCapital,
@@ -680,6 +815,14 @@ public class PaperTradingService : IPaperTradingService
     /// (replays: the last stored mark), falling back to the last mark, then the
     /// entry. Returns the number of positions actually closed.
     /// </summary>
+    /// <remarks>
+    /// Every caller here is someone asking to get out — a person's Stop or
+    /// close, the market close, the risk guard, the kill switch — so a quote too
+    /// old to open a position on still closes one: a leg left open overnight
+    /// because its feed stalled at 11:27 is worse than a leg closed at 11:27's
+    /// price. The fill says so ("priced on a stale quote (N s old)"), and like
+    /// any live market fill it crosses the spread.
+    /// </remarks>
     private async Task<int> CloseOpenPositionsAsync(
         SimulationRun run,
         List<PaperPosition> openPositions,
@@ -697,14 +840,15 @@ public class PaperTradingService : IPaperTradingService
         // quote too, stamped at the replayed session's time so its exits sit on
         // the same timeline as the entries the runner stamped.
         var latestQuotes = replay
-            ? new Dictionary<string, decimal?>()
+            ? new Dictionary<string, QuoteSnapshot>(StringComparer.Ordinal)
             : await LoadLiveQuotesAsync(openPositions.Select(x => x.Symbol).Distinct().ToList(), cancellationToken);
 
         DateTime? recapNow = replay ? null : await RecapClock.NowAsync(_dbContext, run, cancellationToken);
 
+        var now = UtcNow;
         DateTime atUtc = replay
             ? openPositions.Max(x => x.UpdatedUtc)
-            : recapNow ?? DateTime.UtcNow;
+            : recapNow ?? now;
 
         int closed = 0;
 
@@ -721,7 +865,7 @@ public class PaperTradingService : IPaperTradingService
                 TimestampUtc = atUtc,
                 GroupId = group.Key,
                 MetadataJson = metadata,
-                CreatedUtc = DateTime.UtcNow
+                CreatedUtc = now
             };
 
             await _dbContext.SimulationSignals.AddAsync(signal, cancellationToken);
@@ -729,31 +873,44 @@ public class PaperTradingService : IPaperTradingService
 
             foreach (var pos in group)
             {
-                decimal fillPrice =
-                    (latestQuotes.TryGetValue(pos.Symbol, out var ltp) && ltp.HasValue ? ltp : null)
-                    ?? pos.LastMarkPrice
-                    ?? pos.AveragePrice;
-
                 var leg = new SimulationSignalLegRequest
                 {
                     Symbol = pos.Symbol,
                     Side = pos.Direction == "LONG" ? "SELL" : "BUY",
                     Quantity = pos.Quantity,
-                    Price = fillPrice
                 };
+
+                var fill = replay
+                    ? PaperFillPricing.AsGiven(pos.LastMarkPrice ?? pos.AveragePrice, "mark", "filled at the last stored mark")
+                    : SquareOffFill(leg.Side, pos, latestQuotes.TryGetValue(pos.Symbol, out var q) ? q : null, now);
 
                 // This IS the risk action, so it bypasses the risk evaluation.
                 // Reduce-only: if another stopper closed this position between the
                 // snapshot above and now, the closing leg is skipped instead of
                 // opening a reverse position on a run that is being stopped.
                 bool closedLeg = await CreateOrderAndApplyPositionAsync(
-                    signal, leg, cancellationToken, bypassRiskCheck: true, reduceOnly: true,
+                    signal, leg, fill, cancellationToken, bypassRiskCheck: true, reduceOnly: true,
                     atUtc: replay || recapNow.HasValue ? atUtc : null);
                 if (closedLeg) closed++;
             }
         }
 
         return closed;
+    }
+
+    /// <summary>
+    /// A live square-off's fill: the quote whatever its age (and saying how old
+    /// it was), else the position's last mark, else its entry — across the
+    /// spread either way.
+    /// </summary>
+    private PaperFill SquareOffFill(string side, PaperPosition pos, QuoteSnapshot? quote, DateTime nowUtc)
+    {
+        if (quote is { } q && PaperFillPricing.FromQuote(side, q, _fills, nowUtc) is { } fromQuote)
+            return fromQuote;
+
+        return pos.LastMarkPrice is > 0m
+            ? PaperFillPricing.FromReference(side, pos.LastMarkPrice.Value, "mark", _fills)
+            : PaperFillPricing.FromReference(side, pos.AveragePrice, "entry", _fills);
     }
 
     // ---------------------------------------------------------------------
@@ -810,7 +967,7 @@ public class PaperTradingService : IPaperTradingService
             TimestampUtc = atUtc,
             GroupId = position.GroupId,
             MetadataJson = string.IsNullOrWhiteSpace(metadataJson) ? "{}" : metadataJson,
-            CreatedUtc = DateTime.UtcNow
+            CreatedUtc = UtcNow
         };
 
         position.RealizedPnl += CalculateRealizedPnl(
@@ -876,7 +1033,7 @@ public class PaperTradingService : IPaperTradingService
             TimestampUtc = atUtc,
             GroupId = position.GroupId,
             MetadataJson = string.IsNullOrWhiteSpace(metadataJson) ? "{}" : metadataJson,
-            CreatedUtc = DateTime.UtcNow
+            CreatedUtc = UtcNow
         }, cancellationToken);
 
         // The tick and its audit row land together or not at all.
@@ -1009,7 +1166,7 @@ public class PaperTradingService : IPaperTradingService
             TimestampUtc = atUtc,
             GroupId = source.GroupId,
             MetadataJson = string.IsNullOrWhiteSpace(fromMetadataJson) ? "{}" : fromMetadataJson,
-            CreatedUtc = DateTime.UtcNow
+            CreatedUtc = UtcNow
         }, cancellationToken);
         await _dbContext.SimulationSignals.AddAsync(new SimulationSignal
         {
@@ -1019,7 +1176,7 @@ public class PaperTradingService : IPaperTradingService
             TimestampUtc = atUtc,
             GroupId = toGroupId,
             MetadataJson = string.IsNullOrWhiteSpace(toMetadataJson) ? "{}" : toMetadataJson,
-            CreatedUtc = DateTime.UtcNow
+            CreatedUtc = UtcNow
         }, cancellationToken);
 
         // One save: the leg is in exactly one book at every moment.
@@ -1094,11 +1251,13 @@ public class PaperTradingService : IPaperTradingService
 
         using var gate = await SimulationRunLocks.AcquireAsync(simulationRunId, cancellationToken);
 
-        var prices = new Dictionary<string, decimal?>(StringComparer.Ordinal);
+        // A replay's marks are bar closes, all as of the bar the runner names.
+        var atUtc = request.AtUtc.ToUniversalTime();
+        var prices = new Dictionary<string, QuoteSnapshot>(StringComparer.Ordinal);
         foreach (var mark in request.Marks)
         {
             if (string.IsNullOrWhiteSpace(mark.Symbol)) continue;
-            prices[mark.Symbol.Trim()] = mark.Price;
+            prices[mark.Symbol.Trim()] = new QuoteSnapshot(mark.Price, null, null, atUtc);
         }
 
         var open = await _dbContext.PaperPositions
@@ -1109,7 +1268,7 @@ public class PaperTradingService : IPaperTradingService
         if (touched.Count == 0) return 0;
 
         var lotSizes = await ResolveLotSizesForRunAsync(simulationRunId, touched.Select(x => x.Symbol), cancellationToken);
-        MarkOpenPositions(touched, prices, lotSizes, request.AtUtc.ToUniversalTime());
+        MarkOpenPositions(touched, prices, lotSizes);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
         return touched.Count;
@@ -1135,7 +1294,7 @@ public class PaperTradingService : IPaperTradingService
         if (!completed && !failed)
             throw new InvalidOperationException("status must be \"Completed\" or \"Failed\".");
 
-        var now = DateTime.UtcNow;
+        var now = UtcNow;
 
         // A stop that raced the runner's final POST wins: the run stays Stopped.
         if (run.Status != RunStatusStopped)
@@ -1175,34 +1334,25 @@ public class PaperTradingService : IPaperTradingService
     // ---------------------------------------------------------------------
 
     /// <summary>
-    /// Fills one leg as a paper order and applies it to the run's positions.
-    /// With <paramref name="reduceOnly"/> the leg may only shrink or close an
-    /// existing open position in its group: quantity is clamped to what is open
-    /// and, when nothing is open (already closed by a concurrent stop), the leg
-    /// is skipped and <c>false</c> is returned. <paramref name="atUtc"/> is the
-    /// market's clock: the bar time for replays, the replayed session's time for a
-    /// recap (see <see cref="RecapClock"/>); null means the wall clock.
+    /// Fills one leg as a paper order at <paramref name="fill"/> and applies it
+    /// to the run's positions. With <paramref name="reduceOnly"/> the leg may
+    /// only shrink or close an existing open position in its group: quantity is
+    /// clamped to what is open and, when nothing is open (already closed by a
+    /// concurrent stop), the leg is skipped and <c>false</c> is returned.
+    /// <paramref name="atUtc"/> is the market's clock: the bar time for replays,
+    /// the replayed session's time for a recap (see <see cref="RecapClock"/>);
+    /// null means the wall clock.
     /// </summary>
     private async Task<bool> CreateOrderAndApplyPositionAsync(
         SimulationSignal signal,
         SimulationSignalLegRequest leg,
+        PaperFill fill,
         CancellationToken cancellationToken,
         bool bypassRiskCheck = false,
         bool reduceOnly = false,
         DateTime? atUtc = null)
     {
-        if (string.IsNullOrWhiteSpace(leg.Symbol))
-            throw new InvalidOperationException("Paper leg symbol is required.");
-
-        if (string.IsNullOrWhiteSpace(leg.Side))
-            throw new InvalidOperationException("Paper leg side is required.");
-
-        if (leg.Quantity <= 0)
-            throw new InvalidOperationException("Paper leg quantity must be greater than zero.");
-
-        string normalizedSide = leg.Side.Trim().ToUpperInvariant();
-        if (normalizedSide != "BUY" && normalizedSide != "SELL")
-            throw new InvalidOperationException("Paper leg side must be BUY or SELL.");
+        string normalizedSide = ValidateLeg(leg);
 
         int quantity = leg.Quantity;
         if (reduceOnly)
@@ -1237,14 +1387,14 @@ public class PaperTradingService : IPaperTradingService
         // Symbol, side and quantity all fail loudly above; price used to be the
         // one that did not, becoming a zero that reached FillPrice, AveragePrice,
         // the notional and the run's P&L without ever looking wrong. Callers
-        // resolve prices before filling anything (see ResolveLegPricesAsync), so
-        // this should be unreachable — which is the point of asserting it.
-        if (leg.Price is null or <= 0m)
+        // price every leg before filling anything (see PriceLegsAsync), so this
+        // should be unreachable — which is the point of asserting it.
+        if (fill.Price <= 0m)
             throw new InvalidOperationException(
-                $"Paper leg price for {leg.Symbol} must be greater than zero; refusing to fill at {leg.Price?.ToString() ?? "null"}.");
+                $"Paper leg price for {leg.Symbol} must be greater than zero; refusing to fill at {fill.Price}.");
 
-        decimal fillPrice = leg.Price.Value;
-        DateTime clock = atUtc ?? DateTime.UtcNow;
+        decimal fillPrice = fill.Price;
+        DateTime clock = atUtc ?? UtcNow;
 
         var order = new PaperOrder
         {
@@ -1257,8 +1407,11 @@ public class PaperTradingService : IPaperTradingService
             Quantity = quantity,
             OrderType = "MARKET_SIM",
             Status = "Filled",
-            RequestedPrice = leg.Price,
+            // What the signal asked for, when it named a price; the fill can
+            // differ by the spread, or by the move since the runner looked.
+            RequestedPrice = leg.Price is > 0m ? leg.Price : fillPrice,
             FillPrice = fillPrice,
+            MetadataJson = fill.ToMetadataJson(),
             CreatedUtc = clock,
             FilledUtc = clock
         };
@@ -1494,40 +1647,53 @@ public class PaperTradingService : IPaperTradingService
         }
     }
 
-    private async Task<Dictionary<string, decimal?>> LoadLiveQuotesAsync(List<string> symbols, CancellationToken cancellationToken)
+    /// <summary>
+    /// The latest quote of each symbol that has one, with its bid, ask and the
+    /// time it was written: a fill needs the book, and everything that reads a
+    /// quote needs to know how old it is.
+    /// </summary>
+    private async Task<Dictionary<string, QuoteSnapshot>> LoadLiveQuotesAsync(List<string> symbols, CancellationToken cancellationToken)
     {
-        if (symbols.Count == 0) return new Dictionary<string, decimal?>(StringComparer.Ordinal);
+        var result = new Dictionary<string, QuoteSnapshot>(StringComparer.Ordinal);
+        if (symbols.Count == 0) return result;
 
         var rows = await _dbContext.LiveQuotesLatest
             .AsNoTracking()
             .Where(x => symbols.Contains(x.Symbol))
-            .Select(x => new { x.Symbol, x.LastTradedPrice })
+            .Select(x => new { x.Symbol, x.LastTradedPrice, x.BidPrice, x.AskPrice, x.UpdatedUtc })
             .ToListAsync(cancellationToken);
 
-        var result = new Dictionary<string, decimal?>(StringComparer.Ordinal);
         foreach (var row in rows)
         {
-            result[row.Symbol] = row.LastTradedPrice;
+            var updatedUtc = row.UpdatedUtc.Kind == DateTimeKind.Unspecified
+                ? DateTime.SpecifyKind(row.UpdatedUtc, DateTimeKind.Utc)
+                : row.UpdatedUtc.ToUniversalTime();
+            result[row.Symbol] = new QuoteSnapshot(row.LastTradedPrice, row.BidPrice, row.AskPrice, updatedUtc);
         }
         return result;
     }
 
-    /// <summary>Applies mark prices to the open positions that have one; others are left untouched.</summary>
+    /// <summary>
+    /// Marks the open positions that have a price at it; others are left
+    /// untouched. A position's UpdatedUtc becomes the time of the price it is
+    /// marked at, not the time it was marked: the risk guard and the position
+    /// views read it as the age of the mark, and a frozen quote re-applied every
+    /// few seconds must not look fresh.
+    /// </summary>
     private static void MarkOpenPositions(
         IEnumerable<PaperPosition> positions,
-        IReadOnlyDictionary<string, decimal?> prices,
-        IReadOnlyDictionary<string, LotSizeInfo> lotSizes,
-        DateTime atUtc)
+        IReadOnlyDictionary<string, QuoteSnapshot> quotes,
+        IReadOnlyDictionary<string, LotSizeInfo> lotSizes)
     {
         foreach (var pos in positions)
         {
             if (pos.Status != "Open") continue;
-            if (!prices.TryGetValue(pos.Symbol, out var price) || !price.HasValue) continue;
+            if (!quotes.TryGetValue(pos.Symbol, out var quote) || quote.LastTradedPrice is not { } price) continue;
 
             int lotSize = LotSizeOf(lotSizes, pos.Symbol);
-            pos.LastMarkPrice = price.Value;
-            pos.UnrealizedPnl = CalculateUnrealizedPnl(pos.Direction, pos.AveragePrice, price.Value, pos.Quantity, lotSize);
-            pos.UpdatedUtc = atUtc;
+            pos.LastMarkPrice = price;
+            pos.UnrealizedPnl = CalculateUnrealizedPnl(pos.Direction, pos.AveragePrice, price, pos.Quantity, lotSize);
+            pos.UpdatedUtc = quote.UpdatedUtc;
         }
     }
 
@@ -1683,6 +1849,7 @@ public class PaperTradingService : IPaperTradingService
             Status = row.Status,
             RequestedPrice = row.RequestedPrice,
             FillPrice = row.FillPrice,
+            MetadataJson = row.MetadataJson,
             CreatedUtc = row.CreatedUtc,
             FilledUtc = row.FilledUtc
         };

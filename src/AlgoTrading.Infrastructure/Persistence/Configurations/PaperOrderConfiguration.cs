@@ -26,6 +26,7 @@ public class PaperOrderConfiguration : IEntityTypeConfiguration<PaperOrder>
 
         builder.Property(x => x.RequestedPrice).HasColumnType("numeric(18,6)");
         builder.Property(x => x.FillPrice).HasColumnType("numeric(18,6)");
+        builder.Property(x => x.MetadataJson).HasColumnType("text");
 
         builder.Property(x => x.CreatedUtc).IsRequired();
 

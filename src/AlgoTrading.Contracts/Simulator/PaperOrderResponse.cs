@@ -67,6 +67,12 @@ public class PaperOrderResponse
     public decimal? FillPrice { get; set; }
 
     /// <summary>
+    /// How the fill was priced (JSON: <c>rule</c>, <c>note</c>, the quote's
+    /// age); null on orders filled before it was recorded.
+    /// </summary>
+    public string? MetadataJson { get; set; }
+
+    /// <summary>
     /// Order creation timestamp.
     /// </summary>
     public DateTime CreatedUtc { get; set; }
