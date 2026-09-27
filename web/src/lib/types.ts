@@ -141,26 +141,7 @@ export interface Instrument {
   optionType: string | null
 }
 
-// ---------- Simulator ----------
-
-export interface SimulationRun {
-  id: number
-  userId: number
-  mode: string
-  symbol: string
-  resolution: string
-  fromUtc: string | null
-  toUtc: string | null
-  replaySpeed: string
-  status: string
-  strategyName: string
-  parametersJson: string
-  initialCapital: number
-  createdUtc: string
-  startedUtc: string | null
-  completedUtc: string | null
-  lastError: string | null
-}
+// ---------- Paper runs ----------
 
 export interface RiskExposureResponse {
   totalUnrealizedPnL: number
@@ -178,19 +159,6 @@ export interface ActiveRunExposure {
   riskRules: RiskRules
 }
 
-export interface SimulationSignal {
-  id: number
-  simulationRunId: number
-  strategyName: string
-  signalType: string
-  timestampUtc: string
-  symbol: string
-  price: number | null
-  groupId: string
-  metadataJson: string
-  createdUtc: string
-}
-
 export interface PaperOrder {
   id: number
   simulationRunId: number
@@ -206,85 +174,6 @@ export interface PaperOrder {
   fillPrice: number | null
   createdUtc: string
   filledUtc: string | null
-}
-
-export interface PaperPosition {
-  id: number
-  simulationRunId: number
-  strategyName: string
-  groupId: string
-  symbol: string
-  direction: string
-  quantity: number
-  averagePrice: number
-  lastMarkPrice: number | null
-  realizedPnl: number
-  unrealizedPnl: number
-  status: string
-  openedUtc: string
-  closedUtc: string | null
-  updatedUtc: string
-}
-
-export interface PortfolioGroup {
-  groupId: string
-  strategyName: string
-  openPositionCount: number
-  closedPositionCount: number
-  usedCapital: number
-  realizedPnl: number
-  unrealizedPnl: number
-  status: string
-}
-
-export interface SimulationPortfolio {
-  simulationRunId: number
-  strategyName: string
-  runStatus: string
-  initialCapital: number
-  usedCapital: number
-  availableCapital: number
-  realizedPnl: number
-  unrealizedPnl: number
-  totalPnl: number
-  currentEquity: number
-  returnPercent: number
-  totalOrders: number
-  filledOrders: number
-  openPositions: number
-  closedPositions: number
-  groups: PortfolioGroup[]
-}
-
-export interface EquitySnapshot {
-  snapshotUtc: string
-  initialCapital: number
-  usedCapital: number
-  availableCapital: number
-  realizedPnl: number
-  unrealizedPnl: number
-  totalPnl: number
-  currentEquity: number
-  openPositions: number
-  closedPositions: number
-}
-
-export interface PerformanceMetrics {
-  simulationRunId: number
-  initialCapital: number
-  currentEquity: number
-  totalReturnPercent: number
-  maxDrawdownPercent: number
-  totalClosedPositions: number
-  winningPositions: number
-  losingPositions: number
-  winRatePercent: number
-  averageWin: number
-  averageLoss: number
-  grossProfit: number
-  grossLoss: number
-  profitFactor: number
-  expectancy: number
 }
 
 // ---------- Risk rules (live runs and backtests) ----------
@@ -701,7 +590,11 @@ export interface StrategyLiveView {
   runner: {
     processId: number
     lastLogUtc: string | null
-    /** The runner was adopted after an API restart: alive and controllable, output not captured. */
+    /**
+     * The runner was adopted after an API restart: alive and controllable.
+     * Its output is read from the runner's own log file
+     * (logs/engine/runner-<run>-<pid>.log), as every run's is.
+     */
     adopted?: boolean
   } | null
 }
@@ -860,6 +753,181 @@ export interface StrategyTrackRecord {
 
 /** GET /api/Strategy/runs/{runId}/orders — the run's paper order ledger, newest first. */
 export type PaperOrderRow = PaperOrder
+
+// ---------- A day's P&L, minute by minute ----------
+
+/**
+ * GET /api/Strategy/runs/pnl-series?date=yyyy-MM-dd — one IST day of live
+ * runs' P&L as the recorder wrote it once a minute, per run and per account.
+ * Scoped like the run list: a trader gets their own runs whatever `userId`.
+ *
+ * Series are parallel arrays: point i is `minutes[i]`, `net[i]` and so on. A
+ * minute counts from 00:00 IST of `date` (555 is 09:15). Rupees throughout.
+ */
+export interface RunPnlSeriesResponse {
+  date: string
+  /** 00:00 IST of `date`, as UTC. */
+  dayStartUtc: string
+  /** Every run in scope with at least one point that day, in the order they started. */
+  runs: RunPnlSeries[]
+  /** One per account with a run in the totals. */
+  accounts: AccountPnlSeries[]
+}
+
+/**
+ * One run's minutes. A strategy run has a point every minute it was live and
+ * a last one at the minute it ended, so a missing minute while it was live
+ * means the recorder was not running. A manual book has a point only when its
+ * figures moved.
+ */
+export interface RunPnlSeries {
+  runId: number
+  userId: number
+  userName: string | null
+  strategyName: string
+  underlying: string
+  isManualBook: boolean
+  /** Running | Stopping | Stopped | Failed | Completed, now. */
+  status: string
+  startedUtc: string
+  /**
+   * The account totals include it: a trading run started on `date` (the runs
+   * the run list gives for that day). A manual book opened earlier is not, nor
+   * is an alert-only run.
+   */
+  inAccountTotals: boolean
+  minutes: number[]
+  realized: number[]
+  unrealized: number[]
+  charges: number[]
+  /** Realized + unrealized − charges: what the run card showed at that minute. */
+  net: number[]
+}
+
+/**
+ * One account's day, summed over its runs in the totals at every minute any
+ * of them has a point. A run holds its last value between points and keeps
+ * its final value after it ends.
+ */
+export interface AccountPnlSeries {
+  userId: number
+  userName: string | null
+  /** How many runs are summed. */
+  runs: number
+  minutes: number[]
+  realized: number[]
+  unrealized: number[]
+  charges: number[]
+  net: number[]
+}
+
+// ---------- Open positions across books ----------
+
+/**
+ * GET /api/Positions/open — every open leg the caller may see, strategy runs
+ * (Running or Stopping) and manual books alike, on every underlying. A trader
+ * gets their own; an admin every account's, or one with `userId`. Ordered by
+ * account, then run, then the order the legs were opened.
+ */
+export interface OpenPositionsResponse {
+  /** When the marks were read; each `markAgeSeconds` is counted to here. */
+  asOfUtc: string
+  positions: OpenPosition[]
+}
+
+/** One open leg, marked as its run card marks it, with the age of that mark. */
+export interface OpenPosition {
+  positionId: number
+  runId: number
+  strategyName: string
+  isManualBook: boolean
+  userId: number
+  userName: string | null
+  groupId: string
+  symbol: string
+  underlying: string
+  expiryDate: string | null
+  strike: number | null
+  /** 'CE' or 'PE'; '' for a future or a share. */
+  optionType: string
+  /** "NIFTY 24500 CE · 29 Sep"; the symbol itself for anything that is not an option. */
+  label: string
+  direction: 'LONG' | 'SHORT'
+  lots: number
+  lotSize: number
+  /** Lots × lot size. */
+  quantity: number
+  entryPrice: number
+  /** The latest live quote, else the stored mark; null when neither exists. */
+  markPrice: number | null
+  markUtc: string | null
+  /** Seconds from `markUtc` to the answer's `asOfUtc`. */
+  markAgeSeconds: number | null
+  /** At the mark, before charges; null while no mark exists. */
+  unrealizedPnl: number | null
+  /** The carry-forward tick: held overnight instead of squared off at the close. */
+  carryForward: boolean
+  /** On a manual-book leg a strategy carried at the close: the run it came from. */
+  carriedFromRunId: number | null
+  carriedFromStrategy: string | null
+  /** The leg's own stop-loss and target, when the order that opened it carried them. */
+  stopLossPrice: number | null
+  targetPrice: number | null
+  openedUtc: string
+  greeks: PositionGreeks | null
+}
+
+// ---------- The morning plan (admin) ----------
+
+/**
+ * GET /api/Desk/plan — config/morning-plan.txt as the morning job reads it,
+ * and every run it asks for against what is live now. 404 with
+ * `{ message, searched }` when there is no plan file.
+ */
+export interface DeskPlanResponse {
+  /** The file read, as an absolute path on the server. */
+  file: string
+  modifiedUtc: string
+  /** The platform user names the plan deploys into, in the file's order. */
+  accounts: string[]
+  lines: DeskPlanLine[]
+  /** Account by account, line by line, underlying by underlying. */
+  runs: DeskPlanRun[]
+  planned: number
+  live: number
+  /** Lines the morning job would read differently, or refuse; empty when the file is clean. */
+  warnings: string[]
+}
+
+/** One strategy line of the plan. */
+export interface DeskPlanLine {
+  /** 1-based line number in the file. */
+  number: number
+  /** The line as written, without its comment. */
+  text: string
+  strategy: string
+  underlyings: string[]
+  lots: number
+  /** 'default' (the job's own), 'none' ("-"), or 'points'. */
+  legTarget: 'default' | 'none' | 'points'
+  legTargetPoints: number | null
+  /** The accounts an "@" list limits the line to; empty means every account. */
+  onlyAccounts: string[]
+}
+
+/** One run the plan asks for, and whether it is running. */
+export interface DeskPlanRun {
+  account: string
+  /** Null when no active account has that name. */
+  userId: number | null
+  strategy: string
+  underlying: string
+  lots: number
+  /** Running in that account with its runner alive: the morning tally's test. */
+  isLive: boolean
+  /** That run's id (the newest, if a restart left two); null when none is live. */
+  runId: number | null
+}
 
 // ---------- Backtesting ----------
 

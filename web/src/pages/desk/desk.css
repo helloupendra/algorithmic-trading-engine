@@ -217,6 +217,31 @@
 .dk-accname { display: inline-block; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 
 /* --- day P&L ------------------------------------------------------------------------ */
+/* The curve: recessive grid and axes, the accounts' colours on the lines only. */
+.dk-chart { position: relative; margin: 0 0 6px; }
+.dk-chart svg { display: block; overflow: visible; }
+.dk-chart text { fill: var(--text-3); font-size: 10px; font-family: var(--sans); font-variant-numeric: tabular-nums; }
+.dk-chart text.dk-chart__pos { fill: var(--pos); }
+.dk-chart text.dk-chart__neg { fill: var(--neg); }
+.dk-chart__gap { fill: var(--text-3); opacity: 0.08; }
+.dk-chart__now { stroke: var(--brand); stroke-dasharray: 2 2; opacity: 0.8; }
+.dk-chart__cursor { stroke: var(--text-3); stroke-width: 1; pointer-events: none; }
+.dk-chart__tip {
+  position: absolute;
+  top: 4px;
+  z-index: 2;
+  min-width: 150px;
+  padding: 5px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface2);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  pointer-events: none;
+}
+.dk-chart__row { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 6px; }
+.dk-chart__wait { min-height: 34px; margin-bottom: 6px; }
+.dk-gapnote { margin: -2px 0 6px; }
 .dk-acct { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 3px 8px; align-items: center; padding: 7px 0; border-top: 1px solid var(--line-soft); }
 .dk-acct:first-of-type { border-top: 0; padding-top: 2px; }
 .dk-acct__nm { color: var(--text-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

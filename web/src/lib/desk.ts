@@ -18,7 +18,7 @@
 
 import type { Forecast, ScoreboardRow } from './analysis'
 import { asProb, asRange } from './analysis'
-import type { CheckupDetail, CheckupItem, CheckupSummary } from './checkup'
+import type { CheckupSummary } from './checkup'
 import { SLOT_LABEL } from './checkup'
 import { deployState, deploySummary } from './deploys'
 import { expectedMove, istDate } from './factors'
@@ -31,6 +31,9 @@ import { runUserLabel, shortStopReason } from './runHistory'
 import { liveNet, realizedNet } from './strategyList'
 import type {
   DeployRecord,
+  DeskPlanLine,
+  DeskPlanResponse,
+  DeskPlanRun,
   Incident,
   IntelAnnouncement,
   IntelBoardMeeting,
@@ -41,8 +44,8 @@ import type {
   LiveRunSummary,
   MarketPulseResponse,
   MarketSessionInfo,
+  OpenPosition,
   OptionChain,
-  OptionChainPosition,
   OptionChainQuote,
 } from './types'
 
@@ -257,7 +260,9 @@ export type PanelKey =
  * The API enforces every one of these itself; this only keeps a panel that
  * would be refused off the sheet. The pulse and the chain view answer any
  * signed-in user, so the index table needs no grant; its forecast column
- * checks `analysis` on its own.
+ * checks `analysis` on its own. The market-intelligence reads (news and
+ * filings, board meetings, the overnight snapshots, breadth) answer the
+ * market-data grant, like the rest of the market.
  */
 export const PANEL_REQUIRES: Readonly<Record<PanelKey, Requirement | undefined>> = {
   grid: 'strategies',
@@ -268,13 +273,13 @@ export const PANEL_REQUIRES: Readonly<Record<PanelKey, Requirement | undefined>>
   movers: 'market-data',
   flows: 'market-data',
   week: 'market-data',
+  news: 'market-data',
+  overnight: 'market-data',
   forecast: 'analysis',
   scores: 'analysis',
-  // Sentinel, the desk timeline and the market-intelligence endpoints are admin-only.
+  // Sentinel and the desk timeline (incidents, checkups, deploys) are the operator's.
   checkup: 'admin',
   timeline: 'admin',
-  news: 'admin',
-  overnight: 'admin',
 }
 
 /** One cell of the sheet: a panel, how many of the 12 columns it spans, and any panel stacked under it. */
@@ -291,9 +296,10 @@ type Row = ReadonlyArray<readonly [PanelKey, number, PanelKey?]>
  * stacks the same order. Before the open: is the desk ready, what will today
  * be, what is planned. In the session: how much and where, then the market
  * around it. After the close: the result, how the forecasts did, what is held
- * overnight. A trader's sheet has no Sentinel, timeline or news (their
- * endpoints are admin-only), so the rows they would fill hold what a trader can
- * read instead.
+ * overnight. A trader's sheet has no Sentinel or timeline (they are the
+ * operator's), so the rows they would fill hold what a trader can read
+ * instead: before the open, the overnight markets and the news lead, where an
+ * admin's readiness checklist would be.
  */
 const LAYOUTS: Record<Phase, { admin: Row[]; trader: Row[] }> = {
   pre: {
@@ -303,9 +309,9 @@ const LAYOUTS: Record<Phase, { admin: Row[]; trader: Row[] }> = {
       [['indices', 8], ['legs', 4, 'timeline']],
     ],
     trader: [
+      [['overnight', 4], ['news', 4], ['plan', 4]],
       [['indices', 8], ['legs', 4]],
-      [['plan', 4], ['week', 4, 'flows'], ['movers', 4]],
-      [['forecast', 12]],
+      [['week', 4, 'flows'], ['movers', 4], ['forecast', 4]],
     ],
   },
   live: {
@@ -317,7 +323,7 @@ const LAYOUTS: Record<Phase, { admin: Row[]; trader: Row[] }> = {
     trader: [
       [['grid', 8], ['pnl', 4]],
       [['indices', 8], ['legs', 4]],
-      [['week', 4], ['flows', 4], ['movers', 4]],
+      [['news', 4], ['week', 4, 'flows'], ['movers', 4]],
     ],
   },
   post: {
@@ -379,6 +385,11 @@ export function deskAccounts(runs: readonly Pick<LiveRunSummary, 'userId' | 'use
   return [...byId.entries()]
     .sort(([a], [b]) => a - b)
     .map(([id, name], i) => ({ id, name, tone: i === 0 ? 1 : i === 1 ? 2 : null }))
+}
+
+/** An account's series colour: its own, or a neutral line past the second account. */
+export function accountStroke(tone: DeskAccount['tone']): string {
+  return tone === 1 ? 'var(--acct-1)' : tone === 2 ? 'var(--acct-2)' : 'var(--text-2)'
 }
 
 /** All accounts, or one by user id. */
@@ -664,70 +675,117 @@ export function runCounts(runs: readonly LiveRunSummary[]): RunCounts {
   return counts
 }
 
-/** The morning plan as Sentinel's checkup read it: how many runs it holds, per account where it said so. */
-export interface Plan {
-  total: number
-  perAccount: Array<{ name: string; runs: number }>
-  /** Planned runs that were not live when the checkup ran. */
-  notLive: number
-  /** When the checkup read it. */
-  checkedUtc: string | null
+/** One account's part of the morning plan: runs asked for, and how many are live. */
+export interface PlanAccount {
+  name: string
+  /** Null when no active account has the name the plan spells. */
+  userId: number | null
+  planned: number
+  live: number
 }
 
-/**
- * The plan out of a checkup's "plan" item, in the words Sentinel writes
- * (sentinel/checkup/checks.py, `plan`):
- *   "All 23 planned runs are live (admin 13, coderforchange 10)."
- *   "2 of 23 planned runs are not live: admin Fulcrum NIFTY, …"
- * Null when the item is missing, was skipped, or says something else: the
- * Desk then shows no plan rather than a guess (GET /api/Desk/plan is the
- * step that removes the parsing).
- */
-export function planFromItem(item: Pick<CheckupItem, 'key' | 'detail'> | null | undefined, checkedUtc: string | null = null): Plan | null {
-  if (!item || item.key !== 'plan') return null
-  const all = /All (\d+) planned runs? (?:is|are) live(?: \(([^)]*)\))?/i.exec(item.detail)
-  if (all) {
-    const perAccount = (all[2] ?? '')
-      .split(',')
-      .map((part) => /^\s*(.+?)\s+(\d+)\s*$/.exec(part))
-      .filter((m): m is RegExpExecArray => m != null)
-      .map((m) => ({ name: m[1], runs: Number(m[2]) }))
-    return { total: Number(all[1]), perAccount, notLive: 0, checkedUtc }
-  }
-  const some = /(\d+) of (\d+) planned runs? (?:is|are) not live/i.exec(item.detail)
-  if (some) return { total: Number(some[2]), perAccount: [], notLive: Number(some[1]), checkedUtc }
-  return null
+/** One account's run of one plan line on one underlying. */
+export interface PlanCell {
+  account: string
+  userId: number | null
+  live: boolean
+  runId: number | null
 }
 
-/**
- * The plan from today's checkups: the newest finished today whose items
- * include the plan (a checkup asked for during the session reads it again;
- * the one after the close does not).
- */
-export function todaysPlan(checkups: ReadonlyArray<CheckupDetail | null | undefined>, today: string): Plan | null {
-  const done = checkups
-    .filter((c): c is CheckupDetail => !!c && !!c.completedUtc && istDay(Date.parse(c.completedUtc)) === today)
-    .sort((a, b) => Date.parse(b.completedUtc!) - Date.parse(a.completedUtc!))
-  for (const c of done) {
-    const plan = planFromItem(c.items?.find((i) => i.key === 'plan'), c.completedUtc)
-    if (plan) return plan
-  }
-  return null
+/** One strategy line of the plan, as a row: an underlying per column, an account per line in each cell. */
+export interface PlanRow {
+  /** The line number in the file, or null for runs no line could be matched to. */
+  line: number | null
+  strategy: string
+  label: string
+  lots: number | null
+  /** "target 20 pts", "no target", "default target". */
+  target: string | null
+  onlyAccounts: string[]
+  /** Underlying → one cell per account in the plan's order; null where that account is not asked to run it. */
+  cells: Record<string, Array<PlanCell | null>>
 }
 
-/** How many runs the plan holds for a scope: all of them, or one account's where the checkup named it. */
-export function plannedFor(plan: Plan | null, scopeName: string | null): number | null {
-  if (!plan) return null
-  if (!scopeName) return plan.total
-  return plan.perAccount.find((a) => a.name === scopeName)?.runs ?? null
+export interface PlanView {
+  underlyings: string[]
+  accounts: PlanAccount[]
+  rows: PlanRow[]
+  planned: number
+  live: number
+  warnings: string[]
 }
 
-/** Today's morning checkup, from the history list, for its full items. */
-export function morningCheckupId(list: readonly CheckupSummary[] | undefined, today: string): number | null {
-  const hit = (list ?? []).find(
-    (c) => c.slot === 'morning' && c.status === 'done' && !!c.completedUtc && istDay(Date.parse(c.completedUtc)) === today,
+/** The line of the plan a run it asks for came from: same strategy and lots, the underlying on the line, the account allowed. */
+function lineOf(plan: Pick<DeskPlanResponse, 'lines'>, run: DeskPlanRun): DeskPlanLine | null {
+  const same = (a: string, b: string) => a.toUpperCase() === b.toUpperCase()
+  return (
+    plan.lines.find(
+      (l) =>
+        same(l.strategy, run.strategy) &&
+        l.lots === run.lots &&
+        l.underlyings.some((u) => same(u, run.underlying)) &&
+        (l.onlyAccounts.length === 0 || l.onlyAccounts.some((a) => same(a, run.account))),
+    ) ?? null
   )
-  return hit?.id ?? null
+}
+
+function targetText(line: DeskPlanLine): string {
+  if (line.legTarget === 'none') return 'no leg target'
+  if (line.legTarget === 'points' && line.legTargetPoints != null) return `leg target ${line.legTargetPoints} pts`
+  return 'default leg target'
+}
+
+/**
+ * The morning plan (GET /api/Desk/plan) as the Desk lays it out: a row per
+ * plan line, an underlying per column, an account per line in each cell,
+ * live or not, and the counts per account. `accounts` narrows it to the
+ * Desk's scope by user id (null: every account in the plan). The counts are
+ * the API's own test of "live": Running with its runner alive.
+ */
+export function planView(plan: DeskPlanResponse, accounts: readonly number[] | null = null): PlanView {
+  const inScope = (r: Pick<DeskPlanRun, 'userId'>) => accounts == null || (r.userId != null && accounts.includes(r.userId))
+  const runs = plan.runs.filter(inScope)
+  const names = plan.accounts.filter((name) => runs.some((r) => r.account === name))
+  // An account the file names but no run of which is in scope (another account's scope) stays out.
+  const accountRows: PlanAccount[] = names.map((name) => {
+    const own = runs.filter((r) => r.account === name)
+    return { name, userId: own[0]?.userId ?? null, planned: own.length, live: own.filter((r) => r.isLive).length }
+  })
+  const underlyings = [...new Set(runs.map((r) => r.underlying.toUpperCase()))].sort(byUnderlying)
+
+  const rows = new Map<string, PlanRow>()
+  for (const run of runs) {
+    const line = lineOf(plan, run)
+    const key = line ? `L${line.number}` : `S${run.strategy}`
+    let row = rows.get(key)
+    if (!row) {
+      row = {
+        line: line?.number ?? null,
+        strategy: run.strategy,
+        label: strategyLabel(run.strategy),
+        lots: line?.lots ?? run.lots,
+        target: line ? targetText(line) : null,
+        onlyAccounts: line?.onlyAccounts ?? [],
+        cells: Object.fromEntries(underlyings.map((u) => [u, names.map(() => null)])),
+      }
+      rows.set(key, row)
+    }
+    row.cells[run.underlying.toUpperCase()][names.indexOf(run.account)] = {
+      account: run.account,
+      userId: run.userId,
+      live: run.isLive,
+      runId: run.runId,
+    }
+  }
+  const ordered = [...rows.values()].sort((a, b) => (a.line ?? Infinity) - (b.line ?? Infinity))
+  return {
+    underlyings,
+    accounts: accountRows,
+    rows: ordered,
+    planned: runs.length,
+    live: runs.filter((r) => r.isLive).length,
+    warnings: plan.warnings,
+  }
 }
 
 // ---------------------------------------------------------------- indices and levels
@@ -954,9 +1012,11 @@ export function forecastCounts(list: readonly Forecast[] | undefined, session: s
 
 export interface DeskLeg {
   key: string
+  userId: number
   userName: string
   strategy: string
   manual: boolean
+  underlying: string
   /** "NIFTY 23300 CE", "CRUDEOIL FUT". */
   label: string
   expiryDate: string | null
@@ -968,50 +1028,59 @@ export interface DeskLeg {
   openedUtc: string
   /** The weekday it was opened on, when that was before today: a carried leg ("Fri"). */
   carriedFrom: string | null
+  /** Ticked to be held overnight rather than squared off at the close. */
+  carryForward: boolean
   /** Expires today or on the next session. */
   expires: 'today' | 'next' | null
 }
 
+/** "NIFTY 23300 CE" for an option, "CRUDEOIL FUT" for a future, the symbol for anything else. */
+export function legLabel(p: Pick<OpenPosition, 'underlying' | 'strike' | 'optionType' | 'symbol'>): string {
+  if ((p.optionType === 'CE' || p.optionType === 'PE') && p.strike != null) return `${p.underlying} ${p.strike} ${p.optionType}`
+  if (/FUT$/i.test(p.symbol)) return `${p.underlying} FUT`
+  return p.symbol.includes(':') ? p.symbol.slice(p.symbol.indexOf(':') + 1) : p.symbol
+}
+
 /**
- * Every open leg from the chain-positions answers, one per underlying asked,
- * largest open P&L first. The API scopes them (a trader sees their own), so
- * the list is only narrowed further by the Desk's account scope.
+ * Every open leg from GET /api/Positions/open, largest open P&L first. The
+ * API scopes them (a trader sees their own), so the list is only narrowed
+ * further by the Desk's account scope, by user id.
  */
 export function deskLegs(
-  answers: ReadonlyArray<{ underlying: string; rows: readonly OptionChainPosition[] | undefined }>,
-  opts: { today: string; nextSession: string | null; userName?: string | null },
+  positions: readonly OpenPosition[],
+  opts: { today: string; nextSession: string | null; userId?: number | null },
 ): DeskLeg[] {
-  const seen = new Set<string>()
   const legs: DeskLeg[] = []
-  for (const { underlying, rows } of answers) {
-    for (const p of rows ?? []) {
-      const key = `${p.runId}|${p.groupId}|${p.symbol}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      if (opts.userName && p.userName !== opts.userName) continue
-      const openedDay = istDay(Date.parse(p.openedUtc))
-      const option = p.instrumentType === 'CE' || p.instrumentType === 'PE'
-      legs.push({
-        key,
-        userName: p.userName,
-        strategy: p.strategyName,
-        manual: p.isManual,
-        label: option && p.strikePrice != null ? `${underlying} ${p.strikePrice} ${p.instrumentType}` : `${underlying} ${p.instrumentType === 'FUT' ? 'FUT' : p.instrumentType}`,
-        expiryDate: p.expiryDate,
-        lots: p.quantity,
-        short: p.direction === 'SHORT',
-        ltp: p.markPrice,
-        pnl: p.unrealizedPnl,
-        openedUtc: p.openedUtc,
-        carriedFrom: openedDay < opts.today ? weekdayOf(openedDay) : null,
-        expires: p.expiryDate === opts.today ? 'today' : p.expiryDate != null && p.expiryDate === opts.nextSession ? 'next' : null,
-      })
-    }
+  for (const p of positions) {
+    if (opts.userId != null && p.userId !== opts.userId) continue
+    const openedDay = istDay(Date.parse(p.openedUtc))
+    legs.push({
+      key: String(p.positionId),
+      userId: p.userId,
+      userName: runUserLabel(p.userName, p.userId),
+      strategy: p.strategyName,
+      manual: p.isManualBook,
+      underlying: p.underlying.toUpperCase(),
+      label: legLabel(p),
+      expiryDate: p.expiryDate,
+      lots: p.lots,
+      short: p.direction === 'SHORT',
+      ltp: p.markPrice,
+      pnl: p.unrealizedPnl,
+      openedUtc: p.openedUtc,
+      carriedFrom: openedDay < opts.today ? weekdayOf(openedDay) : null,
+      carryForward: p.carryForward,
+      expires: p.expiryDate === opts.today ? 'today' : p.expiryDate != null && p.expiryDate === opts.nextSession ? 'next' : null,
+    })
   }
   return legs.sort((a, b) => Math.abs(b.pnl ?? 0) - Math.abs(a.pnl ?? 0) || a.label.localeCompare(b.label))
 }
 
-/** Runs that carried a leg into the manual book today, from the book's positions. */
+/**
+ * Runs that carried a leg into a manual book, from the open legs of every
+ * book in scope: a carried leg names the run it came from. A carried leg
+ * closed since is no longer open, so its run loses the mark.
+ */
 export function carriedRunIds(positions: ReadonlyArray<{ carriedFromRunId?: number | null }> | undefined): Set<number> {
   return new Set((positions ?? []).map((p) => p.carriedFromRunId).filter((id): id is number => id != null))
 }

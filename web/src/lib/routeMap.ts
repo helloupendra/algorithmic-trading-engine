@@ -46,10 +46,12 @@ export const ROUTE_MOVES: Readonly<Record<string, string>> = {
   '/trader/strategies': '/trade/library',
   '/admin/strategies/history': '/trade/history',
   '/trader/strategies/history': '/trade/history',
-  // The v1 Simulator pages, until positions and orders across every book replace them.
+  // The v1 Simulator pages are retired: positions and orders across every book
+  // replaced them, and a run's page is the one run page.
   '/trader/positions': '/trade/positions',
   '/trader/orders': '/trade/orders',
-  '/trader/runs/:id': '/trade/positions/runs/:id',
+  '/trader/runs/:id': '/trade/runs/:id',
+  '/trade/positions/runs/:id': '/trade/runs/:id',
   '/admin/trading': '/trade/ticket',
   '/trader/trading': '/trade/ticket',
   '/admin/system/risk': '/trade/risk',

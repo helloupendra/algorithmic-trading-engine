@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { Forecast } from './analysis'
-import type { CheckupDetail, CheckupSummary } from './checkup'
+import type { CheckupSummary } from './checkup'
 import {
   NIFTY50,
   PIN_KEY,
@@ -23,13 +23,12 @@ import {
   forecastCounts,
   forecastRows,
   indexRows,
+  legLabel,
   liveIncidents,
   modelStanding,
-  morningCheckupId,
   newsLines,
   overnightRows,
-  planFromItem,
-  plannedFor,
+  planView,
   rangeSoFar,
   readPin,
   runCounts,
@@ -41,7 +40,6 @@ import {
   strategyLabel,
   stripSpans,
   tickerOf,
-  todaysPlan,
   untilText,
   validScope,
   weekdayOf,
@@ -50,9 +48,13 @@ import {
 } from './desk'
 import type { DeskAccount } from './desk'
 import { accessFor } from './modules'
+import { openPosition } from './openPositions.fixture'
 import { liveNet } from './strategyList'
 import type {
   DeployRecord,
+  DeskPlanLine,
+  DeskPlanResponse,
+  DeskPlanRun,
   Incident,
   IntelAnnouncement,
   IntelBoardMeeting,
@@ -60,7 +62,6 @@ import type {
   LiveRunSummary,
   MarketPulseResponse,
   OptionChain,
-  OptionChainPosition,
 } from './types'
 
 // Monday 28 Sep 2026 in IST, as UTC instants.
@@ -286,18 +287,29 @@ describe('deskLayout', () => {
     }
   })
 
-  it('never gives a trader Sentinel, the timeline, the news or the overnight table', () => {
+  it('never gives a trader Sentinel or the desk timeline', () => {
     const all = accessFor({ role: 'Trader', moduleGrants: ['strategies', 'market-data', 'analysis', 'notebook', 'backtesting'] })
     for (const phase of ['pre', 'live', 'post'] as const) {
       const shown = deskLayout(phase, all).flat().flatMap((s) => [s.key, s.under])
-      for (const hidden of ['checkup', 'timeline', 'news', 'overnight']) expect(shown).not.toContain(hidden)
+      for (const hidden of ['checkup', 'timeline']) expect(shown).not.toContain(hidden)
+    }
+  })
+
+  it('gives a trader with market data the news, the overnight markets, the calendar and breadth', () => {
+    const shown = (phase: 'pre' | 'live', grants: string[]) =>
+      deskLayout(phase, accessFor({ role: 'Trader', moduleGrants: grants })).flat().flatMap((s) => [s.key, s.under])
+    expect(keys(deskLayout('pre', accessFor({ role: 'Trader', moduleGrants: ['strategies', 'market-data'] })))[0]).toEqual(['overnight', 'news', 'plan'])
+    expect(shown('live', ['strategies', 'market-data'])).toEqual(expect.arrayContaining(['news', 'week', 'flows', 'movers']))
+    for (const phase of ['pre', 'live'] as const) {
+      for (const hidden of ['news', 'overnight', 'week', 'movers']) expect(shown(phase, ['strategies'])).not.toContain(hidden)
     }
   })
 
   it('drops panels a trader lacks the grant for and widens the rest', () => {
     const rows = deskLayout('live', accessFor({ role: 'Trader', moduleGrants: ['market-data'] }))
-    expect(keys(rows)).toEqual([['indices'], ['week', 'flows', 'movers']])
+    expect(keys(rows)).toEqual([['indices'], ['news', 'week', 'movers']])
     expect(rows[0][0].span).toBe(12)
+    expect(rows[1][1]).toEqual({ key: 'week', span: 4, under: 'flows' })
   })
 
   it('leaves a trader with no grants the index table alone', () => {
@@ -484,86 +496,90 @@ describe('runCounts', () => {
 
 // ---------------------------------------------------------------- the plan
 
-describe('planFromItem', () => {
-  it("reads Sentinel's all-live wording with the accounts", () => {
-    expect(planFromItem({ key: 'plan', detail: 'All 23 planned runs are live (admin 13, coderforchange 10).' })).toEqual({
-      total: 23,
-      perAccount: [
-        { name: 'admin', runs: 13 },
-        { name: 'coderforchange', runs: 10 },
-      ],
-      notLive: 0,
-      checkedUtc: null,
-    })
+describe('planView', () => {
+  const line = (over: Partial<DeskPlanLine>): DeskPlanLine => ({
+    number: 3,
+    text: 'GhostTangentCrossings NIFTY,BANKNIFTY 2',
+    strategy: 'GhostTangentCrossings',
+    underlyings: ['NIFTY', 'BANKNIFTY'],
+    lots: 2,
+    legTarget: 'default',
+    legTargetPoints: null,
+    onlyAccounts: [],
+    ...over,
+  })
+  const planRun = (account: string, userId: number | null, strategy: string, underlying: string, isLive: boolean, runId: number | null, lots = 2): DeskPlanRun => ({
+    account,
+    userId,
+    strategy,
+    underlying,
+    lots,
+    isLive,
+    runId,
+  })
+  const plan: DeskPlanResponse = {
+    file: '/srv/desk/config/morning-plan.txt',
+    modifiedUtc: istIso('18:02', '2026-09-25'),
+    accounts: ['admin', 'coderforchange'],
+    lines: [line({}), line({ number: 5, text: 'Fulcrum NIFTY 2 20 @admin', strategy: 'Fulcrum', underlyings: ['NIFTY'], legTarget: 'points', legTargetPoints: 20, onlyAccounts: ['admin'] })],
+    runs: [
+      planRun('admin', 1, 'GhostTangentCrossings', 'NIFTY', true, 601),
+      planRun('admin', 1, 'GhostTangentCrossings', 'BANKNIFTY', true, 602),
+      planRun('coderforchange', 7, 'GhostTangentCrossings', 'NIFTY', true, 611),
+      planRun('coderforchange', 7, 'GhostTangentCrossings', 'BANKNIFTY', false, null),
+      planRun('admin', 1, 'Fulcrum', 'NIFTY', true, 603),
+    ],
+    planned: 5,
+    live: 4,
+    warnings: ['line 9: "SmcBreak" is not a strategy the catalog knows; the job would skip it'],
+  }
+
+  it('lays the plan out a row per line, an underlying per column, an account per line in each cell', () => {
+    const v = planView(plan)
+    expect(v.underlyings).toEqual(['NIFTY', 'BANKNIFTY'])
+    expect(v.rows.map((r) => [r.line, r.label, r.target])).toEqual([
+      [3, 'Ghost Tangent Crossings', 'default leg target'],
+      [5, 'Fulcrum', 'leg target 20 pts'],
+    ])
+    expect(v.rows[0].cells.BANKNIFTY).toEqual([
+      { account: 'admin', userId: 1, live: true, runId: 602 },
+      { account: 'coderforchange', userId: 7, live: false, runId: null },
+    ])
+    // Fulcrum is asked of admin only: coderforchange's line of the cell is empty, not "not live".
+    expect(v.rows[1].cells.NIFTY).toEqual([{ account: 'admin', userId: 1, live: true, runId: 603 }, null])
+    expect(v.rows[1].onlyAccounts).toEqual(['admin'])
   })
 
-  it('reads the missing-runs wording', () => {
-    expect(planFromItem({ key: 'plan', detail: '2 of 23 planned runs are not live: admin Fulcrum NIFTY, admin Fulcrum SENSEX.' })).toMatchObject({
-      total: 23,
-      notLive: 2,
-    })
+  it('counts planned and live per account, and carries the warnings', () => {
+    const v = planView(plan)
+    expect(v.accounts).toEqual([
+      { name: 'admin', userId: 1, planned: 3, live: 3 },
+      { name: 'coderforchange', userId: 7, planned: 2, live: 1 },
+    ])
+    expect([v.planned, v.live]).toEqual([5, 4])
+    expect(v.warnings).toHaveLength(1)
   })
 
-  it('returns null for another item, a skip, or words it does not know', () => {
-    expect(planFromItem({ key: 'feeds', detail: 'All 3 planned runs are live' })).toBeNull()
-    expect(planFromItem({ key: 'plan', detail: 'Not checked: the plan is checked between 08:50 and 15:25.' })).toBeNull()
-    expect(planFromItem(undefined)).toBeNull()
-  })
-})
-
-describe('plannedFor', () => {
-  const plan = planFromItem({ key: 'plan', detail: 'All 23 planned runs are live (admin 13, coderforchange 10).' })
-  it('counts the whole plan, or one account of it', () => {
-    expect(plannedFor(plan, null)).toBe(23)
-    expect(plannedFor(plan, 'coderforchange')).toBe(10)
-  })
-  it('does not guess an account the checkup did not name', () => {
-    expect(plannedFor(planFromItem({ key: 'plan', detail: '2 of 23 planned runs are not live: a, b.' }), 'admin')).toBeNull()
-    expect(plannedFor(null, null)).toBeNull()
-  })
-})
-
-describe("today's plan and checkups", () => {
-  const detail = (id: number, slot: string, done: string, items: CheckupDetail['items']): CheckupDetail => ({
-    id,
-    slot,
-    status: 'done',
-    verdict: 'ok',
-    headline: '',
-    requestedUtc: null,
-    requestedBy: '',
-    startedUtc: done,
-    completedUtc: done,
-    host: 'h',
-    counts: { ok: 0, warn: 0, fail: 0, info: 0, skip: 0 },
-    items,
-    itemsUnreadable: false,
-    error: '',
-    notifiedUtc: null,
-  })
-  const plan = (text: string) => ({ key: 'plan', area: 'Strategies', title: 'Morning plan', state: 'ok', detail: text, action: '', link: null })
-
-  it("takes the newest of today's checkups that read the plan", () => {
-    const morning = detail(61, 'morning', istIso('08:47'), [plan('All 23 planned runs are live (admin 13, coderforchange 10).')])
-    const close = detail(62, 'close', istIso('15:52'), [])
-    const request = detail(63, 'on-request', istIso('11:00'), [plan('1 of 23 planned runs are not live: admin Fulcrum NIFTY.')])
-    expect(todaysPlan([close, morning, request], TODAY)).toMatchObject({ total: 23, notLive: 1 })
-    expect(todaysPlan([close, morning], TODAY)).toMatchObject({ total: 23, notLive: 0, checkedUtc: istIso('08:47') })
+  it("narrows to one account's runs", () => {
+    const v = planView(plan, [7])
+    expect(v.accounts.map((a) => a.name)).toEqual(['coderforchange'])
+    expect([v.planned, v.live]).toEqual([2, 1])
+    expect(v.rows.map((r) => r.strategy)).toEqual(['GhostTangentCrossings'])
+    expect(v.rows[0].cells.NIFTY).toEqual([{ account: 'coderforchange', userId: 7, live: true, runId: 611 }])
   })
 
-  it("ignores yesterday's plan", () => {
-    const friday = detail(59, 'morning', istIso('08:47', '2026-09-25'), [plan('All 21 planned runs are live (admin 13, coderforchange 8).')])
-    expect(todaysPlan([friday], TODAY)).toBeNull()
+  it('keeps a run no line matches, in a row of its own, after the lines', () => {
+    const odd = { ...plan, runs: [...plan.runs, planRun('admin', 1, 'ChainFlowBuy', 'SENSEX', false, null, 4)] }
+    const v = planView(odd)
+    expect(v.rows.at(-1)).toMatchObject({ line: null, strategy: 'ChainFlowBuy', lots: 4, target: null })
+    expect(v.underlyings).toEqual(['NIFTY', 'BANKNIFTY', 'SENSEX'])
   })
 
-  it("finds today's morning checkup in the history", () => {
-    const list = [
-      { id: 62, slot: 'close', status: 'done', completedUtc: istIso('15:52') },
-      { id: 61, slot: 'morning', status: 'done', completedUtc: istIso('08:47') },
-      { id: 59, slot: 'morning', status: 'done', completedUtc: istIso('08:47', '2026-09-25') },
-    ] as CheckupSummary[]
-    expect(morningCheckupId(list, TODAY)).toBe(61)
-    expect(morningCheckupId(list.slice(2), TODAY)).toBeNull()
+  it('names an account the plan spells that no active account has', () => {
+    const v = planView({ ...plan, accounts: ['admin', 'coderforchange', 'ghost'], runs: [...plan.runs, planRun('ghost', null, 'GhostTangentCrossings', 'NIFTY', false, null)] })
+    expect(v.accounts.at(-1)).toEqual({ name: 'ghost', userId: null, planned: 1, live: 0 })
+    // Scoped to a user id, a run with none cannot be in it.
+    expect(planView({ ...plan, runs: [planRun('ghost', null, 'GhostTangentCrossings', 'NIFTY', false, null)] }, [1]).planned).toBe(0)
   })
 })
 
@@ -719,61 +735,55 @@ describe('modelStanding', () => {
 // ---------------------------------------------------------------- open legs
 
 describe('deskLegs', () => {
-  const pos = (over: Partial<OptionChainPosition>): OptionChainPosition => ({
-    runId: 612,
-    strategyName: 'GhostTangentCrossings',
-    isManual: false,
-    userName: 'admin',
-    groupId: 'g1',
-    symbol: 'NSE:NIFTY2692923300PE',
-    instrumentType: 'PE',
-    strikePrice: 23300,
-    expiryDate: '2026-09-29',
-    direction: 'LONG',
-    quantity: 2,
-    lotSize: 65,
-    averagePrice: 64.8,
-    markPrice: 69.57,
-    markUtc: null,
-    unrealizedPnl: 620,
-    stopLossPrice: null,
-    targetPrice: null,
-    openedUtc: istIso('11:12'),
-    ...over,
+  const book = openPosition({
+    positionId: 9002,
+    runId: 540,
+    isManualBook: true,
+    strategyName: 'Manual',
+    groupId: 'm1',
+    symbol: 'NSE:NIFTY2692923300CE',
+    optionType: 'CE',
+    unrealizedPnl: 3146,
+    carryForward: true,
+    carriedFromRunId: 598,
+    openedUtc: istIso('14:06', '2026-09-25'),
+  })
+  const crude = openPosition({
+    positionId: 9003,
+    runId: 624,
+    symbol: 'MCX:CRUDEOIL26OCTFUT',
+    underlying: 'CRUDEOIL',
+    optionType: '',
+    strike: null,
+    label: 'MCX:CRUDEOIL26OCTFUT',
+    expiryDate: '2026-10-19',
+    unrealizedPnl: -1400,
   })
 
-  it('lists legs largest first, marking the carried and the expiring', () => {
-    const legs = deskLegs(
-      [
-        {
-          underlying: 'NIFTY',
-          rows: [
-            pos({}),
-            pos({ runId: 540, isManual: true, strategyName: 'Manual book', groupId: 'm1', symbol: 'NSE:NIFTY2692923300CE', instrumentType: 'CE', unrealizedPnl: 3146, openedUtc: istIso('14:06', '2026-09-25') }),
-          ],
-        },
-        { underlying: 'CRUDEOIL', rows: [pos({ runId: 624, symbol: 'MCX:CRUDEOIL26OCTFUT', instrumentType: 'FUT', strikePrice: null, expiryDate: '2026-10-19', unrealizedPnl: -1400 })] },
-      ],
-      { today: TODAY, nextSession: '2026-09-29' },
-    )
+  it('lists every book and underlying from one answer, largest first, marking the carried and the expiring', () => {
+    const legs = deskLegs([openPosition(), book, crude], { today: TODAY, nextSession: '2026-09-29' })
     expect(legs.map((l) => l.label)).toEqual(['NIFTY 23300 CE', 'CRUDEOIL FUT', 'NIFTY 23300 PE'])
-    expect(legs[0]).toMatchObject({ manual: true, carriedFrom: 'Fri', expires: 'next', lots: 2 })
-    expect(legs[1]).toMatchObject({ carriedFrom: null, expires: null })
+    expect(legs[0]).toMatchObject({ manual: true, carriedFrom: 'Fri', carryForward: true, expires: 'next', lots: 2, underlying: 'NIFTY' })
+    expect(legs[1]).toMatchObject({ carriedFrom: null, expires: null, underlying: 'CRUDEOIL' })
   })
 
-  it('counts a leg asked for twice once, and narrows to one account', () => {
-    const rows = [pos({}), pos({ userName: 'coderforchange', runId: 613 })]
-    expect(deskLegs([{ underlying: 'NIFTY', rows }, { underlying: 'NIFTY', rows }], { today: TODAY, nextSession: null })).toHaveLength(2)
-    expect(deskLegs([{ underlying: 'NIFTY', rows }], { today: TODAY, nextSession: null, userName: 'coderforchange' })).toHaveLength(1)
+  it('narrows to one account by user id', () => {
+    const theirs = openPosition({ positionId: 9010, userId: 7, userName: 'coderforchange', runId: 613 })
+    expect(deskLegs([openPosition(), theirs], { today: TODAY, nextSession: null })).toHaveLength(2)
+    expect(deskLegs([openPosition(), theirs], { today: TODAY, nextSession: null, userId: 7 }).map((l) => l.userName)).toEqual(['coderforchange'])
   })
 
   it('keeps a leg without a mark, last', () => {
-    const legs = deskLegs([{ underlying: 'NIFTY', rows: [pos({ markPrice: null, unrealizedPnl: null, groupId: 'x' }), pos({})] }], { today: TODAY, nextSession: null })
+    const legs = deskLegs([openPosition({ positionId: 1, markPrice: null, unrealizedPnl: null }), openPosition()], { today: TODAY, nextSession: null })
     expect(legs.map((l) => l.pnl)).toEqual([620, null])
   })
 
-  it('reads the runs a leg was carried from off the book', () => {
-    expect([...carriedRunIds([{ carriedFromRunId: 615 }, { carriedFromRunId: null }, {}])]).toEqual([615])
+  it('names a leg the API could not decorate by its symbol', () => {
+    expect(legLabel({ underlying: 'RELIANCE', strike: null, optionType: '', symbol: 'NSE:RELIANCE-EQ' })).toBe('RELIANCE-EQ')
+  })
+
+  it("reads the runs a leg was carried from off every account's books", () => {
+    expect([...carriedRunIds([book, openPosition({ carriedFromRunId: 615 }), openPosition()])]).toEqual([598, 615])
   })
 })
 

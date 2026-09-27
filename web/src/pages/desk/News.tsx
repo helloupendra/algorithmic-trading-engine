@@ -1,7 +1,7 @@
 /**
- * News & filings (admin: the market-intelligence endpoints are admin-only
- * for now). Headlines the recorder stored, NSE filings of the names the desk
- * cares about (held, watched, NIFTY 50), and the local model's sentiment on
+ * News & filings (market-data grant). Headlines the recorder stored, NSE
+ * filings of the names the desk cares about (held, watched, NIFTY 50: a
+ * trader's held names are their own legs), and the local model's sentiment on
  * each — labelled as the model's reading of the words, not a signal: it has
  * not been scored the way the forecasts are.
  */
@@ -24,13 +24,15 @@ export function News({ view, links, limit = 6 }: { view: DeskView; links: DeskLi
   const { legs } = useDeskLegs(view)
   const names = useMemo(
     () => ({
-      held: new Set((legs ?? []).map((l) => l.label.split(' ')[0].toUpperCase())),
+      held: new Set((legs ?? []).map((l) => l.underlying)),
       watched: new Set((watch.data ?? []).map((w) => tickerOf(w.symbol))),
     }),
     [legs, watch.data],
   )
   const lines = newsLines(news.data?.items, filings.data?.items, tab, names).slice(0, limit)
   const waiting = !news.data && !filings.data && !news.isError && !filings.isError
+  // "Nothing recorded" is said only when every source the tab reads has answered.
+  const readAll = filings.data !== undefined && (tab === 'filings' || news.data !== undefined)
   return (
     <>
       <PanelHead title="News & filings" meta="sentiment: model reading, not a signal" more={links.news ? { to: links.news, label: 'All news' } : null} />
@@ -45,7 +47,7 @@ export function News({ view, links, limit = 6 }: { view: DeskView; links: DeskLi
       {filings.isError && !filings.data && <Failed what="Filings" error={filings.error} />}
       {waiting ? (
         <Waiting>Reading the news…</Waiting>
-      ) : lines.length === 0 ? (
+      ) : lines.length === 0 && !readAll ? null : lines.length === 0 ? (
         <Waiting>{tab === 'held' ? 'Nothing on held or watched names.' : tab === 'results' ? 'No results news.' : 'Nothing recorded since yesterday.'}</Waiting>
       ) : (
         <ul className="dk-list dk-news">

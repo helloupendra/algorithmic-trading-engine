@@ -1,21 +1,25 @@
 /**
- * Day P&L: each account's net today, after charges, then where it came from,
- * strategy by strategy.
+ * Day P&L: each account's net through the day, after charges, as the
+ * recorder wrote it once a minute (GET /api/Strategy/runs/pnl-series); then
+ * each account's figure now, and where it came from, strategy by strategy.
  *
- * There is no per-minute P&L series yet (live runs record none), so there is
- * no curve here, and the panel says so rather than drawing one from guesses.
- * Nor is there a loss rail: the one limit, Risk → max daily loss, is per run,
- * on P&L before charges, and an account's total held against it read as a
+ * Where the recorder wrote nothing for a stretch, the curve breaks and the
+ * panel says when, rather than drawing a line across what nobody saw. Nor is
+ * there a loss rail: the one limit, Risk → max daily loss, is per run, on
+ * P&L before charges, and an account's total held against it read as a
  * breach that was not one. The panel states the limit as it is instead
  * (admins only: traders cannot read the limits).
  */
 
+import { useMemo } from 'react'
 import type { AccountTotals } from '../../lib/desk'
-import { compactInr } from '../../lib/desk'
+import { compactInr, dayLabel } from '../../lib/desk'
+import { dayCurves, gapText } from '../../lib/pnlSeries'
 import { formatInrSigned, formatInrWhole } from '../../lib/format'
-import { useDeskRiskLimits } from '../../lib/queries'
+import { useDeskRiskLimits, useRunPnlSeries } from '../../lib/queries'
 import type { DeskLinks, DeskView } from './data'
-import { toneClass } from './data'
+import { toneClass, useWidth } from './data'
+import { PnlChart } from './PnlChart'
 import { Failed, Money, PanelHead, Swatch, Waiting } from './parts'
 
 /** One account: its net, and the gross the charges turned into it. */
@@ -68,13 +72,52 @@ function ByStrategy({ view }: { view: DeskView }) {
   )
 }
 
+/** The curve, or a plain word on why there is none. */
+function Curve({ view }: { view: DeskView }) {
+  const [ref, width] = useWidth<HTMLDivElement>()
+  const isToday = view.day === view.today
+  const series = useRunPnlSeries(view.day, isToday)
+  const userIds = useMemo(() => view.accounts.map((a) => a.id), [view.accounts])
+  const curves = useMemo(
+    () =>
+      series.data
+        ? dayCurves(series.data, { userIds, nowMs: view.nowMs, isToday, mcxCloseUtc: isToday ? view.mcx?.sessionCloseUtc : null })
+        : null,
+    [series.data, userIds, view.nowMs, isToday, view.mcx?.sessionCloseUtc],
+  )
+  let body
+  if (!curves) {
+    body = series.isError ? <Failed what="The day’s minutes" error={series.error} /> : <p className="dk-wait dk-chart__wait">Reading the day’s minutes…</p>
+  } else if (!curves.any) {
+    body = (
+      <p className="dk-note dk-chart__wait">
+        The recorder has no minutes for {isToday ? 'today' : dayLabel(view.day)} yet, so there is no curve: the figures below are the runs’ own.
+      </p>
+    )
+  } else {
+    body = <PnlChart curves={curves} accounts={view.accounts} width={width} />
+  }
+  return (
+    <>
+      <div ref={ref}>{body}</div>
+      {curves?.any && curves.gaps.length > 0 && (
+        <p className="dk-note dk-gapnote" role="note">
+          No points {gapText(curves.gaps)}: the recorder was not writing then, so the curve is not drawn across it.
+        </p>
+      )}
+    </>
+  )
+}
+
 export function DayPnl({ view, links }: { view: DeskView; links: DeskLinks }) {
   const limits = useDeskRiskLimits(view.isAdmin)
   const limit = limits.data?.maxDailyLoss ?? null
+  const whose = view.accounts.length > 1 ? 'per account · ' : ''
+  const when = view.day === view.today ? '' : ` · ${dayLabel(view.day)}`
   const head = (
     <PanelHead
       title="Day P&L"
-      meta={view.accounts.length > 1 ? 'per account · net after charges' : 'net after charges'}
+      meta={`${whose}net after charges${when}`}
       more={view.isAdmin && links.risk ? { to: links.risk, label: 'Risk' } : null}
     />
   )
@@ -86,6 +129,7 @@ export function DayPnl({ view, links }: { view: DeskView; links: DeskLinks }) {
   return (
     <>
       {head}
+      <Curve view={view} />
       {grid.totals.map((t) => (
         <AccountRow key={t.account.id} totals={t} multi={multi} />
       ))}
@@ -100,15 +144,14 @@ export function DayPnl({ view, links }: { view: DeskView; links: DeskLinks }) {
         </div>
       )}
       <ByStrategy view={view} />
-      <div className="dk-foot" style={{ display: 'block' }}>
-        {view.isAdmin && limit != null && limit < 0 && (
+      {view.isAdmin && limit != null && limit < 0 && (
+        <div className="dk-foot" style={{ display: 'block' }}>
           <p className="dk-note">
             Max daily loss: {formatInrSigned(limit)} per run, on its P&L before charges, checked when the run places a new order.
             There is no limit per account.
           </p>
-        )}
-        <p className="dk-note">Totals only: a curve through the day arrives with the P&L series.</p>
-      </div>
+        </div>
+      )}
     </>
   )
 }

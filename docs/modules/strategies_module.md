@@ -116,12 +116,18 @@ Until 28 Sep a live run kept no P&L over time: its card and its history row said
 
 Scoped like the run list: a trader gets their own runs whatever `userId` they pass; an admin gets every account's, or one account's.
 
+In the console the series is drawn twice (`web/src/lib/pnlSeries.ts` turns it into points, gaps and a day axis). The Desk's **Day P&L** draws each account's net through the day on the IST axis, 09:15 to 15:30 and on to the MCX close once an MCX run has points in the evening, with now marked. **Trade → Runs → Tracks** (`/trade/runs?view=tracks`) draws every run of the day as a track on the same axis, under NIFTY's one-minute closes and the accounts' curves: a track is a grid cell (an account's runs of one strategy on one underlying, a restart adding to it), its line the net on one shared square-root scale, its ticks the fills from the runs' order ledgers, its end how the last run stopped (`web/src/lib/tracks.ts`). Where no strategy run has a point while one was live, both break the line and say when: a gap is the recorder's, never the market's.
+
 ### 10. Every open leg, on every underlying
 `GET /api/Positions/open` answers with every open leg of the live runs (Running or Stopping) and manual books in scope, whatever they are written on. The Desk used to ask `/api/OptionChain/positions` once per underlying it knew of, so a leg on anything else (a crude future carried into the book, a share) never reached it.
 
 Each leg goes through `PositionViewBuilder`, the run card's builder: run id, strategy, `isManualBook`, account, symbol, underlying, expiry, strike, option type and contract label, direction (`LONG`/`SHORT`), lots, lot size and quantity, entry, the mark (latest live quote, else the stored mark) with `markUtc` and `markAgeSeconds` to the answer's `asOfUtc`, the unrealized P&L at that mark (null while no mark exists), the carry tick and `carriedFromRunId`/`carriedFromStrategy`, the leg's own stop-loss and target, when it was opened, and its `greeks` (see section 6; null when no source can price it). The greeks are worked out in one batch for all the legs; an MCX option costs one more lookup, for the future it is written on.
 
 Behind the strategies grant. A trader sees their own legs whatever `userId` they pass; an admin sees every account's, or one account's with `userId`.
+
+In the console, **Trade → Positions** (`/trade/positions`, one page for every role) lists the answer by account and then by run, the manual book first: each leg with its mark and the mark's age (stale past 30 s, and said so), its open P&L before exit charges, its stop and target, delta with IV, theta and vega in rupees, the **Carry** tick (it can be changed there) and **Square off**. An admin can narrow it to one account. The Desk's open-legs panel and the grid's carried marks read the same answer.
+
+**Trade → Orders** (`/trade/orders`) is the day's orders across runs. There is no orders-across-runs endpoint, so the page reads each run's ledger (`GET /api/Strategy/runs/{runId}/orders`) for the day's runs, the manual books holding an open leg and the viewer's own book, and merges them (`web/src/lib/orders.ts`). Another account's manual book with no open leg is not asked, and the page says so. On a day without a session it shows the last day with runs, like the Desk. Both pages replaced the v1 Simulator pages (a run picked from a list); their old URLs redirect, and `/trader/runs/{id}` goes to the run's own page.
 
 ### 11. Paper fills: the spread, and how old a quote may be
 A live run's fill is priced by the API from the contract's latest quote (`live_quotes_latest`), not taken as the runner sent it (`PaperTradingService`, `PaperFillPricing`):
@@ -173,6 +179,8 @@ The runner saves the strategy's state to Redis (`strategy:state:{runId}`) once r
 ### React
 - `web/src/pages/strategies/LiveRunnerPage.tsx`, `StrategyLibraryPage.tsx`, `StrategiesOverviewPage.tsx`, `shared.tsx`
 - `web/src/pages/strategies/RunCard.tsx` — the run card, with the positions table's Carry column.
+- `web/src/pages/strategies/RunTracks.tsx` — the Tracks view of Trade → Runs; `web/src/lib/tracks.ts` (tracks, scale, ends) and `web/src/lib/pnlSeries.ts` (points, gaps, the day axis), shared with the Desk's `pages/desk/PnlChart.tsx`.
+- `web/src/pages/trade/PositionsPage.tsx`, `OrdersPage.tsx` — every open leg and the day's orders, across runs and books; `web/src/lib/openPositions.ts` (grouping, sums, mark age) and `web/src/lib/orders.ts` (which ledgers, merged).
 - `web/src/lib/queries.ts` (`useStrategies`, `useStartStrategy`, `useStopStrategy`, `useStrategyLive`, `useStrategyLogs`, `useFnoUnderlyings`, `useSetCarryForward`), `web/src/lib/symbols.ts` (`parseOptionSymbol`, `formatContract`), `web/src/lib/carry.ts` (what the tick does where, its tooltip and hints).
 
 ---

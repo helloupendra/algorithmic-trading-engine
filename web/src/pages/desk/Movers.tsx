@@ -1,8 +1,8 @@
 /**
  * Breadth & F&O movers: NSE-wide advances and declines for the last session
- * (from NSE's evening files; admin, like the rest of market intelligence),
- * then Angel One's F&O gainers and losers with their open-interest build-up.
- * Angel caches its screens for 45 s and this asks no faster.
+ * (from NSE's evening files), then Angel One's F&O gainers and losers with
+ * their open-interest build-up. Both answer the market-data grant, as the
+ * panel does. Angel caches its screens for 45 s and this asks no faster.
  */
 
 import type { MoverRow } from '../../lib/movers'
@@ -84,8 +84,8 @@ export function Movers({ view, links }: { view: DeskView; links: DeskLinks }) {
   const meta = m?.asOfUtc ? `Angel One · ${istHm(m.asOfUtc)}` : 'Angel One'
   return (
     <>
-      <PanelHead title={view.isAdmin ? 'Breadth & F&O movers' : 'F&O movers'} meta={meta} more={links.movers ? { to: links.movers, label: 'Movers' } : null} />
-      {view.isAdmin && <Breadth view={view} />}
+      <PanelHead title="Breadth & F&O movers" meta={meta} more={links.movers ? { to: links.movers, label: 'Movers' } : null} />
+      <Breadth view={view} />
       {movers.isError && !m ? (
         <Failed what="Movers" error={movers.error} />
       ) : !m ? (

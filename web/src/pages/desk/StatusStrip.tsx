@@ -3,8 +3,9 @@
  * the day: readiness before the open (checkup, token, feeds, plan, forecasts,
  * GIFT, what was carried in), then net P&L per account against the platform
  * limit with runs, legs, the feed, incidents and the checkup, then the day's
- * result. A trader's strip holds only their own numbers and the market; no
- * connector, feed or Sentinel cell is ever built for them.
+ * result. A trader's strip holds only their own numbers and the market (GIFT
+ * Nifty with the market-data grant); no connector, feed, plan or Sentinel
+ * cell is ever built for them.
  *
  * Each cell asks for what it shows and says "…" until it knows. On a phone
  * the strip packs into rows (lib/desk.ts, stripSpans).
@@ -21,7 +22,6 @@ import {
   latestSnapshots,
   modelStanding,
   plainNumber,
-  plannedFor,
   runCounts,
   stripSpans,
   underlyingShort,
@@ -155,30 +155,29 @@ function RunsLiveCell({ view, counts }: { view: DeskView; counts: ReturnType<typ
   return <Cell label={view.isAdmin ? 'Runs' : 'My runs'} value={`${counts.live} live`} sub={sub} />
 }
 
-/** "· 23 planned", from Sentinel's reading of the morning plan (admin). */
+/** "· 23 planned", from the morning plan file (admin). */
 function PlannedSuffix({ view, lead }: { view: DeskView; lead: boolean }) {
   const { plan } = useDeskPlan(view)
-  const planned = plannedFor(plan, view.scopeName)
-  if (planned == null) return null
-  return <>{`${lead ? ' · ' : ''}${planned} planned`}</>
+  if (!plan) return null
+  return <>{`${lead ? ' · ' : ''}${plan.planned} planned`}</>
 }
 
+/** The plan's runs live against the runs it asks for, per account; the API's own test of live (runner alive). */
 function PlanCell({ view }: { view: DeskView }) {
-  const { plan, ready } = useDeskPlan(view)
-  const counts = view.runs ? runCounts(view.runs) : null
+  const { plan, ready, missing } = useDeskPlan(view)
   const first = view.runs?.map((r) => r.startedUtc).filter(Boolean).sort()[0] ?? null
-  if (!ready || !counts) return <Cell label="Morning plan" value={null} />
-  const planned = plannedFor(plan, view.scopeName)
-  if (!plan || planned == null) {
-    return <Cell label="Morning plan" value={`${counts.live} running`} sub="the checkup has not read the plan" />
-  }
-  const short = view.scopeName ? '' : plan.perAccount.map((a) => `${a.name} ${a.runs}`).join(' · ')
+  if (!ready) return <Cell label="Morning plan" value={null} />
+  if (missing) return <Cell label="Morning plan" value="no plan file" tone="warn" sub="the morning job starts nothing without one" />
+  if (!plan) return <Cell label="Morning plan" value="?" sub="could not read the plan" />
+  const perAccount = plan.accounts.length > 1 ? plan.accounts.map((a) => `${a.name} ${a.live}/${a.planned}`).join(' · ') : ''
+  const warned = plan.warnings.length ? `${plan.warnings.length} warning${plan.warnings.length === 1 ? '' : 's'}` : ''
   return (
     <Cell
       label="Morning plan"
-      value={`${counts.live} / ${planned}`}
-      tone={counts.live >= planned ? 'pos' : 'warn'}
-      sub={[first ? `deployed ${istHm(first)}` : 'not deployed yet', short].filter(Boolean).join(' · ')}
+      value={`${plan.live} / ${plan.planned} live`}
+      tone={plan.live >= plan.planned && !warned ? 'pos' : 'warn'}
+      title={plan.warnings.join('\n') || undefined}
+      sub={[warned, first ? `deployed ${istHm(first)}` : 'not deployed yet', perAccount].filter(Boolean).join(' · ')}
     />
   )
 }
@@ -224,7 +223,7 @@ function LegsCell({ view }: { view: DeskView }) {
     <Cell
       label="Open legs"
       value={`${legs.length}`}
-      sub={carried.length ? `${carried.length} carried from ${from}` : [...new Set(legs.map((l) => l.label.split(' ')[0]))].sort(byUnderlying).map(underlyingShort).join(', ') || 'flat'}
+      sub={carried.length ? `${carried.length} carried from ${from}` : [...new Set(legs.map((l) => l.underlying))].sort(byUnderlying).map(underlyingShort).join(', ') || 'flat'}
     />
   )
 }
@@ -322,7 +321,7 @@ function CheckupCell({ lead = false }: { lead?: boolean }) {
 
 function GiftCell({ view }: { view: DeskView }) {
   const snaps = useIntelSnapshots(view.today, true)
-  if (!snaps.data) return <Cell label="GIFT Nifty" value={null} />
+  if (!snaps.data) return <Cell label="GIFT Nifty" value={snaps.isError ? '?' : null} sub={snaps.isError ? 'could not read the snapshots' : undefined} />
   const gift = latestSnapshots(snaps.data).get(GIFT_KEY)
   if (!gift) return <Cell label="GIFT Nifty" value="no snapshot yet" sub="the recorder starts at 06:00" />
   return (
@@ -451,6 +450,7 @@ function specs(view: DeskView): Spec[] {
       add('legs', 'other', <LegsCell view={view} />)
     }
     if (analysis) add('fc', 'other', <ForecastCell view={view} />)
+    if (allows(view.access, 'market-data')) add('gift', 'other', <GiftCell view={view} />)
     add('nifty', 'other', <NiftyCell />)
     add('prices', 'other', <PricesCell view={view} />)
     add('trading', 'other', <TradingCell />)
