@@ -153,7 +153,10 @@ function RiskSection({
   const rules: RiskRules = effectiveRisk(view)
   const chips = riskChips(rules)
   const empty = isRiskEmpty(rules)
-  const total = view.pnl.total
+  // The risk guard judges the overall stop-loss and target on net P&L, after
+  // charges (StrategyRiskGuardService.OverallNet, 27 Sep): measured on gross,
+  // the meters showed a run the guard had stopped as short of its stop.
+  const total = liveNet(view.pnl)
   const overallSl = rules.overall?.stopLoss ?? null
   const overallTg = rules.overall?.target ?? null
   const groups = (view.groups ?? []).filter((g) => g.openLegs > 0)
