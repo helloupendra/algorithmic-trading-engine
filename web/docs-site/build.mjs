@@ -85,16 +85,16 @@ const NAV = [
 
 /** Screenshots on the overview page, with what each shows. */
 const GALLERY = [
-  ['console-admin-home.png', 'Operator home — market, broker, feed and every module at a glance'],
-  ['console-trader-home.png', 'Trader home — indices, large caps, commodities, then their own runs'],
-  ['console-live-runner.png', 'Live runner — strategies running on real ticks, paper-filled'],
-  ['console-live-run-detail.png', 'Run detail — every leg with entry, exit, lots × lot size and P&L'],
-  ['console-backtesting.png', 'Backtesting — coverage first, so a replay never runs on missing data'],
-  ['console-strategies-live.png', 'Strategy library — the rules, the contracts, and How it works'],
-  ['console-live-feeds.png', 'Live feeds — what the ingestor carries and how fresh it is'],
-  ['console-connectors.png', 'Connectors — brokers and data vendors behind one seam'],
-  ['console-users.png', 'Users — roles, module grants and strategy packages'],
-  ['console-activity-log.png', 'Activity log — who did what, across every module'],
+  ['console-desk.png', 'Desk — the trading day on one sheet: results after charges, runs, P&L, checkup and the market'],
+  ['console-trader-desk.png', 'A trader\'s Desk — the same page, scoped by the API to their own runs'],
+  ['console-palette.png', '⌘K — one search for pages, symbols, strategies and today\'s runs'],
+  ['console-option-chain.png', 'Option chain — OI, change, IV and build-up per strike, stamped with its capture'],
+  ['console-market-factors.png', 'Flows — FII, DII, pro and client positions, labelled with what testing found'],
+  ['console-run-history.png', 'Run history — every run, lots × lot size, net after charges, and why it stopped'],
+  ['console-backtests.png', 'Backtests — coverage first, so a replay never runs on missing data'],
+  ['console-forecasts.png', 'Forecasts — judged on live forecasts only; a backtest is history, not proof'],
+  ['console-checkup.png', 'Checkup — Sentinel\'s weekly review, each item with what to do'],
+  ['console-incidents.png', 'Incidents — each problem once, with its root cause and what fixed it'],
 ]
 
 /* ------------------------------------------------------------------ utils */

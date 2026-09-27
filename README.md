@@ -29,121 +29,108 @@ and brokers it connects to, and who on the team may do what.
 
 ## The console
 
-Everything below is driven from the browser — there is no separate admin tool.
+Everything below is driven from the browser; there is no separate admin tool.
 
-Two people see two different consoles. An **admin** operates the platform: the
-data feeding it, who may use it, and the switch that stops everything. A
-**trader** sees only their own trading. That split is enforced by the API, not
-by hiding menu items — a trader calling an admin endpoint directly is refused.
+The console is six workspaces along the top: **Desk** (today on one sheet),
+**Markets** (the chain, charts, movers, flows and news), **Trade** (runs, the
+strategy library, history, orders and risk), **Research** (backtests, forecasts,
+the filter lab and notebooks), **Data** (feeds, stored history, instruments) and
+**System** (health, checkups, incidents, logs, connectors and people). An
+**admin** sees all six. A **trader** sees the workspaces their module grants
+allow, and only their own runs inside them. That split is enforced by the API,
+not by hiding menu items: a trader calling an admin endpoint directly is
+refused.
 
-### The admin console
+The screenshots are this deployment's own data, exported from the server on
+Sunday 27 September 2026 and replayed into the console; the trading day on the
+Desk is Friday 25 September, the last session with runs. Strategy names are
+hidden behind letters (Strategy A, B, …); every number is the one the console
+showed.
 
-**Front door** — the health of everything that has to be true before a strategy
-can run, then the modules themselves. A number that is wrong here is a run that
-should not be started.
+### The Desk
 
-![Admin overview: market, feed, broker, watchlist and kill-switch state above the module grid](docs/image/console-admin-home.png)
+**Desk** — the page both consoles open on, and the one kept open all day. Each
+account's result after charges, the runs grid (strategy by underlying, net of
+charges), the day's P&L by account and by strategy, the latest checkup, what is
+held overnight, the week's events, FII and DII flows, and the indices with their
+option levels. The sheet reorders itself at the open and at the close; the
+buttons above it show any part of the day. On a weekend it opens on the last day
+with runs and says so.
 
+![The Desk after the close: each account's result after charges, the runs grid by strategy and underlying, day P&L, the checkup, the week ahead, flows and index levels (strategy names hidden)](docs/image/console-desk.png)
 
-**Live feeds** — the broker websocket, the symbols it is subscribed to, and the
-last quote stored for each. The age of every quote is shown next to it, so stale
-data looks stale instead of looking like a price.
+**On a phone** — the same sheet in one column. The runs grid keeps its
+columns; the workspaces move to a tab bar at the bottom.
 
-![Live feeds: index tickers and the database recording list](docs/image/console-live-feeds.png)
+<p align="center"><img src="docs/image/console-desk-phone.png" width="300" alt="The Desk at phone width: the day's result per account, the runs grid in one column and the workspaces in a bottom tab bar (strategy names hidden)"></p>
 
-**Backtesting** — coverage first. Before offering a backtest the console says
-exactly what history it holds per index and resolution, where it came from
-(`live` bars the ingestor recorded, or a `backfill`), and what is missing. A
-backtest you cannot run is better than one that quietly replays a gap.
+**A trader's Desk** — the same page for a trader. The API answers with their
+own runs and nothing else, so the sheet is their day: their result after
+charges, their runs, their charges, and no admin panels.
 
-![Backtesting: stored history per index and resolution, with its source](docs/image/console-backtesting.png)
+![A trader's Desk: one account's result, runs and charges, with the market panels beside them (strategy names hidden)](docs/image/console-trader-desk.png)
 
-**Strategies** — what is running right now, across every underlying, with the
-open positions and live P&L of each run. The same strategy on three indices is
-three independent runs: each is counted, priced and stopped on its own.
+**⌘K** — one search box for pages, symbols, strategies and today's runs, on
+every screen. It lists only what the viewer may open.
 
-![Strategies: runs live across NIFTY, BANKNIFTY and SENSEX, each with its own open positions and P&L](docs/image/console-strategies-live.png)
+![The command palette over the Desk, searching "nifty": the NIFTY option chain and the NIFTY indices](docs/image/console-palette.png)
 
-**Run history** — every live run, attached to the user who started it, with
-quantity expressed as **lots × lot size** rather than a bare share count.
-Nothing is dismissed: a run that stopped for any reason is still here, and the
-ones still going are counted apart from it as live.
+### Markets
 
-![Run history: runs per user, the live ones still counting, with net P&L and lots × lot size](docs/image/console-run-history.png)
+**Option chain** — calls left, puts right, strike in the middle: open interest
+and its change, volume, IV, LTP and what each pair means (long build-up, short
+covering and so on). Every chain is stamped with when it was captured and by
+which vendor, and the same chain can be rebuilt for any stored minute. Below
+it, open interest by strike and the put-call ratio through the session.
 
-**Live runner** — pick a strategy, choose the underlying, set risk rules per leg,
-per group or over the whole run, and start it. Quantity is **lots**; the platform
-multiplies by the contract's lot size, which differs per underlying (30 for
-BANKNIFTY, 65 for NIFTY) and is read from the instrument master rather than
-assumed.
+![Option chain for NIFTY after the close: spot, future, VIX, PCR, max pain, support and resistance, the strike ladder with build-up labels, and OI charts](docs/image/console-option-chain.png)
 
-![Live runner: running runs with their risk rules, open legs and live P&L, above the strategy catalogue](docs/image/console-live-runner.png)
+**Flows** — FII, DII, pro and client positions in index futures, the FII long
+share over recent sessions, and cash-market buying and selling. Each section
+says how fresh it is and what our own testing found; here, that nothing has
+been tested yet.
 
-**A live run** — one run in full: the legs it holds, what it paid for them, what
-they are worth on the current tick, and how far it has travelled towards its
-stop-loss or target. Entry sits next to LTP, so the P&L is arithmetic a reader
-can check rather than a number to be trusted.
+![Market factors, FII and DII: index futures positions by participant, FII net positions by session and cash-market flows, labelled "not tested yet"](docs/image/console-market-factors.png)
 
-![A live run: a BullCallSpread on BANKNIFTY with both legs open, entry against LTP, and progress towards target](docs/image/console-live-run-detail.png)
+### Trade
 
-**Positions** — the run's paper position book, marked to the last stored tick.
-Equity, capital in use and what is still free sit above it, so what a run is
-costing is visible while it runs rather than once it has stopped.
+**Run history** — every live run, attached to the account that started it, with
+quantity as **lots × lot size**, net P&L after charges, and the reason it
+stopped. Nothing is dismissed: a run stopped by a risk rule, by the close, by
+hand or by a restart is still here.
 
-![Positions: a run's paper position book, average price against mark, with equity and capital in use](docs/image/console-live-positions.png)
+![Run history for Friday: 26 runs with account, strategy, lots × lot size, risk rules, net P&L after charges and why each stopped (strategy names hidden)](docs/image/console-run-history.png)
 
-**Orders** — every paper order the run placed, the price it asked for against
-the price it filled at, and below them the strategy signals that produced them.
-A fill is traceable back to the decision that caused it.
+### Research
 
-![Orders: paper orders with requested against fill price, above the signals that produced them](docs/image/console-live-orders.png)
+**Backtests** — coverage first. Before offering a backtest the console says
+what history it holds per index and resolution, where it came from (`live` bars
+the ingestor recorded, or a `backfill`), and what is missing. A backtest you
+cannot run is better than one that quietly replays a gap.
 
-**Connectors** — data vendors and brokers as first-class things rather than
-hard-wired code. Each declares what it can actually deliver, and the routing
-table decides which source serves which job.
+![Backtests: stored history per index and resolution with its range, sessions, bars and source](docs/image/console-backtests.png)
 
-![Connectors: FYERS, replay and planned vendors with their capabilities and sessions](docs/image/console-connectors.png)
+**Forecasts** — four models forecast the day's range, trend and direction
+before the open, and every forecast is scored after the close. The scoreboard
+judges a model on live forecasts only; its backtest is shown beside it as
+history, not proof. None has a live score yet.
 
-**Users & access** — accounts, roles, and per-module grants. A grant is checked
-by the API on every request, so removing one takes effect immediately rather
-than on the next sign-in.
+![Forecasts scoreboard: four models collecting their first live forecasts, one opened to show its backtest labelled "history, not proof"](docs/image/console-forecasts.png)
 
-![Users and access: accounts with roles, module grants and strategy packages](docs/image/console-users.png)
+### System
 
-**Activity log** — who did what, across every module, including admins. Click an
-account to narrow the whole page to them. Refusals are recorded too: a 403 is
-often the more interesting row. Reads and request bodies are deliberately not
-recorded — the first would bury the signal, the second would leak credentials.
+**Checkup** — Sentinel, the desk's watchman, writes a checklist before the
+open, after the close, at the end of the day and weekly, each item with what to
+do about it. This one is the weekly review. A checkup only reads the desk.
 
-![Activity log: accounts on the left, the action stream below](docs/image/console-activity-log.png)
+![The weekly checkup: one thing worth a look (the Drive archive), two notes, nine checks fine, and the checkup history](docs/image/console-checkup.png)
 
-### The trader console
+**Incidents** — each problem is one row however often it is seen, and the
+history keeps what caused it and what fixed it. The row opened here is the
+morning archive to Google Drive, which failed every day from 23 September until
+Sentinel's first scan of the logs caught it on the 27th.
 
-**Overview** — what this account can actually do: its capital, its live runs, how
-many strategies its package allows, and how old the price data is. The age is
-shown because a stale price that looks fresh is worse than no price.
-
-![Trader overview: capital, live runs, package allowance and last saved quotes](docs/image/console-trader-home.png)
-
-**Strategies** — the catalogue a trader may run, which is their package's list
-and not the whole library. Each entry says what it trades and why, in words
-rather than in code names.
-
-![Trader strategies: the definitions this account's package allows](docs/image/console-trader-strategies.png)
-
-**Watchlist** — per trader, not global. Removing a symbol here removes it from
-this account's list; it does not stop the platform recording it for everyone
-else. Every account starts with SENSEX, BANKNIFTY and NIFTY 50 and builds from
-there.
-
-![Trader watchlist: this account's symbols with live quotes](docs/image/console-trader-watchlist.png)
-
-**My runs** — every run this account started, however it ended. A run stopped by
-a stop-loss, by the market closing, by hand or by an API restart is all still
-here, with the reason it stopped, because the ones that went wrong are the ones
-worth reading.
-
-![Trader run history: this account's runs with the reason each one stopped](docs/image/console-trader-runs.png)
+![Incident history: an archive failure opened to show its root cause, what was done, the fix and its one episode](docs/image/console-incidents.png)
 
 ---
 
