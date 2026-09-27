@@ -23,6 +23,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 REPO_ROOT="$PWD"
+# shellcheck disable=SC2034  # read by say() in lib/desk-common.sh, sourced below
 LOG="$REPO_ROOT/logs/market-close-$(date +%F).log"
 . scripts/lib/desk-common.sh
 
