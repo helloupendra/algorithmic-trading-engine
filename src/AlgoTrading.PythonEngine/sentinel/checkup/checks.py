@@ -217,6 +217,25 @@ def _auto_sign_in_words(auto: Optional[dict]) -> str:
     return ""
 
 
+def _renewed_later(inp: Inputs, auto: Optional[dict]) -> str:
+    """
+    When a signed-out Dhan is still the automatic sign-in's job, the words for
+    when it will renew; "" once that chance has passed (or there is none).
+    Dhan's token lasts a day, so before 08:00 it is out as a matter of course.
+    """
+    if not isinstance(auto, dict) or not auto.get("configured") or not auto.get("enabled") \
+            or auto.get("stoppedForToday") or auto.get("lastOk") is False:
+        return ""
+    start, until = str(auto.get("morningFromIst") or ""), str(auto.get("morningUntilIst") or "")
+    try:
+        ends = datetime.strptime(until, "%H:%M").time()
+    except ValueError:
+        return ""
+    if not inp.ctx.session().trading_day:
+        return f"on the next trading day between {start} and {until}"
+    return f"between {start} and {until} today" if inp.ist.time() < ends else ""
+
+
 def dhan_token(inp: Inputs) -> list[Item]:
     def item(state: State, detail: str, action: str = "") -> list[Item]:
         return [Item("dhan-token", DATA, "Dhan token", state, detail, action, CONNECTORS)]
@@ -251,6 +270,9 @@ def dhan_token(inp: Inputs) -> list[Item]:
     signed_in, expires = _signed_in(dhan)
     now = inp.now
     if not signed_in or (expires is not None and expires <= now):
+        later = _renewed_later(inp, auto)
+        if later:
+            return item(State.INFO, f"Signed out; the automatic sign-in takes a new token {later}.")
         trouble = _auto_sign_in_words(auto)
         return item(State.FAIL, "Dhan is signed out" + (f", and {trouble}" if trouble else "") + ".",
                     "Sign in on Connectors → Dhan → Connect. Until then no strategy gets Dhan's data.")
@@ -702,6 +724,8 @@ def disk(inp: Inputs) -> list[Item]:
 
 
 _ARCHIVE_OK = re.compile(r"archive to Drive: ok, (\d+) file")
+ARCHIVE_AT = time(6, 0)                  # the server's crontab: 0 6 * * * scripts/archive-to-drive.sh
+ARCHIVE_GRACE = timedelta(minutes=30)
 
 
 def _archive_day(logs: Path, day: str) -> Optional[tuple[str, int]]:
@@ -744,18 +768,25 @@ def archive(inp: Inputs) -> list[Item]:
                          f"{files} files verified in all.")]
         return [Item("archive", DESK, "Archive to Drive", State.WARN,
                      f"This week it {' and '.join(parts)}; {files} files verified in all.", fix)]
-    today = _archive_day(logs, inp.day)
-    if today is None:
+    # Before today's run has had its time, the latest word is yesterday's (the
+    # night checkup at 00:15 read "has not run today" every night).
+    early = inp.now < inp.at_ist(ARCHIVE_AT) + ARCHIVE_GRACE
+    when = "yesterday" if early else "today"
+    seen = _archive_day(logs, (inp.ist.date() - timedelta(days=1)).isoformat() if early else inp.day)
+    if seen is None:
         last = max((p.name[8:18] for p in logs.glob("archive-20*.log")), default="?")
         return [Item("archive", DESK, "Archive to Drive", State.WARN,
-                     f"It has not run today; the last run was on {last}.",
+                     f"It {'did not run yesterday' if early else 'has not run today'}; the last run was on {last}.",
                      "It runs from cron at 06:00: crontab -l on the server should list scripts/archive-to-drive.sh.")]
-    state, files = today
+    state, files = seen
     if state == "failed":
-        return [Item("archive", DESK, "Archive to Drive", State.FAIL, "Today's archive failed.", fix)]
+        return [Item("archive", DESK, "Archive to Drive", State.FAIL, f"{when.capitalize()}'s archive failed.", fix)]
     if state == "running":
+        if early:
+            return [Item("archive", DESK, "Archive to Drive", State.WARN, "Yesterday's archive never finished.", fix)]
         return [Item("archive", DESK, "Archive to Drive", State.INFO, "Today's archive is still running.")]
-    return [Item("archive", DESK, "Archive to Drive", State.OK, f"Ran today: {_n(files, 'file')} copied and verified.")]
+    return [Item("archive", DESK, "Archive to Drive", State.OK,
+                 f"Ran {when}: {_n(files, 'file')} copied and verified." + (" The next run is at 06:00." if early else ""))]
 
 
 def _failover_settings(inp: Inputs) -> tuple[bool, bool]:
