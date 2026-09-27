@@ -237,7 +237,10 @@ public class DeskPlanTests : IDisposable
         var result = await Controller(desk).GetPlan(CancellationToken.None);
 
         var notFound = Assert.IsType<NotFoundObjectResult>(result.Result);
-        Assert.Contains(missing, System.Text.Json.JsonSerializer.Serialize(notFound.Value));
+        // Read the list back rather than search the JSON text: JSON escapes a
+        // Windows path's backslashes, so the raw text never contains the path.
+        var searched = System.Text.Json.JsonSerializer.SerializeToElement(notFound.Value).GetProperty("searched");
+        Assert.Contains(missing, searched.EnumerateArray().Select(x => x.GetString()));
     }
 
     [Fact]
