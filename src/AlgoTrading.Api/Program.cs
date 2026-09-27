@@ -118,8 +118,11 @@ builder.Services.AddHttpClient(nameof(AlgoTrading.Api.Services.SystemHostService
 builder.Services.AddSingleton<AlgoTrading.Api.Services.BacktestProcessRegistry>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.BacktestRunControl>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.BacktestDataService>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.PositionGreeksBuilder>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.PositionViewBuilder>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.BacktestRunViewBuilder>();
+// Settles the manual book's expired contracts (CarriedPositionsService runs it).
+builder.Services.AddScoped<AlgoTrading.Api.Services.ExpirySettler>();
 
 // Hosted services start sequentially in registration order, and an
 // IHostedService's StartAsync runs to completion before the next one starts.
@@ -128,14 +131,18 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.BacktestRunViewBuilder>();
 // market-close service take their first look at the registry. Registered the
 // other way round, a restart after 15:30 IST would let MarketHoursService
 // sweep an empty registry, mark today's shutdown done and leave the runners
-// adopted a moment later trading all evening.
+// adopted a moment later trading all evening. (Since 27 Sep its run sweep asks
+// every minute, so that would now cost a minute, not an evening.)
 builder.Services.AddHostedService<AlgoTrading.Api.Services.BacktestStartupReconciler>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.LiveRunStartupReconciler>();
 // Register the background service that guards active runs against global kill-switches and rate limits
 builder.Services.AddHostedService<AlgoTrading.Api.Services.StrategyRiskGuardService>();
-// Market Hours Service for automated halt/flatten at 3:15 PM
+// Squares off each run at its market's close (NSE/BSE 15:30, MCX at the MCX close) and stops the feeds
 builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketHoursService>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.NightlyArchiveService>();
+// Hand-placed positions held overnight: kept on the feed, settled at expiry
+// (after the close, and on start-up for anything that expired while down).
+builder.Services.AddHostedService<AlgoTrading.Api.Services.CarriedPositionsService>();
 // NSE's evening market-factor files (participant OI, F&O bhavcopy, FII/DII), fetched after 18:00 IST.
 builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketFactorsSyncService>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketPulseSubscriptionService>();

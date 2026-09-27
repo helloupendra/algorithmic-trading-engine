@@ -1817,6 +1817,11 @@ a.pill:hover { border-color: var(--line-strong); }
 /* Position rows: closed legs stay in the table, dimmed, with qty 0. */
 .pos-row--closed { opacity: 0.55; }
 
+/* The greeks column group (delta, theta ₹/day, vega ₹) reads as one block by a
+   rule on its left, not by a second header row: every table header here is
+   sticky at top 0, and two sticky rows would sit on top of each other. */
+.table .greeks-first { border-left: 1px solid var(--line-soft); }
+
 /* Muted second line under a table cell's value ("now ₹12,300", "+6.2 pts · +0.7%"). */
 .cell-sub {
   display: block;

@@ -745,6 +745,78 @@ public class PaperTradingService : IPaperTradingService
     }
 
     // ---------------------------------------------------------------------
+    // EXPIRY SETTLEMENT
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// Settles one expired position at <paramref name="settlementPrice"/>
+    /// under the run's gate. No order row is written, on purpose.
+    /// </summary>
+    /// <remarks>
+    /// Every other close in this class books a fill, and RunCharges charges
+    /// every fill: brokerage per order, plus turnover charges on its premium.
+    /// An expiry is not a trade. The exchange settles it; no order is placed and
+    /// no brokerage is paid, so a settlement booked as a fill would be charged
+    /// as a second round trip that never happened (and an out-of-the-money leg
+    /// settling at 0 would still pay a whole order's brokerage).
+    /// <para>
+    /// The row reads like any other closed leg: quantity 0, realized P&amp;L at
+    /// the settlement price, the settlement price as its exit (the last mark),
+    /// and one CLOSE_GROUP signal whose reason names the settlement. The
+    /// position view counts the lots a closed leg traded from its opening
+    /// fills, which are untouched.
+    /// </para>
+    /// </remarks>
+    public async Task<bool> SettleExpiredPositionAsync(
+        long simulationRunId,
+        long positionId,
+        decimal settlementPrice,
+        string metadataJson,
+        DateTime atUtc,
+        CancellationToken cancellationToken = default)
+    {
+        if (settlementPrice < 0m)
+            throw new InvalidOperationException($"A settlement price cannot be negative ({settlementPrice}).");
+
+        using var gate = await SimulationRunLocks.AcquireAsync(simulationRunId, cancellationToken);
+
+        var position = await _dbContext.PaperPositions
+            .FirstOrDefaultAsync(x => x.Id == positionId && x.SimulationRunId == simulationRunId, cancellationToken);
+
+        // Already closed (by hand, by the guard, or by an earlier pass of the
+        // settler): nothing to do, and nothing written.
+        if (position is null || position.Status != "Open" || position.Quantity <= 0) return false;
+
+        var lotSizes = await ResolveLotSizesForRunAsync(simulationRunId, new[] { position.Symbol }, cancellationToken);
+        int lotSize = LotSizeOf(lotSizes, position.Symbol);
+
+        var signal = new SimulationSignal
+        {
+            SimulationRunId = simulationRunId,
+            StrategyName = position.StrategyName,
+            SignalType = "CLOSE_GROUP",
+            TimestampUtc = atUtc,
+            GroupId = position.GroupId,
+            MetadataJson = string.IsNullOrWhiteSpace(metadataJson) ? "{}" : metadataJson,
+            CreatedUtc = DateTime.UtcNow
+        };
+
+        position.RealizedPnl += CalculateRealizedPnl(
+            position.Direction, position.AveragePrice, settlementPrice, position.Quantity, lotSize);
+        position.Quantity = 0;
+        position.Status = "Closed";
+        position.ClosedUtc = atUtc;
+        position.LastMarkPrice = settlementPrice;
+        position.UnrealizedPnl = 0m;
+        position.UpdatedUtc = atUtc;
+
+        // One SaveChanges: the signal and the close land together or not at all.
+        await _dbContext.SimulationSignals.AddAsync(signal, cancellationToken);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
+    // ---------------------------------------------------------------------
     // OFFLINE REPLAY HOOKS (backtest runner)
     // ---------------------------------------------------------------------
 

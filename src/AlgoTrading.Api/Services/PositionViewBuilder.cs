@@ -15,17 +15,21 @@ namespace AlgoTrading.Api.Services;
 /// A closed leg is the same row with lots 0 (its value uses the quantity that
 /// was opened). Live views mark open rows against LiveQuotesLatest; replays
 /// never do. Also sums what the open legs tie up (capital used, premium
-/// outlay / received) and the per-group P&amp;L.
+/// outlay / received) and the per-group P&amp;L, and — live views only — each
+/// open leg's greeks and the book's theta, vega and delta
+/// (<see cref="PositionGreeksBuilder"/>).
 /// </summary>
 public sealed class PositionViewBuilder
 {
     private readonly TradingDbContext _dbContext;
     private readonly ILotSizeResolver _lotSizeResolver;
+    private readonly PositionGreeksBuilder _greeks;
 
-    public PositionViewBuilder(TradingDbContext dbContext, ILotSizeResolver lotSizeResolver)
+    public PositionViewBuilder(TradingDbContext dbContext, ILotSizeResolver lotSizeResolver, PositionGreeksBuilder greeks)
     {
         _dbContext = dbContext;
         _lotSizeResolver = lotSizeResolver;
+        _greeks = greeks;
     }
 
     public sealed record Result<T>(
@@ -36,7 +40,8 @@ public sealed class PositionViewBuilder
         decimal CapitalUsed,
         decimal PremiumOutlay,
         decimal PremiumReceived,
-        List<LiveGroupResponse> Groups) where T : LivePositionResponse;
+        List<LiveGroupResponse> Groups,
+        RunGreeksTotals? Greeks = null) where T : LivePositionResponse;
 
     /// <summary>
     /// Builds the rows (open first, then newest first). With
@@ -88,7 +93,7 @@ public sealed class PositionViewBuilder
             ? new List<InstrumentLite>()
             : await _dbContext.Instruments.AsNoTracking()
                 .Where(x => symbols.Contains(x.Symbol))
-                .Select(x => new InstrumentLite(x.Symbol, x.Underlying, x.StrikePrice, x.OptionType, x.ExpiryDate))
+                .Select(x => new InstrumentLite(x.Symbol, x.Underlying, x.StrikePrice, x.OptionType, x.ExpiryDate, x.Exchange, x.InstrumentType))
                 .ToListAsync(cancellationToken);
         var instrumentBySymbol = instruments
             .GroupBy(x => x.Symbol, StringComparer.Ordinal)
@@ -120,8 +125,13 @@ public sealed class PositionViewBuilder
                 }
                 else
                 {
+                    // No quote at all: the last mark, with the time it was
+                    // written. A carried position the feed has not reached yet
+                    // this morning is yesterday's price, and must say so rather
+                    // than read as current. (With a quote, its own UpdatedUtc
+                    // is the age: yesterday's until today's first tick.)
                     ltp = pos.LastMarkPrice;
-                    ltpUpdatedUtc = useLiveQuotes ? null : pos.UpdatedUtc;
+                    ltpUpdatedUtc = pos.UpdatedUtc;
                 }
             }
 
@@ -192,6 +202,34 @@ public sealed class PositionViewBuilder
             });
         }
 
+        // Greeks for the open legs, live views only. A finished replay has no
+        // "now" for its open legs to be priced at, and today's quote would be
+        // a figure the backtest never saw.
+        RunGreeksTotals? greeksTotals = null;
+        if (useLiveQuotes)
+        {
+            var openLegs = rows
+                .Where(r => r.Status == "Open" && r.Quantity > 0)
+                .Select(r =>
+                {
+                    instrumentBySymbol.TryGetValue(r.Symbol, out var i);
+                    return new PositionGreeksBuilder.OpenLeg(
+                        r.Id, r.Symbol, r.Contract, i?.Exchange, i?.InstrumentType,
+                        IsLong: r.Side == "BUY", r.Quantity, r.Ltp, r.LtpUpdatedUtc);
+                })
+                .ToList();
+
+            if (openLegs.Count > 0)
+            {
+                var built = await _greeks.BuildAsync(openLegs, DateTime.UtcNow, cancellationToken);
+                foreach (var row in rows)
+                {
+                    if (built.ByPosition.TryGetValue(row.Id, out var g)) row.Greeks = g;
+                }
+                greeksTotals = built.Totals;
+            }
+        }
+
         rows = rows
             .OrderBy(x => x.Status == "Open" ? 0 : 1)
             .ThenByDescending(x => x.OpenedUtc)
@@ -220,7 +258,7 @@ public sealed class PositionViewBuilder
             .Select(x => x.Group)
             .ToList();
 
-        return new Result<T>(rows, spotLtp, spotUpdatedUtc, lotSizes, capitalUsed, premiumOutlay, premiumReceived, groups);
+        return new Result<T>(rows, spotLtp, spotUpdatedUtc, lotSizes, capitalUsed, premiumOutlay, premiumReceived, groups, greeksTotals);
     }
 
     /// <summary>
@@ -393,7 +431,14 @@ public sealed class PositionViewBuilder
         return produced;
     }
 
-    public sealed record InstrumentLite(string Symbol, string Underlying, decimal? StrikePrice, string OptionType, DateOnly? ExpiryDate);
+    public sealed record InstrumentLite(
+        string Symbol,
+        string Underlying,
+        decimal? StrikePrice,
+        string OptionType,
+        DateOnly? ExpiryDate,
+        string? Exchange = null,
+        string? InstrumentType = null);
 
     /// <summary>
     /// Decoded contract for display: the instrument master wins, the FYERS

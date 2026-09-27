@@ -89,6 +89,24 @@ public interface IPaperTradingService
         string by,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Closes one open position of an EXPIRED contract at its settlement price
+    /// (an option's intrinsic value, a future's last price) without booking an
+    /// order: the exchange settles an expiry, nobody trades it, and a fill row
+    /// would be charged brokerage for a trade that never happened. Records a
+    /// CLOSE_GROUP signal carrying <paramref name="metadataJson"/> (its reason
+    /// is what the activity feed shows) and stamps the close at
+    /// <paramref name="atUtc"/>. Returns false, writing nothing, when the
+    /// position is unknown or no longer open, so a second pass is harmless.
+    /// </summary>
+    Task<bool> SettleExpiredPositionAsync(
+        long simulationRunId,
+        long positionId,
+        decimal settlementPrice,
+        string metadataJson,
+        DateTime atUtc,
+        CancellationToken cancellationToken = default);
+
     // ---- OfflineReplay (backtest runner) hooks ----
 
     /// <summary>

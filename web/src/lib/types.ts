@@ -570,6 +570,54 @@ export interface LivePosition {
   /** This position's own stop / target, from the order that opened it. */
   stopLossPrice: number | null
   targetPrice: number | null
+  /**
+   * IV and greeks of an OPEN leg, and what they are worth to this position.
+   * Null for a closed leg, in a backtest, and for an option nothing could
+   * price; absent on an API older than 27 Sep.
+   */
+  greeks?: PositionGreeks | null
+}
+
+/** Where a leg's greeks came from. */
+export type GreeksSource = 'feed' | 'chain' | 'computed' | 'delta-one'
+
+/**
+ * One open leg's greeks. Per unit, in premium points: theta per calendar day,
+ * vega per one point of IV. The rupee figures are × quantity × side, so a
+ * bought option's theta is negative (it pays for time) and a written one's
+ * positive.
+ */
+export interface PositionGreeks {
+  source: GreeksSource
+  /** The moment the figures describe; null for a future (delta 1 at any age). */
+  asOfUtc: string | null
+  /** Too old to read as the market now. */
+  stale: boolean
+  /** 13.6 is 13.6%. */
+  ivPercent: number | null
+  delta: number
+  gamma: number
+  theta: number
+  vega: number
+  underlyingPrice: number | null
+  deltaQuantity: number
+  deltaRupeesPerPoint: number
+  thetaRupeesPerDay: number
+  vegaRupeesPerIvPoint: number
+}
+
+/** The open legs' greeks summed for a run or the manual book. */
+export interface RunGreeksTotals {
+  thetaRupeesPerDay: number
+  vegaRupeesPerIvPoint: number
+  /** Book-wide net delta in units — only when the book holds one underlying. */
+  netDeltaQuantity: number | null
+  byUnderlying: { underlying: string; deltaQuantity: number; deltaRupeesPerPoint: number }[]
+  legs: number
+  /** Open option legs no source could price (left out of the sums). */
+  unpriced: number
+  stale: boolean
+  oldestAsOfUtc: string | null
 }
 
 export interface LiveActivity {
@@ -640,6 +688,8 @@ export interface StrategyLiveView {
   }
   groups?: LiveRunGroup[] | null
   positions: LivePosition[]
+  /** Theta ₹/day, vega ₹ and net delta of the open legs; null with nothing priced. */
+  greeks?: RunGreeksTotals | null
   activity: LiveActivity[]
   runner: {
     processId: number

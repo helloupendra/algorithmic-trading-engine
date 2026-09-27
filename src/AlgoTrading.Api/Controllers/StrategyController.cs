@@ -1252,6 +1252,7 @@ public class StrategyController : ControllerBase
         view.SpotUpdatedUtc = built.SpotUpdatedUtc;
         view.Positions = built.Positions;
         view.Groups = built.Groups;
+        view.Greeks = built.Greeks;
 
         view.Pnl.Realized = positions.Sum(x => x.RealizedPnl);
         view.Pnl.Unrealized = positions

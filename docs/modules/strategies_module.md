@@ -54,7 +54,7 @@ Every run carries a `risk` object (all fields optional, set at start or changed 
 
 The guard runs in the API every 3 seconds (`StrategyRiskGuardService`), not in the runner, so a wedged runner cannot skip its own stop. Each sweep marks the run to market, evaluates leg → group → overall, and closes through reduce-only `CLOSE_GROUP` signals at the last mark with the reason ("Leg stop-loss hit: BANKNIFTY 57500 CE −21.4 pts (−2.6%) ≤ −20 pts", "Group stop-loss hit: G1 P&L −1,240 ≤ −1,000"). A strategy's own later `CLOSE_GROUP` for an already-closed leg is reduce-only and ignored, so the guard can never leave a reverse position behind.
 
-An overall trip runs the stop pipeline: the run is marked `Stopping` (further signals are rejected), the runner receives SIGTERM (falling back to a kill after 5 s), every open position is squared off at its last mark, and a `RUN_STOPPED` signal with the reason is persisted. The same pipeline serves the UI Stop button ("Stopped by <user>"), the 15:30 IST market-close service and a runner that exits on its own ("Runner exited (code N)"). The backtest engine applies the same three levels bar by bar, so a rule behaves the same in replay and live.
+An overall trip runs the stop pipeline: the run is marked `Stopping` (further signals are rejected), the runner receives SIGTERM (falling back to a kill after 5 s), every open position is squared off at its last mark, and a `RUN_STOPPED` signal with the reason is persisted. The same pipeline serves the UI Stop button ("Stopped by <user>"), the market-close service (NSE and BSE runs at 15:30 IST, MCX runs at the MCX close — `MarketCloseRules`) and a runner that exits on its own ("Runner exited (code N)"). The backtest engine applies the same three levels bar by bar, so a rule behaves the same in replay and live.
 
 ### 4. Several runs of one strategy
 Runs are keyed by run id, so the same strategy can run on several underlyings at once (Fulcrum on BANKNIFTY and on NIFTY). Starting a strategy on an underlying it is already running on answers 409. Each run has its own card, stop, live view, logs and signal ring under `/api/Strategy/runs/{runId}/…`; the older strategy-scoped routes resolve to the single active run.
@@ -67,6 +67,7 @@ The ingestor and every runner report their process id (heartbeat `processId`, `P
 - header: underlying, spot LTP, lots, lot size, risk rules, started by/at, stop reason;
 - `pnl`: realized, unrealized, total, capital used, premium outlay (open BUY legs) and premium received (open SELL legs);
 - `positions[]`: contract label ("BANKNIFTY 57600 CE · 29 Sep"), side, lots, lot size, quantity, entry, value (entry × qty, and the current value while open), LTP, P&L with premium points and %, status, opened/closed time — open rows first;
+- `positions[].greeks` and `greeks`: each open option leg's IV, delta, gamma, theta and vega with their rupee effect (theta ₹/day, vega ₹ per 1% IV, delta per underlying), the source and its age, and the run's totals — see [Manual orders & carried positions](manual_orders.md#3-greeks-on-open-positions);
 - `groups[]`: P&L and open/closed leg counts per group;
 - `activity[]`: every signal with the strategy's own reason text, newest first;
 - `runner`: process id and last log time. `GET /api/Strategy/{id}/logs` returns the drained process output.
