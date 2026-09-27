@@ -115,13 +115,6 @@ export function formatAge(iso: string | null | undefined): string {
   return `${Math.floor(h / 24)}d ago`
 }
 
-/** Change vs previous close, when both are present. */
-export function quoteChange(ltp: number | null, prevClose: number | null) {
-  if (ltp == null || prevClose == null || prevClose === 0) return null
-  const abs = ltp - prevClose
-  return { abs, pct: (abs / prevClose) * 100 }
-}
-
 /** Strips the exchange prefix for tighter tables: "NSE:SBIN-EQ" -> "SBIN-EQ". */
 export function shortSymbol(symbol: string): string {
   const i = symbol.indexOf(':')

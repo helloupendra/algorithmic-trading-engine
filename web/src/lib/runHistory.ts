@@ -1,6 +1,6 @@
 /**
  * Pure helpers over a `LiveRunSummary` shared by the Run history table, the
- * Strategies overview and the run detail header. Kept out of the component
+ * trader's Library page and the run detail header. Kept out of the component
  * modules so those files export only components (Fast Refresh stays
  * whole-file safe).
  */

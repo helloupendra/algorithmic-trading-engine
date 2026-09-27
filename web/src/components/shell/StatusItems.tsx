@@ -160,8 +160,8 @@ function HealthItem({ backend, nse, mcx, heartbeats }: {
           ))}
           <div className="pop__foot">
             <Link to="/system/connectors">Connectors</Link>
-            <Link to="/data/feeds">Live feeds</Link>
-            <Link to="/system/checkups">Desk checkup</Link>
+            <Link to="/data/feeds">Feeds</Link>
+            <Link to="/system/checkups">Checkups</Link>
           </div>
         </div>
       )}

@@ -141,21 +141,6 @@ export interface Instrument {
   optionType: string | null
 }
 
-export interface DerivativeExpiry {
-  underlying: string
-  expiryDate: string
-}
-
-export interface OptionChainItem {
-  symbol: string
-  underlying: string
-  expiryDate: string | null
-  strikePrice: number | null
-  optionType: string | null
-  instrumentType: string
-  description: string
-}
-
 // ---------- Simulator ----------
 
 export interface SimulationRun {
