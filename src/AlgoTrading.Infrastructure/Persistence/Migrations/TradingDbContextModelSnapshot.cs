@@ -490,6 +490,153 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.ToTable("candle_pattern_rules", (string)null);
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.CorporateAnnouncement", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime?>("AnnouncedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("AttachmentUrl")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("Company")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("Details")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("Exchange")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
+                    b.Property<DateTime>("FirstSeenUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<short?>("Importance")
+                        .HasColumnType("smallint");
+
+                    b.Property<string>("ScoreModel")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasDefaultValue("");
+
+                    b.Property<DateTime?>("ScoredUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal?>("Sentiment")
+                        .HasPrecision(4, 3)
+                        .HasColumnType("numeric(4,3)");
+
+                    b.Property<string>("Subject")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("Symbol")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("Symbols")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("Topics")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("UniqueKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FirstSeenUtc");
+
+                    b.HasIndex("ScoredUtc");
+
+                    b.HasIndex("UniqueKey")
+                        .IsUnique();
+
+                    b.HasIndex("Symbol", "AnnouncedUtc");
+
+                    b.ToTable("corporate_announcements", (string)null);
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.CorporateCalendarEvent", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Company")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("");
+
+                    b.Property<DateOnly>("EventDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("Exchange")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
+                    b.Property<DateTime>("FirstSeenUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("Symbol")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("UniqueKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UniqueKey")
+                        .IsUnique();
+
+                    b.HasIndex("EventDate", "Symbol");
+
+                    b.ToTable("corporate_calendar", (string)null);
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.DataVendor", b =>
                 {
                     b.Property<long>("Id")
@@ -1420,6 +1567,57 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.ToTable("live_watchlist", (string)null);
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.MarketBreadthDaily", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("Advances")
+                        .HasColumnType("integer");
+
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date");
+
+                    b.Property<int>("Declines")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Exchange")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
+                    b.Property<int?>("Highs52w")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("Lows52w")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<int>("Traded")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal?>("TurnoverCr")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<int>("Unchanged")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Exchange", "Date")
+                        .IsUnique();
+
+                    b.ToTable("market_breadth_daily", (string)null);
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.MarketCashFlow", b =>
                 {
                     b.Property<long>("Id")
@@ -1595,6 +1793,58 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.ToTable("market_futures_daily", (string)null);
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.MarketGlobalDaily", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<decimal>("Close")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date");
+
+                    b.Property<DateTime>("FetchedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal?>("High")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<decimal?>("Low")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<decimal?>("Open")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("Symbol")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<decimal?>("Volume")
+                        .HasPrecision(20, 2)
+                        .HasColumnType("numeric(20,2)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Symbol", "Date")
+                        .IsUnique();
+
+                    b.ToTable("market_global_daily", (string)null);
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.MarketHoliday", b =>
                 {
                     b.Property<long>("Id")
@@ -1713,6 +1963,49 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("market_participant_oi", (string)null);
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.MarketQuoteSnapshot", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime?>("AsOfUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal?>("ChangePct")
+                        .HasPrecision(9, 4)
+                        .HasColumnType("numeric(9,4)");
+
+                    b.Property<DateTime>("FetchedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<decimal?>("PreviousClose")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<decimal>("Price")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Key", "FetchedUtc");
+
+                    b.ToTable("market_quote_snapshots", (string)null);
                 });
 
             modelBuilder.Entity("AlgoTrading.Domain.Entities.MarketSpecialSession", b =>
@@ -1836,6 +2129,94 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.HasIndex("Symbol", "ExchangeTimestampUtc");
 
                     b.ToTable("market_ticks", (string)null);
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.NewsItem", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<DateTime>("FirstSeenUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<short?>("Importance")
+                        .HasColumnType("smallint");
+
+                    b.Property<string>("Link")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("LinkHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime?>("PublishedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ScoreModel")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasDefaultValue("");
+
+                    b.Property<DateTime?>("ScoredUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal?>("Sentiment")
+                        .HasPrecision(4, 3)
+                        .HasColumnType("numeric(4,3)");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Summary")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("Symbols")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Topics")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FirstSeenUtc");
+
+                    b.HasIndex("LinkHash")
+                        .IsUnique();
+
+                    b.HasIndex("ScoredUtc");
+
+                    b.HasIndex("Category", "FirstSeenUtc");
+
+                    b.ToTable("news_items", (string)null);
                 });
 
             modelBuilder.Entity("AlgoTrading.Domain.Entities.OptionChainSnapshot", b =>

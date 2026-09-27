@@ -166,6 +166,15 @@ builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketFactorsSyncServ
 // `score` at 15:50 IST on NSE trading days, plus a catch-up score after start-up.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.ForecastJobRunner>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.ForecastScheduler>();
+// Market intelligence: what moves the market, each row stamped with when the
+// desk first knew it (docs/modules/market_intelligence.md). Every recorder has
+// its own MarketIntelligence:*Enabled switch; none opens a broker or feed.
+builder.Services.AddHostedService<AlgoTrading.Api.Services.NewsRecorderService>();
+builder.Services.AddHostedService<AlgoTrading.Api.Services.CorporateFilingsRecorderService>();
+builder.Services.AddHostedService<AlgoTrading.Api.Services.QuoteSnapshotRecorderService>();
+builder.Services.AddHostedService<AlgoTrading.Api.Services.GlobalDailyRecorderService>();
+builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketIntelligenceBackfillService>();
+builder.Services.AddHostedService<AlgoTrading.Api.Services.NewsScoringScheduler>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketPulseSubscriptionService>();
 // Alert Subscriber Service for logic engine pub/sub
 builder.Services.AddHostedService<AlgoTrading.Api.Services.AlertSubscriberService>();

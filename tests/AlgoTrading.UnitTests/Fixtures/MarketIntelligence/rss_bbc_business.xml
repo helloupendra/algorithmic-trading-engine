@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?><rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0" xmlns:media="http://search.yahoo.com/mrss/">
+    <channel>
+        <title><![CDATA[BBC News]]></title>
+        <description><![CDATA[BBC News - Business]]></description>
+        <link>https://www.bbc.co.uk/news/business</link>
+        <image>
+            <url>https://news.bbcimg.co.uk/nol/shared/img/bbc_news_120x60.gif</url>
+            <title>BBC News</title>
+            <link>https://www.bbc.co.uk/news/business</link>
+        </image>
+        <generator>RSS for Node</generator>
+        <lastBuildDate>Sun, 27 Sep 2026 13:33:08 GMT</lastBuildDate>
+        <atom:link href="https://feeds.bbci.co.uk/news/business/rss.xml" rel="self" type="application/rss+xml"/>
+        <copyright><![CDATA[Copyright: (C) British Broadcasting Corporation, see https://www.bbc.co.uk/usingthebbc/terms-of-use/#15metadataandrssfeeds for terms and conditions of reuse.]]></copyright>
+        <language><![CDATA[en-gb]]></language>
+        <ttl>15</ttl>
+        <item>
+            <title><![CDATA[Andy Burnham refuses to back third runway at Heathrow]]></title>
+            <description><![CDATA[Andy Burnham said he would wait for the results of a consultation on a scheme estimated to cost £33bn]]></description>
+            <link>https://www.bbc.co.uk/news/articles/cvrl6y8rx08wo?at_medium=RSS&amp;at_campaign=rss</link>
+            <guid isPermaLink="false">https://www.bbc.co.uk/news/articles/cvrl6y8rx08wo#0</guid>
+            <pubDate>Sun, 27 Sep 2026 11:22:32 GMT</pubDate>
+            <media:thumbnail width="240" height="134" url="https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/3f28/live/79607810-ba63-11f1-ab5a-210fdaa1dd09.jpg"/>
+        </item>
+        <item>
+            <title><![CDATA[Faisal Islam: The two big decisions the chancellor must make]]></title>
+            <description><![CDATA[He must consider the longevity of Iran war economic pressures and how to sustain modest optimism, writes the BBC's Faisal Islam.]]></description>
+            <link>https://www.bbc.co.uk/news/articles/cklye5e40531o?at_medium=RSS&amp;at_campaign=rss</link>
+            <guid isPermaLink="false">https://www.bbc.co.uk/news/articles/cklye5e40531o#0</guid>
+            <pubDate>Sat, 26 Sep 2026 23:00:42 GMT</pubDate>
+            <media:thumbnail width="240" height="134" url="https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/8047/live/4b558d20-b9f5-11f1-afb9-0ba46641015c.jpg"/>
+        </item></channel></rss>

@@ -47,3 +47,7 @@ Dockerfile      text eol=lf
 
 # Large generated data — keep diffs out of review
 *.csv           text eol=lf -diff
+
+# Captured exchange answers stay byte for byte: NSE serves some files with CRLF,
+# and the parsers are tested on what the exchange actually sends.
+tests/AlgoTrading.UnitTests/Fixtures/MarketIntelligence/** -text

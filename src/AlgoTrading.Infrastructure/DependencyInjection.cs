@@ -134,6 +134,27 @@ public static class DependencyInjection
         services.AddScoped<AlgoTrading.Infrastructure.Services.MarketFactors.MarketFactorsSync>();
         services.AddScoped<AlgoTrading.Infrastructure.Services.MarketFactors.MarketFactorsQueries>();
 
+        // Market intelligence: news, NSE filings, global cues and breadth, each
+        // recorded with when the desk first knew it. One pacer spaces out every
+        // request to NSE (these recorders, their backfills and the market-factor
+        // sync above) to about one a second.
+        services.Configure<AlgoTrading.Infrastructure.Services.MarketIntelligence.MarketIntelligenceOptions>(
+            configuration.GetSection(AlgoTrading.Infrastructure.Services.MarketIntelligence.MarketIntelligenceOptions.SectionName));
+        services.AddSingleton(_ => new AlgoTrading.Infrastructure.Services.MarketIntelligence.NseRequestPacer(TimeSpan.FromSeconds(1)));
+        services.AddSingleton<AlgoTrading.Infrastructure.Services.MarketIntelligence.MarketIntelligenceStatus>();
+        services.AddHttpClient(AlgoTrading.Infrastructure.Services.MarketIntelligence.NewsRecorder.HttpClientName,
+            AlgoTrading.Infrastructure.Services.MarketIntelligence.NewsRecorder.Configure);
+        services.AddHttpClient(AlgoTrading.Infrastructure.Services.MarketIntelligence.NseWebClient.HttpClientName,
+                AlgoTrading.Infrastructure.Services.MarketIntelligence.NseWebClient.Configure)
+            .ConfigurePrimaryHttpMessageHandler(AlgoTrading.Infrastructure.Services.MarketIntelligence.NseWebClient.CreateHandler);
+        services.AddSingleton<AlgoTrading.Infrastructure.Services.MarketIntelligence.NseWebClient>();
+        services.AddScoped<AlgoTrading.Infrastructure.Services.MarketIntelligence.NewsRecorder>();
+        services.AddScoped<AlgoTrading.Infrastructure.Services.MarketIntelligence.CorporateFilingsRecorder>();
+        services.AddScoped<AlgoTrading.Infrastructure.Services.MarketIntelligence.GlobalMarketsRecorder>();
+        services.AddScoped<AlgoTrading.Infrastructure.Services.MarketIntelligence.BreadthRecorder>();
+        services.AddScoped<AlgoTrading.Infrastructure.Services.MarketIntelligence.DailyBackfillRunner>();
+        services.AddScoped<AlgoTrading.Infrastructure.Services.MarketIntelligence.MarketIntelligenceQueries>();
+
 
         services.AddScoped<ISimulationService, SimulationService>();
 

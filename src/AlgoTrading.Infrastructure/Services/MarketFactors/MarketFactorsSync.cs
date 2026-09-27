@@ -5,6 +5,7 @@ using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Domain.Enums;
 using AlgoTrading.Infrastructure.Persistence;
+using AlgoTrading.Infrastructure.Services.MarketIntelligence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -73,18 +74,24 @@ public sealed class MarketFactorsSync
     private readonly IMarketCalendar _calendar;
     private readonly MarketFactorsStatus _status;
     private readonly ILogger<MarketFactorsSync> _logger;
+    private readonly NseRequestPacer? _pacer;
 
     /// <summary>The clock a run reads "today" from; replaced in tests.</summary>
     public Func<DateTime> Clock { get; set; } = () => DateTime.UtcNow;
 
+    /// <param name="pacer">
+    /// Shared with the market-intelligence recorders, so this sync and the
+    /// history backfill running the same evening do not add up to a burst.
+    /// </param>
     public MarketFactorsSync(TradingDbContext db, IHttpClientFactory http, IMarketCalendar calendar,
-        MarketFactorsStatus status, ILogger<MarketFactorsSync> logger)
+        MarketFactorsStatus status, ILogger<MarketFactorsSync> logger, NseRequestPacer? pacer = null)
     {
         _db = db;
         _http = http;
         _calendar = calendar;
         _status = status;
         _logger = logger;
+        _pacer = pacer;
     }
 
     /// <summary>
@@ -127,38 +134,70 @@ public sealed class MarketFactorsSync
         var status = _status.For(ParticipantDataset);
         status.LastAttemptUtc = DateTime.UtcNow;
         var oldest = sessions.Count > 0 ? sessions[^1] : IstTime.DateOf(Clock());
-        var have = (await _db.MarketParticipantOpenInterest.AsNoTracking()
-                .Where(x => x.Date >= oldest).Select(x => x.Date).Distinct().ToListAsync(ct))
-            .ToHashSet();
+        var have = await ParticipantDatesPresentAsync(oldest, DateOnly.MaxValue, ct);
 
         int stored = 0, notYet = 0, failed = 0, fetches = 0;
         string? lastError = null;
         foreach (var day in sessions.Where(d => !have.Contains(d)).OrderByDescending(d => d))
         {
             if (fetches++ >= MaxFetchesPerDataset) break;
-            string url = ParticipantUrl(day);
-            try
+            var outcome = await FetchParticipantDayAsync(day, ct);
+            switch (outcome.Result)
             {
-                var (code, body) = await GetTextAsync(url, ct);
-                if (code == HttpStatusCode.NotFound) { notYet++; continue; }
-                if (code != HttpStatusCode.OK) { failed++; lastError = $"{day:yyyy-MM-dd}: HTTP {(int)code}"; continue; }
-
-                var rows = MarketFactorParsers.ParseParticipantOpenInterest(body, day, url);
-                _db.MarketParticipantOpenInterest.RemoveRange(_db.MarketParticipantOpenInterest.Where(x => x.Date == day));
-                _db.MarketParticipantOpenInterest.AddRange(rows);
-                await _db.SaveChangesAsync(ct);
-                stored++;
-                status.NewestDay = status.NewestDay is null || day > status.NewestDay ? day : status.NewestDay;
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                failed++;
-                lastError = $"{day:yyyy-MM-dd}: {ex.Message}";
+                case DayFetchResult.Stored:
+                    stored++;
+                    status.NewestDay = status.NewestDay is null || day > status.NewestDay ? day : status.NewestDay;
+                    break;
+                case DayFetchResult.NotPublished:
+                    notYet++;
+                    break;
+                default:
+                    failed++;
+                    lastError = outcome.Error;
+                    break;
             }
         }
 
         return Finish(status, $"participant OI: {stored} day(s) stored, {notYet} not published, {failed} failed", failed, lastError,
             await _db.MarketParticipantOpenInterest.AsNoTracking().MaxAsync(x => (DateOnly?)x.Date, ct));
+    }
+
+    /// <summary>The days with participant OI stored, for the evening look and the history backfill to skip.</summary>
+    public async Task<IReadOnlySet<DateOnly>> ParticipantDatesPresentAsync(DateOnly from, DateOnly to, CancellationToken ct) =>
+        (await _db.MarketParticipantOpenInterest.AsNoTracking()
+            .Where(x => x.Date >= from && x.Date <= to)
+            .Select(x => x.Date)
+            .Distinct()
+            .ToListAsync(ct))
+        .ToHashSet();
+
+    /// <summary>
+    /// Fetches and stores one day's participant-wise open interest, replacing
+    /// whatever that day held. A 404 is <see cref="DayFetchResult.NotPublished"/>:
+    /// not posted yet, or a holiday. Shared by the evening look and the history
+    /// backfill (<c>MarketIntelligenceBackfillService</c>), which reads the
+    /// same archive URL for every date back to 2020.
+    /// </summary>
+    public async Task<DayFetchOutcome> FetchParticipantDayAsync(DateOnly day, CancellationToken ct)
+    {
+        string url = ParticipantUrl(day);
+        try
+        {
+            var (code, body) = await GetTextAsync(url, ct);
+            if (code == HttpStatusCode.NotFound) return DayFetchOutcome.NotPublished;
+            if (code != HttpStatusCode.OK) return DayFetchOutcome.Failed($"{day:yyyy-MM-dd}: HTTP {(int)code}");
+
+            var rows = MarketFactorParsers.ParseParticipantOpenInterest(body, day, url);
+            _db.MarketParticipantOpenInterest.RemoveRange(_db.MarketParticipantOpenInterest.Where(x => x.Date == day));
+            _db.MarketParticipantOpenInterest.AddRange(rows);
+            await _db.SaveChangesAsync(ct);
+            return DayFetchOutcome.Stored;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _db.ChangeTracker.Clear();
+            return DayFetchOutcome.Failed($"{day:yyyy-MM-dd}: {ex.Message}");
+        }
     }
 
     private async Task<string> SyncFuturesAsync(IReadOnlyList<DateOnly> sessions, CancellationToken ct)
@@ -180,6 +219,7 @@ public sealed class MarketFactorsSync
             {
                 var client = _http.CreateClient(HttpClientName);
                 await Task.Delay(Pace, ct);
+                if (_pacer is not null) await _pacer.WaitAsync(ct);
                 using var response = await client.GetAsync(url, ct);
                 if (response.StatusCode == HttpStatusCode.NotFound) { notYet++; continue; }
                 if (!response.IsSuccessStatusCode) { failed++; lastError = $"{day:yyyy-MM-dd}: HTTP {(int)response.StatusCode}"; continue; }
@@ -266,6 +306,7 @@ public sealed class MarketFactorsSync
     {
         var client = _http.CreateClient(HttpClientName);
         await Task.Delay(Pace, ct);
+        if (_pacer is not null) await _pacer.WaitAsync(ct);
         using var response = await client.GetAsync(url, ct);
         string body = response.IsSuccessStatusCode ? await response.Content.ReadAsStringAsync(ct) : string.Empty;
         return (response.StatusCode, body);
