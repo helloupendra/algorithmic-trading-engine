@@ -57,7 +57,9 @@ if [ "$(uname -s)" = "Darwin" ]; then tunnel_ok=$(launchctl list 2>/dev/null | g
   || bad "cloudflare tunnel service" "not installed (scripts/install-tunnel.sh on the Mac, scripts/aws/bootstrap.sh on the server)"
 
 code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 "$API/health" 2>/dev/null)"
-[ "$code" = "200" ] && ok "API (local :5025)" "healthy" || bad "API (local :5025)" "health returned '${code:-no response}'"
+# How it runs: the Release output started directly (API_BUILD_CONFIG=Release), or `dotnet run`.
+how="dotnet run"; pgrep -f 'AlgoTrading.Api.dll' >/dev/null 2>&1 && how="Release build"
+[ "$code" = "200" ] && ok "API (local :5025)" "healthy ($how)" || bad "API (local :5025)" "health returned '${code:-no response}'"
 
 code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 12 "$PUBLIC/" 2>/dev/null)"
 [ "$code" = "200" ] && ok "public $PUBLIC" "200" || bad "public $PUBLIC" "'${code:-no response}' — tunnel or API"
@@ -82,6 +84,22 @@ if command -v systemctl >/dev/null 2>&1; then
 else
   meh "sentinel (watchman)" "not installed here (a systemd service on the server)"
 fi
+
+# --- the host -------------------------------------------------------------------
+# Memory, swap and load, and whether the kernel has had to kill anything for
+# memory since boot: on this box that looks like a runner dying for no reason.
+vitals="$(python3 scripts/lib/host_vitals.py 2>/dev/null)"
+case $? in
+  0) ok "host" "$vitals" ;;
+  1) bad "host" "$vitals" ;;
+  *) meh "host" "${vitals:-could not be read}" ;;
+esac
+oom="$(python3 scripts/lib/host_vitals.py --oom 2>/dev/null)"
+case $? in
+  0) ok "OOM killer" "$oom" ;;
+  1) bad "OOM killer" "$oom" ;;
+  *) meh "OOM killer" "${oom:-could not be read}" ;;
+esac
 
 # --- daemons and runs ----------------------------------------------------------
 # Every vendor's feed is run_feed.py --vendor <key>; fyers_streamer is the old

@@ -105,6 +105,9 @@ desk_setting() {  # NAME -> its value, or nothing
 # keeps checking the API meanwhile. Off: in the foreground, as always.
 # shellcheck disable=SC2034  # read by desk.sh
 case "$(desk_setting DESK_BACKGROUND_OPEN)" in 1) DESK_BG_OPEN=1 ;; *) DESK_BG_OPEN=0 ;; esac
+# API_BUILD_CONFIG=Release: the API is built Release and run from its build
+# output (api_start). Off: `dotnet run`, a Debug build, as always.
+case "$(desk_setting API_BUILD_CONFIG)" in [Rr]elease) DESK_API_CONFIG=Release ;; *) DESK_API_CONFIG="" ;; esac
 
 # --- an API restart in progress ---------------------------------------------------
 # Written for as long as any script is restarting the API, so the desk's own
@@ -152,11 +155,48 @@ api_stop() {
   sleep 1
 }
 
+# --- how the API is built and run ---------------------------------------------------
+# By default `dotnet run`: a Debug build, and a `dotnet run` parent process of
+# about 245 MB that sits beside the API for its whole life. With
+# API_BUILD_CONFIG=Release the API is built Release and its output started
+# directly (dotnet AlgoTrading.Api.dll), from the project directory, which is
+# where `dotnet run` starts it too (RunWorkingDirectory): the content root,
+# wwwroot, SeedData and appsettings are found in the same place.
+api_build() {  # builds the API as api_start will run it; output to the caller's redirect
+  if [ "$DESK_API_CONFIG" = Release ]; then
+    ( cd "$REPO_ROOT" && dotnet build src/AlgoTrading.Api -c Release -v q --nologo )
+  else
+    ( cd "$REPO_ROOT" && dotnet build src/AlgoTrading.Api -v q --nologo )
+  fi
+}
+
+api_release_dll() {  # the Release build's entry point, relative to the project directory
+  local tfm
+  tfm="$(sed -n 's:.*<TargetFramework>\(.*\)</TargetFramework>.*:\1:p' "$REPO_ROOT/src/AlgoTrading.Api/AlgoTrading.Api.csproj" 2>/dev/null | head -1)"
+  printf 'bin/Release/%s/AlgoTrading.Api.dll' "${tfm:-net10.0}"
+}
+
+# Starts the API in the background, from DIR (relative to the repo), with .env
+# in its environment. Every API gets .env, whichever script starts it: the
+# desk never loaded it, so an API it restarted (a deploy, a health restart)
+# had no DHAN_CLIENT_ID — on 22 and 24 Sep that was "Dhan has no client id"
+# and a feed on a dead token. The two settings above are put back after it,
+# so nothing in .env can move the API off Production or its port.
+_api_launch() {  # dir command...
+  local dir="$1"
+  shift
+  ( cd "$REPO_ROOT" \
+    && if [ -f .env ]; then set -a; . ./.env; set +a; fi \
+    && export ASPNETCORE_ENVIRONMENT=Production ASPNETCORE_URLS="$API" \
+    && cd "$dir" \
+    && nohup "$@" >>"$REPO_ROOT/logs/api.log" 2>&1 & )
+}
+
 api_start() {
   if api_healthy; then say "API already healthy"; _api_restarted; return 0; fi
   _api_restarting
   api_stop
-  say "starting the API (Production, $API, chain: $CHAIN_UNDERLYINGS)"
+  say "starting the API (Production, $API, chain: $CHAIN_UNDERLYINGS${DESK_API_CONFIG:+, $DESK_API_CONFIG build})"
   # One log per API lifetime, kept under the time it ended, seven deep. Left
   # to append forever, api.log reached 2 GB in two days (EF Core was logging
   # every SQL statement; see appsettings.json); kept as a single .prev, the
@@ -165,23 +205,33 @@ api_start() {
     mv -f "$REPO_ROOT/logs/api.log" "$REPO_ROOT/logs/api-until-$(date '+%Y%m%d-%H%M%S').log"
     ls -t "$REPO_ROOT"/logs/api-until-*.log 2>/dev/null | tail -n +8 | xargs rm -f 2>/dev/null || true
   fi
-  # Every API gets .env in its environment, whichever script starts it. The
-  # desk never loaded it, so an API it restarted (a deploy, a health restart)
-  # had no DHAN_CLIENT_ID: on 22 and 24 Sep that was "Dhan has no client id"
-  # and a feed on a dead token. market-open.sh loads .env itself, which is why
-  # mornings worked. The two settings above are put back after it, so nothing
-  # in .env can move the API off Production or its port.
-  ( cd "$REPO_ROOT" \
-    && if [ -f .env ]; then set -a; . ./.env; set +a; fi \
-    && export ASPNETCORE_ENVIRONMENT=Production ASPNETCORE_URLS="$API" \
-    && nohup dotnet run --project src/AlgoTrading.Api --no-launch-profile >>"$REPO_ROOT/logs/api.log" 2>&1 & )
+  if [ "$DESK_API_CONFIG" = Release ]; then
+    # Built first, as `dotnet run` would (a no-op when a deploy or api_restart
+    # has just built it). A build that fails falls back to `dotnet run`, so
+    # the API still comes up.
+    if api_build >>"$REPO_ROOT/logs/api.log" 2>&1 && [ -f "$REPO_ROOT/src/AlgoTrading.Api/$(api_release_dll)" ]; then
+      _api_launch src/AlgoTrading.Api dotnet "$(api_release_dll)"
+    else
+      warn "the Release build failed — starting the API with dotnet run instead (see logs/api.log)"
+      _api_launch . dotnet run --project src/AlgoTrading.Api --no-launch-profile
+    fi
+  else
+    _api_launch . dotnet run --project src/AlgoTrading.Api --no-launch-profile
+  fi
   for _ in $(seq 1 60); do sleep 2; api_healthy && { say "  API up"; _api_restarted; return 0; }; done
   warn "the API did not come up within two minutes (see logs/api.log)"
   _api_restarted
   return 1
 }
 
-api_restart() { _api_restarting; api_stop; api_start; }
+api_restart() {
+  _api_restarting
+  # Release: built while the old API still serves, so a slow first build
+  # costs no downtime and api_start's own build is a no-op.
+  if [ "$DESK_API_CONFIG" = Release ]; then api_build >>"$LOG" 2>&1 || true; fi
+  api_stop
+  api_start
+}
 
 # --- the console bundle ------------------------------------------------------
 # The API serves the console from wwwroot on the domain, so a frontend change
