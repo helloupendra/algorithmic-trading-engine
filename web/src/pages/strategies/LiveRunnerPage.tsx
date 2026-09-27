@@ -12,17 +12,23 @@
  *
  * A stopped card can be dismissed from THIS list only — every run stays in
  * Run history, attached to the user who started it.
+ *
+ * Two views of the same runs (?view=): the cards, to act on a run now, and
+ * the tracks (RunTracks.tsx), every run of the day on one time axis, to see
+ * when and why.
  */
 
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
+import type { Scope } from '../../lib/desk'
 import { useStrategies, useStrategyLives } from '../../lib/queries'
 import { InlineError, Loading, QueryBoundary, StatTile } from '../../components/ui'
 import { IconClock, IconLayers, IconPlay } from '../../components/icons'
 import type { StrategyActiveRun, StrategyLastExit, StrategyListItem, StrategyLiveView } from '../../lib/types'
 import { LaunchDialog, PnlValue, ReadinessStrip, StrategyCard } from './shared'
 import { RunCard } from './RunCard'
+import { RunTracks } from './RunTracks'
 import { liveNet, realizedNet, runOwner, runningSummary } from '../../lib/strategyList'
 
 /* ------------------------------------------------------------------ helpers */
@@ -68,7 +74,51 @@ function groupByAccount(cards: CardSpec[]): [string, CardSpec[]][] {
   return ordered
 }
 
+type RunsView = 'cards' | 'tracks'
+
+/** Cards or Tracks, in the URL so a view can be linked to and survives a reload. */
+function ViewSwitch({ view, onView }: { view: RunsView; onView: (view: RunsView) => void }) {
+  return (
+    <span className="dk-seg runs-view" role="group" aria-label="View">
+      <button type="button" aria-pressed={view === 'cards'} onClick={() => onView('cards')} title="A card per run, to act on it">
+        Cards
+      </button>
+      <button type="button" aria-pressed={view === 'tracks'} onClick={() => onView('tracks')} title="Every run of the day on one time axis">
+        Tracks
+      </button>
+    </span>
+  )
+}
+
 export function LiveRunnerPage() {
+  const [params, setParams] = useSearchParams()
+  const view: RunsView = params.get('view') === 'tracks' ? 'tracks' : 'cards'
+  const [tracksScope, setTracksScope] = useState<Scope>('all')
+  function setView(next: RunsView) {
+    const p = new URLSearchParams(params)
+    if (next === 'cards') p.delete('view')
+    else p.set('view', next)
+    setParams(p, { replace: true })
+  }
+
+  if (view === 'tracks') {
+    return (
+      <div className="page">
+        <header className="page__header runs-head">
+          <div>
+            <h1 className="page__title">Live runner</h1>
+            <p className="page__subtitle">Every run of the day on one time axis: net P&L after charges, fills, stops.</p>
+          </div>
+          <ViewSwitch view={view} onView={setView} />
+        </header>
+        <RunTracks scope={tracksScope} onScope={setTracksScope} />
+      </div>
+    )
+  }
+  return <RunCards onView={setView} />
+}
+
+function RunCards({ onView }: { onView: (view: RunsView) => void }) {
   const strategies = useStrategies()
   const [launchId, setLaunchId] = useState<number | null>(null)
   const [dismissed, setDismissed] = useState<ReadonlySet<number>>(() => new Set<number>())
@@ -158,7 +208,10 @@ export function LiveRunnerPage() {
             same strategy can run on several underlyings at once.
           </p>
         </div>
-        <ReadinessStrip />
+        <div className="runs-head__tools">
+          <ViewSwitch view="cards" onView={onView} />
+          <ReadinessStrip />
+        </div>
       </header>
 
       <div className="stat-grid">

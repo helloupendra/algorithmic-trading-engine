@@ -92,7 +92,7 @@ describe('navFor', () => {
   it('gives an admin one page per tab, the backtests aside', () => {
     const nav = navFor(admin)
     expect(pagesOf(nav, 'markets')).toEqual(['Watchlist', 'Commodity', 'Chart', 'Option chain', 'Movers', 'Factors', 'News', 'Patterns'])
-    expect(pagesOf(nav, 'trade')).toEqual(['Runs', 'Library', 'History', 'Manual order', 'Risk'])
+    expect(pagesOf(nav, 'trade')).toEqual(['Runs', 'Library', 'History', 'Positions', 'Orders', 'Manual order', 'Risk'])
     expect(pagesOf(nav, 'research')).toEqual(['Backtests', 'New backtest', 'Runs', 'Forecasts', 'Filter lab', 'Notebook'])
     expect(pagesOf(nav, 'system')).toEqual(['Health', 'Incidents', 'Log', 'Calendar', 'Connectors', 'People'])
   })
@@ -133,7 +133,7 @@ describe('navFor', () => {
     const adminUrls = new Set(allUrls(navFor(admin)))
     const shared = allUrls(navFor(traderUnknown)).filter((u) => adminUrls.has(u))
     expect(shared).toEqual(['/desk', '/markets', '/markets/chart', '/markets/chain', '/markets/movers', '/markets/factors', '/markets/news',
-      '/trade/library', '/trade/history', '/trade/ticket', '/research/lab'])
+      '/trade/library', '/trade/history', '/trade/positions', '/trade/orders', '/trade/ticket', '/research/lab'])
   })
 })
 
@@ -167,7 +167,13 @@ describe('locate', () => {
     expect(at(adminNav, '/system/connectors/dhan')).toBe('System / Connectors')
     expect(at(adminNav, '/system/people/packages')).toBe('System / People')
     expect(at(adminNav, '/system/checkups')).toBe('System / Health')
-    expect(at(traderNav, '/trade/positions/runs/3')).toBe('Trade / Positions')
+  })
+
+  it('gives admins and traders the one Positions and Orders page', () => {
+    for (const nav of [adminNav, traderNav]) {
+      expect(at(nav, '/trade/positions')).toBe('Trade / Positions')
+      expect(at(nav, '/trade/orders')).toBe('Trade / Orders')
+    }
   })
 
   it("files a run's page under Runs for an admin and under History for a trader", () => {

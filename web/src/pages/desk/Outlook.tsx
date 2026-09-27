@@ -38,7 +38,7 @@ import type { DeskLinks, DeskView } from './data'
 import { toneClass, useDayForecasts, useDeskLegs } from './data'
 import { Chip, Failed, PanelHead, RangeMeter, Waiting } from './parts'
 
-// ---------------------------------------------------------------- overnight (admin)
+// ---------------------------------------------------------------- overnight (market data)
 
 export function Overnight({ view }: { view: DeskView }) {
   const snaps = useIntelSnapshots(view.today, true)
@@ -49,9 +49,11 @@ export function Overnight({ view }: { view: DeskView }) {
   return (
     <>
       <PanelHead title="Overnight" meta={`GIFT & global${last ? ` · ${istHm(last)}` : ''}`} />
-      {snaps.isError && !snaps.data && <Failed what="The morning snapshots" error={snaps.error} />}
       {!snaps.data && !snaps.isError ? (
         <Waiting>Reading the morning snapshots…</Waiting>
+      ) : !snaps.data ? (
+        // Unread is not "none yet": say the read failed and claim nothing about GIFT or the rest.
+        <Failed what="The morning snapshots" error={snaps.error} />
       ) : (
         <>
           <div className="dk-gift">
@@ -300,11 +302,11 @@ export function Flows({ view, links }: { view: DeskView; links: DeskLinks }) {
 
 const KIND_TONE = { expiry: 'brand', holiday: 'warn', event: undefined, results: undefined, meeting: undefined } as const
 
-/** Board meetings of the desk's names (admin: the calendar endpoint is admin-only). */
+/** Board meetings of the desk's names: NIFTY 50 and whatever this viewer holds. */
 function WithMeetings({ view, links, from, to }: { view: DeskView; links: DeskLinks; from: string; to: string }) {
   const meetings = useIntelCalendar(from, to, true)
   const { legs } = useDeskLegs(view)
-  const names = new Set([...NIFTY50, ...(legs ?? []).map((l) => l.label.split(' ')[0])])
+  const names = new Set([...NIFTY50, ...(legs ?? []).map((l) => l.underlying)])
   return <WeekTable view={view} links={links} from={from} to={to} meetings={meetings.data} names={names} />
 }
 
@@ -329,7 +331,7 @@ function WeekTable({
     <>
       <PanelHead
         title={view.phase === 'post' ? 'Tomorrow & this week' : 'This week'}
-        meta={view.isAdmin ? 'events, expiries, results' : 'events, holidays, expiries'}
+        meta="events, expiries, results"
         more={links.factors ? { to: `${links.factors}?section=events`, label: 'Calendar' } : null}
       />
       {events.isError && !events.data ? (
@@ -366,9 +368,5 @@ export function Week({ view, links }: { view: DeskView; links: DeskLinks }) {
   // After the close the day is done: the list starts tomorrow.
   const from = view.phase === 'post' ? shiftDay(view.day, 1) : view.day
   const to = shiftDay(from, 7)
-  return view.isAdmin ? (
-    <WithMeetings view={view} links={links} from={from} to={to} />
-  ) : (
-    <WeekTable view={view} links={links} from={from} to={to} meetings={undefined} names={new Set()} />
-  )
+  return <WithMeetings view={view} links={links} from={from} to={to} />
 }

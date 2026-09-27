@@ -12,11 +12,10 @@ import { ForbiddenPage, NotFoundPage } from './pages/Placeholders'
 import { DeskPage } from './pages/desk/DeskPage'
 import { WatchlistPage } from './pages/trader/WatchlistPage'
 import { ChartPage } from './pages/markets/chart/ChartPage'
-import { PositionsPage } from './pages/trader/PositionsPage'
-import { OrdersPage } from './pages/trader/OrdersPage'
+import { PositionsPage } from './pages/trade/PositionsPage'
+import { OrdersPage } from './pages/trade/OrdersPage'
 import { MarketNewsPage } from './pages/data/MarketNewsPage'
 import { AccountPage } from './pages/trader/AccountPage'
-import { RunDetailPage } from './pages/trader/RunDetailPage'
 import { HealthPage } from './pages/system/health/HealthPage'
 import { PeoplePage } from './pages/system/people/PeoplePage'
 import { RiskV2Page } from './pages/admin/RiskV2Page'
@@ -140,8 +139,8 @@ export default function App() {
                 />
                 {/* Any run the API lets the viewer read: it answers 403 for someone else's. */}
                 <Route path="/trade/runs/:runId" element={<LiveRunDetailPage />} />
+                {/* Every open leg and the day's orders, across runs and manual books. */}
                 <Route path="/trade/positions" element={<PositionsPage />} />
-                <Route path="/trade/positions/runs/:id" element={<RunDetailPage />} />
                 <Route path="/trade/orders" element={<OrdersPage />} />
                 <Route path="/trade/ticket" element={<ManualOrderPage />} />
 

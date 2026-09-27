@@ -4,20 +4,22 @@
  * after the close, what is held overnight (carried legs and MCX runs), with
  * the ones expiring next flagged.
  *
- * The API marks each leg at the live price and scopes the list (a trader gets
- * their own). The P&L is the open move before exit charges; the charges of
- * the fills so far are already in the run's net on the grid.
+ * One read for every underlying and every book (GET /api/Positions/open):
+ * the API marks each leg at the live price and scopes the list (a trader
+ * gets their own; an admin, every account's carried legs as well as their
+ * own). The P&L is the open move before exit charges; the charges of the
+ * fills so far are already in the run's net on the grid.
  */
 
 import { dayMonth, plainNumber, weekdayOf } from '../../lib/desk'
 import { formatInrSigned } from '../../lib/format'
-import type { DeskView } from './data'
+import type { DeskLinks, DeskView } from './data'
 import { useDeskLegs } from './data'
 import { Chip, Failed, Money, PanelHead, Swatch, Waiting } from './parts'
 
 const SHOWN = 8
 
-export function Legs({ view }: { view: DeskView }) {
+export function Legs({ view, links }: { view: DeskView; links: DeskLinks }) {
   const { legs, error } = useDeskLegs(view)
   const title = view.phase === 'pre' ? 'Carried in' : view.phase === 'post' ? 'Held overnight' : 'Open legs'
   const list = legs ? (view.phase === 'pre' ? legs.filter((l) => l.carriedFrom) : legs) : null
@@ -29,12 +31,12 @@ export function Legs({ view }: { view: DeskView }) {
         : view.phase === 'post'
           ? 'carried legs and MCX runs'
           : 'held from the last session'
-  const toneOf = new Map(view.allAccounts.map((a) => [a.name, a.tone]))
+  const toneOf = new Map(view.allAccounts.map((a) => [a.id, a.tone]))
   const multi = view.accounts.length > 1
 
   return (
     <>
-      <PanelHead title={title} meta={meta} />
+      <PanelHead title={title} meta={meta} more={links.positions ? { to: links.positions, label: 'Positions' } : null} />
       {list == null ? (
         error ? <Failed what="The open legs" error={error} /> : <Waiting>Reading the open legs…</Waiting>
       ) : list.length === 0 ? (
@@ -52,9 +54,9 @@ export function Legs({ view }: { view: DeskView }) {
             </thead>
             <tbody>
               {list.slice(0, SHOWN).map((l) => (
-                <tr key={l.key} title={`${l.userName} · ${l.manual ? 'manual book' : l.strategy} · ${l.short ? 'short' : 'long'} · opened ${new Date(l.openedUtc).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })}${l.pnl != null ? ` · ${formatInrSigned(l.pnl)} open` : ''}`}>
+                <tr key={l.key} title={`${l.userName} · ${l.manual ? 'manual book' : l.strategy} · ${l.short ? 'short' : 'long'}${l.carryForward ? ' · ticked to carry' : ''} · opened ${new Date(l.openedUtc).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })}${l.pnl != null ? ` · ${formatInrSigned(l.pnl)} open` : ''}`}>
                   <td className="dk-leg">
-                    {multi && <Swatch tone={toneOf.get(l.userName) ?? null} />}
+                    {multi && <Swatch tone={toneOf.get(l.userId) ?? null} />}
                     {l.label}
                     {l.expiryDate && <span className="dk-t3 dk-xs"> {dayMonth(l.expiryDate)}</span>}
                     {l.short && <span className="dk-t3 dk-xs"> short</span>}
@@ -68,6 +70,12 @@ export function Legs({ view }: { view: DeskView }) {
                       <>
                         {' '}
                         <Chip title="Held in the manual book">book</Chip>
+                      </>
+                    )}
+                    {l.carryForward && !l.carriedFrom && (
+                      <>
+                        {' '}
+                        <Chip title={l.manual ? 'Ticked to be held overnight' : 'Ticked to move to the manual book at the close'}>carry</Chip>
                       </>
                     )}
                     {/* An expiry matters on the day, and overnight for what is held into it. */}

@@ -41,7 +41,7 @@ export interface PageDef {
   to: string
   /**
    * The one console that has this page, when only one does: the admin's run
-   * cards, the trader's v1 Simulator pages. Unset, both have it.
+   * cards, the admin's backtest pages. Unset, both have it.
    */
   only?: Side
   /** Only this exact path, not the routes under it (they may be pages of their own). */
@@ -220,15 +220,15 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         label: 'Positions',
         home: '/trade/positions',
         requires: 'strategies',
-        // The v1 Simulator pages, until positions across every book exist.
-        pages: [{ label: 'Positions', to: '/trade/positions', only: 'trader' }],
+        // Every open leg across runs and manual books: an admin's every account, a trader's own.
+        pages: [{ label: 'Positions', to: '/trade/positions', keywords: ['open legs', 'carry', 'greeks', 'manual book'] }],
       },
       {
         key: 'orders',
         label: 'Orders',
         home: '/trade/orders',
         requires: 'strategies',
-        pages: [{ label: 'Orders', to: '/trade/orders', only: 'trader' }],
+        pages: [{ label: 'Orders', to: '/trade/orders', keywords: ['fills', 'order book'] }],
       },
       {
         key: 'ticket',
