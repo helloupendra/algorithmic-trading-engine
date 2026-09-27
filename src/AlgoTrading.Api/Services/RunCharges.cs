@@ -7,7 +7,8 @@ using Microsoft.EntityFrameworkCore;
 namespace AlgoTrading.Api.Services;
 
 /// <summary>
-/// The statutory charges of live runs' fills (<see cref="OptionCharges"/>), one
+/// The statutory charges of live runs' fills (<see cref="OptionCharges"/>, at
+/// each contract's <see cref="ChargeSchedule"/>), one
 /// figure per run, for every screen that says "net": the run history, the
 /// per-account rollup, a strategy's track record and the live run page.
 /// </summary>
@@ -79,18 +80,21 @@ public sealed class RunCharges
         return rows
             .GroupBy(r => r.SimulationRunId)
             .ToDictionary(g => g.Key, g =>
-            {
-                decimal buy = 0m, sell = 0m;
-                int orders = 0;
-                foreach (var r in g)
+                // Per schedule, then summed: an MCX fill is charged at MCX's
+                // rates, and one book can hold both kinds.
+                g.GroupBy(r => ChargeSchedule.ForSymbol(r.Symbol)).Sum(bySchedule =>
                 {
-                    decimal rupees = r.PremiumLots * LotSizeOf(lotSizes, r.Symbol);
-                    if (string.Equals(r.Side, "BUY", StringComparison.OrdinalIgnoreCase)) buy += rupees;
-                    else if (string.Equals(r.Side, "SELL", StringComparison.OrdinalIgnoreCase)) sell += rupees;
-                    orders += r.Orders;
-                }
-                return OptionCharges.For(buy, sell, orders).Total;
-            });
+                    decimal buy = 0m, sell = 0m;
+                    int orders = 0;
+                    foreach (var r in bySchedule)
+                    {
+                        decimal rupees = r.PremiumLots * LotSizeOf(lotSizes, r.Symbol);
+                        if (string.Equals(r.Side, "BUY", StringComparison.OrdinalIgnoreCase)) buy += rupees;
+                        else if (string.Equals(r.Side, "SELL", StringComparison.OrdinalIgnoreCase)) sell += rupees;
+                        orders += r.Orders;
+                    }
+                    return OptionCharges.For(buy, sell, orders, bySchedule.Key).Total;
+                }));
     }
 
     /// <summary>The lot size a fill was booked at: 1 when the symbol is unknown, as in PaperTradingService.</summary>

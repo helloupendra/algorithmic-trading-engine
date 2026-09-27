@@ -53,6 +53,25 @@ public class RunChargesTests
     }
 
     [Fact]
+    public async Task A_book_with_index_and_crude_options_charges_each_at_its_own_rates()
+    {
+        const string Crude = "MCX:CRUDEOIL26OCT5500CE";
+        await using var db = NewDb();
+        Fill(db, run: 5, Nifty, "BUY", lots: 2, price: 100m);
+        Fill(db, run: 5, Nifty, "SELL", lots: 2, price: 120m);
+        Fill(db, run: 5, Crude, "BUY", lots: 2, price: 150m);
+        Fill(db, run: 5, Crude, "SELL", lots: 2, price: 180m);
+        await db.SaveChangesAsync();
+
+        decimal both = await new RunCharges(db, new Lots((Nifty, 75), (Crude, 100))).ForRunAsync(5, default);
+
+        var expected = Application.Risk.OptionCharges.For(15_000m, 18_000m, 2).Total
+                     + Application.Risk.OptionCharges.For(30_000m, 36_000m, 2, Application.Risk.ChargeSchedule.McxOptions).Total;
+        Assert.Equal(expected, both);
+        Assert.Equal(88.33m + 98.74m, both);
+    }
+
+    [Fact]
     public async Task Unfilled_orders_cost_nothing_and_runs_are_kept_apart()
     {
         await using var db = NewDb();

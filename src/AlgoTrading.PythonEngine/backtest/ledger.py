@@ -312,7 +312,7 @@ class PaperLedger:
 
     def _record_fill(self, result: ApplyResult, group: str, symbol: str, side: str,
                      lots: int, price: float, t: str, realized: float) -> float:
-        charge = (self.costs.fill_charges(side, price * lots * self.lot_size)
+        charge = (self.costs.for_symbol(symbol).fill_charges(side, price * lots * self.lot_size)
                   if self.costs is not None else self.charges_per_lot * lots)
         self.charges += charge
         fill = Fill(at_utc=t, group_id=group, symbol=symbol, side=side, lots=lots,

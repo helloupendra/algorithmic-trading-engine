@@ -19,6 +19,10 @@ Two separate things, kept separate so a report can show each:
       stamp duty  on the BUY side's turnover
       GST         on brokerage + exchange charge + SEBI fee
 
+MCX fills take MCX's own statutory rates (`CostModel.for_symbol`, see
+MCX_OPTION_RATES and MCX_FUTURE_RATES below); everything else is charged as an
+index option.
+
 Statutory rates change with budgets and exchange circulars. The defaults are
 approximations for NSE index options in 2026 — in particular STT on option
 premium is taken as 0.15% (raised from 0.1% by the 2026 Budget, effective
@@ -31,11 +35,29 @@ backtest whose costs differ from the study's would be a different experiment.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Dict
 
 BUY = "BUY"
 SELL = "SELL"
+
+# MCX's statutory rates, from the brokers' published charge sheets (Zerodha,
+# checked 27 Sep 2026). Until then crude was charged as an NSE index option:
+# STT 0.15% where the commodity transaction tax on MCX options is 0.05%, and
+# the exchange's 0.03503% where MCX takes 0.0418%. The API's ChargeSchedule
+# (Application/Risk/OptionCharges.cs) carries the same three.
+MCX_OPTION_RATES = {"stt_sell_pct": 0.05, "exchange_txn_pct": 0.0418, "stamp_buy_pct": 0.003}
+# Non-agricultural futures. Brokerage is the lower of Rs 20 and 0.03% of the
+# order; Rs 20 is kept, which overstates only mini contracts.
+MCX_FUTURE_RATES = {"stt_sell_pct": 0.01, "exchange_txn_pct": 0.0021, "stamp_buy_pct": 0.002}
+
+
+def segment_of(symbol: Any) -> str:
+    """"mcx-option" for MCX:…CE/PE, "mcx-future" for any other MCX symbol, else "index-option"."""
+    text = str(symbol or "").strip().upper()
+    if not text.startswith("MCX:"):
+        return "index-option"
+    return "mcx-option" if text.endswith(("CE", "PE")) else "mcx-future"
 
 
 @dataclass(frozen=True)
@@ -85,6 +107,20 @@ class CostModel:
         """Charges of a single fill: one order, on the side that was traded."""
         is_buy = str(side).upper() == BUY
         return self.charges(turnover if is_buy else 0.0, 0.0 if is_buy else turnover, orders=1)["total"]
+
+    def for_symbol(self, symbol: Any) -> "CostModel":
+        """
+        This model with the statutory rates of the segment `symbol` trades in.
+        Slippage, brokerage and GST are the run's own; STT/CTT, the exchange
+        charge and stamp duty are the exchange's, so an MCX fill takes MCX's
+        even in a run whose costs block set index-option rates.
+        """
+        segment = segment_of(symbol)
+        if segment == "mcx-option":
+            return replace(self, **MCX_OPTION_RATES)
+        if segment == "mcx-future":
+            return replace(self, **MCX_FUTURE_RATES)
+        return self
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

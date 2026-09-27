@@ -59,7 +59,7 @@ are enforced in the **backtest only** (the live runner applies `filters`, not th
 | `limits` | Trades a day, per window and open at once; a cooldown after a loss; no repeat of a direction that lost; the day ends after N losses or −₹X realised | `backtest/rules.py` |
 | `exits` | Exit N minutes after entry; the stop moves to entry after a set gain and then steps up with the profit; exit when the index closes against EMA/VWAP/Supertrend | `backtest/rules.py` |
 | `contract` | For a bare BUY/SELL signal: how many strikes in or out of the money, and whether to flip the side | `backtest/rules.py` |
-| `costs` | Slippage a side plus brokerage, STT, exchange, SEBI, stamp duty and GST on every fill (replaces the flat charge per lot) | `core/charges.py`, shared with the research harness |
+| `costs` | Slippage a side plus brokerage, STT, exchange, SEBI, stamp duty and GST on every fill (replaces the flat charge per lot). MCX fills take MCX's own rates: CTT 0.05% (options) or 0.01% (futures) on the sell side, MCX's 0.0418% or 0.0021%, stamp 0.003% or 0.002% on the buy side | `core/charges.py`, shared with the research harness and, rate for rate, with the live run history (`ChargeSchedule` in `OptionCharges.cs`) |
 
 Every blocked entry and every rule-driven exit is counted in the run summary (`limitBlocks`,
 `runExits`, `limitDayCloses`) and explained in its data notes, so "it traded less" is never mistaken
