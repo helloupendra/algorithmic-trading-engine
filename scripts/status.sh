@@ -58,7 +58,7 @@ if [ "$(uname -s)" = "Darwin" ]; then tunnel_ok=$(launchctl list 2>/dev/null | g
 
 code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 "$API/health" 2>/dev/null)"
 # How it runs: the Release output started directly (API_BUILD_CONFIG=Release), or `dotnet run`.
-how="dotnet run"; pgrep -f 'AlgoTrading.Api.dll' >/dev/null 2>&1 && how="Release build"
+how="dotnet run"; pgrep -f 'bin/Release/[^ ]*AlgoTrading\.Api\.dll' >/dev/null 2>&1 && how="Release build"
 [ "$code" = "200" ] && ok "API (local :5025)" "healthy ($how)" || bad "API (local :5025)" "health returned '${code:-no response}'"
 
 code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 12 "$PUBLIC/" 2>/dev/null)"
