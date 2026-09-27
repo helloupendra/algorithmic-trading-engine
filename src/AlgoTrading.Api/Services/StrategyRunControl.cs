@@ -45,6 +45,7 @@ public sealed class StrategyRunControl
     private readonly IProcessSettingsStore _processSettings;
     private readonly StrategyProcessRegistry _registry;
     private readonly PositionCarryForward _carryForward;
+    private readonly PythonEngineLocator _engine;
     private readonly ILogger<StrategyRunControl> _logger;
 
     public StrategyRunControl(
@@ -53,6 +54,7 @@ public sealed class StrategyRunControl
         IProcessSettingsStore processSettings,
         StrategyProcessRegistry registry,
         PositionCarryForward carryForward,
+        PythonEngineLocator engine,
         ILogger<StrategyRunControl> logger)
     {
         _dbContext = dbContext;
@@ -60,6 +62,7 @@ public sealed class StrategyRunControl
         _processSettings = processSettings;
         _registry = registry;
         _carryForward = carryForward;
+        _engine = engine;
         _logger = logger;
     }
 
@@ -369,7 +372,9 @@ public sealed class StrategyRunControl
             Math.Max(1, p.Lots ?? 1),
             p.Risk)
         {
-            Adopted = true
+            Adopted = true,
+            // No pipes to read: its console comes from the log it keeps itself.
+            OutputLogPath = RunnerOutputLog.PathFor(_engine.EngineLogDirectory, run.Id, pid.Value)
         };
 
         if (!_registry.TryAdd(entry))
@@ -378,8 +383,8 @@ public sealed class StrategyRunControl
             return false;
         }
 
-        _logger.LogWarning("Adopted strategy run {RunId} ({Strategy} on {Underlying}) pid {Pid} after API restart — output not captured.",
-            run.Id, run.StrategyName, underlying, pid);
+        _logger.LogWarning("Adopted strategy run {RunId} ({Strategy} on {Underlying}) pid {Pid} after API restart; its output is read from {LogFile}.",
+            run.Id, run.StrategyName, underlying, pid, entry.OutputLogPath);
         return true;
     }
 

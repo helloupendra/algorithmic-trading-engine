@@ -764,6 +764,8 @@ public class CarryForwardTests
                 o.RiskGuardIntervalSeconds = 1;
                 o.EngineDirectory = _emptyEngine;
             });
+            services.AddSingleton<IWebHostEnvironment>(RecapClockTests.Inert<IWebHostEnvironment>.Create());
+            services.AddSingleton<PythonEngineLocator>();
             _provider = services.BuildServiceProvider();
             Registry = _provider.GetRequiredService<StrategyProcessRegistry>();
         }
