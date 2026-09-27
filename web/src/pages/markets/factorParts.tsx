@@ -15,10 +15,6 @@ import { useAuth } from '../../lib/auth'
 import { Badge, InlineError } from '../../components/ui'
 import '../data/factors.css'
 
-/** A number in Indian grouping, or a dash when there is none. */
-export const num = (v: number | null | undefined, digits = 0) =>
-  v == null || Number.isNaN(v) ? '—' : v.toLocaleString('en-IN', { minimumFractionDigits: digits, maximumFractionDigits: digits })
-
 export function ResearchNote({ id }: { id: keyof typeof RESEARCH_NOTES }) {
   const note = RESEARCH_NOTES[id]
   return (

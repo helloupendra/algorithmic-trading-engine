@@ -170,6 +170,11 @@ export const BUILD_UPS = ['Long build-up', 'Short build-up', 'Short covering', '
 
 export const EVENT_CATEGORIES = ['RBI policy', 'Fed policy', 'US CPI', 'US jobs', 'India CPI', 'Budget', 'Election', 'Results', 'Other'] as const
 
+/** A reading in Indian grouping to a fixed number of places, or a dash when there is none. */
+export function grouped(v: number | null | undefined, digits = 0): string {
+  return v == null || Number.isNaN(v) ? '—' : v.toLocaleString('en-IN', { minimumFractionDigits: digits, maximumFractionDigits: digits })
+}
+
 /**
  * Where a Market factors section that moved lives now, for an old
  * ?section= link: the chain's levels are a tab of the option chain page, the

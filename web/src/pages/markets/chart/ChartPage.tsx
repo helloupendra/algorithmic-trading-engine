@@ -22,6 +22,7 @@ import {
   RANGES,
   RANGES_FOR,
   RESOLUTIONS,
+  STRUCTURE_DEFAULTS,
   chartLayer,
   coverageByResolution,
   hasResolution,
@@ -29,7 +30,7 @@ import {
   stitch,
   structureTimeframes,
 } from '../../../lib/chart'
-import type { Candle, RangeKey, Resolution } from '../../../lib/chart'
+import type { Candle, RangeKey, Resolution, StructureSettings } from '../../../lib/chart'
 import { formatAge, formatDateTime, formatNumber, formatPrice, shortSymbol } from '../../../lib/format'
 import { SymbolCombobox } from '../../../components/SymbolCombobox'
 import { InlineError, Loading } from '../../../components/ui'
@@ -41,7 +42,6 @@ import {
   StructureLegend,
   StructureNotes,
   StructureStats,
-  useStructureSettings,
 } from './StructureLayer'
 import './chart.css'
 
@@ -59,7 +59,7 @@ export function ChartPage() {
   const [search, setSearch] = useState('')
   const [resolution, setResolution] = useState<Resolution>('5')
   const [range, setRange] = useState<RangeKey>('1D')
-  const [structure, setStructure] = useStructureSettings()
+  const [structure, setStructure] = useState<StructureSettings>(STRUCTURE_DEFAULTS)
 
   // The address carries the symbol and the layer, and nothing else is lost when either changes.
   const setQuery = (key: 'symbol' | 'layer', value: string | null) => {

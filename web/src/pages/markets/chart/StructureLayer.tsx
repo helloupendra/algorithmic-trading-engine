@@ -12,40 +12,12 @@
  * range, and these are its controls and readings.
  */
 
-import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { SmcLayers } from '../../../components/SmcChart'
+import type { StructureSettings } from '../../../lib/chart'
 import { formatDateTime, formatPrice } from '../../../lib/format'
 import type { SmcStructure } from '../../../lib/types'
 import './structure.css'
-
-/** What the layer draws and how it reads a break; only `standingZonesOnly` changes the request. */
-export interface StructureSettings {
-  layers: SmcLayers
-  breakOn: 'close' | 'wick'
-  inducement: 'last' | 'first'
-  /**
-   * Not a layer: this one changes what is FETCHED, because a zone the market
-   * has spent is history rather than a level, and on a month of 5-minute
-   * candles the spent ones are 99% of the gaps and 98% of the blocks. It
-   * starts on for that reason; turning it off asks for the whole history.
-   */
-  standingZonesOnly: boolean
-}
-
-export function useStructureSettings() {
-  return useState<StructureSettings>({
-    // The zone layers start on except the delivery band, which is the reading
-    // a chart can be read without.
-    layers: {
-      swings: true, breaks: true, inducements: true, minorSwings: false, higher: true,
-      orderBlocks: true, fvg: true, orderFlow: false,
-    },
-    breakOn: 'close',
-    inducement: 'last',
-    standingZonesOnly: true,
-  })
-}
 
 function Toggle({
   on,
