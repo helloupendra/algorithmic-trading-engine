@@ -40,4 +40,18 @@ check "anything else for the switch is ignored" \
   '{}' \
   "$(dhan DHAN_CHAIN_POLLER_ENABLED=yes)"
 
+echo "Telegram section"
+telegram() {  # key=value ... -> the Telegram section's chat ids
+  python3 - "$@" <<'PY'
+import json, sys
+sys.path.insert(0, "scripts")
+from _gen_local_settings import build_api_settings
+env = dict(arg.split("=", 1) for arg in sys.argv[1:])
+t = build_api_settings(env)["Telegram"]
+print(t["ChatId"], t["SystemChatId"] or "-")
+PY
+}
+check "the system chat is carried to the API"  "-100111 -100222" "$(telegram TELEGRAM_CHAT_ID=-100111 TELEGRAM_SYSTEM_CHAT_ID=-100222)"
+check "and is empty when .env has none"        "-100111 -"       "$(telegram TELEGRAM_CHAT_ID=-100111)"
+
 [ "$FAILS" -eq 0 ] && echo "all passed" || { echo "$FAILS failed"; exit 1; }

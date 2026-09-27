@@ -81,7 +81,9 @@ A hosted service in the API, every 20 seconds:
    after a restart or when a rule is added, are recorded but not sent.
 
 `PatternAlerts:Enabled=false` turns the scanner off. Telegram uses the platform's
-`Telegram:BotToken` and `Telegram:ChatId`.
+`Telegram:BotToken` and `Telegram:SystemChatId` (from `TELEGRAM_SYSTEM_CHAT_ID`):
+patterns are market information, not trades, so they go to the desk's system
+channel, and to `Telegram:ChatId` only while no system channel is set.
 
 ## API
 

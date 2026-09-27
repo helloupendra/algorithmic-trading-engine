@@ -790,7 +790,8 @@ else
   printf '%s\n' "$REPORT" | tail -n +2 | while IFS= read -r LINE; do say "$LINE"; done
   SUMMARY="$(printf '%s\n' "$REPORT" | head -1)"
   [ "$TALLY_RC" = 0 ] || warn "$SUMMARY"
-  notify "AlgoTrading" "${SUMMARY:-Morning plan: the tally could not be taken}"
+  # The tally is for the traders: the trades channel, not the system one.
+  notify_trades "AlgoTrading" "${SUMMARY:-Morning plan: the tally could not be taken}"
 
   # Who runs what, per account, as before: the tally says what is missing,
   # this says what is there.

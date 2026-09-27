@@ -61,6 +61,20 @@ LEFT_ALONE = [
 ]
 
 
+class ChannelTests(unittest.TestCase):
+    """Incidents go to the system channel when there is one (owner, 27 Sep)."""
+
+    def test_the_system_chat_when_set(self):
+        n = notify.notifier_from_env({"TELEGRAM_BOT_TOKEN": "123:abc", "TELEGRAM_CHAT_ID": "-100111",
+                                      "TELEGRAM_SYSTEM_CHAT_ID": "-100222"}, dry_run=False)
+        self.assertIsInstance(n, TelegramNotifier)
+        self.assertEqual("-100222", n._chat_id)
+
+    def test_the_one_chat_without_it(self):
+        n = notify.notifier_from_env({"TELEGRAM_BOT_TOKEN": "123:abc", "TELEGRAM_CHAT_ID": "-100111"}, dry_run=False)
+        self.assertEqual("-100111", n._chat_id)
+
+
 class RedactionSpecTests(unittest.TestCase):
     def test_every_credential_shape_is_masked_and_its_label_kept(self):
         for text, expected in MASKED:

@@ -4,10 +4,24 @@ using Microsoft.Extensions.Logging;
 
 namespace AlgoTrading.Infrastructure.Services;
 
+/// <summary>Which of the desk's two Telegram channels a message belongs in.</summary>
+public enum TelegramChannel
+{
+    /// <summary>Trading: runs started and stopped, legs, risk, the morning plan. <c>Telegram:ChatId</c>.</summary>
+    Trades,
+
+    /// <summary>
+    /// The desk itself: feeds, sign-ins, deploys, Sentinel, candle patterns.
+    /// <c>Telegram:SystemChatId</c>, or the trades channel while that is not set.
+    /// </summary>
+    System,
+}
+
 /// <summary>
 /// The API's one client for the Telegram Bot API, configured by
 /// <c>Telegram:BotToken</c> and <c>Telegram:ChatId</c> — the same two settings
-/// the alert subscriber has always read and the Alerts page reports on.
+/// the alert subscriber has always read and the Alerts page reports on — plus
+/// <c>Telegram:SystemChatId</c> for the system channel.
 /// </summary>
 /// <remarks>
 /// Configuration is read at every send rather than captured at startup, so
@@ -36,11 +50,33 @@ public sealed class TelegramSender
         !string.IsNullOrWhiteSpace(_configuration["Telegram:BotToken"]) &&
         !string.IsNullOrWhiteSpace(_configuration["Telegram:ChatId"]);
 
-    /// <summary>Sends <paramref name="text"/> with parse_mode HTML. False when not configured or refused.</summary>
-    public async Task<bool> SendHtmlAsync(string text, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// The chat a channel's messages go to. Until 27 Sep everything went to the
+    /// one live channel, and the owner found deploys, feed restarts and candle
+    /// patterns mixed in with the trades. A system chat that is not configured
+    /// falls back to the trades chat: a message in the wrong channel beats one
+    /// that is never sent.
+    /// </summary>
+    public string? ChatIdFor(TelegramChannel channel)
+    {
+        var trades = _configuration["Telegram:ChatId"];
+        if (channel == TelegramChannel.System)
+        {
+            var system = _configuration["Telegram:SystemChatId"];
+            if (!string.IsNullOrWhiteSpace(system)) return system;
+        }
+        return trades;
+    }
+
+    /// <summary>Sends <paramref name="text"/> with parse_mode HTML to the trades channel. False when not configured or refused.</summary>
+    public Task<bool> SendHtmlAsync(string text, CancellationToken cancellationToken = default)
+        => SendHtmlAsync(text, TelegramChannel.Trades, cancellationToken);
+
+    /// <summary>Sends <paramref name="text"/> with parse_mode HTML to <paramref name="channel"/>.</summary>
+    public async Task<bool> SendHtmlAsync(string text, TelegramChannel channel, CancellationToken cancellationToken = default)
     {
         var token = _configuration["Telegram:BotToken"];
-        var chatId = _configuration["Telegram:ChatId"];
+        var chatId = ChatIdFor(channel);
         if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(chatId)) return false;
 
         try

@@ -214,7 +214,9 @@ restart: it is read afresh on every check.
 
 It reads the repository's `.env`: `API_BASE_URL`, `ADMIN_USERNAME` /
 `ADMIN_PASSWORD` (read-only GETs), `POSTGRES_*` (its tables), `REDIS_*`, and
-`TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`. Thresholds can be tuned with
+`TELEGRAM_BOT_TOKEN` and `TELEGRAM_SYSTEM_CHAT_ID` (the desk's system
+channel; `TELEGRAM_CHAT_ID`, the trades channel, when it is not set).
+Thresholds can be tuned with
 `SENTINEL_MAX_TRADES`, `SENTINEL_MAX_TRADES_<STRATEGY>`, `SENTINEL_MAX_DAY_LOSS`,
 `SENTINEL_PUBLIC_URL`, `SENTINEL_PUBLIC_PORTS` (ports and ranges,
 `22,8000-8019`), `SENTINEL_CONTAINERS`, `SENTINEL_SSH_ALLOWED` and
