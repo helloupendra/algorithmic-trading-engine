@@ -184,6 +184,9 @@ def build_api_settings(env: dict[str, str]) -> dict:
         "Telegram": {
             "BotToken": env.get("TELEGRAM_BOT_TOKEN", ""),
             "ChatId": env.get("TELEGRAM_CHAT_ID", ""),
+            # The desk's own notices (feeds, sign-ins, deploys, patterns); the
+            # trades chat above when empty.
+            "SystemChatId": env.get("TELEGRAM_SYSTEM_CHAT_ID", ""),
         },
         # Angel One SmartAPI. Four values, because its session is client code +
         # PIN + a TOTP code rather than a browser sign-in; the console cannot

@@ -211,7 +211,9 @@ def _json_or_empty(response) -> dict:
 
 def notifier_from_env(env: dict[str, str], dry_run: bool) -> Notifier:
     token: Optional[str] = env.get("TELEGRAM_BOT_TOKEN") or None
-    chat: Optional[str] = env.get("TELEGRAM_CHAT_ID") or None
+    # Incidents are the desk's own business: the system channel when one is
+    # set (TELEGRAM_SYSTEM_CHAT_ID), else the one chat the desk has.
+    chat: Optional[str] = env.get("TELEGRAM_SYSTEM_CHAT_ID") or env.get("TELEGRAM_CHAT_ID") or None
     if dry_run or not token or not chat:
         if not dry_run:
             log.warning("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set — incidents will only be logged and stored.")

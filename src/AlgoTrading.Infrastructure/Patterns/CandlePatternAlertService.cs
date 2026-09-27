@@ -164,7 +164,8 @@ public sealed class CandlePatternAlertService : BackgroundService
             }
 
             var text = PatternAlertText.TelegramMessage(batch.ClosedAtUtc, batch.Patterns.Select(p => p.Occurrence).ToList());
-            if (!await _telegram.SendHtmlAsync(text, cancellationToken))
+            // Market information, not trades: the system channel (owner, 27 Sep).
+            if (!await _telegram.SendHtmlAsync(text, TelegramChannel.System, cancellationToken))
             {
                 _state.TelegramFailed("Telegram refused or could not be reached; see the API log.");
                 continue;

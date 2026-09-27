@@ -26,7 +26,14 @@ mkdir -p "$DESK_STATE_DIR"; chmod 700 "$DESK_STATE_DIR" 2>/dev/null || true
 # every one of those nudges went nowhere because the desk had moved to Linux.
 # Telegram is called directly rather than through the API, because notify() is
 # needed most exactly when the API is the thing that is wrong.
-notify() {  # title, message
+# notify goes to the system channel (TELEGRAM_SYSTEM_CHAT_ID, else the one
+# chat): deploys, sign-ins, a failed morning. notify_trades goes to the trades
+# channel, for what a trader reads: the morning plan's tally.
+notify() { _notify_to system "$@"; }
+notify_trades() { _notify_to trades "$@"; }
+
+_notify_to() {  # system|trades, title, message
+  local channel="$1" chat; shift
   if $IS_MAC; then
     osascript -e "display notification \"$2\" with title \"$1\"" 2>/dev/null || true
     return 0
@@ -40,11 +47,15 @@ notify() {  # title, message
     if [ -f "$REPO_ROOT/.env" ]; then set -a; . "$REPO_ROOT/.env"; set +a; fi
   fi
   [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ] || return 0
+  # Chosen after .env is read, so the system chat is known; without one the
+  # message goes to the one chat the desk has.
+  chat="$TELEGRAM_CHAT_ID"
+  [ "$channel" = system ] && [ -n "${TELEGRAM_SYSTEM_CHAT_ID:-}" ] && chat="$TELEGRAM_SYSTEM_CHAT_ID"
   # -o /dev/null: the URL carries the bot token, so nothing from this call is
   # ever echoed or logged.
   curl -fsS --max-time 10 -o /dev/null \
     "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-    --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+    --data-urlencode "chat_id=${chat}" \
     --data-urlencode "text=$1 — $2" 2>/dev/null || true
 }
 

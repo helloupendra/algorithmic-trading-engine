@@ -120,7 +120,20 @@ public class AlertSubscriberService : BackgroundService
     /// Telegram:BotToken / Telegram:ChatId and logs failures without the token.
     /// </summary>
     private Task<bool> SendToTelegramAsync(AlertEventPayload payload)
-        => _telegram.SendHtmlAsync($"🚨 ALERT: {payload.Title}!\n{payload.Message}");
+        => _telegram.SendHtmlAsync($"🚨 ALERT: {payload.Title}!\n{payload.Message}", ChannelFor(payload.Source));
+
+    /// <summary>
+    /// The channel a payload belongs in, by its source: the desk's own
+    /// processes, connectors and system notices go to the system channel;
+    /// strategy runs, risk and anything not recognised stay with the trades,
+    /// where a trading message can never be lost among the system's.
+    /// </summary>
+    public static TelegramChannel ChannelFor(string? source) =>
+        (source ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "process" or "connector" or "system" => TelegramChannel.System,
+            _ => TelegramChannel.Trades,
+        };
 
     private async Task SaveToDatabaseAsync(AlertEventPayload payload, bool delivered)
     {
