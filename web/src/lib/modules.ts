@@ -12,8 +12,9 @@
  * Hiding is a courtesy, never the control: every endpoint checks the grant
  * itself (RequireModule), so a trader who types a URL still gets a 403.
  *
- * URLs have not moved yet. Each tab keeps the pages it will gather, each with
- * today's URL per console, and the `home` it moves to once the URLs change;
+ * Most URLs have not moved yet (the Desk, at /desk, is the first that has).
+ * Each tab keeps the pages it will gather, each with today's URL per console,
+ * and the `home` it moves to once the URLs change;
  * lib/routeMap.ts holds the redirect table for that step. Until the merges
  * land, a tab that gathers several of today's pages shows each of them.
  */
@@ -79,8 +80,8 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         key: 'desk',
         label: 'Desk',
         home: '/desk',
-        // Until /desk exists each console keeps its own home page.
-        pages: [{ label: 'Desk', admin: '/admin', trader: '/trader', exact: true, keywords: ['home', 'overview'] }],
+        // One URL for every role: the panels check their own grants.
+        pages: [{ label: 'Desk', admin: '/desk', trader: '/desk', exact: true, keywords: ['home', 'overview', 'today'] }],
       },
     ],
   },

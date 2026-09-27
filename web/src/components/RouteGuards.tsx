@@ -48,12 +48,12 @@ export function RequireRole({ role }: { role: UserRole }) {
 
 /** Keeps a signed-in user off the login page. */
 export function RedirectIfAuthenticated() {
-  const { isAuthenticated, isAdmin, isLoading } = useAuth()
+  const { isAuthenticated, isLoading } = useAuth()
 
   if (isLoading) return <Splash label="Loading…" />
 
   if (isAuthenticated) {
-    return <Navigate to={isAdmin ? '/admin' : '/trader'} replace />
+    return <Navigate to="/desk" replace />
   }
 
   return <Outlet />

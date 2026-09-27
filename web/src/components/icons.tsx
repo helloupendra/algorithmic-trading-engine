@@ -311,3 +311,12 @@ export const IconPower = (p: SVGProps<SVGSVGElement>) => (
     <path d="M7.2 6.6a7.5 7.5 0 109.6 0" />
   </Icon>
 )
+
+/** A pushpin: hold what is on screen. */
+export const IconPin = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M9 3.5h6" />
+    <path d="M10 3.5v5.2L7 12.5h10l-3-3.8V3.5" />
+    <path d="M12 12.5v8" />
+  </Icon>
+)

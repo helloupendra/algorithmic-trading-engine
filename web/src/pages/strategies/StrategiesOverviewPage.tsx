@@ -90,7 +90,7 @@ export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 't
   const riskLimits = useRiskLimits()
   const blockers: { text: string; to: string }[] = []
   if (trader && killSwitch.data?.isActive)
-    blockers.push({ text: 'Trading is halted by the operator (kill switch) — new runs are refused', to: '/trader' })
+    blockers.push({ text: 'Trading is halted by the operator (kill switch) — new runs are refused', to: '/desk' })
   if (
     trader &&
     exposure.data &&

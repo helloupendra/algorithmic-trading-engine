@@ -77,7 +77,7 @@ describe('navFor', () => {
     const nav = navFor(admin)
     expect(labels(nav)).toEqual(['Desk', 'Markets', 'Trade', 'Research', 'System'])
     expect(nav.find((w) => w.key === 'markets')!.to).toBe('/admin/data/chain')
-    expect(nav[0].to).toBe('/admin')
+    expect(nav[0].to).toBe('/desk')
   })
 
   it('never shows a trader System, connectors, feeds or Sentinel pages', () => {
@@ -85,6 +85,7 @@ describe('navFor', () => {
     expect(labels(nav)).not.toContain('System')
     const urls = allUrls(nav)
     expect(urls.filter((u) => u.startsWith('/admin'))).toEqual([])
+    expect(urls).toContain('/desk')
     for (const hidden of ['Connectors', 'Feeds', 'Checkup', 'Incidents', 'Patterns', 'Risk']) {
       expect(nav.flatMap((w) => w.pages.map((p) => p.label))).not.toContain(hidden)
     }
@@ -107,12 +108,15 @@ describe('navFor', () => {
   it('leaves a trader with no grants the Desk alone', () => {
     const nav = navFor(traderWith())
     expect(labels(nav)).toEqual(['Desk'])
-    expect(nav[0].pages.map((p) => p.to)).toEqual(['/trader'])
+    expect(nav[0].pages.map((p) => p.to)).toEqual(['/desk'])
   })
 
   it('shows no tab the admin console lacks a page for (and the reverse)', () => {
-    expect(allUrls(navFor(admin)).every((u) => u.startsWith('/admin'))).toBe(true)
-    expect(allUrls(navFor(traderUnknown)).every((u) => u.startsWith('/trader'))).toBe(true)
+    // The Desk is the one URL both consoles share.
+    const own = (nav: NavWorkspace[]) => allUrls(nav).filter((u) => u !== '/desk')
+    expect(own(navFor(admin)).every((u) => u.startsWith('/admin'))).toBe(true)
+    expect(own(navFor(traderUnknown)).every((u) => u.startsWith('/trader'))).toBe(true)
+    expect(navFor(admin)[0].to).toBe(navFor(traderUnknown)[0].to)
   })
 })
 
@@ -148,10 +152,12 @@ describe('locate', () => {
     expect(at(traderNav, '/trader/runs/3')).toBe('Trade / Positions')
   })
 
-  it('holds the home pages to their exact path', () => {
-    expect(at(adminNav, '/admin')).toBe('Desk / Desk')
-    expect(at(adminNav, '/admin/')).toBe('Desk / Desk')
-    expect(at(adminNav, '/admin/nowhere')).toBeNull()
+  it('holds the Desk to its exact path', () => {
+    expect(at(adminNav, '/desk')).toBe('Desk / Desk')
+    expect(at(traderNav, '/desk/')).toBe('Desk / Desk')
+    expect(at(adminNav, '/desk/nowhere')).toBeNull()
+    // The old home pages only redirect now; nothing claims them.
+    expect(at(adminNav, '/admin')).toBeNull()
     expect(at(traderNav, '/trader/account')).toBeNull()
   })
 

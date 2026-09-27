@@ -11,46 +11,10 @@
  * Read-only. The deploy is performed by the script; this page never triggers one.
  */
 
-import { useQuery } from '@tanstack/react-query'
-import { api } from '../../lib/api'
+import { useDeployHistory } from '../../lib/queries'
+import type { DeployRecord, DeployStep } from '../../lib/types'
 import { formatAge, formatDateTime } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components/ui'
-
-interface DeployStep {
-  name: string
-  status: 'ok' | 'skipped' | 'failed'
-  detail: string
-  atUtc: string
-}
-
-interface DeployRecord {
-  startedUtc: string
-  finishedUtc: string
-  outcome: 'applied' | 'skipped' | 'failed'
-  summary: string
-  fromCommit: string
-  toCommit: string
-  commits: string[]
-  filesChanged: number
-  steps: DeployStep[]
-  machine: string
-}
-
-interface DeployHistory {
-  file: string | null
-  entries: DeployRecord[]
-  unreadable?: boolean
-}
-
-function useDeployHistory() {
-  return useQuery({
-    queryKey: ['deploy', 'history'],
-    queryFn: () => api.get<DeployHistory>('/api/Deploy/history?limit=20'),
-    // Often enough that watching a deploy land feels live, rare enough that an
-    // idle console is not asking a question nobody posed.
-    refetchInterval: 10_000,
-  })
-}
 
 const OUTCOME_TONE = {
   applied: 'pos',

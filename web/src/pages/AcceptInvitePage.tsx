@@ -71,7 +71,7 @@ export function AcceptInvitePage() {
       // accept call returned: one extra request, and the session is established
       // exactly the way every other session is.
       await login(userName.trim(), password)
-      navigate('/trader', { replace: true })
+      navigate('/desk', { replace: true })
     } catch (err: unknown) {
       setSubmitError(
         (err as { body?: { message?: string } })?.body?.message ??

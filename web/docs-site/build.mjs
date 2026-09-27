@@ -481,7 +481,7 @@ export async function buildDocs({ outDir }) {
   // and is asked not to be indexed; the landing page and the docs are.
   await fs.writeFile(
     path.join(outDir, 'robots.txt'),
-    `User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /trader\nDisallow: /login\nDisallow: /invite/\nDisallow: /api/\nDisallow: /hubs/\n\nSitemap: ${SITE.url}/sitemap.xml\n`,
+    `User-agent: *\nAllow: /\nDisallow: /desk\nDisallow: /admin\nDisallow: /trader\nDisallow: /login\nDisallow: /invite/\nDisallow: /api/\nDisallow: /hubs/\n\nSitemap: ${SITE.url}/sitemap.xml\n`,
   )
   const today = new Date().toISOString().slice(0, 10)
   const urls = [{ url: `${SITE.url}/`, lastmod: today, priority: '1.0' }, ...pages.map((p) => ({ ...p, priority: p.url.endsWith('/docs/') ? '0.9' : '0.7' }))]

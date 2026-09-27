@@ -54,12 +54,13 @@ describe('route map', () => {
   })
 
   it('sends each tab page to the home of its own tab', () => {
+    // A page already at its new URL (the Desk) has no move; it must be its own tab's home.
     const wrong = WORKSPACES.flatMap((ws) =>
       ws.tabs.flatMap((tab) =>
         tab.pages.flatMap((page) =>
           [page.admin, page.trader]
             .filter((url): url is string => !!url)
-            .filter((url) => !landsIn(ROUTE_MOVES[url] ?? '', tab.home))
+            .filter((url) => !landsIn(ROUTE_MOVES[url] ?? url, tab.home))
             .map((url) => `${url} → ${ROUTE_MOVES[url]} (tab ${tab.key}, home ${tab.home})`),
         ),
       ),
@@ -92,5 +93,11 @@ describe('movedUrl', () => {
     expect(movedUrl('/admin/')).toBe('/desk')
     expect(movedUrl('/admin/nowhere')).toBeNull()
     expect(movedUrl('/login')).toBeNull()
+    expect(movedUrl('/desk')).toBeNull()
+  })
+
+  it('opens both old home pages on the Desk', () => {
+    expect(movedUrl('/admin')).toBe('/desk')
+    expect(movedUrl('/trader')).toBe('/desk')
   })
 })

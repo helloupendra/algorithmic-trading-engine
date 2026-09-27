@@ -23,17 +23,22 @@ import { StatusItems } from './shell/StatusItems'
 import { useIstDate } from './shell/useIstDate'
 import { CommandPalette } from './shell/CommandPalette'
 import { UserMenu } from './shell/UserMenu'
+import type { ShellOutlet } from './shell/stripSlot'
 import './shell/shell.css'
 
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent)
 
-/** The Desk has one page, so its strip is a title and the date, not a tab. */
-function DeskTitle() {
+/**
+ * The Desk has one page, so its strip is a title and the date, not a tab,
+ * then a slot the Desk fills with its own switches (phase, account).
+ */
+function DeskTitle({ slotRef }: { slotRef: (el: HTMLDivElement | null) => void }) {
   const date = useIstDate()
   return (
     <>
       <span className="shell__tabs-title">Desk</span>
       <span className="shell__tabs-meta">{date}</span>
+      <div className="shell__tabs-tools" ref={slotRef} />
     </>
   )
 }
@@ -80,6 +85,8 @@ export function AppLayout() {
   const nav = useMemo(() => navFor(access), [access])
   const here = locate(pathname, nav)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [stripSlot, setStripSlot] = useState<HTMLElement | null>(null)
+  const onDesk = here?.workspace.key === 'desk'
 
   const extras = useMemo(
     () => (isAdmin ? [] : [{ label: ACCOUNT_PAGE.label, to: ACCOUNT_PAGE.trader, keywords: ['broker', 'capital', 'profile'] }]),
@@ -169,9 +176,9 @@ export function AppLayout() {
         <UserMenu user={user} isAdmin={isAdmin} onSignOut={handleSignOut} />
       </header>
 
-      <div className="shell__tabs">
-        {here?.workspace.key === 'desk' ? (
-          <DeskTitle />
+      <div className={`shell__tabs${onDesk ? ' shell__tabs--desk' : ''}`}>
+        {onDesk ? (
+          <DeskTitle slotRef={setStripSlot} />
         ) : here ? (
           <TabStrip workspace={here.workspace} current={here.page} />
         ) : (
@@ -180,7 +187,7 @@ export function AppLayout() {
       </div>
 
       <main className="shell__main">
-        <Outlet />
+        <Outlet context={{ stripSlot } satisfies ShellOutlet} />
       </main>
 
       <nav className="shell__bottom" aria-label="Workspaces">
