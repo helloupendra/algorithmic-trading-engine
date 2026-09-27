@@ -94,8 +94,11 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.ManualIntradaySquareOff>();
 // The per-user history of live runs (list rows + per-user rollup).
 builder.Services.AddScoped<AlgoTrading.Api.Services.LiveRunHistoryBuilder>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.RunCharges>();
-// A live run's P&L as every screen states it (realized, marked open legs, charges, net).
+// A live run's P&L as every screen states it (realized, marked open legs,
+// charges, net), and the minute-by-minute record of it the Desk draws.
 builder.Services.AddScoped<AlgoTrading.Api.Services.RunPnl>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.RunPnlRecorder>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.RunPnlSeriesBuilder>();
 // The live data ingestor process: launch, durable pid, adoption after a restart.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.IngestorSupervisor>();
 // One live feed per connector that declares live ticks, FYERS being the
@@ -156,6 +159,8 @@ builder.Services.AddHostedService<AlgoTrading.Api.Services.LiveRunStartupReconci
 builder.Services.AddHostedService<AlgoTrading.Api.Services.StrategyRiskGuardService>();
 // Squares off each run at its market's close (NSE/BSE 15:30, MCX at the MCX close) and stops the feeds
 builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketHoursService>();
+// Once a minute: each live run's P&L (and a last row for a run that just ended).
+builder.Services.AddHostedService<AlgoTrading.Api.Services.RunPnlRecorderService>();
 // During the NSE session: a Dhan feed silent past its own reconnect is switched to FYERS (once a day), or in a dry run reported.
 builder.Services.AddHostedService<AlgoTrading.Api.Services.FeedFailoverService>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.NightlyArchiveService>();
