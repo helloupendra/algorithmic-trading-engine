@@ -20,6 +20,7 @@ import _bootstrap  # noqa: F401
 from strategies.base_strategy import StrategySignal
 from strategies.signal_booking import (
     CLOSE_RETRY_SECONDS,
+    OPEN_REFUSAL_COOLDOWN_SECONDS,
     OPEN_RETRY_SECONDS,
     Booking,
     SignalBooker,
@@ -229,7 +230,8 @@ class TickTests(unittest.TestCase):
     def test_rate_limit_409_restores_state_and_reemits(self):
         strategy = ToyStrategy()
         api = FakeApi((409, RATE_LIMITED))
-        book = booker(api)
+        clock = Clock()
+        book = booker(api, clock)
         state = strategy.initialize_state()
         lines: List[str] = []
 
@@ -240,15 +242,99 @@ class TickTests(unittest.TestCase):
         self.assertIsNone(tick.state["open"], "the strategy no longer believes in the refused group")
         self.assertEqual(lines[0], f"SIGNAL REFUSED by the API: {RATE_LIMITED}")
         self.assertEqual(lines[1], "SIGNAL NOT BOOKED: OPEN_GROUP TOY_1 — refused by the API (HTTP 409).")
-        self.assertIn("back to where it was before this tick", lines[2])
+        self.assertEqual(lines[2], "OPEN held for 30 s after refusal: RATE LIMIT EXCEEDED: More than 50 orders "
+                                   "placed in the last minute for run 214 (leg BUY 1).")
+        self.assertIn("back to where it was before this tick", lines[3])
 
-        # The next tick, the limit has passed: the strategy asks again, and this
-        # time the group is booked — once.
+        # Once the hold and the limit have passed, the strategy asks again and
+        # this time the group is booked — once.
+        clock.now += OPEN_REFUSAL_COOLDOWN_SECONDS + 1
         tick = run_tick(tick.state, strategy.on_bar, book.book)
 
         self.assertFalse(tick.not_booked)
         self.assertEqual(tick.state["open"], "TOY_1")
         self.assertEqual(len(api.booked_of("OPEN_GROUP")), 1)
+
+    def test_an_open_refused_is_held_for_30_s_then_posted_again(self):
+        # 409 on tick 1; ticks 2–5 inside the hold post nothing and log nothing,
+        # though the strategy is still put back and still asks each time; the
+        # first tick after 30 s posts.
+        strategy = ToyStrategy()
+        api = FakeApi((409, RATE_LIMITED))
+        clock = Clock()
+        book = booker(api, clock)
+        lines: List[str] = []
+
+        tick = run_tick(strategy.initialize_state(), strategy.on_bar, book.book)
+        report(tick, lines.append)
+        self.assertEqual(len(api.posts), 1)
+        self.assertEqual(sum(line.startswith("OPEN held for 30 s after refusal") for line in lines), 1)
+
+        logged = len(lines)
+        for second in (1, 8, 15, 29):
+            clock.now = second
+            tick = run_tick(tick.state, strategy.on_bar, book.book)
+            report(tick, lines.append)
+            self.assertTrue(tick.restored)
+            self.assertIsNone(tick.state["open"])
+            self.assertTrue(tick.not_booked[0].held)
+        self.assertEqual(len(api.posts), 1, "no POST inside the hold")
+        self.assertEqual(len(lines), logged, "the hold is logged once, not once per tick")
+        self.assertEqual(tick.state["ticks"], 0, "each held tick is put back like a refused one")
+
+        clock.now = 31
+        tick = run_tick(tick.state, strategy.on_bar, book.book)
+
+        self.assertEqual(len(api.posts), 2)
+        self.assertFalse(tick.not_booked)
+        self.assertEqual(tick.state["open"], "TOY_1")
+
+    def test_a_close_is_never_held(self):
+        api = FakeApi((409, RATE_LIMITED))
+        clock = Clock()
+        book = booker(api, clock)
+
+        self.assertTrue(book.book(signal("OPEN_GROUP", "A", leg(CALL, "BUY", 100.0))).refused)
+        clock.now = 5
+        closing = book.book(signal("CLOSE_GROUP", "Z", leg(PUT, "SELL", 80.0)))
+
+        self.assertTrue(closing.booked)
+        self.assertEqual(len(api.posts), 2)
+
+    def test_a_close_after_a_refused_open_in_the_same_tick_is_still_sent(self):
+        def open_and_close(state):
+            state["seen"] = True
+            return [signal("OPEN_GROUP", "A", leg(CALL, "BUY", 100.0)),
+                    signal("CLOSE_GROUP", "Z", leg(PUT, "SELL", 80.0))]
+
+        api = FakeApi((409, RATE_LIMITED))
+
+        tick = run_tick({}, open_and_close, booker(api).book)
+
+        self.assertTrue(tick.restored)
+        self.assertEqual(tick.unsent, 0)
+        self.assertEqual([p["signalType"] for p in api.posts], ["OPEN_GROUP", "CLOSE_GROUP"])
+        self.assertEqual(len(api.booked_of("CLOSE_GROUP")), 1)
+        self.assertEqual(tick.state, {})
+
+    def test_the_hold_is_a_setting_and_only_a_refusal_starts_one(self):
+        api = FakeApi((409, RATE_LIMITED))
+        clock = Clock()
+        book = booker(api, clock, open_cooldown_seconds=10)
+
+        book.book(signal("OPEN_GROUP", "A", leg(CALL, "BUY", 100.0)))
+        clock.now = 9
+        self.assertTrue(book.book(signal("OPEN_GROUP", "B", leg(CALL, "BUY", 100.0))).held)
+        clock.now = 11
+        self.assertTrue(book.book(signal("OPEN_GROUP", "C", leg(CALL, "BUY", 100.0))).booked)
+
+        # An API that never answered refused nothing: the next OPEN is posted.
+        down = FakeApi(*["down"] * 20)
+        book = booker(down, Clock())
+        self.assertFalse(book.book(signal("OPEN_GROUP", "A", leg(CALL, "BUY", 100.0))).booked)
+        posts = len(down.posts)
+        self.assertFalse(book.book(signal("OPEN_GROUP", "B", leg(CALL, "BUY", 100.0))).held)
+        self.assertGreater(len(down.posts), posts)
 
     def test_a_booked_open_earlier_in_the_tick_is_never_undone(self):
         def two_opens(state):
@@ -279,16 +365,16 @@ class TickTests(unittest.TestCase):
         self.assertTrue(tick.restored)
         self.assertEqual(tick.state, {"open": "A"})
 
-    def test_signals_after_one_that_was_not_booked_are_not_sent(self):
-        def open_and_close(state):
+    def test_opens_after_one_that_was_not_booked_are_not_sent(self):
+        def two_opens(state):
             state["seen"] = True
             return [signal("OPEN_GROUP", "A", leg(CALL, "BUY", 100.0)),
-                    signal("CLOSE_GROUP", "Z", leg(PUT, "SELL", 80.0))]
+                    signal("OPEN_GROUP", "B", leg(PUT, "BUY", 80.0))]
 
         api = FakeApi((409, RATE_LIMITED))
         lines: List[str] = []
 
-        tick = run_tick({}, open_and_close, booker(api).book)
+        tick = run_tick({}, two_opens, booker(api).book)
         report(tick, lines.append)
 
         self.assertTrue(tick.restored)
