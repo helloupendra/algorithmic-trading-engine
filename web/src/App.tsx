@@ -44,6 +44,7 @@ import { BacktestOverviewPage } from './pages/backtesting/BacktestOverviewPage'
 import { NewBacktestPage } from './pages/backtesting/NewBacktestPage'
 import { BacktestRunsPage } from './pages/backtesting/BacktestRunsPage'
 import { BacktestRunPage } from './pages/backtesting/BacktestRunPage'
+import { AnalysisPage } from './pages/analysis/AnalysisPage'
 import { DataOverviewPage } from './pages/data/DataOverviewPage'
 import { AdvancedOptionChainPage } from './pages/data/AdvancedOptionChainPage'
 import { OptionInterestPage } from './pages/data/OptionInterestPage'
@@ -172,6 +173,10 @@ export default function App() {
                   <Route path="/admin/backtesting/new" element={<NewBacktestPage />} />
                   <Route path="/admin/backtesting/runs" element={<BacktestRunsPage />} />
                   <Route path="/admin/backtesting/runs/:id" element={<BacktestRunPage />} />
+
+                  {/* Analysis module: forecasts with proof. Its sections are
+                      tabs on the one page (?section=). */}
+                  <Route path="/admin/analysis" element={<AnalysisPage />} />
 
                   {/* Notebook module: the board list. The boards themselves are
                       full-window routes above; the canvas is a lazy chunk. */}

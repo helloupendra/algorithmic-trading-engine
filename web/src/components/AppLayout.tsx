@@ -18,6 +18,7 @@ import {
 import { calendarPulse, connectorsSummary, feedPulses, marketPulses, recapVendors } from '../lib/pulse'
 import type { ConnectorState } from '../lib/pulse'
 import {
+  ANALYSIS_SECTIONS,
   BACKTESTING_SECTIONS,
   DATA_SECTIONS,
   STRATEGIES_SECTIONS,
@@ -408,6 +409,7 @@ function AdminNav() {
       <NavGroup label="Trading" sections={TRADING_SECTIONS} />
       <NavGroup label="Strategies" sections={STRATEGIES_SECTIONS} />
       <NavGroup label="Backtesting" sections={BACKTESTING_SECTIONS} />
+      <NavGroup label="Analysis" sections={ANALYSIS_SECTIONS} />
       <NavGroup label="Notebook" sections={NOTEBOOK_SECTIONS} />
       <NavGroup label="System" sections={ADMIN_SYSTEM_SECTIONS} />
 
@@ -456,6 +458,7 @@ const ROUTE_TITLES: Array<[prefix: string, crumb: string | null, title: string]>
   ['/admin/backtesting/runs', 'Backtesting', 'Runs'],
   ['/admin/backtesting/new', 'Backtesting', 'New backtest'],
   ['/admin/backtesting', 'Backtesting', 'Overview'],
+  ['/admin/analysis', 'Analysis', 'Forecasts'],
   ['/admin/users/packages', 'System', 'Strategy packages'],
   ['/admin/users', 'System', 'Users & access'],
   ['/admin/system/risk', 'System', 'Risk & kill switch'],
