@@ -110,6 +110,24 @@ class GhostTangentCrossingsStrategy(BaseStrategy):
             "last_signal_idx": None
         }
 
+    def state_to_json(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """The structure reader is an object; it is saved as the candles it read."""
+        data = dict(state)
+        if isinstance(data.get("smc"), MarketStructure):
+            data["smc"] = data["smc"].to_dict()
+        return data
+
+    def state_from_json(self, data: Any) -> Optional[Dict[str, Any]]:
+        if not isinstance(data, dict):
+            return None
+        state = dict(data)
+        saved = state.get("smc")
+        # Saved before 28 Sep, the reader came back as its repr.
+        if not isinstance(saved, dict):
+            return None
+        state["smc"] = MarketStructure.from_dict(saved)
+        return state
+
     def _get_high(self, b: Any) -> float:
         return b.high if self.pivot_type == "Wick" else max(b.open, b.close)
 

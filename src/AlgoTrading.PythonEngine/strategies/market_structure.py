@@ -171,6 +171,29 @@ class MarketStructure:
     def last_event(self) -> Optional[Event]:
         return self.events[-1] if self.events else None
 
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        What rebuilds this reader, in plain JSON values: its two settings and
+        the candles it has read. Everything else — swings, levels, the trend,
+        the inducement — follows from those candles, so `from_dict` replays
+        them rather than restoring each field, and a saved reader can never
+        disagree with the one that read the chart.
+        """
+        return {
+            "break_on": self.break_on,
+            "inducement_mode": self.inducement_mode,
+            "bars": [[_stamp_text(b.time_utc), b.open, b.high, b.low, b.close] for b in self.bars],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "MarketStructure":
+        """The reader `to_dict` describes, rebuilt candle by candle."""
+        reader = cls(break_on=str(data.get("break_on") or "close"),
+                     inducement_mode=str(data.get("inducement_mode") or "last"))
+        for time_utc, open_, high, low, close in data.get("bars") or []:
+            reader.push(Bar(time_utc, float(open_), float(high), float(low), float(close)))
+        return reader
+
     def describe(self) -> Dict[str, Any]:
         """The state in one dict, for a log line or a signal's metadata."""
         return {
@@ -311,6 +334,13 @@ class MarketStructure:
             self.inducement = None
         self.inducement_taken = False
         return event
+
+
+def _stamp_text(stamp: Any) -> Any:
+    """A candle time JSON can hold: an ISO string for a datetime, anything else as it is."""
+    if hasattr(stamp, "to_pydatetime"):
+        stamp = stamp.to_pydatetime()
+    return stamp.isoformat() if isinstance(stamp, datetime) else stamp
 
 
 def bars_from_frames(frames: List[Any]) -> List[Bar]:
