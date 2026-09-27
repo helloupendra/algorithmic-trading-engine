@@ -25,7 +25,12 @@ export interface AccountReading {
   drawdownPercent: number
 }
 
-/** The account's own story over the run: balance = capital + P&L at that point. */
+/**
+ * The account's own story over the run. Each point's `equity` is the balance
+ * itself — the API's CurrentEquity, capital plus P&L — not the P&L: adding the
+ * capital again (as this did until 28 Sep) showed a ₹10 lakh run that lost
+ * ₹1,05,391 with a lowest balance of ₹18.8 lakh.
+ */
 export function readAccount(
   points: BacktestEquityPoint[] | null | undefined,
   initialCapital: number,
@@ -41,7 +46,7 @@ export function readAccount(
   let final = initialCapital
 
   for (const point of points) {
-    const balance = initialCapital + point.equity
+    const balance = point.equity
     final = balance
     if (balance < lowest) {
       lowest = balance
