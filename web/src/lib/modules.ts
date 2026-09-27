@@ -15,6 +15,7 @@ import {
   IconClock,
   IconDatabase,
   IconFlask,
+  IconForecast,
   IconGlobe,
   IconLayers,
   IconPlay,
@@ -72,6 +73,17 @@ export const MODULES: ModuleDef[] = [
     icon: IconFlask,
     route: '/admin/backtesting',
     status: 'ready',
+    adminOnly: true,
+  },
+  {
+    key: 'analysis',
+    name: 'Analysis',
+    description:
+      "Forecasts of the day's range, trend and direction, written before the open, scored after the close and measured against a baseline.",
+    icon: IconForecast,
+    route: '/admin/analysis',
+    status: 'ready',
+    // The API keeps the grant admin-only until the page has a trader view.
     adminOnly: true,
   },
   {
@@ -259,6 +271,19 @@ export const BACKTESTING_SECTIONS = [
     route: '/admin/backtesting/runs',
     label: 'Runs',
     icon: IconClock,
+    end: false,
+  },
+] as const
+
+/**
+ * Sub-navigation of the Analysis module: one page, whose four sections (today,
+ * scoreboard, history, how it works) are tabs inside it.
+ */
+export const ANALYSIS_SECTIONS = [
+  {
+    route: '/admin/analysis',
+    label: 'Forecasts',
+    icon: IconForecast,
     end: false,
   },
 ] as const

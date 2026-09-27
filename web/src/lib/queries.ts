@@ -2467,3 +2467,69 @@ export function useResolveIncident() {
     onSettled: () => qc.invalidateQueries({ queryKey: ['incidents'] }),
   })
 }
+
+// ---------- Analysis: forecasts with proof ----------
+
+import { forecastsQuery, readForecastList, readForecastModels, readScoreboard } from './analysis'
+import type { ForecastFilters } from './analysis'
+
+/**
+ * `VITE_ANALYSIS_MOCK=1 npm run dev` answers the Forecasts endpoints from
+ * lib/analysis.fixture.ts, so the Analysis page can be reviewed before the API
+ * has them. `import.meta.env.DEV` is the literal `false` in a production
+ * build, so this branch — and the fixture's chunk with it — is dropped there.
+ */
+const ANALYSIS_MOCK = import.meta.env.DEV && import.meta.env.VITE_ANALYSIS_MOCK === '1'
+
+/**
+ * A 404 means this server has no Forecasts API yet: retrying it only keeps
+ * the page on "Reading…" for a few seconds before it can say so. Other
+ * failures keep the app's usual two retries (401/403 never retry, as there).
+ */
+function forecastsRetry(failureCount: number, error: unknown): boolean {
+  const status = (error as { status?: number } | null)?.status
+  if (status === 401 || status === 403 || status === 404) return false
+  return failureCount < 2
+}
+
+async function forecastsGet(path: string): Promise<unknown> {
+  if (ANALYSIS_MOCK) {
+    const { fixtureResponse } = await import('./analysis.fixture')
+    return fixtureResponse(path)
+  }
+  return api.get<unknown>(path)
+}
+
+/**
+ * Issued forecasts, newest session first. Every 60 s: forecasts arrive once
+ * at 08:50 IST and are scored once after 15:50, so a minute is plenty.
+ */
+export function useForecasts(filters: ForecastFilters) {
+  const qs = forecastsQuery(filters)
+  return useQuery({
+    queryKey: ['forecasts', 'list', qs],
+    queryFn: async () => readForecastList(await forecastsGet(`/api/Forecasts${qs ? `?${qs}` : ''}`)),
+    refetchInterval: 60_000,
+    retry: forecastsRetry,
+  })
+}
+
+/** Each model version's live record against its baseline, per index and across all. */
+export function useForecastScoreboard() {
+  return useQuery({
+    queryKey: ['forecasts', 'scoreboard'],
+    queryFn: async () => readScoreboard(await forecastsGet('/api/Forecasts/scoreboard')),
+    refetchInterval: 60_000,
+    retry: forecastsRetry,
+  })
+}
+
+/** The registered model versions, with the backtest each was registered with. */
+export function useForecastModels() {
+  return useQuery({
+    queryKey: ['forecasts', 'models'],
+    queryFn: async () => readForecastModels(await forecastsGet('/api/Forecasts/models')),
+    refetchInterval: 60_000,
+    retry: forecastsRetry,
+  })
+}

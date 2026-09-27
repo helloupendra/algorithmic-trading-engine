@@ -282,3 +282,15 @@ export const IconPen = (p: SVGProps<SVGSVGElement>) => (
     <path d="M13.5 6.9l3.6 3.6" />
   </Icon>
 )
+
+/**
+ * A candle beside the range forecast for it: the band with its caps and the
+ * median tick — the Analysis module, whose first forecast is the day's range.
+ */
+export const IconForecast = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M5 5h4M7 5v14M5 19h4M5.5 11h3" />
+    <path d="M16.5 5v3M16.5 16v3" />
+    <rect x="14.25" y="8" width="4.5" height="8" rx="1" />
+  </Icon>
+)
