@@ -729,18 +729,6 @@ export function morningCheckupId(list: readonly CheckupSummary[] | undefined, to
   return hit?.id ?? null
 }
 
-// ---------------------------------------------------------------- the platform loss limit
-
-/**
- * How much of the platform's max daily loss a net figure has used, 0 upward.
- * The limit is negative (−₹50,000 means "stop at a ₹50k loss"); a gain uses
- * none of it. Null when the limit is unknown or not set.
- */
-export function lossLimitShare(net: number, maxDailyLoss: number | null | undefined): number | null {
-  if (maxDailyLoss == null || !(maxDailyLoss < 0)) return null
-  return net < 0 ? net / maxDailyLoss : 0
-}
-
 // ---------------------------------------------------------------- indices and levels
 
 /** One row of the index table. */

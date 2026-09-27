@@ -1,39 +1,31 @@
 /**
- * Day P&L: each account's net today, after charges, on a rail against the
- * platform's max daily loss, then where it came from, strategy by strategy.
+ * Day P&L: each account's net today, after charges, then where it came from,
+ * strategy by strategy.
  *
  * There is no per-minute P&L series yet (live runs record none), so there is
  * no curve here, and the panel says so rather than drawing one from guesses.
- * There are no per-account limits either (the owner chose not to add them);
- * the one limit is the platform's, from Risk → limits, and the API checks it
- * per run on each new order. The rail is read against that and labelled as
- * such. A trader cannot read the limits (admin-only), so their rail is absent.
+ * Nor is there a loss rail: the one limit, Risk → max daily loss, is per run,
+ * on P&L before charges, and an account's total held against it read as a
+ * breach that was not one. The panel states the limit as it is instead
+ * (admins only: traders cannot read the limits).
  */
 
 import type { AccountTotals } from '../../lib/desk'
-import { compactInr, lossLimitShare } from '../../lib/desk'
+import { compactInr } from '../../lib/desk'
 import { formatInrSigned, formatInrWhole } from '../../lib/format'
 import { useDeskRiskLimits } from '../../lib/queries'
 import type { DeskLinks, DeskView } from './data'
 import { toneClass } from './data'
-import { Failed, Money, PanelHead, Rail, Swatch, Waiting } from './parts'
+import { Failed, Money, PanelHead, Swatch, Waiting } from './parts'
 
-/** One account: its net, the rail against the platform limit, and the gross the charges turned into it. */
-function AccountRow({ totals, limit, multi }: { totals: AccountTotals; limit: number | null; multi: boolean }) {
+/** One account: its net, and the gross the charges turned into it. */
+function AccountRow({ totals, multi }: { totals: AccountTotals; multi: boolean }) {
   const f = totals.figures
-  const share = lossLimitShare(f.net, limit)
-  const hasRail = limit != null && limit < 0
   return (
     <div className="dk-acct">
       {multi ? <Swatch tone={totals.account.tone} /> : <span />}
       <span className="dk-acct__nm">{totals.account.name}</span>
       <Money value={f.net} className="dk-acct__nv" />
-      {hasRail && (
-        <div className="dk-acct__rr">
-          <Rail net={f.net} limit={limit} label={`${totals.account.name}: net against the platform max daily loss of ${formatInrSigned(limit)}`} />
-          <span>{share != null && share > 0 ? `${Math.round(share * 100)}% of the max daily loss` : 'no loss against the limit'}</span>
-        </div>
-      )}
       <div className="dk-acct__rr">
         <span>
           gross <span className={toneClass(f.gross)}>{formatInrSigned(f.gross)}</span> · charges {formatInrWhole(f.charges)} · {f.trades} trades
@@ -95,7 +87,7 @@ export function DayPnl({ view, links }: { view: DeskView; links: DeskLinks }) {
     <>
       {head}
       {grid.totals.map((t) => (
-        <AccountRow key={t.account.id} totals={t} limit={limit} multi={multi} />
+        <AccountRow key={t.account.id} totals={t} multi={multi} />
       ))}
       {multi && (
         <div className="dk-acct">
@@ -111,11 +103,10 @@ export function DayPnl({ view, links }: { view: DeskView; links: DeskLinks }) {
       <div className="dk-foot" style={{ display: 'block' }}>
         {view.isAdmin && limit != null && limit < 0 && (
           <p className="dk-note">
-            Rail: the platform’s max daily loss, {formatInrSigned(limit)}, which the API checks per run on each new order. There are
-            no per-account limits.
+            Max daily loss: {formatInrSigned(limit)} per run, on its P&L before charges, checked when the run places a new order.
+            There is no limit per account.
           </p>
         )}
-        {view.isAdmin && limits.isError && <p className="dk-note">The risk limits could not be read, so there is no rail.</p>}
         <p className="dk-note">Totals only: a curve through the day arrives with the P&L series.</p>
       </div>
     </>

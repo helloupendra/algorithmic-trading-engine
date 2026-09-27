@@ -19,7 +19,6 @@ import {
   forecastCounts,
   istHm,
   latestSnapshots,
-  lossLimitShare,
   modelStanding,
   plainNumber,
   plannedFor,
@@ -31,12 +30,11 @@ import {
 } from '../../lib/desk'
 import { statusMeta } from '../../lib/analysis'
 import { verdictBadge, slotLabel } from '../../lib/checkup'
-import { formatInrSigned, formatInrWhole } from '../../lib/format'
+import { formatInrWhole } from '../../lib/format'
 import { connectorsSummary, feedPulses } from '../../lib/pulse'
 import { silenceNote } from '../../lib/incidents'
 import {
   useCheckupLatest,
-  useDeskRiskLimits,
   useFeeds,
   useForecastScoreboard,
   useIncidentSummary,
@@ -48,7 +46,7 @@ import {
 } from '../../lib/queries'
 import type { DeskView } from './data'
 import { toneClass, useDayForecasts, useDeskLegs, useDeskPlan } from './data'
-import { Dot, Money, Rail, Swatch } from './parts'
+import { Dot, Money, Swatch } from './parts'
 
 type Kind = 'lead' | 'account' | 'other'
 type Tone = 'pos' | 'neg' | 'warn' | 'live' | null
@@ -75,7 +73,6 @@ function Cell({ label, value, sub, lead, rail, tone, title }: {
   )
 }
 
-const pct = (share: number) => `${Math.round(share * 100)}%`
 
 // ---------------------------------------------------------------- run cells
 
@@ -96,12 +93,12 @@ function NetLead({ view }: { view: DeskView }) {
   )
 }
 
+// No loss rail here: the only loss limit is per run (Risk → max daily loss,
+// checked on each new order), so an account's total measured against it read
+// as "144% of max daily loss" on a day no run was near it.
 function AccountCell({ view, index }: { view: DeskView; index: number }) {
   const totals = view.grid?.totals[index]
   const account = view.accounts[index]
-  const limits = useDeskRiskLimits(view.isAdmin)
-  const limit = limits.data?.maxDailyLoss ?? null
-  const share = totals ? lossLimitShare(totals.figures.net, limit) : null
   return (
     <Cell
       label={
@@ -111,14 +108,7 @@ function AccountCell({ view, index }: { view: DeskView; index: number }) {
         </>
       }
       value={totals ? <Money value={totals.figures.net} /> : null}
-      sub={
-        totals
-          ? share != null && share > 0
-            ? `${pct(share)} of max daily loss`
-            : `${totals.runs} runs · ${formatInrWhole(totals.figures.charges)} charges`
-          : undefined
-      }
-      rail={totals && limit != null && limit < 0 ? <Rail net={totals.figures.net} limit={limit} label={`Net against the platform max daily loss of ${formatInrSigned(limit)}`} /> : undefined}
+      sub={totals ? `${totals.runs} runs · ${formatInrWhole(totals.figures.charges)} charges` : undefined}
     />
   )
 }
