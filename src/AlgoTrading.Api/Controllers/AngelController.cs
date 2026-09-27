@@ -1,4 +1,5 @@
 using AlgoTrading.Api.Security;
+using AlgoTrading.Domain.Constants;
 using AlgoTrading.Infrastructure.Providers.Angel;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -83,6 +84,9 @@ public class AngelController : ControllerBase
     /// for a fresh one anyway.
     /// </remarks>
     [HttpGet("movers")]
+    // A market view like the chain and the factors, so the same grant: until
+    // 28 Sep any signed-in account could read it, grant or not.
+    [RequireModule(PlatformModules.MarketData)]
     public async Task<IActionResult> Movers([FromQuery] string expiry = "NEAR", [FromQuery] bool force = false,
         CancellationToken cancellationToken = default)
     {
