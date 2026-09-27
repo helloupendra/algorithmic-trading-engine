@@ -34,6 +34,16 @@ _ICON = {Severity.LOW: "·", Severity.MEDIUM: "!", Severity.HIGH: "‼", Severit
 # them only with a newer pack.
 CONTEXT_PREFIX = "context: "
 
+# Evidence lines that start with this say the problem has happened before:
+# how many times, when last, and what was done then (the Resolution a person
+# wrote on the last episode in the console). Added once, when the incident
+# opens, and kept across sightings like the context pack.
+HISTORY_PREFIX = "history: "
+
+#: The prefixes of the lines Sentinel adds to an incident's evidence itself,
+#: which a new sighting keeps instead of replacing with the agent's.
+KEPT_PREFIXES = (HISTORY_PREFIX, CONTEXT_PREFIX)
+
 
 @dataclass(frozen=True)
 class Finding:

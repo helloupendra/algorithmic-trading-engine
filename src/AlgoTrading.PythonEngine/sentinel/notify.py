@@ -12,11 +12,13 @@ import logging
 import re
 import time
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Optional
 
 import requests
 
-from sentinel.model import CONTEXT_PREFIX, Finding, Severity
+from sentinel.clock import to_ist
+from sentinel.model import CONTEXT_PREFIX, HISTORY_PREFIX, Finding, Severity
 
 log = logging.getLogger("sentinel.notify")
 
@@ -90,9 +92,37 @@ def redact(text: str) -> str:
     return _TELEGRAM_BOT_TOKEN.sub(HIDDEN, text)
 
 
+#: "Last time: …" carries at most this much of what a person wrote; the console has the rest.
+LAST_TIME_CHARS = 300
+
+
+def format_seen_before(count: int, last_seen_utc: Optional[datetime], resolution: str = "") -> list[str]:
+    """
+    The evidence lines saying a problem has happened before: how often, when
+    last, and what was done then. None when it has not. A resolution written
+    over several lines becomes one.
+    """
+    if count <= 0:
+        return []
+    times = "once" if count == 1 else f"{count} times"
+    when = f", last on {to_ist(last_seen_utc).strftime('%d %b %Y, %H:%M')} IST" if last_seen_utc else ""
+    lines = [f"{HISTORY_PREFIX}Seen before: {times}{when}"]
+    done = " ".join(resolution.split())
+    if done:
+        if len(done) > LAST_TIME_CHARS:
+            done = done[:LAST_TIME_CHARS - 1].rstrip() + "…"
+        lines.append(f"{HISTORY_PREFIX}Last time: {done}")
+    return lines
+
+
 def format_opened(finding: Finding, incident_id: int, escalated: bool = False,
-                  context: Optional[list[str]] = None) -> str:
-    """The message for an incident that opened or escalated. ``incident_id`` 0: the database did not take it."""
+                  context: Optional[list[str]] = None, history: Optional[list[str]] = None) -> str:
+    """
+    The message for an incident that opened or escalated. ``incident_id`` 0:
+    the database did not take it. ``history``: the seen-before lines
+    (:func:`format_seen_before`), right under the summary — whether this has
+    happened before, and what fixed it, is the first thing to know.
+    """
     head = "ESCALATED" if escalated else "NEW"
     number = f"#{incident_id}" if incident_id else "not stored (the database did not take it)"
     lines = [
@@ -101,6 +131,8 @@ def format_opened(finding: Finding, incident_id: int, escalated: bool = False,
         "",
         finding.summary,
     ]
+    if history:
+        lines += [""] + [h.removeprefix(HISTORY_PREFIX) for h in history]
     if finding.evidence:
         lines += ["", "Evidence:"] + [f"• {e}" for e in finding.evidence[:6]]
         if len(finding.evidence) > 6:

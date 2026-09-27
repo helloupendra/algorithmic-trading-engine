@@ -10,7 +10,17 @@
  * recent check is.
  */
 
-import type { Incident, IncidentSeverity, IncidentStatus, IncidentSummary } from './types'
+import type {
+  Incident,
+  IncidentEpisode,
+  IncidentHistory,
+  IncidentHistoryRow,
+  IncidentNotes,
+  IncidentResolution,
+  IncidentSeverity,
+  IncidentStatus,
+  IncidentSummary,
+} from './types'
 
 /** Loudest first — the order of the header tiles. */
 export const SEVERITY_ORDER: readonly IncidentSeverity[] = ['critical', 'high', 'medium', 'low']
@@ -342,19 +352,202 @@ export function watchmanNote(input: {
   }
 }
 
-/** What the Resolve button asks before it closes a live incident. */
-export function resolveConfirmText(incident: Pick<Incident, 'id' | 'title'>): string {
-  return (
-    `Resolve #${incident.id} "${incident.title}"?\n\n` +
-    'This closes the record; it fixes nothing. If the problem is still there, Sentinel opens a new ' +
-    'incident on its next check and sends a fresh alert.'
-  )
-}
+/**
+ * What the Resolve form says above its button. Closing a record whose problem
+ * is still there buys a new incident and a new alert on the next check; the
+ * form says so before, not after.
+ */
+export const RESOLVE_WARNING =
+  'This closes the record; it fixes nothing. If the problem is still there, Sentinel opens a new ' +
+  'incident on its next check and sends a fresh alert.'
 
 /** "12 times", "once" — how often the problem has been seen. */
 export function occurrencesText(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return '—'
   return n === 1 ? 'once' : `${n.toLocaleString('en-IN')} times`
+}
+
+// ---------- the knowledge record: notes, seen before, history ----------
+
+/** The longest root cause or resolution the API keeps (IncidentsController.MaxNoteChars); the form stops there. */
+export const NOTE_MAX_CHARS = 2000
+
+/** The longest fix reference the API keeps (IncidentsController.MaxFixRefChars). */
+export const FIX_REF_MAX_CHARS = 300
+
+/** How much of a note one line quotes; the History tab has the whole of it. */
+export const QUOTE_CHARS = 200
+
+const DAY = new Intl.DateTimeFormat('en-IN', {
+  timeZone: 'Asia/Kolkata',
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+})
+
+/** "24 Sept 2026" in IST, or "—". */
+export function dayText(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const t = Date.parse(iso)
+  return Number.isNaN(t) ? '—' : DAY.format(new Date(t))
+}
+
+function clip(text: string, max: number): string {
+  const one = text.split(/\s+/).filter(Boolean).join(' ')
+  return one.length > max ? `${one.slice(0, max - 1).trimEnd()}…` : one
+}
+
+type Notes = { rootCause?: string | null; resolution?: string | null; fixRef?: string | null }
+
+/** Whether anyone has written anything about it. */
+export function hasNotes(x: Notes | null | undefined): boolean {
+  return !!(x && (x.rootCause?.trim() || x.resolution?.trim() || x.fixRef?.trim()))
+}
+
+/**
+ * How an earlier episode ended, in a few words: what was done if someone wrote
+ * it, else the cause, else who closed it. Never blank: "nobody wrote anything"
+ * is itself worth knowing when the problem is back.
+ */
+export function lastTimeText(r: IncidentResolution): string {
+  const done = r.resolution?.trim()
+  if (done) return clip(maskSecrets(done), QUOTE_CHARS)
+  const cause = r.rootCause?.trim()
+  if (cause) return `cause: ${clip(maskSecrets(cause), QUOTE_CHARS)}`
+  if (r.status !== 'resolved') return `still ${r.status}`
+  return r.resolvedBy ? `closed by ${r.resolvedBy}, no notes` : 'cleared on its own, no notes'
+}
+
+/**
+ * "Seen before: 3 times, first on 2 Sept 2026; last time: restarted the Dhan
+ * feed (24 Sept 2026)" — or "First time …" — or null.
+ *
+ * Null when the API did not say (an older API, or a field missing): "not
+ * known" must never read as "first time", which would tell the reader there
+ * is no history to look for.
+ */
+export function seenBeforeText(
+  i: Pick<Incident, 'previousEpisodes' | 'firstEverUtc' | 'lastResolution'>,
+): string | null {
+  const n = i.previousEpisodes
+  if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) return null
+  if (n === 0) return 'First time Sentinel has seen this problem.'
+  let text = `Seen before: ${occurrencesText(n)}, first on ${dayText(i.firstEverUtc)}`
+  const last = i.lastResolution
+  if (last) {
+    text += `; last time: ${lastTimeText(last)}`
+    if (last.resolvedUtc) text += ` (${dayText(last.resolvedUtc)})`
+  }
+  return text
+}
+
+/** How an episode ended, telling "it cleared" from "someone closed it" — the difference the history keeps. */
+export function endedText(e: Pick<IncidentEpisode, 'status' | 'resolvedBy'>): string {
+  if (e.status === 'open') return 'Open now'
+  if (e.status === 'acknowledged') return 'Acknowledged, still live'
+  return e.resolvedBy ? `Resolved by ${e.resolvedBy}` : "Cleared: Sentinel's checks came back clean"
+}
+
+/** "< 1 min", "12 min", "2 h 5 min", "3 d 4 h"; "—" when not known. */
+export function durationText(seconds: number | null | undefined): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return '—'
+  const m = Math.floor(seconds / 60)
+  if (m < 1) return '< 1 min'
+  if (m < 60) return `${m} min`
+  const h = Math.floor(m / 60)
+  if (h < 24) return m % 60 ? `${h} h ${m % 60} min` : `${h} h`
+  const d = Math.floor(h / 24)
+  return h % 24 ? `${d} d ${h % 24} h` : `${d} d`
+}
+
+/** How long one episode lasted, first sighting to resolve; "still live" while it is. */
+export function lastedText(e: Pick<IncidentEpisode, 'status' | 'firstSeenUtc' | 'resolvedUtc'>): string {
+  if (e.status !== 'resolved' || !e.resolvedUtc) return 'still live'
+  const ms = Date.parse(e.resolvedUtc) - Date.parse(e.firstSeenUtc)
+  return Number.isNaN(ms) ? '—' : `lasted ${durationText(ms / 1000)}`
+}
+
+/**
+ * The mean time to resolve with what it is a mean of: a mean of one episode
+ * is an anecdote and says so, and none ended is not a zero.
+ */
+export function mttrText(row: Pick<IncidentHistoryRow, 'meanTimeToResolveSeconds' | 'resolvedEpisodes'>): string {
+  if (row.meanTimeToResolveSeconds == null || row.resolvedEpisodes <= 0) return 'none ended yet'
+  const value = durationText(row.meanTimeToResolveSeconds)
+  return row.resolvedEpisodes === 1 ? `${value} (one episode)` : `${value} (mean of ${row.resolvedEpisodes})`
+}
+
+/**
+ * The fix reference as a link, only when it is an http(s) URL. Anything else
+ * — a sha, a path, "javascript:…" — is shown as text: this string is typed by
+ * a person and must not become a script the next admin clicks.
+ */
+export function fixRefLink(ref: string | null | undefined): string | null {
+  const text = ref?.trim()
+  if (!text) return null
+  try {
+    const url = new URL(text)
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : null
+  } catch {
+    return null
+  }
+}
+
+/** What the notes form edits: plain strings, never null. */
+export interface NotesForm {
+  rootCause: string
+  resolution: string
+  fixRef: string
+}
+
+/** The form's starting values: what is written already, so a resolve never wipes notes made earlier. */
+export function notesFormFrom(x: Notes | null | undefined): NotesForm {
+  return { rootCause: x?.rootCause ?? '', resolution: x?.resolution ?? '', fixRef: x?.fixRef ?? '' }
+}
+
+/**
+ * The body the Resolve form and "Edit notes" send: all three fields, trimmed,
+ * within the API's limits. All three always, so a field emptied in the form
+ * is cleared (the API reads "" as clear, and a missing field as leave alone).
+ */
+export function notesBody(form: NotesForm): IncidentNotes {
+  return {
+    rootCause: form.rootCause.trim().slice(0, NOTE_MAX_CHARS),
+    resolution: form.resolution.trim().slice(0, NOTE_MAX_CHARS),
+    fixRef: form.fixRef.trim().slice(0, FIX_REF_MAX_CHARS),
+  }
+}
+
+/** The windows the History tab offers. */
+export const HISTORY_WINDOWS: ReadonlyArray<{ days: number; label: string }> = [
+  { days: 30, label: '30 days' },
+  { days: 90, label: '90 days' },
+  { days: 365, label: '1 year' },
+]
+
+/** The query string for GET /api/Incidents/history. */
+export function historyQuery(days: number): string {
+  const n = Number.isFinite(days) ? Math.round(days) : 90
+  return new URLSearchParams({ days: String(n) }).toString()
+}
+
+/**
+ * The history endpoint's body, read strictly, like the list: anything but
+ * `{ items: [...] }` throws, so the tab shows an error rather than an empty
+ * table that would say nothing has ever gone wrong.
+ */
+export function readIncidentHistory(body: unknown): IncidentHistory {
+  if (body && typeof body === 'object' && Array.isArray((body as { items?: unknown }).items)) {
+    return body as IncidentHistory
+  }
+  throw new Error('The incident history endpoint answered in a shape this page cannot read.')
+}
+
+/** "3 episodes · 84 sightings" — how much of a problem there has been. */
+export function episodesText(row: Pick<IncidentHistoryRow, 'episodes' | 'occurrences'>): string {
+  const e = row.episodes === 1 ? '1 episode' : `${row.episodes.toLocaleString('en-IN')} episodes`
+  const s = row.occurrences === 1 ? '1 sighting' : `${row.occurrences.toLocaleString('en-IN')} sightings`
+  return `${e} · ${s}`
 }
 
 // ---------- secrets ----------

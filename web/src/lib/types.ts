@@ -2140,6 +2140,94 @@ export interface Incident {
   acknowledgedUtc: string | null
   /** When the alert for it was sent, if one was. */
   notifiedUtc?: string | null
+  /** Why it happened, as a person wrote it; null until someone does. */
+  rootCause?: string | null
+  /** What was done about it. */
+  resolution?: string | null
+  /** Where the fix lives: a commit sha, a pull request or a link. */
+  fixRef?: string | null
+  /**
+   * How many earlier episodes of the same fingerprint there were; 0 the first
+   * time. Optional so an API without it still reads — and absent is "not
+   * known", never "first time".
+   */
+  previousEpisodes?: number
+  /** When this problem was first seen at all (this episode's own start the first time). */
+  firstEverUtc?: string
+  /** How the episode just before this one ended, with its notes; null the first time. */
+  lastResolution?: IncidentResolution | null
+}
+
+/** How one episode of a problem ended, and what was written about it. */
+export interface IncidentResolution {
+  id: number
+  status: IncidentStatus
+  resolvedUtc: string | null
+  /** Who resolved it from the console; null when Sentinel's checks came back clean. */
+  resolvedBy: string | null
+  rootCause: string | null
+  resolution: string | null
+  fixRef: string | null
+}
+
+/**
+ * What the Resolve form and "Edit notes" send. A field left out is left as it
+ * is; an empty string clears it.
+ */
+export interface IncidentNotes {
+  rootCause?: string
+  resolution?: string
+  fixRef?: string
+}
+
+/** GET /api/Incidents/history: every problem seen in the window, most recurrent first. */
+export interface IncidentHistory {
+  /** The window actually used (the API clamps it). */
+  days: number
+  sinceUtc: string
+  items: IncidentHistoryRow[]
+}
+
+/** One problem (one fingerprint) over the window. */
+export interface IncidentHistoryRow {
+  fingerprint: string
+  agent: string
+  rule: string
+  /** The latest episode's. */
+  title: string
+  /** The loudest any episode reached. */
+  severity: IncidentSeverity
+  /** How many times it happened: episodes, not sightings. */
+  episodes: number
+  /** How many of those ended — what the mean time to resolve is over. */
+  resolvedEpisodes: number
+  /** Sightings across every episode. */
+  occurrences: number
+  firstSeenUtc: string
+  lastSeenUtc: string
+  /** First sighting to resolve, averaged over the resolved episodes; null when none has ended. */
+  meanTimeToResolveSeconds: number | null
+  openNow: boolean
+  /** The newest episode anyone wrote notes on; null when nobody has. */
+  latestResolution: IncidentResolution | null
+  /** Newest first, at most 50; `episodes` counts them all. */
+  episodeList: IncidentEpisode[]
+}
+
+/** One episode in the history. */
+export interface IncidentEpisode {
+  id: number
+  status: IncidentStatus
+  severity: IncidentSeverity
+  title: string
+  occurrences: number
+  firstSeenUtc: string
+  lastSeenUtc: string
+  resolvedUtc: string | null
+  resolvedBy: string | null
+  rootCause: string | null
+  resolution: string | null
+  fixRef: string | null
 }
 
 /** Live (open or acknowledged) incidents by severity, and the newest one. */

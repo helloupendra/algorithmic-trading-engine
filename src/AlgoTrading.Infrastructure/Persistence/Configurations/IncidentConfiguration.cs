@@ -44,6 +44,15 @@ public class IncidentConfiguration : IEntityTypeConfiguration<Incident>
         builder.Property(x => x.AcknowledgedBy).HasMaxLength(100);
         builder.Property(x => x.ResolvedBy).HasMaxLength(100);
 
+        // The knowledge record a person writes from the console. Nullable and
+        // added after the table existed, so a Sentinel still running the old
+        // store.py inserts exactly as before. The API cuts each to its limit
+        // (IncidentsController.NoteLimits) before storing; the reference is a
+        // sha or a link, so it gets a length, the prose does not.
+        builder.Property(x => x.RootCause).HasColumnType("text");
+        builder.Property(x => x.Resolution).HasColumnType("text");
+        builder.Property(x => x.FixRef).HasMaxLength(300);
+
         // Two writers change a row's status: a person in the console, and
         // Sentinel resolving it after enough clean checks. Without the token an
         // acknowledge that lands just after Sentinel's resolve would put the

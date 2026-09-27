@@ -14,7 +14,7 @@ namespace AlgoTrading.UnitTests;
 
 /// <summary>
 /// The console's side of Sentinel's incidents: listing what Sentinel wrote,
-/// and the two things a person may do with it.
+/// the things a person may do with it, and the record of what was learnt.
 /// </summary>
 /// <remarks>
 /// The rows here are written the way Sentinel's <c>store.py</c> writes them,
@@ -24,7 +24,10 @@ namespace AlgoTrading.UnitTests;
 /// a click never overwrites a resolve Sentinel made a moment earlier, a
 /// malformed evidence column is shown rather than dropped, nothing
 /// secret-shaped reaches the browser, and a stopped Sentinel cannot pass for a
-/// quiet desk.
+/// quiet desk. And for the knowledge record: notes are masked before they are
+/// stored, a field left out is never wiped, every incident knows how often its
+/// problem happened before and how it ended last time, and the history's
+/// numbers agree with the episodes listed under them.
 /// </remarks>
 public class IncidentsControllerTests
 {
@@ -262,7 +265,7 @@ public class IncidentsControllerTests
         await db.SaveChangesAsync();
 
         var before = DateTime.UtcNow;
-        var result = await Controller(db, userName: "upendra").Resolve(row.Id, CancellationToken.None);
+        var result = await Controller(db, userName: "upendra").Resolve(row.Id, null, CancellationToken.None);
 
         var view = Assert.IsType<IncidentView>(Assert.IsType<OkObjectResult>(result).Value);
         Assert.Equal(IncidentStatus.Resolved, view.Status);
@@ -302,7 +305,7 @@ public class IncidentsControllerTests
         db.Incidents.Add(row);
         await db.SaveChangesAsync();
 
-        var result = await Controller(db).Resolve(row.Id, CancellationToken.None);
+        var result = await Controller(db).Resolve(row.Id, null, CancellationToken.None);
 
         Assert.IsType<ConflictObjectResult>(result);
         Assert.Equal(resolvedAt, (await db.Incidents.AsNoTracking().SingleAsync()).ResolvedUtc);
@@ -315,7 +318,7 @@ public class IncidentsControllerTests
         var controller = Controller(db);
 
         Assert.IsType<NotFoundObjectResult>(await controller.Acknowledge(42, CancellationToken.None));
-        Assert.IsType<NotFoundObjectResult>(await controller.Resolve(42, CancellationToken.None));
+        Assert.IsType<NotFoundObjectResult>(await controller.Resolve(42, null, CancellationToken.None));
     }
 
     [Fact]
@@ -531,6 +534,442 @@ public class IncidentsControllerTests
         Assert.Equal(new[] { "{not json" }, item.Evidence);
     }
 
+    // ---------- root cause, resolution, fix reference ----------
+
+    [Fact]
+    public async Task Resolving_with_notes_stores_them_trimmed_masked_and_capped()
+    {
+        // A pasted log line is the likeliest way a token reaches a note, and
+        // what is stored is what the history keeps: masked before it lands.
+        await using var db = NewDb(NewName());
+        var row = Row("feed-silent:dhan");
+        db.Incidents.Add(row);
+        await db.SaveChangesAsync();
+
+        var notes = new IncidentNotesRequest(
+            RootCause: "  Dhan token expired overnight; feed said access_token=abcDEF123456 in the log  ",
+            Resolution: new string('r', IncidentsController.MaxNoteChars + 500),
+            FixRef: "  4c8eaba  ");
+        var result = await Controller(db, userName: "upendra").Resolve(row.Id, notes, CancellationToken.None);
+
+        var view = Assert.IsType<IncidentView>(Assert.IsType<OkObjectResult>(result).Value);
+        Assert.Equal(IncidentStatus.Resolved, view.Status);
+        Assert.Equal("Dhan token expired overnight; feed said access_token=… in the log", view.RootCause);
+        Assert.Equal("4c8eaba", view.FixRef);
+
+        var stored = await db.Incidents.AsNoTracking().SingleAsync();
+        Assert.Equal("Dhan token expired overnight; feed said access_token=… in the log", stored.RootCause);
+        Assert.DoesNotContain("abcDEF123456", stored.RootCause);
+        Assert.Equal(IncidentsController.MaxNoteChars, stored.Resolution!.Length);
+        Assert.Equal("4c8eaba", stored.FixRef);
+        Assert.Equal("upendra", stored.ResolvedBy);
+    }
+
+    [Fact]
+    public async Task Resolving_without_notes_keeps_the_ones_already_written()
+    {
+        // The console's Resolve form is optional, and notes written while the
+        // incident was open must not be wiped by a resolve that sends none.
+        await using var db = NewDb(NewName());
+        var row = Row("feed-silent:dhan");
+        row.RootCause = "Token expired";
+        db.Incidents.Add(row);
+        await db.SaveChangesAsync();
+
+        await Controller(db).Resolve(row.Id, null, CancellationToken.None);
+        Assert.Equal("Token expired", (await db.Incidents.AsNoTracking().SingleAsync()).RootCause);
+
+        await Controller(db).Notes(row.Id, new IncidentNotesRequest(null, "Regenerated the token", null), CancellationToken.None);
+        var stored = await db.Incidents.AsNoTracking().SingleAsync();
+        Assert.Equal("Token expired", stored.RootCause);
+        Assert.Equal("Regenerated the token", stored.Resolution);
+    }
+
+    [Fact]
+    public async Task A_resolve_that_is_refused_stores_no_notes()
+    {
+        await using var db = NewDb(NewName());
+        var row = Row("x", status: IncidentStatus.Resolved);
+        db.Incidents.Add(row);
+        await db.SaveChangesAsync();
+
+        var result = await Controller(db).Resolve(row.Id, new IncidentNotesRequest("cause", "fix", "abc"), CancellationToken.None);
+
+        Assert.IsType<ConflictObjectResult>(result);
+        var stored = await db.Incidents.AsNoTracking().SingleAsync();
+        Assert.Null(stored.RootCause);
+        Assert.Null(stored.Resolution);
+        Assert.Null(stored.FixRef);
+    }
+
+    [Fact]
+    public async Task Notes_can_be_written_on_an_open_incident_and_leave_its_status_alone()
+    {
+        await using var db = NewDb(NewName());
+        var row = Row("feed-silent:dhan");
+        db.Incidents.Add(row);
+        await db.SaveChangesAsync();
+
+        var result = await Controller(db, userName: "upendra").Notes(
+            row.Id,
+            new IncidentNotesRequest("The Dhan websocket was opened a sixth time", "Stopped the extra feed", "docs/modules/sentinel.md"),
+            CancellationToken.None);
+
+        var view = Assert.IsType<IncidentView>(Assert.IsType<OkObjectResult>(result).Value);
+        Assert.Equal(IncidentStatus.Open, view.Status);
+        Assert.Equal("The Dhan websocket was opened a sixth time", view.RootCause);
+        Assert.Equal("Stopped the extra feed", view.Resolution);
+        Assert.Equal("docs/modules/sentinel.md", view.FixRef);
+
+        var stored = await db.Incidents.AsNoTracking().SingleAsync();
+        Assert.Equal(IncidentStatus.Open, stored.Status);
+        Assert.Null(stored.ResolvedUtc);
+        Assert.Null(stored.ResolvedBy);
+        Assert.Equal("Stopped the extra feed", stored.Resolution);
+    }
+
+    [Fact]
+    public async Task Notes_on_a_resolved_incident_can_be_corrected_and_an_empty_field_clears_it()
+    {
+        // The cause is often understood after the incident closed itself.
+        await using var db = NewDb(NewName());
+        var row = Row("feed-silent:dhan", status: IncidentStatus.Resolved);
+        row.ResolvedUtc = T0.AddMinutes(9);
+        row.RootCause = "Unknown";
+        row.Resolution = "Waited";
+        row.FixRef = "abc1234";
+        db.Incidents.Add(row);
+        await db.SaveChangesAsync();
+
+        var result = await Controller(db).Notes(
+            row.Id,
+            new IncidentNotesRequest("Dhan dropped the socket at the 11:27 rollover", "   ", null),
+            CancellationToken.None);
+
+        var view = Assert.IsType<IncidentView>(Assert.IsType<OkObjectResult>(result).Value);
+        Assert.Equal(IncidentStatus.Resolved, view.Status);
+        var stored = await db.Incidents.AsNoTracking().SingleAsync();
+        Assert.Equal("Dhan dropped the socket at the 11:27 rollover", stored.RootCause);
+        Assert.Null(stored.Resolution);          // blank is "clear it"
+        Assert.Equal("abc1234", stored.FixRef);  // absent is "leave it"
+        Assert.Equal(T0.AddMinutes(9), stored.ResolvedUtc);
+        Assert.Equal(IncidentStatus.Resolved, stored.Status);
+    }
+
+    [Fact]
+    public async Task Notes_masks_and_caps_like_resolve()
+    {
+        await using var db = NewDb(NewName());
+        var row = Row("x");
+        db.Incidents.Add(row);
+        await db.SaveChangesAsync();
+
+        string longRef = "https://github.com/x/y/commit/" + new string('f', IncidentsController.MaxFixRefChars);
+        await Controller(db).Notes(
+            row.Id,
+            new IncidentNotesRequest("POSTGRES_PASSWORD=hunter2hunter2 was wrong", null, longRef),
+            CancellationToken.None);
+
+        var stored = await db.Incidents.AsNoTracking().SingleAsync();
+        Assert.Equal("POSTGRES_PASSWORD=… was wrong", stored.RootCause);
+        Assert.Equal(IncidentsController.MaxFixRefChars, stored.FixRef!.Length);
+    }
+
+    [Fact]
+    public async Task Notes_of_nothing_is_a_bad_request_and_a_missing_incident_is_404()
+    {
+        await using var db = NewDb(NewName());
+        var row = Row("x");
+        db.Incidents.Add(row);
+        await db.SaveChangesAsync();
+        var controller = Controller(db);
+
+        Assert.IsType<BadRequestObjectResult>(await controller.Notes(row.Id, null, CancellationToken.None));
+        Assert.IsType<BadRequestObjectResult>(await controller.Notes(row.Id, new IncidentNotesRequest(null, null, null), CancellationToken.None));
+        Assert.IsType<NotFoundObjectResult>(await controller.Notes(row.Id + 1000, new IncidentNotesRequest("a", null, null), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task A_notes_edit_that_lands_after_Sentinel_resolved_the_row_is_a_conflict_and_stores_nothing()
+    {
+        // The same rule as acknowledge: the update carries the status it read.
+        string name = NewName();
+        await using var console = NewDb(name);
+        var row = Row("feed-silent:dhan");
+        console.Incidents.Add(row);
+        await console.SaveChangesAsync();
+
+        await using (var sentinel = NewDb(name))
+        {
+            var same = await sentinel.Incidents.SingleAsync();
+            same.Status = IncidentStatus.Resolved;
+            same.ResolvedUtc = T0.AddMinutes(3);
+            await sentinel.SaveChangesAsync();
+        }
+
+        var result = await Controller(console).Notes(row.Id, new IncidentNotesRequest("cause", null, null), CancellationToken.None);
+
+        Assert.IsType<ConflictObjectResult>(result);
+        await using var check = NewDb(name);
+        var stored = await check.Incidents.SingleAsync();
+        Assert.Equal(IncidentStatus.Resolved, stored.Status);
+        Assert.Null(stored.RootCause);
+    }
+
+    [Theory]
+    [InlineData("  \t ", null)]
+    [InlineData("a\0b", "a�b")]
+    public void A_note_is_trimmed_to_null_and_a_NUL_is_replaced(string text, string? expected)
+    {
+        Assert.Equal(expected, IncidentsController.CleanNote(text, IncidentsController.MaxNoteChars));
+    }
+
+    [Fact]
+    public void The_cut_never_splits_a_surrogate_pair()
+    {
+        // Half an emoji is not UTF-8, and Postgres would refuse the whole update.
+        string text = new string('a', 9) + "\U0001F600";
+        string? cut = IncidentsController.CleanNote(text, 10);
+        Assert.Equal(new string('a', 9), cut);
+    }
+
+    [Fact]
+    public void A_secret_across_the_cut_is_masked_whole_before_the_cut()
+    {
+        // Cut first and a JWT loses its tail, no longer matches, and its head is stored.
+        const string jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"; // pragma: allowlist secret
+        string text = new string('a', 20) + " " + jwt;
+        string? stored = IncidentsController.CleanNote(text, 40);
+        Assert.Equal(new string('a', 20) + " …", stored);
+    }
+
+    // ---------- seen before ----------
+
+    [Fact]
+    public async Task Every_incident_says_how_often_its_problem_happened_before_and_how_it_ended_last_time()
+    {
+        // Two problems, several episodes each, interleaved in time. Each row
+        // counts only the episodes of its own fingerprint that started before it.
+        await using var db = NewDb(NewName());
+        var feed1 = Resolved("feed-silent:dhan", T0, T0.AddMinutes(4), by: null, rootCause: null, resolution: null, fixRef: null);
+        var token1 = Resolved("broker-token:fyers", T0.AddHours(1), T0.AddHours(2), by: "upendra",
+            rootCause: "Token expired at 08:45", resolution: "Regenerated it", fixRef: "abc1234");
+        var feed2 = Resolved("feed-silent:dhan", T0.AddDays(1), T0.AddDays(1).AddMinutes(30), by: "upendra",
+            rootCause: "Sixth websocket kicked the first", resolution: "Closed the extra connection", fixRef: "9f8e7d6");
+        var feed3 = Row("feed-silent:dhan", firstSeen: T0.AddDays(2), lastSeen: T0.AddDays(2).AddMinutes(2));
+        var token2 = Row("broker-token:fyers", status: IncidentStatus.Acknowledged, firstSeen: T0.AddDays(2).AddHours(1));
+        db.Incidents.AddRange(feed1, token1, feed2, feed3, token2);
+        await db.SaveChangesAsync();
+
+        var views = (await List(Controller(db), status: "any")).ToDictionary(v => v.Id);
+
+        Assert.Equal(0, views[feed1.Id].PreviousEpisodes);
+        Assert.Equal(T0, views[feed1.Id].FirstEverUtc);
+        Assert.Null(views[feed1.Id].LastResolution);
+
+        Assert.Equal(1, views[feed2.Id].PreviousEpisodes);
+        Assert.Equal(T0, views[feed2.Id].FirstEverUtc);
+        Assert.Equal(feed1.Id, views[feed2.Id].LastResolution!.Id);
+        Assert.Null(views[feed2.Id].LastResolution!.ResolvedBy);   // Sentinel's checks came back clean
+        Assert.Null(views[feed2.Id].LastResolution!.Resolution);
+
+        // The live one: two before it, and the last one is the most recent, not the first.
+        var last = views[feed3.Id];
+        Assert.Equal(2, last.PreviousEpisodes);
+        Assert.Equal(T0, last.FirstEverUtc);
+        Assert.Equal(feed2.Id, last.LastResolution!.Id);
+        Assert.Equal(T0.AddDays(1).AddMinutes(30), last.LastResolution.ResolvedUtc);
+        Assert.Equal("upendra", last.LastResolution.ResolvedBy);
+        Assert.Equal("Sixth websocket kicked the first", last.LastResolution.RootCause);
+        Assert.Equal("Closed the extra connection", last.LastResolution.Resolution);
+        Assert.Equal("9f8e7d6", last.LastResolution.FixRef);
+
+        // The other fingerprint does not leak into this one's count.
+        Assert.Equal(0, views[token1.Id].PreviousEpisodes);
+        Assert.Equal(1, views[token2.Id].PreviousEpisodes);
+        Assert.Equal(T0.AddHours(1), views[token2.Id].FirstEverUtc);
+        Assert.Equal("Regenerated it", views[token2.Id].LastResolution!.Resolution);
+
+        // The default list (live only) still counts the resolved episodes it does not show.
+        var live = (await List(Controller(db))).ToDictionary(v => v.Id);
+        Assert.Equal(2, live[feed3.Id].PreviousEpisodes);
+        Assert.Equal(1, live[token2.Id].PreviousEpisodes);
+
+        // And so does one incident on its own.
+        var one = await GetView(Controller(db), feed3.Id);
+        Assert.Equal(2, one.PreviousEpisodes);
+        Assert.Equal("Closed the extra connection", one.LastResolution!.Resolution);
+    }
+
+    [Fact]
+    public async Task Two_episodes_that_started_at_the_same_instant_are_ordered_by_number()
+    {
+        await using var db = NewDb(NewName());
+        var a = Resolved("x", T0, T0.AddMinutes(1));
+        var b = Row("x", firstSeen: T0);
+        db.Incidents.AddRange(a, b);
+        await db.SaveChangesAsync();
+
+        var views = (await List(Controller(db), status: "any")).ToDictionary(v => v.Id);
+
+        Assert.Equal(0, views[a.Id].PreviousEpisodes);
+        Assert.Equal(1, views[b.Id].PreviousEpisodes);
+    }
+
+    [Fact]
+    public async Task Notes_shown_as_last_time_are_masked_even_when_stored_by_hand()
+    {
+        await using var db = NewDb(NewName());
+        db.Incidents.Add(Resolved("x", T0, T0.AddMinutes(1), resolution: "Set DHAN_PIN=1234 again"));
+        var now = Row("x", firstSeen: T0.AddHours(1));
+        db.Incidents.Add(now);
+        await db.SaveChangesAsync();
+
+        var view = await GetView(Controller(db), now.Id);
+
+        Assert.Equal("Set DHAN_PIN=… again", view.LastResolution!.Resolution);
+    }
+
+    [Fact]
+    public async Task Resolving_answers_with_the_seen_before_facts_too()
+    {
+        await using var db = NewDb(NewName());
+        db.Incidents.Add(Resolved("x", T0, T0.AddMinutes(1), resolution: "Restarted the feed"));
+        var now = Row("x", firstSeen: T0.AddHours(1));
+        db.Incidents.Add(now);
+        await db.SaveChangesAsync();
+
+        var result = await Controller(db).Resolve(now.Id, new IncidentNotesRequest(null, "Restarted it again", null), CancellationToken.None);
+
+        var view = Assert.IsType<IncidentView>(Assert.IsType<OkObjectResult>(result).Value);
+        Assert.Equal(1, view.PreviousEpisodes);
+        Assert.Equal("Restarted the feed", view.LastResolution!.Resolution);
+        Assert.Equal("Restarted it again", view.Resolution);
+    }
+
+    // ---------- history ----------
+
+    [Fact]
+    public async Task History_is_one_row_per_problem_with_its_episodes_time_to_resolve_and_latest_notes()
+    {
+        var now = DateTime.UtcNow;
+        await using var db = NewDb(NewName());
+        var feed1 = Resolved("feed-silent:dhan", now.AddDays(-10), now.AddDays(-10).AddMinutes(10), severity: IncidentSeverity.Medium,
+            occurrences: 20, resolution: "Restarted the feed", rootCause: "Socket dropped");
+        var feed2 = Resolved("feed-silent:dhan", now.AddDays(-5), now.AddDays(-5).AddMinutes(30), by: "upendra",
+            severity: IncidentSeverity.Critical, occurrences: 60);
+        var feed3 = Row("feed-silent:dhan", severity: IncidentSeverity.High, firstSeen: now.AddMinutes(-3), lastSeen: now.AddMinutes(-1),
+            title: "Dhan feed silent for 120 s");
+        feed3.Occurrences = 4;
+        var token = Resolved("broker-token:fyers", now.AddDays(-2), now.AddDays(-2).AddHours(1), by: "upendra", agent: "trading",
+            fixRef: "abc1234");
+        db.Incidents.AddRange(feed1, feed2, feed3, token);
+        await db.SaveChangesAsync();
+
+        var history = await HistoryOf(Controller(db), days: 90);
+
+        Assert.Equal(90, history.Days);
+        Assert.Equal(new[] { "feed-silent:dhan", "broker-token:fyers" }, history.Items.Select(i => i.Fingerprint));
+
+        var feed = history.Items[0];
+        Assert.Equal("health", feed.Agent);
+        Assert.Equal("Dhan feed silent for 120 s", feed.Title);            // the latest episode's
+        Assert.Equal(IncidentSeverity.Critical, feed.Severity);            // the loudest any reached
+        Assert.Equal(3, feed.Episodes);
+        Assert.Equal(2, feed.ResolvedEpisodes);
+        Assert.Equal(84, feed.Occurrences);
+        Assert.Equal(feed1.FirstSeenUtc, feed.FirstSeenUtc);
+        Assert.Equal(feed3.LastSeenUtc, feed.LastSeenUtc);
+        Assert.Equal(TimeSpan.FromMinutes(20).TotalSeconds, feed.MeanTimeToResolveSeconds!.Value, 3);   // (10 + 30) / 2
+        Assert.True(feed.OpenNow);
+        // The newest episode anyone wrote about, not merely the newest one.
+        Assert.Equal(feed1.Id, feed.LatestResolution!.Id);
+        Assert.Equal("Socket dropped", feed.LatestResolution.RootCause);
+        Assert.Equal("Restarted the feed", feed.LatestResolution.Resolution);
+
+        Assert.Equal(new[] { feed3.Id, feed2.Id, feed1.Id }, feed.EpisodeList.Select(e => e.Id));
+        Assert.Null(feed.EpisodeList[2].ResolvedBy);                     // Sentinel resolved the first
+        Assert.Equal("upendra", feed.EpisodeList[1].ResolvedBy);
+        Assert.Equal("Restarted the feed", feed.EpisodeList[2].Resolution);
+
+        var fyers = history.Items[1];
+        Assert.Equal(1, fyers.Episodes);
+        Assert.False(fyers.OpenNow);
+        Assert.Equal(TimeSpan.FromHours(1).TotalSeconds, fyers.MeanTimeToResolveSeconds!.Value, 3);
+        Assert.Equal("abc1234", fyers.LatestResolution!.FixRef);
+    }
+
+    [Fact]
+    public async Task History_orders_by_episodes_then_by_the_latest_sighting()
+    {
+        var now = DateTime.UtcNow;
+        await using var db = NewDb(NewName());
+        db.Incidents.AddRange(
+            Resolved("once-old", now.AddDays(-20), now.AddDays(-20).AddMinutes(1)),
+            Resolved("once-new", now.AddDays(-1), now.AddDays(-1).AddMinutes(1)),
+            Resolved("twice", now.AddDays(-30), now.AddDays(-30).AddMinutes(1)),
+            Resolved("twice", now.AddDays(-25), now.AddDays(-25).AddMinutes(1)));
+        await db.SaveChangesAsync();
+
+        var history = await HistoryOf(Controller(db), days: 90);
+
+        Assert.Equal(new[] { "twice", "once-new", "once-old" }, history.Items.Select(i => i.Fingerprint));
+    }
+
+    [Fact]
+    public async Task History_keeps_to_its_window_but_never_leaves_out_what_is_live()
+    {
+        var now = DateTime.UtcNow;
+        await using var db = NewDb(NewName());
+        db.Incidents.AddRange(
+            Resolved("x", now.AddDays(-100), now.AddDays(-100).AddMinutes(5)),   // before the window
+            Resolved("x", now.AddDays(-3), now.AddDays(-3).AddMinutes(5)),
+            // Started long ago and never re-seen since: a live row is part of now, whatever its age.
+            Row("stuck", firstSeen: now.AddDays(-200), lastSeen: now.AddDays(-200)));
+        await db.SaveChangesAsync();
+
+        var history = await HistoryOf(Controller(db), days: 30);
+
+        var x = Assert.Single(history.Items, i => i.Fingerprint == "x");
+        Assert.Equal(1, x.Episodes);
+        var stuck = Assert.Single(history.Items, i => i.Fingerprint == "stuck");
+        Assert.True(stuck.OpenNow);
+        Assert.Null(stuck.MeanTimeToResolveSeconds);   // nothing has ended: no mean, not a zero
+        Assert.Equal(0, stuck.ResolvedEpisodes);
+        Assert.Null(stuck.LatestResolution);
+    }
+
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(-4, 1)]
+    [InlineData(100_000, 3650)]
+    public async Task History_days_are_clamped_and_the_answer_says_which(int days, int expected)
+    {
+        await using var db = NewDb(NewName());
+
+        var history = await HistoryOf(Controller(db), days: days);
+
+        Assert.Equal(expected, history.Days);
+        Assert.Empty(history.Items);
+    }
+
+    [Fact]
+    public async Task History_lists_the_latest_episodes_of_a_flapping_problem_and_counts_them_all()
+    {
+        var now = DateTime.UtcNow;
+        await using var db = NewDb(NewName());
+        int total = IncidentsController.MaxEpisodesListed + 7;
+        db.Incidents.AddRange(Enumerable.Range(0, total)
+            .Select(i => Resolved("flap", now.AddHours(-total + i), now.AddHours(-total + i).AddMinutes(1))));
+        await db.SaveChangesAsync();
+
+        var flap = Assert.Single((await HistoryOf(Controller(db), days: 90)).Items);
+
+        Assert.Equal(total, flap.Episodes);
+        Assert.Equal(IncidentsController.MaxEpisodesListed, flap.EpisodeList.Count);
+        Assert.True(flap.EpisodeList[0].FirstSeenUtc > flap.EpisodeList[^1].FirstSeenUtc);
+    }
+
     // ---------- helpers ----------
 
     private static string NewName() => $"incidents-{Guid.NewGuid():N}";
@@ -557,6 +996,39 @@ public class IncidentsControllerTests
     {
         var result = await controller.Summary(CancellationToken.None);
         return Assert.IsType<IncidentSummary>(Assert.IsType<OkObjectResult>(result).Value);
+    }
+
+    private static async Task<IncidentHistory> HistoryOf(IncidentsController controller, int days)
+    {
+        var result = await controller.History(days, CancellationToken.None);
+        return Assert.IsType<IncidentHistory>(Assert.IsType<OkObjectResult>(result).Value);
+    }
+
+    /// <summary>
+    /// A finished episode: Sentinel's resolve when <paramref name="by"/> is
+    /// null, a person's otherwise, with whatever notes were written on it.
+    /// </summary>
+    private static Incident Resolved(
+        string fingerprint,
+        DateTime firstSeen,
+        DateTime resolvedAt,
+        string? by = null,
+        string severity = IncidentSeverity.Medium,
+        string agent = "health",
+        int occurrences = 1,
+        string? rootCause = null,
+        string? resolution = null,
+        string? fixRef = null)
+    {
+        var row = Row(fingerprint, status: IncidentStatus.Resolved, severity: severity, agent: agent,
+            firstSeen: firstSeen, lastSeen: resolvedAt);
+        row.ResolvedUtc = resolvedAt;
+        row.ResolvedBy = by;
+        row.Occurrences = occurrences;
+        row.RootCause = rootCause;
+        row.Resolution = resolution;
+        row.FixRef = fixRef;
+        return row;
     }
 
     private static async Task<IncidentView> GetView(IncidentsController controller, long id)
@@ -660,6 +1132,9 @@ public class IncidentsTableContractTests
         // Guard against the test passing because store.py moved or changed shape.
         Assert.Contains("Fingerprint", quoted);
         Assert.Contains("EvidenceJson", quoted);
+        // Sentinel reads what a person wrote was done last time ("Last time: …"
+        // in a recurring incident's message), so that column is contract too.
+        Assert.Contains("Resolution", quoted);
         var missing = quoted.Where(c => !columns.Contains(c)).ToList();
         Assert.True(missing.Count == 0, "store.py names columns the table does not have: " + string.Join(", ", missing));
     }
@@ -731,6 +1206,25 @@ public class IncidentsTableContractTests
         Assert.Null(MaxLength(nameof(Incident.Summary)));
         Assert.Null(MaxLength(nameof(Incident.EvidenceJson)));
         Assert.Null(MaxLength(nameof(Incident.Suggestion)));
+    }
+
+    [Fact]
+    public void The_notes_columns_are_nullable_so_Sentinel_s_insert_needs_no_change()
+    {
+        // Sentinel's INSERT names its own columns only. A NOT NULL column added
+        // without a default would fail every insert of every Sentinel still
+        // running the store.py of before, and every incident would go to its
+        // fallback file instead of the console.
+        var entity = EntityFor(Model(), "incidents")!;
+
+        foreach (string property in new[] { nameof(Incident.RootCause), nameof(Incident.Resolution), nameof(Incident.FixRef) })
+        {
+            Assert.True(entity.FindProperty(property)!.IsNullable, $"{property} must be nullable");
+        }
+
+        Assert.Null(entity.FindProperty(nameof(Incident.RootCause))!.GetMaxLength());
+        Assert.Null(entity.FindProperty(nameof(Incident.Resolution))!.GetMaxLength());
+        Assert.Equal(IncidentsController.MaxFixRefChars, entity.FindProperty(nameof(Incident.FixRef))!.GetMaxLength());
     }
 
     // ---------- helpers ----------

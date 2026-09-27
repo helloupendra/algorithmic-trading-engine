@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from sentinel.model import CONTEXT_PREFIX, Finding, Severity, Status
+from sentinel.model import KEPT_PREFIXES, Finding, Severity, Status
 
 log = logging.getLogger("sentinel.store")
 
@@ -68,13 +68,18 @@ def _unique_violation(exc: BaseException) -> bool:
 
 
 def _keep_context(evidence: list[str], before: list[str]) -> list[str]:
-    """A new sighting's evidence, followed by the context pack the incident already carries."""
-    return list(evidence) + [e for e in before if e.startswith(CONTEXT_PREFIX)]
+    """A new sighting's evidence, followed by what Sentinel added itself: the seen-before lines, the context pack."""
+    return list(evidence) + [e for e in before if e.startswith(KEPT_PREFIXES)]
 
 
-def _with_context(before: list[str], context: list[str]) -> list[str]:
-    """The incident's evidence with its context pack replaced by a newer one."""
-    return [e for e in before if not e.startswith(CONTEXT_PREFIX)] + list(context)
+def _with_context(before: list[str], added: list[str]) -> list[str]:
+    """
+    The incident's evidence with Sentinel's own lines added: each kind given
+    (a context pack, seen-before lines) replaces the lines of that kind it
+    carried; a kind not given is kept. A newer pack must not drop the history.
+    """
+    kinds = tuple(p for p in KEPT_PREFIXES if any(line.startswith(p) for line in added))
+    return [e for e in before if not (kinds and e.startswith(kinds))] + list(added)
 
 
 @dataclass(frozen=True)
@@ -87,6 +92,19 @@ class Upserted:
     severity: Severity
     occurrences: int
     first_seen_utc: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class EarlierEpisodes:
+    """
+    The resolved episodes of a fingerprint before the incident just opened:
+    how many, when the latest was last seen, and what a person wrote there
+    under "what was done" (the Resolution column the console fills), if anything.
+    """
+
+    count: int
+    last_seen_utc: Optional[datetime]
+    last_resolution: str = ""
 
 
 @dataclass(frozen=True)
@@ -149,11 +167,20 @@ class IncidentStore(ABC):
 
     def attach_context(self, incident_id: int, context: list[str]) -> None:
         """
-        Put a context pack (sentinel/pack.py) in an incident's evidence, in
-        place of the one it carried. Later sightings replace the agent's own
-        evidence and keep the pack. A store that cannot keep one does nothing:
-        the pack is still in the message.
+        Put a context pack (sentinel/pack.py), or seen-before lines, in an
+        incident's evidence, in place of the lines of that kind it carried.
+        Later sightings replace the agent's own evidence and keep these. A
+        store that cannot keep them does nothing: they are still in the message.
         """
+
+    def earlier_episodes(self, fingerprint: str, incident_id: int) -> Optional[EarlierEpisodes]:
+        """
+        The resolved episodes of ``fingerprint`` other than ``incident_id``,
+        or None when there are none. A store that cannot tell returns None;
+        the engine asks after the incident is stored, so a failed read costs
+        the "seen before" line and nothing else.
+        """
+        return None
 
 
 class MemoryIncidentStore(IncidentStore):
@@ -222,12 +249,28 @@ class MemoryIncidentStore(IncidentStore):
             if row is not None:
                 row["evidence"] = _with_context(row["evidence"], context)
 
+    def earlier_episodes(self, fingerprint: str, incident_id: int) -> Optional[EarlierEpisodes]:
+        with self._lock:
+            done = sorted((r for r in self._rows.values()
+                           if r["fingerprint"] == fingerprint and r["id"] != incident_id
+                           and r["status"] == Status.RESOLVED.value),
+                          key=lambda r: (r["first_seen"], r["id"]))
+            if not done:
+                return None
+            last = done[-1]
+            return EarlierEpisodes(len(done), last["last_seen"], last.get("resolution") or "")
+
     # Test helpers.
     last_check: Optional[datetime] = None
 
     def rows(self) -> list[dict]:
         with self._lock:
             return [dict(r) for r in self._rows.values()]
+
+    def write_resolution(self, incident_id: int, text: str) -> None:
+        """What a person does from the console's Resolve form or "Edit notes"."""
+        with self._lock:
+            self._rows[incident_id]["resolution"] = text
 
 
 class PostgresIncidentStore(IncidentStore):
@@ -383,6 +426,27 @@ class PostgresIncidentStore(IncidentStore):
                         (_json(_with_context(_evidence_list(row[0]), context)), incident_id))
 
         self._run(work)
+
+    def earlier_episodes(self, fingerprint: str, incident_id: int) -> Optional[EarlierEpisodes]:
+        # One query: the window count is taken before the LIMIT, so it counts
+        # every earlier episode while the row returned is the latest of them.
+        def work(cur) -> Optional[EarlierEpisodes]:
+            cur.execute(
+                'SELECT COUNT(*) OVER (), "LastSeenUtc", "Resolution" FROM incidents '
+                'WHERE "Fingerprint" = %s AND "Status" = %s AND "Id" <> %s '
+                'ORDER BY "FirstSeenUtc" DESC, "Id" DESC LIMIT 1',
+                (_text(fingerprint), Status.RESOLVED.value, incident_id),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            count, last_seen, resolution = row
+            if isinstance(last_seen, datetime) and last_seen.tzinfo is None:
+                last_seen = last_seen.replace(tzinfo=timezone.utc)
+            return EarlierEpisodes(int(count), last_seen if isinstance(last_seen, datetime) else None,
+                                   resolution or "")
+
+        return self._run(work)
 
     def _append_fallback(self, finding: Finding, now_utc: datetime) -> None:
         """

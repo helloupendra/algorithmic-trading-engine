@@ -22,6 +22,11 @@ An incident that opens, or escalates to high or critical, gets a context pack
 around it. It rides in the incident's evidence and in the message; two minutes
 later the log lines that came after are added to the evidence, quietly.
 
+An incident that opens for a problem with earlier resolved episodes (the same
+fingerprint) says so, in the message and as ``history: `` evidence lines: how
+many times, when last, and what a person wrote was done the last time. Read
+after the incident is stored, so a failed read loses only those lines.
+
 Messages go through an outbox. One that Telegram does not take (unreachable, a
 429) stays there and is tried again with a growing pause, in order, a few per
 round, without holding up the checks; one delivered late says so. On start,
@@ -43,8 +48,8 @@ from typing import Any, Callable, Optional
 from sentinel.agents.base import Agent
 from sentinel.clock import to_ist
 from sentinel.context import SentinelContext
-from sentinel.model import CONTEXT_PREFIX, Finding, Severity
-from sentinel.notify import Notifier, format_opened, format_resolved
+from sentinel.model import CONTEXT_PREFIX, HISTORY_PREFIX, KEPT_PREFIXES, Finding, Severity
+from sentinel.notify import Notifier, format_opened, format_resolved, format_seen_before
 from sentinel.pack import LOG_WINDOW, ContextPack, Pack
 from sentinel.store import IncidentStore
 
@@ -347,16 +352,19 @@ class SentinelEngine:
         if not (result.is_new or result.escalated):
             return
 
+        history = self._seen_before(fingerprint, result.incident_id) if result.is_new else []
         pack = None
         # A low incident turning medium is worth a message, not a second look around.
         if result.is_new or result.severity.rank >= Severity.HIGH.rank:
             pack = self._context(result.first_seen_utc or now, now)
-            if pack is not None and pack.lines:
-                try:
-                    self._store.attach_context(result.incident_id, pack.lines)
+        added = history + (pack.lines if pack is not None else [])
+        if added:
+            try:
+                self._store.attach_context(result.incident_id, added)
+                if pack is not None and pack.lines:
                     self._later[result.incident_id] = pack   # a newer pack replaces a waiting one
-                except Exception as exc:
-                    log.warning("could not keep the context of #%s: %s", result.incident_id, exc)
+            except Exception as exc:
+                log.warning("could not keep the context of #%s: %s", result.incident_id, exc)
         if result.severity is Severity.LOW:
             return   # the console's, not a message: see the module docstring
         context = pack.lines if pack else None
@@ -368,15 +376,31 @@ class SentinelEngine:
             waiting = self._outbox.get(_unstored_key(fingerprint))
             if waiting is not None:
                 waiting.text = format_opened(finding, result.incident_id, escalated=result.escalated,
-                                             context=context)
+                                             context=context, history=history)
                 waiting.incident_id = result.incident_id
             else:
                 self._mark_notified(result.incident_id)
             return
 
         text = format_opened(finding, result.incident_id, escalated=result.escalated or told is not None,
-                             context=context)
+                             context=context, history=history)
         self._queue(_open_key(result.incident_id), text, result.severity, now, incident_id=result.incident_id)
+
+    def _seen_before(self, fingerprint: str, incident_id: int) -> list[str]:
+        """
+        Whether the problem just opened has happened before, as evidence lines;
+        none when it has not, or when the store cannot say. Asked after the
+        incident is stored and never inside its insert: a failed read costs
+        this line, never the incident or its message.
+        """
+        try:
+            earlier = self._store.earlier_episodes(fingerprint, incident_id)
+        except Exception as exc:
+            log.warning("could not read the earlier episodes of %s: %s", fingerprint, exc)
+            return []
+        if earlier is None:
+            return []
+        return format_seen_before(earlier.count, earlier.last_seen_utc, earlier.last_resolution)
 
     def _unstorable(self, finding: Finding, notice: bool, now: datetime, exc: Exception) -> None:
         """
@@ -598,13 +622,15 @@ class SentinelEngine:
             try:
                 finding = Finding(agent=row.agent, rule=row.rule, severity=row.severity, title=row.title,
                                   summary=row.summary, fingerprint=row.fingerprint, where=row.where,
-                                  evidence=[e for e in row.evidence if not e.startswith(CONTEXT_PREFIX)],
+                                  evidence=[e for e in row.evidence if not e.startswith(KEPT_PREFIXES)],
                                   suggestion=row.suggestion)
             except ValueError as exc:
                 log.warning("could not rebuild the message of #%s: %s", row.incident_id, exc)
                 continue
             context = [e for e in row.evidence if e.startswith(CONTEXT_PREFIX)]
-            self._queue(_open_key(row.incident_id), format_opened(finding, row.incident_id, context=context or None),
+            history = [e for e in row.evidence if e.startswith(HISTORY_PREFIX)]
+            self._queue(_open_key(row.incident_id),
+                        format_opened(finding, row.incident_id, context=context or None, history=history),
                         row.severity, row.first_seen_utc or self._ctx.now(), incident_id=row.incident_id)
         if rows:
             log.info("%d live incident(s) had no message sent; sending them now", len(rows))

@@ -548,6 +548,98 @@ class PlanTests(unittest.TestCase):
         self.assertEqual({"admin": 13, "coderforchange": 10}, by_account)
 
 
+class SeenBeforeTests(unittest.TestCase):
+    """A problem that comes back says so: how often, when last, and what was done then."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.store = MemoryIncidentStore()
+        self.notifier = RecordingNotifier()
+
+    def engine(self, script, store=None):
+        return SentinelEngine([ScriptedAgent(script)], store or self.store, self.notifier,
+                              make_context(self.tmp), monotonic=clock_ticks())
+
+    def evidence(self, incident_id, store=None):
+        return next(r for r in (store or self.store).rows() if r["id"] == incident_id)["evidence"]
+
+    def test_a_problem_that_comes_back_says_how_often_and_what_was_done_last_time(self):
+        e = self.engine([[finding()], [], [], [finding()], [finding()]])
+        e.run_due()                   # #1 opens
+        e.run_due()
+        e.run_due()                   # two clean checks: #1 resolved
+        self.store.write_resolution(1, "Restarted the Dhan feed\nfrom the desk")
+        e.run_due()                   # it comes back: #2
+
+        first, resolved, second = self.notifier.sent
+        self.assertNotIn("Seen before", first)   # the first time is the first time
+        self.assertNotIn("Seen before", resolved)
+        # make_context's clock: 06:00 UTC on 24 Sep, 11:30 IST.
+        self.assertIn("No NSE tick for 120 s.\n\nSeen before: once, last on 24 Sep 2026, 11:30 IST\n"
+                      "Last time: Restarted the Dhan feed from the desk\n\nEvidence:", second)
+        self.assertIn("#2 · scripted/feed-silent", second)
+
+        history = ["history: Seen before: once, last on 24 Sep 2026, 11:30 IST",
+                   "history: Last time: Restarted the Dhan feed from the desk"]
+        self.assertEqual(["newest NSE tick 11:27:35 IST"] + history, self.evidence(2))
+        self.assertFalse(any(line.startswith("history: ") for line in self.evidence(1)))
+
+        e.run_due()                   # a later sighting replaces the agent's evidence, not the history
+        self.assertEqual(["newest NSE tick 11:27:35 IST"] + history, self.evidence(2))
+        self.assertEqual(3, len(self.notifier.sent))
+
+    def test_with_no_resolution_written_it_only_counts(self):
+        e = self.engine([[finding()], [], [], [finding()], [], [], [finding()]])
+        for _ in range(7):
+            e.run_due()
+        last = self.notifier.sent[-1]
+        self.assertIn("Seen before: 2 times, last on 24 Sep 2026, 11:30 IST", last)
+        self.assertNotIn("Last time:", last)
+        self.assertEqual(["history: Seen before: 2 times, last on 24 Sep 2026, 11:30 IST"],
+                         [line for line in self.evidence(3) if line.startswith("history: ")])
+
+    def test_a_failed_history_read_still_records_and_sends_the_incident(self):
+        class NoHistory(MemoryIncidentStore):
+            def earlier_episodes(self, fingerprint, incident_id):
+                raise ConnectionError("server closed the connection unexpectedly")
+
+        store = NoHistory()
+        e = self.engine([[finding()], [], [], [finding()]], store=store)
+        with self.assertLogs("sentinel.engine", level="WARNING") as logs:
+            for _ in range(4):
+                e.run_due()
+        self.assertEqual([1, 2], [r["id"] for r in store.rows()])
+        self.assertEqual(3, len(self.notifier.sent))
+        self.assertIn("NEW [HIGH] NSE feed silent", self.notifier.sent[-1])
+        self.assertNotIn("Seen before", self.notifier.sent[-1])
+        self.assertEqual(["newest NSE tick 11:27:35 IST"], self.evidence(2, store))
+        self.assertTrue(any("could not read the earlier episodes" in line for line in logs.output))
+
+    def test_an_escalation_is_not_a_new_episode_and_asks_nothing(self):
+        asked = []
+
+        class Counting(MemoryIncidentStore):
+            def earlier_episodes(self, fingerprint, incident_id):
+                asked.append(incident_id)
+                return super().earlier_episodes(fingerprint, incident_id)
+
+        e = self.engine([[finding(Severity.MEDIUM)], [finding(Severity.CRITICAL)]], store=Counting())
+        e.run_due()
+        e.run_due()
+        self.assertEqual([1], asked)
+        self.assertEqual(2, len(self.notifier.sent))
+
+    def test_a_message_sent_after_a_restart_keeps_its_history_under_the_summary(self):
+        # The last process stored it with its history, then could not send it.
+        incident_id = self.store.upsert(finding(), datetime(2026, 9, 24, 6, 0, tzinfo=timezone.utc)).incident_id
+        self.store.attach_context(incident_id, ["history: Seen before: once, last on 23 Sep 2026, 14:02 IST"])
+        self.engine([[finding()]]).run_due()
+        message = self.notifier.sent[0]
+        self.assertIn("No NSE tick for 120 s.\n\nSeen before: once, last on 23 Sep 2026, 14:02 IST", message)
+        self.assertNotIn("• history:", message)
+        self.assertNotIn("• Seen before", message)
+
+
 class RedactionTests(unittest.TestCase):
     def test_tokens_and_passwords_never_leave_the_machine(self):
         text = ('Authorization: Bearer abcdefghijklmnopqrstuvwxyz123 password=hunter2hunter2 '

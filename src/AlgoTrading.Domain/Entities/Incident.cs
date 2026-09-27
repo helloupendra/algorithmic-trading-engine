@@ -92,6 +92,26 @@ public class Incident
 
     /// <summary>When Sentinel last sent it to Telegram, if it did.</summary>
     public DateTime? NotifiedUtc { get; set; }
+
+    /// <summary>
+    /// Why it happened, in a person's words; null until someone writes it.
+    /// </summary>
+    /// <remarks>
+    /// This and <see cref="Resolution"/> and <see cref="FixRef"/> are the
+    /// incident's knowledge record: what the desk learnt, kept on the episode
+    /// it was learnt from, so the next episode of the same fingerprint can show
+    /// what was done last time. Only the console writes them (on resolve, or
+    /// from "Edit notes" at any time); Sentinel never does, and its upsert
+    /// leaves them alone, so a sighting cannot overwrite a note. Stored already
+    /// redacted.
+    /// </remarks>
+    public string? RootCause { get; set; }
+
+    /// <summary>What was done about it; null until someone writes it.</summary>
+    public string? Resolution { get; set; }
+
+    /// <summary>Where the fix lives: a commit sha, a pull request or a doc link.</summary>
+    public string? FixRef { get; set; }
 }
 
 /// <summary>The values <see cref="Incident.Status"/> takes, exactly as Sentinel writes them.</summary>

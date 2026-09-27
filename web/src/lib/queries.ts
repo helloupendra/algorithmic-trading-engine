@@ -2414,9 +2414,9 @@ export function useSyncMarketFactors() {
 
 // ---------- Sentinel incidents (admin) ----------
 
-import { incidentsQuery, readIncidentList } from './incidents'
+import { historyQuery, incidentsQuery, readIncidentHistory, readIncidentList } from './incidents'
 import type { IncidentFilters } from './incidents'
-import type { IncidentSummary } from './types'
+import type { IncidentNotes, IncidentSummary } from './types'
 
 /**
  * What Sentinel found. Every 15 s: its health agent checks every 30 s and the
@@ -2456,15 +2456,46 @@ export function useAcknowledgeIncident() {
 }
 
 /**
- * Closes it now. If the condition is still there, Sentinel opens a new
- * incident on its next check and alerts again. Re-reads on failure too (see
+ * Closes it now, with what caused it and what was done when the form has them
+ * (sent in the same request, so a refused resolve stores no notes either). If
+ * the condition is still there, Sentinel opens a new incident on its next
+ * check and alerts again. Re-reads on failure too (see
  * {@link useAcknowledgeIncident}).
  */
 export function useResolveIncident() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: number) => api.post<unknown>(`/api/Incidents/${id}/resolve`),
+    mutationFn: ({ id, notes }: { id: number; notes?: IncidentNotes }) =>
+      api.post<unknown>(`/api/Incidents/${id}/resolve`, notes),
     onSettled: () => qc.invalidateQueries({ queryKey: ['incidents'] }),
+  })
+}
+
+/**
+ * Writes or corrects an incident's root cause, what was done, and the fix
+ * reference — open or resolved. Re-reads the list and the history either way:
+ * a 409 means Sentinel changed the row while the form was open.
+ */
+export function useIncidentNotes() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, notes }: { id: number; notes: IncidentNotes }) =>
+      api.post<unknown>(`/api/Incidents/${id}/notes`, notes),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['incidents'] }),
+  })
+}
+
+/**
+ * Every problem of the last `days` days, one row per fingerprint with its
+ * episodes. Once a minute: it is for looking back, and a new episode is on the
+ * live list first.
+ */
+export function useIncidentHistory(days: number) {
+  const qs = historyQuery(days)
+  return useQuery({
+    queryKey: ['incidents', 'history', qs],
+    queryFn: async () => readIncidentHistory(await api.get<unknown>(`/api/Incidents/history?${qs}`)),
+    refetchInterval: 60_000,
   })
 }
 

@@ -1,13 +1,14 @@
 import _bootstrap  # noqa: F401
 
 import unittest
+from datetime import datetime, timezone
 from unittest import mock
 
 import requests
 
 from sentinel.model import Finding, Severity
 from sentinel import notify
-from sentinel.notify import TelegramNotifier, format_opened, format_resolved, redact
+from sentinel.notify import TelegramNotifier, format_opened, format_resolved, format_seen_before, redact
 
 # The shared redaction spec (sentinel/notify.py) as cases. The same table is
 # in tests/AlgoTrading.UnitTests/IncidentsControllerTests.cs and
@@ -169,6 +170,46 @@ class TelegramNotifierTests(unittest.TestCase):
         with self.post(Reply(200, {"ok": True})) as post:
             self.assertTrue(self.notifier.send("feed log: caf\udce9"))
         self.assertEqual("feed log: caf?", post.call_args.kwargs["json"]["text"])
+
+
+class SeenBeforeFormatTests(unittest.TestCase):
+    """The lines that say a problem has happened before: in the evidence with a prefix, in the message without."""
+
+    WHEN = datetime(2026, 9, 24, 5, 57, tzinfo=timezone.utc)   # 11:27 IST
+
+    def test_the_first_time_says_nothing(self):
+        self.assertEqual([], format_seen_before(0, self.WHEN, "Restarted the feed"))
+
+    def test_how_often_when_last_in_ist_and_what_was_done(self):
+        self.assertEqual(["history: Seen before: once, last on 24 Sep 2026, 11:27 IST",
+                          "history: Last time: Restarted the feed"],
+                         format_seen_before(1, self.WHEN, "Restarted the feed"))
+        self.assertEqual(["history: Seen before: 4 times, last on 24 Sep 2026, 11:27 IST"],
+                         format_seen_before(4, self.WHEN, ""))
+
+    def test_a_timestamp_without_a_zone_is_utc_and_none_is_left_out(self):
+        self.assertEqual(["history: Seen before: once, last on 24 Sep 2026, 11:27 IST"],
+                         format_seen_before(1, self.WHEN.replace(tzinfo=None)))
+        self.assertEqual(["history: Seen before: 2 times"], format_seen_before(2, None))
+
+    def test_a_long_resolution_over_several_lines_is_one_short_line(self):
+        lines = format_seen_before(1, self.WHEN, "Closed the sixth\nDhan socket.  " + "x" * 400)
+        last_time = lines[1].removeprefix("history: Last time: ")
+        self.assertTrue(last_time.startswith("Closed the sixth Dhan socket. x"))
+        self.assertNotIn("\n", last_time)
+        self.assertEqual(notify.LAST_TIME_CHARS, len(last_time))
+        self.assertTrue(last_time.endswith("…"))
+
+    def test_the_message_carries_them_under_the_summary_and_redacts_them(self):
+        f = Finding(agent="health", rule="feed-silent", severity=Severity.HIGH, title="NSE feed silent",
+                    summary="No NSE tick for 120 s.", fingerprint="health:feed-silent:NSE",
+                    evidence=["newest tick 11:27:35 IST"])
+        history = format_seen_before(2, self.WHEN, "Set DHAN_PIN=1234 in .env again")
+        text = format_opened(f, 9, history=history)
+        self.assertIn("No NSE tick for 120 s.\n\nSeen before: 2 times, last on 24 Sep 2026, 11:27 IST\n"
+                      "Last time: Set DHAN_PIN=… in .env again\n\nEvidence:\n• newest tick 11:27:35 IST", text)
+        self.assertNotIn("1234", text)
+        self.assertNotIn("Seen before", format_opened(f, 9))
 
 
 if __name__ == "__main__":
