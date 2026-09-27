@@ -49,4 +49,48 @@ public class OptionChargesTests
     {
         Assert.True(OptionCharges.For(-5m, -5m, -2).Total >= 0m);
     }
+
+    [Fact]
+    public void Crude_options_are_charged_at_MCX_rates()
+    {
+        // 2 lots of a CRUDEOIL option (100 barrels a lot), bought at 150 and
+        // sold at 180: buy turnover 30,000, sell 36,000, two orders. The Python
+        // engine gives 98.7317 (unrounded lines).
+        var c = OptionCharges.For(30_000m, 36_000m, 2, ChargeSchedule.McxOptions);
+
+        Assert.Equal(40m, c.Brokerage);
+        Assert.Equal(18m, c.Stt);          // CTT 0.05% of the sell side
+        Assert.Equal(27.59m, c.Exchange);  // MCX 0.0418% of both sides
+        Assert.Equal(0.07m, c.Sebi);
+        Assert.Equal(0.9m, c.Stamp);       // 0.003% of the buy side
+        Assert.Equal(12.18m, c.Gst);
+        Assert.Equal(98.74m, c.Total);
+
+        // At the index-option rates it was charged at until 28 Sep: STT alone 54.
+        Assert.Equal(54m, OptionCharges.For(30_000m, 36_000m, 2).Stt);
+    }
+
+    [Fact]
+    public void Crude_futures_have_their_own_rates()
+    {
+        var c = OptionCharges.For(600_000m, 610_000m, 2, ChargeSchedule.McxFutures);
+
+        Assert.Equal(61m, c.Stt);          // CTT 0.01% of the sell side
+        Assert.Equal(25.41m, c.Exchange);  // MCX 0.0021%
+        Assert.Equal(12m, c.Stamp);        // 0.002% of the buy side
+    }
+
+    [Theory]
+    [InlineData("MCX:CRUDEOIL26OCT5500CE", "MCX options")]
+    [InlineData("mcx:crudeoil26oct5500pe", "MCX options")]
+    [InlineData("MCX:CRUDEOIL26OCTFUT", "MCX futures")]
+    [InlineData("MCX:CRUDEOILM26OCTFUT", "MCX futures")]
+    [InlineData("NSE:NIFTY26SEP25000CE", "index options")]
+    [InlineData("BSE:SENSEX26OCT82000PE", "index options")]
+    [InlineData("MANUAL", "index options")]
+    [InlineData(null, "index options")]
+    public void Each_symbol_is_charged_under_its_own_schedule(string? symbol, string schedule)
+    {
+        Assert.Equal(schedule, ChargeSchedule.ForSymbol(symbol).Name);
+    }
 }
