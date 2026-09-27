@@ -52,7 +52,7 @@ stop something.
 `GET /api/Strategy` filters the catalog to what the caller may run — a courtesy,
 so a trader is not shown buttons that would be refused.
 
-`POST /api/Strategy/{id}/deploy` is what actually stops anything. Immediately
+`POST /api/Strategy/{id}/start` is what actually stops anything. Immediately
 before a runner is launched it checks strategy membership, underlying, lots, mode
 and the open-run count, and answers **403 with the reason**:
 

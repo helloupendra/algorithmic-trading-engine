@@ -97,20 +97,20 @@ public class StrategyController : ControllerBase
     // Catalog
     // ------------------------------------------------------------------
 
+    /// <summary>User id to user name, read once per request (the table is small).</summary>
+    private async Task<IReadOnlyDictionary<long, string>> UserNamesAsync(CancellationToken cancellationToken)
+        => await _dbContext.AppUsers.AsNoTracking()
+            .ToDictionaryAsync(u => u.Id, u => u.UserName, cancellationToken);
+
     /// <summary>
     /// The strategies the caller may run. An admin sees the whole catalog; a
     /// trader sees exactly what their package and overrides allow.
     /// </summary>
     /// <remarks>
     /// Filtering here is a courtesy, so a trader is not shown buttons that would
-    /// be refused. The check that actually stops a deploy lives on the deploy
+    /// be refused. The check that actually stops a run lives on the start
     /// endpoint.
     /// </remarks>
-    /// <summary>User id to user name, read once per request (the table is small).</summary>
-    private async Task<IReadOnlyDictionary<long, string>> UserNamesAsync(CancellationToken cancellationToken)
-        => await _dbContext.AppUsers.AsNoTracking()
-            .ToDictionaryAsync(u => u.Id, u => u.UserName, cancellationToken);
-
     [HttpGet]
     public async Task<ActionResult<List<StrategyListItemResponse>>> GetAll(CancellationToken cancellationToken)
     {
@@ -160,9 +160,9 @@ public class StrategyController : ControllerBase
     /// uses the same launch dialog (underlying, lots, risk rules, strikes) as
     /// the admin runner, and this is the one endpoint behind it. What keeps a
     /// trader inside their package is <see cref="IStrategyAccessService.CanDeployAsync"/>,
-    /// checked below on the last step before a runner is launched — the same
-    /// gate the older create-run-then-deploy path applies. Admins pass it by
-    /// role. The run is owned by whoever started it.
+    /// checked below on the last step before a runner is launched. Admins pass
+    /// it by role. The run is owned by whoever started it, or by the trader an
+    /// admin names in <c>ownerUserId</c>.
     /// </remarks>
     [HttpPost("{id:int}/start")]
     public async Task<IActionResult> StartStrategy(
@@ -316,140 +316,25 @@ public class StrategyController : ControllerBase
             run.LastError = "Runner failed to start.";
             run.CompletedUtc = DateTime.UtcNow;
             await _dbContext.SaveChangesAsync(cancellationToken);
-            return error ?? StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to start the runner." });
-        }
-
-        // Durable pid so a restarted API can adopt (or stop) this runner.
-        await _runControl.RecordRunnerPidAsync(running.RunId, running.ProcessId, startedBy);
-
-        return Ok(StartResponse($"Started {strategy.Name} on {underlying} (paper).", running));
-    }
-
-    /// <summary>
-    /// Deploys a strategy against an existing LivePaper run created by the trader
-    /// wizard (its parametersJson carries the wizard's configuration). Any signed-in
-    /// trader may do this: the runner only posts paper signals into the Simulator.
-    /// </summary>
-    public record DeployRequest(long RunId);
-
-    [HttpPost("{id:int}/deploy")]
-    public async Task<IActionResult> Deploy(
-        int id, 
-        [FromBody] DeployRequest request, 
-        [FromServices] AlgoTrading.Application.Interfaces.IRiskLimitsStore limitsStore,
-        CancellationToken cancellationToken)
-    {
-        var run = await _dbContext.SimulationRuns
-            .FirstOrDefaultAsync(r => r.Id == request.RunId, cancellationToken);
-        if (run is null)
-            return NotFound(new { message = $"Simulation run {request.RunId} not found. Create it first via POST /api/Simulator/runs." });
-
-        if (!string.Equals(run.Mode, LivePaperMode, StringComparison.OrdinalIgnoreCase))
-            return BadRequest(new { message = "Only LivePaper runs can be deployed from the console for now — live mode arrives with the execution loop." });
-
-        var strategy = await _catalog.FindAsync(id, cancellationToken);
-        if (strategy is null) return NotFound(new { message = $"Strategy {id} not found." });
-
-        if (_registry.Contains(run.Id))
-            return Conflict(new { message = $"Run {run.Id} already has a runner behind it." });
-
-        var p = LiveRunParameters.Parse(run.ParametersJson);
-        var underlying = p.Underlying
-                         ?? UnderlyingCatalog.UnderlyingForSpot(run.Symbol)
-                         ?? UnderlyingCatalog.InferUnderlying(run.Symbol);
-        if (string.IsNullOrWhiteSpace(underlying))
-            return BadRequest(new { message = $"Run {run.Id} has no usable symbol to derive an underlying from." });
-
-        underlying = underlying.Trim().ToUpperInvariant();
-
-        // The run row already says whose it is, so the duplicate to refuse is
-        // the same strategy on the same underlying in that same account.
-        if (_registry.Find(id, underlying, run.UserId) is not null)
-            return Conflict(new { message = AlreadyRunningMessage(strategy.Name, underlying) });
-
-        var riskLimits = limitsStore.GetLimits();
-        if (RunCap.Blocks(riskLimits.MaxConcurrentRuns, _registry.CountFor(run.UserId)))
-            return StatusCode(StatusCodes.Status429TooManyRequests,
-                new { message = $"Concurrent strategy limit reached ({riskLimits.MaxConcurrentRuns})." });
-
-        var spotSymbol = string.IsNullOrWhiteSpace(run.Symbol) ? UnderlyingCatalog.SpotSymbolFor(underlying) : run.Symbol;
-        int lots = Math.Max(1, p.Lots ?? strategy.DefaultLots);
-
-        // Same guard as Start: without option contracts the runner would only
-        // exit with "no expiries", which reads as a crash on the run card.
-        if (!await HasFutureOptionContractsAsync(underlying, cancellationToken))
-            return BadRequest(new { message = $"No option contracts loaded for {underlying} — import the F&O master first." });
-
-        var userId = User.GetRequiredUserId();
-        var startedBy = User.GetUserName() ?? "unknown";
-
-        // What this trader may run. Filtering the strategy list is a courtesy;
-        // this check is what actually stops anything, so it happens on the last
-        // step before a runner is launched.
-        int openRuns = await _dbContext.SimulationRuns
-            .CountAsync(
-                x => x.UserId == userId && (x.Status == "Running" || x.Status == "Stopping"),
-                cancellationToken);
-
-        var decision = await _strategyAccess.CanDeployAsync(
-            userId,
-            strategy.Name,
-            underlying,
-            lots,
-            run.Mode,
-            openRuns,
-            cancellationToken);
-
-        if (!decision.Allowed)
-        {
-            return StatusCode(StatusCodes.Status403Forbidden, new { message = decision.Reason });
-        }
-
-        await EnsureSpotOnWatchlistAsync(spotSymbol, cancellationToken);
-
-        var launch = new LaunchSpec(strategy, run.Id, userId, startedBy, underlying, spotSymbol, lots, p.Risk);
-        var (error, running) = LaunchRunner(launch);
-        if (error is not null || running is null)
-        {
-            // Same closing as Start: a run whose runner never came up must say so.
-            // Left Pending it becomes a row nobody can explain later, and the
-            // trader has no reason on screen for why nothing happened.
-            run.Status = "Failed";
-            run.LastError = "Runner failed to start.";
-            run.CompletedUtc = DateTime.UtcNow;
-            await _dbContext.SaveChangesAsync(cancellationToken);
 
             HttpContext.Describe(
-                $"Deploy of {strategy.Name} on {underlying} failed — run #{run.Id} could not start its runner.",
+                $"Start of {strategy.Name} on {underlying} failed — run #{run.Id} could not start its runner.",
                 "run",
                 run.Id.ToString());
 
             return error ?? StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to start the runner." });
         }
 
-        run.Status = "Running";
-        run.StartedUtc ??= DateTime.UtcNow;
-        run.CompletedUtc = null;
-        await _dbContext.SaveChangesAsync(cancellationToken);
-
+        // Durable pid so a restarted API can adopt (or stop) this runner.
         await _runControl.RecordRunnerPidAsync(running.RunId, running.ProcessId, startedBy);
 
         HttpContext.Describe(
-            $"Deployed {strategy.Name} on {underlying} — run #{run.Id}, {lots} lot(s).",
+            $"Started {strategy.Name} on {underlying} — run #{run.Id}, {lots} lot(s)"
+                + (userId == callerId ? "." : $", in {ownerName}'s account."),
             "run",
             run.Id.ToString());
 
-        await _notifier.NotifyAsync(
-            NotificationCategory.StrategyRun,
-            NotificationSeverity.Success,
-            $"{strategy.Name} started on {underlying}",
-            $"Run #{run.Id} · {lots} lot(s) · started by {startedBy}.",
-            underlying: underlying,
-            symbol: spotSymbol,
-            simulationRunId: run.Id,
-            cancellationToken: cancellationToken);
-
-        return Ok(StartResponse($"Deployed {strategy.Name} on run {run.Id}.", running));
+        return Ok(StartResponse($"Started {strategy.Name} on {underlying} (paper).", running));
     }
 
     /// <summary>
