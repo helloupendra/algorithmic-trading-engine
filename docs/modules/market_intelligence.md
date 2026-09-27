@@ -27,7 +27,9 @@ Code:
 
 API: `api/MarketIntelligence/...`, below. The reads need the `market-data`
 grant (admins hold every grant); `status` and the backfill trigger are
-admin-only. The console's Desk reads it.
+admin-only. The console's Desk reads it for admins and for traders holding
+the grant (news and filings, the overnight table, board meetings in the week
+ahead, NSE breadth); a trader without it does not see those panels.
 
 ## The point-in-time rule
 
