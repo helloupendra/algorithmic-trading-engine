@@ -90,6 +90,20 @@ public static class SystemSettingKeys
     /// </summary>
     public const string PatternRulesSeeded = "patterns.rules.seeded";
 
+    /// <summary>
+    /// The last session the 08:50 IST forecast job was started for (or found
+    /// missed), "yyyy-MM-dd". Written before the job starts, so an API restart
+    /// in the middle of it never issues the same morning twice.
+    /// </summary>
+    public const string ForecastsLastIssuedSession = "forecasts.issue.lastSession";
+
+    /// <summary>
+    /// The latest session whose outcomes the scoring job has been started for,
+    /// "yyyy-MM-dd". A trading day whose 15:50 IST has passed and is later than
+    /// this is a scoring run still owed — at 15:50, or at the next start-up.
+    /// </summary>
+    public const string ForecastsLastScoredSession = "forecasts.score.lastSession";
+
     private const string FeedPidPrefix = "feed.";
     private const string StrategyRunPidPrefix = "strategyrun.";
     private const string BacktestRunPidPrefix = "backtestrun.";

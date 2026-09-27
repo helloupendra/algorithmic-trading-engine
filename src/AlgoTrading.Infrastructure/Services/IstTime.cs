@@ -37,6 +37,14 @@ public static class IstTime
     public static DateTime StartOfDayUtc(DateOnly istDate)
         => FromIst(istDate.ToDateTime(TimeOnly.MinValue));
 
+    /// <summary>
+    /// 12:00 IST of the given day, as UTC: a moment safely inside the day, for
+    /// asking the session service (which answers for the day its clock
+    /// argument falls on) about a date rather than an instant.
+    /// </summary>
+    public static DateTime MiddayUtc(DateOnly istDate)
+        => FromIst(istDate.ToDateTime(new TimeOnly(12, 0)));
+
     /// <summary>23:59:59 IST of the given day, as UTC.</summary>
     public static DateTime EndOfDayUtc(DateOnly istDate)
         => FromIst(istDate.ToDateTime(new TimeOnly(23, 59, 59)));

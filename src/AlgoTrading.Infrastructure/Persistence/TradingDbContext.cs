@@ -90,6 +90,12 @@ public class TradingDbContext : DbContext
     /// <summary>One row: when Sentinel last finished a round of checks. See <see cref="SentinelHeartbeat"/>.</summary>
     public DbSet<SentinelHeartbeat> SentinelHeartbeats => Set<SentinelHeartbeat>();
 
+    /// <summary>The Analysis module's forecasts: written before the open, scored after the close. See <see cref="Forecast"/>.</summary>
+    public DbSet<Forecast> Forecasts => Set<Forecast>();
+
+    /// <summary>The model versions allowed to issue forecasts, with their backtests.</summary>
+    public DbSet<ForecastModel> ForecastModels => Set<ForecastModel>();
+
     /// <summary>What the candle-pattern scanner watches and whether it notifies.</summary>
     public DbSet<CandlePatternRule> CandlePatternRules => Set<CandlePatternRule>();
 
