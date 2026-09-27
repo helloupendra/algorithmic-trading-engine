@@ -337,16 +337,16 @@ def plan(inp: Inputs) -> list[Item]:
     if wanted is None:
         raise Unavailable("there is no morning plan (config/morning-plan.txt)")
     live = {r.key for r in _live_strategy_runs(inp)}
-    expected = [(a.lower(), s.lower(), u.upper()) for a, s, u in wanted.expected_runs()]
-    missing = [k for k in expected if k not in live]
+    # Matched as the trading agent matches (_Run.key), named as the plan spells them.
+    expected = {(a.lower(), s.lower(), u.upper()): f"{a} {s} {u.upper()}" for a, s, u in wanted.expected_runs()}
+    missing = [name for k, name in expected.items() if k not in live]
     per_account = Counter(a for a, _, _ in expected)
     accounts = ", ".join(f"{a} {n}" for a, n in per_account.items())
     if not missing:
         return [Item("plan", STRATEGIES, "Morning plan", State.OK,
                      f"All {len(expected)} planned runs are live ({accounts}).", link=LIVE_RUNS)]
-    names = [f"{a} {s} {u}" for a, s, u in missing]
     return [Item("plan", STRATEGIES, "Morning plan", State.FAIL,
-                 f"{len(missing)} of {len(expected)} planned runs are not live: {_listed(names)}.",
+                 f"{len(missing)} of {len(expected)} planned runs are not live: {_listed(missing)}.",
                  f"Start them from Strategies → Live Runner. Why they did not start is in "
                  f"logs/market-open-{inp.day}.log.", LIVE_RUNS)]
 

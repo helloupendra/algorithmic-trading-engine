@@ -170,7 +170,7 @@ class StrategyTests(Base):
                 run_row(4, "coderforchange", "Ghost", active=False)]
         item = self.one(checks.plan(self.inputs("morning", {RUNNING_PATH: rows})))
         self.assertIs(State.FAIL, item.state)
-        self.assertIn("2 of 4 planned runs are not live: admin fulcrum BANKNIFTY, coderforchange ghost NIFTY", item.detail)
+        self.assertIn("2 of 4 planned runs are not live: admin Fulcrum BANKNIFTY, coderforchange Ghost NIFTY", item.detail)
         self.assertIn(f"logs/market-open-{DAY}.log", item.action)
 
     def test_on_request_the_plan_is_checked_only_in_session_hours(self):
