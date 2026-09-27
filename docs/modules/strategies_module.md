@@ -19,7 +19,7 @@ The module runs strictly in **LivePaper** mode: real ticks, simulated fills thro
    - `Services/StrategyProcessRegistry.cs` — the in-memory registry of running runner processes, with drained stdout/stderr ring buffers and a last-exit record per strategy.
    - `Services/StrategyRunControl.cs` — the single stop pipeline (mark run `Stopping` → SIGTERM, then kill → [at the market close only: move the legs ticked "carry forward" to the owner's manual book] → square off open positions → persist `RUN_STOPPED` signal → registry bookkeeping). Used by the UI stop, the risk guard, market close and runner self-exit.
    - `Services/PositionCarryForward.cs` — the per-position carry-forward tick and the close's move of ticked legs (section 8).
-   - `Services/StrategyRiskGuardService.cs` — background service; every 3 s it marks each running run to market and trips the stop pipeline when total P&L ≤ −stop-loss or ≥ target.
+   - `Services/StrategyRiskGuardService.cs` — background service; every 3 s it marks each running run to market, judges its leg, group and overall rules (leg and group only on fresh marks, section 9) and closes legs or trips the stop pipeline.
    - `Controllers/StrategyController.cs` — catalog, start, stop, live view, logs, signal mirror.
    - `Controllers/InstrumentsController.cs` — `GET /api/Instruments/derivatives/underlyings`: the F&O inventory the launch dialog is built from.
 3. **Infrastructure (`src/AlgoTrading.Infrastructure`)**
@@ -53,9 +53,9 @@ Every run carries a `risk` object (all fields optional, set at start or changed 
 - **Per group** (₹ on one `OPEN_GROUP`, e.g. a straddle pair: realized of the group + unrealized of its open legs): a trip closes that group only; the run continues.
 - **Per leg** (premium points and/or % of the entry premium; BUY legs lose when the premium falls, SELL legs when it rises; when both are set the first to trip wins): a trip closes that leg only.
 
-The guard runs in the API every 3 seconds (`StrategyRiskGuardService`), not in the runner, so a wedged runner cannot skip its own stop. Each sweep marks the run to market, evaluates leg → group → overall, and closes through reduce-only `CLOSE_GROUP` signals at the last mark with the reason ("Leg stop-loss hit: BANKNIFTY 57500 CE −21.4 pts (−2.6%) ≤ −20 pts", "Group stop-loss hit: G1 P&L −1,240 ≤ −1,000"). A strategy's own later `CLOSE_GROUP` for an already-closed leg is reduce-only and ignored, so the guard can never leave a reverse position behind.
+The guard runs in the API every 3 seconds (`StrategyRiskGuardService`), not in the runner, so a wedged runner cannot skip its own stop. Each sweep marks the run to market, evaluates leg → group → overall, and closes through reduce-only `CLOSE_GROUP` signals at the latest quote, across the spread (section 9), with the reason ("Leg stop-loss hit: BANKNIFTY 57500 CE −21.4 pts (−2.6%) ≤ −20 pts", "Group stop-loss hit: G1 P&L −1,240 ≤ −1,000"). A strategy's own later `CLOSE_GROUP` for an already-closed leg is reduce-only and ignored, so the guard can never leave a reverse position behind.
 
-An overall trip runs the stop pipeline: the run is marked `Stopping` (further signals are rejected), the runner receives SIGTERM (falling back to a kill after 5 s), every open position is squared off at its last mark, and a `RUN_STOPPED` signal with the reason is persisted. The same pipeline serves the UI Stop button ("Stopped by <user>"), the market-close service (NSE and BSE runs at 15:30 IST, MCX runs at the MCX close — `MarketCloseRules`) and a runner that exits on its own ("Runner exited (code N)"). Only the market close's stop honours a leg's carry-forward tick (section 8); every other one squares off every leg. The backtest engine applies the same three levels bar by bar, so a rule behaves the same in replay and live.
+An overall trip runs the stop pipeline: the run is marked `Stopping` (further signals are rejected), the runner receives SIGTERM (falling back to a kill after 5 s), every open position is squared off at its latest quote (its last mark when it has none), and a `RUN_STOPPED` signal with the reason is persisted. The same pipeline serves the UI Stop button ("Stopped by <user>"), the market-close service (NSE and BSE runs at 15:30 IST, MCX runs at the MCX close — `MarketCloseRules`) and a runner that exits on its own ("Runner exited (code N)"). Only the market close's stop honours a leg's carry-forward tick (section 8); every other one squares off every leg. The backtest engine applies the same three levels bar by bar, so a rule behaves the same in replay and live.
 
 ### 4. Several runs of one strategy
 Runs are keyed by run id, so the same strategy can run on several underlyings at once (Fulcrum on BANKNIFTY and on NIFTY). Starting a strategy on an underlying it is already running on answers 409. Each run has its own card, stop, live view, logs and signal ring under `/api/Strategy/runs/{runId}/…`; the older strategy-scoped routes resolve to the single active run.
@@ -100,18 +100,49 @@ In the book it is held overnight (ticked there too), marked against tomorrow's q
 - The **book** owns the leg **from its entry**: the whole P&L of the trade, entry to exit, lands there, and so do the exit fill's charges.
 - Across the two, the trade is counted once and charged once — the run's entry charges plus the book's exit charges equal what the round trip costs in one run (to the paisa; `CarryForwardTests.After_a_move_the_run_keeps_its_entry_charges_and_the_book_the_trade`). The run history, the run page and `RunCharges` read the same figures.
 
+### 9. Paper fills: the spread, and how old a quote may be
+A live run's fill is priced by the API from the contract's latest quote (`live_quotes_latest`), not taken as the runner sent it (`PaperTradingService`, `PaperFillPricing`):
+- a SELL fills at the **bid** and a BUY at the **ask** when the quote has that side of the book;
+- otherwise at the last trade **less** (SELL) or **plus** (BUY) a half-spread: `LTP × (1 − HalfSpreadFraction)` / `LTP × (1 + HalfSpreadFraction)`. Some SENSEX contracts quote no book at all; a crossed book (bid above ask) is not used either;
+- a contract with no quote row at all fills at the price the signal carried, across the same half-spread.
+
+Net P&L already took the statutory charges off (`RunCharges`); the spread is the other half of what a round trip costs, and leaving it out flattered exactly the strategies that trade most. Fills booked before 28 Sep are left as they were. Replays (bar closes) and the manual ticket (its limit, or the bid or ask it showed the person) fill at the price they give.
+
+Each order row says how it was priced, in `paper_orders.MetadataJson`: `rule` (`bid`, `ask`, `ltp-less-half-spread`, `ltp-plus-half-spread`, `signal-…`, `mark-…`, `entry-…`, or `signal` for a price filled as given), `note` — the sentence a run view can show as it is ("filled at the bid", "LTP 101.20 less half-spread (0.15%)") — `quoteAgeSeconds` and, when it applies, `staleQuote`. `RequestedPrice` is what the runner asked for.
+
+**Stale quotes.** On 24 Sep the feed stalled from 11:27:36 to 11:34:06 and every quote froze while still looking current. While the contract's market is open, a quote older than `MaxQuoteAgeSeconds` now prices no strategy fill: the leg is left unpriced and the signal refused with the quote's age ("its latest quote is 384 s old; while the market is open a fill needs one under 60 s"), and the runner puts the strategy back as it was (section 10). The square-offs a person or the close asks for — the Stop button, closing a leg by hand, the 15:30 / MCX close, the risk guard's closes, the kill switch — always fill, on an old quote if that is all there is, and the order says "priced on a stale quote (N s old)": a leg left open overnight is worse than one closed at a stale price. Out of market hours the last quote is the only price there is; it is used, with the same note.
+
+**The risk guard** judges a leg only on a fresh mark. A position's mark carries the time of the quote it came from (`UpdatedUtc`), so a frozen quote re-applied every sweep still shows its age. A position marked from a quote older than `StrategyRunner:RiskGuardMaxMarkAgeSeconds` is skipped by its own stop/target and the leg rules, and its group by the group rules, until the quote moves again. The run log and the API log say so once per stall, and the owner gets one message ("Risk rules paused — Ghost on NIFTY"); the overall rules and the market-close square-off still apply.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `PaperFills:UseBidAsk` | `true` | Fill a SELL at the bid and a BUY at the ask when the quote has them. |
+| `PaperFills:HalfSpreadFraction` | `0.0015` | Half-spread (0.15%) a fill pays when there is no usable bid or ask. |
+| `PaperFills:MaxQuoteAgeSeconds` | `60` | While the market is open, the oldest quote a strategy's fill may be priced from. |
+| `StrategyRunner:RiskGuardMaxMarkAgeSeconds` | `30` | The oldest mark the guard judges a leg or a group on. |
+
+### 10. Booking signals, and the runner's saved state
+A strategy changes its own state inside `on_bar`: by the time the runner posts an `OPEN_GROUP`, the strategy already believes the group is open. So every signal is booked exactly once, or the strategy is told it was not (`strategies/signal_booking.py`):
+- Each signal is posted with a `clientSignalId` (a uuid, the same on every retry). The API books an id once per run — it looks the id up under the run's lock, and a unique index on `(SimulationRunId, ClientSignalId)` backs it — and answers a repeat with the row it already has. The signal row is written in the same transaction as its fills, so a refused signal leaves nothing behind.
+- A lost answer (connection error, timeout, 502/503/504) is retried: an `OPEN_GROUP` for about 5 s, sent again **without prices** so the API prices it from the quote as it is then; a `CLOSE_GROUP` for about a minute. An answer lost at the deadline gets one more post with the same id, since only the API can say whether it was booked.
+- Before `on_bar` the runner keeps a deep copy of the strategy's state. When a signal of the tick is refused (a 409 rate limit, a stale quote, a stopped run) or still unanswered when its retries run out, the runner hands the strategy that copy, logs `SIGNAL NOT BOOKED`, and sends none of the tick's later signals: the strategy emits them again on a later tick if it still wants them. One case cannot be undone that way — an `OPEN_GROUP` already booked earlier in the same tick, which the restored strategy would open a second time — so then the state is kept and the log says the strategy and the book disagree.
+
+The runner saves the strategy's state to Redis (`strategy:state:{runId}`) once right after warm-up and after every tick whose signals were booked. A strategy that keeps objects in its state writes and reads them through `state_to_json` / `state_from_json` (SmcStructureBreak and Ghost save their structure readers as the candles they read). A restarted runner recovers a saved state — and skips warm-up — only when it reads back as it was saved; one that lost a value to text, or that its strategy cannot read, is dropped and the runner warms up. When the runner exits, which stops its run, it deletes the run's state, heartbeat and lock; a saved state also expires after three days.
+
 ## Module Components
 
 ### Python
 - `src/AlgoTrading.PythonEngine/strategies/base_strategy.py` — `BaseStrategy` with the catalog attributes (`description`, `category`, `supported_underlyings`, `legs_summary`, `default_lots`, `default_params`) and `lots_from()`.
 - `src/AlgoTrading.PythonEngine/strategies/registry.py`, `tools/list_strategies.py` — discovery and catalog output.
 - `src/AlgoTrading.PythonEngine/strategies/execution_runner.py` — the live runner.
+- `src/AlgoTrading.PythonEngine/strategies/signal_booking.py` — posting a tick's signals with retries and a client id, and putting the strategy back when one is not booked.
+- `src/AlgoTrading.PythonEngine/state_management/runner_state.py`, `state_store.py` — what a runner starts from, and the run's keys in Redis.
 
 ### .NET
 - `src/AlgoTrading.Api/Controllers/StrategyController.cs`, `InstrumentsController.cs`
 - `src/AlgoTrading.Api/Services/StrategyCatalogService.cs`, `StrategyProcessRegistry.cs`, `StrategyRunControl.cs`, `StrategyRiskGuardService.cs`, `PythonEngineLocator.cs`, `MarketHoursService.cs`, `PositionCarryForward.cs`, `ManualBook.cs`
 - `src/AlgoTrading.Contracts/Strategies/*.cs` — request/response DTOs.
-- `src/AlgoTrading.Infrastructure/Services/LotSizeResolver.cs`, `UnderlyingCatalog.cs`, `PaperTradingService.cs`, `LocalCsvInstrumentImportService.cs`
+- `src/AlgoTrading.Infrastructure/Services/LotSizeResolver.cs`, `UnderlyingCatalog.cs`, `PaperTradingService.cs`, `PaperFillPricing.cs`, `PaperFillOptions.cs`, `LocalCsvInstrumentImportService.cs`
 
 ### React
 - `web/src/pages/strategies/LiveRunnerPage.tsx`, `StrategyLibraryPage.tsx`, `StrategiesOverviewPage.tsx`, `shared.tsx`
