@@ -53,6 +53,11 @@ public class SimulationSignalResponse
     public string MetadataJson { get; set; } = string.Empty;
 
     /// <summary>
+    /// The runner's id for the signal, when it sent one.
+    /// </summary>
+    public string? ClientSignalId { get; set; }
+
+    /// <summary>
     /// System creation time.
     /// </summary>
     public DateTime CreatedUtc { get; set; }
