@@ -29,6 +29,7 @@ import type {
   BrokerSessionInfo,
   CandleDto,
   ChainPollerStatus,
+  DeskPlanResponse,
   EquitySnapshot,
   FnoUnderlying,
   IngestorProcessStatus,
@@ -47,6 +48,7 @@ import type {
   MarketSessionInfo,
   OptionChain,
   OptionChainSeries,
+  OpenPositionsResponse,
   PaperOrder,
   PaperOrderRow,
   PaperPosition,
@@ -55,6 +57,7 @@ import type {
   RiskEvent,
   RiskExposureResponse,
   RiskLimits,
+  RunPnlSeriesResponse,
   SimulationPortfolio,
   SimulationRun,
   SimulationSignal,
@@ -604,6 +607,7 @@ export function usePlaceManualOrder() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['manual', 'book'] })
       qc.invalidateQueries({ queryKey: ['strategy', 'live'] })
+      qc.invalidateQueries({ queryKey: ['positions'] })
     },
   })
 }
@@ -956,6 +960,7 @@ export function useClosePositions() {
       // The run keeps running, so only its position-level views change.
       qc.invalidateQueries({ queryKey: ['strategy', 'live'] })
       qc.invalidateQueries({ queryKey: ['strategies'] })
+      qc.invalidateQueries({ queryKey: ['positions'] })
     },
   })
 }
@@ -984,6 +989,7 @@ export function useSetCarryForward() {
       }),
     onSuccess: (_data, { runId }) => {
       qc.invalidateQueries({ queryKey: ['strategy', 'live', runId] })
+      qc.invalidateQueries({ queryKey: ['positions'] })
     },
   })
 }
@@ -2610,17 +2616,6 @@ export function useDeskChainViews(underlyings: readonly string[], live: boolean)
   })
 }
 
-/** Open legs on each underlying's contracts, strategy runs and manual books alike, marked at the live price. */
-export function useDeskPositions(underlyings: readonly string[], live: boolean, enabled = true) {
-  return useQueries({
-    queries: underlyings.map((u) => ({
-      ...chainPositionsQuery(u),
-      enabled: enabled && Boolean(u),
-      refetchInterval: live ? DESK_LEGS_LIVE : 60_000,
-    })),
-  })
-}
-
 /** The platform limits (admin-only on the API). They change when an admin saves them, not with the market. */
 export function useDeskRiskLimits(enabled: boolean) {
   return useQuery({ ...riskLimitsQuery, enabled, refetchInterval: DESK_IDLE })
@@ -2631,21 +2626,79 @@ export function useDeskWatchlist(enabled: boolean) {
   return useQuery({ ...myWatchlistQuery, enabled, refetchInterval: DESK_IDLE })
 }
 
-/**
- * The viewer's manual book, in full: which legs were carried and from which
- * run. The Live runner reads a book once (it has no runner, so its view is
- * never "active"); the Desk re-reads it every minute, because a carry at the
- * close changes it while the page stays open.
- */
-export function useDeskBookView(runId: number | null) {
-  return useQuery({ ...liveViewQuery(runId ?? 0, runId != null), refetchInterval: 60_000 })
-}
-
 /** Today's one-minute bars for a small trace; the latest 375 cover a whole NSE session. */
 export function useIntradayTrace(symbol: string, live: boolean) {
   return useQuery({
     queryKey: ['bars', symbol, 375],
     queryFn: () => api.get<LiveBar[]>(`/api/LiveData/bars?${new URLSearchParams({ symbol, take: '375' })}`),
     refetchInterval: live ? 60_000 : false,
+  })
+}
+
+// ---------- The day's P&L series, open positions across books, the morning plan ----------
+
+/**
+ * One IST day of live runs' P&L, minute by minute (strategies grant; a
+ * trader gets their own runs). The recorder writes once a minute, so a day
+ * still being traded is read once a minute; a finished day never changes.
+ */
+export function useRunPnlSeries(date: string | null, live: boolean, enabled = true) {
+  return useQuery({
+    queryKey: ['strategy', 'pnl-series', date],
+    queryFn: () => api.get<RunPnlSeriesResponse>(`/api/Strategy/runs/pnl-series?${new URLSearchParams({ date: date ?? '' })}`),
+    enabled: enabled && date != null,
+    refetchInterval: live ? 60_000 : false,
+  })
+}
+
+/**
+ * Every open leg the viewer may see, across runs and manual books, marked at
+ * the live price (strategies grant; a trader gets their own). The Desk reads
+ * it every 15 s in the session; the Positions page, where legs are closed
+ * and ticked, every 5 s.
+ */
+export function useOpenPositions(pollMs: number | false, enabled = true) {
+  return useQuery({
+    queryKey: ['positions', 'open'],
+    queryFn: () => api.get<OpenPositionsResponse>('/api/Positions/open'),
+    enabled,
+    refetchInterval: pollMs,
+  })
+}
+
+/** How often the Desk reads the open legs: every 15 s in the session, every minute otherwise. */
+export const deskLegsPoll = (live: boolean) => (live ? DESK_LEGS_LIVE : 60_000)
+
+/**
+ * The morning plan against what is live (admin). A 404 means there is no
+ * plan file on the server, which asking again will not change.
+ */
+export function useDeskPlan(enabled: boolean) {
+  return useQuery({
+    queryKey: ['desk', 'plan'],
+    queryFn: () => api.get<DeskPlanResponse>('/api/Desk/plan'),
+    enabled,
+    refetchInterval: 60_000,
+    retry: (failures: number, error: unknown) => {
+      const status = (error as { status?: number } | null)?.status
+      return status !== 404 && status !== 401 && status !== 403 && failures < 2
+    },
+  })
+}
+
+/**
+ * The order ledgers of several runs at once, under the same keys as one
+ * run's (useLiveRunOrders), so a run's page and the Orders page share them.
+ * A finished run's ledger is read once; a live one every 30 s, plenty for a
+ * list a person reads, and cheap across two dozen runs.
+ */
+export function useRunsOrders(runs: ReadonlyArray<{ runId: number; live: boolean }>, enabled = true) {
+  return useQueries({
+    queries: runs.map(({ runId, live }) => ({
+      queryKey: ['strategy', 'orders', runId],
+      queryFn: () => api.get<PaperOrderRow[]>(`/api/Strategy/runs/${runId}/orders`),
+      enabled,
+      refetchInterval: live ? 30_000 : (false as const),
+    })),
   })
 }

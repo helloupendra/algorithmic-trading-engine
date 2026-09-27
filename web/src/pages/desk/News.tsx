@@ -24,7 +24,7 @@ export function News({ view, links, limit = 6 }: { view: DeskView; links: DeskLi
   const { legs } = useDeskLegs(view)
   const names = useMemo(
     () => ({
-      held: new Set((legs ?? []).map((l) => l.label.split(' ')[0].toUpperCase())),
+      held: new Set((legs ?? []).map((l) => l.underlying)),
       watched: new Set((watch.data ?? []).map((w) => tickerOf(w.symbol))),
     }),
     [legs, watch.data],

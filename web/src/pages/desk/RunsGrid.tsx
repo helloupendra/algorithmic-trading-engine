@@ -7,8 +7,9 @@
  * at the bottom, per strategy on the right, with the trades and the charges
  * that turn a gross into a net.
  *
- * Before the open the same grid is the morning plan: a tick per deployed run,
- * waiting for its session.
+ * Before the open the panel beside it is the morning plan: for the operator,
+ * the plan file read against what is live (GET /api/Desk/plan); for a
+ * trader, a tick per run of theirs deployed and waiting for its session.
  */
 
 import { Fragment } from 'react'
@@ -196,31 +197,6 @@ export function RunsGrid({ view, links }: { view: DeskView; links: DeskLinks }) 
   )
 }
 
-/** The account line under the plan: deployed of planned, where the plan says. */
-function PlanFoot({ view }: { view: DeskView }) {
-  const { plan } = useDeskPlan(view)
-  const first = view.runs?.map((r) => r.startedUtc).filter(Boolean).sort()[0] ?? null
-  return (
-    <>
-      {view.grid!.totals.map((t) => {
-        const planned = plan?.perAccount.find((a) => a.name === t.account.name)?.runs
-        return (
-          <tr key={t.account.id} className="dk-tot">
-            <td>
-              <Swatch tone={t.account.tone} />
-              <span className="dk-t2">{t.account.name}</span>
-            </td>
-            <td colSpan={view.grid!.underlyings.length} className="r dk-t2 dk-xs">
-              {planned != null ? `${t.runs} of ${planned} runs deployed` : `${t.runs} runs deployed`}
-              {first ? ` ${istHm(first)}` : ''}
-            </td>
-          </tr>
-        )
-      })}
-    </>
-  )
-}
-
 /** The plan is a narrow panel: a strategy by its first word ("SMC", "Ghost"), in full in the title. */
 function shortName(label: string): string {
   return label.split(' ')[0]
@@ -231,8 +207,142 @@ function opensAt(u: string): string {
   return /^(CRUDEOIL|CRUDEOILM|NATURALGAS|GOLD|SILVER)/.test(u) ? '09:00' : '09:15'
 }
 
+/** "config/morning-plan.txt" out of the server's absolute path. */
+function planFileName(path: string | null): string {
+  if (!path) return 'the plan file'
+  return path.split(/[\\/]/).filter(Boolean).slice(-2).join('/')
+}
+
+/**
+ * The morning plan as the file asks for it (admin: GET /api/Desk/plan), each
+ * run live or not by the API's own test (Running, runner alive), so a row
+ * left Running by a dead runner reads as not live. A row per strategy line of
+ * the file; in each cell, a line per account the line deploys into.
+ */
+function FilePlan({ view, links }: { view: DeskView; links: DeskLinks }) {
+  const { plan, file, ready, missing, searched, error } = useDeskPlan(view)
+  const head = (
+    <PanelHead
+      title="Morning plan"
+      meta={plan ? `${planFileName(file)} · ${plan.live} of ${plan.planned} live` : planFileName(file)}
+      more={links.runs ? { to: links.runs, label: 'Runs' } : null}
+    />
+  )
+  if (!ready) return <>{head}<Waiting>Reading the plan…</Waiting></>
+  if (missing) {
+    return (
+      <>
+        {head}
+        <p className="dk-fail" role="status">
+          There is no plan file on the server, so the morning job starts nothing.
+        </p>
+        {searched.length > 0 && <p className="dk-note">Looked in {searched.join(', ')}.</p>}
+      </>
+    )
+  }
+  if (!plan) return <>{head}<Failed what="The plan" error={error} /></>
+  if (plan.rows.length === 0) return <>{head}<Waiting>The plan asks for no runs{view.scopeName ? ` in ${view.scopeName}` : ''}.</Waiting></>
+  const multi = plan.accounts.length > 1
+  const toneOf = new Map(view.allAccounts.map((a) => [a.id, a.tone]))
+  const toneFor = (userId: number | null) => (userId != null ? (toneOf.get(userId) ?? null) : null)
+  const inPlan = new Set(plan.rows.flatMap((r) => Object.values(r.cells).flat()).map((c) => c?.runId))
+  const outside = (view.runs ?? []).filter((r) => r.isActive && !inPlan.has(r.runId)).length
+  return (
+    <>
+      {head}
+      <div className="dk-gridwrap">
+        <table className="dk-t dk-grid">
+          <thead>
+            <tr>
+              <th>Strategy</th>
+              {plan.underlyings.map((u) => (
+                <th key={u} className="r">
+                  {underlyingShort(u)} <span className="dk-t3">{opensAt(u)}</span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {plan.rows.map((row) => (
+              <tr key={row.line ?? row.strategy}>
+                <td
+                  className="dk-sn"
+                  title={[row.label, row.line != null ? `line ${row.line}` : '', row.target ?? '', row.onlyAccounts.length ? `only ${row.onlyAccounts.join(', ')}` : '']
+                    .filter(Boolean)
+                    .join(' · ')}
+                >
+                  {shortName(row.label)}
+                  {row.lots != null && <span className="dk-xs dk-t3"> {row.lots}L</span>}
+                </td>
+                {plan.underlyings.map((u) => (
+                  <td key={u}>
+                    {row.cells[u].every((c) => c == null)
+                      ? null
+                      : row.cells[u].map((c, i) => (
+                          <div className="dk-pc" key={plan.accounts[i].name}>
+                            {c ? (
+                              <>
+                                {multi && <Swatch tone={toneFor(c.userId)} cell />}
+                                {c.live && c.runId != null ? (
+                                  <Link to={`${links.runBase}/${c.runId}`} className="pos" title={`${c.account}: live as run #${c.runId}`}>
+                                    ✓
+                                  </Link>
+                                ) : (
+                                  <Chip tone="warn" title={`${c.account}: asked for, and not running with a live runner`}>
+                                    not live
+                                  </Chip>
+                                )}
+                              </>
+                            ) : (
+                              <span className="dk-t3 dk-xs" title={`Not asked of ${plan.accounts[i].name}`}>
+                                —
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                  </td>
+                ))}
+              </tr>
+            ))}
+            {plan.accounts.map((a, i) => (
+              <tr key={a.name} className={`dk-tot${i === 0 ? ' dk-tot--first' : ''}`}>
+                <td>
+                  <Swatch tone={toneFor(a.userId)} />
+                  <span className="dk-t2">{a.name}</span>
+                  {a.userId == null && <span className="dk-xs warn"> no such account</span>}
+                </td>
+                <td colSpan={plan.underlyings.length} className={`r dk-xs ${a.live < a.planned ? 'warn' : 'dk-t2'}`}>
+                  {a.live} of {a.planned} live
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {plan.warnings.length > 0 && (
+        <ul className="dk-list dk-warnings" aria-label="What the morning job would read differently">
+          {plan.warnings.map((w) => (
+            <li key={w}>{w}</li>
+          ))}
+        </ul>
+      )}
+      {outside > 0 && (
+        <div className="dk-foot">
+          {outside} live run{outside === 1 ? ' is' : 's are'} not in the plan: started by hand.
+        </div>
+      )}
+    </>
+  )
+}
+
+/** Before the open: the operator reads the plan file against what is live; a trader, their own deployed runs. */
 export function PlanGrid({ view, links }: { view: DeskView; links: DeskLinks }) {
-  const head = <PanelHead title="Morning plan" meta="✓ deployed, waiting for its session" more={links.runs ? { to: links.runs, label: view.isAdmin ? 'Live runner' : 'My runs' } : null} />
+  return view.isAdmin ? <FilePlan view={view} links={links} /> : <DeployedGrid view={view} links={links} />
+}
+
+/** A trader's morning: their own runs, deployed and waiting for the session (the plan file is the operator's). */
+function DeployedGrid({ view, links }: { view: DeskView; links: DeskLinks }) {
+  const head = <PanelHead title="Deployed" meta="✓ waiting for its session" more={links.runs ? { to: links.runs, label: 'My runs' } : null} />
   if (view.runsError && !view.grid) return <>{head}<Failed what="The runs" error={view.runsError} /></>
   if (!view.grid) return <>{head}<Waiting>Reading today’s runs…</Waiting></>
   const { grid } = view
@@ -287,7 +397,6 @@ export function PlanGrid({ view, links }: { view: DeskView; links: DeskLinks }) 
                 ))}
               </tr>
             ))}
-            {view.isAdmin ? <PlanFoot view={view} /> : null}
           </tbody>
         </table>
       </div>

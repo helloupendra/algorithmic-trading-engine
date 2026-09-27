@@ -304,7 +304,7 @@ const KIND_TONE = { expiry: 'brand', holiday: 'warn', event: undefined, results:
 function WithMeetings({ view, links, from, to }: { view: DeskView; links: DeskLinks; from: string; to: string }) {
   const meetings = useIntelCalendar(from, to, true)
   const { legs } = useDeskLegs(view)
-  const names = new Set([...NIFTY50, ...(legs ?? []).map((l) => l.label.split(' ')[0])])
+  const names = new Set([...NIFTY50, ...(legs ?? []).map((l) => l.underlying)])
   return <WeekTable view={view} links={links} from={from} to={to} meetings={meetings.data} names={names} />
 }
 

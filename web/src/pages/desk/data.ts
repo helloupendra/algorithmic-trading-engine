@@ -4,17 +4,19 @@
  * status strip and a panel asking the same question make one request.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Access } from '../../lib/modules'
 import { allows, navFor } from '../../lib/modules'
-import type { DeskAccount, DeskGrid, DeskLeg, Phase, Plan, Scope } from '../../lib/desk'
-import { byUnderlying, deskLegs, figureTone, morningCheckupId, todaysPlan } from '../../lib/desk'
+import type { DeskAccount, DeskGrid, DeskLeg, Phase, PlanView, Scope } from '../../lib/desk'
+import { dayOf, deskDay, deskLegs, figureTone, istDay, planView, shiftDay } from '../../lib/desk'
 import {
-  useCheckup,
-  useCheckupLatest,
-  useCheckups,
-  useDeskPositions,
+  RUN_HISTORY_PAGE,
+  deskLegsPoll,
+  useDeskPlan as useDeskPlanQuery,
   useForecasts,
+  useLiveRunHistory,
+  useMarketSession,
+  useOpenPositions,
 } from '../../lib/queries'
 import type { LiveRunSummary, MarketSessionInfo } from '../../lib/types'
 
@@ -56,6 +58,48 @@ export function useNow(everyMs: number): number {
   return now
 }
 
+/**
+ * An element's width in CSS pixels, kept current as it resizes: what a chart
+ * drawn in pixels (not stretched from a viewBox) needs. Zero until measured.
+ */
+export function useWidth<T extends HTMLElement>(): [(el: T | null) => void, number] {
+  const [el, setEl] = useState<T | null>(null)
+  const [width, setWidth] = useState(0)
+  useEffect(() => {
+    if (!el) return
+    // The observer reports the first size as soon as it starts watching.
+    const observer = new ResizeObserver((entries) => setWidth(Math.round(entries[0].contentRect.width)))
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [el])
+  return [useCallback((next: T | null) => setEl(next), []), width]
+}
+
+/**
+ * The day a page about today's runs reports on, and those runs (alert-only
+ * runs included): today, or on a day with no session and no runs the last
+ * day that had some, so a Saturday opens on Friday rather than on nothing.
+ * The Desk, the Orders page and the Tracks view read it through the same
+ * query keys, so moving between them asks nothing twice.
+ */
+export function useShownDay(nowMs: number, enabled: boolean) {
+  const today = istDay(nowMs)
+  const nse = useMarketSession()
+  const todayRuns = useLiveRunHistory({ fromDate: today, toDate: today, take: RUN_HISTORY_PAGE }, enabled)
+  const noSession = nse.data?.isTradingDay === false && todayRuns.data?.length === 0
+  const recent = useLiveRunHistory({ fromDate: shiftDay(today, -7), toDate: shiftDay(today, -1), take: RUN_HISTORY_PAGE }, enabled && noSession)
+  const day = deskDay(today, nse.data?.isTradingDay, todayRuns.data?.length ?? 0, recent.data)
+  const runs = day === today ? todayRuns.data : recent.data?.filter((r) => dayOf(r.startedUtc) === day)
+  return {
+    today,
+    day,
+    runs,
+    nse: nse.data,
+    error: todayRuns.isError ? todayRuns.error : recent.isError ? recent.error : null,
+    updatedAt: todayRuns.dataUpdatedAt,
+  }
+}
+
 /** The class a rupee figure is coloured with; flat for anything that rounds to ₹0. */
 export function toneClass(value: number | null | undefined): string {
   const t = figureTone(value)
@@ -76,6 +120,7 @@ export function useDeskLinks(access: Access) {
       history: to('history'),
       // A run's page is one URL for everyone; the API refuses someone else's.
       runBase: '/trade/runs',
+      positions: to('positions'),
       chain: to('chain'),
       movers: to('movers'),
       news: to('news'),
@@ -91,46 +136,52 @@ export function useDeskLinks(access: Access) {
 
 export type DeskLinks = ReturnType<typeof useDeskLinks>
 
-/** The underlyings the Desk asks for open legs on: today's runs' and the desk's four. */
-export function legUnderlyings(runs: readonly LiveRunSummary[] | undefined): string[] {
-  const base = ['NIFTY', 'BANKNIFTY', 'SENSEX', 'CRUDEOIL']
-  return [...new Set([...base, ...(runs ?? []).map((r) => r.underlying.toUpperCase())])].sort(byUnderlying)
-}
-
 /**
- * Every open leg in scope, across runs and manual books, largest first; null
- * until every underlying has answered, so a count is never a partial one.
+ * Every open leg in scope, across runs and manual books, largest first (GET
+ * /api/Positions/open, one request for every underlying); null until it has
+ * answered, so a count is never a guess.
  */
 export function useDeskLegs(view: DeskView): { legs: DeskLeg[] | null; error: unknown } {
-  const unds = useMemo(() => legUnderlyings(view.runs), [view.runs])
-  const enabled = allows(view.access, 'strategies')
-  const answers = useDeskPositions(unds, view.clock === 'live', enabled)
-  const ready = answers.every((a) => a.data !== undefined)
-  const error = answers.find((a) => a.isError)?.error ?? null
-  // A few dozen rows at most: cheaper to rebuild than to memoise on an array of answers.
-  const legs = ready
-    ? deskLegs(
-        unds.map((u, i) => ({ underlying: u, rows: answers[i].data })),
-        { today: view.today, nextSession: view.nextSession, userName: view.scopeName },
-      )
-    : null
-  return { legs, error }
+  const open = useOpenPositions(deskLegsPoll(view.clock === 'live'), allows(view.access, 'strategies'))
+  const positions = open.data?.positions
+  const legs = useMemo(
+    () =>
+      positions
+        ? deskLegs(positions, { today: view.today, nextSession: view.nextSession, userId: view.scope === 'all' ? null : view.scope })
+        : null,
+    [positions, view.today, view.nextSession, view.scope],
+  )
+  return { legs, error: open.isError ? open.error : null }
 }
 
 /**
- * The morning plan, as today's checkups read it. Admin only: the checkups are
- * Sentinel's. The latest checkup is asked for anyway (the strip shows its
- * verdict); the morning one is fetched in full only when the latest is not it.
+ * The morning plan against what is live (admin: GET /api/Desk/plan), in the
+ * Desk's scope. `missing` when the server has no plan file, which is a thing
+ * to say, not an empty plan.
  */
-export function useDeskPlan(view: DeskView): { plan: Plan | null; ready: boolean } {
-  const latest = useCheckupLatest()
-  const list = useCheckups(30)
-  const morningId = morningCheckupId(list.data, view.day)
-  const needMorning = morningId != null && latest.data?.latest?.id !== morningId
-  const morning = useCheckup(needMorning ? morningId : null)
-  const plan = todaysPlan([latest.data?.latest, needMorning ? morning.data : null], view.day)
-  const ready = latest.data !== undefined && list.data !== undefined && (!needMorning || morning.data !== undefined)
-  return { plan, ready }
+export function useDeskPlan(view: DeskView): {
+  plan: PlanView | null
+  file: string | null
+  ready: boolean
+  /** No plan file on the server; `searched` says where it was looked for. */
+  missing: boolean
+  searched: string[]
+  error: unknown
+} {
+  const q = useDeskPlanQuery(view.isAdmin && allows(view.access, 'strategies'))
+  const scope = view.scope
+  const plan = useMemo(() => (q.data ? planView(q.data, scope === 'all' ? null : [scope]) : null), [q.data, scope])
+  const error = q.error as { status?: number; body?: { searched?: unknown } } | null
+  const missing = error?.status === 404
+  const searched = missing && Array.isArray(error?.body?.searched) ? error.body.searched.map(String) : []
+  return {
+    plan,
+    file: q.data?.file ?? null,
+    ready: q.data !== undefined || q.isError,
+    missing,
+    searched,
+    error: q.isError && !missing ? q.error : null,
+  }
 }
 
 /** The forecasts of the Desk's day (analysis grant). */
