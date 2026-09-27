@@ -489,7 +489,7 @@ class ReportTests(unittest.TestCase):
         self.assertIn("· Manual books — 1 leg held.", text)
         self.assertIn("✓ Fine: Disk space.", text)
         self.assertIn("Not checked: FYERS backup (FYERS is not set up here).", text)
-        self.assertTrue(text.endswith("https://openfno.com/admin/checkup"))
+        self.assertTrue(text.endswith("https://openfno.com/system/checkups"))
 
     def test_the_message_is_redacted_and_capped(self):
         report = self.report()

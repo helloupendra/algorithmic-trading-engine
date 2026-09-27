@@ -631,17 +631,12 @@ function asOfFor(sessionDate: string, time: string): string | undefined {
 // --- page -----------------------------------------------------------------------
 
 /**
- * The same chain for an admin and for a trader. Only one thing differs: where a
- * position's run link goes, because a trader's runs live under their own pages.
- * The API already scopes the positions to whoever is asking.
+ * The same chain for an admin and for a trader: the API scopes the positions
+ * to whoever is asking, and a run's page is one URL for both.
  */
-export function AdvancedOptionChainPage({
-  asOfUtc: asOfProp,
-  mode = 'admin',
-}: { asOfUtc?: string; mode?: 'admin' | 'trader' } = {}) {
-  const runLink = (runId: number) =>
-    mode === 'trader' ? `/trader/strategies/runs/${runId}` : `/admin/strategies/runs/${runId}`
+const runLink = (runId: number) => `/trade/runs/${runId}`
 
+export function AdvancedOptionChainPage({ asOfUtc: asOfProp }: { asOfUtc?: string } = {}) {
   const [params, setParams] = useSearchParams()
   const requested = (params.get('u') ?? 'NIFTY').toUpperCase()
   const underlying = (UNDERLYINGS as readonly string[]).includes(requested) ? requested : 'NIFTY'

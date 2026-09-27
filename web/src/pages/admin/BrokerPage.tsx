@@ -5,7 +5,8 @@
  * added, the ones this build can add, and the ones still on the roadmap. Each
  * card opens its own page for credentials, session and the connection probe.
  *
- * The route stays /admin/broker because the OAuth callback redirects into it.
+ * The brokers' OAuth callbacks land on a connector's own page under this one;
+ * the old /admin/broker/:key they used before the workspaces redirects there.
  */
 
 import { useState } from 'react'
@@ -79,7 +80,7 @@ function ConnectorCard({ provider }: { provider: Provider }) {
   )
 
   return provider.isInstalled ? (
-    <Link to={`/admin/broker/${provider.key}`} className="module-card connector-card">
+    <Link to={`/system/connectors/${provider.key}`} className="module-card connector-card">
       {body}
     </Link>
   ) : (

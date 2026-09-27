@@ -45,10 +45,10 @@ export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 't
   // Where each link goes. A trader has no live runner and no library: their
   // positions live on the run's own page, and each strategy explains itself
   // through "How it works".
-  const positionsLink = trader ? '/trader/positions' : '/admin/strategies/live'
-  const historyLink = trader ? '/trader/strategies/history' : '/admin/strategies/history'
+  const positionsLink = trader ? '/trade/positions' : '/trade/runs'
+  const historyLink = '/trade/history'
   const runLink = (runId: number) =>
-    trader ? `/trader/strategies/runs/${runId}` : `/admin/strategies/runs/${runId}`
+    `/trade/runs/${runId}`
 
   const strategies = useStrategies()
   const list = useMemo(() => strategies.data ?? [], [strategies.data])
@@ -193,7 +193,7 @@ export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 't
           label={trader ? 'In my package' : 'Library size'}
           value={list.length}
           sub={trader ? 'strategies you may deploy' : 'strategies discovered'}
-          to={trader ? undefined : '/admin/strategies/library'}
+          to={trader ? undefined : '/trade/library'}
         />
       </div>
 
@@ -204,7 +204,7 @@ export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 't
           </>
         }
         actions={
-          <Link className="btn btn--sm" to={trader ? historyLink : '/admin/strategies/live'}>
+          <Link className="btn btn--sm" to={trader ? historyLink : '/trade/runs'}>
             {trader ? 'My runs' : 'Open live runner'}
           </Link>
         }
@@ -218,7 +218,7 @@ export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 't
                 ) : (
                   <>
                     Nothing is running. Start one from the{' '}
-                    <Link to="/admin/strategies/live">Live runner</Link>.
+                    <Link to="/trade/runs">Live runner</Link>.
                   </>
                 )}
               </p>
@@ -256,7 +256,7 @@ export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 't
                             {formatDateTime(run.startedUtc)}
                           </td>
                           <td className="r">
-                            <Link to={trader ? runLink(run.runId) : '/admin/strategies/live'}>Positions →</Link>
+                            <Link to={trader ? runLink(run.runId) : '/trade/runs'}>Positions →</Link>
                           </td>
                         </tr>
                       )
@@ -290,7 +290,7 @@ export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 't
               ) : (
                 <>
                   No live runs yet — start one from the{' '}
-                  <Link to="/admin/strategies/live">Live runner</Link>.
+                  <Link to="/trade/runs">Live runner</Link>.
                 </>
               )}
             </>
@@ -361,7 +361,7 @@ export function StrategiesOverviewPage({ mode = 'admin' }: { mode?: 'admin' | 't
                     key={s.id}
                     strategy={s}
                     actionLabel="Deploy…"
-                    specHref={`/trader/strategies/${s.id}/how-it-works`}
+                    specHref={`/trade/library/${s.id}`}
                     onStart={(st) => setLaunching(st)}
                   />
                 ))}

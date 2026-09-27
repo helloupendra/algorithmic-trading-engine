@@ -443,7 +443,7 @@ export function AdminOverviewPage() {
           label="Kill switch"
           value={killSwitch.data ? (killSwitch.data.isActive ? 'ACTIVE' : 'Off') : '…'}
           tone={killSwitch.data ? (killSwitch.data.isActive ? 'neg' : 'pos') : undefined}
-          to="/admin/system/risk"
+          to="/trade/risk"
           sub={
             killSwitch.data?.updatedUtc
               ? `${killSwitch.data.isActive ? 'halted' : 'last set'} by ${killSwitch.data.updatedBy ?? 'unknown'} ${formatAge(killSwitch.data.updatedUtc)}`
@@ -454,7 +454,7 @@ export function AdminOverviewPage() {
           label="Connectors"
           value={connectors ? connectors.pulse.label.replace(/^Connectors /, '') : '…'}
           tone={connectors ? (connectors.pulse.tone === 'idle' || connectors.pulse.tone === 'live' ? undefined : connectors.pulse.tone) : undefined}
-          to="/admin/broker"
+          to="/system/connectors"
           sub={connectors ? connectors.lines.filter((l) => l.state !== 'not-set-up').map((l) => `${l.name} ${l.state === 'ready' ? '✓' : '✗'}`).join(' · ') : undefined}
         />
         <StatTile
@@ -467,7 +467,7 @@ export function AdminOverviewPage() {
                 ? session.data?.isMarketOpen ? 'neg' : undefined
                 : feedsBeating && running.length === 1 ? 'pos' : 'warn'
           }
-          to="/admin/data/live"
+          to="/data/feeds"
           sub={
             running.length > 1
               ? 'more than one feed running'
@@ -480,7 +480,7 @@ export function AdminOverviewPage() {
           label="Market (NSE)"
           value={session.data ? (session.data.isMarketOpen ? 'OPEN' : 'CLOSED') : '…'}
           tone={session.data?.isMarketOpen ? 'pos' : undefined}
-          to="/admin/system/calendar"
+          to="/system/calendar"
           sub={session.data && `next open ${formatDateTime(session.data.nextMarketOpenUtc)}`}
         />
       </div>
@@ -514,7 +514,7 @@ export function AdminOverviewPage() {
               </>
             }
             actions={
-              <Link className="btn btn--sm btn--ghost" to="/admin/data/live">
+              <Link className="btn btn--sm btn--ghost" to="/data/feeds">
                 Live feeds →
               </Link>
             }
@@ -536,13 +536,13 @@ export function AdminOverviewPage() {
 
       <Panel title="Operations">
         <div className="chip-row">
-          <Link className="btn btn--sm" to="/admin/system/risk">Risk &amp; kill switch →</Link>
-          <Link className="btn btn--sm" to="/admin/system/alerts">Alerts →</Link>
-          <Link className="btn btn--sm" to="/admin/system/calendar">Market calendar →</Link>
-          <Link className="btn btn--sm" to="/admin/system/logs">Activity log →</Link>
-          <Link className="btn btn--sm" to="/admin/system/deployments">Deployments →</Link>
-          <Link className="btn btn--sm" to="/admin/broker">Connectors →</Link>
-          <Link className="btn btn--sm" to="/admin/users">Users &amp; access →</Link>
+          <Link className="btn btn--sm" to="/trade/risk">Risk &amp; kill switch →</Link>
+          <Link className="btn btn--sm" to="/system/log?source=alerts">Alerts →</Link>
+          <Link className="btn btn--sm" to="/system/calendar">Market calendar →</Link>
+          <Link className="btn btn--sm" to="/system/log">Activity log →</Link>
+          <Link className="btn btn--sm" to="/system/log?source=deploys">Deployments →</Link>
+          <Link className="btn btn--sm" to="/system/connectors">Connectors →</Link>
+          <Link className="btn btn--sm" to="/system/people">Users &amp; access →</Link>
         </div>
       </Panel>
     </div>

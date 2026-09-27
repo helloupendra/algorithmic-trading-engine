@@ -98,7 +98,7 @@ function SmallTile({ item, onOpen }: { item: MarketPulseItem; onOpen: () => void
 export function MarketPulse() {
   const pulse = useMarketPulse()
   const navigate = useNavigate()
-  const open = (symbol: string) => navigate(`/trader/charts?symbol=${encodeURIComponent(symbol)}`)
+  const open = (symbol: string) => navigate(`/markets/chart?symbol=${encodeURIComponent(symbol)}`)
 
   if (pulse.isError) return <InlineError error={pulse.error} />
   const groups = pulse.data?.groups ?? []

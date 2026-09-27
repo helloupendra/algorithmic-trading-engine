@@ -1,13 +1,12 @@
 /**
- * Every route App.tsx serves today, and where it lives once the URLs move to
- * the workspaces (/desk, /markets, /trade, /research, /system).
+ * Every URL the console served before the workspaces, and where it lives now.
  *
- * Only the two home pages redirect so far (to /desk); the rest of this is
- * the table the URL move will be generated from, kept now so that no
- * bookmark, Telegram link or checkup link
- * (CheckupItem.link) is forgotten when it happens. The redirect keeps the
- * query string and fills `:params` by name. routeMap.test.ts fails if App.tsx
- * gains a route this table does not place, or if an entry outlives its route.
+ * App.tsx mounts a redirect for each entry, so a bookmark, a Telegram message
+ * already sent or a checkup item Sentinel wrote last week (CheckupItem.link)
+ * still opens the right page. The redirect keeps the query string and fills
+ * `:params` by name. Entries are never removed: an old link has no expiry
+ * date. routeMap.test.ts fails if a target is not a route App.tsx serves, or
+ * if a link in the source still points at an old URL.
  */
 
 export const ROUTE_MOVES: Readonly<Record<string, string>> = {
@@ -17,7 +16,7 @@ export const ROUTE_MOVES: Readonly<Record<string, string>> = {
 
   // Markets.
   '/trader/watchlist': '/markets',
-  '/admin/data/commodity': '/markets?group=mcx',
+  '/admin/data/commodity': '/markets/mcx',
   '/trader/charts': '/markets/chart',
   '/trader/structure': '/markets/chart?layer=structure',
   '/admin/data/structure': '/markets/chart?layer=structure',
@@ -47,10 +46,10 @@ export const ROUTE_MOVES: Readonly<Record<string, string>> = {
   '/trader/strategies': '/trade/library',
   '/admin/strategies/history': '/trade/history',
   '/trader/strategies/history': '/trade/history',
-  // The v1 Simulator pages retire once positions and orders across every book exist.
+  // The v1 Simulator pages, until positions and orders across every book replace them.
   '/trader/positions': '/trade/positions',
   '/trader/orders': '/trade/orders',
-  '/trader/runs/:id': '/trade/history',
+  '/trader/runs/:id': '/trade/positions/runs/:id',
   '/admin/trading': '/trade/ticket',
   '/trader/trading': '/trade/ticket',
   '/admin/system/risk': '/trade/risk',
@@ -86,8 +85,9 @@ export const ROUTE_MOVES: Readonly<Record<string, string>> = {
   '/admin/system/deployments': '/system/log?source=deploys',
   '/admin/system/calendar': '/system/calendar',
   '/admin/broker': '/system/connectors',
-  // Stays routable as an alias until the OAuth callback, which redirects here,
-  // is changed in the same PR.
+  // An alias the brokers' sign-in still lands on: the OAuth callbacks
+  // redirected here until the move, and a sign-in begun before a deploy
+  // finishes after it.
   '/admin/broker/:providerKey': '/system/connectors/:providerKey',
   '/admin/users': '/system/people',
   '/admin/users/packages': '/system/people/packages',
@@ -96,8 +96,8 @@ export const ROUTE_MOVES: Readonly<Record<string, string>> = {
   '/trader/account': '/account',
 }
 
-/** Routes that keep their URL: the public pages, the fallbacks, and pages already at their new home. */
-export const ROUTES_THAT_STAY: readonly string[] = ['/', '/login', '/invite/:token', '/forbidden', '*', '/desk']
+/** Routes that are neither old nor a workspace tab's: the public pages and the fallbacks. */
+export const ROUTES_THAT_STAY: readonly string[] = ['/', '/login', '/invite/:token', '/forbidden', '*']
 
 /** New homes outside every workspace tab. */
 export const HOMES_OUTSIDE_WORKSPACES: readonly string[] = ['/account', '/notebook/:id']
@@ -121,8 +121,8 @@ export function movedUrl(pathname: string, search = ''): string | null {
   return null
 }
 
-/** The `:params` of `pattern` in `pathname`, or null when it does not match. */
-function matchRoute(pattern: string, pathname: string): Record<string, string> | null {
+/** The `:params` of route `pattern` in `pathname`, or null when it does not match. */
+export function matchRoute(pattern: string, pathname: string): Record<string, string> | null {
   const a = pattern.split('/')
   const b = pathname.replace(/\/+$/, '').split('/')
   if (a.length !== b.length) return null
@@ -130,7 +130,12 @@ function matchRoute(pattern: string, pathname: string): Record<string, string> |
   for (let i = 0; i < a.length; i++) {
     if (a[i].startsWith(':')) {
       if (!b[i]) return null
-      params[a[i].slice(1)] = decodeURIComponent(b[i])
+      try {
+        params[a[i].slice(1)] = decodeURIComponent(b[i])
+      } catch {
+        // A malformed escape in a hand-typed URL: take the segment as it is.
+        params[a[i].slice(1)] = b[i]
+      }
     } else if (a[i] !== b[i]) return null
   }
   return params

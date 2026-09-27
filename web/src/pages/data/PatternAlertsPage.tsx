@@ -165,7 +165,7 @@ function WatchedSymbols({ status }: { status: PatternScannerStatus }) {
           <span>
             {problems} watched symbol{problems === 1 ? ' is' : 's are'} not receiving live bars, so no pattern can be
             recognised on {problems === 1 ? 'it' : 'them'}. Add {problems === 1 ? 'it' : 'them'} to a live feed on{' '}
-            <Link to="/admin/data/live">Live feeds</Link> or remove {problems === 1 ? 'it' : 'them'} from the rule.
+            <Link to="/data/feeds">Live feeds</Link> or remove {problems === 1 ? 'it' : 'them'} from the rule.
           </span>
         </div>
       )}
@@ -846,7 +846,7 @@ export function PatternAlertsPage() {
             the moment a candle closes and sent to Telegram when a rule asks.
           </p>
         </div>
-        <Link to="/admin/system/alerts" className="btn btn--ghost btn--sm">
+        <Link to="/system/log?source=alerts" className="btn btn--ghost btn--sm">
           All alerts
         </Link>
       </header>

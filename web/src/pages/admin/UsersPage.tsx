@@ -586,7 +586,7 @@ function StrategyAccessSection({
             ))}
           </select>
           <span className="small-note muted">
-            <Link to="/admin/users/packages">Manage packages →</Link>
+            <Link to="/system/people/packages">Manage packages →</Link>
           </span>
         </div>
         {pkg && (

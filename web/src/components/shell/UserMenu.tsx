@@ -40,7 +40,7 @@ export function UserMenu({ user, isAdmin, onSignOut }: { user: MeResponse | null
             <span data-role={user?.role}>{user?.role}</span>
           </div>
           {!isAdmin && (
-            <Link to={ACCOUNT_PAGE.trader} className="pop__item">
+            <Link to={ACCOUNT_PAGE.to} className="pop__item">
               <IconUsers aria-hidden="true" /> {ACCOUNT_PAGE.label}
             </Link>
           )}

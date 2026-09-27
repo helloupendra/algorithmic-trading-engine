@@ -35,7 +35,7 @@ function RunRow({ run }: { run: BacktestRunSummary }) {
       <tr>
         <td className="mono muted">#{run.runId}</td>
         <td>
-          <Link to={`/admin/backtesting/runs/${run.runId}`}>
+          <Link to={`/research/backtests/runs/${run.runId}`}>
             <b>{run.strategyName}</b>
           </Link>
         </td>
@@ -121,7 +121,7 @@ export function BacktestRunsPage() {
             Every replay, newest first. Results survive restarts — delete what you no longer need.
           </p>
         </div>
-        <Link className="btn btn--primary" to="/admin/backtesting/new">
+        <Link className="btn btn--primary" to="/research/backtests/new">
           <IconPlus style={{ width: 14, height: 14 }} /> New backtest
         </Link>
       </header>

@@ -1,22 +1,22 @@
 /**
  * Workspace registry: the single source of truth for what this console is made
- * of and who may see each part of it.
+ * of, where each part lives and who may see it.
  *
  * The console is six workspaces (Desk, Markets, Trade, Research, Data,
  * System), each holding tabs. A tab declares what it requires: the Admin role, or one of
  * the module grants the API enforces (PlatformModules on the server). The top
  * bar, the tab strip, the phone's bottom bar and the ⌘K palette all read from
  * here, so a part the user may not use is absent everywhere at once rather
- * than greyed out in one place and linked in another.
+ * than greyed out in one place and linked in another. App.tsx serves exactly
+ * these URLs, and a page hidden from traders here sits behind the router's
+ * Admin guard there; routeMap.test.ts holds the two together.
  *
  * Hiding is a courtesy, never the control: every endpoint checks the grant
  * itself (RequireModule), so a trader who types a URL still gets a 403.
  *
- * Most URLs have not moved yet (the Desk, at /desk, is the first that has).
- * Each tab keeps the pages it will gather, each with today's URL per console,
- * and the `home` it moves to once the URLs change;
- * lib/routeMap.ts holds the redirect table for that step. Until the merges
- * land, a tab that gathers several of today's pages shows each of them.
+ * One URL per page for every role. The API already scopes what it answers to
+ * the caller, so a page that differs by role picks its view, not its address.
+ * The URLs the console had before the workspaces redirect here (routeMap.ts).
  */
 
 import type { ComponentType, SVGProps } from 'react'
@@ -32,15 +32,24 @@ export type Requirement = 'admin' | GrantKey
 
 export type WorkspaceKey = 'desk' | 'markets' | 'trade' | 'research' | 'data' | 'system'
 
-/** One of today's pages. */
+/** The two consoles one registry serves. */
+export type Side = 'admin' | 'trader'
+
 export interface PageDef {
   label: string
-  /** Today's URL in each console. A console without one does not show the page. */
-  admin?: string
-  trader?: string
-  /** Only this exact path, not the routes under it: the two home pages sit above everything. */
+  /** Its URL, the same for every role. */
+  to: string
+  /**
+   * The one console that has this page, when only one does: the admin's run
+   * cards, the trader's v1 Simulator pages. Unset, both have it.
+   */
+  only?: Side
+  /** Only this exact path, not the routes under it (they may be pages of their own). */
   exact?: boolean
-  /** More of today's routes that belong to this page (its detail pages), as path prefixes. */
+  /**
+   * More routes that light this page up, as path prefixes. A prefix ending in
+   * "/" claims only the routes under it, not the path itself.
+   */
   owns?: string[]
   /** Extra words ⌘K matches on. */
   keywords?: string[]
@@ -48,9 +57,8 @@ export interface PageDef {
 
 export interface TabDef {
   key: string
-  /** The tab's name once its pages are merged. */
   label: string
-  /** Where the tab lives once URLs move; the redirect table points here. */
+  /** The tab's URL: its pages live at it or under it. */
   home: string
   requires?: Requirement
   pages: PageDef[]
@@ -80,8 +88,8 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         key: 'desk',
         label: 'Desk',
         home: '/desk',
-        // One URL for every role: the panels check their own grants.
-        pages: [{ label: 'Desk', admin: '/desk', trader: '/desk', exact: true, keywords: ['home', 'overview', 'today'] }],
+        // The panels check their own grants.
+        pages: [{ label: 'Desk', to: '/desk', exact: true, keywords: ['home', 'overview', 'today'] }],
       },
     ],
   },
@@ -99,9 +107,10 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         home: '/markets',
         requires: 'market-data',
         pages: [
-          { label: 'Watchlist', trader: '/trader/watchlist', keywords: ['pulse', 'quotes'] },
+          // Exact: every other Markets tab lives under /markets.
+          { label: 'Watchlist', to: '/markets', exact: true, keywords: ['pulse', 'quotes', 'indices'] },
           // MCX is the same feed on another exchange; it becomes the pulse's MCX group.
-          { label: 'Commodity', admin: '/admin/data/commodity', keywords: ['mcx', 'crude', 'gold'] },
+          { label: 'Commodity', to: '/markets/mcx', only: 'admin', keywords: ['mcx', 'crude', 'gold'] },
         ],
       },
       {
@@ -109,10 +118,7 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         label: 'Chart',
         home: '/markets/chart',
         requires: 'market-data',
-        pages: [
-          { label: 'Charts', trader: '/trader/charts', keywords: ['candles'] },
-          { label: 'Structure', admin: '/admin/data/structure', trader: '/trader/structure', keywords: ['smc', 'bos', 'choch'] },
-        ],
+        pages: [{ label: 'Chart', to: '/markets/chart', keywords: ['candles', 'structure', 'smc', 'bos', 'choch'] }],
       },
       {
         key: 'chain',
@@ -120,8 +126,11 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         home: '/markets/chain',
         requires: 'market-data',
         pages: [
-          { label: 'Option chain', admin: '/admin/data/chain', trader: '/trader/option-chain', keywords: ['strikes', 'greeks'] },
-          { label: 'Open interest', admin: '/admin/data/open-interest', keywords: ['oi'] },
+          {
+            label: 'Option chain',
+            to: '/markets/chain',
+            keywords: ['strikes', 'greeks', 'open interest', 'oi history', 'levels', 'max pain', 'walls'],
+          },
         ],
       },
       {
@@ -130,11 +139,7 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         home: '/markets/movers',
         requires: 'market-data',
         pages: [
-          // Angel One's market-wide screens: price, OI build-up, PCR.
-          { label: 'Movers', admin: '/admin/data/movers', trader: '/trader/market-movers', keywords: ['build-up', 'pcr', 'angel'] },
-          // Gainers and losers inside an index. Two pages both called "movers"
-          // sat side by side in the trader nav; this one says what it ranks.
-          { label: 'Index movers', trader: '/trader/movers', keywords: ['gainers', 'losers'] },
+          { label: 'Movers', to: '/markets/movers', keywords: ['gainers', 'losers', 'build-up', 'pcr', 'angel', 'futures'] },
         ],
       },
       {
@@ -142,14 +147,14 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         label: 'Flows & calendar',
         home: '/markets/factors',
         requires: 'market-data',
-        pages: [{ label: 'Factors', admin: '/admin/data/factors', keywords: ['fii', 'dii', 'gift', 'global', 'events'] }],
+        pages: [{ label: 'Factors', to: '/markets/factors', keywords: ['fii', 'dii', 'gift', 'global', 'events'] }],
       },
       {
         key: 'news',
         label: 'News & filings',
         home: '/markets/news',
         requires: 'market-data',
-        pages: [{ label: 'News', admin: '/admin/data/news', trader: '/trader/news', keywords: ['headlines'] }],
+        pages: [{ label: 'News', to: '/markets/news', keywords: ['headlines'] }],
       },
       {
         key: 'patterns',
@@ -157,7 +162,7 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         home: '/markets/patterns',
         // Its API is admin-only.
         requires: 'admin',
-        pages: [{ label: 'Patterns', admin: '/admin/data/patterns', keywords: ['candle', 'alerts'] }],
+        pages: [{ label: 'Patterns', to: '/markets/patterns', keywords: ['candle', 'alerts'] }],
       },
     ],
   },
@@ -173,9 +178,17 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         label: 'Runs',
         home: '/trade/runs',
         requires: 'strategies',
+        // The run cards, with control over every account's runs. A trader
+        // starts runs from the library and follows them in History.
         pages: [
-          { label: 'Overview', admin: '/admin/strategies' },
-          { label: 'Live runner', admin: '/admin/strategies/live', owns: ['/admin/strategies/runs'], keywords: ['run cards'] },
+          {
+            label: 'Runs',
+            to: '/trade/runs',
+            only: 'admin',
+            // As long as History's claim on a run's page, and earlier, so it wins the tie.
+            owns: ['/trade/runs/'],
+            keywords: ['live runner', 'run cards'],
+          },
         ],
       },
       {
@@ -183,12 +196,8 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         label: 'Library',
         home: '/trade/library',
         requires: 'strategies',
-        pages: [
-          { label: 'Library', admin: '/admin/strategies/library', keywords: ['specs', 'how it works'] },
-          // A trader's strategies page is where they deploy from; its "How it
-          // works" pages live under /trader/strategies/:id.
-          { label: 'Strategies', trader: '/trader/deploy', owns: ['/trader/strategies'], keywords: ['deploy', 'launch'] },
-        ],
+        // The admin's catalogue, a trader's page to deploy from; both open the same spec pages.
+        pages: [{ label: 'Library', to: '/trade/library', keywords: ['strategies', 'specs', 'how it works', 'deploy', 'launch'] }],
       },
       {
         key: 'history',
@@ -198,9 +207,10 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         pages: [
           {
             label: 'History',
-            admin: '/admin/strategies/history',
-            trader: '/trader/strategies/history',
-            owns: ['/trader/strategies/runs'],
+            to: '/trade/history',
+            // A run's own page belongs here for a trader, who has no Runs tab;
+            // for an admin the Runs tab claims it first.
+            owns: ['/trade/runs/'],
             keywords: ['my runs', 'run history'],
           },
         ],
@@ -211,28 +221,28 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         home: '/trade/positions',
         requires: 'strategies',
         // The v1 Simulator pages, until positions across every book exist.
-        pages: [{ label: 'Positions', trader: '/trader/positions', owns: ['/trader/runs'] }],
+        pages: [{ label: 'Positions', to: '/trade/positions', only: 'trader' }],
       },
       {
         key: 'orders',
         label: 'Orders',
         home: '/trade/orders',
         requires: 'strategies',
-        pages: [{ label: 'Orders', trader: '/trader/orders' }],
+        pages: [{ label: 'Orders', to: '/trade/orders', only: 'trader' }],
       },
       {
         key: 'ticket',
         label: 'Ticket',
         home: '/trade/ticket',
         requires: 'strategies',
-        pages: [{ label: 'Manual order', admin: '/admin/trading', trader: '/trader/trading', exact: true, keywords: ['ticket', 'book'] }],
+        pages: [{ label: 'Manual order', to: '/trade/ticket', keywords: ['ticket', 'book'] }],
       },
       {
         key: 'risk',
         label: 'Risk',
         home: '/trade/risk',
         requires: 'admin',
-        pages: [{ label: 'Risk', admin: '/admin/system/risk', keywords: ['kill switch', 'limits'] }],
+        pages: [{ label: 'Risk', to: '/trade/risk', keywords: ['kill switch', 'limits'] }],
       },
     ],
   },
@@ -248,10 +258,11 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         label: 'Backtests',
         home: '/research/backtests',
         requires: 'backtesting',
+        // Admin pages so far: the API lets a trader read runs, but starting one is admin-only.
         pages: [
-          { label: 'Backtests', admin: '/admin/backtesting', exact: true },
-          { label: 'New backtest', admin: '/admin/backtesting/new' },
-          { label: 'Runs', admin: '/admin/backtesting/runs', keywords: ['backtest results'] },
+          { label: 'Backtests', to: '/research/backtests', exact: true, only: 'admin' },
+          { label: 'New backtest', to: '/research/backtests/new', only: 'admin' },
+          { label: 'Runs', to: '/research/backtests/runs', only: 'admin', keywords: ['backtest results'] },
         ],
       },
       {
@@ -259,21 +270,22 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         label: 'Forecasts',
         home: '/research/forecasts',
         requires: 'analysis',
-        pages: [{ label: 'Forecasts', admin: '/admin/analysis', keywords: ['analysis', 'scoreboard'] }],
+        pages: [{ label: 'Forecasts', to: '/research/forecasts', only: 'admin', keywords: ['analysis', 'scoreboard'] }],
       },
       {
         key: 'lab',
         label: 'Filter lab',
         home: '/research/lab',
         requires: 'strategies',
-        pages: [{ label: 'Filter lab', admin: '/admin/trading/lab', trader: '/trader/trading/lab' }],
+        pages: [{ label: 'Filter lab', to: '/research/lab' }],
       },
       {
         key: 'notebook',
         label: 'Notebook',
         home: '/research/notebook',
         requires: 'notebook',
-        pages: [{ label: 'Notebook', admin: '/admin/notebook', keywords: ['whiteboards', 'boards'] }],
+        // A board opens full-window at /notebook/:id, outside the shell.
+        pages: [{ label: 'Notebook', to: '/research/notebook', only: 'admin', keywords: ['whiteboards', 'boards'] }],
       },
     ],
   },
@@ -291,28 +303,29 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         label: 'Overview',
         home: '/data',
         requires: 'admin',
-        pages: [{ label: 'Overview', admin: '/admin/data', exact: true, keywords: ['data', 'coverage', 'inventory'] }],
+        // Exact: the other Data tabs live under /data.
+        pages: [{ label: 'Overview', to: '/data', exact: true, keywords: ['data', 'coverage', 'inventory'] }],
       },
       {
         key: 'feeds',
         label: 'Feeds',
         home: '/data/feeds',
         requires: 'admin',
-        pages: [{ label: 'Feeds', admin: '/admin/data/live', keywords: ['live feeds', 'ingestor', 'watchlist'] }],
+        pages: [{ label: 'Feeds', to: '/data/feeds', keywords: ['live feeds', 'ingestor', 'watchlist'] }],
       },
       {
         key: 'historical',
         label: 'Historical',
         home: '/data/historical',
         requires: 'admin',
-        pages: [{ label: 'Historical', admin: '/admin/data/historical', keywords: ['backfill', 'candles'] }],
+        pages: [{ label: 'Historical', to: '/data/historical', keywords: ['backfill', 'candles'] }],
       },
       {
         key: 'instruments',
         label: 'Instruments',
         home: '/data/instruments',
         requires: 'admin',
-        pages: [{ label: 'Instruments', admin: '/admin/data/instruments', keywords: ['masters', 'f&o'] }],
+        pages: [{ label: 'Instruments', to: '/data/instruments', keywords: ['masters', 'symbols', 'lot size'] }],
       },
     ],
   },
@@ -329,8 +342,14 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         home: '/system',
         requires: 'admin',
         pages: [
-          { label: 'Health', admin: '/admin/system', exact: true, keywords: ['host', 'disk', 'processes'] },
-          { label: 'Checkup', admin: '/admin/checkup', keywords: ['sentinel', 'readiness'] },
+          {
+            label: 'Health',
+            to: '/system',
+            // Exact: the other System tabs live under /system too.
+            exact: true,
+            owns: ['/system/checkups'],
+            keywords: ['host', 'disk', 'processes', 'checkup', 'sentinel', 'readiness'],
+          },
         ],
       },
       {
@@ -338,7 +357,7 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         label: 'Incidents',
         home: '/system/incidents',
         requires: 'admin',
-        pages: [{ label: 'Incidents', admin: '/admin/incidents', keywords: ['sentinel'] }],
+        pages: [{ label: 'Incidents', to: '/system/incidents', keywords: ['sentinel'] }],
       },
       {
         key: 'log',
@@ -346,9 +365,7 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         home: '/system/log',
         requires: 'admin',
         pages: [
-          { label: 'Activity', admin: '/admin/system/logs', keywords: ['activity log', 'audit'] },
-          { label: 'Alerts', admin: '/admin/system/alerts', keywords: ['alerter'] },
-          { label: 'Deploys', admin: '/admin/system/deployments', keywords: ['deployments'] },
+          { label: 'Log', to: '/system/log', keywords: ['activity', 'audit', 'alerts', 'deploys', 'deployments', 'risk events'] },
         ],
       },
       {
@@ -356,28 +373,28 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         label: 'Calendar',
         home: '/system/calendar',
         requires: 'admin',
-        pages: [{ label: 'Calendar', admin: '/admin/system/calendar', keywords: ['holidays', 'market calendar'] }],
+        pages: [{ label: 'Calendar', to: '/system/calendar', keywords: ['holidays', 'market calendar'] }],
       },
       {
         key: 'connectors',
         label: 'Connectors',
         home: '/system/connectors',
         requires: 'admin',
-        pages: [{ label: 'Connectors', admin: '/admin/broker', keywords: ['brokers', 'dhan', 'fyers', 'sign in'] }],
+        pages: [{ label: 'Connectors', to: '/system/connectors', keywords: ['brokers', 'dhan', 'fyers', 'sign in'] }],
       },
       {
         key: 'people',
         label: 'People',
         home: '/system/people',
         requires: 'admin',
-        pages: [{ label: 'Users', admin: '/admin/users', keywords: ['people', 'grants', 'packages', 'invites'] }],
+        pages: [{ label: 'People', to: '/system/people', keywords: ['users', 'grants', 'packages', 'invites'] }],
       },
     ],
   },
 ]
 
-/** Pages outside the workspaces, reached from the avatar menu. */
-export const ACCOUNT_PAGE = { label: 'Account', trader: '/trader/account' } as const
+/** A page outside the workspaces, reached from the avatar menu (traders only: an admin has no account page). */
+export const ACCOUNT_PAGE = { label: 'Account', to: '/account' } as const
 
 // ---------- who sees what -----------------------------------------------------
 
@@ -406,7 +423,7 @@ export function allows(access: Access, requirement: Requirement | undefined): bo
   return access.grants === null || access.grants.has(requirement)
 }
 
-/** A page as one user sees it: its URL in their console. */
+/** A page as one user sees it. */
 export interface NavPage {
   label: string
   to: string
@@ -427,23 +444,21 @@ export interface NavWorkspace {
   pages: NavPage[]
 }
 
+/** Whether a page is part of this user's console: its tab's requirement, and its console when only one has it. */
+function shows(access: Access, tab: TabDef, page: PageDef): boolean {
+  return allows(access, tab.requires) && (!page.only || page.only === (access.isAdmin ? 'admin' : 'trader'))
+}
+
 /**
- * The workspaces and pages this user can reach today. A page needs a URL in
- * the user's console and the tab's requirement; a tab with no page left and a
+ * The workspaces and pages this user can reach. A tab with no page left and a
  * workspace with no tab left are dropped, never shown empty.
  */
 export function navFor(access: Access): NavWorkspace[] {
-  const side = access.isAdmin ? 'admin' : 'trader'
   return WORKSPACES.flatMap((ws) => {
     const pages = ws.tabs.flatMap((tab) =>
-      allows(access, tab.requires)
-        ? tab.pages.flatMap((p) => {
-            const to = p[side]
-            return to
-              ? [{ label: p.label, to, exact: p.exact ?? false, owns: p.owns ?? [], keywords: p.keywords ?? [], tab, workspace: ws.key }]
-              : []
-          })
-        : [],
+      tab.pages
+        .filter((p) => shows(access, tab, p))
+        .map((p) => ({ label: p.label, to: p.to, exact: p.exact ?? false, owns: p.owns ?? [], keywords: p.keywords ?? [], tab, workspace: ws.key })),
     )
     if (pages.length === 0) return []
     const landing = pages.find((p) => p.tab.key === ws.landing) ?? pages[0]
@@ -458,8 +473,8 @@ function under(path: string, prefix: string): boolean {
 
 /**
  * The workspace and page the current URL belongs to: the longest matching
- * page URL or owned prefix wins, so /admin/strategies/live beats
- * /admin/strategies and a run's page lights up the tab it was opened from.
+ * page URL or owned prefix wins, so /research/backtests/runs beats
+ * /research/backtests and a run's page lights up the tab it belongs to.
  * Null for a route no visible page claims (the account page, say).
  */
 export function locate(pathname: string, nav: readonly NavWorkspace[]): { workspace: NavWorkspace; page: NavPage } | null {

@@ -57,11 +57,11 @@ public class DhanController : ControllerBase
         try
         {
             await _login.CompleteAsync(tokenId ?? string.Empty, cancellationToken);
-            return Redirect($"/admin/broker/{DhanProvider.Key}?connected=1");
+            return Redirect($"/system/connectors/{DhanProvider.Key}?connected=1");
         }
         catch (InvalidOperationException ex)
         {
-            return Redirect($"/admin/broker/{DhanProvider.Key}?connected=0&reason={Uri.EscapeDataString(ex.Message)}");
+            return Redirect($"/system/connectors/{DhanProvider.Key}?connected=0&reason={Uri.EscapeDataString(ex.Message)}");
         }
     }
 
