@@ -8,7 +8,7 @@
  * strategy catalogue, and today's runs.
  */
 
-import type { NavWorkspace } from './modules'
+import type { NavWorkspace, Side } from './modules'
 import type { Instrument, LiveRunSummary, StrategyListItem } from './types'
 import { UNDERLYINGS } from './optionChain'
 
@@ -32,8 +32,6 @@ export interface PaletteGroup {
   label: string
   items: PaletteItem[]
 }
-
-export type Side = 'admin' | 'trader'
 
 /** Symbols are only looked up from this many characters: one letter matches half the market. */
 export const SYMBOL_MIN_CHARS = 2
@@ -119,24 +117,26 @@ export function pageItems(
   return items
 }
 
-/** Where a symbol opens: the admin's historical chart, or the trader's chart. */
-export function symbolUrl(side: Side, symbol: string): string {
-  const s = encodeURIComponent(symbol)
-  return side === 'admin' ? `/admin/data/historical?symbol=${s}` : `/trader/charts?symbol=${s}`
+/**
+ * Where a symbol opens: the Markets chart, the same for every role. (Symbols
+ * are only searched for a user with the market data grant.)
+ */
+export function symbolUrl(symbol: string): string {
+  return `/markets/chart?symbol=${encodeURIComponent(symbol)}`
 }
 
-export function symbolItems(instruments: readonly Instrument[] | undefined, side: Side, limit = 8): PaletteItem[] {
+export function symbolItems(instruments: readonly Instrument[] | undefined, limit = 8): PaletteItem[] {
   return (instruments ?? []).slice(0, limit).map((i) => ({
     id: `symbol:${i.id}:${i.symbol}`,
     kind: 'symbol',
     label: i.symbol,
     detail: i.description || undefined,
     meta: [i.exchange, i.instrumentType].filter(Boolean).join(' · '),
-    to: symbolUrl(side, i.symbol),
+    to: symbolUrl(i.symbol),
   }))
 }
 
-export function strategyItems(strategies: readonly StrategyListItem[] | undefined, side: Side, query: string, limit = 5): PaletteItem[] {
+export function strategyItems(strategies: readonly StrategyListItem[] | undefined, query: string, limit = 5): PaletteItem[] {
   if (!query.trim()) return []
   // Name and category only: nearly every strategy trades NIFTY, so matching the
   // underlyings would answer "nifty" with the whole catalogue.
@@ -149,7 +149,7 @@ export function strategyItems(strategies: readonly StrategyListItem[] | undefine
       detail: s.category || undefined,
       meta: live > 0 ? `${live} live` : undefined,
       tone: live > 0 ? 'live' : undefined,
-      to: side === 'admin' ? `/admin/strategies/library/${s.id}` : `/trader/strategies/${s.id}/how-it-works`,
+      to: `/trade/library/${s.id}`,
     }
   })
 }
@@ -185,7 +185,7 @@ export function runItems(runs: readonly LiveRunSummary[] | undefined, side: Side
       .join(' · '),
     meta: signedRupees(r.netPnl),
     tone: r.netPnl > 0 ? 'pos' : r.netPnl < 0 ? 'neg' : undefined,
-    to: side === 'admin' ? `/admin/strategies/runs/${r.runId}` : `/trader/strategies/runs/${r.runId}`,
+    to: `/trade/runs/${r.runId}`,
   }))
 }
 

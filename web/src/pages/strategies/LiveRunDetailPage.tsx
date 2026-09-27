@@ -108,7 +108,9 @@ function OrdersDisclosure({ runId, isActive, lotSize }: { runId: number; isActiv
 
 /* -------------------------------------------------------------------- page */
 
-export function LiveRunDetailPage({ basePath }: { basePath: '/admin/strategies' | '/trader/strategies' }) {
+const HISTORY = '/trade/history'
+
+export function LiveRunDetailPage() {
   const { runId: idParam } = useParams()
   const runId = idParam != null && /^\d+$/.test(idParam) ? Number(idParam) : null
   const { user, isAdmin } = useAuth()
@@ -129,7 +131,7 @@ export function LiveRunDetailPage({ basePath }: { basePath: '/admin/strategies' 
       <div className="page">
         <InlineError error={new Error('That is not a run id.')} />
         <p>
-          <Link to={`${basePath}/history`}>← Run history</Link>
+          <Link to={HISTORY}>← Run history</Link>
         </p>
       </div>
     )
@@ -151,7 +153,6 @@ export function LiveRunDetailPage({ basePath }: { basePath: '/admin/strategies' 
     : null
   const reason = shortStopReason(view?.stopReason)
   const by = stoppedByLabel(stoppedByFromReason(view?.stopReason))
-  const historyLink = basePath === '/admin/strategies' ? '/admin/strategies/history' : '/trader/strategies/history'
 
   return (
     <div className="page">
@@ -186,7 +187,7 @@ export function LiveRunDetailPage({ basePath }: { basePath: '/admin/strategies' 
             )}
           </p>
         </div>
-        <Link className="btn btn--sm" to={historyLink}>
+        <Link className="btn btn--sm" to={HISTORY}>
           <IconClock style={{ width: 13, height: 13 }} /> Run history
         </Link>
       </header>
@@ -217,7 +218,7 @@ export function LiveRunDetailPage({ basePath }: { basePath: '/admin/strategies' 
         </p>
       )}
       <p className="small-note">
-        <Link to={historyLink}>← All runs</Link>
+        <Link to={HISTORY}>← All runs</Link>
       </p>
     </div>
   )

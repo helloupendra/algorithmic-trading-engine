@@ -1,0 +1,111 @@
+/* Markets → Movers: one section per source, top to bottom. Every long list
+   scrolls in its own box with its header held in place, so the page reads
+   as three sections rather than one column of a few hundred rows. */
+
+.mvp { display: flex; flex-direction: column; gap: 22px; }
+.page.mvp > * + * { margin-top: 0; }   /* the flex gap does the spacing */
+
+.mvp-sec { display: flex; flex-direction: column; gap: 10px; min-width: 0; scroll-margin-top: 12px; }
+
+/* What a section ranks, then where its numbers come from, on one line over a hairline. */
+.mvp-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.mvp-head__title { margin: 0; font-size: 14px; font-weight: 650; }
+.mvp-head__source { font-size: 11.5px; color: var(--text-3); }
+.mvp-head__tools { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; max-width: 100%; }
+/* Three indices' names are wider than a phone: the picker scrolls, the page does not. */
+.mvp-head__tools .oc-seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.mvp-head__tools .oc-seg button { flex: 0 0 auto; white-space: nowrap; }
+
+.mvp-empty { margin: 0; }
+.mvp-warnings { margin: 0; padding-left: 18px; }
+.mvp-legend { margin: 0; }
+.mv-note { margin: 8px 0 0; }
+
+.mvp-body { min-width: 0; }
+
+.mv-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+.mvp-stocks {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: start;
+}
+@media (max-width: 1200px) { .mvp-stocks { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 900px) {
+  .mv-grid, .mvp-stocks { grid-template-columns: minmax(0, 1fr); }
+}
+
+.mv-card { display: flex; flex-direction: column; min-width: 0; padding-bottom: 12px; }
+.mv-card .panel__head { margin-bottom: 8px; }
+
+/* The card's own scroll, a screenful at most. */
+.mv-scroll {
+  max-height: 380px;
+  overflow: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  scrollbar-width: thin;
+}
+.mvp-stocks .mv-scroll { max-height: 300px; }
+.mv-scroll .col-rank { width: 40px; }
+.mv-scroll table { margin: 0; }
+.mv-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface2);
+}
+.mv-scroll td.num,
+.mv-scroll th.num { text-align: right; white-space: nowrap; }
+
+.mv-sym__code {
+  display: block;
+  font-size: 11px;
+  color: var(--text-2);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.mv-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.mv-filter {
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.mv-filter:hover { color: var(--text); }
+.mv-filter[aria-pressed='true'] {
+  color: var(--text);
+  border-color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 14%, transparent);
+}
+.mv-filter__count { margin-left: 6px; color: var(--text-2); }
+
+.mv-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 10px;
+}
+.mv-tools .field__input { max-width: 220px; }

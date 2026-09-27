@@ -205,7 +205,7 @@ export function ReadinessStrip() {
         tone={r.brokerLinked == null ? 'idle' : r.brokerLinked ? 'pos' : 'neg'}
         label={r.brokerLinked == null ? 'FYERS …' : r.brokerLinked ? 'FYERS linked' : 'FYERS not linked'}
         title="Broker session — click to manage"
-        to="/admin/broker"
+        to="/system/connectors"
       />
       <ReadinessPill
         tone={
@@ -221,7 +221,7 @@ export function ReadinessStrip() {
                 : 'Feed …'
         }
         title="Live ingestor — click to manage"
-        to="/admin/data/live"
+        to="/data/feeds"
       />
     </div>
   )
@@ -317,7 +317,7 @@ export function StrategyCard({
         {showSpecLink && (
           <Link
             className="btn btn--sm"
-            to={specHref ?? `/admin/strategies/library/${s.id}`}
+            to={specHref ?? `/trade/library/${s.id}`}
             title="Entry, exits, data it needs and a worked example — the strategy's specification"
           >
             How it works <IconArrowRight style={{ width: 12, height: 12 }} />
@@ -1064,7 +1064,7 @@ export function LaunchDialog({
   if (isAdmin && readiness.feed && readiness.feed !== 'live')
     notes.push(
       <span key="feed">
-        No live feed is delivering ticks — start one on <Link to="/admin/data/live">Data › Live feeds</Link>.
+        No live feed is delivering ticks — start one on <Link to="/data/feeds">Data › Feeds</Link>.
       </span>,
     )
   // Only worth saying when nothing else is feeding the runner: any connector's
@@ -1073,7 +1073,7 @@ export function LaunchDialog({
     notes.push(
       <span key="broker">
         FYERS is not linked — if no other connector is feeding, no ticks will arrive until the{' '}
-        <Link to="/admin/broker">broker session</Link> is restored.
+        <Link to="/system/connectors">broker session</Link> is restored.
       </span>,
     )
 
@@ -1156,7 +1156,7 @@ export function LaunchDialog({
               <div className="alert alert--warn" role="status">
                 <span>
                   No F&O contracts loaded — import the instrument master first on{' '}
-                  <Link to="/admin/data/instruments">Data › Instruments & F&O</Link>.
+                  <Link to="/data/instruments">Data › Instruments</Link>.
                 </span>
               </div>
             ) : (

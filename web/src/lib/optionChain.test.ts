@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  CHAIN_VIEWS,
+  chainUnderlying,
+  chainViewUrl,
   compactIndian,
   compactSigned,
   describeFreshness,
@@ -278,6 +281,25 @@ describe('pushed ticks on the chain', () => {
     expect(classifyBuildUp(1, -1)).toBe('ShortCovering')
     expect(classifyBuildUp(-1, -1)).toBe('LongUnwinding')
     expect(classifyBuildUp(0, 5)).toBe('Neutral')
+  })
+})
+
+describe('the chain page views', () => {
+  it('reads the underlying from the URL, falling back to NIFTY', () => {
+    expect(chainUnderlying('banknifty')).toBe('BANKNIFTY')
+    expect(chainUnderlying(' CRUDEOIL ')).toBe('CRUDEOIL')
+    expect(chainUnderlying('RELIANCE')).toBe('NIFTY')
+    expect(chainUnderlying(null)).toBe('NIFTY')
+  })
+
+  it('carries the underlying and expiry between views, and leaves the replay clock behind', () => {
+    expect(chainViewUrl('oi', '?u=SENSEX&expiry=2026-10-01&at=10:41')).toBe('/markets/chain/oi?u=SENSEX&expiry=2026-10-01')
+    expect(chainViewUrl('chain', new URLSearchParams('u=BANKNIFTY'))).toBe('/markets/chain?u=BANKNIFTY')
+    expect(chainViewUrl('levels', '')).toBe('/markets/chain/levels')
+  })
+
+  it('has one path per view, all under the chain tab', () => {
+    expect(CHAIN_VIEWS.map((v) => v.path)).toEqual(['/markets/chain', '/markets/chain/oi', '/markets/chain/levels'])
   })
 })
 

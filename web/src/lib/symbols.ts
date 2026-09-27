@@ -41,6 +41,40 @@ export function resolutionRank(resolution: string): number {
   return Number.isNaN(minutes) ? 20_000 : minutes
 }
 
+/** One column of the coverage table: one resolution from one source. */
+export interface CoverageColumn {
+  key: string
+  label: string
+}
+
+/** A coverage row's column: its source and resolution, for the matrix to group by. */
+export function coverageColumnKey(row: { resolution: string; source: string }): string {
+  return `${row.source}|${row.resolution}`
+}
+
+/**
+ * The coverage table's columns, finest first and stored before live at one
+ * resolution, each named so it cannot be misread. The table's headings are
+ * uppercased, so "1m" (a minute) read as "1M" (a month); and the stored
+ * 1-minute candles (resolution "1") and the live 1-minute bars ("1m") were
+ * two columns under that one heading.
+ */
+export function coverageColumns(rows: readonly { resolution: string; source: string }[]): CoverageColumn[] {
+  const seen = new Map<string, { resolution: string; source: string }>()
+  for (const r of rows) seen.set(coverageColumnKey(r), { resolution: r.resolution, source: r.source })
+  return [...seen.entries()]
+    .sort(
+      ([, a], [, b]) =>
+        resolutionRank(a.resolution) - resolutionRank(b.resolution) || Number(a.source === 'live') - Number(b.source === 'live'),
+    )
+    .map(([key, c]) => {
+      const r = c.resolution.toLowerCase()
+      const minutes = /^(\d+)m?$/.exec(r)?.[1]
+      const base = r === 'd' || r === '1d' ? 'Day' : minutes ? `${minutes} min` : c.resolution
+      return { key, label: c.source === 'live' ? `${base} · live` : base }
+    })
+}
+
 export function formatResolution(resolution: string): string {
   const r = resolution.toLowerCase()
   if (r === 'd' || r === '1d') return '1D'

@@ -1,4 +1,5 @@
-/* Charts: the chart is the page. A slim toolbar, quick picks, a header with
+/* Markets → Chart: the chart is the page. A slim toolbar (with the structure
+   layer's switches under it when that layer is on), quick picks, a header with
    the price, the stage, then a row of numbers for what is on screen. */
 
 .charts { display: flex; flex-direction: column; gap: 12px; }
@@ -103,6 +104,12 @@
 
 @media (max-width: 720px) {
   .charts__symbol { width: 100%; }
+  /* On a phone the picks and the structure switches are one row each that
+     scrolls sideways in its own box, so the chart is not four rows down. */
+  .charts__picks,
+  .smc__bar { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .charts__pick,
+  .smc__bar .seg { flex: 0 0 auto; }
   .charts__stage .chart { height: 46vh; }
   .charts__price { font-size: 22px; }
 }

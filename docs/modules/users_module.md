@@ -1,6 +1,7 @@
 # Users module
 
-Accounts, what each may do, and how much they may put at risk. Console page: **`/admin/users`**.
+Accounts, what each may do, and how much they may put at risk. Console: **System → People**
+(`/system/people`, with Packages and Invites as its other tabs).
 
 ## The idea that matters
 
@@ -89,7 +90,7 @@ The admin chooses what the account starts with — module grants and a strategy 
 sign in and do nothing. Verified: a new account with the `strategies` module but no package sees
 zero strategies.
 
-Console: the **Invitations** panel on `/admin/users`. The public page is `/invite/{token}`.
+Console: the **Invites** tab of System → People (`/system/people/invites`). The public page is `/invite/{token}`.
 
 ## API
 
@@ -123,7 +124,7 @@ passing through the admin. Safe to add precisely because a new account holds not
 ## A trader's broker account (Account page)
 
 Traders trade at the **simulated broker** ([OpenFNO Broker](https://broker.openfno.com)), and an
-administrator opens their account for them. There is nothing on `/trader/account` to link: the page
+administrator opens their account for them. There is nothing on the trader's Account page (`/account`) to link: the page
 shows the account the platform issued — client id, money, positions, the day's orders, and whether the
 account is stopped — all read from the broker on each request, never cached here.
 
@@ -133,7 +134,7 @@ platform stores them encrypted (ASP.NET Data Protection, `sim_broker_accounts`);
 who lost them would have to have the whole account reopened. It is a POST, not part of the page's own
 data, so secrets travel only when someone asks for them.
 
-**From the admin side**, every user's row on `/admin/users` has a **Broker account** section:
+**From the admin side**, every user's row on System → People (`/system/people`) has a **Broker account** section:
 
 | Action | What it does |
 | --- | --- |

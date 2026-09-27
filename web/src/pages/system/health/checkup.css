@@ -1,12 +1,6 @@
-/* Desk checkup (System → Desk checkup): the parts the shared classes do not cover. */
+/* System → Health → Checkups: the parts the shared classes do not cover. */
 
-/* The title and what the page is take the room, and the run button stays
-   beside them rather than wrapping under a long subtitle. Below 760px the
-   shared header stacks, and the button goes full width on its own. */
-@media (min-width: 761px) {
-  .checkup-intro { flex: 1 1 0; min-width: 0; }
-  .checkup-run { flex: none; }
-}
+.checkup-run { flex: none; }
 
 /* The report: its header, then the sections, in one panel. */
 .checkup-report > * + * { margin-top: 16px; }

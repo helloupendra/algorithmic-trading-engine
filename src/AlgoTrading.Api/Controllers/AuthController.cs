@@ -210,10 +210,11 @@ namespace AlgoTrading.Api.Controllers;
     private IActionResult FrontendRedirect(bool connected, string? reason = null, string? providerKey = null)
     {
         // Back to the connector's own page when we know which one it was, so the
-        // operator lands where they pressed Connect.
+        // operator lands where they pressed Connect. The console still redirects
+        // the old /admin/broker/{key} here, for a sign-in begun before a deploy.
         string path = string.IsNullOrWhiteSpace(providerKey)
-            ? "/admin/broker"
-            : $"/admin/broker/{providerKey}";
+            ? "/system/connectors"
+            : $"/system/connectors/{providerKey}";
 
         string origin = _frontendBaseUrl ?? $"{Request.Scheme}://{Request.Host}";
         string url = $"{origin}{path}?connected={(connected ? 1 : 0)}";

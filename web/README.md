@@ -1,15 +1,18 @@
 # AlgoTrading Web Client
 
-React 19 + TypeScript console hosting the **admin modules** and the **trader
-screens**. One app, one build, routes gated by the signed-in user's role.
+React 19 + TypeScript console for admins and traders alike: one app, one
+build, one URL per page for every role. What renders is decided by the
+signed-in user's role and module grants; the API scopes what it answers.
 
-The app runs on the **v2 design system**: a single token vocabulary in
-`styles.css` (dark, dense, operator-grade), an SVG icon set, a grouped sidebar
-built from the module registry, and a topbar that keeps the three live health
-signals (market session, broker session, feed heartbeat) on every screen.
-Modules are rebuilt one at a time on this system — **Data is complete**; the
-screens still tagged `v1` in the sidebar run on the old markup but inherit the
-new look through the shared class vocabulary.
+The console is six workspaces, each a set of tabs: **Desk** (`/desk`, the day
+on one sheet), **Markets** (`/markets/…`), **Trade** (`/trade/…`),
+**Research** (`/research/…`), **Data** (`/data/…`) and **System**
+(`/system/…`). A 44 px top bar carries the workspaces, ⌘K search and the live
+health signals; a tab strip under it shows the current workspace's tabs; on a
+phone the workspaces move to a bottom bar. `src/lib/modules.ts` is the single
+registry the bar, the strip, the palette and the router's guards read. The
+URLs the console used before the workspaces (`/admin/…`, `/trader/…`) redirect
+to their new homes with their query string (`src/lib/routeMap.ts`).
 
 ## Running it
 
@@ -24,7 +27,7 @@ npm run dev
 
 Then open <http://localhost:5173>. The root `/` is the public homepage
 (`src/pages/LandingPage.tsx`); "Open console" leads to `/login`, and signing
-out returns to `/`. `/trader` and `/admin` require a session.
+out returns to `/`. Everything else requires a session, and opens on `/desk`.
 
 ### Signing in as admin
 
@@ -85,30 +88,34 @@ src/
 │   ├── auth.tsx           AuthProvider / useAuth — session state
 │   ├── queries.ts         One TanStack Query hook per endpoint; polling intervals live here
 │   ├── types.ts           DTO shapes mirroring src/AlgoTrading.Contracts
-│   ├── modules.ts         Module registry — sidebar, admin home grid, future per-trader grants
+│   ├── modules.ts         Workspace registry: the tabs, their URLs and who may see each
+│   ├── routeMap.ts        Every pre-workspace URL and where it redirects
 │   ├── symbols.ts         Symbol → category classification, resolution helpers
 │   └── format.ts          INR/number/date/age formatting
 ├── components/
-│   ├── AppLayout.tsx      v2 shell: grouped sidebar + topbar health pills
+│   ├── AppLayout.tsx      The shell: top bar, tab strip, phone bottom bar, ⌘K palette
+│   ├── shell/             The shell's parts (status items, palette, account menu)
 │   ├── icons.tsx          Inline SVG icon set (no icon library)
 │   ├── ui.tsx             Panel, StatTile, Badge, QueryBoundary primitives
+│   ├── PageTabs.tsx       A page's own tabs when each tab is a URL
 │   ├── CandleChart.tsx    Persistent lightweight-charts candlestick + volume
-│   ├── LiveQuotesMonitor.tsx  Flashing quote table (used by the v1 System page)
-│   ├── charts.tsx         v1 chart wrappers (legacy pages)
-│   └── RouteGuards.tsx    RequireAuth, RequireRole, RedirectIfAuthenticated
+│   ├── charts.tsx         Price and equity charts
+│   └── RouteGuards.tsx    RequireAuth, RequireRole, ByRole and the old-URL redirect
 ├── pages/
 │   ├── LoginPage.tsx
-│   ├── data/              THE DATA MODULE (v2)
-│   │   ├── DataOverviewPage.tsx     Coverage matrix, pipeline health, needs-attention
-│   │   ├── LiveFeedsPage.tsx        Feed start/stop, index tickers, merged live watchlist,
-│   │   │                            diagnostics (+ /api/Ingestor/logs), tick/bar inspector
-│   │   ├── HistoricalDataPage.tsx   Coverage-first browser, chart, FYERS backfill,
-│   │   │                            ATM±N option-chain backfill
-│   │   └── InstrumentsFnoPage.tsx   Master search, expiries, CE/PE chain ladder
-│   ├── admin/             AdminHomePage (module grid) + v1 modules awaiting rebuild
-│   └── trader/            Trader screens (v1, rebuild queued)
-├── App.tsx                Route table (old /admin/ingestion and /admin/instruments
-│                          redirect into the Data module)
+│   ├── desk/              The Desk (/desk)
+│   ├── markets/           Markets: the chart with its structure layer, the option
+│   │                      chain (chain · OI history · levels), movers by source
+│   ├── system/            System: Health (overview · checkups), Log, People
+│   ├── data/              Data (coverage, feeds, historical, instruments) and the
+│   │                      market pages not yet moved under markets/
+│   ├── strategies/ backtesting/ analysis/ notebook/ trading/
+│   │                      Trade and Research pages
+│   ├── admin/             Connectors, incidents, risk, calendar
+│   └── trader/            The trader's account, watchlist and the v1 positions,
+│                          orders and run pages (until positions across books)
+├── App.tsx                Route table: the registry's URLs, then a redirect for
+│                          every pre-workspace URL
 └── styles.css             v2 design tokens + the shared class vocabulary
 ```
 
@@ -131,7 +138,7 @@ Route guards and conditional navigation decide **what is rendered**. They are a
 usability layer, not a security boundary — the API independently enforces the
 same rules against the token's role claim on every request.
 
-Concretely: a trader who types `/admin/risk` is redirected to `/forbidden`, and
+Concretely: a trader who types `/trade/risk` is redirected to `/forbidden`, and
 if they defeated that redirect the underlying endpoints still answer `403`.
 Never move an authorization decision into this app.
 

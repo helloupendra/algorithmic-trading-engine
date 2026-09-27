@@ -1,0 +1,42 @@
+/* System → Health: the tabs, then one line saying what the tab is for with
+   its one action at the right, then the tab's panels. The shared shapes (.hp-bar)
+   are used by System → People and System → Log too. */
+
+.hp > * + * { margin-top: 12px; }
+
+.hp-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+.hp-bar__lead { margin: 0; font-size: 12.5px; max-width: 92ch; }
+
+/* The latest checkup, one line, the whole of it a link to the full report. */
+.hp-checkup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+  font-size: 12.5px;
+}
+.hp-checkup:hover { border-color: var(--line-strong); }
+.hp-checkup__text { flex: 1 1 auto; min-width: 0; }
+.hp-checkup__more { flex: 0 0 auto; color: var(--text-3); }
+
+/* Reference a tab keeps folded: read once, then out of the way. */
+.hp-details { color: var(--text-2); }
+.hp-details > summary { cursor: pointer; width: fit-content; color: var(--text-3); padding: 2px 0; }
+.hp-details > summary:hover { color: var(--text-2); }
+.hp-details[open] > summary { margin-bottom: 8px; }
+
+@media (max-width: 640px) {
+  .hp-checkup { flex-wrap: wrap; }
+  .hp-checkup__more { display: none; }
+}

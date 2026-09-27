@@ -18,6 +18,43 @@ export const UNDERLYINGS = [
   'NATURALGAS',
 ] as const
 
+/* ------------------------------------------------------------------ views -- */
+
+/**
+ * The three readings of one chain, one page with a tab each: the chain now,
+ * how open interest moved at a strike through the session, and the levels
+ * (walls, max pain, the straddle's move) desks read off it.
+ */
+export type ChainViewKey = 'chain' | 'oi' | 'levels'
+
+export const CHAIN_VIEWS: ReadonlyArray<{ key: ChainViewKey; label: string; path: string }> = [
+  { key: 'chain', label: 'Chain', path: '/markets/chain' },
+  { key: 'oi', label: 'OI history', path: '/markets/chain/oi' },
+  { key: 'levels', label: 'Levels', path: '/markets/chain/levels' },
+]
+
+/** The underlying a URL asks for, when the recorder captures it; NIFTY otherwise. */
+export function chainUnderlying(requested: string | null | undefined): (typeof UNDERLYINGS)[number] {
+  const wanted = (requested ?? '').trim().toUpperCase()
+  return (UNDERLYINGS as readonly string[]).includes(wanted) ? (wanted as (typeof UNDERLYINGS)[number]) : 'NIFTY'
+}
+
+/**
+ * A view's URL, carrying what the views share: the underlying and the expiry.
+ * The replay clock (`at`) belongs to the chain alone and is left behind.
+ */
+export function chainViewUrl(view: ChainViewKey, search: string | URLSearchParams): string {
+  const from = new URLSearchParams(search)
+  const next = new URLSearchParams()
+  for (const key of ['u', 'expiry']) {
+    const value = from.get(key)
+    if (value) next.set(key, value)
+  }
+  const path = CHAIN_VIEWS.find((v) => v.key === view)!.path
+  const qs = next.toString()
+  return qs ? `${path}?${qs}` : path
+}
+
 const MINUS = '−'
 
 /**

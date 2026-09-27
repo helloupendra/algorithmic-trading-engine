@@ -16,7 +16,7 @@ import {
   type IChartApi,
   type UTCTimestamp,
 } from 'lightweight-charts'
-import type { EquitySnapshot, LiveBar } from '../lib/types'
+import type { EquitySnapshot } from '../lib/types'
 
 function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
@@ -53,48 +53,6 @@ function useResize(chartRef: React.RefObject<IChartApi | null>, ref: React.RefOb
     observer.observe(el)
     return () => observer.disconnect()
   }, [chartRef, ref])
-}
-
-export function BarChart({ bars }: { bars: LiveBar[] }) {
-  const ref = useRef<HTMLDivElement | null>(null)
-  const chartRef = useRef<IChartApi | null>(null)
-
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-
-    const chart = createChart(el, baseOptions(el))
-    chartRef.current = chart
-
-    const series = chart.addSeries(CandlestickSeries, {
-      upColor: cssVar('--success'),
-      wickUpColor: cssVar('--success'),
-      downColor: cssVar('--danger'),
-      wickDownColor: cssVar('--danger'),
-      borderVisible: false,
-    })
-
-    const data = [...bars]
-      .sort((a, b) => a.barStartUtc.localeCompare(b.barStartUtc))
-      .map((b) => ({
-        time: istTime(b.barStartUtc),
-        open: b.open,
-        high: b.high,
-        low: b.low,
-        close: b.close,
-      }))
-    series.setData(data)
-    chart.timeScale().fitContent()
-
-    return () => {
-      chart.remove()
-      chartRef.current = null
-    }
-  }, [bars])
-
-  useResize(chartRef, ref)
-
-  return <div ref={ref} className="chart" />
 }
 
 export function EquityChart({ snapshots }: { snapshots: EquitySnapshot[] }) {

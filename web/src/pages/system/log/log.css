@@ -1,0 +1,104 @@
+/* System → Log: one timeline of four streams. A row is a grid (when, stream,
+   what, who, result) on one hairline; on a phone it folds to two lines with
+   the stream beside the time. */
+
+.log-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.log-search { width: 280px; max-width: 100%; }
+.log-select { width: auto; max-width: 220px; }
+.log-tools__count { margin-left: auto; font-size: 12px; }
+
+.log-person { margin: 0; }
+.log-note { margin: 0; }
+
+.log-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 18px;
+  padding: 8px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.log-strip__tools { margin-left: auto; display: inline-flex; flex-wrap: wrap; gap: 6px; }
+
+.log-sent ul { margin: 6px 0; padding-left: 18px; }
+.log-sent p { margin: 0; }
+
+.log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
+}
+.log-row {
+  display: grid;
+  grid-template-columns: 138px 64px minmax(0, 1fr) minmax(0, 190px) 104px;
+  align-items: baseline;
+  gap: 12px;
+  padding: 7px 4px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 12.5px;
+}
+.log-row__when { color: var(--text-2); font-size: 11.5px; white-space: nowrap; }
+.log-row__source {
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.log-row__what { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.log-row__title { color: var(--text); overflow-wrap: anywhere; }
+.log-row__detail { color: var(--text-3); font-size: 11.5px; overflow-wrap: anywhere; white-space: pre-line; }
+.log-row__who { color: var(--text-2); overflow-wrap: anywhere; }
+.log-row__result { justify-self: end; }
+
+/* A deploy row opens to its commits and steps. */
+.log-row__toggle {
+  all: unset;
+  cursor: pointer;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.log-row__toggle::after { content: ' ▸'; color: var(--text-3); }
+.log-row__toggle[aria-expanded='true']::after { content: ' ▾'; }
+.log-row__toggle:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.log-row--more { display: block; padding: 4px 4px 10px 218px; }
+.log-deploy__commits { margin: 0 0 6px; padding-left: 16px; font-size: 11.5px; color: var(--text-2); }
+.log-deploy__steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.log-deploy__step {
+  display: grid;
+  grid-template-columns: 16px 150px minmax(0, 1fr) auto;
+  gap: 8px;
+  font-size: 12px;
+}
+.log-deploy__step--ok .log-deploy__mark { color: var(--pos); }
+.log-deploy__step--failed .log-deploy__mark { color: var(--neg); }
+.log-deploy__step--skipped .log-deploy__mark { color: var(--text-3); }
+
+@media (max-width: 760px) {
+  .log-row {
+    grid-template-columns: auto 1fr auto;
+    grid-template-areas:
+      'when source result'
+      'what what what'
+      'who who who';
+    gap: 2px 10px;
+  }
+  .log-row__when { grid-area: when; }
+  .log-row__source { grid-area: source; }
+  .log-row__result { grid-area: result; }
+  .log-row__what { grid-area: what; }
+  .log-row__who { grid-area: who; font-size: 11.5px; color: var(--text-3); }
+  .log-row--more { padding-left: 4px; }
+  .log-deploy__step { grid-template-columns: 16px minmax(0, 1fr); }
+  .log-deploy__step > :nth-child(n + 3) { grid-column: 2; }
+  .log-tools__count { margin-left: 0; }
+  .log-search { width: 100%; }
+}

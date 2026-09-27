@@ -13,6 +13,8 @@
  * than letting the last good report stand in for today.
  */
 
+import { movedUrl } from './routeMap'
+
 // ---------- types (GET/POST /api/Checkups) ----------
 
 export type CheckupSlot = 'morning' | 'close' | 'night' | 'weekly' | 'on-request'
@@ -216,13 +218,16 @@ export function emptyToDoText(c: Pick<CheckupDetail, 'status' | 'itemsUnreadable
 
 /**
  * An item's link, only when it is a path inside this console. Sentinel builds
- * them ("/admin/incidents"), but the column is text: anything else (a full
- * URL, "//host", "javascript:…") is not turned into a link.
+ * them ("/system/incidents"), but the column is text: anything else (a full
+ * URL, "//host", "javascript:…") is not turned into a link. A report written
+ * before the workspaces names the old URL; it is shown as where it goes now,
+ * so the link and its label agree.
  */
 export function itemLink(link: string | null | undefined): string | null {
   const path = link?.trim()
   if (!path || !path.startsWith('/') || path.startsWith('//') || path.includes('\\')) return null
-  return path
+  const [pathname, search = ''] = path.split('?')
+  return movedUrl(pathname, search ? `?${search}` : '') ?? path
 }
 
 // ---------- staleness ----------

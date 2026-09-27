@@ -124,14 +124,14 @@ function HealthItem({ backend, nse, mcx, heartbeats }: {
             {summary && <span>Live data: {summary.liveFeeds.length ? summary.liveFeeds.join(', ') : 'no feed running'}</span>}
           </div>
           {backendState && (
-            <Link to="/admin/system" className="pop__row">
+            <Link to="/system" className="pop__row">
               <Dot tone={backendState.tone} />
               <span className="pop__name">{backendState.label}</span>
               <span className="pop__detail">{backendState.title}</span>
             </Link>
           )}
           {calendar && (
-            <Link to="/admin/system/calendar" className="pop__row">
+            <Link to="/system/calendar" className="pop__row">
               <Dot tone={calendar.tone} />
               <span className="pop__name">{calendar.label}</span>
               <span className="pop__detail">{calendar.title}</span>
@@ -139,7 +139,7 @@ function HealthItem({ backend, nse, mcx, heartbeats }: {
           )}
           {feedList.length > 0 && <div className="pop__section">Feeds</div>}
           {feedList.map((p) => (
-            <Link key={p.key} to="/admin/data/live" className="pop__row">
+            <Link key={p.key} to="/data/feeds" className="pop__row">
               <Dot tone={p.tone} />
               <span className="pop__name">{p.label}</span>
               <span className="pop__detail">{p.title}</span>
@@ -147,7 +147,7 @@ function HealthItem({ backend, nse, mcx, heartbeats }: {
           ))}
           {summary && summary.lines.length > 0 && <div className="pop__section">Connectors</div>}
           {summary?.lines.map((line) => (
-            <Link key={line.key} to={`/admin/broker/${line.key}`} className="pop__row">
+            <Link key={line.key} to={`/system/connectors/${line.key}`} className="pop__row">
               <Dot tone={CONNECTOR_TONE[line.state]} />
               <span className="pop__name">
                 {line.name} <small>{line.role}</small>
@@ -159,9 +159,9 @@ function HealthItem({ backend, nse, mcx, heartbeats }: {
             </Link>
           ))}
           <div className="pop__foot">
-            <Link to="/admin/broker">Connectors</Link>
-            <Link to="/admin/data/live">Live feeds</Link>
-            <Link to="/admin/checkup">Desk checkup</Link>
+            <Link to="/system/connectors">Connectors</Link>
+            <Link to="/data/feeds">Feeds</Link>
+            <Link to="/system/checkups">Checkups</Link>
           </div>
         </div>
       )}
@@ -179,7 +179,7 @@ function IncidentsItem() {
   const s = summary.data
   if (!s) {
     return summary.isError ? (
-      <Link to="/admin/incidents" className="st st--badge st--idle" title="Could not read Sentinel's incidents" aria-label="Incidents: could not be read">
+      <Link to="/system/incidents" className="st st--badge st--idle" title="Could not read Sentinel's incidents" aria-label="Incidents: could not be read">
         <IconWarning aria-hidden="true" />
         <span className="st__label">?</span>
       </Link>
@@ -193,7 +193,7 @@ function IncidentsItem() {
   const tone: Tone = silence ? 'warn' : live === 0 || severity === 'neutral' ? 'idle' : severity
   const title = silence ?? (live === 0 ? 'No live incidents' : `${live} live incident${live === 1 ? '' : 's'}${s.newestTitle ? `. Newest: ${s.newestTitle}` : ''}`)
   return (
-    <Link to="/admin/incidents" className={`st st--badge st--${tone}`} title={title} aria-label={`Incidents: ${title}`}>
+    <Link to="/system/incidents" className={`st st--badge st--${tone}`} title={title} aria-label={`Incidents: ${title}`}>
       <IconWarning aria-hidden="true" />
       <span className="st__label">{silence ? 'Sentinel quiet' : live}</span>
     </Link>
@@ -212,7 +212,7 @@ function KillSwitchItem({ isAdmin }: { isAdmin: boolean }) {
 
   if (!ks.data) {
     return isAdmin && ks.isError ? (
-      <Link to="/admin/system/risk" className="st st--warn" title="Could not read the kill switch">
+      <Link to="/trade/risk" className="st st--warn" title="Could not read the kill switch">
         <span className="st__dot" aria-hidden="true" />
         <span className="st__label">Kill switch ?</span>
       </Link>
@@ -235,7 +235,7 @@ function KillSwitchItem({ isAdmin }: { isAdmin: boolean }) {
       </>
     )
     return isAdmin ? (
-      <Link to="/admin/system/risk" className="st st--halted" title={`${why} Release it on the Risk page.`}>
+      <Link to="/trade/risk" className="st st--halted" title={`${why} Release it on the Risk page.`}>
         {body}
       </Link>
     ) : (

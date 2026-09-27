@@ -141,21 +141,6 @@ export interface Instrument {
   optionType: string | null
 }
 
-export interface DerivativeExpiry {
-  underlying: string
-  expiryDate: string
-}
-
-export interface OptionChainItem {
-  symbol: string
-  underlying: string
-  expiryDate: string | null
-  strikePrice: number | null
-  optionType: string | null
-  instrumentType: string
-  description: string
-}
-
 // ---------- Simulator ----------
 
 export interface SimulationRun {
@@ -2382,14 +2367,16 @@ export interface DeployStep {
   name: string
   status: 'ok' | 'skipped' | 'failed'
   detail: string
-  atUtc: string
+  /** Written by the Windows script only; desk.sh records no time per step. */
+  atUtc?: string
 }
 
 /** One pass of the desk's deploy script over the latest push. */
 export interface DeployRecord {
   startedUtc: string
   finishedUtc: string
-  outcome: 'applied' | 'skipped' | 'failed'
+  /** "applied" from the Windows script, "ok" from desk.sh: both went live (lib/deploys.ts). */
+  outcome: 'applied' | 'ok' | 'skipped' | 'failed'
   summary: string
   fromCommit: string
   toCommit: string

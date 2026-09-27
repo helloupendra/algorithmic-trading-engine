@@ -34,7 +34,7 @@ export interface CardContext {
   onStart: (strategy: StrategyListItem) => void
 }
 
-const specHref = (s: StrategyListItem) => `/admin/strategies/library/${s.id}`
+const specHref = (s: StrategyListItem) => `/trade/library/${s.id}`
 
 /* ------------------------------------------------------------------ chips */
 

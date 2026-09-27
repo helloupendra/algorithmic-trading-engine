@@ -35,7 +35,7 @@ def format_report(report: Report, slot: Slot, console_url: str = "") -> str:
         lines.append("Not checked: " + "; ".join(f"{i.title} ({i.detail.removeprefix('Not checked: ').rstrip('.')})"
                                                  for i in skipped) + ".")
     if console_url:
-        lines += ["", f"{console_url.rstrip('/')}/admin/checkup"]
+        lines += ["", f"{console_url.rstrip('/')}/system/checkups"]
 
     text = redact("\n".join(lines))
     if len(text) > MESSAGE_CHARS:

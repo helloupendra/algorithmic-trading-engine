@@ -170,8 +170,27 @@ export const BUILD_UPS = ['Long build-up', 'Short build-up', 'Short covering', '
 
 export const EVENT_CATEGORIES = ['RBI policy', 'Fed policy', 'US CPI', 'US jobs', 'India CPI', 'Budget', 'Election', 'Results', 'Other'] as const
 
-/** Underlyings whose option chain the levels section can read. */
-export const LEVEL_UNDERLYINGS = ['NIFTY', 'BANKNIFTY', 'SENSEX', 'FINNIFTY', 'MIDCPNIFTY'] as const
+/** A reading in Indian grouping to a fixed number of places, or a dash when there is none. */
+export function grouped(v: number | null | undefined, digits = 0): string {
+  return v == null || Number.isNaN(v) ? '—' : v.toLocaleString('en-IN', { minimumFractionDigits: digits, maximumFractionDigits: digits })
+}
+
+/**
+ * Where a Market factors section that moved lives now, for an old
+ * ?section= link: the chain's levels are a tab of the option chain page, the
+ * futures build-up a section of Movers. Null for a section still on the
+ * Factors page.
+ */
+export function movedFactorSection(section: string | null | undefined): string | null {
+  switch (section) {
+    case 'levels':
+      return '/markets/chain/levels'
+    case 'futures':
+      return '/markets/movers#futures'
+    default:
+      return null
+  }
+}
 
 export const DATASET_LABELS: Record<string, string> = {
   'participant-oi': 'Participant-wise OI (NSE)',

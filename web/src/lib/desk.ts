@@ -20,6 +20,7 @@ import type { Forecast, ScoreboardRow } from './analysis'
 import { asProb, asRange } from './analysis'
 import type { CheckupDetail, CheckupItem, CheckupSummary } from './checkup'
 import { SLOT_LABEL } from './checkup'
+import { deployState, deploySummary } from './deploys'
 import { expectedMove, istDate } from './factors'
 import type { MarketEvent } from './factors'
 import { formatInrSigned } from './format'
@@ -1131,9 +1132,10 @@ export function deskTimeline(input: {
 
   for (const d of input.deploys ?? []) {
     const ms = msOf(d.finishedUtc)
-    if (!isToday(ms) || d.outcome === 'skipped') continue
-    if (d.outcome === 'applied') push(`dep-${d.finishedUtc}`, ms, 'info', `Deployed ${d.toCommit.slice(0, 7)}${d.commits.length ? ` · ${d.commits.length} commit${d.commits.length === 1 ? '' : 's'}` : ''}`)
-    else push(`dep-${d.finishedUtc}`, ms, 'neg', `Deploy failed · ${d.summary}`)
+    const state = deployState(d.outcome)
+    if (!isToday(ms) || state === 'skipped') continue
+    if (state === 'live') push(`dep-${d.finishedUtc}`, ms, 'info', `Deployed ${d.toCommit.slice(0, 7)}${d.commits.length ? ` · ${d.commits.length} commit${d.commits.length === 1 ? '' : 's'}` : ''}`)
+    else push(`dep-${d.finishedUtc}`, ms, 'neg', `Deploy failed · ${deploySummary(d.summary)}`)
   }
 
   return events.sort((a, b) => b.atMs - a.atMs || a.key.localeCompare(b.key))

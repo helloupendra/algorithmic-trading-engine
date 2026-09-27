@@ -29,7 +29,6 @@ import type {
   BrokerSessionInfo,
   CandleDto,
   ChainPollerStatus,
-  DerivativeExpiry,
   EquitySnapshot,
   FnoUnderlying,
   IngestorProcessStatus,
@@ -47,7 +46,6 @@ import type {
   LiveWatchlistItem,
   MarketSessionInfo,
   OptionChain,
-  OptionChainItem,
   OptionChainSeries,
   PaperOrder,
   PaperOrderRow,
@@ -243,29 +241,6 @@ export function useIngestorProcessStatus() {
     queryKey: ['ingestor', 'process'],
     queryFn: () => api.get<IngestorProcessStatus>('/api/Ingestor/status'),
     refetchInterval: POLL_SLOW,
-  })
-}
-
-export function useStartIngestor() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: () => api.post<{ message: string }>('/api/Ingestor/start'),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['ingestor'] })
-      // The ingestor is also the "fyers" row of the feeds list.
-      qc.invalidateQueries({ queryKey: ['feeds'] })
-    },
-  })
-}
-
-export function useStopIngestor() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: () => api.post<{ message: string }>('/api/Ingestor/stop'),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['ingestor'] })
-      qc.invalidateQueries({ queryKey: ['feeds'] })
-    },
   })
 }
 
@@ -651,31 +626,6 @@ export function useInstrumentSearch(query: string, type?: string, includeExpired
   })
 }
 
-export function useExpiries(underlying: string) {
-  return useQuery({
-    queryKey: ['derivatives', 'expiries', underlying],
-    queryFn: () =>
-      api.get<DerivativeExpiry[]>(
-        `/api/Instruments/derivatives/expiries?underlying=${encodeURIComponent(underlying)}`,
-      ),
-    // >= 1, not >= 3 — NSE has legitimate short underlyings (e.g. M&M → "MM").
-    enabled: underlying.trim().length >= 1,
-    staleTime: 5 * 60_000,
-  })
-}
-
-export function useOptionChain(underlying: string, expiry: string | null) {
-  return useQuery({
-    queryKey: ['derivatives', 'chain', underlying, expiry],
-    queryFn: () =>
-      api.get<OptionChainItem[]>(
-        `/api/Instruments/derivatives/chain?underlying=${encodeURIComponent(underlying)}&expiry=${expiry}`,
-      ),
-    enabled: underlying.trim().length >= 1 && !!expiry,
-    staleTime: 5 * 60_000,
-  })
-}
-
 export function useStoredCandles(
   symbol: string | null,
   resolution = 'D',
@@ -700,8 +650,8 @@ export function useStoredCandles(
  * from them come back together, so the chart never draws a mark against a
  * different series than it was computed on.
  *
- * The Structure page reads the ladder below instead, so nothing calls this one
- * today; it is kept in step with it rather than allowed to drift apart.
+ * The chart's structure layer reads the ladder below instead, so nothing calls
+ * this one today; it is kept in step with it rather than allowed to drift apart.
  */
 export function useSmcStructure(params: {
   symbol: string | null
@@ -1442,26 +1392,11 @@ export function useBrokerSession() {
 
 // ---------- Users (admin) ----------
 
-export function useUsers() {
-  return useQuery({
-    queryKey: ['users'],
-    queryFn: () => api.get<MeResponse[]>('/api/UserAuth'),
-  })
-}
-
 export function useRegisterUser() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (input: { userName: string; email: string; password: string }) =>
       api.post('/api/UserAuth/register', input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
-  })
-}
-
-export function useDeleteUser() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (userName: string) => api.delete<{ message: string }>(`/api/UserAuth/${userName}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
   })
 }
@@ -1532,35 +1467,6 @@ export function useEquityGroups() {
   })
 }
 
-// ---------- Broker app credentials ----------
-
-export interface BrokerConfigResponse {
-  broker: string
-  clientId: string
-  redirectUri: string
-  hasSecret: boolean
-  source: 'database' | 'config' | 'none'
-  updatedBy: string | null
-  updatedUtc: string | null
-  suggestedRedirectUri: string
-}
-
-export function useBrokerConfig() {
-  return useQuery({
-    queryKey: ['broker', 'config'],
-    queryFn: () => api.get<BrokerConfigResponse>('/api/Auth/broker-config'),
-  })
-}
-
-export function useSaveBrokerConfig() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (input: { clientId: string; secretKey: string; redirectUri: string }) =>
-      api.put<{ message: string }>('/api/Auth/broker-config', input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['broker'] }),
-  })
-}
-
 // ---------- Data coverage (the chartable-data inventory) ----------
 
 export interface CoverageRow {
@@ -1582,9 +1488,13 @@ export function useDataCoverage() {
 
 // ---------- Telegram Alerter ----------
 
+/** GET /api/Alerts/status: the signal alerter's processes, and whether Telegram delivery is set up. */
 export interface AlerterStatus {
   isRunning: boolean
   startedUtc: string | null
+  managed: boolean
+  processes: { underlying: string; processId: number | null; source: string; startedUtc: string | null }[]
+  telegramConfigured: boolean
 }
 
 export function useAlerterStatus() {
@@ -1592,14 +1502,6 @@ export function useAlerterStatus() {
     queryKey: ['alerts', 'status'],
     queryFn: () => api.get<AlerterStatus>('/api/alerts/status'),
     refetchInterval: 3000,
-  })
-}
-
-export function useAlerterLogs() {
-  return useQuery({
-    queryKey: ['alerts', 'logs'],
-    queryFn: () => api.get<string[]>('/api/alerts/logs'),
-    refetchInterval: 2000,
   })
 }
 
@@ -1612,47 +1514,6 @@ export function useStartAlerter() {
 }
 
 // ---------- Data module v2 ----------
-
-/** Recent stdout/stderr of the ingestor process (new endpoint; an older API
- *  build answers with the SPA fallback, so callers must tolerate non-arrays). */
-export function useIngestorLogs(enabled: boolean) {
-  return useQuery({
-    queryKey: ['ingestor', 'logs'],
-    queryFn: () => api.get<string[]>('/api/Ingestor/logs?take=200'),
-    enabled,
-    refetchInterval: POLL_FAST,
-  })
-}
-
-/** Expiry dates that actually exist in the instrument universe. */
-export function useAvailableExpiries(exchange: string, underlying: string | null) {
-  return useQuery({
-    queryKey: ['expiries', 'available', exchange, underlying],
-    queryFn: () =>
-      api.get<string[]>(
-        `/api/Expiry/available?exchange=${encodeURIComponent(exchange)}&underlying=${encodeURIComponent(underlying!)}`,
-      ),
-    enabled: !!underlying,
-    staleTime: 10 * 60_000,
-  })
-}
-
-/** Pull candles straight from FYERS into the local store (returns them too). */
-export function useSyncHistory() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (input: {
-      symbol: string
-      resolution: string
-      fromDate: string
-      toDate: string
-    }) => api.post<CandleDto[]>('/api/MarketData/history/sync', input),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['candles'] })
-      qc.invalidateQueries({ queryKey: ['coverage'] })
-    },
-  })
-}
 
 export interface OptionsBackfillRequest {
   exchange: string
@@ -1703,16 +1564,6 @@ export function useStopAlerter() {
   return useMutation({
     mutationFn: () => api.post<{ message: string }>('/api/alerts/stop'),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['alerts', 'status'] }),
-  })
-}
-
-/** The runner's UI signal ring of one run (run-scoped, like logs and live). */
-export function useStrategySignals(runId: number, isRunning: boolean) {
-  return useQuery({
-    queryKey: ['strategy', 'signals', runId],
-    queryFn: () => api.get<any[]>(`/api/Strategy/runs/${runId}/signals`),
-    enabled: isRunning,
-    refetchInterval: 1000,
   })
 }
 
@@ -1844,15 +1695,6 @@ export function useTestProvider() {
   })
 }
 
-export function useSaveProviderBinding() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (body: { capability: string; providerKeys: string[] }) =>
-      api.put<{ message: string }>('/api/Providers/bindings', body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['providers'] }),
-  })
-}
-
 // ---------- Data vendors added from the console ----------
 
 export function useDataVendors() {
@@ -1938,8 +1780,6 @@ export function useRevokeUserSessions() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
   })
 }
-
-// ---------- The signed-in trader's own watchlist ----------
 
 // ---------- The trader's account at the simulated broker ----------
 //
@@ -2197,31 +2037,6 @@ export function useActivityUserSummary(userId: number | null) {
 
 
 // --- option chain ------------------------------------------------------------
-
-/**
- * The priced strike ladder — LTP, volume, open interest and everything derived.
- *
- * Distinct from `useOptionChain` above, which returns the instrument master's
- * contract DEFINITIONS and no prices at all.
- *
- * `asOfUtc` is the replay clock; omit it and the newest capture comes back,
- * which is what the live screen wants.
- */
-export function useLiveOptionChain(underlying: string, expiry?: string, asOfUtc?: string) {
-  return useQuery({
-    queryKey: ['optionChain', underlying, expiry ?? null, asOfUtc ?? null],
-    queryFn: () => {
-      const params = new URLSearchParams({ underlying })
-      if (expiry) params.set('expiry', expiry)
-      if (asOfUtc) params.set('asOfUtc', asOfUtc)
-      return api.get<OptionChain>(`/api/OptionChain?${params}`)
-    },
-    enabled: Boolean(underlying),
-    // A replayed chain never changes; only the live one is worth re-asking for.
-    refetchInterval: asOfUtc ? false : POLL_FAST,
-    placeholderData: keepPreviousData,
-  })
-}
 
 /** One strike through the session — the OI-change curves. */
 export function useOptionChainSeries(

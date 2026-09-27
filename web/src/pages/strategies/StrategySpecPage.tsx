@@ -249,13 +249,13 @@ function StateLine({ s, runHref }: { s: StrategyListItem; runHref: (runId: numbe
 export function StrategySpecPage({ mode = 'admin' }: { mode?: 'admin' | 'trader' }) {
   const { id } = useParams()
   const navigate = useNavigate()
-  // The same document for both areas; only where the buttons lead differs.
+  // The same document for both roles; only what the buttons do differs.
   // A trader deploys through the wizard (with this strategy pre-selected)
   // and has no backtesting module or admin runner to be sent to.
   const trader = mode === 'trader'
-  const backHref = trader ? '/trader/deploy' : '/admin/strategies/library'
+  const backHref = '/trade/library'
   const backLabel = trader ? '← Deploy' : '← Strategy library'
-  const runHref = (runId: number) => (trader ? `/trader/strategies/runs/${runId}` : `/admin/strategies/runs/${runId}`)
+  const runHref = (runId: number) => `/trade/runs/${runId}`
   const strategyId = Number(id)
   const strategies = useStrategies()
   const spec = useStrategySpec(Number.isInteger(strategyId) && strategyId > 0 ? strategyId : null)
@@ -289,7 +289,7 @@ export function StrategySpecPage({ mode = 'admin' }: { mode?: 'admin' | 'trader'
               <button
                 type="button"
                 className="btn btn--primary"
-                onClick={() => navigate(`/trader/deploy?strategy=${strategy.id}`)}
+                onClick={() => navigate(`/trade/library?strategy=${strategy.id}`)}
               >
                 <IconPlay style={{ width: 13, height: 13 }} /> Deploy this strategy…
               </button>
@@ -298,7 +298,7 @@ export function StrategySpecPage({ mode = 'admin' }: { mode?: 'admin' | 'trader'
                 <button type="button" className="btn btn--primary" onClick={() => setLaunching(true)}>
                   <IconPlay style={{ width: 13, height: 13 }} /> Start…
                 </button>
-                <Link className="btn" to="/admin/backtesting/new">
+                <Link className="btn" to="/research/backtests/new">
                   Backtest… <IconArrowRight style={{ width: 12, height: 12 }} />
                 </Link>
               </>
@@ -336,7 +336,7 @@ export function StrategySpecPage({ mode = 'admin' }: { mode?: 'admin' | 'trader'
                   strategyId={strategyId}
                   runHref={runHref}
                   isAdmin={!trader}
-                  historyHref={`${trader ? '/trader/strategies/history' : '/admin/strategies/history'}?strategy=${strategy.id}`}
+                  historyHref={`/trade/history?strategy=${strategy.id}`}
                 />
               </section>
 
@@ -379,7 +379,7 @@ export function StrategySpecPage({ mode = 'admin' }: { mode?: 'admin' | 'trader'
       </QueryBoundary>
 
       {launching && strategy && (
-        <LaunchDialog strategy={strategy} onClose={() => setLaunching(false)} onStarted={() => navigate('/admin/strategies/live')} />
+        <LaunchDialog strategy={strategy} onClose={() => setLaunching(false)} onStarted={() => navigate('/trade/runs')} />
       )}
     </div>
   )
