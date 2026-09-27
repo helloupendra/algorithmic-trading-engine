@@ -93,13 +93,18 @@ public class StrategyRunControlTests
 
         // Not our child (its shell exits and it is handed to init), and slow to
         // leave: it finishes its shutdown six seconds after SIGTERM, as a runner
-        // releasing its lock and joining its threads can.
-        var shell = Process.Start(new ProcessStartInfo("/bin/sh",
-            "-c \"(trap 'sleep 6; exit 0' TERM; while :; do sleep 1; done) >/dev/null 2>&1 & echo $!\"")
+        // releasing its lock and joining its threads can. It prints its own pid
+        // only once its trap is set: printed from outside with $!, the pid could
+        // be read and signalled before the trap existed, and the runner died at
+        // once (macOS CI, 28 Sep: "it left after 0.0s").
+        var start = new ProcessStartInfo("/bin/sh")
         {
             RedirectStandardOutput = true,
             UseShellExecute = false
-        })!;
+        };
+        start.ArgumentList.Add("-c");
+        start.ArgumentList.Add("sh -c 'trap \"sleep 6; exit 0\" TERM; echo $$; exec >/dev/null 2>&1; while :; do sleep 1; done' &");
+        var shell = Process.Start(start)!;
         int pid = int.Parse(shell.StandardOutput.ReadLine()!.Trim());
         shell.WaitForExit();
 
