@@ -406,6 +406,14 @@ class RecorderTests(Base):
         self.assertIn("news (all feeds timed out)", item.detail)
         self.assertIn("cannot be fetched later", item.action)
 
+    def test_a_backfill_day_it_could_not_read_is_a_note_not_a_stall(self):
+        body = self.status()
+        body["backfills"][0]["lastError"] = "2020-07-13: CM bhavcopy date does not parse"
+        item = self.one(checks.recorders(self.inputs("morning", {self.PATH: body})))
+        self.assertIs(State.INFO, item.state)
+        self.assertIn("2 recorders on schedule", item.detail)
+        self.assertIn("gaps it could not read: breadth (2020-07-13", item.detail)
+
     def test_a_running_backfill_is_a_note(self):
         body = self.status()
         body["backfills"][0]["missingSessions"] = 1738

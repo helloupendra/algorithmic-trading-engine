@@ -499,14 +499,20 @@ def recorders(inp: Inputs) -> list[Item]:
     broken = [f"{b.get('dataset')} ({str(b.get('lastError'))[:120]})" for b in backfills if b.get("lastError")]
     news = next((r for r in rows if r.get("name") == "news"), {})
     key, title = "recorders", "Market data recorders"
-    if stalled or broken:
+    if stalled:
         return [Item(key, DATA, title, State.FAIL if any(s.startswith("news ") for s in stalled) else State.WARN,
-                     "Not recording: " + _listed(stalled + [f"backfill {b}" for b in broken]) + ".",
+                     "Not recording: " + _listed(stalled) + ".",
                      "GET /api/MarketIntelligence/status has each recorder's last error; logs/api.log the detail. "
                      "Headlines missed while the news recorder is down cannot be fetched later.")]
     detail = (f"{_n(len(rows), 'recorder')} on schedule; {int(news.get('rowsToday') or 0):,} headlines today.")
     if sources:
         detail += f" Some sources failing: {'; '.join(sources)}."
+    if broken:
+        # A history file the parser refuses is a gap in the past, not today's
+        # recording: worth knowing, nothing to do before the open.
+        return [Item(key, DATA, title, State.INFO,
+                     detail + f" Backfill left gaps it could not read: {_listed(broken)}.",
+                     "A parser fix can fill them later; today's recording is not affected.")]
     if pending:
         return [Item(key, DATA, title, State.INFO, detail + f" Backfill still running: {_listed(pending)}.")]
     return [Item(key, DATA, title, State.WARN if sources else State.OK, detail,
