@@ -80,6 +80,7 @@ from strategies.signal_utils import (  # noqa: F401
     signal_to_ui_payload,
     stamp_signal_metadata,
 )
+from strategies.signal_booking import Booking, SignalBooker, report as report_booking, run_tick
 from backtest.run_spec import parse_risk_rules
 
 import core.fyers_orders as fyers_orders
@@ -913,6 +914,91 @@ if __name__ == "__main__":
         print_status_if_due()
         check_feed_if_due()
 
+    # Posts each signal with retries and a clientSignalId the API books once.
+    booker = SignalBooker(api, run_id, on_wait=housekeeping) if run_id else None
+
+    def evaluate_tick(tick_state: Dict[str, Any], inp: StrategyInput) -> List[StrategySignal]:
+        """The strategy's on_bar for one tick, timed and printed."""
+        t_start = time.time()
+        emitted = strategy.on_bar(tick_state, inp)
+        STRATEGY_LOOP_DURATION.observe(time.time() - t_start)
+
+        housekeeping()
+
+        print_signals(emitted)
+        if DEBUG_PRINT_MESSAGES:
+            print_strategy_state(tick_state)
+        return emitted
+
+    def post_signal(sig: StrategySignal, inp: StrategyInput, atm_ce_contract: Optional[OptionContract],
+                    atm_pe_contract: Optional[OptionContract]) -> Optional[Booking]:
+        """
+        One signal of a tick to the paper book. Returns the Booking, or None
+        for a signal that is not for the book (not a group signal, or held back
+        by the run's filters).
+        """
+        if args.strategy == "GhostTangentCrossings" and sig.signal_type in {"BUY", "SELL"}:
+            try:
+                print(f"Converting {sig.signal_type} to PAPER OPEN_GROUP Signal...")
+                direction = sig.signal_type
+                # Ghost always trades the ATM leg of the direction it called.
+                target_contract = atm_ce_contract if direction == "BUY" else atm_pe_contract
+                if target_contract is not None:
+                    exec_symbol = target_contract.symbol
+                    print(f"Selected Option Symbol for Paper: {exec_symbol}")
+
+                    # Morph the signal into OPEN_GROUP for the Simulator
+                    sig.signal_type = "OPEN_GROUP"
+                    sig.metadata["group_id"] = f"GTC_{int(time.time())}"
+                    sig.metadata["direction"] = direction
+                    sig.legs = [{"symbol": exec_symbol, "side": "BUY", "quantity": strategy_lots}]
+
+                else:
+                    print(f"ERROR: Could not resolve contract for {direction}.")
+            except Exception as ex:
+                print(f"ERROR during paper conversion: {ex}")
+                import traceback
+                traceback.print_exc()
+
+        if sig.signal_type not in {"OPEN_GROUP", "CLOSE_GROUP"}:
+            return None
+
+        # The live loop is always handed a bar that is still
+        # forming, so the gate judges the one before it.
+        verdict = signal_filters.evaluate(
+            filter_config, sig, inp, newest_bar_is_forming=True)
+        if verdict.blocked:
+            print(f"[FILTER] {sig.signal_type} blocked by {verdict.blocked_by}: "
+                  f"{verdict.reason} | {verdict.details}", flush=True)
+            SIGNALS_FILTERED.inc()
+            return None
+
+        sig = enrich_signal_leg_prices(api, sig, expiry_date, on_poll=housekeeping)
+        stamp_signal_metadata(sig, inp)
+
+        print("ENRICHED SIGNAL LEGS:")
+        print(json.dumps(sig.legs, indent=2, default=str))
+
+        booking = booker.book(sig) if booker is not None else None
+        if booking is not None and not booking.booked:
+            return booking
+
+        ORDERS_EMITTED.inc()
+        if booking is None:
+            print("LIVE ORDER EMITTED (No Run ID)")
+        else:
+            print("PERSISTED SIGNAL:")
+            print(json.dumps(booking.result, indent=2, default=str))
+
+        # The dashboard copy goes out once the book has the signal: one the
+        # strategy is made to emit again after a refusal would otherwise show
+        # on the card once per attempt.
+        try:
+            ui_signals.publish(signal_to_ui_payload(sig, datetime.now(timezone.utc).isoformat()))
+        except Exception as e:
+            print(f"WARN: Could not publish live signal to UI: {e}")
+        return booking
+
     # Ticks a recap run refused because they fell outside the replayed session.
     recap_refused = [0]
     # Set once the replay has played to 15:30; the strategy is fed nothing after.
@@ -1046,91 +1132,20 @@ if __name__ == "__main__":
                     metadata={"source": "live-api", "tick": tick, "expiry_date": expiry_date},
                 )
 
-                # Record STRATEGY_LOOP_DURATION metric
-                t_start = time.time()
-                signals = strategy.on_bar(state, inp)
-                t_end = time.time()
-                STRATEGY_LOOP_DURATION.observe(t_end - t_start)
+                # Every signal of the tick is booked, or the strategy's state
+                # goes back to what it was before on_bar and it emits them again
+                # on a later tick (strategies/signal_booking.py).
+                tick_outcome = run_tick(
+                    state,
+                    lambda tick_state: evaluate_tick(tick_state, inp),
+                    lambda sig: post_signal(sig, inp, atm_ce_contract, atm_pe_contract),
+                )
+                state = tick_outcome.state
+                report_booking(tick_outcome, log=lambda line: print(line, flush=True))
 
-                housekeeping()
-
-                print_signals(signals)
-                if DEBUG_PRINT_MESSAGES:
-                    print_strategy_state(state)
-
-                for sig in signals:
-                    if args.strategy == "GhostTangentCrossings" and sig.signal_type in {"BUY", "SELL"}:
-                        try:
-                            print(f"Converting {sig.signal_type} to PAPER OPEN_GROUP Signal...")
-                            direction = sig.signal_type
-                            # Ghost always trades the ATM leg of the direction it called.
-                            target_contract = atm_ce_contract if direction == "BUY" else atm_pe_contract
-                            if target_contract is not None:
-                                exec_symbol = target_contract.symbol
-                                print(f"Selected Option Symbol for Paper: {exec_symbol}")
-
-                                # Morph the signal into OPEN_GROUP for the Simulator
-                                sig.signal_type = "OPEN_GROUP"
-                                sig.metadata["group_id"] = f"GTC_{int(time.time())}"
-                                sig.metadata["direction"] = direction
-                                sig.legs = [{"symbol": exec_symbol, "side": "BUY", "quantity": strategy_lots}]
-
-                            else:
-                                print(f"ERROR: Could not resolve contract for {direction}.")
-                        except Exception as ex:
-                            print(f"ERROR during paper conversion: {ex}")
-                            import traceback
-                            traceback.print_exc()
-
-                    if sig.signal_type in {"OPEN_GROUP", "CLOSE_GROUP"}:
-                        # The live loop is always handed a bar that is still
-                        # forming, so the gate judges the one before it.
-                        verdict = signal_filters.evaluate(
-                            filter_config, sig, inp, newest_bar_is_forming=True)
-                        if verdict.blocked:
-                            print(f"[FILTER] {sig.signal_type} blocked by {verdict.blocked_by}: "
-                                  f"{verdict.reason} | {verdict.details}", flush=True)
-                            SIGNALS_FILTERED.inc()
-                            continue
-
-                        sig = enrich_signal_leg_prices(api, sig, expiry_date, on_poll=housekeeping)
-                        stamp_signal_metadata(sig, inp)
-
-                        print("ENRICHED SIGNAL LEGS:")
-                        print(json.dumps(sig.legs, indent=2, default=str))
-
-                        # Always push signal to UI dynamically via the run-scoped Strategy feed
-                        try:
-                            ui_signals.publish(signal_to_ui_payload(sig, datetime.now(timezone.utc).isoformat()))
-                        except Exception as e:
-                            print(f"WARN: Could not publish live signal to UI: {e}")
-
-                        if run_id:
-                            payload = signal_to_request(run_id, sig)
-                            try:
-                                result = api.create_simulation_signal(payload)
-                            except requests.exceptions.HTTPError as ex:
-                                # A refusal matters more than it looks. The
-                                # strategy already recorded this group as open in
-                                # its own state inside on_bar, so it will not
-                                # re-emit until its strikes next change — the
-                                # position it thinks it holds does not exist.
-                                # Say so loudly rather than letting a stack trace
-                                # scroll past.
-                                body = ex.response.text if ex.response is not None else str(ex)
-                                print(f"SIGNAL REFUSED by the API: {body}", flush=True)
-                                print(f"  {sig.signal_type} {sig.metadata.get('group_id', '')} was NOT booked. "
-                                      f"The strategy still believes this group is open.", flush=True)
-                                raise
-                            ORDERS_EMITTED.inc()
-
-                            print("PERSISTED SIGNAL:")
-                            print(json.dumps(result, indent=2, default=str))
-                        else:
-                            ORDERS_EMITTED.inc()
-                            print("LIVE ORDER EMITTED (No Run ID)")
-
-                    # Persist state after loop iteration
+                # Saved when the tick's signals are in the book; a state put
+                # back is the one the tick began with.
+                if tick_outcome.signals and not tick_outcome.restored:
                     loaded_state.strategy_data = state
                     state_store.save(loaded_state)
 
