@@ -298,7 +298,7 @@ export function PositionsPage() {
 
       {open.data && totals.stale > 0 && (
         <p className="tr-stale" role="status">
-          {totals.stale} of {totals.legs} marks are older than 30 s
+          {totals.stale} of {totals.legs} mark{totals.legs === 1 ? ' is' : 's are'} older than 30 s
           {marketOpen ? ': their P&L is not now.' : ': the markets are closed, so they are the last quotes of the session.'}
         </p>
       )}
