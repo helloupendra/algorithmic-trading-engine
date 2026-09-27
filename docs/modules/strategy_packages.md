@@ -1,7 +1,8 @@
 # Strategy packages
 
 Which strategies a trader may run, and the ceilings that come with them.
-Console: **`/admin/users`** (assignment) and the packages API below.
+Console: **System → People**, the Packages tab (`/system/people/packages`), with each trader's
+package assigned on the Users tab (`/system/people`); the API is below.
 
 ## Why a package rather than checkboxes
 
