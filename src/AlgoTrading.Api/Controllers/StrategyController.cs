@@ -817,19 +817,28 @@ public class StrategyController : ControllerBase
     /// <remarks>
     /// A frozen feed is the dangerous failure: the runner keeps waiting, the
     /// process looks healthy, and the strategy is blind to a market that is
-    /// still moving. Only the runner can see it — the API has no view of what
-    /// arrives on a Redis stream — so the runner says so and this turns it into
-    /// an alert that reaches Telegram.
+    /// still moving. Only the runner knows what reached it — the API's
+    /// <see cref="FeedFailoverService"/> watches the stream as a whole, not
+    /// each run's input — so the runner says so and this turns it into an
+    /// alert.
     /// <para>
     /// It never stops the run. Squaring off positions because ticks stopped
     /// would be a bigger decision than this endpoint should make on its own,
     /// and the operator now has what they need to make it.
+    /// </para>
+    /// <para>
+    /// Every report is logged against the run and kept as an alert_events row,
+    /// but only <see cref="FeedStallAlertGate"/>'s choice reaches Telegram: the
+    /// first stall per underlying in ten minutes, after 180 s of silence, and a
+    /// recovery only for a stall that was sent. Until 28 Sep every run sent
+    /// both halves of every blip — 572 messages on 25 Sep, 350 of them refused.
     /// </para>
     /// </remarks>
     [HttpPost("runs/{runId:long}/feed")]
     public async Task<IActionResult> ReportFeedHealth(
         long runId,
         [FromBody] RunnerFeedHealthRequest? request,
+        [FromServices] FeedStallAlertGate gate,
         CancellationToken cancellationToken)
     {
         if (request is null)
@@ -862,16 +871,24 @@ public class StrategyController : ControllerBase
         {
             _registry.AppendLog(runId, $"FEED STALLED — no ticks for {seconds}s");
 
-            await _notifier.NotifyAsync(
-                NotificationCategory.StrategyRun,
-                NotificationSeverity.Warning,
-                $"{tag}Feed stalled — {run.StrategyName} on {underlying}",
-                $"Run #{runId} has had no ticks for {seconds}s while the market is open. "
-                + "The strategy is still running but is not seeing prices.",
-                underlying: underlying,
-                symbol: run.Symbol,
-                simulationRunId: runId,
-                cancellationToken: cancellationToken);
+            bool send = gate.ShouldSendStall(underlying, seconds);
+            string title = $"{tag}Feed stalled — {run.StrategyName} on {underlying}";
+            string message = $"Run #{runId} has had no ticks for {seconds}s while the market is open. "
+                + "The strategy is still running but is not seeing prices."
+                + (send
+                    ? $" Other {underlying} runs reporting this in the next {FeedStallAlertGate.Window.TotalMinutes:0} minutes are on the Alerts page, not sent."
+                    : string.Empty);
+
+            if (send)
+            {
+                await _notifier.NotifyAsync(NotificationCategory.StrategyRun, NotificationSeverity.Warning, title, message,
+                    underlying: underlying, symbol: run.Symbol, simulationRunId: runId, cancellationToken: cancellationToken);
+            }
+            else
+            {
+                await _notifier.RecordAsync(NotificationCategory.StrategyRun, NotificationSeverity.Warning, title, message,
+                    underlying: underlying, symbol: run.Symbol, simulationRunId: runId, cancellationToken: cancellationToken);
+            }
 
             HttpContext.Describe($"Reported a stalled feed on run #{runId} — {seconds}s without ticks.", "run", runId.ToString());
         }
@@ -879,15 +896,19 @@ public class StrategyController : ControllerBase
         {
             _registry.AppendLog(runId, $"feed recovered after {seconds}s");
 
-            await _notifier.NotifyAsync(
-                NotificationCategory.StrategyRun,
-                NotificationSeverity.Success,
-                $"{tag}Feed recovered — {run.StrategyName} on {underlying}",
-                $"Run #{runId} is receiving ticks again after {seconds}s.",
-                underlying: underlying,
-                symbol: run.Symbol,
-                simulationRunId: runId,
-                cancellationToken: cancellationToken);
+            string title = $"{tag}Feed recovered — {run.StrategyName} on {underlying}";
+            string message = $"Run #{runId} is receiving ticks again after {seconds}s.";
+
+            if (gate.ShouldSendRecovery(underlying))
+            {
+                await _notifier.NotifyAsync(NotificationCategory.StrategyRun, NotificationSeverity.Success, title, message,
+                    underlying: underlying, symbol: run.Symbol, simulationRunId: runId, cancellationToken: cancellationToken);
+            }
+            else
+            {
+                await _notifier.RecordAsync(NotificationCategory.StrategyRun, NotificationSeverity.Success, title, message,
+                    underlying: underlying, symbol: run.Symbol, simulationRunId: runId, cancellationToken: cancellationToken);
+            }
 
             HttpContext.Describe($"Reported feed recovery on run #{runId} after {seconds}s.", "run", runId.ToString());
         }

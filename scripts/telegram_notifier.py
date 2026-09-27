@@ -937,6 +937,16 @@ def is_superseded(payload: dict[str, Any]) -> bool:
     return bool(_SUPERSEDED_BY_POLLER.search(title))
 
 
+def is_record_only(payload: dict[str, Any]) -> bool:
+    """
+    Published to be kept on the record, not sent (ISystemNotifier.RecordAsync):
+    the runners' repeated feed-stall reports beyond the first per underlying.
+    The API's subscriber writes the row and skips Telegram; a forwarder that
+    sent them anyway would bring back the 572 messages of 25 Sep 2026.
+    """
+    return payload.get("RecordOnly") is True
+
+
 # The first character of every message this process formats. A heading missing
 # here is escaped as if it were backend plain text: through the forwarder a
 # roll ("🔁") and the startup summary ("🔔") arrived as literal "<b>" tags
@@ -1012,6 +1022,9 @@ def forwarder_loop(
                 if not isinstance(payload, dict):
                     continue
                 title = payload.get("Title") or payload.get("title") or "Alert"
+                if is_record_only(payload):
+                    log.debug("not forwarded (record only): %s", title)
+                    continue
                 if is_superseded(payload):
                     log.debug("suppressed (the poller reports this in full): %s", title)
                     continue

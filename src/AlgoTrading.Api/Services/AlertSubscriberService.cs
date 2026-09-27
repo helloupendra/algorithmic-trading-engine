@@ -50,7 +50,7 @@ public class AlertSubscriberService : BackgroundService
                 if (payload == null) return;
 
                 bool delivered = false;
-                if (_telegram.IsConfigured)
+                if (_telegram.IsConfigured && !IsRecordOnly(payload))
                 {
                     if (IsSupersededByNotifier(payload) && await NotifierIsRunningAsync(stoppingToken))
                     {
@@ -95,6 +95,15 @@ public class AlertSubscriberService : BackgroundService
 
         return BackendRunStartStop.IsMatch(title);
     }
+
+    /// <summary>
+    /// True for an event published to be recorded but not sent
+    /// (<c>ISystemNotifier.RecordAsync</c>): the row is written, Telegram is not
+    /// asked. The runners' repeated feed-stall reports go this way — every one
+    /// on the record, one per underlying on the channel (25 Sep 2026: 572
+    /// messages, 350 refused by Telegram).
+    /// </summary>
+    public static bool IsRecordOnly(AlertEventPayload payload) => payload.RecordOnly == true;
 
     /// <summary>
     /// True only while a notifier verified as ours is running. Anything less —
@@ -168,4 +177,7 @@ public class AlertEventPayload
     public string? Severity { get; set; }
     public string? Symbol { get; set; }
     public long? SimulationRunId { get; set; }
+
+    /// <summary>True: record the event, do not send it to Telegram. Absent on everything else.</summary>
+    public bool? RecordOnly { get; set; }
 }

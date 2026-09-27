@@ -57,4 +57,28 @@ public interface ISystemNotifier
         string? symbol = null,
         long? simulationRunId = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Records the event exactly as <see cref="NotifyAsync"/> does — the
+    /// <c>alert_events</c> row, the console's alert stream — but does not send
+    /// it to Telegram.
+    /// </summary>
+    /// <remarks>
+    /// For events that must stay on the record but would drown the channel if
+    /// each were sent: on 25 Sep 2026, 26 runners each reported every one of 11
+    /// feed blips, stalled and recovered, and 572 messages hit Telegram, which
+    /// refused 350 of them. An implementation that cannot hold a message back
+    /// sends it: a duplicate is noise, a lost alert is the failure this desk
+    /// exists to prevent.
+    /// </remarks>
+    Task RecordAsync(
+        NotificationCategory category,
+        NotificationSeverity severity,
+        string title,
+        string message,
+        string? underlying = null,
+        string? symbol = null,
+        long? simulationRunId = null,
+        CancellationToken cancellationToken = default)
+        => NotifyAsync(category, severity, title, message, underlying, symbol, simulationRunId, cancellationToken);
 }
