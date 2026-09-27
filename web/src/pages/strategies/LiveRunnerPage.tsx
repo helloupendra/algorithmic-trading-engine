@@ -106,7 +106,7 @@ export function LiveRunnerPage() {
       <div className="page">
         <header className="page__header runs-head">
           <div>
-            <h1 className="page__title">Runs</h1>
+            <h1 className="page__title">Live runner</h1>
             <p className="page__subtitle">Every run of the day on one time axis: net P&L after charges, fills, stops.</p>
           </div>
           <ViewSwitch view={view} onView={setView} />

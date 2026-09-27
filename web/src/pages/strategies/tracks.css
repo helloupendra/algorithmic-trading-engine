@@ -5,7 +5,7 @@
  */
 
 /* The view switch in the Runs header, beside the readiness pills on the cards. */
-.runs-head__tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 12px; }
+.runs-head__tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 12px; margin-left: auto; }
 .runs-view { align-self: flex-end; }
 .page__header.runs-head { margin-bottom: 4px; }
 
