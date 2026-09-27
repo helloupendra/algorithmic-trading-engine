@@ -25,8 +25,9 @@ Code:
 - `src/AlgoTrading.Api/Services/MarketIntelligence*.cs` and
   `NewsScoringScheduler.cs` (the schedules).
 
-API (admin only): `api/MarketIntelligence/...`, below. No console page yet:
-the dashboard is being redesigned and will show it.
+API: `api/MarketIntelligence/...`, below. The reads need the `market-data`
+grant (admins hold every grant); `status` and the backfill trigger are
+admin-only. The console's Desk reads it.
 
 ## The point-in-time rule
 
@@ -298,7 +299,13 @@ anywhere.
 
 ## API
 
-Admin only (`api/MarketIntelligence`).
+`api/MarketIntelligence`. The reads are for anyone holding the `market-data`
+module grant, the same grant the market factors need;
+admins pass by role. Until 28 Sep the whole controller was admin-only, which
+kept it off a trader's Desk. `status` and `POST backfill/{dataset}` stay
+admin-only: one is the recorders' health, the other spends the host's time
+and the sources' patience. A trader without the grant gets 403 with the
+module named, as everywhere else.
 
 `from` and `to` on news and announcements are instants: an ISO 8601 time with
 its offset, or a `yyyy-MM-dd` date meaning that IST day, whole. A time
@@ -312,8 +319,8 @@ without an offset is refused, because IST and UTC are the whole morning apart.
 | `GET global/daily?symbol&from&to` | overseas bars (default: 30 days; all symbols at most 400 days) |
 | `GET global/snapshots?key&date` | every snapshot taken on an IST date (default: today) |
 | `GET breadth?from&to` | breadth per session (default: 60 days) |
-| `GET status` | see below |
-| `POST backfill/{dataset}` | queues a backfill run (202) |
+| `GET status` | see below (admin only) |
+| `POST backfill/{dataset}` | queues a backfill run (202; admin only) |
 
 Paged answers carry `total`, `skip`, `take` and `items`; `take` is 1-500.
 

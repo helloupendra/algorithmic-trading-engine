@@ -17,6 +17,9 @@
     <PackageReference Include="Microsoft.Extensions.Options" Version="11.0.0-preview.4.26230.115" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="11.0.0-preview.4.26230.115" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.4" />
+    <!-- An in-process host, for tests that must drive a request through the
+         real authentication, authorization and module-grant filters. -->
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="10.0.12" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.6.0" />
     <PackageReference Include="Swashbuckle.AspNetCore.SwaggerGen" Version="10.2.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
