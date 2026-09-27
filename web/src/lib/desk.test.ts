@@ -287,18 +287,29 @@ describe('deskLayout', () => {
     }
   })
 
-  it('never gives a trader Sentinel, the timeline, the news or the overnight table', () => {
+  it('never gives a trader Sentinel or the desk timeline', () => {
     const all = accessFor({ role: 'Trader', moduleGrants: ['strategies', 'market-data', 'analysis', 'notebook', 'backtesting'] })
     for (const phase of ['pre', 'live', 'post'] as const) {
       const shown = deskLayout(phase, all).flat().flatMap((s) => [s.key, s.under])
-      for (const hidden of ['checkup', 'timeline', 'news', 'overnight']) expect(shown).not.toContain(hidden)
+      for (const hidden of ['checkup', 'timeline']) expect(shown).not.toContain(hidden)
+    }
+  })
+
+  it('gives a trader with market data the news, the overnight markets, the calendar and breadth', () => {
+    const shown = (phase: 'pre' | 'live', grants: string[]) =>
+      deskLayout(phase, accessFor({ role: 'Trader', moduleGrants: grants })).flat().flatMap((s) => [s.key, s.under])
+    expect(keys(deskLayout('pre', accessFor({ role: 'Trader', moduleGrants: ['strategies', 'market-data'] })))[0]).toEqual(['overnight', 'news', 'plan'])
+    expect(shown('live', ['strategies', 'market-data'])).toEqual(expect.arrayContaining(['news', 'week', 'flows', 'movers']))
+    for (const phase of ['pre', 'live'] as const) {
+      for (const hidden of ['news', 'overnight', 'week', 'movers']) expect(shown(phase, ['strategies'])).not.toContain(hidden)
     }
   })
 
   it('drops panels a trader lacks the grant for and widens the rest', () => {
     const rows = deskLayout('live', accessFor({ role: 'Trader', moduleGrants: ['market-data'] }))
-    expect(keys(rows)).toEqual([['indices'], ['week', 'flows', 'movers']])
+    expect(keys(rows)).toEqual([['indices'], ['news', 'week', 'movers']])
     expect(rows[0][0].span).toBe(12)
+    expect(rows[1][1]).toEqual({ key: 'week', span: 4, under: 'flows' })
   })
 
   it('leaves a trader with no grants the index table alone', () => {

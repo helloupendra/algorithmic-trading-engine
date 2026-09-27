@@ -2520,14 +2520,15 @@ export function useDeployHistory(pollMs = 10_000, enabled = true) {
   })
 }
 
-// ---------- Market intelligence (admin-only endpoints) ----------
+// ---------- Market intelligence (market-data grant) ----------
 
 /**
  * What the market-intelligence recorders stored: headlines and filings (with
  * the local model's reading once scored), board meetings, the morning
  * snapshots of GIFT Nifty and overseas markets, their daily bars, and NSE
- * breadth. The API serves them to admins only for now, so every hook takes
- * `enabled` and a trader's console never asks.
+ * breadth. The API serves these reads to admins and to traders holding the
+ * market-data grant; every hook takes `enabled`, so a console without the
+ * grant never asks.
  */
 const INTEL_TAKE = 60
 

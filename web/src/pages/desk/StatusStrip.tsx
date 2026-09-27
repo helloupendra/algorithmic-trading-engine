@@ -3,8 +3,9 @@
  * the day: readiness before the open (checkup, token, feeds, plan, forecasts,
  * GIFT, what was carried in), then net P&L per account against the platform
  * limit with runs, legs, the feed, incidents and the checkup, then the day's
- * result. A trader's strip holds only their own numbers and the market; no
- * connector, feed or Sentinel cell is ever built for them.
+ * result. A trader's strip holds only their own numbers and the market (GIFT
+ * Nifty with the market-data grant); no connector, feed, plan or Sentinel
+ * cell is ever built for them.
  *
  * Each cell asks for what it shows and says "…" until it knows. On a phone
  * the strip packs into rows (lib/desk.ts, stripSpans).
@@ -449,6 +450,7 @@ function specs(view: DeskView): Spec[] {
       add('legs', 'other', <LegsCell view={view} />)
     }
     if (analysis) add('fc', 'other', <ForecastCell view={view} />)
+    if (allows(view.access, 'market-data')) add('gift', 'other', <GiftCell view={view} />)
     add('nifty', 'other', <NiftyCell />)
     add('prices', 'other', <PricesCell view={view} />)
     add('trading', 'other', <TradingCell />)

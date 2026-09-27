@@ -1,7 +1,7 @@
 /**
- * News & filings (admin: the market-intelligence endpoints are admin-only
- * for now). Headlines the recorder stored, NSE filings of the names the desk
- * cares about (held, watched, NIFTY 50), and the local model's sentiment on
+ * News & filings (market-data grant). Headlines the recorder stored, NSE
+ * filings of the names the desk cares about (held, watched, NIFTY 50: a
+ * trader's held names are their own legs), and the local model's sentiment on
  * each — labelled as the model's reading of the words, not a signal: it has
  * not been scored the way the forecasts are.
  */

@@ -38,7 +38,7 @@ import type { DeskLinks, DeskView } from './data'
 import { toneClass, useDayForecasts, useDeskLegs } from './data'
 import { Chip, Failed, PanelHead, RangeMeter, Waiting } from './parts'
 
-// ---------------------------------------------------------------- overnight (admin)
+// ---------------------------------------------------------------- overnight (market data)
 
 export function Overnight({ view }: { view: DeskView }) {
   const snaps = useIntelSnapshots(view.today, true)
@@ -300,7 +300,7 @@ export function Flows({ view, links }: { view: DeskView; links: DeskLinks }) {
 
 const KIND_TONE = { expiry: 'brand', holiday: 'warn', event: undefined, results: undefined, meeting: undefined } as const
 
-/** Board meetings of the desk's names (admin: the calendar endpoint is admin-only). */
+/** Board meetings of the desk's names: NIFTY 50 and whatever this viewer holds. */
 function WithMeetings({ view, links, from, to }: { view: DeskView; links: DeskLinks; from: string; to: string }) {
   const meetings = useIntelCalendar(from, to, true)
   const { legs } = useDeskLegs(view)
@@ -329,7 +329,7 @@ function WeekTable({
     <>
       <PanelHead
         title={view.phase === 'post' ? 'Tomorrow & this week' : 'This week'}
-        meta={view.isAdmin ? 'events, expiries, results' : 'events, holidays, expiries'}
+        meta="events, expiries, results"
         more={links.factors ? { to: `${links.factors}?section=events`, label: 'Calendar' } : null}
       />
       {events.isError && !events.data ? (
@@ -366,9 +366,5 @@ export function Week({ view, links }: { view: DeskView; links: DeskLinks }) {
   // After the close the day is done: the list starts tomorrow.
   const from = view.phase === 'post' ? shiftDay(view.day, 1) : view.day
   const to = shiftDay(from, 7)
-  return view.isAdmin ? (
-    <WithMeetings view={view} links={links} from={from} to={to} />
-  ) : (
-    <WeekTable view={view} links={links} from={from} to={to} meetings={undefined} names={new Set()} />
-  )
+  return <WithMeetings view={view} links={links} from={from} to={to} />
 }

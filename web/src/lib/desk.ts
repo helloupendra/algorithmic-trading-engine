@@ -260,7 +260,9 @@ export type PanelKey =
  * The API enforces every one of these itself; this only keeps a panel that
  * would be refused off the sheet. The pulse and the chain view answer any
  * signed-in user, so the index table needs no grant; its forecast column
- * checks `analysis` on its own.
+ * checks `analysis` on its own. The market-intelligence reads (news and
+ * filings, board meetings, the overnight snapshots, breadth) answer the
+ * market-data grant, like the rest of the market.
  */
 export const PANEL_REQUIRES: Readonly<Record<PanelKey, Requirement | undefined>> = {
   grid: 'strategies',
@@ -271,13 +273,13 @@ export const PANEL_REQUIRES: Readonly<Record<PanelKey, Requirement | undefined>>
   movers: 'market-data',
   flows: 'market-data',
   week: 'market-data',
+  news: 'market-data',
+  overnight: 'market-data',
   forecast: 'analysis',
   scores: 'analysis',
-  // Sentinel, the desk timeline and the market-intelligence endpoints are admin-only.
+  // Sentinel and the desk timeline (incidents, checkups, deploys) are the operator's.
   checkup: 'admin',
   timeline: 'admin',
-  news: 'admin',
-  overnight: 'admin',
 }
 
 /** One cell of the sheet: a panel, how many of the 12 columns it spans, and any panel stacked under it. */
@@ -294,9 +296,10 @@ type Row = ReadonlyArray<readonly [PanelKey, number, PanelKey?]>
  * stacks the same order. Before the open: is the desk ready, what will today
  * be, what is planned. In the session: how much and where, then the market
  * around it. After the close: the result, how the forecasts did, what is held
- * overnight. A trader's sheet has no Sentinel, timeline or news (their
- * endpoints are admin-only), so the rows they would fill hold what a trader can
- * read instead.
+ * overnight. A trader's sheet has no Sentinel or timeline (they are the
+ * operator's), so the rows they would fill hold what a trader can read
+ * instead: before the open, the overnight markets and the news lead, where an
+ * admin's readiness checklist would be.
  */
 const LAYOUTS: Record<Phase, { admin: Row[]; trader: Row[] }> = {
   pre: {
@@ -306,9 +309,9 @@ const LAYOUTS: Record<Phase, { admin: Row[]; trader: Row[] }> = {
       [['indices', 8], ['legs', 4, 'timeline']],
     ],
     trader: [
+      [['overnight', 4], ['news', 4], ['plan', 4]],
       [['indices', 8], ['legs', 4]],
-      [['plan', 4], ['week', 4, 'flows'], ['movers', 4]],
-      [['forecast', 12]],
+      [['week', 4, 'flows'], ['movers', 4], ['forecast', 4]],
     ],
   },
   live: {
@@ -320,7 +323,7 @@ const LAYOUTS: Record<Phase, { admin: Row[]; trader: Row[] }> = {
     trader: [
       [['grid', 8], ['pnl', 4]],
       [['indices', 8], ['legs', 4]],
-      [['week', 4], ['flows', 4], ['movers', 4]],
+      [['news', 4], ['week', 4, 'flows'], ['movers', 4]],
     ],
   },
   post: {
