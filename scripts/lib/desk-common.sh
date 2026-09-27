@@ -87,6 +87,36 @@ export ASPNETCORE_URLS="$API"
 
 api_healthy() { curl -sf -o /dev/null --max-time 4 "$API/health"; }
 
+# --- switches the owner sets ----------------------------------------------------
+# From the environment (a systemd Environment= line), else from .env, the one
+# file an operator edits. Read once, as this file is sourced: .env is loaded
+# into the shell wholesale later (load_env, notify), and a switch must not
+# change under a running desk. A change takes effect when the desk restarts.
+desk_setting() {  # NAME -> its value, or nothing
+  local name="$1" v
+  v="${!name:-}"
+  if [ -z "$v" ] && [ -f "$REPO_ROOT/.env" ]; then
+    v="$(sed -n "s/^[[:space:]]*$name=//p" "$REPO_ROOT/.env" | tail -1 | tr -d '\r')"
+    v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
+  fi
+  printf '%s' "$v"
+}
+# DESK_BACKGROUND_OPEN=1: desk.sh runs the morning job in the background and
+# keeps checking the API meanwhile. Off: in the foreground, as always.
+# shellcheck disable=SC2034  # read by desk.sh
+case "$(desk_setting DESK_BACKGROUND_OPEN)" in 1) DESK_BG_OPEN=1 ;; *) DESK_BG_OPEN=0 ;; esac
+
+# --- an API restart in progress ---------------------------------------------------
+# Written for as long as any script is restarting the API, so the desk's own
+# health restart can hold off instead of killing the API another script is
+# bringing up (DESK_BACKGROUND_OPEN, desk.sh). Older than five minutes it no
+# longer counts, so a script killed mid-restart cannot silence the desk for
+# long; a restart takes about two and a half at most.
+API_RESTARTING_FILE="$DESK_STATE_DIR/api-restarting"
+api_restart_in_progress() { [ -n "$(find "$API_RESTARTING_FILE" -mmin -5 2>/dev/null)" ]; }
+_api_restarting() { printf 'pid=%s since=%s\n' "$$" "$(date '+%F %T')" >"$API_RESTARTING_FILE" 2>/dev/null || true; }
+_api_restarted() { rm -f "$API_RESTARTING_FILE" 2>/dev/null || true; }
+
 # --- the database and Redis -------------------------------------------------
 # Docker Desktop is an app: after a reboot it is only running if it is a login
 # item, and the first morning after a shutdown found it closed — no database,
@@ -123,7 +153,8 @@ api_stop() {
 }
 
 api_start() {
-  if api_healthy; then say "API already healthy"; return 0; fi
+  if api_healthy; then say "API already healthy"; _api_restarted; return 0; fi
+  _api_restarting
   api_stop
   say "starting the API (Production, $API, chain: $CHAIN_UNDERLYINGS)"
   # One log per API lifetime, kept under the time it ended, seven deep. Left
@@ -144,12 +175,13 @@ api_start() {
     && if [ -f .env ]; then set -a; . ./.env; set +a; fi \
     && export ASPNETCORE_ENVIRONMENT=Production ASPNETCORE_URLS="$API" \
     && nohup dotnet run --project src/AlgoTrading.Api --no-launch-profile >>"$REPO_ROOT/logs/api.log" 2>&1 & )
-  for _ in $(seq 1 60); do sleep 2; api_healthy && { say "  API up"; return 0; }; done
+  for _ in $(seq 1 60); do sleep 2; api_healthy && { say "  API up"; _api_restarted; return 0; }; done
   warn "the API did not come up within two minutes (see logs/api.log)"
+  _api_restarted
   return 1
 }
 
-api_restart() { api_stop; api_start; }
+api_restart() { _api_restarting; api_stop; api_start; }
 
 # --- the console bundle ------------------------------------------------------
 # The API serves the console from wwwroot on the domain, so a frontend change

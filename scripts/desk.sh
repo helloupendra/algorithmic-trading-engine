@@ -1,43 +1,54 @@
 #!/usr/bin/env bash
 # The trading desk: one long-running loop that keeps the platform up.
 #
-#   - keeps the API healthy (restarts it after three failed health checks);
-#   - every two minutes checks GitHub, and when origin/main has moved, pulls
-#     and deploys — console rebuilt in place, API rebuilt and restarted when
-#     its code changed;
-#   - at 08:45 on weekdays runs scripts/market-open.sh once;
+#   - keeps the API healthy: after three failed health checks, 30 s apart, it
+#     checks the database and Redis, then restarts the API;
+#   - every two minutes checks GitHub. When origin/main has moved it pulls at
+#     once, but builds and restarts only on a quiet desk: weekends, weekdays
+#     before 08:40 or after the evening close, and no live run (deploy_allowed
+#     in lib/desk-common.sh; `touch "$DESK_STATE_DIR/deploy-now"` overrides it
+#     for an hour). The commit last built is kept in DESK_STATE_DIR/deployed-sha,
+#     so a restart between a pull and its build still builds it;
+#   - at 08:45 on weekdays runs scripts/market-open.sh, once a day even across
+#     desk restarts: a marker file per day decides (daily_job in
+#     lib/desk-common.sh), and a job that was interrupted is reported, never
+#     rerun by itself;
 #   - at 23:58 on weekdays, after the MCX close (23:30 or 23:55), runs
-#     scripts/market-close.sh once — after midnight if it was missed — so no
-#     feed, recorder or run is left holding a session overnight;
+#     scripts/market-close.sh the same way — after midnight if it was missed —
+#     so no feed, recorder or run is left holding a session overnight;
 #   - writes logs/desk.status every loop so scripts/status.sh can answer
 #     "is it running?" without guessing.
 #
-# Why it is born in a Terminal window and not as a launchd service: macOS
+# Where it runs. On the server (Linux, AWS since 2026-09-17) it is the systemd
+# unit algotrading-desk (scripts/aws/bootstrap.sh). Restart=always brings it
+# back 15 s after it exits, so there --headless and --stop only print the
+# systemctl command. KillMode=process: stopping or restarting the unit ends
+# this loop alone — the API and a morning job it started keep running.
+#
+# On the Mac it is born in a Terminal window, not as a launchd service: macOS
 # privacy protection refuses a launchd-spawned bash, git or dotnet any file
 # under ~/Documents, where this repo lives — the first scheduled morning failed
-# exactly that way. Terminal holds the permission and passes it to everything
-# it starts, so launchd's only job (install-desk.sh) is to open the launcher in
-# Terminal. The launcher runs this script with --headless: the loop detaches
-# into the background with its output in logs/desk.log, and the window that
-# was opened for it closes itself a second later. No window stays open, and
-# nothing here is meant to be read on a screen — read the log.
+# exactly that way. Terminal holds the permission and passes it on, so
+# launchd's only job (install-desk.sh) is to open the launcher in Terminal,
+# which runs this script with --headless: the loop detaches into the background
+# with its output in logs/desk.log, and the window closes itself a second
+# later. The permission stays with the process (verified 2026-09-08 after
+# Terminal.app was quit); should a future macOS take it away, the loop
+# notices — it can no longer read the repo — exits, and the keepalive reopens
+# it through Terminal within ten minutes.
 #
-# The permission is fixed when the process is created and stays with it:
-# verified 2026-09-08 that the detached loop kept reading and fetching the
-# repo after Terminal.app was quit. Should a future macOS take it away, the
-# loop notices — it can no longer read the repo — exits, and the keepalive
-# reopens it through Terminal within ten minutes.
+# A deploy never kills a live run: runners are separate processes that survive
+# an API restart and re-register with the new API, and the Python engine keeps
+# the code a run started with until that run is restarted by hand.
 #
-# Deploy policy (mirrors scripts/auto-deploy.ps1 on the Windows box, with one
-# difference the owner asked for): the API IS restarted while runs are live.
-# Runners are separate processes that survive the ~15 s restart and re-register
-# with the new API; the Python engine, however, keeps the code it started with
-# until a run is restarted by hand — a live run is never killed by a deploy.
+# Switches, from the environment or .env, read when the desk starts:
+#   DESK_BACKGROUND_OPEN=1   run the morning job in the background and keep
+#                            checking the API meanwhile (default: foreground)
 #
 # Usage: ./scripts/desk.sh             here, in this window; Ctrl+C stops it
-#        ./scripts/desk.sh --headless  in the background; watch logs/desk.log
-#        ./scripts/desk.sh --stop      stop the background loop (API stays up)
-#        (--daemon is the detached copy; the launcher and --headless use it)
+#        ./scripts/desk.sh --headless  (Mac) in the background; watch logs/desk.log
+#        ./scripts/desk.sh --stop      (Mac) stop the background loop; the API stays up
+#        (--daemon is the detached copy: the launcher, --headless and systemd run it)
 
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -78,8 +89,17 @@ close_own_window() {
   spawn_detached /bin/bash -c "sleep 1; osascript -e 'tell application \"Terminal\" to close window id $win' >/dev/null 2>&1" </dev/null >/dev/null 2>&1
 }
 
+# On the server the desk belongs to systemd (Restart=always): a copy started
+# beside it, or a kill it undoes in 15 s, would only confuse the two.
+SYSTEMD_UNIT=algotrading-desk
+
 case "${1:-}" in
   --headless)
+    if ! $IS_MAC; then
+      echo "On this server the desk is the systemd unit $SYSTEMD_UNIT. Start it with:"
+      echo "  sudo systemctl start $SYSTEMD_UNIT      (then: scripts/status.sh; its log is logs/desk.log)"
+      exit 0
+    fi
     if pid="$(desk_pid)"; then
       echo "desk is already running in the background (pid $pid) — logs/desk.log"
     else
@@ -92,6 +112,11 @@ case "${1:-}" in
     [ "${DESK_CLOSE_WINDOW:-}" = "1" ] && close_own_window
     exit 0;;
   --stop)
+    if ! $IS_MAC; then
+      echo "On this server the desk is the systemd unit $SYSTEMD_UNIT (Restart=always: a kill is undone in 15 s). Stop it with:"
+      echo "  sudo systemctl stop $SYSTEMD_UNIT      (the API, and a morning job under way, keep running: KillMode=process)"
+      exit 0
+    fi
     if pid="$(desk_pid)"; then kill "$pid" && echo "desk (pid $pid) stopped; the API keeps running"; else echo "desk is not running"; fi
     exit 0;;
   --daemon)
@@ -110,18 +135,55 @@ echo $$ > "$PIDFILE"
 trap 'rm -f "$PIDFILE"; say "desk stopped (the API is left running)"; exit 0' INT TERM
 
 say "=== desk started (pid $$, $( [ -n "${DESK_LOG_ONLY:-}" ] && echo background || echo 'this window' )) — API $API, chain $CHAIN_UNDERLYINGS, open at $OPEN_AT ==="
+[ "$DESK_BG_OPEN" = 1 ] && say "DESK_BACKGROUND_OPEN=1: the morning job runs in the background; the loop keeps checking the API meanwhile"
 
 # --- infra, then the API --------------------------------------------------------
 say "infra ..."
 infra_up || true
 api_start || true
 
+# --- what was last built ----------------------------------------------------------
+# Two ways a commit reaches this machine: pulled from GitHub, or made right here
+# and pushed. Both must be built, so the desk remembers the commit it last built
+# (deployed_sha) and builds whatever HEAD has moved past it — the pull is only
+# the first half. It is kept in a file, written after each deploy: taken from
+# HEAD at startup, as it was until 28 Sep, a desk restarted between a pull and
+# its build (a deferred deploy, a crash, a systemd restart) counted the pulled
+# commit as built and never built it.
+# >>> deployed-sha (also loaded by scripts/tests/desk-hygiene.test.sh)
+DEPLOYED_SHA_FILE="$DESK_STATE_DIR/deployed-sha"
+# Written before a pull and removed when the deploy step returns: found at
+# startup, the last deploy was cut off halfway.
+DEPLOY_PENDING_FILE="$DESK_STATE_DIR/deploy-pending"
+save_deployed_sha() { printf '%s\n' "$1" >"$DEPLOYED_SHA_FILE.tmp" && mv -f "$DEPLOYED_SHA_FILE.tmp" "$DEPLOYED_SHA_FILE"; }
+deploy_pending() { printf '%s at %s\n' "$1" "$(date '+%F %T')" >"$DEPLOY_PENDING_FILE"; }
+
+# Sets deployed_sha as the desk starts: the recorded commit while it is one in
+# this checkout, else HEAD (and records that).
+load_deployed_sha() {
+  local sha
+  sha="$(head -1 "$DEPLOYED_SHA_FILE" 2>/dev/null || true)"
+  if [ -z "$sha" ] || ! git cat-file -e "$sha^{commit}" 2>/dev/null; then
+    [ -z "$sha" ] || warn "the recorded deployed commit $sha is not in this checkout — taking HEAD as built"
+    sha="$(git rev-parse HEAD 2>/dev/null || echo '')"
+    [ -z "$sha" ] || save_deployed_sha "$sha"
+  fi
+  if [ -f "$DEPLOY_PENDING_FILE" ]; then
+    warn "previous deploy was interrupted ($(head -1 "$DEPLOY_PENDING_FILE")) — redoing: everything since $(git rev-parse --short "$sha" 2>/dev/null) is built at the next check the deploy gate allows"
+    rm -f "$DEPLOY_PENDING_FILE"
+  fi
+  deployed_sha="$sha"
+}
+# <<< deployed-sha
+load_deployed_sha
+
 fails=0
 last_deploy_check=0
 opened_on=""
 closed_on=""
 deferred_sha=""   # the commit whose deferral was already announced (once per commit)
-last_commit="$(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+deploy_held=0     # 1 while deploy checks wait for a background morning job
+last_commit="$(git rev-parse --short "$deployed_sha" 2>/dev/null || echo '?')"
 last_deploy_note="none since desk started"
 
 write_status() {
@@ -132,17 +194,19 @@ write_status() {
     printf 'commit=%s\n' "$last_commit"
     printf 'last_deploy=%s\n' "$last_deploy_note"
     printf 'market_open_ran_on=%s\n' "${opened_on:-not yet today}"
+    printf 'market_open_today=%s\n' "$(job_state "$(job_marker market-open "$(date +%F)")" market-open)"
   } > "$STATUS.tmp" && mv "$STATUS.tmp" "$STATUS"
 }
 
 # --- deploy ---------------------------------------------------------------------
-# Two ways a commit reaches this machine: pulled from GitHub, or made right here
-# and pushed (the owner commits on this Mac). Both must be built, so the desk
-# remembers the commit it last built (deployed_sha) and builds whatever HEAD
-# has moved past it — the pull is only the first half.
-deployed_sha="$(git rev-parse HEAD 2>/dev/null || echo '')"
-
+# What was built last is deployed_sha (above). deploy-pending lives only while
+# this runs; a desk that finds it at startup redoes the deploy.
 deploy_if_behind() {
+  _deploy_if_behind
+  rm -f "$DEPLOY_PENDING_FILE"
+}
+
+_deploy_if_behind() {
   git fetch origin --quiet 2>>"$LOG" || { warn "git fetch failed; leaving everything alone"; return; }
   local local_sha remote_sha
   local_sha="$(git rev-parse HEAD)"; remote_sha="$(git rev-parse origin/main)"
@@ -173,6 +237,7 @@ deploy_if_behind() {
       record failed "Not a fast-forward — the branches have diverged" "Pulled from GitHub|failed|Not a fast-forward - resolve by hand"
       return
     fi
+    deploy_pending "pulling $(git rev-parse --short "$local_sha") -> $to_short"
     git pull --ff-only --quiet origin main >>"$LOG" 2>&1 || { warn "git pull failed (see desk.log)"; record failed "git pull failed" "Pulled from GitHub|failed|see logs/desk.log"; return; }
   fi
 
@@ -219,6 +284,7 @@ deploy_if_behind() {
     fi
     rm -f "$DEPLOY_NOW_FILE"
   fi
+  deploy_pending "building $from_short -> $to_short"
 
   if [ "$web_changed" -gt 0 ]; then
     if ( cd web && npm ci --silent >>"$LOG" 2>&1 || true ) && web_build; then notes+=("console rebuilt"); steps+=("Console rebuilt|ok|New bundle is being served - no restart needed"); else notes+=("console build FAILED"); steps+=("Console rebuilt|failed|Build failed - the old bundle is still being served"); fi
@@ -266,8 +332,9 @@ deploy_if_behind() {
   local outcome=ok; case "$last_deploy_note" in *FAILED*) outcome=failed;; esac
   record "$outcome" "$(IFS='; '; echo "${notes[*]}")" "${steps[@]}"
   # One attempt per commit, pass or fail — a broken build is not retried every
-  # two minutes; the next commit gets its own attempt.
+  # two minutes; the next commit gets its own attempt. Kept across restarts.
   deployed_sha="$head"
+  save_deployed_sha "$head" || warn "could not record $to_short in $DEPLOYED_SHA_FILE"
   notify "AlgoTrading deploy" "$last_deploy_note"
 }
 
@@ -283,6 +350,8 @@ while true; do
     rm -f "$PIDFILE"; exit 3
   fi
 
+  today="$(date +%F)"; dow="$(date +%u)"; hhmm="$(date +%H%M)"
+
   # 1. health
   if api_healthy; then
     fails=0
@@ -290,27 +359,44 @@ while true; do
     fails=$((fails + 1))
     warn "API health check failed ($fails/3)"
     if [ "$fails" -ge 3 ]; then
-      # The database first: an API restarted against a stopped Docker just
-      # dies again, two minutes at a time.
-      say "API is down — checking infra, then restarting"
-      infra_up || true
-      api_restart || true
-      fails=0
+      if [ "$DESK_BG_OPEN" = 1 ] && api_restart_in_progress; then
+        # A morning job running beside the loop is restarting it right now;
+        # a second restart would kill the API it is bringing up.
+        say "the API is down while another script restarts it ($API_RESTARTING_FILE) — leaving that restart alone"
+      else
+        # The database first: an API restarted against a stopped Docker just
+        # dies again, two minutes at a time.
+        say "API is down — checking infra, then restarting"
+        infra_up || true
+        api_restart || true
+        fails=0
+      fi
     fi
   fi
 
-  # 2. deploy
+  # 2. deploy — held while a background morning job runs: it restarts the API
+  #    and the feeds itself, and a deploy in the middle would do it again.
   if [ $((now - last_deploy_check)) -ge "$DEPLOY_EVERY" ]; then
-    deploy_if_behind
+    if [ "$DESK_BG_OPEN" = 1 ] && job_in_progress market-open "$today"; then
+      [ "$deploy_held" = 1 ] || say "deploy checks held while the morning job runs"
+      deploy_held=1
+    else
+      deploy_held=0
+      deploy_if_behind
+    fi
     last_deploy_check=$now
   fi
 
   # 3. market open, once per weekday — once per DAY, even across desk
   #    restarts: the day's marker file decides, not opened_on (daily_job in
   #    lib/desk-common.sh). opened_on only spares re-reading it every loop.
-  today="$(date +%F)"; dow="$(date +%u)"; hhmm="$(date +%H%M)"
+  #    With DESK_BACKGROUND_OPEN=1 the job runs beside the loop, which keeps
+  #    checking the API and writing its status, and asks after the job each
+  #    loop until it has finished.
   if [ "$dow" -le 5 ] && [ "$hhmm" -ge "$OPEN_AT" ] && [ "$hhmm" -lt 1500 ] && [ "$opened_on" != "$today" ]; then
-    if daily_job market-open "$today" fg "=== $OPEN_AT — running market-open.sh ===" ./scripts/market-open.sh; then
+    open_mode="fg"
+    [ "$DESK_BG_OPEN" = 1 ] && open_mode="bg"
+    if daily_job market-open "$today" "$open_mode" "=== $OPEN_AT — running market-open.sh ===" ./scripts/market-open.sh; then
       opened_on="$today"
     fi
   fi
