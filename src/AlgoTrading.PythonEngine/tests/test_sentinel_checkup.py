@@ -350,6 +350,19 @@ class DeskTests(Base):
         self.archive_log(DAY, "06:05:10  archive to Drive: ok, 3 file(s)\n07:00:00  archive to Drive FAILED — see\n")
         self.assertIs(State.FAIL, self.one(checks.archive(self.inputs("morning"))).state)
 
+    def test_a_week_of_failures_caught_up_by_a_later_run_is_a_note(self):
+        for day in ("2026-09-23", "2026-09-24"):
+            self.archive_log(day, "06:05:10  archive to Drive FAILED — see log\n")
+        self.archive_log("2026-09-27", "06:05:10  archive to Drive: ok, 12 file(s) verified\n")
+        inp = self.inputs("weekly", now=ist(18, 0, day=27))
+        item = self.one(checks.archive(inp))
+        self.assertIs(State.INFO, item.state)
+        self.assertIn("failed on 2026-09-23, 2026-09-24", item.detail)
+        self.assertIn("the run on 2026-09-27 caught up", item.detail)
+        self.archive_log("2026-09-26", "06:05:10  archive to Drive FAILED — see log\n")
+        self.archive_log("2026-09-27", "06:05:10  archive to Drive FAILED — see log\n")
+        self.assertIs(State.WARN, self.one(checks.archive(inp)).state)
+
     def test_a_missing_archive_says_when_it_last_ran(self):
         self.archive_log("2026-09-25", "archive to Drive: ok, 1 file(s)\n")
         item = self.one(checks.archive(self.inputs("morning")))

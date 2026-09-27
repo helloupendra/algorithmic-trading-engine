@@ -679,16 +679,23 @@ def archive(inp: Inputs) -> list[Item]:
     if inp.slot == "weekly":
         days = [(inp.ist.date() - timedelta(days=i)).isoformat() for i in range(7)]
         seen = {d: _archive_day(logs, d) for d in days}
-        failed = [d for d, r in seen.items() if r and r[0] == "failed"]
-        missing = [d for d, r in seen.items() if r is None]
+        failed = sorted(d for d, r in seen.items() if r and r[0] == "failed")
+        missing = sorted(d for d, r in seen.items() if r is None)
         files = sum(r[1] for r in seen.values() if r)
-        if failed or missing:
-            parts = ([f"failed on {', '.join(failed)}"] if failed else []) + \
-                    ([f"did not run on {', '.join(missing)}"] if missing else [])
-            return [Item("archive", DESK, "Archive to Drive", State.WARN,
-                         f"This week it {' and '.join(parts)}; {files} files verified in all.", fix)]
-        return [Item("archive", DESK, "Archive to Drive", State.OK,
-                     f"Ran every day this week; {files} files copied and verified.")]
+        if not failed and not missing:
+            return [Item("archive", DESK, "Archive to Drive", State.OK,
+                         f"Ran every day this week; {files} files copied and verified.")]
+        parts = ([f"failed on {', '.join(failed)}"] if failed else []) + \
+                ([f"did not run on {', '.join(missing)}"] if missing else [])
+        latest = next(((d, r) for d, r in seen.items() if r is not None), None)   # days run newest first
+        # Each run archives every finished day not yet on Drive, so a good run
+        # after bad ones has caught them up: the week's failures are history.
+        if latest is not None and latest[1][0] == "ok" and (not failed or latest[0] > failed[-1]):
+            return [Item("archive", DESK, "Archive to Drive", State.INFO,
+                         f"This week it {' and '.join(parts)}; the run on {latest[0]} caught up. "
+                         f"{files} files verified in all.")]
+        return [Item("archive", DESK, "Archive to Drive", State.WARN,
+                     f"This week it {' and '.join(parts)}; {files} files verified in all.", fix)]
     today = _archive_day(logs, inp.day)
     if today is None:
         last = max((p.name[8:18] for p in logs.glob("archive-20*.log")), default="?")
