@@ -141,6 +141,8 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.BacktestDataService>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.PositionGreeksBuilder>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.PositionViewBuilder>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.BacktestRunViewBuilder>();
+// Every open leg across runs and manual books, for the Desk (GET /api/Positions/open).
+builder.Services.AddScoped<AlgoTrading.Api.Services.OpenPositionsBuilder>();
 // Settles the manual book's expired contracts (CarriedPositionsService runs it).
 builder.Services.AddScoped<AlgoTrading.Api.Services.ExpirySettler>();
 
