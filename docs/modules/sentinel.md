@@ -46,7 +46,14 @@ API (admin only): `GET /api/Incidents`, `/summary`, `/{id}`, `/history`;
 | `checkup` | 1 min | not an alarm: runs the [desk checkup](checkup.md) — the checklist before the open, after the close, at the end of the day and on Sundays, or when the console asks — and keeps and sends its report; opens no incidents of its own |
 
 The plan it checks is `config/morning-plan.txt` — the same file
-`scripts/market-open.sh` deploys from.
+`scripts/market-open.sh` deploys from. The API reads it too, for the Desk:
+`GET /api/Desk/plan` (admin only) returns its accounts, its lines and every
+run it asks for, each with whether it is live now and its run id, matched as
+the morning tally matches (the account a run trades for; Running with its
+runner alive). Lines the morning job would read differently or refuse (a
+comment after a line, lots that are not a number, an `@` account missing from
+the accounts line) come back as warnings. The file is found from the API's
+content root upwards; `Desk:PlanFile` overrides it.
 
 ## How a finding becomes an incident
 
