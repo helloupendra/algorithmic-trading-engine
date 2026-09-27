@@ -2864,6 +2864,16 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
 
+                    b.Property<string>("StartedByName")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasDefaultValue("");
+
+                    b.Property<long?>("StartedByUserId")
+                        .HasColumnType("bigint");
+
                     b.Property<DateTime?>("StartedUtc")
                         .HasColumnType("timestamp with time zone");
 
