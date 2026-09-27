@@ -171,6 +171,29 @@ class SmcStructureBreakStrategy(BaseStrategy):
             "day": None,            # the session the position was opened in
         }
 
+    #: The state's structure readers: objects, saved as the candles they read.
+    _READERS = ("reader", "bias")
+
+    def state_to_json(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        data = dict(state)
+        for key in self._READERS:
+            if isinstance(data.get(key), MarketStructure):
+                data[key] = data[key].to_dict()
+        return data
+
+    def state_from_json(self, data: Any) -> Optional[Dict[str, Any]]:
+        if not isinstance(data, dict):
+            return None
+        state = dict(data)
+        for key in self._READERS:
+            saved = state.get(key)
+            # A reader saved before 28 Sep came back as its repr: not a state
+            # this strategy can go on from.
+            if not isinstance(saved, dict):
+                return None
+            state[key] = MarketStructure.from_dict(saved)
+        return state
+
     # ------------------------------------------------------------------- read --
     def on_bar(self, state: Dict[str, Any], inp: StrategyInput) -> List[StrategySignal]:
         bars = inp.bars.get(self.chart(inp), {}).get("index", [])

@@ -95,6 +95,7 @@ except ImportError:
 
 from state_management.state_models import StrategyState
 from state_management.state_store import StrategyStateStore
+from state_management.runner_state import save_strategy_state, starting_state
 
 from core.metrics import (
     AUTO_METRICS_PORT_RANGE,
@@ -657,22 +658,26 @@ if __name__ == "__main__":
         print(f"ERROR: Another strategy runner is already active for run_id={run_id}")
         sys.exit(1)
 
-    loaded_state = state_store.load()
-    recovered_state = loaded_state is not None
-    if loaded_state is None:
-        print(f"[STATE] Fresh strategy state initialized for run {run_id}")
-        loaded_state = StrategyState(
-            simulation_run_id=run_id,
-            strategy_name=args.strategy,
-            mode="LivePaper",
-            exchange=args.spot_symbol.split(":")[0] if ":" in args.spot_symbol else "NSE",
-            underlying=args.underlying,
-        )
-        loaded_state.strategy_data = state
-        state_store.save(loaded_state)
-    else:
-        print(f"[STATE] Recovered strategy state from Redis for run {run_id}")
-        state = loaded_state.strategy_data
+    # A stored state is recovered only when it can be read back as it was
+    # saved; otherwise the run starts fresh and warms up. A fresh state is not
+    # saved until warm-up has run: saved before it, it would be recovered as a
+    # state that skips warm-up and never had it (state_management/runner_state.py).
+    start = starting_state(state_store, strategy, lambda: StrategyState(
+        simulation_run_id=run_id,
+        strategy_name=args.strategy,
+        mode="LivePaper",
+        exchange=args.spot_symbol.split(":")[0] if ":" in args.spot_symbol else "NSE",
+        underlying=args.underlying,
+    ))
+    loaded_state, state, recovered_state = start.record, start.state, start.recovered
+    print(f"[STATE] {start.note}", flush=True)
+
+    def save_state() -> None:
+        """Never fatal: a state that could not be saved costs a recovery, not the run."""
+        try:
+            save_strategy_state(state_store, loaded_state, strategy, state)
+        except Exception as ex:
+            print(f"[STATE] WARN: could not save the strategy state: {ex}", flush=True)
 
     keepalive_running = True
     def keepalive_loop():
@@ -789,6 +794,9 @@ if __name__ == "__main__":
                         
         if not recovered_state:
             print(f"[{args.underlying}] Warmup complete. State initialized.")
+            # Saved here, once, so a state recovered after a restart is always
+            # one that had its warm-up.
+            save_state()
     except Exception as ex:
         print(f"[{args.underlying}] WARN: Warmup failed: {ex}")
 
@@ -1146,8 +1154,7 @@ if __name__ == "__main__":
                 # Saved when the tick's signals are in the book; a state put
                 # back is the one the tick began with.
                 if tick_outcome.signals and not tick_outcome.restored:
-                    loaded_state.strategy_data = state
-                    state_store.save(loaded_state)
+                    save_state()
 
             except Exception as ex:
                 import traceback
@@ -1157,7 +1164,9 @@ if __name__ == "__main__":
     finally:
         keepalive_running = False
         try:
-            state_store.release_lock(owner_id)
-            print("[STATE] Released strategy lock gracefully.", flush=True)
+            # The runner exits only when its run stops (the API stops the run
+            # when the runner exits), so nothing will read these keys again.
+            state_store.forget(owner_id)
+            print("[STATE] Cleared the run's strategy state, heartbeat and lock.", flush=True)
         except Exception as ex:
-            print(f"[STATE] WARN: could not release strategy lock: {ex}", flush=True)
+            print(f"[STATE] WARN: could not clear the run's state from Redis: {ex}", flush=True)
