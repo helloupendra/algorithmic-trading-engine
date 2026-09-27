@@ -64,8 +64,8 @@ check "cleared when the restart ends" "$(test ! -f "$API_RESTARTING_FILE"; echo 
 echo "api_start and api_restart mark the restart"
 (
   eval "$(sed -n '/^# --- an API restart in progress/,/^_api_restarted()/p' scripts/lib/desk-common.sh)"
-  eval "$(sed -n '/^api_pids()/,/^api_restart()/p' scripts/lib/desk-common.sh)"
-  REPO_ROOT="$WORK/repo"; mkdir -p "$REPO_ROOT/logs"; API=http://127.0.0.1:1 CHAIN_UNDERLYINGS=NIFTY
+  eval "$(sed -n '/^api_pids()/,/^# --- the console bundle/p' scripts/lib/desk-common.sh)"
+  REPO_ROOT="$WORK/repo"; mkdir -p "$REPO_ROOT/logs"; API=http://127.0.0.1:1 CHAIN_UNDERLYINGS=NIFTY DESK_API_CONFIG=""
   UP=0
   api_healthy() { [ "$UP" = 1 ]; }
   api_pids() { :; }

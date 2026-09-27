@@ -948,6 +948,10 @@ for user, rows in sorted(by_user.items()):
 PYEOF
 fi
 
+# How the box is holding up with the day's runners on it: a runner the kernel
+# killed for memory looks like one that died for no reason.
+say "host: $(python3 "$REPO_ROOT/scripts/lib/host_vitals.py" 2>/dev/null || true); OOM killer: $(python3 "$REPO_ROOT/scripts/lib/host_vitals.py" --oom 2>/dev/null || true)"
+
 say "Watch them at $CONSOLE/admin/strategies/live — or read this file."
 
 # Short (or unknown) is a failed morning for whoever reads the exit code: the

@@ -44,10 +44,16 @@
 # Switches, from the environment or .env, read when the desk starts:
 #   DESK_BACKGROUND_OPEN=1   run the morning job in the background and keep
 #                            checking the API meanwhile (default: foreground)
+#   API_BUILD_CONFIG=Release build the API Release and run its output
+#                            directly (default: `dotnet run`, a Debug build).
+#                            It applies from the next API restart; to switch
+#                            at once, restart the desk, then --restart-api.
 #
-# Usage: ./scripts/desk.sh             here, in this window; Ctrl+C stops it
-#        ./scripts/desk.sh --headless  (Mac) in the background; watch logs/desk.log
-#        ./scripts/desk.sh --stop      (Mac) stop the background loop; the API stays up
+# Usage: ./scripts/desk.sh               here, in this window; Ctrl+C stops it
+#        ./scripts/desk.sh --headless    (Mac) in the background; watch logs/desk.log
+#        ./scripts/desk.sh --stop        (Mac) stop the background loop; the API stays up
+#        ./scripts/desk.sh --restart-api restart the API once, as the desk would
+#                                        (refused while runs are live)
 #        (--daemon is the detached copy: the launcher, --headless and systemd run it)
 
 set -uo pipefail
@@ -119,11 +125,22 @@ case "${1:-}" in
     fi
     if pid="$(desk_pid)"; then kill "$pid" && echo "desk (pid $pid) stopped; the API keeps running"; else echo "desk is not running"; fi
     exit 0;;
+  --restart-api)
+    # One API restart, built and run the way the desk would (API_BUILD_CONFIG):
+    # how a switch of that setting is tried out at once, or rolled back. Not
+    # under live runs, like a deploy; DESK_RESTART_API_FORCE=1 overrides.
+    live="$(live_runs)"
+    if [ "$live" != 0 ] && [ -z "${DESK_RESTART_API_FORCE:-}" ]; then
+      echo "not restarting the API: $( [ "$live" = -1 ] && echo 'the live-run count is unknown' || echo "$live run(s) are live" ) (DESK_RESTART_API_FORCE=1 overrides)"
+      exit 1
+    fi
+    api_restart
+    exit $?;;
   --daemon)
     # stdout is already the log: say() must not tee into it a second time.
     export DESK_LOG_ONLY=1;;
   "") ;;
-  *) echo "usage: scripts/desk.sh [--headless | --stop]"; exit 2;;
+  *) echo "usage: scripts/desk.sh [--headless | --stop | --restart-api]"; exit 2;;
 esac
 
 # One desk at a time. A second copy would double every restart and deploy.
@@ -136,6 +153,7 @@ trap 'rm -f "$PIDFILE"; say "desk stopped (the API is left running)"; exit 0' IN
 
 say "=== desk started (pid $$, $( [ -n "${DESK_LOG_ONLY:-}" ] && echo background || echo 'this window' )) — API $API, chain $CHAIN_UNDERLYINGS, open at $OPEN_AT ==="
 [ "$DESK_BG_OPEN" = 1 ] && say "DESK_BACKGROUND_OPEN=1: the morning job runs in the background; the loop keeps checking the API meanwhile"
+[ "$DESK_API_CONFIG" = Release ] && say "API_BUILD_CONFIG=Release: the API is built Release and run from its output, from its next restart on"
 
 # --- infra, then the API --------------------------------------------------------
 say "infra ..."
@@ -305,9 +323,10 @@ _deploy_if_behind() {
 
   if [ "$api_changed" -gt 0 ]; then
     # Build BEFORE stopping the old API, so a broken build costs nothing but
-    # a log line and the running API stays up.
-    say "API code changed — building ..."
-    if dotnet build src/AlgoTrading.Api -v q --nologo >>"$LOG" 2>&1; then
+    # a log line and the running API stays up. The build is the one api_start
+    # runs: Debug, or Release with API_BUILD_CONFIG=Release.
+    say "API code changed — building${DESK_API_CONFIG:+ ($DESK_API_CONFIG)} ..."
+    if api_build >>"$LOG" 2>&1; then
       local live; live="$(live_runs)"
       if [ "$live" != "0" ]; then
         say "  restarting the API with $live live run(s) — runners survive and re-register (owner's policy)"
