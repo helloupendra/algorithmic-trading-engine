@@ -23,6 +23,13 @@ namespace AlgoTrading.Api.Services;
 /// Trailing peaks live on the run's registry entry (<see cref="RiskTrailState"/>)
 /// and are never persisted, so an adopted run and a run whose rules were just
 /// changed re-arm their trails from the P&amp;L of the next sweep.
+///
+/// A position is judged by its own, leg and group rules only on a fresh mark
+/// (<see cref="StrategyRunnerOptions.RiskGuardMaxMarkAgeSeconds"/>): a mark
+/// taken from a quote the feed stopped updating is a price the market may have
+/// left, and a stop or target tripped on it closes at a level nobody could
+/// trade. The overall rules still run on every sweep — they are the run's last
+/// line, and what they trip is a square-off.
 /// </summary>
 public sealed class StrategyRiskGuardService : BackgroundService
 {
@@ -32,6 +39,12 @@ public sealed class StrategyRiskGuardService : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IOptionsMonitor<StrategyRunnerOptions> _options;
     private readonly ILogger<StrategyRiskGuardService> _logger;
+
+    /// <summary>
+    /// Runs whose rules are paused on a stale mark, and since when: one alert
+    /// per incident, not one per sweep. Only the sweep loop touches it.
+    /// </summary>
+    private readonly Dictionary<long, DateTime> _staleSince = new();
 
     public StrategyRiskGuardService(
         StrategyProcessRegistry registry,
@@ -78,11 +91,21 @@ public sealed class StrategyRiskGuardService : BackgroundService
         _logger.LogInformation("StrategyRiskGuardService is stopping.");
     }
 
+    /// <summary>One pass of the loop, for the tests.</summary>
+    internal Task SweepOnceAsync(CancellationToken cancellationToken) => CheckAllAsync(cancellationToken);
+
     private async Task CheckAllAsync(CancellationToken cancellationToken)
     {
         var guarded = _registry.List()
             .Where(x => x.Risk.HasAnyRule && !x.StopRequested)
             .ToList();
+
+        // A run that has stopped takes its incident with it.
+        var swept = guarded.Select(x => x.RunId).ToHashSet();
+        foreach (var runId in _staleSince.Keys.Where(id => !swept.Contains(id)).ToList())
+        {
+            _staleSince.Remove(runId);
+        }
 
         if (guarded.Count == 0) return;
 
@@ -97,7 +120,7 @@ public sealed class StrategyRiskGuardService : BackgroundService
                 var control = scope.ServiceProvider.GetRequiredService<StrategyRunControl>();
                 var charges = scope.ServiceProvider.GetRequiredService<RunCharges>();
 
-                await SweepAsync(entry, paperTrading, control, charges, cancellationToken);
+                await SweepAsync(entry, paperTrading, control, charges, scope.ServiceProvider, cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -147,6 +170,7 @@ public sealed class StrategyRiskGuardService : BackgroundService
         if (pending.Count == 0) return;
 
         var paperTrading = scope.ServiceProvider.GetRequiredService<IPaperTradingService>();
+        var maxAge = MaxMarkAge();
 
         foreach (var runId in pending)
         {
@@ -155,10 +179,21 @@ public sealed class StrategyRiskGuardService : BackgroundService
             try
             {
                 var positions = await paperTrading.GetPaperPositionsAsync(runId, cancellationToken);
+                var now = DateTime.UtcNow;
 
                 foreach (var pos in positions.Where(IsOpen))
                 {
                     if (pos.StopLossPrice is null && pos.TargetPrice is null) continue;
+
+                    // Judged on a fresh mark only, as in the runs above. A book
+                    // has no runner and nobody to page, and a carried leg's quote
+                    // is hours old every night, so this is worth a debug line.
+                    if (IsStale(pos, now, maxAge))
+                    {
+                        _logger.LogDebug("Own levels of position {PositionId} (run {RunId}) not checked: its mark is {Age:0}s old.",
+                            pos.Id, runId, (now - pos.UpdatedUtc).TotalSeconds);
+                        continue;
+                    }
 
                     var reason = EvaluateOwnLevels(pos);
                     if (reason is null) continue;
@@ -183,6 +218,7 @@ public sealed class StrategyRiskGuardService : BackgroundService
         IPaperTradingService paperTrading,
         StrategyRunControl control,
         RunCharges charges,
+        IServiceProvider services,
         CancellationToken cancellationToken)
     {
         // The registry entry may have been replaced by a risk update since the
@@ -204,6 +240,16 @@ public sealed class StrategyRiskGuardService : BackgroundService
             open.Select(x => x.Id).ToHashSet(),
             open.Select(x => x.GroupId ?? string.Empty).ToHashSet(StringComparer.Ordinal));
 
+        // a2. Only a fresh mark is judged. GetPaperPositionsAsync stamps each
+        //     mark with the time of the quote it came from, so a quote the feed
+        //     stopped updating shows its real age here however often it is
+        //     re-applied. Its leg is left alone, and so is any group it is in.
+        var now = DateTime.UtcNow;
+        var maxAge = MaxMarkAge();
+        var stale = open.Where(x => IsStale(x, now, maxAge)).ToList();
+        var staleIds = stale.Select(x => x.Id).ToHashSet();
+        await TrackStaleMarksAsync(current, stale, now, maxAge, services, cancellationToken);
+
         var closedThisSweep = new HashSet<long>();
 
         // b0. A position's OWN stop / target, set when the order was placed.
@@ -215,6 +261,7 @@ public sealed class StrategyRiskGuardService : BackgroundService
         foreach (var pos in open)
         {
             if (pos.StopLossPrice is null && pos.TargetPrice is null) continue;
+            if (staleIds.Contains(pos.Id)) continue;
 
             var reason = EvaluateOwnLevels(pos);
             if (reason is null) continue;
@@ -233,6 +280,8 @@ public sealed class StrategyRiskGuardService : BackgroundService
         {
             foreach (var pos in open)
             {
+                if (staleIds.Contains(pos.Id)) continue;
+
                 var reason = EvaluateLeg(pos, leg, trail);
                 if (reason is null) continue;
 
@@ -250,6 +299,10 @@ public sealed class StrategyRiskGuardService : BackgroundService
             {
                 var openLegs = g.Where(IsOpen).ToList();
                 if (openLegs.Count == 0) continue;
+
+                // The group's P&L carries every open leg's mark; one stale leg
+                // makes the whole figure one the market may not agree with.
+                if (openLegs.Any(x => staleIds.Contains(x.Id))) continue;
 
                 decimal groupPnl = g.Sum(x => x.RealizedPnl) + openLegs.Sum(x => x.UnrealizedPnl);
                 var reason = EvaluateGroup(g.Key, groupPnl, group, trail);
@@ -503,6 +556,95 @@ public sealed class StrategyRiskGuardService : BackgroundService
 
     private static bool IsOpen(PaperPositionResponse pos)
         => string.Equals(pos.Status, "Open", StringComparison.OrdinalIgnoreCase);
+
+    private TimeSpan MaxMarkAge()
+        => TimeSpan.FromSeconds(Math.Max(1, _options.CurrentValue.RiskGuardMaxMarkAgeSeconds));
+
+    /// <summary>A mark older than the limit. A position's UpdatedUtc is the time of the quote it was marked at.</summary>
+    internal static bool IsStale(PaperPositionResponse pos, DateTime nowUtc, TimeSpan maxAge)
+        => nowUtc - pos.UpdatedUtc > maxAge;
+
+    /// <summary>
+    /// Keeps one incident per run while any rule is skipped for a stale mark:
+    /// logged and sent once when it starts, logged when every mark is fresh
+    /// again. A run whose stale positions carry no rule to skip (only overall
+    /// rules, no levels of their own) has nothing to report.
+    /// </summary>
+    private async Task TrackStaleMarksAsync(
+        RunningStrategy entry,
+        IReadOnlyList<PaperPositionResponse> stale,
+        DateTime nowUtc,
+        TimeSpan maxAge,
+        IServiceProvider services,
+        CancellationToken cancellationToken)
+    {
+        long runId = entry.RunId;
+        var rules = entry.Risk;
+        bool skipsSomething = stale.Count > 0
+            && (rules.Leg is { HasAnyRule: true }
+                || rules.Group is { HasAnyRule: true }
+                || stale.Any(x => x.StopLossPrice is not null || x.TargetPrice is not null));
+
+        if (!skipsSomething)
+        {
+            if (_staleSince.Remove(runId, out var since))
+            {
+                _logger.LogInformation("Run {RunId}: marks are fresh again after {Seconds:0}s; leg and group rules resume.",
+                    runId, (nowUtc - since).TotalSeconds);
+                _registry.AppendLog(runId, "risk guard: marks are fresh again; leg and group rules resume");
+            }
+            return;
+        }
+
+        if (_staleSince.ContainsKey(runId)) return;
+        _staleSince[runId] = nowUtc;
+
+        double oldest = stale.Max(x => (nowUtc - x.UpdatedUtc).TotalSeconds);
+        string legs = string.Join(", ", stale.Select(x => ContractLabel(x.Symbol)).Distinct());
+        string limit = maxAge.TotalSeconds.ToString("0", CultureInfo.InvariantCulture);
+        string age = oldest.ToString("0", CultureInfo.InvariantCulture);
+
+        _logger.LogWarning(
+            "Risk guard pausing leg and group rules of strategy {StrategyId} ({Name}) run {RunId} on {Underlying}: "
+            + "{Count} open position(s) marked from quotes older than {Limit}s (oldest {Age}s): {Legs}",
+            entry.StrategyId, entry.Name, runId, entry.Underlying, stale.Count, limit, age, legs);
+        _registry.AppendLog(runId, $"risk guard: leg and group rules paused — no price newer than {limit}s for {legs} (oldest {age}s)");
+
+        var notifier = services.GetService<ISystemNotifier>();
+        if (notifier is null) return;
+
+        try
+        {
+            // The account first, as in every run alert: the same plan runs in
+            // several accounts, and without the name two alerts read as one run
+            // reported twice.
+            string? owner = null;
+            if (services.GetService<TradingDbContext>() is { } db)
+            {
+                owner = await db.AppUsers.AsNoTracking()
+                    .Where(u => u.Id == entry.UserId)
+                    .Select(u => u.UserName)
+                    .FirstOrDefaultAsync(cancellationToken);
+            }
+            string tag = string.IsNullOrWhiteSpace(owner) ? string.Empty : $"[{owner}] ";
+
+            await notifier.NotifyAsync(
+                NotificationCategory.StrategyRun,
+                NotificationSeverity.Warning,
+                $"{tag}Risk rules paused — {entry.Name} on {entry.Underlying}",
+                $"Run #{runId}: no price newer than {limit}s for {legs} (oldest {age}s). Their leg and group "
+                + "stop-losses and targets are not checked until the quotes move again. The overall rules and the "
+                + "market-close square-off still apply.",
+                underlying: entry.Underlying,
+                simulationRunId: runId,
+                cancellationToken: cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Telling the owner must never cost the sweep.
+            _logger.LogWarning(ex, "Could not send the paused-rules alert for run {RunId}.", runId);
+        }
+    }
 
     /// <summary>"BANKNIFTY 57500 CE" from the FYERS symbol grammar; the raw symbol when it is not an option.</summary>
     internal static string ContractLabel(string symbol)

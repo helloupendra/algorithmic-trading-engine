@@ -35,6 +35,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="AlgoTrading.UnitTests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\AlgoTrading.Application\AlgoTrading.Application.csproj" />
     <ProjectReference Include="..\AlgoTrading.Contracts\AlgoTrading.Contracts.csproj" />
 	<ProjectReference Include="..\AlgoTrading.Infrastructure\AlgoTrading.Infrastructure.csproj" />
