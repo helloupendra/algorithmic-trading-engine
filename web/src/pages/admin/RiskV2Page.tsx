@@ -156,7 +156,7 @@ function LimitsPanel() {
               }}
             >
               {field('maxOrdersPerMinute', 'Max orders / minute', 'Throttles a runaway strategy.')}
-              {field('maxDailyLoss', 'Max daily loss (₹)', 'Across every run on the platform.')}
+              {field('maxDailyLoss', 'Max daily loss (₹)', 'Per run, before charges: a run below it cannot open new positions; exits stay allowed.')}
               {field('maxConcurrentRuns', 'Max concurrent runs', 'Total live runners allowed at once.')}
               {field('maxRunsPerUser', 'Max runs per trader', 'How many one trader may hold open.')}
               <button className="btn btn--primary" disabled={update.isPending || !form}>
