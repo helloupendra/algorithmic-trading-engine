@@ -15,18 +15,13 @@ import type { MouseEvent } from 'react'
 import type { DeskAccount } from '../../lib/desk'
 import { accountStroke, compactInr } from '../../lib/desk'
 import type { DayCurves } from '../../lib/pnlSeries'
-import { minuteLabel, spreadLabels, stepPath, timeTicks, valueAt, valueDomain, valueTicks } from '../../lib/pnlSeries'
+import { axisInr, minuteLabel, spreadLabels, stepPath, timeTicks, valueAt, valueDomain, valueTicks } from '../../lib/pnlSeries'
 import { formatInrSigned } from '../../lib/format'
 
 const L = 34
 const R = 50
 const T = 8
 const B = 17
-
-/** "−10k", "0", "+5k": the value gridlines, as short as they can be. */
-function axisValue(v: number): string {
-  return v === 0 ? '0' : compactInr(v).replace('+', '')
-}
 
 export function PnlChart({
   curves,
@@ -89,7 +84,7 @@ export function PnlChart({
           <g key={v}>
             <line x1={L} x2={L + plotW} y1={y(v)} y2={y(v)} stroke={v === 0 ? 'var(--line-strong)' : 'var(--line-soft)'} />
             <text x={L - 5} y={y(v) + 3.5} textAnchor="end">
-              {axisValue(v)}
+              {axisInr(v)}
             </text>
           </g>
         ))}
