@@ -5,6 +5,7 @@ import {
   buildUpTone,
   filterBuildUp,
   formatOi,
+  indexLabel,
   movePercent,
   pcrEnds,
   pcrSummary,
@@ -130,5 +131,14 @@ describe('put-call ratio table', () => {
   it('summarises the whole list', () => {
     expect(pcrSummary(rows)).toEqual({ count: 3, median: 0.95, putHeavy: 1, callHeavy: 1 })
     expect(pcrSummary([])).toEqual({ count: 0, median: null, putHeavy: 0, callHeavy: 0 })
+  })
+})
+
+describe('indexLabel', () => {
+  it('names an index group without the word every one of them ends in', () => {
+    expect(indexLabel('Nifty 50 Constituents')).toBe('Nifty 50')
+    expect(indexLabel('Bank Nifty constituents')).toBe('Bank Nifty')
+    expect(indexLabel('Sensex')).toBe('Sensex')
+    expect(indexLabel('Constituents')).toBe('Constituents')
   })
 })

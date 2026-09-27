@@ -25,7 +25,7 @@ import { BrokerPage } from './pages/admin/BrokerPage'
 import { ConnectorDetailPage } from './pages/admin/ConnectorDetailPage'
 import { LiveAlertsV2Page } from './pages/admin/LiveAlertsV2Page'
 import { PatternAlertsPage } from './pages/data/PatternAlertsPage'
-import MarketMoversPage from './pages/data/MarketMoversPage'
+import { MoversPage } from './pages/markets/movers/MoversPage'
 import MarketFactorsPage from './pages/data/MarketFactorsPage'
 import { ActivityLogPage } from './pages/admin/ActivityLogPage'
 import { DeploymentsPage } from './pages/admin/DeploymentsPage'
@@ -139,7 +139,7 @@ export default function App() {
                 <Route path="/markets/chain" element={<OptionChainPage view="chain" />} />
                 <Route path="/markets/chain/oi" element={<OptionChainPage view="oi" />} />
                 <Route path="/markets/chain/levels" element={<OptionChainPage view="levels" />} />
-                <Route path="/markets/movers" element={<MarketMoversPage />} />
+                <Route path="/markets/movers" element={<MoversPage />} />
                 <Route path="/markets/factors" element={<MarketFactorsPage />} />
                 <Route path="/markets/news" element={<MarketNewsPage />} />
 

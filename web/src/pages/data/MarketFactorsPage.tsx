@@ -2,9 +2,7 @@
  * Market factors: the numbers desks read to judge where the market may go,
  * gathered on one page.
  *
- * Four sections, one at a time (the choice lives in the URL):
- *  - Futures build-up: index futures today (live OI against yesterday's close)
- *    and over recent sessions, plus the day's stock futures by build-up;
+ * Three sections, one at a time (the choice lives in the URL):
  *  - FII & DII: cash-market buying and selling, and how FIIs, DIIs, pros and
  *    clients sit in index futures, from NSE's evening files;
  *  - Global: GIFT Nifty and the overseas markets that set the tone before 09:15;
@@ -13,9 +11,10 @@
  * Every section says how fresh its numbers are and what our own tests found for
  * that factor, so a reading is never mistaken for a proven signal.
  *
- * The chain's levels (walls, max pain, the straddle's move) were a section
- * here; they are the Levels tab of Markets → Option chain now, and an old
- * ?section=levels link is sent there.
+ * Two sections moved to the pages that read the same data: the chain's
+ * levels are the Levels tab of Markets → Option chain, and the futures
+ * build-up is a section of Markets → Movers. An old ?section= link to either
+ * is sent there.
  */
 
 import { useState } from 'react'
@@ -27,10 +26,8 @@ import {
   useGlobalCues,
   useMarketEvents,
   useMarketFlows,
-  useMarketFutures,
 } from '../../lib/queries'
 import {
-  BUILD_UPS,
   EVENT_CATEGORIES,
   cashStreak,
   formatCrore,
@@ -44,16 +41,14 @@ import {
   splitEvents,
 } from '../../lib/factors'
 import type { GlobalCue, MarketEvent } from '../../lib/factors'
-import { buildUpTone, formatOi, movePercent } from '../../lib/movers'
+import { formatOi, movePercent } from '../../lib/movers'
 import { formatAge, formatDateTime } from '../../lib/format'
 import { useAuth } from '../../lib/auth'
 import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components/ui'
 import { Metric, ResearchNote, StatusLine, num } from '../markets/factorParts'
-import './movers.css'
 import './factors.css'
 
 const SECTIONS = [
-  { key: 'futures', label: 'Futures build-up' },
   { key: 'flows', label: 'FII & DII' },
   { key: 'global', label: 'Global' },
   { key: 'events', label: 'Events' },
@@ -61,122 +56,7 @@ const SECTIONS = [
 type SectionKey = (typeof SECTIONS)[number]['key']
 
 function sectionFrom(value: string | null): SectionKey {
-  return (SECTIONS.find((s) => s.key === value)?.key ?? 'futures') as SectionKey
-}
-
-// ---------------------------------------------------------------------------
-// Futures build-up
-// ---------------------------------------------------------------------------
-
-function FuturesSection() {
-  const futures = useMarketFutures(10)
-  const data = futures.data
-
-  return (
-    <>
-      <ResearchNote id="futures" />
-      {futures.isError && <InlineError error={futures.error} />}
-      {futures.isLoading && !data && <Loading />}
-      {data && !data.latestDay && (
-        <EmptyState>No bhavcopy is stored yet. The API fetches NSE's files a few minutes after it starts and every evening after 18:00 IST.</EmptyState>
-      )}
-
-      {data?.latestDay && (
-        <>
-          <Panel title="Index futures · price and open interest together" className="mf-card">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Future</th>
-                  <th>Now (live vs last close)</th>
-                  <th className="num">Price</th>
-                  <th className="num">OI</th>
-                  <th>Last session · {formatDay(data.latestDay)}</th>
-                  <th className="num">Price</th>
-                  <th className="num">OI</th>
-                  <th>Last 10 sessions (newest left)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.indices.map((f) => (
-                  <tr key={f.underlying}>
-                    <td>
-                      {f.underlying}
-                      {f.latest && <span className="cell-sub muted small">exp {formatDay(f.latest.expiry)}</span>}
-                    </td>
-                    <td>
-                      {f.live?.buildUp ? (
-                        <>
-                          <Badge tone={buildUpTone(f.live.buildUp)}>{f.live.buildUp}</Badge>
-                          <span className="cell-sub muted small">
-                            {f.live.isFresh ? 'live' : `quote ${formatAge(f.live.asOfUtc)}`}
-                          </span>
-                        </>
-                      ) : (
-                        <span className="muted small">{f.live ? 'no baseline close yet' : 'no live quote'}</span>
-                      )}
-                    </td>
-                    <td className={`num mono ${signTone(f.live?.priceChangePercent)}`}>{movePercent(f.live?.priceChangePercent)}</td>
-                    <td className={`num mono ${signTone(f.live?.openInterestChangePercent)}`}>{movePercent(f.live?.openInterestChangePercent)}</td>
-                    <td>{f.latest ? <Badge tone={buildUpTone(f.latest.buildUp)}>{f.latest.buildUp}</Badge> : '—'}</td>
-                    <td className={`num mono ${signTone(f.latest?.priceChangePercent)}`}>{movePercent(f.latest?.priceChangePercent)}</td>
-                    <td className={`num mono ${signTone(f.latest?.openInterestChangePercent)}`}>{movePercent(f.latest?.openInterestChangePercent)}</td>
-                    <td>
-                      <div className="mf-strip">
-                        {f.history.slice(0, 10).map((h) => (
-                          <span
-                            key={h.date}
-                            className={`mf-strip__cell mf-tone--${buildUpTone(h.buildUp)}`}
-                            title={`${formatDay(h.date)}: ${h.buildUp} · price ${movePercent(h.priceChangePercent)} · OI ${movePercent(h.openInterestChangePercent)}`}
-                          />
-                        ))}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <p className="muted small">
-              Long build-up: price and OI both up (new buyers). Short build-up: price down, OI up (new sellers). Short covering:
-              price up, OI down (sellers leaving). Long unwinding: both down (buyers leaving).
-            </p>
-          </Panel>
-
-          <h2 className="mf-h2">Stock futures · {formatDay(data.latestDay)}</h2>
-          <div className="mf-grid mf-grid--four">
-            {BUILD_UPS.map((b) => (
-              <Panel key={b} title={`${b} · ${data.stockCounts[b] ?? 0}`} className="mf-card">
-                {(data.stocks[b] ?? []).length === 0 ? (
-                  <EmptyState>None.</EmptyState>
-                ) : (
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>Stock</th>
-                        <th className="num">Price</th>
-                        <th className="num">OI</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.stocks[b].map((s) => (
-                        <tr key={s.underlying}>
-                          <td>{s.underlying}</td>
-                          <td className={`num mono ${signTone(s.priceChangePercent)}`}>{movePercent(s.priceChangePercent)}</td>
-                          <td className={`num mono ${signTone(s.openInterestChangePercent)}`}>{movePercent(s.openInterestChangePercent)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </Panel>
-            ))}
-          </div>
-        </>
-      )}
-
-      <StatusLine status={data?.status} datasets={['futures-bhavcopy']} />
-    </>
-  )
+  return (SECTIONS.find((s) => s.key === value)?.key ?? 'flows') as SectionKey
 }
 
 // ---------------------------------------------------------------------------
@@ -577,10 +457,10 @@ export default function MarketFactorsPage() {
 
   return (
     <div className="page mf">
-      <header className="mv-head">
+      <header className="page__header">
         <div>
-          <h1>Market factors</h1>
-          <p className="muted small mv-head__meta">
+          <h1 className="page__title">Market factors</h1>
+          <p className="page__subtitle">
             What desks read to judge where the market may go. Each section says how fresh it is and what our own tests found.
           </p>
         </div>
@@ -602,7 +482,6 @@ export default function MarketFactorsPage() {
       </div>
 
       <div role="tabpanel" className="mf-body">
-        {section === 'futures' && <FuturesSection />}
         {section === 'flows' && <FlowsSection />}
         {section === 'global' && <GlobalSection />}
         {section === 'events' && <EventsSection />}

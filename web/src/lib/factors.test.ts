@@ -131,6 +131,7 @@ describe('topWalls', () => {
 describe('movedFactorSection', () => {
   it('sends an old link to a section that moved on to its new page', () => {
     expect(movedFactorSection('levels')).toBe('/markets/chain/levels')
+    expect(movedFactorSection('futures')).toBe('/markets/movers#futures')
   })
 
   it('leaves the sections still on the Factors page alone', () => {
