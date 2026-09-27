@@ -15,6 +15,7 @@ import {
   expectedMove,
   formatDistance,
   formatSignedContracts,
+  grouped,
   signTone,
   topWalls,
 } from '../../../lib/factors'
@@ -22,7 +23,7 @@ import type { WallRow } from '../../../lib/factors'
 import { formatOi, movePercent } from '../../../lib/movers'
 import { formatAge } from '../../../lib/format'
 import { EmptyState, InlineError, Loading, Panel } from '../../../components/ui'
-import { Metric, ResearchNote, num } from '../factorParts'
+import { Metric, ResearchNote } from '../factorParts'
 
 function WallsTable({ title, rows, tone }: { title: string; rows: WallRow[]; tone: 'pos' | 'neg' }) {
   return (
@@ -77,23 +78,23 @@ export function LevelsView({ underlying }: { underlying: string }) {
       <div className="mf-metrics lv-metrics">
         <Metric
           label={underlying}
-          value={num(spot, 2)}
+          value={grouped(spot, 2)}
           sub={header.spot?.changePercent != null ? movePercent(header.spot.changePercent) : undefined}
           tone={signTone(header.spot?.changePercent)}
         />
         <Metric
           label="Resistance · biggest call OI"
-          value={num(header.resistanceStrike)}
+          value={grouped(header.resistanceStrike)}
           sub={`${formatOi(header.resistanceOpenInterest)} · ${formatDistance(distanceTo(spot, header.resistanceStrike))}`}
           tone="neg"
         />
         <Metric
           label="Support · biggest put OI"
-          value={num(header.supportStrike)}
+          value={grouped(header.supportStrike)}
           sub={`${formatOi(header.supportOpenInterest)} · ${formatDistance(distanceTo(spot, header.supportStrike))}`}
           tone="pos"
         />
-        <Metric label="Max pain" value={num(header.maxPainStrike)} sub={formatDistance(distanceTo(spot, header.maxPainStrike))} />
+        <Metric label="Max pain" value={grouped(header.maxPainStrike)} sub={formatDistance(distanceTo(spot, header.maxPainStrike))} />
         <Metric
           label="Put-call ratio"
           value={header.putCallRatio != null ? header.putCallRatio.toFixed(2) : '—'}
@@ -101,13 +102,13 @@ export function LevelsView({ underlying }: { underlying: string }) {
         />
         <Metric
           label="Move the straddle prices"
-          value={move ? `±${num(move.points)}` : '—'}
-          sub={move ? `${move.percent.toFixed(2)}% to expiry · ${num(move.strike)} straddle` : 'no ATM prices'}
+          value={move ? `±${grouped(move.points)}` : '—'}
+          sub={move ? `${move.percent.toFixed(2)}% to expiry · ${grouped(move.strike)} straddle` : 'no ATM prices'}
         />
         <Metric label="ATM IV" value={header.atTheMoneyIv != null ? `${header.atTheMoneyIv.toFixed(1)}%` : '—'} />
         <Metric
           label="India VIX"
-          value={num(header.vix?.lastPrice, 2)}
+          value={grouped(header.vix?.lastPrice, 2)}
           sub={header.vix?.changePercent != null ? movePercent(header.vix.changePercent) : undefined}
           // VIX up is fear: coloured the way a falling market is.
           tone={signTone(header.vix?.changePercent) === 'pos' ? 'neg' : signTone(header.vix?.changePercent) === 'neg' ? 'pos' : ''}

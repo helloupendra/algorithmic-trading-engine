@@ -34,6 +34,7 @@ import {
   formatDay,
   formatSignedContracts,
   gapReading,
+  grouped,
   istDate,
   movedFactorSection,
   participantStance,
@@ -45,7 +46,7 @@ import { formatOi, movePercent } from '../../lib/movers'
 import { formatAge, formatDateTime } from '../../lib/format'
 import { useAuth } from '../../lib/auth'
 import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components/ui'
-import { Metric, ResearchNote, StatusLine, num } from '../markets/factorParts'
+import { Metric, ResearchNote, StatusLine } from '../markets/factorParts'
 import './factors.css'
 
 const SECTIONS = [
@@ -196,8 +197,8 @@ function FlowsSection() {
                     {data.cash.map((d) => (
                       <tr key={d.date}>
                         <td>{formatDay(d.date)}</td>
-                        <td className="num mono">{num(d.fii?.buy)}</td>
-                        <td className="num mono">{num(d.fii?.sell)}</td>
+                        <td className="num mono">{grouped(d.fii?.buy)}</td>
+                        <td className="num mono">{grouped(d.fii?.sell)}</td>
                         <td className={`num mono ${signTone(d.fii?.net)}`}>{formatCrore(d.fii?.net)}</td>
                         <td className="mf-barcell">
                           <div className="mf-bar">
@@ -233,8 +234,8 @@ function CueRow({ cue }: { cue: GlobalCue }) {
   return (
     <tr>
       <td>{cue.name}</td>
-      <td className="num mono">{cue.error ? '—' : num(cue.lastPrice, 2)}</td>
-      <td className={`num mono ${signTone(cue.change)}`}>{cue.error ? '—' : num(cue.change, 2)}</td>
+      <td className="num mono">{cue.error ? '—' : grouped(cue.lastPrice, 2)}</td>
+      <td className={`num mono ${signTone(cue.change)}`}>{cue.error ? '—' : grouped(cue.change, 2)}</td>
       <td className={`num mono ${signTone(cue.changePercent)}`}>{cue.error ? '—' : movePercent(cue.changePercent)}</td>
       <td className="muted small">{cue.error ? <span className="neg">{cue.error}</span> : formatDateTime(cue.asOfUtc)}</td>
     </tr>
@@ -258,7 +259,7 @@ function GlobalSection() {
           <div className="mf-metrics">
             <Metric
               label="GIFT Nifty"
-              value={data.gift.error ? '—' : num(data.gift.lastPrice, 2)}
+              value={data.gift.error ? '—' : grouped(data.gift.lastPrice, 2)}
               sub={
                 data.gift.error
                   ? data.gift.error
@@ -268,10 +269,10 @@ function GlobalSection() {
             />
             <Metric
               label="Against NSE NIFTY future's last close"
-              value={data.indicatedGapPoints != null ? `${data.indicatedGapPoints > 0 ? '+' : ''}${num(data.indicatedGapPoints, 1)}` : '—'}
+              value={data.indicatedGapPoints != null ? `${data.indicatedGapPoints > 0 ? '+' : ''}${grouped(data.indicatedGapPoints, 1)}` : '—'}
               sub={
                 data.nseFutureClose != null
-                  ? `${gap.label} · close ${num(data.nseFutureClose, 2)} on ${data.nseFutureCloseDate ? formatDay(data.nseFutureCloseDate) : '—'}`
+                  ? `${gap.label} · close ${grouped(data.nseFutureClose, 2)} on ${data.nseFutureCloseDate ? formatDay(data.nseFutureCloseDate) : '—'}`
                   : 'no NSE close of the same contract stored yet'
               }
               tone={gap.tone}
