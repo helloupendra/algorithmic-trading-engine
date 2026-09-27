@@ -383,6 +383,37 @@ class DeskTests(Base):
         self.assertIs(State.OK, item.state)
 
 
+class RecorderTests(Base):
+    PATH = "/api/MarketIntelligence/status"
+
+    def status(self, **news):
+        recorder = {"name": "news", "enabled": True, "lastSuccessUtc": iso(ist(8, 50)), "lastErrorUtc": None,
+                    "lastError": None, "failingSources": [], "rowsToday": 412, "overdue": False}
+        recorder.update(news)
+        return {"recorders": [recorder, {"name": "breadth", "enabled": True, "overdue": False, "failingSources": []},
+                              {"name": "news-scoring", "enabled": False, "overdue": True}],
+                "backfills": [{"dataset": "breadth", "enabled": True, "missingSessions": 0, "lastError": None}]}
+
+    def test_recorders_on_schedule_are_fine(self):
+        item = self.one(checks.recorders(self.inputs("morning", {self.PATH: self.status()})))
+        self.assertIs(State.OK, item.state)
+        self.assertEqual("2 recorders on schedule; 412 headlines today.", item.detail)
+
+    def test_a_stalled_news_recorder_is_to_do(self):
+        body = self.status(overdue=True, lastError="all feeds timed out", lastErrorUtc=iso(ist(8, 51)))
+        item = self.one(checks.recorders(self.inputs("morning", {self.PATH: body})))
+        self.assertIs(State.FAIL, item.state)
+        self.assertIn("news (all feeds timed out)", item.detail)
+        self.assertIn("cannot be fetched later", item.action)
+
+    def test_a_running_backfill_is_a_note(self):
+        body = self.status()
+        body["backfills"][0]["missingSessions"] = 1738
+        item = self.one(checks.recorders(self.inputs("morning", {self.PATH: body})))
+        self.assertIs(State.INFO, item.state)
+        self.assertIn("breadth 1,738 sessions to go", item.detail)
+
+
 class CalendarTests(Base):
     def test_holidays_in_the_week_ahead_are_listed_and_next_year_is_asked_for_in_november(self):
         body = {"holidays": [{"date": "2026-11-10", "exchange": "NSE", "name": "Diwali"},

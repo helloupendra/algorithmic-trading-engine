@@ -55,6 +55,7 @@ the console has every report either way.
 | FYERS backup | ✓ | | | | Signed in or not. Only a note while the failover is in log mode; worth a look once it is live, since a switch needs it. |
 | Live feeds | ✓ | | ✓ | | `/api/Feeds`: one running before the open, none after the last close. |
 | Morning plan | ✓ | | | | Every run in `config/morning-plan.txt` live, by account. |
+| Market data recorders | ✓ | | | ✓ | `/api/MarketIntelligence/status`: every [recorder](market_intelligence.md) on schedule, failing sources, and how far the 2020 backfills have to go. A stalled news recorder is to do: a headline not recorded today cannot be fetched later. |
 | Runs after the close | | ✓ | | | No NSE/BSE strategy run still live after 15:30; crude runs noted until the MCX close. |
 | Runs overnight | | | ✓ | | No strategy run live after the day's last close. |
 | Strategy legs after the close | | ✓ | | | No NSE/BSE leg open in a strategy run. |
