@@ -729,6 +729,11 @@ class Watcher:
         seen: dict[int, str] = {}
         opened: list[dict[str, Any]] = []
         closed: list[dict[str, Any]] = []
+        # 27 Sep: a leg ticked "carry forward" leaves its run at the close for
+        # the owner's manual book. It was not sold, so reporting it as a close
+        # ("closed · ₹0") would tell the desk a position was exited that is in
+        # fact being held overnight.
+        carried: list[dict[str, Any]] = []
 
         for position in live.get("positions") or []:
             pid = position.get("id")
@@ -744,10 +749,12 @@ class Watcher:
                 # closed between two polls; report it as the close it is.
                 if status.lower() == "open":
                     opened.append(position)
+                elif status.lower() == "carried":
+                    carried.append(position)
                 else:
                     closed.append(position)
             elif previous != status and status.lower() != "open":
-                closed.append(position)
+                (carried if status.lower() == "carried" else closed).append(position)
 
         # A leg that vanished from the payload entirely counts as closed, but we
         # have no closing numbers for it, so say only what is true.
@@ -758,8 +765,8 @@ class Watcher:
 
         self._positions[run_id] = seen
 
-        if opened or closed or vanished:
-            self._alert_position_change(run, live, opened, closed, vanished)
+        if opened or closed or vanished or carried:
+            self._alert_position_change(run, live, opened, closed, vanished, carried)
 
     @staticmethod
     def _contract(position: dict[str, Any]) -> str:
@@ -794,6 +801,7 @@ class Watcher:
         opened: list[dict[str, Any]],
         closed: list[dict[str, Any]],
         vanished: list[int],
+        carried: list[dict[str, Any]] | None = None,
     ) -> None:
         """
         Everything one run did in one tick, as a single message.
@@ -809,16 +817,23 @@ class Watcher:
 
         # The headline names the shape of the move, so the first line alone says
         # what happened without reading the legs.
+        carried = carried or []
         if opened and closed:
             icon = "🔁"
             what = f"rolled - {len(closed)} out, {len(opened)} in"
         elif opened:
             icon = "🟢"
             what = f"{len(opened)} leg{'s' if len(opened) != 1 else ''} opened"
-        else:
+        elif closed or vanished:
             total = len(closed) + len(vanished)
             icon = "✅" if realized_now > 0 else ("🔻" if realized_now < 0 else "⚪")
             what = f"{total} leg{'s' if total != 1 else ''} closed"
+        else:
+            icon = "🌙"
+            what = ""
+        if carried:
+            moved = f"{len(carried)} leg{'s' if len(carried) != 1 else ''} carried forward"
+            what = f"{what}, {moved}" if what else f"{moved} to the manual book"
 
         lines = [f"{icon} {esc(account_tag(run))}<b>{esc(name)}</b> · {esc(underlying)} - {esc(what)}", ""]
 
@@ -839,6 +854,17 @@ class Watcher:
             lines.append("<b>Opened</b>")
             for position in opened:
                 lines += self._leg_line(position, closing=False)
+            lines.append("")
+
+        if carried:
+            # No exit and no P&L here: the leg is held overnight in the owner's
+            # manual book, at this entry, and its P&L is the book's from now on.
+            lines.append("<b>Carried forward</b> to the manual book")
+            for position in carried:
+                side = str(position.get("side") or "?").upper()
+                qty = qty_line(position.get("lots"), position.get("lotSize"), position.get("quantity"))
+                lines.append(f"  <b>{esc(side)}</b> {esc(Watcher._contract(position))}")
+                lines.append(f"     {esc(qty)} @ <b>{esc(position.get('entryPrice'))}</b> · held overnight")
             lines.append("")
 
         open_legs = sum(

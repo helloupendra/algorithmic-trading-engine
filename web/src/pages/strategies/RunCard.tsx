@@ -3,6 +3,12 @@
  * with its spot, P&L, risk rules, every position as a row (closed legs stay
  * with quantity 0), and the activity / runner-output disclosures.
  *
+ * Each open row has a "Carry" tick (27 Sep): in the manual book it keeps a
+ * position past its exchange's close, in a strategy run it moves the leg to
+ * the owner's manual book when the market close stops the run. A leg that
+ * moved stays here as a "Carried" row; in the book it says which run it came
+ * from.
+ *
  * Shared by the Live runner (one card per running or just-stopped run) and
  * the Run history detail page (one card for any run ever started, read-only
  * for a trader who did not start it). Everything is keyed by runId — a
@@ -14,6 +20,7 @@ import type { ReactNode } from 'react'
 import {
   useClosePositions,
   useLatestQuotes,
+  useSetCarryForward,
   useStopStrategy,
   useStrategyLive,
   useStrategyLogs,
@@ -32,6 +39,8 @@ import {
   totalsNote,
 } from '../../lib/greeks'
 import { effectiveRisk, isRiskEmpty, parseRiskDraft, riskChips, riskDraftFrom } from '../../lib/risk'
+import { carriedNote, carryControl, carryHint, positionCountsNote, stopCarryWarning } from '../../lib/carry'
+import type { CarryContext } from '../../lib/carry'
 import { liveNet } from '../../lib/strategyList'
 import type { RiskDraft, RiskDraftField } from '../../lib/risk'
 import { Badge, FlashPrice, InlineError, Loading } from '../../components/ui'
@@ -394,6 +403,7 @@ function PositionsTable({
   positions,
   runId,
   canClose,
+  carry: carryContext,
 }: {
   positions: LivePosition[]
   runId: number
@@ -404,6 +414,11 @@ function PositionsTable({
    * reports isActive=false while its positions are genuinely open.
    */
   canClose: boolean
+  /**
+   * The carry-forward tick's context, or null when the API predates it (the
+   * Carry column is then left out rather than shown as ticks that cannot work).
+   */
+  carry: CarryContext | null
 }) {
   const { data: quotes } = useLatestQuotes()
   const bySymbol = new Map((quotes ?? []).map((q) => [q.symbol, q]))
@@ -416,6 +431,16 @@ function PositionsTable({
   // Which row was asked for, so only that row shows "Closing…" while several
   // are squared off one after another.
   const [closingId, setClosingId] = useState<number | null>(null)
+
+  // The carry-forward tick (27 Sep). One row at a time, like Square off.
+  const setCarry = useSetCarryForward()
+  const [carryingId, setCarryingId] = useState<number | null>(null)
+  const showCarry = carryContext != null
+
+  function toggleCarry(p: LivePosition, next: boolean) {
+    setCarryingId(p.id)
+    setCarry.mutate({ runId, positionId: p.id, carryForward: next }, { onSettled: () => setCarryingId(null) })
+  }
 
   function confirmClose(p: LivePosition) {
     const msg =
@@ -432,6 +457,7 @@ function PositionsTable({
   return (
     <div className="tablewrap tablewrap--rows5">
       {close.isError && <InlineError error={close.error} />}
+      {setCarry.isError && <InlineError error={setCarry.error} />}
       <table className="table">
         <thead>
           <tr>
@@ -469,6 +495,14 @@ function PositionsTable({
             <th className="r" title="Stop-loss and target set on this position when it was opened">
               SL / Target
             </th>
+            {showCarry && (
+              <th
+                className="c"
+                title={carryHint(carryContext.isManualBook)}
+              >
+                Carry
+              </th>
+            )}
             <th>Status</th>
             {canClose && <th aria-label="Actions" />}
           </tr>
@@ -476,14 +510,25 @@ function PositionsTable({
         <tbody>
           {positions.map((p) => {
             const open = p.status === 'Open'
+            const carried = p.status === 'Carried'
             const values = positionValues({ ...p, mark: p.ltp })
             // A carried leg before today's first tick is still on the last
             // session's price: say how old it is rather than let it read as now.
             const ltpAge = open ? ltpAgeNote(p.ltpUpdatedUtc) : null
+            const moved = carriedNote(p)
+            const tick = carryContext ? carryControl(p, carryContext) : null
             return (
               <tr key={p.id} className={open ? '' : 'pos-row--closed'}>
                 <td className="mono" title={`${p.symbol} · group ${p.groupId}`}>
                   {contractLabel(p)}
+                  {moved && <span className="cell-sub">{moved}</span>}
+                  {/* Under the name rather than beside Open: the Status column
+                      stays one badge wide, so the table does not grow. */}
+                  {open && p.carryForward && (
+                    <span className="cell-sub">
+                      <Badge tone="live">Carry forward</Badge>
+                    </span>
+                  )}
                 </td>
                 <td>
                   <Badge tone={p.side === 'BUY' ? 'pos' : 'neg'}>{p.side}</Badge>
@@ -496,7 +541,12 @@ function PositionsTable({
                   <span className="cell-sub">{formatTime(p.openedUtc)}</span>
                 </td>
                 <td className="r mono">
-                  {open || p.exitPrice == null ? (
+                  {carried ? (
+                    <>
+                      <span className="muted">→ book</span>
+                      <span className="cell-sub">{formatTime(p.closedUtc)}</span>
+                    </>
+                  ) : open || p.exitPrice == null ? (
                     <span className="muted">—</span>
                   ) : (
                     <>
@@ -529,7 +579,32 @@ function PositionsTable({
                     </>
                   )}
                 </td>
-                <td>{open ? <Badge tone="accent">Open</Badge> : <Badge>Closed</Badge>}</td>
+                {showCarry && (
+                  <td className="c">
+                    {tick?.show ? (
+                      <input
+                        type="checkbox"
+                        className="carry-check"
+                        checked={tick.checked}
+                        disabled={tick.disabled || carryingId === p.id}
+                        title={tick.title}
+                        aria-label={`Carry forward ${contractLabel(p)}`}
+                        onChange={(e) => toggleCarry(p, e.target.checked)}
+                      />
+                    ) : (
+                      <span className="faint">—</span>
+                    )}
+                  </td>
+                )}
+                <td>
+                  {open ? (
+                    <Badge tone="accent">Open</Badge>
+                  ) : carried ? (
+                    <Badge tone="warn">Carried</Badge>
+                  ) : (
+                    <Badge>Closed</Badge>
+                  )}
+                </td>
                 {canClose && (
                   <td className="r">
                     {open && (
@@ -670,7 +745,10 @@ export function RunCard({
 
   function confirmStop() {
     const where = underlying ? ` on ${underlying}` : ''
-    const msg = `Square off ${openCount} open position${openCount === 1 ? '' : 's'} at the last price and stop ${strategy.name}${where}?`
+    const carryWarning = stopCarryWarning(positions)
+    const msg =
+      `Square off ${openCount} open position${openCount === 1 ? '' : 's'} at the last price and stop ${strategy.name}${where}?` +
+      (carryWarning ? `\n\n${carryWarning}` : '')
     if (window.confirm(msg)) stop.mutate({ runId })
   }
 
@@ -779,9 +857,7 @@ export function RunCard({
               <div className="metric__value">
                 <PnlValue value={view.pnl.unrealized} />
               </div>
-              <div className="metric__sub">
-                {openCount} open · {positions.length - openCount} closed
-              </div>
+              <div className="metric__sub">{positionCountsNote(positions)}</div>
             </div>
             <div className="metric">
               <div className="metric__label">Lots</div>
@@ -825,7 +901,28 @@ export function RunCard({
           <RiskSection runId={runId} view={view} isActive={isActive} canEdit={mayControl} />
 
           {positions.length > 0 ? (
-            <PositionsTable positions={positions} runId={runId} canClose={mayControl} />
+            <>
+              <PositionsTable
+                positions={positions}
+                runId={runId}
+                canClose={mayControl}
+                carry={
+                  // An API older than 28 Sep sends neither flag: no Carry column.
+                  view.canCarryForward === undefined
+                    ? null
+                    : {
+                        canControl: mayControl,
+                        canCarryForward: view.canCarryForward,
+                        isManualBook: view.isManualBook ?? false,
+                      }
+                }
+              />
+              {/* Under the table's frame, not inside it: it explains the Carry
+                  column, it is not a row. */}
+              {view.canCarryForward !== undefined && openCount > 0 && (
+                <p className="small-note carry-note">{carryHint(view.isManualBook ?? false)}</p>
+              )}
+            </>
           ) : isActive ? (
             <div className="waiting" role="status">
               <span className="pulse-dot" aria-hidden="true" />

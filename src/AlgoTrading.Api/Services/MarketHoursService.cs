@@ -14,6 +14,10 @@ namespace AlgoTrading.Api.Services
     /// Auto-shutdown at the close. Every strategy run is stopped — its open paper
     /// positions squared off — at the close of the market it trades on: NSE and
     /// BSE runs at 15:30 IST, MCX runs at the MCX close (<see cref="MarketCloseRules"/>).
+    /// A leg ticked "carry forward" is moved to the run owner's manual book
+    /// instead (<see cref="PositionCarryForward"/>), and the manual book's own
+    /// unticked positions are squared off at their exchange's close
+    /// (<see cref="ManualIntradaySquareOff"/>).
     /// At 15:30 on weekdays the live data feeds, the chain poller and the alerter
     /// are stopped too, except the feeds MCX still needs, which go at the MCX
     /// close — so nothing keeps consuming the host after its session ends.
@@ -81,6 +85,12 @@ namespace AlgoTrading.Api.Services
                     // Before the feeds below, so the square-off marks at quotes
                     // that are still arriving.
                     await StopRunsPastTheirCloseAsync(nowUtc, stoppingToken);
+
+                    // The manual book's intraday positions, each at its own
+                    // exchange's close, by the same memory-less rule. After the
+                    // runs, whose carried legs arrive in the book ticked and are
+                    // left alone here.
+                    await SquareOffManualIntradayAsync(nowUtc, stoppingToken);
 
                     // Reset shutdown flag if it's a new day
                     if (_hasShutdownToday && nowIst.Date > _lastShutdownDate)
@@ -241,7 +251,9 @@ namespace AlgoTrading.Api.Services
                 {
                     try
                     {
-                        var result = await control.StopAsync(run.RunId, run.Reason, flatten: true, by: "market-hours", cancellationToken);
+                        // The close's own stop: ticked legs move to the owner's
+                        // manual book, the rest are squared off.
+                        var result = await control.StopAtMarketCloseAsync(run.RunId, run.Reason, run.ClosedAtUtc, cancellationToken);
                         if (result.WasRunning) stopped++;
                     }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -264,6 +276,33 @@ namespace AlgoTrading.Api.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Market close: the strategy-run sweep failed; asking again in a minute.");
+            }
+        }
+
+        /// <summary>
+        /// Squares off the manual book's positions nobody ticked to carry, at
+        /// the close of each one's exchange. A failure is logged and the rule is
+        /// asked again a minute later; it never stops the feed shutdown.
+        /// </summary>
+        private async Task SquareOffManualIntradayAsync(DateTime nowUtc, CancellationToken cancellationToken)
+        {
+            try
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var squareOff = scope.ServiceProvider.GetRequiredService<ManualIntradaySquareOff>();
+                int closed = await squareOff.SquareOffDueAsync(nowUtc, cancellationToken);
+                if (closed > 0)
+                {
+                    _logger.LogInformation("Market close: squared off {Count} intraday manual position(s).", closed);
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Market close: the manual intraday square-off failed; asking again in a minute.");
             }
         }
     }

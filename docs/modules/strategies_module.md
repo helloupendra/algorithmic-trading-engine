@@ -17,7 +17,8 @@ The module runs strictly in **LivePaper** mode: real ticks, simulated fills thro
 2. **.NET API (`src/AlgoTrading.Api`)**
    - `Services/StrategyCatalogService.cs` — cached catalog (5 s TTL + source-file mtime check, regex-scan fallback when Python is unavailable). Strategy ids are a deterministic FNV-1a hash of the name.
    - `Services/StrategyProcessRegistry.cs` — the in-memory registry of running runner processes, with drained stdout/stderr ring buffers and a last-exit record per strategy.
-   - `Services/StrategyRunControl.cs` — the single stop pipeline (mark run `Stopping` → SIGTERM, then kill → square off open positions → persist `RUN_STOPPED` signal → registry bookkeeping). Used by the UI stop, the risk guard, market close and runner self-exit.
+   - `Services/StrategyRunControl.cs` — the single stop pipeline (mark run `Stopping` → SIGTERM, then kill → [at the market close only: move the legs ticked "carry forward" to the owner's manual book] → square off open positions → persist `RUN_STOPPED` signal → registry bookkeeping). Used by the UI stop, the risk guard, market close and runner self-exit.
+   - `Services/PositionCarryForward.cs` — the per-position carry-forward tick and the close's move of ticked legs (section 8).
    - `Services/StrategyRiskGuardService.cs` — background service; every 3 s it marks each running run to market and trips the stop pipeline when total P&L ≤ −stop-loss or ≥ target.
    - `Controllers/StrategyController.cs` — catalog, start, stop, live view, logs, signal mirror.
    - `Controllers/InstrumentsController.cs` — `GET /api/Instruments/derivatives/underlyings`: the F&O inventory the launch dialog is built from.
@@ -54,7 +55,7 @@ Every run carries a `risk` object (all fields optional, set at start or changed 
 
 The guard runs in the API every 3 seconds (`StrategyRiskGuardService`), not in the runner, so a wedged runner cannot skip its own stop. Each sweep marks the run to market, evaluates leg → group → overall, and closes through reduce-only `CLOSE_GROUP` signals at the last mark with the reason ("Leg stop-loss hit: BANKNIFTY 57500 CE −21.4 pts (−2.6%) ≤ −20 pts", "Group stop-loss hit: G1 P&L −1,240 ≤ −1,000"). A strategy's own later `CLOSE_GROUP` for an already-closed leg is reduce-only and ignored, so the guard can never leave a reverse position behind.
 
-An overall trip runs the stop pipeline: the run is marked `Stopping` (further signals are rejected), the runner receives SIGTERM (falling back to a kill after 5 s), every open position is squared off at its last mark, and a `RUN_STOPPED` signal with the reason is persisted. The same pipeline serves the UI Stop button ("Stopped by <user>"), the market-close service (NSE and BSE runs at 15:30 IST, MCX runs at the MCX close — `MarketCloseRules`) and a runner that exits on its own ("Runner exited (code N)"). The backtest engine applies the same three levels bar by bar, so a rule behaves the same in replay and live.
+An overall trip runs the stop pipeline: the run is marked `Stopping` (further signals are rejected), the runner receives SIGTERM (falling back to a kill after 5 s), every open position is squared off at its last mark, and a `RUN_STOPPED` signal with the reason is persisted. The same pipeline serves the UI Stop button ("Stopped by <user>"), the market-close service (NSE and BSE runs at 15:30 IST, MCX runs at the MCX close — `MarketCloseRules`) and a runner that exits on its own ("Runner exited (code N)"). Only the market close's stop honours a leg's carry-forward tick (section 8); every other one squares off every leg. The backtest engine applies the same three levels bar by bar, so a rule behaves the same in replay and live.
 
 ### 4. Several runs of one strategy
 Runs are keyed by run id, so the same strategy can run on several underlyings at once (Fulcrum on BANKNIFTY and on NIFTY). Starting a strategy on an underlying it is already running on answers 409. Each run has its own card, stop, live view, logs and signal ring under `/api/Strategy/runs/{runId}/…`; the older strategy-scoped routes resolve to the single active run.
@@ -66,7 +67,8 @@ The ingestor and every runner report their process id (heartbeat `processId`, `P
 `GET /api/Strategy/runs/{runId}/live` returns the run as:
 - header: underlying, spot LTP, lots, lot size, risk rules, started by/at, stop reason;
 - `pnl`: realized, unrealized, total, capital used, premium outlay (open BUY legs) and premium received (open SELL legs);
-- `positions[]`: contract label ("BANKNIFTY 57600 CE · 29 Sep"), side, lots, lot size, quantity, entry, value (entry × qty, and the current value while open), LTP, P&L with premium points and %, status, opened/closed time — open rows first;
+- `positions[]`: contract label ("BANKNIFTY 57600 CE · 29 Sep"), side, lots, lot size, quantity, entry, value (entry × qty, and the current value while open), LTP, P&L with premium points and %, status (`Open`, `Closed`, or `Carried` for a leg moved to the manual book at the close), the carry-forward tick, opened/closed time — open rows first;
+- `canCarryForward` (the run is live and not a recap) and `isManualBook`;
 - `positions[].greeks` and `greeks`: each open option leg's IV, delta, gamma, theta and vega with their rupee effect (theta ₹/day, vega ₹ per 1% IV, delta per underlying), the source and its age, and the run's totals — see [Manual orders & carried positions](manual_orders.md#3-greeks-on-open-positions);
 - `groups[]`: P&L and open/closed leg counts per group;
 - `activity[]`: every signal with the strategy's own reason text, newest first;
@@ -79,6 +81,25 @@ The web client polls the live view every 2 s while a run is active and stops pol
 ### 7. Run history (per user)
 Every live run is a `SimulationRun` owned by the user who started it and is never deleted by the UI. `GET /api/Strategy/runs` lists runs (filters: user — admin only, strategy, underlying, status, IST date range, paging) with lots, lot size, risk rules, status, stop reason and who stopped it, duration, trades and net P&L; `GET /api/Strategy/runs/summary` gives the per-user rollup (runs, active, net P&L, last run). A trader only ever sees their own runs (the API answers 403 for another user's run id on every run-scoped route); admins see everyone. The console pages are Strategies › Run history (`/admin/strategies/history`), the run detail (`/admin/strategies/runs/{runId}`: positions, activity, orders ledger, runner output) and the trader's "My runs". Dismissing a stopped card on the Live runner only hides it from that list.
 
+### 8. Carrying a leg forward
+The owner, 27 Sep: "Put a carry-forward system in strategies and in manual orders: if I want to carry forward, there should be a tick there and ticking it is enough. In strategies, even a single leg — I should be able to do it."
+
+**The tick.** Every open leg on a run card has a **Carry** tick (`PUT /api/Strategy/runs/{runId}/positions/{positionId}/carry-forward { "carryForward": true }`). The owner of the run or an admin may change it (403 for anyone else, the same rule as squaring a leg off); only on an open leg of a running run, and never on a recap (409). Each change is a `CARRY_FORWARD` activity row with who and when (`Carry forward ticked by trader: NIFTY 24500 CE · 29 Sep — moves to the manual book at the close instead of being squared off`). Nothing is ticked unless someone ticks it, so a run nobody touches ends exactly as before.
+
+**At the close.** When `MarketHoursService` stops a run because its market has closed (`StrategyRunControl.StopAtMarketCloseAsync`, reasons `Market closed (15:30 IST)` / `MCX closed (23:30 IST)`), the pipeline, after the runner is stopped and before the flatten, moves each open ticked leg into the run owner's **manual book** — opening the book if the owner has none, exactly as the manual ticket does — and then squares off the rest as always. The moved leg keeps its contract, side, lots, entry price and opening time. Both sides say what happened:
+
+> run: Carried forward to the manual book at the close (15:30 IST): NIFTY 24500 CE · 29 Sep — SELL 2 lots at 100.00
+> book: Carried forward from run #412 (Ghost) at the close (15:30 IST): NIFTY 24500 CE · 29 Sep — SELL 2 lots at 100.00
+
+In the book it is held overnight (ticked there too), marked against tomorrow's quote, shown with its greeks, and settled at expiry like any hand-placed position — see [Manual orders › Legs a strategy carried in](manual_orders.md#1a-legs-a-strategy-carried-in). The run's own stop-loss, target and leg rules do not travel with it.
+
+**Which stops ignore the tick, and why.** Only the market close carries. The **Stop** button, a **risk-rule trip** (overall stop-loss/target) and a **runner that dies**, as well as an API restart that finds the runner gone, square off every leg, ticked or not: those are decisions — or failures — that call for getting out, and a protective stop that left legs behind would not be one. The run card says so under the table, and the Stop confirmation says so when a ticked leg is open. The strategy's own exits and the leg/group rules also keep working on a ticked leg during the day: the tick changes only what happens at the close. A recap run never carries (its fills are a replayed session's prices), and a leg whose move fails is squared off with the rest rather than left on a stopped run.
+
+**P&L and charges.** The move is not a trade: no order is written on either side (a close and a re-open would each be charged, and the book's entry would be the close's price instead of the real one).
+- The **run** keeps the leg's **entry fill and its charges**; its P&L stops counting the leg (the row is `Carried`: it keeps the lots that left and whatever it had realized before, no unrealized, no exit). It is not counted as a trade in the history, and it adds nothing to the run's realized P&L.
+- The **book** owns the leg **from its entry**: the whole P&L of the trade, entry to exit, lands there, and so do the exit fill's charges.
+- Across the two, the trade is counted once and charged once — the run's entry charges plus the book's exit charges equal what the round trip costs in one run (to the paisa; `CarryForwardTests.After_a_move_the_run_keeps_its_entry_charges_and_the_book_the_trade`). The run history, the run page and `RunCharges` read the same figures.
+
 ## Module Components
 
 ### Python
@@ -88,13 +109,14 @@ Every live run is a `SimulationRun` owned by the user who started it and is neve
 
 ### .NET
 - `src/AlgoTrading.Api/Controllers/StrategyController.cs`, `InstrumentsController.cs`
-- `src/AlgoTrading.Api/Services/StrategyCatalogService.cs`, `StrategyProcessRegistry.cs`, `StrategyRunControl.cs`, `StrategyRiskGuardService.cs`, `PythonEngineLocator.cs`, `MarketHoursService.cs`
+- `src/AlgoTrading.Api/Services/StrategyCatalogService.cs`, `StrategyProcessRegistry.cs`, `StrategyRunControl.cs`, `StrategyRiskGuardService.cs`, `PythonEngineLocator.cs`, `MarketHoursService.cs`, `PositionCarryForward.cs`, `ManualBook.cs`
 - `src/AlgoTrading.Contracts/Strategies/*.cs` — request/response DTOs.
 - `src/AlgoTrading.Infrastructure/Services/LotSizeResolver.cs`, `UnderlyingCatalog.cs`, `PaperTradingService.cs`, `LocalCsvInstrumentImportService.cs`
 
 ### React
 - `web/src/pages/strategies/LiveRunnerPage.tsx`, `StrategyLibraryPage.tsx`, `StrategiesOverviewPage.tsx`, `shared.tsx`
-- `web/src/lib/queries.ts` (`useStrategies`, `useStartStrategy`, `useStopStrategy`, `useStrategyLive`, `useStrategyLogs`, `useFnoUnderlyings`), `web/src/lib/symbols.ts` (`parseOptionSymbol`, `formatContract`).
+- `web/src/pages/strategies/RunCard.tsx` — the run card, with the positions table's Carry column.
+- `web/src/lib/queries.ts` (`useStrategies`, `useStartStrategy`, `useStopStrategy`, `useStrategyLive`, `useStrategyLogs`, `useFnoUnderlyings`, `useSetCarryForward`), `web/src/lib/symbols.ts` (`parseOptionSymbol`, `formatContract`), `web/src/lib/carry.ts` (what the tick does where, its tooltip and hints).
 
 ---
 
@@ -108,3 +130,4 @@ Every live run is a `SimulationRun` owned by the user who started it and is neve
 - The runner supplies only ATM contracts today, so strategies that need OTM legs (strangle, butterfly, spreads) wait for entry until OTM contract selection ships; their descriptions say so.
 - Runner state lives in the API process. An API restart cannot stop an orphaned runner from the console; the live view still rebuilds from the database.
 - Live mode against a broker is not wired — every run is paper.
+- A leg carried forward into the manual book leaves its run's leg, group and overall rules behind, and the book has no way yet to give an existing position a stop-loss or target (only the ticket sets one, at order time). Overnight, a carried leg is guarded by nothing but its owner.

@@ -1,26 +1,54 @@
-# Manual Orders — the hand-placed book, carried positions, expiry and greeks
+# Manual Orders — the hand-placed book, intraday vs carry forward, expiry and greeks
 
 ## Overview
 Everything else the platform books comes from a strategy. The manual order ticket is the other half: an order the operator decides on — an MCX future, an NSE share, an index or commodity option — priced and sized by the rules of its own segment (tick size and lot size from the instrument master), filled from the live book (a buy pays the ask, a sell hits the bid), with an optional stop-loss and target on that position alone.
 
 Hand-placed orders live in their own run, one per user: a `SimulationRun` with `StrategyName = "Manual"` (`ManualOrdersController.BookStrategyName`), `Mode = LivePaper`, `Status = Running`, and no runner process behind it by design. Because it is an ordinary run, every tool that understands a run works on it unchanged: the position rows, the live P&L, charges, and the per-position square-off. The console shows it as a run card under the ticket.
 
-This page covers what is special about the book: its positions are **carried across days**, they are **settled at expiry**, and every open leg shows its **greeks** and what they are worth in rupees.
+This page covers what is special about the book: each position is **intraday or carried forward** (a tick on the ticket and on the position), carried positions are **settled at expiry**, and every open leg shows its **greeks** and what they are worth in rupees.
 
 ---
 
-## 1. Carrying a position forward
-On 27 Sep the owner asked: "if I want to carry forward a position, it should carry." A strategy run squares off at its market's close; the manual book must not.
+## 1. Intraday or carry forward
+On 27 Sep the owner asked, first: "if I want to carry forward a position, it should carry", and then: "Put a carry-forward system in strategies and in manual orders: if I want to carry forward, there should be a tick there and ticking it is enough." So each position carries one flag, `CarryForward`, like a broker's two products:
+
+| Tick | Product | At its exchange's close |
+|---|---|---|
+| **off** (the default) | intraday (MIS) | **squared off** at its last price — NSE and BSE at 15:30 IST, MCX at the MCX close (23:30 IST while New York is on summer time, 23:55 otherwise) |
+| **on** | carry forward (NRML) | **held overnight**, until it is closed by hand, by its own stop-loss/target, or settled at expiry |
+
+The ticket has the tick, **"Carry forward (hold overnight)"**, off by default. Each ticket order opens a position of its own (its own group), so two orders never merge into one position and their ticks never combine; should an order ever add to a held position, the position stays carried if either asked for it. The tick can be changed later on any open position in the book (the **Carry** column of the book's run card, `PUT …/positions/{id}/carry-forward`); each change is a `CARRY_FORWARD` row on the book's activity (`Carry forward unticked by trader: NIFTY 24500 CE · 29 Sep — intraday — squared off at the close (15:30 IST)`) and a row in the activity log.
+
+**The square-off.** `ManualIntradaySquareOff`, called every minute by `MarketHoursService`, closes each open, unticked position whose exchange has closed since it **became intraday** — since it was opened, or, if its tick was cleared later, since then. Through the usual reduce-only close (`CLOSE_GROUP`, at the latest quote, else the last mark), attributed to `market-hours`, with the reason:
+
+> Intraday — squared off at the close (15:30 IST)
+> Intraday — squared off at the MCX close (23:30 IST)
+
+The rule keeps no memory, so it is restart-safe: an API that was down at 15:30 squares the day's intraday positions off in its first minute back, and a second pass finds nothing left to do. Consequences worth knowing:
+- a position carried from yesterday and **unticked this morning** is intraday for **today's** close — not squared off the minute the tick is cleared;
+- a position opened **after** its market closed (a limit order in the evening) waits for the **next** close;
+- the tick is re-read under the book's lock at the moment of the close, so a tick that lands while the sweep is on its way is honoured;
+- ticked positions are never touched.
+
+**The deploy.** Until the tick existed every manual position was carried (from earlier on 27 Sep). The migration that adds the column (`PositionCarryForward`) ticks every position open in a manual book at that moment, so the first minute of the new API squares off nothing anybody chose to keep.
 
 What touches the book, and what does not:
 
 | Mechanism | When | What it does to the manual book |
 |---|---|---|
-| `scripts/market-close.sh` | 23:35 IST nightly | **Leaves it alone.** It stops every other Running run with `flatten:true`, and logs `manual book(s) left open — hand-placed positions carry overnight: <id>`. Until 27 Sep it stopped the book like any run, squaring off every hand-placed position each night. |
-| `MarketHoursService` (15:30 NSE/BSE, MCX close) | at each market's close | Stops registered runners only. The book has no runner and is never in the registry. |
+| `MarketHoursService` → `ManualIntradaySquareOff` | every minute | Squares off **unticked** positions at their exchange's close (above). Never a ticked one. |
+| `MarketHoursService` → strategy stops | at each market's close | Stops registered runners; a strategy leg ticked to carry arrives in its owner's book (section 1a). |
+| `scripts/market-close.sh` | 23:35 IST nightly | **Leaves it alone.** It stops every other Running run with `flatten:true`, and logs `manual book(s) left open — hand-placed positions carry overnight: <id>`. It cannot tell carried from intraday, so the intraday square-off lives in the API instead. Until 27 Sep it stopped the book like any run, squaring off every hand-placed position each night. |
 | `LiveRunStartupReconciler` | API start | Skips the book explicitly (an API restart used to liquidate it). |
 | `StrategyRiskGuardService` | every few seconds | Closes a position only when its own stop-loss or target is crossed. |
 | `CarriedPositionsService` → `ExpirySettler` | after an expiry day's close | Settles positions whose contract has expired (section 2). |
+
+### 1a. Legs a strategy carried in
+A strategy leg ticked to carry forward is moved into its run owner's book when the market close stops the run (the book is opened for an owner who has none) — see [Strategies › Carrying a leg forward](strategies_module.md#8-carrying-a-leg-forward). In the book it is an ordinary position: the same contract, side, lots and **entry price** as in the run, opened at the time the run opened it, ticked to carry, in a group of its own (`CARRY-<runId>-<group>`, so the legs of one straddle stay together). Its row says where it came from (`from run #412 · Ghost`), and a `CARRY_IN` activity row reads:
+
+> Carried forward from run #412 (Ghost) at the close (15:30 IST): NIFTY 24500 CE · 29 Sep — SELL 2 lots at 100.00
+
+From then on it is the book's: its P&L from the entry, its exit fill's charges, the settlement at expiry, the greeks, the next morning's quote. The run's own stop-loss, target and leg rules do not travel with it; set a level by hand or square it off.
 
 **The next morning.** A carried leg is marked against its contract's live quote, exactly like a leg opened today. Until the feed delivers today's first tick, the quote is the last session's, and the row says so: the LTP cell shows `as of 15:29 · 18h ago` under the price whenever it is more than a minute old. With no quote row at all, the leg shows its last stored mark with the time that mark was written (the API used to send no time at all, so yesterday's price read as current).
 
@@ -59,7 +87,7 @@ or `Expired — settled at intrinsic 0.00 (out of the money), …`, or `Expired 
 
 **Idempotent.** A position already closed — by hand, by the guard, or by an earlier pass — is skipped by the write itself, so a second pass changes nothing.
 
-**Scope.** Manual books only. Strategy runs square off at their market's close and never hold an expired contract overnight.
+**Scope.** Manual books only, which includes strategy legs carried into a book at the close. Strategy runs themselves square off (or carry into the book) at their market's close and never hold an expired contract overnight.
 
 ---
 
@@ -101,10 +129,11 @@ An open option that nothing can price (no quote for it or its underlying) shows 
 ---
 
 ## 4. In the console
-- **Manual order** (`/trader/trading`, `/admin/trading`): the ticket, and under it the **Manual book** run card.
+- **Manual order** (`/trader/trading`, `/admin/trading`): the ticket, with the **Carry forward (hold overnight)** tick above Buy/Sell and a line under it that says what happens to the order (`Intraday: squared off at the close (15:30 IST)…`, or the MCX close for a commodity), and under the ticket the **Manual book** run card.
 - **Strategies › Live runner** (`/admin/strategies/live`) and the run detail pages (`/admin/strategies/runs/{runId}`, `/trader/strategies/runs/{runId}`): one run card per run.
 
 On every run card:
+- the positions table has a **Carry** column: a tick on each open row, and a line under the table saying what the ticks do there. The tick is disabled, with a tooltip saying why, for someone who may not change it (only the owner of the run or an admin may) and on a run that is no longer live. An open row with the tick shows a **Carry forward** badge beside **Open**; a strategy leg that moved to the book reads **Carried** with `→ book` in its exit cell; a book row that came from a run says `from run #N · Strategy` under its contract;
 - the metric strip has **Greeks · open legs**: `Theta −₹450/day` (red when the book pays for time, green when it collects), and under it vega ₹ per 1% IV, delta per underlying, how many legs could not be priced, and "as of" when stale;
 - the positions table has a **Δ · IV / Θ ₹/day / Vega ₹** column group after P&L (source and IV under delta, per-unit theta under the rupees; hover for every figure and its age);
 - the LTP cell says `as of HH:MM · age` when the price is more than a minute old.
@@ -112,19 +141,29 @@ On every run card:
 The table scrolls sideways inside its frame on a phone, like every table in the console.
 
 ## 5. API
+`POST /api/ManualOrders` takes `carryForward` (bool, default false — intraday) with the order; the response echoes it.
+
+`PUT /api/Strategy/runs/{runId}/positions/{positionId}/carry-forward` with `{ "carryForward": true | false }` ticks or unticks one position, in the book or in a strategy run. Admin, or the owner of the run (403 otherwise). Only an **open** position of a **running, non-recap** run: anything else answers 409 and changes nothing. Asking for the value it already has answers 200 with `changed: false` and writes nothing.
+
 `GET /api/Strategy/runs/{runId}/live` (the manual book's run id comes from `GET /api/ManualOrders/book`):
+- `isManualBook`, `canCarryForward` (the run is live and not a recap; who may is `canControl`);
+- `positions[].carryForward`; `positions[].status` is `Open`, `Closed` or `Carried`; `positions[].carriedFromRunId` / `carriedFromStrategy` on a book row a strategy carried in;
 - `positions[].greeks` — `source`, `asOfUtc`, `stale`, `ivPercent`, `delta`, `gamma`, `theta`, `vega`, `underlyingPrice` (computed only), `deltaQuantity`, `deltaRupeesPerPoint`, `thetaRupeesPerDay`, `vegaRupeesPerIvPoint`; null on closed legs and unpriced options;
 - `positions[].ltpUpdatedUtc` — the age of the LTP (the quote's, or the stored mark's when there is no quote);
 - `greeks` — `thetaRupeesPerDay`, `vegaRupeesPerIvPoint`, `netDeltaQuantity` (one underlying only), `byUnderlying[]`, `legs`, `unpriced`, `stale`, `oldestAsOfUtc`.
 
 ## Components
-- `src/AlgoTrading.Api/Controllers/ManualOrdersController.cs` — ticket, book, place.
+- `src/AlgoTrading.Api/Controllers/ManualOrdersController.cs` — ticket, book, place (with the carry tick).
+- `src/AlgoTrading.Api/Services/ManualBook.cs` — finding and opening a user's book, shared with the close's carry.
+- `src/AlgoTrading.Api/Services/ManualIntradaySquareOff.cs` — which unticked positions are due at which close, and the square-off.
+- `src/AlgoTrading.Api/Services/PositionCarryForward.cs` — changing the tick; moving a strategy's ticked legs into the book at the close.
 - `src/AlgoTrading.Api/Services/CarriedPositionsService.cs` — the five-minute pass: settle, keep carried contracts on the feed.
 - `src/AlgoTrading.Api/Services/ExpirySettler.cs` — which positions are due, S, the settlement price and its reason.
-- `src/AlgoTrading.Infrastructure/Services/PaperTradingService.cs` — `SettleExpiredPositionAsync`: the close, without an order.
+- `src/AlgoTrading.Infrastructure/Services/PaperTradingService.cs` — `SettleExpiredPositionAsync`: the close, without an order; `SetCarryForwardAsync`, `CloseIntradayPositionsAsync` (re-reads the tick under the lock) and `CarryPositionAsync` (the move).
 - `src/AlgoTrading.Api/Services/PositionGreeks.cs` — source order, freshness, rupee effects, totals (`PositionGreeks`), and the loader (`PositionGreeksBuilder`).
 - `src/AlgoTrading.Infrastructure/Services/OptionHistory/OptionMath.cs` — Black-Scholes(-Merton / Black-76) greeks and the IV solver.
 - `scripts/market-close.sh` — the nightly close, which skips the book.
-- `web/src/lib/greeks.ts`, `web/src/pages/strategies/RunCard.tsx` — the column group, the totals line, the LTP age.
+- `web/src/lib/greeks.ts`, `web/src/pages/strategies/RunCard.tsx` — the column group, the totals line, the LTP age, the Carry column.
+- `web/src/lib/carry.ts`, `web/src/pages/trading/ManualOrderPage.tsx` — the tick's rules and words; the ticket's tick.
 
-Tests: `tests/AlgoTrading.UnitTests/OptionGreeksTests.cs`, `PositionGreeksTests.cs`, `ExpirySettlementTests.cs`; `web/src/lib/greeks.test.ts`; `scripts/tests/market-close-manual-book.test.sh`.
+Tests: `tests/AlgoTrading.UnitTests/OptionGreeksTests.cs`, `PositionGreeksTests.cs`, `ExpirySettlementTests.cs`, `CarryForwardTests.cs`; `web/src/lib/greeks.test.ts`, `carry.test.ts`, `positions.test.ts`; `scripts/tests/market-close-manual-book.test.sh`.

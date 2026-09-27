@@ -677,6 +677,79 @@ public class StrategyController : ControllerBase
         });
     }
 
+    /// <summary>Body of PUT /api/Strategy/runs/{runId}/positions/{positionId}/carry-forward.</summary>
+    /// <param name="CarryForward">True to hold the position overnight, false for intraday.</param>
+    public sealed record CarryForwardRequest(bool? CarryForward);
+
+    /// <summary>
+    /// Ticks or unticks "carry forward" on one open position of a run or of the
+    /// manual book.
+    /// </summary>
+    /// <remarks>
+    /// The owner's request, 27 Sep: "if I want to carry forward, there should
+    /// be a tick there and ticking it is enough. In strategies, even a single
+    /// leg." In the manual book an unticked position is squared off at its
+    /// exchange's close; in a strategy run a ticked leg moves to the owner's
+    /// manual book when the market close stops the run — and only then: the
+    /// Stop button, a risk rule and a runner that dies still square off every
+    /// leg. See <see cref="PositionCarryForward"/>.
+    ///
+    /// Admin, or the owner of the run — the same rule as squaring the position
+    /// off. Only an open position of a running (non-recap) run; anything else
+    /// answers 409 and changes nothing. Each change is a CARRY_FORWARD row on
+    /// the run's activity with who and when, besides the activity log's own
+    /// record of the request.
+    /// </remarks>
+    [HttpPut("runs/{runId:long}/positions/{positionId:long}/carry-forward")]
+    public async Task<IActionResult> SetCarryForward(
+        long runId,
+        long positionId,
+        [FromBody] CarryForwardRequest? request,
+        [FromServices] PositionCarryForward carryForward,
+        CancellationToken cancellationToken)
+    {
+        if (request?.CarryForward is not { } carry)
+            return BadRequest(new { message = "carryForward (true or false) is required." });
+
+        var run = await _dbContext.SimulationRuns
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == runId && x.Mode == LivePaperMode, cancellationToken);
+
+        if (run is null)
+            return NotFound(new { message = $"Strategy run {runId} not found." });
+
+        var startedBy = _registry.Get(runId)?.StartedBy
+                        ?? await _dbContext.AppUsers.AsNoTracking()
+                            .Where(x => x.Id == run.UserId)
+                            .Select(x => x.UserName)
+                            .FirstOrDefaultAsync(cancellationToken);
+
+        if (!CanStop(startedBy, run.UserId))
+            return Forbid();
+
+        var userName = User.GetUserName() ?? "unknown";
+        var result = await carryForward.SetAsync(run, positionId, carry, userName, cancellationToken);
+
+        if (result.Outcome is not (PositionCarryForward.Outcome.Changed or PositionCarryForward.Outcome.Unchanged))
+            return Conflict(new { message = result.Message, runId, positionId });
+
+        if (result.Outcome == PositionCarryForward.Outcome.Changed)
+        {
+            HttpContext.Describe($"{result.Message} — run #{runId}, position #{positionId}.", "run", runId.ToString());
+            _logger.LogInformation("Run {RunId} ({Strategy}) position {PositionId}: {Message}",
+                runId, run.StrategyName, positionId, result.Message);
+        }
+
+        return Ok(new
+        {
+            message = result.Message,
+            runId,
+            positionId,
+            carryForward = carry,
+            changed = result.Outcome == PositionCarryForward.Outcome.Changed
+        });
+    }
+
     /// <summary>True for a manual book that is still open — Running, with no runner by design.</summary>
     private static bool IsOpenManualBook(SimulationRun run)
         => run.StrategyName == ManualOrdersController.BookStrategyName
@@ -1256,6 +1329,9 @@ public class StrategyController : ControllerBase
             .Select(x => x.UserName)
             .FirstOrDefaultAsync(cancellationToken);
         view.CanControl = CanStop(view.StartedBy, run.UserId);
+        view.IsManualBook = run.StrategyName == ManualOrdersController.BookStrategyName;
+        // The same conditions PUT …/carry-forward checks; who may is CanControl.
+        view.CanCarryForward = PositionCarryForward.IsChangeable(run, active: running is not null || IsOpenManualBook(run));
 
         view.StopLoss = view.Risk.OverallStopLoss;
         view.Target = view.Risk.OverallTarget;

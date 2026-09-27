@@ -1817,6 +1817,33 @@ a.pill:hover { border-color: var(--line-strong); }
 /* Position rows: closed legs stay in the table, dimmed, with qty 0. */
 .pos-row--closed { opacity: 0.55; }
 
+/* The carry-forward tick (27 Sep): a plain checkbox, big enough for a thumb
+   on a phone, in its own narrow column. */
+.carry-check {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  vertical-align: middle;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+.carry-check:disabled { cursor: not-allowed; opacity: 0.5; }
+
+/* The hint under the positions table: what the ticks do in this run. */
+.carry-note { margin: 6px 2px 0; }
+
+/* The ticket's tick: the box and its label on one line, the hint under it. */
+.manual-carry {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  cursor: pointer;
+}
+.manual-carry input { width: 18px; height: 18px; margin: 1px 0 0; flex: none; accent-color: var(--accent); }
+.manual-carry__label { font-weight: 600; }
+.manual-carry .field__help { display: block; margin-top: 2px; font-weight: 400; }
+
 /* The greeks column group (delta, theta ₹/day, vega ₹) reads as one block by a
    rule on its left, not by a second header row: every table header here is
    sticky at top 0, and two sticky rows would sit on top of each other. */

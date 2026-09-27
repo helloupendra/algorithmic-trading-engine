@@ -32,6 +32,18 @@ public class PaperTradingService : IPaperTradingService
     public const string OfflineReplayMode = "OfflineReplay";
     public const string BacktestSummarySignalType = "BACKTEST_SUMMARY";
 
+    /// <summary>A strategy run's leg that was moved to the owner's manual book at the close.</summary>
+    public const string CarriedStatus = "Carried";
+
+    /// <summary>The carry-forward tick of a position was changed (who, when, which way).</summary>
+    public const string CarryForwardSignalType = "CARRY_FORWARD";
+
+    /// <summary>In the run: a ticked leg left for the owner's manual book at the close.</summary>
+    public const string CarryOutSignalType = "CARRY_OUT";
+
+    /// <summary>In the manual book: a leg arrived from a strategy run at the close.</summary>
+    public const string CarryInSignalType = "CARRY_IN";
+
     private const string RunStatusStopping = "Stopping";
     private const string RunStatusStopped = "Stopped";
     private const string RunStatusCompleted = "Completed";
@@ -817,6 +829,205 @@ public class PaperTradingService : IPaperTradingService
     }
 
     // ---------------------------------------------------------------------
+    // CARRY FORWARD
+    // ---------------------------------------------------------------------
+
+    /// <remarks>
+    /// UpdatedUtc is left alone on purpose: the position views read it as the
+    /// age of the stored mark, and a tick changed this morning must not make
+    /// yesterday's price look fresh.
+    /// </remarks>
+    public async Task<CarryForwardUpdate> SetCarryForwardAsync(
+        long simulationRunId,
+        long positionId,
+        bool carryForward,
+        string metadataJson,
+        DateTime atUtc,
+        CancellationToken cancellationToken = default)
+    {
+        using var gate = await SimulationRunLocks.AcquireAsync(simulationRunId, cancellationToken);
+
+        // Read under the gate, after any stop has marked the run: a tick that
+        // arrives once the close has begun to stop the run is refused rather
+        // than recorded as if it could still make a difference.
+        var runStatus = await _dbContext.SimulationRuns
+            .AsNoTracking()
+            .Where(x => x.Id == simulationRunId)
+            .Select(x => x.Status)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (runStatus is null) return CarryForwardUpdate.PositionNotOpen;
+        if (IsClosedStatus(runStatus)) return CarryForwardUpdate.RunNotRunning;
+
+        var position = await _dbContext.PaperPositions
+            .FirstOrDefaultAsync(x => x.Id == positionId && x.SimulationRunId == simulationRunId, cancellationToken);
+        if (position is null || position.Status != "Open" || position.Quantity <= 0)
+            return CarryForwardUpdate.PositionNotOpen;
+
+        if (position.CarryForward == carryForward) return CarryForwardUpdate.Unchanged;
+
+        position.CarryForward = carryForward;
+        position.CarryForwardChangedUtc = atUtc;
+
+        await _dbContext.SimulationSignals.AddAsync(new SimulationSignal
+        {
+            SimulationRunId = simulationRunId,
+            StrategyName = position.StrategyName,
+            SignalType = CarryForwardSignalType,
+            TimestampUtc = atUtc,
+            GroupId = position.GroupId,
+            MetadataJson = string.IsNullOrWhiteSpace(metadataJson) ? "{}" : metadataJson,
+            CreatedUtc = DateTime.UtcNow
+        }, cancellationToken);
+
+        // The tick and its audit row land together or not at all.
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return CarryForwardUpdate.Changed;
+    }
+
+    public async Task<int> CloseIntradayPositionsAsync(
+        long simulationRunId,
+        IEnumerable<long> positionIds,
+        string reason,
+        string by,
+        CancellationToken cancellationToken = default)
+    {
+        var ids = positionIds.Distinct().ToList();
+        if (ids.Count == 0) return 0;
+
+        var run = await _dbContext.SimulationRuns
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == simulationRunId, cancellationToken);
+
+        if (run is null)
+            throw new InvalidOperationException($"Simulation run {simulationRunId} was not found.");
+
+        using var gate = await SimulationRunLocks.AcquireAsync(simulationRunId, cancellationToken);
+
+        // The tick is read here, under the gate, not from the sweep's snapshot:
+        // an owner who ticks "carry" at 15:30:05 while the sweep is on its way
+        // keeps the position.
+        var intraday = await _dbContext.PaperPositions
+            .AsNoTracking()
+            .Where(x => x.SimulationRunId == simulationRunId && x.Status == "Open" && !x.CarryForward && ids.Contains(x.Id))
+            .OrderBy(x => x.Id)
+            .ToListAsync(cancellationToken);
+
+        var metadata = System.Text.Json.JsonSerializer.Serialize(new { reason, by, system = true, intraday = true });
+        return await CloseOpenPositionsAsync(run, intraday, metadata, cancellationToken);
+    }
+
+    /// <remarks>
+    /// <para>
+    /// Why a move and not a close and a re-open: a close books an exit fill in
+    /// the run and a re-open an entry fill in the book, and RunCharges charges
+    /// every fill — a leg carried overnight would pay a round trip that never
+    /// happened, and the book's entry would be the close's price rather than
+    /// the one the leg was actually opened at.
+    /// </para>
+    /// <para>
+    /// So the run keeps the ENTRY fill (and its charges), and its P&amp;L
+    /// simply stops counting the leg: the carried row has no unrealized P&amp;L
+    /// and realizes nothing. The book's row starts at the same entry, so the
+    /// whole P&amp;L of the trade, entry to exit, lands in the book, and so do
+    /// the exit fill's charges when the owner closes it. Across the two, the
+    /// trade is counted once and charged once.
+    /// </para>
+    /// <para>
+    /// Both gates are held, the run's first. Nothing else ever holds two, so the
+    /// order cannot deadlock.
+    /// </para>
+    /// </remarks>
+    public async Task<PaperPositionResponse?> CarryPositionAsync(
+        long fromRunId,
+        long positionId,
+        long toRunId,
+        string toGroupId,
+        string fromMetadataJson,
+        string toMetadataJson,
+        DateTime atUtc,
+        CancellationToken cancellationToken = default)
+    {
+        if (fromRunId == toRunId)
+            throw new InvalidOperationException($"A position cannot be carried from run {fromRunId} into itself.");
+        if (string.IsNullOrWhiteSpace(toGroupId))
+            throw new InvalidOperationException("A carried position needs a group in the book.");
+
+        using var fromGate = await SimulationRunLocks.AcquireAsync(fromRunId, cancellationToken);
+        using var toGate = await SimulationRunLocks.AcquireAsync(toRunId, cancellationToken);
+
+        var book = await _dbContext.SimulationRuns
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == toRunId, cancellationToken);
+        if (book is null)
+            throw new InvalidOperationException($"Simulation run {toRunId} was not found.");
+        if (IsClosedStatus(book.Status))
+            throw new InvalidOperationException($"Simulation run {toRunId} is {book.Status.ToLowerInvariant()}; nothing can be carried into it.");
+
+        var source = await _dbContext.PaperPositions
+            .FirstOrDefaultAsync(x => x.Id == positionId && x.SimulationRunId == fromRunId, cancellationToken);
+
+        // Closed by the guard, unticked a moment ago, or already carried by an
+        // earlier attempt: nothing to move, and nothing written.
+        if (source is null || source.Status != "Open" || source.Quantity <= 0 || !source.CarryForward)
+            return null;
+
+        var carried = new PaperPosition
+        {
+            SimulationRunId = toRunId,
+            StrategyName = book.StrategyName,
+            GroupId = toGroupId,
+            Symbol = source.Symbol,
+            Direction = source.Direction,
+            Quantity = source.Quantity,
+            AveragePrice = source.AveragePrice,
+            LastMarkPrice = source.LastMarkPrice,
+            RealizedPnl = 0m,
+            // Same contract, quantity, entry and mark: the same unrealized.
+            UnrealizedPnl = source.UnrealizedPnl,
+            Status = "Open",
+            // When the trade was actually entered, not when it changed books.
+            OpenedUtc = source.OpenedUtc,
+            // The mark's age travels with the mark.
+            UpdatedUtc = source.UpdatedUtc,
+            StopLossPrice = source.StopLossPrice,
+            TargetPrice = source.TargetPrice,
+            CarryForward = true,
+            CarryForwardChangedUtc = atUtc,
+            CarriedFromPositionId = source.Id
+        };
+
+        source.Status = CarriedStatus;
+        source.UnrealizedPnl = 0m;
+        source.ClosedUtc = atUtc;
+
+        await _dbContext.PaperPositions.AddAsync(carried, cancellationToken);
+        await _dbContext.SimulationSignals.AddAsync(new SimulationSignal
+        {
+            SimulationRunId = fromRunId,
+            StrategyName = source.StrategyName,
+            SignalType = CarryOutSignalType,
+            TimestampUtc = atUtc,
+            GroupId = source.GroupId,
+            MetadataJson = string.IsNullOrWhiteSpace(fromMetadataJson) ? "{}" : fromMetadataJson,
+            CreatedUtc = DateTime.UtcNow
+        }, cancellationToken);
+        await _dbContext.SimulationSignals.AddAsync(new SimulationSignal
+        {
+            SimulationRunId = toRunId,
+            StrategyName = book.StrategyName,
+            SignalType = CarryInSignalType,
+            TimestampUtc = atUtc,
+            GroupId = toGroupId,
+            MetadataJson = string.IsNullOrWhiteSpace(toMetadataJson) ? "{}" : toMetadataJson,
+            CreatedUtc = DateTime.UtcNow
+        }, cancellationToken);
+
+        // One save: the leg is in exactly one book at every moment.
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return MapPosition(carried);
+    }
+
+    // ---------------------------------------------------------------------
     // OFFLINE REPLAY HOOKS (backtest runner)
     // ---------------------------------------------------------------------
 
@@ -1497,6 +1708,8 @@ public class PaperTradingService : IPaperTradingService
             ClosedUtc = row.ClosedUtc,
             StopLossPrice = row.StopLossPrice,
             TargetPrice = row.TargetPrice,
+            CarryForward = row.CarryForward,
+            CarriedFromPositionId = row.CarriedFromPositionId,
             UpdatedUtc = row.UpdatedUtc
         };
     }

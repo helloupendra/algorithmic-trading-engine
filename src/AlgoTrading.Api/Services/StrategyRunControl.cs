@@ -21,6 +21,11 @@ namespace AlgoTrading.Api.Services;
 /// off (which would leave an ownerless or reversed position on a stopped run).
 /// The stop itself is claimed atomically on the registry entry, so concurrent
 /// stoppers wait for the owner instead of flattening twice.
+///
+/// One stop is different: the market close's (<see cref="StopAtMarketCloseAsync"/>)
+/// first moves the legs the owner ticked "carry forward" into their manual
+/// book, then flattens the rest. Every other trigger flattens every leg,
+/// ticked or not — see <see cref="PositionCarryForward"/>.
 /// </summary>
 public sealed class StrategyRunControl
 {
@@ -39,6 +44,7 @@ public sealed class StrategyRunControl
     private readonly IPaperTradingService _paperTradingService;
     private readonly IProcessSettingsStore _processSettings;
     private readonly StrategyProcessRegistry _registry;
+    private readonly PositionCarryForward _carryForward;
     private readonly ILogger<StrategyRunControl> _logger;
 
     public StrategyRunControl(
@@ -46,16 +52,19 @@ public sealed class StrategyRunControl
         IPaperTradingService paperTradingService,
         IProcessSettingsStore processSettings,
         StrategyProcessRegistry registry,
+        PositionCarryForward carryForward,
         ILogger<StrategyRunControl> logger)
     {
         _dbContext = dbContext;
         _paperTradingService = paperTradingService;
         _processSettings = processSettings;
         _registry = registry;
+        _carryForward = carryForward;
         _logger = logger;
     }
 
-    public sealed record StopResult(bool WasRunning, int Flattened);
+    /// <param name="Carried">Legs moved to the owner's manual book (a stop at the market close only).</param>
+    public sealed record StopResult(bool WasRunning, int Flattened, int Carried = 0);
 
     public sealed record ReconcileResult(int Adopted, int Closed);
 
@@ -95,6 +104,48 @@ public sealed class StrategyRunControl
 
         return await FinishStopAsync(entry, reason, by, lastError: null, flatten, runnerAlreadyExited: false);
     }
+
+    /// <summary>
+    /// Stops a run because its market has closed (<see cref="MarketCloseRules"/>):
+    /// the legs ticked "carry forward" are moved to the run owner's manual book
+    /// at their entry, and everything else is squared off, as it always was.
+    /// </summary>
+    /// <remarks>
+    /// The only stop that honours the tick. The owner's request (27 Sep) was to
+    /// carry a leg past the close; a stop for any other reason — the Stop
+    /// button, a risk rule, a runner that died — is a decision to get out, and
+    /// leaving a leg behind would turn a protective stop into a partial one.
+    /// A second caller that finds the stop already claimed waits for it, as
+    /// with <see cref="StopAsync"/>, whoever claimed it.
+    /// </remarks>
+    public async Task<StopResult> StopAtMarketCloseAsync(
+        long runId,
+        string reason,
+        DateTime closedAtUtc,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var entry = _registry.Get(runId);
+        if (entry is null)
+        {
+            return new StopResult(false, 0);
+        }
+
+        if (!entry.TryClaimStop())
+        {
+            _logger.LogInformation("Stop of run {RunId} ({Name} on {Underlying}) already in progress; waiting for it ({Reason}).",
+                runId, entry.Name, entry.Underlying, reason);
+            int flattenedByOwner = await entry.StopCompletion.Task.ConfigureAwait(false);
+            return new StopResult(true, flattenedByOwner);
+        }
+
+        return await FinishStopAsync(entry, reason, MarketCloseBy, lastError: null, flatten: true,
+            runnerAlreadyExited: false, carryAtCloseUtc: closedAtUtc);
+    }
+
+    /// <summary>Who a market-close stop is attributed to.</summary>
+    public const string MarketCloseBy = "market-hours";
 
     /// <summary>
     /// A LivePaper run whose row is still Running/Stopping but has no registry
@@ -338,11 +389,13 @@ public sealed class StrategyRunControl
         string by,
         string? lastError,
         bool flatten,
-        bool runnerAlreadyExited)
+        bool runnerAlreadyExited,
+        DateTime? carryAtCloseUtc = null)
     {
         int strategyId = entry.StrategyId;
         long runId = entry.RunId;
         int flattened = 0;
+        int carried = 0;
 
         try
         {
@@ -356,6 +409,29 @@ public sealed class StrategyRunControl
             if (!runnerAlreadyExited)
             {
                 await StopProcessAsync(entry);
+            }
+
+            // At the close only, and after the runner is gone (it can no longer
+            // close or add to a leg): the ticked legs leave for the owner's
+            // book before the flatten, which then finds only what stays. A leg
+            // that fails to move is still open, so the flatten squares it off —
+            // the day ends for it exactly as it did before the tick existed.
+            if (carryAtCloseUtc is { } closedAtUtc)
+            {
+                try
+                {
+                    carried = await _carryForward.CarryTickedLegsAsync(runId, closedAtUtc, CancellationToken.None);
+                    if (carried > 0)
+                    {
+                        _registry.AppendLog(runId, $"carried {carried} ticked leg(s) forward to the owner's manual book");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Carry forward failed for strategy {StrategyId} run {RunId}; its ticked legs are squared off with the rest.",
+                        strategyId, runId);
+                    _registry.AppendLog(runId, $"carry forward failed: {ex.Message}; squaring off every leg");
+                }
             }
 
             if (flatten)
@@ -396,10 +472,10 @@ public sealed class StrategyRunControl
 
             await DisposeProcessAsync(entry, runnerAlreadyExited);
 
-            _logger.LogInformation("Strategy {StrategyId} ({Name}) run {RunId} on {Underlying} stopped: {Reason} (by {By}, flattened {Flattened})",
-                strategyId, entry.Name, runId, entry.Underlying, reason, by, flattened);
+            _logger.LogInformation("Strategy {StrategyId} ({Name}) run {RunId} on {Underlying} stopped: {Reason} (by {By}, flattened {Flattened}, carried {Carried})",
+                strategyId, entry.Name, runId, entry.Underlying, reason, by, flattened, carried);
 
-            return new StopResult(true, flattened);
+            return new StopResult(true, flattened, carried);
         }
         finally
         {

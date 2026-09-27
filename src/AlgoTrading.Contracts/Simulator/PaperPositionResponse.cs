@@ -62,7 +62,7 @@ public class PaperPositionResponse
     public decimal UnrealizedPnl { get; set; }
 
     /// <summary>
-    /// Open or Closed.
+    /// Open, Closed, or Carried (moved to the owner's manual book at the close).
     /// </summary>
     public string Status { get; set; } = string.Empty;
 
@@ -84,6 +84,12 @@ public class PaperPositionResponse
 
     /// <inheritdoc cref="StopLossPrice"/>
     public decimal? TargetPrice { get; set; }
+
+    /// <summary>Held overnight (carry forward) rather than squared off at the close (intraday).</summary>
+    public bool CarryForward { get; set; }
+
+    /// <summary>On a manual-book row a strategy run carried forward: the run's position it came from.</summary>
+    public long? CarriedFromPositionId { get; set; }
 
     public DateTime UpdatedUtc { get; set; }
 }
