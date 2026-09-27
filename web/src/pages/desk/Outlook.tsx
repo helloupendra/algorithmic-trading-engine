@@ -49,9 +49,11 @@ export function Overnight({ view }: { view: DeskView }) {
   return (
     <>
       <PanelHead title="Overnight" meta={`GIFT & global${last ? ` · ${istHm(last)}` : ''}`} />
-      {snaps.isError && !snaps.data && <Failed what="The morning snapshots" error={snaps.error} />}
       {!snaps.data && !snaps.isError ? (
         <Waiting>Reading the morning snapshots…</Waiting>
+      ) : !snaps.data ? (
+        // Unread is not "none yet": say the read failed and claim nothing about GIFT or the rest.
+        <Failed what="The morning snapshots" error={snaps.error} />
       ) : (
         <>
           <div className="dk-gift">

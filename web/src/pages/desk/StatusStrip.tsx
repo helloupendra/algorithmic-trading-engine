@@ -321,7 +321,7 @@ function CheckupCell({ lead = false }: { lead?: boolean }) {
 
 function GiftCell({ view }: { view: DeskView }) {
   const snaps = useIntelSnapshots(view.today, true)
-  if (!snaps.data) return <Cell label="GIFT Nifty" value={null} />
+  if (!snaps.data) return <Cell label="GIFT Nifty" value={snaps.isError ? '?' : null} sub={snaps.isError ? 'could not read the snapshots' : undefined} />
   const gift = latestSnapshots(snaps.data).get(GIFT_KEY)
   if (!gift) return <Cell label="GIFT Nifty" value="no snapshot yet" sub="the recorder starts at 06:00" />
   return (
