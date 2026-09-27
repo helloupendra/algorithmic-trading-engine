@@ -5,13 +5,14 @@
    else. Now a tab picks the section, the section fills the window, and every
    card keeps its header in place while its rows scroll. */
 
-/* The page is exactly the window below the top bar (the shell adds 22px of
-   padding above and 40px below), so only the cards scroll — never the page. */
+/* The page is exactly the window below the top bar and the tab strip (the
+   shell adds 16px of padding above and 36px below), so only the cards scroll —
+   never the page. */
 .mv {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  height: calc(100dvh - var(--topbar-h) - 62px);
+  height: calc(100dvh - var(--topbar-h) - var(--tabbar-h) - 52px);
   min-height: 480px;
 }
 .page.mv > * + * { margin-top: 0; }   /* the flex gap does the spacing */

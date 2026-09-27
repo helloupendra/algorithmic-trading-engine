@@ -303,3 +303,11 @@ export const IconForecast = (p: SVGProps<SVGSVGElement>) => (
     <rect x="14.25" y="8" width="4.5" height="8" rx="1" />
   </Icon>
 )
+
+/** The power symbol: the kill switch, in the top bar. */
+export const IconPower = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M12 3.5v7.5" />
+    <path d="M7.2 6.6a7.5 7.5 0 109.6 0" />
+  </Icon>
+)

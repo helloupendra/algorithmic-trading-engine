@@ -1,310 +1,446 @@
 /**
- * Module registry — the single source of truth for what this console is made
- * of. The sidebar, the overview grid, and (later) per-trader module grants all
- * read from here: when module access becomes a per-user setting stored on the
- * API, a user's grant list will be a set of these keys.
+ * Workspace registry: the single source of truth for what this console is made
+ * of and who may see each part of it.
+ *
+ * The console is five workspaces (Desk, Markets, Trade, Research, System),
+ * each holding tabs. A tab declares what it requires: the Admin role, or one of
+ * the module grants the API enforces (PlatformModules on the server). The top
+ * bar, the tab strip, the phone's bottom bar and the ⌘K palette all read from
+ * here, so a part the user may not use is absent everywhere at once rather
+ * than greyed out in one place and linked in another.
+ *
+ * Hiding is a courtesy, never the control: every endpoint checks the grant
+ * itself (RequireModule), so a trader who types a URL still gets a 403.
+ *
+ * URLs have not moved yet. Each tab keeps the pages it will gather, each with
+ * today's URL per console, and the `home` it moves to once the URLs change;
+ * lib/routeMap.ts holds the redirect table for that step. Until the merges
+ * land, a tab that gathers several of today's pages shows each of them.
  */
 
 import type { ComponentType, SVGProps } from 'react'
-import {
-  IconArrowRight,
-  IconBell,
-  IconBot,
-  IconActivity,
-  IconCandles,
-  IconClock,
-  IconDatabase,
-  IconFlask,
-  IconForecast,
-  IconGlobe,
-  IconLayers,
-  IconPlay,
-  IconPlug,
-  IconPlus,
-  IconPulse,
-  IconRefresh,
-  IconServer,
-  IconShield,
-  IconUsers,
-} from '../components/icons'
+import type { MeResponse } from './api'
+import { IconCandles, IconDashboard, IconFlask, IconServer, IconSwitch } from '../components/icons'
 
-export type ModuleStatus = 'ready' | 'legacy' | 'planned'
+/** The module keys the server grants to traders (PlatformModules.cs). */
+export const GRANT_KEYS = ['strategies', 'backtesting', 'market-data', 'notebook', 'analysis'] as const
+export type GrantKey = (typeof GRANT_KEYS)[number]
 
-export interface ModuleDef {
-  /** Stable key — future per-trader grants reference this. */
-  key: string
-  name: string
-  description: string
-  icon: ComponentType<SVGProps<SVGSVGElement>>
-  route: string
-  /**
-   * ready  — rebuilt on the v2 design, fully supported.
-   * legacy — functional page from v1, queued for its v2 rebuild.
-   * planned — not built yet; rendered as disabled.
-   */
-  status: ModuleStatus
-  adminOnly: boolean
+/** What a tab needs beyond being signed in: the Admin role, or one grant. */
+export type Requirement = 'admin' | GrantKey
+
+export type WorkspaceKey = 'desk' | 'markets' | 'trade' | 'research' | 'system'
+
+/** One of today's pages. */
+export interface PageDef {
+  label: string
+  /** Today's URL in each console. A console without one does not show the page. */
+  admin?: string
+  trader?: string
+  /** Only this exact path, not the routes under it: the two home pages sit above everything. */
+  exact?: boolean
+  /** More of today's routes that belong to this page (its detail pages), as path prefixes. */
+  owns?: string[]
+  /** Extra words ⌘K matches on. */
+  keywords?: string[]
 }
 
-export const MODULES: ModuleDef[] = [
+export interface TabDef {
+  key: string
+  /** The tab's name once its pages are merged. */
+  label: string
+  /** Where the tab lives once URLs move; the redirect table points here. */
+  home: string
+  requires?: Requirement
+  pages: PageDef[]
+}
+
+export interface WorkspaceDef {
+  key: WorkspaceKey
+  label: string
+  home: string
+  /** One line: what the workspace is for. */
+  description: string
+  icon: ComponentType<SVGProps<SVGSVGElement>>
+  /** The tab a click on the workspace opens, when the user can see it; otherwise the first tab. */
+  landing?: string
+  tabs: TabDef[]
+}
+
+export const WORKSPACES: readonly WorkspaceDef[] = [
   {
-    key: 'data',
-    name: 'Data',
-    description:
-      'Live tick feeds, historical candles, instruments and F&O chains — everything every strategy depends on.',
-    icon: IconDatabase,
-    route: '/admin/data',
-    status: 'ready',
-    adminOnly: true,
+    key: 'desk',
+    label: 'Desk',
+    home: '/desk',
+    description: 'Today on one sheet: readiness, runs, P&L, risk and the market around them.',
+    icon: IconDashboard,
+    tabs: [
+      {
+        key: 'desk',
+        label: 'Desk',
+        home: '/desk',
+        // Until /desk exists each console keeps its own home page.
+        pages: [{ label: 'Desk', admin: '/admin', trader: '/trader', exact: true, keywords: ['home', 'overview'] }],
+      },
+    ],
   },
   {
-    key: 'strategies',
-    name: 'Strategies',
-    description: 'Deploy, monitor and control strategy runners.',
-    icon: IconBot,
-    route: '/admin/strategies',
-    status: 'ready',
-    adminOnly: true,
+    key: 'markets',
+    label: 'Markets',
+    home: '/markets',
+    description: 'Read-only market views: the chain, charts, movers, factors and news.',
+    icon: IconCandles,
+    landing: 'chain',
+    tabs: [
+      {
+        key: 'pulse',
+        label: 'Pulse & watchlist',
+        home: '/markets',
+        requires: 'market-data',
+        pages: [
+          { label: 'Watchlist', trader: '/trader/watchlist', keywords: ['pulse', 'quotes'] },
+          // MCX is the same feed on another exchange; it becomes the pulse's MCX group.
+          { label: 'Commodity', admin: '/admin/data/commodity', keywords: ['mcx', 'crude', 'gold'] },
+        ],
+      },
+      {
+        key: 'chart',
+        label: 'Chart',
+        home: '/markets/chart',
+        requires: 'market-data',
+        pages: [
+          { label: 'Charts', trader: '/trader/charts', keywords: ['candles'] },
+          { label: 'Structure', admin: '/admin/data/structure', trader: '/trader/structure', keywords: ['smc', 'bos', 'choch'] },
+        ],
+      },
+      {
+        key: 'chain',
+        label: 'Option chain',
+        home: '/markets/chain',
+        requires: 'market-data',
+        pages: [
+          { label: 'Option chain', admin: '/admin/data/chain', trader: '/trader/option-chain', keywords: ['strikes', 'greeks'] },
+          { label: 'Open interest', admin: '/admin/data/open-interest', keywords: ['oi'] },
+        ],
+      },
+      {
+        key: 'movers',
+        label: 'Movers & breadth',
+        home: '/markets/movers',
+        requires: 'market-data',
+        pages: [
+          // Angel One's market-wide screens: price, OI build-up, PCR.
+          { label: 'Movers', admin: '/admin/data/movers', trader: '/trader/market-movers', keywords: ['build-up', 'pcr', 'angel'] },
+          // Gainers and losers inside an index. Two pages both called "movers"
+          // sat side by side in the trader nav; this one says what it ranks.
+          { label: 'Index movers', trader: '/trader/movers', keywords: ['gainers', 'losers'] },
+        ],
+      },
+      {
+        key: 'factors',
+        label: 'Flows & calendar',
+        home: '/markets/factors',
+        requires: 'market-data',
+        pages: [{ label: 'Factors', admin: '/admin/data/factors', keywords: ['fii', 'dii', 'gift', 'global', 'events'] }],
+      },
+      {
+        key: 'news',
+        label: 'News & filings',
+        home: '/markets/news',
+        requires: 'market-data',
+        pages: [{ label: 'News', admin: '/admin/data/news', trader: '/trader/news', keywords: ['headlines'] }],
+      },
+      {
+        key: 'patterns',
+        label: 'Patterns',
+        home: '/markets/patterns',
+        // Its API is admin-only.
+        requires: 'admin',
+        pages: [{ label: 'Patterns', admin: '/admin/data/patterns', keywords: ['candle', 'alerts'] }],
+      },
+    ],
   },
   {
-    key: 'backtesting',
-    name: 'Backtesting',
-    description: 'Replay any strategy over stored history: coverage-first, position-based results.',
+    key: 'trade',
+    label: 'Trade',
+    home: '/trade',
+    description: 'Everything that places or holds a position: runs, the library, history and orders.',
+    icon: IconSwitch,
+    tabs: [
+      {
+        key: 'runs',
+        label: 'Runs',
+        home: '/trade/runs',
+        requires: 'strategies',
+        pages: [
+          { label: 'Overview', admin: '/admin/strategies' },
+          { label: 'Live runner', admin: '/admin/strategies/live', owns: ['/admin/strategies/runs'], keywords: ['run cards'] },
+        ],
+      },
+      {
+        key: 'library',
+        label: 'Library',
+        home: '/trade/library',
+        requires: 'strategies',
+        pages: [
+          { label: 'Library', admin: '/admin/strategies/library', keywords: ['specs', 'how it works'] },
+          // A trader's strategies page is where they deploy from; its "How it
+          // works" pages live under /trader/strategies/:id.
+          { label: 'Strategies', trader: '/trader/deploy', owns: ['/trader/strategies'], keywords: ['deploy', 'launch'] },
+        ],
+      },
+      {
+        key: 'history',
+        label: 'History',
+        home: '/trade/history',
+        requires: 'strategies',
+        pages: [
+          {
+            label: 'History',
+            admin: '/admin/strategies/history',
+            trader: '/trader/strategies/history',
+            owns: ['/trader/strategies/runs'],
+            keywords: ['my runs', 'run history'],
+          },
+        ],
+      },
+      {
+        key: 'positions',
+        label: 'Positions',
+        home: '/trade/positions',
+        requires: 'strategies',
+        // The v1 Simulator pages, until positions across every book exist.
+        pages: [{ label: 'Positions', trader: '/trader/positions', owns: ['/trader/runs'] }],
+      },
+      {
+        key: 'orders',
+        label: 'Orders',
+        home: '/trade/orders',
+        requires: 'strategies',
+        pages: [{ label: 'Orders', trader: '/trader/orders' }],
+      },
+      {
+        key: 'ticket',
+        label: 'Ticket',
+        home: '/trade/ticket',
+        requires: 'strategies',
+        pages: [{ label: 'Manual order', admin: '/admin/trading', trader: '/trader/trading', exact: true, keywords: ['ticket', 'book'] }],
+      },
+      {
+        key: 'risk',
+        label: 'Risk',
+        home: '/trade/risk',
+        requires: 'admin',
+        pages: [{ label: 'Risk', admin: '/admin/system/risk', keywords: ['kill switch', 'limits'] }],
+      },
+    ],
+  },
+  {
+    key: 'research',
+    label: 'Research',
+    home: '/research',
+    description: 'Evidence before money: backtests, forecasts, the filter lab and notebooks.',
     icon: IconFlask,
-    route: '/admin/backtesting',
-    status: 'ready',
-    adminOnly: true,
-  },
-  {
-    key: 'analysis',
-    name: 'Analysis',
-    description:
-      "Forecasts of the day's range, trend and direction, written before the open, scored after the close and measured against a baseline.",
-    icon: IconForecast,
-    route: '/admin/analysis',
-    status: 'ready',
-    // The API keeps the grant admin-only until the page has a trader view.
-    adminOnly: true,
-  },
-  {
-    key: 'broker',
-    name: 'Connectors',
-    description: 'Data vendors and brokers: credentials, sessions, routing.',
-    icon: IconPlug,
-    route: '/admin/broker',
-    status: 'ready',
-    adminOnly: true,
-  },
-  {
-    key: 'users',
-    name: 'Users',
-    description: 'Accounts, roles, module grants, strategy packages and invitations.',
-    icon: IconUsers,
-    route: '/admin/users',
-    status: 'ready',
-    adminOnly: true,
+    tabs: [
+      {
+        key: 'backtests',
+        label: 'Backtests',
+        home: '/research/backtests',
+        requires: 'backtesting',
+        pages: [
+          { label: 'Backtests', admin: '/admin/backtesting', exact: true },
+          { label: 'New backtest', admin: '/admin/backtesting/new' },
+          { label: 'Runs', admin: '/admin/backtesting/runs', keywords: ['backtest results'] },
+        ],
+      },
+      {
+        key: 'forecasts',
+        label: 'Forecasts',
+        home: '/research/forecasts',
+        requires: 'analysis',
+        pages: [{ label: 'Forecasts', admin: '/admin/analysis', keywords: ['analysis', 'scoreboard'] }],
+      },
+      {
+        key: 'lab',
+        label: 'Filter lab',
+        home: '/research/lab',
+        requires: 'strategies',
+        pages: [{ label: 'Filter lab', admin: '/admin/trading/lab', trader: '/trader/trading/lab' }],
+      },
+      {
+        key: 'notebook',
+        label: 'Notebook',
+        home: '/research/notebook',
+        requires: 'notebook',
+        pages: [{ label: 'Notebook', admin: '/admin/notebook', keywords: ['whiteboards', 'boards'] }],
+      },
+    ],
   },
   {
     key: 'system',
-    name: 'System',
-    description:
-      'Everything operational in one place: service health, the kill switch and trading limits, and the alerter.',
+    label: 'System',
+    home: '/system',
+    description: 'Is the platform behaving, and who may use it: health, incidents, data plumbing, people.',
     icon: IconServer,
-    route: '/admin/system',
-    status: 'legacy',
-    adminOnly: true,
-    /* Risk and Alerts live under this module as sections — see SYSTEM_SECTIONS. */
+    tabs: [
+      {
+        key: 'health',
+        label: 'Health',
+        home: '/system',
+        requires: 'admin',
+        pages: [
+          { label: 'Health', admin: '/admin/system', exact: true, keywords: ['host', 'disk', 'processes'] },
+          { label: 'Checkup', admin: '/admin/checkup', keywords: ['sentinel', 'readiness'] },
+        ],
+      },
+      {
+        key: 'incidents',
+        label: 'Incidents',
+        home: '/system/incidents',
+        requires: 'admin',
+        pages: [{ label: 'Incidents', admin: '/admin/incidents', keywords: ['sentinel'] }],
+      },
+      {
+        key: 'log',
+        label: 'Log',
+        home: '/system/log',
+        requires: 'admin',
+        pages: [
+          { label: 'Activity', admin: '/admin/system/logs', keywords: ['activity log', 'audit'] },
+          { label: 'Alerts', admin: '/admin/system/alerts', keywords: ['alerter'] },
+          { label: 'Deploys', admin: '/admin/system/deployments', keywords: ['deployments'] },
+        ],
+      },
+      {
+        key: 'data',
+        label: 'Data',
+        home: '/system/data',
+        requires: 'admin',
+        pages: [
+          { label: 'Data', admin: '/admin/data', exact: true, keywords: ['coverage'] },
+          { label: 'Feeds', admin: '/admin/data/live', keywords: ['live feeds', 'ingestor', 'watchlist'] },
+          { label: 'Historical', admin: '/admin/data/historical', keywords: ['backfill', 'candles'] },
+          { label: 'Instruments', admin: '/admin/data/instruments', keywords: ['masters', 'f&o'] },
+          { label: 'Calendar', admin: '/admin/system/calendar', keywords: ['holidays', 'market calendar'] },
+        ],
+      },
+      {
+        key: 'connectors',
+        label: 'Connectors',
+        home: '/system/connectors',
+        requires: 'admin',
+        pages: [{ label: 'Connectors', admin: '/admin/broker', keywords: ['brokers', 'dhan', 'fyers', 'sign in'] }],
+      },
+      {
+        key: 'people',
+        label: 'People',
+        home: '/system/people',
+        requires: 'admin',
+        pages: [{ label: 'Users', admin: '/admin/users', keywords: ['people', 'grants', 'packages', 'invites'] }],
+      },
+    ],
   },
 ]
 
-/** Sub-navigation of the Data module — the first fully rebuilt module. */
-export const DATA_SECTIONS = [
-  {
-    route: '/admin/data',
-    label: 'Overview',
-    icon: IconDatabase,
-    end: true,
-  },
-  {
-    route: '/admin/data/live',
-    label: 'Live feeds',
-    icon: IconPulse,
-    end: false,
-  },
-  {
-    // Commodities sit with the rest of the live market data rather than in a
-    // module of their own: it is the same feed, a different exchange.
-    route: '/admin/data/commodity',
-    label: 'Commodity',
-    icon: IconGlobe,
-    end: false,
-  },
-  {
-    route: '/admin/data/chain',
-    label: 'Option chain',
-    icon: IconLayers,
-    end: false,
-  },
-  {
-    route: '/admin/data/open-interest',
-    label: 'Open interest',
-    icon: IconActivity,
-    end: false,
-  },
-  {
-    // Read from the same live bars as the rest of this module, so it sits with
-    // the data it watches.
-    route: '/admin/data/patterns',
-    label: 'Pattern alerts',
-    icon: IconBell,
-    end: false,
-  },
-  {
-    // Angel One's market-wide screens; it is the only connector that publishes
-    // them, so the page lives with the rest of the market data.
-    route: '/admin/data/movers',
-    label: 'Market movers',
-    icon: IconActivity,
-    end: false,
-  },
-  {
-    // What desks read to judge direction: OI walls, futures build-up, FII/DII
-    // positioning, GIFT Nifty and overseas markets, and the event calendar.
-    route: '/admin/data/factors',
-    label: 'Market factors',
-    icon: IconPulse,
-    end: false,
-  },
-  {
-    // The headlines behind the factors above — broad market feeds and one tab
-    // per sector. It sits with market factors because it answers the same
-    // question, in words rather than in numbers: what is moving, and why.
-    route: '/admin/data/news',
-    label: 'Market news',
-    icon: IconGlobe,
-    end: false,
-  },
-  {
-    route: '/admin/data/historical',
-    label: 'Historical',
-    icon: IconCandles,
-    end: false,
-  },
-  {
-    route: '/admin/data/structure',
-    label: 'Market structure',
-    icon: IconCandles,
-    end: false,
-  },
-  {
-    route: '/admin/data/instruments',
-    label: 'Instruments & F&O',
-    icon: IconServer,
-    end: false,
-  },
-] as const
+/** Pages outside the workspaces, reached from the avatar menu. */
+export const ACCOUNT_PAGE = { label: 'Account', trader: '/trader/account' } as const
+
+// ---------- who sees what -----------------------------------------------------
+
+export interface Access {
+  isAdmin: boolean
+  /**
+   * The grants the user holds, or null when the API did not say. /me does not
+   * carry grants yet; until it does a grant-gated tab stays visible, as it was
+   * in the sidebar, and its page shows the API's refusal. Not knowing is not
+   * the same as knowing the grant is missing.
+   */
+  grants: ReadonlySet<string> | null
+}
+
+/** The console-side view of a user's rights. Admins hold every module by role. */
+export function accessFor(user: Pick<MeResponse, 'role' | 'moduleGrants'> | null): Access {
+  const isAdmin = user?.role === 'Admin'
+  const grants = user?.moduleGrants
+  return { isAdmin, grants: isAdmin ? null : Array.isArray(grants) ? new Set(grants) : null }
+}
+
+export function allows(access: Access, requirement: Requirement | undefined): boolean {
+  if (!requirement) return true
+  if (access.isAdmin) return true
+  if (requirement === 'admin') return false
+  return access.grants === null || access.grants.has(requirement)
+}
+
+/** A page as one user sees it: its URL in their console. */
+export interface NavPage {
+  label: string
+  to: string
+  exact: boolean
+  owns: readonly string[]
+  keywords: readonly string[]
+  tab: TabDef
+  workspace: WorkspaceKey
+}
+
+export interface NavWorkspace {
+  key: WorkspaceKey
+  label: string
+  icon: ComponentType<SVGProps<SVGSVGElement>>
+  /** Where a click on the workspace goes. */
+  to: string
+  /** The pages it shows, in order; `tab.key` changes mark the group boundaries. */
+  pages: NavPage[]
+}
 
 /**
- * Sub-navigation of the Trading module: orders the operator places by hand.
- *
- * Its own group rather than a page under Strategies, because it is the one
- * place in the console where a trade does not come from a strategy at all.
+ * The workspaces and pages this user can reach today. A page needs a URL in
+ * the user's console and the tab's requirement; a tab with no page left and a
+ * workspace with no tab left are dropped, never shown empty.
  */
-export const TRADING_SECTIONS = [
-  {
-    route: '/admin/trading',
-    label: 'Manual order',
-    icon: IconArrowRight,
-    end: true,
-  },
-  {
-    route: '/admin/trading/lab',
-    label: 'Filter lab',
-    icon: IconFlask,
-    end: false,
-  },
-] as const
+export function navFor(access: Access): NavWorkspace[] {
+  const side = access.isAdmin ? 'admin' : 'trader'
+  return WORKSPACES.flatMap((ws) => {
+    const pages = ws.tabs.flatMap((tab) =>
+      allows(access, tab.requires)
+        ? tab.pages.flatMap((p) => {
+            const to = p[side]
+            return to
+              ? [{ label: p.label, to, exact: p.exact ?? false, owns: p.owns ?? [], keywords: p.keywords ?? [], tab, workspace: ws.key }]
+              : []
+          })
+        : [],
+    )
+    if (pages.length === 0) return []
+    const landing = pages.find((p) => p.tab.key === ws.landing) ?? pages[0]
+    return [{ key: ws.key, label: ws.label, icon: ws.icon, to: landing.to, pages }]
+  })
+}
 
-/** Sub-navigation of the Strategies module. */
-export const STRATEGIES_SECTIONS = [
-  {
-    route: '/admin/strategies',
-    label: 'Overview',
-    icon: IconBot,
-    end: true,
-  },
-  {
-    route: '/admin/strategies/live',
-    label: 'Live runner',
-    icon: IconPlay,
-    end: false,
-  },
-  {
-    route: '/admin/strategies/history',
-    label: 'Run history',
-    icon: IconClock,
-    end: false,
-  },
-  {
-    route: '/admin/strategies/library',
-    label: 'Library',
-    icon: IconLayers,
-    end: false,
-  },
-] as const
-
-/** Sub-navigation of the Backtesting module. */
-export const BACKTESTING_SECTIONS = [
-  {
-    route: '/admin/backtesting',
-    label: 'Overview',
-    icon: IconFlask,
-    end: true,
-  },
-  {
-    route: '/admin/backtesting/new',
-    label: 'New backtest',
-    icon: IconPlus,
-    end: false,
-  },
-  {
-    route: '/admin/backtesting/runs',
-    label: 'Runs',
-    icon: IconClock,
-    end: false,
-  },
-] as const
+/** Whether `path` is `prefix` or a route under it, on a segment boundary. */
+function under(path: string, prefix: string): boolean {
+  return path === prefix || path.startsWith(prefix.endsWith('/') ? prefix : `${prefix}/`)
+}
 
 /**
- * Sub-navigation of the Analysis module: one page, whose four sections (today,
- * scoreboard, history, how it works) are tabs inside it.
+ * The workspace and page the current URL belongs to: the longest matching
+ * page URL or owned prefix wins, so /admin/strategies/live beats
+ * /admin/strategies and a run's page lights up the tab it was opened from.
+ * Null for a route no visible page claims (the account page, say).
  */
-export const ANALYSIS_SECTIONS = [
-  {
-    route: '/admin/analysis',
-    label: 'Forecasts',
-    icon: IconForecast,
-    end: false,
-  },
-] as const
-
-/**
- * Sub-navigation of the System module. Risk, Alerts and Users used to be
- * separate entries under a generic "Modules" heading. An operator asking "is the
- * platform behaving, and who may use it" wants those in one place — and a
- * heading that says "modules" says nothing, since every entry in the sidebar is
- * one.
- */
-export const SYSTEM_SECTIONS = [
-  { route: '/admin/system', label: 'Overview', icon: IconServer, end: true },
-  { route: '/admin/system/risk', label: 'Risk & kill switch', icon: IconShield },
-  { route: '/admin/system/alerts', label: 'Alerts', icon: IconBell },
-  { route: '/admin/system/calendar', label: 'Market calendar', icon: IconClock },
-  { route: '/admin/system/logs', label: 'Activity log', icon: IconClock },
-  { route: '/admin/system/deployments', label: 'Deployments', icon: IconRefresh },
-  { route: '/admin/users', label: 'Users & access', icon: IconUsers },
-  // Vendor credentials, sign-ins and routing are set up once and then left
-  // alone, so they sit last with the rest of the operator's plumbing (owner's
-  // call, 2026-09-16) rather than among the market-data pages used every day.
-  { route: '/admin/broker', label: 'Connectors', icon: IconPlug },
-]
+export function locate(pathname: string, nav: readonly NavWorkspace[]): { workspace: NavWorkspace; page: NavPage } | null {
+  const path = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname
+  let best: { workspace: NavWorkspace; page: NavPage; length: number } | null = null
+  for (const workspace of nav) {
+    for (const page of workspace.pages) {
+      const base = page.to.split('?')[0]
+      const candidates = page.exact ? page.owns : [base, ...page.owns]
+      const length = Math.max(
+        page.exact && path === base ? base.length : -1,
+        ...candidates.map((prefix) => (under(path, prefix) ? prefix.length : -1)),
+      )
+      if (length >= 0 && (!best || length > best.length)) best = { workspace, page, length }
+    }
+  }
+  return best ? { workspace: best.workspace, page: best.page } : null
+}

@@ -935,13 +935,14 @@ function normalizeStrategy(s: Partial<StrategyListItem> & { id: number; name: st
   } as StrategyListItem
 }
 
-export function useStrategies() {
+export function useStrategies({ enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['strategies'],
     queryFn: async () => {
       const rows = await api.get<Array<Partial<StrategyListItem> & { id: number; name: string }>>('/api/Strategy')
       return (Array.isArray(rows) ? rows : []).map(normalizeStrategy)
     },
+    enabled,
     refetchInterval: POLL_FAST,
   })
 }

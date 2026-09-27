@@ -26,6 +26,8 @@ export type PulseTone = 'pos' | 'neg' | 'warn' | 'live' | 'idle'
 export interface Pulse {
   key: string
   label: string
+  /** A shorter label for a phone's top bar, where it would not fit; `label` when absent. */
+  short?: string
   tone: PulseTone
   title: string
 }
@@ -118,6 +120,8 @@ export function marketPulses(
     pulses.push({
       key: 'markets',
       label: `${open.map((m) => m.name).join(' · ')} open`,
+      // Both open is the usual day; one open names which, since that is the news.
+      short: open.length === 2 ? 'Open' : undefined,
       tone: 'pos',
       title: [
         ...open.map((m) => `${m.name} until ${timeIst(m.session.sessionCloseUtc)} IST`),
@@ -129,6 +133,7 @@ export function marketPulses(
     pulses.push({
       key: 'markets',
       label: holiday ? `Holiday · ${holiday}` : 'Markets closed',
+      short: holiday ? 'Holiday' : 'Closed',
       tone: 'idle',
       title: closed.map(closedText).join(' · '),
     })
@@ -149,6 +154,7 @@ export function marketPulses(
     pulses.push({
       key: 'recap',
       label: 'NSE recap',
+      short: 'Recap',
       tone: 'live',
       title: `${recap.join(', ')} is replaying today's session. Not the live market: only runs started in recap mode trade on it.`,
     })
@@ -381,4 +387,68 @@ export function connectorsSummary(
   }
 
   return { pulse, lines, liveFeeds, dataOn, backupsDown }
+}
+
+// --- backend and the one-line summary -------------------------------------------
+
+/** "2h 14m", "6m", "48s" — short enough for a status item. */
+export function formatUptime(seconds: number): string {
+  if (seconds < 60) return `${Math.max(0, Math.round(seconds))}s`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`
+}
+
+export interface BackendReading {
+  isDown: boolean
+  /** When a new API process was first seen, if one was. */
+  restartedAt: string | null
+  status?: { uptimeSeconds: number; startedUtc: string; environment: string | null }
+}
+
+/**
+ * The API process as a pulse. Down comes first: while the API is unreachable
+ * every other item is its last answer, and this is the one that says why.
+ * Null until the first answer, so nothing is claimed about a process not yet
+ * heard from.
+ */
+export function backendPulse(b: BackendReading): Pulse | null {
+  if (b.isDown) {
+    return { key: 'backend', label: 'Backend down', tone: 'neg', title: 'The API is not answering. It may be restarting.' }
+  }
+  if (b.restartedAt) {
+    const at = new Date(b.restartedAt).toLocaleTimeString('en-IN', { ...IST, hour: '2-digit', minute: '2-digit' })
+    return {
+      key: 'backend',
+      label: `Backend restarted ${at}`,
+      tone: 'warn',
+      title: 'A new backend process is running. Refresh if a page looks stale.',
+    }
+  }
+  if (!b.status) return null
+  return {
+    key: 'backend',
+    label: `Backend up ${formatUptime(b.status.uptimeSeconds)}`,
+    tone: 'pos',
+    title: `Started ${dateTimeIst(b.status.startedUtc)} IST${b.status.environment ? ` · ${b.status.environment}` : ''}`,
+  }
+}
+
+const HEADLINE_RANK: Record<PulseTone, number> = { neg: 4, warn: 3, live: 2, pos: 1, idle: 0 }
+
+/**
+ * The one pulse a single status item names, out of backend, connectors, feeds
+ * and the calendar. The loudest wins, and `more` counts the other pulses that
+ * also need a hand, so two alarms never read as one. When nothing is wrong a
+ * running feed is named ahead of "all ready": what the desk is live on is the
+ * useful sentence. Ties keep the caller's order.
+ */
+export function headlinePulse(pulses: readonly Pulse[]): { pulse: Pulse; more: number } | null {
+  if (pulses.length === 0) return null
+  const pulse = pulses.reduce((best, p) => (HEADLINE_RANK[p.tone] > HEADLINE_RANK[best.tone] ? p : best))
+  const alarming = (p: Pulse) => p.tone === 'neg' || p.tone === 'warn'
+  const more = alarming(pulse) ? pulses.filter((p) => p !== pulse && alarming(p)).length : 0
+  return { pulse, more }
 }

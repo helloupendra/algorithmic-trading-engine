@@ -1,0 +1,523 @@
+/*
+ * The console shell, v3: a 44px top bar (brand, workspaces, search, status,
+ * account), a 38px strip of the workspace's tabs, and on a phone a 56px bar of
+ * workspaces at the bottom. No sidebar: its 240px went back to the data.
+ *
+ * Status items are text with a dot, not bordered pills. Colour marks only what
+ * needs a hand (warn, neg); a calm item keeps quiet text and a coloured dot,
+ * and every state is also written out, so colour is never the only signal.
+ */
+
+.shell {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* --- top bar -------------------------------------------------------------- */
+.shell__top {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  height: var(--topbar-h);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left));
+  background: var(--bg0);
+  border-bottom: 1px solid var(--line);
+}
+
+.shell__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.shell__brand .shell__brand-mark { width: 20px; height: 20px; border-radius: 5px; }
+.shell__brand .shell__brand-mark svg { width: 14px; height: 14px; }
+.shell__brand b { color: var(--live); font-weight: 600; }
+
+/* Workspaces: the bar's own height, underlined when current. */
+.shell__ws {
+  display: flex;
+  align-self: stretch;
+  gap: 2px;
+}
+.shell__ws-link {
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  color: var(--text-2);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+}
+.shell__ws-link:hover { color: var(--text); }
+.shell__ws-link[aria-current] { color: var(--text); border-bottom-color: var(--brand); }
+.shell__ws-link:focus-visible { outline-offset: -3px; }
+
+.shell__grow { flex: 1; min-width: 0; }
+
+/* The ⌘K trigger reads as a field, because that is what it opens. */
+.shell__search {
+  flex: none;
+  width: 220px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg1);
+  color: var(--text-3);
+  font: inherit;
+  font-size: var(--fs-s);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.shell__search:hover { border-color: var(--line-strong); color: var(--text-2); }
+.shell__search svg { width: 13px; height: 13px; flex: none; }
+.shell__search kbd,
+.palette kbd {
+  margin-left: auto;
+  font: 10px/14px var(--sans);
+  color: var(--text-3);
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+/* --- status items --------------------------------------------------------- */
+.shell__status {
+  /* The one part of the bar that gives way: on a narrow screen the health
+     label shortens to fit, and nothing is pushed off the edge. */
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: var(--fs-s);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.shell__status > * { flex: none; }
+.shell__status > .st-anchor { flex: 0 1 auto; }
+
+.st {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-2);
+  text-decoration: none;
+}
+.st__dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.st--pos .st__dot { background: var(--pos); }
+.st--live .st__dot { background: var(--live); box-shadow: 0 0 0 3px var(--live-soft); }
+.st--warn { color: var(--warn); }
+.st--warn .st__dot { background: var(--warn); }
+.st--neg { color: var(--neg); }
+.st--neg .st__dot { background: var(--neg); }
+.st__label { overflow: hidden; text-overflow: ellipsis; }
+.st__more { color: var(--text-3); }
+.st--clock { color: var(--text); }
+.st--clock small { color: var(--text-3); font-size: inherit; }
+
+/* An item that opens something: a button or a link that looks like the rest. */
+button.st {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+button.st:hover,
+a.st:hover { color: var(--text); }
+button.st--warn:hover,
+a.st--warn:hover { color: var(--warn); filter: brightness(1.15); }
+button.st--neg:hover,
+a.st--neg:hover { color: var(--neg); filter: brightness(1.15); }
+
+/* Sentinel's live incidents: a count in a small ring, loud only when not zero. */
+.st--badge {
+  padding: 0 7px;
+  height: 20px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+}
+.st--badge svg { width: 11px; height: 11px; }
+.st--badge.st--warn { border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.st--badge.st--neg { border-color: color-mix(in srgb, var(--neg) 45%, transparent); }
+
+/* The kill switch pulled is the one state the whole desk must see. */
+.st--halted {
+  padding: 0 8px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--neg-soft);
+  color: var(--neg);
+  font-weight: 600;
+}
+.st--halted .st__dot { background: var(--neg); }
+.st__short,
+.st__narrow { display: none; }
+
+/* The kill switch at rest: quiet, but one press from the dialog that pulls it. */
+.st--ks svg { width: 13px; height: 13px; color: var(--text-3); flex: none; }
+.st--ks:hover svg { color: var(--neg); }
+
+/* Holds a popover's trigger; the popover itself is fixed to the window. */
+.st-anchor { display: inline-flex; min-width: 0; }
+.st--health { min-width: 0; max-width: 100%; }
+
+/* --- account menu --------------------------------------------------------- */
+.shell__user { position: relative; flex: none; }
+.shell__avatar {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: var(--surface2);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.shell__avatar:hover,
+.shell__avatar[aria-expanded='true'] { color: var(--text); border-color: #3b4d66; }
+
+/* --- popovers (health, account) -------------------------------------------- */
+/* Fixed under the bar rather than inside it: the bar clips nothing that way,
+   and a phone gets the full width. */
+.pop {
+  position: fixed;
+  top: calc(var(--topbar-h) + 6px);
+  right: max(12px, env(safe-area-inset-right));
+  z-index: 60;
+  width: min(380px, calc(100vw - 24px));
+  padding: 6px 0;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+  font-size: var(--fs);
+  color: var(--text);
+  white-space: normal;
+}
+.pop--menu { width: 220px; }
+.pop__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 4px 12px 8px;
+  border-bottom: 1px solid var(--line-soft);
+  font-weight: 600;
+}
+.pop__head span:last-child { font-weight: 400; color: var(--text-3); font-size: var(--fs-s); }
+.pop__section {
+  padding: 8px 12px 2px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.pop__row {
+  display: grid;
+  grid-template-columns: 6px minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 1px;
+  align-items: center;
+  padding: 5px 12px;
+  color: inherit;
+  text-decoration: none;
+}
+a.pop__row:hover,
+a.pop__row:focus-visible,
+button.pop__row:hover,
+button.pop__row:focus-visible { background: var(--surface2); outline: none; }
+.pop__row .st__dot { grid-row: 1; }
+.pop__name { font-weight: 550; }
+.pop__name small { font-weight: 400; color: var(--text-3); font-size: var(--fs-s); margin-left: 4px; }
+.pop__detail { grid-column: 2; color: var(--text-2); font-size: var(--fs-s); }
+.pop__foot {
+  display: flex;
+  gap: 16px;
+  margin-top: 4px;
+  padding: 8px 12px 2px;
+  border-top: 1px solid var(--line-soft);
+  font-size: var(--fs-s);
+}
+.pop__foot a { color: var(--brand-hi); text-decoration: none; }
+.pop__foot a:hover { text-decoration: underline; }
+.pop__who { padding: 4px 12px 8px; border-bottom: 1px solid var(--line-soft); margin-bottom: 4px; }
+.pop__who b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.pop__who span { font-size: var(--fs-xs); letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-3); }
+.pop__who span[data-role='Admin'] { color: var(--warn); }
+.pop__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.pop__item svg { width: 14px; height: 14px; }
+.pop__item:hover,
+.pop__item:focus-visible { background: var(--surface2); color: var(--text); outline: none; }
+
+/* --- workspace tab strip ---------------------------------------------------- */
+.shell__tabs {
+  height: var(--tabbar-h);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left));
+  border-bottom: 1px solid var(--line-soft);
+}
+.shell__tabs-title { font-size: 13px; font-weight: 600; white-space: nowrap; }
+.shell__tabs-meta { color: var(--text-3); font-size: var(--fs-s); white-space: nowrap; }
+
+/* Scrolls sideways inside itself on a narrow screen; the page never does. */
+.shell__tablist {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.shell__tablist::-webkit-scrollbar { display: none; }
+.shell__tab {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  text-decoration: none;
+  font-size: var(--fs);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.shell__tab:hover { color: var(--text); }
+.shell__tab[aria-current='page'] { color: var(--text); background: var(--surface2); }
+.shell__tab:focus-visible { outline-offset: -2px; }
+/* Where one tab of the final layout ends and the next begins: the pages
+   between two rules are the ones that merge into one tab. */
+.shell__tabsep {
+  flex: none;
+  width: 1px;
+  height: 14px;
+  margin: 0 5px;
+  background: var(--line);
+}
+
+/* --- page area ------------------------------------------------------------- */
+.shell__main {
+  flex: 1;
+  min-width: 0;
+  padding: 16px max(16px, env(safe-area-inset-right)) 36px max(16px, env(safe-area-inset-left));
+  /* clip, not hidden: hidden makes this a scroll container, and every
+     position: sticky inside it would stick to it instead of the window. */
+  overflow-x: clip;
+}
+
+/* --- phone bottom bar ------------------------------------------------------- */
+.shell__bottom { display: none; }
+
+/* --- ⌘K palette -------------------------------------------------------------- */
+.palette {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 12vh 12px 12px;
+  background: rgb(3 5 8 / 0.62);
+}
+.palette__card {
+  width: min(620px, 100%);
+  max-height: min(560px, 76vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+  overflow: hidden;
+}
+.palette__field {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 44px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-3);
+}
+.palette__field svg { width: 15px; height: 15px; flex: none; }
+.palette__input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+.palette__input:focus { outline: none; }
+.palette__input::placeholder { color: var(--text-3); }
+.palette__list { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 0 6px; overscroll-behavior: contain; }
+.palette__group-label {
+  padding: 8px 12px 3px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.palette__option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 12px;
+  padding: 5px 12px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.palette__option[aria-selected='true'] { background: var(--surface2); border-left-color: var(--brand); }
+.palette__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette__detail { color: var(--text-3); font-size: var(--fs-s); margin-left: 8px; }
+.palette__meta { color: var(--text-2); font-size: var(--fs-s); white-space: nowrap; }
+.palette__meta--pos { color: var(--pos); }
+.palette__meta--neg { color: var(--neg); }
+.palette__meta--live { color: var(--live); }
+.palette__empty { padding: 14px 12px; color: var(--text-3); }
+.palette__foot {
+  flex: none;
+  display: flex;
+  gap: 14px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+.palette__foot kbd { margin: 0 3px 0 0; }
+.palette__foot span:last-child { margin-left: auto; }
+
+/* --- narrower screens ------------------------------------------------------------ */
+/* What gives way as the bar narrows, least useful first, so the health label
+   (the item that says what needs a hand) keeps its words longest: the search
+   field's words, the clock, the kill switch's words, then the brand's word
+   and the long market label. */
+@media (max-width: 1320px) {
+  .shell__search { width: auto; }
+  .shell__search span { display: none; }
+  .shell__search kbd { margin-left: 0; }
+}
+
+@media (max-width: 1100px) {
+  .st--clock { display: none; }
+}
+
+@media (max-width: 980px) {
+  .shell__top { gap: 12px; }
+  .shell__status { gap: 11px; }
+  .st__long { display: none; }
+  .st__short { display: inline; }
+}
+
+@media (max-width: 900px) {
+  .shell__brand-word { display: none; }
+  .shell__ws-link { padding: 0 8px; }
+  .st__wide { display: none; }
+  .st__narrow { display: inline; }
+}
+
+/* A phone: the workspaces move to the bottom bar, the top bar keeps what the
+   phone's own clock cannot tell you (markets, health, incidents, the kill
+   switch), and the tab strip scrolls. */
+@media (max-width: 760px) {
+  .shell__top { gap: 9px; padding: 0 max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left)); }
+  .shell__ws { display: none; }
+  .shell__search { width: 28px; height: 28px; justify-content: center; padding: 0; }
+  .shell__search kbd { display: none; }
+  .shell__status { gap: 9px; }
+
+  .shell__avatar { width: 28px; height: 28px; }
+
+  .shell__tabs { padding: 0 max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left)); gap: 10px; }
+  /* The strip runs off the edge on a phone; the fade says there is more. */
+  .shell__tablist { mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); padding-right: 20px; }
+
+  .shell__main {
+    padding: 12px max(12px, env(safe-area-inset-right)) calc(var(--bottombar-h) + 24px + env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
+  }
+
+  .shell__bottom {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    height: calc(var(--bottombar-h) + env(safe-area-inset-bottom));
+    padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    background: var(--bg0);
+    border-top: 1px solid var(--line);
+  }
+  .shell__bottom .shell__ws-link {
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    padding: 0;
+    margin: 0;
+    border: 0;
+    color: var(--text-3);
+    font-size: 10px;
+  }
+  .shell__bottom .shell__ws-link svg { width: 18px; height: 18px; }
+  .shell__bottom .shell__ws-link[aria-current] { color: var(--text); }
+  .shell__bottom .shell__ws-link[aria-current] svg { color: var(--brand-hi); }
+
+  .palette { padding: 8px; }
+  .palette__card { max-height: calc(100dvh - 16px); }
+  .palette__foot { display: none; }
+  .palette__option { padding: 8px 12px; }
+}
