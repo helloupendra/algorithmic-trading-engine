@@ -129,6 +129,19 @@ class DhanTokenTests(Base):
         self.assertIn("stopped for today: Dhan refused the PIN", item.detail)
         self.assertIn("Connectors → Dhan → Connect", item.action)
 
+    def test_signed_out_before_the_automatic_sign_in_has_had_its_window_is_a_note(self):
+        # 28 Sep, 04:00: an on-request checkup read yesterday's expired token as
+        # "1 thing to do right now", four hours before the sign-in that renews it.
+        auto = dict(AUTO_OK, lastAttemptUtc=None, lastOk=None, lastMessage=None)
+        signed_out = self.api(provider("dhan", connected=False), auto)
+        item = self.one(checks.dhan_token(self.inputs("on-request", signed_out, now=ist(4, 0))))
+        self.assertIs(State.INFO, item.state)
+        self.assertEqual("Signed out; the automatic sign-in takes a new token between 08:00 and 08:40 today.",
+                         item.detail)
+        self.assertIs(State.FAIL, self.one(checks.dhan_token(self.inputs("morning", signed_out))).state)
+        switched_off = self.api(provider("dhan", connected=False), dict(auto, enabled=False))
+        self.assertIs(State.FAIL, self.one(checks.dhan_token(self.inputs("on-request", switched_off, now=ist(4, 0)))).state)
+
     def test_a_token_that_ends_before_the_mcx_close_is_worth_a_look(self):
         item = self.one(checks.dhan_token(self.inputs("morning", self.api(provider("dhan", expires=ist(21, 10))))))
         self.assertIs(State.WARN, item.state)
@@ -368,6 +381,16 @@ class DeskTests(Base):
         item = self.one(checks.archive(self.inputs("morning")))
         self.assertIs(State.WARN, item.state)
         self.assertIn("the last run was on 2026-09-25", item.detail)
+
+    def test_before_the_0600_run_the_archive_is_judged_by_yesterday_s(self):
+        self.archive_log("2026-09-27", "06:05:10  archive to Drive: ok, 12 file(s) verified\n")
+        item = self.one(checks.archive(self.inputs("night", now=ist(0, 15))))
+        self.assertIs(State.OK, item.state)
+        self.assertEqual("Ran yesterday: 12 files copied and verified. The next run is at 06:00.", item.detail)
+        self.archive_log("2026-09-27", "06:05:10  archive to Drive FAILED — see log\n")
+        self.assertEqual("Yesterday's archive failed.", self.one(checks.archive(self.inputs("night", now=ist(0, 15)))).detail)
+        self.assertEqual("It has not run today; the last run was on 2026-09-27.",
+                         self.one(checks.archive(self.inputs("on-request", now=ist(6, 45)))).detail)
 
     def test_the_failover_reports_its_mode_and_what_it_would_have_done(self):
         api_dir = self.repo / "src" / "AlgoTrading.Api"
