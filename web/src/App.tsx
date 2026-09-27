@@ -11,7 +11,7 @@ import { LandingPage } from './pages/LandingPage'
 import { ForbiddenPage, NotFoundPage } from './pages/Placeholders'
 import { DeskPage } from './pages/desk/DeskPage'
 import { WatchlistPage } from './pages/trader/WatchlistPage'
-import { ChartsPage } from './pages/trader/ChartsPage'
+import { ChartPage } from './pages/markets/chart/ChartPage'
 import { PositionsPage } from './pages/trader/PositionsPage'
 import { OrdersPage } from './pages/trader/OrdersPage'
 import { MarketNewsPage } from './pages/data/MarketNewsPage'
@@ -50,7 +50,6 @@ import { OptionChainPage } from './pages/markets/chain/OptionChainPage'
 import { LiveFeedsPage } from './pages/data/LiveFeedsPage'
 import { CommodityPage } from './pages/data/CommodityPage'
 import { HistoricalDataPage } from './pages/data/HistoricalDataPage'
-import { StructurePage } from './pages/data/StructurePage'
 import { InstrumentsFnoPage } from './pages/data/InstrumentsFnoPage'
 import { NotebookPage } from './pages/notebook/NotebookPage'
 import { WhiteboardPage } from './pages/notebook/WhiteboardPage'
@@ -75,12 +74,6 @@ const queryClient = new QueryClient({
 function GlobalSignalR() {
   useLiveFeedSignalR()
   return null
-}
-
-/** Until the chart and structure merge: the structure page is the chart's structure layer. */
-function ChartRoute() {
-  const [params] = useSearchParams()
-  return params.get('layer') === 'structure' ? <StructurePage /> : <ChartsPage />
 }
 
 /** Until the one timeline: the log's source picks which of the three pages shows. */
@@ -134,7 +127,7 @@ export default function App() {
 
                 {/* Markets. */}
                 <Route path="/markets" element={<WatchlistPage />} />
-                <Route path="/markets/chart" element={<ChartRoute />} />
+                <Route path="/markets/chart" element={<ChartPage />} />
                 {/* One page, a URL per tab. */}
                 <Route path="/markets/chain" element={<OptionChainPage view="chain" />} />
                 <Route path="/markets/chain/oi" element={<OptionChainPage view="oi" />} />
