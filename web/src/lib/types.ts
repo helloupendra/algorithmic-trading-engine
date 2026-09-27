@@ -590,7 +590,11 @@ export interface StrategyLiveView {
   runner: {
     processId: number
     lastLogUtc: string | null
-    /** The runner was adopted after an API restart: alive and controllable, output not captured. */
+    /**
+     * The runner was adopted after an API restart: alive and controllable.
+     * Its output is read from the runner's own log file
+     * (logs/engine/runner-<run>-<pid>.log), as every run's is.
+     */
     adopted?: boolean
   } | null
 }

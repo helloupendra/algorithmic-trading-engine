@@ -646,7 +646,11 @@ function RunnerOutput({
 }: {
   runId: number
   isActive: boolean
-  /** Adopted after an API restart: the API holds the process but not its pipes. */
+  /**
+   * Adopted after an API restart: the API holds the process but not its
+   * pipes. Its output still arrives, from the runner's own log file, as every
+   * run's does.
+   */
   adopted?: boolean
 }) {
   const logs = useStrategyLogs(runId, isActive)
@@ -666,7 +670,7 @@ function RunnerOutput({
   else if (logs.isError) placeholder = 'Could not load the runner output.'
   else if (adopted)
     placeholder =
-      'Adopted after an API restart — output not captured. The runner keeps writing to logs/engine/runner-<runId>-<pid>.log on the API host.'
+      'Adopted after an API restart. Its output is read from logs/engine/runner-<runId>-<pid>.log on the API host, which has no lines yet.'
   else if (!isActive) placeholder = 'No output was retained for this run.'
   else placeholder = 'No output yet — the runner prints a [CONFIG] line at startup and a [STATUS] line every 10 s.'
   return <ConsoleOutput lines={lines} placeholder={placeholder} />
