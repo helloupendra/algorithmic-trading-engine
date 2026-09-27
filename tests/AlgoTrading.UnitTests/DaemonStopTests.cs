@@ -147,9 +147,7 @@ public class DaemonStopTests : IDisposable
 
     private Process Sleeper()
     {
-        var info = OperatingSystem.IsWindows()
-            ? new ProcessStartInfo("cmd.exe", "/c timeout /t 30 /nobreak")
-            : new ProcessStartInfo("/bin/sleep", "30");
+        var info = TestSleeper.StartInfo();
         info.RedirectStandardOutput = true;
         info.RedirectStandardError = true;
         info.UseShellExecute = false;
