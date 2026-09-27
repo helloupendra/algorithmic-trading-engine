@@ -144,7 +144,7 @@ public class MarketIntelligenceScheduleTests
     }
 
     [Fact]
-    public void News_scoring_runs_every_ten_minutes_inside_06_00_to_23_30_but_not_in_the_session()
+    public void News_scoring_runs_every_ten_minutes_inside_06_00_to_23_30_but_not_from_08_40_to_15_40()
     {
         static bool Weekday(DateOnly d) => d.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday);
         Assert.True(NewsScoringScheduler.Due(Ist(2026, 9, 28, 6, 0), null, Weekday));
@@ -153,6 +153,8 @@ public class MarketIntelligenceScheduleTests
         // The session belongs to the strategies on a trading day; a Sunday has none.
         Assert.False(NewsScoringScheduler.Due(Ist(2026, 9, 28, 10, 10), Ist(2026, 9, 28, 8, 50), Weekday));
         Assert.True(NewsScoringScheduler.Due(Ist(2026, 9, 28, 15, 40), Ist(2026, 9, 28, 8, 50), Weekday));
+        Assert.True(NewsScoringScheduler.Due(Ist(2026, 9, 28, 8, 39), Ist(2026, 9, 28, 8, 20), Weekday));
+        Assert.False(NewsScoringScheduler.Due(Ist(2026, 9, 28, 8, 40), Ist(2026, 9, 28, 8, 20), Weekday));
         Assert.False(NewsScoringScheduler.Due(Ist(2026, 9, 27, 10, 9), Ist(2026, 9, 27, 10, 0), Weekday));
         Assert.True(NewsScoringScheduler.Due(Ist(2026, 9, 27, 10, 10), Ist(2026, 9, 27, 10, 0), Weekday));
         Assert.Equal(new[] { "-m", "analysis", "news-score" }, NewsScoringScheduler.Arguments);
