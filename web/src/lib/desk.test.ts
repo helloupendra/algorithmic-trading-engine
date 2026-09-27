@@ -24,7 +24,6 @@ import {
   forecastRows,
   indexRows,
   liveIncidents,
-  lossLimitShare,
   modelStanding,
   morningCheckupId,
   newsLines,
@@ -568,20 +567,6 @@ describe("today's plan and checkups", () => {
   })
 })
 
-describe('lossLimitShare', () => {
-  it('measures a loss against the platform limit and a gain as none of it', () => {
-    expect(lossLimitShare(-17374, -50000)).toBeCloseTo(0.347, 3)
-    expect(lossLimitShare(2551, -50000)).toBe(0)
-    expect(lossLimitShare(-60000, -50000)).toBeCloseTo(1.2)
-  })
-
-  it('has no answer without a limit', () => {
-    expect(lossLimitShare(-1000, null)).toBeNull()
-    expect(lossLimitShare(-1000, 0)).toBeNull()
-    // A positive "limit" is not one the API accepts; it is not read as one.
-    expect(lossLimitShare(-1000, 50000)).toBeNull()
-  })
-})
 
 // ---------------------------------------------------------------- indices, levels, traces
 

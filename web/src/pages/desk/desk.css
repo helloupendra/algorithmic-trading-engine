@@ -197,7 +197,6 @@
 .dk-v .dk-dot { margin-right: 6px; }
 
 /* A rail: the loss limit on the left, zero in the middle. */
-.dk-rail { display: block; width: 100%; max-width: 132px; height: 12px; }
 
 /* --- the P&L grid ------------------------------------------------------------------ */
 .dk-gridwrap { overflow-x: auto; }
@@ -223,7 +222,6 @@
 .dk-acct__nm { color: var(--text-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dk-acct__nv { font-weight: 500; font-size: 13px; text-align: right; }
 .dk-acct__rr { grid-column: 2 / 4; display: flex; align-items: center; gap: 8px; font-size: var(--fs-xs); color: var(--text-3); min-width: 0; }
-.dk-acct__rr .dk-rail { width: 118px; flex: none; }
 .dk-acct__rr span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dk-bystrat { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
 .dk-bar-row { display: grid; grid-template-columns: minmax(0, 1fr) 96px 52px; gap: 8px; align-items: center; height: 22px; font-size: var(--fs-s); }
@@ -319,7 +317,6 @@ a.dk-news__t:hover { text-decoration: underline; }
   .dk-v { padding: 7px 10px 8px; grid-column: span var(--span, 2); }
   .dk-v__val { font-size: 13px; }
   .dk-v__val--lead { font-size: 16px; }
-  .dk-v .dk-rail { max-width: none; }
 
   .dk-grid .dk-long, .dk-grid .dk-hide-s, .dk-grid .dk-sw--cell, .dk-grid .dk-sub { display: none; }
   .dk-grid .dk-short { display: inline; }

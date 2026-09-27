@@ -89,26 +89,6 @@ export function Spark({ values, base, width = 62, height = 20 }: { values: numbe
   )
 }
 
-/**
- * The loss limit on the left, zero in the middle, as much gain again on the
- * right: the fill runs from zero to the figure, red for a loss, green for a
- * gain, and stops at the ends.
- */
-export function Rail({ net, limit, label }: { net: number; limit: number; label: string }) {
-  const w = 132
-  const half = w / 2
-  const reach = Math.abs(limit)
-  const x = half + Math.max(-1, Math.min(1, net / reach)) * (half - 2)
-  return (
-    <svg className="dk-rail" viewBox={`0 0 ${w} 12`} preserveAspectRatio="none" role="img" aria-label={label}>
-      <line x1="2" x2={w - 2} y1="6" y2="6" stroke="var(--line)" strokeWidth="4" strokeLinecap="round" />
-      <line x1={half} x2={x} y1="6" y2="6" stroke={net < 0 ? 'var(--neg)' : 'var(--pos)'} strokeWidth="4" strokeLinecap="round" opacity=".85" />
-      <line x1={half} x2={half} y1="1" y2="11" stroke="var(--text-3)" />
-      <line x1="2" x2="2" y1="1" y2="11" stroke="var(--neg)" opacity=".7" />
-    </svg>
-  )
-}
-
 /** The range so far against the forecast: the 80% band as a track, the median as a tick, the fill as far as today has gone. */
 export function RangeMeter({ soFar, median, low80, high80, width = 64 }: { soFar: number | null; median: number; low80: number; high80: number; width?: number }) {
   const max = high80 * 1.08
