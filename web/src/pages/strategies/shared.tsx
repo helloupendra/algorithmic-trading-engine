@@ -21,6 +21,7 @@ import {
   useIngestorStatuses,
   useMarketSession,
   useStartStrategy,
+  useUserAccounts,
 } from '../../lib/queries'
 import {
   formatDateTime,
@@ -640,27 +641,112 @@ export function UnderlyingPicker({
 /** Under the launch picker: why rows are greyed out, if any are. */
 function PickerHelp({
   strategy,
+  taken,
+  account,
   anySupported,
   anyStartable,
 }: {
   strategy: StrategyListItem
+  /** The underlyings the target account already runs this strategy on. */
+  taken: ReadonlySet<string>
+  /** The target account's name when it is not the signed-in user's own. */
+  account: string | null
   anySupported: boolean
   anyStartable: boolean
 }) {
-  const on = activeUnderlyings(strategy)
   if (!anySupported) {
     return (
       <span className="field__help warn">None of the loaded underlyings is supported by this strategy.</span>
     )
   }
-  if (on.length === 0) return null
+  if (taken.size === 0) return null
   return (
     <span className={`field__help ${anyStartable ? '' : 'warn'}`}>
-      {strategy.name} is already running on {on.join(', ')}
+      {strategy.name} is already running on {[...taken].join(', ')}
+      {account ? ` in ${account}'s account` : ''}
       {anyStartable
         ? ' — those rows are greyed out; pick another underlying.'
         : ' — every supported underlying is taken; stop a run first.'}
     </span>
+  )
+}
+
+/**
+ * Whose account a launch goes into, and what that decides.
+ *
+ * A trader always launches in their own account. An admin launches in the
+ * account they picked, their own by default; the morning plan runs in every
+ * trading account, and a missing run is restarted by hand in the right one.
+ * The rows greyed out are the ones the TARGET account already runs this
+ * strategy on — the API refuses exactly those. Until 28 Sep they were always
+ * the signed-in user's: an admin starting a run in coderforchange's account
+ * saw their own runs greyed out, coderforchange's left open, and the API then
+ * answered 409.
+ */
+export function launchTarget(
+  strategy: StrategyListItem,
+  signedInUserId: number | null | undefined,
+  isAdmin: boolean,
+  pickedOwnerId: number | null,
+): { ownerUserId: number | null | undefined; taken: Set<string>; sendOwnerUserId: number | undefined } {
+  const ownerUserId = isAdmin && pickedOwnerId != null ? pickedOwnerId : signedInUserId
+  return {
+    ownerUserId,
+    taken: blockedUnderlyings(strategy, ownerUserId),
+    // Only another account is named: the API reads a missing owner as the
+    // caller's, and refuses the field from anyone but an admin.
+    sendOwnerUserId: ownerUserId != null && ownerUserId !== signedInUserId ? ownerUserId : undefined,
+  }
+}
+
+/**
+ * The admin's choice of account for a launch. Rendered for admins only, so
+ * the account list (an admin endpoint) is never asked for by a trader.
+ */
+function OwnerPicker({
+  signedInUserId,
+  value,
+  onChange,
+}: {
+  signedInUserId: number | null | undefined
+  value: number | null
+  onChange: (owner: { id: number; name: string }) => void
+}) {
+  const accounts = useUserAccounts()
+  // Service accounts sign runners in; they hold no book of their own.
+  const choices = (accounts.data ?? []).filter((a) => a.isActive && a.role !== 'Service')
+  const selected = value ?? signedInUserId ?? ''
+  return (
+    <div className="field">
+      <label className="field__label" htmlFor="launch-owner">
+        Account
+      </label>
+      {accounts.isError && choices.length === 0 ? (
+        <InlineError error={accounts.error} />
+      ) : (
+        <select
+          id="launch-owner"
+          className="field__input"
+          value={selected}
+          disabled={accounts.isPending}
+          onChange={(e) => {
+            const id = Number(e.target.value)
+            onChange({ id, name: choices.find((a) => a.id === id)?.userName ?? `user ${id}` })
+          }}
+        >
+          {choices.length === 0 && signedInUserId != null && <option value={signedInUserId}>your account</option>}
+          {choices.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.userName}
+              {a.id === signedInUserId ? ' (you)' : ''}
+            </option>
+          ))}
+        </select>
+      )}
+      <span className="field__help">
+        The run trades in this account's book, and that account's package and run limits apply.
+      </span>
+    </div>
   )
 }
 
@@ -852,10 +938,17 @@ export function LaunchDialog({
     () => new Set(strategy.supportedUnderlyings.map((u) => u.toUpperCase())),
     [strategy.supportedUnderlyings],
   )
-  // Underlyings this account already runs the strategy on: the API answers
+  // The account the run goes into (an admin may pick one), and the
+  // underlyings that account already runs the strategy on: the API answers
   // 409 for them, so the rows are greyed out before the user gets that far.
   // Another account's run is no clash (blockedUnderlyings).
-  const running = useMemo(() => blockedUnderlyings(strategy, user?.id), [strategy, user?.id])
+  const [pickedOwner, setPickedOwner] = useState<{ id: number; name: string } | null>(null)
+  const target = useMemo(
+    () => launchTarget(strategy, user?.id, isAdmin, pickedOwner?.id ?? null),
+    [strategy, user?.id, isAdmin, pickedOwner],
+  )
+  const running = target.taken
+  const targetName = target.sendOwnerUserId != null ? (pickedOwner?.name ?? null) : null
 
   const [underlying, setUnderlying] = useState<string | null>(null)
   const [lots, setLots] = useState(String(Math.max(1, strategy.defaultLots || 1)))
@@ -912,7 +1005,8 @@ export function LaunchDialog({
     }
     if (chosenTaken) {
       setValidation(
-        `${strategy.name} is already running on ${chosen.underlying} — stop that run or pick another underlying.`,
+        `${strategy.name} is already running on ${chosen.underlying}${targetName ? ` in ${targetName}'s account` : ''}` +
+          ' — stop that run or pick another underlying.',
       )
       return
     }
@@ -940,7 +1034,7 @@ export function LaunchDialog({
     }
     // The legacy stopLoss/target fields mirror the overall level so an API
     // build from before the three-level rules still applies them.
-    const body: StartStrategyRequest = {
+    const body: StartStrategyRequest & { ownerUserId?: number } = {
       underlying: chosen.underlying,
       lots: lotsNum,
       stopLoss: parsed.rules.overall?.stopLoss ?? null,
@@ -948,6 +1042,7 @@ export function LaunchDialog({
       risk: parsed.rules,
       parameters: mergeParams(params, strikes.values),
       initialCapital: cap,
+      ownerUserId: target.sendOwnerUserId,
     }
     start.mutate(
       { id: strategy.id, body },
@@ -1017,6 +1112,18 @@ export function LaunchDialog({
             </button>
           </div>
 
+          {isAdmin && (
+            <OwnerPicker
+              signedInUserId={user?.id}
+              value={pickedOwner?.id ?? null}
+              onChange={(owner) => {
+                setPickedOwner(owner)
+                // What is taken depends on the account: pick again from its free rows.
+                setUnderlying(null)
+              }}
+            />
+          )}
+
           <div className="field">
             <span className="field__label">Underlying (required)</span>
             {underlyings.isPending ? (
@@ -1039,6 +1146,8 @@ export function LaunchDialog({
                 />
                 <PickerHelp
                   strategy={strategy}
+                  taken={running}
+                  account={targetName}
                   anySupported={!!firstSupported}
                   anyStartable={!!firstStartable}
                 />
@@ -1061,6 +1170,8 @@ export function LaunchDialog({
                 />
                 <PickerHelp
                   strategy={strategy}
+                  taken={running}
+                  account={targetName}
                   anySupported={!!firstSupported}
                   anyStartable={!!firstStartable}
                 />
@@ -1182,7 +1293,7 @@ export function LaunchDialog({
               <IconPlay style={{ width: 14, height: 14 }} />
               {start.isPending
                 ? 'Starting…'
-                : `Start on ${chosen?.underlying ?? '…'} (paper)`}
+                : `Start on ${chosen?.underlying ?? '…'}${targetName ? ` for ${targetName}` : ''} (paper)`}
             </button>
           </div>
         </div>

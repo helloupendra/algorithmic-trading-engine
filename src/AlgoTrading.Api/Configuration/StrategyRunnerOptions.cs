@@ -33,11 +33,30 @@ public class StrategyRunnerOptions
     /// trading account running its own copy of the morning's plan the honest
     /// number is accounts times runs — five strategies over three indices plus
     /// crude is thirteen a head — so the ceiling is what the machine can carry,
-    /// not what one desk used to need. Each runner is a Python process of
-    /// roughly 150 MB; forty is about 6 GB, which is why it is not higher on an
-    /// 8 GB box. Set <c>StrategyRunner:MaxConcurrentProcesses</c> to change it.
+    /// not what one desk used to need.
+    /// <para>
+    /// It was forty, on an estimate of 150 MB a runner. Measured on 25 Sep with
+    /// 26 runners on the 8 GB box: 115–125 MB each, MemAvailable down to
+    /// 1.76–1.92 GB and the CPU nearly saturated. Twenty-eight is two accounts'
+    /// plans with a little room, and <see cref="MinAvailableMemoryMb"/> refuses
+    /// a start before the box gets there anyway. Set
+    /// <c>StrategyRunner:MaxConcurrentProcesses</c> to change it.
+    /// </para>
     /// </remarks>
-    public int MaxConcurrentProcesses { get; set; } = 40;
+    public int MaxConcurrentProcesses { get; set; } = 28;
+
+    /// <summary>
+    /// A new runner is refused (429) while the host has less than this much
+    /// memory available (MemAvailable, in MB). Only where it can be read —
+    /// Linux; elsewhere the check is skipped.
+    /// </summary>
+    /// <remarks>
+    /// The runner cap counts processes, not memory. A runner is 115–125 MB,
+    /// and the API, the feeds and the database live on the same box: below
+    /// about a gigabyte the next start is what pushes it into swap or the OOM
+    /// killer, which takes out a running strategy rather than the new one.
+    /// </remarks>
+    public int MinAvailableMemoryMb { get; set; } = 1024;
 
     /// <summary>
     /// Hard ceiling on concurrently running backtest runner processes. A

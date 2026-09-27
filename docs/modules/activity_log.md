@@ -43,12 +43,12 @@ Where the path and status do not say enough, an endpoint adds a sentence:
 
 ```csharp
 HttpContext.Describe(
-    $"Deployed {strategy.Name} on {underlying} — run #{run.Id}, {lots} lot(s).",
+    $"Started {strategy.Name} on {underlying} — run #{run.Id}, {lots} lot(s).",
     "run", run.Id.ToString());
 ```
 
-The row then reads *"Deployed ShortStraddle on BANKNIFTY — run #46, 1 lot(s)."*
-with `POST /api/Strategy/650824872/deploy` underneath it.
+The row then reads *"Started ShortStraddle on BANKNIFTY — run #46, 1 lot(s)."*
+with `POST /api/Strategy/650824872/start` underneath it.
 
 ## The view
 

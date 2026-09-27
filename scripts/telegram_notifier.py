@@ -13,7 +13,7 @@ Two things stop it from actually reaching Telegram today:
 
   1. POST /api/Strategy/{id}/start — the endpoint the console uses to start a
      run — never calls ISystemNotifier.NotifyAsync, so a run starting publishes
-     nothing at all. (Only /deploy and the stop endpoints notify.)
+     nothing at all. (Only the stop endpoints notify.)
   2. The running API has an empty Telegram:BotToken, because
      appsettings.Local.json carries no "Telegram" section. So even a published
      event is recorded to the database and never sent.
@@ -24,7 +24,7 @@ outside instead:
 
   * FORWARDER — subscribes to "alerts:new" and sends every event to Telegram.
     That covers fix (2) for events the backend already publishes (the strategy
-    alerter, risk/kill-switch, deploy and stop).
+    alerter, risk/kill-switch and stop).
   * POLLER — reads the API read-only, diffs successive snapshots, and publishes
     the events nobody emits today: run started, position opened, position
     closed, run stopped, market data started/stopped. That covers fix (1).
@@ -943,7 +943,7 @@ class Watcher:
 # the forwarder
 # --------------------------------------------------------------------------- #
 # The API itself notifies on a run stopping (StrategyController's stop endpoint)
-# and on a deploy, with a one-line message. The poller in this process reports
+# with a one-line message (and did on a deploy, until that endpoint went). The poller in this process reports
 # the same two moments with the whole picture — net P&L, realized, trades,
 # duration, reason — so forwarding both puts two messages in the group for one
 # event. Drop the terse one and keep ours.

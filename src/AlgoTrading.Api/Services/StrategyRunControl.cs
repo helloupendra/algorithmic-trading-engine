@@ -45,6 +45,9 @@ public sealed class StrategyRunControl
     private readonly IProcessSettingsStore _processSettings;
     private readonly StrategyProcessRegistry _registry;
     private readonly PositionCarryForward _carryForward;
+    private readonly PythonEngineLocator _engine;
+    private readonly IProcessProbe _probe;
+    private readonly ISystemNotifier _notifier;
     private readonly ILogger<StrategyRunControl> _logger;
 
     public StrategyRunControl(
@@ -53,6 +56,9 @@ public sealed class StrategyRunControl
         IProcessSettingsStore processSettings,
         StrategyProcessRegistry registry,
         PositionCarryForward carryForward,
+        PythonEngineLocator engine,
+        IProcessProbe probe,
+        ISystemNotifier notifier,
         ILogger<StrategyRunControl> logger)
     {
         _dbContext = dbContext;
@@ -60,13 +66,25 @@ public sealed class StrategyRunControl
         _processSettings = processSettings;
         _registry = registry;
         _carryForward = carryForward;
+        _engine = engine;
+        _probe = probe;
+        _notifier = notifier;
         _logger = logger;
     }
+
+    /// <summary>
+    /// The waits before a runner that could not be verified is probed again at
+    /// startup: 2, 4 and 8 seconds, so a probe that failed under a moment's
+    /// load gets 14 seconds to come right before the run is reported.
+    /// </summary>
+    public IReadOnlyList<TimeSpan> UnknownProbeRetryDelays { get; init; } =
+        new[] { TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(8) };
 
     /// <param name="Carried">Legs moved to the owner's manual book (a stop at the market close only).</param>
     public sealed record StopResult(bool WasRunning, int Flattened, int Carried = 0);
 
-    public sealed record ReconcileResult(int Adopted, int Closed);
+    /// <param name="Unverified">Runs whose runner could be neither confirmed nor ruled out: left as they were, and reported.</param>
+    public sealed record ReconcileResult(int Adopted, int Closed, int Unverified = 0);
 
     /// <summary>
     /// Stops one running strategy run (by SimulationRun id). <paramref name="by"/>
@@ -242,9 +260,20 @@ public sealed class StrategyRunControl
     /// Once at startup, after migrations: every LivePaper run left
     /// Running/Stopping by the previous API process is either ADOPTED (its
     /// stored pid is alive and is an execution_runner for that run — the entry
-    /// is rebuilt from the row and its exit monitor attached) or CLOSED as
-    /// Stopped with <see cref="RestartReason"/>, flattening at last mark.
+    /// is rebuilt from the row and its exit monitor attached), CLOSED as
+    /// Stopped with <see cref="RestartReason"/>, flattening at last mark, when
+    /// its runner is known to be gone — or, when its pid could not be verified
+    /// either way, LEFT exactly as it is and reported.
     /// </summary>
+    /// <remarks>
+    /// "Could not verify" is not "gone". Until 28 Sep the probe folded the two
+    /// together, and a runner still trading whose command line could not be
+    /// read at that moment (ps timing out on a loaded box) had its run closed
+    /// and its positions flattened under it. Such a pid is probed again after
+    /// 2, 4 and 8 seconds, all of them together; one still unverified keeps
+    /// its row and its pid, and the operator is told. The start endpoint
+    /// refuses a second run beside it.
+    /// </remarks>
     public async Task<ReconcileResult> ReconcileOrphanedRunsAsync(CancellationToken cancellationToken = default)
     {
         // A manual book is Running with no runner BY DESIGN — it is a container
@@ -261,66 +290,119 @@ public sealed class StrategyRunControl
             .ToListAsync(cancellationToken);
 
         int adopted = 0, closed = 0;
+        var unverified = new List<SimulationRun>();
 
         foreach (var run in orphans)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (_registry.Contains(run.Id)) continue;
 
-            bool wasAdopted = false;
-            try
+            switch (await ReconcileOneAsync(run, cancellationToken))
             {
-                wasAdopted = await TryAdoptAsync(run, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Adoption of strategy run {RunId} failed; closing it instead.", run.Id);
-            }
-
-            if (wasAdopted)
-            {
-                adopted++;
-                continue;
-            }
-
-            try
-            {
-                var result = await StopOrphanAsync(run.Id, RestartReason, flatten: true, by: "api", noteMissingRunner: false);
-                if (result.WasRunning)
-                {
-                    closed++;
-                    _logger.LogWarning("Strategy run {RunId} ({Strategy}) was {Status} with no live runner; closed as Stopped ({Flattened} position(s) squared off).",
-                        run.Id, run.StrategyName, run.Status, result.Flattened);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Could not close orphaned strategy run {RunId}.", run.Id);
+                case Adoption.Adopted: adopted++; break;
+                case Adoption.Closed: closed++; break;
+                case Adoption.Unverified: unverified.Add(run); break;
             }
         }
 
-        return new ReconcileResult(adopted, closed);
+        // Probed again together, so a box that cannot read command lines costs
+        // the startup 14 seconds, not 14 per run.
+        foreach (var delay in UnknownProbeRetryDelays)
+        {
+            if (unverified.Count == 0) break;
+
+            _logger.LogWarning("Could not verify the runner of {Count} live run(s) ({RunIds}); probing again in {Seconds}s.",
+                unverified.Count, string.Join(", ", unverified.Select(x => x.Id)), delay.TotalSeconds);
+            await Task.Delay(delay, cancellationToken);
+
+            var still = new List<SimulationRun>();
+            foreach (var run in unverified)
+            {
+                switch (await ReconcileOneAsync(run, cancellationToken))
+                {
+                    case Adoption.Adopted: adopted++; break;
+                    case Adoption.Closed: closed++; break;
+                    case Adoption.Unverified: still.Add(run); break;
+                }
+            }
+            unverified = still;
+        }
+
+        foreach (var run in unverified)
+        {
+            await ReportUnverifiedAsync(run, cancellationToken);
+        }
+
+        return new ReconcileResult(adopted, closed, unverified.Count);
+    }
+
+    /// <summary>What reconciling one run came to.</summary>
+    private enum Adoption
+    {
+        /// <summary>Its runner is alive and verified: the run is in the registry again.</summary>
+        Adopted,
+
+        /// <summary>Its runner is gone (or was ended): the run was closed.</summary>
+        Closed,
+
+        /// <summary>Its runner could not be verified either way: nothing was touched.</summary>
+        Unverified,
+
+        /// <summary>Something else registered it meanwhile: nothing to do.</summary>
+        Skipped
+    }
+
+    private async Task<Adoption> ReconcileOneAsync(SimulationRun run, CancellationToken cancellationToken)
+    {
+        Adoption outcome;
+        try
+        {
+            outcome = await TryAdoptAsync(run, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Adoption of strategy run {RunId} failed; closing it instead.", run.Id);
+            outcome = Adoption.Closed;
+        }
+
+        if (outcome != Adoption.Closed) return outcome;
+
+        try
+        {
+            var result = await StopOrphanAsync(run.Id, RestartReason, flatten: true, by: "api", noteMissingRunner: false);
+            if (!result.WasRunning) return Adoption.Skipped;
+
+            _logger.LogWarning("Strategy run {RunId} ({Strategy}) was {Status} with no live runner; closed as Stopped ({Flattened} position(s) squared off).",
+                run.Id, run.StrategyName, run.Status, result.Flattened);
+            return Adoption.Closed;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not close orphaned strategy run {RunId}.", run.Id);
+            return Adoption.Skipped;
+        }
     }
 
     /// <summary>
     /// Adopts the run when its stored pid is a live execution_runner for it.
     /// A Stopping row is never adopted (the previous API was already ending it).
+    /// Returns <see cref="Adoption.Closed"/> for a run to close — the caller
+    /// closes it — and <see cref="Adoption.Unverified"/> when the pid is alive
+    /// but could not be told apart from a recycled one.
     /// </summary>
-    private async Task<bool> TryAdoptAsync(SimulationRun run, CancellationToken cancellationToken)
+    private async Task<Adoption> TryAdoptAsync(SimulationRun run, CancellationToken cancellationToken)
     {
         var key = SystemSettingKeys.StrategyRunPid(run.Id);
         var pid = await _processSettings.GetPidAsync(key, cancellationToken);
         if (pid is null)
         {
             _logger.LogInformation("Strategy run {RunId} has no stored runner pid; nothing to adopt.", run.Id);
-            return false;
+            return Adoption.Closed;
         }
 
-        var process = ProcessProbe.TryGetAlive(pid.Value, ProcessProbe.StrategyRunnerMarker, run.Id, _logger);
-        if (process is null)
-        {
-            return false;
-        }
+        var probe = _probe.Probe(pid.Value, ProcessProbe.StrategyRunnerMarker, run.Id);
+        if (probe.IsUnknown) return Adoption.Unverified;
+        if (!probe.IsAlive || probe.Process is not { } process) return Adoption.Closed;
 
         // A Stopping row was already being ended by the previous API process
         // (its signals are refused); the runner it left behind must not linger.
@@ -330,13 +412,13 @@ public sealed class StrategyRunControl
                 run.Id, run.Status, pid);
             try
             {
-                await ProcessTerminator.StopAsync(process, pid.Value, _ => { }, _logger, $"stale strategy run {run.Id}");
+                await ProcessTerminator.StopAsync(process, pid.Value, _ => { }, _logger, $"stale strategy run {run.Id}", adopted: true);
             }
             finally
             {
                 process.Dispose();
             }
-            return false;
+            return Adoption.Closed;
         }
 
         var p = LiveRunParameters.Parse(run.ParametersJson);
@@ -345,10 +427,16 @@ public sealed class StrategyRunControl
                           ?? UnderlyingCatalog.InferUnderlying(run.Symbol)).Trim().ToUpperInvariant();
         var spotSymbol = string.IsNullOrWhiteSpace(run.Symbol) ? UnderlyingCatalog.SpotSymbolFor(underlying) : run.Symbol;
 
-        var startedBy = await _dbContext.AppUsers.AsNoTracking()
-            .Where(x => x.Id == run.UserId)
-            .Select(x => x.UserName)
-            .FirstOrDefaultAsync(cancellationToken) ?? "unknown";
+        // Who started it, as the row recorded at the start. Only rows from
+        // before 28 Sep have none and fall back to the owner — which is what
+        // every adopted run used to claim, and why runs #234 and #235 changed
+        // from admin to coderforchange at the 24 Sep restart.
+        var startedBy = !string.IsNullOrWhiteSpace(run.StartedByName)
+            ? run.StartedByName
+            : await _dbContext.AppUsers.AsNoTracking()
+                .Where(x => x.Id == run.UserId)
+                .Select(x => x.UserName)
+                .FirstOrDefaultAsync(cancellationToken) ?? "unknown";
 
         var entry = new RunningStrategy(
             StrategyCatalogService.StableId(run.StrategyName),
@@ -363,18 +451,58 @@ public sealed class StrategyRunControl
             Math.Max(1, p.Lots ?? 1),
             p.Risk)
         {
-            Adopted = true
+            Adopted = true,
+            // No pipes to read: its console comes from the log it keeps itself.
+            OutputLogPath = RunnerOutputLog.PathFor(_engine.EngineLogDirectory, run.Id, pid.Value)
         };
 
         if (!_registry.TryAdd(entry))
         {
+            // Registered meanwhile: it has a runner, and closing it would flatten under it.
             process.Dispose();
-            return false;
+            return Adoption.Skipped;
         }
 
-        _logger.LogWarning("Adopted strategy run {RunId} ({Strategy} on {Underlying}) pid {Pid} after API restart — output not captured.",
-            run.Id, run.StrategyName, underlying, pid);
-        return true;
+        _logger.LogWarning("Adopted strategy run {RunId} ({Strategy} on {Underlying}) pid {Pid} after API restart; its output is read from {LogFile}.",
+            run.Id, run.StrategyName, underlying, pid, entry.OutputLogPath);
+        return Adoption.Adopted;
+    }
+
+    /// <summary>
+    /// A run whose runner could not be verified after every retry: its row and
+    /// its stored pid stay as they are — neither adopted nor closed — and the
+    /// operator is told, because nothing guards it until someone decides.
+    /// </summary>
+    private async Task ReportUnverifiedAsync(SimulationRun run, CancellationToken cancellationToken)
+    {
+        var pid = await _processSettings.GetPidAsync(SystemSettingKeys.StrategyRunPid(run.Id), cancellationToken);
+        var underlying = LiveRunParameters.Parse(run.ParametersJson).Underlying
+                         ?? UnderlyingCatalog.UnderlyingForSpot(run.Symbol)
+                         ?? UnderlyingCatalog.InferUnderlying(run.Symbol);
+
+        _logger.LogError(
+            "Strategy run {RunId} ({Strategy} on {Underlying}) is {Status} with runner pid {Pid} alive, but its command line could not be read "
+            + "after {Tries} tries; it was neither adopted nor closed. No risk guard watches it until it is dealt with by hand.",
+            run.Id, run.StrategyName, underlying, run.Status, pid, UnknownProbeRetryDelays.Count + 1);
+
+        try
+        {
+            await _notifier.NotifyAsync(
+                NotificationCategory.StrategyRun,
+                NotificationSeverity.Error,
+                $"Run #{run.Id} could not be verified after the API restart",
+                $"{run.StrategyName} on {underlying}: pid {pid} is alive, but the API could not confirm it is this run's runner, "
+                    + "so the run was neither adopted nor closed. Nothing watches its risk rules. Check the process on the server "
+                    + $"(ps -o args= -p {pid}); if it is the runner, restart the API to adopt it, otherwise stop the run from its page.",
+                underlying: underlying,
+                symbol: run.Symbol,
+                simulationRunId: run.Id,
+                cancellationToken: CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not send the alert for unverified strategy run {RunId}.", run.Id);
+        }
     }
 
     /// <summary>
@@ -569,7 +697,8 @@ public sealed class StrategyRunControl
     /// <summary>
     /// SIGTERM, graceful wait, then SIGKILL of the whole tree — shared with the
     /// backtest control through <see cref="ProcessTerminator"/>. Works on an
-    /// adopted handle too (the signals go by pid).
+    /// adopted handle too (the signals go by pid), and an adopted runner, not
+    /// being our child, is given longer and watched by pid.
     /// </summary>
     private Task StopProcessAsync(RunningStrategy entry)
         => ProcessTerminator.StopAsync(
@@ -577,7 +706,8 @@ public sealed class StrategyRunControl
             entry.ProcessId,
             line => _registry.AppendLog(entry.RunId, line),
             _logger,
-            $"strategy {entry.StrategyId} run {entry.RunId}");
+            $"strategy {entry.StrategyId} run {entry.RunId}",
+            adopted: entry.Adopted);
 
     /// <summary>
     /// Releases the Process (stdout/stderr readers, exit-event registration)

@@ -1,6 +1,9 @@
 using System.Diagnostics;
+using AlgoTrading.Api.Controllers;
 using AlgoTrading.Api.Services;
 using AlgoTrading.Contracts.Strategies;
+using AlgoTrading.Domain.Entities;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -108,6 +111,122 @@ public class StrategyRunOwnershipTests : IDisposable
         Assert.Equal(6, exits.Count);
         Assert.Equal(3, exits.Count(x => x.UserId == 100));
         Assert.Equal(3, exits.Count(x => x.UserId == 200));
+    }
+
+    [Fact]
+    public void SixExits_AllKept()
+    {
+        // 25 Sep: six runs of one strategy a day — three indices in two
+        // accounts — against five exits kept per strategy. Admin's 249, 252,
+        // 255 and 258 fell off, and "Realized today" was short by ₹1,176.
+        var registry = NewRegistry();
+        long runId = 249;
+        foreach (long owner in new long[] { 1, 7 })
+        {
+            foreach (var underlying in new[] { "NIFTY", "BANKNIFTY", "SENSEX" })
+            {
+                var run = Run(runId++, strategyId: 7, underlying, owner);
+                registry.TryAdd(run);
+                registry.RecordExit(run, "Market closed (15:30 IST)");
+            }
+        }
+
+        var exits = registry.GetLastExits(7);
+        Assert.Equal(6, exits.Count);
+        Assert.Equal(new long[] { 249, 250, 251, 252, 253, 254 }, exits.Select(x => x.RunId).Order());
+        Assert.Equal(3, registry.GetLastExits(7, ownerUserId: 1).Count);
+        Assert.Equal(3, registry.GetLastExits(7, ownerUserId: 7).Count);
+    }
+
+    [Fact]
+    public void One_accounts_restarts_never_push_out_another_accounts_exits()
+    {
+        var registry = NewRegistry();
+        var admins = Run(runId: 249, strategyId: 7, underlying: "NIFTY", userId: 1);
+        registry.TryAdd(admins);
+        registry.RecordExit(admins, "Stopped by admin");
+
+        // The other account stops and restarts the same strategy all day.
+        for (long i = 0; i < 3 * StrategyProcessRegistry.ExitsPerAccountAndUnderlying; i++)
+        {
+            var churn = Run(runId: 1000 + i, strategyId: 7, underlying: "NIFTY", userId: 7);
+            registry.TryAdd(churn);
+            registry.RecordExit(churn, "Stopped by coderforchange");
+        }
+
+        Assert.Equal(249, Assert.Single(registry.GetLastExits(7, ownerUserId: 1)).RunId);
+        Assert.Equal(StrategyProcessRegistry.ExitsPerAccountAndUnderlying, registry.GetLastExits(7, ownerUserId: 7).Count);
+        Assert.NotNull(registry.GetExitByRun(249));
+    }
+
+    [Fact]
+    public async Task TraderList_HasNoOtherOwnersExits()
+    {
+        using var desk = new RunnerDesk();
+        var runs = new Dictionary<long, long>();
+        foreach (var owner in new[] { RunnerDesk.AdminId, RunnerDesk.TraderId, RunnerDesk.OtherTraderId })
+        {
+            // What the stop pipeline does at the close: close the row, remember
+            // the exit, drop the entry.
+            long runId = desk.SeedRun(owner, "NIFTY", "Stopped");
+            var run = Run(runId, RunnerDesk.GhostId, "NIFTY", owner);
+            desk.Registry.TryAdd(run);
+            desk.Registry.RecordExit(run, "Market closed (15:30 IST)");
+            desk.Registry.Remove(runId);
+            runs[owner] = runId;
+        }
+
+        await using var db = desk.Db();
+
+        var trader = await Ghost(desk.Controller(db, RunnerDesk.TraderId));
+        Assert.Equal(runs[RunnerDesk.TraderId], Assert.Single(trader.RecentExits).RunId);
+        Assert.Equal(runs[RunnerDesk.TraderId], trader.LastExit!.RunId);
+
+        var admin = await Ghost(desk.Controller(db, RunnerDesk.AdminId));
+        Assert.Equal(runs.Values.Order(), admin.RecentExits.Select(x => x.RunId).Order());
+
+        // The legacy strategy-scoped logs route resolves to the trader's own
+        // newest exit, not to whichever account's run ended last (which it
+        // then refused to show them).
+        var logs = await desk.Controller(db, RunnerDesk.TraderId).GetLogs(RunnerDesk.GhostId);
+        Assert.IsType<OkObjectResult>(logs);
+    }
+
+    [Fact]
+    public async Task Adopted_KeepsStarter()
+    {
+        using var desk = new RunnerDesk();
+
+        // The morning plan: admin starts it in coderforchange's account.
+        long run = desk.SeedRun(RunnerDesk.TraderId, "NIFTY", "Running", startedBy: (RunnerDesk.AdminId, "admin"));
+        await desk.Pids.SetPidAsync(SystemSettingKeys.StrategyRunPid(run), desk.RunnerFor(run).Id);
+
+        // A row from before the starter was recorded: the owner is all there is.
+        long older = desk.SeedRun(RunnerDesk.TraderId, "BANKNIFTY", "Running");
+        await desk.Pids.SetPidAsync(SystemSettingKeys.StrategyRunPid(older), desk.RunnerFor(older).Id);
+
+        await using (var db = desk.Db())
+        {
+            var result = await desk.RunControl(db).ReconcileOrphanedRunsAsync();
+            Assert.Equal(2, result.Adopted);
+        }
+
+        var adopted = desk.Registry.Get(run)!;
+        Assert.True(adopted.Adopted);
+        Assert.Equal("admin", adopted.StartedBy);
+        Assert.Equal(RunnerDesk.TraderId, adopted.UserId);
+        Assert.Equal("coderforchange", desk.Registry.Get(older)!.StartedBy);
+
+        // And the exit it leaves says the same.
+        desk.Registry.RecordExit(adopted, "Market closed (15:30 IST)");
+        Assert.Equal("admin", desk.Registry.GetExitByRun(run)!.StartedBy);
+    }
+
+    private static async Task<StrategyListItemResponse> Ghost(StrategyController controller)
+    {
+        var result = await controller.GetAll(CancellationToken.None);
+        var list = Assert.IsType<List<StrategyListItemResponse>>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        return list.Single(x => x.Id == RunnerDesk.GhostId);
     }
 
     private StrategyProcessRegistry NewRegistry()

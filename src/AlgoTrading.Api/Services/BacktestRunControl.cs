@@ -206,10 +206,14 @@ public sealed class BacktestRunControl
                          ?? UnderlyingCatalog.UnderlyingForSpot(run.Symbol)
                          ?? UnderlyingCatalog.InferUnderlying(run.Symbol);
 
-        var startedBy = await _dbContext.AppUsers.AsNoTracking()
-            .Where(x => x.Id == run.UserId)
-            .Select(x => x.UserName)
-            .FirstOrDefaultAsync(cancellationToken) ?? "unknown";
+        // As for live runs: the recorded starter, the owner only for rows
+        // from before 28 Sep that recorded none.
+        var startedBy = !string.IsNullOrWhiteSpace(run.StartedByName)
+            ? run.StartedByName
+            : await _dbContext.AppUsers.AsNoTracking()
+                .Where(x => x.Id == run.UserId)
+                .Select(x => x.UserName)
+                .FirstOrDefaultAsync(cancellationToken) ?? "unknown";
 
         var entry = new RunningBacktest(
             run.Id,
