@@ -30,11 +30,20 @@ tick. Restoring would have the strategy open it a second time, so the state is
 kept, the tick's remaining signals are still sent, and the runner says loudly
 that the strategy and the book disagree. A CLOSE_GROUP booked earlier in the
 tick is no obstacle: emitted again, it closes nothing twice (reduce-only).
+
+A strategy put back emits its refused OPEN_GROUP again on the very next tick,
+and a refusal rarely clears that fast: a rate limit lasts up to a minute, a
+stale quote as long as the feed is stalled. Posted every tick, each one is a
+request, a RiskEvent row and a log block. So after a refused OPEN_GROUP the
+booker holds every OPEN of the run for a while (OPEN_REFUSAL_COOLDOWN_SECONDS)
+without posting it; the strategy is still put back each tick and still asks,
+and the first OPEN after the hold is posted. A CLOSE_GROUP is never held.
 """
 
 from __future__ import annotations
 
 import copy
+import json
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -64,6 +73,10 @@ RETRY_STATUSES = frozenset({502, 503, 504})
 #: Pauses between attempts, the last one repeated.
 BACKOFF_SECONDS = (0.5, 1.0, 2.0, 4.0, 5.0)
 
+#: How long every OPEN_GROUP of the run is held, unposted, after the API refused
+#: one. The runner reads OPEN_REFUSAL_COOLDOWN_SECONDS from the environment.
+OPEN_REFUSAL_COOLDOWN_SECONDS = 30.0
+
 
 @dataclass
 class Booking:
@@ -76,6 +89,10 @@ class Booking:
     result: Optional[Dict[str, Any]] = None
     #: The API answered and said no (a 4xx, a 500): sending it again would not help.
     refused: bool = False
+    #: Not posted at all: an OPEN inside the hold that follows a refused one.
+    held: bool = False
+    #: On a refused OPEN: how long the run's OPENs are now held, in seconds.
+    holds_opens_for: Optional[float] = None
     status: Optional[int] = None
     detail: str = ""
     attempts: int = 0
@@ -110,6 +127,7 @@ class SignalBooker:
         open_retry_seconds: float = OPEN_RETRY_SECONDS,
         close_retry_seconds: float = CLOSE_RETRY_SECONDS,
         post_timeout_seconds: float = POST_TIMEOUT_SECONDS,
+        open_cooldown_seconds: float = OPEN_REFUSAL_COOLDOWN_SECONDS,
         new_id: Callable[[], str] = lambda: str(uuid.uuid4()),
     ) -> None:
         self._api = api
@@ -120,7 +138,9 @@ class SignalBooker:
         self._open_retry = open_retry_seconds
         self._close_retry = close_retry_seconds
         self._post_timeout = post_timeout_seconds
+        self._open_cooldown = max(0.0, open_cooldown_seconds)
         self._new_id = new_id
+        self._opens_held_until: Optional[float] = None
 
     def book(self, sig: StrategySignal) -> Booking:
         payload = signal_to_request(self._run_id, sig)
@@ -133,8 +153,14 @@ class SignalBooker:
             return Booking(signal_type=signal_type, group_id=str(payload.get("groupId") or ""),
                            client_signal_id=payload["clientSignalId"], booked=booked, attempts=attempts, **kwargs)
 
-        started = self._clock()
         attempts = 0
+        if opening and self._opens_held_until is not None:
+            left = self._opens_held_until - self._clock()
+            if left > 0:
+                return outcome(False, held=True, detail=f"OPENs held for another {left:.0f} s after a refusal")
+            self._opens_held_until = None
+
+        started = self._clock()
         confirming = False
 
         while True:
@@ -145,7 +171,11 @@ class SignalBooker:
             except requests.exceptions.HTTPError as ex:
                 status = ex.response.status_code if ex.response is not None else None
                 if status not in RETRY_STATUSES:
-                    return outcome(False, refused=True, status=status, detail=_body(ex))
+                    held_for = None
+                    if opening and self._open_cooldown > 0:
+                        held_for = self._open_cooldown
+                        self._opens_held_until = self._clock() + held_for
+                    return outcome(False, refused=True, status=status, detail=_body(ex), holds_opens_for=held_for)
                 last, unsure = f"HTTP {status}", False
             except requests.exceptions.ConnectTimeout as ex:
                 # Never connected, so never booked.
@@ -208,16 +238,23 @@ def run_tick(
     One tick: ``evaluate`` is the strategy's ``on_bar`` (it changes ``state``),
     ``post`` sends one signal to the book and returns what became of it, or
     None for a signal that is not for the book (filtered out, or not a group
-    signal). Signals are sent in order, and the first one not booked stops the
-    rest: the state they were emitted from is about to be put back — unless an
-    OPEN_GROUP of this tick was already booked, when nothing can be put back and
-    the rest are sent as usual.
+    signal). Signals are sent in order. Once one is not booked, the state they
+    were emitted from is about to be put back and the tick's later OPENs (and
+    other signals) are not sent — they come back with it; its later CLOSE_GROUPs
+    still are, since getting flat never waits and a close emitted again closes
+    nothing twice. When an OPEN_GROUP of this tick was already booked, nothing
+    can be put back and the rest are sent as usual.
     """
     before = copy.deepcopy(state)
     signals = evaluate(state) or []
     bookings: List[Booking] = []
+    restore = False
+    unsent = 0
 
-    for index, sig in enumerate(signals):
+    for sig in signals:
+        if restore and str(sig.signal_type or "").upper() != "CLOSE_GROUP":
+            unsent += 1
+            continue
         try:
             booking = post(sig)
         except Exception as ex:  # noqa: BLE001 — a signal that failed on the way is not booked
@@ -230,16 +267,25 @@ def run_tick(
         if booking.booked:
             continue
 
-        if not any(b.booked and b.opens for b in bookings):
-            return TickOutcome(before, signals, bookings, [booking], restored=True,
-                               unsent=len(signals) - index - 1)
+        if not restore and not any(b.booked and b.opens for b in bookings):
+            restore = True
 
-    return TickOutcome(state, signals, bookings, [b for b in bookings if not b.booked])
+    not_booked = [b for b in bookings if not b.booked]
+    if restore:
+        return TickOutcome(before, signals, bookings, not_booked, restored=True, unsent=unsent)
+    return TickOutcome(state, signals, bookings, not_booked)
 
 
 def report(outcome: TickOutcome, log: Callable[[str], None] = print) -> None:
-    """The lines a tick with a signal that was not booked leaves in the runner log."""
+    """
+    The lines a tick with a signal that was not booked leaves in the runner
+    log. An OPEN held after a refusal was announced when the hold began, so a
+    tick whose only miss is a held OPEN logs nothing: the hold is one line, not
+    one per tick.
+    """
     for failed in outcome.not_booked:
+        if failed.held:
+            continue
         if failed.refused:
             # The API's own reason, on the line the desk's log watcher reads.
             log(f"SIGNAL REFUSED by the API: {failed.detail}")
@@ -247,8 +293,12 @@ def report(outcome: TickOutcome, log: Callable[[str], None] = print) -> None:
         else:
             why = f"not booked: {failed.detail}" if failed.detail else "not booked"
         log(f"SIGNAL NOT BOOKED: {failed.describe()} — {why}.")
+        if failed.holds_opens_for:
+            log(f"OPEN held for {failed.holds_opens_for:.0f} s after refusal: {_reason(failed.detail)}")
 
     if not outcome.not_booked:
+        return
+    if outcome.restored and all(b.held for b in outcome.not_booked):
         return
 
     if outcome.restored:
@@ -262,6 +312,17 @@ def report(outcome: TickOutcome, log: Callable[[str], None] = print) -> None:
         log(f"  The strategy's state was NOT put back: {opened} was booked earlier in this tick, and putting "
             f"the state back would open it a second time. The strategy believes {missing} happened; "
             "the book does not.")
+
+
+def _reason(detail: str) -> str:
+    """The API's own sentence from a refusal body ({"error": ...} or {"message": ...}), else the body."""
+    try:
+        body = json.loads(detail)
+    except (TypeError, ValueError):
+        return detail
+    if isinstance(body, dict):
+        return str(body.get("error") or body.get("message") or detail)
+    return detail
 
 
 def _body(ex: requests.exceptions.HTTPError) -> str:

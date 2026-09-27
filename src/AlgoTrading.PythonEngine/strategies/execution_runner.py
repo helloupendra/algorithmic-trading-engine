@@ -80,7 +80,13 @@ from strategies.signal_utils import (  # noqa: F401
     signal_to_ui_payload,
     stamp_signal_metadata,
 )
-from strategies.signal_booking import Booking, SignalBooker, report as report_booking, run_tick
+from strategies.signal_booking import (
+    OPEN_REFUSAL_COOLDOWN_SECONDS as DEFAULT_OPEN_REFUSAL_COOLDOWN_SECONDS,
+    Booking,
+    SignalBooker,
+    report as report_booking,
+    run_tick,
+)
 from backtest.run_spec import parse_risk_rules
 
 import core.fyers_orders as fyers_orders
@@ -120,6 +126,11 @@ VERIFY_SSL = False
 # Total wait for ALL legs of one signal. It is time the strategy spends blind,
 # so it is bounded well under the feed watchdog's 90s stall threshold.
 SIGNAL_PRICE_WAIT_SECONDS = float(os.getenv("SIGNAL_PRICE_WAIT_SECONDS", DEFAULT_WAIT_SECONDS))
+
+# After the API refuses an OPEN_GROUP, how long the run's OPENs are held without
+# being posted (strategies/signal_booking.py). Closes are never held.
+OPEN_REFUSAL_COOLDOWN_SECONDS = float(os.getenv("OPEN_REFUSAL_COOLDOWN_SECONDS",
+                                                DEFAULT_OPEN_REFUSAL_COOLDOWN_SECONDS))
 
 
 def build_redis_client() -> redis.Redis:
@@ -922,8 +933,10 @@ if __name__ == "__main__":
         print_status_if_due()
         check_feed_if_due()
 
-    # Posts each signal with retries and a clientSignalId the API books once.
-    booker = SignalBooker(api, run_id, on_wait=housekeeping) if run_id else None
+    # Posts each signal with retries and a clientSignalId the API books once,
+    # and holds the run's OPENs for a while after one is refused.
+    booker = (SignalBooker(api, run_id, on_wait=housekeeping, open_cooldown_seconds=OPEN_REFUSAL_COOLDOWN_SECONDS)
+              if run_id else None)
 
     def evaluate_tick(tick_state: Dict[str, Any], inp: StrategyInput) -> List[StrategySignal]:
         """The strategy's on_bar for one tick, timed and printed."""
