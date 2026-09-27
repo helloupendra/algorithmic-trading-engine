@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Application.Providers;
 using AlgoTrading.Application.UseCases.Auth;
@@ -337,15 +338,15 @@ namespace AlgoTrading.Api.Controllers;
     /// <para>
     /// The engine genuinely needs them: the ingestor opens the FYERS websocket
     /// with the access token and signs in as the Service account to get it. So
-    /// the rule is by role, not by removing the field — Admin and Service see
-    /// the tokens, everyone else sees whether the broker is connected, which is
-    /// all any screen ever needed.
+    /// the rule is by role, not by removing the field — only Service sees the
+    /// tokens (<see cref="MayReadBrokerTokens"/>), everyone else sees whether
+    /// the broker is connected, which is all any screen ever needed.
     /// </para>
     /// </remarks>
     [HttpGet("session")]
     public async Task<IActionResult> GetSession(CancellationToken cancellationToken)
     {
-        bool mayReadTokens = User.IsInRole(UserRoles.Admin) || User.IsInRole(UserRoles.Service);
+        bool mayReadTokens = MayReadBrokerTokens(User);
 
         var session = await _brokerSessionStore.GetCurrentAsync(cancellationToken);
 
@@ -389,6 +390,20 @@ namespace AlgoTrading.Api.Controllers;
             refreshToken = session.RefreshToken
         });
     }
+
+    /// <summary>
+    /// Whether this caller may read the broker's access and refresh tokens: the
+    /// engine's Service account only.
+    /// </summary>
+    /// <remarks>
+    /// Admins could read them too until 28 Sep, and the console asks for the
+    /// session on ordinary pages, so the tokens reached the admin's browser —
+    /// and its cache, extensions and screenshots — though no screen ever used
+    /// them. Every engine caller signs in as Service (core/api_client.py,
+    /// build_session); the desk's scripts ask the admin session only whether
+    /// the broker is linked.
+    /// </remarks>
+    public static bool MayReadBrokerTokens(ClaimsPrincipal user) => user.IsInRole(UserRoles.Service);
 
     [HttpPost("logout")]
     public async Task<IActionResult> Logout(CancellationToken cancellationToken)
