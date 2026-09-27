@@ -136,7 +136,9 @@ public sealed class BacktestRunViewBuilder
                 CreatedUtc = run.CreatedUtc,
                 StartedUtc = run.StartedUtc,
                 CompletedUtc = run.CompletedUtc,
-                StartedBy = running?.StartedBy ?? (userNames.TryGetValue(run.UserId, out var name) ? name : null),
+                StartedBy = running?.StartedBy
+                            ?? (string.IsNullOrWhiteSpace(run.StartedByName) ? null : run.StartedByName)
+                            ?? (userNames.TryGetValue(run.UserId, out var name) ? name : null),
                 LastError = string.IsNullOrWhiteSpace(run.LastError) ? null : run.LastError
             });
         }
@@ -244,10 +246,13 @@ public sealed class BacktestRunViewBuilder
             CompletedUtc = run.CompletedUtc
         };
 
-        view.StartedBy = running?.StartedBy ?? await _dbContext.AppUsers.AsNoTracking()
-            .Where(x => x.Id == run.UserId)
-            .Select(x => x.UserName)
-            .FirstOrDefaultAsync(cancellationToken);
+        // The recorded starter; the owner only for rows from before 28 Sep.
+        view.StartedBy = running?.StartedBy
+                         ?? (string.IsNullOrWhiteSpace(run.StartedByName) ? null : run.StartedByName)
+                         ?? await _dbContext.AppUsers.AsNoTracking()
+                             .Where(x => x.Id == run.UserId)
+                             .Select(x => x.UserName)
+                             .FirstOrDefaultAsync(cancellationToken);
 
         // Positions: stored marks only (the runner's bar closes), never live quotes.
         var paperPositions = await _paperTrading.GetPaperPositionsAsync(run.Id, cancellationToken);

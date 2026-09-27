@@ -7,8 +7,9 @@ namespace AlgoTrading.Api.Services;
 /// Answers "is the process with this pid still OUR child from before the
 /// restart?" for the adoption paths. A bare pid check is not enough: pids are
 /// recycled, and killing whatever now owns a stale pid would be a disaster. On
-/// non-Windows hosts the command line (<c>ps -o command= -p pid</c>) must name
-/// the expected script (and, for runners, the exact <c>--run-id</c>).
+/// non-Windows hosts the command line (<c>/proc/pid/cmdline</c> on Linux,
+/// <c>ps -o command= -p pid</c> on macOS) must name the expected script (and,
+/// for runners, the exact <c>--run-id</c>).
 /// </summary>
 public static class ProcessProbe
 {
@@ -154,9 +155,16 @@ public static class ProcessProbe
         => ReadCommandLine(pid, logger) is { } commandLine && NamesAnyMarker(commandLine, markers);
 
     /// <summary>Full command line of the process on macOS/Linux, or null when it cannot be read.</summary>
+    /// <remarks>
+    /// On Linux it is read from /proc rather than by running <c>ps</c>: a
+    /// process spawned per probe is exactly what fails on a loaded box (26
+    /// runners, the CPU nearly saturated), and every such failure reads as
+    /// "cannot verify". macOS has no /proc, so it keeps <c>ps</c>.
+    /// </remarks>
     public static string? ReadCommandLine(int pid, ILogger logger)
     {
         if (OperatingSystem.IsWindows()) return null;
+        if (OperatingSystem.IsLinux()) return ReadProcCommandLine(pid, logger);
 
         try
         {
@@ -191,6 +199,32 @@ public static class ProcessProbe
             logger.LogDebug(ex, "ps failed for pid {Pid}.", pid);
             return null;
         }
+    }
+
+    private static string? ReadProcCommandLine(int pid, ILogger logger)
+    {
+        try
+        {
+            return ParseProcCommandLine(File.ReadAllBytes(
+                $"/proc/{pid.ToString(System.Globalization.CultureInfo.InvariantCulture)}/cmdline"));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Gone since the liveness check, or hidden (hidepid): not proof either way.
+            logger.LogDebug(ex, "Could not read /proc/{Pid}/cmdline.", pid);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The arguments in a /proc/&lt;pid&gt;/cmdline read — NUL-separated, usually
+    /// NUL-terminated — joined with spaces, as <c>ps</c> prints them. Null when
+    /// there are none: a zombie, or a kernel thread.
+    /// </summary>
+    public static string? ParseProcCommandLine(ReadOnlySpan<byte> raw)
+    {
+        var text = System.Text.Encoding.UTF8.GetString(raw).Replace('\0', ' ').Trim();
+        return text.Length == 0 ? null : text;
     }
 
     /// <summary>
@@ -241,4 +275,21 @@ public static class ProcessProbe
 
     private static string Truncate(string text)
         => text.Length <= 160 ? text : text[..160] + "…";
+}
+
+/// <summary>
+/// <see cref="ProcessProbe.Probe(int, string, long?, ILogger)"/> as a service,
+/// so the adoption paths can be tested with the one answer a real process
+/// cannot be made to give on cue: "could not verify".
+/// </summary>
+public interface IProcessProbe
+{
+    ProcessProbe.ProbeResult Probe(int pid, string marker, long? runId);
+}
+
+/// <inheritdoc cref="IProcessProbe"/>
+public sealed class SystemProcessProbe(ILogger<SystemProcessProbe> logger) : IProcessProbe
+{
+    public ProcessProbe.ProbeResult Probe(int pid, string marker, long? runId)
+        => ProcessProbe.Probe(pid, marker, runId, logger);
 }

@@ -22,6 +22,26 @@ namespace AlgoTrading.Domain.Entities
         public long UserId { get; set; }
 
         /// <summary>
+        /// Who started the run, which is not always whose it is: an admin may
+        /// start a run in a trader's account (the morning plan does, every
+        /// day). Null on rows from before 28 Sep 2026 and on rows nobody
+        /// started through a start endpoint.
+        /// </summary>
+        /// <remarks>
+        /// Kept on the row because the registry that held it is lost at every
+        /// API restart. Without it an adopted run fell back to the owner, and
+        /// on 24 Sep runs #234 and #235 changed from "started by admin" to
+        /// "started by coderforchange" at a restart.
+        /// </remarks>
+        public long? StartedByUserId { get; set; }
+
+        /// <summary>
+        /// The starter's user name at the time of the start; empty where
+        /// <see cref="StartedByUserId"/> is null.
+        /// </summary>
+        public string StartedByName { get; set; } = string.Empty;
+
+        /// <summary>
         /// The mode of operation: "LivePaper" or "OfflineReplay".
         /// </summary>
         public string Mode { get; set; } = string.Empty;

@@ -32,6 +32,12 @@ internal sealed class RunSharedState
     public DateTime? LastLogUtc;
     public string? LastStderrLine;
     public Task? ExitMonitor;
+
+    /// <summary>Reads the runner's log file into <see cref="Logs"/>; null when there is none to read.</summary>
+    public RunnerLogTail? OutputTail;
+
+    /// <summary>What the runner's EXIT line said, once it has been read.</summary>
+    public RunnerOutputLog.Exit? ExitLine;
 }
 
 /// <summary>
@@ -64,9 +70,18 @@ public sealed record RunningStrategy(
 
     /// <summary>
     /// True when the process was found alive after an API restart and taken
-    /// over by pid: no stdout/stderr pipes, so its output is not captured.
+    /// over by pid: it has no stdout/stderr pipes, so its output comes only
+    /// from <see cref="OutputLogPath"/>, and its exit code is not known.
     /// </summary>
     public bool Adopted { get; init; }
+
+    /// <summary>
+    /// The log the runner keeps of its own output (<see cref="RunnerOutputLog"/>).
+    /// When set, the console is read from this file for launched and adopted
+    /// runners alike and the pipes only feed the API's own log; when null (a
+    /// process that keeps no such file) the console is fed from the pipes.
+    /// </summary>
+    public string? OutputLogPath { get; init; }
 
     internal RunSharedState Shared { get; } = new();
 
@@ -164,15 +179,18 @@ public sealed record LastExit(
 public sealed class StrategyProcessRegistry
 {
     /// <summary>
-    /// Exits remembered per strategy, newest first. Five was one account's
-    /// three indices with room to spare; with the plan in two accounts a
-    /// strategy ends six runs at the close, and the oldest fell off the
-    /// Stopped list and out of "Realized today".
+    /// Exits remembered per strategy, account and underlying, newest first.
+    /// One strategy on one underlying in one account ends a run or two a day;
+    /// ten covers restarts with room to spare, and no other account's day
+    /// can use them up.
     /// </summary>
-    public const int ExitsPerStrategy = 20;
+    public const int ExitsPerAccountAndUnderlying = 10;
 
-    /// <summary>The single log line an adopted entry starts with.</summary>
-    public const string AdoptedLogLine = "adopted after API restart — output not captured";
+    /// <summary>How the console line an adopted entry adds begins.</summary>
+    public const string AdoptedLogLine = "adopted after API restart";
+
+    /// <summary>How often a runner's log file is read for new lines.</summary>
+    public static readonly TimeSpan OutputPollInterval = TimeSpan.FromSeconds(1);
 
     // Output of runs that already exited, so a run page can still show what the
     // runner printed. Bounded: the newest FinishedLogCapacity runs only. Both
@@ -183,7 +201,10 @@ public sealed class StrategyProcessRegistry
     private const int FinishedLogCapacity = 30;
 
     private readonly ConcurrentDictionary<long, RunningStrategy> _running = new();
-    private readonly ConcurrentDictionary<int, List<LastExit>> _lastExits = new();
+    /// <summary>Where an exit is kept: a strategy's runs in one account on one underlying.</summary>
+    private readonly record struct ExitKey(int StrategyId, long UserId, string Underlying);
+
+    private readonly ConcurrentDictionary<ExitKey, List<LastExit>> _lastExits = new();
     private readonly object _finishedLock = new();
     private readonly Dictionary<long, string[]> _finishedLogs = new();
     private readonly LinkedList<long> _finishedOrder = new();
@@ -197,11 +218,13 @@ public sealed class StrategyProcessRegistry
     }
 
     /// <summary>
-    /// Serializes start attempts so two overlapping POSTs cannot both spawn a
-    /// process for the same strategy + underlying (the second would be untracked)
-    /// or overrun the concurrency cap.
+    /// One start at a time, from its duplicate and capacity checks to the
+    /// registered runner, so two overlapping POSTs cannot both pass the checks
+    /// and both launch. A semaphore rather than <c>lock</c>: the steps in
+    /// between await the database (the open-row check, the run row's insert),
+    /// and a lock cannot be held across an await.
     /// </summary>
-    public object StartLock { get; } = new();
+    public SemaphoreSlim StartGate { get; } = new(1, 1);
 
     public int Count => _running.Count;
 
@@ -209,9 +232,10 @@ public sealed class StrategyProcessRegistry
 
     /// <summary>
     /// Registers a freshly started process: wires stdout/stderr draining (the
-    /// pipes MUST be read or the Python process blocks on its next print) and an
-    /// exit monitor that records "Runner exited" when the process dies on its own.
-    /// An adopted entry has no pipes; it only gets the exit monitor.
+    /// pipes MUST be read or the Python process blocks on its next print), the
+    /// reading of its log file into the console, and an exit monitor that
+    /// records "Runner exited" when the process dies on its own. An adopted
+    /// entry has no pipes; its console comes from the log file alone.
     /// </summary>
     public bool TryAdd(RunningStrategy entry)
     {
@@ -234,30 +258,43 @@ public sealed class StrategyProcessRegistry
             _logger.LogWarning(ex, "Could not read process id for strategy {StrategyId} run {RunId}.", entry.StrategyId, entry.RunId);
         }
 
+        // The runner's own log is the console's one source when there is one:
+        // the same lines, on the runner's own clock, before and after an API
+        // restart. Seeded now so an adopted runner's morning comes first.
+        var tail = entry.OutputLogPath is { } logPath
+            ? new RunnerLogTail(logPath, line => OnRunnerLine(entry, line))
+            : null;
+        entry.Shared.OutputTail = tail;
+        tail?.Poll();
+
         if (entry.Adopted)
         {
-            Append(entry, $"{DateTime.UtcNow:HH:mm:ss} | {AdoptedLogLine} (pid {entry.ProcessId}, run {entry.RunId}, {entry.Underlying} x{entry.Lots})");
+            Append(entry, $"{DateTime.UtcNow:HH:mm:ss} | {AdoptedLogLine} (pid {entry.ProcessId}, run {entry.RunId}, {entry.Underlying} x{entry.Lots}) — "
+                          + (tail is null ? "output not captured" : $"output continues from {Path.GetFileName(tail.Path)}"));
             if (entry.Risk.HasAnyTrailingRule)
             {
                 // The peaks lived in the previous API process; this entry starts
                 // with none, so say so rather than let the trail look continuous.
                 Append(entry, $"{DateTime.UtcNow:HH:mm:ss} | trailing stops re-arm from the current P&L (peaks were lost with the API restart)");
             }
+            tail?.Start(OutputPollInterval);
             entry.ExitMonitor = Task.Run(() => MonitorExitAsync(entry));
             return true;
         }
 
+        // The pipes still feed the API's own log (the Sentinel reads it), and
+        // the console only when the runner keeps no file of its own.
         process.OutputDataReceived += (_, e) =>
         {
             if (e.Data is null) return;
-            Append(entry, $"{DateTime.UtcNow:HH:mm:ss} | {e.Data}");
+            if (tail is null) Append(entry, $"{DateTime.UtcNow:HH:mm:ss} | {e.Data}");
             _logger.LogInformation("[strategy:{Name}:{Underlying}] {Line}", entry.Name, entry.Underlying, e.Data);
         };
         process.ErrorDataReceived += (_, e) =>
         {
             if (e.Data is null) return;
             entry.LastStderrLine = e.Data;
-            Append(entry, $"{DateTime.UtcNow:HH:mm:ss} ! {e.Data}");
+            if (tail is null) Append(entry, $"{DateTime.UtcNow:HH:mm:ss} ! {e.Data}");
             _logger.LogWarning("[strategy:{Name}:{Underlying}:err] {Line}", entry.Name, entry.Underlying, e.Data);
         };
 
@@ -273,8 +310,23 @@ public sealed class StrategyProcessRegistry
 
         Append(entry, $"{DateTime.UtcNow:HH:mm:ss} | runner started (pid {entry.ProcessId}, run {entry.RunId}, {entry.Underlying} x{entry.Lots}, {entry.Risk.Describe()})");
 
+        tail?.Start(OutputPollInterval);
         entry.ExitMonitor = Task.Run(() => MonitorExitAsync(entry));
         return true;
+    }
+
+    /// <summary>One line of the runner's log file, into its console.</summary>
+    private static void OnRunnerLine(RunningStrategy entry, RunnerOutputLog.Line line)
+    {
+        Append(entry, RunnerOutputLog.ToConsole(line, DateTime.UtcNow));
+        if (line.IsStderr)
+        {
+            entry.LastStderrLine = line.Text;
+        }
+        if (RunnerOutputLog.ParseExit(line.Text) is { } exit)
+        {
+            Volatile.Write(ref entry.Shared.ExitLine, exit);
+        }
     }
 
     public RunningStrategy? Get(long runId)
@@ -358,6 +410,9 @@ public sealed class StrategyProcessRegistry
             return false;
         }
 
+        // One last read, so the snapshot ends with the runner's own last lines.
+        entry.Shared.OutputTail?.Stop();
+
         string[] snapshot;
         lock (entry.LogLock)
         {
@@ -393,11 +448,18 @@ public sealed class StrategyProcessRegistry
     }
 
     /// <summary>
-    /// Snapshots the running entry as one of its strategy's recent exits
-    /// (newest first, at most <see cref="ExitsPerStrategy"/>). A second record
+    /// Snapshots the running entry as one of its recent exits. A second record
     /// for the same run replaces the first. The rules recorded are the run's
     /// CURRENT ones (the caller may hold a copy from before a risk update).
     /// </summary>
+    /// <remarks>
+    /// Kept per strategy, account and underlying, at most
+    /// <see cref="ExitsPerAccountAndUnderlying"/> each, so one account's busy
+    /// day can never push another account's exits out. Until 28 Sep they were
+    /// kept per strategy, five of them, against six runs a day; on 25 Sep
+    /// admin's exits 249, 252, 255 and 258 fell off, and "Realized today" was
+    /// ₹1,176 short.
+    /// </remarks>
     public void RecordExit(RunningStrategy entry, string reason)
     {
         var current = Get(entry.RunId) ?? entry;
@@ -407,39 +469,47 @@ public sealed class StrategyProcessRegistry
             entry.Underlying, entry.SpotSymbol, entry.Lots, current.StopLoss, current.Target,
             entry.StartedBy, entry.StartedUtc, current.Risk, entry.UserId);
 
-        var exits = _lastExits.GetOrAdd(entry.StrategyId, _ => new List<LastExit>());
+        var key = new ExitKey(entry.StrategyId, entry.UserId, entry.Underlying.ToUpperInvariant());
+        var exits = _lastExits.GetOrAdd(key, _ => new List<LastExit>());
         lock (exits)
         {
             exits.RemoveAll(x => x.RunId == entry.RunId);
             exits.Insert(0, exit);
-            if (exits.Count > ExitsPerStrategy)
+            if (exits.Count > ExitsPerAccountAndUnderlying)
             {
-                exits.RemoveRange(ExitsPerStrategy, exits.Count - ExitsPerStrategy);
+                exits.RemoveRange(ExitsPerAccountAndUnderlying, exits.Count - ExitsPerAccountAndUnderlying);
             }
         }
     }
 
-    /// <summary>Recent exits of the strategy, newest first.</summary>
-    public IReadOnlyList<LastExit> GetLastExits(int strategyId)
+    /// <summary>
+    /// Recent exits of the strategy, newest first — every account's, or only
+    /// <paramref name="ownerUserId"/>'s. A trader's view must pass their id:
+    /// another account's exits carry its run ids, underlyings and stop reasons.
+    /// </summary>
+    public IReadOnlyList<LastExit> GetLastExits(int strategyId, long? ownerUserId = null)
     {
-        if (!_lastExits.TryGetValue(strategyId, out var exits)) return Array.Empty<LastExit>();
-
-        lock (exits)
+        var found = new List<LastExit>();
+        foreach (var (key, exits) in _lastExits)
         {
-            return exits.ToList();
+            if (key.StrategyId != strategyId) continue;
+            if (ownerUserId is long owner && key.UserId != owner) continue;
+
+            lock (exits)
+            {
+                found.AddRange(exits);
+            }
         }
+
+        return found
+            .OrderByDescending(x => x.AtUtc)
+            .ThenByDescending(x => x.RunId)
+            .ToList();
     }
 
-    /// <summary>The newest exit of the strategy, if any.</summary>
-    public LastExit? GetLastExit(int strategyId)
-    {
-        if (!_lastExits.TryGetValue(strategyId, out var exits)) return null;
-
-        lock (exits)
-        {
-            return exits.Count > 0 ? exits[0] : null;
-        }
-    }
+    /// <summary>The newest exit of the strategy (of one account's runs, when given), if any.</summary>
+    public LastExit? GetLastExit(int strategyId, long? ownerUserId = null)
+        => GetLastExits(strategyId, ownerUserId).FirstOrDefault();
 
     /// <summary>The remembered exit of one run, if it is still kept.</summary>
     public LastExit? GetExitByRun(long runId)
@@ -453,26 +523,6 @@ public sealed class StrategyProcessRegistry
             }
         }
         return null;
-    }
-
-    /// <summary>
-    /// Forgets the exit of one run (<paramref name="runId"/> given) or every
-    /// remembered exit of the strategy (null).
-    /// </summary>
-    public void ClearLastExit(int strategyId, long? runId = null)
-    {
-        if (runId is null)
-        {
-            _lastExits.TryRemove(strategyId, out _);
-            return;
-        }
-
-        if (!_lastExits.TryGetValue(strategyId, out var exits)) return;
-
-        lock (exits)
-        {
-            exits.RemoveAll(x => x.RunId == runId.Value);
-        }
     }
 
     public void AppendLog(long runId, string line)
@@ -576,9 +626,24 @@ public sealed class StrategyProcessRegistry
             }
         }
 
-        Append(entry, exitCodeKnown
-            ? $"{DateTime.UtcNow:HH:mm:ss} | runner exited with code {exitCode}"
-            : $"{DateTime.UtcNow:HH:mm:ss} | runner exited (exit code unknown)");
+        // The runner has written its last line (the EXIT line among them):
+        // read it before deciding what to say about the exit.
+        entry.Shared.OutputTail?.Stop();
+
+        // An adopted runner is not our child, so the OS keeps its exit code
+        // from us; its EXIT line says what it was, and why.
+        var exitLine = Volatile.Read(ref entry.Shared.ExitLine);
+        if (!exitCodeKnown && exitLine is not null)
+        {
+            exitCode = exitLine.Code;
+        }
+        bool codeKnown = exitCodeKnown || exitLine is not null;
+
+        Append(entry, !codeKnown
+            ? $"{DateTime.UtcNow:HH:mm:ss} | runner exited (exit code unknown)"
+            : exitCodeKnown
+                ? $"{DateTime.UtcNow:HH:mm:ss} | runner exited with code {exitCode}"
+                : $"{DateTime.UtcNow:HH:mm:ss} | runner exited with code {exitCode} (from its EXIT line)");
 
         // A deliberate stop (StrategyRunControl) owns the bookkeeping and disposes
         // the process once it is done with it; the monitor only reports the exit.
@@ -587,14 +652,14 @@ public sealed class StrategyProcessRegistry
             return;
         }
 
-        var reason = exitCodeKnown
+        var reason = codeKnown
             ? $"Runner exited (code {exitCode})"
             : entry.Adopted
                 ? "Runner exited (adopted after API restart; exit code unknown)"
                 : "Runner exited (exit code unknown)";
-        if (exitCodeKnown && exitCode != 0 && !string.IsNullOrWhiteSpace(entry.LastStderrLine))
+        if (codeKnown && exitCode != 0 && ExitCause(entry, exitCodeKnown ? null : exitLine) is { } cause)
         {
-            reason += $": {entry.LastStderrLine.Trim()}";
+            reason += $": {cause}";
         }
 
         _logger.LogWarning("Strategy {StrategyId} ({Name}) run {RunId} on {Underlying} exited on its own: {Reason}",
@@ -607,7 +672,7 @@ public sealed class StrategyProcessRegistry
         {
             using var scope = _scopeFactory.CreateScope();
             var control = scope.ServiceProvider.GetRequiredService<StrategyRunControl>();
-            await control.HandleRunnerExitAsync(entry, reason, exitCodeKnown && exitCode == 0 ? null : reason);
+            await control.HandleRunnerExitAsync(entry, reason, codeKnown && exitCode == 0 ? null : reason);
         }
         catch (Exception ex)
         {
@@ -619,5 +684,21 @@ public sealed class StrategyProcessRegistry
             entry.StopCompletion.TrySetResult(0);
             try { process.Dispose(); } catch { /* already gone */ }
         }
+    }
+
+    /// <summary>
+    /// Why a runner ended with a non-zero code, in a few words: its last
+    /// stderr line, as always. From an EXIT line, "uncaught KeyError: 'ltp'"
+    /// says it outright; "sys.exit(2)" says only that the runner chose to stop,
+    /// and the stderr line before it says why.
+    /// </summary>
+    private static string? ExitCause(RunningStrategy entry, RunnerOutputLog.Exit? exitLine)
+    {
+        var stderr = string.IsNullOrWhiteSpace(entry.LastStderrLine) ? null : entry.LastStderrLine.Trim();
+        if (exitLine is null) return stderr;
+
+        return exitLine.Reason.StartsWith("sys.exit(", StringComparison.Ordinal)
+            ? stderr ?? exitLine.Reason
+            : exitLine.Reason;
     }
 }

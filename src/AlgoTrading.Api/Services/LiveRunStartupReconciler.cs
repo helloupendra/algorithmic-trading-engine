@@ -9,7 +9,9 @@ namespace AlgoTrading.Api.Services;
 /// execution_runner for that run) is ADOPTED — its card returns, the risk
 /// guard watches it again and Stop works; a dead one is closed as Stopped
 /// ("API restarted; runner not found") with its positions squared off at the
-/// last mark, exactly like the backtest reconciler.
+/// last mark, exactly like the backtest reconciler. One whose pid is alive but
+/// cannot be verified is left open and reported (see
+/// <see cref="StrategyRunControl.ReconcileOrphanedRunsAsync"/>).
 /// </summary>
 public sealed class LiveRunStartupReconciler : IHostedService
 {
@@ -36,6 +38,10 @@ public sealed class LiveRunStartupReconciler : IHostedService
             if (result.Closed > 0)
             {
                 _logger.LogWarning("Closed {Count} orphaned live strategy run(s) left Running by a previous API process.", result.Closed);
+            }
+            if (result.Unverified > 0)
+            {
+                _logger.LogError("Left {Count} live strategy run(s) open without a runner: their pids are alive but could not be verified.", result.Unverified);
             }
         }
         catch (Exception ex)

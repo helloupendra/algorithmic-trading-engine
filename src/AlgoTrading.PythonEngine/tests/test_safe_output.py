@@ -7,15 +7,28 @@ error logging fail.
 
 import io
 import os
+import re
+import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
-from typing import List
+from typing import List, Tuple
 
 import _bootstrap  # noqa: F401
 
 from core.heartbeat import run_forever
-from core.safe_output import SafeStream, default_log_path, install_safe_stdio, is_installed
+from core.safe_output import (
+    LineLog,
+    SafeStream,
+    default_log_path,
+    install_safe_stdio,
+    is_installed,
+    log_name_for_run,
+)
+
+#: "2026-09-28T03:45:01.123Z | text" — a stamped line of a runner's log.
+STAMPED = re.compile(r"^(?P<at>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z) (?P<stream>[|!]) (?P<text>.*)$")
 
 
 class BrokenStream(io.StringIO):
@@ -215,6 +228,171 @@ class InstallSafeStdioTests(unittest.TestCase):
         self.assertTrue(path.endswith(f"runner-12-{os.getpid()}.log"))
         self.assertIn(os.path.join("logs", "engine"), path)
         self.assertTrue(default_log_path("a b/c").endswith(f"a-b-c-{os.getpid()}.log"))
+
+
+def stamped(path: str) -> List[Tuple[str, str]]:
+    """(stream, text) of every line of a runner's log; fails on a line that is not stamped."""
+    lines = []
+    for raw in read(path).splitlines():
+        match = STAMPED.match(raw)
+        if match is None:
+            raise AssertionError(f"not a stamped line: {raw!r}")
+        lines.append((match["stream"], match["text"]))
+    return lines
+
+
+class RunnerLogTests(unittest.TestCase):
+    """A runner's log from its first line: every line stamped, the pipe or not."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.tmp.name, "engine", "runner-215-4242.log")
+        self.log = LineLog(self.path)
+
+    def tearDown(self) -> None:
+        self.log.close()
+        self.tmp.cleanup()
+
+    def test_every_line_is_stamped_with_its_time_and_stream_while_the_pipe_still_gets_it_plain(self) -> None:
+        out, err = BrokenStream(), BrokenStream()
+        stdout = SafeStream(out, None, tee=self.log, marker="|")
+        stderr = SafeStream(err, None, tee=self.log, marker="!")
+
+        # print() writes the text and the newline separately; a line is one line.
+        print("[CONFIG] strategy=Fulcrum", file=stdout)
+        stdout.write("[STATUS] NIFTY ")
+        stdout.write("spot=25010\n[STATUS] second\n")
+        print("SIGNAL REFUSED by the API", file=stderr)
+
+        self.assertEqual(
+            [("|", "[CONFIG] strategy=Fulcrum"), ("|", "[STATUS] NIFTY spot=25010"),
+             ("|", "[STATUS] second"), ("!", "SIGNAL REFUSED by the API")],
+            stamped(self.path))
+        self.assertEqual("[CONFIG] strategy=Fulcrum\n[STATUS] NIFTY spot=25010\n[STATUS] second\n", out.getvalue())
+        self.assertEqual("SIGNAL REFUSED by the API\n", err.getvalue())
+
+    def test_the_log_carries_on_when_the_pipe_breaks_and_nothing_is_written_twice(self) -> None:
+        out = BrokenStream()
+        stdout = SafeStream(out, None, label="sys.stdout", tee=self.log, marker="|")
+        print("before the restart", file=stdout)
+        out.broken = True                                   # the API went away
+        print("after the restart", file=stdout)
+        print("and later", file=stdout)
+
+        lines = stamped(self.path)
+        self.assertEqual(("|", "before the restart"), lines[0])
+        self.assertEqual("!", lines[1][0])
+        self.assertIn("sys.stdout lost (BrokenPipeError", lines[1][1])
+        self.assertEqual([("|", "after the restart"), ("|", "and later")], lines[2:])
+
+    def test_an_unfinished_line_is_written_as_it_stands_when_asked(self) -> None:
+        self.log.write("|", "half a line")
+        self.assertFalse(os.path.exists(self.path))
+        self.log.flush_pending()
+        self.assertEqual([("|", "half a line")], stamped(self.path))
+
+    def test_a_line_that_never_ends_is_not_held_forever(self) -> None:
+        self.log.write("|", "x" * (LineLog.MAX_PENDING + 1))
+        [(stream, text)] = stamped(self.path)
+        self.assertEqual(LineLog.MAX_PENDING + 1, len(text))
+
+    def test_the_run_id_is_read_from_the_command_line(self) -> None:
+        self.assertEqual("runner-215", log_name_for_run("runner", ["execution_runner.py", "--strategy", "Fulcrum",
+                                                                  "--run-id", "215", "--underlying", "NIFTY"]))
+        self.assertEqual("runner-9", log_name_for_run("runner", ["execution_runner.py", "--run-id=9"]))
+        self.assertEqual("runner", log_name_for_run("runner", ["execution_runner.py", "--strategy", "Fulcrum"]))
+        self.assertEqual("runner", log_name_for_run("runner", ["execution_runner.py", "--run-id", "abc"]))
+
+
+class InstallWithTeeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.saved = (sys.stdout, sys.stderr)
+
+    def tearDown(self) -> None:
+        for stream in (sys.stdout, sys.stderr):
+            if isinstance(stream, SafeStream):
+                stream.close()
+        sys.stdout, sys.stderr = self.saved
+        self.tmp.cleanup()
+
+    def test_both_streams_share_one_log_in_the_order_written(self) -> None:
+        sys.stdout, sys.stderr = io.StringIO(), io.StringIO()
+        path = os.path.join(self.tmp.name, "runner-215-1.log")
+        install_safe_stdio(path, tee=True)
+
+        print("[CONFIG] run 215")
+        print("WARN: could not read the lot size", file=sys.stderr)
+        print("[STATUS] NIFTY spot=25010")
+
+        self.assertEqual([("|", "[CONFIG] run 215"), ("!", "WARN: could not read the lot size"),
+                          ("|", "[STATUS] NIFTY spot=25010")], stamped(path))
+
+
+class ExitLineTests(unittest.TestCase):
+    """
+    The last line of a runner's log says how it ended. It is written from
+    atexit, which only a real interpreter exit runs, so each case is its own
+    Python process.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.tmp.name, "runner-215-1.log")
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def run_script(self, body: str) -> Tuple[int, List[Tuple[str, str]]]:
+        script = textwrap.dedent(f"""\
+            import sys
+            sys.path.insert(0, {_bootstrap.ENGINE_DIR!r})
+            from core.safe_output import install_exit_line, install_safe_stdio, note_exit
+            install_safe_stdio({self.path!r}, tee=True)
+            install_exit_line()
+        """) + textwrap.dedent(body)
+        done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=60)
+        return done.returncode, stamped(self.path)
+
+    def test_a_script_that_runs_to_its_end(self) -> None:
+        code, lines = self.run_script("print('working')\n")
+        self.assertEqual(0, code)
+        self.assertEqual([("|", "working"), ("|", "EXIT code=0 reason=finished")], lines)
+
+    def test_sys_exit_with_a_code(self) -> None:
+        code, lines = self.run_script("""\
+            print('No option contracts loaded for NIFTY', file=sys.stderr)
+            sys.exit(2)
+        """)
+        self.assertEqual(2, code)
+        self.assertEqual([("!", "No option contracts loaded for NIFTY"), ("|", "EXIT code=2 reason=sys.exit(2)")], lines)
+
+    def test_an_uncaught_exception(self) -> None:
+        code, lines = self.run_script("raise KeyError('ltp')\n")
+        self.assertEqual(1, code)
+        self.assertIn(("!", "Traceback (most recent call last):"), lines)
+        self.assertEqual(("!", "KeyError: 'ltp'"), lines[-2])
+        self.assertEqual(("|", "EXIT code=1 reason=uncaught KeyError: 'ltp'"), lines[-1])
+
+    @unittest.skipIf(sys.platform == "win32", "no SIGTERM handler to run on Windows")
+    def test_a_signal_the_runner_turns_into_an_exit(self) -> None:
+        # The runner's own handler: note the signal, then leave through SystemExit.
+        code, lines = self.run_script("""\
+            import os, signal, time
+            def stop(signum, frame):
+                note_exit(0, f"signal {signal.Signals(signum).name}")
+                raise SystemExit(0)
+            signal.signal(signal.SIGTERM, stop)
+            print('[RUNNER] waiting for ticks', flush=True)
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(10)
+        """)
+        self.assertEqual(0, code)
+        self.assertEqual(("|", "EXIT code=0 reason=signal SIGTERM"), lines[-1])
+
+    def test_the_exit_line_comes_after_a_half_written_line(self) -> None:
+        code, lines = self.run_script("sys.stdout.write('no newline yet')\n")
+        self.assertEqual([("|", "no newline yet"), ("|", "EXIT code=0 reason=finished")], lines)
 
 
 class NeverDyingLoopTests(unittest.TestCase):
