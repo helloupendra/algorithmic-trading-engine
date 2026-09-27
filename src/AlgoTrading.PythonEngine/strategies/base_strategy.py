@@ -205,6 +205,25 @@ class BaseStrategy:
         """
         return {}
 
+    def state_to_json(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        The state in plain JSON values, for the live runner's saved copy.
+
+        The default is the state itself: numbers, strings, lists and dicts need
+        nothing. A strategy that keeps an object in its state overrides this and
+        `state_from_json`. Saved as it was, the object is written as its text
+        and the run's saved state cannot be recovered (SmcStructureBreak's
+        structure reader, until 28 Sep).
+        """
+        return state
+
+    def state_from_json(self, data: Any) -> Optional[Dict[str, Any]]:
+        """
+        The state back from its saved copy, or None when the copy cannot be
+        trusted — the runner then starts fresh and warms up instead.
+        """
+        return data if isinstance(data, dict) else None
+
     #: How many bars of the run's resolution the strategy needs before its
     #: first real evaluation; the backtest sizes its warm-up window from it.
     #: None keeps the default window (15 calendar days).

@@ -6,6 +6,7 @@ The candles are the schematic from tests/test_market_structure.py, so the
 structure behind every signal here is the one that test pins.
 """
 
+import json
 import unittest
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
@@ -15,7 +16,7 @@ import _bootstrap  # noqa: F401
 from strategies.base_strategy import OptionContract, StrategyInput
 from strategies.directional.smc_structure_break import SmcStructureBreakStrategy
 from strategies.ghost_tangent_crossings import GhostTangentCrossingsStrategy
-from strategies.market_structure import BOS, Bar, stamp_key
+from strategies.market_structure import BOS, Bar, MarketStructure, stamp_key
 from test_market_structure import bars, schematic
 
 UNDERLYING = "NIFTY"
@@ -33,17 +34,25 @@ class Frame:
         self.open, self.high, self.low, self.close = bar.open, bar.high, bar.low, bar.close
 
 
+def saved_and_reloaded(strategy: Any, state: Dict[str, Any]) -> Dict[str, Any]:
+    """The state as a live runner saves it to Redis and a restarted one reads it back."""
+    return strategy.state_from_json(json.loads(json.dumps(strategy.state_to_json(state))))
+
+
 def run(strategy: SmcStructureBreakStrategy, bars=None, mode="OfflineReplay",
-        open_groups_from=None) -> List[Dict[str, Any]]:
+        open_groups_from=None, reload_at=None) -> List[Dict[str, Any]]:
     """
     Steps the strategy through the candles one at a time, as the engine does,
-    and returns every signal with the index of the candle it fired on.
+    and returns every signal with the index of the candle it fired on. With
+    ``reload_at``, the state goes through a save and a reload before that step.
     """
     frames = [Frame(b) for b in (bars or schematic())]
     state = strategy.initialize_state()
     fired: List[Dict[str, Any]] = []
     open_groups: List[str] = []
     for i in range(1, len(frames) + 1):
+        if i == reload_at:
+            state = saved_and_reloaded(strategy, state)
         visible = frames[:i]
         metadata: Dict[str, Any] = {"source": "backtest", "resolution": "5m"}
         if open_groups_from is not None:
@@ -478,6 +487,66 @@ class UnreadableTimeTests(unittest.TestCase):
 
         self.assertEqual(state["smc_fed"], 0)
         self.assertEqual(state["smc"].bars, [])
+
+
+class SavedStateTests(unittest.TestCase):
+    """
+    A live runner saves the strategy's state to Redis as JSON. Until 28 Sep the
+    structure reader went in as its repr and came back a string, and every tick
+    after a reload raised AttributeError.
+    """
+
+    def test_state_round_trip_through_json(self):
+        # A restart before the entry, between the entry and the exit, and after
+        # both: the reloaded strategy trades exactly as the one that never stopped.
+        straight = run(SmcStructureBreakStrategy())
+        self.assertTrue(straight)
+        for reload_at in (5, 12, 20, 24):
+            with self.subTest(reload_at=reload_at):
+                self.assertEqual(run(SmcStructureBreakStrategy(), reload_at=reload_at), straight)
+
+    def test_the_saved_state_is_plain_json_and_reads_back_the_same_structure(self):
+        strategy = SmcStructureBreakStrategy({"bias": "with", "inducement": "first"})
+        state = strategy.initialize_state()
+        for i in range(1, 16):
+            frames = [Frame(b) for b in schematic()[:i]]
+            strategy.on_bar(state, StrategyInput(
+                mode="OfflineReplay", timestamp_utc=frames[-1].timestamp_utc, underlying=UNDERLYING,
+                spot_price=frames[-1].close, atm_strike=25000, strike_step=50, lot_size=75,
+                contracts={"atm_ce": CE, "atm_pe": PE}, bars={"5m": {"index": frames}, "1D": {"index": frames}},
+                metadata={"source": "backtest", "resolution": "5m"}))
+
+        text = json.dumps(strategy.state_to_json(state))    # no default=: nothing may need one
+        back = strategy.state_from_json(json.loads(text))
+
+        for key in ("reader", "bias"):
+            self.assertIsInstance(back[key], MarketStructure)
+            self.assertEqual(back[key].inducement_mode, "first")
+            self.assertEqual(back[key].bars, state[key].bars)
+            self.assertEqual(back[key].swings, state[key].swings)
+            self.assertEqual(back[key].events, state[key].events)
+            self.assertEqual(back[key].describe(), state[key].describe())
+        self.assertIsInstance(state["reader"], MarketStructure, "saving leaves the live state alone")
+
+    def test_a_reader_saved_as_text_is_not_a_state_to_go_on_from(self):
+        strategy = SmcStructureBreakStrategy()
+        before_the_fix = json.loads(json.dumps(strategy.initialize_state(), default=str))
+
+        self.assertIsInstance(before_the_fix["reader"], str)
+        self.assertIsNone(strategy.state_from_json(before_the_fix))
+
+    def test_ghosts_structure_filter_survives_a_save_and_reload(self):
+        strategy = GhostTangentCrossingsStrategy({"smc_filter": "with"})
+        state = strategy.initialize_state()
+        frames = [Frame(b) for b in schematic()]
+        strategy._read_structure(state, frames, "OfflineReplay")
+
+        back = saved_and_reloaded(strategy, state)
+
+        self.assertIsInstance(back["smc"], MarketStructure)
+        self.assertEqual(back["smc"].describe(), state["smc"].describe())
+        self.assertEqual(back["smc_seen"], state["smc_seen"])
+        self.assertIsNone(strategy.state_from_json(json.loads(json.dumps(strategy.initialize_state(), default=str))))
 
 
 if __name__ == "__main__":

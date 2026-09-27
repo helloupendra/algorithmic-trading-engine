@@ -51,4 +51,17 @@ public class StrategyRunnerOptions
     /// against its stop-loss / target.
     /// </summary>
     public int RiskGuardIntervalSeconds { get; set; } = 3;
+
+    /// <summary>
+    /// The oldest mark, in seconds, the risk guard judges a leg or a group on.
+    /// A position marked from an older quote is skipped by the leg and group
+    /// rules until its quote moves again, and the run's owner is told once.
+    /// </summary>
+    /// <remarks>
+    /// On 24 Sep the feed stalled from 11:27:36 to 11:34:06 and the guard went
+    /// on evaluating leg targets for runs 205, 206, 207, 234 and 235 against
+    /// prices that had stopped moving: a target "hit" on a frozen price closes
+    /// a leg at a price the market is no longer at.
+    /// </remarks>
+    public int RiskGuardMaxMarkAgeSeconds { get; set; } = 30;
 }

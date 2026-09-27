@@ -55,6 +55,11 @@ class QuoteFreshnessTests(unittest.TestCase):
         """LiveQuotesLatest is never purged — Friday's close must not price Monday."""
         self.assertIsNone(usable_quote(fresh(41.5, seconds_old=3 * 86400), NOW))
 
+    def test_a_quote_frozen_by_a_stalled_feed_is_refused_after_a_minute(self):
+        """24 Sep: the feed stalled for six and a half minutes and every quote froze."""
+        self.assertEqual(usable_quote(fresh(41.5, seconds_old=59), NOW), 41.5)
+        self.assertIsNone(usable_quote(fresh(41.5, seconds_old=61), NOW))
+
     def test_a_zero_or_negative_quote_is_refused(self):
         self.assertIsNone(usable_quote(fresh(0), NOW))
         self.assertIsNone(usable_quote(fresh(-3), NOW))
