@@ -35,9 +35,10 @@ public sealed record LiveRunHistoryFilter(
 /// Shapes the per-user history of LivePaper runs: the list rows (one grouped
 /// query over paper positions per page of runs, one query for the RUN_STOPPED
 /// reasons, user names from AppUsers) and the per-user rollup. Active runs
-/// take isActive and their unrealized P&amp;L from the registry plus the same
-/// mark-to-market the live view uses (latest live quote, stored mark as the
-/// fallback). Nothing here writes: the history is read-only by design.
+/// take isActive from the registry (an open manual book from its own status)
+/// and their unrealized P&amp;L from <see cref="RunPnl"/>, the mark-to-market
+/// the live view and the minute recorder use (latest live quote, stored mark
+/// as the fallback). Nothing here writes: the history is read-only by design.
 /// </summary>
 public sealed class LiveRunHistoryBuilder
 {
@@ -75,19 +76,22 @@ public sealed class LiveRunHistoryBuilder
     private readonly StrategyCatalogService _catalog;
     private readonly ILotSizeResolver _lotSizeResolver;
     private readonly RunCharges _charges;
+    private readonly RunPnl _pnl;
 
     public LiveRunHistoryBuilder(
         TradingDbContext dbContext,
         StrategyProcessRegistry registry,
         StrategyCatalogService catalog,
         ILotSizeResolver lotSizeResolver,
-        RunCharges charges)
+        RunCharges charges,
+        RunPnl pnl)
     {
         _dbContext = dbContext;
         _registry = registry;
         _catalog = catalog;
         _lotSizeResolver = lotSizeResolver;
         _charges = charges;
+        _pnl = pnl;
     }
 
     // ------------------------------------------------------------------
@@ -231,8 +235,12 @@ public sealed class LiveRunHistoryBuilder
             .Select(u => new { u.Id, u.UserName })
             .ToDictionaryAsync(u => u.Id, u => u.UserName, cancellationToken);
 
-        var activeRunIds = runIds.Where(_registry.Contains).ToList();
-        var liveMarks = await MarkActiveRunsAsync(activeRunIds, cancellationToken);
+        // The open book of every active run is marked at the latest quote: a
+        // runner's, and an open manual book's, which has no runner by design
+        // (see isActive below). The book used to be left at its stored mark
+        // here while its own page marked it live, so the two read differently.
+        var activeRunIds = runs.Where(r => _registry.Contains(r.Id) || IsOpenManualBook(r)).Select(r => r.Id).ToList();
+        var liveMarks = await _pnl.MarkOpenLegsAsync(activeRunIds, cancellationToken);
 
         var lotSizeByUnderlying = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var chargesByRun = await _charges.ForRunsAsync(runIds, cancellationToken);
@@ -263,9 +271,7 @@ public sealed class LiveRunHistoryBuilder
             // placed by hand — so asking the registry about it always answers
             // "not running", and the console painted an open book, with open
             // positions in it, as Stopped. Its own status is the truth there.
-            bool isActive = running is not null
-                || (run.StrategyName == ManualOrdersController.BookStrategyName
-                    && run.Status == "Running");
+            bool isActive = running is not null || IsOpenManualBook(run);
             var startedUtc = running?.StartedUtc ?? run.StartedUtc ?? run.CreatedUtc;
             DateTime? stoppedUtc = isActive ? null : run.CompletedUtc ?? stop?.AtUtc ?? exit?.AtUtc;
 
@@ -511,7 +517,7 @@ public sealed class LiveRunHistoryBuilder
         var stops = await LoadStopsAsync(runQuery, cancellationToken);
 
         var activeRunIds = rows.Where(x => _registry.Contains(x.Id)).Select(x => x.Id).ToList();
-        var liveMarks = await MarkActiveRunsAsync(activeRunIds, cancellationToken);
+        var liveMarks = await _pnl.MarkOpenLegsAsync(activeRunIds, cancellationToken);
 
         var recordCharges = await _charges.ForRunsAsync(runQuery.Select(x => x.Id), cancellationToken);
 
@@ -665,7 +671,7 @@ public sealed class LiveRunHistoryBuilder
         return DeriveUnderlying(running, exit, p, symbol);
     }
 
-    private static string DeriveUnderlying(RunningStrategy? running, LastExit? exit, LiveRunParameters p, string? symbol)
+    internal static string DeriveUnderlying(RunningStrategy? running, LastExit? exit, LiveRunParameters p, string? symbol)
     {
         var underlying = running?.Underlying
                          ?? exit?.Underlying
@@ -797,61 +803,13 @@ public sealed class LiveRunHistoryBuilder
         return result;
     }
 
-    private sealed record LiveMark(decimal Unrealized, decimal CapitalUsed);
-
     /// <summary>
-    /// Unrealized P&amp;L and capital used of the active runs' open legs, marked
-    /// against the latest live quote exactly as the live view does (stored mark
-    /// when no quote is known). Read-only: nothing is written back.
+    /// A manual book is live while its row says Running: it is a container for
+    /// orders placed by hand, not a process, so the registry never has it.
     /// </summary>
-    private async Task<Dictionary<long, LiveMark>> MarkActiveRunsAsync(List<long> activeRunIds, CancellationToken cancellationToken)
-    {
-        var result = new Dictionary<long, LiveMark>();
-        if (activeRunIds.Count == 0) return result;
-
-        var open = await _dbContext.PaperPositions.AsNoTracking()
-            .Where(p => activeRunIds.Contains(p.SimulationRunId) && p.Status == OpenStatus)
-            .Select(p => new { p.SimulationRunId, p.Symbol, p.Direction, p.Quantity, p.AveragePrice, p.UnrealizedPnl })
-            .ToListAsync(cancellationToken);
-
-        foreach (var runId in activeRunIds)
-        {
-            result[runId] = new LiveMark(0m, 0m);
-        }
-
-        if (open.Count == 0) return result;
-
-        var symbols = open.Select(x => x.Symbol).Distinct(StringComparer.Ordinal).ToList();
-
-        var quotes = await _dbContext.LiveQuotesLatest.AsNoTracking()
-            .Where(q => symbols.Contains(q.Symbol))
-            .Select(q => new { q.Symbol, q.LastTradedPrice })
-            .ToListAsync(cancellationToken);
-        var ltpBySymbol = new Dictionary<string, decimal>(StringComparer.Ordinal);
-        foreach (var q in quotes)
-        {
-            if (q.LastTradedPrice.HasValue) ltpBySymbol.TryAdd(q.Symbol, q.LastTradedPrice.Value);
-        }
-
-        var lotSizes = await _lotSizeResolver.ResolveManyAsync(symbols, cancellationToken);
-
-        foreach (var pos in open)
-        {
-            int lotSize = lotSizes.TryGetValue(pos.Symbol, out var info) && info.LotSize > 0 ? info.LotSize : 1;
-            // The same function the fills use. Written out by hand here, this
-            // was the second copy of the number that says how much a run made.
-            decimal unrealized = ltpBySymbol.TryGetValue(pos.Symbol, out var ltp)
-                ? PaperPnl.Unrealized(pos.Direction, pos.AveragePrice, ltp, pos.Quantity, lotSize)
-                : pos.UnrealizedPnl;
-
-            decimal used = PaperTradingService.UsedCapitalOf(pos.Direction, pos.Symbol, pos.AveragePrice, pos.Quantity, lotSize);
-
-            var current = result[pos.SimulationRunId];
-            result[pos.SimulationRunId] = new LiveMark(current.Unrealized + unrealized, current.CapitalUsed + used);
-        }
-
-        return result;
-    }
+    private static bool IsOpenManualBook(SimulationRun run)
+        => run.StrategyName == ManualOrdersController.BookStrategyName
+           && run.Status == StrategyRunControl.RunStatusRunning;
 
     private static long DurationSeconds(DateTime startedUtc, DateTime endUtc)
     {
