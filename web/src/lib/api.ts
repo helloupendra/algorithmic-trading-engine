@@ -67,6 +67,12 @@ export interface MeResponse {
   isActive: boolean
   createdUtc: string
   lastLoginUtc: string | null
+  /**
+   * Module keys a trader holds. Not sent by /me yet: until it is, the console
+   * cannot tell a missing grant from an unknown one and keeps grant-gated tabs
+   * visible (lib/modules.ts, accessFor). Empty for admins, who hold them all.
+   */
+  moduleGrants?: string[]
 }
 
 /** Thrown for any non-2xx response, carrying the status for callers to branch on. */

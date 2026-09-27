@@ -1,10 +1,11 @@
 /**
- * Admin home — the console front door. One card per module (from the module
- * registry) plus the live health strip.
+ * Admin home — the console front door until the Desk replaces it: the live
+ * health strip, then one card per workspace (from the workspace registry).
  */
 
+import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { MODULES } from '../../lib/modules'
+import { WORKSPACES, accessFor, navFor } from '../../lib/modules'
 import {
   useFeeds,
   useIngestorProcessStatus,
@@ -16,10 +17,19 @@ import {
 } from '../../lib/queries'
 import { useAuth } from '../../lib/auth'
 import { connectorsSummary } from '../../lib/pulse'
-import { Badge, StatTile } from '../../components/ui'
+import { StatTile } from '../../components/ui'
 
 export function AdminHomePage() {
   const { user } = useAuth()
+  // Every workspace but the Desk, which is this page; each card opens where
+  // the top bar would.
+  const workspaces = useMemo(() => {
+    const nav = navFor(accessFor(user))
+    return WORKSPACES.filter((ws) => ws.key !== 'desk').flatMap((ws) => {
+      const entry = nav.find((n) => n.key === ws.key)
+      return entry ? [{ ...ws, to: entry.to }] : []
+    })
+  }, [user])
   const session = useMarketSession()
   const mcxSession = useMarketSession('MCX', 'COM')
   const providers = useProviders()
@@ -64,7 +74,7 @@ export function AdminHomePage() {
       <header className="page__header">
         <div>
           <h1 className="page__title">Welcome back, {user?.userName}</h1>
-          <p className="page__subtitle">Console health at a glance, then pick a module.</p>
+          <p className="page__subtitle">Console health at a glance, then pick a workspace.</p>
         </div>
       </header>
 
@@ -133,31 +143,15 @@ export function AdminHomePage() {
       </div>
 
       <div className="module-grid">
-        {MODULES.map((m) => {
-          const Icon = m.icon
-          const disabled = m.status === 'planned'
-          const card = (
-            <>
+        {workspaces.map((ws) => {
+          const Icon = ws.icon
+          return (
+            <Link key={ws.key} to={ws.to} className="module-card">
               <span className="module-card__icon">
                 <Icon />
               </span>
-              <span className="module-card__name">
-                {m.name}
-                {/* Only a module that cannot be opened yet needs a tag. Which
-                    design generation a working module was built on is our
-                    business, not something to label the front door with. */}
-                {m.status === 'planned' && <Badge tone="neutral">soon</Badge>}
-              </span>
-              <p className="module-card__desc">{m.description}</p>
-            </>
-          )
-          return disabled ? (
-            <div key={m.key} className="module-card module-card--off">
-              {card}
-            </div>
-          ) : (
-            <Link key={m.key} to={m.route} className="module-card">
-              {card}
+              <span className="module-card__name">{ws.label}</span>
+              <p className="module-card__desc">{ws.description}</p>
             </Link>
           )
         })}

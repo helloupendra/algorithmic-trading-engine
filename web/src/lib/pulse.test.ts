@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest'
 
-import { calendarPulse, connectorsSummary, feedPulses, heartbeatFeed, marketPulses, recapVendors } from './pulse'
+import {
+  backendPulse,
+  calendarPulse,
+  connectorsSummary,
+  feedPulses,
+  formatUptime,
+  headlinePulse,
+  heartbeatFeed,
+  marketPulses,
+  recapVendors,
+} from './pulse'
+import type { Pulse } from './pulse'
 import type { IngestorStatus, LiveFeed, MarketSessionInfo, Provider } from './types'
 
 /**
@@ -78,6 +89,7 @@ describe('marketPulses', () => {
   it('folds two open markets into one pill', () => {
     const pulses = marketPulses(nseOpen, mcxOpen, [])
     expect(pulses.map((p) => p.label)).toEqual(['NSE · MCX open'])
+    expect(pulses.map((p) => p.short)).toEqual(['Open'])
   })
 
   it('says "Markets closed" once, and only when both sessions have answered', () => {
@@ -238,5 +250,56 @@ describe('connectorsSummary', () => {
     expect(s.pulse).toMatchObject({ label: '2 feeds running', tone: 'warn' })
     const notSetUp = provider('dhan', 'Dhan', { isConfigured: false, session: { isConnected: false, connectedUtc: null, ageSeconds: null, needsReconnect: true } })
     expect(connectorsSummary([fyersP, notSetUp], [], true, at)!.pulse).toMatchObject({ label: 'Connectors 1/1 ready', tone: 'pos' })
+  })
+})
+
+describe('backendPulse', () => {
+  const status = { uptimeSeconds: 5 * 3600 + 12 * 60, startedUtc: '2026-09-28T01:00:00Z', environment: 'Production' }
+
+  it('says nothing before the first answer', () => {
+    expect(backendPulse({ isDown: false, restartedAt: null })).toBeNull()
+  })
+
+  it('puts down ahead of everything, even with an old answer on hand', () => {
+    expect(backendPulse({ isDown: true, restartedAt: '2026-09-28T05:00:00Z', status })).toMatchObject({ label: 'Backend down', tone: 'neg' })
+  })
+
+  it('names a restart in IST, then the uptime once all is well', () => {
+    expect(backendPulse({ isDown: false, restartedAt: '2026-09-28T06:10:00Z', status })?.label).toBe('Backend restarted 11:40')
+    expect(backendPulse({ isDown: false, restartedAt: null, status })).toMatchObject({
+      label: 'Backend up 5h 12m',
+      tone: 'pos',
+      title: expect.stringMatching(/^Started 28 Sep\w*, 06:30 IST · Production$/),
+    })
+  })
+
+  it('formats an uptime short enough for the bar', () => {
+    expect([48, 360, 7200, 7260].map(formatUptime)).toEqual(['48s', '6m', '2h', '2h 1m'])
+  })
+})
+
+describe('headlinePulse', () => {
+  const p = (key: string, tone: Pulse['tone']): Pulse => ({ key, label: key, tone, title: '' })
+
+  it('names the loudest pulse and counts the other alarms', () => {
+    const h = headlinePulse([p('backend', 'pos'), p('connectors', 'warn'), p('no-feed', 'neg'), p('calendar', 'warn')])
+    expect(h).toEqual({ pulse: p('no-feed', 'neg'), more: 2 })
+  })
+
+  it('names the running feed when nothing is wrong', () => {
+    expect(headlinePulse([p('backend', 'pos'), p('connectors', 'pos'), p('dhan', 'live')])).toEqual({ pulse: p('dhan', 'live'), more: 0 })
+  })
+
+  it("keeps the caller's order on a tie, and says nothing about nothing", () => {
+    expect(headlinePulse([p('connectors', 'pos'), p('backend', 'pos')])?.pulse.key).toBe('connectors')
+    expect(headlinePulse([])).toBeNull()
+  })
+})
+
+describe('short market labels for a phone', () => {
+  it('names the one market that is open, and shortens the rest', () => {
+    expect(marketPulses(nseClosed, mcxOpen, [])[0].short).toBeUndefined()
+    expect(marketPulses(nseClosed, mcxClosed, [])[0].short).toBe('Closed')
+    expect(marketPulses(nseOpen, mcxOpen, ['TrueData']).map((p) => p.short)).toEqual(['Open', 'Recap'])
   })
 })
