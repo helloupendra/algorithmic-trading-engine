@@ -174,10 +174,7 @@ public class NotifierRestartTests : IDisposable
         return new NotifierSupervisor(engine, scopes, NullLogger<NotifierSupervisor>.Instance);
     }
 
-    private Process Sleeper()
-        => Launch(OperatingSystem.IsWindows()
-            ? new ProcessStartInfo("cmd.exe", "/c timeout /t 30 /nobreak")
-            : new ProcessStartInfo("/bin/sleep", "30"));
+    private Process Sleeper() => Launch(TestSleeper.StartInfo());
 
     /// <summary>A live process whose command line names the notifier's script.</summary>
     private Process NamedLikeTheNotifier()
