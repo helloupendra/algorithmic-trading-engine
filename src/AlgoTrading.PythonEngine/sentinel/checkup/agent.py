@@ -58,11 +58,11 @@ class CheckupAgent(Agent):
         self._reads = reads
         self._notifier = notifier
         self._host = host or socket.gethostname()
-        self._wired = store is not None and notifier is not None
+        self._wired = False
         self._said_waiting = ""
 
     def _wire(self, ctx: SentinelContext) -> None:
-        """The store, the reads and the notifier from the .env — once, on the first check."""
+        """What was not handed in — the store, the reads, the notifier — from the .env, once, on the first check."""
         if self._wired:
             return
         self._wired = True
