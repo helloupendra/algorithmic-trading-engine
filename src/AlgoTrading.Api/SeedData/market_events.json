@@ -1,226 +1,3114 @@
 {
-  "version": 1,
-  "checked": "2026-09-17",
+  "version": 2,
+  "checked": "2026-09-27",
+  "sources": {
+    "RBI policy": "RBI press releases on rbi.org.in: each MPC resolution (the Monetary Policy Statement) for held meetings, the year's MPC schedule for future ones. The press releases carry no clock time; times are when RBI's own live stream of the announcement began, left empty where that could not be found.",
+    "Fed policy": "federalreserve.gov: each FOMC statement's press release (its 'For release at' time) for held meetings; the FOMC calendar and the schedule announcements for future ones.",
+    "US CPI": "bls.gov: the CPI news-release archive (actual release dates, the 2025-26 shutdown delays included) and the release schedule for future ones.",
+    "US jobs": "bls.gov: the Employment Situation news-release archive and release schedule, as for CPI.",
+    "Budget": "indiabudget.gov.in: each year's Budget speech; the 2026-27 speech from pib.gov.in. Times are when PIB's live stream from Parliament began.",
+    "India CPI": "pib.gov.in (MoSPI's press releases) and mospi.gov.in (release PDFs and the advance release calendar)."
+  },
   "events": [
     {
-      "date": "2026-04-08",
-      "timeIst": "10:00",
-      "region": "IN",
-      "category": "RBI policy",
-      "title": "RBI monetary policy decision",
-      "importance": 3,
-      "notes": "MPC meeting 6-8 Apr 2026; the decision is announced on the last day, usually at 10:00 IST.",
-      "source": "https://www.rbi.org.in/scripts/BS_PressReleaseDisplay.aspx?prid=62422"
+      "date": "2020-01-10",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Dec 2019)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
     },
     {
-      "date": "2026-06-05",
-      "timeIst": "10:00",
+      "date": "2020-01-13",
+      "timeIst": "17:30",
       "region": "IN",
-      "category": "RBI policy",
-      "title": "RBI monetary policy decision",
-      "importance": 3,
-      "notes": "MPC meeting 3-5 Jun 2026; the decision is announced on the last day, usually at 10:00 IST.",
-      "source": "https://www.rbi.org.in/scripts/BS_PressReleaseDisplay.aspx?prid=62422"
+      "category": "India CPI",
+      "title": "India CPI inflation (Dec 2019)",
+      "importance": 2,
+      "notes": "All-India CPI for Dec 2019, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1599279&reg=3&lang=1"
     },
     {
-      "date": "2026-08-05",
-      "timeIst": "10:00",
-      "region": "IN",
-      "category": "RBI policy",
-      "title": "RBI monetary policy decision",
-      "importance": 3,
-      "notes": "MPC meeting 3-5 Aug 2026; the decision is announced on the last day, usually at 10:00 IST.",
-      "source": "https://www.rbi.org.in/scripts/BS_PressReleaseDisplay.aspx?prid=62422"
+      "date": "2020-01-14",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Dec 2019)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
     },
     {
-      "date": "2026-10-07",
-      "timeIst": "10:00",
-      "region": "IN",
-      "category": "RBI policy",
-      "title": "RBI monetary policy decision",
-      "importance": 3,
-      "notes": "MPC meeting 5-7 Oct 2026; the decision is announced on the last day, usually at 10:00 IST.",
-      "source": "https://www.rbi.org.in/scripts/BS_PressReleaseDisplay.aspx?prid=62422"
-    },
-    {
-      "date": "2026-12-04",
-      "timeIst": "10:00",
-      "region": "IN",
-      "category": "RBI policy",
-      "title": "RBI monetary policy decision",
-      "importance": 3,
-      "notes": "MPC meeting 2-4 Dec 2026; the decision is announced on the last day, usually at 10:00 IST.",
-      "source": "https://www.rbi.org.in/scripts/BS_PressReleaseDisplay.aspx?prid=62422"
-    },
-    {
-      "date": "2027-02-05",
-      "timeIst": "10:00",
-      "region": "IN",
-      "category": "RBI policy",
-      "title": "RBI monetary policy decision",
-      "importance": 3,
-      "notes": "MPC meeting 3-5 Feb 2027; the decision is announced on the last day, usually at 10:00 IST.",
-      "source": "https://www.rbi.org.in/scripts/BS_PressReleaseDisplay.aspx?prid=62422"
-    },
-    {
-      "date": "2026-01-29",
+      "date": "2020-01-30",
       "timeIst": "00:30",
       "region": "US",
       "category": "Fed policy",
       "title": "US Fed interest rate decision",
       "importance": 3,
-      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-01-28; Indian markets react in the next session.",
-      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2020-01-29; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20200129a.htm"
     },
     {
-      "date": "2026-03-18",
+      "date": "2020-02-01",
+      "timeIst": "11:00",
+      "region": "IN",
+      "category": "Budget",
+      "title": "Union Budget 2020-21",
+      "importance": 3,
+      "notes": "Union Budget 2020-21, presented in Parliament on a Saturday at 11:00 IST (PIB's live stream).",
+      "source": "https://www.indiabudget.gov.in/budget2020-21/doc/budget_speech.pdf"
+    },
+    {
+      "date": "2020-02-06",
+      "timeIst": null,
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 4-6 Feb 2020; the decision is announced on the last day.",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=49342"
+    },
+    {
+      "date": "2020-02-07",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Jan 2020)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2020-02-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Jan 2020)",
+      "importance": 2,
+      "notes": "All-India CPI for Jan 2020, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1602967&reg=3&lang=1"
+    },
+    {
+      "date": "2020-02-13",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Jan 2020)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2020-03-03",
+      "timeIst": "20:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed unscheduled rate decision",
+      "importance": 3,
+      "notes": "Unscheduled FOMC rate cut, statement released at 10:00 US Eastern on 2020-03-03. Not known in advance.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20200303a.htm"
+    },
+    {
+      "date": "2020-03-06",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Feb 2020)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2020-03-11",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Feb 2020)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2020-03-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Feb 2020)",
+      "importance": 2,
+      "notes": "All-India CPI for Feb 2020, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1606122&reg=3&lang=1"
+    },
+    {
+      "date": "2020-03-16",
+      "timeIst": "02:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed unscheduled rate decision",
+      "importance": 3,
+      "notes": "Unscheduled FOMC rate cut, statement released at 17:00 US Eastern on 2020-03-15. Not known in advance. It replaced the scheduled 17-18 March meeting, which was cancelled.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20200315a.htm"
+    },
+    {
+      "date": "2020-03-23",
+      "timeIst": "17:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed unscheduled policy statement",
+      "importance": 3,
+      "notes": "Unscheduled FOMC statement (a notation vote) released at 08:00 US Eastern on 2020-03-23: open-ended Treasury and mortgage-bond purchases, rates unchanged. Not known in advance.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20200323a.htm"
+    },
+    {
+      "date": "2020-03-27",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI off-cycle monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 24, 26-27 Mar 2020 (advanced from 31 Mar-3 Apr, COVID-19): decision announced at 10:00 IST (the time of RBI's own live stream), off the published schedule, so treated as not known in advance.",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=49581"
+    },
+    {
+      "date": "2020-04-03",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Mar 2020)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2020-04-10",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Mar 2020)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2020-04-13",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Mar 2020)",
+      "importance": 2,
+      "notes": "All-India CPI for Mar 2020, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1613998&reg=3&lang=1"
+    },
+    {
+      "date": "2020-04-29",
       "timeIst": "23:30",
       "region": "US",
       "category": "Fed policy",
       "title": "US Fed interest rate decision",
       "importance": 3,
-      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-03-18; Indian markets react in the next session.",
-      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2020-04-29; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20200429a.htm"
     },
     {
-      "date": "2026-04-29",
+      "date": "2020-05-08",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Apr 2020)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2020-05-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Apr 2020)",
+      "importance": 2,
+      "notes": "All-India CPI for Apr 2020, released by MoSPI (NSO) at 17:30 IST, after the close. Partial release: selected sub-groups/groups only, covid-19.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1623298&reg=3&lang=1"
+    },
+    {
+      "date": "2020-05-12",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Apr 2020)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2020-05-22",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI off-cycle monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 20-22 May 2020 (advanced from 3-5 Jun, COVID-19): decision announced at 10:00 IST (the time of RBI's own live stream), off the published schedule, so treated as not known in advance.",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=49843"
+    },
+    {
+      "date": "2020-06-05",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (May 2020)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2020-06-10",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (May 2020)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2020-06-10",
       "timeIst": "23:30",
       "region": "US",
       "category": "Fed policy",
       "title": "US Fed interest rate decision",
       "importance": 3,
-      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-04-29; Indian markets react in the next session.",
-      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2020-06-10; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20200610a.htm"
     },
     {
-      "date": "2026-06-17",
+      "date": "2020-06-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (May 2020)",
+      "importance": 2,
+      "notes": "All-India CPI for May 2020, released by MoSPI (NSO) at 17:30 IST, after the close. Partial release: selected sub-groups/groups only, covid-19.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1631155&reg=3&lang=1"
+    },
+    {
+      "date": "2020-07-02",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Jun 2020)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2020-07-13",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Jun 2020)",
+      "importance": 2,
+      "notes": "All-India CPI for Jun 2020, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1638314&reg=3&lang=1"
+    },
+    {
+      "date": "2020-07-14",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Jun 2020)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2020-07-29",
       "timeIst": "23:30",
       "region": "US",
       "category": "Fed policy",
       "title": "US Fed interest rate decision",
       "importance": 3,
-      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-06-17; Indian markets react in the next session.",
-      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2020-07-29; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20200729a.htm"
     },
     {
-      "date": "2026-07-29",
+      "date": "2020-08-06",
+      "timeIst": "12:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 4-6 Aug 2020; the decision is announced on the last day at 12:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=50175"
+    },
+    {
+      "date": "2020-08-07",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Jul 2020)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2020-08-12",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Jul 2020)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2020-08-13",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Jul 2020)",
+      "importance": 2,
+      "notes": "All-India CPI for Jul 2020, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1645525&reg=3&lang=1"
+    },
+    {
+      "date": "2020-09-04",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Aug 2020)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2020-09-11",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Aug 2020)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2020-09-14",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Aug 2020)",
+      "importance": 2,
+      "notes": "All-India CPI for Aug 2020, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.mospi.gov.in/uploads/documents/CPI%20Press%20Release%20August%202020.pdf"
+    },
+    {
+      "date": "2020-09-16",
       "timeIst": "23:30",
       "region": "US",
       "category": "Fed policy",
       "title": "US Fed interest rate decision",
       "importance": 3,
-      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-07-29; Indian markets react in the next session.",
-      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2020-09-16; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20200916a.htm"
     },
     {
-      "date": "2026-09-16",
-      "timeIst": "23:30",
+      "date": "2020-10-02",
+      "timeIst": "18:00",
       "region": "US",
-      "category": "Fed policy",
-      "title": "US Fed interest rate decision",
-      "importance": 3,
-      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-09-16; Indian markets react in the next session.",
-      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Sep 2020)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
     },
     {
-      "date": "2026-10-28",
-      "timeIst": "23:30",
+      "date": "2020-10-09",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 7-9 Oct 2020 (rescheduled from 29 Sep-1 Oct); the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=50479"
+    },
+    {
+      "date": "2020-10-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Sep 2020)",
+      "importance": 2,
+      "notes": "All-India CPI for Sep 2020, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1663729&reg=3&lang=1"
+    },
+    {
+      "date": "2020-10-13",
+      "timeIst": "18:00",
       "region": "US",
-      "category": "Fed policy",
-      "title": "US Fed interest rate decision",
-      "importance": 3,
-      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-10-28; Indian markets react in the next session.",
-      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+      "category": "US CPI",
+      "title": "US CPI inflation (Sep 2020)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
     },
     {
-      "date": "2026-12-10",
+      "date": "2020-11-06",
       "timeIst": "00:30",
       "region": "US",
       "category": "Fed policy",
       "title": "US Fed interest rate decision",
       "importance": 3,
-      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-12-09; Indian markets react in the next session.",
-      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2020-11-05; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20201105a.htm"
     },
     {
-      "date": "2027-01-28",
+      "date": "2020-11-06",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Oct 2020)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2020-11-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Oct 2020)",
+      "importance": 2,
+      "notes": "All-India CPI for Oct 2020, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.mospi.gov.in/uploads/documents/CPI_Press_Statement_12nov20.pdf"
+    },
+    {
+      "date": "2020-11-12",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Oct 2020)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2020-12-04",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 2-4 Dec 2020; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=50747"
+    },
+    {
+      "date": "2020-12-04",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Nov 2020)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2020-12-10",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Nov 2020)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2020-12-14",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Nov 2020)",
+      "importance": 2,
+      "notes": "All-India CPI for Nov 2020, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1680570&reg=3&lang=1"
+    },
+    {
+      "date": "2020-12-17",
       "timeIst": "00:30",
       "region": "US",
       "category": "Fed policy",
       "title": "US Fed interest rate decision",
       "importance": 3,
-      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-01-27; Indian markets react in the next session.",
-      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2020-12-16; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20201216a.htm"
     },
     {
-      "date": "2027-03-17",
-      "timeIst": "23:30",
+      "date": "2021-01-08",
+      "timeIst": "19:00",
       "region": "US",
-      "category": "Fed policy",
-      "title": "US Fed interest rate decision",
-      "importance": 3,
-      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-03-17; Indian markets react in the next session.",
-      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Dec 2020)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
     },
     {
-      "date": "2027-04-28",
-      "timeIst": "23:30",
+      "date": "2021-01-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Dec 2020)",
+      "importance": 2,
+      "notes": "All-India CPI for Dec 2020, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1687967&reg=3&lang=1"
+    },
+    {
+      "date": "2021-01-13",
+      "timeIst": "19:00",
       "region": "US",
-      "category": "Fed policy",
-      "title": "US Fed interest rate decision",
-      "importance": 3,
-      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-04-28; Indian markets react in the next session.",
-      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+      "category": "US CPI",
+      "title": "US CPI inflation (Dec 2020)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
     },
     {
-      "date": "2027-06-09",
-      "timeIst": "23:30",
-      "region": "US",
-      "category": "Fed policy",
-      "title": "US Fed interest rate decision",
-      "importance": 3,
-      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-06-09; Indian markets react in the next session.",
-      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
-    },
-    {
-      "date": "2027-07-28",
-      "timeIst": "23:30",
-      "region": "US",
-      "category": "Fed policy",
-      "title": "US Fed interest rate decision",
-      "importance": 3,
-      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-07-28; Indian markets react in the next session.",
-      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
-    },
-    {
-      "date": "2027-09-15",
-      "timeIst": "23:30",
-      "region": "US",
-      "category": "Fed policy",
-      "title": "US Fed interest rate decision",
-      "importance": 3,
-      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-09-15; Indian markets react in the next session.",
-      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
-    },
-    {
-      "date": "2027-10-27",
-      "timeIst": "23:30",
-      "region": "US",
-      "category": "Fed policy",
-      "title": "US Fed interest rate decision",
-      "importance": 3,
-      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-10-27; Indian markets react in the next session.",
-      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
-    },
-    {
-      "date": "2027-12-09",
+      "date": "2021-01-28",
       "timeIst": "00:30",
       "region": "US",
       "category": "Fed policy",
       "title": "US Fed interest rate decision",
       "importance": 3,
-      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-12-08; Indian markets react in the next session.",
-      "source": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2021-01-27; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20210127a.htm"
+    },
+    {
+      "date": "2021-02-01",
+      "timeIst": "11:00",
+      "region": "IN",
+      "category": "Budget",
+      "title": "Union Budget 2021-22",
+      "importance": 3,
+      "notes": "Union Budget 2021-22, presented in Parliament at 11:00 IST (PIB's live stream).",
+      "source": "https://www.indiabudget.gov.in/budget2021-22/doc/budget_speech.pdf"
+    },
+    {
+      "date": "2021-02-05",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 3-5 Feb 2021; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=51077"
+    },
+    {
+      "date": "2021-02-05",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Jan 2021)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2021-02-10",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Jan 2021)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2021-02-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Jan 2021)",
+      "importance": 2,
+      "notes": "All-India CPI for Jan 2021, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1697432&reg=3&lang=1"
+    },
+    {
+      "date": "2021-03-05",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Feb 2021)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2021-03-10",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Feb 2021)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2021-03-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Feb 2021)",
+      "importance": 2,
+      "notes": "All-India CPI for Feb 2021, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1704386&reg=3&lang=1"
+    },
+    {
+      "date": "2021-03-17",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2021-03-17; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20210317a.htm"
+    },
+    {
+      "date": "2021-04-02",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Mar 2021)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2021-04-07",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 5-7 Apr 2021; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=51381"
+    },
+    {
+      "date": "2021-04-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Mar 2021)",
+      "importance": 2,
+      "notes": "All-India CPI for Mar 2021, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1711173&reg=3&lang=1"
+    },
+    {
+      "date": "2021-04-13",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Mar 2021)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2021-04-28",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2021-04-28; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20210428a.htm"
+    },
+    {
+      "date": "2021-05-07",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Apr 2021)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2021-05-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Apr 2021)",
+      "importance": 2,
+      "notes": "All-India CPI for Apr 2021, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1717999&reg=3&lang=1"
+    },
+    {
+      "date": "2021-05-12",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Apr 2021)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2021-06-04",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 2-4 Jun 2021; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=51683"
+    },
+    {
+      "date": "2021-06-04",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (May 2021)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2021-06-10",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (May 2021)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2021-06-14",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (May 2021)",
+      "importance": 2,
+      "notes": "All-India CPI for May 2021, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1726990&reg=3&lang=1"
+    },
+    {
+      "date": "2021-06-16",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2021-06-16; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20210616a.htm"
+    },
+    {
+      "date": "2021-07-02",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Jun 2021)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2021-07-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Jun 2021)",
+      "importance": 2,
+      "notes": "All-India CPI for Jun 2021, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1734814&reg=3&lang=1"
+    },
+    {
+      "date": "2021-07-13",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Jun 2021)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2021-07-28",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2021-07-28; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20210728a.htm"
+    },
+    {
+      "date": "2021-08-06",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 4-6 Aug 2021; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=52011"
+    },
+    {
+      "date": "2021-08-06",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Jul 2021)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2021-08-11",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Jul 2021)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2021-08-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Jul 2021)",
+      "importance": 2,
+      "notes": "All-India CPI for Jul 2021, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.mospi.gov.in/uploads/documents/CPIPressReleaseJuly2021.pdf"
+    },
+    {
+      "date": "2021-09-03",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Aug 2021)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2021-09-13",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Aug 2021)",
+      "importance": 2,
+      "notes": "All-India CPI for Aug 2021, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1754560&reg=3&lang=1"
+    },
+    {
+      "date": "2021-09-14",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Aug 2021)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2021-09-22",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2021-09-22; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20210922a.htm"
+    },
+    {
+      "date": "2021-10-08",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 6-8 Oct 2021; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=52366"
+    },
+    {
+      "date": "2021-10-08",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Sep 2021)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2021-10-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Sep 2021)",
+      "importance": 2,
+      "notes": "All-India CPI for Sep 2021, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1763254&reg=3&lang=1"
+    },
+    {
+      "date": "2021-10-13",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Sep 2021)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2021-11-03",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2021-11-03; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20211103a.htm"
+    },
+    {
+      "date": "2021-11-05",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Oct 2021)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2021-11-10",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Oct 2021)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2021-11-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Oct 2021)",
+      "importance": 2,
+      "notes": "All-India CPI for Oct 2021, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1771235&reg=3&lang=1"
+    },
+    {
+      "date": "2021-12-03",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Nov 2021)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2021-12-08",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 6-8 Dec 2021; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=52687"
+    },
+    {
+      "date": "2021-12-10",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Nov 2021)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2021-12-13",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Nov 2021)",
+      "importance": 2,
+      "notes": "All-India CPI for Nov 2021, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1780967&reg=3&lang=1"
+    },
+    {
+      "date": "2021-12-16",
+      "timeIst": "00:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2021-12-15; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20211215a.htm"
+    },
+    {
+      "date": "2022-01-07",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Dec 2021)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2022-01-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Dec 2021)",
+      "importance": 2,
+      "notes": "All-India CPI for Dec 2021, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1789391&reg=3&lang=1"
+    },
+    {
+      "date": "2022-01-12",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Dec 2021)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2022-01-27",
+      "timeIst": "00:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2022-01-26; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20220126a.htm"
+    },
+    {
+      "date": "2022-02-01",
+      "timeIst": "11:00",
+      "region": "IN",
+      "category": "Budget",
+      "title": "Union Budget 2022-23",
+      "importance": 3,
+      "notes": "Union Budget 2022-23, presented in Parliament at 11:00 IST (PIB's live stream).",
+      "source": "https://www.indiabudget.gov.in/budget2022-23/doc/budget_speech.pdf"
+    },
+    {
+      "date": "2022-02-04",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Jan 2022)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2022-02-10",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 8-10 Feb 2022 (rescheduled from 7-9 Feb); the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=53247"
+    },
+    {
+      "date": "2022-02-10",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Jan 2022)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2022-02-14",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Jan 2022)",
+      "importance": 2,
+      "notes": "All-India CPI for Jan 2022, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.mospi.gov.in/uploads/documents/CPI%20Press%20Release%20January%202022.pdf"
+    },
+    {
+      "date": "2022-03-04",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Feb 2022)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2022-03-10",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Feb 2022)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2022-03-14",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Feb 2022)",
+      "importance": 2,
+      "notes": "All-India CPI for Feb 2022, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1805838&reg=3&lang=1"
+    },
+    {
+      "date": "2022-03-16",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2022-03-16; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20220316a.htm"
+    },
+    {
+      "date": "2022-04-01",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Mar 2022)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2022-04-08",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 6-8 Apr 2022; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=53537"
+    },
+    {
+      "date": "2022-04-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Mar 2022)",
+      "importance": 2,
+      "notes": "All-India CPI for Mar 2022, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1816066&reg=3&lang=1"
+    },
+    {
+      "date": "2022-04-12",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Mar 2022)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2022-05-04",
+      "timeIst": "14:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI off-cycle monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 2 and 4 May 2022 (off-cycle): decision announced at 14:00 IST (the time of RBI's own live stream), off the published schedule, so treated as not known in advance.",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=53652"
+    },
+    {
+      "date": "2022-05-04",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2022-05-04; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20220504a.htm"
+    },
+    {
+      "date": "2022-05-06",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Apr 2022)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2022-05-11",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Apr 2022)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2022-05-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Apr 2022)",
+      "importance": 2,
+      "notes": "All-India CPI for Apr 2022, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1824772&reg=3&lang=1"
+    },
+    {
+      "date": "2022-06-03",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (May 2022)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2022-06-08",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 6-8 Jun 2022; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=53832"
+    },
+    {
+      "date": "2022-06-10",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (May 2022)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2022-06-13",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (May 2022)",
+      "importance": 2,
+      "notes": "All-India CPI for May 2022, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1833536&reg=3&lang=1"
+    },
+    {
+      "date": "2022-06-15",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2022-06-15; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20220615a.htm"
+    },
+    {
+      "date": "2022-07-08",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Jun 2022)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2022-07-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Jun 2022)",
+      "importance": 2,
+      "notes": "All-India CPI for Jun 2022, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1840945&reg=3&lang=1"
+    },
+    {
+      "date": "2022-07-13",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Jun 2022)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2022-07-27",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2022-07-27; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20220727a.htm"
+    },
+    {
+      "date": "2022-08-05",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 3-5 Aug 2022 (rescheduled from 2-4 Aug); the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=54148"
+    },
+    {
+      "date": "2022-08-05",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Jul 2022)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2022-08-10",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Jul 2022)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2022-08-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Jul 2022)",
+      "importance": 2,
+      "notes": "All-India CPI for Jul 2022, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1851273&reg=3&lang=1"
+    },
+    {
+      "date": "2022-09-02",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Aug 2022)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2022-09-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Aug 2022)",
+      "importance": 2,
+      "notes": "All-India CPI for Aug 2022, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1858724&reg=3&lang=1"
+    },
+    {
+      "date": "2022-09-13",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Aug 2022)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2022-09-21",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2022-09-21; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20220921a.htm"
+    },
+    {
+      "date": "2022-09-30",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 28-30 Sep 2022; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=54465"
+    },
+    {
+      "date": "2022-10-07",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Sep 2022)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2022-10-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Sep 2022)",
+      "importance": 2,
+      "notes": "All-India CPI for Sep 2022, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1867095&reg=3&lang=1"
+    },
+    {
+      "date": "2022-10-13",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Sep 2022)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2022-11-02",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2022-11-02; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20221102a.htm"
+    },
+    {
+      "date": "2022-11-04",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Oct 2022)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2022-11-10",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Oct 2022)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2022-11-14",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Oct 2022)",
+      "importance": 2,
+      "notes": "All-India CPI for Oct 2022, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1875824&reg=3&lang=1"
+    },
+    {
+      "date": "2022-12-02",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Nov 2022)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2022-12-07",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 5-7 Dec 2022; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=54818"
+    },
+    {
+      "date": "2022-12-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Nov 2022)",
+      "importance": 2,
+      "notes": "All-India CPI for Nov 2022, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1882801&reg=3&lang=1"
+    },
+    {
+      "date": "2022-12-13",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Nov 2022)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2022-12-15",
+      "timeIst": "00:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2022-12-14; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20221214a.htm"
+    },
+    {
+      "date": "2023-01-06",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Dec 2022)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2023-01-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Dec 2022)",
+      "importance": 2,
+      "notes": "All-India CPI for Dec 2022, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1890750&reg=3&lang=1"
+    },
+    {
+      "date": "2023-01-12",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Dec 2022)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2023-02-01",
+      "timeIst": "11:00",
+      "region": "IN",
+      "category": "Budget",
+      "title": "Union Budget 2023-24",
+      "importance": 3,
+      "notes": "Union Budget 2023-24, presented in Parliament at 11:00 IST (PIB's live stream).",
+      "source": "https://www.indiabudget.gov.in/budget2023-24/doc/budget_speech.pdf"
+    },
+    {
+      "date": "2023-02-02",
+      "timeIst": "00:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2023-02-01; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20230201a.htm"
+    },
+    {
+      "date": "2023-02-03",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Jan 2023)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2023-02-08",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 6-8 Feb 2023; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=55178"
+    },
+    {
+      "date": "2023-02-13",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Jan 2023)",
+      "importance": 2,
+      "notes": "All-India CPI for Jan 2023, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1898820&reg=3&lang=1"
+    },
+    {
+      "date": "2023-02-14",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Jan 2023)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2023-03-10",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Feb 2023)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2023-03-13",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Feb 2023)",
+      "importance": 2,
+      "notes": "All-India CPI for Feb 2023, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1906436&reg=3&lang=1"
+    },
+    {
+      "date": "2023-03-14",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Feb 2023)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2023-03-22",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2023-03-22; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20230322a.htm"
+    },
+    {
+      "date": "2023-04-06",
+      "timeIst": null,
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 3, 5-6 Apr 2023; the decision is announced on the last day.",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=55472"
+    },
+    {
+      "date": "2023-04-07",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Mar 2023)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2023-04-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Mar 2023)",
+      "importance": 2,
+      "notes": "All-India CPI for Mar 2023, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.mospi.gov.in/uploads/documents/CPI_PR_12apr23.pdf"
+    },
+    {
+      "date": "2023-04-12",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Mar 2023)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2023-05-03",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2023-05-03; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20230503a.htm"
+    },
+    {
+      "date": "2023-05-05",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Apr 2023)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2023-05-10",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Apr 2023)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2023-05-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Apr 2023)",
+      "importance": 2,
+      "notes": "All-India CPI for Apr 2023, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1923709&reg=3&lang=1"
+    },
+    {
+      "date": "2023-06-02",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (May 2023)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2023-06-08",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 6-8 Jun 2023; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=55814"
+    },
+    {
+      "date": "2023-06-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (May 2023)",
+      "importance": 2,
+      "notes": "All-India CPI for May 2023, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1931707&reg=3&lang=1"
+    },
+    {
+      "date": "2023-06-13",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (May 2023)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2023-06-14",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2023-06-14; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20230614a.htm"
+    },
+    {
+      "date": "2023-07-07",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Jun 2023)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2023-07-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Jun 2023)",
+      "importance": 2,
+      "notes": "All-India CPI for Jun 2023, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1938980&reg=3&lang=1"
+    },
+    {
+      "date": "2023-07-12",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Jun 2023)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2023-07-26",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2023-07-26; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20230726a.htm"
+    },
+    {
+      "date": "2023-08-04",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Jul 2023)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2023-08-10",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 8-10 Aug 2023; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=56173"
+    },
+    {
+      "date": "2023-08-10",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Jul 2023)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2023-08-14",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Jul 2023)",
+      "importance": 2,
+      "notes": "All-India CPI for Jul 2023, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1948574&reg=3&lang=1"
+    },
+    {
+      "date": "2023-09-01",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Aug 2023)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2023-09-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Aug 2023)",
+      "importance": 2,
+      "notes": "All-India CPI for Aug 2023, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1956659&reg=3&lang=1"
+    },
+    {
+      "date": "2023-09-13",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Aug 2023)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2023-09-20",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2023-09-20; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20230920a.htm"
+    },
+    {
+      "date": "2023-10-06",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 4-6 Oct 2023; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=56502"
+    },
+    {
+      "date": "2023-10-06",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Sep 2023)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2023-10-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Sep 2023)",
+      "importance": 2,
+      "notes": "All-India CPI for Sep 2023, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1967118&reg=3&lang=1"
+    },
+    {
+      "date": "2023-10-12",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Sep 2023)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2023-11-01",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2023-11-01; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20231101a.htm"
+    },
+    {
+      "date": "2023-11-03",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Oct 2023)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2023-11-13",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Oct 2023)",
+      "importance": 2,
+      "notes": "All-India CPI for Oct 2023, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1976688&reg=3&lang=1"
+    },
+    {
+      "date": "2023-11-14",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Oct 2023)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2023-12-08",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 6-8 Dec 2023; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=56888"
+    },
+    {
+      "date": "2023-12-08",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Nov 2023)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2023-12-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Nov 2023)",
+      "importance": 2,
+      "notes": "All-India CPI for Nov 2023, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1985492&reg=3&lang=1"
+    },
+    {
+      "date": "2023-12-12",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Nov 2023)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2023-12-14",
+      "timeIst": "00:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2023-12-13; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20231213a.htm"
+    },
+    {
+      "date": "2024-01-05",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Dec 2023)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2024-01-11",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Dec 2023)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2024-01-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Dec 2023)",
+      "importance": 2,
+      "notes": "All-India CPI for Dec 2023, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=1995548&reg=3&lang=1"
+    },
+    {
+      "date": "2024-02-01",
+      "timeIst": "00:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2024-01-31; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20240131a.htm"
+    },
+    {
+      "date": "2024-02-01",
+      "timeIst": "11:00",
+      "region": "IN",
+      "category": "Budget",
+      "title": "Interim Union Budget 2024-25",
+      "importance": 3,
+      "notes": "Interim Union Budget 2024-25, presented in Parliament at 11:00 IST (PIB's live stream).",
+      "source": "https://www.indiabudget.gov.in/budget2024-25(I)/doc/budget_speech.pdf"
+    },
+    {
+      "date": "2024-02-02",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Jan 2024)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2024-02-08",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 6-8 Feb 2024; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=57275"
+    },
+    {
+      "date": "2024-02-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Jan 2024)",
+      "importance": 2,
+      "notes": "All-India CPI for Jan 2024, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2005313&reg=3&lang=1"
+    },
+    {
+      "date": "2024-02-13",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Jan 2024)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2024-03-08",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Feb 2024)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2024-03-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Feb 2024)",
+      "importance": 2,
+      "notes": "All-India CPI for Feb 2024, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2013793&reg=3&lang=1"
+    },
+    {
+      "date": "2024-03-12",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Feb 2024)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2024-03-20",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2024-03-20; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20240320a.htm"
+    },
+    {
+      "date": "2024-04-05",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 3-5 Apr 2024; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=57637"
+    },
+    {
+      "date": "2024-04-05",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Mar 2024)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2024-04-10",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Mar 2024)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2024-04-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Mar 2024)",
+      "importance": 2,
+      "notes": "All-India CPI for Mar 2024, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.mospi.gov.in/uploads/documents/CPI_PR_12apr24.pdf"
+    },
+    {
+      "date": "2024-05-01",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2024-05-01; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20240501a.htm"
+    },
+    {
+      "date": "2024-05-03",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Apr 2024)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2024-05-13",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Apr 2024)",
+      "importance": 2,
+      "notes": "All-India CPI for Apr 2024, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2020447&reg=3&lang=1"
+    },
+    {
+      "date": "2024-05-15",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Apr 2024)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2024-06-07",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 5-7 Jun 2024; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=58050"
+    },
+    {
+      "date": "2024-06-07",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (May 2024)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2024-06-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (May 2024)",
+      "importance": 2,
+      "notes": "All-India CPI for May 2024, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2024761&reg=3&lang=1"
+    },
+    {
+      "date": "2024-06-12",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (May 2024)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2024-06-12",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2024-06-12; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20240612a.htm"
+    },
+    {
+      "date": "2024-07-05",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Jun 2024)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2024-07-11",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Jun 2024)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2024-07-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Jun 2024)",
+      "importance": 2,
+      "notes": "All-India CPI for Jun 2024, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2032780&reg=3&lang=1"
+    },
+    {
+      "date": "2024-07-23",
+      "timeIst": "11:00",
+      "region": "IN",
+      "category": "Budget",
+      "title": "Union Budget 2024-25",
+      "importance": 3,
+      "notes": "Union Budget 2024-25, presented in Parliament at 11:00 IST (PIB's live stream).",
+      "source": "https://www.indiabudget.gov.in/budget2024-25/doc/budget_speech.pdf"
+    },
+    {
+      "date": "2024-07-31",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2024-07-31; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20240731a.htm"
+    },
+    {
+      "date": "2024-08-02",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Jul 2024)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2024-08-08",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 6-8 Aug 2024; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=58447"
+    },
+    {
+      "date": "2024-08-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Jul 2024)",
+      "importance": 2,
+      "notes": "All-India CPI for Jul 2024, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2044604&reg=3&lang=1"
+    },
+    {
+      "date": "2024-08-14",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Jul 2024)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2024-09-06",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Aug 2024)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2024-09-11",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Aug 2024)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2024-09-12",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Aug 2024)",
+      "importance": 2,
+      "notes": "All-India CPI for Aug 2024, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2054203&reg=3&lang=1"
+    },
+    {
+      "date": "2024-09-18",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2024-09-18; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20240918a.htm"
+    },
+    {
+      "date": "2024-10-04",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Sep 2024)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2024-10-09",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 7-9 Oct 2024; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=58850"
+    },
+    {
+      "date": "2024-10-10",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Sep 2024)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2024-10-14",
+      "timeIst": "17:30",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Sep 2024)",
+      "importance": 2,
+      "notes": "All-India CPI for Sep 2024, released by MoSPI (NSO) at 17:30 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2064700&reg=3&lang=1"
+    },
+    {
+      "date": "2024-11-01",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Oct 2024)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2024-11-08",
+      "timeIst": "00:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2024-11-07; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20241107a.htm"
+    },
+    {
+      "date": "2024-11-12",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Oct 2024)",
+      "importance": 2,
+      "notes": "All-India CPI for Oct 2024, released by MoSPI (NSO) at 16:00 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2072719&reg=3&lang=1"
+    },
+    {
+      "date": "2024-11-13",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Oct 2024)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2024-12-06",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 4-6 Dec 2024; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=59244"
+    },
+    {
+      "date": "2024-12-06",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Nov 2024)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2024-12-11",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Nov 2024)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2024-12-12",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Nov 2024)",
+      "importance": 2,
+      "notes": "All-India CPI for Nov 2024, released by MoSPI (NSO) at 16:00 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2083704&reg=3&lang=1"
+    },
+    {
+      "date": "2024-12-19",
+      "timeIst": "00:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2024-12-18; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20241218a.htm"
+    },
+    {
+      "date": "2025-01-10",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Dec 2024)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2025-01-13",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Dec 2024)",
+      "importance": 2,
+      "notes": "All-India CPI for Dec 2024, released by MoSPI (NSO) at 16:00 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2092477&reg=3&lang=1"
+    },
+    {
+      "date": "2025-01-15",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Dec 2024)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2025-01-30",
+      "timeIst": "00:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2025-01-29; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20250129a.htm"
+    },
+    {
+      "date": "2025-02-01",
+      "timeIst": "11:00",
+      "region": "IN",
+      "category": "Budget",
+      "title": "Union Budget 2025-26",
+      "importance": 3,
+      "notes": "Union Budget 2025-26, presented in Parliament on a Saturday at 11:00 IST (PIB's live stream).",
+      "source": "https://www.indiabudget.gov.in/budget2025-26/doc/budget_speech.pdf"
+    },
+    {
+      "date": "2025-02-07",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 5-7 Feb 2025; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=59692"
+    },
+    {
+      "date": "2025-02-07",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Jan 2025)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2025-02-12",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Jan 2025)",
+      "importance": 2,
+      "notes": "All-India CPI for Jan 2025, released by MoSPI (NSO) at 16:00 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2102267&reg=3&lang=1"
+    },
+    {
+      "date": "2025-02-12",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Jan 2025)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2025-03-07",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Feb 2025)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2025-03-12",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Feb 2025)",
+      "importance": 2,
+      "notes": "All-India CPI for Feb 2025, released by MoSPI (NSO) at 16:00 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2110779&reg=3&lang=1"
+    },
+    {
+      "date": "2025-03-12",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Feb 2025)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2025-03-19",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2025-03-19; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20250319a.htm"
+    },
+    {
+      "date": "2025-04-04",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Mar 2025)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2025-04-09",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 7-9 Apr 2025; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=60176"
+    },
+    {
+      "date": "2025-04-10",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Mar 2025)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2025-04-15",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Mar 2025)",
+      "importance": 2,
+      "notes": "All-India CPI for Mar 2025, released by MoSPI (NSO) at 16:00 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2121843&reg=3&lang=1"
+    },
+    {
+      "date": "2025-05-02",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Apr 2025)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2025-05-07",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2025-05-07; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20250507a.htm"
+    },
+    {
+      "date": "2025-05-13",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Apr 2025)",
+      "importance": 2,
+      "notes": "All-India CPI for Apr 2025, released by MoSPI (NSO) at 16:00 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2128387&reg=3&lang=1"
+    },
+    {
+      "date": "2025-05-13",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Apr 2025)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2025-06-06",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 4-6 Jun 2025; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=60604"
+    },
+    {
+      "date": "2025-06-06",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (May 2025)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2025-06-11",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (May 2025)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2025-06-12",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (May 2025)",
+      "importance": 2,
+      "notes": "All-India CPI for May 2025, released by MoSPI (NSO) at 16:00 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2135927&reg=3&lang=1"
+    },
+    {
+      "date": "2025-06-18",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2025-06-18; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20250618a.htm"
+    },
+    {
+      "date": "2025-07-03",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Jun 2025)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2025-07-14",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Jun 2025)",
+      "importance": 2,
+      "notes": "All-India CPI for Jun 2025, released by MoSPI (NSO) at 16:00 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2144511&reg=3&lang=1"
+    },
+    {
+      "date": "2025-07-15",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Jun 2025)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2025-07-30",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2025-07-30; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20250730a.htm"
+    },
+    {
+      "date": "2025-08-01",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Jul 2025)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2025-08-06",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 4-6 Aug 2025 (rescheduled from 5-7 Aug); the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=60957"
+    },
+    {
+      "date": "2025-08-12",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Jul 2025)",
+      "importance": 2,
+      "notes": "All-India CPI for Jul 2025, released by MoSPI (NSO) at 16:00 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2155476&reg=3&lang=1"
+    },
+    {
+      "date": "2025-08-12",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Jul 2025)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2025-09-05",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Aug 2025)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2025-09-11",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Aug 2025)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2025-09-12",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Aug 2025)",
+      "importance": 2,
+      "notes": "All-India CPI for Aug 2025, released by MoSPI (NSO) at 16:00 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2165974&reg=3&lang=1"
+    },
+    {
+      "date": "2025-09-17",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2025-09-17; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20250917a.htm"
+    },
+    {
+      "date": "2025-10-01",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 29 Sep-1 Oct 2025; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=61332"
+    },
+    {
+      "date": "2025-10-13",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Sep 2025)",
+      "importance": 2,
+      "notes": "All-India CPI for Sep 2025, released by MoSPI (NSO) at 16:00 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2178447&reg=3&lang=1"
+    },
+    {
+      "date": "2025-10-24",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Sep 2025)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern. Released during the Oct 1 - Nov 12, 2025 lapse in federal appropriations; the release states September CPI data collection was completed before the lapse. Embargo line: 8:30 a.m. (ET) Friday, October 24, 2025. The originally scheduled date is not listed on the BLS revised-dates page, so it is not recorded here.",
+      "source": "https://www.bls.gov/news.release/archives/cpi_10242025.htm"
+    },
+    {
+      "date": "2025-10-29",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2025-10-29; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20251029a.htm"
+    },
+    {
+      "date": "2025-11-12",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Oct 2025)",
+      "importance": 2,
+      "notes": "All-India CPI for Oct 2025, released by MoSPI (NSO) at 16:00 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2189186&reg=3&lang=1"
+    },
+    {
+      "date": "2025-11-20",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Sep 2025)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern. Delayed more than six weeks by the Oct 1 - Nov 12, 2025 lapse in appropriations: previously scheduled Fri Oct 3, 2025, revised to Thu Nov 20, 2025 (per https://www.bls.gov/bls/2025-lapse-revised-release-dates.htm).",
+      "source": "https://www.bls.gov/news.release/archives/empsit_11202025.htm"
+    },
+    {
+      "date": "2025-12-05",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 3-5 Dec 2025; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=61749"
+    },
+    {
+      "date": "2025-12-11",
+      "timeIst": "00:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2025-12-10; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20251210a.htm"
+    },
+    {
+      "date": "2025-12-12",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Nov 2025)",
+      "importance": 2,
+      "notes": "All-India CPI for Nov 2025, released by MoSPI (NSO) at 16:00 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2202940&reg=3&lang=1"
+    },
+    {
+      "date": "2025-12-16",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Oct-Nov 2025)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern. BLS titles this 'The Employment Situation -- November 2025'. Delayed by the 2025 lapse: previously scheduled Fri Dec 5, 2025, revised to Tue Dec 16, 2025. It carries the initial establishment-survey (payroll) estimates for BOTH October and November 2025; no October household-survey data exist. The separate October 2025 Employment Situation release was canceled.",
+      "source": "https://www.bls.gov/news.release/archives/empsit_12162025.htm"
+    },
+    {
+      "date": "2025-12-18",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US CPI",
+      "title": "US CPI inflation (Nov 2025)",
+      "importance": 2,
+      "notes": "Released 8:30 am US Eastern. Delayed by the 2025 lapse in appropriations: previously scheduled Wed Dec 10, 2025, revised to Thu Dec 18, 2025 (per https://www.bls.gov/bls/2025-lapse-revised-release-dates.htm). October 2025 CPI release was canceled (Oct 2025 survey data not collected; no Oct all-items index published).",
+      "source": "https://www.bls.gov/news.release/archives/cpi_12182025.htm"
+    },
+    {
+      "date": "2026-01-09",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Dec 2025)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2026-01-12",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Dec 2025)",
+      "importance": 2,
+      "notes": "All-India CPI for Dec 2025, released by MoSPI (NSO) at 16:00 IST, after the close. Last release on base 2012=100.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2213736&reg=3&lang=1"
     },
     {
       "date": "2026-01-13",
@@ -230,7 +3118,57 @@
       "title": "US CPI inflation (Dec 2025)",
       "importance": 2,
       "notes": "Released 8:30 am US Eastern.",
-      "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2026-01-29",
+      "timeIst": "00:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-01-28; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260128a.htm"
+    },
+    {
+      "date": "2026-02-01",
+      "timeIst": "11:00",
+      "region": "IN",
+      "category": "Budget",
+      "title": "Union Budget 2026-27",
+      "importance": 3,
+      "notes": "Union Budget 2026-27, presented in Parliament on a Sunday at 11:00 IST (PIB's live stream).",
+      "source": "https://static.pib.gov.in/WriteReadData/specificdocs/documents/2026/feb/doc202621775901.pdf"
+    },
+    {
+      "date": "2026-02-06",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 4-6 Feb 2026; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=62169"
+    },
+    {
+      "date": "2026-02-11",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Jan 2026)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern. Delayed by the 2026 lapse in appropriations: previously scheduled Fri Feb 6, 2026, revised to Wed Feb 11, 2026 (per https://www.bls.gov/bls/2025-lapse-revised-release-dates.htm). Annual household population-control adjustments deferred to the February 2026 release.",
+      "source": "https://www.bls.gov/news.release/archives/empsit_02112026.htm"
+    },
+    {
+      "date": "2026-02-12",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Jan 2026)",
+      "importance": 2,
+      "notes": "All-India CPI for Jan 2026, released by MoSPI (NSO) at 16:00 IST, after the close. First release on base 2024=100.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2227012&reg=3&lang=1"
     },
     {
       "date": "2026-02-13",
@@ -239,8 +3177,18 @@
       "category": "US CPI",
       "title": "US CPI inflation (Jan 2026)",
       "importance": 2,
-      "notes": "Released 8:30 am US Eastern.",
-      "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
+      "notes": "Released 8:30 am US Eastern. Delayed by the 2026 lapse in appropriations: previously scheduled Wed Feb 11, 2026, revised to Fri Feb 13, 2026 (per https://www.bls.gov/bls/2025-lapse-revised-release-dates.htm).",
+      "source": "https://www.bls.gov/news.release/archives/cpi_02132026.htm"
+    },
+    {
+      "date": "2026-03-06",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Feb 2026)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
     },
     {
       "date": "2026-03-11",
@@ -250,7 +3198,47 @@
       "title": "US CPI inflation (Feb 2026)",
       "importance": 2,
       "notes": "Released 8:30 am US Eastern.",
-      "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2026-03-12",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Feb 2026)",
+      "importance": 2,
+      "notes": "All-India CPI for Feb 2026, released by MoSPI (NSO) at 16:00 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2238889&reg=3&lang=1"
+    },
+    {
+      "date": "2026-03-18",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-03-18; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260318a.htm"
+    },
+    {
+      "date": "2026-04-03",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Mar 2026)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2026-04-08",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 6-8 Apr 2026; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=62514"
     },
     {
       "date": "2026-04-10",
@@ -260,7 +3248,47 @@
       "title": "US CPI inflation (Mar 2026)",
       "importance": 2,
       "notes": "Released 8:30 am US Eastern.",
-      "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2026-04-13",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Mar 2026)",
+      "importance": 2,
+      "notes": "All-India CPI for Mar 2026, released by MoSPI (NSO) at 16:00 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2251519&reg=3&lang=1"
+    },
+    {
+      "date": "2026-04-29",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-04-29; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260429a.htm"
+    },
+    {
+      "date": "2026-05-08",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Apr 2026)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2026-05-12",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Apr 2026)",
+      "importance": 2,
+      "notes": "All-India CPI for Apr 2026, released by MoSPI (NSO) at 16:00 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2260251&reg=3&lang=1"
     },
     {
       "date": "2026-05-12",
@@ -270,7 +3298,27 @@
       "title": "US CPI inflation (Apr 2026)",
       "importance": 2,
       "notes": "Released 8:30 am US Eastern.",
-      "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2026-06-05",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 3-5 Jun 2026; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=62863"
+    },
+    {
+      "date": "2026-06-05",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (May 2026)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
     },
     {
       "date": "2026-06-10",
@@ -280,7 +3328,47 @@
       "title": "US CPI inflation (May 2026)",
       "importance": 2,
       "notes": "Released 8:30 am US Eastern.",
-      "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2026-06-12",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (May 2026)",
+      "importance": 2,
+      "notes": "All-India CPI for May 2026, released by MoSPI (NSO) at 16:00 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2272112&reg=3&lang=1"
+    },
+    {
+      "date": "2026-06-17",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-06-17; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260617a.htm"
+    },
+    {
+      "date": "2026-07-02",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Jun 2026)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2026-07-13",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Jun 2026)",
+      "importance": 2,
+      "notes": "All-India CPI for Jun 2026, released by MoSPI (NSO) at 16:00 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2284125&reg=3&lang=1"
     },
     {
       "date": "2026-07-14",
@@ -290,7 +3378,47 @@
       "title": "US CPI inflation (Jun 2026)",
       "importance": 2,
       "notes": "Released 8:30 am US Eastern.",
-      "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2026-07-29",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-07-29; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260729a.htm"
+    },
+    {
+      "date": "2026-08-05",
+      "timeIst": "10:00",
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 3-5 Aug 2026; the decision is announced on the last day at 10:00 IST (the time of RBI's own live stream).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=63287"
+    },
+    {
+      "date": "2026-08-07",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Jul 2026)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
+    },
+    {
+      "date": "2026-08-12",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Jul 2026)",
+      "importance": 2,
+      "notes": "All-India CPI for Jul 2026, released by MoSPI (NSO) at 16:00 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2298247&reg=3&lang=1"
     },
     {
       "date": "2026-08-12",
@@ -300,7 +3428,17 @@
       "title": "US CPI inflation (Jul 2026)",
       "importance": 2,
       "notes": "Released 8:30 am US Eastern.",
-      "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2026-09-04",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Aug 2026)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/bls/news-release/empsit.htm"
     },
     {
       "date": "2026-09-11",
@@ -310,7 +3448,57 @@
       "title": "US CPI inflation (Aug 2026)",
       "importance": 2,
       "notes": "Released 8:30 am US Eastern.",
-      "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
+      "source": "https://www.bls.gov/bls/news-release/cpi.htm"
+    },
+    {
+      "date": "2026-09-14",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Aug 2026)",
+      "importance": 2,
+      "notes": "All-India CPI for Aug 2026, released by MoSPI (NSO) at 16:00 IST, after the close.",
+      "source": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2310058&reg=3&lang=1"
+    },
+    {
+      "date": "2026-09-16",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-09-16; Indian markets react in the next session.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260916a.htm"
+    },
+    {
+      "date": "2026-10-02",
+      "timeIst": "18:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Sep 2026)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/schedule/news_release/empsit.htm"
+    },
+    {
+      "date": "2026-10-07",
+      "timeIst": null,
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 5-7 Oct 2026, from RBI's published schedule; the decision is announced on the last day, usually at 10:00 IST (the time is not published in advance).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=62422"
+    },
+    {
+      "date": "2026-10-12",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Sep 2026)",
+      "importance": 2,
+      "notes": "All-India CPI for Sep 2026, released by MoSPI (NSO) at 16:00 IST, after the close. Scheduled (MoSPI advance release calendar).",
+      "source": "https://www.mospi.gov.in/uploads/documents/releaseCalender/1788266096813-ARC%202026-27%20updated%20till%20August%202026.pdf"
     },
     {
       "date": "2026-10-14",
@@ -323,6 +3511,26 @@
       "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
     },
     {
+      "date": "2026-10-28",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-10-28; Indian markets react in the next session. Scheduled; the Fed confirms each date at the meeting before it.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20240809a.htm"
+    },
+    {
+      "date": "2026-11-06",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Oct 2026)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/schedule/news_release/empsit.htm"
+    },
+    {
       "date": "2026-11-10",
       "timeIst": "19:00",
       "region": "US",
@@ -333,6 +3541,46 @@
       "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
     },
     {
+      "date": "2026-11-12",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Oct 2026)",
+      "importance": 2,
+      "notes": "All-India CPI for Oct 2026, released by MoSPI (NSO) at 16:00 IST, after the close. Scheduled (MoSPI advance release calendar).",
+      "source": "https://www.mospi.gov.in/uploads/documents/releaseCalender/1788266096813-ARC%202026-27%20updated%20till%20August%202026.pdf"
+    },
+    {
+      "date": "2026-12-04",
+      "timeIst": null,
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 2-4 Dec 2026, from RBI's published schedule; the decision is announced on the last day, usually at 10:00 IST (the time is not published in advance).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=62422"
+    },
+    {
+      "date": "2026-12-04",
+      "timeIst": "19:00",
+      "region": "US",
+      "category": "US jobs",
+      "title": "US nonfarm payrolls (Nov 2026)",
+      "importance": 2,
+      "notes": "The Employment Situation (nonfarm payrolls), released 8:30 am US Eastern.",
+      "source": "https://www.bls.gov/schedule/news_release/empsit.htm"
+    },
+    {
+      "date": "2026-12-10",
+      "timeIst": "00:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2026-12-09; Indian markets react in the next session. Scheduled; the Fed confirms each date at the meeting before it.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20240809a.htm"
+    },
+    {
       "date": "2026-12-10",
       "timeIst": "19:00",
       "region": "US",
@@ -341,6 +3589,126 @@
       "importance": 2,
       "notes": "Released 8:30 am US Eastern.",
       "source": "https://www.bls.gov/schedule/news_release/cpi.htm"
+    },
+    {
+      "date": "2027-01-12",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Dec 2026)",
+      "importance": 2,
+      "notes": "All-India CPI for Dec 2026, released by MoSPI (NSO) at 16:00 IST, after the close. Scheduled (MoSPI advance release calendar).",
+      "source": "https://www.mospi.gov.in/uploads/documents/releaseCalender/1788266096813-ARC%202026-27%20updated%20till%20August%202026.pdf"
+    },
+    {
+      "date": "2027-01-28",
+      "timeIst": "00:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-01-27; Indian markets react in the next session. Scheduled; the Fed confirms each date at the meeting before it.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20250905a.htm"
+    },
+    {
+      "date": "2027-02-05",
+      "timeIst": null,
+      "region": "IN",
+      "category": "RBI policy",
+      "title": "RBI monetary policy decision",
+      "importance": 3,
+      "notes": "MPC meeting 3-5 Feb 2027, from RBI's published schedule; the decision is announced on the last day, usually at 10:00 IST (the time is not published in advance).",
+      "source": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=62422"
+    },
+    {
+      "date": "2027-02-12",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Jan 2027)",
+      "importance": 2,
+      "notes": "All-India CPI for Jan 2027, released by MoSPI (NSO) at 16:00 IST, after the close. Scheduled (MoSPI advance release calendar).",
+      "source": "https://www.mospi.gov.in/uploads/documents/releaseCalender/1788266096813-ARC%202026-27%20updated%20till%20August%202026.pdf"
+    },
+    {
+      "date": "2027-03-12",
+      "timeIst": "16:00",
+      "region": "IN",
+      "category": "India CPI",
+      "title": "India CPI inflation (Feb 2027)",
+      "importance": 2,
+      "notes": "All-India CPI for Feb 2027, released by MoSPI (NSO) at 16:00 IST, after the close. Scheduled (MoSPI advance release calendar).",
+      "source": "https://www.mospi.gov.in/uploads/documents/releaseCalender/1788266096813-ARC%202026-27%20updated%20till%20August%202026.pdf"
+    },
+    {
+      "date": "2027-03-17",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-03-17; Indian markets react in the next session. Scheduled; the Fed confirms each date at the meeting before it.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20250905a.htm"
+    },
+    {
+      "date": "2027-04-28",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-04-28; Indian markets react in the next session. Scheduled; the Fed confirms each date at the meeting before it.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20250905a.htm"
+    },
+    {
+      "date": "2027-06-09",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-06-09; Indian markets react in the next session. Scheduled; the Fed confirms each date at the meeting before it.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20250905a.htm"
+    },
+    {
+      "date": "2027-07-28",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-07-28; Indian markets react in the next session. Scheduled; the Fed confirms each date at the meeting before it.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20250905a.htm"
+    },
+    {
+      "date": "2027-09-15",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-09-15; Indian markets react in the next session. Scheduled; the Fed confirms each date at the meeting before it.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20250905a.htm"
+    },
+    {
+      "date": "2027-10-27",
+      "timeIst": "23:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-10-27; Indian markets react in the next session. Scheduled; the Fed confirms each date at the meeting before it.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20250905a.htm"
+    },
+    {
+      "date": "2027-12-09",
+      "timeIst": "00:30",
+      "region": "US",
+      "category": "Fed policy",
+      "title": "US Fed interest rate decision",
+      "importance": 3,
+      "notes": "FOMC statement at 2:00 pm US Eastern on 2027-12-08; Indian markets react in the next session. Scheduled; the Fed confirms each date at the meeting before it.",
+      "source": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20250905a.htm"
     }
   ]
 }

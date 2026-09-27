@@ -22,7 +22,7 @@ public class MarketEvent
     /// <summary>"IN", "US" or "GLOBAL".</summary>
     public string Region { get; set; } = "IN";
 
-    /// <summary>A short kind the page groups by: "RBI policy", "Fed policy", "US CPI", "Budget", "Election", "Results", "Other".</summary>
+    /// <summary>A short kind the page groups by: "RBI policy", "Fed policy", "US CPI", "US jobs", "India CPI", "Budget", "Election", "Results", "Other".</summary>
     public string Category { get; set; } = "Other";
 
     public string Title { get; set; } = string.Empty;

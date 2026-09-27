@@ -168,7 +168,7 @@ export interface SaveMarketEvent {
 
 export const BUILD_UPS = ['Long build-up', 'Short build-up', 'Short covering', 'Long unwinding'] as const
 
-export const EVENT_CATEGORIES = ['RBI policy', 'Fed policy', 'US CPI', 'India CPI', 'Budget', 'Election', 'Results', 'Other'] as const
+export const EVENT_CATEGORIES = ['RBI policy', 'Fed policy', 'US CPI', 'US jobs', 'India CPI', 'Budget', 'Election', 'Results', 'Other'] as const
 
 /** Underlyings whose option chain the levels section can read. */
 export const LEVEL_UNDERLYINGS = ['NIFTY', 'BANKNIFTY', 'SENSEX', 'FINNIFTY', 'MIDCPNIFTY'] as const

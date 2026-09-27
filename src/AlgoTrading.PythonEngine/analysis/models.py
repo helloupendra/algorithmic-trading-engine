@@ -32,6 +32,14 @@ The baselines are deliberately plain: the mean range of the last 20 sessions,
 and the trailing 250-session base rate of trend days and up days. A model that
 cannot beat them is not worth its parameters.
 
+Version 2 (MODEL_VERSION_V2) adds the backtestable context of
+analysis/context.py — overnight global moves, FII positioning, breadth and
+event days — to the same three questions: range.har-vix-cues,
+trend.logit-cues and direction.logit-cues. Same fit, same baselines, same
+windows and penalty; only the inputs grow. Each is registered only where it
+beats its v1 model on validation (backtest.compare), and v1 keeps running
+beside it either way.
+
 Deterministic: no random numbers, no search. The feature sets are fixed here
 and nowhere else.
 """
@@ -45,11 +53,15 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
+from analysis import context as ctxmod
 from analysis.data import SessionBar
 from analysis.scoring import BUCKETS, TREND_EFFICIENCY, efficiency
 
-#: Registered with every model; bump the suffix for a change on the same day.
+#: Registered with every v1 model; bump the suffix for a change on the same day.
 MODEL_VERSION = "2026-09-27.1"
+#: Registered with every v2 model. Its inputs were fixed before any of the
+#: tables they read existed, so before any v2 result could be looked at.
+MODEL_VERSION_V2 = "2026-09-27.2"
 
 #: Sessions a model must have trained on before it may forecast. With fewer, a
 #: 22-session HAR and a seven-input logit are fitted to noise.
@@ -77,6 +89,12 @@ class ModelSpec:
     kind: str         # har | logit
     uses_vix: bool
     description: str
+    version: str = MODEL_VERSION
+    #: v2's inputs beyond v1's: (input name, context column, transform). The
+    #: transform is None, "log", "abs" or "lopsided" (|x − 50|, for a share in %).
+    extras: Tuple[Tuple[str, str, Optional[str]], ...] = ()
+    #: The v1 model a v2 model has to beat on validation to be registered.
+    compares_with: Optional[str] = None
 
 
 MODELS: Dict[str, ModelSpec] = {m.key: m for m in (
@@ -94,6 +112,65 @@ MODELS: Dict[str, ModelSpec] = {m.key: m for m in (
               "Logistic regression (ridge) for close > open, on the same seven inputs as trend.logit. A "
               "control: nothing in the desk's research predicts intraday direction."),
 )}
+
+
+#: range.har-vix-cues: the size of the overnight moves (a range has no sign),
+#: US VIX, FII positioning and its last change, how lopsided the previous
+#: session's breadth was, the heavyweights' dispersion, and event days.
+RANGE_EXTRAS: Tuple[Tuple[str, str, Optional[str]], ...] = (
+    ("lnUsVix", "usVix", "log"),
+    ("absSpxRet", "spxRet", "abs"),
+    ("absAsiaRet", "asiaRet", "abs"),
+    ("absUsdinrRet", "usdinrRet", "abs"),
+    ("fiiNetLong", "fiiNetLong", None),
+    ("absFiiChange1", "fiiChange1", "abs"),
+    ("breadthSkew", "pctAdvancing", "lopsided"),
+    ("lnHwDispersion", "hwDispersion", "log"),
+    ("majorEvent", "majorEvent", None),
+    ("majorEve", "majorEve", None),
+    ("dataRelease", "dataRelease", None),
+)
+
+#: The logits' extras: the same groups with their signs kept. One of the four
+#: US equity series (SPX; NDX, DJI and ES move with it) and the three Asian
+#: indices as one mean; DXY, the US 10-year and the day after an event are
+#: recorded on each forecast but left out, to keep 22 inputs from becoming 30.
+LOGIT_EXTRAS: Tuple[Tuple[str, str, Optional[str]], ...] = (
+    ("spxRet", "spxRet", None),
+    ("usVixChange", "usVixChange", None),
+    ("asiaRet", "asiaRet", None),
+    ("usdinrRet", "usdinrRet", None),
+    ("brentRet", "brentRet", None),
+    ("fiiNetLong", "fiiNetLong", None),
+    ("fiiChange1", "fiiChange1", None),
+    ("fiiChange5", "fiiChange5", None),
+    ("pctAdvancing", "pctAdvancing", None),
+    ("netHighsLowsPct", "netHighsLowsPct", None),
+    ("hwRet", "hwRet", None),
+    ("hwDispersion", "hwDispersion", None),
+    ("majorEvent", "majorEvent", None),
+    ("majorEve", "majorEve", None),
+    ("dataRelease", "dataRelease", None),
+)
+
+_CUES = ("overnight US and Asian moves, US VIX, the rupee, oil, FII index-futures positioning, NSE breadth, "
+         "the heavyweights' previous session and RBI/Fed/Budget/data-release days")
+
+MODELS_V2: Dict[str, ModelSpec] = {m.key: m for m in (
+    ModelSpec("range.har-vix-cues", "range", "har", True,
+              "range.har-vix plus the pre-open context (absolute sizes of the moves): " + _CUES + ".",
+              MODEL_VERSION_V2, RANGE_EXTRAS, "range.har-vix"),
+    ModelSpec("trend.logit-cues", "trend", "logit", True,
+              "trend.logit's seven inputs plus the pre-open context: " + _CUES + ".",
+              MODEL_VERSION_V2, LOGIT_EXTRAS, "trend.logit"),
+    ModelSpec("direction.logit-cues", "direction", "logit", True,
+              "direction.logit's seven inputs plus the pre-open context: " + _CUES + ". Still a control: skill "
+              "here is a reason to look for a leak.",
+              MODEL_VERSION_V2, LOGIT_EXTRAS, "direction.logit"),
+)}
+
+#: Every model of every version, by key.
+SPECS: Dict[str, ModelSpec] = {**MODELS, **MODELS_V2}
 
 
 class ForecastUnavailable(RuntimeError):
@@ -136,6 +213,8 @@ class Table:
     # calendar facts about session i, known in advance
     expiry: np.ndarray
     monday: np.ndarray
+    # v2's context inputs for session i (analysis/context.py), when the table was built with them
+    context: Optional[ctxmod.ContextColumns] = None
     # input matrices already built, by model key (a table is never changed after it is built)
     _features: Dict[str, np.ndarray] = field(default_factory=dict, compare=False, repr=False)
 
@@ -147,10 +226,12 @@ class Table:
 
 
 def build_table(underlying: str, sessions: Sequence[SessionBar], vix_close: Mapping[date, float],
-                is_expiry: Callable[[date], bool], pending: Optional[date] = None) -> Table:
+                is_expiry: Callable[[date], bool], pending: Optional[date] = None,
+                context: Optional[ctxmod.Context] = None) -> Table:
     """
     The table for `sessions` (oldest first), with a last row for `pending`
-    when given. Every input column at row i is computed from rows < i only.
+    when given. Every input column at row i is computed from rows < i only;
+    `context` adds v2's columns, computed by the same rule (context.columns).
     """
     rows = sorted(sessions, key=lambda s: s.day)
     if pending is not None:
@@ -195,8 +276,9 @@ def build_table(underlying: str, sessions: Sequence[SessionBar], vix_close: Mapp
 
     expiry = np.array([float(bool(is_expiry(d))) for d in days]) if n else nan.copy()
     monday = np.array([float(d.weekday() == 0) for d in days]) if n else nan.copy()
+    cols = ctxmod.columns(days, context) if context is not None else None
     return Table(underlying, days, o, h, l, c, prev_close, rng, eff, trend, up, r1, r5, r22, mean20,
-                 base_trend, base_up, prev_ret, prev_eff, vix_prev, vix_chg5, expiry, monday)
+                 base_trend, base_up, prev_ret, prev_eff, vix_prev, vix_chg5, expiry, monday, cols)
 
 
 def _mean_last(values: np.ndarray, k: int) -> float:
@@ -228,11 +310,28 @@ def features(spec: ModelSpec, t: Table) -> np.ndarray:
             cols = [np.log(t.r1 / t.mean20), t.prev_ret, t.prev_eff, t.vix_prev, t.vix_chg5, t.expiry, t.monday]
         else:
             raise ValueError(f"unknown model kind {spec.kind!r}")
+        cols += [_context_input(t, column, how) for _, column, how in spec.extras]
         X = np.column_stack(cols) if len(t.days) else np.empty((0, len(cols)))
     X[~np.isfinite(X)] = np.nan
     X.flags.writeable = False
     t._features[spec.key] = X
     return X
+
+
+def _context_input(t: Table, column: str, how: Optional[str]) -> np.ndarray:
+    """A v2 input: the context column, transformed; all NaN when the table has no context (a v1 table)."""
+    if t.context is None:
+        return np.full(len(t.days), np.nan)
+    v = t.context.values[column]
+    if how is None:
+        return v
+    if how == "log":
+        return np.where(v > 0, np.log(np.where(v > 0, v, 1.0)), np.nan)
+    if how == "abs":
+        return np.abs(v)
+    if how == "lopsided":
+        return np.abs(v - 50.0)
+    raise ValueError(f"unknown transform {how!r}")
 
 
 def target(spec: ModelSpec, t: Table) -> np.ndarray:
@@ -370,7 +469,9 @@ def predict(model: Fit, t: Table, i: int) -> Forecast:
     x = features(spec, t)[i]
     missing = [name for name, v in zip(_input_names(spec), x) if not np.isfinite(v)]
     if missing:
-        raise ForecastUnavailable(f"{spec.key} {t.underlying} {t.days[i]}: no {', '.join(missing)}")
+        sources = _sources(spec)
+        raise ForecastUnavailable(f"{spec.key} {t.underlying} {t.days[i]}: no "
+                                  + ", ".join(f"{m} ({sources[m]})" if m in sources else m for m in missing))
     if not _baseline_known(spec, t)[i]:
         raise ForecastUnavailable(f"{spec.key} {t.underlying} {t.days[i]}: the baseline needs more sessions")
     if spec.kind == "har":
@@ -407,6 +508,7 @@ def _predict_range(model: Fit, t: Table, i: int, x: np.ndarray) -> Forecast:
     if model.spec.uses_vix:
         inputs.update({"vixPrevClose": round(float(t.vix_prev[i]), 2), "expiryDay": bool(t.expiry[i]),
                        "monday": bool(t.monday[i])})
+    inputs.update(_context_inputs(model.spec, t, i))
     inputs.update(_training(model))
     return Forecast(prediction, baseline, inputs)
 
@@ -424,9 +526,17 @@ def _predict_probability(model: Fit, t: Table, i: int, x: np.ndarray) -> Forecas
         "vixChange5": round(float(t.vix_chg5[i]), 2),
         "expiryDay": bool(t.expiry[i]),
         "monday": bool(t.monday[i]),
+        **_context_inputs(model.spec, t, i),
         **_training(model),
     }
     return Forecast({"p": round(p, 4)}, {"p": round(base, 4)}, inputs)
+
+
+def _context_inputs(spec: ModelSpec, t: Table, i: int) -> Dict[str, Any]:
+    """A v2 forecast records every context column (raw, not transformed), the ones it did not use included."""
+    if not spec.extras or t.context is None:
+        return {}
+    return t.context.row(i)
 
 
 def _training(model: Fit) -> Dict[str, Any]:
@@ -435,9 +545,15 @@ def _training(model: Fit) -> Dict[str, Any]:
 
 def _input_names(spec: ModelSpec) -> List[str]:
     if spec.kind == "har":
-        names = ["r1", "r5", "r22"]
-        return names + (["vixPrevClose", "expiryDay", "monday"] if spec.uses_vix else [])
-    return ["rangeRatio", "prevReturn", "prevEfficiency", "vixPrevClose", "vixChange5", "expiryDay", "monday"]
+        names = ["r1", "r5", "r22"] + (["vixPrevClose", "expiryDay", "monday"] if spec.uses_vix else [])
+    else:
+        names = ["rangeRatio", "prevReturn", "prevEfficiency", "vixPrevClose", "vixChange5", "expiryDay", "monday"]
+    return names + [name for name, _, _ in spec.extras]
+
+
+def _sources(spec: ModelSpec) -> Dict[str, str]:
+    """Input name -> the table it is read from, for v2's inputs: what to look at when one is missing."""
+    return {name: ctxmod.SOURCES[column] for name, column, _ in spec.extras if column in ctxmod.SOURCES}
 
 
 def range_distribution(median: float, low80: float, high80: float, prev_close: float,
@@ -461,7 +577,7 @@ def forecast_payload(spec: ModelSpec, underlying: str, session: date, fc: Foreca
     """POST /api/Forecasts body."""
     return {
         "modelKey": spec.key,
-        "modelVersion": MODEL_VERSION,
+        "modelVersion": spec.version,
         "target": spec.target,
         "underlying": underlying,
         "sessionDate": session.isoformat(),

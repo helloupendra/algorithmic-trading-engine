@@ -56,19 +56,24 @@ class ForecastApi:
         return self._post(f"/api/Forecasts/{int(forecast_id)}/outcome", payload)
 
     def forecasts(self, from_day: date, to_day: date) -> List[Dict[str, Any]]:
+        return self._get_list("/api/Forecasts", {"from": from_day.isoformat(), "to": to_day.isoformat()})
+
+    def models(self) -> List[Dict[str, Any]]:
+        """Every registered model version: which v2 models the morning may issue."""
+        return self._get_list("/api/Forecasts/models", None)
+
+    def _get_list(self, path: str, params: Optional[Dict[str, str]]) -> List[Dict[str, Any]]:
         try:
-            resp = self.http.get(f"{self.base_url}/api/Forecasts",
-                                 params={"from": from_day.isoformat(), "to": to_day.isoformat()},
-                                 verify=self.verify, timeout=30)
+            resp = self.http.get(f"{self.base_url}{path}", params=params, verify=self.verify, timeout=30)
         except Exception as ex:
-            raise ApiError(f"GET /api/Forecasts failed: {type(ex).__name__}: {ex}") from None
+            raise ApiError(f"GET {path} failed: {type(ex).__name__}: {ex}") from None
         if resp.status_code >= 400:
-            raise ApiError(f"GET /api/Forecasts: HTTP {resp.status_code} {_message(resp)}")
+            raise ApiError(f"GET {path}: HTTP {resp.status_code} {_message(resp)}")
         body = _json(resp)
         if not isinstance(body, list):
             # The contract answers a list. Anything else read as "nothing to score" would leave every
             # forecast unscored without a word.
-            raise ApiError(f"GET /api/Forecasts: expected a list, got {type(body).__name__}")
+            raise ApiError(f"GET {path}: expected a list, got {type(body).__name__}")
         return body
 
     def _post(self, path: str, payload: Dict[str, Any]) -> Answer:

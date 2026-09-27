@@ -103,3 +103,48 @@ class FakeHttp:
     def get(self, url, params=None, **kw):
         self.calls.append(("GET", url, params, kw))
         return self._answer()
+
+
+# ------------------------------------------------------------ v2 context --
+
+def context_for(days: Sequence[date], seed: int = 3, holidays: Optional[Dict[str, frozenset]] = None,
+                spx_returns: Optional[Dict[date, float]] = None, lead: int = 40, tail: int = 20):
+    """
+    A synthetic v2 context around `days`: every global series on every weekday
+    from `lead` weekdays before the first session to `tail` after the last
+    (so rows dated on and after any session exist, for the leak tests), FII
+    and breadth rows and the ten heavyweights on each session, and a few
+    events. `spx_returns` fixes SPX's daily % return on given dates.
+    """
+    from analysis import context as ctx
+
+    rng = np.random.default_rng(seed)
+    first = days[0] - timedelta(days=int(lead * 1.5))
+    cal = [d for d in weekdays(first, 2 * ((days[-1] - first).days + 7) + tail) if d <= days[-1]]
+    cal += weekdays(days[-1] + timedelta(days=1), tail)
+    rows: Dict[str, List] = {}
+    for k, symbol in enumerate(ctx.GLOBAL_SYMBOLS):
+        level, out = 100.0 + 10 * k, []
+        for day in cal:
+            move = (spx_returns or {}).get(day) if symbol == "SPX" else None
+            move = rng.normal(0, 1.0) if move is None else move
+            level = level * (1 + move / 100.0) if symbol not in ("VIX", "US10Y") else max(1.0, level + move)
+            out.append(ctx.GlobalRow(day, round(level, 4)))
+        rows[symbol] = out
+    fii = [ctx.ParticipantDay(d, int(rng.integers(50_000, 250_000)), int(rng.integers(50_000, 250_000))) for d in days]
+    breadth = []
+    for d in days:
+        a, dcl = int(rng.integers(500, 2000)), int(rng.integers(500, 2000))
+        breadth.append(ctx.BreadthDay(d, a, dcl, 100, a + dcl + 100, int(rng.integers(0, 150)),
+                                      int(rng.integers(0, 150))))
+    heavy = {s: SessionSeries(f"NSE:{s}-EQ", sessions(days, seed=100 + k, level=1000.0))
+             for k, s in enumerate(ctx.HEAVYWEIGHTS)}
+    events = []
+    for k, d in enumerate(days):
+        if k % 40 == 5:
+            events.append(ctx.Event(d, ctx.time(10, 0), "RBI policy", "RBI monetary policy decision"))
+        if k % 30 == 12:
+            events.append(ctx.Event(d, ctx.time(23, 30), "Fed policy", "US Fed interest rate decision"))
+        if k % 21 == 3:
+            events.append(ctx.Event(d, ctx.time(18, 0), "US CPI", "US CPI inflation"))
+    return ctx.Context(rows, fii, breadth, heavy, events, holidays or {})
