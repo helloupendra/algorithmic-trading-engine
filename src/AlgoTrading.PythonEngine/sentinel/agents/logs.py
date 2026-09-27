@@ -226,7 +226,10 @@ _RUNNER_PREFIX = re.compile(r"^\[strategy:(?P<name>[^:\]]+):(?P<ul>[^:\]]+)(?P<e
 _DAEMON_PREFIX = re.compile(r"^\[(?P<label>[A-Za-z][A-Za-z0-9 ._-]{1,30}?)(?P<err>:err)?\] ?(?P<text>.*)$")
 _DAEMON_LABELS = ("ingestor", "chain poller", "notifier")  # and anything called "… feed"
 _INNER_VENDOR = re.compile(r"^\[(?P<vendor>dhan|fyers|truedata|angel)\]", re.I)
-_DESK_LINE = re.compile(r"^(?P<time>\d{2}:\d{2}:\d{2})\s+(?P<text>.*)$")
+# desk.sh and its jobs stamp each line "2026-09-28 08:45:03  text" (say() in
+# scripts/lib/desk-common.sh) since 28 Sep 2026, and "08:45:03  text" before
+# that; both are read, and "time" is the clock part either way.
+_DESK_LINE = re.compile(r"^(?:\d{4}-\d{2}-\d{2}[ T])?(?P<time>\d{2}:\d{2}:\d{2})\s+(?P<text>.*)$")
 # The API's run console ("09:15:01 | …") and, from 28 Sep, a runner's own log,
 # which stamps every line the same way with a full UTC time
 # ("2026-09-28T03:45:01.123Z ! …"). "!" is stderr: a traceback is assembled
@@ -1478,12 +1481,18 @@ class LogsAgent(Agent):
                     suggestion=("Check that exactly one thing starts the desk (the keepalive, install-desk.sh, a "
                                 "login shell) and that it checks the pidfile before starting."),
                     raw=raw, file="desk.log", hold=scan.hold("desk-relaunched"),
-                    line_time=raw[:8] if raw[:2].isdigit() else None)
+                    line_time=_desk_hms(raw))
         last_sec, last_raw = starts[-1]
         data["desk_start"] = {"day": today, "sec": last_sec, "raw": last_raw[:240]}
 
 
 # --- small helpers --------------------------------------------------------------
+def _desk_hms(raw: str) -> Optional[str]:
+    """The HH:MM:SS of a desk.log line, dated or not; None for a line without a stamp."""
+    m = _DESK_LINE.match(raw)
+    return m["time"] if m else None
+
+
 def _read_lines(path: Path, start: int, size: int, mid_line: bool = False) -> tuple[list[str], int]:
     """
     Complete lines between ``start`` and ``size`` (at most MAX_READ_BYTES of

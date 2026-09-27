@@ -16,6 +16,13 @@
 #
 # Idempotent: every step checks before it installs, so re-running after a
 # failure continues where it stopped.
+#
+# Bootstrapped before 28 Sep 2026? One step was added since (step 8): keep
+# needrestart from restarting the desk after an apt upgrade. Apply it once,
+# by hand, on the server:
+#
+#   sudo mkdir -p /etc/needrestart/conf.d
+#   echo '$nrconf{override_rc}{qr(^algotrading-desk)} = 0;' | sudo tee /etc/needrestart/conf.d/algotrading.conf
 
 set -euo pipefail
 
@@ -167,11 +174,20 @@ StandardOutput=append:$REPO_DIR/logs/desk.log
 StandardError=append:$REPO_DIR/logs/desk.log
 Restart=always
 RestartSec=15
+# Stopping or restarting the desk ends its loop alone: the API it started, and
+# a morning job under way, keep running (scripts/desk.sh).
 KillMode=process
 
 [Install]
 WantedBy=multi-user.target
 UNIT
+# needrestart restarts services after an apt upgrade (unattended upgrades
+# included): during a session that would restart the desk with the day under
+# way. The desk's markers keep it from running the morning job twice, but the
+# restart itself is still not wanted in market hours; it is left to a person.
+sudo mkdir -p /etc/needrestart/conf.d
+# shellcheck disable=SC2016  # a line of Perl (needrestart's config), written as it stands
+echo '$nrconf{override_rc}{qr(^algotrading-desk)} = 0;' | sudo tee /etc/needrestart/conf.d/algotrading.conf >/dev/null
 # The desk starts docker compose and reads .env; it needs sudo only to start
 # the docker service if it is down.
 echo "$USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl start docker" | sudo tee /etc/sudoers.d/algotrading-desk >/dev/null

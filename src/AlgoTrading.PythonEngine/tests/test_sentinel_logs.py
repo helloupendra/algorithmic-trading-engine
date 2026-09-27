@@ -575,6 +575,19 @@ class DeskTests(LogsAgentTestCase):
         self.assertEqual(Severity.MEDIUM, finding.severity)
         self.assertEqual(4, len(finding.evidence))  # three launches + the file
 
+    def test_dated_desk_lines_are_read_like_the_old_ones(self):
+        # say() stamps "%F %T" since 28 Sep 2026; the rules read the text after the stamp either way.
+        self.start_watching("desk.log")
+        self.append("desk.log",
+                    "2026-09-24 09:12:10  FAILED: no FYERS sign-in by 09:12 IST; nothing was started.\n"
+                    "".join(f"2026-09-24 06:58:0{s}  === desk started (pid 3{s}672, background) ===\n"
+                            for s in (1, 5)))
+        found = self.check()
+        failed = next(f for f in found.values() if f.rule == "job-failed")
+        self.assertIn("at 09:12 IST", failed.summary)
+        self.assertIn("Sign in to FYERS", failed.suggestion)
+        self.assertIn("logs:desk-relaunched", found)
+
     def test_one_desk_start_is_ordinary(self):
         self.start_watching("desk.log")
         self.append("desk.log", "06:58:01  === desk started (pid 31672, background) — API http://localhost:5025 ===\n")

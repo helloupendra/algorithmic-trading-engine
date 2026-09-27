@@ -89,8 +89,10 @@ starts serving before the Mac stops.
 
 ## Day to day
 
-- `sudo systemctl status algotrading-desk`, `tail -f logs/desk.log`, `./scripts/status.sh` — the same log and status as on the Mac.
-- Deploys: push to GitHub; the desk pulls, rebuilds and restarts the API within two minutes, exactly as before.
+- `sudo systemctl status algotrading-desk`, `tail -f logs/desk.log`, `./scripts/status.sh` — the same log and status as on the Mac. Start and stop the desk with `sudo systemctl start|stop algotrading-desk`; here `scripts/desk.sh --stop` and `--headless` only print that command. Stopping it leaves the API running (`KillMode=process`).
+- Deploys: push to GitHub; the desk pulls within two minutes, and builds and restarts the API when the desk is quiet (weekends, weekdays before 08:40 or after the evening close, no live run).
+- The morning and evening jobs run once a day, recorded in `~/.local/state/algotrading/market-open-<date>` (and `market-close-<date>`); a desk restart does not run them again. A morning job that was cut off is reported on Telegram, not rerun: `scripts/market-open.sh --redeploy-only` deploys the plan without restarting the API or the feeds.
+- Switches in `.env`, read when the desk starts (restart it after the close): `DESK_BACKGROUND_OPEN=1` runs the morning job beside the desk's loop; `API_BUILD_CONFIG=Release` builds the API Release and runs its output instead of `dotnet run` (`scripts/desk.sh --restart-api` applies it at once; remove the line and do the same to roll back).
 - Heavy migrations (a rebuild of a big table): apply them by hand first with `dotnet ef database update` while the desk is stopped, then start the desk. The desk restarts an API that takes longer than two minutes to come up, which would interrupt the migration.
 - The FYERS sign-in is still a daily manual step at the console before 09:15; the desk waits for it.
 - Logs rotate as on the Mac (`logs/api-until-*.log`); raw ticks age out after seven days by TimescaleDB's retention policy.

@@ -9,7 +9,15 @@
 # It writes one report per day to logs/market-open-YYYY-MM-DD.log and prints the
 # same lines, so the overnight result is readable in one place.
 #
-# Usage: ./scripts/market-open.sh [--dry-run]
+# Usage: ./scripts/market-open.sh [--dry-run] [--redeploy-only]
+#   --dry-run        say what would be done; start, stop and restart nothing
+#   --redeploy-only  the plan and the tally only: no API restart, no feed
+#                    stopped or started. For a morning job that was
+#                    interrupted after the feeds were up; plan lines already
+#                    running are left alone, as always.
+#
+# The desk (scripts/desk.sh) runs this once a day and records it in a marker
+# file (daily_job in lib/desk-common.sh); a run by hand leaves no marker.
 
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -18,7 +26,19 @@ LOG="$REPO_ROOT/logs/market-open-$(date +%F).log"
 . scripts/lib/desk-common.sh
 
 DRY_RUN=0
-[ "${1:-}" = "--dry-run" ] && DRY_RUN=1
+REDEPLOY_ONLY=0
+# Unknown arguments are refused: a mistyped --dry-run used to run the whole
+# live morning.
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=1 ;;
+    --redeploy-only) REDEPLOY_ONLY=1 ;;
+    *) echo "usage: scripts/market-open.sh [--dry-run] [--redeploy-only]" >&2; exit 2 ;;
+  esac
+done
+# The pid and, on the way out, the outcome go into the day's marker when the
+# desk started this run (DESK_JOB_MARKER).
+[ "$DRY_RUN" = 1 ] || job_marker_attach
 
 # Space-separated: the underlyings the feed and the chain poller cover. The
 # chain poller covers the same set (CHAIN_UNDERLYINGS, set for the API by the
@@ -87,6 +107,61 @@ LEG_TARGET_PTS="${MARKET_OPEN_LEG_TARGET_PTS:-20}"
 LEG_STOP_PTS="${MARKET_OPEN_LEG_STOP_PTS:-}"
 DAY_TARGET="${MARKET_OPEN_DAY_TARGET:-}"
 DAY_STOP_LOSS="${MARKET_OPEN_DAY_STOP_LOSS:-}"
+
+# >>> plan-line (also loaded by scripts/tests/market-open-plan.test.sh and market-open-gates.test.sh)
+# One plan line, read for one account:
+#   Strategy  UNDERLYING[,UNDERLYING...]  lots  [legTargetPoints | -]  [@account[,account]]
+# Prints "NAME SYMBOLS LOTS TARGET" when the line applies to the account, and
+# nothing when it does not (a comment, a blank, or an @-list without it).
+parse_plan_line() {  # line account default_lots default_target
+  local name symbols lots rest field target="" only=""
+  read -r name symbols lots rest <<<"$1"
+  [ -n "${name:-}" ] || return 0
+  case "$name" in \#*) return 0 ;; esac
+  for field in ${rest:-}; do
+    case "$field" in
+      @*) only="${field#@}" ;;
+      *) target="$field" ;;
+    esac
+  done
+  if [ -n "$only" ] && ! printf ',%s,' "$only" | tr '[:upper:]' '[:lower:]' \
+      | grep -qF ",$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]'),"; then
+    return 0
+  fi
+  echo "$name ${symbols:-} ${lots:-$3} ${target:-$4}"
+}
+
+# Every planned run, in the order the job starts them, one per line:
+#   account|strategy|underlying|lots|target
+# Interleaved: each strategy on each underlying is started for every account
+# before the next one. Account after account, the second account's copy of a
+# run started 30-40 s after the first's (27 Sep audit): one signal, two books,
+# two different entries.
+plan_runs() {  # accounts default_lots default_target, the plan's lines on stdin
+  local accounts="$1" line account parsed rows name symbols u
+  while IFS= read -r line; do
+    rows=""
+    for account in $accounts; do
+      parsed="$(parse_plan_line "$line" "$account" "$2" "$3")"
+      [ -n "$parsed" ] && rows="$rows$account $parsed"$'\n'
+    done
+    [ -n "$rows" ] || continue
+    read -r _ name symbols _ <<<"$rows"
+    for u in $(printf '%s' "$symbols" | tr ',' ' '); do
+      printf '%s' "$rows" | while read -r account name _ lots target; do
+        [ -n "$account" ] && echo "$account|$name|$u|$lots|$target"
+      done
+    done
+  done
+}
+# <<< plan-line
+
+# Every underlying the plan trades, comma-separated: the spots the feed check
+# (step 6) requires to be priced since the open.
+PLAN_UNDERLYINGS="$(plan_runs "$ACCOUNTS" "$LOTS_DEFAULT" "$LEG_TARGET_PTS" <<<"$PLAN" | cut -d'|' -f3 | awk '!seen[$0]++' | paste -sd, -)"
+# Seconds between two starts in the plan step.
+START_GAP="${MARKET_OPEN_START_GAP:-1}"
+
 # Clock time (HHMM, IST) to stop waiting for the morning FYERS sign-in.
 #
 # Late in the session rather than a short window: FYERS expires its token at
@@ -113,6 +188,7 @@ fail() {
 
 say "=== market-open: $(date '+%A %d %B %Y') ==="
 [ "$DRY_RUN" = 1 ] && say "(dry run — nothing will be started)"
+[ "$REDEPLOY_ONLY" = 1 ] && say "(redeploy only — the API and the feeds are left as they are; the plan and the tally follow)"
 
 # --- 0. is it even a trading day? -------------------------------------------
 DOW="$(date +%u)"   # 1=Mon .. 7=Sun
@@ -130,7 +206,9 @@ load_env || fail ".env is missing or has no ADMIN_USERNAME / ADMIN_PASSWORD."
 # runners, the failure of 22 and 24 Sep. It is exactly what a short morning
 # tally, or a Sentinel incident, tempts someone to do, so it is refused here;
 # a missing run is started from Strategies > Live runner instead.
-if [ "$DRY_RUN" != 1 ] && [ "$((10#$(date +%H%M)))" -ge 915 ] && [ -z "${MARKET_OPEN_FORCE:-}" ]; then
+# --redeploy-only restarts nothing, so it is not refused: the plan step leaves
+# every run that is already live alone.
+if [ "$DRY_RUN" != 1 ] && [ "$REDEPLOY_ONLY" != 1 ] && [ "$((10#$(date +%H%M)))" -ge 915 ] && [ -z "${MARKET_OPEN_FORCE:-}" ]; then
   LIVE_NOW="$(live_runs)"
   if [ "${LIVE_NOW:--1}" -gt 0 ] 2>/dev/null; then
     say "$LIVE_NOW strategy run(s) are live — not running the morning job again under them"
@@ -140,11 +218,84 @@ if [ "$DRY_RUN" != 1 ] && [ "$((10#$(date +%H%M)))" -ge 915 ] && [ -z "${MARKET_
   fi
 fi
 
+# --- 1c. is the exchange open today? ------------------------------------------
+# Weekends are caught above without the API; holidays need the exchanges' own
+# calendar, which the API holds (System > Market calendar). On 2026-09-14,
+# Ganesh Chaturthi, this script could not tell: it restarted everything and
+# waited for a FYERS sign-in until 14:30 on a day NSE never opened.
+#
+# So the API that is already running is asked first, before anything is
+# rebuilt or restarted. A day the calendar cannot vouch for — no answer, a
+# non-2xx answer, or a calendarWarning (its list for this year is missing) —
+# is "unknown", not "trading": the job carries on, but if nothing has priced
+# by the open it stops as "probably a holiday" instead of waiting for FYERS
+# until 14:30 (probably_holiday, steps 4 and 6). scripts/lib/morning_checks.py
+# reads the answer.
+DAY_STATE=unknown        # trading | unknown; a holiday ends the job here
+DAY_WHY=""               # why it is unknown
+DAY_ASK_AGAIN=0          # 1 when the API gave no answer: asked again once it is up
+CALENDAR_WARNED=0
+ask_trading_day() {
+  local body answered=yes out verdict detail warning
+  if ! api_healthy; then
+    DAY_STATE=unknown; DAY_WHY="the API was not running to ask"; DAY_ASK_AGAIN=1
+    return 0
+  fi
+  body="$(api_get "/api/MarketSession/check?exchange=NSE&segment=CM" 2>/dev/null)" || answered=no
+  out="$(printf '%s' "$body" | python3 "$REPO_ROOT/scripts/lib/morning_checks.py" session --answered "$answered" 2>/dev/null)" || out=""
+  verdict="$(printf '%s\n' "$out" | sed -n 1p)"
+  detail="$(printf '%s\n' "$out" | sed -n 2p)"
+  warning="$(printf '%s\n' "$out" | sed -n 3p)"
+  if [ -n "$warning" ] && [ "$CALENDAR_WARNED" = 0 ]; then
+    warn "$warning"
+    notify "AlgoTrading" "Holiday calendar: $warning Add it under System > Market calendar."
+    CALENDAR_WARNED=1
+  fi
+  case "$verdict" in
+    holiday)
+      say "Exchange holiday — NSE is closed today ($detail). Nothing to start."
+      notify "AlgoTrading" "Market holiday today: $detail. NSE is closed; the desk is not starting feeds or strategies."
+      exit 0 ;;
+    trading)
+      DAY_STATE=trading; DAY_WHY=""; DAY_ASK_AGAIN=0 ;;
+    *)
+      DAY_STATE=unknown; DAY_WHY="${detail:-the answer from the calendar could not be read}"
+      # No answer is worth asking for again once the API is up; a calendar
+      # warning is the same answer every time.
+      if [ "$answered" = no ] || [ -z "$verdict" ]; then DAY_ASK_AGAIN=1; else DAY_ASK_AGAIN=0; fi ;;
+  esac
+}
+ask_trading_day
+if [ "$DAY_STATE" = unknown ]; then
+  warn "cannot tell whether today is a trading day ($DAY_WHY) — carrying on; if nothing has priced by the open, this stops as a probable holiday"
+fi
+
+# The plan's spots against today's open (scripts/lib/morning_checks.py feed):
+# the report, first line pass | partial | fail. Empty when it could not be taken.
+feed_report() {
+  api_get /api/LiveData/latest/all 2>/dev/null \
+    | python3 "$REPO_ROOT/scripts/lib/morning_checks.py" feed --underlyings "$PLAN_UNDERLYINGS" 2>/dev/null
+  return 0
+}
+
+# Nothing priced since the open, on a day the calendar cannot vouch for: the
+# job stops rather than wait for a sign-in until 14:30. $1 says what was seen.
+probably_holiday() {
+  say "$1, and the holiday calendar cannot vouch for today ($DAY_WHY) — probably a holiday"
+  say "--- stopping here; nothing further is started. If the market is open: sign in, then run scripts/market-open.sh by hand ---"
+  notify "AlgoTrading" "Probably a holiday: $1, and the holiday calendar cannot vouch for today ($DAY_WHY). The morning job stopped without waiting for FYERS. If the market is open, sign in and run scripts/market-open.sh by hand."
+  exit 0
+}
+# 09:15 and a 90 s grace for every spot's first print after the open (HHMMSS).
+FEED_JUDGE_AT="${MARKET_OPEN_FEED_JUDGE_AT:-091630}"
+
 # --- 2. infrastructure -------------------------------------------------------
 if [ "$DRY_RUN" = 1 ]; then
   # A dry run starts nothing, and that includes the API: on 23 Sep five dry
   # runs restarted it five times in ten minutes.
   say "dry run: would start infra, rebuild the console and restart the API"
+elif [ "$REDEPLOY_ONLY" = 1 ]; then
+  say "redeploy only: infra, the console and the API are left as they are"
 else
 say "starting infra (TimescaleDB, Redis) ..."
 docker compose up -d --wait timescaledb redis >>"$LOG" 2>&1 \
@@ -163,42 +314,12 @@ fi
 # and the sign-in wait below can run past 14:30 — see desk-common.sh.
 auth_token >/dev/null || fail "could not sign in to the API as $ADMIN_USERNAME."
 
-# --- 3b. is the exchange open today? -----------------------------------------
-# Weekends are caught above without the API; holidays need the exchanges' own
-# calendar, which the API holds (System > Market calendar). On 2026-09-14,
-# Ganesh Chaturthi, this script could not tell: it restarted everything and
-# waited for a FYERS sign-in until 14:30 on a day NSE never opened.
-SESSION_JSON="$(api_get "/api/MarketSession/check?exchange=NSE&segment=CM" 2>/dev/null || true)"
-read_session() {  # field -> value, empty when the answer is missing or unreadable
-  printf '%s' "$SESSION_JSON" | python3 -c '
-import json, sys
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
-field = sys.argv[1]
-if field == "holiday":
-    print((d.get("holidayName") or "a non-trading day") if d.get("isTradingDay") is False else "")
-else:
-    print(d.get(field) or "")
-' "$1" 2>/dev/null
-}
-
-if [ -z "$SESSION_JSON" ]; then
-  warn "could not ask the API whether today is a trading day — carrying on as an ordinary weekday"
-else
-  CALENDAR_WARNING="$(read_session calendarWarning)"
-  if [ -n "$CALENDAR_WARNING" ]; then
-    warn "$CALENDAR_WARNING"
-    notify "AlgoTrading" "Holiday calendar: $CALENDAR_WARNING Add it under System > Market calendar."
-  fi
-
-  HOLIDAY="$(read_session holiday)"
-  if [ -n "$HOLIDAY" ]; then
-    say "Exchange holiday — NSE is closed today ($HOLIDAY). Nothing to start."
-    notify "AlgoTrading" "Market holiday today: $HOLIDAY. NSE is closed; the desk is not starting feeds or strategies."
-    exit 0
-  fi
+# --- 3b. the calendar again, when step 1c got no answer -----------------------
+# The API was down at 1c (or answered with an error): the restarted one is
+# asked, so a holiday is still caught before any feed or strategy starts.
+if [ "$DAY_ASK_AGAIN" = 1 ]; then
+  ask_trading_day
+  if [ "$DAY_STATE" = trading ]; then say "the calendar says today is a trading day"; fi
 fi
 
 start_daemon() {
@@ -303,7 +424,9 @@ dhan_token_short() {  # hours left -> exit 0 when the token will not last to the
   python3 -c "import sys; sys.exit(0 if float('$1') < 15.5 else 1)" 2>/dev/null
 }
 
-if [ "$DRY_RUN" = 1 ]; then
+if [ "$REDEPLOY_ONLY" = 1 ]; then
+  say "redeploy only: Dhan is not checked, and the feeds that are running stay as they are"
+elif [ "$DRY_RUN" = 1 ]; then
   say "dry run: would check Dhan ($(dhan_state)), map instruments, start the Dhan feed and chain recorder"
   dhan_auto_configured && say "dry run: the automatic PIN + TOTP sign-in is set up" \
     || say "dry run: the automatic PIN + TOTP sign-in is not set up (DHAN_PIN / DHAN_TOTP_SECRET)"
@@ -402,6 +525,12 @@ wait_for_fyers() {  # blocks until FYERS (or, late, Dhan) is signed in; fails th
     if [ "$NOW" -ge "$LOGIN_WAIT_UNTIL" ]; then
       fail "no FYERS or Dhan sign-in by ${LOGIN_WAIT_UNTIL} IST; nothing was started."
     fi
+    # A day the calendar cannot vouch for (step 1c), past the open, with
+    # nothing priced: not worth waiting for a sign-in until 14:30.
+    if [ "${DAY_STATE:-trading}" = unknown ] && [ "$(date +%H%M%S)" -ge "$FEED_JUDGE_AT" ] \
+        && [ "$(feed_report | head -1)" = fail ]; then
+      probably_holiday "no FYERS or Dhan sign-in and no price since the 09:15 open"
+    fi
 
     # A louder reminder at the open itself, then one every ten minutes: the
     # first notification is easy to sleep through, and every minute waited is
@@ -442,8 +571,14 @@ fyers_gate() {  # $1 = 1 when Dhan is the day's feed
 }
 # <<< fyers-gate
 
-if [ "$DRY_RUN" = 1 ] && ! connected; then
-  if [ "$DHAN_PRIMARY" = 1 ]; then
+if [ "$REDEPLOY_ONLY" = 1 ]; then
+  : # nothing waits for a sign-in: the feeds are whatever is running already
+elif [ "$DRY_RUN" = 1 ]; then
+  # Asked once and never handed to the gate: a session that lapsed between
+  # two checks sent a dry run into the real wait, up to 14:30.
+  if connected; then
+    say "dry run: FYERS session already valid"
+  elif [ "$DHAN_PRIMARY" = 1 ]; then
     say "dry run: FYERS is not signed in; would carry on without it (Dhan is the feed)"
   else
     say "dry run: FYERS is not signed in; would wait for the sign-in until ${LOGIN_WAIT_UNTIL} IST"
@@ -459,6 +594,8 @@ fi
 # morning proves it the hard way.
 if [ "$DRY_RUN" = 1 ]; then
   say "dry run: would start the ingestor and the chain poller; the plan follows"
+elif [ "$REDEPLOY_ONLY" = 1 ]; then
+  say "redeploy only: no feed is stopped or started and the feed check is skipped; the plan follows"
 else
 
 # Fresh daemons, never "already running": a feed that lived through the night
@@ -532,42 +669,54 @@ else
 fi
 
 # Long enough for the ingestor to have subscribed and the first ticks to land.
+# With the wait above, the check below is never taken before about 09:17:30:
+# past the 60-90 s grace a spot may need for its first print after the open.
 sleep 90
 
-# Only quotes updated in the last few minutes count. The table keeps every
-# symbol's LAST price forever, so on 2026-09-10 it showed 127 "prices" from
-# the previous evening while the ingestor sat on an expired token and
-# nothing was flowing. The date-time filter is done in python on purpose:
-# the JSON is one line and grep cannot tell today's stamp from yesterday's.
-FRESH_PRICES_PY='
-import json, sys
-from datetime import datetime, timedelta, timezone
-try:
-    rows = json.load(sys.stdin)
-except Exception:
-    rows = []
-if isinstance(rows, dict):
-    rows = rows.get("items") or rows.get("quotes") or rows.get("data") or []
-cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
-fresh = 0
-for r in rows:
-    stamp = r.get("updatedUtc") or r.get("receivedUtc") or ""
-    try:
-        at = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
-        if at.tzinfo is None:
-            at = at.replace(tzinfo=timezone.utc)
-    except Exception:
-        continue
-    if at >= cutoff and r.get("lastTradedPrice") is not None:
-        fresh += 1
-print(fresh)
-'
-TICKS="$(api_get /api/LiveData/latest/all 2>/dev/null | python3 -c "$FRESH_PRICES_PY" 2>/dev/null || echo 0)"
-say "  symbols with a price in the last 5 minutes: ${TICKS:-0}"
+# Every spot the plan trades must have a price the exchange stamped since
+# today's open: 09:15 IST on NSE and BSE, 09:00 on MCX (morning_checks.py feed).
+# Until 28 Sep one fresh symbol of ~260 passed, and the MCX ones are fresh from
+# 09:00, so a dead NSE feed read as live at the open. The table keeps every
+# symbol's LAST price forever, so a stamp older than today's open is no price:
+# on 2026-09-10 it showed 127 "prices" from the previous evening while the
+# ingestor sat on an expired token and nothing was flowing.
+#   pass     every spot fresh
+#   partial  some missing, the equity session flowing: warned, and the plan runs
+#   fail     no NSE/BSE spot fresh: the feed is not delivering the session
+check_feed() {  # label -> FEED_VERDICT and FEED_MISSING; the report is logged
+  local report
+  report="$(feed_report)"
+  FEED_VERDICT="$(printf '%s\n' "$report" | sed -n 1p)"
+  [ -n "$FEED_VERDICT" ] || { FEED_VERDICT=fail; report="$(printf 'fail\nthe feed check could not be taken (no answer from the API)')"; }
+  FEED_MISSING="$(printf '%s\n' "$report" | sed -n 's/^  missing: \([^ ]*\).*/\1/p' | paste -sd, -)"
+  printf '%s\n' "$report" | sed -n '2,$p' | while IFS= read -r line; do say "  $1$line"; done
+}
 
-# The backup: Dhan was started but nothing is arriving. Its feed is stopped and
-# the FYERS feed takes over, so the strategies are not left without prices.
-if [ "${TICKS:-0}" -lt 1 ] && [ "$DHAN_PRIMARY" = 1 ]; then
+stop_started_feeds() {  # on a probable holiday: what this job started is not left running all day
+  if [ "$DHAN_PRIMARY" = 1 ]; then
+    api_post /api/Feeds/dhan/stop '{}' >/dev/null 2>&1 || true
+    api_post /api/Dhan/chain-poller/stop '{}' >/dev/null 2>&1 || true
+    say "  stopped the Dhan feed and chain recorder this job started"
+  else
+    api_post /api/Ingestor/stop '{}' >/dev/null 2>&1 || true
+    api_post /api/OptionChain/poller/stop '{}' >/dev/null 2>&1 || true
+    say "  stopped the FYERS feed and chain poller this job started"
+  fi
+}
+
+check_feed ""
+
+# Nothing since the open on a day the calendar cannot vouch for (step 1c):
+# probably a holiday, not a feed to replace and a sign-in to wait for.
+if [ "$FEED_VERDICT" = fail ] && [ "$DAY_STATE" = unknown ]; then
+  stop_started_feeds
+  probably_holiday "no price since the open on the spots the plan trades"
+fi
+
+# The backup: Dhan was started but the session is not arriving. Its feed is
+# stopped and the FYERS feed takes over, so the strategies are not left
+# without prices.
+if [ "$FEED_VERDICT" = fail ] && [ "$DHAN_PRIMARY" = 1 ]; then
   warn "the Dhan feed delivered no prices — switching to the FYERS feed"
   notify "AlgoTrading" "Dhan feed delivered no prices after the open. Switched to FYERS; Dhan's option chain keeps recording."
   stop_daemon "Dhan feed" "/api/Feeds/dhan/stop"
@@ -583,12 +732,15 @@ if [ "${TICKS:-0}" -lt 1 ] && [ "$DHAN_PRIMARY" = 1 ]; then
   fi
   start_fyers_feed
   sleep 90
-  TICKS="$(api_get /api/LiveData/latest/all 2>/dev/null | python3 -c "$FRESH_PRICES_PY" 2>/dev/null || echo 0)"
-  say "  symbols with a price in the last 5 minutes (FYERS): ${TICKS:-0}"
+  check_feed "(FYERS) "
 fi
 
-if [ "${TICKS:-0}" -lt 1 ]; then
+if [ "$FEED_VERDICT" = fail ]; then
   fail "no fresh prices after the ingestor started — the feed is not flowing (check the broker token — FYERS expires it at 06:00 IST)."
+fi
+if [ "$FEED_VERDICT" = partial ]; then
+  warn "no price since the open for $FEED_MISSING — the plan still starts, and those runs wait for prices"
+  notify "AlgoTrading" "Feed check: no price since the open for $FEED_MISSING. The rest of the plan starts; check Data → Feeds."
 fi
 
 fi   # end of the live-only section a dry run skips
@@ -659,30 +811,6 @@ sys.exit(1)
 ' 2>/dev/null
 }
 
-# >>> plan-line (also loaded by scripts/tests/market-open-plan.test.sh)
-# One plan line, read for one account:
-#   Strategy  UNDERLYING[,UNDERLYING...]  lots  [legTargetPoints | -]  [@account[,account]]
-# Prints "NAME SYMBOLS LOTS TARGET" when the line applies to the account, and
-# nothing when it does not (a comment, a blank, or an @-list without it).
-parse_plan_line() {  # line account default_lots default_target
-  local name symbols lots rest field target="" only=""
-  read -r name symbols lots rest <<<"$1"
-  [ -n "${name:-}" ] || return 0
-  case "$name" in \#*) return 0 ;; esac
-  for field in ${rest:-}; do
-    case "$field" in
-      @*) only="${field#@}" ;;
-      *) target="$field" ;;
-    esac
-  done
-  if [ -n "$only" ] && ! printf ',%s,' "$only" | tr '[:upper:]' '[:lower:]' \
-      | grep -qF ",$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]'),"; then
-    return 0
-  fi
-  echo "$name ${symbols:-} ${lots:-$3} ${target:-$4}"
-}
-# <<< plan-line
-
 # The rules as the API's RiskRulesDto (camelCase; leg rules in premium points,
 # day rules in rupees with scope "day"). Built per plan line, because the leg
 # target is the one rule a strategy may want its own.
@@ -703,46 +831,60 @@ PYEOF
 
 say "day rules for every run: ${DAY_TARGET:+target ₹$DAY_TARGET }${DAY_STOP_LOSS:+SL ₹$DAY_STOP_LOSS}${DAY_TARGET:-${DAY_STOP_LOSS:-none}}; leg target is per strategy, below"
 
+# The accounts first: a name that is not an active account is reported once,
+# and the rest still run.
+ACTIVE_ACCOUNTS=""
+OWNER_IDS=""   # "name=id name=id"
 for ACCOUNT in $ACCOUNTS; do
   OWNER_ID="$(user_id "$ACCOUNT")"
   if [ -z "$OWNER_ID" ]; then
     say "no active account called '$ACCOUNT' — skipping it; the other accounts still run"
     continue
   fi
-
-  say "--- $ACCOUNT (user $OWNER_ID) ---"
-
-  printf '%s\n' "$PLAN" | while IFS= read -r LINE; do
-    PARSED="$(parse_plan_line "$LINE" "$ACCOUNT" "$LOTS_DEFAULT" "$LEG_TARGET_PTS")"
-    [ -n "$PARSED" ] || continue
-    read -r NAME SYMBOLS PLAN_LOTS PLAN_TARGET <<<"$PARSED"
-    RISK_JSON="$(risk_json "$PLAN_TARGET")"
-    RISK_TEXT="leg target $([ "$PLAN_TARGET" = "-" ] && echo none || echo "$PLAN_TARGET pts")"
-
-    SID="$(strategy_id "$NAME")"
-    if [ -z "$SID" ]; then
-      say "  '$NAME' is not in the catalogue — skipped"
-      continue
-    fi
-
-    for U in $(printf '%s' "$SYMBOLS" | tr ',' ' '); do
-      if already_running "$NAME" "$U" "$OWNER_ID"; then
-        say "  $NAME on $U — already running in this account, left alone"
-        continue
-      fi
-
-      if [ "$DRY_RUN" = 1 ]; then
-        say "  dry run: would start $NAME (id $SID) on $U, $PLAN_LOTS lot(s) for $ACCOUNT"
-        continue
-      fi
-
-      say "  deploying $NAME (id $SID) on $U, $PLAN_LOTS lot(s), $RISK_TEXT — paper, for $ACCOUNT"
-      RUN="$(api_post "/api/Strategy/$SID/start" \
-        "{\"underlying\":\"$U\",\"lots\":$PLAN_LOTS,\"ownerUserId\":$OWNER_ID,\"risk\":$RISK_JSON}" || true)"
-      say "    $(printf '%s' "$RUN" | head -c 200)"
-      sleep 2
-    done
+  say "account $ACCOUNT (user $OWNER_ID)"
+  ACTIVE_ACCOUNTS="$ACTIVE_ACCOUNTS $ACCOUNT"
+  OWNER_IDS="$OWNER_IDS $ACCOUNT=$OWNER_ID"
+done
+owner_id() {  # account -> its user id
+  local pair
+  for pair in $OWNER_IDS; do
+    if [ "${pair%%=*}" = "$1" ]; then echo "${pair#*=}"; return; fi
   done
+}
+
+# Interleaved (plan_runs): each strategy on each underlying goes to every
+# account before the next one, START_GAP seconds apart, so the accounts'
+# copies of one signal start within a second or two of each other.
+GROUP=""
+SID=""
+plan_runs "$ACTIVE_ACCOUNTS" "$LOTS_DEFAULT" "$LEG_TARGET_PTS" <<<"$PLAN" \
+  | while IFS='|' read -r ACCOUNT NAME U PLAN_LOTS PLAN_TARGET; do
+  if [ "$NAME|$U" != "$GROUP" ]; then
+    GROUP="$NAME|$U"
+    say "--- $NAME on $U ---"
+    SID="$(strategy_id "$NAME")"
+    [ -n "$SID" ] || say "  '$NAME' is not in the catalogue — skipped"
+  fi
+  [ -n "$SID" ] || continue
+  OWNER_ID="$(owner_id "$ACCOUNT")"
+  RISK_JSON="$(risk_json "$PLAN_TARGET")"
+  RISK_TEXT="leg target $([ "$PLAN_TARGET" = "-" ] && echo none || echo "$PLAN_TARGET pts")"
+
+  if already_running "$NAME" "$U" "$OWNER_ID"; then
+    say "  $NAME on $U — already running for $ACCOUNT, left alone"
+    continue
+  fi
+
+  if [ "$DRY_RUN" = 1 ]; then
+    say "  dry run: would start $NAME (id $SID) on $U, $PLAN_LOTS lot(s) for $ACCOUNT"
+    continue
+  fi
+
+  say "  deploying $NAME (id $SID) on $U, $PLAN_LOTS lot(s), $RISK_TEXT — paper, for $ACCOUNT"
+  RUN="$(api_post "/api/Strategy/$SID/start" \
+    "{\"underlying\":\"$U\",\"lots\":$PLAN_LOTS,\"ownerUserId\":$OWNER_ID,\"risk\":$RISK_JSON}" || true)"
+  say "    $(printf '%s' "$RUN" | head -c 200)"
+  sleep "$START_GAP"
 done
 
 # --- 8. the tally: the plan against what is actually live -------------------
@@ -752,16 +894,8 @@ done
 # 0. The expected runs come from the same parser the deploy loop used, so the
 # two cannot disagree about what the plan says; scripts/lib/morning_tally.py
 # does the matching (tested in the engine's tests/test_morning_tally.py).
-expected_runs() {  # every planned run as "account|strategy|underlying"
-  local account line parsed name symbols u
-  for account in $ACCOUNTS; do
-    while IFS= read -r line; do
-      parsed="$(parse_plan_line "$line" "$account" "$LOTS_DEFAULT" "$LEG_TARGET_PTS")"
-      [ -n "$parsed" ] || continue
-      read -r name symbols _ _ <<<"$parsed"
-      for u in $(printf '%s' "$symbols" | tr ',' ' '); do echo "$account|$name|$u"; done
-    done <<<"$PLAN"
-  done
+expected_runs() {  # every planned run as "account|strategy|underlying", in the order they start
+  plan_runs "$ACCOUNTS" "$LOTS_DEFAULT" "$LEG_TARGET_PTS" <<<"$PLAN" | cut -d'|' -f1-3
 }
 
 EXPECTED="$(expected_runs)"
@@ -814,8 +948,15 @@ for user, rows in sorted(by_user.items()):
 PYEOF
 fi
 
+# How the box is holding up with the day's runners on it: a runner the kernel
+# killed for memory looks like one that died for no reason.
+say "host: $(python3 "$REPO_ROOT/scripts/lib/host_vitals.py" 2>/dev/null || true); OOM killer: $(python3 "$REPO_ROOT/scripts/lib/host_vitals.py" --oom 2>/dev/null || true)"
+
 say "Watch them at $CONSOLE/admin/strategies/live — or read this file."
 
 # Short (or unknown) is a failed morning for whoever reads the exit code: the
-# desk's log, and the once-a-day marker that is coming (audit fix 9).
+# desk's log, and the day's marker (done=... exit=2).
 [ "$TALLY_RC" = 0 ] || exit 2
+# Said, not fallen off the end: the marker counts only the job's own exits
+# as finished (job_marker_attach).
+exit 0
