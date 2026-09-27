@@ -9,6 +9,7 @@ import {
   formatSignedContracts,
   gapReading,
   istDate,
+  movedFactorSection,
   participantStance,
   splitEvents,
   topWalls,
@@ -124,5 +125,15 @@ describe('topWalls', () => {
     expect(calls[0].distance?.points).toBe(230)
     expect(topWalls(chain, 'put', 5).map((w) => w.strike)).toEqual([23000, 23300, 23500])
     expect(topWalls(undefined, 'put')).toEqual([])
+  })
+})
+
+describe('movedFactorSection', () => {
+  it('sends an old link to a section that moved on to its new page', () => {
+    expect(movedFactorSection('levels')).toBe('/markets/chain/levels')
+  })
+
+  it('leaves the sections still on the Factors page alone', () => {
+    for (const s of ['flows', 'global', 'events', null, undefined, 'nonsense']) expect(movedFactorSection(s)).toBeNull()
   })
 })

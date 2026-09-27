@@ -2,9 +2,7 @@
  * Market factors: the numbers desks read to judge where the market may go,
  * gathered on one page.
  *
- * Five sections, one at a time (the choice lives in the URL):
- *  - Levels: OI walls, max pain, PCR, IV, VIX and the move the straddle prices,
- *    read live from the same chain view the option chain page uses;
+ * Four sections, one at a time (the choice lives in the URL):
  *  - Futures build-up: index futures today (live OI against yesterday's close)
  *    and over recent sessions, plus the day's stock futures by build-up;
  *  - FII & DII: cash-market buying and selling, and how FIIs, DIIs, pros and
@@ -14,11 +12,15 @@
  *
  * Every section says how fresh its numbers are and what our own tests found for
  * that factor, so a reading is never mistaken for a proven signal.
+ *
+ * The chain's levels (walls, max pain, the straddle's move) were a section
+ * here; they are the Levels tab of Markets → Option chain now, and an old
+ * ?section=levels link is sent there.
  */
 
 import { useState } from 'react'
-import type { FormEvent, ReactNode } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import type { FormEvent } from 'react'
+import { Navigate, useSearchParams } from 'react-router-dom'
 import {
   useAddMarketEvent,
   useDeleteMarketEvent,
@@ -26,39 +28,31 @@ import {
   useMarketEvents,
   useMarketFlows,
   useMarketFutures,
-  useOptionChainView,
-  useSyncMarketFactors,
 } from '../../lib/queries'
 import {
   BUILD_UPS,
-  DATASET_LABELS,
   EVENT_CATEGORIES,
-  LEVEL_UNDERLYINGS,
-  RESEARCH_NOTES,
   cashStreak,
-  distanceTo,
-  expectedMove,
   formatCrore,
   formatDay,
-  formatDistance,
   formatSignedContracts,
   gapReading,
   istDate,
+  movedFactorSection,
   participantStance,
   signTone,
   splitEvents,
-  topWalls,
 } from '../../lib/factors'
-import type { DatasetStatus, GlobalCue, MarketEvent, WallRow } from '../../lib/factors'
+import type { GlobalCue, MarketEvent } from '../../lib/factors'
 import { buildUpTone, formatOi, movePercent } from '../../lib/movers'
 import { formatAge, formatDateTime } from '../../lib/format'
 import { useAuth } from '../../lib/auth'
 import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components/ui'
+import { Metric, ResearchNote, StatusLine, num } from '../markets/factorParts'
 import './movers.css'
 import './factors.css'
 
 const SECTIONS = [
-  { key: 'levels', label: 'Levels' },
   { key: 'futures', label: 'Futures build-up' },
   { key: 'flows', label: 'FII & DII' },
   { key: 'global', label: 'Global' },
@@ -67,190 +61,12 @@ const SECTIONS = [
 type SectionKey = (typeof SECTIONS)[number]['key']
 
 function sectionFrom(value: string | null): SectionKey {
-  return (SECTIONS.find((s) => s.key === value)?.key ?? 'levels') as SectionKey
-}
-
-function ResearchNote({ id }: { id: keyof typeof RESEARCH_NOTES }) {
-  const note = RESEARCH_NOTES[id]
-  return (
-    <p className="mf-research small">
-      <Badge tone={note.tested ? 'accent' : 'neutral'}>{note.tested ? 'Tested' : 'Not tested yet'}</Badge> {note.text}
-    </p>
-  )
-}
-
-function Metric({ label, value, sub, tone }: { label: string; value: ReactNode; sub?: ReactNode; tone?: string }) {
-  return (
-    <div className="mf-metric">
-      <div className="mf-metric__label">{label}</div>
-      <div className={`mf-metric__value mono ${tone ?? ''}`}>{value}</div>
-      {sub != null && <div className="mf-metric__sub small muted">{sub}</div>}
-    </div>
-  )
-}
-
-const num = (v: number | null | undefined, digits = 0) =>
-  v == null || Number.isNaN(v) ? '—' : v.toLocaleString('en-IN', { minimumFractionDigits: digits, maximumFractionDigits: digits })
-
-// ---------------------------------------------------------------------------
-// Levels
-// ---------------------------------------------------------------------------
-
-function WallsTable({ title, rows, tone }: { title: string; rows: WallRow[]; tone: 'pos' | 'neg' }) {
-  return (
-    <Panel title={title} className="mf-card">
-      {rows.length === 0 ? (
-        <EmptyState>No open interest in this chain.</EmptyState>
-      ) : (
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Strike</th>
-              <th className="num">Open interest</th>
-              <th className="num">Change today</th>
-              <th className="num">From spot</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((w, i) => (
-              <tr key={w.strike}>
-                <td className={`mono ${i === 0 ? tone : ''}`}>{w.strike.toLocaleString('en-IN')}</td>
-                <td className="num mono">{formatOi(w.openInterest)}</td>
-                <td className={`num mono ${signTone(w.openInterestChange)}`}>{formatSignedContracts(w.openInterestChange)}</td>
-                <td className="num mono">{formatDistance(w.distance)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </Panel>
-  )
-}
-
-function LevelsSection() {
-  const [underlying, setUnderlying] = useState<string>('NIFTY')
-  const view = useOptionChainView(underlying)
-  const chain = view.data
-  const header = chain?.header ?? null
-  const spot = header?.spot?.lastPrice ?? chain?.spotPrice ?? null
-  const move = expectedMove(chain)
-
-  return (
-    <>
-      <div className="mf-tools">
-        <div className="mv-filters" role="group" aria-label="Underlying" style={{ margin: 0 }}>
-          {LEVEL_UNDERLYINGS.map((u) => (
-            <button key={u} type="button" className="mv-filter" aria-pressed={underlying === u} onClick={() => setUnderlying(u)}>
-              {u}
-            </button>
-          ))}
-        </div>
-        <span className="muted small">
-          {header
-            ? `${header.mode === 'live' ? 'Live' : 'Last capture'} · ${formatAge(header.liveOverlayUtc ?? header.snapshotCapturedUtc)}${
-                chain?.expiryDate ? ` · expiry ${chain.expiryDate}` : ''
-              }`
-            : view.isLoading
-              ? 'Loading the chain…'
-              : ''}
-        </span>
-      </div>
-      <ResearchNote id="levels" />
-
-      {view.isError && <InlineError error={view.error} />}
-      {view.isLoading && !chain && <Loading />}
-      {chain && !header && <EmptyState>No chain has been captured for {underlying} yet.</EmptyState>}
-
-      {chain && header && (
-        <>
-          <div className="mf-metrics">
-            <Metric
-              label={underlying}
-              value={num(spot, 2)}
-              sub={header.spot?.changePercent != null ? movePercent(header.spot.changePercent) : undefined}
-              tone={signTone(header.spot?.changePercent)}
-            />
-            <Metric
-              label="Resistance · biggest call OI"
-              value={num(header.resistanceStrike)}
-              sub={`${formatOi(header.resistanceOpenInterest)} · ${formatDistance(distanceTo(spot, header.resistanceStrike))}`}
-              tone="neg"
-            />
-            <Metric
-              label="Support · biggest put OI"
-              value={num(header.supportStrike)}
-              sub={`${formatOi(header.supportOpenInterest)} · ${formatDistance(distanceTo(spot, header.supportStrike))}`}
-              tone="pos"
-            />
-            <Metric label="Max pain" value={num(header.maxPainStrike)} sub={formatDistance(distanceTo(spot, header.maxPainStrike))} />
-            <Metric
-              label="Put-call ratio"
-              value={header.putCallRatio != null ? header.putCallRatio.toFixed(2) : '—'}
-              sub={header.putCallRatioOfChange != null ? `of today's change ${header.putCallRatioOfChange.toFixed(2)}` : 'above 1: more puts written'}
-            />
-            <Metric
-              label="Move the straddle prices"
-              value={move ? `±${num(move.points)}` : '—'}
-              sub={move ? `${move.percent.toFixed(2)}% to expiry · ${num(move.strike)} straddle` : 'no ATM prices'}
-            />
-            <Metric label="ATM IV" value={header.atTheMoneyIv != null ? `${header.atTheMoneyIv.toFixed(1)}%` : '—'} />
-            <Metric
-              label="India VIX"
-              value={num(header.vix?.lastPrice, 2)}
-              sub={header.vix?.changePercent != null ? movePercent(header.vix.changePercent) : undefined}
-              tone={signTone(header.vix?.changePercent) === 'pos' ? 'neg' : signTone(header.vix?.changePercent) === 'neg' ? 'pos' : ''}
-            />
-            <Metric label="Days to expiry" value={header.daysToExpiry ?? '—'} />
-          </div>
-
-          <div className="mf-grid">
-            <WallsTable title="Call walls · where sellers expect a ceiling" rows={topWalls(chain, 'call')} tone="neg" />
-            <WallsTable title="Put walls · where sellers expect a floor" rows={topWalls(chain, 'put')} tone="pos" />
-          </div>
-          <p className="muted small">
-            A wall is where option sellers have the most contracts open. Desks read the biggest call OI as resistance and the
-            biggest put OI as support; walls move during the day as positions are added and closed.
-          </p>
-        </>
-      )}
-    </>
-  )
+  return (SECTIONS.find((s) => s.key === value)?.key ?? 'futures') as SectionKey
 }
 
 // ---------------------------------------------------------------------------
 // Futures build-up
 // ---------------------------------------------------------------------------
-
-function StatusLine({ status, datasets }: { status: DatasetStatus[] | undefined; datasets: string[] }) {
-  const { user } = useAuth()
-  const sync = useSyncMarketFactors()
-  const rows = datasets.map((d) => status?.find((s) => s.dataset === d) ?? null)
-
-  return (
-    <div className="mf-status small">
-      {datasets.map((d, i) => {
-        const s = rows[i]
-        return (
-          <span key={d} className="mf-status__item">
-            <span className={`live-dot ${s?.lastFailed ? 'neg' : s?.lastSuccessUtc ? 'pos' : ''}`} aria-hidden />
-            {DATASET_LABELS[d] ?? d}:{' '}
-            {s
-              ? `${s.newestDay ? `newest ${formatDay(s.newestDay)}` : 'nothing stored yet'} · checked ${formatAge(s.lastAttemptUtc)}${
-                  s.lastFailed && s.lastMessage ? ` · ${s.lastMessage}` : ''
-                }`
-              : 'not fetched since the API started'}
-          </span>
-        )
-      })}
-      {user?.role === 'Admin' && (
-        <button type="button" className="btn btn--sm" onClick={() => sync.mutate()} disabled={sync.isPending}>
-          {sync.isPending ? 'Fetching from NSE…' : 'Fetch now'}
-        </button>
-      )}
-      {sync.isError && <InlineError error={sync.error} />}
-    </div>
-  )
-}
 
 function FuturesSection() {
   const futures = useMarketFutures(10)
@@ -756,6 +572,8 @@ function EventsSection() {
 export default function MarketFactorsPage() {
   const [params, setParams] = useSearchParams()
   const section = sectionFrom(params.get('section'))
+  const moved = movedFactorSection(params.get('section'))
+  if (moved) return <Navigate to={moved} replace />
 
   return (
     <div className="page mf">
@@ -784,7 +602,6 @@ export default function MarketFactorsPage() {
       </div>
 
       <div role="tabpanel" className="mf-body">
-        {section === 'levels' && <LevelsSection />}
         {section === 'futures' && <FuturesSection />}
         {section === 'flows' && <FlowsSection />}
         {section === 'global' && <GlobalSection />}

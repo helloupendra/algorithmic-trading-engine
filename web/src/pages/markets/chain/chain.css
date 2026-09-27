@@ -1,0 +1,44 @@
+/* Markets → Option chain. The views and the underlying share one row over one
+   rule; everything under it belongs to the view. The row is the page's only
+   heading: the tab strip above already names the page. */
+
+.ocp > * + * { margin-top: 12px; }
+
+.ocp-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.ocp-head .ocp-views { border-bottom: 0; flex: 0 0 auto; }
+
+/* Eight underlyings are wider than a phone: the row scrolls on its own, the page never does. */
+.ocp-unds {
+  position: relative;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin: 3px 0;
+}
+.ocp-unds::-webkit-scrollbar { display: none; }
+.ocp-unds button { flex: 0 0 auto; }
+
+.ocp-meta { margin: 0; }
+.oi-strike { width: auto; min-width: 140px; }
+
+/* Levels: the nine readings in one row on a desk screen, two to a row on a phone. */
+.lv-metrics { grid-template-columns: repeat(auto-fit, minmax(136px, 1fr)); }
+
+@media (max-width: 760px) {
+  .ocp-head { padding-bottom: 6px; }
+  .lv-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .lv-metrics .mf-metric { padding: 8px 10px; }
+  /* Four columns of a walls table fit a phone once the cells stop padding like a desk's. */
+  .lv .table th,
+  .lv .table td { padding-left: 6px; padding-right: 6px; }
+  /* "+1,920 pts (+3.45%)" may break before its percentage rather than run off the card. */
+  .lv .table td { white-space: normal; }
+  .lv .mf-card { padding-left: 10px; padding-right: 10px; }
+}

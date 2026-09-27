@@ -1,7 +1,9 @@
 /**
- * The advanced option chain — one expiry of one underlying, read the way a
+ * Markets → Option chain → Chain: one expiry of one underlying, read the way a
  * trader reads it: where the price is, what every strike costs, how much is
- * written on it and how that moved today.
+ * written on it and how that moved today. The page around it (OptionChainPage)
+ * picks the underlying; this view picks the expiry, the columns and the replay
+ * clock.
  *
  * Two layers, and the page always says which it is showing. The Dhan recorder
  * captures the whole chain once a minute (with IV and greeks); the Dhan feed
@@ -20,12 +22,11 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { onLiveTicks, useOptionChainExpiries, useOptionChainPositions, useOptionChainTrend, useOptionChainView } from '../../lib/queries'
-import type { OptionChain, OptionChainHeader, OptionChainLeg, OptionChainPosition, OptionChainQuote, OptionChainStrike } from '../../lib/types'
-import { EmptyState, InlineError, Loading, Panel } from '../../components/ui'
+import { onLiveTicks, useOptionChainExpiries, useOptionChainPositions, useOptionChainTrend, useOptionChainView } from '../../../lib/queries'
+import type { OptionChain, OptionChainHeader, OptionChainLeg, OptionChainPosition, OptionChainQuote, OptionChainStrike } from '../../../lib/types'
+import { EmptyState, InlineError, Loading, Panel } from '../../../components/ui'
 import {
   BUILD_UP,
-  UNDERLYINGS,
   arrowPercent,
   columnPeak,
   compactIndian,
@@ -49,9 +50,9 @@ import {
   strikeWindow,
   tone,
   type WindowSize,
-} from '../../lib/optionChain'
+} from '../../../lib/optionChain'
 import { OptionChainAnalysis } from './OptionChainAnalysis'
-import { formatInrSigned } from '../../lib/format'
+import { formatInrSigned } from '../../../lib/format'
 
 // --- columns ----------------------------------------------------------------------
 
@@ -636,17 +637,15 @@ function asOfFor(sessionDate: string, time: string): string | undefined {
  */
 const runLink = (runId: number) => `/trade/runs/${runId}`
 
-export function AdvancedOptionChainPage({ asOfUtc: asOfProp }: { asOfUtc?: string } = {}) {
+export function ChainView({ underlying }: { underlying: string }) {
   const [params, setParams] = useSearchParams()
-  const requested = (params.get('u') ?? 'NIFTY').toUpperCase()
-  const underlying = (UNDERLYINGS as readonly string[]).includes(requested) ? requested : 'NIFTY'
   const expiry = params.get('expiry') ?? undefined
   const replayTime = params.get('at') ?? ''
   const [windowSize, setWindowSize] = useState<WindowSize>(20)
   const [toggles, setToggles] = useState<Toggles>({ greeks: false, bidAsk: false, perLot: false })
   const [sessionDate, setSessionDate] = useState<string>('')
 
-  const asOfUtc = asOfProp ?? (replayTime && sessionDate ? asOfFor(sessionDate, replayTime) : undefined)
+  const asOfUtc = replayTime && sessionDate ? asOfFor(sessionDate, replayTime) : undefined
 
   const expiries = useOptionChainExpiries(underlying)
   const view = useOptionChainView(underlying, expiry, asOfUtc)
@@ -700,10 +699,6 @@ export function AdvancedOptionChainPage({ asOfUtc: asOfProp }: { asOfUtc?: strin
     const next = new URLSearchParams(params)
     if (value) next.set(key, value)
     else next.delete(key)
-    if (key === 'u') {
-      next.delete('expiry')
-      next.delete('at')
-    }
     setParams(next, { replace: true })
   }
 
@@ -719,30 +714,7 @@ export function AdvancedOptionChainPage({ asOfUtc: asOfProp }: { asOfUtc?: strin
   const lastCapture = trendData?.points[trendData.points.length - 1]?.capturedUtc
 
   return (
-    <div className="page oc-page">
-      <header className="page__header">
-        <h1 className="page__title">Option chain</h1>
-        <p className="page__subtitle">
-          Calls left, puts right, strike in the middle. The spot line sits between the two strikes the price is
-          between; the in-the-money half of each side is shaded.
-        </p>
-      </header>
-
-      <div className="oc-tabs" role="tablist" aria-label="Underlying">
-        {UNDERLYINGS.map((name) => (
-          <button
-            key={name}
-            type="button"
-            role="tab"
-            aria-selected={underlying === name}
-            className={`oc-tab ${underlying === name ? 'oc-tab--on' : ''}`}
-            onClick={() => setParam('u', name)}
-          >
-            {name}
-          </button>
-        ))}
-      </div>
-
+    <>
       <div className="oc-toolbar">
         <label className="oc-control">
           <span className="oc-control__label">Expiry</span>
@@ -781,27 +753,25 @@ export function AdvancedOptionChainPage({ asOfUtc: asOfProp }: { asOfUtc?: strin
 
         <span className="oc-toolbar__spacer" />
 
-        {!asOfProp && (
-          <label className="oc-control" title="Replay a capture from this session (IST)">
-            <span className="oc-control__label">As of</span>
-            <input
-              type="time"
-              className="field__input field__input--sm oc-time"
-              value={replayTime}
-              min={firstCapture ? istTime(firstCapture) : undefined}
-              max={lastCapture ? istTime(lastCapture) : undefined}
-              onChange={(e) => setParam('at', e.target.value || undefined)}
-              aria-label="Replay time (IST)"
-            />
-            {replayTime ? (
-              <button type="button" className="btn btn--sm btn--primary" onClick={() => setParam('at', undefined)}>
-                Back to live
-              </button>
-            ) : (
-              <span className="faint oc-control__hint">{sessionDate ? `${sessionDate.slice(8, 10)}/${sessionDate.slice(5, 7)}` : ''}</span>
-            )}
-          </label>
-        )}
+        <label className="oc-control" title="Replay a capture from this session (IST)">
+          <span className="oc-control__label">As of</span>
+          <input
+            type="time"
+            className="field__input field__input--sm oc-time"
+            value={replayTime}
+            min={firstCapture ? istTime(firstCapture) : undefined}
+            max={lastCapture ? istTime(lastCapture) : undefined}
+            onChange={(e) => setParam('at', e.target.value || undefined)}
+            aria-label="Replay time (IST)"
+          />
+          {replayTime ? (
+            <button type="button" className="btn btn--sm btn--primary" onClick={() => setParam('at', undefined)}>
+              Back to live
+            </button>
+          ) : (
+            <span className="faint oc-control__hint">{sessionDate ? `${sessionDate.slice(8, 10)}/${sessionDate.slice(5, 7)}` : ''}</span>
+          )}
+        </label>
       </div>
 
       {view.isError && !data && <InlineError error={view.error} />}
@@ -843,6 +813,6 @@ export function AdvancedOptionChainPage({ asOfUtc: asOfProp }: { asOfUtc?: strin
           )}
         </>
       )}
-    </div>
+    </>
   )
 }
