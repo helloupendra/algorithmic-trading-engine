@@ -55,6 +55,13 @@ public class CreateSimulationSignalRequest
     public List<SimulationSignalLegRequest>? Legs { get; set; }
 
     /// <summary>
+    /// The runner's id for this signal (at most 64 characters), the same on
+    /// every retry. A second post with an id the run already holds books
+    /// nothing and answers with the first one's row.
+    /// </summary>
+    public string? ClientSignalId { get; set; }
+
+    /// <summary>
     /// Set by a caller inside the API whose leg prices are already decided and
     /// must be filled as given — the manual ticket's limit, or the bid or ask it
     /// showed the person. Never read from a request body: a live strategy run's

@@ -53,6 +53,18 @@ public class SimulationSignal
     public string MetadataJson { get; set; } = "{}";
 
     /// <summary>
+    /// The runner's own id for this signal, sent again with every retry of it.
+    /// </summary>
+    /// <remarks>
+    /// A post whose answer was lost (a timeout, a dropped connection) may or may
+    /// not have been booked, and only a retry can find out. Without an id the
+    /// retry of an OPEN_GROUP would book the group twice; with one, the API
+    /// answers with the row it already has. Unique per run; null for every
+    /// signal the API writes itself and for runners that predate it.
+    /// </remarks>
+    public string? ClientSignalId { get; set; }
+
+    /// <summary>
     /// When this record was persisted to the database.
     /// </summary>
     public DateTime CreatedUtc { get; set; } = DateTime.UtcNow;

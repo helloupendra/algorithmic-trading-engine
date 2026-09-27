@@ -15,12 +15,13 @@ namespace AlgoTrading.UnitTests;
 /// How a live paper fill is priced, and when it is not.
 /// </summary>
 /// <remarks>
-/// Two findings of the 27 Sep audit meet here. Fills crossed no spread: a
+/// Three findings of the 27 Sep audit meet here. Fills crossed no spread: a
 /// sold straddle sold at the last trade and bought back at the last trade.
-/// And fills trusted any quote: on 24 Sep the feed stalled from 11:27:36 to
-/// 11:34:06 and every quote froze while still looking current. The clock is
-/// Monday 28 Sep 2026, a trading day, so the quote-age rule is on unless a
-/// test says otherwise.
+/// Fills trusted any quote: on 24 Sep the feed stalled from 11:27:36 to
+/// 11:34:06 and every quote froze while still looking current. And a signal
+/// the runner posted twice — a retry after a lost answer — could book an
+/// OPEN_GROUP twice. The clock is Monday 28 Sep 2026, a trading day, so the
+/// quote-age rule is on unless a test says otherwise.
 /// </remarks>
 public class PaperTradingServiceTests
 {
@@ -235,6 +236,62 @@ public class PaperTradingServiceTests
         // into a fresh mark.
         Assert.Equal(90m, marked.LastMarkPrice);
         Assert.Equal(Ist(11, 27, 36), marked.UpdatedUtc);
+    }
+
+    // ======================================================= idempotency
+
+    [Fact]
+    public async Task SameClientSignalId_BooksOnce()
+    {
+        using var book = new Book(Morning);
+        book.Quote(Call, ltp: 100m, bid: 99.5m, ask: 100.5m, age: TimeSpan.FromSeconds(1));
+
+        var first = book.Signal("OPEN_GROUP", "G1", Leg(Call, "SELL", 100m));
+        first.ClientSignalId = "3f0c6b0e-6a55-4d0b-9d0c-2b1f7f6a9c11";
+        var booked = await book.Service.CreateSignalAsync(first);
+
+        // The runner's retry after a lost answer: same id, sent unpriced.
+        var retry = book.Signal("OPEN_GROUP", "G1", Leg(Call, "SELL", null));
+        retry.ClientSignalId = first.ClientSignalId;
+        var again = await book.Service.CreateSignalAsync(retry);
+
+        Assert.Equal(booked.Id, again.Id);
+        Assert.Equal(first.ClientSignalId, again.ClientSignalId);
+        Assert.Single(book.Signals());
+        Assert.Single(book.Orders());
+        Assert.Equal(1, book.Positions().Single().Quantity);
+
+        // A new id is a new signal.
+        var another = book.Signal("OPEN_GROUP", "G2", Leg(Call, "SELL", 100m));
+        another.ClientSignalId = "another";
+        await book.Service.CreateSignalAsync(another);
+        Assert.Equal(2, book.Signals().Count);
+    }
+
+    [Fact]
+    public async Task A_retry_is_answered_even_after_the_run_began_to_stop()
+    {
+        using var book = new Book(Morning);
+        book.Quote(Call, ltp: 100m, age: TimeSpan.FromSeconds(1));
+        var first = book.Signal("OPEN_GROUP", "G1", Leg(Call, "SELL", 100m));
+        first.ClientSignalId = "abc";
+        var booked = await book.Service.CreateSignalAsync(first);
+
+        book.SetRunStatus("Stopping");
+
+        var again = await book.Service.CreateSignalAsync(first);
+        Assert.Equal(booked.Id, again.Id);
+    }
+
+    [Fact]
+    public async Task A_client_id_longer_than_the_column_is_refused()
+    {
+        using var book = new Book(Morning);
+        var signal = book.Signal("OPEN_GROUP", "G1", Leg(Call, "SELL", 100m));
+        signal.ClientSignalId = new string('x', PaperTradingService.MaxClientSignalIdLength + 1);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => book.Service.CreateSignalAsync(signal));
+        Assert.Empty(book.Signals());
     }
 
     // ============================================================ helpers

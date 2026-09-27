@@ -58,6 +58,9 @@ public class PaperTradingService : IPaperTradingService
 
     private const int MaxEquitySnapshotBatch = 5000;
 
+    /// <summary>Longest <see cref="CreateSimulationSignalRequest.ClientSignalId"/> accepted (the column's width).</summary>
+    public const int MaxClientSignalIdLength = 64;
+
     private readonly TradingDbContext _dbContext;
     private readonly IRiskManagementService _riskManagementService;
     private readonly ILotSizeResolver _lotSizeResolver;
@@ -102,10 +105,28 @@ public class PaperTradingService : IPaperTradingService
         CreateSimulationSignalRequest request,
         CancellationToken cancellationToken = default)
     {
+        string? clientSignalId = string.IsNullOrWhiteSpace(request.ClientSignalId) ? null : request.ClientSignalId.Trim();
+        if (clientSignalId is { Length: > MaxClientSignalIdLength })
+            throw new InvalidOperationException($"clientSignalId may be at most {MaxClientSignalIdLength} characters.");
+
         // Serialized with the run's other position writers (guard closes, the
         // stop's flatten): the status check, the lookups and the fills below
         // must see one consistent state of the run's positions.
         using var gate = await SimulationRunLocks.AcquireAsync(request.SimulationRunId, cancellationToken);
+
+        // A retry of a signal this run already booked. The runner retries when
+        // an answer is lost — a timeout, a dropped connection — and cannot tell
+        // whether the first post was booked; this is how it finds out, without
+        // booking an OPEN_GROUP twice. Looked up before the status check: a
+        // signal booked just before a stop began was still booked.
+        if (clientSignalId is not null)
+        {
+            var booked = await _dbContext.SimulationSignals
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.SimulationRunId == request.SimulationRunId && x.ClientSignalId == clientSignalId,
+                    cancellationToken);
+            if (booked is not null) return MapSignal(booked);
+        }
 
         var run = await _dbContext.SimulationRuns
             .FirstOrDefaultAsync(x => x.Id == request.SimulationRunId, cancellationToken);
@@ -135,6 +156,7 @@ public class PaperTradingService : IPaperTradingService
             TimestampUtc = timestampUtc,
             GroupId = request.GroupId,
             MetadataJson = string.IsNullOrWhiteSpace(request.MetadataJson) ? "{}" : request.MetadataJson,
+            ClientSignalId = clientSignalId,
             CreatedUtc = UtcNow
         };
 
@@ -161,7 +183,8 @@ public class PaperTradingService : IPaperTradingService
         // the legs before it filled and the legs after it absent. A one-legged
         // "straddle" is naked risk that nobody chose, and it survives in the
         // database looking like a real position. The signal row is inside too:
-        // a refused signal is not one the run made.
+        // a refused signal left behind with its client id would answer the
+        // runner's retry as if it had been booked.
         //
         // Cheap to hold: the legs of one signal are a handful of rows, and the
         // per-run lock above already serialises every other writer.
@@ -1829,6 +1852,7 @@ public class PaperTradingService : IPaperTradingService
             TimestampUtc = row.TimestampUtc,
             GroupId = row.GroupId,
             MetadataJson = row.MetadataJson,
+            ClientSignalId = row.ClientSignalId,
             CreatedUtc = row.CreatedUtc
         };
     }
