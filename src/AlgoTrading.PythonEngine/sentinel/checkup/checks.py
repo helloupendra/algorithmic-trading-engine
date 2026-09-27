@@ -472,6 +472,48 @@ def orphaned_legs(inp: Inputs) -> list[Item]:
                  "time it stopped.", LIVE_RUNS)]
 
 
+def recorders(inp: Inputs) -> list[Item]:
+    """
+    The market-intelligence recorders (docs/modules/market_intelligence.md):
+    each on schedule, and the 2020 backfills' progress. A headline not
+    recorded today is lost for good, so a stalled news recorder is to do.
+    """
+    body = inp.api("/api/MarketIntelligence/status")
+    rows = [r for r in body.get("recorders") or [] if isinstance(r, dict) and r.get("enabled")] \
+        if isinstance(body, dict) else []
+    if not rows:
+        raise Unavailable("the API reports no market-data recorders")
+    stalled, sources = [], []
+    for r in rows:
+        name = str(r.get("name"))
+        error_at, ok_at = _parse_utc(r.get("lastErrorUtc")), _parse_utc(r.get("lastSuccessUtc"))
+        if r.get("overdue") or (error_at and (ok_at is None or error_at > ok_at)):
+            said = str(r.get("lastError") or "overdue").strip()
+            stalled.append(f"{name} ({said[:120]})")
+        failing = [str(f) for f in r.get("failingSources") or []]
+        if failing:
+            sources.append(f"{name}: {_listed(failing)}")
+    backfills = [b for b in body.get("backfills") or [] if isinstance(b, dict) and b.get("enabled")]
+    pending = [f"{b.get('dataset')} {int(b['missingSessions']):,} sessions to go"
+               for b in backfills if isinstance(b.get("missingSessions"), (int, float)) and b["missingSessions"] > 0]
+    broken = [f"{b.get('dataset')} ({str(b.get('lastError'))[:120]})" for b in backfills if b.get("lastError")]
+    news = next((r for r in rows if r.get("name") == "news"), {})
+    key, title = "recorders", "Market data recorders"
+    if stalled or broken:
+        return [Item(key, DATA, title, State.FAIL if any(s.startswith("news ") for s in stalled) else State.WARN,
+                     "Not recording: " + _listed(stalled + [f"backfill {b}" for b in broken]) + ".",
+                     "GET /api/MarketIntelligence/status has each recorder's last error; logs/api.log the detail. "
+                     "Headlines missed while the news recorder is down cannot be fetched later.")]
+    detail = (f"{_n(len(rows), 'recorder')} on schedule; {int(news.get('rowsToday') or 0):,} headlines today.")
+    if sources:
+        detail += f" Some sources failing: {'; '.join(sources)}."
+    if pending:
+        return [Item(key, DATA, title, State.INFO, detail + f" Backfill still running: {_listed(pending)}.")]
+    return [Item(key, DATA, title, State.WARN if sources else State.OK, detail,
+                 "A publisher's feed can move or die; if it keeps failing, replace it in NewsFeedCatalog.cs."
+                 if sources else "")]
+
+
 # ------------------------------------------------------------------ analysis
 
 def _forecasts_today(inp: Inputs) -> list[dict]:
@@ -835,6 +877,7 @@ CHECKS: dict[str, tuple[str, str, Check]] = {
     "fyers-backup": (DATA, "FYERS backup", fyers_backup),
     "feeds": (DATA, "Live feeds", feeds),
     "failover": (DATA, "Feed failover", failover),
+    "recorders": (DATA, "Market data recorders", recorders),
     "plan": (STRATEGIES, "Morning plan", plan),
     "runs-after-close": (STRATEGIES, "Runs after the close", runs_after_close),
     "runs-overnight": (STRATEGIES, "Runs overnight", runs_overnight),
