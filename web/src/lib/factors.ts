@@ -172,13 +172,16 @@ export const EVENT_CATEGORIES = ['RBI policy', 'Fed policy', 'US CPI', 'US jobs'
 
 /**
  * Where a Market factors section that moved lives now, for an old
- * ?section= link: the chain's levels are a tab of the option chain page.
- * Null for a section still on the Factors page.
+ * ?section= link: the chain's levels are a tab of the option chain page, the
+ * futures build-up a section of Movers. Null for a section still on the
+ * Factors page.
  */
 export function movedFactorSection(section: string | null | undefined): string | null {
   switch (section) {
     case 'levels':
       return '/markets/chain/levels'
+    case 'futures':
+      return '/markets/movers#futures'
     default:
       return null
   }

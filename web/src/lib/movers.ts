@@ -140,6 +140,15 @@ export function sortPcr(rows: PcrRow[] | undefined, order: PcrOrder, query = '')
   return kept.sort((a, b) => (order === 'high' ? b.pcr - a.pcr : a.pcr - b.pcr))
 }
 
+/**
+ * An index group's name as the movers page shows it: "Nifty 50", not "Nifty
+ * 50 Constituents". The section is already called Index movers, and three
+ * names each ending in the same word made the picker wider than a phone.
+ */
+export function indexLabel(displayName: string): string {
+  return displayName.replace(/\s+constituents$/i, '').trim() || displayName
+}
+
 /** Three numbers that describe the whole put-call ratio list at a glance. */
 export function pcrSummary(rows: PcrRow[] | undefined): {
   count: number
