@@ -287,6 +287,8 @@ public class StrategyController : ControllerBase
             var run = new SimulationRun
             {
                 UserId = userId,
+                StartedByUserId = callerId,
+                StartedByName = startedBy,
                 Mode = LivePaperMode,
                 Symbol = spotSymbol,
                 Resolution = "1m",
@@ -1216,7 +1218,7 @@ public class StrategyController : ControllerBase
         if (strategy is null) return NotFound(new { message = $"Strategy {id} not found." });
 
         var running = NewestActiveRun(id);
-        var lastExit = running is null ? _registry.GetLastExit(id) : null;
+        var lastExit = running is null ? ExitsVisibleToCaller(id).FirstOrDefault() : null;
 
         if (running is not null && !CanRead(running.UserId))
             return Forbid();
@@ -1290,6 +1292,12 @@ public class StrategyController : ControllerBase
             view.RecapDate = RecapClock.RecapDate(run.ParametersJson)?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         }
 
+        view.OwnerUserId = run.UserId;
+        view.OwnerName = await _dbContext.AppUsers.AsNoTracking()
+            .Where(x => x.Id == run.UserId)
+            .Select(x => x.UserName)
+            .FirstOrDefaultAsync(cancellationToken);
+
         if (running is not null)
         {
             view.Risk = running.Risk;
@@ -1308,19 +1316,13 @@ public class StrategyController : ControllerBase
         else
         {
             view.Risk = p.Risk;
-            view.StartedBy = await _dbContext.AppUsers.AsNoTracking()
-                .Where(x => x.Id == run.UserId)
-                .Select(x => x.UserName)
-                .FirstOrDefaultAsync(cancellationToken);
+            // Rows from before 28 Sep recorded no starter; the owner is the
+            // best that can be said for them.
+            view.StartedBy = string.IsNullOrWhiteSpace(run.StartedByName) ? view.OwnerName : run.StartedByName;
             view.StartedUtc = run.StartedUtc ?? run.CreatedUtc;
             view.StoppedUtc = run.CompletedUtc;
         }
 
-        view.OwnerUserId = run.UserId;
-        view.OwnerName = await _dbContext.AppUsers.AsNoTracking()
-            .Where(x => x.Id == run.UserId)
-            .Select(x => x.UserName)
-            .FirstOrDefaultAsync(cancellationToken);
         view.CanControl = CanStop(view.StartedBy, run.UserId);
         view.IsManualBook = run.StrategyName == ManualOrdersController.BookStrategyName;
         // The same conditions PUT …/carry-forward checks; who may is CanControl.
@@ -1422,7 +1424,7 @@ public class StrategyController : ControllerBase
     [HttpGet("{id:int}/logs")]
     public async Task<IActionResult> GetLogs(int id, [FromQuery] int take = 200, CancellationToken cancellationToken = default)
     {
-        var runId = NewestActiveRun(id)?.RunId ?? _registry.GetLastExit(id)?.RunId;
+        var runId = NewestActiveRun(id)?.RunId ?? ExitsVisibleToCaller(id).FirstOrDefault()?.RunId;
         if (!runId.HasValue)
             return Ok(Array.Empty<string>());
 
@@ -1480,6 +1482,20 @@ public class StrategyController : ControllerBase
             return Forbid();
 
         return Ok(_registry.GetSignals(running.RunId));
+    }
+
+    /// <summary>
+    /// The strategy's recent exits the caller may see, newest first: every
+    /// account's for an admin, a trader's own otherwise. Another account's
+    /// exits carry its run ids, underlyings and stop reasons.
+    /// </summary>
+    private IReadOnlyList<LastExit> ExitsVisibleToCaller(int strategyId)
+    {
+        if (User.IsAdmin()) return _registry.GetLastExits(strategyId);
+
+        return User.GetUserId() is long me
+            ? _registry.GetLastExits(strategyId, me)
+            : Array.Empty<LastExit>();
     }
 
     /// <summary>The strategy's most recently started active run, for the legacy strategy-scoped routes.</summary>
@@ -1684,14 +1700,11 @@ public class StrategyController : ControllerBase
         // trader somebody else's run — which they cannot open (the live view is
         // owner-checked) and should not have been told about.
         var activeRuns = _registry.GetByStrategy(entry.Id);
-        var recentExits = _registry.GetLastExits(entry.Id);
+        var recentExits = ExitsVisibleToCaller(entry.Id);
         if (!User.IsAdmin())
         {
             long? me = User.GetUserId();
             activeRuns = activeRuns.Where(r => r.UserId == me).ToList();
-            // The same for exits: they carry another account's run ids,
-            // underlyings and stop reasons.
-            recentExits = recentExits.Where(x => x.UserId == me).ToList();
         }
 
         // Legacy single-run fields describe the first (oldest) active run; the

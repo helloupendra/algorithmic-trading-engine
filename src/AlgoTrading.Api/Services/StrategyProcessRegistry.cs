@@ -164,12 +164,12 @@ public sealed record LastExit(
 public sealed class StrategyProcessRegistry
 {
     /// <summary>
-    /// Exits remembered per strategy, newest first. Five was one account's
-    /// three indices with room to spare; with the plan in two accounts a
-    /// strategy ends six runs at the close, and the oldest fell off the
-    /// Stopped list and out of "Realized today".
+    /// Exits remembered per strategy, account and underlying, newest first.
+    /// One strategy on one underlying in one account ends a run or two a day;
+    /// ten covers restarts with room to spare, and no other account's day
+    /// can use them up.
     /// </summary>
-    public const int ExitsPerStrategy = 20;
+    public const int ExitsPerAccountAndUnderlying = 10;
 
     /// <summary>The single log line an adopted entry starts with.</summary>
     public const string AdoptedLogLine = "adopted after API restart — output not captured";
@@ -183,7 +183,10 @@ public sealed class StrategyProcessRegistry
     private const int FinishedLogCapacity = 30;
 
     private readonly ConcurrentDictionary<long, RunningStrategy> _running = new();
-    private readonly ConcurrentDictionary<int, List<LastExit>> _lastExits = new();
+    /// <summary>Where an exit is kept: a strategy's runs in one account on one underlying.</summary>
+    private readonly record struct ExitKey(int StrategyId, long UserId, string Underlying);
+
+    private readonly ConcurrentDictionary<ExitKey, List<LastExit>> _lastExits = new();
     private readonly object _finishedLock = new();
     private readonly Dictionary<long, string[]> _finishedLogs = new();
     private readonly LinkedList<long> _finishedOrder = new();
@@ -395,11 +398,18 @@ public sealed class StrategyProcessRegistry
     }
 
     /// <summary>
-    /// Snapshots the running entry as one of its strategy's recent exits
-    /// (newest first, at most <see cref="ExitsPerStrategy"/>). A second record
+    /// Snapshots the running entry as one of its recent exits. A second record
     /// for the same run replaces the first. The rules recorded are the run's
     /// CURRENT ones (the caller may hold a copy from before a risk update).
     /// </summary>
+    /// <remarks>
+    /// Kept per strategy, account and underlying, at most
+    /// <see cref="ExitsPerAccountAndUnderlying"/> each, so one account's busy
+    /// day can never push another account's exits out. Until 28 Sep they were
+    /// kept per strategy, five of them, against six runs a day; on 25 Sep
+    /// admin's exits 249, 252, 255 and 258 fell off, and "Realized today" was
+    /// ₹1,176 short.
+    /// </remarks>
     public void RecordExit(RunningStrategy entry, string reason)
     {
         var current = Get(entry.RunId) ?? entry;
@@ -409,39 +419,47 @@ public sealed class StrategyProcessRegistry
             entry.Underlying, entry.SpotSymbol, entry.Lots, current.StopLoss, current.Target,
             entry.StartedBy, entry.StartedUtc, current.Risk, entry.UserId);
 
-        var exits = _lastExits.GetOrAdd(entry.StrategyId, _ => new List<LastExit>());
+        var key = new ExitKey(entry.StrategyId, entry.UserId, entry.Underlying.ToUpperInvariant());
+        var exits = _lastExits.GetOrAdd(key, _ => new List<LastExit>());
         lock (exits)
         {
             exits.RemoveAll(x => x.RunId == entry.RunId);
             exits.Insert(0, exit);
-            if (exits.Count > ExitsPerStrategy)
+            if (exits.Count > ExitsPerAccountAndUnderlying)
             {
-                exits.RemoveRange(ExitsPerStrategy, exits.Count - ExitsPerStrategy);
+                exits.RemoveRange(ExitsPerAccountAndUnderlying, exits.Count - ExitsPerAccountAndUnderlying);
             }
         }
     }
 
-    /// <summary>Recent exits of the strategy, newest first.</summary>
-    public IReadOnlyList<LastExit> GetLastExits(int strategyId)
+    /// <summary>
+    /// Recent exits of the strategy, newest first — every account's, or only
+    /// <paramref name="ownerUserId"/>'s. A trader's view must pass their id:
+    /// another account's exits carry its run ids, underlyings and stop reasons.
+    /// </summary>
+    public IReadOnlyList<LastExit> GetLastExits(int strategyId, long? ownerUserId = null)
     {
-        if (!_lastExits.TryGetValue(strategyId, out var exits)) return Array.Empty<LastExit>();
-
-        lock (exits)
+        var found = new List<LastExit>();
+        foreach (var (key, exits) in _lastExits)
         {
-            return exits.ToList();
+            if (key.StrategyId != strategyId) continue;
+            if (ownerUserId is long owner && key.UserId != owner) continue;
+
+            lock (exits)
+            {
+                found.AddRange(exits);
+            }
         }
+
+        return found
+            .OrderByDescending(x => x.AtUtc)
+            .ThenByDescending(x => x.RunId)
+            .ToList();
     }
 
-    /// <summary>The newest exit of the strategy, if any.</summary>
-    public LastExit? GetLastExit(int strategyId)
-    {
-        if (!_lastExits.TryGetValue(strategyId, out var exits)) return null;
-
-        lock (exits)
-        {
-            return exits.Count > 0 ? exits[0] : null;
-        }
-    }
+    /// <summary>The newest exit of the strategy (of one account's runs, when given), if any.</summary>
+    public LastExit? GetLastExit(int strategyId, long? ownerUserId = null)
+        => GetLastExits(strategyId, ownerUserId).FirstOrDefault();
 
     /// <summary>The remembered exit of one run, if it is still kept.</summary>
     public LastExit? GetExitByRun(long runId)
@@ -455,26 +473,6 @@ public sealed class StrategyProcessRegistry
             }
         }
         return null;
-    }
-
-    /// <summary>
-    /// Forgets the exit of one run (<paramref name="runId"/> given) or every
-    /// remembered exit of the strategy (null).
-    /// </summary>
-    public void ClearLastExit(int strategyId, long? runId = null)
-    {
-        if (runId is null)
-        {
-            _lastExits.TryRemove(strategyId, out _);
-            return;
-        }
-
-        if (!_lastExits.TryGetValue(strategyId, out var exits)) return;
-
-        lock (exits)
-        {
-            exits.RemoveAll(x => x.RunId == runId.Value);
-        }
     }
 
     public void AppendLog(long runId, string line)
