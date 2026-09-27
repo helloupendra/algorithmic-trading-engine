@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { describeFeedState, feedDiagnostics, feedsView, meaningfulError, readinessFeedState } from './feeds'
+import { describeFeedState, feedDiagnostics, feedsView, readinessFeedState } from './feeds'
+import { meaningfulError } from './pulse'
 import type { IngestorStatus, LiveFeed } from './types'
 
 /**
