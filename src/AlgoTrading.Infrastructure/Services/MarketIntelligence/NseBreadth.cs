@@ -49,7 +49,8 @@ public static class NseBreadthParsers
             previous = Col(udiff ? "PrvsClsgPric" : "PREVCLOSE"), volume = Col(udiff ? "TtlTradgVol" : "TOTTRDQTY"),
             turnover = Col(udiff ? "TtlTrfVal" : "TOTTRDVAL");
         int segment = udiff ? Col("Sgmt") : -1;
-        string[] dateFormats = udiff ? ["yyyy-MM-dd"] : ["dd-MMM-yyyy", "d-MMM-yyyy"];
+        // Some legacy days of 2020 write a two-digit year ("13-Jul-20").
+        string[] dateFormats = udiff ? ["yyyy-MM-dd"] : ["dd-MMM-yyyy", "d-MMM-yyyy", "dd-MMM-yy", "d-MMM-yy"];
 
         var rows = new List<CmEquityRow>();
         var dates = new HashSet<DateOnly>();
