@@ -11,9 +11,12 @@ using Microsoft.Extensions.Logging;
 namespace AlgoTrading.Api.Services
 {
     /// <summary>
-    /// Auto-shutdown at market close (15:30 IST, weekdays): stops every live data
-    /// feed and every running strategy — squaring off their open paper positions —
-    /// so nothing keeps consuming the host after the session ends.
+    /// Auto-shutdown at the close. Every strategy run is stopped — its open paper
+    /// positions squared off — at the close of the market it trades on: NSE and
+    /// BSE runs at 15:30 IST, MCX runs at the MCX close (<see cref="MarketCloseRules"/>).
+    /// At 15:30 on weekdays the live data feeds, the chain poller and the alerter
+    /// are stopped too, except the feeds MCX still needs, which go at the MCX
+    /// close — so nothing keeps consuming the host after its session ends.
     /// </summary>
     public class MarketHoursService : BackgroundService
     {
@@ -25,6 +28,7 @@ namespace AlgoTrading.Api.Services
         private readonly ChainPollerSupervisor _poller;
         private readonly AlertsSupervisor _alerts;
         private readonly IMarketSessionService _marketSession;
+        private readonly StrategyProcessRegistry _runs;
         private readonly TimeZoneInfo _istZone;
         private bool _hasShutdownToday;
         private DateTime _lastShutdownDate;
@@ -33,7 +37,7 @@ namespace AlgoTrading.Api.Services
         private readonly HashSet<string> _feedsKeptOpenForMcx = new(StringComparer.OrdinalIgnoreCase);
         public const string McxClosedReason = "MCX closed";
 
-        public MarketHoursService(ILogger<MarketHoursService> logger, IServiceScopeFactory scopeFactory, FeedSupervisorRegistry feeds, ChainPollerSupervisor poller, AlertsSupervisor alerts, IMarketSessionService marketSession)
+        public MarketHoursService(ILogger<MarketHoursService> logger, IServiceScopeFactory scopeFactory, FeedSupervisorRegistry feeds, ChainPollerSupervisor poller, AlertsSupervisor alerts, IMarketSessionService marketSession, StrategyProcessRegistry runs)
         {
             _logger = logger;
             _scopeFactory = scopeFactory;
@@ -41,6 +45,7 @@ namespace AlgoTrading.Api.Services
             _poller = poller;
             _alerts = alerts;
             _marketSession = marketSession;
+            _runs = runs;
             try
             {
                 // Windows uses "India Standard Time", Linux/macOS uses "Asia/Kolkata"
@@ -64,6 +69,18 @@ namespace AlgoTrading.Api.Services
                 {
                     var nowUtc = DateTime.UtcNow;
                     var nowIst = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, _istZone);
+
+                    // Strategy runs, each at the close of its own market: NSE and
+                    // BSE at 15:30, MCX at the MCX close. Until 27 Sep every run
+                    // went at 15:30, once a day behind a "done today" flag kept in
+                    // memory — so an API process started after 15:30 swept at
+                    // start-up and squared off a crude run trading the evening
+                    // (run 104, 22:40:15 on 2026-09-10). Now it is asked every
+                    // minute with no flag, and a run adopted after a restart is in
+                    // the registry like any other, so the MCX close reaches it too.
+                    // Before the feeds below, so the square-off marks at quotes
+                    // that are still arriving.
+                    await StopRunsPastTheirCloseAsync(nowUtc, stoppingToken);
 
                     // Reset shutdown flag if it's a new day
                     if (_hasShutdownToday && nowIst.Date > _lastShutdownDate)
@@ -127,13 +144,9 @@ namespace AlgoTrading.Api.Services
                             var pollerStop = await _poller.StopAsync(MarketClosedReason, stoppingToken);
                             _logger.LogInformation("Market close: chain poller {Outcome}.", pollerStop.Message);
 
-                            // Stop all running strategies, squaring off their open positions.
-                            using (var scope = _scopeFactory.CreateScope())
-                            {
-                                var control = scope.ServiceProvider.GetRequiredService<StrategyRunControl>();
-                                var stopped = await control.StopAllAsync(MarketClosedReason, flatten: true, by: "market-hours", stoppingToken);
-                                _logger.LogInformation("Market close: stopped {Count} strategy run(s).", stopped);
-                            }
+                            // The strategy runs are not stopped here: the sweep at the
+                            // top of the loop has stopped the NSE and BSE ones already,
+                            // and leaves the MCX ones trading until the MCX close.
 
                             // The alerter too: it watches the same closed market, and left
                             // running it sat "waiting for ticks" until the next reboot.
@@ -201,5 +214,57 @@ namespace AlgoTrading.Api.Services
                 .AnyAsync(x => x.IsActive && x.Symbol.StartsWith("MCX:"), cancellationToken);
         }
 
+        /// <summary>
+        /// Stops, squaring off, every run whose market has closed since it
+        /// started — adopted runs included, since the registry holds them like
+        /// any other. A run whose stop another caller has already claimed is left
+        /// to that caller. A failure is logged and asked about again a minute
+        /// later; it never keeps the other runs, or the feed shutdown after this,
+        /// from going ahead.
+        /// </summary>
+        private async Task StopRunsPastTheirCloseAsync(DateTime nowUtc, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var due = MarketCloseRules.RunsToStop(
+                    _marketSession,
+                    nowUtc,
+                    _runs.List()
+                        .Where(r => !r.StopRequested)
+                        .Select(r => new MarketCloseRules.DeskRun(r.RunId, r.Underlying, r.SpotSymbol, r.StartedUtc)));
+                if (due.Count == 0) return;
+
+                using var scope = _scopeFactory.CreateScope();
+                var control = scope.ServiceProvider.GetRequiredService<StrategyRunControl>();
+                int stopped = 0;
+                foreach (var run in due)
+                {
+                    try
+                    {
+                        var result = await control.StopAsync(run.RunId, run.Reason, flatten: true, by: "market-hours", cancellationToken);
+                        if (result.WasRunning) stopped++;
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Market close: could not stop run {RunId} ({Reason}); asking again in a minute.", run.RunId, run.Reason);
+                    }
+                }
+
+                _logger.LogInformation("Market close: stopped {Count} strategy run(s) — {Reasons}.",
+                    stopped, string.Join(", ", due.Select(r => r.Reason).Distinct()));
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Market close: the strategy-run sweep failed; asking again in a minute.");
+            }
+        }
     }
 }

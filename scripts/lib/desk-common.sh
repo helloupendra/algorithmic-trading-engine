@@ -333,3 +333,38 @@ print(sum(1 for r in rows if isinstance(r, dict)
           and r.get("isActive") is not False
           and str(r.get("strategyName") or "") != "Manual"))' 2>/dev/null || echo -1
 }
+
+# --- when the evening close runs ----------------------------------------------
+# market-close.sh stops every run, feed and recorder, so it must run after the
+# LAST market of the day has closed: MCX, at 23:30 IST while the US is on
+# daylight saving and 23:55 while it is not (MarketSessionService). Until
+# 27 Sep it ran at a fixed 23:35: after the summer close, but from 1 Nov twenty
+# minutes before the winter one — squaring off crude runs that the owner
+# decided that day should trade the MCX evening to its close. The API stops
+# each run itself at its own market's close (MarketHoursService); this is the
+# net under it.
+#
+# 23:58 is after both closes, and leaves the API's once-a-minute sweep time to
+# stop the crude runs first, with its own "MCX closed (23:55 IST)". It also
+# leaves two minutes before midnight, so a close the desk missed — the loop
+# held up, the desk restarted — is caught up after midnight, until 06:00, for
+# the day before. A desk started in that window runs it once more for that
+# day, which is harmless: stopping what is already stopped does nothing.
+#
+# market_close_due DOW HHMM TODAY YESTERDAY CLOSED_ON [CLOSE_AT]
+#   -> prints the trading day whose close is due and exits 0; exits 1 when none is.
+#   DOW 1..7 (date +%u) of today, HHMM local IST, CLOSED_ON the day it last ran for.
+MARKET_CLOSE_AT_DEFAULT=2358
+MARKET_CLOSE_CATCH_UP_UNTIL="${MARKET_CLOSE_CATCH_UP_UNTIL:-0600}"
+
+market_close_due() {
+  local dow="$1" hhmm="$2" today="$3" yesterday="$4" closed_on="$5" close_at="${6:-$MARKET_CLOSE_AT_DEFAULT}"
+  local ydow=$(( dow == 1 ? 7 : dow - 1 ))
+  if [ "$dow" -le 5 ] && [ "$((10#$hhmm))" -ge "$((10#$close_at))" ] && [ "$closed_on" != "$today" ]; then
+    echo "$today"; return 0
+  fi
+  if [ "$ydow" -le 5 ] && [ "$((10#$hhmm))" -lt "$((10#$MARKET_CLOSE_CATCH_UP_UNTIL))" ] && [ "$closed_on" != "$yesterday" ]; then
+    echo "$yesterday"; return 0
+  fi
+  return 1
+}

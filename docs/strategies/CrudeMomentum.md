@@ -61,27 +61,34 @@ metadata.
 - **Session:** the IST calendar date of the signal bar (`indicators.session_date`;
   the code's comment: "MCX runs one session a day, 09:00 to 23:30/23:55 IST,
   so an IST calendar date identifies a session exactly" — `MarketSessionService`
-  closes MCX at 23:30 IST while New York is on standard time, 23:55 on DST).
+  closes MCX at 23:30 IST while New York is on daylight saving, 23:55 while it
+  is on standard time).
   There is no first- or last-entry time of its own (`description`: "no
   time-of-day filter"). A new date resets `trades_this_session` to 0 and
   re-arms. VWAP is anchored to the first bucket of that date **in the list**,
   which is the ingestor's first bar, not 09:00 — see Limitations.
-- **15:30 IST:** `MarketHoursService` checks once a minute and, at or after
-  15:30 on a weekday, stops every run with flatten
-  (`StrategyRunControl.StopAllAsync(MarketClosedReason, flatten: true)` — no
-  exchange filter), so a crude run started in the morning is squared off at
-  15:30 although MCX trades on; run 100 on 2026-09-09 (another strategy)
-  was stopped that way at 15:30:46. The sweep fires once per calendar day per
-  API process (an in-memory flag), so a run started after it — run 104 at
-  19:25 — is not touched until the next weekday's sweep, or until an API
-  process starts while the clock is past 15:30: run 104 was stopped with
-  "Market closed (15:30 IST)" at 22:40:15 IST by exactly that (only
-  `MarketHoursService` writes this reason, and its loop runs on start-up).
-  At the MCX close the same service stops only the **ingestor**
-  ("MCX closed", commit b80038d of 2026-09-09); no run is squared off, so a
-  position opened in the evening and not closed by a rule is held, marked at
-  the last quote, until something else stops the run. The strategy relies on
-  the platform for every exit.
+- **The MCX close:** the run trades the MCX evening and is squared off at the
+  MCX close — 23:30 IST while New York is on daylight saving, 23:55 while it
+  is not, 17:00 on a day MCX shuts its evening session. `MarketHoursService`
+  asks once a minute which runs' markets have closed since they started
+  (`MarketCloseRules.RunsToStop`, from the exchange calendar): an NSE or BSE
+  run stops at 15:30, a run whose symbol is `MCX:` (or whose underlying is a
+  commodity) at the MCX close, with flatten and the reason
+  "MCX closed (23:30 IST)" (`by` `market-hours`). The rule keeps no memory,
+  so a run adopted after an API restart during the evening is closed at the
+  MCX close like any other, one adopted after it is closed at once, and an
+  API started after 15:30 no longer squares off an evening crude run. The
+  desk's `market-close.sh` stops whatever is left at 23:58, after both
+  closes. The strategy relies on the platform for every exit.
+- **Before 27 Sep** the sweep stopped every run at 15:30 on a weekday with no
+  exchange filter, so a crude run started in the morning was squared off
+  with eight hours of MCX left (run 100 on 2026-09-09, another strategy, at
+  15:30:46), and a run started after it — run 104 at 19:25 — was stopped with
+  "Market closed (15:30 IST)" at 22:40:15 IST by an API process that started
+  while the clock was past 15:30 (the sweep's "done today" flag lived in
+  memory). At the MCX close only the ingestor was stopped ("MCX closed",
+  commit b80038d of 2026-09-09); no run was squared off. Runs 99 and 104
+  below traded under those rules.
 
 ## Entry
 
@@ -231,9 +238,8 @@ from the reason text (run 99: "P&L 5,370" tripped, ₹3,270 booked — the
 arithmetic is in the worked example).
 
 **What the strategy never does:** it has no built-in exit. Without a leg /
-group / overall rule, a manual stop or the 15:30 sweep, a position stays
-open — through the MCX close and overnight if the run was started after
-15:30 (see Timeframe).
+group / overall rule or a manual stop, a position stays open until the
+platform squares the run off at the MCX close (see Timeframe).
 
 ## Exit
 
@@ -254,9 +260,10 @@ precedence relative to it — whichever takes the run's lock first closes the
 position:
 
 - a manual square-off or the run's stop button;
-- `MarketHoursService` at 15:30 IST on weekdays — or on the first loop of an
-  API process started after 15:30 (run 104, signal 1481 "Market closed
-  (15:30 IST)" at 22:40:15 IST, 1482 `RUN_STOPPED` by `market-hours`).
+- `MarketHoursService` at the MCX close ("MCX closed (23:30 IST)", `RUN_STOPPED`
+  by `market-hours`). Before 27 Sep it was 15:30 IST on weekdays — or the first
+  loop of an API process started after 15:30 (run 104, signal 1481 "Market
+  closed (15:30 IST)" at 22:40:15 IST, 1482 `RUN_STOPPED` by `market-hours`).
 
 An API restart that finds the runner process dead closes the run as an
 orphan at the last mark (`StrategyRunControl.ReconcileOrphanedRunsAsync`);
@@ -383,15 +390,17 @@ $$
 $$
 
 = ₹39,660.00 (position 1119). Had the API not restarted, the position
-would have been held through the MCX close.
+would have been held through the MCX close; since 27 Sep the run would have
+been squared off at it.
 
 ## Limitations
 
 - **No exit, no position awareness.** Groups stack (run 99 held two at
-  once); a leg is closed only by a run rule, a stop, or the 15:30 sweep. Run
-  104 shows the other side: with `"risk":{}` a 132-point winner was kept open
-  for two and a half hours by nothing but luck, and would have been carried
-  overnight.
+  once); a leg is closed only by a run rule, a stop, or the square-off at the
+  MCX close. Run 104 shows the other side: with `"risk":{}` a 132-point
+  winner was kept open for two and a half hours by nothing but luck; since
+  27 Sep such a leg is closed at the MCX close at whatever the option quotes
+  then, not carried overnight.
 - **"Session VWAP" is anchored to the ingestor's first bar, not the MCX
   open.** The `description` says "VWAP is anchored to the MCX session open";
   the code anchors to the first bucket of that IST date in the 500-bucket
@@ -407,13 +416,13 @@ would have been held through the MCX close.
   for the first evening bars). A run that starts the ingestor late has an
   EMA that says nothing for the first $p$ buckets and little for a while
   after.
-- **The 15:30 sweep does not know MCX.** `StopAllAsync` stops every run at
-  15:30 IST; a crude run started in the morning is squared off with eight
-  hours of session left. A run started after 15:30 escapes the day's sweep but
-  is stopped by the first loop of any API process started later that evening
-  (run 104 at 22:40:15), and there is no square-off at the MCX close at all —
-  only the ingestor is stopped then, which leaves the run "waiting for ticks"
-  with its positions marked at the last quote.
+- **The evening needs its feed.** After 15:30 the tick feeds stay up only
+  while MCX is open and the recording list holds an `MCX:` symbol — which a
+  crude run's start puts there (its future), with the option it trades added
+  by the runner. The FYERS chain poller and the alerter are stopped at 15:30
+  whatever runs on; this strategy reads neither. On a day NSE does not trade
+  the morning job starts nothing, so the plan's crude runs do not run on an
+  NSE holiday even when MCX trades its evening session.
 - **State changes before the API answers.** `armed` and the trade count are
   updated inside `on_bar`; a signal the API refuses (no quote within 10 s) or
   a bar whose contract is missing at resolve time still costs an entry.

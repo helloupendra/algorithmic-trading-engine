@@ -99,8 +99,8 @@ EVIDENCE_LINES = 4
 EVIDENCE_CHARS = 240
 
 #: A hold of this value lasts until the end of the session: 15:30 IST (the
-#: desk stops every run then), or 23:30 IST after it (MCX's evening), and at
-#: least MIN_EVENT_HOLD_SECONDS.
+#: desk stops the NSE and BSE runs then), or 23:30 IST after it (MCX's
+#: evening), and at least MIN_EVENT_HOLD_SECONDS.
 UNTIL_CLOSE = -1
 MIN_EVENT_HOLD_SECONDS = 3600
 
@@ -1538,7 +1538,7 @@ def _short_category(category: str) -> str:
 
 
 def _until_close(now_ts: float) -> float:
-    """Seconds until 15:30 IST (the desk stops every run), or 23:30 after it; at least MIN_EVENT_HOLD_SECONDS."""
+    """Seconds until 15:30 IST (the desk stops NSE and BSE runs), or 23:30 after it; at least MIN_EVENT_HOLD_SECONDS."""
     now = to_ist(datetime.fromtimestamp(now_ts, timezone.utc))
     for close in (NSE_CLOSE, MCX_CLOSE):
         end = now.replace(hour=close.hour, minute=close.minute, second=0, microsecond=0)

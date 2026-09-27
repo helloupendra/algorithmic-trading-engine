@@ -30,6 +30,7 @@ DAY = "2026-09-24"  # a Thursday
 LIMITER_429 = ("Runner exited (code 1): requests.exceptions.HTTPError: 429 Client Error: Too Many Requests "
                "for url: http://localhost:5025/api/UserAuth/login")
 CLOSED = "Market closed (15:30 IST)"
+MCX_CLOSED = "MCX closed (23:30 IST)"
 
 # A normal day's trade counts per strategy (25 Sep: Ghost 6-8, ChainFlowBuy 1-2).
 NORMAL_TRADES = {"GhostTangentCrossings": 7, "ChainFlowBuy": 2, "SmcStructureBreak": 0, "Fulcrum": 120,
@@ -81,13 +82,16 @@ def without(rows, user, strategy, underlying):
                                     and r["underlying"] == underlying)]
 
 
-def routes(running, today, day=DAY, nse=True, mcx=True, trading=True):
+def routes(running, today, day=DAY, nse=True, mcx=True, trading=True, mcx_close=None):
     def session(is_open):
         return {"isTradingDay": trading, "isMarketOpen": is_open, "isHoliday": not trading,
                 "holidayName": None if trading else "Gandhi Jayanti"}
+    mcx_answer = session(mcx)
+    if mcx_close is not None:   # the calendar's MCX close: 23:30 or 23:55 IST
+        mcx_answer["sessionCloseUtc"] = iso(mcx_close)
     return {
         "/api/MarketSession/check?exchange=NSE&segment=CM": session(nse),
-        "/api/MarketSession/check?exchange=MCX&segment=COM": session(mcx),
+        "/api/MarketSession/check?exchange=MCX&segment=COM": mcx_answer,
         RUNNING_PATH: running,
         today_path(day): today,
     }
@@ -824,6 +828,108 @@ def history(*days, fulcrum=(270, 344, 388), ghost=(7, 8, 6)):
 
 
 HISTORY_PATH = history_path("2026-09-15", "2026-09-23")
+
+
+class McxEveningTests(TradingAgentTestCase):
+    """
+    From 27 Sep the desk stops the NSE and BSE runs at 15:30 and the crude runs at
+    the MCX close; until then it stopped every run at 15:30, and Sentinel let every
+    planned run go at 15:25.
+    """
+
+    def evening(self, rows=None):
+        """(running, today) after 15:30: every index run closed by the desk, the crude runs trading on."""
+        rows = full_day() if rows is None else rows
+        closed = [dict(r, status="Stopped", isActive=False, stoppedUtc=iso(ist(15, 30, 30)), stopReason=CLOSED,
+                       stoppedBy="market-hours") for r in rows if r["underlying"] != "CRUDEOIL"]
+        crude = [r for r in rows if r["underlying"] == "CRUDEOIL"]
+        return crude, closed + crude
+
+    @staticmethod
+    def closed_at_mcx_close(today):
+        return [dict(r, status="Stopped", isActive=False, stoppedUtc=iso(ist(23, 30, 40)), stopReason=MCX_CLOSED,
+                     stoppedBy="market-hours") if r["underlying"] == "CRUDEOIL" else r for r in today]
+
+    @staticmethod
+    def admin_crude(rows):
+        return [r for r in rows if r["userName"] == "admin" and r["underlying"] == "CRUDEOIL"][0]
+
+    def test_an_evening_of_crude_trading_is_silent(self):
+        running, today = self.evening()
+        for moment in (ist(15, 31), ist(18, 0), ist(23, 24)):
+            self.assertEqual([], self.check(running, today, now=moment, nse=False, mcx=True))
+
+    def test_a_planned_crude_run_that_is_not_running_in_the_evening_is_missing(self):
+        running, today = self.evening(without(full_day(), "admin", "CrudeMomentum", "CRUDEOIL"))
+        findings = self.check(running, today, now=ist(18, 0), nse=False, mcx=True)
+        self.assertEqual(["trading:run-missing:admin:crudemomentum:CRUDEOIL"], [f.fingerprint for f in findings])
+
+    def test_crude_is_held_to_the_plan_until_five_minutes_before_the_calendars_mcx_close(self):
+        running, today = self.evening(without(full_day(), "admin", "CrudeMomentum", "CRUDEOIL"))
+        evening = {"nse": False, "mcx": True}
+        # The US summer: the calendar closes MCX at 23:30.
+        self.assertEqual(["run-missing"], self.rules(self.check(running, today, now=ist(23, 24), mcx_close=ist(23, 30),
+                                                                **evening)))
+        self.assertEqual([], self.check(running, today, now=ist(23, 26), mcx_close=ist(23, 30), **evening))
+        # The US winter: 23:55, so a crude run missing at 23:40 is still news.
+        self.assertEqual(["run-missing"], self.rules(self.check(running, today, now=ist(23, 40), mcx_close=ist(23, 55),
+                                                                **evening)))
+        self.assertEqual([], self.check(running, today, now=ist(23, 51), mcx_close=ist(23, 55), **evening))
+
+    def test_the_stop_at_the_mcx_close_is_an_ending_on_purpose(self):
+        _, today = self.evening()
+        done = self.closed_at_mcx_close(today)
+        # The calendar answered a moment before the close, the runs a moment after the desk's stop.
+        self.assertEqual([], self.check([], done, now=ist(23, 30, 50), nse=False, mcx=True))
+        self.assertEqual([], self.check([], done, now=ist(23, 31), nse=False, mcx=False))
+
+    def test_a_crude_run_that_died_in_the_afternoon_is_still_reported_after_the_equity_close(self):
+        rows = full_day()
+        crude = self.admin_crude(rows)
+        gone = dict(crude, status="Stopped", isActive=False, stoppedUtc=iso(ist(14, 0)),
+                    stopReason="Runner exited (code 1): KeyError: 'ltp'", stoppedBy="runner")
+        others = [r for r in rows if r is not crude]
+        fingerprint = f"trading:run-stopped-early:{crude['runId']}"
+        self.assertEqual([fingerprint], [f.fingerprint for f in self.check(others, others + [gone], now=ist(14, 1))])
+
+        # Until 27 Sep it was let go at 15:30 with the index runs' deaths: the desk stopped crude then too.
+        running, today = self.evening(others)
+        self.assertEqual([fingerprint], [f.fingerprint for f in self.check(running, today + [gone], now=ist(18, 0),
+                                                                          nse=False, mcx=True)])
+        self.assertEqual([], self.check(running, today + [gone], now=ist(23, 31), nse=False, mcx=False))
+
+    def test_a_crude_death_after_23_30_is_reported_while_the_calendar_keeps_mcx_open(self):
+        rows = full_day()
+        crude = self.admin_crude(rows)
+        gone = dict(crude, status="Stopped", isActive=False, stoppedUtc=iso(ist(23, 40)),
+                    stopReason="Runner exited (code 1): boom", stoppedBy="runner")
+        running, today = self.evening([r for r in rows if r is not crude])
+        findings = self.check(running, today + [gone], now=ist(23, 41), nse=False, mcx=True, mcx_close=ist(23, 55))
+        self.assertEqual(["run-stopped-early"], self.rules(findings))
+        self.assertIn("stopped unexpectedly at 23:40", findings[0].title)
+
+    def test_an_account_trading_crude_in_the_evening_is_held_to_its_loss_line_until_the_mcx_close(self):
+        rows = full_day()
+        for r in rows:
+            if r["userName"] == "admin" and r["underlying"] != "CRUDEOIL":
+                r["netPnl"] = r["realizedPnl"] = -4500.0   # 12 x -4,500 booked by 15:30, and -300 on crude
+        running, today = self.evening(rows)
+        self.assertEqual(["account-loss"], self.rules(self.check(running, today, now=ist(18, 0), nse=False, mcx=True)))
+        done = self.closed_at_mcx_close(today)
+        self.assertEqual([], self.check([], done, now=ist(23, 31), nse=False, mcx=False))
+
+    def test_the_whole_evening_through_the_engine_sends_nothing(self):
+        desk = Desk(self.tmp)
+        running, today = self.evening()
+        desk.at(ist(15, 28), full_day())
+        moment = ist(15, 31)
+        while moment < ist(23, 30):
+            desk.at(moment, running, today, nse=False, mcx=True, mcx_close=ist(23, 30))
+            moment += timedelta(minutes=7)
+        done = self.closed_at_mcx_close(today)
+        desk.at(ist(23, 30, 50), [], done, nse=False, mcx=True, mcx_close=ist(23, 30))   # the calendar a moment behind
+        desk.at(ist(23, 32), [], done, nse=False, mcx=False, mcx_close=ist(23, 30))
+        self.assertEqual([], desk.notes.sent)
 
 
 class OvertradingTests(TradingAgentTestCase):

@@ -42,6 +42,9 @@ class Session:
     from_calendar: bool = False
     # The calendar's word from earlier today, because the API is not answering now.
     remembered: bool = False
+    # When MCX closes today as the calendar has it — 23:30 or 23:55 IST, 17:00 on a
+    # half day — so a rule can stop just before it; None on the weekday rule.
+    mcx_close: Optional[datetime] = None
 
     @property
     def any_open(self) -> bool:
@@ -134,7 +137,7 @@ def _recalled(exchange: str, facts: Any, moment_utc: datetime, fallback: Session
         is_open = fallback.nse_open if exchange == "NSE" else fallback.mcx_open
     holiday = facts.get("holiday") if isinstance(facts.get("holiday"), str) else None
     return {"isTradingDay": trading, "isMarketOpen": is_open, "isHoliday": holiday is not None,
-            "holidayName": holiday}
+            "holidayName": holiday, "sessionCloseUtc": facts.get("closeUtc")}
 
 
 def session_from_answers(moment_utc: datetime, answers: dict[str, dict], kept: Any = None) -> Session:
@@ -170,6 +173,7 @@ def session_from_answers(moment_utc: datetime, answers: dict[str, dict], kept: A
         holiday_name=holiday,
         from_calendar=True,
         remembered=nse_recalled or mcx_recalled,
+        mcx_close=_parse_utc(mcx.get("sessionCloseUtc")) if mcx is not None else None,
     )
 
 
