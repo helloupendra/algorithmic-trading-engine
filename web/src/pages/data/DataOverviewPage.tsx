@@ -26,8 +26,9 @@ import { IconArrowRight, IconDatabase, IconPulse, IconWarning } from '../../comp
 import {
   CATEGORY_ORDER,
   classifySymbol,
+  coverageColumnKey,
+  coverageColumns,
   formatResolution,
-  resolutionRank,
   type SymbolCategory,
 } from '../../lib/symbols'
 
@@ -37,23 +38,24 @@ interface MatrixCell {
 }
 
 function buildMatrix(rows: CoverageRow[]) {
-  const resolutions = [...new Set(rows.map((r) => r.resolution))].sort(
-    (a, b) => resolutionRank(a) - resolutionRank(b),
-  )
+  // A column per source and resolution: the stored 1-minute candles and the
+  // live 1-minute bars are different data, and used to share a "1M" heading.
+  const columns = coverageColumns(rows)
   const matrix = new Map<SymbolCategory, Map<string, MatrixCell>>()
 
   for (const row of rows) {
     const cat = classifySymbol(row.symbol)
     if (!matrix.has(cat)) matrix.set(cat, new Map())
-    const byRes = matrix.get(cat)!
-    if (!byRes.has(row.resolution)) byRes.set(row.resolution, { symbols: new Set(), bars: 0 })
-    const cell = byRes.get(row.resolution)!
+    const byColumn = matrix.get(cat)!
+    const key = coverageColumnKey(row)
+    if (!byColumn.has(key)) byColumn.set(key, { symbols: new Set(), bars: 0 })
+    const cell = byColumn.get(key)!
     cell.symbols.add(row.symbol)
     cell.bars += row.barCount
   }
 
   const categories = CATEGORY_ORDER.filter((c) => matrix.has(c))
-  return { resolutions, matrix, categories }
+  return { columns, matrix, categories }
 }
 
 /** A heartbeat's last error, in red only when it says something ("None None" does not). */
@@ -366,16 +368,16 @@ export function DataOverviewPage() {
           empty="No stored candles yet. Use Historical → Backfill to pull data from FYERS."
         >
           {(rows) => {
-            const { resolutions, matrix, categories } = buildMatrix(rows)
+            const { columns, matrix, categories } = buildMatrix(rows)
             return (
               <div className="tablewrap">
                 <table className="table">
                   <thead>
                     <tr>
                       <th>Category</th>
-                      {resolutions.map((r) => (
-                        <th key={r} className="r">
-                          {formatResolution(r)}
+                      {columns.map((c) => (
+                        <th key={c.key} className="r">
+                          {c.label}
                         </th>
                       ))}
                     </tr>
@@ -386,10 +388,10 @@ export function DataOverviewPage() {
                         <td>
                           <Badge tone={cat === 'Options' ? 'accent' : 'neutral'}>{cat}</Badge>
                         </td>
-                        {resolutions.map((res) => {
-                          const cell = matrix.get(cat)?.get(res)
+                        {columns.map((c) => {
+                          const cell = matrix.get(cat)?.get(c.key)
                           return (
-                            <td key={res} className="r">
+                            <td key={c.key} className="r">
                               {cell ? (
                                 <>
                                   <b>{formatNumber(cell.symbols.size)}</b>{' '}
@@ -411,8 +413,8 @@ export function DataOverviewPage() {
           }}
         </QueryBoundary>
         <p className="small-note">
-          Counts combine broker backfill (candles) and live-captured 1m bars. Tick-level capture is
-          visible per symbol under Live feeds.
+          Stored candles from broker backfills and the nightly archive, with the live-captured 1-minute bars
+          in a column of their own. Tick-level capture is per symbol under Data → Feeds.
         </p>
       </Panel>
 
