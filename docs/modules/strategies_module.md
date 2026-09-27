@@ -123,6 +123,10 @@ Each leg goes through `PositionViewBuilder`, the run card's builder: run id, str
 
 Behind the strategies grant. A trader sees their own legs whatever `userId` they pass; an admin sees every account's, or one account's with `userId`.
 
+In the console, **Trade → Positions** (`/trade/positions`, one page for every role) lists the answer by account and then by run, the manual book first: each leg with its mark and the mark's age (stale past 30 s, and said so), its open P&L before exit charges, its stop and target, delta with IV, theta and vega in rupees, the **Carry** tick (it can be changed there) and **Square off**. An admin can narrow it to one account. The Desk's open-legs panel and the grid's carried marks read the same answer.
+
+**Trade → Orders** (`/trade/orders`) is the day's orders across runs. There is no orders-across-runs endpoint, so the page reads each run's ledger (`GET /api/Strategy/runs/{runId}/orders`) for the day's runs, the manual books holding an open leg and the viewer's own book, and merges them (`web/src/lib/orders.ts`). Another account's manual book with no open leg is not asked, and the page says so. On a day without a session it shows the last day with runs, like the Desk. Both pages replaced the v1 Simulator pages (a run picked from a list); their old URLs redirect, and `/trader/runs/{id}` goes to the run's own page.
+
 ### 11. Paper fills: the spread, and how old a quote may be
 A live run's fill is priced by the API from the contract's latest quote (`live_quotes_latest`), not taken as the runner sent it (`PaperTradingService`, `PaperFillPricing`):
 - a SELL fills at the **bid** and a BUY at the **ask** when the quote has that side of the book;
@@ -173,6 +177,7 @@ The runner saves the strategy's state to Redis (`strategy:state:{runId}`) once r
 ### React
 - `web/src/pages/strategies/LiveRunnerPage.tsx`, `StrategyLibraryPage.tsx`, `StrategiesOverviewPage.tsx`, `shared.tsx`
 - `web/src/pages/strategies/RunCard.tsx` — the run card, with the positions table's Carry column.
+- `web/src/pages/trade/PositionsPage.tsx`, `OrdersPage.tsx` — every open leg and the day's orders, across runs and books; `web/src/lib/openPositions.ts` (grouping, sums, mark age) and `web/src/lib/orders.ts` (which ledgers, merged).
 - `web/src/lib/queries.ts` (`useStrategies`, `useStartStrategy`, `useStopStrategy`, `useStrategyLive`, `useStrategyLogs`, `useFnoUnderlyings`, `useSetCarryForward`), `web/src/lib/symbols.ts` (`parseOptionSymbol`, `formatContract`), `web/src/lib/carry.ts` (what the tick does where, its tooltip and hints).
 
 ---

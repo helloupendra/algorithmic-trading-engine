@@ -30,7 +30,6 @@ import type {
   CandleDto,
   ChainPollerStatus,
   DeskPlanResponse,
-  EquitySnapshot,
   FnoUnderlying,
   IngestorProcessStatus,
   IngestorStatus,
@@ -49,18 +48,12 @@ import type {
   OptionChain,
   OptionChainSeries,
   OpenPositionsResponse,
-  PaperOrder,
   PaperOrderRow,
-  PaperPosition,
-  PerformanceMetrics,
   PruneWatchlistResponse,
   RiskEvent,
   RiskExposureResponse,
   RiskLimits,
   RunPnlSeriesResponse,
-  SimulationPortfolio,
-  SimulationRun,
-  SimulationSignal,
   SmcLadder,
   SmcStructure,
   StaleQuote,
@@ -738,84 +731,6 @@ export function useSmcLadder(params: {
     enabled: !!symbol,
     staleTime: 30_000,
     refetchInterval: includeLive ? POLL_SLOW : false,
-  })
-}
-
-// ---------- Simulator ----------
-
-export function useSimulationRuns() {
-  return useQuery({
-    queryKey: ['runs'],
-    queryFn: () => api.get<SimulationRun[]>('/api/Simulator/runs'),
-    refetchInterval: POLL_SLOW,
-  })
-}
-
-export function useSimulationRun(id: number | null) {
-  return useQuery({
-    queryKey: ['runs', id],
-    queryFn: () => api.get<SimulationRun>(`/api/Simulator/runs/${id}`),
-    enabled: id != null,
-  })
-}
-
-export function useRunPortfolio(id: number | null) {
-  return useQuery({
-    queryKey: ['runs', id, 'portfolio'],
-    queryFn: () => api.get<SimulationPortfolio>(`/api/Simulator/runs/${id}/portfolio`),
-    enabled: id != null,
-    refetchInterval: POLL_SLOW,
-  })
-}
-
-export function useRunPositions(id: number | null) {
-  return useQuery({
-    queryKey: ['runs', id, 'positions'],
-    queryFn: () => api.get<PaperPosition[]>(`/api/Simulator/runs/${id}/positions`),
-    enabled: id != null,
-    refetchInterval: POLL_SLOW,
-  })
-}
-
-export function useRunOrders(id: number | null) {
-  return useQuery({
-    queryKey: ['runs', id, 'orders'],
-    queryFn: () => api.get<PaperOrder[]>(`/api/Simulator/runs/${id}/orders`),
-    enabled: id != null,
-    refetchInterval: POLL_SLOW,
-  })
-}
-
-export function useRunSignals(id: number | null) {
-  return useQuery({
-    queryKey: ['runs', id, 'signals'],
-    queryFn: () => api.get<SimulationSignal[]>(`/api/Simulator/runs/${id}/signals`),
-    enabled: id != null,
-  })
-}
-
-export function useRunEquityCurve(id: number | null) {
-  return useQuery({
-    queryKey: ['runs', id, 'equity'],
-    queryFn: () => api.get<EquitySnapshot[]>(`/api/Simulator/runs/${id}/equity-curve`),
-    enabled: id != null,
-  })
-}
-
-export function useRunPerformance(id: number | null) {
-  return useQuery({
-    queryKey: ['runs', id, 'performance'],
-    queryFn: () => api.get<PerformanceMetrics>(`/api/Simulator/runs/${id}/performance`),
-    enabled: id != null,
-  })
-}
-
-export function useRefreshPortfolio() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (id: number) =>
-      api.post<SimulationPortfolio>(`/api/Simulator/runs/${id}/portfolio/refresh`),
-    onSuccess: (_data, id) => qc.invalidateQueries({ queryKey: ['runs', id] }),
   })
 }
 
@@ -2701,5 +2616,18 @@ export function useRunsOrders(runs: ReadonlyArray<{ runId: number; live: boolean
       enabled,
       refetchInterval: live ? 30_000 : (false as const),
     })),
+    combine: combineLedgers,
   })
+}
+
+/**
+ * The ledgers as one value, rebuilt only when one of them changes, so a page
+ * merging a few thousand orders does it once per answer, not once per render.
+ */
+function combineLedgers(results: ReadonlyArray<{ data?: PaperOrderRow[]; isError: boolean }>) {
+  return {
+    ledgers: results.map((r) => r.data),
+    failed: results.map((r) => r.isError),
+    loaded: results.filter((r) => r.data !== undefined).length,
+  }
 }
