@@ -2,6 +2,7 @@ using System.Globalization;
 using AlgoTrading.Api.Security;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.MarketIntelligence;
+using AlgoTrading.Domain.Constants;
 using AlgoTrading.Infrastructure.Services;
 using AlgoTrading.Infrastructure.Services.MarketIntelligence;
 using Microsoft.AspNetCore.Authorization;
@@ -21,8 +22,11 @@ namespace AlgoTrading.Api.Controllers;
 /// run now, which still waits for the market to close.
 /// </para>
 /// <para>
-/// Admin-only for now: nothing here is secret, but none of it has a page yet,
-/// and a trader-facing view will get its own module grant when it does.
+/// The reads are for anyone holding the market-data grant, opened on 28 Sep
+/// so the Desk can show traders the news, filings, overseas markets and
+/// breadth; admins hold every grant. <c>status</c> and the backfill trigger stay with admins:
+/// one describes the recorders' health, the other spends the host's time and
+/// the sources' patience.
 /// </para>
 /// <para>
 /// <c>from</c> and <c>to</c> on news and announcements are instants: an ISO
@@ -31,7 +35,8 @@ namespace AlgoTrading.Api.Controllers;
 /// second. Everywhere else they are IST dates.
 /// </para>
 /// </remarks>
-[Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+[Authorize]
+[RequireModule(PlatformModules.MarketData)]
 [ApiController]
 [Route("api/MarketIntelligence")]
 public class MarketIntelligenceController : ControllerBase
@@ -114,8 +119,9 @@ public class MarketIntelligenceController : ControllerBase
     /// <summary>
     /// Every recorder's last success, rows today, last error and whether it is
     /// overdue; every backfill's reach (first and last date, sessions still
-    /// missing). The desk checkup reads this.
+    /// missing). The desk checkup reads this. Admin-only.
     /// </summary>
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
     [HttpGet("status")]
     public async Task<ActionResult<MarketIntelligenceStatusResponse>> Status(CancellationToken cancellationToken)
         => Ok(await _queries.StatusAsync(cancellationToken));
@@ -124,8 +130,9 @@ public class MarketIntelligenceController : ControllerBase
     /// Asks a history backfill to run or resume now: <c>breadth</c>,
     /// <c>participant-oi</c>, <c>global-daily</c> or <c>all</c>. It skips what
     /// is stored, and inside 09:00–15:40 IST on a trading day it waits for
-    /// 15:40 (the answer says so).
+    /// 15:40 (the answer says so). Admin-only.
     /// </summary>
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
     [HttpPost("backfill/{dataset}")]
     public ActionResult<BackfillRequestResponse> Backfill(string dataset)
     {

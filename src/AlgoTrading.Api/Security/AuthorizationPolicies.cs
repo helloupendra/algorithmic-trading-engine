@@ -1,3 +1,6 @@
+using AlgoTrading.Domain.Constants;
+using Microsoft.AspNetCore.Authorization;
+
 namespace AlgoTrading.Api.Security;
 
 /// <summary>
@@ -11,6 +14,20 @@ public static class AuthorizationPolicies
     /// backfill, strategy process control and the global kill switch.
     /// </summary>
     public const string AdminOnly = "AdminOnly";
+
+    /// <summary>
+    /// The platform's rules: every endpoint needs a signed-in caller unless it
+    /// opts out with [AllowAnonymous], and <see cref="AdminOnly"/> needs the
+    /// Admin role. Defined once, so a test host that drives the real
+    /// attributes through the real pipeline applies the API's own rules.
+    /// </summary>
+    public static AuthorizationBuilder AddPlatformPolicies(this AuthorizationBuilder builder)
+        => builder
+            .SetFallbackPolicy(new AuthorizationPolicyBuilder()
+                .RequireAuthenticatedUser()
+                .Build())
+            .AddPolicy(AdminOnly, policy =>
+                policy.RequireRole(UserRoles.Admin));
 }
 
 /// <summary>

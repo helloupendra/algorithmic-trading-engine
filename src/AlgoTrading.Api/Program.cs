@@ -340,12 +340,7 @@ builder.Services.AddRateLimiter(options =>
     });
 });
 
-builder.Services.AddAuthorizationBuilder()
-    .SetFallbackPolicy(new AuthorizationPolicyBuilder()
-        .RequireAuthenticatedUser()
-        .Build())
-    .AddPolicy(AuthorizationPolicies.AdminOnly, policy =>
-        policy.RequireRole(UserRoles.Admin));
+builder.Services.AddAuthorizationBuilder().AddPlatformPolicies();
 
 // The browser client sends its bearer token from a different origin, so the allowed
 // origins are explicit and configurable. AllowAnyOrigin is never used: combined with
