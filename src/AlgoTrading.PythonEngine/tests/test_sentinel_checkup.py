@@ -580,6 +580,12 @@ class AgentTests(Base):
         self.assertEqual(["night"], [r["slot"] for r in self.store.rows])
 
 
+    def test_what_is_not_handed_in_is_wired_from_the_env(self):
+        agent = CheckupAgent(store=MemoryCheckupStore(), notifier=RecordingNotifier(), host="box")
+        agent._wire(make_context(self.repo, env={"POSTGRES_PASSWORD": "x"}))
+        self.assertIsNotNone(agent._reads)   # the terminal's report reads the desk like the service
+
+
 class StoreTests(unittest.TestCase):
     def test_a_request_is_claimed_once(self):
         store = MemoryCheckupStore()
