@@ -372,6 +372,25 @@ public class LiveFeedHubTests
         Assert.Equal(TimeSpan.FromMilliseconds(250), Dispatcher(subs, new RecordingHubContext()).PushInterval);
     }
 
+    [Fact]
+    public async Task A_tab_that_goes_away_during_its_handshake_is_not_an_error_and_leaves_nothing_behind()
+    {
+        await using var db = Users();
+        var subs = new LiveFeedSubscriptions();
+        using var gone = new CancellationTokenSource();
+        gone.Cancel();
+        var hub = new LiveFeedHub(subs, new UserAdminService(db, new PasswordHasher<AppUser>(),
+            RecapClockTests.Inert<ITokenValidityService>.Create(), NullLogger<UserAdminService>.Instance))
+        {
+            Context = new TestCallerContext("quick", Admin(AdminId), aborted: gone.Token),
+            Groups = new RecordingHubContext().Groups
+        };
+
+        await hub.OnConnectedAsync();
+
+        Assert.Equal(0, subs.ConnectionCount);
+    }
+
     // ---------------------------------------------------- subscribe to all --
 
     [Theory]
