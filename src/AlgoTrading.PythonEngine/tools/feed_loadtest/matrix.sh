@@ -8,6 +8,14 @@
 #   OUT       where results go (default: a new folder under $TMPDIR)
 #   BASE_REF  the baseline commit (default ee27219, what production runs)
 #   TRIALS    trials per case (default 3)
+#   QUIET_LOAD, QUIET_PROBE_MS, QUIET_WAIT   the quiet-window gate (below)
+#
+# The quiet-window gate. Docker Desktop's CPUs are the host's: on a Mac busy
+# with other work a trial measures the Mac, not the feed. Before each trial
+# the script waits until the host's 1-minute load average is at most
+# QUIET_LOAD (default 10) and a 2M-iteration Python loop pinned to CPU 6 takes
+# at most QUIET_PROBE_MS (default 400), checking every 20 s. After QUIET_WAIT
+# seconds (default 1200) it runs anyway. Either way matrix.log says which.
 #
 # Run it on a development Mac with Docker Desktop (8 CPUs in its VM), never on
 # the live server. LOCAL ONLY: the "Dhan" is a fake on 127.0.0.1 inside the
@@ -49,12 +57,50 @@ fi
 
 docker build -q -t "$IMAGE" "$HERE" >/dev/null
 
+QUIET_LOAD="${QUIET_LOAD:-10}"
+QUIET_PROBE_MS="${QUIET_PROBE_MS:-400}"
+QUIET_WAIT="${QUIET_WAIT:-1200}"
+
+host_load() {
+  # The 1-minute load average: macOS first, then Linux.
+  if sysctl -n vm.loadavg >/dev/null 2>&1; then
+    sysctl -n vm.loadavg | tr -d '{}' | awk '{print $1}'
+  else
+    cut -d' ' -f1 /proc/loadavg
+  fi
+}
+
+probe_ms() {
+  docker run --rm --cpuset-cpus 6 "$IMAGE" python -c \
+    'import time
+t = time.perf_counter(); x = 0
+for i in range(2_000_000): x += i * i
+print(round((time.perf_counter() - t) * 1000))'
+}
+
+wait_for_quiet() {
+  local waited=0 load probe
+  while true; do
+    load="$(host_load)"
+    probe="$(probe_ms)"
+    if awk -v l="$load" -v p="$probe" -v L="$QUIET_LOAD" -v P="$QUIET_PROBE_MS" 'BEGIN { exit !(l <= L && p <= P) }'; then
+      QUIET_NOTE="quiet: host load $load, CPU probe ${probe} ms, waited ${waited}s"
+      return
+    fi
+    if [ "$waited" -ge "$QUIET_WAIT" ]; then
+      QUIET_NOTE="NOT QUIET after ${waited}s: host load $load, CPU probe ${probe} ms"
+      return
+    fi
+    sleep 20
+    waited=$((waited + 20))
+  done
+}
+
 run() {
-  local label="$1" tree="$2" load
+  local label="$1" tree="$2"
   shift 2
-  # The host's load, beside each trial: the VM's CPUs are the host's.
-  load="$( (sysctl -n vm.loadavg 2>/dev/null || cut -d' ' -f1-3 /proc/loadavg) | tr -d '{}')"
-  echo "=== $label (host load average:$load)" | tee -a "$OUT/matrix.log"
+  wait_for_quiet
+  echo "=== $label ($QUIET_NOTE)" | tee -a "$OUT/matrix.log"
   docker run --rm --cpuset-cpus 5,6,7 -e LOAD_CLIENT_CPUS=6,7 -e LOAD_SERVER_CPUS=5 \
     -v "$REPO":/trees/fix:ro -v "$BASE_TREE":/trees/base:ro -v "$OUT":/out "$IMAGE" \
     python /trees/fix/src/AlgoTrading.PythonEngine/tools/feed_loadtest/run_load.py \
