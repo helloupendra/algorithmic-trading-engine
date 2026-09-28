@@ -85,6 +85,11 @@ class FeedRunner:
     #: repeat the refusal and fill the log.
     REFUSED_BACKOFF_SECONDS = 60
 
+    #: How long a batch the API did not store keeps showing as the heartbeat's
+    #: error once the feed has nothing else to say. Long enough to be seen on
+    #: the Data overview; short enough that a blip at 09:20 is not an error at 15:00.
+    STORE_FAILURE_NOTE_SECONDS = 600
+
     def __init__(self, feed, http=None, publisher=None, fixed_symbols=None,
                  api_base_url: str | None = None, verify_ssl: bool | None = None,
                  watchlist_refresh_seconds: float = WATCHLIST_REFRESH_SECONDS,
@@ -155,6 +160,17 @@ class FeedRunner:
         self.ticks_accepted = 0
         self.last_error = ""
         self._publish_errors = 0
+
+        # What never reached the tables, counted since the process started and
+        # sent in every heartbeat. A failed batch used to be one printed line:
+        # the strategies still heard those ticks on the stream, but the quote
+        # table the runners price legs from did not, and nothing counted how
+        # often. The flushers are six threads, hence the lock.
+        self._counts_lock = threading.Lock()
+        self.ticks_not_stored = 0
+        self.ticks_rejected = 0
+        #: (time.monotonic(), what went wrong) of the last batch not stored.
+        self.last_store_failure: tuple[float, str] | None = None
         self._market_open_cache = {"value": None, "checked_at": 0.0}
         self._stop = threading.Event()
 
@@ -173,7 +189,10 @@ class FeedRunner:
                 self._accept(tick)
             except Exception as ex:
                 self.last_error = str(ex)
-                print(f"[{self._feed.key}] could not accept a tick: {ex}", flush=True)
+                self.ticks_rejected += 1
+                # Neither published nor stored: the strategies never hear it.
+                print(f"[{self._feed.key}] could not accept a tick ({self.ticks_rejected} so far): {ex}",
+                      flush=True)
         if ticks:
             self.last_error = ""
 
@@ -226,10 +245,36 @@ class FeedRunner:
         try:
             response = self._http.post(url, json=batch, verify=self._verify, timeout=30)
             if response.status_code >= 400:
+                total = self._not_stored(batch, f"HTTP {response.status_code}")
                 print(f"[{self._feed.key}] TICK BATCH FAILED: {response.status_code} "
-                      f"{response.text[:300]}", flush=True)
+                      f"{response.text[:300]} ({total} tick(s) not stored so far)", flush=True)
         except Exception as ex:
-            print(f"[{self._feed.key}] TICK BATCH HTTP ERROR: {ex}", flush=True)
+            total = self._not_stored(batch, str(ex)[:200])
+            print(f"[{self._feed.key}] TICK BATCH HTTP ERROR: {ex} ({total} tick(s) not stored so far)",
+                  flush=True)
+
+    def _not_stored(self, batch: list[dict], detail: str) -> int:
+        with self._counts_lock:
+            self.ticks_not_stored += len(batch)
+            self.last_store_failure = (time.monotonic(), detail)
+            return self.ticks_not_stored
+
+    def health_note(self, now: float | None = None) -> str:
+        """
+        What the heartbeat's error says when nothing is wrong with the
+        connection itself: ticks the API did not store lately, and option
+        greeks this process cannot compute. Empty when there is neither.
+        """
+        now = time.monotonic() if now is None else now
+        notes = []
+        failure = self.last_store_failure
+        if failure is not None and now - failure[0] < self.STORE_FAILURE_NOTE_SECONDS:
+            notes.append(f"{self.ticks_not_stored} tick(s) not stored since the feed started; the last batch "
+                         f"failed {int(now - failure[0])}s ago ({failure[1]})")
+        greeks = self.enricher.unavailable_reason()
+        if greeks:
+            notes.append(f"option greeks unavailable: {greeks}")
+        return "; ".join(notes)
 
     # ================================================================ events
 
@@ -537,7 +582,10 @@ class FeedRunner:
             # entirely inside the feed with nothing reporting it.
             "queueDepth": self.pump.depth(),
             "ticksDropped": self.pump.dropped_total(),
-            "lastError": self.last_error,
+            "ticksNotStored": self.ticks_not_stored,
+            "ticksRejected": self.ticks_rejected,
+            "greeksUnavailable": self.enricher.unavailable_reason() or "",
+            "lastError": self.last_error or self.health_note(),
             # Lets the API find (and stop) this process again after it restarts —
             # under this feed's own key, so one vendor's pid never lands in
             # another's slot.
