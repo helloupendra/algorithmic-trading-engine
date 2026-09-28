@@ -946,42 +946,645 @@ export function scoringNote(f: Pick<Forecast, 'outcome' | 'sessionDate'>, today:
   }
 }
 
-// ---------- the model's inputs ----------
+// ---------- the models, in words ----------
 
-/** The inputs docs/modules/analysis.md defines ("How the models work → Inputs"). */
-const INPUT_LABELS: Record<string, string> = {
-  vixPrevClose: 'India VIX, previous close',
-  vixChange5: 'India VIX, 5-session change',
-  r1: 'Range, last session %',
-  r5: 'Range, 5-session mean %',
-  r22: 'Range, 22-session mean %',
-  rangeRatio: 'Last range ÷ 20-session mean',
-  prevReturn: 'Previous close-to-close %',
-  prevEfficiency: 'Previous session efficiency',
-  expiryDay: 'Expiry day',
-  monday: 'Monday',
-  prevSession: 'Inputs from session',
-  trainingSessions: 'Training sessions',
-  trainedThrough: 'Trained through',
+/**
+ * What each model is (analysis/models.py, docs/modules/analysis.md): `short`
+ * for a second line under its key, `about` for its tooltip when the API's own
+ * registered description is not at hand. The registered one wins when it is.
+ */
+export const MODEL_META: Record<string, { short: string; about: string }> = {
+  'range.har': {
+    short: 'recent ranges',
+    about:
+      "Log-range on the logs of the 1-, 5- and 22-session mean ranges (OLS); a log-normal around it with the training residuals' spread.",
+  },
+  'range.har-vix': {
+    short: 'recent ranges + India VIX',
+    about:
+      "Log-range on the logs of the 1-, 5- and 22-session mean ranges, plus India VIX's previous close (log), expiry-day and Monday flags.",
+  },
+  'trend.logit': {
+    short: 'logistic, 7 inputs',
+    about:
+      'Logistic regression (ridge) for a trend day (|close − open| ≥ 0.6 × range) on the previous range against its ' +
+      "20-session mean, previous return and efficiency, India VIX's previous close and 5-session change, expiry-day " +
+      'and Monday flags.',
+  },
+  'direction.logit': {
+    short: 'logistic, 7 inputs · control',
+    about:
+      'Logistic regression (ridge) for close > open, on the same seven inputs as trend.logit. A control: nothing in ' +
+      "the desk's research predicts intraday direction.",
+  },
 }
 
-/** Facts the models send as 0/1; shown as yes/no. */
-const FLAG_INPUTS = new Set(['expiryDay', 'monday'])
+const CUES_SUFFIX = '-cues'
+const CONTROL_SUFFIX = ' · control'
+const CUES_ABOUT =
+  ' plus the pre-open context: overnight US and Asian moves, US VIX, the rupee, oil, FII index-futures ' +
+  "positioning, NSE breadth, the heavyweights' previous session and RBI/Fed/Budget/data-release days."
 
-/** `inputs` as label/value pairs, in the order the model sent them. */
-export function formatInputs(inputs: Record<string, unknown> | null | undefined): Array<[string, string]> {
-  if (!inputs || typeof inputs !== 'object') return []
-  return Object.entries(inputs).map(([key, value]) => {
-    const label = INPUT_LABELS[key] ?? key
-    let text: string
-    if (typeof value === 'boolean') text = value ? 'yes' : 'no'
-    else if (FLAG_INPUTS.has(key) && (value === 0 || value === 1)) text = value === 1 ? 'yes' : 'no'
-    else if (finite(value)) text = value.toLocaleString('en-IN', { maximumFractionDigits: 3 })
-    else if (value == null) text = '—'
-    else if (typeof value === 'string') text = value
-    else text = JSON.stringify(value)
-    return [label, text]
-  })
+/** Version 2's "-cues" model's version 1 model, or null. */
+function cuesBase(key: string): string | null {
+  return key.endsWith(CUES_SUFFIX) ? key.slice(0, -CUES_SUFFIX.length) : null
+}
+
+/** "recent ranges + India VIX" — a model in a few words; '' for a model this page does not know. */
+export function modelShort(key: string): string {
+  const own = MODEL_META[key]
+  if (own) return own.short
+  const base = cuesBase(key)
+  const meta = base ? MODEL_META[base] : undefined
+  if (!meta) return ''
+  const control = meta.short.endsWith(CONTROL_SUFFIX)
+  return `${meta.short.replace(CONTROL_SUFFIX, '')} + pre-open cues${control ? CONTROL_SUFFIX : ''}`
+}
+
+/** A model's description: the registered one when there is one, else what this page knows; '' when neither. */
+export function modelAbout(key: string, registered?: string | null): string {
+  if (registered && registered.trim()) return registered.trim()
+  const own = MODEL_META[key]
+  if (own) return own.about
+  const base = cuesBase(key)
+  return base && MODEL_META[base] ? `${base}${CUES_ABOUT}` : ''
+}
+
+/** A model key's tooltip: "range.har-vix · version 2026-09-27.1 — Log-range on …". */
+export function modelTitle(key: string, version?: string | null, registered?: string | null): string {
+  const about = modelAbout(key, registered)
+  return `${key}${version ? ` · version ${version}` : ''}${about ? ` — ${about}` : ''}`
+}
+
+// ---------- times and signed numbers ----------
+
+const IST_OFFSET_MS = 330 * 60_000
+const MINUS = '−'
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0')
+}
+
+function parseStamp(iso: unknown): number | null {
+  if (typeof iso !== 'string' || !iso) return null
+  const ms = Date.parse(iso)
+  return Number.isFinite(ms) ? ms : null
+}
+
+/** "08:43 IST" — a UTC stamp as the IST clock read it; '—' when missing or unreadable. */
+export function formatIstClock(iso: string | null | undefined): string {
+  const ms = parseStamp(iso)
+  if (ms == null) return '—'
+  const d = new Date(ms + IST_OFFSET_MS)
+  return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())} IST`
+}
+
+/** "28 Sept, 08:43 IST" — a UTC stamp with its IST date. */
+export function formatIstStamp(iso: string | null | undefined): string {
+  const ms = parseStamp(iso)
+  if (ms == null) return '—'
+  const day = new Date(ms).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })
+  return `${day}, ${formatIstClock(iso)}`
+}
+
+/** "25 Sept" — a yyyy-MM-dd date, short, for a table cell. */
+export function shortDay(date: string): string {
+  const [y, m, d] = date.split('-').map(Number)
+  if (!y || !m || !d) return date
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+}
+
+/**
+ * "issued 08:50 IST", or "issued 08:50–09:05 IST" when a session's forecasts
+ * went out at different minutes (a re-run for one index); '' with none.
+ */
+export function issuedText(forecasts: ReadonlyArray<Pick<Forecast, 'issuedUtc'>>): string {
+  const stamps = forecasts.map((f) => parseStamp(f.issuedUtc)).filter((ms): ms is number => ms != null)
+  if (stamps.length === 0) return ''
+  const first = formatIstClock(new Date(Math.min(...stamps)).toISOString())
+  const last = formatIstClock(new Date(Math.max(...stamps)).toISOString())
+  return first === last ? `issued ${first}` : `issued ${first.replace(' IST', '')}–${last}`
+}
+
+/** "+0.34", "−0.41", "0.00" — signed, Indian grouping, a true minus; nothing that rounds to zero gets a sign. */
+export function formatSigned(value: number | null | undefined, digits = 2): string {
+  if (!finite(value)) return '—'
+  const rounded = Number(value.toFixed(digits))
+  if (rounded === 0) return num(0, digits)
+  return `${rounded > 0 ? '+' : MINUS}${num(Math.abs(value), digits)}`
+}
+
+/** "+0.34%", "−0.41%", "0.00%". */
+export function formatSignedPct(value: number | null | undefined, digits = 2): string {
+  const t = formatSigned(value, digits)
+  return t === '—' ? t : `${t}%`
+}
+
+// ---------- a value this page has no layout for ----------
+
+/**
+ * Anything the API sends that this page has no particular layout for, as a
+ * small tree the page draws as nested label/value lists: never as JSON.
+ */
+export type ValueNode =
+  | { kind: 'text'; text: string }
+  | { kind: 'fields'; fields: Array<{ key: string; label: string; node: ValueNode }> }
+  | { kind: 'items'; items: ValueNode[] }
+
+const TREE_DEPTH = 4
+const TREE_ITEMS = 40
+const ISO_STAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/
+
+function textNode(t: string): ValueNode {
+  return { kind: 'text', text: t }
+}
+
+/** "giftNiftyGapPct" → "Gift nifty gap pct", "trained_through" → "Trained through". */
+export function humanizeKey(key: string): string {
+  const words = key
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_\s-]+/g, ' ')
+    .trim()
+    .toLowerCase()
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : key
+}
+
+/** A string as a reader wants it: a UTC stamp in IST, a date with its weekday, anything else as it is. */
+function describeText(value: string): string {
+  if (ISO_STAMP.test(value)) return formatIstStamp(value)
+  if (ISO_DAY.test(value)) return formatDay(value)
+  return value
+}
+
+/**
+ * Any JSON value as a {@link ValueNode}: numbers with Indian grouping (at most
+ * three decimals), true/false as yes/no, null as "—", UTC stamps in IST, a
+ * list of plain values on one line, and objects as labelled fields. Past four
+ * levels, or forty entries, it says how many more there are instead.
+ */
+export function describeValue(value: unknown, depth = 0): ValueNode {
+  if (value == null) return textNode('—')
+  if (typeof value === 'boolean') return textNode(value ? 'yes' : 'no')
+  if (typeof value === 'number') {
+    return textNode(Number.isFinite(value) ? value.toLocaleString('en-IN', { maximumFractionDigits: 3 }) : '—')
+  }
+  if (typeof value === 'string') return textNode(value.trim() === '' ? '—' : describeText(value))
+  if (Array.isArray(value)) {
+    if (value.length === 0) return textNode('none')
+    if (value.every((v) => v == null || typeof v !== 'object')) {
+      return textNode(value.map((v) => (describeValue(v) as { text: string }).text).join(', '))
+    }
+    if (depth >= TREE_DEPTH) return textNode(`${value.length} items`)
+    const items = value.slice(0, TREE_ITEMS).map((v) => describeValue(v, depth + 1))
+    if (value.length > TREE_ITEMS) items.push(textNode(`and ${value.length - TREE_ITEMS} more`))
+    return { kind: 'items', items }
+  }
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+    if (entries.length === 0) return textNode('none')
+    if (depth >= TREE_DEPTH) return textNode(`${entries.length} fields`)
+    const fields = entries
+      .slice(0, TREE_ITEMS)
+      .map(([key, v]) => ({ key, label: humanizeKey(key), node: describeValue(v, depth + 1) }))
+    if (entries.length > TREE_ITEMS) {
+      fields.push({ key: '…', label: 'More', node: textNode(`and ${entries.length - TREE_ITEMS} more`) })
+    }
+    return { kind: 'fields', fields }
+  }
+  return textNode(String(value))
+}
+
+// ---------- the models' inputs ----------
+
+type InputUnit =
+  | 'pct'
+  | 'pctSigned'
+  | 'signed'
+  | 'ratio'
+  | 'times'
+  | 'level'
+  | 'price'
+  | 'count'
+  | 'countSigned'
+  | 'flag'
+  | 'date'
+  | 'text'
+
+/**
+ * Every input the models record, in the order the page lists them, with its
+ * unit (docs/modules/analysis.md: "Inputs", and version 2's "The inputs and
+ * their point-in-time rules"). One not listed is shown under its own name.
+ */
+const INPUTS: ReadonlyArray<readonly [string, string, InputUnit]> = [
+  ['prevSession', 'Inputs from session', 'date'],
+  ['prevClose', 'Previous close', 'price'],
+  ['r1', 'Range, last session', 'pct'],
+  ['r5', 'Range, 5-session mean', 'pct'],
+  ['r22', 'Range, 22-session mean', 'pct'],
+  ['rangeRatio', 'Last range ÷ 20-session mean', 'times'],
+  ['prevReturn', 'Previous close-to-close', 'pctSigned'],
+  ['prevEfficiency', 'Previous session efficiency', 'ratio'],
+  ['vixPrevClose', 'India VIX, previous close', 'level'],
+  ['vixChange5', 'India VIX, 5-session change', 'signed'],
+  ['expiryDay', 'Expiry day', 'flag'],
+  ['monday', 'Monday', 'flag'],
+  // Version 2's context. Markets that close after India: since India's previous close.
+  ['spxRet', 'S&P 500', 'pctSigned'],
+  ['ndxRet', 'Nasdaq 100', 'pctSigned'],
+  ['djiRet', 'Dow Jones', 'pctSigned'],
+  ['esRet', 'S&P 500 futures', 'pctSigned'],
+  ['usVix', 'US VIX', 'level'],
+  ['usVixChange', 'US VIX, change', 'signed'],
+  ['brentRet', 'Brent crude', 'pctSigned'],
+  ['dxyRet', 'Dollar index', 'pctSigned'],
+  ['us10yChange', 'US 10-year yield, change', 'signed'],
+  ['usdinrRet', 'USD/INR', 'pctSigned'],
+  ['n225Ret', 'Nikkei 225, last session', 'pctSigned'],
+  ['hsiRet', 'Hang Seng, last session', 'pctSigned'],
+  ['ks11Ret', 'KOSPI, last session', 'pctSigned'],
+  ['asiaRet', 'Asia, mean of the three', 'pctSigned'],
+  ['fiiNetLong', 'FII index futures, net long', 'pctSigned'],
+  ['fiiChange1', 'FII net long, 1-day change', 'signed'],
+  ['fiiChange5', 'FII net long, 5-day change', 'signed'],
+  ['adRatio', 'Advances ÷ declines', 'ratio'],
+  ['pctAdvancing', 'Stocks advancing', 'pct'],
+  ['netHighsLows', '52-week highs − lows', 'countSigned'],
+  ['netHighsLowsPct', '52-week highs − lows, % of traded', 'pctSigned'],
+  ['hwRet', 'Heavyweights, mean return', 'pctSigned'],
+  ['hwDispersion', 'Heavyweights, dispersion', 'pct'],
+  ['hwCount', 'Heavyweights counted', 'count'],
+  ['majorEvent', 'RBI, Fed or Budget day', 'flag'],
+  ['majorEve', 'RBI, Fed or Budget next session', 'flag'],
+  ['majorAfter', 'Day after RBI, Fed or Budget', 'flag'],
+  ['dataRelease', 'US CPI, US jobs or India CPI day', 'flag'],
+  ['events', 'Events', 'text'],
+  ['trainingSessions', 'Training sessions', 'count'],
+  ['trainedThrough', 'Trained through', 'date'],
+]
+
+const INPUT_SPEC = new Map(INPUTS.map(([key, label, unit], i) => [key, { label, unit, order: i }]))
+
+/** Recorded on every forecast, but shown by the page once, on its own (the session's pre-open context). */
+const OWN_LAYOUT_INPUTS = new Set(['liveOnly'])
+
+export function inputLabel(key: string): string {
+  return INPUT_SPEC.get(key)?.label ?? humanizeKey(key)
+}
+
+/** One input's value in words: its unit, Indian grouping, a true minus, yes/no for the 0/1 facts. */
+export function formatInputValue(key: string, value: unknown): string {
+  const unit = INPUT_SPEC.get(key)?.unit
+  if (value == null) return '—'
+  if (typeof value === 'boolean') return value ? 'yes' : 'no'
+  if (unit === 'flag' && (value === 0 || value === 1)) return value === 1 ? 'yes' : 'no'
+  if (typeof value === 'string') {
+    if (unit === 'date' && ISO_DAY.test(value)) return shortDay(value)
+    if (value.trim() === '') return unit === 'text' ? 'none' : '—'
+    return describeText(value)
+  }
+  if (!finite(value)) return '—'
+  switch (unit) {
+    case 'pct':
+      return formatPct(value, 2)
+    case 'pctSigned':
+      return formatSignedPct(value, 2)
+    case 'signed':
+      return formatSigned(value, 2)
+    case 'ratio':
+    case 'level':
+    case 'price':
+      return num(value, 2)
+    case 'times':
+      return `${num(value, 2)}×`
+    case 'count':
+      return Math.round(value).toLocaleString('en-IN')
+    case 'countSigned':
+      return formatSigned(value, 0)
+    default:
+      return value.toLocaleString('en-IN', { maximumFractionDigits: 3 })
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === 'object' && !Array.isArray(value)
+}
+
+/** A value with its object keys sorted, so two equal records compare equal whatever their key order. */
+function sortedKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortedKeys)
+  if (isRecord(value)) {
+    return Object.fromEntries(Object.keys(value).sort().map((k) => [k, sortedKeys(value[k])]))
+  }
+  return value
+}
+
+/** Two JSON values' identity, for telling them apart. Serialised only to compare; never shown. */
+function sameKey(value: unknown): string {
+  return JSON.stringify(sortedKeys(value)) ?? 'undefined'
+}
+
+function inputNode(key: string, value: unknown): ValueNode {
+  return value != null && typeof value === 'object' ? describeValue(value) : textNode(formatInputValue(key, value))
+}
+
+/** An input the same for every model that records it, shown once. */
+export interface InputFact {
+  key: string
+  label: string
+  value: ValueNode
+}
+
+/** The inputs a set of models share, under those models' names. */
+export interface InputGroup {
+  /** Model keys, in the card's order; `all` when every model on the card records these. */
+  models: string[]
+  all: boolean
+  facts: InputFact[]
+}
+
+/** Inputs whose values differ from model to model (how much history each was fitted on): one row per model. */
+export interface PerModelInputs {
+  keys: Array<{ key: string; label: string }>
+  rows: Array<{ model: string; modelKey: string; modelVersion: string; cells: Array<ValueNode | null> }>
+}
+
+export interface InputsView {
+  /** The session every model's inputs come from, when they all say the same one (then it is not listed). */
+  prevSession: string | null
+  groups: InputGroup[]
+  perModel: PerModelInputs | null
+}
+
+/**
+ * What a card's models saw. The morning's facts are the same whichever model
+ * reads them, so each is shown once, under the models that record it, in
+ * the documented order; what differs by model (training sessions, trained
+ * through) is a small table of its own. The pre-open context is left out:
+ * it is the same on every forecast, and the page shows it once, on its own.
+ */
+export function inputsView(forecasts: readonly Forecast[]): InputsView | null {
+  const shown = forecasts.filter(
+    (f) => isRecord(f.inputs) && Object.keys(f.inputs).some((k) => !OWN_LAYOUT_INPUTS.has(k)),
+  )
+  if (shown.length === 0) return null
+  const inputs = shown.map((f) => f.inputs as Record<string, unknown>)
+  const keyCount = new Map<string, number>()
+  for (const f of shown) keyCount.set(f.modelKey, (keyCount.get(f.modelKey) ?? 0) + 1)
+  const names = shown.map((f) => ((keyCount.get(f.modelKey) ?? 0) > 1 ? `${f.modelKey} ${f.modelVersion}` : f.modelKey))
+
+  const sessions = new Set(inputs.map((i) => i.prevSession))
+  const only = sessions.size === 1 ? [...sessions][0] : null
+  const prevSession = typeof only === 'string' && ISO_DAY.test(only) ? only : null
+
+  const firstSeen = new Map<string, number>()
+  for (const i of inputs) {
+    for (const key of Object.keys(i)) {
+      if (OWN_LAYOUT_INPUTS.has(key) || (key === 'prevSession' && prevSession)) continue
+      if (!firstSeen.has(key)) firstSeen.set(key, firstSeen.size)
+    }
+  }
+  const rank = (key: string) => INPUT_SPEC.get(key)?.order ?? INPUTS.length + (firstSeen.get(key) ?? 0)
+  const keys = [...firstSeen.keys()].sort((a, b) => rank(a) - rank(b))
+
+  const groups = new Map<string, InputGroup>()
+  const differing: string[] = []
+  for (const key of keys) {
+    const carriers = inputs.map((i, n) => (key in i ? n : -1)).filter((n) => n >= 0)
+    const values = new Set(carriers.map((n) => sameKey(inputs[n][key])))
+    if (values.size > 1) {
+      differing.push(key)
+      continue
+    }
+    const models = carriers.map((n) => names[n])
+    const id = models.join('\u0000')
+    const group = groups.get(id) ?? { models, all: carriers.length === shown.length && shown.length > 1, facts: [] }
+    group.facts.push({ key, label: inputLabel(key), value: inputNode(key, inputs[carriers[0]][key]) })
+    groups.set(id, group)
+  }
+
+  return {
+    prevSession,
+    groups: [...groups.values()],
+    perModel:
+      differing.length === 0
+        ? null
+        : {
+            keys: differing.map((key) => ({ key, label: inputLabel(key) })),
+            rows: shown.map((f, n) => ({
+              model: names[n],
+              modelKey: f.modelKey,
+              modelVersion: f.modelVersion,
+              cells: differing.map((key) => (key in inputs[n] ? inputNode(key, inputs[n][key]) : null)),
+            })),
+          },
+  }
+}
+
+// ---------- the pre-open context (inputs.liveOnly) ----------
+
+/** The news model's reading: within ±0.15 is level, as on the Desk. */
+export const SENTIMENT_LEVEL = 0.15
+
+/** The tone of a sentiment reading, −1 … +1; null when nothing was scored. */
+export function sentimentTone(value: number | null | undefined): 'pos' | 'neg' | 'flat' | null {
+  if (!finite(value)) return null
+  if (value > SENTIMENT_LEVEL) return 'pos'
+  if (value < -SENTIMENT_LEVEL) return 'neg'
+  return 'flat'
+}
+
+/** "+0.71", "−0.33", "0.00"; "—" when nothing was scored. */
+export function formatSentiment(value: number | null | undefined): string {
+  return formatSigned(value, 2)
+}
+
+/** One `news_items` category (or NIFTY-50 companies' filings) in the pre-open context. */
+export interface NewsRow {
+  key: string
+  label: string
+  group: 'market' | 'sector' | 'other' | 'filings'
+  /** Headlines first seen between the previous close and the forecasts. */
+  n: number | null
+  scored: number | null
+  /** Mean sentiment of the scored ones, −1 … +1. */
+  sentiment: number | null
+  /** Highest importance among the scored ones, 0 … 3. */
+  maxImportance: number | null
+}
+
+const NEWS_LABELS: Record<string, string> = {
+  india: 'India',
+  global: 'Global',
+  auto: 'Auto',
+  banking: 'Banking',
+  commodities: 'Commodities',
+  energy: 'Energy',
+  fmcg: 'FMCG',
+  it: 'IT',
+  metals: 'Metals',
+  pharma: 'Pharma',
+  realty: 'Realty',
+  uncategorised: 'Uncategorised',
+  'nifty50 announcements': 'NIFTY 50 filings',
+}
+
+function newsGroup(key: string): NewsRow['group'] {
+  if (key === 'india' || key === 'global') return 'market'
+  if (key === 'nifty50 announcements') return 'filings'
+  if (key === 'uncategorised') return 'other'
+  return 'sector'
+}
+
+const NEWS_GROUP_ORDER: Record<NewsRow['group'], number> = { market: 0, sector: 1, other: 2, filings: 3 }
+
+export function newsLabel(key: string): string {
+  return NEWS_LABELS[key] ?? humanizeKey(key)
+}
+
+/** India and Global first, then the sectors A–Z, then uncategorised, then the NIFTY-50 filings. */
+export function sortNewsRows(rows: readonly NewsRow[]): NewsRow[] {
+  const marketRank = (key: string) => (key === 'india' ? 0 : key === 'global' ? 1 : 2)
+  return [...rows].sort(
+    (a, b) =>
+      NEWS_GROUP_ORDER[a.group] - NEWS_GROUP_ORDER[b.group] ||
+      marketRank(a.key) - marketRank(b.key) ||
+      a.label.localeCompare(b.label),
+  )
+}
+
+export interface LiveContext {
+  /** False on every forecast so far: no model reads this. Null when the record does not say. */
+  usedByModels: boolean | null
+  gift: { gapPct: number | null; changePct: number | null; asOfUtc: string | null; fetchedUtc: string | null } | null
+  /** Why there is no GIFT Nifty reading ("no snapshot this morning", "unavailable (…)"). */
+  giftNote: string | null
+  news: NewsRow[] | null
+  newsNote: string | null
+  earnings: { today: number | null; sincePrev: number | null } | null
+  earningsNote: string | null
+  /** Anything else recorded there, for the generic view. */
+  other: Array<{ key: string; label: string; node: ValueNode }>
+}
+
+const CONTEXT_KEYS = new Set([
+  'usedByModels',
+  'giftNifty',
+  'giftNiftyGapPct',
+  'giftNiftyChangePct',
+  'giftNiftyAsOf',
+  'giftNiftyFetchedUtc',
+  'news',
+  'earnings',
+  'earningsToday',
+  'earningsSincePrev',
+])
+
+const numOrNull = (v: unknown): number | null => (finite(v) ? v : null)
+const strOrNull = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null)
+
+/**
+ * `inputs.liveOnly` read into what the page draws: the GIFT Nifty gap, the
+ * news since the previous close by category, and the earnings load. A part
+ * the job could not read arrives as a sentence ("unavailable (…)") and is
+ * kept as that sentence, never as a zero. Null when it is not an object.
+ */
+export function readLiveContext(raw: unknown): LiveContext | null {
+  if (!isRecord(raw)) return null
+  const other: LiveContext['other'] = []
+
+  const giftKeys = ['giftNiftyGapPct', 'giftNiftyChangePct', 'giftNiftyAsOf', 'giftNiftyFetchedUtc']
+  const gift = giftKeys.some((k) => k in raw)
+    ? {
+        gapPct: numOrNull(raw.giftNiftyGapPct),
+        changePct: numOrNull(raw.giftNiftyChangePct),
+        asOfUtc: strOrNull(raw.giftNiftyAsOf),
+        fetchedUtc: strOrNull(raw.giftNiftyFetchedUtc),
+      }
+    : null
+
+  let news: NewsRow[] | null = null
+  let newsNote: string | null = null
+  if (isRecord(raw.news)) {
+    const rows: NewsRow[] = []
+    for (const [key, v] of Object.entries(raw.news)) {
+      if (!isRecord(v)) {
+        other.push({ key: `news.${key}`, label: `News: ${newsLabel(key)}`, node: describeValue(v) })
+        continue
+      }
+      rows.push({
+        key,
+        label: newsLabel(key),
+        group: newsGroup(key),
+        n: numOrNull(v.n),
+        scored: numOrNull(v.scored),
+        sentiment: numOrNull(v.sentiment),
+        maxImportance: numOrNull(v.maxImportance),
+      })
+    }
+    news = sortNewsRows(rows)
+  } else if (typeof raw.news === 'string') {
+    newsNote = strOrNull(raw.news)
+  } else if (raw.news != null) {
+    other.push({ key: 'news', label: 'News', node: describeValue(raw.news) })
+  }
+
+  const earnings =
+    'earningsToday' in raw || 'earningsSincePrev' in raw
+      ? { today: numOrNull(raw.earningsToday), sincePrev: numOrNull(raw.earningsSincePrev) }
+      : null
+
+  for (const [key, v] of Object.entries(raw)) {
+    if (!CONTEXT_KEYS.has(key)) other.push({ key, label: humanizeKey(key), node: describeValue(v) })
+  }
+
+  return {
+    usedByModels: typeof raw.usedByModels === 'boolean' ? raw.usedByModels : null,
+    gift,
+    giftNote: strOrNull(raw.giftNifty),
+    news,
+    newsNote,
+    earnings,
+    earningsNote: strOrNull(raw.earnings),
+    other,
+  }
+}
+
+/** One distinct pre-open context of a session, and which forecasts carry it. */
+export interface SessionContext {
+  context: LiveContext
+  count: number
+  underlyings: string[]
+  issuedUtc: string
+}
+
+/**
+ * The session's pre-open context, once. The morning's job records the same
+ * `liveOnly` on every forecast it writes, so a session normally has one; a
+ * forecast written by a later run carries its own, and each distinct one is
+ * returned, the most widely carried first.
+ */
+export function sessionContexts(forecasts: readonly Forecast[]): SessionContext[] {
+  const groups = new Map<string, { raw: unknown; list: Forecast[] }>()
+  for (const f of forecasts) {
+    const raw = isRecord(f.inputs) ? f.inputs.liveOnly : undefined
+    if (!isRecord(raw)) continue
+    const key = sameKey(raw)
+    const g = groups.get(key) ?? { raw, list: [] }
+    g.list.push(f)
+    groups.set(key, g)
+  }
+  const out: SessionContext[] = []
+  for (const g of groups.values()) {
+    const context = readLiveContext(g.raw)
+    if (!context) continue
+    const underlyings = [...new Set(g.list.map((f) => f.underlying))].sort(
+      (a, b) => underlyingOrder(a) - underlyingOrder(b) || a.localeCompare(b),
+    )
+    const issuedUtc = g.list.map((f) => f.issuedUtc).sort()[0]
+    out.push({ context, count: g.list.length, underlyings, issuedUtc })
+  }
+  return out.sort((a, b) => b.count - a.count || a.issuedUtc.localeCompare(b.issuedUtc))
 }
 
 // ---------- history rows ----------

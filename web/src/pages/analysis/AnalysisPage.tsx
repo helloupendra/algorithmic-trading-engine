@@ -42,22 +42,30 @@ import {
   displayStatus,
   forecastCells,
   formatCiSkill,
-  formatInputs,
+  formatIstClock,
   formatPct,
   formatPoints,
   formatProb,
   formatProbDelta,
+  formatSentiment,
+  formatSignedPct,
   formatSkill,
   formatSkillSigned,
   groupScoreboard,
+  inputsView,
   intervalBar,
+  issuedText,
   istToday,
   issueNote,
+  modelShort,
+  modelTitle,
   pickSession,
   rangeScale,
   reliabilityLabel,
   reliabilityPoints,
   scoringNote,
+  sentimentTone,
+  sessionContexts,
   sharedExtent,
   sortForecasts,
   statusMeta,
@@ -70,13 +78,16 @@ import type {
   CalibrationBin,
   Forecast,
   ForecastTarget,
+  LiveContext,
   ModelGroup,
   RangePrediction,
   ScoreboardRow,
+  SessionContext,
   TodayCard,
+  ValueNode,
 } from '../../lib/analysis'
 import { formatDay } from '../../lib/factors'
-import { formatAge, formatDateTime, formatPrice, formatTime } from '../../lib/format'
+import { formatAge, formatDateTime, formatPrice } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components/ui'
 import './analysis.css'
 
@@ -359,8 +370,10 @@ function LiveCount({ n }: { n: number }) {
 
 function ModelTag({ f, group }: { f: Forecast; group?: ModelGroup }) {
   return (
-    <span className="an-model" title={`${f.modelKey} · version ${f.modelVersion} · issued ${formatDateTime(f.issuedUtc)} IST`}>
-      <span className="mono">{f.modelKey}</span>
+    <span className="an-model">
+      <span className="mono an-model__key" title={`${modelTitle(f.modelKey, f.modelVersion, group?.description)}\nIssued ${formatDateTime(f.issuedUtc)} IST.`}>
+        {f.modelKey}
+      </span>
       {group && <StatusBadge status={displayStatus(group.all)} />}
     </span>
   )
@@ -414,7 +427,7 @@ function RangeBlock({ f, others, group }: { f: Forecast; others: Forecast[]; gro
             {others.map((o, i) => {
               const or = asRange(o.prediction)
               return (
-                <span key={o.id} className="mono" title={`${o.modelKey} · version ${o.modelVersion}`}>
+                <span key={o.id} className="mono" title={modelTitle(o.modelKey, o.modelVersion)}>
                   {i > 0 ? ' · ' : ''}
                   {o.modelKey} {or ? `${formatPct(or.median)} (${or.low80.toFixed(2)}–${formatPct(or.high80)})` : '—'}
                 </span>
@@ -471,28 +484,358 @@ function ProbRow({
   )
 }
 
-function InputsList({ forecasts }: { forecasts: Forecast[] }) {
-  const withInputs = forecasts.filter((f) => formatInputs(f.inputs).length > 0)
-  if (withInputs.length === 0) return null
+/**
+ * A value the page has no particular layout for, as nested label/value
+ * lists (lib/analysis describeValue). Never JSON on screen.
+ */
+function ValueView({ node }: { node: ValueNode }) {
+  if (node.kind === 'text') return <>{node.text}</>
+  if (node.kind === 'items') {
+    return (
+      <ol className="an-tree an-tree--items">
+        {node.items.map((item, i) => (
+          <li key={i}>
+            <ValueView node={item} />
+          </li>
+        ))}
+      </ol>
+    )
+  }
+  return (
+    <dl className="an-tree">
+      {node.fields.map((f) => (
+        <div key={f.key}>
+          <dt>{f.label}</dt>
+          <dd className={nestClass(f.node)}>
+            <ValueView node={f.node} />
+          </dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+/** A value that is itself a list or a set of fields takes the whole row, under its label. */
+function nestClass(node: ValueNode, base = ''): string | undefined {
+  const cls = `${base}${node.kind === 'text' ? '' : ' an-tree__nest'}`.trim()
+  return cls || undefined
+}
+
+/**
+ * What the card's models saw: each of the morning's facts once, under the
+ * models that record it, then what differs by model (the history each was
+ * fitted on) as a small table.
+ */
+function InputsList({ forecasts, groups }: { forecasts: Forecast[]; groups: Map<string, ModelGroup> }) {
+  const v = inputsView(forecasts)
+  if (!v || (v.groups.length === 0 && !v.perModel)) return null
+  const about = (key: string, version: string) => modelTitle(key, version, groups.get(`${key}@${version}`)?.description)
+  const versionOf = new Map(forecasts.map((f) => [f.modelKey, f.modelVersion]))
   return (
     <details className="an-inputs">
-      <summary>What the models saw</summary>
-      <div className="an-inputs__grid">
-        {withInputs.map((f) => (
-          <div key={f.id} className="an-inputs__model">
-            <div className="an-inputs__name mono">{f.modelKey}</div>
-            <dl>
-              {formatInputs(f.inputs).map(([k, v]) => (
-                <div key={k}>
-                  <dt>{k}</dt>
-                  <dd className="mono">{v}</dd>
+      <summary>
+        What the models saw
+        {v.prevSession && <span className="faint"> · inputs from {formatDay(v.prevSession)}</span>}
+      </summary>
+      <div className="an-inputs__body">
+        {v.groups.map((g) => (
+          <div key={g.models.join(' ')} className="an-inputs__group">
+            <p className="an-inputs__who">
+              {g.all ? (
+                'All the models'
+              ) : (
+                g.models.map((m, i) => (
+                  <span key={m}>
+                    {i > 0 && <span className="faint"> · </span>}
+                    <span className="mono" title={about(m, versionOf.get(m) ?? '')}>
+                      {m}
+                    </span>
+                  </span>
+                ))
+              )}
+            </p>
+            <dl className="an-facts an-facts--sm">
+              {g.facts.map((f) => (
+                <div key={f.key}>
+                  <dt>{f.label}</dt>
+                  <dd className={nestClass(f.value, 'mono')}>
+                    <ValueView node={f.value} />
+                  </dd>
                 </div>
               ))}
             </dl>
           </div>
         ))}
+        {v.perModel && (
+          <div className="tablewrap an-inputs__wrap">
+            <table className="table an-inputs__table">
+              <thead>
+                <tr>
+                  <th scope="col">Model</th>
+                  {v.perModel.keys.map((k) => (
+                    <th key={k.key} scope="col" className="r">
+                      {k.label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {v.perModel.rows.map((r) => (
+                  <tr key={r.model}>
+                    <th scope="row" className="mono" title={about(r.modelKey, r.modelVersion)}>
+                      {r.model}
+                    </th>
+                    {r.cells.map((cell, i) => (
+                      <td key={v.perModel!.keys[i].key} className="r mono">
+                        {cell ? <ValueView node={cell} /> : <span className="faint">—</span>}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </details>
+  )
+}
+
+// ---------- the pre-open context ----------
+
+/** "No snapshot this morning" — a part's own sentence, capitalised. */
+function sentence(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+function signedTone(value: number | null): string {
+  if (value == null || Number(value.toFixed(2)) === 0) return ''
+  return value > 0 ? 'pos' : 'neg'
+}
+
+/** A count with Indian grouping; "—" when the record has none. */
+function count(n: number | null): string {
+  return n == null ? '—' : n.toLocaleString('en-IN')
+}
+
+function Fact({ label, value, title, className = '' }: { label: string; value: ReactNode; title?: string; className?: string }) {
+  return (
+    <div title={title}>
+      <dt>{label}</dt>
+      <dd className={`mono ${className}`.trim()}>{value}</dd>
+    </div>
+  )
+}
+
+function GiftFacts({ c }: { c: LiveContext }) {
+  const g = c.gift
+  return (
+    <div className="an-ctx__part">
+      <h4 className="an-label">GIFT Nifty</h4>
+      {g ? (
+        <>
+          <dl className="an-facts">
+            <Fact
+              label="Gap to NIFTY's previous close"
+              value={formatSignedPct(g.gapPct)}
+              className={signedTone(g.gapPct)}
+              title="The morning's latest GIFT Nifty snapshot against NIFTY's previous close."
+            />
+            <Fact label="Change (vendor)" value={formatSignedPct(g.changePct)} className={signedTone(g.changePct)} />
+            <Fact
+              label="Snapshot"
+              value={
+                <>
+                  {formatIstClock(g.asOfUtc)}
+                  {g.fetchedUtc && <span className="faint"> · read {formatIstClock(g.fetchedUtc).replace(' IST', '')}</span>}
+                </>
+              }
+              title="As of: the source's own time. Read: when the desk fetched it."
+            />
+          </dl>
+          <p className="an-ctx__fine small faint">A future: the gap includes its basis to spot, a few tenths of a percent.</p>
+        </>
+      ) : (
+        <p className="an-ctx__fine small muted">{c.giftNote ? sentence(c.giftNote) : 'Not recorded.'}</p>
+      )}
+    </div>
+  )
+}
+
+function EarningsFacts({ c }: { c: LiveContext }) {
+  const e = c.earnings
+  return (
+    <div className="an-ctx__part">
+      <h4 className="an-label">NIFTY 50 results</h4>
+      {e ? (
+        <dl className="an-facts">
+          <Fact label="Today" value={count(e.today)} title="NIFTY-50 companies with results on this session." />
+          <Fact
+            label="Since the previous session"
+            value={count(e.sincePrev)}
+            title="NIFTY-50 companies with results from the previous session to this one, weekend results included."
+          />
+        </dl>
+      ) : (
+        <p className="an-ctx__fine small muted">{c.earningsNote ? sentence(c.earningsNote) : 'Not recorded.'}</p>
+      )}
+    </div>
+  )
+}
+
+/** The news model's mean reading, −1 … +1: a bar from the middle, and the number. */
+function SentimentBar({ value }: { value: number | null }) {
+  const tone = sentimentTone(value)
+  if (value == null || tone == null) return <span className="faint">—</span>
+  const v = Math.max(-1, Math.min(1, value))
+  const from = v >= 0 ? 50 : 50 + v * 50
+  const width = Math.abs(v) * 50
+  return (
+    <span className={`an-senti an-senti--${tone}`}>
+      <span className="an-senti__track" aria-hidden="true">
+        <i style={{ left: `${from}%`, width: `${Math.max(width, 1)}%` }} />
+      </span>
+      <b className="mono">{formatSentiment(value)}</b>
+    </span>
+  )
+}
+
+/** Highest importance 0–3, as three pips. */
+function Importance({ value }: { value: number | null }) {
+  if (value == null) return <span className="faint">—</span>
+  const n = Math.max(0, Math.min(3, Math.round(value)))
+  return (
+    <span className="an-imp" role="img" aria-label={`${n} of 3`} title={`Highest importance among the scored headlines: ${n} of 3`}>
+      {[0, 1, 2].map((i) => (
+        <i key={i} className={i < n ? 'is-on' : ''} />
+      ))}
+    </span>
+  )
+}
+
+function NewsTable({ c, since }: { c: LiveContext; since: string | null }) {
+  const rows = c.news
+  const from = since ? `${formatDay(since)}, 15:30 IST` : 'the previous close'
+  let body: ReactNode
+  if (rows && rows.length > 0) {
+    body = (
+      <div className="tablewrap an-news__wrap">
+        <table className="table an-news">
+          <thead>
+            <tr>
+              <th scope="col">Category</th>
+              <th scope="col" className="r an-wide" title="Headlines first seen between the previous close and the forecasts">
+                Headlines
+              </th>
+              <th scope="col" className="r an-wide" title="How many of them the news model had scored by then">
+                Scored
+              </th>
+              <th scope="col" className="r an-narrow" title="Headlines scored by the news model, of those first seen">
+                Scored
+              </th>
+              <th scope="col" title="Mean reading of the scored headlines, −1 to +1: the words, not a signal">
+                Sentiment
+              </th>
+              <th scope="col" title="Highest importance among the scored headlines, 0 to 3 (rules: results, policy, deals, …)">
+                <span className="an-wide">Importance</span>
+                <span className="an-narrow">Imp.</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={r.key} className={i < rows.length - 1 && rows[i + 1].group !== r.group ? 'an-news__end' : undefined}>
+                <th scope="row" title={r.group === 'filings' ? 'NSE announcements by NIFTY-50 companies' : undefined}>
+                  {r.label}
+                </th>
+                <td className="r mono an-wide">{count(r.n)}</td>
+                <td className="r mono muted an-wide">{count(r.scored)}</td>
+                <td className="r mono an-narrow">
+                  {count(r.scored)} <span className="faint">of {count(r.n)}</span>
+                </td>
+                <td>
+                  <SentimentBar value={r.sentiment} />
+                </td>
+                <td>
+                  <Importance value={r.maxImportance} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
+  } else if (rows) {
+    body = <p className="an-ctx__fine small muted">No headlines were first seen between {from} and the forecasts.</p>
+  } else {
+    body = <p className="an-ctx__fine small muted">{c.newsNote ? sentence(c.newsNote) : 'Not recorded.'}</p>
+  }
+  return (
+    <div className="an-ctx__part an-ctx__news">
+      <h4 className="an-label">News since the previous close</h4>
+      {body}
+      {rows && rows.length > 0 && (
+        <p className="an-ctx__fine small faint">
+          Headlines first seen from {from} until the forecasts were written. Sentiment is the news model's mean reading
+          of the words, −1 to +1, not a signal; importance is the highest among them, 0 to 3.
+        </p>
+      )}
+    </div>
+  )
+}
+
+/**
+ * The pre-open context recorded with the session's forecasts (inputs.liveOnly):
+ * the GIFT Nifty gap, the earnings load and the news by category. No model
+ * reads it; the page says so beside it, and claims nothing about it.
+ */
+function ContextPanel({ ctx, since, several }: { ctx: SessionContext; since: string | null; several: boolean }) {
+  const c = ctx.context
+  const notUsed = c.usedByModels === false
+  return (
+    <section className="an-ctx" aria-label="Pre-open context">
+      <header className="an-ctx__head">
+        <h3 className="an-ctx__title">Pre-open context</h3>
+        <span className="small faint">
+          recorded with {several ? `the ${ctx.underlyings.join(', ')} forecasts` : 'the forecasts'},{' '}
+          {formatIstClock(ctx.issuedUtc)}
+        </span>
+        {notUsed && (
+          <span className="an-ctx__badge">
+            <Badge tone="neutral">Not used by the models</Badge>
+          </span>
+        )}
+      </header>
+      <div className="an-ctx__grid">
+        {notUsed && (
+          <p className="an-ctx__note small muted">
+            Shown for reference, not used by the models. None of this has a history to backtest, so no model reads it;
+            it is recorded with every forecast so that, once there are enough live sessions, whether it would have
+            helped can be tested on forecasts written before the open.
+          </p>
+        )}
+        <div className="an-ctx__side">
+          <GiftFacts c={c} />
+          <EarningsFacts c={c} />
+        </div>
+        <NewsTable c={c} since={since} />
+      </div>
+      {c.other.length > 0 && (
+        <div className="an-ctx__part">
+          <h4 className="an-label">Also recorded</h4>
+          <dl className="an-tree an-tree--top">
+            {c.other.map((o) => (
+              <div key={o.key}>
+                <dt>{o.label}</dt>
+                <dd className={nestClass(o.node)}>
+                  <ValueView node={o.node} />
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -502,7 +845,6 @@ function IndexCard({ card, groups, today }: { card: TodayCard; groups: Map<strin
   const groupOf = (f: Forecast | undefined) => (f ? groups.get(`${f.modelKey}@${f.modelVersion}`) : undefined)
   const outcome = all.find((f) => f.outcome)?.outcome ?? null
   const prevClose = asRange(lead?.prediction)?.prevClose ?? null
-  const issued = all.map((f) => f.issuedUtc).sort()[0]
   const pending = all.find((f) => !f.outcome)
   const scoring = pending ? scoringNote(pending, today) : null
 
@@ -517,7 +859,6 @@ function IndexCard({ card, groups, today }: { card: TodayCard; groups: Map<strin
             prev close <span className="mono">{formatPrice(prevClose)}</span>
           </span>
         )}
-        <span className="an-card__meta an-card__issued small faint">issued {formatTime(issued)} IST</span>
       </header>
 
       {lead ? (
@@ -552,7 +893,7 @@ function IndexCard({ card, groups, today }: { card: TodayCard; groups: Map<strin
       </section>
 
       {scoring && <p className={`an-card__note small ${scoring.tone === 'warn' ? 'warn' : 'faint'}`}>{scoring.text}</p>}
-      <InputsList forecasts={all} />
+      <InputsList forecasts={all} groups={groups} />
     </article>
   )
 }
@@ -593,6 +934,10 @@ function TodaySection({ groups, modelsKnown, nowMs }: { groups: ModelGroup[]; mo
   }
 
   const cards = todayCards(list.data, pick.sessionDate, groups)
+  const sessionForecasts = list.data.filter((f) => f.sessionDate === pick.sessionDate)
+  const issued = issuedText(sessionForecasts)
+  const contexts = sessionContexts(sessionForecasts)
+  const since = inputsView(sessionForecasts)?.prevSession ?? null
 
   return (
     <div className="an-today">
@@ -601,6 +946,7 @@ function TodaySection({ groups, modelsKnown, nowMs }: { groups: ModelGroup[]; mo
         <div className="an-session__when">
           <span className="an-session__rel">{RELATION_LABEL[pick.relation]}</span>
           <span className="an-session__date">{formatDay(pick.sessionDate)}</span>
+          {issued && <span className="an-session__issued small faint">{issued}</span>}
         </div>
         {note && <p className={`an-session__note small ${note.tone === 'warn' ? 'warn' : 'muted'}`}>{note.text}</p>}
         <p className="an-legend small faint" aria-hidden="true">
@@ -613,6 +959,9 @@ function TodaySection({ groups, modelsKnown, nowMs }: { groups: ModelGroup[]; mo
           <IndexCard key={card.underlying} card={card} groups={byId} today={today} />
         ))}
       </div>
+      {contexts.map((ctx, i) => (
+        <ContextPanel key={i} ctx={ctx} since={since} several={contexts.length > 1} />
+      ))}
       <p className="small-note muted">
         Each number sits beside its baseline: a model is only useful where it differs from the baseline and is right
         to. One session proves nothing either way — the scoreboard is where a model is judged. Times are IST.
@@ -676,10 +1025,12 @@ function BoardRow({
             <span className="an-board__caret" aria-hidden="true">
               {open ? '▾' : '▸'}
             </span>
-            <span>
+            <span title={modelTitle(group.modelKey, group.modelVersion, group.description)}>
               <span className="mono an-board__key">{group.modelKey}</span>
               <span className="an-board__meta">
-                {targetLabel(group.target)} · <span className="mono">{group.modelVersion}</span>
+                {targetLabel(group.target)}
+                {modelShort(group.modelKey) && ` · ${modelShort(group.modelKey)}`} ·{' '}
+                <span className="mono">{group.modelVersion}</span>
               </span>
             </span>
           </button>
@@ -796,7 +1147,10 @@ function BoardDetail({ group }: { group: ModelGroup }) {
               {group.target === 'range' && (
                 <div>
                   <dt>Coverage</dt>
-                  <dd>{coverageText(group.all.coverage80)} — a calibrated band holds about 80%.</dd>
+                  <dd>
+                    {group.all.coverage80 == null ? 'None scored yet' : coverageText(group.all.coverage80)} — a
+                    calibrated band holds about 80%.
+                  </dd>
                 </div>
               )}
             </dl>
@@ -988,7 +1342,7 @@ function HistorySection({ nowMs }: { nowMs: number }) {
                     </td>
                     <td>{f.underlying}</td>
                     <td>{targetLabel(f.target)}</td>
-                    <td className="mono" title={`version ${f.modelVersion}`}>
+                    <td className="mono" title={modelTitle(f.modelKey, f.modelVersion)}>
                       {f.modelKey}
                     </td>
                     <td className="r mono">{c.forecast}</td>
