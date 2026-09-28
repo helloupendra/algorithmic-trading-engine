@@ -1,0 +1,55 @@
+# Indicator alerts: what the API watches on live candles besides candle
+# patterns, and what it tells the Desk System Telegram channel (the same channel
+# as the pattern alerts). The API reads this file on every scan, so an edit
+# applies within about twenty seconds, without a restart. Markets -> Patterns
+# shows what it read, and names any line it could not read and why; a bad line
+# is skipped, never fatal.
+#
+# Settings (each optional; the defaults are shown):
+#   cooldown: 30    minutes. After an alert, the same rule on the same symbol
+#                   and timeframe is recorded on the page but not sent again
+#                   until this long after that alert's candle closed. 0 = off.
+#   telegram: on    off = record on the page only; send nothing.
+#   warmup: 250     candles of earlier sessions read before today's first, from
+#                   the stored live 1-minute bars, so the day's first alert is
+#                   computed on an indicator that has settled.
+#
+# Then one line per watch:
+#   SYMBOLS  TIMEFRAMES  RULE [RULE ...]  [page-only]
+#
+#   SYMBOLS     comma-separated EXCHANGE:NAME (NSE:NIFTY50-INDEX), or
+#               future:UNDERLYING for its nearest-expiry future (future:NIFTY),
+#               re-resolved every scan so an expiry rolls over by itself.
+#   TIMEFRAMES  comma-separated minutes: 3, 5, 15, 30 or 60 ("5m" works too).
+#               Candles are built from the live 1-minute bars, aligned to the
+#               exchange's open (09:15 NSE and BSE, 09:00 MCX).
+#   page-only   record these alerts on the page and never send them.
+#
+# Rules (the numbers in brackets may be left off; the defaults are shown):
+#   rsi-above(14,70)       RSI(14) closes above 70, having been at or below it
+#   rsi-below(14,30)       RSI(14) closes below 30, having been at or above it
+#   ema-cross(9,21)        EMA(9) crosses EMA(21), either way
+#   supertrend-flip(10,3)  Supertrend(10, 3) changes direction
+#   vwap-cross             the close crosses the session VWAP, either way
+#
+# Every rule reads closed candles only. The candle still forming is never
+# read, so an alert can never be withdrawn by the rest of its candle, and a
+# rule stays quiet until it has read enough candles to have settled (RSI and
+# Supertrend five periods, EMAs four slow periods: 84 candles for ema-cross(9,21)).
+# Alerts go out only while the symbol's exchange is in session, holidays
+# included.
+#
+# VWAP needs traded volume. An index has none (NIFTY 50, NIFTY BANK and SENSEX
+# are calculated, not traded), and a VWAP made from no volume would be
+# invented, so vwap-cross is not on the index line below; written on an index
+# it is refused, and the page says so. It belongs on a future or a stock, as in
+# the commented line at the end.
+
+cooldown: 30
+telegram: on
+
+NSE:NIFTY50-INDEX,NSE:NIFTYBANK-INDEX,BSE:SENSEX-INDEX  5,15  rsi-above(14,70) rsi-below(14,30) ema-cross(9,21) supertrend-flip(10,3)
+
+# Index futures, with VWAP. Only useful while a live feed streams them: the page
+# names any watched symbol that has no live bars.
+# future:NIFTY,future:BANKNIFTY  5,15  rsi-above rsi-below ema-cross supertrend-flip vwap-cross

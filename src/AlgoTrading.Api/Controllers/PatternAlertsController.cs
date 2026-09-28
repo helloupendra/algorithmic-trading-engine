@@ -12,7 +12,8 @@ namespace AlgoTrading.Api.Controllers;
 
 /// <summary>
 /// Candle-pattern alerts: the rules, today's alerts, the candles forming now and
-/// the scanner's health. Admin-only, like the rest of the Alerts section.
+/// the scanner's health; and the indicator alerts beside them (their config,
+/// warm-up and today's alerts). Admin-only, like the rest of the Alerts section.
 /// </summary>
 /// <remarks>
 /// Recognition and recording happen in <see cref="CandlePatternAlertService"/>;
@@ -274,6 +275,159 @@ public class PatternAlertsController : ControllerBase
                 .Select(g => new PatternCountDto { Key = $"{g.Key}m", Count = g.Count() }).ToList(),
         });
     }
+
+    /// <summary>
+    /// The indicator alerts (RSI, EMA cross, Supertrend, VWAP): the config file
+    /// as the scanner reads it — settings, lines, and every line it could not
+    /// read with the reason — where each watched symbol and timeframe stands
+    /// (warm-up, session, bars), and the scanner's health. Read-only: the rules
+    /// live in config/indicator-alerts.txt, and an edit there applies at the
+    /// next scan.
+    /// </summary>
+    [HttpGet("indicators")]
+    public async Task<ActionResult<IndicatorAlertsResponse>> GetIndicators(
+        [FromServices] IndicatorAlertConfigSource source,
+        [FromServices] IndicatorScannerState state,
+        [FromServices] PatternWatchPlanner planner,
+        [FromServices] TelegramSender telegram,
+        CancellationToken cancellationToken)
+    {
+        var read = source.Read();
+        var config = read.Config ?? IndicatorAlertConfig.Empty;
+        var snap = state.Snapshot;
+        var since = IstTime.StartOfDayUtc(IstTime.DateOf(DateTime.UtcNow));
+
+        var groups = config.Lines.SelectMany(l => l.Groups).Distinct(StringComparer.Ordinal).ToList();
+        var byGroup = groups.Count > 0
+            ? await planner.ResolveGroupsAsync(groups, IstTime.DateOf(DateTime.UtcNow), cancellationToken)
+            : new Dictionary<string, IReadOnlyList<string>>();
+
+        var today = await _db.AlertEvents.AsNoTracking()
+            .Where(e => e.Source == IndicatorAlertScanner.Source && e.OccurredUtc >= since)
+            .Select(e => e.DeliveredToTelegram)
+            .ToListAsync(cancellationToken);
+
+        return Ok(new IndicatorAlertsResponse
+        {
+            Enabled = snap.Enabled,
+            IntervalSeconds = (int)CandlePatternAlertService.Settings.Interval.TotalSeconds,
+            File = read.File,
+            FileModifiedUtc = read.ModifiedUtc,
+            Searched = read.File is null ? read.Searched.ToList() : [],
+            FileError = read.Error,
+            CooldownMinutes = (int)config.Cooldown.TotalMinutes,
+            Telegram = config.Telegram,
+            WarmupCandles = config.WarmupCandles,
+            Warnings = config.Warnings.ToList(),
+            Lines = config.Lines.Select(l => new IndicatorLineDto
+            {
+                Number = l.Number,
+                Text = l.Text,
+                Symbols = l.Symbols.ToList(),
+                Groups = l.Groups.ToList(),
+                Timeframes = l.Timeframes.ToList(),
+                Rules = l.Rules.Select(ToRuleDto).ToList(),
+                PageOnly = l.PageOnly,
+                ResolvedSymbols = l.Symbols.Concat(l.Groups.SelectMany(g => byGroup.GetValueOrDefault(g) ?? []))
+                    .Distinct(StringComparer.Ordinal).ToList(),
+            }).ToList(),
+            Catalog = IndicatorRule.Defaults.Select(ToRuleDto).ToList(),
+            StartedUtc = snap.StartedUtc,
+            LastScanUtc = snap.LastScanUtc,
+            LastScanMilliseconds = snap.LastScanMilliseconds is { } ms ? Math.Round(ms, 1) : null,
+            LastErrorUtc = snap.LastErrorUtc,
+            LastError = snap.LastError,
+            Watches = (snap.LastOutcome?.Watches ?? []).Select(w => new IndicatorWatchDto
+            {
+                Symbol = w.Symbol,
+                DisplayName = PatternAlertText.DisplayName(w.Symbol),
+                Timeframe = w.TimeframeMinutes,
+                Exchange = w.Exchange,
+                InSession = w.ExchangeInSession,
+                HistoryCandles = w.HistoryCandles,
+                TodayCandles = w.TodayCandles,
+                LastBarUtc = w.LastBarUtc,
+                Rules = w.Rules.Select(r => new IndicatorRuleStateDto { Rule = r.Rule, Label = r.Label, State = r.State, Detail = r.Detail }).ToList(),
+                Problem = w.Problem,
+            }).ToList(),
+            Unresolved = snap.LastOutcome?.Unresolved.ToList() ?? [],
+            TelegramConfigured = telegram.IsConfigured,
+            TelegramMaxMessages = IndicatorAlertService.MaxMessages,
+            TelegramWindowMinutes = (int)IndicatorAlertService.MessageWindow.TotalMinutes,
+            LastTelegramUtc = snap.LastTelegramUtc,
+            TelegramMessagesSent = snap.TelegramMessagesSent,
+            TelegramMessagesSuppressed = snap.TelegramMessagesSuppressed,
+            TelegramMessagesFailed = snap.TelegramMessagesFailed,
+            LastTelegramProblem = snap.LastTelegramProblem,
+            AlertsToday = today.Count,
+            DeliveredToday = today.Count(d => d),
+        });
+    }
+
+    /// <summary>Indicator alerts recorded since 00:00 IST, newest first; symbol is the canonical symbol.</summary>
+    [HttpGet("indicators/events")]
+    public async Task<ActionResult<List<IndicatorAlertDto>>> GetIndicatorEvents(
+        [FromQuery] string? symbol,
+        [FromQuery] int? timeframe,
+        [FromQuery] int limit = 300,
+        CancellationToken cancellationToken = default)
+    {
+        limit = Math.Clamp(limit, 1, 1000);
+        var since = IstTime.StartOfDayUtc(IstTime.DateOf(DateTime.UtcNow));
+
+        var query = _db.AlertEvents.AsNoTracking()
+            .Where(e => e.Source == IndicatorAlertScanner.Source && e.OccurredUtc >= since);
+        if (!string.IsNullOrWhiteSpace(symbol))
+        {
+            var s = symbol.Trim().ToUpperInvariant();
+            query = query.Where(e => e.Symbol == s);
+        }
+
+        var rows = await query.OrderByDescending(e => e.OccurredUtc).ThenByDescending(e => e.Id)
+            .Take(5000)
+            .ToListAsync(cancellationToken);
+
+        return Ok(rows
+            .Select(e => (Row: e, Meta: IndicatorEventMetadata.TryRead(e.MetadataJson)))
+            .Where(x => x.Meta is not null && (timeframe is null || x.Meta.Timeframe == timeframe))
+            .Take(limit)
+            .Select(x => new IndicatorAlertDto
+            {
+                Id = x.Row.Id,
+                OccurredUtc = x.Row.OccurredUtc,
+                Symbol = x.Row.Symbol ?? string.Empty,
+                DisplayName = PatternAlertText.DisplayName(x.Row.Symbol ?? string.Empty),
+                Timeframe = x.Meta!.Timeframe,
+                Rule = x.Meta.Rule,
+                RuleName = x.Meta.RuleName,
+                What = x.Meta.What,
+                Direction = x.Meta.Direction,
+                BarStartUtc = x.Meta.BarStartUtc,
+                BarEndUtc = x.Meta.BarEndUtc,
+                Close = x.Meta.Close,
+                MinutesInBar = x.Meta.MinutesInBar,
+                MinutesExpected = x.Meta.MinutesExpected,
+                Values = x.Meta.Values.ToDictionary(v => v.Key, v => v.Value),
+                Title = x.Row.Title,
+                Message = x.Row.Message,
+                DeliveredToTelegram = x.Row.DeliveredToTelegram,
+                Notify = x.Meta.Notify,
+                NotifySkippedReason = x.Meta.NotifySkippedReason,
+                CooledDown = x.Meta.CoolingSinceUtc is not null,
+            })
+            .ToList());
+    }
+
+    private static IndicatorRuleDto ToRuleDto(IndicatorRule r) => new()
+    {
+        Key = r.Key,
+        Name = r.Name,
+        Label = r.Label,
+        Definition = r.Definition,
+        Syntax = IndicatorRule.Syntax(r.Kind),
+        SettleCandles = r.SettleCandles,
+        NeedsVolume = r.NeedsVolume,
+    };
 
     private static List<string> Validate(SavePatternRuleRequest r) =>
         CandlePatternRules.Validate(r.Name, r.Symbols, r.Groups, r.Timeframes, r.Patterns).ToList();
