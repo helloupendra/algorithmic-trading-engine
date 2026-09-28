@@ -187,6 +187,42 @@ export function stitch(
   return sessions == null ? merged : lastSessions(merged, sessions)
 }
 
+/**
+ * The forming candle moved by a pushed price between two polls of the bars:
+ * its close becomes the price and its high and low stretch to take it in.
+ * A price past the forming candle's bucket opens the next candle (open, high,
+ * low and close all at that price), by the same bucket rule as rollUp, but
+ * only on the same session: a new day's first candle waits for the bars,
+ * which bring its real open. Nothing changes for a day chart, a pre-open
+ * print, or a price older than the forming candle.
+ */
+export function withLiveTick(
+  candles: readonly Candle[],
+  tick: { lastTradedPrice: number | null; exchangeTimestampUtc: string | null; receivedAtMs: number } | undefined,
+  opts: { symbol: string; resolution: Resolution },
+): readonly Candle[] {
+  const price = tick?.lastTradedPrice
+  const minutes = RESOLUTIONS.find((r) => r.key === opts.resolution)?.minutes ?? null
+  const last = candles[candles.length - 1]
+  if (!tick || price == null || price <= 0 || minutes == null || !last) return candles
+  const stamped = tick.exchangeTimestampUtc ? Date.parse(tick.exchangeTimestampUtc) : NaN
+  const t = Number.isNaN(stamped) ? tick.receivedAtMs : stamped
+  const timeUtc = new Date(t).toISOString()
+  if (isPreOpen(opts.symbol, timeUtc)) return candles
+
+  const span = minutes * 60_000
+  const start = Date.parse(last.timeUtc)
+  if (Number.isNaN(start) || t < start) return candles
+  if (t < start + span) {
+    if (price === last.close && price <= last.high && price >= last.low) return candles
+    return [...candles.slice(0, -1), { ...last, close: price, high: Math.max(last.high, price), low: Math.min(last.low, price) }]
+  }
+  const bucket = t - (t % span)
+  const next = new Date(bucket).toISOString()
+  if (next.slice(0, 10) !== last.timeUtc.slice(0, 10)) return candles
+  return [...candles, { timeUtc: next, open: price, high: price, low: price, close: price, volume: null }]
+}
+
 /** What the structure layer draws and how it reads a break; only `standingZonesOnly` changes the request. */
 export interface StructureSettings {
   layers: SmcLayers

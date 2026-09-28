@@ -15,11 +15,10 @@
  * strategy may be live on several underlyings at once.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   useClosePositions,
-  useLatestQuotes,
   useSetCarryForward,
   useStopStrategy,
   useStrategyLive,
@@ -29,6 +28,8 @@ import {
 import { formatAge, formatInrSigned, formatInrWhole, formatLots, formatNumber, formatPrice, formatTime } from '../../lib/format'
 import { formatContract } from '../../lib/symbols'
 import { positionValues } from '../../lib/positions'
+import { useLivePrices } from '../../lib/live'
+import { runViewWithTicks } from '../../lib/liveMarks'
 import {
   formatDelta,
   formatThetaPerDay,
@@ -48,7 +49,6 @@ import { RiskRulesForm } from '../../components/RiskRulesForm'
 import { IconShield, IconStop } from '../../components/icons'
 import type {
   LivePosition,
-  LiveQuote,
   RiskRules,
   StrategyActiveRun,
   StrategyLastExit,
@@ -304,41 +304,6 @@ function RiskSection({
 /* ---------------------------------------------------------- positions table */
 
 /**
- * Re-prices an open leg from the live quote feed.
- *
- * The row arrives on this page's 1-second poll of the run, which reaches the
- * paper-trading service and marks the legs under the run's lock. The quote
- * cache, by contrast, is pushed over SignalR as ticks land, so it is typically
- * a couple of hundred milliseconds old. Reading the mark from there is what
- * makes the LTP column move at the speed of the feed instead of the poll,
- * without asking the run for anything more often.
- *
- * The whole row is recomputed from that mark, not just the price: an LTP that
- * moves while the value and P&L beside it sit a second behind reads as a bug,
- * and on a trading screen a row that disagrees with itself is worse than one
- * that is uniformly a moment old. The arithmetic is the server's own —
- * BUY earns (mark − entry), SELL earns (entry − mark), times quantity.
- */
-function repriced(p: LivePosition, quote: LiveQuote | undefined): LivePosition {
-  const mark = quote?.lastTradedPrice
-  if (p.status !== 'Open' || mark == null || mark === p.ltp) return p
-
-  const points = p.side === 'BUY' ? mark - p.entryPrice : p.entryPrice - mark
-  return {
-    ...p,
-    ltp: mark,
-    // The price's age travels with it: the row says "as of …" from this.
-    ltpUpdatedUtc: quote?.updatedUtc ?? p.ltpUpdatedUtc,
-    pnl: points * p.quantity,
-    // Cleared so positionValues() derives these from the new mark rather than
-    // reusing the ones computed against the old one.
-    currentValue: null,
-    pnlPoints: null,
-    pnlPercent: null,
-  }
-}
-
-/**
  * The greeks column group of one row: delta (IV and source under it), theta
  * in rupees a day for THIS position, and vega in rupees per point of IV.
  * Rupees carry the P&L colours: a bought option's theta is a cost (red), a
@@ -423,9 +388,6 @@ function PositionsTable({
    */
   carry: CarryContext | null
 }) {
-  const { data: quotes } = useLatestQuotes()
-  const bySymbol = new Map((quotes ?? []).map((q) => [q.symbol, q]))
-  positions = positions.map((p) => repriced(p, bySymbol.get(p.symbol)))
   // The greeks columns appear once any open leg has figures (an API older
   // than 27 Sep sends none, and a finished run has no open leg to price).
   const showGreeks = positions.some((p) => p.status === 'Open' && p.greeks != null)
@@ -720,7 +682,25 @@ export function RunCard({
   const [showActivity, setShowActivity] = useState(false)
   const [showOutput, setShowOutput] = useState(false)
 
-  const view = live.data
+  // Prices at the speed of the feed, not of the poll: the open legs and, while
+  // the run is live, its spot are pushed, and the view is re-priced from them
+  // (lib/liveMarks.ts) so the LTP column, each row's P&L, the tiles and the
+  // risk meters move together. The poll (a second without the socket, 15 s
+  // with it) still brings everything else: fills, stops, realized, charges.
+  const answer = live.data
+  const answeredAt = live.dataUpdatedAt
+  const symbols = useMemo(
+    () =>
+      answer
+        ? [
+            ...answer.positions.filter((p) => p.status === 'Open').map((p) => p.symbol),
+            ...(answer.isActive && answer.spotSymbol ? [answer.spotSymbol] : []),
+          ]
+        : [],
+    [answer],
+  )
+  const prices = useLivePrices(symbols)
+  const view = useMemo(() => (answer ? runViewWithTicks(answer, prices, answeredAt) : answer), [answer, prices, answeredAt])
   const isActive = view ? view.isActive : run != null
   const positions = view?.positions ?? []
   const openCount = positions.filter((p) => p.status === 'Open').length

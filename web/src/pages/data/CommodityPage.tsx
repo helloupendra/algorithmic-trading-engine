@@ -17,6 +17,10 @@
  * hours of every trading day, so the page shows quote age instead: "0.3s ago"
  * says the feed is live far more honestly than a rule that does not know this
  * exchange exists.
+ *
+ * The six contracts' prices are pushed (lib/live.ts) and laid over the latest
+ * quotes, which are still polled for the open, the previous close and the
+ * volume a tick does not carry.
  */
 
 import { useMemo } from 'react'
@@ -24,6 +28,8 @@ import { Link } from 'react-router-dom'
 import { useQueries } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { useAddWatchlistSymbol, useLatestQuotes, useWatchlist } from '../../lib/queries'
+import { useLivePrices } from '../../lib/live'
+import { quotesWithTicks } from '../../lib/liveMarks'
 import { formatAge, formatPrice } from '../../lib/format'
 import { Badge, FlashPrice, InlineError, Loading, Panel } from '../../components/ui'
 import { IconPlus } from '../../components/icons'
@@ -123,9 +129,11 @@ export function CommodityPage() {
     })),
   })
 
+  const contracts = COMMODITIES.map((c, i) => nearMonth(searches[i].data, c.root))
+  const prices = useLivePrices(contracts.flatMap((c) => (c ? [c.symbol] : [])))
   const bySymbol = useMemo(
-    () => new Map((quotes.data ?? []).map((q) => [q.symbol, q])),
-    [quotes.data],
+    () => quotesWithTicks(quotes.data, prices, quotes.dataUpdatedAt),
+    [quotes.data, prices, quotes.dataUpdatedAt],
   )
   const watched = useMemo(
     () => new Set((watchlist.data ?? []).map((w) => w.symbol)),
@@ -133,7 +141,7 @@ export function CommodityPage() {
   )
 
   const rows = COMMODITIES.map((c, i) => {
-    const contract = nearMonth(searches[i].data, c.root)
+    const contract = contracts[i]
     return {
       ...c,
       contract,

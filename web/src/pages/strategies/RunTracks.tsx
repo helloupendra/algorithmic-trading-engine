@@ -42,6 +42,7 @@ import {
   useRunPnlSeries,
   useRunsOrders,
 } from '../../lib/queries'
+import { useLiveConnection } from '../../lib/live'
 import { useNow, useShownDay, useWidth } from '../desk/data'
 import { Money, Swatch, Waiting } from '../desk/parts'
 import { InlineError } from '../../components/ui'
@@ -262,7 +263,7 @@ export function RunTracks({ scope, onScope }: { scope: Scope; onScope: (scope: S
       ),
     [trading, read.ledgers],
   )
-  const open = useOpenPositions(deskLegsPoll(isToday))
+  const open = useOpenPositions(deskLegsPoll(isToday, useLiveConnection()))
   const carried = useMemo(() => carriedRunIds(open.data?.positions), [open.data])
   const bars = useIntradayTrace(NIFTY, isToday)
   const price = useMemo(() => barPoints(bars.data, day), [bars.data, day])

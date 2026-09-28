@@ -22,7 +22,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { onLiveTicks, useOptionChainExpiries, useOptionChainPositions, useOptionChainTrend, useOptionChainView } from '../../../lib/queries'
+import { useOptionChainExpiries, useOptionChainPositions, useOptionChainTrend, useOptionChainView } from '../../../lib/queries'
+import { useLivePrices } from '../../../lib/live'
 import type { OptionChain, OptionChainHeader, OptionChainLeg, OptionChainPosition, OptionChainQuote, OptionChainStrike } from '../../../lib/types'
 import { EmptyState, InlineError, Loading, Panel } from '../../../components/ui'
 import {
@@ -36,7 +37,6 @@ import {
   isCallItm,
   isPutItm,
   applyTicksToChain,
-  type PushedTick,
   istDate,
   positionMarker,
   positionsBySymbol,
@@ -632,6 +632,24 @@ function asOfFor(sessionDate: string, time: string): string | undefined {
 // --- page -----------------------------------------------------------------------
 
 /**
+ * The contracts a reader can see: both legs of every strike in the window the
+ * table shows (the same slice ChainTable draws), and the header's spot,
+ * future and VIX. What the page asks the hub to push.
+ */
+function chainSymbols(chain: OptionChain, windowSize: WindowSize): string[] {
+  const strikes = chain.strikes
+  const { start, end } = strikeWindow(strikes.map((s) => s.strikePrice), chain.atTheMoneyStrike, windowSize)
+  const symbols: string[] = []
+  for (const strike of strikes.slice(start, end)) {
+    if (strike.call) symbols.push(strike.call.symbol)
+    if (strike.put) symbols.push(strike.put.symbol)
+  }
+  const h = chain.header
+  for (const quote of [h?.spot, h?.future, h?.vix]) if (quote?.symbol) symbols.push(quote.symbol)
+  return symbols
+}
+
+/**
  * The same chain for an admin and for a trader: the API scopes the positions
  * to whoever is asking, and a run's page is one URL for both.
  */
@@ -649,39 +667,37 @@ export function ChainView({ underlying }: { underlying: string }) {
 
   const expiries = useOptionChainExpiries(underlying)
   const view = useOptionChainView(underlying, expiry, asOfUtc)
-
-  // Prices between polls. The hub pushes every tick batch the API stores; they
-  // are gathered and laid over the chain four times a second, so an LTP moves
-  // within a fraction of a second of reaching the platform instead of waiting
-  // up to three seconds for the next poll. A replay is left alone.
-  const queryClient = useQueryClient()
-  useEffect(() => {
-    if (asOfUtc) return
-    const key = ['optionChainView', underlying, expiry ?? null, null]
-    let pending: PushedTick[] = []
-    const stop = onLiveTicks((ticks) => {
-      pending.push(...ticks)
-    })
-    const timer = window.setInterval(() => {
-      if (pending.length === 0) return
-      const batch = pending
-      pending = []
-      const state = queryClient.getQueryState<OptionChain>(key)
-      const chain = state?.data
-      const serverUtc = chain?.header?.serverUtc
-      if (!chain || !serverUtc) return
-      // The server's clock now: its stamp on the data plus the time since it arrived.
-      const nowIso = new Date(Date.parse(serverUtc) + (Date.now() - state.dataUpdatedAt)).toISOString()
-      const next = applyTicksToChain(chain, batch, nowIso)
-      if (next !== chain) queryClient.setQueryData(key, next)
-    }, 250)
-    return () => {
-      stop()
-      window.clearInterval(timer)
-    }
-  }, [queryClient, underlying, expiry, asOfUtc])
   // keepPreviousData must never show one underlying's chain under another's tab.
   const data = view.data && view.data.underlying === underlying ? view.data : undefined
+
+  // Prices between polls. The hub pushes the contracts on screen (the strikes
+  // in the window, the spot, the future and VIX), at most four times a
+  // second, and each push is laid over the chain in the cache, so an LTP
+  // moves within a fraction of a second of reaching the platform instead of
+  // waiting up to three seconds for the next poll. A replay is left alone.
+  const liveSymbols = useMemo(() => (data && !asOfUtc ? chainSymbols(data, windowSize) : []), [data, asOfUtc, windowSize])
+  const prices = useLivePrices(liveSymbols)
+  const queryClient = useQueryClient()
+  // The chain last written here, and the newest push already laid over it. A
+  // chain the cache holds that is not this one is a fresh poll, which already
+  // carries every push received before it arrived.
+  const overlaid = useRef<{ chain: OptionChain | null; upToMs: number }>({ chain: null, upToMs: 0 })
+  useEffect(() => {
+    if (asOfUtc || prices.size === 0) return
+    const key = ['optionChainView', underlying, expiry ?? null, null]
+    const state = queryClient.getQueryState<OptionChain>(key)
+    const chain = state?.data
+    const serverUtc = chain?.header?.serverUtc
+    if (!chain || !serverUtc) return
+    const since = overlaid.current.chain === chain ? overlaid.current.upToMs : state.dataUpdatedAt
+    const fresh = [...prices.values()].filter((t) => t.receivedAtMs > since)
+    if (fresh.length === 0) return
+    // The server's clock now: its stamp on the data plus the time since it arrived.
+    const nowIso = new Date(Date.parse(serverUtc) + (Date.now() - state.dataUpdatedAt)).toISOString()
+    const next = applyTicksToChain(chain, fresh, nowIso)
+    overlaid.current = { chain: next, upToMs: Math.max(...fresh.map((t) => t.receivedAtMs)) }
+    if (next !== chain) queryClient.setQueryData(key, next)
+  }, [prices, queryClient, underlying, expiry, asOfUtc])
   const header = data?.header ?? null
   const trend = useOptionChainTrend(underlying, expiry ?? data?.expiryDate, asOfUtc, header?.marketOpen)
   // Positions are today's, not the replay clock's: hidden while replaying.
