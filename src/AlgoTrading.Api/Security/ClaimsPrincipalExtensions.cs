@@ -48,4 +48,18 @@ public static class ClaimsPrincipalExtensions
     /// </summary>
     public static bool IsAdmin(this ClaimsPrincipal principal)
         => principal.IsInRole(UserRoles.Admin);
+
+    /// <summary>
+    /// The account a read across runs covers: for an admin, the one asked for
+    /// (<paramref name="requested"/>; null is every account); for anyone else,
+    /// their own, whatever they asked for.
+    /// </summary>
+    /// <remarks>
+    /// One rule for every such read (the run list, the day's P&amp;L series, the
+    /// open positions, the orders), so a new one cannot scope differently by
+    /// accident: a trader who passes another account's id gets their own rows,
+    /// not a 403 that would confirm the account exists.
+    /// </remarks>
+    public static long? ScopeUserId(this ClaimsPrincipal principal, long? requested)
+        => principal.IsAdmin() ? requested : principal.GetRequiredUserId();
 }

@@ -176,13 +176,15 @@ function normalizeEvent(raw: unknown): LiveDeskEvent | null {
  * when the event names a run, every run's otherwise.
  *
  * - order, fill: the open legs (Positions, the Desk, the chain's positions
- *   panel), the run's order ledger and live view, the day's P&L series and
- *   the run lists, whose P&L and trade counts moved.
+ *   panel), the run's order ledger and live view, the day's orders across
+ *   runs (Trade → Orders), the day's P&L series and the run lists, whose
+ *   P&L and trade counts moved.
  * - run (started, stopped): the strategy list the Live runner reads its
  *   running runs from, the run lists, the morning plan's live count, the
  *   run's live view and the strategies' track records.
- * - risk (a rule tripped or was changed): the run's live view and the legs
- *   it may have squared off.
+ * - risk (a rule tripped or was changed): the run's live view, the legs it
+ *   may have squared off, and the day's orders, which hold those
+ *   square-offs and the orders the risk gate refused.
  * - position, carry: the open legs, and the run's view that shows the same
  *   leg with its Carry tick.
  */
@@ -194,11 +196,11 @@ export function deskEventKeys(event: Pick<LiveDeskEvent, 'kind' | 'runId'>): Que
   switch (event.kind) {
     case 'order':
     case 'fill':
-      return [...legs, orders, live, ['strategy', 'pnl-series'], ['strategy', 'history']]
+      return [...legs, orders, live, ['orders'], ['strategy', 'pnl-series'], ['strategy', 'history']]
     case 'run':
       return [['strategies'], ['strategy', 'history'], ['desk', 'plan'], live, ['strategy', 'track-record']]
     case 'risk':
-      return [live, ...legs]
+      return [live, ...legs, ['orders']]
     case 'position':
     case 'carry':
       return [...legs, live]

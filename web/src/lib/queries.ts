@@ -19,6 +19,8 @@ import { api } from './api'
 import { livePoll, useLiveAllState, useLiveConnection, useLivePrices } from './live'
 import type { LiveConnection } from './live'
 import { pulseBehind, pulseWithTicks } from './liveMarks'
+import { ordersQuery } from './orders'
+import type { OrdersFilter } from './orders'
 import type {
   AlertEvent,
   BackfillHistoryResponse,
@@ -50,6 +52,7 @@ import type {
   OptionChain,
   OptionChainSeries,
   OpenPositionsResponse,
+  OrdersResponse,
   PaperOrderRow,
   PruneWatchlistResponse,
   RiskEvent,
@@ -2571,6 +2574,31 @@ export function useRunsOrders(runs: ReadonlyArray<{ runId: number; live: boolean
       refetchInterval: live ? 30_000 : (false as const),
     })),
     combine: combineLedgers,
+  })
+}
+
+/** Without the socket, a day still being traded is read every 15 s; with it, orders and fills arrive as desk events. */
+const POLL_ORDERS = 15_000
+const POLL_ORDERS_PUSHED = 60_000
+
+/**
+ * One IST day of orders across every run and manual book the viewer may see
+ * (GET /api/Orders; a trader gets their own), newest first, a page at a
+ * time: the first page, and the next each time the page asks for more. The
+ * order and fill desk events re-read it (['orders'] is in their keys), so
+ * the poll is the safety net: a minute with the socket, 15 s without it,
+ * while `live` (the day is today). A day that is over never changes.
+ */
+export function useOrders(filter: OrdersFilter, live: boolean) {
+  const connection = useLiveConnection()
+  return useInfiniteQuery({
+    queryKey: ['orders', 'day', filter],
+    queryFn: ({ pageParam }) => api.get<OrdersResponse>(`/api/Orders${ordersQuery({ ...filter, date: filter.date ?? '', skip: pageParam })}`),
+    initialPageParam: 0,
+    getNextPageParam: (last: OrdersResponse) => (last.skip + last.orders.length < last.total ? last.skip + last.take : undefined),
+    enabled: filter.date != null,
+    placeholderData: keepPreviousData,
+    refetchInterval: live ? livePoll(connection, POLL_ORDERS_PUSHED, POLL_ORDERS) : false,
   })
 }
 

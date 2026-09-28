@@ -379,10 +379,24 @@ describe('deskEventKeys', () => {
       ['optionChainPositions'],
       ['strategy', 'orders', 612],
       ['strategy', 'live', 612],
+      ['orders'],
       ['strategy', 'pnl-series'],
       ['strategy', 'history'],
     ])
     expect(deskEventKeys({ kind: 'order', runId: 612 })).toEqual(keys)
+  })
+
+  it("re-reads the day's orders across runs (Trade → Orders) after an order, a fill or a risk trip, whatever the run", () => {
+    // Every Orders page's key starts with it, whatever its day and filters.
+    const blotter = ['orders', 'day', { date: '2026-09-28', userId: null, runId: 612, status: 'Rejected' }]
+    const covers = (keys: readonly (readonly unknown[])[]) =>
+      keys.some((k) => k.every((part, i) => JSON.stringify(part) === JSON.stringify(blotter[i])))
+    for (const kind of ['order', 'fill', 'risk'] as const) {
+      expect(covers(deskEventKeys({ kind, runId: 7 }))).toBe(true)
+      expect(covers(deskEventKeys({ kind, runId: null }))).toBe(true)
+    }
+    expect(covers(deskEventKeys({ kind: 'run', runId: 7 }))).toBe(false)
+    expect(allEventedKeys()).toContainEqual(['orders'])
   })
 
   it('re-reads the run lists, the plan and the run after a run starts or stops', () => {
@@ -396,7 +410,7 @@ describe('deskEventKeys', () => {
   })
 
   it('re-reads the run and the legs after a risk trip, and the legs after a position or carry change', () => {
-    expect(deskEventKeys({ kind: 'risk', runId: 7 })).toEqual([['strategy', 'live', 7], ['positions'], ['optionChainPositions']])
+    expect(deskEventKeys({ kind: 'risk', runId: 7 })).toEqual([['strategy', 'live', 7], ['positions'], ['optionChainPositions'], ['orders']])
     expect(deskEventKeys({ kind: 'carry', runId: 7 })).toEqual([['positions'], ['optionChainPositions'], ['strategy', 'live', 7]])
     expect(deskEventKeys({ kind: 'position', runId: 7 })).toEqual(deskEventKeys({ kind: 'carry', runId: 7 }))
   })
@@ -426,7 +440,7 @@ describe('invalidationBatcher', () => {
     const sent = invalidateQueries.mock.calls.map(([arg]) => JSON.stringify(arg.queryKey))
     expect(new Set(sent).size).toBe(sent.length)
     expect(sent).toEqual(expect.arrayContaining(['["strategy","live",1]', '["strategy","live",2]', '["positions"]']))
-    expect(sent).toHaveLength(8)
+    expect(sent).toHaveLength(9)
   })
 
   it('drops what is pending when cancelled', async () => {
