@@ -15,7 +15,25 @@ ever open.
 
 A person can also resolve an incident from the console. If the condition is
 still there, the next check opens a fresh one — which is the honest answer to
-"I resolved it and it came back".
+"I resolved it and it came back". A finding an agent repeats from memory (a log
+finding held open after its last line) carries when it was last observed, and
+does not reopen an incident resolved at or after that: on 28 Sep an operator
+resolved four API errors of a deliberate Postgres restart at 13:08, and their
+held findings opened them again at 13:11, counting the same 13:05-13:06 lines.
+The agent is told (``let_go``), so it stops holding them.
+
+A problem that comes back within FLAP_WINDOW (30 min) of Sentinel resolving it
+is the same incident, reopened rather than opened anew (store.py; not a notice,
+and not an incident a person resolved). 28 Sep 13:06-13:28: the feed stalled
+for ~2 min every few minutes, and each stall opened a new CRITICAL incident per
+exchange group, each with its NEW and its RESOLVED message. Now a flapping
+incident is messaged when it opens (at once, as ever) and when it comes back
+after its RESOLVED went out ("Back again: the 2nd time since 13:06"). From then
+on it is quiet: a return is messaged only when nothing has been said about it
+for FLAP_WINDOW, and its RESOLVED is held back until it has stayed clear for
+FLAP_WINDOW, or dropped when it comes back first. So a person is never left
+believing it is over while it is not. The episode count and what was last said
+live in the engine's state file, like the notices, across restarts.
 
 An incident that opens, or escalates to high or critical, gets a context pack
 (sentinel/pack.py): the last deploy, the live commit, the runs, the log lines
@@ -42,16 +60,17 @@ import logging
 import time
 import traceback
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Callable, Optional
 
 from sentinel.agents.base import Agent
 from sentinel.clock import to_ist
 from sentinel.context import SentinelContext
-from sentinel.model import CONTEXT_PREFIX, HISTORY_PREFIX, KEPT_PREFIXES, Finding, Severity
-from sentinel.notify import Notifier, format_opened, format_resolved, format_seen_before
+from sentinel.model import CONTEXT_PREFIX, FLAP_WINDOW, HISTORY_PREFIX, KEPT_PREFIXES, Finding, Severity
+from sentinel.notify import (Notifier, format_again, format_flapping, format_opened, format_resolved,
+                             format_seen_before, format_settled)
 from sentinel.pack import LOG_WINDOW, ContextPack, Pack
-from sentinel.store import IncidentStore
+from sentinel.store import IncidentStore, LiveIncident, Upserted
 
 log = logging.getLogger("sentinel.engine")
 
@@ -73,6 +92,10 @@ LATE_AFTER_SECONDS = 90.0
 UNSENT_ON_START = 20
 #: A round that fails again the same way is logged at most this often.
 ROUND_ERROR_LOG_SECONDS = 600.0
+#: A flapping incident's bookkeeping left untouched this long (no return, no
+#: resolve) is let go: the incident is live and steady, and if it resolves its
+#: RESOLVED simply goes out at once, as any incident's does.
+FLAP_FORGET_AFTER = timedelta(days=1)
 
 
 @dataclass
@@ -128,7 +151,21 @@ def _malformed(item: Any) -> Optional[str]:
         return f"{item.fingerprint!r}: evidence is not a list of text"
     if not isinstance(item.extra, dict):
         return f"{item.fingerprint!r}: extra is {type(item.extra).__name__}, not a dict"
+    observed = item.observed_utc
+    if observed is not None and (not isinstance(observed, datetime) or observed.tzinfo is None):
+        return f"{item.fingerprint!r}: observed_utc {observed!r} is not an aware datetime"
     return None
+
+
+def _parse_time(value: Any) -> Optional[datetime]:
+    """An ISO time from the engine's state file; None for anything else, or one without a zone."""
+    if not isinstance(value, str):
+        return None
+    try:
+        moment = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return moment if moment.tzinfo is not None else None
 
 
 def _crash_finding(agent: Agent, summary: str, kind: str, evidence: list[str], suggestion: str) -> Finding:
@@ -183,6 +220,7 @@ class SentinelEngine:
         if ran:
             self._mark()
             self._add_later_lines()
+            self._settle_flaps()
             self._beat()
         self._deliver()
         return ran
@@ -195,6 +233,7 @@ class SentinelEngine:
         for track in self._tracks:
             self._run_guarded(track)
         self._mark()
+        self._settle_flaps()
         self._beat()
         self._deliver()
 
@@ -316,12 +355,19 @@ class SentinelEngine:
         log.debug("%s: %d finding(s) in %.1fs", agent.name, len(findings), time.monotonic() - started)
 
         seen: set[str] = set()
+        stale: set[str] = set()
         for finding in findings:
             if finding.fingerprint in seen:
                 continue  # one sighting per check, however many times an agent repeats itself
             seen.add(finding.fingerprint)
-            self._record(finding)
+            if self._record(finding):
+                stale.add(finding.fingerprint)
             track.clean.pop(finding.fingerprint, None)
+        if stale:
+            try:
+                agent.let_go(self._ctx, stale)
+            except Exception as exc:
+                log.warning("the %s agent could not let go of %d resolved finding(s): %s", agent.name, len(stale), exc)
 
         if not whole:
             # The agent's other incidents are neither gone nor a clean check
@@ -333,7 +379,8 @@ class SentinelEngine:
 
     # ------------------------------------------------------------------ recording
 
-    def _record(self, finding: Finding) -> None:
+    def _record(self, finding: Finding) -> bool:
+        """Store a finding and say what needs saying. True when it was old news (see Finding.observed_utc)."""
         now = self._ctx.now()
         fingerprint = finding.fingerprint
         notice = bool(finding.extra.get("notice"))
@@ -341,7 +388,15 @@ class SentinelEngine:
             result = self._store.upsert(finding, now)
         except Exception as exc:
             self._unstorable(finding, notice, now, exc)
-            return
+            return False
+
+        if result.stale:
+            # Resolved at or after everything behind this finding was observed:
+            # nothing was written, and there is nothing to say.
+            self._unstored.pop(fingerprint, None)
+            log.debug("%s: #%s was resolved after this was last observed; not reopened", fingerprint,
+                      result.incident_id)
+            return True
 
         self._live.setdefault(finding.agent, {})[fingerprint] = (result.incident_id, result.severity)
         told = self._unstored.pop(fingerprint, None)
@@ -349,8 +404,11 @@ class SentinelEngine:
             told = None   # a low one was messaged nothing
         if notice:
             self._remember_notice(fingerprint, finding.agent)
+        if result.reopened:
+            self._reopened(finding, result, now, told)
+            return False
         if not (result.is_new or result.escalated):
-            return
+            return False
 
         history = self._seen_before(fingerprint, result.incident_id) if result.is_new else []
         pack = None
@@ -366,7 +424,7 @@ class SentinelEngine:
             except Exception as exc:
                 log.warning("could not keep the context of #%s: %s", result.incident_id, exc)
         if result.severity is Severity.LOW:
-            return   # the console's, not a message: see the module docstring
+            return False   # the console's, not a message: see the module docstring
         context = pack.lines if pack else None
 
         if told is not None and told.severity.rank >= result.severity.rank:
@@ -380,11 +438,12 @@ class SentinelEngine:
                 waiting.incident_id = result.incident_id
             else:
                 self._mark_notified(result.incident_id)
-            return
+            return False
 
         text = format_opened(finding, result.incident_id, escalated=result.escalated or told is not None,
                              context=context, history=history)
         self._queue(_open_key(result.incident_id), text, result.severity, now, incident_id=result.incident_id)
+        return False
 
     def _seen_before(self, fingerprint: str, incident_id: int) -> list[str]:
         """
@@ -462,6 +521,7 @@ class SentinelEngine:
         live_now = {i.fingerprint for i in live}
         track.clean = {fp: n for fp, n in track.clean.items() if fp in live_now}
         self._forget_notices(name, live_now | seen)
+        self._forget_flaps(name, {i.incident_id for i in live})
 
         for incident in live:
             if incident.fingerprint in seen:
@@ -484,6 +544,8 @@ class SentinelEngine:
                 log.info("#%s was no longer live when its checks came back clean; nothing to announce",
                          incident.incident_id)
                 continue
+            if self._hold_resolved(incident):
+                continue
             if notice or incident.severity is Severity.LOW:
                 log.info("resolved #%s without a message (%s)", incident.incident_id,
                          "a notice" if notice else "low")
@@ -491,6 +553,151 @@ class SentinelEngine:
             self._queue(f"resolved:#{incident.incident_id}",
                         format_resolved(incident.title, incident.incident_id, incident.severity),
                         incident.severity, self._ctx.now())
+
+    # ------------------------------------------------------------------ flapping
+
+    def _flaps(self) -> dict[str, dict]:
+        """
+        Incident number -> its flapping so far: how many episodes, since when,
+        what the last message about it said ("open" or "resolved") and when,
+        and when Sentinel resolved it while its RESOLVED is held back. Kept in
+        the engine's state file, like the notices: Sentinel restarts on every
+        deploy of its own code, and one in the middle of a flapping feed must
+        not start the count, or the quiet, again.
+        """
+        state = self._ctx.state("engine")
+        flaps = state.data.get("flapping")
+        if not isinstance(flaps, dict):
+            flaps = state.data["flapping"] = {}
+        return flaps
+
+    def _save_flaps(self) -> None:
+        self._ctx.state("engine").save()
+
+    def _reopened(self, finding: Finding, result: Upserted, now: datetime, told: Optional[_Unstored]) -> None:
+        """
+        A problem Sentinel resolved less than FLAP_WINDOW ago is back, and its
+        incident is live again. Said at once when the last word a person had
+        about it was "resolved" (a real outage must never wait behind a flap),
+        when it got worse, or when nothing has been said about it for
+        FLAP_WINDOW. Otherwise it comes back quietly: they were told it is
+        back, and no RESOLVED has gone out since.
+        """
+        flaps = self._flaps()
+        key = str(result.incident_id)
+        entry = flaps.get(key)
+        if not isinstance(entry, dict):
+            # Its first return. A RESOLVED is held back only once an incident
+            # has come back, so the one before this went out: the last word a
+            # person had was "resolved".
+            entry = {"episodes": 1, "since": (result.first_seen_utc or now).isoformat(), "told": "resolved",
+                     "told_at": None}
+        entry["episodes"] = int(entry.get("episodes") or 1) + 1
+        entry.update(agent=finding.agent, fingerprint=finding.fingerprint, title=finding.title,
+                     severity=result.severity.value, resolved_at=None, touched=now.isoformat())
+        flaps[key] = entry
+        episodes = entry["episodes"]
+        since = _parse_time(entry.get("since")) or result.first_seen_utc or now
+        try:
+            self._store.attach_context(result.incident_id, [format_flapping(episodes, since, now)])
+        except Exception as exc:
+            log.warning("could not note the flapping of #%s: %s", result.incident_id, exc)
+
+        told_at = _parse_time(entry.get("told_at"))
+        said_lately = entry.get("told") == "open" and told_at is not None and now - told_at < FLAP_WINDOW
+        if result.severity is Severity.LOW or (said_lately and not result.escalated):
+            self._save_flaps()
+            log.info("#%s is back (episode %d); not messaged: said to be back at %s and not resolved since",
+                     result.incident_id, episodes, entry.get("told_at"))
+            return
+        entry["told"], entry["told_at"] = "open", now.isoformat()
+        self._save_flaps()
+        if told is not None and told.severity.rank >= result.severity.rank:
+            # A person was told while the database was not taking writes: that was the message.
+            waiting = self._outbox.get(_unstored_key(finding.fingerprint))
+            if waiting is not None:
+                waiting.incident_id = result.incident_id
+            else:
+                self._mark_notified(result.incident_id)
+            return
+
+        pack = self._context(now, now)   # around this return, not around the first episode
+        if pack is not None and pack.lines:
+            try:
+                self._store.attach_context(result.incident_id, pack.lines)
+                self._later[result.incident_id] = pack
+            except Exception as exc:
+                log.warning("could not keep the context of #%s: %s", result.incident_id, exc)
+        text = format_opened(finding, result.incident_id, escalated=result.escalated,
+                             context=pack.lines if pack else None, again=format_again(episodes, since, now))
+        self._queue(_open_key(result.incident_id), text, result.severity, now, incident_id=result.incident_id)
+
+    def _hold_resolved(self, incident: LiveIncident) -> bool:
+        """
+        Sentinel has just resolved ``incident``. True when it has flapped: its
+        RESOLVED waits until it has stayed clear for FLAP_WINDOW
+        (:meth:`_settle_flaps`) and is dropped if it comes back first —
+        "resolved" and "back again" minutes apart, over and over, was 28 Sep.
+        """
+        entry = self._flaps().get(str(incident.incident_id))
+        if not isinstance(entry, dict):
+            return False
+        now = self._ctx.now()
+        entry.update(resolved_at=now.isoformat(), touched=now.isoformat(), title=incident.title,
+                     severity=incident.severity.value)
+        self._save_flaps()
+        log.info("resolved #%s (episode %s of a flapping problem); its RESOLVED waits until it stays clear",
+                 incident.incident_id, entry.get("episodes"))
+        return True
+
+    def _settle_flaps(self) -> None:
+        """A flapping incident clear for FLAP_WINDOW gets its RESOLVED now, saying how often it happened."""
+        flaps = self._flaps()
+        if not flaps:
+            return
+        now = self._ctx.now()
+        changed = False
+        for key, entry in list(flaps.items()):
+            entry = entry if isinstance(entry, dict) else {}
+            resolved_at = _parse_time(entry.get("resolved_at"))
+            if resolved_at is None:
+                touched = _parse_time(entry.get("touched"))
+                if touched is None or now - touched > FLAP_FORGET_AFTER:
+                    del flaps[key]
+                    changed = True
+                continue
+            if now - resolved_at < FLAP_WINDOW:
+                continue
+            del flaps[key]
+            changed = True
+            try:
+                severity = Severity(entry.get("severity"))
+                incident_id = int(key)
+            except (TypeError, ValueError):
+                continue
+            if entry.get("told") != "open" or severity is Severity.LOW:
+                continue   # nobody was told it was back, so nobody is waiting to hear it is over
+            note = format_settled(int(entry.get("episodes") or 2), _parse_time(entry.get("since")), resolved_at, now)
+            self._queue(f"resolved:#{incident_id}",
+                        format_resolved(str(entry.get("title") or ""), incident_id, severity, note=note),
+                        severity, now)
+        if changed:
+            self._save_flaps()
+
+    def _forget_flaps(self, agent: str, live_ids: set[int]) -> None:
+        """
+        The flapping of this agent's incidents that are no longer live and
+        that Sentinel did not resolve: a person resolved them from the console,
+        and if the problem comes back it is a new incident.
+        """
+        flaps = self._flaps()
+        gone = [key for key, entry in flaps.items()
+                if isinstance(entry, dict) and entry.get("agent") == agent and not entry.get("resolved_at")
+                and key.isdigit() and int(key) not in live_ids]
+        for key in gone:
+            del flaps[key]
+        if gone:
+            self._save_flaps()
 
     # ------------------------------------------------------------------ notices
 

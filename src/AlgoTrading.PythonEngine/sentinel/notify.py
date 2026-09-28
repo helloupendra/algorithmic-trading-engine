@@ -18,7 +18,7 @@ from typing import Optional
 import requests
 
 from sentinel.clock import to_ist
-from sentinel.model import CONTEXT_PREFIX, HISTORY_PREFIX, Finding, Severity
+from sentinel.model import CONTEXT_PREFIX, FLAP_PREFIX, FLAP_WINDOW, HISTORY_PREFIX, Finding, Severity
 
 log = logging.getLogger("sentinel.notify")
 
@@ -115,22 +115,65 @@ def format_seen_before(count: int, last_seen_utc: Optional[datetime], resolution
     return lines
 
 
+def _ordinal(n: int) -> str:
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+def _clock(moment: datetime, now: datetime) -> str:
+    """HH:MM IST, with the day when it is not today's."""
+    when = to_ist(moment)
+    return when.strftime("%H:%M") if when.date() == to_ist(now).date() else when.strftime("%d %b %H:%M").lstrip("0")
+
+
+def _window_minutes() -> int:
+    return int(FLAP_WINDOW.total_seconds() // 60)
+
+
+def format_again(episodes: int, since_utc: datetime, now_utc: datetime) -> str:
+    """
+    The line under a reopened incident's header: which return this is, and
+    what to expect from here — the owner's "stopped again (5th time since 13:06)".
+    """
+    minutes = _window_minutes()
+    return (f"Back again: the {_ordinal(episodes)} time since {_clock(since_utc, now_utc)} IST. While it keeps "
+            f"clearing and coming back it stays this one incident: at most one message about it every {minutes} "
+            f"min, and ✅ RESOLVED once it has stayed clear for {minutes} min.")
+
+
+def format_flapping(episodes: int, since_utc: datetime, now_utc: datetime) -> str:
+    """The evidence line a flapping incident carries in the console, rewritten on every return."""
+    return (f"{FLAP_PREFIX}{_ordinal(episodes)} episode since {_clock(since_utc, now_utc)} IST: it cleared and came "
+            f"back within {_window_minutes()} min each time, so it stays this one incident")
+
+
+def format_settled(episodes: int, since_utc: Optional[datetime], cleared_utc: datetime, now_utc: datetime) -> str:
+    """The line under a flapping incident's held-back RESOLVED: how often, and clear since when."""
+    since = f" since {_clock(since_utc, now_utc)} IST" if since_utc else ""
+    return (f"It happened {episodes} times{since}; clear since {_clock(cleared_utc, now_utc)} IST "
+            f"({_window_minutes()} min without coming back).")
+
+
 def format_opened(finding: Finding, incident_id: int, escalated: bool = False,
-                  context: Optional[list[str]] = None, history: Optional[list[str]] = None) -> str:
+                  context: Optional[list[str]] = None, history: Optional[list[str]] = None,
+                  again: Optional[str] = None) -> str:
     """
-    The message for an incident that opened or escalated. ``incident_id`` 0:
-    the database did not take it. ``history``: the seen-before lines
-    (:func:`format_seen_before`), right under the summary — whether this has
-    happened before, and what fixed it, is the first thing to know.
+    The message for an incident that opened, escalated or came back.
+    ``incident_id`` 0: the database did not take it. ``history``: the
+    seen-before lines (:func:`format_seen_before`), right under the summary —
+    whether this has happened before, and what fixed it, is the first thing to
+    know. ``again``: a reopened incident's line (:func:`format_again`), first.
     """
-    head = "ESCALATED" if escalated else "NEW"
+    head = "ESCALATED" if escalated else "AGAIN" if again else "NEW"
     number = f"#{incident_id}" if incident_id else "not stored (the database did not take it)"
     lines = [
         f"{finding.severity.icon} {head} [{finding.severity.value.upper()}] {finding.title}",
         f"{number} · {finding.agent}/{finding.rule}" + (f" · {finding.where}" if finding.where else ""),
         "",
-        finding.summary,
     ]
+    if again:
+        lines += [again, ""]
+    lines.append(finding.summary)
     if history:
         lines += [""] + [h.removeprefix(HISTORY_PREFIX) for h in history]
     if finding.evidence:
@@ -146,9 +189,10 @@ def format_opened(finding: Finding, incident_id: int, escalated: bool = False,
     return redact("\n".join(lines))[:MESSAGE_CHARS]
 
 
-def format_resolved(title: str, incident_id: int, severity: Severity) -> str:
+def format_resolved(title: str, incident_id: int, severity: Severity, note: str = "") -> str:
     number = f"#{incident_id}" if incident_id else "(never stored)"
-    return redact(f"✅ RESOLVED {number} [{severity.value.upper()}] {title}")[:MESSAGE_CHARS]
+    text = f"✅ RESOLVED {number} [{severity.value.upper()}] {title}" + (f"\n{note}" if note else "")
+    return redact(text)[:MESSAGE_CHARS]
 
 
 #: What a message may carry: Telegram takes 4,096 characters, and a message
