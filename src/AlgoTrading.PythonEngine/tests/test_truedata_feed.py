@@ -233,7 +233,10 @@ class EntryPointTests(unittest.TestCase):
             build_feed("nobody")
 
     def test_run_feed_wires_the_vendor_the_stream_and_the_named_symbols(self):
+        import sys
         import market_data.live.run_feed as run_feed
+        # main() sets the feed process's GIL switch interval; not this one's.
+        self.addCleanup(sys.setswitchinterval, sys.getswitchinterval())
         env = {
             "TRUEDATA_USERNAME": "u", "TRUEDATA_PASSWORD": "p",
             "TRUEDATA_HOST": "replay.truedata.in", "TRUEDATA_REALTIME_PORT": "8082",
