@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { QueryClient } from '@tanstack/react-query'
 
-import { answerAsOf, keepSentStamp, stampSent } from './asOf'
+import { answerAsOf, keepPageStamps, keepSentStamp, stampSent } from './asOf'
 import { freshPrice } from './liveMarks'
 
 /**
@@ -63,6 +63,43 @@ describe('answerAsOf', () => {
     // Nothing changed: the cache keeps the same object, now as of the newer request.
     expect(qc.getQueryData(key)).toBe(second)
     expect(answerAsOf(qc.getQueryState(key)!)).toBe(2_010_600)
+  })
+
+  it('stamps each page of a paged list with the request that brought it, through structural sharing', async () => {
+    const clock = { now: 3_000_000 }
+    const qc = new QueryClient()
+    const key = ['strategy', 'history', 'pages', '?take=2']
+    let open = 1_200
+    const pages: Record<number, () => Array<{ runId: number; unrealizedPnl: number }>> = {
+      0: () => [{ runId: 9, unrealizedPnl: open }, { runId: 8, unrealizedPnl: 0 }],
+      2: () => [{ runId: 7, unrealizedPnl: 0 }],
+    }
+    const options = {
+      queryKey: key,
+      queryFn: ({ pageParam }: { pageParam: number }) => stampSent(slowRequest(clock, 200, pages[pageParam]), () => clock.now)(),
+      structuralSharing: keepPageStamps,
+      initialPageParam: 0,
+      getNextPageParam: (last: unknown[], all: unknown[][]) => (last.length >= 2 ? all.length * 2 : undefined),
+      staleTime: 0,
+    }
+    await qc.fetchInfiniteQuery(options)
+    await qc.fetchInfiniteQuery({ ...options, pages: 2 })
+    type Page = Array<{ runId: number }>
+    const asOfPages = () => {
+      const state = qc.getQueryState<{ pages: Page[] }>(key)!
+      return state.data!.pages.map((page) => answerAsOf({ data: page, dataUpdatedAt: state.dataUpdatedAt }))
+    }
+    // Refetched page by page: the first sent at 3_000_000 + 200, the second 200 ms after it.
+    const [first, second] = asOfPages()
+    expect(second - first).toBe(200)
+
+    // The live run's page changes, the old one does not: each carries the newer request's time.
+    clock.now += 10_000
+    open = 1_350
+    await qc.refetchQueries({ queryKey: key })
+    const [nextFirst, nextSecond] = asOfPages()
+    expect(nextFirst).toBeGreaterThan(second)
+    expect(nextSecond - nextFirst).toBe(200)
   })
 
   it('is the arrival for an answer written here, and for a query without the stamp', () => {

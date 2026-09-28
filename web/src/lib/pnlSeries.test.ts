@@ -23,6 +23,7 @@ import {
   valueAt,
   valueDomain,
   valueTicks,
+  withLiveTips,
 } from './pnlSeries'
 import type { AccountPnlSeries, RunPnlSeries } from './types'
 
@@ -312,5 +313,56 @@ describe('dayCurves', () => {
     expect(empty.any).toBe(false)
     expect(empty.accounts).toEqual([])
     expect(empty.axis).toEqual({ from: NSE_OPEN, to: NSE_CLOSE, evening: false })
+  })
+})
+
+describe('withLiveTips', () => {
+  const res = {
+    date: DAY,
+    dayStartUtc: '2026-09-27T18:30:00Z',
+    runs: [
+      run({ userId: 1, status: 'Running', minutes: span('09:18', '11:41') }),
+      run({ userId: 2, runId: 2, userName: 'coderforchange', status: 'Running', minutes: span('09:18', '11:41') }),
+    ],
+    accounts: [account(1, span('09:18', '11:41')), account(2, span('09:18', '11:41'), (i) => i)],
+  }
+  const nowMs = Date.parse(at('11:42')) + 25_000
+  const nowMinute = (nowMs - START) / 60_000
+  const curves = dayCurves(res, { userIds: [1, 2], nowMs, isToday: true })
+
+  it('carries a live account’s line on to its figure now; the minutes recorded stay as written', () => {
+    const shown = withLiveTips(curves, new Map([[1, -512.5]]), nowMinute)
+    const admin = shown.accounts[0]
+    expect(admin.last).toEqual({ m: nowMinute, v: -512.5 })
+    expect(admin.points.slice(0, -1)).toEqual(curves.accounts[0].points)
+    expect(admin.segments.at(-1)!.at(-1)).toEqual({ m: nowMinute, v: -512.5 })
+    // The hover reads the live figure at now, and the recorded one before it.
+    expect(valueAt(admin.points, nowMinute)).toBe(-512.5)
+    expect(valueAt(admin.points, min('11:41'))).toBe(curves.accounts[0].last!.v)
+    // An account not live (not in the tips) ends where the recorder left it.
+    expect(shown.accounts[1]).toBe(curves.accounts[1])
+  })
+
+  it('draws nothing new on another day, past the axis, or with no live account', () => {
+    const tips = new Map([[1, -512.5]])
+    const past = dayCurves(res, { userIds: [1, 2], nowMs, isToday: false })
+    expect(withLiveTips(past, tips, nowMinute)).toBe(past)
+    const evening = dayCurves(res, { userIds: [1, 2], nowMs: Date.parse(at('16:10')), isToday: true })
+    expect(withLiveTips(evening, tips, min('16:10'))).toBe(evening)
+    expect(withLiveTips(curves, new Map(), nowMinute)).toBe(curves)
+  })
+
+  it('leaves a line whose last recorded point is as new as now', () => {
+    expect(withLiveTips(curves, new Map([[1, -512.5]]), min('11:41'))).toBe(curves)
+  })
+
+  it('puts the figure on its own past an open gap at the end, not on a line across it', () => {
+    // The recorder stopped at 11:41; it is 11:52 now.
+    const late = dayCurves(res, { userIds: [1, 2], nowMs: Date.parse(at('11:52')) + 5_000, isToday: true })
+    expect(late.gaps).toEqual([{ from: min('11:41'), to: min('11:52') }])
+    const shown = withLiveTips(late, new Map([[1, -700]]), min('11:52') + 5 / 60)
+    const segments = shown.accounts[0].segments
+    expect(segments).toHaveLength(2)
+    expect(segments[1]).toEqual([{ m: min('11:52') + 5 / 60, v: -700 }])
   })
 })
