@@ -17,6 +17,12 @@ namespace AlgoTrading.Infrastructure.Services;
 
 public class RiskManagementService : IRiskManagementService
 {
+    /// <summary>
+    /// <see cref="RiskEvent.Kind"/> of an order this gate refused: the only
+    /// refused orders the platform keeps (Trade → Orders lists them).
+    /// </summary>
+    public const string OrderRejectedKind = "OrderRejected";
+
     private readonly TradingDbContext _dbContext;
     private readonly IRiskLimitsStore _limitsStore;
 
@@ -83,7 +89,7 @@ public class RiskManagementService : IRiskManagementService
         // 1. Check Kill Switch
         if (await IsKillSwitchActiveAsync(cancellationToken))
         {
-            await RejectOrderAsync(simulationRunId, symbol, "GLOBAL KILL SWITCH IS ACTIVE. NEW POSITIONS REJECTED (exits are always allowed).", cancellationToken);
+            await RejectOrderAsync(simulationRunId, symbol, side, quantity, "GLOBAL KILL SWITCH IS ACTIVE. NEW POSITIONS REJECTED (exits are always allowed).", cancellationToken);
         }
 
         // 2. Check Rate Limits (Max Orders per Minute)
@@ -102,7 +108,7 @@ public class RiskManagementService : IRiskManagementService
         // retry and could never come back under the line.
         if (queue.Count >= limits.MaxOrdersPerMinute)
         {
-            await RejectOrderAsync(simulationRunId, symbol, $"RATE LIMIT EXCEEDED: More than {limits.MaxOrdersPerMinute} orders placed in the last minute for run {simulationRunId} (leg {side} {quantity}).", cancellationToken);
+            await RejectOrderAsync(simulationRunId, symbol, side, quantity, $"RATE LIMIT EXCEEDED: More than {limits.MaxOrdersPerMinute} orders placed in the last minute for run {simulationRunId} (leg {side} {quantity}).", cancellationToken);
         }
 
         // 3. Check Max Daily Loss
@@ -118,14 +124,14 @@ public class RiskManagementService : IRiskManagementService
 
         if (currentPnl < limits.MaxDailyLoss)
         {
-            await RejectOrderAsync(simulationRunId, symbol, $"MAX DAILY LOSS EXCEEDED: Current PnL {currentPnl} is below the limit of {limits.MaxDailyLoss}. Exits remain allowed.", cancellationToken);
+            await RejectOrderAsync(simulationRunId, symbol, side, quantity, $"MAX DAILY LOSS EXCEEDED: Current PnL {currentPnl} is below the limit of {limits.MaxDailyLoss}. Exits remain allowed.", cancellationToken);
         }
 
         // Accepted: only now does it count toward the next order's rate window.
         queue.Enqueue(now);
     }
 
-    private async Task RejectOrderAsync(long simulationRunId, string symbol, string reason, CancellationToken cancellationToken)
+    private async Task RejectOrderAsync(long simulationRunId, string symbol, string side, int lots, string reason, CancellationToken cancellationToken)
     {
         using var scope = _scopeFactory.CreateScope();
         var localDb = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
@@ -133,10 +139,11 @@ public class RiskManagementService : IRiskManagementService
         var riskEvent = new RiskEvent
         {
             OccurredUtc = DateTime.UtcNow,
-            Kind = "OrderRejected",
+            Kind = OrderRejectedKind,
             Reason = reason,
             SimulationRunId = simulationRunId,
-            Symbol = symbol
+            Symbol = symbol,
+            DetailsJson = RejectionDetails.ToJson(side, lots)
         };
         localDb.RiskEvents.Add(riskEvent);
         await localDb.SaveChangesAsync(cancellationToken);

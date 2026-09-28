@@ -51,7 +51,38 @@ public sealed record PaperFill(
         quoteAgeSeconds = QuoteAgeSeconds is { } age ? Math.Round(age, 1) : (double?)null,
         staleQuote = StaleQuote ? true : (bool?)null,
     }, Json);
+
+    /// <summary>
+    /// How an order row says it was priced, read back from what
+    /// <see cref="ToMetadataJson"/> wrote; null for an order filled before
+    /// that was recorded (28 Sep), or with metadata that is not this shape.
+    /// </summary>
+    public static PaperFillSource? ReadSource(string? metadataJson)
+    {
+        if (string.IsNullOrWhiteSpace(metadataJson)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(metadataJson);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return null;
+
+            string? Text(string name) => root.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+
+            string? rule = Text("rule");
+            if (string.IsNullOrWhiteSpace(rule)) return null;
+            double? age = root.TryGetProperty("quoteAgeSeconds", out var a) && a.ValueKind == JsonValueKind.Number ? a.GetDouble() : null;
+            bool stale = root.TryGetProperty("staleQuote", out var s) && s.ValueKind == JsonValueKind.True;
+            return new PaperFillSource(rule, Text("note"), age, stale);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 }
+
+/// <summary>The part of an order's fill metadata a ledger shows: the rule, its sentence, and the quote's age.</summary>
+public sealed record PaperFillSource(string Rule, string? Note, double? QuoteAgeSeconds, bool StaleQuote);
 
 /// <summary>
 /// Where a live paper fill lands: a SELL at the bid and a BUY at the ask when

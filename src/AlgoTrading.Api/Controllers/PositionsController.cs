@@ -37,7 +37,7 @@ public class PositionsController : ControllerBase
     [HttpGet("open")]
     public async Task<ActionResult<OpenPositionsResponse>> GetOpen([FromQuery] long? userId, CancellationToken cancellationToken)
     {
-        long? scopeUserId = User.IsAdmin() ? userId : User.GetRequiredUserId();
+        long? scopeUserId = User.ScopeUserId(userId);
         return Ok(await _positions.BuildAsync(scopeUserId, DateTime.UtcNow, cancellationToken));
     }
 }
