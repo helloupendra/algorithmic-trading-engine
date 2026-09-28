@@ -31,6 +31,16 @@ namespace AlgoTrading.Api.Hubs;
 [Authorize]
 public class LiveFeedHub : Hub
 {
+    /// <summary>
+    /// The query parameter, and its value, a console built from 28 Sep on
+    /// connects with (<c>/hubs/livefeed?v=2</c>): it names its symbols with
+    /// <see cref="Subscribe"/>. A connection without it is an older console.
+    /// </summary>
+    public const string ProtocolQueryKey = "v";
+
+    /// <inheritdoc cref="ProtocolQueryKey"/>
+    public const string CurrentProtocol = "2";
+
     private readonly LiveFeedSubscriptions _subscriptions;
     private readonly IUserAdminService _users;
 
@@ -71,8 +81,28 @@ public class LiveFeedHub : Hub
             await Groups.AddToGroupAsync(Context.ConnectionId, DeskEventGroups.Admins);
         }
 
+        // TEMPORARY, added 28 Sep 2026 for one release; remove once no
+        // console built before 28 Sep can still be open.
+        //
+        // A console built before 28 Sep never calls Subscribe: the API used to
+        // send every tick to every browser, and it only listened. A tab left
+        // open across the deploy reconnects to this hub and would be sent
+        // nothing, silently, and it never reloads by itself (only a lazy
+        // screen's missing chunk does that). It gets the old whole feed if its
+        // account may have the whole feed at all, decided exactly as
+        // SubscribeAll decides it; otherwise nothing, and it keeps its polls.
+        if (!IsCurrentConsole())
+        {
+            var decision = await ModuleAccess.CheckAsync(Context.User, _users, PlatformModules.MarketData, Context.ConnectionAborted);
+            if (decision == ModuleAccessDecision.Allowed) _subscriptions.SetAll(Context.ConnectionId, true);
+        }
+
         await base.OnConnectedAsync();
     }
+
+    /// <summary>Whether the connection said it is a console that subscribes (<see cref="CurrentProtocol"/>).</summary>
+    private bool IsCurrentConsole()
+        => string.Equals(Context.GetHttpContext()?.Request.Query[ProtocolQueryKey].ToString(), CurrentProtocol, StringComparison.Ordinal);
 
     public override async Task OnDisconnectedAsync(Exception? exception)
     {

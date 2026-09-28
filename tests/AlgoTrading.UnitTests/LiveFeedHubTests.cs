@@ -376,6 +376,27 @@ public class LiveFeedHubTests
         Assert.Empty(groups.Joined);
     }
 
+    // ------------------------------------------------ a pre-28-Sep console --
+
+    [Theory]
+    [InlineData(AdminId, true)]
+    [InlineData(GrantedTrader, true)]
+    [InlineData(PlainTrader, false)]
+    public async Task A_console_without_v2_gets_the_whole_feed_if_its_account_may_have_it(long userId, bool everything)
+    {
+        await using var db = Users();
+        var subs = new LiveFeedSubscriptions();
+        var user = userId == AdminId ? Admin(userId) : Trader(userId);
+
+        var legacy = Hub(subs, "old", user, db, query: "");
+        await legacy.OnConnectedAsync();
+        var current = Hub(subs, "new", user, db);
+        await current.OnConnectedAsync();
+
+        Assert.Equal(everything, subs.IsAll("old"));
+        Assert.False(subs.IsAll("new"));
+    }
+
     // ------------------------------------------------------------- helpers --
 
     private const long AdminId = 1;
@@ -417,7 +438,7 @@ public class LiveFeedHubTests
     private static DateTime At(int h, int m, int s = 0) => new DateTime(2026, 9, 28, h, m, s, DateTimeKind.Utc).AddMinutes(-330);
 
     private static LiveFeedHub Hub(LiveFeedSubscriptions subs, string connectionId, ClaimsPrincipal user, TradingDbContext? db = null,
-        RecordingHubContext? groups = null)
+        RecordingHubContext? groups = null, string query = "?v=2")
     {
         var users = db is null
             ? RecapClockTests.Inert<IUserAdminService>.Create()
@@ -426,7 +447,7 @@ public class LiveFeedHubTests
 
         return new LiveFeedHub(subs, users)
         {
-            Context = new TestCallerContext(connectionId, user),
+            Context = new TestCallerContext(connectionId, user, query),
             Groups = (groups ?? new RecordingHubContext()).Groups
         };
     }
