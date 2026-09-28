@@ -23,7 +23,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from sentinel.agents.trading import RUNNING_PATH, _parse_runs, today_path
+from sentinel.agents.trading import PLAN_START, RUNNING_PATH, _parse_runs, today_path
 from sentinel.checkup.model import Item, State
 from sentinel.checkup.reads import DeskReads
 from sentinel.clock import IST, MCX_CLOSE, NSE_CLOSE, ist_date, to_ist
@@ -351,6 +351,65 @@ def feeds(inp: Inputs) -> list[Item]:
 
 # ---------------------------------------------------------------- strategies
 
+@dataclass(frozen=True)
+class MorningJob:
+    """Today's market-open.sh as the desk's marker records it (daily_job in scripts/lib/desk-common.sh)."""
+
+    started: Optional[datetime]
+    #: When it finished (its done= line) or was found interrupted (ended=, notified=); None while it runs.
+    ended: Optional[datetime] = None
+    #: Its exit status; None while it runs, or when a signal ended it.
+    exit: Optional[int] = None
+
+    def sentence(self) -> str:
+        if self.ended is None:
+            return f"The morning job has been running since {_hm(self.started)}." if self.started \
+                else "The morning job is still running."
+        if self.exit is None:
+            return f"The morning job was interrupted at {_hm(self.ended)}."
+        return f"The morning job finished at {_hm(self.ended)}" + (f" with exit {self.exit}." if self.exit else ".")
+
+
+_MARKER_AT = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?: exit=(\d+))?")
+
+
+def _desk_time(value: Optional[str]) -> tuple[Optional[datetime], Optional[int]]:
+    """A marker value, "2026-09-28 09:19:40 exit=0": the desk writes its own clock, which is IST (it opens at 08:45)."""
+    m = _MARKER_AT.match(value or "")
+    if not m:
+        return None, None
+    moment = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST).astimezone(timezone.utc)
+    return moment, int(m.group(2)) if m.group(2) else None
+
+
+def morning_job(inp: Inputs) -> Optional[MorningJob]:
+    """
+    Today's morning job from the marker desk.sh keeps for it, or None when
+    there is none to read (not started yet, run by hand, or not this machine).
+    The marker, not logs/desk.status: the desk runs the job in the foreground
+    by default, so desk.status is not rewritten until the job is over.
+    """
+    for folder in inp.ctx.desk_state_dirs():
+        try:
+            text = (folder / f"market-open-{inp.day}").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        fields: dict[str, str] = {}
+        for line in text.splitlines():
+            key, sep, value = line.partition("=")
+            if sep:
+                fields[key.strip()] = value.strip()   # the last one written wins, as job_field reads it
+        started, _ = _desk_time(fields.get("started"))
+        done, code = _desk_time(fields.get("done"))
+        if done is not None:
+            return MorningJob(started, done, code if code is not None else 0)
+        # A signal ended it (ended=), or it died without a word and the desk
+        # reported it (notified=): either way it deploys nothing more.
+        gone = _desk_time(fields.get("ended"))[0] or _desk_time(fields.get("notified"))[0]
+        return MorningJob(started, gone)
+    return None
+
+
 def plan(inp: Inputs) -> list[Item]:
     ist = inp.ist
     if inp.slot != "morning" and not (time(8, 50) <= ist.time() < time(15, 25) and inp.ctx.session().trading_day):
@@ -367,9 +426,25 @@ def plan(inp: Inputs) -> list[Item]:
     if not missing:
         return [Item("plan", STRATEGIES, "Morning plan", State.OK,
                      f"All {len(expected)} planned runs are live ({accounts}).", link=LIVE_RUNS)]
+    job = morning_job(inp)
+    # market-open.sh starts at 08:45 but deploys the plan only after the 09:15
+    # open, once the plan's spots are priced: on 28 Sep the 08:55 checkup sent
+    # "23 of 23 planned runs are not live" to Telegram as a failure, and the job
+    # had all 23 live by 09:19. Until the job has finished, and until the
+    # trading agent holds the plan to account (PLAN_START, 09:25), not yet live
+    # is what the morning looks like. A job that has finished deploys nothing
+    # more, so what it left out is missing whatever the time.
+    if (job is None or job.ended is None) and ist.time() < PLAN_START:
+        running = f" (running since {_hm(job.started)})" if job is not None and job.started is not None else ""
+        return [Item("plan", STRATEGIES, "Morning plan", State.INFO,
+                     f"{len(missing)} of {len(expected)} planned runs are not live yet: the morning job{running} "
+                     "deploys the plan after the 09:15 open, once the plan's spots are priced.",
+                     f"Nothing to do yet. From {PLAN_START.strftime('%H:%M')} Sentinel opens an incident for a "
+                     "planned run that is not live.", LIVE_RUNS)]
+    said = f" {job.sentence()}" if job is not None else ""
     return [Item("plan", STRATEGIES, "Morning plan", State.FAIL,
-                 f"{len(missing)} of {len(expected)} planned runs are not live: {_listed(missing)}.",
-                 f"Start them from Strategies → Live Runner. Why they did not start is in "
+                 f"{len(missing)} of {len(expected)} planned runs are not live: {_listed(missing)}.{said}",
+                 f"Start them from Trade → Runs. Why they did not start is in "
                  f"logs/market-open-{inp.day}.log.", LIVE_RUNS)]
 
 
@@ -381,7 +456,7 @@ def runs_after_close(inp: Inputs) -> list[Item]:
         names = [f"{r.user} {r.strategy} {r.underlying} (#{r.run_id})" for r in nse]
         return [Item("runs-after-close", STRATEGIES, "Runs after the close", State.FAIL,
                      f"{_n(len(nse), 'NSE/BSE run')} still running after the 15:30 close: {_listed(names)}.",
-                     "Stop them from Strategies → Live Runner. The close stop is MarketHoursService: look for it in "
+                     "Stop them from Trade → Runs. The close stop is MarketHoursService: look for it in "
                      "logs/api.log around 15:30.", LIVE_RUNS)]
     tail = ""
     if mcx:
@@ -398,7 +473,7 @@ def runs_overnight(inp: Inputs) -> list[Item]:
     names = [f"{r.user} {r.strategy} {r.underlying} (#{r.run_id})" for r in live]
     return [Item("runs-overnight", STRATEGIES, "Runs overnight", State.FAIL,
                  f"{_n(len(live), 'run')} still live after the day's last close: {_listed(names)}.",
-                 "Stop them from Strategies → Live Runner. market-close.sh stops everything at 23:58; its report "
+                 "Stop them from Trade → Runs. market-close.sh stops everything at 23:58; its report "
                  "is logs/market-close-<date>.log.", LIVE_RUNS)]
 
 
@@ -465,7 +540,7 @@ def strategy_legs_after_close(inp: Inputs) -> list[Item]:
     names = [f"#{r['run']} {r['strategy']} ({r['run_status']}) {_leg(r)}" for r in rows]
     return [Item("legs-after-close", POSITIONS, "Strategy legs after the close", State.FAIL,
                  f"{_n(len(rows), 'NSE/BSE leg')} still open in strategy runs: {_listed(names)}.",
-                 "Close them from the run's card on Strategies → Live Runner. A square-off that failed at the close "
+                 "Close them from the run's card on Trade → Runs. A square-off that failed at the close "
                  "is in logs/api.log around 15:30.", LIVE_RUNS)]
 
 
