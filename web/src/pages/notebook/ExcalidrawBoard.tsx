@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { useTheme } from '../../lib/theme'
 import {
   CaptureUpdateAction,
   convertToExcalidrawElements,
@@ -242,7 +243,7 @@ function viewportCentre(appState: AppState): { x: number; y: number } {
 
 // Loading a file, saving one and the cloud export all talk to a file system or
 // to excalidraw.com; the board IS the file here, and nothing leaves this
-// origin. Theme is the console's, not the user's to toggle.
+// origin. The theme is the console's (the account menu), not a second toggle here.
 const UI_OPTIONS: UIOptions = {
   canvasActions: { loadScene: false, saveToActiveFile: false, export: false, toggleTheme: false },
 }
@@ -264,6 +265,8 @@ export default function ExcalidrawBoard({
   onOpenLink: (path: string) => void
 }) {
   const [initialData] = useState(() => parseScene(sceneJson))
+  // The canvas follows the console's theme; Excalidraw's own toggle stays off.
+  const { theme } = useTheme()
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null)
   // What onChange last delivered. Saving reads this, not the imperative API:
   // the page's unmount flush runs while Excalidraw may already have torn its
@@ -364,7 +367,7 @@ export default function ExcalidrawBoard({
   return (
     <div className="wb-canvas" ref={wrapRef}>
       <Excalidraw
-        theme="dark"
+        theme={theme}
         name={name}
         initialData={initialData}
         UIOptions={UI_OPTIONS}

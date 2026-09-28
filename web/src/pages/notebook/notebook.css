@@ -96,7 +96,7 @@
   right: 0;
   z-index: 30;
   width: min(440px, calc(100vw - 20px));
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-2);
 }
 
 .wb__back {
@@ -203,14 +203,20 @@
   font-size: 13px;
 }
 
-/* Excalidraw ships its own dark palette; only its accent is retuned to the
-   console's brand so the selected tool and focus rings match the chrome
-   around the canvas. */
+/* Excalidraw ships its own palettes and follows the console's theme; only
+   its accent is retuned to the console's brand so the selected tool and
+   focus rings match the chrome around the canvas. */
 .wb-canvas .excalidraw.theme--dark {
   --color-primary: var(--brand);
   --color-primary-darker: #3f6be6;
   --color-primary-darkest: #3059cc;
   --color-primary-light: #1a2a4d;
+}
+.wb-canvas .excalidraw:not(.theme--dark) {
+  --color-primary: var(--brand);
+  --color-primary-darker: var(--brand-hi);
+  --color-primary-darkest: #2647b0;
+  --color-primary-light: #e3eafc;
 }
 
 @media (max-width: 760px) {
