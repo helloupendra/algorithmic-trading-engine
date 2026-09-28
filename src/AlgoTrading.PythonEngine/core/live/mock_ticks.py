@@ -2,9 +2,14 @@
 Fabricated ticks for symbols no feed carries. Off unless asked for.
 
 Lifted out of the FYERS streamer unchanged, gate and all. Invented prices go to
-the same tables as real ones, and the only thing marking them is their
-rawPayload, so the gate is what stands between a quiet chart and a fabricated
-one — and it applies to every feed, not only the one it was written for.
+the same tables as real ones, so the gate is what stands between a quiet chart
+and a fabricated one — and it applies to every feed, not only the one it was
+written for.
+
+Each row also says what it is, twice: rawPayload {"mock": true}, and the source
+key "mock". The source key used to be left out, and the API fills a missing one
+with the connector that claims a live feed when only one does — a fabricated
+price filed under a real vendor's name.
 """
 
 import hashlib
@@ -13,6 +18,9 @@ import time
 from datetime import datetime, timezone
 
 from core.config import ENABLE_MOCK_TICKS
+
+#: The source key every fabricated tick carries. No connector is called this.
+MOCK_SOURCE_KEY = "mock"
 
 
 def should_mock_symbol(symbol: str, enabled: bool | None = None) -> bool:
@@ -82,6 +90,7 @@ class MockTickSource:
                         "volume": random.randint(100, 5000),
                         # Says so in the row itself.
                         "rawPayload": '{"mock": true}',
+                        "sourceKey": MOCK_SOURCE_KEY,
                     })
             except Exception as ex:
                 print("MOCK TICK ERROR:", ex, flush=True)

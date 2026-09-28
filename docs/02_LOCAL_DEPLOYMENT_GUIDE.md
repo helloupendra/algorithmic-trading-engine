@@ -166,17 +166,21 @@ python src/AlgoTrading.PythonEngine/market_data/historical/db_replayer.py \
 
 ### 5. Tick persistence
 
-Ticks published to Redis are only written to TimescaleDB while the market-data
-worker is running:
+The feed posts every tick to the API (`POST /api/LiveData/ticks/upsert-batch`),
+which stores it in `live_ticks`, `live_bars` and `live_quotes_latest`; nothing
+else needs to run. The same ticks go to the Redis stream `market:ticks` for the
+strategies.
 
 ```bash
-# Optional: the API already hosts the batched tick writer.
-# Run this only to move that drain out of process.
+# Optional, and not run on the desk: a second copy of every tick in market_ticks.
 dotnet run --project src/AlgoTrading.Worker.MarketData
 ```
 
-It reads the `market:ticks` stream through a consumer group and writes in
-batches.
+The worker reads `market:ticks` through a consumer group, retries what it could
+not store and dead-letters what never stores to `market:ticks:dead`. It leaves
+`live_quotes_latest` to the API unless `Redis:ProjectLatestQuotes` is set (for a
+`db_replayer.py` replay, which never reaches the API). See
+[the data module](modules/data_module.md#7-when-a-tick-does-not-arrive).
 
 ---
 

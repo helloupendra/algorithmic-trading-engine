@@ -10,6 +10,7 @@ from core.api_client import build_session
 from core.config import API_BASE_URL, VERIFY_SSL, require_app_id, FYERS_LOG_PATH
 from core.data_models import BarData, OptionChainSnapshot, OptionContractLive, TickData, OptionGreeks
 from core.greeks_calculator import calculate_greeks
+from core.option_symbol import parse_option_symbol, years_to_expiry
 
 class DataEngine:
     """
@@ -162,19 +163,27 @@ class DataEngine:
                             volume=v.get("volume", 0)
                         )
                         
+                        # The contract's own expiry, not a flat seven days: the
+                        # same price implies 20% vol over seven days and 110% on
+                        # expiry morning. The regex above also reads a weekly
+                        # symbol's date as part of its strike.
+                        contract = parse_option_symbol(sym)
+                        expiry = contract.expiry if contract else None
+                        if contract:
+                            strike, opt_type = contract.strike, contract.kind
                         greeks = calculate_greeks(
                             spot=spot_price,
                             strike=strike,
-                            tte_years=7.0/365.0, # Mock 7 days to expiry
+                            tte_years=years_to_expiry(expiry),
                             option_type=opt_type,
                             option_price=ltp
-                        )
-                        
+                        ) if expiry else None
+
                         contracts[sym] = OptionContractLive(
                             symbol=sym,
                             strike=strike,
                             option_type=opt_type,
-                            expiry=datetime.now(timezone.utc).date(),
+                            expiry=expiry or datetime.now(timezone.utc).date(),
                             underlying_price=spot_price,
                             tick=tick,
                             greeks=greeks

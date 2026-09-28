@@ -230,7 +230,7 @@ the machine.
                                ▼
    ┌───────────────┐  ┌──────────────────────┐   ┌──────────────────┐
    │ AlgoTrading   │  │ Worker.MarketData    │──►│ TimescaleDB      │
-   │ .Api  :5025   │◄─┤ batch tick writer    │   │ (PostgreSQL 15)  │
+   │ .Api  :5025   │◄─┤ optional archive     │   │ (PostgreSQL 15)  │
    │ REST + Swagger│  └──────────────────────┘   └──────────────────┘
    └───────┬───────┘                                      ▲
            │ REST                                         │
@@ -251,7 +251,7 @@ the machine.
 | Component | Stack | Responsibility |
 |---|---|---|
 | `AlgoTrading.Api` | .NET 10 | REST API, auth and access control, instruments, expiry resolution, simulation, risk, and the connector registry that decides which vendor serves which job; serves the built web console from `wwwroot` |
-| `AlgoTrading.Worker.MarketData` | .NET 10 | Drains the Redis tick stream into TimescaleDB in batches |
+| `AlgoTrading.Worker.MarketData` | .NET 10 | Optional: drains the Redis tick stream into the `market_ticks` archive, with retries and a dead-letter stream (the API stores live ticks itself) |
 | `AlgoTrading.Worker.Strategy` | .NET 10 | Strategy host (placeholder — live strategies run in the Python engine) |
 | `AlgoTrading.PythonEngine` | Python 3.10+ | Live ingestion (Dhan, with FYERS as the fallback), option-chain tracking, strategy execution, and Sentinel, the rules-based watchman |
 | `web/` | React 19 + Vite + TypeScript | Web console: the admin modules plus the trader screens |
@@ -428,10 +428,11 @@ Each of these wants its own terminal.
 | 3 | Web console (dev) | `cd web && npm run dev` → <http://localhost:5173> |
 | 4 | Python engine (optional CLI) | `python src/AlgoTrading.PythonEngine/algo.py` |
 
-`AlgoTrading.Worker.MarketData` is **not** a step: the API hosts the batched tick
-writer itself (`MarketTickBatchWriterService`), which is why `scripts/go-live.sh`
-starts only the API. The worker project remains as a way to run that drain out of
-process if the API ever needs relieving of it.
+`AlgoTrading.Worker.MarketData` is **not** a step: the feeds post every tick to
+the API and the API stores it, which is why `scripts/go-live.sh` starts only the API.
+The worker only keeps a second copy in `market_ticks`, which the API stopped
+writing on 15 Sep (see `docs/modules/data_module.md`, "When a tick does not
+arrive").
 
 Day-to-day operation is designed to happen **from the web console**: sign in as
 admin, connect FYERS under *Broker*, then use the **Data module** —
@@ -808,9 +809,11 @@ Work down the chain:
    diagnostics*, or `GET /api/Ingestor/logs`.
 5. Confirm ticks are reaching Redis:
    `docker exec -it algotrading_redis redis-cli XLEN market:ticks`
-6. Confirm the archive is filling: `SELECT count(*) FROM market_ticks;`. The API
-   writes it in batches from a hosted service — a separate worker process is not
-   required, and `go-live.sh` does not start one.
+6. Confirm ticks are being stored:
+   `SELECT count(*) FROM live_ticks WHERE "ReceivedUtc" > now() - interval '5 minutes';`.
+   The API writes them as the feed posts them — no worker process is needed. A
+   feed whose batches the API refused says so in its heartbeat error and in
+   `algotrading_feed_ticks_not_stored` on `/metrics`.
 </details>
 
 <details>
