@@ -407,7 +407,8 @@ function applyTickToLeg(leg: OptionChainLeg, tick: PushedTick, snapshotAgeMs: nu
   return next
 }
 
-function applyTickToQuote<T extends OptionChainQuote>(quote: T | null, tick: PushedTick | undefined, nowIso: string): T | null {
+/** A header quote (spot, future, VIX) at a pushed price, its change against the previous close; the Desk's VIX row reads it too. */
+export function applyTickToQuote<T extends OptionChainQuote>(quote: T | null, tick: PushedTick | undefined, nowIso: string): T | null {
   const ltp = tick?.lastTradedPrice
   if (!quote || ltp == null || ltp <= 0) return quote
   const prev = quote.previousClose

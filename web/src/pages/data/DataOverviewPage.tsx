@@ -4,9 +4,13 @@
  * Only what the topbar does NOT already say (market session and broker live
  * there): the state of the pipeline, what data exists, what changed last,
  * and — only when something is actually wrong — what needs attention.
+ *
+ * Its quote ages read the whole feed, so it holds the hub's everything-feed
+ * while open (lib/live.ts, useLiveAll).
  */
 
 import { Link } from 'react-router-dom'
+import { useLiveAll } from '../../lib/live'
 import {
   useBrokerSession,
   useDataCoverage,
@@ -282,6 +286,7 @@ function LivePipelinePanel() {
 }
 
 export function DataOverviewPage() {
+  useLiveAll()
   const coverage = useDataCoverage()
   const watchlist = useWatchlist()
   const quotes = useLatestQuotes()

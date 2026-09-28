@@ -15,6 +15,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
+import { useLiveFeed } from '../lib/live'
 import { ACCOUNT_PAGE, accessFor, locate, navFor } from '../lib/modules'
 import type { NavPage, NavWorkspace } from '../lib/modules'
 import { isPaletteShortcut } from '../lib/palette'
@@ -79,6 +80,9 @@ function TabStrip({ workspace, current }: { workspace: NavWorkspace; current: Na
 
 export function AppLayout() {
   const { user, isAdmin, logout } = useAuth()
+  // The live connection lives as long as the signed-in console: it opens on
+  // sign-in without a reload and closes on sign-out.
+  useLiveFeed()
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const access = useMemo(() => accessFor(user), [user])
