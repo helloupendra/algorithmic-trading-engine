@@ -11,6 +11,12 @@
  * Carry" is done on this page. The run itself (stop, risk rules) is on its
  * own page, one click away.
  *
+ * The marks are pushed: each leg's price, its age and its open P&L move with
+ * the feed (lib/liveMarks.ts, at the server's own arithmetic), and the list
+ * is read again once a minute, or at once when a fill, a carry or a risk
+ * trip arrives as a desk event. Without the socket it is read every 5 s in a
+ * session, as before.
+ *
  * It replaces the v1 Positions page, which showed one Simulator run picked
  * from a list and none of the day's live runs.
  */
@@ -26,15 +32,20 @@ import { formatInrSigned, formatPrice } from '../../lib/format'
 import { ageText, groupPositions, markState, positionAccounts, totalSums } from '../../lib/openPositions'
 import type { PositionAccount, PositionRun } from '../../lib/openPositions'
 import { useClosePositions, useMarketSession, useOpenPositions, useSetCarryForward } from '../../lib/queries'
+import { livePoll, useLiveConnection, useLivePrices } from '../../lib/live'
+import { withLiveMarks } from '../../lib/liveMarks'
 import type { OpenPosition } from '../../lib/types'
 import { InlineError } from '../../components/ui'
 import { Chip, Money, Swatch, Waiting } from '../desk/parts'
+import { useNow } from '../desk/data'
 import '../desk/desk.css'
 import './trade.css'
 
-/** Legs are closed and ticked from here: in a session the marks are read every 5 s. */
+/** Legs are closed and ticked from here: without the socket, in a session, the marks are read every 5 s. */
 const POLL_OPEN_MS = 5_000
 const POLL_CLOSED_MS = 60_000
+/** With it the marks are pushed and a fill arrives as an event: the list is re-read as a safety net. */
+const POLL_PUSHED_MS = 60_000
 
 function Mark({ p }: { p: OpenPosition }) {
   const state = markState(p)
@@ -242,9 +253,18 @@ export function PositionsPage() {
   const nse = useMarketSession()
   const mcx = useMarketSession('MCX', 'COM')
   const marketOpen = nse.data?.isMarketOpen === true || mcx.data?.isMarketOpen === true
-  const open = useOpenPositions(marketOpen ? POLL_OPEN_MS : POLL_CLOSED_MS)
+  const connection = useLiveConnection()
+  const open = useOpenPositions(livePoll(connection, POLL_PUSHED_MS, marketOpen ? POLL_OPEN_MS : POLL_CLOSED_MS))
   const [scope, setScope] = useState<Scope>('all')
-  const positions = open.data?.positions
+  const answer = open.data?.positions
+  const answeredAt = open.dataUpdatedAt
+  const prices = useLivePrices(useMemo(() => (answer ?? []).map((p) => p.symbol), [answer]))
+  // Ages are counted to now, so a leg nothing is pushed for still turns stale at 30 s between answers.
+  const nowMs = useNow(1_000)
+  const positions = useMemo(
+    () => (answer ? withLiveMarks(answer, prices, { nowMs, answeredAtMs: answeredAt }) : undefined),
+    [answer, prices, nowMs, answeredAt],
+  )
   const accounts = useMemo(() => positionAccounts(positions ?? []), [positions])
   const shown: Scope = scope !== 'all' && accounts.some((a) => a.id === scope) ? scope : 'all'
   const groups = useMemo(() => groupPositions(positions ?? [], shown === 'all' ? null : shown), [positions, shown])
@@ -291,7 +311,8 @@ export function PositionsPage() {
         <span className="tr-grow" />
         {open.data && (
           <span className="dk-t3 dk-xs">
-            marks as of {new Date(open.data.asOfUtc).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })} IST
+            {connection === 'connected' ? 'marks live · legs as of ' : 'marks as of '}
+            {new Date(open.data.asOfUtc).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })} IST
           </span>
         )}
       </div>

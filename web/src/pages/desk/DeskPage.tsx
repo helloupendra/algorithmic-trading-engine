@@ -34,6 +34,7 @@ import {
   writePin,
 } from '../../lib/desk'
 import { deskLegsPoll, useMarketSession, useOpenPositions } from '../../lib/queries'
+import { useLiveConnection } from '../../lib/live'
 import { IconPin } from '../../components/icons'
 import { useStripSlot } from '../../components/shell/stripSlot'
 import type { DeskLinks, DeskView } from './data'
@@ -169,7 +170,7 @@ export function DeskPage() {
   const runs = useMemo(() => (trading ? scopeRuns(trading, scope) : undefined), [trading, scope])
 
   // Which runs carried a leg into a manual book, in any account: a carried leg names its run.
-  const open = useOpenPositions(deskLegsPoll(clock === 'live'), strategies)
+  const open = useOpenPositions(deskLegsPoll(clock === 'live', useLiveConnection()), strategies)
   const grid = useMemo(
     () => (runs ? buildGrid(runs, accounts, carriedRunIds(open.data?.positions)) : null),
     [runs, accounts, open.data],

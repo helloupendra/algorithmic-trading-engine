@@ -18,6 +18,8 @@ import {
   useMarketSession,
   useOpenPositions,
 } from '../../lib/queries'
+import { useLiveConnection, useLivePrices } from '../../lib/live'
+import { withLegMarks, withLiveMarks } from '../../lib/liveMarks'
 import type { LiveRunSummary, MarketSessionInfo } from '../../lib/types'
 
 /** Everything a panel needs to know about the Desk it sits on. */
@@ -139,17 +141,24 @@ export type DeskLinks = ReturnType<typeof useDeskLinks>
 /**
  * Every open leg in scope, across runs and manual books, largest first (GET
  * /api/Positions/open, one request for every underlying); null until it has
- * answered, so a count is never a guess.
+ * answered, so a count is never a guess. Each leg's LTP and P&L move with its
+ * pushed price; the order is the answer's, so rows do not swap on every tick.
  */
 export function useDeskLegs(view: DeskView): { legs: DeskLeg[] | null; error: unknown } {
-  const open = useOpenPositions(deskLegsPoll(view.clock === 'live'), allows(view.access, 'strategies'))
+  const open = useOpenPositions(deskLegsPoll(view.clock === 'live', useLiveConnection()), allows(view.access, 'strategies'))
   const positions = open.data?.positions
-  const legs = useMemo(
+  const answeredAt = open.dataUpdatedAt
+  const prices = useLivePrices(useMemo(() => (positions ?? []).map((p) => p.symbol), [positions]))
+  const ordered = useMemo(
     () =>
       positions
         ? deskLegs(positions, { today: view.today, nextSession: view.nextSession, userId: view.scope === 'all' ? null : view.scope })
         : null,
     [positions, view.today, view.nextSession, view.scope],
+  )
+  const legs = useMemo(
+    () => (ordered && positions ? withLegMarks(ordered, withLiveMarks(positions, prices, { nowMs: Date.now(), answeredAtMs: answeredAt })) : ordered),
+    [ordered, positions, prices, answeredAt],
   )
   return { legs, error: open.isError ? open.error : null }
 }

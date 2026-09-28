@@ -7,10 +7,15 @@
  * (the old page showed the same symbols twice — once as a bare watchlist,
  * once as quotes). Index tickers sit on top and start moving the moment the
  * feed runs. Diagnostics (heartbeats, process logs) fold away at the bottom.
+ *
+ * The page lists the whole feed, so it holds the hub's everything-feed while
+ * open: every price is pushed into the latest quotes as it lands, the way
+ * this page has always moved (lib/live.ts, useLiveAll).
  */
 
 import { useMemo, useState } from 'react'
 import { FeedsPanel } from './FeedsPanel'
+import { useLiveAll } from '../../lib/live'
 import {
   useAddEquityGroupToWatchlist,
   useAddWatchlistSymbol,
@@ -772,6 +777,7 @@ function InspectorPanel() {
 /* --------------------------------------------------------------------- page */
 
 export function LiveFeedsPage() {
+  useLiveAll()
   return (
     <div className="page">
       <header className="page__header">
