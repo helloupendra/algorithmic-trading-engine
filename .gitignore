@@ -163,3 +163,10 @@ data/session-watchlist-state.json
 # What this machine did with the last pushes (scripts/auto-deploy.ps1).
 # One box's operational record; pushing it would mix machines' histories.
 data/deploy-history.json
+
+# The pager's own files, if it is ever run from the checkout (on the server it
+# runs from ~/openfno-pager). pager.env names the phone the call goes to.
+scripts/pager/pager.env
+scripts/pager/state.json
+scripts/pager/state.tmp
+scripts/pager/pager.log
