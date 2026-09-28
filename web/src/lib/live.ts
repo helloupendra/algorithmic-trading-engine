@@ -44,6 +44,7 @@ import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'r
 import { useQueryClient } from '@tanstack/react-query'
 import type { QueryClient, QueryKey } from '@tanstack/react-query'
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr'
+import type { ILogger } from '@microsoft/signalr'
 import { API_BASE_URL, tokenStore } from './api'
 import { foldTicks } from './liveMarks'
 import type { LiveQuote } from './types'
@@ -814,13 +815,35 @@ export function hubUrl(apiBase: string): string {
   return `${apiBase}/hubs/livefeed?v=2`
 }
 
+/** What SignalR logs when a connection is stopped before its start finished. */
+const STOPPED_WHILE_STARTING = /stopped during negotiation|before stop\(\) was called/i
+
+/**
+ * SignalR's console logging from Warning up, without the "errors" a
+ * deliberate stop makes. Stopping a connection that is still negotiating
+ * (signing out, a nudge, and in development React StrictMode running the
+ * shell's effect twice, on every sign-in) is logged as a failed start, but
+ * nothing failed: the stop was asked for.
+ */
+export function hubLogger(sink: Pick<Console, 'error' | 'warn'> = console): ILogger {
+  return {
+    log(level: LogLevel, message: string) {
+      if (level < LogLevel.Warning || level === LogLevel.None) return
+      if (STOPPED_WHILE_STARTING.test(message)) return
+      const line = `[${new Date().toISOString()}] ${LogLevel[level]}: ${message}`
+      if (level >= LogLevel.Error) sink.error(line)
+      else sink.warn(line)
+    },
+  }
+}
+
 function connectHub(): HubLike {
   return new HubConnectionBuilder()
     // The hub is authorized: it carries market data the platform pays a
     // vendor for. The factory is read on every (re)connect, so a token the
     // API layer refreshed in the meantime is the one sent.
     .withUrl(hubUrl(API_BASE_URL), { accessTokenFactory: () => tokenStore.access ?? '' })
-    .configureLogging(LogLevel.Warning)
+    .configureLogging(hubLogger())
     .withAutomaticReconnect({ nextRetryDelayInMilliseconds: (ctx) => retryDelay(ctx.previousRetryCount) })
     .build()
 }
