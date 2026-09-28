@@ -14,11 +14,14 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   useKillSwitch,
   useLiveRunHistory,
+  useLiveRuns,
   useRiskExposure,
   useRiskLimits,
+  useRunLegs,
   useStrategies,
   useStrategyLivesRepriced,
 } from '../../lib/queries'
+import { answerAsOf } from '../../lib/asOf'
 import { formatDateTime, formatDuration, formatNumber } from '../../lib/format'
 import { runDurationSeconds, runNetPnl } from '../../lib/runHistory'
 import { Panel, QueryBoundary, StatTile } from '../../components/ui'
@@ -39,22 +42,25 @@ const HISTORY = '/trade/history'
 const POSITIONS = '/trade/positions'
 const runLink = (runId: number) => `/trade/runs/${runId}`
 
-export function TraderLibraryPage() {
-  const strategies = useStrategies()
-  const list = useMemo(() => strategies.data ?? [], [strategies.data])
-  const runningStrategies = useMemo(() => list.filter((s) => s.activeRuns.length > 0), [list])
-  const rows = useMemo<RunRow[]>(
-    () => list.flatMap((s) => s.activeRuns.map((run) => ({ strategy: s, run }))),
-    [list],
-  )
-  const runIds = useMemo(() => rows.map((r) => r.run.runId), [rows])
+/**
+ * The running runs' live views by run, each re-priced at the pushed prices of
+ * its legs as its run card is: with the socket up a view is read every 15 s,
+ * and the prices move between. The tiles and the table read it through the
+ * same cache and the same pushes, so the tile is the sum of the rows.
+ */
+function useRunningViews(rows: readonly RunRow[]): Map<number, StrategyLiveView> {
+  const views = useStrategyLivesRepriced(useMemo(() => rows.map((r) => r.run.runId), [rows]))
+  const byRun = new Map<number, StrategyLiveView>()
+  for (const v of views) if (v?.runId != null) byRun.set(v.runId, v)
+  return byRun
+}
 
-  // Re-priced at the pushed prices of each run's legs, as its run card is:
-  // with the socket up a view is read every 15 s, and the prices move between.
-  const views = useStrategyLivesRepriced(runIds)
-  const viewByRun = new Map<number, StrategyLiveView>()
-  for (const v of views) if (v?.runId != null) viewByRun.set(v.runId, v)
-
+/**
+ * The tiles. Their own component: they move with every push, and the page
+ * around them (the strategy cards to deploy) has nothing a price changes.
+ */
+function Tiles({ rows, runningStrategies, packaged }: { rows: readonly RunRow[]; runningStrategies: StrategyListItem[]; packaged: number }) {
+  const viewByRun = useRunningViews(rows)
   const openPositions = rows.reduce(
     (n, r) => n + (viewByRun.get(r.run.runId)?.positions.filter((p) => p.status === 'Open').length ?? 0),
     0,
@@ -64,14 +70,165 @@ export function TraderLibraryPage() {
     return n + (view ? liveNet(view.pnl) : 0)
   }, 0)
 
-  // Run history: today's runs for the tile, the newest six for the list.
+  // Today's runs, stopped ones included, the live ones' open books at the pushed prices of their legs.
   const today = todayIst()
   const todayFilters = useMemo(() => ({ fromDate: today, toDate: today, take: 500 }), [today])
   const todayRuns = useLiveRunHistory(todayFilters)
+  const todayList = useLiveRuns(todayRuns.data, answerAsOf(todayRuns), useRunLegs(todayRuns.data)) ?? []
+  const todayPnl = todayList.reduce((n, r) => n + runNetPnl(r), 0)
+
+  return (
+    <div className="stat-grid">
+      <StatTile
+        label={rows.length === 1 ? 'Running run' : 'Running runs'}
+        value={rows.length}
+        tone={rows.length > 0 ? 'pos' : undefined}
+        sub={
+          runningStrategies.length > 0
+            ? runningStrategies.map((s, i) => (
+                <span key={s.id}>
+                  {i > 0 && <br />}
+                  {runningSummary(s)}
+                </span>
+              ))
+            : 'nothing running'
+        }
+        to={POSITIONS}
+      />
+      <StatTile label="Open positions" value={openPositions} sub="across running runs" to={POSITIONS} />
+      <StatTile
+        label="Live P&L"
+        value={<PnlValue value={livePnl} />}
+        tone={livePnl > 0 ? 'pos' : livePnl < 0 ? 'neg' : undefined}
+        sub="net of charges · open and closed"
+        to={POSITIONS}
+      />
+      <StatTile
+        label="Runs today"
+        value={todayRuns.data ? formatNumber(todayList.length) : '—'}
+        tone={todayPnl > 0 ? 'pos' : todayPnl < 0 ? 'neg' : undefined}
+        sub={
+          todayRuns.data
+            ? todayList.length > 0
+              ? <>net <PnlValue value={todayPnl} /> · your runs · incl. stopped</>
+              : 'none started yet — all in Run history'
+            : todayRuns.isError
+              ? 'history unavailable'
+              : 'loading…'
+        }
+        to={HISTORY}
+      />
+      <StatTile label="In my package" value={packaged} sub="strategies you may deploy" />
+    </div>
+  )
+}
+
+/** What is running now, a row per run, each at its live view: its own component for the same reason as the tiles. */
+function RunningTable({ rows }: { rows: readonly RunRow[] }) {
+  const viewByRun = useRunningViews(rows)
+  return (
+    <div className="tablewrap">
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Strategy</th>
+            <th>Underlying</th>
+            <th className="r">Open</th>
+            <th className="r">Net P&L</th>
+            <th>Started</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ strategy: s, run }) => {
+            const v = viewByRun.get(run.runId)
+            return (
+              <tr key={run.runId}>
+                <td>
+                  <b>{s.name}</b> <CategoryBadge category={s.category} />
+                  <span className="faint"> · #{run.runId}</span>
+                </td>
+                <td className="mono">{v?.underlying ?? run.underlying}</td>
+                <td className="r">{v ? v.positions.filter((p) => p.status === 'Open').length : '—'}</td>
+                {/* Net of charges, as the Live P&L tile above sums it: the rows add up to the tile. */}
+                <td className="r">{v ? <PnlValue value={liveNet(v.pnl)} /> : '—'}</td>
+                <td className="muted">
+                  {run.startedBy ? `${run.startedBy} · ` : ''}
+                  {formatDateTime(run.startedUtc)}
+                </td>
+                <td className="r">
+                  <Link to={runLink(run.runId)}>Positions →</Link>
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+/** The newest runs, a live one's net moving with the pushed prices of its legs. */
+function RecentRuns() {
   const recentFilters = useMemo(() => ({ take: RECENT_RUNS }), [])
   const recent = useLiveRunHistory(recentFilters)
-  const todayList = todayRuns.data ?? []
-  const todayPnl = todayList.reduce((n, r) => n + runNetPnl(r), 0)
+  const runs = useLiveRuns(recent.data, answerAsOf(recent), useRunLegs(recent.data))
+  return (
+    <QueryBoundary query={recent} empty="No runs yet — deploy a strategy below and it will appear here.">
+      {() => (
+        <div className="tablewrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Run #</th>
+                <th>Strategy</th>
+                <th>Underlying</th>
+                <th>Started</th>
+                <th className="r">Duration</th>
+                <th className="r">Trades</th>
+                <th className="r">Net P&L</th>
+                <th>Status</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {(runs ?? []).slice(0, RECENT_RUNS).map((run) => (
+                <tr key={run.runId} className={run.isActive ? 'row--live' : ''}>
+                  <td className="mono muted">#{run.runId}</td>
+                  <td>
+                    <b>{run.strategyName}</b> <CategoryBadge category={run.category} />
+                  </td>
+                  <td className="mono">{run.underlying}</td>
+                  <td className="muted">{formatDateTime(run.startedUtc)}</td>
+                  <td className="r mono muted">{formatDuration(runDurationSeconds(run))}</td>
+                  <td className="r">{formatNumber(run.trades)}</td>
+                  <td className="r">
+                    <PnlValue value={runNetPnl(run)} />
+                  </td>
+                  <td>
+                    <RunStatusCell run={run} />
+                  </td>
+                  <td className="r">
+                    <Link to={runLink(run.runId)}>Detail →</Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </QueryBoundary>
+  )
+}
+
+export function TraderLibraryPage() {
+  const strategies = useStrategies()
+  const list = useMemo(() => strategies.data ?? [], [strategies.data])
+  const runningStrategies = useMemo(() => list.filter((s) => s.activeRuns.length > 0), [list])
+  const rows = useMemo<RunRow[]>(
+    () => list.flatMap((s) => s.activeRuns.map((run) => ({ strategy: s, run }))),
+    [list],
+  )
 
   // Only what concerns a trader: a halt they must respect and a ceiling they
   // have hit. The broker link and the feed are the operator's job — a trader is
@@ -129,48 +286,7 @@ export function TraderLibraryPage() {
         </div>
       )}
 
-      <div className="stat-grid">
-        <StatTile
-          label={rows.length === 1 ? 'Running run' : 'Running runs'}
-          value={rows.length}
-          tone={rows.length > 0 ? 'pos' : undefined}
-          sub={
-            runningStrategies.length > 0
-              ? runningStrategies.map((s, i) => (
-                  <span key={s.id}>
-                    {i > 0 && <br />}
-                    {runningSummary(s)}
-                  </span>
-                ))
-              : 'nothing running'
-          }
-          to={POSITIONS}
-        />
-        <StatTile label="Open positions" value={openPositions} sub="across running runs" to={POSITIONS} />
-        <StatTile
-          label="Live P&L"
-          value={<PnlValue value={livePnl} />}
-          tone={livePnl > 0 ? 'pos' : livePnl < 0 ? 'neg' : undefined}
-          sub="net of charges · open and closed"
-          to={POSITIONS}
-        />
-        <StatTile
-          label="Runs today"
-          value={todayRuns.data ? formatNumber(todayList.length) : '—'}
-          tone={todayPnl > 0 ? 'pos' : todayPnl < 0 ? 'neg' : undefined}
-          sub={
-            todayRuns.data
-              ? todayList.length > 0
-                ? <>net <PnlValue value={todayPnl} /> · your runs · incl. stopped</>
-                : 'none started yet — all in Run history'
-              : todayRuns.isError
-                ? 'history unavailable'
-                : 'loading…'
-          }
-          to={HISTORY}
-        />
-        <StatTile label="In my package" value={list.length} sub="strategies you may deploy" />
-      </div>
+      <Tiles rows={rows} runningStrategies={runningStrategies} packaged={list.length} />
 
       <Panel
         title={
@@ -189,43 +305,7 @@ export function TraderLibraryPage() {
             rows.length === 0 ? (
               <p className="empty">Nothing of yours is running. Pick a strategy below and press Deploy.</p>
             ) : (
-              <div className="tablewrap">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Strategy</th>
-                      <th>Underlying</th>
-                      <th className="r">Open</th>
-                      <th className="r">P&L</th>
-                      <th>Started</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map(({ strategy: s, run }) => {
-                      const v = viewByRun.get(run.runId)
-                      return (
-                        <tr key={run.runId}>
-                          <td>
-                            <b>{s.name}</b> <CategoryBadge category={s.category} />
-                            <span className="faint"> · #{run.runId}</span>
-                          </td>
-                          <td className="mono">{v?.underlying ?? run.underlying}</td>
-                          <td className="r">{v ? v.positions.filter((p) => p.status === 'Open').length : '—'}</td>
-                          <td className="r">{v ? <PnlValue value={v.pnl.total} /> : '—'}</td>
-                          <td className="muted">
-                            {run.startedBy ? `${run.startedBy} · ` : ''}
-                            {formatDateTime(run.startedUtc)}
-                          </td>
-                          <td className="r">
-                            <Link to={runLink(run.runId)}>Positions →</Link>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              <RunningTable rows={rows} />
             )
           }
         </QueryBoundary>
@@ -243,50 +323,7 @@ export function TraderLibraryPage() {
           </Link>
         }
       >
-        <QueryBoundary query={recent} empty="No runs yet — deploy a strategy below and it will appear here.">
-          {(runs) => (
-            <div className="tablewrap">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Run #</th>
-                    <th>Strategy</th>
-                    <th>Underlying</th>
-                    <th>Started</th>
-                    <th className="r">Duration</th>
-                    <th className="r">Trades</th>
-                    <th className="r">Net P&L</th>
-                    <th>Status</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {runs.slice(0, RECENT_RUNS).map((run) => (
-                    <tr key={run.runId} className={run.isActive ? 'row--live' : ''}>
-                      <td className="mono muted">#{run.runId}</td>
-                      <td>
-                        <b>{run.strategyName}</b> <CategoryBadge category={run.category} />
-                      </td>
-                      <td className="mono">{run.underlying}</td>
-                      <td className="muted">{formatDateTime(run.startedUtc)}</td>
-                      <td className="r mono muted">{formatDuration(runDurationSeconds(run))}</td>
-                      <td className="r">{formatNumber(run.trades)}</td>
-                      <td className="r">
-                        <PnlValue value={runNetPnl(run)} />
-                      </td>
-                      <td>
-                        <RunStatusCell run={run} />
-                      </td>
-                      <td className="r">
-                        <Link to={runLink(run.runId)}>Detail →</Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </QueryBoundary>
+        <RecentRuns />
       </Panel>
 
       <Panel
