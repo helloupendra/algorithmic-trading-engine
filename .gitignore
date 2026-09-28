@@ -167,3 +167,10 @@ data/deploy-history.json
 # The throwaway local stack (scripts/dev/local-live.sh): its generated
 # passwords and JWT key, the API's environment, logs, pids and build output.
 .dev-live/
+
+# The pager's own files, if it is ever run from the checkout (on the server it
+# runs from ~/openfno-pager). pager.env names the phone the call goes to.
+scripts/pager/pager.env
+scripts/pager/state.json
+scripts/pager/state.tmp
+scripts/pager/pager.log
