@@ -82,6 +82,32 @@ Run it by hand for any day with `POST /api/Backfill/archive?day=YYYY-MM-DD` (adm
 
 **Not kept yet:** a live run's equity curve (the `equity-snapshots` endpoint is backtest-only; live P&L is reconstructed from positions and ticks), and OI for underlyings the chain poller is not configured for (FINNIFTY, MCX).
 
+### 7. When a Tick Does Not Arrive
+
+The rule: live data must never stop reaching a running strategy without something saying so. A tick takes two roads out of the feed (`core/live/feed_runner.py`), and each failure on either road is counted, logged, or kept.
+
+1. **Redis stream `market:ticks`**, which the strategy runners read.
+2. **`POST /api/LiveData/ticks/upsert-batch`**, which stores it: `live_ticks`, the 1-minute `live_bars`, and `live_quotes_latest`, the quote the runners price legs from.
+
+| Where | What can go wrong | What says so |
+| :--- | :--- | :--- |
+| Feed | The API refuses a batch or does not answer | `ticksNotStored` in the heartbeat, and for ten minutes after the last failure the heartbeat's error (Data overview) reads "N tick(s) not stored…" when the connection has no error of its own |
+| Feed | A tick the feed cannot handle (neither published nor stored) | `ticksRejected` in the heartbeat, and a printed line with the running count |
+| Feed | The buffer in front of the API is full and sheds the oldest ticks | `queueDepth` and `ticksDropped` in the heartbeat |
+| Feed | The Black-Scholes library does not load, so no option gets IV or greeks | `GREEKS UNAVAILABLE` once on stderr, `greeksUnavailable` in the heartbeat, and the heartbeat's error |
+| Runner | A stream entry whose payload is not JSON | Counted; a line at the 1st, 100th, 1000th and every 10,000th |
+| Runner | The strategy raises on a tick | A traceback per tick, `tick_errors=N` on the `[STATUS]` line, `algotrading_tick_errors_total` |
+
+The heartbeat counts are the feed's own, since it started. The API used to drop `queueDepth` and `ticksDropped` on the floor — its heartbeat DTO did not have them — and now mirrors all of them per feed on `/metrics`: `algotrading_feed_queue_depth`, `algotrading_feed_ticks_dropped`, `algotrading_feed_ticks_not_stored`, `algotrading_feed_ticks_rejected` and `algotrading_feed_greeks_available` (label `source`, the feed key). They are not stored, so there is no table for them.
+
+**One writer for the latest quote.** The API is the only writer of `live_quotes_latest`, and it refuses a tick whose exchange stamp is older than the stored one — unless the tick is a replay, which runs behind the live stamps on purpose. `market_ticks`, the second copy of every tick, has not been written by the API since 15 Sep; `live_ticks` is the record.
+
+**What a runner does not replay.** A runner reads the stream from `$`: ticks published before it started are not fed to the strategy, because a strategy treats every tick as now and catching up on stale prices would pick stale strikes. This costs nothing in practice — every launch is a new run, a runner that dies has its run closed by the API, and a Redis reconnect inside one runner resumes from the last entry it read. Waiting for option prices before booking a signal takes at most 10 s for all legs together (`SIGNAL_PRICE_WAIT_SECONDS`), and none for a closing signal; the runner's status and feed-stall checks keep running while it waits.
+
+**Fabricated ticks.** `ENABLE_MOCK_TICKS` (off by default) invents prices for symbols no feed can carry, never for a real dated contract or index. Each one carries `rawPayload` `{"mock": true}` and source key `mock`.
+
+**The optional market-data worker** (`AlgoTrading.Worker.MarketData`, not run on the desk) drains the stream into `market_ticks` through a Redis consumer group. It delivers at least once and drops nothing silently: an entry left unacknowledged for `Redis:ClaimMinIdleMs` (60 s) is claimed back and retried, the last of `Redis:MaxDeliveries` (5) tries is made one entry at a time, and then the entry is copied with its reason to `Redis:DeadLetterStreamName` (`market:ticks:dead`; read it with `redis-cli XRANGE market:ticks:dead - +`). A payload that is not JSON goes there at once. A redelivered batch skips ticks already archived. It writes `live_quotes_latest` only with `Redis:ProjectLatestQuotes=true` — for a `db_replayer.py` replay, which publishes to Redis and never reaches the API — and then under the API's ordering rule.
+
 ## Module Components
 
 ### Python Scripts
