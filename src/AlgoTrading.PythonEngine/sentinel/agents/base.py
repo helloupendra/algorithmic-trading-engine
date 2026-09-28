@@ -27,3 +27,11 @@ class Agent(ABC):
     @abstractmethod
     def check(self, ctx: SentinelContext) -> list[Finding]:
         ...
+
+    def let_go(self, ctx: SentinelContext, fingerprints: set[str]) -> None:
+        """
+        Findings this agent repeated from memory (``observed_utc`` set) whose
+        incident was resolved at or after they were last observed: the store
+        did not reopen them. An agent that holds findings open stops holding
+        these, so a later observation starts afresh; by default nothing is held.
+        """
