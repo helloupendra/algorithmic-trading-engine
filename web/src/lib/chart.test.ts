@@ -34,10 +34,14 @@ const bar = (timeUtc: string, close = 100, volume: number | null = 10): Candle =
 })
 
 describe('chartLayer', () => {
-  it('draws the structure only when the URL asks for it', () => {
-    expect(chartLayer('structure')).toBe('structure')
+  it('draws SMC only when the URL asks for it', () => {
+    expect(chartLayer('smc')).toBe('smc')
     expect(chartLayer(null)).toBe('price')
-    expect(chartLayer('smc')).toBe('price')
+    expect(chartLayer('candles')).toBe('price')
+  })
+
+  it('still opens SMC from a link saved before the layer was renamed', () => {
+    expect(chartLayer('structure')).toBe('smc')
   })
 })
 

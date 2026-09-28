@@ -55,7 +55,7 @@ export function ChartPage() {
 
   const symbol = params.get('symbol') ?? DEFAULT_SYMBOL
   const layer = chartLayer(params.get('layer'))
-  const structureOn = layer === 'structure'
+  const structureOn = layer === 'smc'
   const [search, setSearch] = useState('')
   const [resolution, setResolution] = useState<Resolution>('5')
   const [range, setRange] = useState<RangeKey>('1D')
@@ -202,10 +202,10 @@ export function ChartPage() {
             type="button"
             className={`seg__btn${structureOn ? ' is-active' : ''}`}
             aria-pressed={structureOn}
-            title="Market structure (Smart Money Concepts): swings, breaks of structure, inducements and zones"
-            onClick={() => setQuery('layer', structureOn ? null : 'structure')}
+            title="Smart Money Concepts (SMC): swings, breaks of structure, inducements and zones"
+            onClick={() => setQuery('layer', structureOn ? null : 'smc')}
           >
-            Structure
+            SMC
           </button>
         </div>
       </div>

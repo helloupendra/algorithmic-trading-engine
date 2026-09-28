@@ -160,7 +160,7 @@ describe('movedUrl', () => {
 
   it("merges the target's own query over the old one", () => {
     expect(movedUrl('/admin/system/alerts', '?source=x&limit=50')).toBe('/system/log?source=alerts&limit=50')
-    expect(movedUrl('/admin/data/structure', '?symbol=NSE%3ANIFTY50-INDEX')).toBe('/markets/chart?symbol=NSE%3ANIFTY50-INDEX&layer=structure')
+    expect(movedUrl('/admin/data/structure', '?symbol=NSE%3ANIFTY50-INDEX')).toBe('/markets/chart?symbol=NSE%3ANIFTY50-INDEX&layer=smc')
   })
 
   it("keeps a broker's sign-in result on its way to the connector", () => {

@@ -52,12 +52,16 @@ export interface Candle {
   volume: number | null
 }
 
-/** The chart's layers. Price alone, or with the market structure read on it. */
-export type ChartLayer = 'price' | 'structure'
+/** The chart's layers. Price alone, or with the Smart Money Concepts (SMC) read on it. */
+export type ChartLayer = 'price' | 'smc'
 
-/** The layer a URL asks for (?layer=structure), price otherwise. */
+/**
+ * The layer a URL asks for (?layer=smc), price otherwise. The layer was called
+ * "Structure" until 28 Sep, which did not tell a trader that it switched SMC
+ * on; links saved with ?layer=structure still open it.
+ */
 export function chartLayer(value: string | null | undefined): ChartLayer {
-  return value === 'structure' ? 'structure' : 'price'
+  return value === 'smc' || value === 'structure' ? 'smc' : 'price'
 }
 
 /**

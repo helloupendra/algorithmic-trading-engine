@@ -1,6 +1,6 @@
 # Market structure (Smart Money Concepts)
 
-The **Structure** layer of Markets → Chart (`/markets/chart?layer=structure`) draws a candle chart with the marks Smart Money
+The **SMC** layer of Markets → Chart (`/markets/chart?layer=smc`) draws a candle chart with the marks Smart Money
 Concepts teaches: swing points labelled **HH / HL / LH / LL**, a line from every
 broken level to the candle that broke it (**BOS** or **CHoCH**), and the
 **inducement (IDM)** each leg has to take before a break counts. Three further
