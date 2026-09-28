@@ -1028,7 +1028,7 @@ public class StrategyController : ControllerBase
 
         // Ownership comes from the token, never from the query string: a trader
         // sees only their own runs whatever userId they pass.
-        long? scopeUserId = User.IsAdmin() ? userId : User.GetRequiredUserId();
+        long? scopeUserId = User.ScopeUserId(userId);
 
         var filter = new LiveRunHistoryFilter(scopeUserId, strategyId, underlying, status, from, to, take, skip);
         var rows = await _history.ListAsync(filter, cancellationToken);
@@ -1043,7 +1043,7 @@ public class StrategyController : ControllerBase
     [HttpGet("runs/summary")]
     public async Task<ActionResult<List<LiveRunUserSummaryResponse>>> GetRunsSummary(CancellationToken cancellationToken)
     {
-        long? scopeUserId = User.IsAdmin() ? null : User.GetRequiredUserId();
+        long? scopeUserId = User.ScopeUserId(null);
         var rows = await _history.SummarizeAsync(scopeUserId, cancellationToken);
         return Ok(rows);
     }
@@ -1069,7 +1069,7 @@ public class StrategyController : ControllerBase
         if (!TryParseIstDate(date, out var day))
             return BadRequest(new { message = "date must be an IST calendar day in yyyy-MM-dd form." });
 
-        long? scopeUserId = User.IsAdmin() ? userId : User.GetRequiredUserId();
+        long? scopeUserId = User.ScopeUserId(userId);
         return Ok(await series.BuildAsync(day ?? IstTime.DateOf(DateTime.UtcNow), scopeUserId, cancellationToken));
     }
 
@@ -1093,7 +1093,7 @@ public class StrategyController : ControllerBase
         [FromQuery] long? userId,
         CancellationToken cancellationToken)
     {
-        long? scopeUserId = User.IsAdmin() ? userId : User.GetRequiredUserId();
+        long? scopeUserId = User.ScopeUserId(userId);
 
         var record = await _history.SummarizeStrategyAsync(id, scopeUserId, cancellationToken);
         if (record is null)

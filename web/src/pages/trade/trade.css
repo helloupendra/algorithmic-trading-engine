@@ -76,6 +76,10 @@
 .tr-orders .tr-run-link { color: var(--text-2); text-decoration: none; }
 .tr-orders .tr-run-link:hover { color: var(--brand-hi); }
 .tr-orders .tr-contract { color: var(--text); }
+/* The risk gate's reason under a refused order's contract: a sentence, so it wraps. */
+.tr-orders .tr-reason { display: block; max-width: 56ch; margin-top: 1px; font-size: var(--fs-xs); line-height: 1.35; white-space: normal; color: var(--neg); }
+.tr-orders .tr-priced { font-size: var(--fs-xs); white-space: nowrap; }
+.tr-run-filter { max-width: 280px; }
 .tr-more { margin-top: 8px; }
 .tr-more button {
   height: 26px;

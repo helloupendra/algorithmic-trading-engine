@@ -1,186 +1,236 @@
 /**
- * Trade → Orders: the day's orders across every run and manual book, newest
- * first. An admin sees every account's, with a filter to one; a trader,
- * their own (the API refuses another account's ledger).
+ * Trade → Orders: one day's orders across every run and manual book, newest
+ * first (GET /api/Orders). An admin sees every account's, with a filter to
+ * one; a trader, their own (the API scopes the answer). The orders the risk
+ * gate refused (kill switch, order rate, daily loss) are listed too, with
+ * its reason.
  *
- * There is no orders-across-runs endpoint, so the page reads each run's own
- * ledger (GET /api/Strategy/runs/{id}/orders) and merges them (lib/orders.ts):
- * the day's runs, the manual books holding an open leg, and the viewer's own
- * book. The page says what that leaves out. The day is the Desk's: today, or
- * on a day without a session the last one with runs.
+ * The day, the account, the run and the status are kept in the URL, so a
+ * view can be linked to. Without a date the day is the Desk's: today, or on
+ * a day without a session the last one with runs. The list is read again
+ * when an order, a fill or a risk trip arrives as a desk event (lib/live.ts);
+ * the poll is the safety net, and only today's list is polled at all.
  *
  * It replaces the v1 Orders page, which showed one Simulator run picked from
- * a list.
+ * a list, and this page's first version, which asked each of the day's runs
+ * for its own ledger and found manual books through their open legs.
  */
 
-import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useMemo } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../lib/auth'
-import { dayLabel, isTradingRun, strategyLabel, underlyingShort } from '../../lib/desk'
-import type { Scope } from '../../lib/desk'
+import { dayLabel } from '../../lib/desk'
 import { formatPrice } from '../../lib/format'
-import { MANUAL_BOOK, dayOrders, orderCounts, orderSources } from '../../lib/orders'
-import type { OrderLine } from '../../lib/orders'
-import { useManualBook, useOpenPositions, useRunsOrders } from '../../lib/queries'
+import {
+  dayOrderCounts,
+  mergeOrderPages,
+  orderAccounts,
+  orderKey,
+  priceSourceLabel,
+  readOrdersFilter,
+  runName,
+  runOptionLabel,
+  runOptions,
+  sizeText,
+  statusOptions,
+  statusTone,
+  writeOrdersFilter,
+  ORDERS_PAGE,
+} from '../../lib/orders'
+import type { OrdersFilter } from '../../lib/orders'
+import { useOrders } from '../../lib/queries'
+import { runUserLabel } from '../../lib/runHistory'
+import { formatContract } from '../../lib/symbols'
+import type { OrderRow } from '../../lib/types'
+import { DateField } from '../../components/DateField'
 import { InlineError } from '../../components/ui'
 import { Chip, Swatch, Waiting } from '../desk/parts'
 import { useNow, useShownDay } from '../desk/data'
 import '../desk/desk.css'
 import './trade.css'
 
-/** Rows drawn at a time: a busy day holds thousands of orders. */
-const PAGE = 200
-
 const time = (iso: string) => new Date(iso).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })
 
-function statusTone(status: string): 'pos' | 'neg' | 'warn' | undefined {
-  const s = status.toLowerCase()
-  return s === 'filled' ? undefined : s === 'rejected' ? 'neg' : s === 'cancelled' ? 'warn' : undefined
-}
-
-function Row({ line, multi, toneOf }: { line: OrderLine; multi: boolean; toneOf: (id: number) => 1 | 2 | null }) {
-  const { order: o, source: s } = line
-  const run = s.isManualBook ? 'Manual book' : `${strategyLabel(s.strategyName)}${s.underlying ? ` · ${underlyingShort(s.underlying.toUpperCase())}` : ''}`
+function Row({ o, multi, toneOf }: { o: OrderRow; multi: boolean; toneOf: (id: number) => 1 | 2 | null }) {
+  const run = runName(o)
+  const who = runUserLabel(o.userName, o.userId)
+  const source = priceSourceLabel(o.priceRule)
+  const side = o.side?.toUpperCase() ?? null
+  const size = sizeText(o)
+  const units =
+    o.quantity != null ? `${o.quantity.toLocaleString('en-IN')} units` : o.lots != null ? 'Lots; the lot size is not known' : 'The size was not recorded with this refusal'
+  const when = o.kind === 'rejection' ? `Refused ${time(o.atUtc)} IST` : `Placed ${time(o.atUtc)}${o.filledUtc ? `, filled ${time(o.filledUtc)}` : ''} IST`
   return (
     <tr>
-      <td className="dk-n tr-when" title={`Placed ${time(o.createdUtc)}${o.filledUtc ? `, filled ${time(o.filledUtc)}` : ''} IST`}>
-        {time(line.atUtc)}
+      <td className="dk-n tr-when" title={`${when}${o.clientSignalId ? ` · signal ${o.clientSignalId}` : ''}`}>
+        {time(o.atUtc)}
       </td>
       {multi && (
         <td className="tr-hide-s">
-          <Swatch tone={toneOf(s.userId)} />
-          <span className="dk-t2">{s.userName}</span>
+          <Swatch tone={toneOf(o.userId)} />
+          <span className="dk-t2">{who}</span>
         </td>
       )}
       <td className="tr-hide-s">
-        <Link to={`/trade/runs/${s.runId}`} className="tr-run-link" title={`Run #${s.runId}`}>
+        <Link to={`/trade/runs/${o.runId}`} className="tr-run-link" title={`Run #${o.runId}`}>
           {run}
         </Link>
       </td>
       <td className="tr-leg">
         <span className="tr-contract" title={o.symbol}>
-          {line.contract}
+          {formatContract(o.symbol)}
         </span>
         <span className="tr-sub dk-t3 tr-only-s">
+          {o.status.toLowerCase() !== 'filled' && <span className={statusTone(o.status)}>{o.status} · </span>}
           {run}
-          {multi ? ` · ${s.userName}` : ''}
+          {size ? ` · ${size}` : ''}
+          {multi ? ` · ${who}` : ''}
         </span>
+        {o.reason && <span className="tr-reason">{o.reason}</span>}
       </td>
-      <td>
-        <Chip tone={o.side.toUpperCase() === 'BUY' ? 'pos' : 'neg'}>{o.side.toUpperCase()}</Chip>
+      <td>{side ? <Chip tone={side === 'BUY' ? 'pos' : 'neg'}>{side}</Chip> : <span className="dk-t3">—</span>}</td>
+      <td className="r dk-n tr-hide-s" title={units}>
+        {size ?? <span className="dk-t3">—</span>}
       </td>
-      <td className="r dk-n">{o.quantity.toLocaleString('en-IN')}</td>
-      <td className="dk-t3 tr-hide-s">{o.orderType.toLowerCase()}</td>
       <td className="r dk-n tr-hide-s dk-t3">{o.requestedPrice != null ? formatPrice(o.requestedPrice) : '—'}</td>
-      <td className="r dk-n">{o.fillPrice != null ? formatPrice(o.fillPrice) : <span className="dk-t3">—</span>}</td>
-      <td className="r">
-        <Chip tone={statusTone(o.status)}>{o.status}</Chip>
+      <td className="r dk-n" title={o.priceNote ?? undefined}>
+        {o.fillPrice != null ? formatPrice(o.fillPrice) : <span className="dk-t3">—</span>}
+      </td>
+      <td className={`tr-hide-s tr-priced ${o.staleQuote ? 'warn' : 'dk-t3'}`} title={o.priceNote ?? undefined}>
+        {source ? (o.staleQuote ? `${source} · stale` : source) : ''}
+      </td>
+      <td className="r tr-hide-s">
+        <Chip tone={statusTone(o.status)} title={o.reason ?? undefined}>
+          {o.status}
+        </Chip>
       </td>
     </tr>
   )
 }
 
 export function OrdersPage() {
-  const { user, isAdmin } = useAuth()
+  const { isAdmin } = useAuth()
+  const [params, setParams] = useSearchParams()
+  const filter = readOrdersFilter(params)
   const nowMs = useNow(60_000)
-  const shownDay = useShownDay(nowMs, true)
-  const { day, today } = shownDay
-  const open = useOpenPositions(60_000)
-  const book = useManualBook()
-  const [scope, setScope] = useState<Scope>('all')
-  const [shown, setShown] = useState(PAGE)
+  // The Desk's day is only needed when the URL names none.
+  const shownDay = useShownDay(nowMs, filter.date == null)
+  const today = shownDay.today
+  const date = filter.date ?? (shownDay.runs !== undefined || shownDay.error != null ? shownDay.day : null)
+  const userId = isAdmin ? filter.userId : null
 
-  const sources = useMemo(() => {
-    const books = (open.data?.positions ?? [])
-      .filter((p) => p.isManualBook)
-      .map((p) => ({ runId: p.runId, userId: p.userId, userName: p.userName }))
-    if (book.data?.runId != null && user) books.push({ runId: book.data.runId, userId: user.id, userName: user.userName })
-    return orderSources((shownDay.runs ?? []).filter(isTradingRun), books)
-  }, [shownDay.runs, open.data, book.data, user])
+  const query = useOrders({ date, userId, runId: filter.runId, status: filter.status }, date === today)
+  const pages = query.data?.pages
+  const answer = pages?.[0]
+  const rows = useMemo(() => mergeOrderPages(pages), [pages])
+  const facets = useMemo(() => answer?.runs ?? [], [answer])
 
-  // A day that is over never changes: only today's live ledgers are read again.
-  const read = useRunsOrders(
-    sources.map((s) => ({ runId: s.runId, live: s.live && day === today })),
-    shownDay.runs !== undefined,
-  )
-  const { ledgers, loaded } = read
-  const failed = sources.filter((_, i) => read.failed[i])
+  const set = (change: Partial<OrdersFilter>) => setParams(writeOrdersFilter(params, change), { replace: true })
 
-  const accounts = useMemo(() => {
-    const seen = new Map<number, string>()
-    for (const s of sources) if (!seen.has(s.userId)) seen.set(s.userId, s.userName)
-    return [...seen.entries()].sort(([a], [b]) => a - b).map(([id, name]) => ({ id, name }))
-  }, [sources])
-  const scopeShown: Scope = scope !== 'all' && accounts.some((a) => a.id === scope) ? scope : 'all'
-  const lines = useMemo(
-    () => dayOrders(sources.map((source, i) => ({ source, orders: ledgers[i] })), day, scopeShown === 'all' ? null : scopeShown),
-    [sources, ledgers, day, scopeShown],
-  )
-  const counts = orderCounts(lines)
-  const multi = accounts.length > 1 && scopeShown === 'all'
-  const toneOf = (id: number): 1 | 2 | null => {
-    const i = accounts.findIndex((a) => a.id === id)
-    return i === 0 ? 1 : i === 1 ? 2 : null
-  }
-  const books = sources.filter((s) => s.isManualBook).length
-  const runs = sources.length - books
+  const accounts = orderAccounts(facets)
+  const picked = userId != null && !accounts.some((a) => a.id === userId) ? [{ id: userId, name: `user ${userId}`, tone: null }] : []
+  const accountOptions = [...accounts, ...picked]
+  const runsOffered = runOptions(facets, userId)
+  const counts = dayOrderCounts(facets, userId, filter.runId)
+  const statuses = statusOptions(answer?.statuses ?? [], filter.status)
+  const multi = isAdmin && accounts.length > 1 && userId == null
+  const toneOf = (id: number): 1 | 2 | null => accounts.find((a) => a.id === id)?.tone ?? null
+  const dayText = date == null ? '' : date === today ? 'Today' : dayLabel(date)
+  const narrowed = filter.runId != null || filter.status != null
+  const older = answer ? answer.total - rows.length : 0
 
   return (
     <div className="page tr">
       <div className="tr-bar">
-        {isAdmin && accounts.length > 1 && (
+        {isAdmin && accountOptions.length > 1 && (
           <span className="dk-seg" role="group" aria-label="Accounts">
-            <button type="button" aria-pressed={scopeShown === 'all'} onClick={() => setScope('all')}>
+            <button type="button" aria-pressed={userId == null} onClick={() => set({ userId: null, runId: null })}>
               All accounts
             </button>
-            {accounts.map((a) => (
-              <button key={a.id} type="button" aria-pressed={scopeShown === a.id} onClick={() => setScope(a.id)}>
+            {accountOptions.map((a) => (
+              <button key={a.id} type="button" aria-pressed={userId === a.id} onClick={() => set({ userId: a.id, runId: null })}>
                 {a.name}
               </button>
             ))}
           </span>
         )}
-        <span className="tr-summary">
-          {day === today ? 'Today' : dayLabel(day)} · <b>{counts.orders.toLocaleString('en-IN')}</b> order{counts.orders === 1 ? '' : 's'} from {counts.runs} run
-          {counts.runs === 1 ? '' : 's'}
-          {counts.orders > 0 && (
-            <span className="dk-t3">
-              {' '}
-              · {counts.filled.toLocaleString('en-IN')} filled
-              {counts.notFilled > 0 && <span className="warn"> · {counts.notFilled} rejected or cancelled</span>}
-              {counts.open > 0 && ` · ${counts.open} open`}
-            </span>
-          )}
-        </span>
-        <span className="tr-grow" />
-        {sources.length > 0 && loaded < sources.length && (
-          <span className="dk-t3 dk-xs">
-            read {loaded} of {sources.length} ledgers…
+        <DateField
+          className="field__input field__input--sm field__input--date"
+          value={date ?? ''}
+          max={today}
+          onChange={(iso) => set({ date: iso || null, runId: null })}
+          aria-label="Day"
+          title="The IST day the orders were placed on"
+        />
+        <select
+          className="field__input field__input--sm tr-run-filter"
+          value={filter.runId ?? 'all'}
+          onChange={(e) => set({ runId: e.target.value === 'all' ? null : Number(e.target.value) })}
+          aria-label="Run"
+        >
+          <option value="all">All runs and books</option>
+          {runsOffered.map((r) => (
+            <option key={r.runId} value={r.runId}>
+              {runOptionLabel(r, multi)}
+            </option>
+          ))}
+          {filter.runId != null && !runsOffered.some((r) => r.runId === filter.runId) && <option value={filter.runId}>Run #{filter.runId} (no orders)</option>}
+        </select>
+        {statuses.length > 1 || filter.status != null ? (
+          <span className="dk-seg" role="group" aria-label="Status">
+            <button type="button" aria-pressed={filter.status == null} onClick={() => set({ status: null })}>
+              All
+            </button>
+            {statuses.map((s) => (
+              <button key={s} type="button" aria-pressed={filter.status?.toLowerCase() === s.toLowerCase()} onClick={() => set({ status: s })}>
+                {s}
+              </button>
+            ))}
           </span>
-        )}
+        ) : null}
+        <span className="tr-grow" />
+        {query.isFetching && query.isPlaceholderData && <span className="dk-t3 dk-xs">reading…</span>}
       </div>
 
-      {day !== today && (
+      {answer && date != null && (
+        <div className="tr-bar">
+          <span className="tr-summary">
+            {dayText} · <b>{counts.orders.toLocaleString('en-IN')}</b> order{counts.orders === 1 ? '' : 's'}
+            {filter.runId == null && ` from ${counts.runs} run${counts.runs === 1 ? '' : 's'}`}
+            {counts.orders > 0 && (
+              <span className="dk-t3">
+                {' '}
+                · {counts.filled.toLocaleString('en-IN')} filled
+                {counts.rejected > 0 && <span className="neg"> · {counts.rejected.toLocaleString('en-IN')} rejected</span>}
+                {counts.other > 0 && <span className="warn"> · {counts.other.toLocaleString('en-IN')} pending or cancelled</span>}
+              </span>
+            )}
+          </span>
+        </div>
+      )}
+
+      {filter.date == null && date != null && date !== today && (
         <p className="dk-note" role="status">
-          No session today: these are the orders of {dayLabel(day)}, the last day with runs.
+          No session today: these are the orders of {dayLabel(date)}, the last day with runs.
         </p>
       )}
-      {failed.length > 0 && (
+      {query.isError && query.data && (
         <p className="tr-stale" role="status">
-          {failed.length} ledger{failed.length === 1 ? '' : 's'} could not be read ({failed.map((s) => `#${s.runId}`).join(', ')}): {failed.length === 1 ? 'its' : 'their'} orders are missing below.
+          The orders could not be read again just now; this is the last answer.
         </p>
       )}
 
-      {shownDay.error != null && shownDay.runs === undefined ? (
-        <InlineError error={shownDay.error} />
-      ) : shownDay.runs === undefined ? (
+      {date == null ? (
         <Waiting>Reading the day’s runs…</Waiting>
-      ) : sources.length === 0 ? (
-        <p className="tr-empty">No run traded on {day === today ? 'today' : dayLabel(day)}, and no manual book is open.</p>
-      ) : lines.length === 0 && loaded < sources.length ? (
-        <Waiting>Reading the ledgers…</Waiting>
-      ) : lines.length === 0 ? (
-        <p className="tr-empty">No order was placed on {day === today ? 'today' : dayLabel(day)}{scopeShown === 'all' ? '' : ' in this account'}.</p>
+      ) : query.isError && !query.data ? (
+        <InlineError error={query.error} />
+      ) : !answer ? (
+        <Waiting>Reading the day’s orders…</Waiting>
+      ) : rows.length === 0 ? (
+        <p className="tr-empty">
+          No order {filter.status?.toLowerCase() === 'rejected' ? 'was refused' : 'was placed'} {date === today ? 'today' : `on ${dayLabel(date)}`}
+          {narrowed || userId != null ? ' that matches these filters' : ''}.
+        </p>
       ) : (
         <div className="tr-sheet">
           <div className="tr-acct">
@@ -193,26 +243,30 @@ export function OrdersPage() {
                     <th className="tr-hide-s">Run</th>
                     <th>Contract</th>
                     <th>Side</th>
-                    <th className="r">Qty</th>
-                    <th className="tr-hide-s">Type</th>
-                    <th className="r tr-hide-s" title="The limit price asked for; a market order asks none">
-                      Limit
+                    <th className="r tr-hide-s" title="Lots × lot size; the units are in the tooltip. A share's lot size is 1.">
+                      Lots × size
+                    </th>
+                    <th className="r tr-hide-s" title="The price the runner or the ticket asked for; the fill can differ by the spread, or the move since">
+                      Asked
                     </th>
                     <th className="r">Fill</th>
-                    <th className="r">Status</th>
+                    <th className="tr-hide-s" title="Where the fill's price came from: the bid or the ask, else the last trade across half the spread">
+                      Priced at
+                    </th>
+                    <th className="r tr-hide-s">Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {lines.slice(0, shown).map((l) => (
-                    <Row key={l.key} line={l} multi={multi} toneOf={toneOf} />
+                  {rows.map((o) => (
+                    <Row key={orderKey(o)} o={o} multi={multi} toneOf={toneOf} />
                   ))}
                 </tbody>
               </table>
             </div>
-            {lines.length > shown && (
+            {query.hasNextPage && older > 0 && (
               <div className="tr-more">
-                <button type="button" onClick={() => setShown((n) => n + PAGE)}>
-                  Show {Math.min(PAGE, lines.length - shown)} more of {(lines.length - shown).toLocaleString('en-IN')} older
+                <button type="button" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>
+                  {query.isFetchingNextPage ? 'Reading…' : `Show ${Math.min(ORDERS_PAGE, older)} more of ${older.toLocaleString('en-IN')} older`}
                 </button>
               </div>
             )}
@@ -220,13 +274,12 @@ export function OrdersPage() {
         </div>
       )}
 
-      {sources.length > 0 && (
-        <p className="dk-note tr-foot">
-          Read run by run: the API has no orders-across-runs answer, so this page asks each of the day’s {runs} run{runs === 1 ? '' : 's'}
-          {books > 0 ? ` and the ${books} ${MANUAL_BOOK.toLowerCase()} book${books === 1 ? '' : 's'} it knows of` : ''} for its own ledger. A manual book
-          is known when it holds an open leg, or is yours; {isAdmin ? 'another account’s book with neither is not asked, so its orders today are not here.' : 'one with neither holds no order today.'}
-        </p>
-      )}
+      <p className="dk-note tr-foot">
+        Every order booked on the day in the runs and manual books {isAdmin ? 'of every account' : 'of your account'}, and every order the risk gate
+        refused (kill switch, order rate, daily loss) with its reason. A signal refused for a stale quote or a stopped run books nothing, so it is not
+        here; the run’s log has it. Size is lots × lot size, the units in its tooltip. Priced at says where a fill’s price came from (its tooltip has
+        the whole sentence), and a fill priced on a stale quote says so.
+      </p>
     </div>
   )
 }

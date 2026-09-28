@@ -1,103 +1,185 @@
 import { describe, expect, it } from 'vitest'
 
-import { MANUAL_BOOK, dayOrders, orderCounts, orderSources } from './orders'
-import type { PaperOrderRow } from './types'
+import {
+  dayOrderCounts,
+  mergeOrderPages,
+  orderAccounts,
+  orderKey,
+  ordersQuery,
+  priceSourceLabel,
+  readOrdersFilter,
+  runName,
+  runOptionLabel,
+  runOptions,
+  sizeText,
+  statusOptions,
+  statusTone,
+  writeOrdersFilter,
+} from './orders'
+import type { OrderRow, OrderRunFacet } from './types'
 
-const run = (runId: number, userId: number, strategyName: string, underlying: string, isActive = false) => ({
-  runId,
-  userId,
-  userName: userId === 2 ? 'admin' : 'coderforchange',
-  strategyName,
-  underlying,
-  isActive,
-})
-
-let nextId = 1
-function order(runId: number, createdUtc: string, over: Partial<PaperOrderRow> = {}): PaperOrderRow {
-  const id = nextId++
+function row(kind: OrderRow['kind'], id: number, over: Partial<OrderRow> = {}): OrderRow {
   return {
+    kind,
     id,
-    simulationRunId: runId,
-    simulationSignalId: null,
+    atUtc: '2026-09-28T04:00:00Z',
+    filledUtc: kind === 'order' ? '2026-09-28T04:00:00Z' : null,
+    runId: 612,
     strategyName: 'GhostTangentCrossings',
-    groupId: 'g1',
+    underlying: 'NIFTY',
+    isManualBook: false,
+    userId: 2,
+    userName: 'admin',
     symbol: 'NSE:NIFTY2692923100CE',
     side: 'BUY',
+    lots: 2,
+    lotSize: 65,
     quantity: 130,
-    orderType: 'MARKET',
-    status: 'Filled',
-    requestedPrice: null,
-    fillPrice: 121.4,
-    createdUtc,
-    filledUtc: createdUtc,
+    orderType: kind === 'order' ? 'MARKET_SIM' : null,
+    status: kind === 'order' ? 'Filled' : 'Rejected',
+    requestedPrice: 121,
+    fillPrice: kind === 'order' ? 121.4 : null,
+    priceRule: kind === 'order' ? 'ask' : null,
+    priceNote: kind === 'order' ? 'filled at the ask' : null,
+    quoteAgeSeconds: null,
+    staleQuote: false,
+    groupId: 'G1',
+    signalId: null,
+    clientSignalId: null,
+    reason: kind === 'rejection' ? 'RATE LIMIT EXCEEDED' : null,
     ...over,
   }
 }
 
-describe('orderSources', () => {
-  it("reads every run of the day, then the books the list does not hold, each once", () => {
-    const sources = orderSources(
-      [run(250, 2, 'GhostTangentCrossings', 'NIFTY'), run(260, 2, MANUAL_BOOK, 'MANUAL', true)],
-      [
-        { runId: 260, userId: 2, userName: 'admin' },
-        { runId: 276, userId: 7, userName: 'coderforchange' },
-        { runId: 276, userId: 7, userName: 'coderforchange' },
-      ],
-    )
-    expect(sources.map((s) => [s.runId, s.isManualBook, s.live, s.underlying])).toEqual([
-      [250, false, false, 'NIFTY'],
-      [260, true, true, null],
-      [276, true, true, null],
-    ])
+function facet(runId: number, userId: number, orders: number, filled: number, rejected: number, over: Partial<OrderRunFacet> = {}): OrderRunFacet {
+  return {
+    runId,
+    userId,
+    userName: userId === 2 ? 'admin' : 'coderforchange',
+    strategyName: 'GhostTangentCrossings',
+    underlying: 'NIFTY',
+    isManualBook: false,
+    runStatus: 'Running',
+    orders,
+    filled,
+    rejected,
+    ...over,
+  }
+}
+
+describe('the filters in the URL', () => {
+  it('reads what the URL narrows to and ignores what is malformed', () => {
+    expect(readOrdersFilter(new URLSearchParams('date=2026-09-25&user=7&run=612&status=Rejected'))).toEqual({
+      date: '2026-09-25',
+      userId: 7,
+      runId: 612,
+      status: 'Rejected',
+    })
+    expect(readOrdersFilter(new URLSearchParams('date=25-09-2026&user=me&run=-3&status=%3Cb%3E'))).toEqual({
+      date: null,
+      userId: null,
+      runId: null,
+      status: null,
+    })
+  })
+
+  it('round-trips through the URL, clears a filter set to null and keeps the params it does not own', () => {
+    const start = new URLSearchParams('tab=x&run=5')
+    const set = writeOrdersFilter(start, { date: '2026-09-28', userId: 7, runId: 612, status: 'Filled' })
+    expect(readOrdersFilter(set)).toEqual({ date: '2026-09-28', userId: 7, runId: 612, status: 'Filled' })
+    expect(set.get('tab')).toBe('x')
+
+    const cleared = writeOrdersFilter(set, { runId: null, status: null })
+    expect(cleared.has('run')).toBe(false)
+    expect(cleared.has('status')).toBe(false)
+    expect(cleared.get('user')).toBe('7')
+    // The original is left as it was.
+    expect(start.get('run')).toBe('5')
   })
 })
 
-describe('dayOrders', () => {
-  const ghost = orderSources([run(250, 2, 'GhostTangentCrossings', 'NIFTY')], [])[0]
-  const book = orderSources([], [{ runId: 276, userId: 7, userName: 'coderforchange' }])[0]
-
-  it("merges the ledgers newest first, keeping only the day's orders", () => {
-    const lines = dayOrders(
-      [
-        { source: ghost, orders: [order(250, '2026-09-25T04:10:00Z'), order(250, '2026-09-25T06:00:00Z')] },
-        // A book's ledger reaches back over days: Thursday's order stays out.
-        { source: book, orders: [order(276, '2026-09-25T15:35:11Z', { symbol: 'MCX:CRUDEOIL26OCTFUT', side: 'SELL' }), order(276, '2026-09-24T09:00:00Z')] },
-        { source: ghost, orders: undefined },
-      ],
-      '2026-09-25',
+describe('ordersQuery', () => {
+  it('asks for the day and only the filters that narrow', () => {
+    expect(ordersQuery({ date: '2026-09-28' })).toBe('?date=2026-09-28&take=200')
+    expect(ordersQuery({ date: '2026-09-28', userId: 7, runId: 612, status: 'Rejected', skip: 200, take: 100 })).toBe(
+      '?date=2026-09-28&userId=7&runId=612&status=Rejected&skip=200&take=100',
     )
-    expect(lines.map((l) => [l.source.runId, l.order.createdUtc])).toEqual([
-      [276, '2026-09-25T15:35:11Z'],
-      [250, '2026-09-25T06:00:00Z'],
-      [250, '2026-09-25T04:10:00Z'],
+    expect(ordersQuery({ date: '2026-09-28', userId: null, runId: null, status: null, skip: 0 })).toBe('?date=2026-09-28&take=200')
+  })
+})
+
+describe('mergeOrderPages', () => {
+  it('keeps each row once, as an order and a rejection sharing an id are two rows', () => {
+    const first = { orders: [row('order', 9), row('rejection', 9), row('order', 8)] }
+    // An order placed between the two reads pushed order 8 onto the next page too.
+    const second = { orders: [row('order', 8), row('order', 7)] }
+    expect(mergeOrderPages([first, second]).map(orderKey)).toEqual(['order-9', 'rejection-9', 'order-8', 'order-7'])
+    expect(mergeOrderPages(undefined)).toEqual([])
+  })
+})
+
+describe('counts and run options', () => {
+  const runs = [
+    facet(612, 2, 14, 13, 1),
+    facet(613, 2, 4, 4, 0, { strategyName: 'Manual', underlying: null, isManualBook: true }),
+    facet(700, 7, 6, 5, 0, { underlying: 'BANKNIFTY' }),
+  ]
+
+  it("sums the day's rows for every account, one account or one run", () => {
+    expect(dayOrderCounts(runs, null, null)).toEqual({ orders: 24, filled: 22, rejected: 1, other: 1, runs: 3 })
+    expect(dayOrderCounts(runs, 2, null)).toEqual({ orders: 18, filled: 17, rejected: 1, other: 0, runs: 2 })
+    expect(dayOrderCounts(runs, null, 700)).toEqual({ orders: 6, filled: 5, rejected: 0, other: 1, runs: 1 })
+    expect(dayOrderCounts(runs, 2, 700)).toEqual({ orders: 0, filled: 0, rejected: 0, other: 0, runs: 0 })
+  })
+
+  it("offers the account's runs, named as the page names them", () => {
+    expect(runOptions(runs, 7).map((r) => r.runId)).toEqual([700])
+    expect(runOptions(runs, null)).toHaveLength(3)
+    expect(runOptionLabel(runs[0], false)).toBe('Ghost Tangent Crossings · NIFTY · #612 (14)')
+    expect(runOptionLabel(runs[1], true)).toBe('admin · Manual book · #613 (4)')
+    expect(runOptionLabel(runs[2], false)).toBe('Ghost Tangent Crossings · BANK · #700 (6)')
+    expect(runName(row('order', 1, { isManualBook: true, underlying: null, strategyName: 'Manual' }))).toBe('Manual book')
+    expect(orderAccounts(runs).map((a) => [a.id, a.name, a.tone])).toEqual([
+      [2, 'admin', 1],
+      [7, 'coderforchange', 2],
     ])
-    expect(lines[0].contract).toBe('CRUDEOIL26OCTFUT')
-    expect(lines[1].contract).toBe('NIFTY 23100 CE · 29 Sep')
   })
 
-  it('reads the day in IST: 00:30 IST on the 26th is the 26th, though UTC still says the 25th', () => {
-    const late = [{ source: book, orders: [order(276, '2026-09-25T19:00:00Z')] }]
-    expect(dayOrders(late, '2026-09-25')).toHaveLength(0)
-    expect(dayOrders(late, '2026-09-26')).toHaveLength(1)
-  })
-
-  it('narrows to one account', () => {
-    const ledgers = [
-      { source: ghost, orders: [order(250, '2026-09-25T04:10:00Z')] },
-      { source: book, orders: [order(276, '2026-09-25T05:10:00Z')] },
+  it('offers the statuses the day holds, Filled first and Rejected last, and the one picked', () => {
+    const statuses = [
+      { status: 'Rejected', orders: 1 },
+      { status: 'Pending', orders: 1 },
+      { status: 'Filled', orders: 22 },
     ]
-    expect(dayOrders(ledgers, '2026-09-25', 7).map((l) => l.source.userId)).toEqual([7])
+    expect(statusOptions(statuses, null)).toEqual(['Filled', 'Pending', 'Rejected'])
+    expect(statusOptions([{ status: 'Filled', orders: 3 }], 'Rejected')).toEqual(['Filled', 'Rejected'])
+    expect(statusOptions([], null)).toEqual([])
+  })
+})
+
+describe('how a row reads', () => {
+  it('names the fill price source from the rule the API recorded', () => {
+    expect(priceSourceLabel('bid')).toBe('bid')
+    expect(priceSourceLabel('ask')).toBe('ask')
+    expect(priceSourceLabel('ltp-less-half-spread')).toBe('LTP − ½ spread')
+    expect(priceSourceLabel('ltp-plus-half-spread')).toBe('LTP + ½ spread')
+    expect(priceSourceLabel('mark-less-half-spread')).toBe('mark − ½ spread')
+    expect(priceSourceLabel('signal')).toBe('as asked')
+    expect(priceSourceLabel('entry')).toBe('entry price')
+    expect(priceSourceLabel('auction')).toBe('auction')
+    expect(priceSourceLabel(null)).toBeNull()
   })
 
-  it('counts filled, refused and still open orders, and the runs they came from', () => {
-    const lines = dayOrders(
-      [
-        { source: ghost, orders: [order(250, '2026-09-25T04:10:00Z'), order(250, '2026-09-25T04:11:00Z', { status: 'Rejected' })] },
-        { source: book, orders: [order(276, '2026-09-25T05:10:00Z', { status: 'Pending', filledUtc: null })] },
-      ],
-      '2026-09-25',
-    )
-    expect(orderCounts(lines)).toEqual({ orders: 3, filled: 1, notFilled: 1, open: 1, runs: 2 })
-    expect(lines.find((l) => l.order.status === 'Pending')!.atUtc).toBe('2026-09-25T05:10:00Z')
+  it('sizes a row in lots by lot size, and in lots alone when the lot size is unknown', () => {
+    expect(sizeText({ lots: 2, lotSize: 65 })).toBe('2 × 65')
+    expect(sizeText({ lots: 1500, lotSize: 1 })).toBe('1,500 × 1')
+    expect(sizeText({ lots: 3, lotSize: null })).toBe('3')
+    expect(sizeText({ lots: null, lotSize: 65 })).toBeNull()
+  })
+
+  it('marks a rejection and an order not done', () => {
+    expect(statusTone('Rejected')).toBe('neg')
+    expect(statusTone('Cancelled')).toBe('warn')
+    expect(statusTone('Filled')).toBeUndefined()
   })
 })

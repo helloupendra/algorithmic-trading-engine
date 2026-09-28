@@ -754,6 +754,94 @@ export interface StrategyTrackRecord {
 /** GET /api/Strategy/runs/{runId}/orders — the run's paper order ledger, newest first. */
 export type PaperOrderRow = PaperOrder
 
+// ---------- A day's orders across runs and books ----------
+
+/**
+ * One row of GET /api/Orders: a paper order the engine booked (`kind`
+ * 'order'), or an order the risk gate refused (`kind` 'rejection', status
+ * 'Rejected', with the gate's `reason`). An order and a rejection can share
+ * an id: a row is its kind and its id (lib/orders.ts, orderKey).
+ */
+export interface OrderRow {
+  kind: 'order' | 'rejection'
+  id: number
+  /** When it was placed, or refused. */
+  atUtc: string
+  filledUtc: string | null
+  runId: number
+  /** The run's strategy; "Manual" for a manual book. */
+  strategyName: string
+  /** Null for a manual book, which holds anything. */
+  underlying: string | null
+  isManualBook: boolean
+  userId: number
+  userName: string | null
+  symbol: string
+  /** 'BUY' | 'SELL'; null on a rejection recorded before its side was (28 Sep). */
+  side: string | null
+  /** The stored quantity: lots (shares for a share, whose lot size is 1). */
+  lots: number | null
+  lotSize: number | null
+  /** Units: lots × lot size. */
+  quantity: number | null
+  orderType: string | null
+  /** 'Filled' (or an older 'Pending' / 'Cancelled'); 'Rejected' on a rejection. */
+  status: string
+  /** What the runner or the ticket asked for. */
+  requestedPrice: number | null
+  fillPrice: number | null
+  /** How the fill was priced: 'bid', 'ask', 'ltp-less-half-spread', 'ltp-plus-half-spread', 'signal', 'signal-…', 'mark-…', 'entry-…'. */
+  priceRule: string | null
+  /** The same as a sentence: "filled at the bid", "LTP 101.20 less half-spread (0.15%)". */
+  priceNote: string | null
+  quoteAgeSeconds: number | null
+  staleQuote: boolean
+  groupId: string | null
+  signalId: number | null
+  clientSignalId: string | null
+  /** Why the risk gate refused it; null on an order. */
+  reason: string | null
+}
+
+export interface OrderStatusCount {
+  status: string
+  orders: number
+}
+
+/** A run with a row on the day, with its counts: what the account and run filters offer. */
+export interface OrderRunFacet {
+  runId: number
+  userId: number
+  userName: string | null
+  strategyName: string
+  underlying: string | null
+  isManualBook: boolean
+  runStatus: string
+  /** Rows on the day, rejections included. */
+  orders: number
+  filled: number
+  rejected: number
+}
+
+/**
+ * GET /api/Orders — one IST day of orders across every run and manual book
+ * the viewer may see, newest first, a page at a time. `statuses` and `runs`
+ * count the day over every account the viewer may see, before the account,
+ * run, status and symbol filters.
+ */
+export interface OrdersResponse {
+  date: string
+  dayStartUtc: string
+  mode: 'LivePaper' | 'OfflineReplay'
+  /** Rows matching every filter. */
+  total: number
+  skip: number
+  take: number
+  orders: OrderRow[]
+  statuses: OrderStatusCount[]
+  runs: OrderRunFacet[]
+}
+
 // ---------- A day's P&L, minute by minute ----------
 
 /**

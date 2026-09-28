@@ -16,9 +16,70 @@
 
 import type { DeskAccount, Figures, StopKind } from './desk'
 import { byUnderlying, istHm, isTradingRun, stopKind, strategyLabel, sumFigures } from './desk'
+import { MANUAL_BOOK } from './orders'
 import type { AccountCurve, CurvePoint, DayAxis, Gap } from './pnlSeries'
 import { dayAxis, dayStartMs, mcxCloseMinute, minuteOfDay, recorderGaps, seriesPoints, splitAtGaps, valueAt } from './pnlSeries'
 import type { LiveBar, LiveRunSummary, RunPnlSeriesResponse } from './types'
+
+// ---------------------------------------------------------------- one underlying
+
+/** The URL's name for the board's underlying: /trade/runs?view=tracks&underlying=BANKNIFTY */
+export const UNDERLYING_PARAM = 'underlying'
+
+const NIFTY_SPOT = 'NSE:NIFTY50-INDEX'
+
+/**
+ * The underlyings the board can be narrowed to: the ones its runs are on
+ * (the day's trading runs in the accounts shown), in the grid's index order.
+ * Taken from the runs rather than a list, so a day on NIFTY and crude offers
+ * exactly those two. A manual book is on no underlying and is not offered;
+ * it stays on the board under All.
+ */
+export function trackUnderlyings(runs: readonly Pick<LiveRunSummary, 'underlying' | 'role' | 'strategyName'>[]): string[] {
+  const found = new Set<string>()
+  for (const r of runs) {
+    if (!isTradingRun(r) || r.strategyName === MANUAL_BOOK || !r.underlying) continue
+    found.add(r.underlying.toUpperCase())
+  }
+  return [...found].sort(byUnderlying)
+}
+
+/** The underlying the URL names, upper-cased; null (every underlying) when it names none or something that is not one. */
+export function readTrackUnderlying(params: URLSearchParams): string | null {
+  const raw = params.get(UNDERLYING_PARAM)?.trim().toUpperCase()
+  return raw && /^[A-Z0-9&_-]{1,30}$/.test(raw) ? raw : null
+}
+
+/** The URL's params with the underlying set, or removed for every underlying; every other param is kept. */
+export function writeTrackUnderlying(params: URLSearchParams, underlying: string | null): URLSearchParams {
+  const next = new URLSearchParams(params)
+  if (underlying) next.set(UNDERLYING_PARAM, underlying.toUpperCase())
+  else next.delete(UNDERLYING_PARAM)
+  return next
+}
+
+/** An underlying no run on the board is on falls back to every underlying, as an account no longer on the Desk does. */
+export function validUnderlying(underlying: string | null, offered: readonly string[]): string | null {
+  return underlying != null && offered.includes(underlying) ? underlying : null
+}
+
+/**
+ * The price lane's instrument: NIFTY 50 over every underlying, else the one
+ * picked, at the spot its newest run of the day names (for crude, the
+ * future the run traded against). NIFTY 50 again when no run names one.
+ */
+export function priceTrace(
+  runs: readonly Pick<LiveRunSummary, 'underlying' | 'spotSymbol' | 'startedUtc'>[],
+  underlying: string | null,
+): { symbol: string; label: string } {
+  const nifty = { symbol: NIFTY_SPOT, label: 'NIFTY 50' }
+  if (underlying == null || underlying === 'NIFTY') return nifty
+  const started = (r: Pick<LiveRunSummary, 'startedUtc'>) => (r.startedUtc ? Date.parse(r.startedUtc) : 0)
+  const newest = runs
+    .filter((r) => r.underlying.toUpperCase() === underlying && !!r.spotSymbol)
+    .sort((a, b) => started(b) - started(a))[0]
+  return newest ? { symbol: newest.spotSymbol, label: underlying } : nifty
+}
 
 /** How a track ends, drawn at the minute it ended. */
 export interface TrackEnd {
@@ -149,7 +210,8 @@ export function barPoints(bars: readonly LiveBar[] | undefined, day: string): Cu
  * (in the order given) and ordered as the grid orders its rows (strategies
  * in the order they first started, then the index order). `fills` holds each
  * run's filled instants, from its ledger; a run whose ledger has not arrived
- * simply has no ticks yet.
+ * simply has no ticks yet. With `underlying`, only the runs on it, and each
+ * account's line is theirs rather than the account's whole day.
  */
 export function tracksLayout(input: {
   runs: readonly LiveRunSummary[]
@@ -161,11 +223,16 @@ export function tracksLayout(input: {
   nowMs: number
   isToday: boolean
   mcxCloseUtc?: string | null
+  underlying?: string | null
 }): TracksLayout {
   const start = dayStartMs(input.day, input.series?.dayStartUtc)
   const nowMinute = input.isToday ? Math.floor((input.nowMs - start) / 60_000) : null
   const inScope = new Set(input.accounts.map((a) => a.id))
-  const runs = input.runs.filter(isTradingRun).filter((r) => inScope.has(r.userId))
+  const underlying = input.underlying?.toUpperCase() ?? null
+  const runs = input.runs
+    .filter(isTradingRun)
+    .filter((r) => inScope.has(r.userId))
+    .filter((r) => underlying == null || r.underlying.toUpperCase() === underlying)
   const ids = new Set(runs.map((r) => r.runId))
   const seriesRuns = (input.series?.runs ?? []).filter((s) => ids.has(s.runId))
   const pointsOf = new Map(seriesRuns.map((s) => [s.runId, seriesPoints(s)]))
@@ -221,9 +288,17 @@ export function tracksLayout(input: {
   })
 
   const accountCurves: AccountCurve[] = input.accounts.flatMap((a) => {
-    const s = input.series?.accounts.find((x) => x.userId === a.id)
-    if (!s) return []
-    const points = seriesPoints(s)
+    let points: CurvePoint[]
+    if (underlying != null) {
+      // The server's account totals are every underlying's: on one, the line
+      // is the account's runs on it, summed the way the server sums them.
+      points = sumCurves(runs.filter((r) => r.userId === a.id).map((r) => pointsOf.get(r.runId) ?? []))
+      if (points.length === 0) return []
+    } else {
+      const s = input.series?.accounts.find((x) => x.userId === a.id)
+      if (!s) return []
+      points = seriesPoints(s)
+    }
     return [{ userId: a.id, points, segments: splitAtGaps(points, gaps), last: points[points.length - 1] ?? null }]
   })
 
