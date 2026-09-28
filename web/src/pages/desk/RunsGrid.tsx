@@ -7,12 +7,21 @@
  * at the bottom, per strategy on the right, with the trades and the charges
  * that turn a gross into a net.
  *
+ * The columns are whatever underlyings ran today, however many: each takes
+ * the width its figures need, and past what the panel can hold the table
+ * scrolls sideways under a fixed Strategy column and a fixed Net column, so
+ * the row is never read without its name or its answer. The panel's own width
+ * (a container query in desk.css), not the window's, picks the short names
+ * and drops the trades and charges columns; under about 520px the same grid
+ * is a list, a block per strategy with a line per underlying, because eight
+ * columns of figures do not fit a phone whatever their width.
+ *
  * Before the open the panel beside it is the morning plan: for the operator,
  * the plan file read against what is live (GET /api/Desk/plan); for a
  * trader, a tick per run of theirs deployed and waiting for its session.
  */
 
-import { Fragment } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { CellMark, DeskAccount, GridCell, GridRow } from '../../lib/desk'
 import { compactInr, istHm, underlyingShort } from '../../lib/desk'
@@ -68,17 +77,113 @@ function CellLine({ cell, account, multi, links }: { cell: GridCell | null; acco
   )
 }
 
-function StrategyName({ row, view }: { row: GridRow; view: DeskView }) {
+/** "6 runs · 2 lots · admin only": what the strategy's row says under its name. */
+function rowDetail(row: GridRow, view: DeskView): string {
   const only = view.accounts.length > 1 && row.accountIds.length === 1 ? view.accounts.find((a) => a.id === row.accountIds[0])?.name : null
-  const detail = [`${row.runs} run${row.runs === 1 ? '' : 's'}`, row.lots != null ? `${row.lots} lot${row.lots === 1 ? '' : 's'}` : 'mixed lots', only ? `${only} only` : '']
+  return [`${row.runs} run${row.runs === 1 ? '' : 's'}`, row.lots != null ? `${row.lots} lot${row.lots === 1 ? '' : 's'}` : 'mixed lots', only ? `${only} only` : '']
     .filter(Boolean)
     .join(' · ')
+}
+
+function StrategyName({ row, view }: { row: GridRow; view: DeskView }) {
   return (
     <>
       <span className="dk-long">{row.label}</span>
       <span className="dk-short">{shortName(row.label)}</span>
-      <div className="dk-xs dk-t3 dk-sub">{detail}</div>
+      <div className="dk-xs dk-t3 dk-sub">{rowDetail(row, view)}</div>
     </>
+  )
+}
+
+/**
+ * Whether a scroll container's content is wider than it is, kept current as
+ * either resizes: the table grows a column per underlying that ran, and the
+ * panel shrinks with the window.
+ */
+function useOverflowX<T extends HTMLElement>(): [(el: T | null) => void, boolean] {
+  const [el, setEl] = useState<T | null>(null)
+  const [over, setOver] = useState(false)
+  useEffect(() => {
+    if (!el) return
+    const check = () => setOver(el.scrollWidth > el.clientWidth + 1)
+    const observer = new ResizeObserver(check)
+    observer.observe(el)
+    if (el.firstElementChild) observer.observe(el.firstElementChild)
+    check()
+    return () => observer.disconnect()
+  }, [el])
+  return [useCallback((next: T | null) => setEl(next), []), over]
+}
+
+/**
+ * The grid as a phone reads it: a block per strategy with its net on the
+ * right, then a line per underlying it ran with an account's figure per
+ * column, and the accounts' totals in the same shape. Rendered beside the
+ * table; desk.css shows one or the other by the panel's width.
+ */
+function GridList({ view, links, multi }: { view: DeskView; links: DeskLinks; multi: boolean }) {
+  const grid = view.grid!
+  return (
+    <div className="dk-gl" aria-label="Runs by strategy">
+      {grid.rows.map((row) => (
+        <section className="dk-gl__row" key={row.strategy}>
+          <div className="dk-gl__head">
+            <span className="dk-gl__name">
+              {row.label}
+              <span className="dk-xs dk-t3 dk-gl__detail">{rowDetail(row, view)}</span>
+            </span>
+            <b className={`dk-n ${toneClass(row.figures.net)}`} title={formatInrSigned(row.figures.net)}>
+              {compactInr(row.figures.net)}
+            </b>
+          </div>
+          <div className="dk-gl__cells">
+            {grid.underlyings
+              .filter((u) => row.cells[u].some((c) => c != null))
+              .map((u) => (
+                <div className="dk-gl__u" key={u}>
+                  <span className="dk-gl__ul dk-t3" title={u}>
+                    {underlyingShort(u)}
+                  </span>
+                  {row.cells[u].map((c, i) => (
+                    <CellLine key={grid.accounts[i].id} cell={c} account={grid.accounts[i]} multi={multi} links={links} />
+                  ))}
+                </div>
+              ))}
+          </div>
+          <div className="dk-gl__meta dk-xs dk-t3">
+            {row.figures.trades.toLocaleString('en-IN')} trade{row.figures.trades === 1 ? '' : 's'} · charges {compactInr(row.figures.charges, false)}
+          </div>
+        </section>
+      ))}
+      {grid.totals.map((t) => (
+        <section className="dk-gl__row dk-gl__tot" key={t.account.id}>
+          <div className="dk-gl__head">
+            <span className="dk-gl__name dk-t2">
+              {multi && <Swatch tone={t.account.tone} />}
+              {multi ? t.account.name : 'Total'}
+              <span className="dk-xs dk-t3 dk-gl__detail">{t.runs} runs</span>
+            </span>
+            <b className={`dk-n dk-net ${toneClass(t.figures.net)}`} title={formatInrSigned(t.figures.net)}>
+              {compactInr(t.figures.net)}
+            </b>
+          </div>
+          <div className="dk-gl__cells dk-gl__cells--tot">
+            {grid.underlyings.map((u) => {
+              const f = t.byUnderlying[u]
+              if (!f) return null
+              return (
+                <span key={u} className="dk-n" title={`${u}: ${formatInrSigned(f.net)}`}>
+                  <span className="dk-t3">{underlyingShort(u)}</span> <span className={toneClass(f.net)}>{compactInr(f.net)}</span>
+                </span>
+              )
+            })}
+          </div>
+          <div className="dk-gl__meta dk-xs dk-t3">
+            {t.figures.trades.toLocaleString('en-IN')} trades · charges {compactInr(t.figures.charges, false)}
+          </div>
+        </section>
+      ))}
+    </div>
   )
 }
 
@@ -98,14 +203,15 @@ export function RunsGrid({ view, links }: { view: DeskView; links: DeskLinks }) 
   }
   const multi = grid.accounts.length > 1
   const anyMark = grid.rows.some((r) => Object.values(r.cells).some((cs) => cs.some((c) => c && c.marks.length)))
+  const [wrapRef, overflows] = useOverflowX<HTMLDivElement>()
   return (
     <>
       {head}
-      <div className="dk-gridwrap">
-        <table className="dk-t dk-grid">
+      <div className={`dk-gridwrap dk-gridwrap--pnl${overflows ? ' dk-gridwrap--scroll' : ''}`} ref={wrapRef}>
+        <table className="dk-t dk-grid dk-grid--pnl">
           <thead>
             <tr>
-              <th>Strategy</th>
+              <th className="dk-fix dk-fix--l">Strategy</th>
               {grid.underlyings.map((u) => (
                 <th key={u} className="r dk-u">
                   <span className="dk-long">{u}</span>
@@ -114,13 +220,13 @@ export function RunsGrid({ view, links }: { view: DeskView; links: DeskLinks }) 
               ))}
               <th className="r dk-hide-s">Trades</th>
               <th className="r dk-hide-s">Charges</th>
-              <th className="r">Net</th>
+              <th className="r dk-fix dk-fix--r">Net</th>
             </tr>
           </thead>
           <tbody>
             {grid.rows.map((row) => (
               <tr key={row.strategy}>
-                <td className="dk-sn">
+                <td className="dk-sn dk-fix dk-fix--l">
                   <StrategyName row={row} view={view} />
                 </td>
                 {grid.underlyings.map((u) => (
@@ -132,7 +238,7 @@ export function RunsGrid({ view, links }: { view: DeskView; links: DeskLinks }) 
                 <td className="r dk-n dk-t3 dk-hide-s" title={formatInrWhole(row.figures.charges)}>
                   {compactInr(row.figures.charges, false)}
                 </td>
-                <td className="r dk-n">
+                <td className="r dk-n dk-fix dk-fix--r">
                   <b className={toneClass(row.figures.net)} style={{ fontWeight: 500 }} title={formatInrSigned(row.figures.net)}>
                     {compactInr(row.figures.net)}
                   </b>
@@ -141,7 +247,7 @@ export function RunsGrid({ view, links }: { view: DeskView; links: DeskLinks }) 
             ))}
             {grid.totals.map((t, i) => (
               <tr key={t.account.id} className={`dk-tot${i === 0 ? ' dk-tot--first' : ''}`}>
-                <td>
+                <td className="dk-fix dk-fix--l">
                   {multi && <Swatch tone={t.account.tone} />}
                   <span className="dk-t2 dk-accname" title={t.account.name}>
                     {multi ? t.account.name : 'Total'}
@@ -160,7 +266,7 @@ export function RunsGrid({ view, links }: { view: DeskView; links: DeskLinks }) 
                 <td className="r dk-n dk-t3 dk-hide-s" title={formatInrWhole(t.figures.charges)}>
                   {compactInr(t.figures.charges, false)}
                 </td>
-                <td className={`r dk-n dk-net ${toneClass(t.figures.net)}`} title={formatInrSigned(t.figures.net)}>
+                <td className={`r dk-n dk-net dk-fix dk-fix--r ${toneClass(t.figures.net)}`} title={formatInrSigned(t.figures.net)}>
                   {compactInr(t.figures.net)}
                 </td>
               </tr>
@@ -168,6 +274,8 @@ export function RunsGrid({ view, links }: { view: DeskView; links: DeskLinks }) 
           </tbody>
         </table>
       </div>
+      {overflows && <p className="dk-note dk-gridhint">Scroll sideways for the other underlyings; the strategy and its net stay put.</p>}
+      <GridList view={view} links={links} multi={multi} />
       {(multi || anyMark) && (
         <div className="dk-foot">
           {multi && (

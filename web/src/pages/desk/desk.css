@@ -199,11 +199,24 @@
 /* A rail: the loss limit on the left, zero in the middle. */
 
 /* --- the P&L grid ------------------------------------------------------------------ */
-.dk-gridwrap { overflow-x: auto; }
+/* Any number of underlyings: a column takes the width its figures need (no
+   share of the table set here), and past the panel's width the table scrolls
+   sideways under the fixed Strategy and Net columns. The plan grids share
+   the vocabulary and the scrolling; only the P&L table has fixed columns. */
+.dk-gridwrap { overflow-x: auto; overscroll-behavior-x: contain; }
+.dk-grid { table-layout: auto; border-collapse: separate; border-spacing: 0; }
+.dk-grid th, .dk-grid td { white-space: nowrap; }
 .dk-grid td { height: auto; padding-top: 5px; padding-bottom: 5px; vertical-align: top; }
-.dk-grid .dk-sn { padding-top: 6px; }
+.dk-grid .dk-sn { padding-top: 6px; min-width: 128px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .dk-grid .dk-sn a { color: var(--text); text-decoration: none; }
-.dk-grid th.dk-u, .dk-grid td.dk-u { width: 13%; }
+.dk-grid th.dk-u, .dk-grid td.dk-u { min-width: 62px; }
+.dk-grid .dk-fix { position: sticky; z-index: 1; background: var(--surface); }
+.dk-grid .dk-fix--l { left: 0; }
+.dk-grid .dk-fix--r { right: 0; }
+/* The rules the fixed columns cover, drawn again on them once the table scrolls. */
+.dk-gridwrap--scroll .dk-fix--l { box-shadow: 1px 0 0 var(--line); }
+.dk-gridwrap--scroll .dk-fix--r { box-shadow: -1px 0 0 var(--line); }
+.dk-gridhint { margin-top: 6px; }
 .dk-pc { display: flex; justify-content: flex-end; align-items: center; gap: 5px; line-height: 17px; }
 .dk-pc b, .dk-pc a { font-weight: 500; min-width: 40px; text-align: right; color: inherit; text-decoration: none; }
 .dk-pc a:hover { text-decoration: underline; }
@@ -215,6 +228,25 @@
 .dk-grid tr.dk-tot td.dk-net { font-weight: 500; }
 .dk-grid .dk-short { display: none; }
 .dk-accname { display: inline-block; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+
+/* The same grid as a list (a phone, or any panel under ~520px): a block per
+   strategy, its net on the right, a line per underlying with an account's
+   figure per column; the accounts' totals in the same shape under a rule. */
+.dk-gl { display: none; }
+.dk-gl__row { padding: 7px 0 8px; border-bottom: 1px solid var(--line-soft); }
+.dk-gl__row:last-child { border-bottom: 0; padding-bottom: 2px; }
+.dk-gl__head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; min-width: 0; }
+.dk-gl__head b { font-weight: 500; flex: none; }
+.dk-gl__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-gl__detail { display: block; white-space: normal; }
+.dk-gl__cells { display: grid; gap: 1px; margin-top: 5px; }
+.dk-gl__u { display: flex; align-items: center; gap: 8px; min-height: 19px; }
+.dk-gl__ul { flex: 0 0 52px; font-size: var(--fs-xs); }
+.dk-gl__u > .dk-pc { flex: 1 1 0; min-width: 0; }
+.dk-gl__meta { margin-top: 4px; }
+.dk-gl__tot { border-top: 1px solid var(--line); }
+.dk-gl__tot + .dk-gl__tot { border-top-color: var(--line-soft); }
+.dk-gl__cells--tot { display: flex; flex-wrap: wrap; gap: 2px 12px; }
 
 /* --- day P&L ------------------------------------------------------------------------ */
 /* The curve: recessive grid and axes, the accounts' colours on the lines only. */
@@ -328,6 +360,21 @@ a.dk-news__t:hover { text-decoration: underline; }
   .dk-hide-n { display: none !important; }
 }
 
+/* --- the grid by its panel's width ------------------------------------------------------- */
+/* .dk-cell is an inline-size container: a narrow panel on a wide window
+   reads the same as a phone's. */
+@container (max-width: 719px) {
+  .dk-grid--pnl .dk-long, .dk-grid--pnl .dk-hide-s, .dk-grid--pnl .dk-sub { display: none; }
+  .dk-grid--pnl .dk-short { display: inline; }
+  .dk-grid--pnl .dk-sn { min-width: 76px; }
+  .dk-grid--pnl th.dk-u, .dk-grid--pnl td.dk-u { min-width: 56px; }
+  .dk-grid--pnl td, .dk-grid--pnl th { padding-left: 4px; padding-right: 4px; }
+}
+@container (max-width: 519px) {
+  .dk-gridwrap--pnl, .dk-gridhint { display: none; }
+  .dk-gl { display: block; }
+}
+
 /* --- a phone ----------------------------------------------------------------------------- */
 @media (max-width: 760px) {
   .dk-seg .dk-long, .dk-updated, .dk-now { display: none; }
@@ -345,7 +392,6 @@ a.dk-news__t:hover { text-decoration: underline; }
 
   .dk-grid .dk-long, .dk-grid .dk-hide-s, .dk-grid .dk-sw--cell, .dk-grid .dk-sub { display: none; }
   .dk-grid .dk-short { display: inline; }
-  .dk-grid th.dk-u, .dk-grid td.dk-u { width: auto; }
   /* The account's colour is beside it and its full name is in the legend and the title. */
   .dk-grid .dk-accname { max-width: 64px; }
   .dk-grid td, .dk-grid th { padding-left: 3px; padding-right: 3px; }
