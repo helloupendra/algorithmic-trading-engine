@@ -66,12 +66,15 @@ class Base(unittest.TestCase):
         self.repo = Path(self.tmp.name)
         (self.repo / "logs").mkdir()
         (self.repo / "config").mkdir()
+        # The desk keeps its day markers under HOME, outside the repo: a home
+        # of the test's own, so no test reads this machine's.
+        self.home = self.repo / "home"
 
     def tearDown(self):
         self.tmp.cleanup()
 
     def inputs(self, slot, api=None, reads=None, now=None, env=None):
-        ctx = make_context(self.repo, api=api or {}, now=now or ist(8, 55), env=env)
+        ctx = make_context(self.repo, api=api or {}, now=now or ist(8, 55), env={"HOME": str(self.home), **(env or {})})
         return Inputs(ctx, reads, slot)
 
     def one(self, items):
@@ -178,13 +181,74 @@ class StrategyTests(Base):
         self.assertIs(State.OK, item.state)
         self.assertEqual("All 4 planned runs are live (admin 3, coderforchange 1).", item.detail)
 
-    def test_missing_runs_are_named(self):
+    def marker(self, *lines):
+        """Today's market-open marker, as desk.sh and the job write it (daily_job in scripts/lib/desk-common.sh)."""
+        folder = self.home / ".local" / "state" / "algotrading"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"market-open-{DAY}").write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
+
+    def test_at_0855_a_plan_the_morning_job_has_yet_to_deploy_is_a_note(self):
+        # 28 Sep: the 08:55 checkup sent "23 of 23 planned runs are not live"
+        # as a failure. market-open.sh, started at 08:45, waits for the 09:15
+        # open and for the spots to be priced; the 23 went live 09:16-09:19.
+        (self.repo / "config" / "morning-plan.txt").write_text(
+            "accounts: admin coderforchange\n"
+            "GhostTangentCrossings  BANKNIFTY,NIFTY,SENSEX  2\n"
+            "ChainFlowBuy           BANKNIFTY,NIFTY,SENSEX  2\n"
+            "SmcStructureBreak      BANKNIFTY,NIFTY,SENSEX  2\n"
+            "Fulcrum                BANKNIFTY,NIFTY,SENSEX  2  -  @admin\n"
+            "CrudeMomentum          CRUDEOIL                2  -\n", encoding="utf-8")
+        self.marker("started=2026-09-28 08:45:03", "pid=41822")
+        item = self.one(checks.plan(self.inputs("morning", {RUNNING_PATH: []})))
+        self.assertIs(State.INFO, item.state)
+        self.assertEqual("23 of 23 planned runs are not live yet: the morning job (running since 08:45) deploys the "
+                         "plan after the 09:15 open, once the plan's spots are priced.", item.detail)
+        self.assertIn("From 09:25 Sentinel opens an incident", item.action)
+        report = Report("morning", ist(8, 55), [item])
+        self.assertEqual([], report.to_do)
+
+    def test_before_0925_a_plan_being_deployed_is_a_note_with_or_without_the_marker(self):
+        rows = [run_row(1, "admin", "Fulcrum", "NIFTY"), run_row(3, "admin", "Ghost")]
+        # Sentinel on a machine where the desk keeps no marker: the clock alone.
+        item = self.one(checks.plan(self.inputs("on-request", {RUNNING_PATH: rows}, now=ist(9, 17))))
+        self.assertIs(State.INFO, item.state)
+        self.assertTrue(item.detail.startswith("2 of 4 planned runs are not live yet: the morning job deploys"),
+                        item.detail)
+        self.marker("started=2026-09-28 08:45:03", "pid=41822")
+        item = self.one(checks.plan(self.inputs("on-request", {RUNNING_PATH: rows}, now=ist(9, 24))))
+        self.assertIs(State.INFO, item.state)
+
+    def test_a_real_miss_at_0945_is_a_failure_that_names_the_runs(self):
         rows = [run_row(1, "admin", "Fulcrum", "NIFTY"), run_row(3, "admin", "Ghost"),
                 run_row(4, "coderforchange", "Ghost", active=False)]
-        item = self.one(checks.plan(self.inputs("morning", {RUNNING_PATH: rows})))
+        self.marker("started=2026-09-28 08:45:03", "pid=41822", "done=2026-09-28 09:19:40 exit=2")
+        item = self.one(checks.plan(self.inputs("morning", {RUNNING_PATH: rows}, now=ist(9, 45))))
         self.assertIs(State.FAIL, item.state)
-        self.assertIn("2 of 4 planned runs are not live: admin Fulcrum BANKNIFTY, coderforchange Ghost NIFTY", item.detail)
-        self.assertIn(f"logs/market-open-{DAY}.log", item.action)
+        self.assertEqual("2 of 4 planned runs are not live: admin Fulcrum BANKNIFTY, coderforchange Ghost NIFTY. "
+                         "The morning job finished at 09:19 with exit 2.", item.detail)
+        self.assertEqual(f"Start them from Trade → Runs. Why they did not start is in logs/market-open-{DAY}.log.",
+                         item.action)
+        # Past 09:25 a missing run is missing, marker or not, the job still running or not.
+        (self.home / ".local" / "state" / "algotrading" / f"market-open-{DAY}").unlink()
+        item = self.one(checks.plan(self.inputs("morning", {RUNNING_PATH: rows}, now=ist(9, 45))))
+        self.assertIs(State.FAIL, item.state)
+        self.assertTrue(item.detail.endswith("coderforchange Ghost NIFTY."), item.detail)
+        self.marker("started=2026-09-28 08:45:03", "pid=41822")
+        item = self.one(checks.plan(self.inputs("morning", {RUNNING_PATH: rows}, now=ist(9, 45))))
+        self.assertIs(State.FAIL, item.state)
+        self.assertIn("The morning job has been running since 08:45.", item.detail)
+
+    def test_a_morning_job_that_has_ended_deploys_nothing_more_whatever_the_time(self):
+        self.marker("started=2026-09-28 08:45:03", "pid=41822", "done=2026-09-28 08:47:12 exit=1")
+        item = self.one(checks.plan(self.inputs("morning", {RUNNING_PATH: []})))
+        self.assertIs(State.FAIL, item.state)
+        self.assertIn("4 of 4 planned runs are not live", item.detail)
+        self.assertIn("The morning job finished at 08:47 with exit 1.", item.detail)
+        self.marker("started=2026-09-28 08:45:03", "pid=41822",
+                    "ended=2026-09-28 08:51:30 without finishing (killed by a signal?)")
+        item = self.one(checks.plan(self.inputs("morning", {RUNNING_PATH: []})))
+        self.assertIs(State.FAIL, item.state)
+        self.assertIn("The morning job was interrupted at 08:51.", item.detail)
 
     def test_on_request_the_plan_is_checked_only_in_session_hours(self):
         items = run_checks(self.inputs("on-request", now=ist(19, 0)), ("plan",))

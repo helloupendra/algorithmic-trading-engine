@@ -169,30 +169,57 @@ public class LiveDataService : ILiveDataService
         var existing = await _dbContext.LiveWatchlistItems
             .FirstOrDefaultAsync(x => x.Symbol == request.Symbol, cancellationToken);
 
-        if (existing is null)
+        if (existing is not null)
         {
-            existing = new LiveWatchlistItem
+            ApplyWatchlistRequest(existing, request);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            return existing;
+        }
+
+        var created = new LiveWatchlistItem
+        {
+            Symbol = request.Symbol,
+            CreatedUtc = DateTime.UtcNow,
+        };
+        ApplyWatchlistRequest(created, request);
+        await _dbContext.LiveWatchlistItems.AddAsync(created, cancellationToken);
+
+        try
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            return created;
+        }
+        catch (DbUpdateException)
+        {
+            // Lost an insert race on IX_live_watchlist_Symbol. On 28 Sep, as
+            // the 23 runners started at 09:16, two of them added the same
+            // symbol at once: the second insert failed with 23505 and the
+            // request answered 500, although the row it wanted was there. Both
+            // callers asked for the same symbol to be recorded, so the loser
+            // detaches its insert (left tracked, it would be sent again by the
+            // next save on this context) and updates the winner's row instead.
+            // Any other insert failure leaves no row behind: the re-read finds
+            // nothing and the failure propagates.
+            _dbContext.Entry(created).State = EntityState.Detached;
+            existing = await _dbContext.LiveWatchlistItems
+                .FirstOrDefaultAsync(x => x.Symbol == request.Symbol, cancellationToken);
+            if (existing is null)
             {
-                Symbol = request.Symbol,
-                DataType = request.DataType,
-                IsActive = request.IsActive,
-                Priority = request.Priority,
-                CreatedUtc = DateTime.UtcNow,
-                UpdatedUtc = DateTime.UtcNow
-            };
+                throw;
+            }
 
-            await _dbContext.LiveWatchlistItems.AddAsync(existing, cancellationToken);
+            ApplyWatchlistRequest(existing, request);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            return existing;
         }
-        else
-        {
-            existing.DataType = request.DataType;
-            existing.IsActive = request.IsActive;
-            existing.Priority = request.Priority;
-            existing.UpdatedUtc = DateTime.UtcNow;
-        }
+    }
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
-        return existing;
+    private static void ApplyWatchlistRequest(LiveWatchlistItem item, UpsertWatchlistItemRequest request)
+    {
+        item.DataType = request.DataType;
+        item.IsActive = request.IsActive;
+        item.Priority = request.Priority;
+        item.UpdatedUtc = DateTime.UtcNow;
     }
 
     public async Task RemoveWatchlistItemAsync(

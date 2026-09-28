@@ -1213,11 +1213,8 @@ class HealthAgent(Agent):
         return findings
 
     def _desk_pidfile(self, ctx: SentinelContext) -> Optional[str]:
-        home = Path(ctx.env.get("HOME") or Path.home())
-        state = ctx.env.get("XDG_STATE_HOME") or str(home / ".local" / "state")
-        for path in (Path(state) / "algotrading" / "desk.pid",
-                     home / "Library" / "Application Support" / "algotrading" / "desk.pid"):
-            text = self.read_text(str(path))
+        for folder in ctx.desk_state_dirs():
+            text = self.read_text(str(folder / "desk.pid"))
             if text and text.strip().isdigit():
                 return text.strip()
         return None

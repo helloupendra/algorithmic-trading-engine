@@ -40,6 +40,11 @@ all three steps:
 - the morning job at 08:45;
 - the forecasts at 08:50.
 
+The morning job starts at 08:45 but deploys the plan only after the 09:15 open,
+once the plan's spots are priced (on 28 Sep the 23 runs went live 09:16–09:19).
+So at 08:55 a plan with nothing live yet is a note, not a failure: see Morning
+plan below.
+
 The NSE close (15:30) and the forecast scoring (15:50) come before 16:00, and
 `market-close.sh` (23:58) comes before 00:15.
 
@@ -54,7 +59,7 @@ the console has every report either way.
 | Dhan token | ✓ | ✓ | | ✓ | `/api/Providers`, `/api/Dhan/auto-sign-in`: signed in, and good until today's last close (the MCX close from the calendar). On Sunday: whether Monday will sign itself in. |
 | FYERS backup | ✓ | | | | Signed in or not. Only a note while the failover is in log mode; worth a look once it is live, since a switch needs it. |
 | Live feeds | ✓ | | ✓ | | `/api/Feeds`: one running before the open, none after the last close. |
-| Morning plan | ✓ | | | | Every run in `config/morning-plan.txt` live, by account. The Desk reads the same file, run by run, from `GET /api/Desk/plan` ([Sentinel](sentinel.md)). |
+| Morning plan | ✓ | | | | Every run in `config/morning-plan.txt` live, by account. Before 09:25, while the morning job has not finished (the desk's day marker, `market-open-<date>` in its state directory), a run not live yet is a note: the job deploys after the open. After 09:25, or once the job has finished, a run not live is to do, with how the job ended. The Desk reads the same file, run by run, from `GET /api/Desk/plan` ([Sentinel](sentinel.md)). |
 | Market data recorders | ✓ | | | ✓ | `/api/MarketIntelligence/status`: every [recorder](market_intelligence.md) on schedule, failing sources, and how far the 2020 backfills have to go. A stalled news recorder is to do: a headline not recorded today cannot be fetched later. |
 | Runs after the close | | ✓ | | | No NSE/BSE strategy run still live after 15:30; crude runs noted until the MCX close. |
 | Runs overnight | | | ✓ | | No strategy run live after the day's last close. |
