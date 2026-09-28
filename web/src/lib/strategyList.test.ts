@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activeAccounts, activeUnderlyings, blockedUnderlyings, liveNet, realizedNet, runOwner, runningSummary } from './strategyList'
+import { activeUnderlyings, blockedUnderlyings, liveNet, realizedNet, runOwner, runningTileSub } from './strategyList'
 import type { StrategyActiveRun, StrategyListItem } from './types'
 
 function run(underlying: string, ownerName: string | null, startedBy = 'admin'): StrategyActiveRun {
@@ -23,20 +23,30 @@ describe('the morning plan in two accounts reads as two accounts, not a double d
     expect(activeUnderlyings(both)).toEqual(['BANKNIFTY', 'NIFTY'])
   })
 
-  it('counts the accounts', () => {
-    expect(activeAccounts(both)).toBe(2)
-  })
+})
 
-  it('says so in the summary', () => {
-    expect(runningSummary(both)).toBe('Fulcrum · BANKNIFTY, NIFTY (2 accounts)')
+describe('the line under the Running runs tile', () => {
+  const both = strategy([
+    run('BANKNIFTY', 'admin'), run('NIFTY', 'admin'),
+    run('BANKNIFTY', 'coderforchange'), run('NIFTY', 'coderforchange'),
+  ])
+  const crude = { ...strategy([run('CRUDEOIL', 'admin')]), name: 'CrudeMomentum' } as StrategyListItem
+
+  it('counts the strategies and the accounts, and names neither', () => {
+    expect(runningTileSub([both, crude])).toBe('2 strategies across 2 accounts')
   })
 
   it('says nothing about accounts when there is one', () => {
-    expect(runningSummary(strategy([run('NIFTY', 'admin')]))).toBe('Fulcrum · NIFTY')
+    expect(runningTileSub([crude])).toBe('1 strategy')
   })
 
-  it('is just the name when nothing runs', () => {
-    expect(runningSummary(strategy([]))).toBe('Fulcrum')
+  it('leaves out a strategy with nothing running', () => {
+    expect(runningTileSub([strategy([]), crude])).toBe('1 strategy')
+  })
+
+  it('says so when nothing runs', () => {
+    expect(runningTileSub([])).toBe('nothing running')
+    expect(runningTileSub([strategy([])])).toBe('nothing running')
   })
 })
 

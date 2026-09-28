@@ -206,6 +206,53 @@ export function barPoints(bars: readonly LiveBar[] | undefined, day: string): Cu
 }
 
 /**
+ * The board with its live runs' figures at the pushed prices of their legs
+ * (`live`: the layout's runs re-priced, liveMarks.runsWithTicks, each run no
+ * price moved the same object). A track or account holding a moved run gets
+ * its figures again from the moved runs, and on the day that is today, with
+ * now on the axis, its line carried on to that figure at `nowMinute`, as the
+ * Desk's curve is (pnlSeries.withLiveTips): the recorder's minutes stay as
+ * written, and the line's end agrees with the number beside it. Everything
+ * else is the same object, so a lane no price reached is not redrawn.
+ */
+export function tracksWithLiveRuns(layout: TracksLayout, live: readonly LiveRunSummary[], nowMinute: number): TracksLayout {
+  const byId = new Map(live.map((r) => [r.runId, r]))
+  const moved = (r: LiveRunSummary) => {
+    const next = byId.get(r.runId)
+    return next && next !== r ? next : null
+  }
+  const tipped = (points: CurvePoint[], v: number): CurvePoint[] | null => {
+    const last = points[points.length - 1]
+    if (layout.now == null || !last || last.m >= nowMinute) return null
+    return [...points, { m: nowMinute, v }]
+  }
+  let changed = false
+  const groups = layout.groups.map((g) => {
+    let groupMoved = false
+    const tracks = g.tracks.map((t) => {
+      if (!t.runs.some(moved)) return t
+      groupMoved = true
+      const runs = t.runs.map((r) => moved(r) ?? r)
+      const figures = sumFigures(runs)
+      const points = t.live ? tipped(t.points, figures.net) : null
+      return points ? { ...t, runs, figures, points, segments: splitAtGaps(points, layout.gaps) } : { ...t, runs, figures }
+    })
+    if (!groupMoved) return g
+    changed = true
+    return { ...g, tracks, figures: sumFigures(tracks.flatMap((t) => t.runs)) }
+  })
+  if (!changed) return layout
+  const figuresOf = new Map(groups.map((g) => [g.account.id, g.figures]))
+  const movedAccounts = new Set(groups.filter((g, i) => g !== layout.groups[i]).map((g) => g.account.id))
+  const accounts = layout.accounts.map((a) => {
+    const figures = figuresOf.get(a.userId)
+    const points = figures && movedAccounts.has(a.userId) ? tipped(a.points, figures.net) : null
+    return points ? { ...a, points, segments: splitAtGaps(points, layout.gaps), last: points[points.length - 1] } : a
+  })
+  return { ...layout, groups, accounts }
+}
+
+/**
  * The board: the day's trading runs in scope as tracks, grouped by account
  * (in the order given) and ordered as the grid orders its rows (strategies
  * in the order they first started, then the index order). `fills` holds each

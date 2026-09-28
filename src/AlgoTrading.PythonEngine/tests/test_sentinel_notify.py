@@ -8,7 +8,8 @@ import requests
 
 from sentinel.model import Finding, Severity
 from sentinel import notify
-from sentinel.notify import TelegramNotifier, format_opened, format_resolved, format_seen_before, redact
+from sentinel.notify import (TelegramNotifier, format_again, format_flapping, format_opened, format_resolved,
+                             format_seen_before, format_settled, redact)
 
 # The shared redaction spec (sentinel/notify.py) as cases. The same table is
 # in tests/AlgoTrading.UnitTests/IncidentsControllerTests.cs and
@@ -210,6 +211,45 @@ class SeenBeforeFormatTests(unittest.TestCase):
                       "Last time: Set DHAN_PIN=… in .env again\n\nEvidence:\n• newest tick 11:27:35 IST", text)
         self.assertNotIn("1234", text)
         self.assertNotIn("Seen before", format_opened(f, 9))
+
+
+class FlappingMessageTests(unittest.TestCase):
+    """What a flapping incident says (28 Sep 13:06-13:28): which return it is, and what comes next."""
+
+    SINCE = datetime(2026, 9, 28, 7, 37, 30, tzinfo=timezone.utc)   # 13:07:30 IST
+    NOW = datetime(2026, 9, 28, 7, 40, 30, tzinfo=timezone.utc)
+
+    def test_a_return_says_which_time_it_is_under_the_header(self):
+        f = Finding(agent="health", rule="feed-silent", severity=Severity.CRITICAL,
+                    title="NSE/BSE ticks have stopped while the market is open", summary="No live NSE/BSE tick.",
+                    fingerprint="health:feed-silent:NSE")
+        text = format_opened(f, 135, again=format_again(2, self.SINCE, self.NOW))
+        head, number, blank, again, blank2, summary = text.splitlines()[:6]
+        self.assertEqual("🔴 AGAIN [CRITICAL] NSE/BSE ticks have stopped while the market is open", head)
+        self.assertTrue(again.startswith("Back again: the 2nd time since 13:07 IST."), again)
+        self.assertIn("at most one message about it every 30 min", again)
+        self.assertEqual("No live NSE/BSE tick.", summary)
+        self.assertTrue(format_opened(f, 135, escalated=True, again="x").startswith("🔴 ESCALATED"))
+
+    def test_ordinals(self):
+        said = [format_again(n, self.SINCE, self.NOW).split(" time ")[0].removeprefix("Back again: the ")
+                for n in (2, 3, 4, 5, 11, 12, 13, 21, 22, 23, 101, 111)]
+        self.assertEqual(["2nd", "3rd", "4th", "5th", "11th", "12th", "13th", "21st", "22nd", "23rd", "101st",
+                          "111th"], said)
+
+    def test_another_day_is_named(self):
+        self.assertIn("since 27 Sep 13:07 IST", format_again(3, self.SINCE.replace(day=27), self.NOW))
+
+    def test_the_held_back_resolved_says_how_often_and_since_when(self):
+        note = format_settled(8, self.SINCE, datetime(2026, 9, 28, 8, 0, tzinfo=timezone.utc), self.NOW)
+        text = format_resolved("MCX ticks have stopped while the market is open", 136, Severity.CRITICAL, note=note)
+        self.assertEqual("✅ RESOLVED #136 [CRITICAL] MCX ticks have stopped while the market is open\n"
+                         "It happened 8 times since 13:07 IST; clear since 13:30 IST (30 min without coming back).",
+                         text)
+
+    def test_the_console_line(self):
+        self.assertEqual("flapping: 5th episode since 13:07 IST: it cleared and came back within 30 min each time, "
+                         "so it stays this one incident", format_flapping(5, self.SINCE, self.NOW))
 
 
 if __name__ == "__main__":

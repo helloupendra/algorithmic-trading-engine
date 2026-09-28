@@ -35,18 +35,30 @@ import {
   validScope,
 } from '../../lib/desk'
 import type { CurvePoint, DayAxis, Gap } from '../../lib/pnlSeries'
-import { gapText, minuteLabel, NSE_CLOSE, NSE_OPEN, stepPath, timeTicks, valueAt, valueDomain } from '../../lib/pnlSeries'
+import { dayStartMs, gapText, minuteLabel, NSE_CLOSE, NSE_OPEN, stepPath, timeTicks, valueAt, valueDomain } from '../../lib/pnlSeries'
 import type { Track, TracksLayout } from '../../lib/tracks'
-import { barPoints, priceTrace, trackHeight, trackUnderlyings, tracksLayout, underlyingCode, validUnderlying } from '../../lib/tracks'
+import {
+  barPoints,
+  priceTrace,
+  trackHeight,
+  trackUnderlyings,
+  tracksLayout,
+  tracksWithLiveRuns,
+  underlyingCode,
+  validUnderlying,
+} from '../../lib/tracks'
 import {
   deskLegsPoll,
   useIntradayTrace,
+  useLiveRuns,
   useMarketSession,
   useOpenPositions,
   useRunPnlSeries,
   useRunsOrders,
 } from '../../lib/queries'
 import { useLiveConnection } from '../../lib/live'
+import { answerAsOf } from '../../lib/asOf'
+import { runLegs } from '../../lib/liveMarks'
 import { useNow, useShownDay, useWidth } from '../desk/data'
 import { Money, Swatch, Waiting } from '../desk/parts'
 import { InlineError } from '../../components/ui'
@@ -284,7 +296,12 @@ export function RunTracks({
     [trading, read.ledgers],
   )
   const open = useOpenPositions(deskLegsPoll(isToday, useLiveConnection()))
-  const carried = useMemo(() => carriedRunIds(open.data?.positions), [open.data])
+  const positions = open.data?.positions
+  const legsAsOf = answerAsOf(open)
+  const carried = useMemo(() => carriedRunIds(positions), [positions])
+  // The same open legs re-price the live runs' figures between the run list's answers.
+  const legs = useMemo(() => runLegs(positions, legsAsOf), [positions, legsAsOf])
+  const liveRuns = useLiveRuns(trading, shownDay.asOf, legs)
   const bars = useIntradayTrace(trace.symbol, isToday)
   const price = useMemo(() => barPoints(bars.data, day), [bars.data, day])
 
@@ -304,6 +321,15 @@ export function RunTracks({
       }),
     [trading, accounts, series.data, fills, carried, day, nowMs, isToday, mcx.data?.sessionCloseUtc, shownUnderlying],
   )
+
+  // The live tracks' figures, and their lines' ends, at the pushed prices. Every lane a push
+  // did not reach keeps its track object, and the frame is the answered layout's, so only
+  // the lanes a price moved are redrawn.
+  const seriesStart = series.data?.dayStartUtc
+  const shown = useMemo(() => {
+    if (!liveRuns || liveRuns === trading) return layout
+    return tracksWithLiveRuns(layout, liveRuns, (Date.now() - dayStartMs(day, seriesStart)) / 60_000)
+  }, [layout, liveRuns, trading, day, seriesStart])
 
   const [laneRef, width] = useWidth<HTMLDivElement>()
   const [hover, setHover] = useState<number | null>(null)
@@ -325,7 +351,7 @@ export function RunTracks({
   const multi = allAccounts.length > 1
   const priceLast = price.filter((p) => p.m >= layout.axis.from && p.m <= layout.axis.to).at(-1)
   const range = price.length ? Math.max(...price.map((p) => p.v)) - Math.min(...price.map((p) => p.v)) : null
-  const toneOf = new Map(layout.groups.map((g) => [g.account.id, g.account]))
+  const toneOf = new Map(shown.groups.map((g) => [g.account.id, g.account]))
   const inGap = hover != null && layout.gaps.some((g) => hover > g.from && hover < g.to)
 
   return (
@@ -398,7 +424,7 @@ export function RunTracks({
               <span className="dk-t3 dk-xs">
                 Net P&L<span className="tk-hide-s">{shownUnderlying ? ` on ${underlyingShort(shownUnderlying)}` : ''} by account</span>
               </span>
-              {layout.groups.map((g) => (
+              {shown.groups.map((g) => (
                 <span key={g.account.id} className="tk-legend tk-hide-s">
                   {multi && <Swatch tone={g.account.tone} />}
                   {g.account.name}
@@ -408,20 +434,20 @@ export function RunTracks({
           }
           lane={
             width > 0 && layout.any ? (
-              <AccountLane f={frame} layout={layout} h={62} />
+              <AccountLane f={frame} layout={shown} h={62} />
             ) : (
               <span className="dk-t3 dk-xs tk-lane-note">{series.data ? 'the recorder has no minutes for these runs' : 'reading the day’s minutes…'}</span>
             )
           }
-          num={layout.groups.map((g) => (
+          num={shown.groups.map((g) => (
             <span key={g.account.id} className="tk-kv">
               <span className="dk-t2 tk-hide-s">{g.account.name}</span>
               {multi && <span className="tk-only-s"><Swatch tone={g.account.tone} /></span>}
-              <At points={layout.accounts.find((a) => a.userId === g.account.id)?.points ?? []} hover={hover} fallback={g.figures.net} compact={false} />
+              <At points={shown.accounts.find((a) => a.userId === g.account.id)?.points ?? []} hover={hover} fallback={g.figures.net} compact={false} />
             </span>
           ))}
         />
-        {layout.groups.map((g) => (
+        {shown.groups.map((g) => (
           <div key={g.account.id} role="group" aria-label={`${g.account.name}: ${g.tracks.length} tracks`}>
             <Row
               cls="tk-grp"
@@ -470,7 +496,7 @@ export function RunTracks({
 
       <p className="dk-note tk-read">
         Net after charges, one shared square-root scale: a track fills its row at {compactInr(layout.scale, false)} and stops there; the figure beside it is
-        the run list’s. Green above the line, red below; ticks along the top are fills; ■ a stop by a risk rule (green: target, amber: the runner
+        the run list’s, a live run’s open book at the pushed prices, where its line ends too. Green above the line, red below; ticks along the top are fills; ■ a stop by a risk rule (green: target, amber: the runner
         exited), | the close or a person; ↻ a restart; C a leg carried to the manual book. Shaded: outside the NSE session.
         {layout.gaps.length > 0 && ` No points ${gapText(layout.gaps)}: the recorder was not writing, so no line is drawn across it.`}
         {!layout.any && series.data && ' The recorder has no minutes for these runs, so the tracks show fills and stops only.'}

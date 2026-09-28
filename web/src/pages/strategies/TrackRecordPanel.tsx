@@ -11,12 +11,23 @@
  * hypothesis and a live run is a result.
  */
 
+import { memo, useMemo } from 'react'
+import type { ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { RUN_HISTORY_PAGE, useLiveRunHistoryPages, useStrategyTrackRecord } from '../../lib/queries'
+import {
+  RUN_HISTORY_PAGE,
+  pagedRowsAsOf,
+  useLiveRun,
+  useLiveRunHistoryPages,
+  useLiveRuns,
+  useRunLegs,
+  useStrategyTrackRecord,
+} from '../../lib/queries'
+import type { RunLegs } from '../../lib/liveMarks'
 import { formatDateTime, formatDuration, formatInr, formatInrSigned, formatLots, formatNumber } from '../../lib/format'
 import { runDurationSeconds, runNetPnl } from '../../lib/runHistory'
 import { InlineError, Loading, StatTile } from '../../components/ui'
-import type { StrategyTrackRecord, StrategyTrackRecordRunRef } from '../../lib/types'
+import type { LiveRunSummary, StrategyTrackRecord, StrategyTrackRecordRunRef } from '../../lib/types'
 import { PnlValue } from './shared'
 import { RunStatusCell } from './RunHistoryPage'
 
@@ -51,9 +62,29 @@ function RunRefLink({ run, href }: { run: StrategyTrackRecordRunRef; href: strin
 
 /* ------------------------------------------------------------------ rollup */
 
-function Rollup({ record, runHref }: { record: StrategyTrackRecord; runHref: (runId: number) => string }) {
+/**
+ * "open ₹X": the live runs' open book, at the pushed prices of their legs.
+ * Summed over the live rows of the run list below (the same cached pages),
+ * re-priced as each row is; the record's own figure while those rows are not
+ * all loaded, or say a different number of runs is live than the record does.
+ */
+function OpenBook({ record, strategyId, otherwise }: { record: StrategyTrackRecord; strategyId: number; otherwise: ReactNode }) {
+  const history = useLiveRunHistoryPages({ strategyId, take: TAKE })
+  const active = useMemo(() => (history.data?.pages.flat() ?? []).filter((r) => r.isActive), [history.data])
+  const asOf = useMemo(() => pagedRowsAsOf(history.data, history.dataUpdatedAt), [history.data, history.dataUpdatedAt])
+  const live = useLiveRuns(active, asOf, useRunLegs(active)) ?? active
+  const open = live.length === record.activeRuns ? live.reduce((n, r) => n + r.unrealizedPnl, 0) : record.openPnl
+  return open !== 0 ? <>open {formatInrSigned(open)}</> : <>{otherwise}</>
+}
+
+function Rollup({ record, runHref, strategyId }: { record: StrategyTrackRecord; runHref: (runId: number) => string; strategyId: number }) {
   const own = record.scope === 'own'
   const live = record.activeRuns > 0
+  const chargesNote = record.pnlIsGrossOfCharges ? (
+    <span className="faint">before charges</span>
+  ) : record.charges ? (
+    <span className="faint">after {formatInr(record.charges)} charges</span>
+  ) : undefined
 
   return (
     <>
@@ -62,15 +93,7 @@ function Rollup({ record, runHref }: { record: StrategyTrackRecord; runHref: (ru
           label="Net P&L"
           value={<PnlValue value={record.netPnl} />}
           tone={record.netPnl > 0 ? 'pos' : record.netPnl < 0 ? 'neg' : undefined}
-          sub={
-            live && record.openPnl !== 0 ? (
-              <>open {formatInrSigned(record.openPnl)}</>
-            ) : record.pnlIsGrossOfCharges ? (
-              <span className="faint">before charges</span>
-            ) : record.charges ? (
-              <span className="faint">after {formatInr(record.charges)} charges</span>
-            ) : undefined
-          }
+          sub={live ? <OpenBook record={record} strategyId={strategyId} otherwise={chargesNote} /> : chargesNote}
         />
         <StatTile
           label="Win rate"
@@ -243,6 +266,62 @@ function StopReasons({ record }: { record: StrategyTrackRecord }) {
 
 /* --------------------------------------------------------------- every run */
 
+/**
+ * One run's row, its net moving with the pushed prices of its legs while it
+ * is live. Memoised and holding only its own legs, so a push re-renders the
+ * live rows it moves and not the lifetime of stopped ones.
+ */
+const TrackRunRow = memo(function TrackRunRow({ run: answered, to, isAdmin, asOf, legs, onOpen }: {
+  run: LiveRunSummary
+  to: string
+  isAdmin: boolean
+  asOf: number
+  legs: RunLegs | null
+  onOpen: (to: string) => void
+}) {
+  const run = useLiveRun(answered, asOf, legs)
+  return (
+    <tr
+      className={run.isActive ? 'row--live' : ''}
+      onClick={(e) => {
+        // Plain clicks open the run; modified clicks and clicks on
+        // the explicit link keep their browser behaviour.
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+        if ((e.target as HTMLElement).closest('a')) return
+        onOpen(to)
+      }}
+    >
+      <td className="mono muted">#{run.runId}</td>
+      {isAdmin && <td>{run.userName || <span className="faint">user {run.userId}</span>}</td>}
+      <td className="mono" title={run.spotSymbol || undefined}>
+        {run.underlying}
+      </td>
+      <td className="r">
+        {run.role === 'alerts' ? <span className="muted">alerts only</span> : formatLots(run.lots, run.lotSize)}
+      </td>
+      <td className="muted">{formatDateTime(run.startedUtc)}</td>
+      <td className="muted">{run.isActive ? <span className="faint">—</span> : formatDateTime(run.stoppedUtc)}</td>
+      <td className="r mono muted">{formatDuration(runDurationSeconds(run))}</td>
+      <td className="r" title={run.openPositions > 0 ? `${run.openPositions} open` : undefined}>
+        {formatNumber(run.trades)}
+        {run.openPositions > 0 && <span className="cell-sub">{run.openPositions} open</span>}
+      </td>
+      <td className="r">
+        <PnlValue value={runNetPnl(run)} />
+        {run.isActive && run.unrealizedPnl !== 0 && (
+          <span className="cell-sub">unrealized {formatInrSigned(run.unrealizedPnl)}</span>
+        )}
+      </td>
+      <td>
+        <RunStatusCell run={run} />
+      </td>
+      <td className="r">
+        <Link to={to}>Detail →</Link>
+      </td>
+    </tr>
+  )
+})
+
 function RunTable({
   strategyId,
   runHref,
@@ -255,7 +334,10 @@ function RunTable({
   const navigate = useNavigate()
   // No date floor: this is the lifetime list, paged from the newest back.
   const history = useLiveRunHistoryPages({ strategyId, take: TAKE })
-  const rows = history.data?.pages.flat() ?? []
+  const rows = useMemo(() => history.data?.pages.flat() ?? [], [history.data])
+  // The live rows are re-priced from their open legs, each against the page it came in.
+  const legs = useRunLegs(rows)
+  const asOfByRun = useMemo(() => pagedRowsAsOf(history.data, history.dataUpdatedAt), [history.data, history.dataUpdatedAt])
 
   if (history.isPending) return <Loading label="Loading runs…" />
   if (history.isError && history.data === undefined) return <InlineError error={history.error} />
@@ -289,50 +371,17 @@ function RunTable({
             </tr>
           </thead>
           <tbody>
-            {rows.map((run) => {
-              const to = runHref(run.runId)
-              return (
-                <tr
-                  key={run.runId}
-                  className={run.isActive ? 'row--live' : ''}
-                  onClick={(e) => {
-                    // Plain clicks open the run; modified clicks and clicks on
-                    // the explicit link keep their browser behaviour.
-                    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
-                    if ((e.target as HTMLElement).closest('a')) return
-                    navigate(to)
-                  }}
-                >
-                  <td className="mono muted">#{run.runId}</td>
-                  {isAdmin && <td>{run.userName || <span className="faint">user {run.userId}</span>}</td>}
-                  <td className="mono" title={run.spotSymbol || undefined}>
-                    {run.underlying}
-                  </td>
-                  <td className="r">
-                    {run.role === 'alerts' ? <span className="muted">alerts only</span> : formatLots(run.lots, run.lotSize)}
-                  </td>
-                  <td className="muted">{formatDateTime(run.startedUtc)}</td>
-                  <td className="muted">{run.isActive ? <span className="faint">—</span> : formatDateTime(run.stoppedUtc)}</td>
-                  <td className="r mono muted">{formatDuration(runDurationSeconds(run))}</td>
-                  <td className="r" title={run.openPositions > 0 ? `${run.openPositions} open` : undefined}>
-                    {formatNumber(run.trades)}
-                    {run.openPositions > 0 && <span className="cell-sub">{run.openPositions} open</span>}
-                  </td>
-                  <td className="r">
-                    <PnlValue value={runNetPnl(run)} />
-                    {run.isActive && run.unrealizedPnl !== 0 && (
-                      <span className="cell-sub">unrealized {formatInrSigned(run.unrealizedPnl)}</span>
-                    )}
-                  </td>
-                  <td>
-                    <RunStatusCell run={run} />
-                  </td>
-                  <td className="r">
-                    <Link to={to}>Detail →</Link>
-                  </td>
-                </tr>
-              )
-            })}
+            {rows.map((run) => (
+              <TrackRunRow
+                key={run.runId}
+                run={run}
+                to={runHref(run.runId)}
+                isAdmin={isAdmin}
+                asOf={asOfByRun.get(run.runId) ?? history.dataUpdatedAt}
+                legs={legs}
+                onOpen={navigate}
+              />
+            ))}
           </tbody>
         </table>
       </div>
@@ -389,7 +438,7 @@ export function TrackRecordPanel({
 
   return (
     <div className="track">
-      <Rollup record={r} runHref={runHref} />
+      <Rollup record={r} runHref={runHref} strategyId={strategyId} />
       <div className="track__breaks">
         <ByUnderlying record={r} />
         <StopReasons record={r} />

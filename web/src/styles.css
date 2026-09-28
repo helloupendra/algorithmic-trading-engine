@@ -2449,32 +2449,96 @@ a.pill:hover { border-color: var(--line-strong); }
 /* --- option chain ----------------------------------------------------------- */
 /* Dense by design. A chain is read by shape before it is read by number, so the
    bars carry the meaning and the digits are the detail underneath them. */
+/* The summary strip over the chain. It is its own size container, so its layout
+   follows the width it is given rather than the window's, and each layout is a
+   fixed set of named areas that fills every row edge to edge. Counting how many
+   140px tiles fit (auto-fill) left the lot size alone on a second row beside a
+   wide hole at most desk widths, and broke the future's change under its price. */
 .oc-header {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px;
-  margin-bottom: 12px;
+  container-type: inline-size;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
+}
+.oc-head-grid {
+  display: grid;
+  gap: 1px; /* the gaps show the background through: they are the dividers */
   background: var(--line-soft);
+  /* A phone: the spot across the top, the future beside VIX, the four short readings, then the two walls. */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-areas:
+    'spot spot spot spot'
+    'fut  fut  vix  vix'
+    'pcr  pain atm  lot'
+    'sr   sr   oi   oi';
+}
+/* MCX: the future is the spot, so VIX has the second row to itself. */
+.oc-head-grid--no-future {
+  grid-template-areas:
+    'spot spot spot spot'
+    'vix  vix  vix  vix'
+    'pcr  pain atm  lot'
+    'sr   sr   oi   oi';
+}
+/* A laptop: where the price is, over what the chain says. The six readings
+   below set the columns and each price above spans two of them, which is about
+   what it needs. Columns are as wide as what they hold, the spare width is
+   shared out evenly, and the lot keeps only its own width. Below 800px a long
+   price line (an after-hours spot's "previous close not known") widens its two
+   columns until the walls below wrap, so a tablet keeps the phone's rows. */
+@container (min-width: 800px) {
+  .oc-head-grid {
+    grid-template-columns: repeat(5, minmax(0, auto)) minmax(0, max-content);
+    grid-template-areas:
+      'spot spot fut  fut vix vix'
+      'pcr  pain atm  sr  oi  lot';
+  }
+  .oc-head-grid--no-future {
+    grid-template-areas:
+      'spot spot spot vix vix vix'
+      'pcr  pain atm  sr  oi  lot';
+  }
+}
+/* A desk screen: every reading in one row, the lot last and narrow. Nine
+   readings need about 1,310px, so a 1366px laptop gets the row too. */
+@container (min-width: 1320px) {
+  .oc-head-grid {
+    grid-template-columns: repeat(8, minmax(0, auto)) minmax(0, max-content);
+    grid-template-areas: 'spot fut vix pcr pain atm sr oi lot';
+  }
+  .oc-head-grid--no-future {
+    grid-template-columns: repeat(7, minmax(0, auto)) minmax(0, max-content);
+    grid-template-areas: 'spot vix pcr pain atm sr oi lot';
+  }
 }
 .oc-head-item {
-  flex: 1 1 120px;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 8px 12px;
+  padding: 7px 11px;
   background: var(--surface);
 }
-.oc-head-item--wide { flex: 2 1 220px; }
+.oc-head-item--spot { grid-area: spot; }
+.oc-head-item--fut { grid-area: fut; }
+.oc-head-item--vix { grid-area: vix; }
+.oc-head-item--pcr { grid-area: pcr; }
+.oc-head-item--pain { grid-area: pain; }
+.oc-head-item--atm { grid-area: atm; }
+.oc-head-item--sr { grid-area: sr; }
+.oc-head-item--oi { grid-area: oi; }
+.oc-head-item--lot { grid-area: lot; }
+/* The lot is a fact about the contract, not a reading of the market. */
+.oc-head-item--lot .oc-head-value { color: var(--text-2); }
 .oc-head-label {
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .oc-head-value {
   font-size: 15px;
@@ -2652,25 +2716,26 @@ a.oc-tab { text-decoration: none; }
 .oc-toggle[aria-pressed='true'] .oc-toggle__box { background: var(--brand); }
 .oc-toggle[aria-pressed='true'] .oc-toggle__box::after { transform: translateX(10px); background: #fff; }
 
-.oc-page .oc-header {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  grid-auto-flow: row dense;
-  gap: 1px;
-  margin-bottom: 0;
-}
-.oc-page .oc-head-item { padding: 7px 11px; }
-.oc-page .oc-head-item--wide { grid-column: span 2; }
-/* The last tile takes the rest of its row, so a short second row has no hole. */
-.oc-page .oc-head-item:last-child { grid-column-end: -1; }
 @media (max-width: 520px) {
-  .oc-page .oc-header { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .oc-page .oc-head-item { padding: 6px 8px; }
-  .oc-page .oc-head-item--wide { grid-column: 1 / -1; }
   .oc-page .oc-head-value { font-size: 13.5px; }
-  .oc-page .oc-head-label { font-size: 9.5px; letter-spacing: 0.05em; }
+  /* "of OI chg 0.27" fits a quarter of a phone. A longer line (a future's
+     premium and its bar time, MCX's "nearest future" label) wraps: a touch
+     screen has no tooltip to read a cut line from. */
+  .oc-page .oc-head-label { font-size: 9.5px; letter-spacing: 0.05em; white-space: normal; }
+  .oc-page .oc-head-sub { font-size: 10.5px; white-space: normal; }
 }
-.oc-head-value .oc-chg { font-size: 12px; font-weight: 600; margin-left: 4px; white-space: nowrap; }
+/* A price and its change. When the cell is too narrow for both, the change
+   drops under the price flush left, instead of starting its line with a gap. */
+.oc-head-item--spot .oc-head-value,
+.oc-head-item--fut .oc-head-value,
+.oc-head-item--vix .oc-head-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 6px;
+}
+.oc-head-value .oc-chg { font-size: 12px; font-weight: 600; white-space: nowrap; }
 .oc-head-sub {
   font-size: 11px;
   color: var(--text-3);

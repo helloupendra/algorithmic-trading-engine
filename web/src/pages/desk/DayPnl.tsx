@@ -12,13 +12,13 @@
  */
 
 import { useMemo } from 'react'
-import type { AccountTotals } from '../../lib/desk'
-import { compactInr, dayLabel } from '../../lib/desk'
-import { dayCurves, gapText } from '../../lib/pnlSeries'
+import type { AccountTotals, DeskGrid } from '../../lib/desk'
+import { compactInr, dayLabel, liveAccountNets } from '../../lib/desk'
+import { dayCurves, dayStartMs, gapText, withLiveTips } from '../../lib/pnlSeries'
 import { formatInrSigned, formatInrWhole } from '../../lib/format'
 import { useDeskRiskLimits, useRunPnlSeries } from '../../lib/queries'
 import type { DeskLinks, DeskView } from './data'
-import { toneClass, useWidth } from './data'
+import { toneClass, useLiveGrid, useWidth } from './data'
 import { PnlChart } from './PnlChart'
 import { Failed, Money, PanelHead, Swatch, Waiting } from './parts'
 
@@ -40,8 +40,8 @@ function AccountRow({ totals, multi }: { totals: AccountTotals; multi: boolean }
 }
 
 /** Where the net came from: one diverging bar per strategy, scaled to the largest. */
-function ByStrategy({ view }: { view: DeskView }) {
-  const rows = view.grid!.rows
+function ByStrategy({ grid }: { grid: DeskGrid }) {
+  const rows = grid.rows
   const max = Math.max(1, ...rows.map((r) => Math.abs(r.figures.net)))
   return (
     <div className="dk-bystrat">
@@ -72,8 +72,14 @@ function ByStrategy({ view }: { view: DeskView }) {
   )
 }
 
-/** The curve, or a plain word on why there is none. */
-function Curve({ view }: { view: DeskView }) {
+const NO_TIPS: ReadonlyMap<number, number> = new Map()
+
+/**
+ * The curve, or a plain word on why there is none. `tips` are the live
+ * accounts' figures now, which the lines are carried on to between the
+ * recorder's minutes (pnlSeries.withLiveTips).
+ */
+function Curve({ view, tips }: { view: DeskView; tips: ReadonlyMap<number, number> }) {
   const [ref, width] = useWidth<HTMLDivElement>()
   const isToday = view.day === view.today
   const series = useRunPnlSeries(view.day, isToday)
@@ -85,24 +91,30 @@ function Curve({ view }: { view: DeskView }) {
         : null,
     [series.data, userIds, view.nowMs, isToday, view.mcx?.sessionCloseUtc],
   )
+  const shown = useMemo(() => {
+    if (!curves || !series.data || !isToday) return curves
+    // The instant a tip changed: a push re-prices it, so the line's end moves with the figure beside it.
+    const nowMinute = (Date.now() - dayStartMs(series.data.date, series.data.dayStartUtc)) / 60_000
+    return withLiveTips(curves, tips, nowMinute)
+  }, [curves, series.data, isToday, tips])
   let body
-  if (!curves) {
+  if (!shown) {
     body = series.isError ? <Failed what="The day’s minutes" error={series.error} /> : <p className="dk-wait dk-chart__wait">Reading the day’s minutes…</p>
-  } else if (!curves.any) {
+  } else if (!shown.any) {
     body = (
       <p className="dk-note dk-chart__wait">
         The recorder has no minutes for {isToday ? 'today' : dayLabel(view.day)} yet, so there is no curve: the figures below are the runs’ own.
       </p>
     )
   } else {
-    body = <PnlChart curves={curves} accounts={view.accounts} width={width} />
+    body = <PnlChart curves={shown} accounts={view.accounts} width={width} />
   }
   return (
     <>
       <div ref={ref}>{body}</div>
-      {curves?.any && curves.gaps.length > 0 && (
+      {shown?.any && shown.gaps.length > 0 && (
         <p className="dk-note dk-gapnote" role="note">
-          No points {gapText(curves.gaps)}: the recorder was not writing then, so the curve is not drawn across it.
+          No points {gapText(shown.gaps)}: the recorder was not writing then, so the curve is not drawn across it.
         </p>
       )}
     </>
@@ -110,6 +122,12 @@ function Curve({ view }: { view: DeskView }) {
 }
 
 export function DayPnl({ view, links }: { view: DeskView; links: DeskLinks }) {
+  // The live runs' figures at the pushed prices: the same numbers as the strip and the grid.
+  const grid = useLiveGrid(view)
+  const tips = useMemo(
+    () => (grid && view.runs && view.day === view.today ? liveAccountNets(grid, view.runs) : NO_TIPS),
+    [grid, view.runs, view.day, view.today],
+  )
   const limits = useDeskRiskLimits(view.isAdmin)
   const limit = limits.data?.maxDailyLoss ?? null
   const whose = view.accounts.length > 1 ? 'per account · ' : ''
@@ -121,15 +139,14 @@ export function DayPnl({ view, links }: { view: DeskView; links: DeskLinks }) {
       more={view.isAdmin && links.risk ? { to: links.risk, label: 'Risk' } : null}
     />
   )
-  if (view.runsError && !view.grid) return <>{head}<Failed what="The runs" error={view.runsError} /></>
-  if (!view.grid) return <>{head}<Waiting>Reading today’s runs…</Waiting></>
-  const { grid } = view
+  if (view.runsError && !grid) return <>{head}<Failed what="The runs" error={view.runsError} /></>
+  if (!grid) return <>{head}<Waiting>Reading today’s runs…</Waiting></>
   if (grid.rows.length === 0) return <>{head}<Waiting>Nothing traded yet.</Waiting></>
   const multi = grid.totals.length > 1
   return (
     <>
       {head}
-      <Curve view={view} />
+      <Curve view={view} tips={tips} />
       {grid.totals.map((t) => (
         <AccountRow key={t.account.id} totals={t} multi={multi} />
       ))}
@@ -143,7 +160,7 @@ export function DayPnl({ view, links }: { view: DeskView; links: DeskLinks }) {
           </div>
         </div>
       )}
-      <ByStrategy view={view} />
+      <ByStrategy grid={grid} />
       {view.isAdmin && limit != null && limit < 0 && (
         <div className="dk-foot" style={{ display: 'block' }}>
           <p className="dk-note">

@@ -732,6 +732,24 @@ class ApiOutageTests(TradingAgentTestCase):
         carried = self.agent.check(make_context(self.tmp, api=api, now=ist(9, 40)))
         self.assertEqual([(f.fingerprint, f.title, f.severity, f.evidence) for f in seen],
                          [(f.fingerprint, f.title, f.severity, f.evidence) for f in carried])
+        # As observed at the last answer: an incident resolved since is not reopened by it.
+        self.assertEqual({None}, {f.observed_utc for f in seen})
+        self.assertEqual({ist(9, 30)}, {f.observed_utc for f in carried})
+
+    def test_what_a_person_resolved_while_sentinel_was_blind_stays_resolved(self):
+        desk = Desk(self.tmp)
+        desk.at(ist(11, 0), [])
+        self.assertEqual(2, len(desk.opened()))   # none of the 13 planned runs, for each account
+        desk.at(ist(11, 1), [], down=True)
+        admin = next(r for r in desk.store.rows() if r["fingerprint"] == "trading:run-missing:admin")
+        desk.store.resolve_by_person(admin["id"], ist(11, 1, 30))   # "I know; starting them by hand"
+        for minute in range(2, 10):
+            desk.at(ist(11, minute), [], down=True)
+        self.assertEqual(2, len(desk.store.rows()), "the last answer, from 11:00, reopened nothing")
+        self.assertEqual(2, len(desk.notes.sent))
+        desk.at(ist(11, 10), [])   # it answers again, and they are still not running: that is news
+        self.assertEqual(3, len(desk.store.rows()))
+        self.assertEqual(3, len(desk.opened()))
 
     def failing(self, running, today, error=None, **session):
         api = routes(running, today, **session)

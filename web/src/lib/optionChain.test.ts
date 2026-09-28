@@ -13,6 +13,7 @@ import {
   isPutItm,
   applyTicksToChain,
   classifyBuildUp,
+  pointsVsSpot,
   positionMarker,
   positionsBySymbol,
   signedPercent,
@@ -51,6 +52,25 @@ describe('compactIndian', () => {
     expect(signedPercent(0.11)).toBe('+0.11%')
     expect(signedPercent(-5.82)).toBe('−5.82%')
     expect(signedPercent(0.001)).toBe('0.00%')
+  })
+})
+
+describe('pointsVsSpot', () => {
+  it('reads a level against the spot in whole points, signed with a true minus', () => {
+    expect(pointsVsSpot(23_250, 23_140.5)).toBe('+110 vs spot')
+    expect(pointsVsSpot(23_100, 23_140.5)).toBe('−41 vs spot')
+    expect(pointsVsSpot(83_100, 81_845.6)).toBe('+1,254 vs spot')
+  })
+
+  it('says "at the spot" inside half a point', () => {
+    expect(pointsVsSpot(23_150, 23_149.7)).toBe('at the spot')
+  })
+
+  it('leaves the line out when either side is unknown', () => {
+    expect(pointsVsSpot(null, 23_140.5)).toBeNull()
+    expect(pointsVsSpot(23_250, null)).toBeNull()
+    expect(pointsVsSpot(23_250, 0)).toBeNull()
+    expect(pointsVsSpot(Number.NaN, 23_140.5)).toBeNull()
   })
 })
 

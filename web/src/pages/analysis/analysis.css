@@ -77,9 +77,11 @@
 .an-legend__base { width: 7px; height: 7px; transform: rotate(45deg); border: 1.5px solid var(--text-2); }
 .an-legend__actual { width: 8px; height: 8px; border-radius: 50%; background: var(--live); }
 
+
+/* auto-fit: three cards share the row rather than leaving a fourth, empty track. */
 .an-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(330px, 100%), 1fr));
   gap: 12px;
   align-items: start;
 }
@@ -97,7 +99,6 @@
 }
 .an-card__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
 .an-card__name { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
-.an-card__issued { margin-left: auto; }
 .an-card__note { margin: 0; }
 
 .an-block { min-width: 0; }
@@ -270,31 +271,161 @@
   font-size: 11.5px;
 }
 .an-model .badge { font-size: 10px; padding: 0 6px; }
+/* A model key carries its description as a tooltip; the dotted rule says so. */
+.an-model__key,
+.an-inputs__who .mono,
+.an-inputs__table tbody th.mono {
+  cursor: help;
+  text-decoration: underline dotted var(--line-strong);
+  text-underline-offset: 3px;
+}
 
+/* What the models saw: each fact once, under the models that record it,
+   then what differs by model as a small table. */
 .an-inputs summary {
   cursor: pointer;
   color: var(--text-3);
   font-size: 12px;
 }
 .an-inputs summary:hover { color: var(--text-2); }
-.an-inputs__grid {
+.an-inputs__body { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.an .an-inputs__who { margin: 0 0 2px; color: var(--text-3); font-size: 11px; line-height: 1.5; }
+.an .an-inputs__table { font-size: 11.5px; line-height: 1.45; }
+.an .an-inputs__table th,
+.an .an-inputs__table td { padding: 4px 9px; }
+.an .an-inputs__table thead th { letter-spacing: 0.05em; white-space: normal; vertical-align: bottom; }
+/* The row names: data text, not the header's micro-label voice. */
+.an-inputs__table tbody th,
+.an-news tbody th {
+  position: static;
+  background: transparent;
+  color: var(--text-2);
+  font-size: inherit;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: left;
+  border-bottom: 1px solid var(--line-soft);
+  white-space: normal;
+  z-index: auto;
+}
+.an-inputs__table tbody th { white-space: nowrap; }
+.an-inputs__table td { color: var(--text); }
+
+/* A value with no particular layout: nested label / value lists. */
+.an-tree { margin: 0; text-align: left; font-family: var(--sans); white-space: normal; }
+.an-tree > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 10px; padding: 1px 0; }
+.an-tree dt { color: var(--text-3); }
+.an-tree dd { margin: 0; color: var(--text-2); font-family: var(--mono); font-size: 0.95em; }
+.an-tree--items { margin: 0; padding-left: 16px; }
+.an-tree--top { max-width: 560px; }
+.an-tree--top > div { border-bottom: 1px dashed var(--line-soft); padding: 3px 0; font-size: 12px; }
+/* A value that is itself fields or a list: the whole row, indented under its label. */
+.an-tree dd.an-tree__nest,
+.an-facts dd.an-tree__nest {
+  flex: 1 1 100%;
+  padding-left: 10px;
+  border-left: 1px solid var(--line-soft);
+  text-align: left;
+}
+/* The label takes what is left and wraps; the value keeps its width. */
+.an-tree dt,
+.an-facts dt { flex: 1 1 0; min-width: 0; }
+.an-tree dd,
+.an-facts dd { min-width: 0; overflow-wrap: anywhere; }
+
+/* ---------- The pre-open context ---------- */
+
+.an-ctx {
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+}
+.an-ctx > * + * { margin-top: 12px; }
+.an-ctx__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.an-ctx__title { margin: 0; font-size: 13px; font-weight: 650; }
+.an-ctx__badge { margin-left: auto; align-self: center; }
+.an-ctx__badge .badge { font-size: 10.5px; }
+/* Wide: the facts, the news as wide as its columns, and the note beside them.
+   Narrower, the note goes on top; on a phone everything stacks. */
+.an-ctx__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 10px 18px;
-  margin-top: 8px;
+  grid-template-columns: minmax(230px, 300px) auto minmax(220px, 1fr);
+  grid-template-areas: 'side news note';
+  gap: 14px 32px;
+  align-items: start;
 }
-.an .an-inputs__name { color: var(--text-2); font-size: 11.5px; margin-bottom: 3px; }
-.an-inputs dl { margin: 0; }
-.an-inputs dl > div {
+.an .an-ctx__note { grid-area: note; margin: 0; max-width: 60ch; line-height: 1.55; }
+.an-ctx__side { grid-area: side; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.an-ctx__news { grid-area: news; }
+.an-ctx__part { min-width: 0; }
+.an-ctx__part > .an-label { display: block; margin: 0 0 6px; }
+.an .an-ctx__fine { margin: 6px 0 0; line-height: 1.45; }
+/* The news footnote wraps at the table's width instead of widening its column. */
+.an-ctx__news .an-ctx__fine { width: 0; min-width: 100%; }
+
+.an-facts { margin: 0; }
+.an-facts > div {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
-  gap: 10px;
-  padding: 2px 0;
+  align-items: baseline;
+  gap: 2px 12px;
+  padding: 4px 0;
   border-bottom: 1px dashed var(--line-soft);
-  font-size: 11.5px;
+  font-size: 12.5px;
 }
-.an-inputs dt { color: var(--text-3); }
-.an-inputs dd { margin: 0; color: var(--text-2); }
+.an-facts dt { color: var(--text-2); }
+.an-facts dd { margin: 0; color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
+.an-facts dd.pos { color: var(--pos); }
+.an-facts dd.neg { color: var(--neg); }
+.an-facts--sm > div { padding: 2px 0; font-size: 11.5px; }
+
+/* As wide as its columns need, not the whole row: a reader goes across it. */
+.an-news__wrap { width: fit-content; max-width: 100%; }
+.an .an-news { width: auto; font-size: 12px; line-height: 1.45; }
+.an-news tbody th { min-width: 130px; }
+.an .an-news th,
+.an .an-news td { padding: 5px 10px; }
+.an-news tbody th { color: var(--text); }
+/* A firmer rule where the markets end and the sectors begin, and before the filings. */
+.an .an-news .an-news__end th,
+.an .an-news .an-news__end td { border-bottom-color: var(--line-strong); }
+.an-news tbody tr:last-child th,
+.an-inputs__table tbody tr:last-child th { border-bottom: 0; }
+
+/* Mean sentiment: a bar out from the middle, and the reading. */
+.an-senti { display: inline-flex; align-items: center; gap: 7px; }
+.an-senti__track {
+  position: relative;
+  width: 64px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg0);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+.an-senti__track::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background: var(--text-3);
+}
+.an-senti__track i { position: absolute; top: 1px; bottom: 1px; border-radius: 2px; background: var(--text-3); }
+.an-senti b { min-width: 38px; text-align: right; font-weight: 500; font-size: 11.5px; }
+.an-senti--pos i { background: var(--pos); }
+.an-senti--pos b { color: var(--pos); }
+.an-senti--neg i { background: var(--neg); }
+.an-senti--neg b { color: var(--neg); }
+.an-senti--flat b { color: var(--text-2); }
+
+/* Highest importance, 0–3, as pips. */
+.an-imp { display: inline-flex; gap: 3px; vertical-align: middle; }
+.an-imp i { width: 7px; height: 7px; border-radius: 2px; border: 1px solid var(--line-strong); }
+.an-imp i.is-on { background: var(--text-2); border-color: var(--text-2); }
 
 /* ---------- Scoreboard ---------- */
 
@@ -442,12 +573,44 @@
   .an-detail { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .an-detail__cal { grid-column: 1 / -1; }
   .an-how__grid { grid-template-columns: minmax(0, 1fr); }
+  .an-ctx__grid {
+    grid-template-columns: minmax(230px, 300px) minmax(0, 1fr);
+    grid-template-areas: 'note note' 'side news';
+  }
+  .an .an-ctx__note { max-width: 96ch; }
+}
+
+@media (max-width: 900px) {
+  .an-ctx__grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'note' 'side' 'news'; }
+  .an-ctx__side { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr)); gap: 14px 28px; }
 }
 
 @media (max-width: 760px) {
-  .an-card { padding: 12px 13px; }
+  .an-card,
+  .an-ctx { padding: 12px 13px; }
   .an-legend { margin-left: 0; }
-  .an-card__issued { margin-left: 0; }
+  .an-ctx__badge { margin-left: 0; }
   .an-detail { grid-template-columns: minmax(0, 1fr); left: 0; }
   .an-detail__facts > div { grid-template-columns: minmax(0, 1fr); gap: 1px; }
+}
+
+/* The news table on a phone: seen and scored share a column, so the reading
+   and its importance stay on screen without scrolling. */
+.an-narrow { display: none; }
+@media (max-width: 560px) {
+  .an .an-news th.an-wide,
+  .an .an-news td.an-wide,
+  .an .an-news span.an-wide { display: none; }
+  .an .an-news th.an-narrow,
+  .an .an-news td.an-narrow { display: table-cell; }
+  .an .an-news span.an-narrow { display: inline; }
+  .an .an-news th,
+  .an .an-news td { padding: 5px 6px; }
+  .an .an-news thead th { letter-spacing: 0.04em; }
+  .an-news tbody th { min-width: 0; }
+  .an-news__wrap { width: auto; }
+  .an .an-news { width: 100%; }
+  .an-senti { gap: 5px; }
+  .an-senti__track { width: 34px; }
+  .an-senti b { min-width: 34px; }
 }

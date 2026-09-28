@@ -37,17 +37,19 @@ export function runOwner(run: { ownerName?: string | null; startedBy?: string | 
   return run.ownerName || run.startedBy || 'unknown account'
 }
 
-/** How many accounts are running this strategy right now. */
-export function activeAccounts(s: StrategyListItem): number {
-  return new Set(s.activeRuns.map(runOwner)).size
-}
-
-/** "Fulcrum · BANKNIFTY, NIFTY (2 accounts)" — one line per running strategy for tiles and lists. */
-export function runningSummary(s: StrategyListItem): string {
-  const on = activeUnderlyings(s)
-  if (on.length === 0) return s.name
-  const accounts = activeAccounts(s)
-  return `${s.name} · ${on.join(', ')}${accounts > 1 ? ` (${accounts} accounts)` : ''}`
+/**
+ * The line under the "Running runs" tile: how many strategies are running,
+ * and across how many accounts when it is more than one. Only that: until
+ * 28 Sep the tile listed every running strategy with its underlyings, a line
+ * each, which made it several times the height of the tiles beside it and
+ * repeated the cards right below it.
+ */
+export function runningTileSub(strategies: readonly StrategyListItem[]): string {
+  const running = strategies.filter((s) => s.activeRuns.length > 0)
+  if (running.length === 0) return 'nothing running'
+  const accounts = new Set(running.flatMap((s) => s.activeRuns.map(runOwner))).size
+  const count = `${running.length} ${running.length === 1 ? 'strategy' : 'strategies'}`
+  return accounts > 1 ? `${count} across ${accounts} accounts` : count
 }
 
 /**

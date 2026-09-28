@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any
+from typing import Any, Optional
 
 
 class Severity(str, Enum):
@@ -40,9 +41,22 @@ CONTEXT_PREFIX = "context: "
 # opens, and kept across sightings like the context pack.
 HISTORY_PREFIX = "history: "
 
+# Evidence lines that start with this say the incident is flapping: it
+# cleared and came back within FLAP_WINDOW, how many times, since when. The
+# engine rewrites the line on every return; kept across sightings like the rest.
+FLAP_PREFIX = "flapping: "
+
 #: The prefixes of the lines Sentinel adds to an incident's evidence itself,
 #: which a new sighting keeps instead of replacing with the agent's.
-KEPT_PREFIXES = (HISTORY_PREFIX, CONTEXT_PREFIX)
+KEPT_PREFIXES = (HISTORY_PREFIX, CONTEXT_PREFIX, FLAP_PREFIX)
+
+#: A problem that comes back within this long of Sentinel resolving it is the
+#: same episode, not a new one: the resolved incident is reopened, and while it
+#: keeps flapping it is messaged at most once per this window. 28 Sep 13:06-13:28:
+#: the feed stalled for ~2 min every few minutes, and each stall opened a new
+#: CRITICAL "ticks have stopped" incident per exchange group, with its NEW and
+#: its RESOLVED message, where the problem was one flapping feed.
+FLAP_WINDOW = timedelta(minutes=30)
 
 
 @dataclass(frozen=True)
@@ -68,6 +82,15 @@ class Finding:
     evidence: list[str] = field(default_factory=list)
     suggestion: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
+    #: When the newest observation behind this finding was made, for a finding
+    #: an agent repeats from memory rather than from what it saw this check (a
+    #: log finding held open after its last line, the last answer carried while
+    #: a source cannot be read). None: observed now. An incident resolved at or
+    #: after this moment is not reopened by it — 28 Sep 13:08 the operator
+    #: resolved four API errors of a deliberate Postgres restart (13:05-13:06),
+    #: and at 13:11 their held findings opened them again as new incidents,
+    #: counting the same lines.
+    observed_utc: Optional[datetime] = None
 
     def __post_init__(self) -> None:
         if not self.fingerprint:
