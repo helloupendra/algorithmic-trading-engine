@@ -7,6 +7,7 @@ import {
   compactIndian,
   compactSigned,
   describeFreshness,
+  capturedExpiry,
   expiryLabel,
   isCallItm,
   isPutItm,
@@ -116,6 +117,17 @@ describe('strikeWindow', () => {
   it('shows everything for All or for a short chain', () => {
     expect(strikeWindow(strikes, 57_400, 'all')).toEqual({ start: 0, end: 101 })
     expect(strikeWindow([1, 2, 3], 2, 10)).toEqual({ start: 0, end: 3 })
+  })
+})
+
+describe('capturedExpiry', () => {
+  it("drops the default date the API names when nothing is captured, and keeps a real expiry", () => {
+    expect(capturedExpiry('0001-01-01')).toBeNull()
+    expect(capturedExpiry('0001-01-01T00:00:00')).toBeNull()
+    expect(capturedExpiry('')).toBeNull()
+    expect(capturedExpiry(null)).toBeNull()
+    expect(capturedExpiry(undefined)).toBeNull()
+    expect(capturedExpiry('2026-09-30')).toBe('2026-09-30')
   })
 })
 
