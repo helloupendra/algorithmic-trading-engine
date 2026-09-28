@@ -17,7 +17,7 @@ import {
   useRiskExposure,
   useRiskLimits,
   useStrategies,
-  useStrategyLives,
+  useStrategyLivesRepriced,
 } from '../../lib/queries'
 import { formatDateTime, formatDuration, formatNumber } from '../../lib/format'
 import { runDurationSeconds, runNetPnl } from '../../lib/runHistory'
@@ -49,9 +49,10 @@ export function TraderLibraryPage() {
   )
   const runIds = useMemo(() => rows.map((r) => r.run.runId), [rows])
 
-  const lives = useStrategyLives(runIds)
+  // Re-priced at the pushed prices of each run's legs, as its run card is:
+  // with the socket up a view is read every 15 s, and the prices move between.
   const viewByRun = new Map<number, StrategyLiveView>()
-  for (const q of lives) if (q.data?.runId != null) viewByRun.set(q.data.runId, q.data)
+  for (const v of useStrategyLivesRepriced(runIds)) if (v?.runId != null) viewByRun.set(v.runId, v)
 
   const openPositions = rows.reduce(
     (n, r) => n + (viewByRun.get(r.run.runId)?.positions.filter((p) => p.status === 'Open').length ?? 0),
