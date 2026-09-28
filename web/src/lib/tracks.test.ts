@@ -2,7 +2,19 @@ import { describe, expect, it } from 'vitest'
 
 import type { DeskAccount } from './desk'
 import { NSE_CLOSE, NSE_OPEN } from './pnlSeries'
-import { barPoints, sumCurves, trackHeight, trackScale, tracksLayout, underlyingCode } from './tracks'
+import {
+  barPoints,
+  priceTrace,
+  readTrackUnderlying,
+  sumCurves,
+  trackHeight,
+  trackScale,
+  trackUnderlyings,
+  tracksLayout,
+  underlyingCode,
+  validUnderlying,
+  writeTrackUnderlying,
+} from './tracks'
 import type { LiveRunSummary, RunPnlSeries } from './types'
 
 const DAY = '2026-09-25'
@@ -223,5 +235,81 @@ describe('tracksLayout', () => {
   it('marks now on the day that is today, inside the axis', () => {
     expect(layout({ isToday: true, nowMs: Date.parse(at('11:42')) }).now).toBe(min('11:42'))
     expect(layout({ isToday: true }).now).toBeNull()
+  })
+})
+
+describe('narrowing the board to one underlying', () => {
+  const nifty = run()
+  const bank = run({ underlying: 'BANKNIFTY', spotSymbol: 'NSE:NIFTYBANK-INDEX', netPnl: 400, grossPnl: 500, charges: 100, realizedPnl: 500, trades: 1 })
+  const sensex = run({ underlying: 'sensex', spotSymbol: 'BSE:SENSEX-INDEX' })
+  const crudeEarly = run({ underlying: 'CRUDEOIL', spotSymbol: 'MCX:CRUDEOIL26SEPFUT', startedUtc: at('09:05') })
+  const crudeLate = run({ underlying: 'CRUDEOIL', spotSymbol: 'MCX:CRUDEOIL26OCTFUT', startedUtc: at('17:00') })
+  const book = run({ strategyName: 'Manual', underlying: 'MANUAL', spotSymbol: 'MANUAL' })
+  const alerter = run({ role: 'alerts', underlying: 'FINNIFTY' })
+
+  it('offers the underlyings the runs are on, in the index order, and no manual book or alert-only run', () => {
+    expect(trackUnderlyings([crudeLate, sensex, bank, nifty, book, alerter, crudeEarly])).toEqual(['NIFTY', 'BANKNIFTY', 'SENSEX', 'CRUDEOIL'])
+    expect(trackUnderlyings([nifty])).toEqual(['NIFTY'])
+    expect(trackUnderlyings([])).toEqual([])
+  })
+
+  it('keeps the pick in the URL beside the view, and reads back what it wrote', () => {
+    const params = new URLSearchParams('view=tracks')
+    for (const u of ['NIFTY', 'BANKNIFTY', 'SENSEX', 'CRUDEOIL']) {
+      const written = writeTrackUnderlying(params, u)
+      expect(written.get('view')).toBe('tracks')
+      expect(readTrackUnderlying(written)).toBe(u)
+    }
+    expect(writeTrackUnderlying(new URLSearchParams('view=tracks&underlying=SENSEX'), null).toString()).toBe('view=tracks')
+    expect(readTrackUnderlying(new URLSearchParams('view=tracks&underlying=banknifty'))).toBe('BANKNIFTY')
+    expect(readTrackUnderlying(new URLSearchParams('underlying=%3Cscript%3E'))).toBeNull()
+    expect(readTrackUnderlying(new URLSearchParams('view=tracks'))).toBeNull()
+  })
+
+  it('falls back to every underlying when the URL names one no run is on', () => {
+    expect(validUnderlying('SENSEX', ['NIFTY', 'SENSEX'])).toBe('SENSEX')
+    expect(validUnderlying('CRUDEOIL', ['NIFTY', 'SENSEX'])).toBeNull()
+    expect(validUnderlying(null, ['NIFTY'])).toBeNull()
+  })
+
+  it("draws the picked underlying's price, from its newest run's spot, and NIFTY 50 otherwise", () => {
+    const runs = [nifty, bank, crudeEarly, crudeLate]
+    expect(priceTrace(runs, null)).toEqual({ symbol: 'NSE:NIFTY50-INDEX', label: 'NIFTY 50' })
+    expect(priceTrace(runs, 'NIFTY')).toEqual({ symbol: 'NSE:NIFTY50-INDEX', label: 'NIFTY 50' })
+    expect(priceTrace(runs, 'BANKNIFTY')).toEqual({ symbol: 'NSE:NIFTYBANK-INDEX', label: 'BANKNIFTY' })
+    expect(priceTrace(runs, 'CRUDEOIL')).toEqual({ symbol: 'MCX:CRUDEOIL26OCTFUT', label: 'CRUDEOIL' })
+    expect(priceTrace(runs, 'GOLD')).toEqual({ symbol: 'NSE:NIFTY50-INDEX', label: 'NIFTY 50' })
+  })
+
+  it("keeps only the underlying's tracks, and draws each account's line from those runs alone", () => {
+    const res = {
+      date: DAY,
+      dayStartUtc: '2026-09-24T18:30:00Z',
+      runs: [series(nifty, span('09:18', '10:00'), (i) => i * 10), series(bank, span('09:30', '10:30'), (i) => -i)],
+      // The server's account line is every underlying's: a BANKNIFTY board must not draw it.
+      accounts: [{ userId: 2, userName: 'admin', runs: 2, minutes: [min('09:18')], realized: [0], unrealized: [0], charges: [0], net: [999] }],
+    }
+    const input = {
+      runs: [nifty, bank],
+      accounts: [ADMIN, CFC],
+      series: res,
+      fills: new Map<number, string[]>(),
+      carried: new Set<number>(),
+      day: DAY,
+      nowMs: Date.parse(at('16:00')),
+      isToday: false,
+    }
+
+    const all = tracksLayout(input)
+    const onBank = tracksLayout({ ...input, underlying: 'banknifty' })
+
+    expect(all.groups[0].tracks.map((t) => t.underlying)).toEqual(['NIFTY', 'BANKNIFTY'])
+    expect(all.accounts[0].points).toEqual([{ m: min('09:18'), v: 999 }])
+    expect(onBank.groups.map((g) => g.account.id)).toEqual([2])
+    expect(onBank.groups[0].tracks.map((t) => t.underlying)).toEqual(['BANKNIFTY'])
+    expect(onBank.groups[0].figures.net).toBe(400)
+    expect(onBank.accounts).toHaveLength(1)
+    expect(onBank.accounts[0].points).toEqual(onBank.groups[0].tracks[0].points)
+    expect(onBank.accounts[0].last).toEqual({ m: min('10:30'), v: -60 })
   })
 })
