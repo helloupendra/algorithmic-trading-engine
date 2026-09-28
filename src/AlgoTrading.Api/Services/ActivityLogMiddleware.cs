@@ -87,15 +87,20 @@ public class ActivityLogMiddleware
     };
 
     private readonly RequestDelegate _next;
+    private readonly IServiceScopeFactory _scopes;
     private readonly ILogger<ActivityLogMiddleware> _logger;
 
-    public ActivityLogMiddleware(RequestDelegate next, ILogger<ActivityLogMiddleware> logger)
+    public ActivityLogMiddleware(
+        RequestDelegate next,
+        IServiceScopeFactory scopes,
+        ILogger<ActivityLogMiddleware> logger)
     {
         _next = next;
+        _scopes = scopes;
         _logger = logger;
     }
 
-    public async Task InvokeAsync(HttpContext context, TradingDbContext dbContext)
+    public async Task InvokeAsync(HttpContext context)
     {
         string path = context.Request.Path.Value ?? string.Empty;
         string method = context.Request.Method;
@@ -107,10 +112,18 @@ public class ActivityLogMiddleware
         }
 
         var stopwatch = Stopwatch.StartNew();
+        Exception? failure = null;
 
         try
         {
             await _next(context);
+        }
+        catch (Exception ex)
+        {
+            // Kept only to record the status the caller will get; the
+            // exception itself goes on, untouched, to the exception handler.
+            failure = ex;
+            throw;
         }
         finally
         {
@@ -118,7 +131,7 @@ public class ActivityLogMiddleware
 
             try
             {
-                await WriteAsync(context, dbContext, method, path, (int)stopwatch.ElapsedMilliseconds);
+                await WriteAsync(context, failure, method, path, (int)stopwatch.ElapsedMilliseconds);
             }
             catch (Exception ex)
             {
@@ -145,9 +158,9 @@ public class ActivityLogMiddleware
         return !IgnoredPathPrefixes.Any(prefix => lower.StartsWith(prefix, StringComparison.Ordinal));
     }
 
-    private static async Task WriteAsync(
+    private async Task WriteAsync(
         HttpContext context,
-        TradingDbContext dbContext,
+        Exception? failure,
         string method,
         string path,
         int durationMs)
@@ -159,7 +172,13 @@ public class ActivityLogMiddleware
         // endpoint names the actor itself once it knows.
         var actor = ActivityLogContext.ReadActor(context);
 
-        int status = context.Response.StatusCode;
+        // An exception that escaped the endpoint is answered by the exception
+        // handler, outside this middleware, after this row is written: until
+        // then the response still says 200, and every request that crashed was
+        // recorded as a success.
+        int status = failure is not null && !context.Response.HasStarted
+            ? UnhandledExceptionStatus.For(failure)
+            : context.Response.StatusCode;
 
         var entry = new ActivityLogEntry
         {
@@ -180,8 +199,16 @@ public class ActivityLogMiddleware
             IpAddress = context.Connection.RemoteIpAddress?.ToString(),
         };
 
-        dbContext.ActivityLog.Add(entry);
-        await dbContext.SaveChangesAsync(context.RequestAborted);
+        // A context of its own, never the request's. On 28 Sep two runners
+        // added the same watchlist symbol at once; the loser's insert failed on
+        // IX_live_watchlist_Symbol and stayed tracked in the request's context,
+        // so saving this row there sent that insert again, failed the same way,
+        // and the request's row was lost. Sharing the context would also save
+        // anything else a request changed and chose not to save.
+        await using var scope = _scopes.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
+        db.ActivityLog.Add(entry);
+        await db.SaveChangesAsync(context.RequestAborted);
     }
 
     /// <summary>Which part of the platform a path belongs to.</summary>

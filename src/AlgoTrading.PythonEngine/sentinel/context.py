@@ -189,6 +189,18 @@ class SentinelContext:
     def state_dir(self) -> Path:
         return self.state_root if self.state_root is not None else self.logs_dir / "sentinel"
 
+    def desk_state_dirs(self) -> tuple[Path, ...]:
+        """
+        Where scripts/desk.sh keeps its pid and the day's job markers
+        (DESK_STATE_DIR in scripts/lib/desk-common.sh): the XDG state directory
+        on Linux, Application Support on the Mac. Outside the repo, so both are
+        offered and the reader takes whichever holds the file; Sentinel runs as
+        the desk's user, with its HOME (scripts/install-sentinel.sh).
+        """
+        home = Path(self.env.get("HOME") or Path.home())
+        state = self.env.get("XDG_STATE_HOME") or str(home / ".local" / "state")
+        return Path(state) / "algotrading", home / "Library" / "Application Support" / "algotrading"
+
     def now(self) -> datetime:
         return self.clock()
 
