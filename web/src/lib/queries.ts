@@ -1994,15 +1994,16 @@ export function useOptionChainExpiries(underlying: string) {
  * every 60 s otherwise; a replay (`asOfUtc`) never changes, so it never polls.
  */
 /**
- * Open paper positions on the underlying's contracts — strategy legs and manual
- * trades — polled with the chain so a new fill shows within seconds.
+ * Open paper positions on the underlying's contracts — live strategy legs and
+ * manual trades, never a backtest's — polled with the chain so a new fill
+ * shows within seconds.
  */
 function chainPositionsQuery(underlying: string) {
   return {
     queryKey: ['optionChainPositions', underlying] as const,
     queryFn: () =>
       api.get<import('./types').OptionChainPosition[]>(
-        `/api/OptionChain/positions?${new URLSearchParams({ underlying })}`,
+        `/api/OptionChain/positions?${new URLSearchParams({ underlying, mode: 'LivePaper' })}`,
       ),
     enabled: Boolean(underlying),
   }

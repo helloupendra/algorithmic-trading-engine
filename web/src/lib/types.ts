@@ -2024,7 +2024,7 @@ export interface TraderSimBrokerResponse {
   message?: string
   code?: string
 }
-/** An open paper position on a contract of the chain's underlying (GET /api/OptionChain/positions). */
+/** An open paper position on a contract of the chain's underlying (GET /api/OptionChain/positions?mode=LivePaper). */
 export interface OptionChainPosition {
   runId: number
   strategyName: string
