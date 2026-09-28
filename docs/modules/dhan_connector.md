@@ -193,7 +193,7 @@ Service account behind the live feed may call too.
 
 `scripts/market-open.sh` runs at 08:45 IST on the server:
 
-1. Holiday check (System > Market calendar). On a holiday nothing starts.
+1. Holiday check (System → Calendar). On a holiday nothing starts.
 2. **Dhan status.** If Dhan is not signed in, the script asks the API for the
    automatic sign-in first (when it is set up). If that fails too, a
    notification asks for Connect, and the script waits until 09:12. If the token

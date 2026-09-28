@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Nightly: copies each finished trading day of ticks, option chain snapshots and
-# 1-minute bars to Google Drive, verified (scripts/archive_to_drive.py).
+# Nightly: copies each finished trading day of ticks, option chain snapshots,
+# 1-minute bars and the live runs' P&L minutes to Google Drive, verified
+# (scripts/archive_to_drive.py).
 #
 # Run by cron at 06:00 IST, after the UTC day has ended and before the 08:45
 # morning job (setup notes are kept outside the public repo).

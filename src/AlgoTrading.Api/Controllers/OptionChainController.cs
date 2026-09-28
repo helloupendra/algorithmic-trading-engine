@@ -54,19 +54,36 @@ public class OptionChainController : ControllerBase
     }
 
     /// <summary>
-    /// Open paper positions on this underlying's contracts, from running strategy
-    /// runs and manual books, marked at the live price. An admin sees every
-    /// book; anyone else sees their own.
+    /// Open paper positions on this underlying's contracts, from the running
+    /// runs of one mode, marked at the live price. An admin sees every book;
+    /// anyone else sees their own.
     /// </summary>
+    /// <param name="mode">
+    /// <c>LivePaper</c> (the default: strategy runs and manual books) or
+    /// <c>OfflineReplay</c> (backtests, marked at their own last bar close,
+    /// never at today's quote). Until 28 Sep the answer took every running
+    /// run of either mode, so a backtest's open legs on this underlying's
+    /// contracts reached the live chain, marked at today's quote.
+    /// </param>
     [HttpGet("positions")]
     public async Task<ActionResult<IReadOnlyList<OptionChainPositionResponse>>> GetPositions(
         [FromQuery] string underlying,
+        [FromQuery] string? mode,
         [FromServices] TradingDbContext db,
         [FromServices] ILotSizeResolver lotSizes,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(underlying))
             return BadRequest(new { message = "underlying is required." });
+
+        string runMode;
+        if (string.IsNullOrWhiteSpace(mode) || string.Equals(mode.Trim(), StrategyRunControl.LivePaperMode, StringComparison.OrdinalIgnoreCase))
+            runMode = StrategyRunControl.LivePaperMode;
+        else if (string.Equals(mode.Trim(), BacktestRunControl.OfflineReplayMode, StringComparison.OrdinalIgnoreCase))
+            runMode = BacktestRunControl.OfflineReplayMode;
+        else
+            return BadRequest(new { message = $"mode must be {StrategyRunControl.LivePaperMode} or {BacktestRunControl.OfflineReplayMode}." });
+        bool live = runMode == StrategyRunControl.LivePaperMode;
 
         string key = underlying.Trim().ToUpperInvariant();
         bool admin = User.IsAdmin();
@@ -81,7 +98,7 @@ public class OptionChainController : ControllerBase
                 from u in users.DefaultIfEmpty()
                 join q in db.LiveQuotesLatest.AsNoTracking() on p.Symbol equals q.Symbol into quotes
                 from q in quotes.DefaultIfEmpty()
-                where p.Status == "Open" && p.Quantity > 0 && r.Status == "Running" && i.Underlying == key
+                where p.Status == "Open" && p.Quantity > 0 && r.Mode == runMode && r.Status == "Running" && i.Underlying == key
                       && (admin || r.UserId == userId)
                 orderby p.OpenedUtc
                 select new
@@ -116,9 +133,11 @@ public class OptionChainController : ControllerBase
         {
             int lotSize = lots.TryGetValue(x.Symbol, out var info) && info.LotSize > 0 ? info.LotSize : 1;
             // The live quote wins when it is newer than the engine's last mark:
-            // the manual book is marked only when something touches it.
-            bool quoteNewer = x.QuotePrice is > 0 && x.QuoteUtc is { } qu && qu >= x.UpdatedUtc;
-            decimal? mark = quoteNewer ? x.QuotePrice : x.LastMarkPrice ?? x.QuotePrice;
+            // the manual book is marked only when something touches it. A
+            // backtest is marked by its own replay; today's quote is no price
+            // of the day it is replaying.
+            bool quoteNewer = live && x.QuotePrice is > 0 && x.QuoteUtc is { } qu && qu >= x.UpdatedUtc;
+            decimal? mark = quoteNewer ? x.QuotePrice : live ? x.LastMarkPrice ?? x.QuotePrice : x.LastMarkPrice;
             return new OptionChainPositionResponse
             {
                 RunId = x.RunId,

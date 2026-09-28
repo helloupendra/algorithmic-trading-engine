@@ -119,6 +119,7 @@ as soon as anything comes back.
 | GET | `/api/OptionChain/trend` | spot, call and put OI and PCR at each capture of the session |
 | GET | `/api/OptionChain/series` | one strike through the session |
 | GET | `/api/OptionChain/expiries` | which expiries have been captured |
+| GET | `/api/OptionChain/positions` | open legs of running runs on the underlying's contracts, the caller's own (an admin's: every account's); `mode` is `LivePaper` (default: strategy runs and manual books, marked at the newer of the live quote and the stored mark) or `OfflineReplay` (backtests, at their own last mark) — never both |
 | POST | `/api/OptionChain/snapshots` | the poller's write path |
 | POST | `/api/OptionChain/poller/start` · `/stop` | admin only |
 | GET | `/api/OptionChain/poller/status` · `/logs` | process state and output |
