@@ -36,6 +36,16 @@ public class DhanConnectorTests
     }
 
     [Fact]
+    public void Nifty_next_50_is_streamed_with_its_master_id_so_the_pattern_indices_get_bars()
+    {
+        // 28 Sep: the "indices" pattern group watched NIFTYNXT50 and no feed
+        // streamed it. Master row: NSE,I,38,NIFTYNXT50,Nifty Next 50.
+        var next50 = DhanInstruments.Indices["NSE:NIFTYNXT50-INDEX"];
+
+        Assert.Equal(new DhanInstrument("IDX_I", 38, "INDEX"), next50);
+    }
+
+    [Fact]
     public void Asks_one_minute_early_because_Dhan_excludes_a_bar_on_fromDate()
     {
         var nifty = DhanInstruments.Indices["NSE:NIFTY50-INDEX"];

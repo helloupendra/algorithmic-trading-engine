@@ -401,6 +401,16 @@ The cutoff is the issue time, never later than the 09:15 open. A table that
 is not there, or a part that fails, says `unavailable (…)` in its place: the
 morning's forecasts never wait on them.
 
+The Forecasts page shows this once per session, under the index cards, as
+"Pre-open context", marked not used by the models: the GIFT Nifty gap and
+snapshot time in IST, the earnings counts, and the news per category (India
+and Global first, then the sectors, then the NIFTY-50 filings) with the
+mean sentiment as a signed bar. A part recorded as a sentence is shown as
+that sentence. Each card's "What the models saw" lists the other inputs
+once, under the models that record them, with training sessions and
+trained-through per model in a small table; a value the page has no layout
+for is drawn as nested labels, never as JSON.
+
 ### Selection, and what counts as better
 
 `python -m analysis backtest-v2` walks v1 and v2 forward together, with v1's

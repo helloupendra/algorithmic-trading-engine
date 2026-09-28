@@ -9,7 +9,7 @@ import _bootstrap  # noqa: F401
 from sentinel import engine as engine_module
 from sentinel.agents.base import Agent
 from sentinel.engine import SEND_PER_ROUND, SentinelEngine
-from sentinel.model import Finding, Severity
+from sentinel.model import FLAP_WINDOW, Finding, Severity
 from sentinel.notify import Notifier, redact
 from sentinel.store import MemoryIncidentStore
 from _sentinel_fakes import RecordingNotifier, clock_ticks, make_context
@@ -164,10 +164,16 @@ class EngineTests(unittest.TestCase):
         e.run_due()
         self.assertEqual("resolved", self.store.rows()[0]["status"])
 
-    def test_a_problem_that_returns_after_resolving_opens_a_new_incident(self):
-        e = self.engine(ScriptedAgent([[finding()], [], [], [finding()]]))
-        for _ in range(4):
+    def test_a_problem_that_returns_long_after_resolving_opens_a_new_incident(self):
+        ctx = make_context(self.tmp)
+        at = {"now": ctx.now()}
+        ctx.clock = lambda: at["now"]
+        e = SentinelEngine([ScriptedAgent([[finding()], [], [], [finding()]])], self.store, self.notifier, ctx,
+                           monotonic=clock_ticks())
+        for _ in range(3):
             e.run_due()
+        at["now"] += FLAP_WINDOW + timedelta(seconds=1)   # past the window in which a return is a flap
+        e.run_due()
         rows = self.store.rows()
         self.assertEqual(2, len(rows))
         self.assertEqual(["resolved", "open"], [r["status"] for r in rows])
@@ -399,7 +405,10 @@ class CrashTests(unittest.TestCase):
     def test_a_malformed_result_is_reported_and_resolves_nothing(self):
         bad_severity = Finding(agent="scripted", rule="r", severity="high", title="t", summary="s",
                                fingerprint="scripted:r")
-        for broken in (None, [finding(), "not a finding"], [bad_severity]):
+        # A naive time cannot be weighed against a resolve: which zone would it be in?
+        naive_observed = Finding(agent="scripted", rule="r", severity=Severity.HIGH, title="t", summary="s",
+                                 fingerprint="scripted:r", observed_utc=datetime(2026, 9, 28, 7, 36))
+        for broken in (None, [finding(), "not a finding"], [bad_severity], [naive_observed]):
             with self.subTest(broken=broken):
                 self.store = MemoryIncidentStore()
                 e = self.engine(ScriptedAgent([[finding()], broken, broken, [finding()]]))
@@ -555,10 +564,17 @@ class SeenBeforeTests(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.store = MemoryIncidentStore()
         self.notifier = RecordingNotifier()
+        self.now = datetime(2026, 9, 24, 6, 0, tzinfo=timezone.utc)   # make_context's: 11:30 IST
 
     def engine(self, script, store=None):
-        return SentinelEngine([ScriptedAgent(script)], store or self.store, self.notifier,
-                              make_context(self.tmp), monotonic=clock_ticks())
+        ctx = make_context(self.tmp)
+        ctx.clock = lambda: self.now
+        return SentinelEngine([ScriptedAgent(script)], store or self.store, self.notifier, ctx,
+                              monotonic=clock_ticks())
+
+    def later(self):
+        """Past the window in which a return is the same flapping incident: a new episode."""
+        self.now += FLAP_WINDOW + timedelta(minutes=1)
 
     def evidence(self, incident_id, store=None):
         return next(r for r in (store or self.store).rows() if r["id"] == incident_id)["evidence"]
@@ -569,6 +585,7 @@ class SeenBeforeTests(unittest.TestCase):
         e.run_due()
         e.run_due()                   # two clean checks: #1 resolved
         self.store.write_resolution(1, "Restarted the Dhan feed\nfrom the desk")
+        self.later()
         e.run_due()                   # it comes back: #2
 
         first, resolved, second = self.notifier.sent
@@ -590,12 +607,14 @@ class SeenBeforeTests(unittest.TestCase):
 
     def test_with_no_resolution_written_it_only_counts(self):
         e = self.engine([[finding()], [], [], [finding()], [], [], [finding()]])
-        for _ in range(7):
+        for check in range(7):
+            if check in (3, 6):
+                self.later()
             e.run_due()
         last = self.notifier.sent[-1]
-        self.assertIn("Seen before: 2 times, last on 24 Sep 2026, 11:30 IST", last)
+        self.assertIn("Seen before: 2 times, last on 24 Sep 2026, 12:01 IST", last)   # the second episode
         self.assertNotIn("Last time:", last)
-        self.assertEqual(["history: Seen before: 2 times, last on 24 Sep 2026, 11:30 IST"],
+        self.assertEqual(["history: Seen before: 2 times, last on 24 Sep 2026, 12:01 IST"],
                          [line for line in self.evidence(3) if line.startswith("history: ")])
 
     def test_a_failed_history_read_still_records_and_sends_the_incident(self):
@@ -606,7 +625,9 @@ class SeenBeforeTests(unittest.TestCase):
         store = NoHistory()
         e = self.engine([[finding()], [], [], [finding()]], store=store)
         with self.assertLogs("sentinel.engine", level="WARNING") as logs:
-            for _ in range(4):
+            for check in range(4):
+                if check == 3:
+                    self.later()
                 e.run_due()
         self.assertEqual([1, 2], [r["id"] for r in store.rows()])
         self.assertEqual(3, len(self.notifier.sent))
@@ -653,6 +674,178 @@ class RedactionTests(unittest.TestCase):
     def test_ordinary_text_is_left_alone(self):
         text = "NSE feed silent for 120 s; newest tick 11:27:35 IST on NSE:NIFTY50-INDEX"
         self.assertEqual(text, redact(text))
+
+
+def ist28(hour, minute, second=0):
+    """A moment on 28 Sep 2026, given in IST."""
+    return datetime(2026, 9, 28, hour, minute, second, tzinfo=timezone.utc) - timedelta(hours=5, minutes=30)
+
+
+GROUP_LABEL = {"NSE": "NSE/BSE", "MCX": "MCX"}
+
+
+def feed_silent(group):
+    label = GROUP_LABEL[group]
+    return Finding(agent="health", rule="feed-silent", severity=Severity.CRITICAL,
+                   title=f"{label} ticks have stopped while the market is open",
+                   summary=f"No live {label} tick has reached Redis market:ticks for 1 min 35 s.",
+                   fingerprint=f"health:feed-silent:{group}", where="Redis market:ticks · feed dhan",
+                   evidence=[f"newest {label} tick"], suggestion="Restart the running feed.")
+
+
+class StallingFeed(Agent):
+    """
+    The health agent's feed-silent on 28 Sep: at its cadence (30 s, resolved after two clean checks), silent
+    from 90 s into each ~2-minute stall until the ticks came back, for both exchange groups at once.
+    """
+
+    name = "health"
+    interval_seconds = 30
+    resolve_after = 2
+
+    def __init__(self, stalls):
+        self.stalls = list(stalls)
+
+    def check(self, ctx):
+        now = ctx.now()
+        if any(start + timedelta(seconds=90) <= now < start + timedelta(seconds=150) for start in self.stalls):
+            return [feed_silent("NSE"), feed_silent("MCX")]
+        return []
+
+
+def every(minutes, first, last):
+    """Stall starts from ``first`` to ``last`` (IST hour, minute), ``minutes`` apart."""
+    out, moment = [], ist28(*first)
+    while moment <= ist28(*last):
+        out.append(moment)
+        moment += timedelta(minutes=minutes)
+    return out
+
+
+class FlappingTests(unittest.TestCase):
+    """
+    28 Sep 13:06-13:28: the feed stalled for ~2 min every few minutes. Each stall opened a new CRITICAL
+    incident per exchange group, and each one sent its NEW and, two minutes later, its RESOLVED: four messages
+    a stall, 32 for eight of them. A flapping problem is one incident, and its messages are the ones that
+    change what a person knows.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.store = MemoryIncidentStore()
+        self.notes = RecordingNotifier()
+        self.ctx = make_context(self.tmp)
+        self.now = ist28(13, 5)
+        self.ctx.clock = lambda: self.now
+
+    def engine(self, stalls):
+        return SentinelEngine([StallingFeed(stalls)], self.store, self.notes, self.ctx, monotonic=clock_ticks())
+
+    def run_until(self, engine, hour, minute, second=0):
+        """A round every 30 s up to and including the moment; the messages sent meanwhile."""
+        before = len(self.notes.sent)
+        while self.now <= ist28(hour, minute, second):
+            engine.run_due()
+            self.now += timedelta(seconds=30)
+        return self.notes.sent[before:]
+
+    @staticmethod
+    def heads(messages):
+        return [m.splitlines()[0] for m in messages]
+
+    def test_the_28_sep_stalls_are_one_incident_per_exchange_and_three_messages_each(self):
+        # Eight stalls three minutes apart; with five, five minutes apart, the count is the same.
+        for stalls in (every(3, (13, 6), (13, 27)), every(5, (13, 6), (13, 26))):
+            with self.subTest(stalls=len(stalls)):
+                self.setUp()
+                e = self.engine(stalls)
+                first = self.run_until(e, 13, 7, 30)   # the first check that sees the stall
+                self.assertEqual(2, len(first), "the first alert is not held back")
+                sent = first + self.run_until(e, 13, 28, 59)
+                self.assertEqual(["🔴 NEW [CRITICAL] NSE/BSE ticks have stopped while the market is open",
+                                  "🔴 NEW [CRITICAL] MCX ticks have stopped while the market is open",
+                                  "✅ RESOLVED #1 [CRITICAL] NSE/BSE ticks have stopped while the market is open",
+                                  "✅ RESOLVED #2 [CRITICAL] MCX ticks have stopped while the market is open",
+                                  "🔴 AGAIN [CRITICAL] NSE/BSE ticks have stopped while the market is open",
+                                  "🔴 AGAIN [CRITICAL] MCX ticks have stopped while the market is open"],
+                                 self.heads(sent))
+                self.assertIn("Back again: the 2nd time since 13:07 IST.", sent[4])
+                self.assertEqual([1, 2], [r["id"] for r in self.store.rows()], "one incident per exchange group")
+
+                # Quiet until it has stayed clear for 30 minutes; then one RESOLVED each, with the count.
+                self.assertEqual([], self.run_until(e, 13, 58, 30))
+                done = self.run_until(e, 14, 10)
+                self.assertEqual(["✅ RESOLVED #1 [CRITICAL] NSE/BSE ticks have stopped while the market is open",
+                                  "✅ RESOLVED #2 [CRITICAL] MCX ticks have stopped while the market is open"],
+                                 self.heads(done))
+                last_clear = "13:30" if len(stalls) == 8 else "13:29"
+                self.assertIn(f"It happened {len(stalls)} times since 13:07 IST; clear since {last_clear} IST", done[0])
+                row = self.store.rows()[0]
+                self.assertEqual("resolved", row["status"])
+                self.assertIn(f"flapping: {len(stalls)}th episode since 13:07 IST: it cleared and came back "
+                              "within 30 min each time, so it stays this one incident", row["evidence"])
+                self.assertEqual({}, self.ctx.state("engine").data["flapping"])
+
+    def test_a_real_outage_after_a_flap_is_still_said_at_once(self):
+        stalls = [ist28(13, 6)]
+        outage = ist28(13, 10)   # from 13:11:30 silent, and it stays silent
+        agent = StallingFeed(stalls)
+        e = SentinelEngine([agent], self.store, self.notes, self.ctx, monotonic=clock_ticks())
+        self.run_until(e, 13, 11)
+        self.assertEqual(4, len(self.notes.sent))   # NEW and RESOLVED, for each group
+        agent.stalls.append(outage)
+        agent.check = lambda ctx: ([feed_silent("NSE"), feed_silent("MCX")]
+                                   if ctx.now() >= outage + timedelta(seconds=90) else [])
+        sent = self.run_until(e, 13, 11, 30)
+        self.assertEqual(["🔴 AGAIN [CRITICAL] NSE/BSE ticks have stopped while the market is open",
+                          "🔴 AGAIN [CRITICAL] MCX ticks have stopped while the market is open"], self.heads(sent))
+        self.assertEqual([], self.run_until(e, 13, 40), "it is open, and the person knows it is")
+        self.assertEqual(["open", "open"], [r["status"] for r in self.store.rows()])
+
+    def test_flapping_on_is_said_again_every_thirty_minutes(self):
+        e = self.engine(every(3, (13, 6), (14, 15)))
+        sent = self.run_until(e, 14, 20)
+        again = [m for m in sent if " AGAIN " in m.splitlines()[0] and "NSE/BSE" in m.splitlines()[0]]
+        self.assertEqual(3, len(again), self.heads(sent))
+        self.assertIn("Back again: the 2nd time since 13:07 IST.", again[0])
+        self.assertIn("Back again: the 12th time since 13:07 IST.", again[1])   # 13:40:30, 30 min after 13:10:30
+        self.assertIn("Back again: the 22nd time since 13:07 IST.", again[2])   # 14:10:30
+        self.assertEqual(2, len(self.store.rows()))
+
+    def test_a_flapping_incident_a_person_resolves_comes_back_as_a_new_one(self):
+        e = self.engine(every(3, (13, 6), (13, 15)))
+        self.run_until(e, 13, 11)              # NEW, RESOLVED, AGAIN for each group; the stall's last check
+        self.assertEqual(6, len(self.notes.sent))
+        for row in self.store.rows():          # 13:11:30, from the console, with the ticks back
+            self.store.resolve_by_person(row["id"], self.now, by="upendra")
+        sent = self.run_until(e, 13, 14)       # the next stall
+        self.assertEqual(["🔴 NEW [CRITICAL] NSE/BSE ticks have stopped while the market is open",
+                          "🔴 NEW [CRITICAL] MCX ticks have stopped while the market is open"], self.heads(sent))
+        self.assertIn("Seen before: once", sent[0])
+        self.assertEqual([3, 4], sorted(r["id"] for r in self.store.rows() if r["status"] == "open"))
+        self.assertEqual({}, self.ctx.state("engine").data["flapping"], "#1 and #2 are a person's now")
+
+    def test_a_restart_in_the_middle_keeps_the_count_and_the_quiet(self):
+        stalls = every(3, (13, 6), (13, 27))
+        self.run_until(self.engine(stalls), 13, 16)
+        told = len(self.notes.sent)
+        restarted = self.engine(stalls)       # Sentinel redeployed at 13:16: a new engine, the same state file
+        self.ctx._states.clear()
+        self.assertEqual([], self.run_until(restarted, 13, 28, 59))
+        self.assertEqual(6, told)
+        done = self.run_until(restarted, 14, 10)
+        self.assertIn("It happened 8 times since 13:07 IST", done[0])
+
+    def test_a_single_blip_is_as_before(self):
+        # One stall, never again: NEW and RESOLVED, nothing held back, nothing kept.
+        e = self.engine([ist28(13, 6)])
+        sent = self.run_until(e, 14, 0)
+        self.assertEqual(["🔴 NEW [CRITICAL] NSE/BSE ticks have stopped while the market is open",
+                          "🔴 NEW [CRITICAL] MCX ticks have stopped while the market is open",
+                          "✅ RESOLVED #1 [CRITICAL] NSE/BSE ticks have stopped while the market is open",
+                          "✅ RESOLVED #2 [CRITICAL] MCX ticks have stopped while the market is open"],
+                         self.heads(sent))
+        self.assertEqual({}, self.ctx.state("engine").data.get("flapping", {}))
 
 
 if __name__ == "__main__":

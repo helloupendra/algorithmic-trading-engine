@@ -16,6 +16,7 @@ import {
   ruleToForm,
   scannerHealth,
   sortWatches,
+  telegramChannelNote,
   toggle,
 } from './patterns'
 import type { IndicatorWatch, PatternAlert, PatternCatalog, PatternRule, PatternScannerStatus } from './patterns'
@@ -239,20 +240,70 @@ describe('indicator alerts', () => {
   })
 })
 
+describe('telegramChannelNote', () => {
+  it('names the live trades channel, where the owner moved these alerts on 28 Sep', () => {
+    // The default, with or without a system chat on the server.
+    for (const telegramSystemChatConfigured of [true, false]) {
+      expect(telegramChannelNote({ telegramChannel: 'trades', telegramSystemChatConfigured })).toEqual({
+        text: 'Live trades channel',
+        title: 'The channel the live trade alerts go to (Telegram:ChatId).',
+        problem: null,
+      })
+    }
+  })
+
+  it('names the Desk System channel only when it is set and the server has a system chat', () => {
+    expect(telegramChannelNote({ telegramChannel: 'system', telegramSystemChatConfigured: true })?.text).toBe('Desk System channel')
+    // Set to system, but no system chat: the server sends these among the trades, and the page says so.
+    const fallback = telegramChannelNote({ telegramChannel: 'system', telegramSystemChatConfigured: false })
+    expect(fallback?.text).toBe('Live trades channel: no Desk System chat is set on this server')
+    expect(fallback?.title).toMatch(/Telegram:SystemChatId is not set/)
+  })
+
+  it('passes on why a setting was not read, rather than hiding it behind the fallback', () => {
+    const problem = 'PatternAlerts:TelegramChannel is "desk", which is neither trades nor system; sent to the trades channel.'
+    const note = telegramChannelNote({ telegramChannel: 'trades', telegramChannelProblem: problem, telegramSystemChatConfigured: true })
+    expect(note?.text).toBe('Live trades channel')
+    expect(note?.problem).toBe(problem)
+  })
+
+  it('reads an API from before the move as the system chat it then used, and names nothing when nothing is reported', () => {
+    expect(telegramChannelNote({ telegramSystemChatConfigured: true })?.text).toBe('Desk System channel')
+    expect(telegramChannelNote({ telegramSystemChatConfigured: false })?.text).toBe('Live trades channel: no Desk System chat is set on this server')
+    expect(telegramChannelNote({})).toBeNull()
+  })
+})
+
 describe('indicatorTelegramNote', () => {
   it('says whether indicator alerts go to Telegram at all', () => {
-    expect(indicatorTelegramNote({ telegram: false, telegramConfigured: true, telegramSystemChatConfigured: true })).toEqual({ text: 'off in the file', title: null })
-    expect(indicatorTelegramNote({ telegram: true, telegramConfigured: false, telegramSystemChatConfigured: true }).text).toBe(
+    expect(indicatorTelegramNote({ telegram: false, telegramConfigured: true, telegramChannel: 'trades', telegramSystemChatConfigured: true })).toEqual({
+      text: 'off in the file',
+      title: null,
+      problem: null,
+    })
+    expect(indicatorTelegramNote({ telegram: true, telegramConfigured: false, telegramChannel: 'trades', telegramSystemChatConfigured: true }).text).toBe(
       'on, but no bot is configured on this server',
     )
   })
 
-  it('names the Desk System channel only when the server says it has a system chat', () => {
-    expect(indicatorTelegramNote({ telegram: true, telegramConfigured: true, telegramSystemChatConfigured: true }).text).toBe('on (Desk System channel)')
-    // No system chat: the server sends these among the trades, and the page says so.
-    const trades = indicatorTelegramNote({ telegram: true, telegramConfigured: true, telegramSystemChatConfigured: false })
-    expect(trades.text).toBe('on (trades channel: no Desk System chat is set on this server)')
-    expect(trades.title).toMatch(/Telegram:SystemChatId is not set/)
+  it('names the channel the server reports', () => {
+    expect(indicatorTelegramNote({ telegram: true, telegramConfigured: true, telegramChannel: 'trades', telegramSystemChatConfigured: true }).text).toBe(
+      'on (Live trades channel)',
+    )
+    expect(indicatorTelegramNote({ telegram: true, telegramConfigured: true, telegramChannel: 'system', telegramSystemChatConfigured: true }).text).toBe(
+      'on (Desk System channel)',
+    )
+    const fallback = indicatorTelegramNote({ telegram: true, telegramConfigured: true, telegramChannel: 'system', telegramSystemChatConfigured: false })
+    expect(fallback.text).toBe('on (Live trades channel: no Desk System chat is set on this server)')
+    expect(fallback.title).toMatch(/Telegram:SystemChatId is not set/)
+    const bad = indicatorTelegramNote({
+      telegram: true,
+      telegramConfigured: true,
+      telegramChannel: 'trades',
+      telegramChannelProblem: 'IndicatorAlerts:TelegramChannel is "desk", which is neither trades nor system; sent to the trades channel.',
+    })
+    expect(bad.text).toBe('on (Live trades channel)')
+    expect(bad.problem).toMatch(/^IndicatorAlerts:TelegramChannel is "desk"/)
   })
 
   it('names no chat when an older API does not report which', () => {

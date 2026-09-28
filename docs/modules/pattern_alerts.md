@@ -82,10 +82,33 @@ A hosted service in the API, every 20 seconds:
    go out as one message, at most 4 messages in 5 minutes. Candles found late,
    after a restart or when a rule is added, are recorded but not sent.
 
-`PatternAlerts:Enabled=false` turns the scanner off. Telegram uses the platform's
-`Telegram:BotToken` and `Telegram:SystemChatId` (from `TELEGRAM_SYSTEM_CHAT_ID`):
-patterns are market information, not trades, so they go to the desk's system
-channel, and to `Telegram:ChatId` only while no system channel is set.
+`PatternAlerts:Enabled=false` turns the scanner off.
+
+### Which Telegram channel
+
+`PatternAlerts:TelegramChannel` picks the channel, with the platform's
+`Telegram:BotToken`:
+
+| Value | Channel | Chat |
+| --- | --- | --- |
+| `trades` (the default) | Live Algotrading, where the live trade alerts go | `Telegram:ChatId` (`TELEGRAM_CHAT_ID`) |
+| `system` | Desk System | `Telegram:SystemChatId` (`TELEGRAM_SYSTEM_CHAT_ID`), or `Telegram:ChatId` while that is not set |
+
+On 27 Sep 2026 the owner put the patterns in the Desk System channel ("market
+information, not trades"); on 28 Sep he moved them to the channel the live trade
+alerts go to. The default follows the 28 Sep decision, so nothing needs setting
+for it. To send them to Desk System again, set
+`PatternAlerts__TelegramChannel=system` in `.env` and restart the API (or set
+`PatternAlerts:TelegramChannel` in `appsettings.Local.json`, which applies at
+the next message: the setting is read at every send).
+
+The value is read in any case. Anything other than `trades` or `system` sends
+to the trades channel and says why, once in the API log and on the page; it
+never stops the API. The indicator alerts follow the same
+setting unless `IndicatorAlerts:TelegramChannel` names their own (see
+[Market hours and delivery](#market-hours-and-delivery)). The page names the
+channel in use, and says so when `system` is set but no system chat is, so the
+messages are reaching the trades chat.
 
 ## API
 
@@ -97,15 +120,16 @@ All admin-only, under `/api/PatternAlerts`.
 | GET · POST · PUT · DELETE | `rules` | The rules |
 | GET | `events` | Today's alerts, filterable by symbol, timeframe, pattern and direction |
 | GET | `forming` | The candle forming now for each watched symbol and timeframe |
-| GET | `status` | Last scan, symbols watched, symbols with no bars |
+| GET | `status` | Last scan, symbols watched, symbols with no bars, the Telegram channel (`telegramChannel`: `trades` or `system`) |
 
 ## Indicator alerts
 
 Beside the patterns, a second scanner watches indicators on the same candles:
 RSI crossing a level, EMA crosses, Supertrend flips and VWAP crosses. Same live
 1-minute bars, same session-aligned candles, same session and holiday gate,
-same `alert_events` table (source `indicators`), same Telegram channel (Desk
-System). They appear in their own section on **Markets → Patterns**.
+same `alert_events` table (source `indicators`), same Telegram channel (the
+trades channel unless set otherwise; see [Which Telegram channel](#which-telegram-channel)).
+They appear in their own section on **Markets → Patterns**.
 
 ### Rules
 
@@ -239,6 +263,12 @@ At most 200 (symbol, timeframe) pairs are scanned, in the config's order; the
 page names the line past which pairs were left out. Each pair reads its warm-up
 with a query of its own, all at 09:15.
 
+They go to the channel `PatternAlerts:TelegramChannel` names, the patterns'
+own, unless `IndicatorAlerts:TelegramChannel` (`trades` or `system`) is set:
+the same kind of market alert, so when the owner moved the patterns to the
+trades channel on 28 Sep these moved with them. A bad value is read as trades
+and said, as for the patterns.
+
 `IndicatorAlerts:Enabled=false` turns this scanner off; when it is not set it
 follows `PatternAlerts:Enabled`, so the one switch a second API on the same
 database already sets turns both off. Both take true/false, on/off, yes/no or
@@ -252,7 +282,7 @@ Admin-only, under `/api/PatternAlerts`.
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| GET | `indicators` | The config as read (settings, lines, warnings, the rule catalog), each watch's warm-up state, the scanner's health |
+| GET | `indicators` | The config as read (settings, lines, warnings, the rule catalog), each watch's warm-up state, the scanner's health, the Telegram channel (`telegramChannel`; `telegramSystemChatConfigured` is kept for older consoles) |
 | GET | `indicators/events` | Today's indicator alerts, filterable by symbol and timeframe |
 
 ## Not built yet

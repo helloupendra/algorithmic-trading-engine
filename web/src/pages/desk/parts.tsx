@@ -11,11 +11,18 @@ import { compactInr } from '../../lib/desk'
 import { toneClass } from './data'
 import { formatInrSigned } from '../../lib/format'
 
-export function PanelHead({ title, meta, more }: { title: string; meta?: ReactNode; more?: { to: string; label: string } | null }) {
+export function PanelHead({ title, meta, tools, more }: {
+  title: string
+  meta?: ReactNode
+  /** A small control kept at the right, before the "more" link. */
+  tools?: ReactNode
+  more?: { to: string; label: string } | null
+}) {
   return (
     <div className="dk-hd">
       <h2>{title}</h2>
       {meta && <span className="dk-meta">{meta}</span>}
+      {tools && <span className="dk-tools">{tools}</span>}
       {more && (
         <Link className="dk-more" to={more.to}>
           {more.label} →

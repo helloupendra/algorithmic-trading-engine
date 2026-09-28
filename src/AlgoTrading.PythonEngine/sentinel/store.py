@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from sentinel.model import KEPT_PREFIXES, Finding, Severity, Status
+from sentinel.model import FLAP_WINDOW, KEPT_PREFIXES, Finding, Severity, Status
 
 log = logging.getLogger("sentinel.store")
 
@@ -68,7 +68,10 @@ def _unique_violation(exc: BaseException) -> bool:
 
 
 def _keep_context(evidence: list[str], before: list[str]) -> list[str]:
-    """A new sighting's evidence, followed by what Sentinel added itself: the seen-before lines, the context pack."""
+    """
+    A new sighting's evidence, followed by what Sentinel added itself: the
+    seen-before lines, the context pack, the flapping line.
+    """
     return list(evidence) + [e for e in before if e.startswith(KEPT_PREFIXES)]
 
 
@@ -82,9 +85,46 @@ def _with_context(before: list[str], added: list[str]) -> list[str]:
     return [e for e in before if not (kinds and e.startswith(kinds))] + list(added)
 
 
+def _utc(value: Any) -> Optional[datetime]:
+    """A timestamp column as an aware UTC datetime: psycopg2 hands ``timestamp`` back naive, and it is UTC."""
+    if not isinstance(value, datetime):
+        return None
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+
+
+def _after_resolve(finding: Finding, resolved_utc: Optional[datetime], resolved_by: Optional[str],
+                   now_utc: datetime) -> str:
+    """
+    What a sighting does to its fingerprint's latest episode when that one is
+    resolved (no live row): "stale", "reopen" or "insert". Times are aware UTC.
+
+    * stale — everything behind the finding was observed at or before the
+      resolve (a held log finding whose last line came before it): nothing is
+      reopened or opened. 28 Sep 13:11 re-raised four incidents resolved at
+      13:08 from lines of 13:05-13:06.
+    * reopen — Sentinel itself resolved it (ResolvedBy empty) within
+      FLAP_WINDOW: a flapping problem is one incident, not one per flap. Not a
+      notice: each notice is its own event. Not an episode a person resolved:
+      that was a judgement ("dealt with"), and its return is a new episode that
+      says what was done last time.
+    * insert — anything else: a new episode.
+    """
+    if resolved_utc is not None and finding.observed_utc is not None and finding.observed_utc <= resolved_utc:
+        return "stale"
+    if (resolved_utc is not None and not resolved_by and not finding.extra.get("notice")
+            and now_utc - resolved_utc <= FLAP_WINDOW):
+        return "reopen"
+    return "insert"
+
+
 @dataclass(frozen=True)
 class Upserted:
-    """What happened to a finding in the store."""
+    """
+    What happened to a finding in the store. ``reopened``: a resolved incident
+    of the fingerprint came back within FLAP_WINDOW and is live again (not new).
+    ``stale``: nothing was written — the incident was resolved at or after the
+    finding's ``observed_utc``; ``incident_id`` is that resolved incident.
+    """
 
     incident_id: int
     is_new: bool
@@ -92,6 +132,8 @@ class Upserted:
     severity: Severity
     occurrences: int
     first_seen_utc: Optional[datetime] = None
+    reopened: bool = False
+    stale: bool = False
 
 
 @dataclass(frozen=True)
@@ -135,7 +177,12 @@ class UnsentIncident:
 
 class IncidentStore(ABC):
     @abstractmethod
-    def upsert(self, finding: Finding, now_utc: datetime) -> Upserted: ...
+    def upsert(self, finding: Finding, now_utc: datetime) -> Upserted:
+        """
+        One sighting: the live incident of its fingerprint is updated; with
+        none live, the latest resolved one is reopened, left alone, or
+        followed by a new one, as :func:`_after_resolve` says.
+        """
 
     @abstractmethod
     def live_for_agent(self, agent: str) -> list[LiveIncident]: ...
@@ -202,6 +249,22 @@ class MemoryIncidentStore(IncidentStore):
                                occurrences=row["occurrences"] + 1)
                     return Upserted(row["id"], False, after.rank > before.rank, after, row["occurrences"],
                                     row["first_seen"])
+            latest = max((r for r in self._rows.values() if r["fingerprint"] == finding.fingerprint),
+                         key=lambda r: r["id"], default=None)
+            step = "insert" if latest is None else \
+                _after_resolve(finding, latest["resolved"], latest.get("resolved_by"), now_utc)
+            if step == "stale":
+                return Upserted(latest["id"], False, False, latest["severity"], latest["occurrences"],
+                                latest["first_seen"], stale=True)
+            if step == "reopen":
+                before = latest["severity"]
+                after = max(before, finding.severity, key=lambda s: s.rank)
+                latest.update(status=Status.ACKNOWLEDGED.value if latest.get("acknowledged") else Status.OPEN.value,
+                              resolved=None, severity=after, title=finding.title, summary=finding.summary,
+                              evidence=_keep_context(list(finding.evidence), latest["evidence"]),
+                              last_seen=now_utc, occurrences=latest["occurrences"] + 1)
+                return Upserted(latest["id"], False, after.rank > before.rank, after, latest["occurrences"],
+                                latest["first_seen"], reopened=True)
             row = dict(id=self._next, fingerprint=finding.fingerprint, agent=finding.agent,
                        rule=finding.rule, severity=finding.severity, status=Status.OPEN.value,
                        title=finding.title, summary=finding.summary, where=finding.where,
@@ -272,6 +335,16 @@ class MemoryIncidentStore(IncidentStore):
         with self._lock:
             self._rows[incident_id]["resolution"] = text
 
+    def resolve_by_person(self, incident_id: int, now_utc: datetime, by: str = "upendra") -> None:
+        """What the console's Resolve does: resolved, with ResolvedBy set (Sentinel's own resolve leaves it empty)."""
+        with self._lock:
+            self._rows[incident_id].update(status=Status.RESOLVED.value, resolved=now_utc, resolved_by=by)
+
+    def acknowledge(self, incident_id: int, now_utc: datetime) -> None:
+        """What the console's Acknowledge does."""
+        with self._lock:
+            self._rows[incident_id].update(status=Status.ACKNOWLEDGED.value, acknowledged=now_utc)
+
 
 class PostgresIncidentStore(IncidentStore):
     """
@@ -336,10 +409,40 @@ class PostgresIncidentStore(IncidentStore):
                     '"LastSeenUtc" = %s, "Occurrences" = "Occurrences" + 1 WHERE "Id" = %s',
                     (after.value, _text(finding.title)[:300], _text(finding.summary), kept, now_utc, incident_id),
                 )
-                if isinstance(first_seen, datetime) and first_seen.tzinfo is None:
-                    first_seen = first_seen.replace(tzinfo=timezone.utc)
                 return Upserted(incident_id, False, after.rank > before.rank, after, occurrences + 1,
-                                first_seen if isinstance(first_seen, datetime) else None)
+                                _utc(first_seen))
+
+            # No live row: the fingerprint's latest episode, if any, is
+            # resolved. Whether this sighting reopens it, opens a new one or
+            # is old news is _after_resolve's to say.
+            cur.execute(
+                'SELECT "Id", "Severity", "Occurrences", "EvidenceJson", "FirstSeenUtc", "ResolvedUtc", '
+                '"ResolvedBy", "AcknowledgedUtc" FROM incidents WHERE "Fingerprint" = %s '
+                'ORDER BY "Id" DESC LIMIT 1 FOR UPDATE',
+                (fingerprint,),
+            )
+            latest = cur.fetchone()
+            step = "insert" if latest is None else _after_resolve(finding, _utc(latest[5]), latest[6], now_utc)
+            if step == "stale":
+                return Upserted(latest[0], False, False, Severity(latest[1]), latest[2], _utc(latest[4]),
+                                stale=True)
+            if step == "reopen":
+                incident_id, before_raw, occurrences, evidence_before, first_seen = latest[:5]
+                before = Severity(before_raw)
+                after = max(before, finding.severity, key=lambda s: s.rank)
+                # Acknowledged before it cleared: someone is already on it, and
+                # a flap does not put it back in front of them as unattended.
+                status = Status.ACKNOWLEDGED.value if latest[7] is not None else Status.OPEN.value
+                kept = _json(_keep_context(list(finding.evidence), _evidence_list(evidence_before)))
+                cur.execute(
+                    'UPDATE incidents SET "Status" = %s, "ResolvedUtc" = NULL, "Severity" = %s, "Title" = %s, '
+                    '"Summary" = %s, "EvidenceJson" = %s, "LastSeenUtc" = %s, "Occurrences" = "Occurrences" + 1 '
+                    'WHERE "Id" = %s',
+                    (status, after.value, _text(finding.title)[:300], _text(finding.summary), kept, now_utc,
+                     incident_id),
+                )
+                return Upserted(incident_id, False, after.rank > before.rank, after, occurrences + 1,
+                                _utc(first_seen), reopened=True)
 
             cur.execute(
                 'INSERT INTO incidents ("Fingerprint", "Agent", "Rule", "Severity", "Status", "Title", "Summary", '
@@ -357,10 +460,10 @@ class PostgresIncidentStore(IncidentStore):
             except Exception as exc:
                 if not _unique_violation(exc):
                     raise
-                # Another writer inserted this fingerprint's live row between
-                # the SELECT and the INSERT (the partial unique index refused
-                # the second). The row exists now: once more, and the SELECT
-                # finds it and takes the update path.
+                # Another writer inserted (or reopened) this fingerprint's live
+                # row between the SELECT and the INSERT or reopen (the partial
+                # unique index refused the second). The row exists now: once
+                # more, and the SELECT finds it and takes the update path.
                 return self._run(work)
         except Exception:
             self._append_fallback(finding, now_utc)

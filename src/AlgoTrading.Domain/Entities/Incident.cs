@@ -19,7 +19,12 @@ namespace AlgoTrading.Domain.Entities;
 /// its <see cref="Fingerprint"/> (the rule and what it is about, never a count
 /// or a time) and, while the row is still live, a new sighting updates it and
 /// bumps <see cref="Occurrences"/>. Once the row is resolved, the same problem
-/// coming back opens a new row, so the history keeps each episode separately.
+/// coming back opens a new row, so the history keeps each episode separately —
+/// except within 30 minutes of Sentinel itself resolving it (<see cref="ResolvedBy"/>
+/// null): a flapping problem is one episode, so Sentinel reopens the row
+/// (Status back to open, or acknowledged if it was, and ResolvedUtc cleared)
+/// rather than opening one per flap. 28 Sep 2026, 13:06-13:28: a feed stalling
+/// every few minutes opened a new CRITICAL incident, and two messages, per stall.
 /// </para>
 /// </remarks>
 public class Incident
@@ -73,7 +78,8 @@ public class Incident
 
     /// <summary>
     /// When it stopped being live: Sentinel sets it after enough clean checks
-    /// in a row, a person sets it from the console.
+    /// in a row, a person sets it from the console. Sentinel clears it again
+    /// when it reopens a row it resolved itself less than 30 minutes before.
     /// </summary>
     public DateTime? ResolvedUtc { get; set; }
 
@@ -123,7 +129,10 @@ public static class IncidentStatus
     /// <summary>A person has seen it. Sentinel still updates it while the problem lasts.</summary>
     public const string Acknowledged = "acknowledged";
 
-    /// <summary>Over. A later sighting of the same problem opens a new row.</summary>
+    /// <summary>
+    /// Over. A later sighting of the same problem opens a new row, or, within
+    /// 30 minutes of Sentinel resolving it itself, reopens this one.
+    /// </summary>
     public const string Resolved = "resolved";
 
     /// <summary>Statuses Sentinel still tracks: a new sighting updates the row instead of opening another.</summary>
