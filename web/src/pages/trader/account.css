@@ -53,7 +53,7 @@
 .acct-light--linked { color: var(--pos); border-color: color-mix(in srgb, var(--pos) 40%, transparent); }
 .acct-light--linked .acct-light__dot {
   background: var(--pos);
-  box-shadow: 0 0 0 0 rgba(49, 196, 141, 0.55);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--pos) 55%, transparent);
   animation: pill-pulse 2.4s infinite;
 }
 .acct__broker { display: flex; flex-direction: column; gap: 14px; }

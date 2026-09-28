@@ -14,6 +14,7 @@
  * it on the run page.
  */
 
+import { useTheme } from '../../lib/theme'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AreaSeries,
@@ -74,6 +75,8 @@ export function EquityCurveChart({
     return [...map.entries()].sort((a, b) => a[0] - b[0])
   }, [points])
 
+  // The tokens are read once, when the chart is created: a theme change makes a new chart.
+  const { theme } = useTheme()
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
@@ -132,7 +135,7 @@ export function EquityCurveChart({
       priceLineRef.current = null
       lastFitKey.current = null
     }
-  }, [])
+  }, [theme])
 
   useEffect(() => {
     const series = seriesRef.current
@@ -156,7 +159,7 @@ export function EquityCurveChart({
       lastFitKey.current = fitKey
       chart.timeScale().fitContent()
     }
-  }, [sorted, fitKey, follow, initialCapital])
+  }, [sorted, fitKey, follow, initialCapital, theme])
 
   const shown = hover ?? sorted[sorted.length - 1]?.[1] ?? null
 

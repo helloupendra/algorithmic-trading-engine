@@ -25,10 +25,11 @@
  * up against the same candle list the chart itself was drawn from.
  */
 
+import { chartOptions } from '../lib/chartTheme'
+import { useTheme } from '../lib/theme'
 import { useEffect, useMemo, useRef } from 'react'
 import {
   CandlestickSeries,
-  ColorType,
   createChart,
   createSeriesMarkers,
   LineSeries,
@@ -142,27 +143,13 @@ export function SmcChart({
     return byIndex
   }, [candles])
 
+  // The tokens are read once, when the chart is created: a theme change makes a new chart.
+  const { theme } = useTheme()
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
 
-    const chart = createChart(el, {
-      width: el.clientWidth,
-      height: el.clientHeight,
-      layout: {
-        background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: cssVar('--text-2'),
-        fontSize: 11,
-        attributionLogo: false,
-      },
-      grid: {
-        vertLines: { color: cssVar('--line-soft') },
-        horzLines: { color: cssVar('--line-soft') },
-      },
-      rightPriceScale: { borderColor: cssVar('--line') },
-      timeScale: { borderColor: cssVar('--line'), timeVisible: true, secondsVisible: false },
-      crosshair: { mode: 0 },
-    })
+    const chart = createChart(el, chartOptions(el))
 
     const price = chart.addSeries(CandlestickSeries, {
       upColor: cssVar('--pos'),
@@ -200,7 +187,7 @@ export function SmcChart({
       priceLinesRef.current = []
       lastFitKey.current = null
     }
-  }, [])
+  }, [theme])
 
   useEffect(() => {
     const price = priceRef.current
@@ -215,7 +202,7 @@ export function SmcChart({
       lastFitKey.current = fitKey
       chart.timeScale().fitContent()
     }
-  }, [candles, fitKey])
+  }, [candles, fitKey, theme])
 
   // Overlays: rebuilt whenever the marks or the chosen layers change.
   useEffect(() => {
@@ -434,7 +421,7 @@ export function SmcChart({
     // this index on every frame, so a poll that adds candles extends it without
     // anything being pushed here.
     zones.setZones(boxes, candles.length - 1)
-  }, [data, layers, candles, indexByTime])
+  }, [data, layers, candles, indexByTime, theme])
 
   useEffect(() => {
     const price = priceRef.current
@@ -462,7 +449,7 @@ export function SmcChart({
         )
       }
     }
-  }, [higher, layers.higher])
+  }, [higher, layers.higher, theme])
 
   return <div ref={containerRef} className="chart chart--tall" />
 }

@@ -204,7 +204,7 @@ a.st--neg:hover { color: var(--neg); filter: brightness(1.15); }
   cursor: pointer;
 }
 .shell__avatar:hover,
-.shell__avatar[aria-expanded='true'] { color: var(--text); border-color: #3b4d66; }
+.shell__avatar[aria-expanded='true'] { color: var(--text); border-color: var(--line-hover); }
 
 /* --- popovers (health, account) -------------------------------------------- */
 /* Fixed under the bar rather than inside it: the bar clips nothing that way,
@@ -293,6 +293,26 @@ button.pop__row:focus-visible { background: var(--surface2); outline: none; }
 .pop__item:hover,
 .pop__item:focus-visible { background: var(--surface2); color: var(--text); outline: none; }
 
+/* The theme: three words in one segmented control, the way the Desk's phase switch reads. */
+.pop__theme { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 12px 8px; margin-top: 2px; border-top: 1px solid var(--line-soft); }
+.pop__theme > span { color: var(--text-3); font-size: var(--fs-xs); letter-spacing: 0.07em; text-transform: uppercase; }
+.pop__seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
+.pop__seg button {
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-s);
+  cursor: pointer;
+}
+.pop__seg button:first-child { border-left: 0; }
+.pop__seg button:hover { color: var(--text); }
+.pop__seg button[aria-pressed='true'] { background: var(--surface2); color: var(--text); }
+.pop__seg button:focus-visible { outline-offset: -2px; }
+
 /* --- workspace tab strip ---------------------------------------------------- */
 .shell__tabs {
   height: var(--tabbar-h);
@@ -366,7 +386,7 @@ button.pop__row:focus-visible { background: var(--surface2); outline: none; }
   justify-content: center;
   align-items: flex-start;
   padding: 12vh 12px 12px;
-  background: rgb(3 5 8 / 0.62);
+  background: var(--scrim);
 }
 .palette__card {
   width: min(620px, 100%);

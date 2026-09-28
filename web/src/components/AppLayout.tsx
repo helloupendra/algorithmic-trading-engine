@@ -19,6 +19,7 @@ import { useLiveFeed } from '../lib/live'
 import { ACCOUNT_PAGE, accessFor, locate, navFor } from '../lib/modules'
 import type { NavPage, NavWorkspace } from '../lib/modules'
 import { isPaletteShortcut } from '../lib/palette'
+import { installScrollCues } from '../lib/scrollCues'
 import { IconLogo, IconSearch } from './icons'
 import { StatusItems } from './shell/StatusItems'
 import { useIstDate } from './shell/useIstDate'
@@ -111,6 +112,9 @@ export function AppLayout() {
 
   // Back and forward close it too, not only a pick from the list.
   useEffect(() => setPaletteOpen(false), [pathname])
+
+  // Sideways-scrolling tables and strips fade the edge that hides more.
+  useEffect(() => installScrollCues(document), [])
 
   // The browser tab names the page: several consoles open side by side
   // otherwise all read as the site's title.
