@@ -229,6 +229,41 @@ function calibrate(pairs: Array<{ p: number; y: number }>): CalibrationBin[] {
     }))
 }
 
+const NEWS_SIZES: Record<string, number> = {
+  india: 480, global: 370, auto: 50, banking: 57, commodities: 66, energy: 51, fmcg: 55, it: 75, metals: 50,
+  pharma: 54, realty: 50, 'nifty50 announcements': 9,
+}
+
+/**
+ * A made-up pre-open context for a session (`inputs.liveOnly`), the same on
+ * every forecast of the session, as the morning job records it. From its own
+ * generator, seeded by the date, so it leaves the forecasts' numbers alone.
+ */
+function liveOnlyFor(date: string, prevClose: number): Record<string, unknown> {
+  const r = rng(Number(date.split('-').join('')) ^ 0x51ed)
+  const news: Record<string, unknown> = {}
+  for (const [category, size] of Object.entries(NEWS_SIZES)) {
+    const n = Math.max(1, Math.round(size * (0.7 + 0.6 * r())))
+    news[category] = {
+      n,
+      scored: n - Math.floor(r() * 3),
+      sentiment: round(Math.max(-1, Math.min(1, 0.1 + 0.3 * gauss(r))), 3),
+      maxImportance: 1 + Math.floor(r() * 3),
+    }
+  }
+  const gift = prevClose * (1 + (0.25 * gauss(r)) / 100)
+  return {
+    usedByModels: false,
+    giftNiftyGapPct: round((gift / prevClose - 1) * 100, 3),
+    giftNiftyChangePct: round(0.4 * gauss(r), 3),
+    giftNiftyAsOf: `${date}T03:13:18Z`,
+    giftNiftyFetchedUtc: `${date}T03:15:03Z`,
+    news,
+    earningsToday: Math.floor(r() * 3),
+    earningsSincePrev: Math.floor(r() * 2),
+  }
+}
+
 /** 95% percentile interval of mean(baselineLoss − loss), resampling whole sessions. */
 function bootstrap(scored: Forecast[]): { low: number; high: number } | null {
   const bySession = new Map<string, number[]>()
@@ -375,6 +410,7 @@ export function buildAnalysisFixture(opts: { nowMs: number; sessions?: number; s
     const dayVol = gauss(r)
     const dayTrend = gauss(r)
     const dayUp = r() < 0.53
+    const live = liveOnlyFor(date, state.get('NIFTY')?.prevClose ?? INDICES.NIFTY.close)
 
     for (const index of indices) {
       const spec = INDICES[index]
@@ -456,7 +492,7 @@ export function buildAnalysisFixture(opts: { nowMs: number; sessions?: number; s
             issuedUtc: `${date}T03:20:0${(n % 7) + 1}Z`,
             prediction: m.prediction,
             baseline,
-            inputs: m.inputs,
+            inputs: { ...m.inputs, liveOnly: live },
             // Trend and direction state no bucket edges, so their outcome has no bucket.
             outcome: scored ? (model.target === 'range' ? outcome : { ...outcome, bucket: null }) : null,
             scores: scored ? score(model.target, m.prediction, baseline, outcome) : null,

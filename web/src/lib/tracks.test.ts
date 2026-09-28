@@ -11,6 +11,7 @@ import {
   trackScale,
   trackUnderlyings,
   tracksLayout,
+  tracksWithLiveRuns,
   underlyingCode,
   validUnderlying,
   writeTrackUnderlying,
@@ -235,6 +236,44 @@ describe('tracksLayout', () => {
   it('marks now on the day that is today, inside the axis', () => {
     expect(layout({ isToday: true, nowMs: Date.parse(at('11:42')) }).now).toBe(min('11:42'))
     expect(layout({ isToday: true }).now).toBeNull()
+  })
+
+  describe('with the live runs re-priced (tracksWithLiveRuns)', () => {
+    // 12:41 and a little: the SMC restart is live, its last recorded minute 12:41.
+    const nowMinute = min('12:41') + 0.4
+    const today = layout({ isToday: true, nowMs: Date.parse(at('12:41')) + 24_000 })
+    // Its open book at the pushed prices: ₹-330 before charges, as liveMarks.runsWithTicks would make it.
+    const moved = { ...smcRestart, openPositions: 2, unrealizedPnl: -330 }
+    const live = runs.map((r) => (r === smcRestart ? moved : r))
+
+    it('moves the live track’s and its account’s figures, and carries both lines on to them', () => {
+      const shown = tracksWithLiveRuns(today, live, nowMinute)
+      const admin = shown.groups[0]
+      const smc = admin.tracks.find((t) => t.strategy === 'SmcStructureBreak')!
+      // The restart's net: realized 60 − charges 10 − 330 open; the first run's −100 stays.
+      expect(smc.figures.net).toBeCloseTo(-100 + 50 - 330)
+      expect(smc.points.at(-1)).toEqual({ m: nowMinute, v: smc.figures.net })
+      expect(admin.figures.net).toBeCloseTo(today.groups[0].figures.net - 330)
+      // The group total is still the sum of its tracks.
+      expect(admin.figures.net).toBeCloseTo(admin.tracks.reduce((n, t) => n + t.figures.net, 0))
+    })
+
+    it('keeps every track, group and line no price reached as the same object, so its lane is not redrawn', () => {
+      const shown = tracksWithLiveRuns(today, live, nowMinute)
+      const before = today.groups[0].tracks
+      shown.groups[0].tracks.forEach((t, i) => {
+        if (t.strategy !== 'SmcStructureBreak') expect(t).toBe(before[i])
+      })
+      expect(shown.groups[1]).toBe(today.groups[1])
+      expect(tracksWithLiveRuns(today, runs, nowMinute)).toBe(today)
+    })
+
+    it('moves the figures but draws no line past the axis or on another day', () => {
+      const closed = tracksWithLiveRuns(layout(), live, nowMinute)
+      const smc = closed.groups[0].tracks.find((t) => t.strategy === 'SmcStructureBreak')!
+      expect(smc.figures.net).toBeCloseTo(-100 + 50 - 330)
+      expect(smc.points.at(-1)!.m).toBe(min('12:41'))
+    })
   })
 })
 

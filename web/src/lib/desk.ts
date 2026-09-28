@@ -181,25 +181,50 @@ export interface PhasePick {
   from: Phase
 }
 
-/** A phase held for the rest of one IST day. */
+/**
+ * A phase held until the clock next moves (09:15, 15:30) or the IST day ends,
+ * whichever is first, across reloads and tabs.
+ */
 export interface PhasePin {
   phase: Phase
   date: string
+  /** The phase the clock was in when the pin was set: it holds while the clock stays there. */
+  from: Phase
 }
 
 /**
- * What the Desk shows. A pin holds for the day it was set on, so the next
- * morning never opens on yesterday's choice; a click to look at another phase
- * lasts until the clock next moves (09:15, 15:30), when the Desk reorders
- * itself; otherwise the clock decides.
+ * Whether a pin still holds. Until 28 Sep a pin held for the whole day, so
+ * "Before open" pinned at 08:50 kept the Desk on the 08:55 readiness list at
+ * 13:15, long after the open, showing a checkup nobody needed any more as if
+ * it were the state of the desk. Now it ends where the Desk would reorder
+ * itself: a pin set before the open ends at the open, one set in the session
+ * ends at the close, one set after the close ends with the day.
+ */
+export function pinHolds(pin: PhasePin | null, clock: Phase, today: string): boolean {
+  return pin != null && pin.date === today && pin.from === clock
+}
+
+/** When a pin set now would end, for the pin's own words. */
+export function pinUntil(clock: Phase): string {
+  return clock === 'pre' ? 'until the open' : clock === 'live' ? 'until the close' : 'for the rest of the day'
+}
+
+/**
+ * What the Desk shows. A pin holds until the clock next moves or the day
+ * ends (pinHolds); a click to look at another phase lasts until the clock
+ * next moves, when the Desk reorders itself; otherwise the clock decides.
+ * Until the market session has been read (`clockKnown` false) the clock is
+ * the standard hours' guess, which is wrong on a holiday, so a pin of today
+ * is honoured without asking it.
  */
 export function shownPhase(
   clock: Phase,
   pick: PhasePick | null,
   pin: PhasePin | null,
   today: string,
+  clockKnown = true,
 ): { phase: Phase; how: 'clock' | 'picked' | 'pinned' } {
-  if (pin && pin.date === today) return { phase: pin.phase, how: 'pinned' }
+  if (pin && (clockKnown ? pinHolds(pin, clock, today) : pin.date === today)) return { phase: pin.phase, how: 'pinned' }
   if (pick && pick.from === clock) return { phase: pick.phase, how: pick.phase === clock ? 'clock' : 'picked' }
   return { phase: clock, how: 'clock' }
 }
@@ -213,14 +238,16 @@ const isPhase = (v: unknown): v is Phase => v === 'pre' || v === 'live' || v ===
  * The stored pin, or null. Storage can be missing or throw (a private window,
  * blocked site data), and what is stored can be anything an older build or a
  * person wrote; none of that may break the Desk, so it all reads as "no pin".
+ * A pin from before 28 Sep has no `from`: it was set to hold the whole day,
+ * which pins no longer do, so it reads as none rather than being guessed at.
  */
 export function readPin(storage: Pick<Storage, 'getItem'> | null): PhasePin | null {
   try {
     const raw = storage?.getItem(PIN_KEY)
     if (!raw) return null
     const v = JSON.parse(raw) as Partial<PhasePin>
-    return isPhase(v.phase) && typeof v.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v.date)
-      ? { phase: v.phase, date: v.date }
+    return isPhase(v.phase) && isPhase(v.from) && typeof v.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v.date)
+      ? { phase: v.phase, date: v.date, from: v.from }
       : null
   } catch {
     return null
@@ -639,6 +666,16 @@ export function buildGrid(
   })
 
   return { underlyings, accounts: [...accounts], rows, totals, figures: sumFigures(sorted) }
+}
+
+/**
+ * Each account's net now, for the accounts with a run still live: where the
+ * Day P&L curve's line is carried on to (pnlSeries.withLiveTips). An account
+ * whose runs have all stopped has a final figure the recorder already holds.
+ */
+export function liveAccountNets(grid: Pick<DeskGrid, 'totals'>, runs: ReadonlyArray<Pick<LiveRunSummary, 'userId' | 'isActive'>>): Map<number, number> {
+  const live = new Set(runs.filter((r) => r.isActive).map((r) => r.userId))
+  return new Map(grid.totals.filter((t) => live.has(t.account.id)).map((t) => [t.account.id, t.figures.net]))
 }
 
 // ---------------------------------------------------------------- run counts and the plan

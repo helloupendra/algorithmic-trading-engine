@@ -9,9 +9,12 @@
  * left out rather than shown as a default.
  */
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { formatInrSigned, pnlClass } from '../../lib/format'
+import { useLiveRuns } from '../../lib/queries'
+import type { RunLegs } from '../../lib/liveMarks'
+import { runNetPnl } from '../../lib/runHistory'
 import { activeUnderlyings } from '../../lib/strategyList'
 import {
   builtInExit,
@@ -23,7 +26,7 @@ import {
 } from '../../lib/strategyLibrary'
 import type { RecentPaper } from '../../lib/strategyLibrary'
 import type { SpecFacts } from '../../lib/specs'
-import type { StrategyListItem } from '../../lib/types'
+import type { LiveRunSummary, StrategyListItem } from '../../lib/types'
 import { IconChevronDown, IconChevronRight, IconPlay } from '../../components/icons'
 
 export interface CardContext {
@@ -31,7 +34,35 @@ export interface CardContext {
   recent: ReadonlyMap<number, RecentPaper> | null
   /** Days the recent P&L covers, for its label. */
   recentDays: number
+  /** The window's live runs and what re-prices them, so a recent P&L with an open book in it moves; null without them. */
+  live: LiveRecent | null
   onStart: (strategy: StrategyListItem) => void
+}
+
+/** The recent window's live runs by catalog id, with the list's time and the open legs they are re-priced from. */
+export interface LiveRecent {
+  runs: ReadonlyMap<number, readonly LiveRunSummary[]>
+  asOf: number
+  legs: RunLegs | null
+}
+
+const NO_RUNS: readonly LiveRunSummary[] = []
+
+/**
+ * A recent P&L with its live runs' open books at the pushed prices of their
+ * legs: the answered sum moved by exactly what the prices moved those runs.
+ * A card with nothing live holds no prices and is not re-rendered by a push.
+ */
+function useLiveRecent(recent: RecentPaper | undefined, ids: readonly number[], live: LiveRecent | null): RecentPaper | undefined {
+  const key = ids.join(',')
+  const runs = useMemo(() => {
+    const own = live && key ? key.split(',').flatMap((id) => live.runs.get(Number(id)) ?? []) : []
+    return own.length ? own : NO_RUNS
+  }, [key, live])
+  const moved = useLiveRuns(runs, live?.asOf ?? 0, live?.legs ?? null) ?? runs
+  if (!recent || moved === runs) return recent
+  const delta = moved.reduce((n, r, i) => n + runNetPnl(r) - runNetPnl(runs[i]), 0)
+  return delta === 0 ? recent : { ...recent, netPnl: recent.netPnl + delta }
 }
 
 const specHref = (s: StrategyListItem) => `/trade/library/${s.id}`
@@ -86,7 +117,9 @@ function RunningNote({ on }: { on: string[] }) {
   )
 }
 
-function RecentNote({ recent, days }: { recent: RecentPaper | undefined; days: number }) {
+function RecentNote({ recent: answered, ids, ctx }: { recent: RecentPaper | undefined; ids: readonly number[]; ctx: CardContext }) {
+  const recent = useLiveRecent(answered, ids, ctx.live)
+  const days = ctx.recentDays
   if (!recent || recent.runs + recent.alertRuns === 0) {
     return <span className="lib-recent lib-recent--none">No runs in {days}d</span>
   }
@@ -147,7 +180,7 @@ export function LibraryCard({ strategy: s, ctx }: { strategy: StrategyListItem; 
       <div className="lib-card__foot">
         <div className="lib-card__state">
           <RunningNote on={on} />
-          {ctx.recent && <RecentNote recent={ctx.recent.get(s.id)} days={ctx.recentDays} />}
+          {ctx.recent && <RecentNote recent={ctx.recent.get(s.id)} ids={[s.id]} ctx={ctx} />}
         </div>
         <Actions s={s} onStart={ctx.onStart} />
       </div>
@@ -203,7 +236,7 @@ export function FamilyCard({
               {runningMembers === 1 ? '1 variant' : `${runningMembers} variants`} running · {running.join(', ')}
             </span>
           )}
-          {ctx.recent && <RecentNote recent={recent} days={ctx.recentDays} />}
+          {ctx.recent && <RecentNote recent={recent} ids={members.map((m) => m.id)} ctx={ctx} />}
         </div>
         <button
           type="button"
@@ -232,7 +265,7 @@ export function FamilyCard({
                 </div>
                 <div className="lib-variant__side">
                   <RunningNote on={on} />
-                  {ctx.recent && <RecentNote recent={ctx.recent.get(m.id)} days={ctx.recentDays} />}
+                  {ctx.recent && <RecentNote recent={ctx.recent.get(m.id)} ids={[m.id]} ctx={ctx} />}
                   <Actions s={m} onStart={ctx.onStart} />
                 </div>
               </li>

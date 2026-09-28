@@ -19,7 +19,6 @@
  */
 
 import { Fragment, useEffect, useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import type { Scope } from '../../lib/desk'
 import { useStrategies, useStrategyLivesRepriced } from '../../lib/queries'
@@ -29,7 +28,7 @@ import type { StrategyActiveRun, StrategyLastExit, StrategyListItem, StrategyLiv
 import { LaunchDialog, PnlValue, ReadinessStrip, StrategyCard } from './shared'
 import { RunCard } from './RunCard'
 import { RunTracks } from './RunTracks'
-import { liveNet, realizedNet, runOwner, runningSummary } from '../../lib/strategyList'
+import { liveNet, realizedNet, runOwner, runningTileSub } from '../../lib/strategyList'
 import { readTrackUnderlying, writeTrackUnderlying } from '../../lib/tracks'
 
 /* ------------------------------------------------------------------ helpers */
@@ -125,6 +124,52 @@ export function LiveRunnerPage() {
   return <RunCards onView={setView} />
 }
 
+/**
+ * The four tiles over the cards. Their own component: they are re-priced at
+ * every push, and the page around them, every card and the strategy
+ * catalogue, would otherwise be re-rendered with them. Each card re-prices
+ * itself from the same pushes and the same cached views, so the tiles stay
+ * the sum of the cards.
+ */
+function RunnerTiles({ runIds, running, runningSub }: { runIds: number[]; running: number; runningSub: string }) {
+  const views = useStrategyLivesRepriced(runIds).filter((v): v is StrategyLiveView => !!v)
+  const activeViews = views.filter((v) => v.isActive)
+  const openPositions = activeViews.reduce(
+    (n, v) => n + v.positions.filter((p) => p.status === 'Open').length,
+    0,
+  )
+  // Net of charges, like the run history: the same runs read gross here and
+  // net there until 28 Sep.
+  const livePnl = activeViews.reduce((n, v) => n + liveNet(v.pnl), 0)
+  const realizedToday = views
+    .filter((v) => isToday(v.startedUtc))
+    .reduce((n, v) => n + realizedNet(v.pnl), 0)
+  return (
+    <>
+      <StatTile
+        label={running === 1 ? 'Running run' : 'Running runs'}
+        value={running}
+        tone={running > 0 ? 'pos' : undefined}
+        sub={runningSub}
+      />
+      <StatTile label="Open positions" value={openPositions} sub="across running runs" />
+      <StatTile
+        label="Live P&L"
+        value={<PnlValue value={livePnl} />}
+        tone={livePnl > 0 ? 'pos' : livePnl < 0 ? 'neg' : undefined}
+        sub="net of charges · realized + unrealized of running runs"
+      />
+      <StatTile
+        label="Realized today"
+        value={<PnlValue value={realizedToday} />}
+        tone={realizedToday > 0 ? 'pos' : realizedToday < 0 ? 'neg' : undefined}
+        sub="after charges · runs started today, incl. stopped ones shown below"
+        to="/trade/history"
+      />
+    </>
+  )
+}
+
 function RunCards({ onView }: { onView: (view: RunsView) => void }) {
   const strategies = useStrategies()
   const [launchId, setLaunchId] = useState<number | null>(null)
@@ -136,7 +181,6 @@ function RunCards({ onView }: { onView: (view: RunsView) => void }) {
   const listUnknown = strategies.isError && strategies.data === undefined
 
   const list = useMemo(() => strategies.data ?? [], [strategies.data])
-  const runningStrategies = useMemo(() => list.filter((s) => s.activeRuns.length > 0), [list])
 
   // One card per live run, in start order within each strategy.
   const running = useMemo<CardSpec[]>(
@@ -164,20 +208,6 @@ function RunCards({ onView }: { onView: (view: RunsView) => void }) {
   // them, and their live query stops polling by itself once isActive is false.
   const visibleRunIds = useMemo(() => visible.map((c) => c.runId), [visible])
 
-  // Page totals share the cache with each card's own useStrategyLive, and are
-  // re-priced at the same pushes, so the tiles never disagree with the cards.
-  const views = useStrategyLivesRepriced(visibleRunIds).filter((v): v is StrategyLiveView => !!v)
-  const activeViews = views.filter((v) => v.isActive)
-  const openPositions = activeViews.reduce(
-    (n, v) => n + v.positions.filter((p) => p.status === 'Open').length,
-    0,
-  )
-  // Net of charges, like the run history: the same runs read gross here and
-  // net there until 28 Sep.
-  const livePnl = activeViews.reduce((n, v) => n + liveNet(v.pnl), 0)
-  const realizedToday = views
-    .filter((v) => isToday(v.startedUtc))
-    .reduce((n, v) => n + realizedNet(v.pnl), 0)
 
   // After a start, bring the new card into view once the list has caught up.
   const startedCardVisible = scrollTo != null && running.some((c) => c.runId === scrollTo)
@@ -193,16 +223,6 @@ function RunCards({ onView }: { onView: (view: RunsView) => void }) {
   // The dialog reads the strategy from the polled list, so a run started from
   // another browser greys its underlying out while the dialog is open.
   const launch = launchId != null ? (list.find((s) => s.id === launchId) ?? null) : null
-
-  let runningSub: ReactNode = 'nothing running'
-  if (runningStrategies.length > 0) {
-    runningSub = runningStrategies.map((s, i) => (
-      <span key={s.id}>
-        {i > 0 && <br />}
-        {runningSummary(s)}
-      </span>
-    ))
-  }
 
   return (
     <div className="page">
@@ -230,28 +250,9 @@ function RunCards({ onView }: { onView: (view: RunsView) => void }) {
             <StatTile label="Realized today" value="—" sub="strategy list unavailable" />
           </>
         ) : (
-          <>
-            <StatTile
-              label={running.length === 1 ? 'Running run' : 'Running runs'}
-              value={running.length}
-              tone={running.length > 0 ? 'pos' : undefined}
-              sub={runningSub}
-            />
-            <StatTile label="Open positions" value={openPositions} sub="across running runs" />
-            <StatTile
-              label="Live P&L"
-              value={<PnlValue value={livePnl} />}
-              tone={livePnl > 0 ? 'pos' : livePnl < 0 ? 'neg' : undefined}
-              sub="net of charges · realized + unrealized of running runs"
-            />
-            <StatTile
-              label="Realized today"
-              value={<PnlValue value={realizedToday} />}
-              tone={realizedToday > 0 ? 'pos' : realizedToday < 0 ? 'neg' : undefined}
-              sub="after charges · runs started today, incl. stopped ones shown below"
-              to="/trade/history"
-            />
-          </>
+          // Page totals share the cache with each card's own useStrategyLive, and are
+          // re-priced at the same pushes, so the tiles never disagree with the cards.
+          <RunnerTiles runIds={visibleRunIds} running={running.length} runningSub={runningTileSub(list)} />
         )}
       </div>
 
