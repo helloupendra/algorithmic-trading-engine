@@ -121,6 +121,50 @@ public class StrategyRiskGuardServiceTests
         Assert.Empty(desk.Notifier.Sent);
     }
 
+    [Fact]
+    public async Task A_tripped_leg_rule_tells_the_owner_what_it_closed_and_why()
+    {
+        using var desk = new GuardDesk();
+        long run = desk.NewRun();
+        desk.Fill(run, "G1", Call, "SELL", 2, 100m);
+        desk.Register(run, LegAndGroupStops());
+        desk.Quote(Call, 160m, age: TimeSpan.FromSeconds(1));
+
+        await desk.Guard().SweepOnceAsync(CancellationToken.None);
+
+        var risk = Assert.Single(desk.DeskEvents.Of(DeskEventKinds.Risk));
+        Assert.Equal((run, (long?)7, Call), (risk.RunId, risk.UserId, risk.Symbol));
+        Assert.StartsWith("Leg stop-loss hit: NIFTY 25000 CE", risk.Detail);
+        // The close itself, booked before the rule was announced.
+        Assert.Single(desk.DeskEvents.Of(DeskEventKinds.Fill), x => x.RunId == run && x.Symbol == Call);
+        Assert.True(IndexOf(desk.DeskEvents, DeskEventKinds.Fill) < IndexOf(desk.DeskEvents, DeskEventKinds.Risk));
+    }
+
+    [Fact]
+    public async Task An_overall_stop_tells_the_owner_the_run_was_stopped_by_the_rule()
+    {
+        using var desk = new GuardDesk();
+        long run = desk.NewRun();
+        desk.Fill(run, "G1", Call, "SELL", 2, 100m);
+        desk.Register(run, new RiskRulesDto { Overall = new OverallRiskDto { StopLoss = 5_000m } });
+        // 60 points against 2 lots of 65: −7,800.
+        desk.Quote(Call, 160m, age: TimeSpan.FromSeconds(1));
+
+        await desk.Guard().SweepOnceAsync(CancellationToken.None);
+
+        var risk = Assert.Single(desk.DeskEvents.Of(DeskEventKinds.Risk));
+        Assert.Equal((run, (long?)7), (risk.RunId, risk.UserId));
+        Assert.Null(risk.Symbol);
+        Assert.StartsWith("Run stopped — Stop loss hit: P&L −7,8", risk.Detail);
+
+        var stopped = Assert.Single(desk.DeskEvents.Of(DeskEventKinds.Run), x => x.Detail!.StartsWith("Stopped: "));
+        Assert.Equal((run, (long?)7), (stopped.RunId, stopped.UserId));
+        Assert.Contains(desk.DeskEvents.Of(DeskEventKinds.Position), x => x.RunId == run && x.Symbol == Call);
+    }
+
+    private static int IndexOf(RecordingDeskEvents events, string kind)
+        => events.All.Select((x, i) => (x, i)).First(p => p.x.Kind == kind).i;
+
     /// <summary>One run on a registry, over an in-memory database, with a notifier that keeps what it is sent.</summary>
     private sealed class GuardDesk : IDisposable
     {
@@ -138,6 +182,7 @@ public class StrategyRiskGuardServiceTests
             services.AddSingleton<IProcessSettingsStore>(RecapClockTests.Inert<IProcessSettingsStore>.Create());
             services.AddSingleton<ILotSizeResolver>(new PositionGreeksTests.FixedLots(65));
             services.AddSingleton<ISystemNotifier>(Notifier);
+            services.AddSingleton<IDeskEventPublisher>(DeskEvents);
             services.AddScoped<IPaperTradingService, PaperTradingService>();
             services.AddSingleton<StrategyProcessRegistry>();
             // What StrategyRunControl needs besides the above, as the carry-forward desk registers it.
@@ -154,6 +199,7 @@ public class StrategyRiskGuardServiceTests
 
         public StrategyProcessRegistry Registry { get; }
         public RecordingNotifier Notifier { get; } = new();
+        public RecordingDeskEvents DeskEvents { get; } = new();
 
         private void Configure(DbContextOptionsBuilder options) => options
             .UseInMemoryDatabase(_name, _root)

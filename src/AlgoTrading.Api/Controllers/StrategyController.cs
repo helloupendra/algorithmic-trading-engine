@@ -314,6 +314,7 @@ public class StrategyController : ControllerBase
                 run.LastError = "Runner failed to start.";
                 run.CompletedUtc = DateTime.UtcNow;
                 await _dbContext.SaveChangesAsync(CancellationToken.None);
+                _runControl.PublishRunEvent(run.Id, userId, $"Failed: the runner of {strategy.Name} on {underlying} did not start");
 
                 HttpContext.Describe(
                     $"Start of {strategy.Name} on {underlying} failed — run #{run.Id} could not start its runner.",
@@ -325,6 +326,7 @@ public class StrategyController : ControllerBase
 
             // Durable pid so a restarted API can adopt (or stop) this runner.
             await _runControl.RecordRunnerPidAsync(running.RunId, running.ProcessId, startedBy);
+            _runControl.PublishRunEvent(run.Id, userId, $"Started {strategy.Name} on {underlying}, {lots} lot(s)");
 
             HttpContext.Describe(
                 $"Started {strategy.Name} on {underlying} — run #{run.Id}, {lots} lot(s)"
@@ -829,6 +831,7 @@ public class StrategyController : ControllerBase
         }
 
         _registry.AppendLog(runId, $"risk rules updated by {userName}: {rules.Describe()}");
+        _runControl.PublishRunEvent(runId, running.UserId, $"Risk rules changed by {userName}");
         _logger.LogInformation("Risk rules of strategy {StrategyId} ({Name}) run {RunId} on {Underlying} updated by {User}: {Rules}",
             running.StrategyId, running.Name, runId, running.Underlying, userName, rules.Describe());
 

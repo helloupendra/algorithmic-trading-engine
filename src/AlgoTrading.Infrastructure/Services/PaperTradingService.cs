@@ -6,6 +6,7 @@ using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using System.Globalization;
 
 namespace AlgoTrading.Infrastructure.Services;
 
@@ -32,6 +33,12 @@ namespace AlgoTrading.Infrastructure.Services;
 /// less or plus half the spread (<see cref="PaperFillOptions"/>), and never
 /// from a quote too old to be a price while the market is open. Each order
 /// row records which rule priced it.
+///
+/// Every write a desk page shows — a booked signal and its fills, a closed or
+/// settled position, a carry — is announced once it has committed
+/// (<see cref="IDeskEventPublisher"/>), so the page fetches again at once
+/// instead of on its next poll. Replays announce nothing: a backtest books
+/// thousands of fills that no desk page is watching.
 /// </summary>
 public class PaperTradingService : IPaperTradingService
 {
@@ -67,11 +74,16 @@ public class PaperTradingService : IPaperTradingService
     private readonly IMarketSessionService? _marketSessions;
     private readonly PaperFillOptions _fills;
     private readonly TimeProvider _time;
+    private readonly IDeskEventPublisher? _deskEvents;
 
     /// <param name="marketSessions">
     /// Says whether a contract's market is open, which is when a quote's age
     /// is judged. Always registered in the API; null only in tests that
     /// predate it, where no quote is refused for its age.
+    /// </param>
+    /// <param name="deskEvents">
+    /// Tells the console what changed. Registered in the API; null where
+    /// nobody is watching (tests, and any host without the hub).
     /// </param>
     public PaperTradingService(
         TradingDbContext dbContext,
@@ -79,7 +91,8 @@ public class PaperTradingService : IPaperTradingService
         ILotSizeResolver lotSizeResolver,
         IMarketSessionService? marketSessions = null,
         IOptions<PaperFillOptions>? fillOptions = null,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        IDeskEventPublisher? deskEvents = null)
     {
         _dbContext = dbContext;
         _riskManagementService = riskManagementService;
@@ -87,6 +100,7 @@ public class PaperTradingService : IPaperTradingService
         _marketSessions = marketSessions;
         _fills = fillOptions?.Value ?? new PaperFillOptions();
         _time = time ?? TimeProvider.System;
+        _deskEvents = deskEvents;
     }
 
     private DateTime UtcNow => _time.GetUtcNow().UtcDateTime;
@@ -188,6 +202,7 @@ public class PaperTradingService : IPaperTradingService
         //
         // Cheap to hold: the legs of one signal are a handful of rows, and the
         // per-run lock above already serialises every other writer.
+        var bookedLegs = new List<BookedLeg>(legs.Count);
         await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
         try
         {
@@ -205,7 +220,7 @@ public class PaperTradingService : IPaperTradingService
             for (int i = 0; i < legs.Count; i++)
             {
                 await CreateOrderAndApplyPositionAsync(signal, legs[i], fills[i], cancellationToken,
-                    bypassRiskCheck: replay, reduceOnly: reduceOnly, atUtc: clock);
+                    bypassRiskCheck: replay, reduceOnly: reduceOnly, atUtc: clock, booked: bookedLegs);
             }
 
             await transaction.CommitAsync(cancellationToken);
@@ -215,6 +230,8 @@ public class PaperTradingService : IPaperTradingService
             await transaction.RollbackAsync(CancellationToken.None);
             throw;
         }
+
+        PublishBooked(run, signal, bookedLegs, reason: null);
 
         return MapSignal(signal);
     }
@@ -768,7 +785,12 @@ public class PaperTradingService : IPaperTradingService
 
         foreach (var runId in runIds)
         {
-            await FlattenRunAsync(runId, "GLOBAL_KILL_SWITCH", cancellationToken);
+            int flattened = await FlattenRunAsync(runId, "GLOBAL_KILL_SWITCH", cancellationToken);
+            if (flattened > 0)
+            {
+                await PublishAsync(runId, DeskEventKinds.Risk, symbol: null,
+                    $"Kill switch: {Plural(flattened, "position")} squared off");
+            }
         }
     }
 
@@ -795,7 +817,7 @@ public class PaperTradingService : IPaperTradingService
             .ToListAsync(cancellationToken);
 
         var metadata = System.Text.Json.JsonSerializer.Serialize(new { reason, system = true });
-        return await CloseOpenPositionsAsync(run, openPositions, metadata, cancellationToken);
+        return await CloseOpenPositionsAsync(run, openPositions, metadata, reason, cancellationToken);
     }
 
     public async Task<int> ClosePositionsAsync(
@@ -828,7 +850,7 @@ public class PaperTradingService : IPaperTradingService
             .ToListAsync(cancellationToken);
 
         var metadata = System.Text.Json.JsonSerializer.Serialize(new { reason, by, system = true });
-        return await CloseOpenPositionsAsync(run, openPositions, metadata, cancellationToken);
+        return await CloseOpenPositionsAsync(run, openPositions, metadata, reason, cancellationToken);
     }
 
     /// <summary>
@@ -850,6 +872,7 @@ public class PaperTradingService : IPaperTradingService
         SimulationRun run,
         List<PaperPosition> openPositions,
         string metadata,
+        string reason,
         CancellationToken cancellationToken)
     {
         if (openPositions.Count == 0) return 0;
@@ -894,6 +917,7 @@ public class PaperTradingService : IPaperTradingService
             await _dbContext.SimulationSignals.AddAsync(signal, cancellationToken);
             await _dbContext.SaveChangesAsync(cancellationToken);
 
+            var booked = new List<BookedLeg>();
             foreach (var pos in group)
             {
                 var leg = new SimulationSignalLegRequest
@@ -913,9 +937,12 @@ public class PaperTradingService : IPaperTradingService
                 // opening a reverse position on a run that is being stopped.
                 bool closedLeg = await CreateOrderAndApplyPositionAsync(
                     signal, leg, fill, cancellationToken, bypassRiskCheck: true, reduceOnly: true,
-                    atUtc: replay || recapNow.HasValue ? atUtc : null);
+                    atUtc: replay || recapNow.HasValue ? atUtc : null, booked: booked);
                 if (closedLeg) closed++;
             }
+
+            // Each leg was saved on its own above, so the group's fills are all in.
+            PublishBooked(run, signal, booked, reason);
         }
 
         return closed;
@@ -1005,6 +1032,9 @@ public class PaperTradingService : IPaperTradingService
         // One SaveChanges: the signal and the close land together or not at all.
         await _dbContext.SimulationSignals.AddAsync(signal, cancellationToken);
         await _dbContext.SaveChangesAsync(cancellationToken);
+
+        await PublishAsync(simulationRunId, DeskEventKinds.Position, position.Symbol,
+            $"Settled at expiry at {Price(settlementPrice)}");
         return true;
     }
 
@@ -1030,13 +1060,11 @@ public class PaperTradingService : IPaperTradingService
         // Read under the gate, after any stop has marked the run: a tick that
         // arrives once the close has begun to stop the run is refused rather
         // than recorded as if it could still make a difference.
-        var runStatus = await _dbContext.SimulationRuns
+        var run = await _dbContext.SimulationRuns
             .AsNoTracking()
-            .Where(x => x.Id == simulationRunId)
-            .Select(x => x.Status)
-            .FirstOrDefaultAsync(cancellationToken);
-        if (runStatus is null) return CarryForwardUpdate.PositionNotOpen;
-        if (IsClosedStatus(runStatus)) return CarryForwardUpdate.RunNotRunning;
+            .FirstOrDefaultAsync(x => x.Id == simulationRunId, cancellationToken);
+        if (run is null) return CarryForwardUpdate.PositionNotOpen;
+        if (IsClosedStatus(run.Status)) return CarryForwardUpdate.RunNotRunning;
 
         var position = await _dbContext.PaperPositions
             .FirstOrDefaultAsync(x => x.Id == positionId && x.SimulationRunId == simulationRunId, cancellationToken);
@@ -1061,6 +1089,9 @@ public class PaperTradingService : IPaperTradingService
 
         // The tick and its audit row land together or not at all.
         await _dbContext.SaveChangesAsync(cancellationToken);
+
+        Publish(run, DeskEventKinds.Carry, position.Symbol,
+            carryForward ? "Carry forward ticked: held past the close" : "Carry forward unticked: intraday");
         return CarryForwardUpdate.Changed;
     }
 
@@ -1093,7 +1124,7 @@ public class PaperTradingService : IPaperTradingService
             .ToListAsync(cancellationToken);
 
         var metadata = System.Text.Json.JsonSerializer.Serialize(new { reason, by, system = true, intraday = true });
-        return await CloseOpenPositionsAsync(run, intraday, metadata, cancellationToken);
+        return await CloseOpenPositionsAsync(run, intraday, metadata, reason, cancellationToken);
     }
 
     /// <remarks>
@@ -1204,6 +1235,9 @@ public class PaperTradingService : IPaperTradingService
 
         // One save: the leg is in exactly one book at every moment.
         await _dbContext.SaveChangesAsync(cancellationToken);
+
+        await PublishAsync(fromRunId, DeskEventKinds.Carry, source.Symbol, $"Carried forward to the manual book (run #{toRunId})");
+        Publish(book, DeskEventKinds.Carry, source.Symbol, $"Carried forward from run #{fromRunId}");
         return MapPosition(carried);
     }
 
@@ -1364,7 +1398,8 @@ public class PaperTradingService : IPaperTradingService
     /// concurrent stop), the leg is skipped and <c>false</c> is returned.
     /// <paramref name="atUtc"/> is the market's clock: the bar time for replays,
     /// the replayed session's time for a recap (see <see cref="RecapClock"/>);
-    /// null means the wall clock.
+    /// null means the wall clock. A leg that filled is added to
+    /// <paramref name="booked"/>, for the desk events sent once it is committed.
     /// </summary>
     private async Task<bool> CreateOrderAndApplyPositionAsync(
         SimulationSignal signal,
@@ -1373,7 +1408,8 @@ public class PaperTradingService : IPaperTradingService
         CancellationToken cancellationToken,
         bool bypassRiskCheck = false,
         bool reduceOnly = false,
-        DateTime? atUtc = null)
+        DateTime? atUtc = null,
+        List<BookedLeg>? booked = null)
     {
         string normalizedSide = ValidateLeg(leg);
 
@@ -1442,7 +1478,7 @@ public class PaperTradingService : IPaperTradingService
         await _dbContext.PaperOrders.AddAsync(order, cancellationToken);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        bool applied = await ApplyPositionAsync(signal, order, cancellationToken, reduceOnly, clock);
+        var (applied, closedPosition) = await ApplyPositionAsync(signal, order, cancellationToken, reduceOnly, clock);
         if (!applied)
         {
             // The position vanished between the lookup and the apply (closed by a
@@ -1450,6 +1486,10 @@ public class PaperTradingService : IPaperTradingService
             // confuse the order history, so drop it.
             _dbContext.PaperOrders.Remove(order);
             await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+        else
+        {
+            booked?.Add(new BookedLeg(order.Symbol, order.Side, order.Quantity, fillPrice, closedPosition));
         }
 
         return applied;
@@ -1469,12 +1509,13 @@ public class PaperTradingService : IPaperTradingService
 
     /// <summary>
     /// Applies a filled order to the run's open position for (group, symbol).
-    /// Returns <c>false</c> only in reduce-only mode when there is no open
-    /// position to reduce; otherwise a fresh position is opened. Every
-    /// timestamp written here is <paramref name="clock"/> (bar time for replays,
-    /// the replayed session's time for a recap).
+    /// Not applied only in reduce-only mode when there is no open position to
+    /// reduce; otherwise a fresh position is opened. Closed when the order took
+    /// an open position to zero. Every timestamp written here is
+    /// <paramref name="clock"/> (bar time for replays, the replayed session's
+    /// time for a recap).
     /// </summary>
-    private async Task<bool> ApplyPositionAsync(
+    private async Task<(bool Applied, bool Closed)> ApplyPositionAsync(
         SimulationSignal signal,
         PaperOrder order,
         CancellationToken cancellationToken,
@@ -1487,7 +1528,7 @@ public class PaperTradingService : IPaperTradingService
         {
             if (reduceOnly)
             {
-                return false;
+                return (false, false);
             }
 
             var direction = order.Side == "BUY" ? "LONG" : "SHORT";
@@ -1511,7 +1552,7 @@ public class PaperTradingService : IPaperTradingService
 
             await _dbContext.PaperPositions.AddAsync(pos, cancellationToken);
             await _dbContext.SaveChangesAsync(cancellationToken);
-            return true;
+            return (true, false);
         }
 
         bool sameDirection =
@@ -1524,7 +1565,7 @@ public class PaperTradingService : IPaperTradingService
             {
                 // The open position flipped direction under us; adding to it is
                 // the opposite of squaring off.
-                return false;
+                return (false, false);
             }
 
             int newQty = existing.Quantity + order.Quantity;
@@ -1537,7 +1578,7 @@ public class PaperTradingService : IPaperTradingService
             existing.UpdatedUtc = clock;
 
             await _dbContext.SaveChangesAsync(cancellationToken);
-            return true;
+            return (true, false);
         }
 
         int closingQty = Math.Min(existing.Quantity, order.Quantity);
@@ -1599,8 +1640,73 @@ public class PaperTradingService : IPaperTradingService
             await _dbContext.SaveChangesAsync(cancellationToken);
         }
 
-        return true;
+        return (true, existing.Quantity == 0);
     }
+
+    // ---------------------------------------------------------------------
+    // DESK EVENTS
+    // ---------------------------------------------------------------------
+
+    /// <summary>A leg that filled, as the desk event reports it.</summary>
+    private sealed record BookedLeg(string Symbol, string Side, int Quantity, decimal Price, bool ClosedPosition);
+
+    /// <summary>
+    /// A committed signal's events: one <c>order</c>, a <c>fill</c> per leg
+    /// that filled, and a <c>position</c> per position it closed. Nothing for
+    /// a signal that filled nothing (every leg skipped as already closed).
+    /// </summary>
+    private void PublishBooked(SimulationRun run, SimulationSignal signal, IReadOnlyList<BookedLeg> booked, string? reason)
+    {
+        if (_deskEvents is null || booked.Count == 0 || IsReplay(run.Mode)) return;
+
+        var symbols = booked.Select(x => x.Symbol).Distinct(StringComparer.Ordinal).ToList();
+        string because = string.IsNullOrWhiteSpace(reason) ? string.Empty : $" — {reason}";
+
+        Publish(run, DeskEventKinds.Order, symbols.Count == 1 ? symbols[0] : null,
+            $"{signal.SignalType}: {Plural(booked.Count, "leg")} filled{because}");
+
+        foreach (var leg in booked)
+        {
+            Publish(run, DeskEventKinds.Fill, leg.Symbol, $"{leg.Side} {leg.Quantity} at {Price(leg.Price)}");
+            if (leg.ClosedPosition)
+            {
+                Publish(run, DeskEventKinds.Position, leg.Symbol, $"Position closed{because}");
+            }
+        }
+    }
+
+    /// <summary>One event about <paramref name="run"/>, told to its owner and the admins.</summary>
+    private void Publish(SimulationRun run, string kind, string? symbol, string? detail)
+    {
+        if (_deskEvents is null || IsReplay(run.Mode)) return;
+        _deskEvents.TryPublish(new DeskEvent(kind, run.Id, run.UserId, symbol, UtcNow, detail));
+    }
+
+    /// <summary>
+    /// As <see cref="Publish(SimulationRun, string, string?, string?)"/> for a
+    /// run that is not at hand: its owner is looked up, so the owner is still
+    /// told. Never throws — the write it reports has committed.
+    /// </summary>
+    private async Task PublishAsync(long runId, string kind, string? symbol, string? detail)
+    {
+        if (_deskEvents is null) return;
+
+        try
+        {
+            var run = await _dbContext.SimulationRuns
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Id == runId, CancellationToken.None);
+            if (run is not null) Publish(run, kind, symbol, detail);
+        }
+        catch (Exception)
+        {
+            // The event is a hint to fetch again; the write it reports is in.
+        }
+    }
+
+    private static string Price(decimal value) => value.ToString("0.00", CultureInfo.InvariantCulture);
+
+    private static string Plural(int count, string noun) => count == 1 ? $"1 {noun}" : $"{count} {noun}s";
 
     // ---------------------------------------------------------------------
     // HELPERS
