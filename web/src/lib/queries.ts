@@ -19,7 +19,7 @@ import { api } from './api'
 import { answerAsOf, keepSentStamp, stampSent } from './asOf'
 import { livePoll, useLiveAllState, useLiveConnection, useLivePrices } from './live'
 import type { LiveConnection } from './live'
-import { pulseBehind, pulseWithTicks, runViewSymbols, runViewWithTicks } from './liveMarks'
+import { pulseBehind, pulseWithTicks, runViewSymbols, runViewWithTicks, watchlistBehind, watchlistWithTicks } from './liveMarks'
 import { ordersQuery } from './orders'
 import type { OrdersFilter } from './orders'
 import type {
@@ -1750,20 +1750,22 @@ export function useMarketPulse() {
   const symbols = useMemo(() => (answer?.groups ?? []).flatMap((g) => g.items.map((i) => i.symbol)), [answer])
   const prices = useLivePrices(symbols)
   const data = useMemo(() => (answer ? pulseWithTicks(answer, prices, answeredAt) : answer), [answer, prices, answeredAt])
+  useRefetchWhenBehind(answer ? pulseBehind(answer, prices, answeredAt) : false, query.refetch)
+  return { ...query, data }
+}
 
-  // The first pushes of a session land on yesterday's answer, which they are
-  // not laid over (its high, low and previous close are the last session's):
-  // ask for today's at once rather than at the next poll, at most every 10 s.
-  const behind = answer ? pulseBehind(answer, prices, answeredAt) : false
+/**
+ * The first pushes of a session land on yesterday's answer, which they are
+ * not laid over (its high, low and previous close are the last session's):
+ * ask for today's at once rather than at the next poll, at most every 10 s.
+ */
+function useRefetchWhenBehind(behind: boolean, refetch: () => Promise<unknown>): void {
   const askedAt = useRef(0)
-  const { refetch } = query
   useEffect(() => {
     if (!behind || Date.now() - askedAt.current < 10_000) return
     askedAt.current = Date.now()
     void refetch()
   }, [behind, refetch])
-
-  return { ...query, data }
 }
 
 const myWatchlistQuery = {
@@ -1775,6 +1777,25 @@ const myWatchlistQuery = {
 /** The viewer's list; its rows' prices are pushed on the page that shows them, so the socket slows the poll. */
 export function useMyWatchlist() {
   return useQuery({ ...myWatchlistQuery, refetchInterval: livePoll(useLiveConnection(), 30_000, POLL_FAST) })
+}
+
+/**
+ * The viewer's list as the Watchlist page shows it: each row moved to its
+ * newer pushed price (price, the day's range, the quote's age), and asked for
+ * again at once when those prices are from a later day than the rows. With
+ * the socket up the list is read only twice a minute, so at the open every
+ * row showed yesterday's price for up to 30 s while the pulse above it,
+ * which asked again, moved.
+ */
+export function useMyWatchlistLive() {
+  const query = useMyWatchlist()
+  const answer = query.data
+  const answeredAt = answerAsOf(query)
+  const symbols = useMemo(() => (answer ?? []).map((w) => w.symbol), [answer])
+  const prices = useLivePrices(symbols)
+  const rows = useMemo(() => (answer ? watchlistWithTicks(answer, prices, answeredAt) : answer), [answer, prices, answeredAt])
+  useRefetchWhenBehind(answer ? watchlistBehind(answer, prices, answeredAt) : false, query.refetch)
+  return { query, rows }
 }
 
 export function useAddToMyWatchlist() {

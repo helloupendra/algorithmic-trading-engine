@@ -10,6 +10,7 @@ import {
   runViewSymbols,
   runViewWithTicks,
   unrealizedAt,
+  watchlistBehind,
   watchlistWithTicks,
   withLegMarks,
   withLiveMarks,
@@ -297,6 +298,17 @@ describe('watchlistWithTicks', () => {
     expect(watchlistWithTicks(list, prices(tick(row.symbol, 810, ANSWERED - 1)), ANSWERED)).toBe(list)
     const [moved] = watchlistWithTicks(list, prices(tick(row.symbol, 799.5, ANSWERED + 1)), ANSWERED)
     expect(moved).toMatchObject({ lastTradedPrice: 799.5, high: 815, low: 799.5, close: 800 })
+  })
+
+  it("says the list is behind when the session's first prices land on yesterday's rows, as the pulse does", () => {
+    // 09:15 IST Monday: the rows are Friday's close, the pushes are Monday's.
+    const friday = [{ ...row, updatedUtc: '2026-09-25T10:00:00Z' }, { ...row, symbol: 'NSE:TCS-EQ', updatedUtc: '2026-09-25T10:00:00Z' }]
+    const monday = prices(tick(row.symbol, 820, ANSWERED + 1_000))
+    expect(watchlistWithTicks(friday, monday, ANSWERED)).toBe(friday)
+    expect(watchlistBehind(friday, monday, ANSWERED)).toBe(true)
+    // Today's rows, or pushes the answer already carries, are not behind.
+    expect(watchlistBehind([row], monday, ANSWERED)).toBe(false)
+    expect(watchlistBehind(friday, prices(tick(row.symbol, 820, ANSWERED - 1)), ANSWERED)).toBe(false)
   })
 })
 
