@@ -51,6 +51,12 @@ or until the desk logs the line that ends it (the morning job run again, the
 daemon starting, "archive to Drive: ok"): "resolved" two minutes after
 "nothing was started" would be a lie.
 
+A held finding says when its newest line was read (``observed_utc``), and a
+person resolving its incident ends the hold: those lines never reopen it, only
+a line read after the resolve does. On 28 Sep the operator resolved four API
+errors of a deliberate Postgres restart (13:05-13:06) at 13:08, and at 13:11
+their four-hour holds opened them again as new incidents.
+
 It only reads. A log line is text from outside — a vendor message, a symbol, a
 headline — and nothing in it is ever executed or followed. A line that may
 carry a credential is dropped before any rule sees it.
@@ -716,6 +722,21 @@ class LogsAgent(Agent):
             self._last_check = now_ts
             state.save()
         return findings
+
+    def let_go(self, ctx: SentinelContext, fingerprints: set[str]) -> None:
+        """
+        A person resolved these while they were held: the hold is over. A line
+        read later opens the problem afresh — counted from that line, not from
+        the lines of the episode that was resolved.
+        """
+        state = ctx.state(AGENT)
+        active = state.data.get("active")
+        if not isinstance(active, dict):
+            return
+        dropped = [fp for fp in fingerprints if active.pop(fp, None) is not None]
+        if dropped:
+            log.info("no longer holding %s: resolved after its last line", ", ".join(sorted(dropped)))
+            state.save()
 
     # -- which files, and what is new in them ---------------------------------
     def _log_files(self, ctx: SentinelContext, now_ts: float) -> list[_LogFile]:
@@ -1417,9 +1438,11 @@ class LogsAgent(Agent):
                 extra={"lines": hit.count, **({"runs": deaths} if deaths else {})})
             findings[fingerprint] = finding
             if hit.hold > 0:
+                # "last_ts": when its newest line was read. api.log's lines carry no time of their own, and
+                # a line is read within a check (30 s) of being written: what a resolve is weighed against.
                 active[fingerprint] = {"until": now_ts + hit.hold, "since": since, "last": last, "count": count,
                                        "what": what, "key": hit.key[:240], "deaths": deaths, "subjects": subjects,
-                                       "finding": _dump(finding)}
+                                       "last_ts": now_ts, "finding": _dump(finding)}
 
         for fingerprint in list(active):
             entry = active[fingerprint]
@@ -1595,14 +1618,21 @@ def _dump(finding: Finding) -> dict[str, Any]:
 
 
 def _load(fingerprint: str, entry: dict[str, Any]) -> Finding:
-    """A held finding, reported again between sightings so its incident stays open."""
+    """
+    A held finding, reported again between sightings so its incident stays
+    open — as observed when its newest line was read, so that an incident
+    resolved since is not reopened by it. A hold from before 28 Sep has no
+    "last_ts" and counts as observed now, as it did then.
+    """
     stored = entry["finding"]
+    last_ts = entry.get("last_ts")
+    observed = datetime.fromtimestamp(float(last_ts), timezone.utc) if isinstance(last_ts, (int, float)) else None
     return Finding(
         agent=AGENT, rule=stored["rule"], severity=Severity(stored["severity"]), title=stored["title"],
         summary=(f"{str(entry['what']).rstrip()} {int(entry['count'])} matching line(s) since {entry['since']} IST, "
                  f"the last at {entry['last']} IST; held open while it may recur."),
         fingerprint=fingerprint, where=stored["where"], evidence=list(stored["evidence"]),
-        suggestion=stored["suggestion"])
+        suggestion=stored["suggestion"], observed_utc=observed)
 
 
 __all__ = ["LogsAgent", "normalise", "BENIGN_LINES"]

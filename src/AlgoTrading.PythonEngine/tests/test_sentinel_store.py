@@ -3,11 +3,11 @@ import _bootstrap  # noqa: F401
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-from sentinel.model import Finding, Severity
+from sentinel.model import FLAP_WINDOW, Finding, Severity
 from sentinel.store import (FALLBACK_MAX_BYTES, WATCH_LOCK_KEY, EarlierEpisodes, MemoryIncidentStore,
                             PostgresIncidentStore, WatchLock, dsn_from_env)
 
@@ -113,7 +113,7 @@ class TextParameterTests(unittest.TestCase):
 
     def test_a_nul_in_any_text_is_stored_not_refused_for_good(self):
         cur = Cursor(quote=True)
-        cur.rows = [None, (7,)]   # no live row, then the INSERT's id
+        cur.rows = [None, None, (7,)]   # no live row, no episode before, then the INSERT's id
         store, _ = store_with(cur)
         result = store.upsert(finding(title="bad \x00 frame", summary="x\x00y", where="api\x00.log",
                                       suggestion="\x00", evidence=["line \x00 with nul"],
@@ -162,7 +162,7 @@ class RaceTests(unittest.TestCase):
         # the partial unique index refused this one. Once more: the SELECT now
         # finds the row, and this sighting counts on it.
         cur = Cursor(raise_on={"INSERT INTO incidents": UniqueViolation("duplicate key")})
-        cur.rows = [None, (41, "medium", 1, "[]", NOW.replace(tzinfo=None))]
+        cur.rows = [None, None, (41, "medium", 1, "[]", NOW.replace(tzinfo=None))]
         store, connections = store_with(cur)
         result = store.upsert(finding(), NOW)
         self.assertEqual((41, False), (result.incident_id, result.is_new))
@@ -257,7 +257,7 @@ class EarlierEpisodesTests(unittest.TestCase):
         first = store.upsert(finding(), NOW).incident_id
         store.resolve(first, NOW)
         store.write_resolution(first, "Fixed the log format")
-        second = store.upsert(finding(), NOW).incident_id
+        second = store.upsert(finding(), NOW + FLAP_WINDOW + timedelta(seconds=1)).incident_id
         self.assertEqual(EarlierEpisodes(1, NOW, "Fixed the log format"), store.earlier_episodes("logs:new-error:abc", second))
         self.assertIsNone(store.earlier_episodes("logs:new-error:other", second))
 
@@ -271,6 +271,141 @@ class KeptLinesTests(unittest.TestCase):
         store.upsert(finding(evidence=["a newer sighting"]), NOW)
         self.assertEqual(["a newer sighting", "history: Seen before: once", "context: then desk.log API up"],
                          store.rows()[0]["evidence"])
+
+    def test_the_flapping_line_is_kept_like_the_others(self):
+        store = MemoryIncidentStore()
+        incident_id = store.upsert(finding(), NOW).incident_id
+        store.attach_context(incident_id, ["history: Seen before: once", "flapping: 2nd episode since 13:06 IST"])
+        store.attach_context(incident_id, ["flapping: 3rd episode since 13:06 IST"])   # rewritten, the rest kept
+        store.upsert(finding(evidence=["a newer sighting"]), NOW)
+        self.assertEqual(["a newer sighting", "history: Seen before: once", "flapping: 3rd episode since 13:06 IST"],
+                         store.rows()[0]["evidence"])
+
+
+def minutes(n):
+    return NOW + timedelta(minutes=n)
+
+
+class FlapReopenTests(unittest.TestCase):
+    """28 Sep 13:06-13:28: a feed stalling every few minutes is one incident, reopened, not one per stall."""
+
+    def setUp(self):
+        self.store = MemoryIncidentStore()
+        self.first = self.store.upsert(finding(), NOW).incident_id
+
+    def test_a_problem_back_within_the_window_of_sentinel_resolving_it_reopens_that_incident(self):
+        self.store.resolve(self.first, minutes(2))
+        back = self.store.upsert(finding(severity=Severity.HIGH, evidence=["stalled again"]), minutes(5))
+        self.assertEqual((self.first, False, True, False), (back.incident_id, back.is_new, back.reopened, back.stale))
+        self.assertTrue(back.escalated, "medium before, high now")
+        self.assertEqual((2, NOW), (back.occurrences, back.first_seen_utc))
+        [row] = self.store.rows()
+        self.assertEqual(("open", None, 2, ["stalled again"]),
+                         (row["status"], row["resolved"], row["occurrences"], row["evidence"]))
+
+    def test_the_window_is_thirty_minutes_after_the_resolve(self):
+        self.assertEqual(timedelta(minutes=30), FLAP_WINDOW)
+        self.store.resolve(self.first, minutes(2))
+        self.assertTrue(self.store.upsert(finding(), minutes(32)).reopened)
+        self.store.resolve(self.first, minutes(33))
+        later = self.store.upsert(finding(), minutes(64))
+        self.assertTrue(later.is_new)
+        self.assertEqual([("resolved", 1), ("open", 2)], [(r["status"], r["id"]) for r in self.store.rows()])
+
+    def test_one_a_person_resolved_is_not_reopened_its_return_is_a_new_episode(self):
+        self.store.resolve_by_person(self.first, minutes(2))
+        back = self.store.upsert(finding(), minutes(5))
+        self.assertTrue(back.is_new)
+        self.assertNotEqual(self.first, back.incident_id)
+
+    def test_a_notice_is_its_own_event_every_time(self):
+        store = MemoryIncidentStore()
+        first = store.upsert(finding(extra={"notice": True}), NOW).incident_id
+        store.resolve(first, minutes(1))
+        self.assertTrue(store.upsert(finding(extra={"notice": True}), minutes(2)).is_new)
+
+    def test_one_acknowledged_before_it_cleared_comes_back_acknowledged(self):
+        self.store.acknowledge(self.first, minutes(1))
+        self.store.resolve(self.first, minutes(2))
+        self.store.upsert(finding(), minutes(5))
+        self.assertEqual("acknowledged", self.store.rows()[0]["status"])
+
+
+class StaleFindingTests(unittest.TestCase):
+    """28 Sep 13:11: findings held from 13:05-13:06 lines reopened what a person resolved at 13:08."""
+
+    def setUp(self):
+        self.store = MemoryIncidentStore()
+        self.first = self.store.upsert(finding(), minutes(0)).incident_id
+        self.store.resolve_by_person(self.first, minutes(3))
+
+    def test_what_was_observed_before_the_resolve_writes_nothing(self):
+        held = self.store.upsert(finding(observed_utc=minutes(1)), minutes(6))
+        self.assertEqual((self.first, True, False, False), (held.incident_id, held.stale, held.is_new, held.reopened))
+        self.assertEqual([("resolved", 1)], [(r["status"], r["occurrences"]) for r in self.store.rows()])
+
+    def test_at_the_resolve_is_before_it_too(self):
+        self.assertTrue(self.store.upsert(finding(observed_utc=minutes(3)), minutes(6)).stale)
+
+    def test_what_was_observed_after_it_is_news(self):
+        again = self.store.upsert(finding(observed_utc=minutes(4)), minutes(6))
+        self.assertTrue(again.is_new)
+        self.assertEqual(["resolved", "open"], [r["status"] for r in self.store.rows()])
+
+    def test_a_finding_observed_now_is_news_as_before(self):
+        self.assertTrue(self.store.upsert(finding(), minutes(6)).is_new)
+
+
+class PostgresAfterResolveTests(unittest.TestCase):
+    """The same three outcomes in SQL: the latest episode is read, and only a reopen or an insert writes."""
+
+    def latest(self, resolved_by=None, resolved=minutes(2), acknowledged=None):
+        # "Id", "Severity", "Occurrences", "EvidenceJson", "FirstSeenUtc", "ResolvedUtc", "ResolvedBy", "AcknowledgedUtc"
+        return (19, "critical", 6, json.dumps(["old", "history: Seen before: once"]), NOW.replace(tzinfo=None),
+                resolved.replace(tzinfo=None), resolved_by, acknowledged)
+
+    def test_a_flap_reopens_the_row_it_came_from(self):
+        cur = Cursor(rows=[None, self.latest()])
+        store, _ = store_with(cur)
+        result = store.upsert(finding(severity=Severity.CRITICAL, evidence=["new"]), minutes(5))
+        self.assertEqual((19, True, False, 7, NOW), (result.incident_id, result.reopened, result.is_new,
+                                                     result.occurrences, result.first_seen_utc))
+        sql, params = cur.executed[1]
+        self.assertIn('WHERE "Fingerprint" = %s ORDER BY "Id" DESC LIMIT 1 FOR UPDATE', sql)
+        self.assertIn('"ResolvedUtc", "ResolvedBy", "AcknowledgedUtc"', sql)
+        sql, params = cur.executed[2]
+        self.assertTrue(sql.startswith('UPDATE incidents SET "Status" = %s, "ResolvedUtc" = NULL'), sql)
+        self.assertEqual(("open", "critical"), params[:2])
+        self.assertEqual(["new", "history: Seen before: once"], json.loads(params[4]))
+        self.assertEqual(19, params[-1])
+        self.assertEqual(3, len(cur.executed))
+
+    def test_acknowledged_before_it_cleared_it_comes_back_acknowledged(self):
+        cur = Cursor(rows=[None, self.latest(acknowledged=minutes(1).replace(tzinfo=None))])
+        store, _ = store_with(cur)
+        store.upsert(finding(), minutes(5))
+        self.assertEqual("acknowledged", cur.executed[2][1][0])
+
+    def test_old_news_writes_nothing(self):
+        cur = Cursor(rows=[None, self.latest(resolved_by="upendra")])
+        store, _ = store_with(cur)
+        result = store.upsert(finding(observed_utc=minutes(1)), minutes(5))
+        self.assertEqual((19, True), (result.incident_id, result.stale))
+        self.assertEqual(2, len(cur.executed), "two reads, no write")
+
+    def test_one_a_person_resolved_gets_a_new_row(self):
+        cur = Cursor(rows=[None, self.latest(resolved_by="upendra"), (20,)])
+        store, _ = store_with(cur)
+        result = store.upsert(finding(), minutes(5))
+        self.assertEqual((20, True), (result.incident_id, result.is_new))
+        self.assertTrue(cur.executed[2][0].startswith("INSERT INTO incidents"))
+
+    def test_a_reopen_that_races_another_writer_is_retried_as_an_update(self):
+        cur = Cursor(raise_on={'UPDATE incidents SET "Status"': UniqueViolation("duplicate key")})
+        cur.rows = [None, self.latest(), (21, "critical", 1, "[]", NOW.replace(tzinfo=None))]
+        store, _ = store_with(cur)
+        result = store.upsert(finding(), minutes(5))
+        self.assertEqual((21, False, False), (result.incident_id, result.is_new, result.reopened))
 
 
 class DsnTests(unittest.TestCase):

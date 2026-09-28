@@ -809,6 +809,107 @@ class ErrorGroupingTests(LogsAgentTestCase):
         self.assertNotIn("error alpha", seen)
 
 
+# 28 Sep 13:05:38: Postgres restarted on purpose. What the API logged about it for the next minute.
+POSTGRES_RESTART = (
+    "fail: AlgoTrading.Api.Services.AlertSubscriberService[0]\n"
+    f"{B}Failed to process alert event from Redis.\n"
+    f"{B}Npgsql.PostgresException (0x80004005): 53300: sorry, too many clients already\n"
+    "fail: AlgoTrading.Api.Services.FeedSupervisor[0]\n"
+    f"{B}Feed status poll failed.\n"
+    f"{B}Npgsql.PostgresException (0x80004005): 57P01: terminating connection due to administrator command\n"
+    "fail: AlgoTrading.Api.Services.StrategyRunControl[0]\n"
+    f"{B}Could not reach the database.\n"
+    f"{B}Npgsql.NpgsqlException (0x80004005): Failed to connect to 127.0.0.1:5432\n"
+    f"{B} ---> System.Net.Sockets.SocketException (61): Connection refused\n"
+    "fail: AlgoTrading.Infrastructure.Patterns.CandlePatternAlertService[0]\n"
+    f"{B}Candle pattern scan failed.\n"
+    f"{B}System.IO.EndOfStreamException: Attempted to read past the end of the stream.\n"
+)
+TOO_MANY_CLIENTS = POSTGRES_RESTART.split("fail: AlgoTrading.Api.Services.FeedSupervisor")[0]
+
+
+class ResolvedWhileHeldTests(LogsAgentTestCase):
+    """
+    28 Sep: the operator resolved the restart's four API errors at 13:08 (#119, #126, #127, #128) and at
+    13:11 Sentinel opened them again as #134-#137, "18 matching line(s) since 13:05 IST, the last at 13:06
+    IST": their four-hour holds, not new lines. What was read before a resolve never reopens it.
+    """
+
+    def at(self, hour, minute, second=0):
+        self.clock[0] = datetime(2026, 9, 28, hour, minute, second, tzinfo=timezone.utc) - timedelta(hours=5,
+                                                                                                    minutes=30)
+
+    def desk(self):
+        store, notifier = MemoryIncidentStore(), RecordingNotifier()
+        return store, notifier, SentinelEngine([self.agent], store, notifier, self.ctx, monotonic=clock_ticks())
+
+    def test_the_28_sep_restart_resolved_by_hand_stays_resolved_until_a_new_line(self):
+        store, notifier, engine = self.desk()
+        self.at(13, 5, 10)
+        self.write("api.log")
+        engine.run_due()
+        for second, burst in ((40, True), (70, True), (100, False), (130, False), (160, False)):
+            self.at(13, 5 + second // 60, second % 60)   # 13:05:40, a second burst at 13:06:10, then quiet
+            if burst:
+                self.append("api.log", POSTGRES_RESTART)
+            engine.run_due()
+        rows = store.rows()
+        self.assertEqual(4, len(rows))
+        self.assertEqual({"api-error"}, {r["rule"] for r in rows})
+        self.assertEqual(4, len(notifier.sent))
+        self.assertTrue(any("too many clients" in r["title"] for r in rows))
+
+        self.at(13, 8)
+        for row in rows:   # the operator, from the console, with a root cause for each
+            store.resolve_by_person(row["id"], self.clock[0])
+            store.write_resolution(row["id"], "Deliberate Postgres restart at 13:05:38; not a fault.")
+
+        for second in range(10, 4 * 60, 30):   # 13:08:10 … 13:11:40: the holds still run for hours
+            self.at(13, 8 + second // 60, second % 60)
+            engine.run_due()
+        self.assertEqual(4, len(store.rows()), "nothing reopened, nothing new")
+        self.assertEqual(["resolved"] * 4, [r["status"] for r in store.rows()])
+        self.assertEqual(4, len(notifier.sent))
+        held = self.ctx.state("logs").data.get("active", {})
+        self.assertFalse(any(r["fingerprint"] in held for r in rows), "the holds are over")
+
+        # 13:20: the database refuses a connection again. That line is news, and only it is counted.
+        self.at(13, 20)
+        self.append("api.log", TOO_MANY_CLIENTS)
+        engine.run_due()
+        self.at(13, 20, 30)
+        engine.run_due()
+        self.assertEqual(5, len(store.rows()))
+        new = store.rows()[-1]
+        self.assertEqual(("open", 1), (new["status"], new["occurrences"]))
+        self.assertIn("too many clients", new["title"])
+        self.assertIn("1 matching line(s) at 13:20 IST", new["summary"])
+        self.assertEqual(5, len(notifier.sent))
+        self.assertIn("NEW [MEDIUM] API error", notifier.sent[-1].splitlines()[0])
+        self.assertIn("Last time: Deliberate Postgres restart at 13:05:38; not a fault.", notifier.sent[-1])
+
+    def test_a_held_finding_says_when_its_last_line_was_read(self):
+        self.start_watching("api.log")
+        self.append("api.log", EF_VALUE_TOO_LONG)
+        fresh = self.check()
+        self.assertEqual({None}, {f.observed_utc for f in fresh.values()}, "seen this check")
+        self.advance(30)
+        self.check()   # the last entry of the burst is finished on the next quiet check
+        last_read = self.clock[0]
+        self.advance(600)
+        held = self.check()
+        self.assertEqual({last_read}, {f.observed_utc for f in held.values()})
+        self.assertTrue(all("held open" in f.summary for f in held.values()))
+
+        self.agent.let_go(self.ctx, set(held))
+        self.advance(30)
+        self.assertEqual({}, self.check(), "let go: nothing held")
+        self.append("api.log", EF_VALUE_TOO_LONG)
+        again = self.check()
+        self.assertEqual(set(held), set(again))
+        self.assertTrue(all("1 matching line(s)" in f.summary for f in again.values()), "counted afresh")
+
+
 class QuietTests(LogsAgentTestCase):
     def test_known_benign_lines_are_muted(self):
         self.start_watching("api.log", "desk.log")
