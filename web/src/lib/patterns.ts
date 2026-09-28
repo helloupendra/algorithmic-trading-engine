@@ -168,14 +168,21 @@ export function candleSpan(startIso: string | null | undefined, endIso: string |
   return `${istClock(startIso)}–${istClock(endIso)}`
 }
 
+/** What either scanner (patterns or indicators) says about its own loop. */
+export type ScannerClock = Pick<PatternScannerStatus, 'enabled' | 'intervalSeconds' | 'lastScanUtc' | 'lastErrorUtc' | 'lastError'>
+
 /**
  * Whether the scanner is doing its job, from its own status. A scan older than
  * three intervals is "stalled", never "running": the page must not show green
  * for a loop that stopped.
  */
-export function scannerHealth(status: PatternScannerStatus, nowMs: number): { label: string; tone: Tone; detail: string } {
+export function scannerHealth(
+  status: ScannerClock,
+  nowMs: number,
+  offDetail = 'PatternAlerts:Enabled is false on this API.',
+): { label: string; tone: Tone; detail: string } {
   if (!status.enabled) {
-    return { label: 'Off', tone: 'warn', detail: 'PatternAlerts:Enabled is false on this API.' }
+    return { label: 'Off', tone: 'warn', detail: offDetail }
   }
   const last = status.lastScanUtc ? new Date(status.lastScanUtc).getTime() : null
   const errorAt = status.lastErrorUtc ? new Date(status.lastErrorUtc).getTime() : null
@@ -322,4 +329,158 @@ export function ruleSummary(rule: PatternRule, catalog: PatternCatalog | undefin
 export function toggle<T>(list: T[], value: T, order?: T[]): T[] {
   const next = list.includes(value) ? list.filter((x) => x !== value) : [...list, value]
   return order ? order.filter((x) => next.includes(x)) : next
+}
+
+// --------------------------------------------------------- indicator alerts --
+//
+// RSI, EMA crosses, Supertrend and VWAP on the same live candles, with their
+// rules in config/indicator-alerts.txt on the server. The page reads that file
+// back through the API; it does not edit it.
+
+export interface IndicatorRuleInfo {
+  key: string
+  name: string
+  label: string
+  definition: string
+  syntax: string
+  settleCandles: number
+  needsVolume: boolean
+}
+
+export interface IndicatorLine {
+  number: number
+  text: string
+  symbols: string[]
+  groups: string[]
+  timeframes: number[]
+  rules: IndicatorRuleInfo[]
+  pageOnly: boolean
+  resolvedSymbols: string[]
+}
+
+export type IndicatorRuleStateName = 'ready' | 'warming up' | 'waiting' | 'skipped'
+
+export interface IndicatorRuleState {
+  rule: string
+  label: string
+  state: IndicatorRuleStateName
+  detail: string | null
+}
+
+export interface IndicatorWatch {
+  symbol: string
+  displayName: string
+  timeframe: number
+  exchange: string
+  inSession: boolean
+  historyCandles: number
+  todayCandles: number
+  lastBarUtc: string | null
+  rules: IndicatorRuleState[]
+  problem: string | null
+}
+
+export interface IndicatorAlertsStatus {
+  enabled: boolean
+  intervalSeconds: number
+  file: string | null
+  fileModifiedUtc: string | null
+  searched: string[]
+  fileError: string | null
+  cooldownMinutes: number
+  telegram: boolean
+  warmupCandles: number
+  warnings: string[]
+  lines: IndicatorLine[]
+  catalog: IndicatorRuleInfo[]
+  startedUtc: string
+  lastScanUtc: string | null
+  lastScanMilliseconds: number | null
+  lastErrorUtc: string | null
+  lastError: string | null
+  watches: IndicatorWatch[]
+  unresolved: string[]
+  telegramConfigured: boolean
+  telegramMaxMessages: number
+  telegramWindowMinutes: number
+  lastTelegramUtc: string | null
+  telegramMessagesSent: number
+  telegramMessagesSuppressed: number
+  telegramMessagesFailed: number
+  lastTelegramProblem: string | null
+  alertsToday: number
+  deliveredToday: number
+}
+
+export interface IndicatorAlert {
+  id: number
+  occurredUtc: string
+  symbol: string
+  displayName: string
+  timeframe: number
+  rule: string
+  ruleName: string
+  what: string
+  direction: 'up' | 'down'
+  barStartUtc: string
+  barEndUtc: string
+  close: number
+  minutesInBar: number
+  minutesExpected: number
+  values: Record<string, number>
+  title: string
+  message: string
+  deliveredToTelegram: boolean
+  notify: boolean
+  notifySkippedReason: string | null
+  cooledDown: boolean
+}
+
+/**
+ * Only a rule that is not yet able to alert is coloured: a table of every rule
+ * in green says nothing, and hides the one still warming up.
+ */
+export function ruleStateTone(state: string): Tone {
+  return state === 'warming up' ? 'warn' : 'neutral'
+}
+
+/** Up/down is which way a line was crossed, not advice: coloured like a price change. */
+export function crossTone(direction: string): Tone {
+  return direction === 'up' ? 'pos' : direction === 'down' ? 'neg' : 'neutral'
+}
+
+const level = (v: number | undefined) =>
+  v === undefined ? '—' : v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const oscillator = (v: number | undefined) => (v === undefined ? '—' : v.toFixed(1))
+
+/** The numbers behind an alert, short: "RSI 68.4 → 71.2", "EMA 25,061.30 / 25,058.90". */
+export function indicatorNumbers(alert: Pick<IndicatorAlert, 'ruleName' | 'values'>): string {
+  const v = alert.values
+  switch (alert.ruleName) {
+    case 'rsi-above':
+    case 'rsi-below':
+      return `RSI ${oscillator(v.rsiBefore)} → ${oscillator(v.rsi)}`
+    case 'ema-cross':
+      return `EMA ${level(v.emaFast)} / ${level(v.emaSlow)}`
+    case 'supertrend-flip':
+      // The band the close went through, then where the new line starts.
+      return `band ${level(v.through)} · line ${level(v.line)}`
+    case 'vwap-cross':
+      return `VWAP ${level(v.vwap)}`
+    default:
+      return Object.entries(v)
+        .map(([k, x]) => `${k} ${x}`)
+        .join(', ')
+  }
+}
+
+/**
+ * The watches with something to say first — a feed problem, then a rule still
+ * warming up — so the table answers "will the next alert be right?" at a glance.
+ */
+export function sortWatches(watches: IndicatorWatch[]): IndicatorWatch[] {
+  const rank = (w: IndicatorWatch) => (w.problem ? 0 : w.rules.some((r) => r.state === 'warming up') ? 1 : 2)
+  return [...watches].sort(
+    (a, b) => rank(a) - rank(b) || a.displayName.localeCompare(b.displayName) || a.timeframe - b.timeframe,
+  )
 }

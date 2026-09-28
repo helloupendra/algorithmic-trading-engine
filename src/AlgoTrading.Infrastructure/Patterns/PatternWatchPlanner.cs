@@ -91,7 +91,13 @@ public sealed class PatternWatchPlanner
             unresolved);
     }
 
-    private async Task<Dictionary<string, IReadOnlyList<string>>> ResolveGroupsAsync(
+    /// <summary>
+    /// Each group's symbols as of <paramref name="istToday"/>; a group that
+    /// resolves to nothing maps to an empty list. The indicator alerts resolve
+    /// their config's groups here too, so a <c>future:NIFTY</c> means the same
+    /// contract to both scanners.
+    /// </summary>
+    public async Task<Dictionary<string, IReadOnlyList<string>>> ResolveGroupsAsync(
         IReadOnlyList<string> groups,
         DateOnly istToday,
         CancellationToken cancellationToken)
