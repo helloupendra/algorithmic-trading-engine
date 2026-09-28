@@ -30,10 +30,22 @@ Once subscribed, the `Python Ingestor` receives a continuous stream of market ti
 - **1-Minute Bars**: It aggregates ticks into continuous 1-minute OHLCV (Open, High, Low, Close, Volume) bars in the `live_bars` table. It uses an `UPSERT` logic—creating a new bar if the minute has rolled over, or updating the existing bar's High, Low, Close, and Volume if it's within the same minute.
 
 ### 3. Real-Time UI Broadcasting (SignalR)
-To provide a lag-free experience in the React dashboard:
-- The `.NET API` utilizes `Microsoft.AspNetCore.SignalR`.
-- Whenever the `LiveDataController` detects a database UPSERT (or through background polling services), it pushes the latest data directly to the web client over WebSockets.
-- The React frontend uses `@microsoft/signalr` to connect to `/hubs/livefeed` and directly updates the `react-query` cache, preventing the need for aggressive REST API polling.
+The console's websocket is the hub at `/hubs/livefeed` (`LiveFeedHub`), signed-in callers only; the browser sends its token as `?access_token=`. Each connection is sent the prices it asked for and nothing else. Until 28 Sep every tick batch went to every signed-in browser, so a page following three contracts was sent every strike of every chain on the feed.
+
+**Asking for prices** (client → server):
+
+| Method | Returns | What it does |
+|---|---|---|
+| `Subscribe(string[] symbols)` | `int` | Adds symbols to this connection's set and returns how many it follows. Symbols are trimmed, blanks dropped and case ignored. At most 400 per connection: a call that would go past that adds nothing and fails with a `HubException` whose message can be shown as it is. |
+| `Unsubscribe(string[] symbols)` | `int` | Removes symbols; returns how many are left. |
+| `SubscribeAll()` | `bool` | Every symbol on the feed, for the pages that show the whole feed. Only for an admin or an account with the market-data module, decided exactly as the market-data endpoints decide it (`ModuleAccess`); `false` otherwise, and nothing changes. |
+| `UnsubscribeAll()` | `bool` | Back to the connection's own symbols. |
+
+A connection's set lives in memory (`LiveFeedSubscriptions`) and ends with the connection: after a reconnect the page subscribes again.
+
+**Receiving them** (server → client): `ReceiveTicks`, an array of `{ symbol, lastTradedPrice, bidPrice, askPrice, volume, openInterest, impliedVolatility, exchangeTimestampUtc }`, `symbol` spelled as the feed spells it. The ingest endpoints only queue each tick (`LiveTickDispatcher`, the last tick of a symbol wins); every `LiveFeed:PushIntervalMs` (default 250, never under 50) the dispatcher sends each connection at most one message, with its symbols that changed since the last one, or every changed symbol after `SubscribeAll`. A connection with nothing new is sent nothing. A browser whose previous message is still being written is not sent another on top: what it is owed waits, one price per symbol, until the first is through, so a slow tab never delays the others, and a failed send is logged and forgotten. The singular `ReceiveTick` message is gone.
+
+The React frontend uses `@microsoft/signalr` to connect and writes the prices straight into the `react-query` cache, so pages do not poll for them.
 
 ### 4. Automatic Expired Contract Cleanup
 Since F&O (Futures & Options) contracts expire frequently, leaving them in the database can bloat storage and cause subscription failures.
@@ -89,7 +101,7 @@ Run it by hand for any day with `POST /api/Backfill/archive?day=YYYY-MM-DD` (adm
 
 ### .NET C# Services & Controllers
 - `src/AlgoTrading.Api/Controllers/LiveDataController.cs`: Handles REST endpoints for live data.
-- `src/AlgoTrading.Api/Hubs/LiveFeedHub.cs`: The SignalR Hub for WebSockets.
+- `src/AlgoTrading.Api/Hubs/LiveFeedHub.cs`: The SignalR Hub for WebSockets; `LiveFeedSubscriptions.cs` (who follows what) and `LiveTickDispatcher.cs` (the coalesced push) beside it.
 - `src/AlgoTrading.Infrastructure/Services/LiveDataService.cs`: Contains business logic for fetching quotes, calculating staleness, and auto-expiring contracts.
 
 ### React UI Pages
