@@ -25,6 +25,7 @@
  * up against the same candle list the chart itself was drawn from.
  */
 
+import { useTheme } from '../lib/theme'
 import { useEffect, useMemo, useRef } from 'react'
 import {
   CandlestickSeries,
@@ -142,6 +143,8 @@ export function SmcChart({
     return byIndex
   }, [candles])
 
+  // The tokens are read once, when the chart is created: a theme change makes a new chart.
+  const { theme } = useTheme()
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
@@ -200,7 +203,7 @@ export function SmcChart({
       priceLinesRef.current = []
       lastFitKey.current = null
     }
-  }, [])
+  }, [theme])
 
   useEffect(() => {
     const price = priceRef.current
@@ -215,7 +218,7 @@ export function SmcChart({
       lastFitKey.current = fitKey
       chart.timeScale().fitContent()
     }
-  }, [candles, fitKey])
+  }, [candles, fitKey, theme])
 
   // Overlays: rebuilt whenever the marks or the chosen layers change.
   useEffect(() => {
@@ -434,7 +437,7 @@ export function SmcChart({
     // this index on every frame, so a poll that adds candles extends it without
     // anything being pushed here.
     zones.setZones(boxes, candles.length - 1)
-  }, [data, layers, candles, indexByTime])
+  }, [data, layers, candles, indexByTime, theme])
 
   useEffect(() => {
     const price = priceRef.current
@@ -462,7 +465,7 @@ export function SmcChart({
         )
       }
     }
-  }, [higher, layers.higher])
+  }, [higher, layers.higher, theme])
 
   return <div ref={containerRef} className="chart chart--tall" />
 }

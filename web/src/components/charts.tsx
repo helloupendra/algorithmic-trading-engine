@@ -6,6 +6,7 @@
  * app theme without duplicating hex values here.
  */
 
+import { useTheme } from '../lib/theme'
 import { useEffect, useRef } from 'react'
 import {
   CandlestickSeries,
@@ -108,6 +109,8 @@ export function PriceChart({ candles, fitKey = '' }: { candles: readonly PriceCa
   const shownRef = useRef<readonly PriceCandle[] | null>(null)
   const fittedRef = useRef<string | null>(null)
 
+  // The tokens are read once, when the chart is created: a theme change makes a new chart.
+  const { theme } = useTheme()
   useEffect(() => {
     const el = ref.current
     if (!el) return
@@ -144,7 +147,7 @@ export function PriceChart({ candles, fitKey = '' }: { candles: readonly PriceCa
       shownRef.current = null
       fittedRef.current = null
     }
-  }, [])
+  }, [theme])
 
   useEffect(() => {
     const chart = chartRef.current
@@ -182,7 +185,7 @@ export function PriceChart({ candles, fitKey = '' }: { candles: readonly PriceCa
       fittedRef.current = fitKey
       chart.timeScale().fitContent()
     }
-  }, [candles, fitKey])
+  }, [candles, fitKey, theme])
 
   useResize(chartRef, ref)
 

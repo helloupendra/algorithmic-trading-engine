@@ -20,10 +20,12 @@
      and panels stop floating above it. */
   --surface: #0d131c; /* panels */
   --surface2: #131c29; /* hover, nested panels, the active tab */
+  --surface3: #1c2836; /* a pressed or hovered control on --surface2 */
 
   --line: #1c2735;
   --line-soft: #151f2b;
   --line-strong: #2b3a4e;
+  --line-hover: #3b4d66; /* a control's border under the pointer */
 
   --text: #e2e9f3;
   --text-2: #91a0b4;
@@ -42,6 +44,8 @@
 
   --pos: #31c48d;
   --pos-soft: rgba(49, 196, 141, 0.11);
+  /* Text on a --pos fill (the buy button): dark on the bright green, white on the deep one. */
+  --on-pos: #04120c;
   --neg: #f4635e;
   --neg-soft: rgba(244, 99, 94, 0.11);
   --warn: #e3b341;
@@ -102,6 +106,8 @@
      dialogs) keeps one. */
   --shadow-1: none;
   --shadow-2: 0 8px 28px -8px rgb(0 0 0 / 0.55);
+  /* Behind a dialog or the palette: the page, dimmed. */
+  --scrim: rgb(3 5 8 / 0.62);
 
   /* v1 token aliases — legacy components (charts.tsx) read these from JS. */
   --success: var(--pos);
@@ -120,6 +126,69 @@
   --accent-soft: var(--brand-soft);
 
   color-scheme: dark;
+}
+
+/*
+ * Light: the same vocabulary on paper. Chosen against the light surfaces the
+ * way the dark set was chosen against the dark ones: every text token at
+ * AA (4.5:1) on --surface, --surface2, --bg0 and --bg1 (the totals rows and
+ * inputs), the accents deep enough to carry a figure on a white cell, and
+ * the two account colours still a pair. Only tokens change; no page rule
+ * knows which theme it is in. index.html sets data-theme before the first
+ * paint; lib/theme.ts keeps it set.
+ */
+:root[data-theme='light'] {
+  --bg0: #f4f6f9;
+  --bg1: #eaeef3;
+  --surface: #ffffff;
+  --surface2: #f0f3f7;
+  --surface3: #e4e9f0;
+
+  --line: #d9dfe7;
+  --line-soft: #e6ebf1;
+  --line-strong: #b9c3d0;
+  --line-hover: #a5b1c1;
+
+  --text: #111827;
+  --text-2: #4b5768;
+  --text-3: #5e6c7d; /* 5.4:1 on --surface, 4.6:1 on --bg1 */
+
+  --brand: #3962d7; /* 5.4:1 on white, so it can be link text; white on it 5.4:1 */
+  --brand-hi: #2f56c9;
+  --brand-soft: rgba(57, 98, 215, 0.1);
+  --brand-line: rgba(57, 98, 215, 0.4);
+  --live: #0a7868;
+  --live-soft: rgba(10, 120, 104, 0.1);
+
+  --pos: #147951;
+  --pos-soft: rgba(20, 121, 81, 0.1);
+  --on-pos: #ffffff;
+  --neg: #c13833;
+  --neg-soft: rgba(193, 56, 51, 0.09);
+  --warn: #916100;
+  --warn-soft: rgba(145, 97, 0, 0.11);
+
+  --acct-1: #2f5fd8;
+  --acct-2: #9e5817;
+
+  --zone-ob-bull: rgba(20, 121, 81, 0.1);
+  --zone-ob-bull-edge: rgba(20, 121, 81, 0.55);
+  --zone-ob-bear: rgba(193, 56, 51, 0.1);
+  --zone-ob-bear-edge: rgba(193, 56, 51, 0.55);
+  --zone-fvg-bull: rgba(20, 121, 81, 0.07);
+  --zone-fvg-bull-edge: rgba(20, 121, 81, 0.34);
+  --zone-fvg-bear: rgba(193, 56, 51, 0.07);
+  --zone-fvg-bear-edge: rgba(193, 56, 51, 0.34);
+  --zone-flow-bull: rgba(20, 121, 81, 0.2);
+  --zone-flow-bull-edge: rgba(20, 121, 81, 0.6);
+  --zone-flow-bear: rgba(193, 56, 51, 0.2);
+  --zone-flow-bear-edge: rgba(193, 56, 51, 0.6);
+
+  /* Paper shows a shadow where the dark sheet showed a hairline; keep both faint. */
+  --shadow-2: 0 8px 28px -8px rgb(15 23 42 / 0.28);
+  --scrim: rgb(15 23 42 / 0.4);
+
+  color-scheme: light;
 }
 
 * {
@@ -182,7 +251,7 @@ a:not([class]):hover {
   border: 2px solid var(--bg0);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3b4d66;
+  background: var(--line-hover);
 }
 
 code {
@@ -227,8 +296,8 @@ a.btn, a.btn:hover, a.btn:visited { text-decoration: none; }
 }
 
 .btn:hover:not(:disabled) {
-  background: #1c2836;
-  border-color: #37485f;
+  background: var(--surface3);
+  border-color: var(--line-hover);
 }
 
 .btn:disabled {
@@ -249,7 +318,7 @@ a.btn, a.btn:hover, a.btn:visited { text-decoration: none; }
 .btn--pos {
   background: var(--pos);
   border-color: transparent;
-  color: #04120c;
+  color: var(--on-pos);
 }
 .btn--pos:hover:not(:disabled) {
   filter: brightness(1.08);
@@ -395,13 +464,13 @@ select.field__input { appearance: auto; }
 }
 
 .pill--pos { color: var(--pos); border-color: color-mix(in srgb, var(--pos) 32%, transparent); }
-.pill--pos .pill__dot { background: var(--pos); box-shadow: 0 0 0 0 rgba(49, 196, 141, 0.5); animation: pill-pulse 2.4s infinite; }
+.pill--pos .pill__dot { background: var(--pos); box-shadow: 0 0 0 0 color-mix(in srgb, var(--pos) 50%, transparent); animation: pill-pulse 2.4s infinite; }
 .pill--neg { color: var(--neg); border-color: color-mix(in srgb, var(--neg) 32%, transparent); }
 .pill--neg .pill__dot { background: var(--neg); }
 .pill--warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 32%, transparent); }
 .pill--warn .pill__dot { background: var(--warn); }
 .pill--live { color: var(--live); border-color: color-mix(in srgb, var(--live) 32%, transparent); }
-.pill--live .pill__dot { background: var(--live); box-shadow: 0 0 0 0 rgba(43, 212, 189, 0.5); animation: pill-pulse 2.4s infinite; }
+.pill--live .pill__dot { background: var(--live); box-shadow: 0 0 0 0 color-mix(in srgb, var(--live) 50%, transparent); animation: pill-pulse 2.4s infinite; }
 
 @keyframes pill-pulse {
   70% { box-shadow: 0 0 0 6px transparent; }
@@ -768,7 +837,7 @@ select.field__input { appearance: auto; }
   background: var(--surface2);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-2);
 }
 
 .combo__item {

@@ -2,19 +2,21 @@ import { useCallback, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { MeResponse } from '../../lib/api'
 import { ACCOUNT_PAGE } from '../../lib/modules'
+import { THEME_LABELS, THEME_PREFS, useTheme } from '../../lib/theme'
 import { IconSignOut, IconUsers } from '../icons'
 import { useDismiss } from './useDismiss'
 
 /**
  * The avatar: who is signed in, the trader's own Account page (their broker
- * account and capital) and signing out. An admin has no Account page; the
- * people and grants live under System.
+ * account and capital), the theme, and signing out. An admin has no Account
+ * page; the people and grants live under System.
  */
 export function UserMenu({ user, isAdmin, onSignOut }: { user: MeResponse | null; isAdmin: boolean; onSignOut: () => void }) {
   const [open, setOpen] = useState(false)
   const boxRef = useRef<HTMLDivElement>(null)
   const close = useCallback(() => setOpen(false), [])
   useDismiss(boxRef, open, close)
+  const { pref, setPref } = useTheme()
 
   const name = user?.userName ?? ''
   const initials = (name || '?').slice(0, 2).toUpperCase()
@@ -47,6 +49,22 @@ export function UserMenu({ user, isAdmin, onSignOut }: { user: MeResponse | null
           <button type="button" className="pop__item" onClick={onSignOut}>
             <IconSignOut aria-hidden="true" /> Sign out
           </button>
+          <div className="pop__theme">
+            <span id="theme-label">Theme</span>
+            <span className="pop__seg" role="group" aria-labelledby="theme-label">
+              {THEME_PREFS.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  aria-pressed={pref === p}
+                  title={p === 'system' ? 'Follow the device' : `${THEME_LABELS[p]} console`}
+                  onClick={() => setPref(p)}
+                >
+                  {THEME_LABELS[p]}
+                </button>
+              ))}
+            </span>
+          </div>
         </div>
       )}
     </div>

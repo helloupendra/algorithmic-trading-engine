@@ -10,9 +10,11 @@
  */
 
 import { usePhone } from '../lib/sceneMode'
+import { useForcedTheme } from '../lib/theme'
 import { LandingDesktop } from './landing/Desktop'
 import { LandingMobile } from './landing/Mobile'
 
 export function LandingPage() {
+  useForcedTheme('dark')
   return usePhone() ? <LandingMobile /> : <LandingDesktop />
 }

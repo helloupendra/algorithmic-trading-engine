@@ -11,8 +11,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <!-- The console is dark; without this iOS paints white behind rubber-band
          scrolling and around the status bar. -->
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="dark light" />
     <meta name="theme-color" content="#030406" />
+    <!-- The theme before the first paint, so a light console does not flash
+         dark on every load: the same rule as lib/theme.ts (openfno.theme =
+         dark | light | system, default dark). The public pages keep their
+         own black identity whatever the preference. -->
+    <script>
+      (function () {
+        try {
+          var path = location.pathname
+          var isPublic = path === '/' || path === '/login' || path.indexOf('/invite/') === 0
+          var pref = localStorage.getItem('openfno.theme')
+          var light = !isPublic && (pref === 'light' || (pref === 'system' && matchMedia('(prefers-color-scheme: light)').matches))
+          var theme = light ? 'light' : 'dark'
+          document.documentElement.setAttribute('data-theme', theme)
+          document.documentElement.style.colorScheme = theme
+          var meta = document.querySelector('meta[name="theme-color"]')
+          if (meta) meta.setAttribute('content', light ? '#f4f6f9' : '#030406')
+        } catch (e) {}
+      })()
+    </script>
     <!-- iOS reads this in preference to the manifest's icons, so the 180px file
          is what actually lands on the home screen; the manifest set is for
          everyone else. -->
@@ -90,6 +109,8 @@
       #boot p { margin: 22px 0 0; font: 500 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .18em; text-transform: uppercase; color: rgba(233,238,250,.42); text-align: center; }
       @keyframes bootc { 0% { transform: scaleY(.25); opacity: .35 } 35% { transform: scaleY(1); opacity: 1 } 70% { transform: scaleY(.62); opacity: .85 } 100% { transform: scaleY(.25); opacity: .35 } }
       @media (prefers-reduced-motion: reduce) { #boot .b span { animation: none } }
+      :root[data-theme='light'] #boot { background: #f4f6f9; }
+      :root[data-theme='light'] #boot p { color: rgba(17,24,39,.5); }
     </style>
     <div id="root"><div id="boot"><div><div class="b"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><p>Loading the console</p></div></div></div>
     <script type="module" src="/src/main.tsx"></script>
