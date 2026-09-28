@@ -166,6 +166,16 @@ public sealed class IndicatorAlertScanner
     /// <summary>Longest history read for a warm-up, in calendar days (an hourly warm-up would otherwise read months).</summary>
     public const int MaxLookbackDays = 45;
 
+    /// <summary>
+    /// The most (symbol, timeframe) pairs scanned. Each reads its warm-up with
+    /// a query of its own, all of them in the first scan of the day at 09:15,
+    /// the busiest minute on the desk, and again after any restart; a line
+    /// such as "recording-stocks 5,15 ema-cross" had no limit. The same figure
+    /// as the candle-pattern rules' symbol cap. Pairs past it are left out, in
+    /// the config's order, and the page says so.
+    /// </summary>
+    public const int MaxWatches = 200;
+
     /// <summary>An NSE session, for estimating how many days hold a warm-up; MCX sessions are longer, so this over-reads for them.</summary>
     private const double SessionMinutes = 375;
 
@@ -308,6 +318,8 @@ public sealed class IndicatorAlertScanner
 
         var unresolved = new List<string>();
         var watches = new Dictionary<(string, int), IndicatorWatch>();
+        int leftOut = 0;
+        int? firstLeftOutLine = null;
         foreach (var line in config.Lines)
         {
             var symbols = new List<string>(line.Symbols);
@@ -324,6 +336,13 @@ public sealed class IndicatorAlertScanner
                 {
                     if (!watches.TryGetValue((symbol, tf), out var watch))
                     {
+                        if (watches.Count >= MaxWatches)
+                        {
+                            leftOut++;
+                            firstLeftOutLine ??= line.Number;
+                            continue;
+                        }
+
                         watch = new IndicatorWatch { Symbol = symbol, TimeframeMinutes = tf };
                         watches[(symbol, tf)] = watch;
                     }
@@ -342,6 +361,12 @@ public sealed class IndicatorAlertScanner
                     }
                 }
             }
+        }
+
+        if (leftOut > 0)
+        {
+            unresolved.Add($"Line {firstLeftOutLine}: the config asks for more than {MaxWatches} symbol × timeframe pairs; " +
+                           $"the first {MaxWatches} are scanned and {leftOut} from this line on are left out.");
         }
 
         foreach (var watch in watches.Values)
