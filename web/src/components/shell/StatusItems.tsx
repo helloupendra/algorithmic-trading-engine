@@ -1,6 +1,7 @@
 /**
- * The top bar's status items: the IST clock, the market sessions, and for an
- * operator the desk's health, Sentinel's live incidents and the kill switch.
+ * The top bar's status items: the IST clock, the market sessions, whether
+ * prices are being pushed, and for an operator the desk's health, Sentinel's
+ * live incidents and the kill switch.
  *
  * Every item says only what it knows. A question not yet answered renders
  * nothing rather than a comfortable default: an unknown kill switch is not
@@ -9,11 +10,12 @@
  * now.
  */
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../lib/auth'
+import { useLiveConnection } from '../../lib/live'
 import {
   useBackendStatus,
   useFeeds,
@@ -59,6 +61,51 @@ function Clock() {
   return (
     <span className="st st--clock" title="India Standard Time">
       {clock.time} <small>IST</small>
+    </span>
+  )
+}
+
+/** True once `on` has held for `ms` without a break. */
+function useSustained(on: boolean, ms: number): boolean {
+  const [held, setHeld] = useState(false)
+  useEffect(() => {
+    setHeld(false)
+    if (!on) return
+    const id = window.setTimeout(() => setHeld(true), ms)
+    return () => window.clearTimeout(id)
+  }, [on, ms])
+  return on && held
+}
+
+/**
+ * Whether prices, fills and stops are reaching this screen as they happen.
+ * "Live" while the socket is up. Once it has been down for a couple of
+ * seconds, the warning, because every price on screen is then the last poll's
+ * and may be seconds old; the pages poll at their old pace until it is back.
+ * The first connect and a blip both take well under that, so neither flashes
+ * a warning nobody could act on.
+ */
+function LiveItem() {
+  const connection = useLiveConnection()
+  const down = useSustained(connection !== 'connected', 2_000)
+  if (connection === 'connected') {
+    return (
+      <span className="st st--live" title="Prices, fills and stops are pushed to this screen as they happen">
+        <span className="st__dot" aria-hidden="true" />
+        <span className="st__label">Live</span>
+      </span>
+    )
+  }
+  if (!down) return null
+  return (
+    <span
+      className="st st--warn"
+      role="status"
+      title="The live connection dropped and is being retried. Prices are read every few seconds meanwhile, so they may be behind the market."
+    >
+      <span className="st__dot" aria-hidden="true" />
+      <span className="st__label st__wide">Reconnecting — prices may be stale</span>
+      <span className="st__label st__narrow">Reconnecting</span>
     </span>
   )
 }
@@ -365,6 +412,7 @@ export function StatusItems() {
           )}
         </span>
       ))}
+      {!down && <LiveItem />}
       {isAdmin && <HealthItem backend={backend} nse={nse} mcx={mcx} heartbeats={heartbeats} />}
       {isAdmin && !down && <IncidentsItem />}
       {!down && <KillSwitchItem isAdmin={isAdmin} />}
