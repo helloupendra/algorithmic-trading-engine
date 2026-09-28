@@ -30,7 +30,7 @@ Once subscribed, the `Python Ingestor` receives a continuous stream of market ti
 - **1-Minute Bars**: It aggregates ticks into continuous 1-minute OHLCV (Open, High, Low, Close, Volume) bars in the `live_bars` table. It uses an `UPSERT` logic—creating a new bar if the minute has rolled over, or updating the existing bar's High, Low, Close, and Volume if it's within the same minute.
 
 ### 3. Real-Time UI Broadcasting (SignalR)
-The console's websocket is the hub at `/hubs/livefeed` (`LiveFeedHub`), signed-in callers only; the browser sends its token as `?access_token=`. Each connection is sent the prices it asked for and nothing else. Until 28 Sep every tick batch went to every signed-in browser, so a page following three contracts was sent every strike of every chain on the feed.
+The console's websocket is the hub at `/hubs/livefeed` (`LiveFeedHub`), signed-in callers only; the browser sends its token as `?access_token=`. A connection is closed when that token expires (`CloseOnAuthenticationExpiration`), and the console reconnects with a fresh one; admin, and whether the account is active at all, are read from the account row at each connect, not from the token. Until 28 Sep a demoted or disabled admin's open socket kept every account's desk events for as long as it stayed up. Each connection is sent the prices it asked for and nothing else. Until 28 Sep every tick batch went to every signed-in browser, so a page following three contracts was sent every strike of every chain on the feed.
 
 **Asking for prices** (client → server):
 

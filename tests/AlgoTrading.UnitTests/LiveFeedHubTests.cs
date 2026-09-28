@@ -81,11 +81,13 @@ public class LiveFeedHubTests
     [Fact]
     public async Task A_closed_connection_is_forgotten_and_sent_nothing()
     {
+        await using var db = Users();
         var subs = new LiveFeedSubscriptions();
         var hubContext = new RecordingHubContext();
         var dispatcher = Dispatcher(subs, hubContext);
-        var hub = Hub(subs, "c1", Trader(7));
+        var hub = Hub(subs, "c1", Trader(GrantedTrader), db);
         await hub.OnConnectedAsync();
+        Assert.Equal(1, subs.ConnectionCount);
         hub.Subscribe(new[] { Nifty });
 
         await hub.OnDisconnectedAsync(null);
@@ -337,12 +339,50 @@ public class LiveFeedHubTests
         Assert.False(subs.IsAll("c1"));
     }
 
+    // ------------------------------------------------ who the connection is --
+
+    [Fact]
+    public async Task The_account_row_decides_admin_not_the_token()
+    {
+        // Demoted ten minutes ago: the token, good for an hour, still says Admin.
+        await using var db = Users();
+        var subs = new LiveFeedSubscriptions();
+        var groups = new RecordingHubContext();
+
+        await Hub(subs, "demoted", Admin(DemotedAdmin), db, groups).OnConnectedAsync();
+        await Hub(subs, "admin", Admin(AdminId), db, groups).OnConnectedAsync();
+
+        Assert.Equal(
+            new[] { ("demoted", DeskEventGroups.User(DemotedAdmin)), ("admin", DeskEventGroups.User(AdminId)), ("admin", DeskEventGroups.Admins) },
+            groups.Joined);
+        Assert.Equal(new[] { "admin" }, subs.AdminConnectionIds());
+    }
+
+    [Fact]
+    public async Task A_disabled_or_unknown_account_is_closed_and_not_registered()
+    {
+        await using var db = Users();
+        var subs = new LiveFeedSubscriptions();
+        var groups = new RecordingHubContext();
+
+        foreach (var (id, user) in new[] { ("gone", Trader(DisabledGrantedTrader)), ("nobody", Trader(404)) })
+        {
+            var hub = Hub(subs, id, user, db, groups);
+            await hub.OnConnectedAsync();
+            Assert.True(((TestCallerContext)hub.Context).Aborted);
+        }
+
+        Assert.Equal(0, subs.ConnectionCount);
+        Assert.Empty(groups.Joined);
+    }
+
     // ------------------------------------------------------------- helpers --
 
     private const long AdminId = 1;
     private const long GrantedTrader = 7;
     private const long PlainTrader = 8;
     private const long DisabledGrantedTrader = 9;
+    private const long DemotedAdmin = 10;
 
     private static (LiveFeedSubscriptions, RecordingHubContext, LiveTickDispatcher) Desk()
     {
@@ -376,7 +416,8 @@ public class LiveFeedHubTests
     /// <summary>IST wall time on 28 Sep 2026, in UTC.</summary>
     private static DateTime At(int h, int m, int s = 0) => new DateTime(2026, 9, 28, h, m, s, DateTimeKind.Utc).AddMinutes(-330);
 
-    private static LiveFeedHub Hub(LiveFeedSubscriptions subs, string connectionId, ClaimsPrincipal user, TradingDbContext? db = null)
+    private static LiveFeedHub Hub(LiveFeedSubscriptions subs, string connectionId, ClaimsPrincipal user, TradingDbContext? db = null,
+        RecordingHubContext? groups = null)
     {
         var users = db is null
             ? RecapClockTests.Inert<IUserAdminService>.Create()
@@ -386,7 +427,7 @@ public class LiveFeedHubTests
         return new LiveFeedHub(subs, users)
         {
             Context = new TestCallerContext(connectionId, user),
-            Groups = new RecordingHubContext().Groups
+            Groups = (groups ?? new RecordingHubContext()).Groups
         };
     }
 
@@ -399,7 +440,8 @@ public class LiveFeedHubTests
             new AppUser { Id = AdminId, UserName = "admin", Role = UserRoles.Admin, IsActive = true },
             new AppUser { Id = GrantedTrader, UserName = "coderforchange", Role = UserRoles.Trader, IsActive = true },
             new AppUser { Id = PlainTrader, UserName = "mallory", Role = UserRoles.Trader, IsActive = true },
-            new AppUser { Id = DisabledGrantedTrader, UserName = "gone", Role = UserRoles.Trader, IsActive = false });
+            new AppUser { Id = DisabledGrantedTrader, UserName = "gone", Role = UserRoles.Trader, IsActive = false },
+            new AppUser { Id = DemotedAdmin, UserName = "demoted", Role = UserRoles.Trader, IsActive = true });
         db.UserModuleGrants.AddRange(
             new UserModuleGrant { UserId = GrantedTrader, ModuleKey = PlatformModules.MarketData, GrantedBy = "admin" },
             new UserModuleGrant { UserId = PlainTrader, ModuleKey = PlatformModules.Strategies, GrantedBy = "admin" },

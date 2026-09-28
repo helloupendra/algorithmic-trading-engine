@@ -40,18 +40,31 @@ public class LiveFeedHub : Hub
         _users = users;
     }
 
+    /// <remarks>
+    /// Admin, and the account being active at all, are read from the account
+    /// row, not the token: a token is good for an hour, and an admin demoted
+    /// ten minutes ago still carries the Admin claim. The token decided
+    /// role:admin once, at connect, until 28 Sep, and the socket kept every
+    /// account's desk events for as long as it stayed up. A connection now
+    /// also closes when its token expires (<see cref="LiveFeedHubSetup"/>), so
+    /// this runs again at least once an hour.
+    /// </remarks>
     public override async Task OnConnectedAsync()
     {
-        var user = Context.User;
-        long? userId = user?.GetUserId();
-        bool admin = user?.IsAdmin() == true;
-
-        _subscriptions.Connect(Context.ConnectionId, userId, admin);
-
-        if (userId is { } id)
+        long? userId = Context.User?.GetUserId();
+        var account = userId is { } uid ? await _users.GetAsync(uid, Context.ConnectionAborted) : null;
+        if (userId is not { } id || account is null || !account.IsActive)
         {
-            await Groups.AddToGroupAsync(Context.ConnectionId, DeskEventGroups.User(id));
+            // The handshake's sign-out cutoff refuses a disabled account's
+            // token already; this is for a row that changed since.
+            Context.Abort();
+            return;
         }
+
+        bool admin = string.Equals(account.Role, UserRoles.Admin, StringComparison.Ordinal);
+        _subscriptions.Connect(Context.ConnectionId, id, admin);
+
+        await Groups.AddToGroupAsync(Context.ConnectionId, DeskEventGroups.User(id));
 
         if (admin)
         {
