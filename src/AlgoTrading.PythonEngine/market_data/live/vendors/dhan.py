@@ -130,6 +130,8 @@ INDEX_INSTRUMENTS = {
     "NSE:MIDCPNIFTY-INDEX": DhanInstrument("IDX_I", 442, "INDEX"),
     "BSE:SENSEX-INDEX": DhanInstrument("IDX_I", 51, "INDEX"),
     "BSE:BANKEX-INDEX": DhanInstrument("IDX_I", 69, "INDEX"),
+    # Streamed for the candle-pattern "indices" group (master row NSE,I,38,NIFTYNXT50).
+    "NSE:NIFTYNXT50-INDEX": DhanInstrument("IDX_I", 38, "INDEX"),
 }
 
 # ------------------------------------------------------------------- packets
