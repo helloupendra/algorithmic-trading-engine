@@ -384,13 +384,13 @@ app.UseExceptionHandler(errorApp =>
         var exceptionHandlerPathFeature = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerPathFeature>();
         if (exceptionHandlerPathFeature?.Error is AlgoTrading.Application.Exceptions.RiskViolationException riskEx)
         {
-            context.Response.StatusCode = 409;
+            context.Response.StatusCode = AlgoTrading.Api.Services.UnhandledExceptionStatus.For(riskEx);
             context.Response.ContentType = "application/json";
             await context.Response.WriteAsJsonAsync(new { error = riskEx.Message });
         }
         else if (exceptionHandlerPathFeature?.Error != null)
         {
-            context.Response.StatusCode = 500;
+            context.Response.StatusCode = AlgoTrading.Api.Services.UnhandledExceptionStatus.For(exceptionHandlerPathFeature.Error);
             context.Response.ContentType = "application/json";
             if (app.Environment.IsDevelopment())
             {
