@@ -70,6 +70,48 @@ public class FeedHeartbeatMetricsTests
         Assert.Equal(150, FeedHeartbeatMetrics.TicksNotStored.WithLabels(source).Value);
     }
 
+    [Theory]
+    [InlineData("dhan", true)]
+    [InlineData("python-truedata-recap", true)]
+    [InlineData("devreplay", true)]
+    [InlineData("feed with spaces", false)]
+    [InlineData("dhan\n# HELP spoof", false)]
+    [InlineData("", false)]
+    public void A_feed_name_is_a_label_only_in_the_shape_the_feeds_write_it(string source, bool wellFormed)
+    {
+        Assert.Equal(wellFormed, FeedHeartbeatMetrics.IsWellFormed(source));
+        Assert.False(FeedHeartbeatMetrics.IsWellFormed(new string('x', FeedHeartbeatMetrics.MaxSourceLength + 1)));
+    }
+
+    [Fact]
+    public void Past_the_cap_a_new_feed_name_makes_no_series_and_is_counted()
+    {
+        // A caller looping over new keys used to add five series a call, kept
+        // for the life of the API process.
+        var budget = new LabelBudget(2);
+        string Name(int i) => $"cap-test-{i}-{Guid.NewGuid():N}";
+        var first = Name(1);
+        var second = Name(2);
+        var third = Name(3);
+        double refusedBefore = FeedHeartbeatMetrics.SourcesRefused.Value;
+
+        Assert.True(FeedHeartbeatMetrics.Record(new UpsertHeartbeatRequest { SourceName = "x", FeedKey = first, QueueDepth = 1 }, budget));
+        Assert.True(FeedHeartbeatMetrics.Record(new UpsertHeartbeatRequest { SourceName = "x", FeedKey = second, QueueDepth = 2 }, budget));
+        Assert.False(FeedHeartbeatMetrics.Record(new UpsertHeartbeatRequest { SourceName = "x", FeedKey = third, QueueDepth = 3 }, budget));
+        Assert.False(FeedHeartbeatMetrics.Record(new UpsertHeartbeatRequest { SourceName = "x", FeedKey = "not a feed", QueueDepth = 3 }, budget));
+        // A feed already admitted keeps reporting.
+        Assert.True(FeedHeartbeatMetrics.Record(new UpsertHeartbeatRequest { SourceName = "x", FeedKey = first, QueueDepth = 9 }, budget));
+
+        var labelled = FeedHeartbeatMetrics.QueueDepth.GetAllLabelValues().Select(x => x[0]).ToList();
+        Assert.Contains(first, labelled);
+        Assert.Contains(second, labelled);
+        Assert.DoesNotContain(third, labelled);
+        Assert.DoesNotContain("not a feed", labelled);
+        Assert.Equal(9, FeedHeartbeatMetrics.QueueDepth.WithLabels(first).Value);
+        Assert.Equal(2, budget.Count);
+        Assert.True(FeedHeartbeatMetrics.SourcesRefused.Value >= refusedBefore + 2);
+    }
+
     private static LiveDataService Service()
     {
         var options = new DbContextOptionsBuilder<TradingDbContext>()
