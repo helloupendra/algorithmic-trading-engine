@@ -33,6 +33,7 @@ import {
   filterChoices,
   formToRequest,
   indicatorNumbers,
+  indicatorTelegramNote,
   istClock,
   ruleStateTone,
   ruleSummary,
@@ -563,11 +564,7 @@ function IndicatorsPanel() {
                 {s.fileModifiedUtc && <> · edited {formatAge(s.fileModifiedUtc)}</>} · cooldown{' '}
                 {s.cooldownMinutes > 0 ? `${s.cooldownMinutes} min per symbol, timeframe and rule` : 'off'} · warm-up{' '}
                 {s.warmupCandles} candles · Telegram{' '}
-                {!s.telegram
-                  ? 'off in the file'
-                  : s.telegramConfigured
-                    ? 'on (Desk System channel)'
-                    : 'on, but no bot is configured on this server'}
+                <TelegramNote status={s} />
                 {s.telegramMessagesSuppressed + s.telegramMessagesFailed > 0 && s.lastTelegramProblem && (
                   <span className="warn"> · {s.lastTelegramProblem}</span>
                 )}
@@ -580,6 +577,12 @@ function IndicatorsPanel() {
       </QueryBoundary>
     </Panel>
   )
+}
+
+/** Telegram on or off for the indicator alerts, and the chat the server says they reach (indicatorTelegramNote). */
+function TelegramNote({ status }: { status: IndicatorAlertsStatus }) {
+  const note = indicatorTelegramNote(status)
+  return <span title={note.title ?? undefined}>{note.text}</span>
 }
 
 function IndicatorLines({ lines }: { lines: IndicatorLine[] }) {

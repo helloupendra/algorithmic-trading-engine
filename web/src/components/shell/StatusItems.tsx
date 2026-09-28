@@ -15,7 +15,7 @@ import type { FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../lib/auth'
-import { useLiveConnection } from '../../lib/live'
+import { useLiveConnection, useLiveNudgeWhenApiBack } from '../../lib/live'
 import {
   useBackendStatus,
   useFeeds,
@@ -32,6 +32,7 @@ import {
   connectorsSummary,
   feedPulses,
   headlinePulse,
+  livePulse,
   marketPulses,
   recapVendors,
 } from '../../lib/pulse'
@@ -78,34 +79,27 @@ function useSustained(on: boolean, ms: number): boolean {
 }
 
 /**
- * Whether prices, fills and stops are reaching this screen as they happen.
- * "Live" while the socket is up. Once it has been down for a couple of
- * seconds, the warning, because every price on screen is then the last poll's
- * and may be seconds old; the pages poll at their old pace until it is back.
- * The first connect and a blip both take well under that, so neither flashes
- * a warning nobody could act on.
+ * Whether prices, fills and stops are reaching this screen as they happen
+ * (livePulse). Once the socket has been down for a couple of seconds, the
+ * warning, because every price on screen is then the last poll's and may be
+ * seconds old; the pages poll at their old pace until it is back.
  */
 function LiveItem() {
   const connection = useLiveConnection()
-  const down = useSustained(connection !== 'connected', 2_000)
-  if (connection === 'connected') {
-    return (
-      <span className="st st--live" title="Prices, fills and stops are pushed to this screen as they happen">
-        <span className="st__dot" aria-hidden="true" />
-        <span className="st__label">Live</span>
-      </span>
-    )
-  }
-  if (!down) return null
+  const down = useSustained(connection === 'reconnecting' || connection === 'disconnected', 2_000)
+  const p = livePulse(connection, down)
+  if (!p) return null
   return (
-    <span
-      className="st st--warn"
-      role="status"
-      title="The live connection dropped and is being retried. Prices are read every few seconds meanwhile, so they may be behind the market."
-    >
+    <span className={`st st--${p.tone}`} role={p.tone === 'warn' ? 'status' : undefined} title={p.title}>
       <span className="st__dot" aria-hidden="true" />
-      <span className="st__label st__wide">Reconnecting — prices may be stale</span>
-      <span className="st__label st__narrow">Reconnecting</span>
+      {p.short ? (
+        <>
+          <span className="st__label st__wide">{p.label}</span>
+          <span className="st__label st__narrow">{p.short}</span>
+        </>
+      ) : (
+        <span className="st__label">{p.label}</span>
+      )}
     </span>
   )
 }
@@ -383,6 +377,9 @@ export function StatusItems() {
   const feeds = useFeeds({ enabled: isAdmin })
 
   const down = backend.isDown
+  // The moment the API answers again, the live connection tries at once
+  // rather than at the end of a retry wait that has grown to 30 s.
+  useLiveNudgeWhenApiBack(down)
   const nse = down ? undefined : nseSession.data
   const mcx = down ? undefined : mcxSession.data
   const heartbeats = down ? undefined : ingestors.data

@@ -22,7 +22,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import type { Scope } from '../../lib/desk'
-import { useStrategies, useStrategyLives } from '../../lib/queries'
+import { useStrategies, useStrategyLivesRepriced } from '../../lib/queries'
 import { InlineError, Loading, QueryBoundary, StatTile } from '../../components/ui'
 import { IconClock, IconLayers, IconPlay } from '../../components/icons'
 import type { StrategyActiveRun, StrategyLastExit, StrategyListItem, StrategyLiveView } from '../../lib/types'
@@ -164,9 +164,9 @@ function RunCards({ onView }: { onView: (view: RunsView) => void }) {
   // them, and their live query stops polling by itself once isActive is false.
   const visibleRunIds = useMemo(() => visible.map((c) => c.runId), [visible])
 
-  // Page totals share the cache with each card's own useStrategyLive.
-  const lives = useStrategyLives(visibleRunIds)
-  const views = lives.map((q) => q.data).filter((v): v is StrategyLiveView => !!v)
+  // Page totals share the cache with each card's own useStrategyLive, and are
+  // re-priced at the same pushes, so the tiles never disagree with the cards.
+  const views = useStrategyLivesRepriced(visibleRunIds).filter((v): v is StrategyLiveView => !!v)
   const activeViews = views.filter((v) => v.isActive)
   const openPositions = activeViews.reduce(
     (n, v) => n + v.positions.filter((p) => p.status === 'Open').length,

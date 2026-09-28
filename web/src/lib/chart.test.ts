@@ -7,6 +7,7 @@ import {
   hasResolution,
   isPreOpen,
   lastSessions,
+  outsideSession,
   rangeFromDate,
   rollUp,
   stitch,
@@ -112,6 +113,19 @@ describe('candles', () => {
   })
 })
 
+describe('outsideSession', () => {
+  it('holds NSE and BSE to 09:15-15:30 IST and MCX to 09:00 to its evening close, and leaves other symbols alone', () => {
+    const t = (hm: string) => `2026-09-28T${hm}:00Z`
+    expect(['03:44', '03:45', '09:59', '10:00', '18:30'].map((hm) => outsideSession('NSE:NIFTY50-INDEX', t(hm)))).toEqual([true, false, false, true, true])
+    expect(outsideSession('bse:sensex-index', t('10:05'))).toBe(true)
+    expect(['03:29', '03:30', '17:59', '18:00'].map((hm) => outsideSession('MCX:GOLD26DECFUT', t(hm), '2026-09-28T18:00:00Z'))).toEqual([true, false, false, true])
+    // A session answer that is not an evening close (a closed day, a bad value) falls back to 23:55 IST.
+    expect(outsideSession('MCX:GOLD26DECFUT', t('18:10'), '2026-09-28T04:00:00Z')).toBe(false)
+    expect(outsideSession('MCX:GOLD26DECFUT', t('18:10'), 'not a date')).toBe(false)
+    expect(outsideSession('NIFTY', t('20:00'))).toBe(false)
+  })
+})
+
 describe('structureTimeframes', () => {
   it('carries the timeframes above the chart, highest first', () => {
     expect(structureTimeframes('5')).toBe('1D,15m,5m')
@@ -152,6 +166,40 @@ describe('withLiveTick', () => {
     same(undefined)
     const opening = [bar('2026-09-28T03:45:00.000Z', 100)]
     expect(withLiveTick(opening, at('2026-09-28T03:40:00Z', 90), { symbol: NIFTY, resolution: '1' })).toBe(opening)
+  })
+
+  it('adds no candle after the close, when the vendors go on repeating the last price', () => {
+    // The last 5-minute candle of the session, 15:25 IST.
+    const closing = [bar('2026-09-28T09:50:00.000Z', 100), bar('2026-09-28T09:55:00.000Z', 101)]
+    const opts = { symbol: NIFTY, resolution: '5' as const }
+    expect(withLiveTick(closing, at('2026-09-28T10:01:00Z', 101), opts)).toBe(closing)
+    expect(withLiveTick(closing, at('2026-09-28T10:00:00Z', 101.5), opts)).toBe(closing)
+    expect(withLiveTick(closing, at('2026-09-28T14:12:00Z', 101), opts)).toBe(closing)
+    // The session's last seconds still move the forming candle.
+    expect(withLiveTick(closing, at('2026-09-28T09:59:58Z', 101.5), opts)[1]).toMatchObject({ close: 101.5 })
+  })
+
+  it("adds no candle at 00:00 IST for BSE's replay of the previous close before today has bars", () => {
+    const yesterday = [bar('2026-09-27T09:50:00.000Z', 80_000), bar('2026-09-27T09:55:00.000Z', 80_100)]
+    // 00:00 IST on the 28th is 18:30Z on the 27th: the same UTC date as yesterday's candles.
+    expect(withLiveTick(yesterday, at('2026-09-27T18:30:00Z', 80_100), { symbol: 'BSE:SENSEX-INDEX', resolution: '5' })).toBe(yesterday)
+  })
+
+  it('keeps MCX to its own hours: from 09:00 IST to the evening close the session answer gives', () => {
+    const CRUDE = 'MCX:CRUDEOIL26OCTFUT'
+    // The 23:25 IST candle.
+    const late = [bar('2026-09-28T17:50:00.000Z', 5_300), bar('2026-09-28T17:55:00.000Z', 5_310)]
+    const summer = { symbol: CRUDE, resolution: '5' as const, mcxCloseUtc: '2026-09-28T18:00:00Z' }
+    expect(withLiveTick(late, at('2026-09-28T18:02:00Z', 5_312), summer)).toBe(late)
+    // In the US winter it trades to 23:55 IST.
+    const winter = { ...summer, mcxCloseUtc: '2026-11-28T18:25:00Z' }
+    expect(withLiveTick(late, at('2026-09-28T18:02:00Z', 5_312), winter)).toHaveLength(3)
+    // No answer yet: the later close, so a real candle is never held back.
+    expect(withLiveTick(late, at('2026-09-28T18:02:00Z', 5_312), { symbol: CRUDE, resolution: '5' })).toHaveLength(3)
+    expect(withLiveTick(late, at('2026-09-28T18:26:00Z', 5_312), { symbol: CRUDE, resolution: '5' })).toBe(late)
+    // MCX's morning, which NSE has not opened yet, is a session.
+    const morning = [bar('2026-09-28T03:30:00.000Z', 5_290)]
+    expect(withLiveTick(morning, at('2026-09-28T03:36:00Z', 5_295), { symbol: CRUDE, resolution: '5' })).toHaveLength(2)
   })
 
   it('reads the arrival time when the exchange sent no stamp', () => {

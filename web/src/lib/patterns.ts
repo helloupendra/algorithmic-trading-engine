@@ -380,6 +380,33 @@ export interface IndicatorWatch {
   problem: string | null
 }
 
+/**
+ * What the indicator status line says of Telegram, and which chat the
+ * messages reach as the server reports it. The server sends them to its
+ * system chat (the Desk System channel) and, when no system chat is set, to
+ * the trades chat. The line read "Desk System channel" whatever the server
+ * was doing, so a box without a system chat sent every indicator batch among
+ * the trades while the page said otherwise. An API from before 28 Sep does
+ * not report it, and then no chat is named.
+ */
+export function indicatorTelegramNote(
+  s: Pick<IndicatorAlertsStatus, 'telegram' | 'telegramConfigured' | 'telegramSystemChatConfigured'>,
+): { text: string; title: string | null } {
+  if (!s.telegram) return { text: 'off in the file', title: null }
+  if (!s.telegramConfigured) return { text: 'on, but no bot is configured on this server', title: null }
+  if (s.telegramSystemChatConfigured === true) return { text: 'on (Desk System channel)', title: null }
+  if (s.telegramSystemChatConfigured === false) {
+    return {
+      text: 'on (trades channel: no Desk System chat is set on this server)',
+      title: 'Telegram:SystemChatId is not set, so the server sends its system messages, these included, to the trades chat.',
+    }
+  }
+  return {
+    text: 'on',
+    title: "Sent to the server's system Telegram chat (Telegram:SystemChatId), or to its trades chat when no system chat is set.",
+  }
+}
+
 export interface IndicatorAlertsStatus {
   enabled: boolean
   intervalSeconds: number
@@ -401,6 +428,12 @@ export interface IndicatorAlertsStatus {
   watches: IndicatorWatch[]
   unresolved: string[]
   telegramConfigured: boolean
+  /**
+   * Whether the server has a system chat (Telegram:SystemChatId): indicator
+   * alerts go there, else to the trades chat. Absent on API builds from
+   * before 28 Sep.
+   */
+  telegramSystemChatConfigured?: boolean
   telegramMaxMessages: number
   telegramWindowMinutes: number
   lastTelegramUtc: string | null

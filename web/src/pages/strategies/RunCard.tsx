@@ -15,12 +15,13 @@
  * strategy may be live on several underlyings at once.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   useClosePositions,
   useSetCarryForward,
   useStopStrategy,
+  useRepricedRunView,
   useStrategyLive,
   useStrategyLogs,
   useUpdateRunRisk,
@@ -28,8 +29,6 @@ import {
 import { formatAge, formatInrSigned, formatInrWhole, formatLots, formatNumber, formatPrice, formatTime } from '../../lib/format'
 import { formatContract } from '../../lib/symbols'
 import { positionValues } from '../../lib/positions'
-import { useLivePrices } from '../../lib/live'
-import { runViewWithTicks } from '../../lib/liveMarks'
 import {
   formatDelta,
   formatThetaPerDay,
@@ -43,6 +42,7 @@ import { effectiveRisk, isRiskEmpty, parseRiskDraft, riskChips, riskDraftFrom } 
 import { carriedNote, carryControl, carryHint, positionCountsNote, stopCarryWarning } from '../../lib/carry'
 import type { CarryContext } from '../../lib/carry'
 import { liveNet } from '../../lib/strategyList'
+import { answerAsOf } from '../../lib/asOf'
 import type { RiskDraft, RiskDraftField } from '../../lib/risk'
 import { Badge, FlashPrice, InlineError, Loading } from '../../components/ui'
 import { RiskRulesForm } from '../../components/RiskRulesForm'
@@ -687,20 +687,9 @@ export function RunCard({
   // (lib/liveMarks.ts) so the LTP column, each row's P&L, the tiles and the
   // risk meters move together. The poll (a second without the socket, 15 s
   // with it) still brings everything else: fills, stops, realized, charges.
-  const answer = live.data
-  const answeredAt = live.dataUpdatedAt
-  const symbols = useMemo(
-    () =>
-      answer
-        ? [
-            ...answer.positions.filter((p) => p.status === 'Open').map((p) => p.symbol),
-            ...(answer.isActive && answer.spotSymbol ? [answer.spotSymbol] : []),
-          ]
-        : [],
-    [answer],
-  )
-  const prices = useLivePrices(symbols)
-  const view = useMemo(() => (answer ? runViewWithTicks(answer, prices, answeredAt) : answer), [answer, prices, answeredAt])
+  // The page totals above the cards re-price the same way
+  // (useStrategyLivesRepriced), so a total is always the sum of its cards.
+  const view = useRepricedRunView(live.data, answerAsOf(live))
   const isActive = view ? view.isActive : run != null
   const positions = view?.positions ?? []
   const openCount = positions.filter((p) => p.status === 'Open').length

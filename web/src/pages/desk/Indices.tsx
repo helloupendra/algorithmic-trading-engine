@@ -15,6 +15,7 @@ import { useMemo } from 'react'
 import type { ChainLevels, ForecastRow, IndexRow } from '../../lib/desk'
 import { VIX_SYMBOL, chainLevels, dayLabel, dayOf, dayTrace, forecastRows, indexRows, plainNumber, rangeSoFar, signedNumber, weekdayOf } from '../../lib/desk'
 import { useLivePrices } from '../../lib/live'
+import { answerAsOf } from '../../lib/asOf'
 import { freshPrice } from '../../lib/liveMarks'
 import { applyTickToQuote } from '../../lib/optionChain'
 import { allows } from '../../lib/modules'
@@ -151,7 +152,7 @@ function IndexTable({ view, links, forecasts }: { view: DeskView; links: DeskLin
   const chains = useDeskChainViews(CHAINED, view.clock === 'live')
   const byUnd = new Map((forecasts ?? []).map((f) => [f.underlying, f]))
   const vixAnswer = chains[0].data?.header?.vix ?? null
-  const vixAnsweredAt = chains[0].dataUpdatedAt
+  const vixAnsweredAt = answerAsOf(chains[0])
   const vixTick = useLivePrices(VIX).get(VIX_SYMBOL)
   const vix = useMemo(
     () =>

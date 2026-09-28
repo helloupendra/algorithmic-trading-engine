@@ -9,10 +9,11 @@
  * would give it now, without asking it again.
  *
  * One rule runs through all of them: a tick replaces a polled price only when
- * it is newer. Received after the answer arrived, it is; received before, the
- * answer already carries it or something newer, since the API marks from the
- * same quotes the hub pushes. Open positions compare the two ages instead,
- * because that answer says how old each mark was.
+ * it is newer. Received after the answer's request was sent, it is (the
+ * `answeredAtMs` each takes is lib/asOf.ts's answerAsOf); received before,
+ * the answer already carries it or something newer, since the API marks from
+ * the same quotes the hub pushes. Open positions compare the two ages
+ * instead, because that answer says how old each mark was.
  */
 
 import type { LiveTick } from './live'
@@ -132,6 +133,18 @@ export function repricePosition(p: LivePosition, price: number, atMs: number): L
     pnlPoints: null,
     pnlPercent: null,
   }
+}
+
+/**
+ * The symbols a run's view is re-priced from: its open legs and, while the
+ * run is live, its spot. The run card and the page totals above the cards ask
+ * for the same ones, so both are priced from the same pushes.
+ */
+export function runViewSymbols(view: StrategyLiveView): string[] {
+  return [
+    ...view.positions.filter((p) => p.status === 'Open').map((p) => p.symbol),
+    ...(view.isActive && view.spotSymbol ? [view.spotSymbol] : []),
+  ]
 }
 
 /**
@@ -331,6 +344,11 @@ export function pulseWithTicks(pulse: MarketPulseResponse, prices: Prices, answe
 /** Whether any tile's pushed price is from a later day than its row: the pulse is worth asking for again now. */
 export function pulseBehind(pulse: MarketPulseResponse, prices: Prices, answeredAtMs: number): boolean {
   return pulse.groups.some((g) => g.items.some((item) => behind(item, prices.get(item.symbol), answeredAtMs)))
+}
+
+/** Whether any watchlist row's pushed price is from a later day than the row: the list is worth asking for again now. */
+export function watchlistBehind(items: readonly MyWatchlistItem[], prices: Prices, answeredAtMs: number): boolean {
+  return items.some((item) => behind(item, prices.get(item.symbol), answeredAtMs))
 }
 
 /** The viewer's watchlist rows moved to their newer pushed prices; the same list when none moved. */

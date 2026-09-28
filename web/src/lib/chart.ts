@@ -118,6 +118,41 @@ export function isPreOpen(symbol: string, timeUtc: string): boolean {
   return timeUtc.slice(11, 16) < '03:45'
 }
 
+/** MCX's evening close while the US is on winter time, 23:55 IST; 23:30 (18:00Z) in its summer. */
+const MCX_LATEST_CLOSE = '18:25'
+
+/** A session answer's close as HH:MM UTC when it reads as an MCX evening close; null otherwise. */
+function mcxCloseHm(sessionCloseUtc: string | null | undefined): string | null {
+  const ms = sessionCloseUtc ? Date.parse(sessionCloseUtc) : NaN
+  if (Number.isNaN(ms)) return null
+  const hm = new Date(ms).toISOString().slice(11, 16)
+  return hm > '10:00' && hm <= '18:30' ? hm : null
+}
+
+/**
+ * Whether a moment is outside the symbol's regular session: the rule the API
+ * keeps live bars to (LiveDataService.InSession), for a price pushed between
+ * polls of those bars.
+ *
+ * - NSE and BSE: 09:15 to 15:30 IST (03:45 to 10:00Z). Before is the pre-open
+ *   auction. After, the vendors go on repeating the close with stamps that
+ *   move forward until the feeds stop late in the evening, and BSE replays the
+ *   previous close stamped 00:00 IST (18:30Z the day before).
+ * - MCX: 09:00 IST (03:30Z) to the evening close. `mcxCloseUtc` is the MCX
+ *   session answer's close; without it, the later of the two seasonal closes,
+ *   so a real candle is never held back.
+ *
+ * Other symbols are left alone. A special session (Muhurat trading) is not a
+ * regular one: its candles come with the bars poll.
+ */
+export function outsideSession(symbol: string, timeUtc: string, mcxCloseUtc?: string | null): boolean {
+  const exchange = symbol.slice(0, symbol.indexOf(':') + 1).toUpperCase()
+  const hm = timeUtc.slice(11, 16)
+  if (exchange === 'NSE:' || exchange === 'BSE:') return hm < '03:45' || hm >= '10:00'
+  if (exchange === 'MCX:') return hm < '03:30' || hm >= (mcxCloseHm(mcxCloseUtc) ?? MCX_LATEST_CLOSE)
+  return false
+}
+
 /**
  * The last N sessions present in the data (a session is one UTC date, which
  * is the IST day for every Indian bar). For a single session, a day with only
@@ -193,13 +228,18 @@ export function stitch(
  * A price past the forming candle's bucket opens the next candle (open, high,
  * low and close all at that price), by the same bucket rule as rollUp, but
  * only on the same session: a new day's first candle waits for the bars,
- * which bring its real open. Nothing changes for a day chart, a pre-open
- * print, or a price older than the forming candle.
+ * which bring its real open. Nothing changes for a day chart, a price outside
+ * the regular session (outsideSession: the pre-open, the quotes after the
+ * close, BSE's midnight replay), or a price older than the forming candle.
+ *
+ * Until 28 Sep only the pre-open was kept out, and every quote after 15:30
+ * opened a flat candle at the close (15:30, 15:35, ...) all evening: the ones
+ * the API stopped storing on 20 Sep, drawn again in the browser.
  */
 export function withLiveTick(
   candles: readonly Candle[],
   tick: { lastTradedPrice: number | null; exchangeTimestampUtc: string | null; receivedAtMs: number } | undefined,
-  opts: { symbol: string; resolution: Resolution },
+  opts: { symbol: string; resolution: Resolution; mcxCloseUtc?: string | null },
 ): readonly Candle[] {
   const price = tick?.lastTradedPrice
   const minutes = RESOLUTIONS.find((r) => r.key === opts.resolution)?.minutes ?? null
@@ -208,7 +248,7 @@ export function withLiveTick(
   const stamped = tick.exchangeTimestampUtc ? Date.parse(tick.exchangeTimestampUtc) : NaN
   const t = Number.isNaN(stamped) ? tick.receivedAtMs : stamped
   const timeUtc = new Date(t).toISOString()
-  if (isPreOpen(opts.symbol, timeUtc)) return candles
+  if (outsideSession(opts.symbol, timeUtc, opts.mcxCloseUtc)) return candles
 
   const span = minutes * 60_000
   const start = Date.parse(last.timeUtc)
