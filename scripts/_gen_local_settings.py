@@ -184,8 +184,9 @@ def build_api_settings(env: dict[str, str]) -> dict:
         "Telegram": {
             "BotToken": env.get("TELEGRAM_BOT_TOKEN", ""),
             "ChatId": env.get("TELEGRAM_CHAT_ID", ""),
-            # The desk's own notices (feeds, sign-ins, deploys, patterns); the
-            # trades chat above when empty.
+            # The desk's own notices (feeds, sign-ins, deploys); the trades
+            # chat above when empty. Candle patterns go to the trades chat
+            # since 28 Sep unless PatternAlerts:TelegramChannel says system.
             "SystemChatId": env.get("TELEGRAM_SYSTEM_CHAT_ID", ""),
         },
         # Angel One SmartAPI. Four values, because its session is client code +

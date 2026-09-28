@@ -103,7 +103,8 @@ public static class IndicatorTelegramBatches
 /// Runs the indicator scanner inside the API, on the candle-pattern scanner's
 /// clock (<see cref="CandlePatternAlertService.Settings"/>: every 20 seconds,
 /// 10 seconds behind the clock, 3 minutes past the close), and delivers what it
-/// finds to the same Telegram channel as the patterns.
+/// finds to the same Telegram channel as the patterns unless
+/// <c>IndicatorAlerts:TelegramChannel</c> names another (<see cref="AlertChannel"/>).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -118,7 +119,10 @@ public static class IndicatorTelegramBatches
 /// <para>
 /// Off with <c>IndicatorAlerts:Enabled=false</c>; when that is not set it
 /// follows <c>PatternAlerts:Enabled</c>, so the one switch a second API pointed
-/// at the same database already sets turns both scanners off.
+/// at the same database already sets turns both scanners off. The channel
+/// follows the patterns' the same way: the same kind of market alert, so when
+/// the owner moved the patterns to the trades channel on 28 Sep these moved
+/// with them.
 /// </para>
 /// </remarks>
 public sealed class IndicatorAlertService : BackgroundService
@@ -133,6 +137,7 @@ public sealed class IndicatorAlertService : BackgroundService
     private readonly IConfiguration _configuration;
     private readonly ILogger<IndicatorAlertService> _logger;
     private readonly SlidingWindowLimiter _limiter = new(MaxMessages, MessageWindow);
+    private string? _channelProblem;
 
     public IndicatorAlertService(
         IServiceScopeFactory scopeFactory,
@@ -173,6 +178,9 @@ public sealed class IndicatorAlertService : BackgroundService
             if (problem is null) _logger.LogInformation("Indicator alerts are off (IndicatorAlerts:Enabled / PatternAlerts:Enabled is false).");
             return;
         }
+
+        // Read now too, so a bad channel value is in the log at startup, not at the first alert.
+        ReadChannel();
 
         using var timer = new PeriodicTimer(CandlePatternAlertService.Settings.Interval);
         do
@@ -259,8 +267,7 @@ public sealed class IndicatorAlertService : BackgroundService
                     continue;
                 }
 
-                // Market information, not trades: the system channel, with the patterns.
-                if (!await _telegram.SendHtmlAsync(part.Text, TelegramChannel.System, cancellationToken))
+                if (!await SendAsync(part.Text, cancellationToken))
                 {
                     _state.TelegramFailed("Telegram refused or could not be reached; see the API log.");
                     continue;
@@ -276,5 +283,30 @@ public sealed class IndicatorAlertService : BackgroundService
                 await db.SaveChangesAsync(cancellationToken);
             }
         }
+    }
+
+    /// <summary>
+    /// Sends one message to the channel the setting names (<see cref="ReadChannel"/>).
+    /// </summary>
+    internal Task<bool> SendAsync(string text, CancellationToken cancellationToken) =>
+        _telegram.SendHtmlAsync(text, ReadChannel(), cancellationToken);
+
+    /// <summary>
+    /// <c>IndicatorAlerts:TelegramChannel</c>, else <c>PatternAlerts:TelegramChannel</c>,
+    /// read at every send as the Telegram settings are, so an edit to
+    /// appsettings.Local.json applies without a restart and the page (which
+    /// reads the same settings) never disagrees with the send. A value that is
+    /// neither channel is warned about once, not with every message.
+    /// </summary>
+    private TelegramChannel ReadChannel()
+    {
+        var channel = AlertChannel.ForIndicators(_configuration, out var problem);
+        if (problem is not null && problem != _channelProblem)
+        {
+            _logger.LogWarning("Indicator alerts: {Problem}", problem);
+        }
+
+        _channelProblem = problem;
+        return channel;
     }
 }

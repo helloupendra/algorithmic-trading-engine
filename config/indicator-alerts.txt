@@ -1,9 +1,11 @@
 # Indicator alerts: what the API watches on live candles besides candle
-# patterns, and what it tells the Desk System Telegram channel (the same channel
-# as the pattern alerts). The API reads this file on every scan, so an edit
-# applies within about twenty seconds, without a restart. Markets -> Patterns
-# shows what it read, and names any line it could not read and why; a bad line
-# is skipped, never fatal.
+# patterns, and what it tells Telegram. They go to the same channel as the
+# pattern alerts: the Live Algotrading channel, where the trade alerts go (the
+# owner, 28 Sep 2026), unless the API setting PatternAlerts:TelegramChannel, or
+# IndicatorAlerts:TelegramChannel for these alone, says system (Desk System).
+# The API reads this file on every scan, so an edit applies within about twenty
+# seconds, without a restart. Markets -> Patterns shows what it read, and names
+# any line it could not read and why; a bad line is skipped, never fatal.
 #
 # Settings (each optional; the defaults are shown):
 #   cooldown: 30    minutes. After an alert is sent, the same rule on the same
