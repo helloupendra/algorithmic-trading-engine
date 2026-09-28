@@ -21,7 +21,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { useDataCoverage, useLiveBars, useMarketPulse, useMyWatchlist, useSmcLadder, useStoredCandles } from '../../../lib/queries'
+import { useDataCoverage, useLiveBars, useMarketPulse, useMarketSession, useMyWatchlist, useSmcLadder, useStoredCandles } from '../../../lib/queries'
 import {
   RANGES,
   RANGES_FOR,
@@ -128,16 +128,19 @@ export function ChartPage() {
   // which carry every price before it. The structure layer is left to its
   // marks, which were read from the candles as they came.
   const tick = useLivePrices(useMemo(() => [symbol], [symbol])).get(symbol)
+  // MCX's evening close moves with US daylight saving; the session answer
+  // says which it is today (the top bar already asks, so this is its cache).
+  const mcxCloseUtc = useMarketSession('MCX', 'COM').data?.sessionCloseUtc ?? null
   const [forming, setForming] = useState<{ base: readonly Candle[]; candles: readonly Candle[] } | null>(null)
   const barsAnsweredAt = live.dataUpdatedAt
   useEffect(() => {
     if (structureOn || !tick || tick.receivedAtMs <= barsAnsweredAt) return
     setForming((f) => {
       const from = f && f.base === candles ? f.candles : candles
-      const next = withLiveTick(from, tick, { symbol, resolution })
+      const next = withLiveTick(from, tick, { symbol, resolution, mcxCloseUtc })
       return next === from && f?.base === candles ? f : { base: candles, candles: next }
     })
-  }, [tick, candles, barsAnsweredAt, structureOn, symbol, resolution])
+  }, [tick, candles, barsAnsweredAt, structureOn, symbol, resolution, mcxCloseUtc])
   const shown = forming && forming.base === candles ? forming.candles : candles
 
   const summary = useMemo(() => {
