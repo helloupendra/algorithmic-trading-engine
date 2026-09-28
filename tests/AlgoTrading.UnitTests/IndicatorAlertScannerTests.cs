@@ -583,9 +583,13 @@ public class IndicatorAlertScannerTests
 
             var controller = new AlgoTrading.Api.Controllers.PatternAlertsController(db);
             var telegram = new TelegramSender(new NoHttp(), new ConfigurationBuilder().Build(), NullLogger<TelegramSender>.Instance);
-            var response = Assert.IsType<AlgoTrading.Contracts.Patterns.IndicatorAlertsResponse>(
-                Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>(
-                    (await controller.GetIndicators(source, state, new PatternWatchPlanner(db), telegram, CancellationToken.None)).Result).Value);
+            async Task<AlgoTrading.Contracts.Patterns.IndicatorAlertsResponse> Get(params (string Key, string Value)[] settings) =>
+                Assert.IsType<AlgoTrading.Contracts.Patterns.IndicatorAlertsResponse>(
+                    Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>(
+                        (await controller.GetIndicators(source, state, new PatternWatchPlanner(db), telegram,
+                            new ConfigurationBuilder().AddInMemoryCollection(settings.Select(s => new KeyValuePair<string, string?>(s.Key, s.Value))).Build(),
+                            CancellationToken.None)).Result).Value);
+            var response = await Get();
 
             Assert.Equal(Path.Combine(root, "config", "indicator-alerts.txt"), response.File);
             Assert.Equal(20, response.CooldownMinutes);
@@ -611,6 +615,17 @@ public class IndicatorAlertScannerTests
             Assert.True(new TelegramSender(new NoHttp(),
                 new ConfigurationBuilder().AddInMemoryCollection([new("Telegram:SystemChatId", "-100123")]).Build(),
                 NullLogger<TelegramSender>.Instance).IsSystemChatConfigured);
+
+            // The channel as set, which the page names: trades unless a setting says
+            // system (owner, 28 Sep), the patterns' setting followed unless the
+            // indicators have their own, and a bad value said rather than hidden.
+            Assert.Equal("trades", response.TelegramChannel);
+            Assert.Null(response.TelegramChannelProblem);
+            Assert.Equal("system", (await Get(("PatternAlerts:TelegramChannel", "system"))).TelegramChannel);
+            Assert.Equal("trades", (await Get(("PatternAlerts:TelegramChannel", "system"), ("IndicatorAlerts:TelegramChannel", "Trades"))).TelegramChannel);
+            var bad = await Get(("IndicatorAlerts:TelegramChannel", "desk"));
+            Assert.Equal("trades", bad.TelegramChannel);
+            Assert.Equal("IndicatorAlerts:TelegramChannel is \"desk\", which is neither trades nor system; sent to the trades channel.", bad.TelegramChannelProblem);
 
             var events = Assert.IsType<List<AlgoTrading.Contracts.Patterns.IndicatorAlertDto>>(
                 Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>((await controller.GetIndicatorEvents(null, 15)).Result).Value);

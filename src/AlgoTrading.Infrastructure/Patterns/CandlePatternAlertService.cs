@@ -50,6 +50,12 @@ public static class PatternTelegramBatches
 /// over the limit is not sent and its alerts stay "recorded only" on the page.
 /// </para>
 /// <para>
+/// Sent to the channel <c>PatternAlerts:TelegramChannel</c> names: the trades
+/// channel unless it says system (<see cref="AlertChannel"/>). The owner had
+/// them in the Desk System channel on 27 Sep and moved them to where the live
+/// trade alerts go on 28 Sep.
+/// </para>
+/// <para>
 /// Off with <c>PatternAlerts:Enabled=false</c>, for a second API pointed at a
 /// database another API already scans.
 /// </para>
@@ -65,6 +71,7 @@ public sealed class CandlePatternAlertService : BackgroundService
     private readonly IConfiguration _configuration;
     private readonly ILogger<CandlePatternAlertService> _logger;
     private readonly SlidingWindowLimiter _limiter = new(MaxMessages, MessageWindow);
+    private string? _channelProblem;
 
     public CandlePatternAlertService(
         IServiceScopeFactory scopeFactory,
@@ -98,6 +105,9 @@ public sealed class CandlePatternAlertService : BackgroundService
             if (problem is null) _logger.LogInformation("Candle-pattern alerts are off (PatternAlerts:Enabled=false).");
             return;
         }
+
+        // Read now too, so a bad channel value is in the log at startup, not at the first alert.
+        ReadChannel();
 
         using var timer = new PeriodicTimer(Settings.Interval);
         do
@@ -171,8 +181,7 @@ public sealed class CandlePatternAlertService : BackgroundService
             }
 
             var text = PatternAlertText.TelegramMessage(batch.ClosedAtUtc, batch.Patterns.Select(p => p.Occurrence).ToList());
-            // Market information, not trades: the system channel (owner, 27 Sep).
-            if (!await _telegram.SendHtmlAsync(text, TelegramChannel.System, cancellationToken))
+            if (!await SendAsync(text, cancellationToken))
             {
                 _state.TelegramFailed("Telegram refused or could not be reached; see the API log.");
                 continue;
@@ -184,5 +193,30 @@ public sealed class CandlePatternAlertService : BackgroundService
             foreach (var row in rows) row.DeliveredToTelegram = true;
             await db.SaveChangesAsync(cancellationToken);
         }
+    }
+
+    /// <summary>
+    /// Sends one message to the channel the setting names (<see cref="ReadChannel"/>).
+    /// </summary>
+    internal Task<bool> SendAsync(string text, CancellationToken cancellationToken) =>
+        _telegram.SendHtmlAsync(text, ReadChannel(), cancellationToken);
+
+    /// <summary>
+    /// <c>PatternAlerts:TelegramChannel</c>, read at every send as the Telegram
+    /// settings are, so an edit to appsettings.Local.json applies without a
+    /// restart and the page (which reads the same setting) never disagrees with
+    /// the send. A value that is neither channel is warned about once, not with
+    /// every message.
+    /// </summary>
+    private TelegramChannel ReadChannel()
+    {
+        var channel = AlertChannel.ForPatterns(_configuration, out var problem);
+        if (problem is not null && problem != _channelProblem)
+        {
+            _logger.LogWarning("Candle-pattern alerts: {Problem}", problem);
+        }
+
+        _channelProblem = problem;
+        return channel;
     }
 }
