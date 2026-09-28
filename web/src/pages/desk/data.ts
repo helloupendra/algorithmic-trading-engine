@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Access } from '../../lib/modules'
 import { allows, navFor } from '../../lib/modules'
 import type { DeskAccount, DeskGrid, DeskLeg, Phase, PlanView, Scope } from '../../lib/desk'
-import { dayOf, deskDay, deskLegs, figureTone, istDay, planView, shiftDay } from '../../lib/desk'
+import { buildGrid, dayOf, deskDay, deskLegs, figureTone, istDay, planView, shiftDay } from '../../lib/desk'
 import {
   RUN_HISTORY_PAGE,
   deskLegsPoll,
@@ -17,14 +17,17 @@ import {
   useFeeds,
   useForecasts,
   useLiveRunHistory,
+  useLiveRuns,
   useMarketSession,
   useOpenPositions,
   useProviders,
+  useStructuralSharing,
 } from '../../lib/queries'
 import { checkupNow } from '../../lib/checkupNow'
 import { useLiveConnection, useLivePrices } from '../../lib/live'
 import { answerAsOf } from '../../lib/asOf'
 import { withLegMarks, withLiveMarks } from '../../lib/liveMarks'
+import type { RunLegs } from '../../lib/liveMarks'
 import type { LiveRunSummary, MarketSessionInfo } from '../../lib/types'
 
 /** Everything a panel needs to know about the Desk it sits on. */
@@ -45,8 +48,19 @@ export interface DeskView {
   allAccounts: DeskAccount[]
   /** The day's trading runs in scope; undefined until they arrive. */
   runs: LiveRunSummary[] | undefined
+  /** When the run list was asked for (lib/asOf.ts): a price pushed after it is newer than its figures. */
+  runsAsOf: number
   runsError: unknown
+  /**
+   * The grid as the run list answered it: its rows, cells and marks. What a
+   * panel shows as money is useLiveGrid's, the same grid with the live runs'
+   * open books at the pushed prices.
+   */
   grid: DeskGrid | null
+  /** Runs a leg was carried from, read off the manual books: the grid's C mark. */
+  carried: ReadonlySet<number>
+  /** Every open leg in view, by run, that the live runs' open books are re-priced from. */
+  legs: RunLegs | null
   /** The one account's name when the scope is one account. */
   scopeName: string | null
   nse: MarketSessionInfo | undefined
@@ -101,10 +115,33 @@ export function useShownDay(nowMs: number, enabled: boolean) {
     today,
     day,
     runs,
+    /** When the list the runs came from was asked for: the base the pushed prices are laid over. */
+    asOf: day === today ? answerAsOf(todayRuns) : answerAsOf(recent),
     nse: nse.data,
     error: todayRuns.isError ? todayRuns.error : recent.isError ? recent.error : null,
     updatedAt: todayRuns.dataUpdatedAt,
   }
+}
+
+/**
+ * The Desk's grid with every live run's open book at the pushed prices of
+ * its legs (liveMarks.runsWithTicks over the open legs the Desk already
+ * reads), and the grid itself while nothing newer is known. Every panel that
+ * shows money reads this one, so the strip, the grid's cells and totals, the
+ * Day P&L rows and its curve's end are the same numbers at every push; a
+ * panel that shows none (indices, news, the outlook) is not re-rendered by a
+ * price it does not show.
+ */
+export function useLiveGrid(view: DeskView): DeskGrid | null {
+  // `listed` is what `grid` was built from; `runs` is that list re-priced.
+  const { grid, accounts, carried, runs: listed } = view
+  const runs = useLiveRuns(listed, view.runsAsOf, view.legs)
+  const live = useMemo(
+    () => (!grid || !runs || runs === listed ? grid : buildGrid(runs, accounts, carried)),
+    [grid, runs, listed, accounts, carried],
+  )
+  // A row whose runs no price reached keeps its object, so its memoised line does not re-render.
+  return useStructuralSharing(live)
 }
 
 /** The class a rupee figure is coloured with; flat for anything that rounds to ₹0. */
@@ -166,6 +203,22 @@ export function useDeskLegs(view: DeskView): { legs: DeskLeg[] | null; error: un
     [ordered, positions, prices, answeredAt],
   )
   return { legs, error: open.isError ? open.error : null }
+}
+
+/**
+ * The underlyings held in the Desk's scope, from the same open legs as
+ * useDeskLegs but without their prices: the news panel's "held" tab needs
+ * which names are held, and a panel that holds the legs' prices is
+ * re-rendered by every push of every leg.
+ */
+export function useHeldUnderlyings(view: DeskView): ReadonlySet<string> {
+  const open = useOpenPositions(deskLegsPoll(view.clock === 'live', useLiveConnection()), allows(view.access, 'strategies'))
+  const positions = open.data?.positions
+  const userId = view.scope === 'all' ? null : view.scope
+  return useMemo(
+    () => new Set((positions ?? []).filter((p) => userId == null || p.userId === userId).map((p) => p.underlying.toUpperCase())),
+    [positions, userId],
+  )
 }
 
 /**

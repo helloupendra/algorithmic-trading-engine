@@ -668,6 +668,16 @@ export function buildGrid(
   return { underlyings, accounts: [...accounts], rows, totals, figures: sumFigures(sorted) }
 }
 
+/**
+ * Each account's net now, for the accounts with a run still live: where the
+ * Day P&L curve's line is carried on to (pnlSeries.withLiveTips). An account
+ * whose runs have all stopped has a final figure the recorder already holds.
+ */
+export function liveAccountNets(grid: Pick<DeskGrid, 'totals'>, runs: ReadonlyArray<Pick<LiveRunSummary, 'userId' | 'isActive'>>): Map<number, number> {
+  const live = new Set(runs.filter((r) => r.isActive).map((r) => r.userId))
+  return new Map(grid.totals.filter((t) => live.has(t.account.id)).map((t) => [t.account.id, t.figures.net]))
+}
+
 // ---------------------------------------------------------------- run counts and the plan
 
 export interface RunCounts {

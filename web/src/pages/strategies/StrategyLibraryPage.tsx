@@ -16,7 +16,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useLiveRunHistory, useStrategies } from '../../lib/queries'
+import { useLiveRunHistory, useRunLegs, useStrategies } from '../../lib/queries'
+import { answerAsOf } from '../../lib/asOf'
 import { useStrategySpecFacts } from '../../lib/specs'
 import type { SpecFacts } from '../../lib/specs'
 import {
@@ -36,11 +37,11 @@ import {
 import type { InstrumentClass, LibraryFilters, TradeSide } from '../../lib/strategyLibrary'
 import { QueryBoundary } from '../../components/ui'
 import { IconSearch, IconX } from '../../components/icons'
-import type { StrategyListItem } from '../../lib/types'
+import type { LiveRunSummary, StrategyListItem } from '../../lib/types'
 import { addDays, todayIst } from '../backtesting/shared'
 import { LaunchDialog } from './shared'
 import { FamilyCard, LibraryCard } from './LibraryCards'
-import type { CardContext } from './LibraryCards'
+import type { CardContext, LiveRecent } from './LibraryCards'
 import './library.css'
 
 const EMPTY_FACTS: ReadonlyMap<number, SpecFacts> = new Map()
@@ -108,6 +109,18 @@ function Library({ items }: { items: StrategyListItem[] }) {
     if (!rows || rows.length >= 500) return null
     return recentPaperByStrategy(rows)
   }, [history.data])
+  // The window's live trading runs: each card holding one re-prices it at the
+  // pushed prices of its legs, so its P&L moves as the run card's does.
+  const legs = useRunLegs(history.data)
+  const historyAsOf = answerAsOf(history)
+  const live = useMemo<LiveRecent | null>(() => {
+    const byStrategy = new Map<number, LiveRunSummary[]>()
+    for (const r of history.data ?? []) {
+      if (!r.isActive || r.role === 'alerts') continue
+      byStrategy.set(r.strategyId, [...(byStrategy.get(r.strategyId) ?? []), r])
+    }
+    return byStrategy.size ? { runs: byStrategy, asOf: historyAsOf, legs } : null
+  }, [history.data, historyAsOf, legs])
 
   const setFilters = useCallback(
     (next: Partial<LibraryFilters>) => {
@@ -140,6 +153,7 @@ function Library({ items }: { items: StrategyListItem[] }) {
     facts,
     recent,
     recentDays: RUN_WINDOW_DAYS,
+    live,
     onStart: (s) => setLaunchId(s.id),
   }
 

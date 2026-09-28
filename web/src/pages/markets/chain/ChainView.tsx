@@ -22,7 +22,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent, ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { useOptionChainExpiries, useOptionChainPositions, useOptionChainTrend, useOptionChainView } from '../../../lib/queries'
+import { useOptionChainExpiries, useOptionChainPositions, useOptionChainTrend, useOptionChainView, useRepricedChainPositions } from '../../../lib/queries'
 import { useLivePrices } from '../../../lib/live'
 import { answerAsOf } from '../../../lib/asOf'
 import type { OptionChain, OptionChainHeader, OptionChainLeg, OptionChainPosition, OptionChainQuote, OptionChainStrike } from '../../../lib/types'
@@ -248,16 +248,24 @@ function heldTitle(positions: OptionChainPosition[]): string {
  * What is held on this underlying right now: every open leg of a running
  * strategy and every manual trade, marked at the live price. The same legs carry
  * a B/S marker in the chain below, so a position can be read against its strike.
+ *
+ * Each leg's LTP and P&L move with its pushed price between answers
+ * (liveMarks.chainPositionsWithTicks), and the total with them: it is the
+ * sum of the rows shown.
  */
 function PositionsPanel({
   underlying,
-  positions,
+  positions: answered,
+  answeredAtMs,
   runLink,
 }: {
   underlying: string
   positions: OptionChainPosition[]
+  /** When the positions were asked for (lib/asOf.ts). */
+  answeredAtMs: number
   runLink: (runId: number) => string
 }) {
+  const positions = useRepricedChainPositions(answered, answeredAtMs)
   const total = positions.reduce((sum, p) => sum + (p.unrealizedPnl ?? 0), 0)
   return (
     <Panel
@@ -834,7 +842,7 @@ export function ChainView({ underlying }: { underlying: string }) {
         <>
           <HeaderStrip chain={data} header={header} />
           <FreshnessLine header={header} receivedAt={view.dataUpdatedAt} fetchFailed={view.isError} />
-          {!asOfUtc && <PositionsPanel underlying={underlying} positions={positions} runLink={runLink} />}
+          {!asOfUtc && <PositionsPanel underlying={underlying} positions={positions} answeredAtMs={answerAsOf(positionsQuery)} runLink={runLink} />}
 
           {data.strikes.length === 0 ? (
             <EmptyState>
