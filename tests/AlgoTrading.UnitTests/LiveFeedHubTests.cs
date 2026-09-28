@@ -114,6 +114,66 @@ public class LiveFeedHubTests
         Assert.Equal(102m, tick.LastTradedPrice);
     }
 
+    // At the open the feed posts from six threads at once, and a batch holding
+    // 09:15:07 can reach the API after one holding 09:15:08. The quote table
+    // refuses the older price; the push used to send it anyway.
+
+    [Fact]
+    public void An_older_tick_that_arrives_second_in_the_same_flush_is_not_pushed()
+    {
+        var (subs, hubContext, dispatcher) = Desk();
+        Follow(subs, "c1", Nifty);
+
+        dispatcher.Enqueue(Tick(Nifty, 146.5m, At(9, 15, 8)));
+        dispatcher.Enqueue(Tick(Nifty, 142.0m, At(9, 15, 7)));
+        dispatcher.Flush();
+
+        Assert.Equal(146.5m, Assert.Single(Assert.Single(hubContext.TicksTo("c1"))).LastTradedPrice);
+    }
+
+    [Fact]
+    public void An_older_tick_that_arrives_after_the_newer_one_was_pushed_is_not_pushed()
+    {
+        var (subs, hubContext, dispatcher) = Desk();
+        Follow(subs, "c1", Nifty);
+
+        dispatcher.Enqueue(Tick(Nifty, 146.5m, At(9, 15, 8)));
+        Assert.Equal(1, dispatcher.Flush());
+        dispatcher.Enqueue(new[] { Tick(Nifty, 142.0m, At(9, 15, 7)) });
+        Assert.Equal(0, dispatcher.Flush());
+
+        // A tick at the same second, or later, is news again.
+        dispatcher.Enqueue(Tick(Nifty, 147.0m, At(9, 15, 8)));
+        dispatcher.Flush();
+        Assert.Equal(new decimal?[] { 146.5m, 147.0m }, hubContext.TicksTo("c1").Select(m => Assert.Single(m).LastTradedPrice));
+    }
+
+    [Fact]
+    public void Only_that_symbol_is_held_back_and_a_replay_or_an_unstamped_tick_never_is()
+    {
+        var (subs, hubContext, dispatcher) = Desk();
+        Follow(subs, "c1", Nifty, BankNifty, Sbin);
+        dispatcher.Enqueue(new[] { Tick(Nifty, 25_000m, At(15, 29, 59)), Tick(BankNifty, 57_000m, At(15, 29, 59)) });
+        dispatcher.Flush();
+        hubContext.Clear();
+
+        // The evening recap replays the session behind the stamps the live
+        // session already wrote; refusing it would freeze the price at the close.
+        var replay = Tick(Nifty, 24_900m, At(9, 20));
+        replay.IsReplay = true;
+        var unstamped = Tick(Sbin, 801m, null);
+        dispatcher.Enqueue(new[] { replay, Tick(BankNifty, 56_000m, At(9, 20)), unstamped });
+        dispatcher.Flush();
+
+        var pushed = Assert.Single(hubContext.TicksTo("c1")).ToDictionary(x => x.Symbol, x => x.LastTradedPrice);
+        Assert.Equal(new Dictionary<string, decimal?> { [Nifty] = 24_900m, [Sbin] = 801m }, pushed);
+
+        // The replay's stamp is the one now held, as the quote table holds it.
+        dispatcher.Enqueue(Tick(Nifty, 24_910m, At(9, 21)));
+        dispatcher.Flush();
+        Assert.Equal(24_910m, Assert.Single(hubContext.TicksTo("c1")[1]).LastTradedPrice);
+    }
+
     [Fact]
     public void Each_connection_gets_only_its_own_symbols_in_the_feeds_spelling()
     {
@@ -300,15 +360,21 @@ public class LiveFeedHubTests
         Assert.True(subs.Subscribe(connectionId, symbols).Accepted);
     }
 
-    private static UpsertLiveTickRequest Tick(string symbol, decimal ltp) => new()
+    private static UpsertLiveTickRequest Tick(string symbol, decimal ltp)
+        => Tick(symbol, ltp, new DateTime(2026, 9, 28, 4, 0, 0, DateTimeKind.Utc));
+
+    private static UpsertLiveTickRequest Tick(string symbol, decimal ltp, DateTime? exchangeUtc) => new()
     {
         Symbol = symbol,
         LastTradedPrice = ltp,
         BidPrice = ltp - 0.05m,
         AskPrice = ltp + 0.05m,
         Volume = 1_000,
-        ExchangeTimestampUtc = new DateTime(2026, 9, 28, 4, 0, 0, DateTimeKind.Utc)
+        ExchangeTimestampUtc = exchangeUtc
     };
+
+    /// <summary>IST wall time on 28 Sep 2026, in UTC.</summary>
+    private static DateTime At(int h, int m, int s = 0) => new DateTime(2026, 9, 28, h, m, s, DateTimeKind.Utc).AddMinutes(-330);
 
     private static LiveFeedHub Hub(LiveFeedSubscriptions subs, string connectionId, ClaimsPrincipal user, TradingDbContext? db = null)
     {
