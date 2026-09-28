@@ -379,7 +379,7 @@ function IndexSection() {
         }
       >
         {(groups.data ?? []).length > 0 && (
-          <span className="oc-seg" role="group" aria-label="Index">
+          <span className="oc-seg scroll-x" role="group" aria-label="Index">
             {groups.data!.map((g) => (
               <button key={g.name} type="button" aria-pressed={group === g.name} onClick={() => setGroup(g.name)}>
                 {indexLabel(g.displayName || g.name)}

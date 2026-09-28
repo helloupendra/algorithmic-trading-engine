@@ -22,8 +22,10 @@ import {
 import type { WallRow } from '../../../lib/factors'
 import { formatOi, movePercent } from '../../../lib/movers'
 import { formatAge } from '../../../lib/format'
+import { capturedExpiry, expiryLabel, istDate } from '../../../lib/optionChain'
 import { EmptyState, InlineError, Loading, Panel } from '../../../components/ui'
 import { Metric, ResearchNote } from '../factorParts'
+import './chain-views.css'
 
 function WallsTable({ title, rows, tone }: { title: string; rows: WallRow[]; tone: 'pos' | 'neg' }) {
   return (
@@ -64,6 +66,8 @@ export function LevelsView({ underlying }: { underlying: string }) {
   const header = chain?.header ?? null
   const spot = header?.spot?.lastPrice ?? chain?.spotPrice ?? null
   const move = expectedMove(chain)
+  // The expiry as the chain's toolbar prints it, days to go included, so it is not a tile of its own.
+  const expiry = chain && capturedExpiry(chain.expiryDate)
 
   if (view.isError && !chain) return <InlineError error={view.error} />
   if (!chain) return <Loading label={`Loading the ${underlying} chain…`} />
@@ -73,8 +77,9 @@ export function LevelsView({ underlying }: { underlying: string }) {
     <div className="mf-body lv">
       <p className="ocp-meta small muted">
         {header.mode === 'live' ? 'Live' : 'Last capture'} · {formatAge(header.liveOverlayUtc ?? header.snapshotCapturedUtc)}
-        {chain.expiryDate ? ` · expiry ${chain.expiryDate}` : ''}
+        {expiry ? ` · expiry ${expiryLabel(expiry, istDate(Date.now()))}` : ''}
       </p>
+      {/* Eight readings with one-line labels (chain-views.css sizes the row), so the values sit on one baseline. */}
       <div className="mf-metrics lv-metrics">
         <Metric
           label={underlying}
@@ -83,13 +88,13 @@ export function LevelsView({ underlying }: { underlying: string }) {
           tone={signTone(header.spot?.changePercent)}
         />
         <Metric
-          label="Resistance · biggest call OI"
+          label="Resistance · call OI"
           value={grouped(header.resistanceStrike)}
           sub={`${formatOi(header.resistanceOpenInterest)} · ${formatDistance(distanceTo(spot, header.resistanceStrike))}`}
           tone="neg"
         />
         <Metric
-          label="Support · biggest put OI"
+          label="Support · put OI"
           value={grouped(header.supportStrike)}
           sub={`${formatOi(header.supportOpenInterest)} · ${formatDistance(distanceTo(spot, header.supportStrike))}`}
           tone="pos"
@@ -101,7 +106,7 @@ export function LevelsView({ underlying }: { underlying: string }) {
           sub={header.putCallRatioOfChange != null ? `of today's change ${header.putCallRatioOfChange.toFixed(2)}` : 'above 1: more puts written'}
         />
         <Metric
-          label="Move the straddle prices"
+          label="Straddle move"
           value={move ? `±${grouped(move.points)}` : '—'}
           sub={move ? `${move.percent.toFixed(2)}% to expiry · ${grouped(move.strike)} straddle` : 'no ATM prices'}
         />
@@ -113,7 +118,6 @@ export function LevelsView({ underlying }: { underlying: string }) {
           // VIX up is fear: coloured the way a falling market is.
           tone={signTone(header.vix?.changePercent) === 'pos' ? 'neg' : signTone(header.vix?.changePercent) === 'neg' ? 'pos' : ''}
         />
-        <Metric label="Days to expiry" value={header.daysToExpiry ?? '—'} />
       </div>
 
       <div className="mf-grid">

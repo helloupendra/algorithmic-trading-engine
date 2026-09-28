@@ -1,13 +1,17 @@
-/* Market pulse — the first thing a trader sees. Two rows: the six big tiles
-   (indices left, commodities right), then the large-cap grid. Colour is used
-   for one thing only: up is green, down is red. */
+/* Market pulse — the first thing a trader sees. The big tiles (one group per
+   API group: indices, commodities, whatever else it sends) share a row, then
+   the large-cap chip grid. Nothing here counts the groups or the tiles: the
+   grids fit as many as the width allows. Colour is used for one thing only:
+   up is green, down is red. */
 
 .pulse { display: flex; flex-direction: column; gap: 14px; }
 .pulse--loading { opacity: 0.6; }
 
+/* Tile groups side by side, 420px each at the least; one under the other
+   when the window is too narrow for two. */
 .pulse__row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
   gap: 14px;
 }
 
@@ -31,10 +35,13 @@
   color: var(--text-3);
   opacity: 0.8;
 }
+.pulse__empty { margin: 0; font-size: 12px; color: var(--text-3); }
 
+/* As many tiles across as fit at 150px: three indices are three columns and
+   a fourth joins the row; a phone gets two across. */
 .pulse__big {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
   gap: 10px;
 }
 
@@ -53,6 +60,8 @@
   cursor: pointer;
   position: relative;
   transition: border-color 0.15s ease, transform 0.15s ease;
+  /* The day range reads the tile's own width (below), not the window's. */
+  container-type: inline-size;
 }
 .pulse-tile:hover { border-color: var(--brand-line); transform: translateY(-1px); }
 .pulse-tile:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
@@ -102,10 +111,13 @@
 .pulse-tile__change--neg { color: var(--neg); }
 .pulse__arrow { flex: none; }
 
-/* Day range: low ——●—— high */
+/* Day range: low ——●—— high on a wide tile; on a narrow one (six tiles across
+   a 1024 screen, two across a phone) the bar takes the row and the two prices
+   sit under its ends, so the track never collapses to nothing. */
 .pulse-range {
   display: grid;
   grid-template-columns: auto 1fr auto;
+  grid-template-areas: 'lo bar hi';
   align-items: center;
   gap: 8px;
   margin-top: 6px;
@@ -114,11 +126,22 @@
   font-variant-numeric: tabular-nums;
 }
 .pulse-range--empty { display: block; }
+.pulse-range__lo { grid-area: lo; }
+.pulse-range__hi { grid-area: hi; text-align: right; }
 .pulse-range__bar {
+  grid-area: bar;
   position: relative;
   height: 3px;
   border-radius: 2px;
   background: var(--line-strong);
+}
+@container (max-width: 200px) {
+  .pulse-range {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas: 'bar bar' 'lo hi';
+    gap: 3px 8px;
+  }
+  .pulse-range__bar { margin: 3px 0 2px; }
 }
 .pulse-range__dot {
   position: absolute;
@@ -140,9 +163,10 @@
 }
 
 /* --- large-cap grid ---------------------------------------------------- */
+/* As many chips across as fit at 220px: six on a desk screen, four at 1024. */
 .pulse__grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
   gap: 8px;
 }
 
@@ -192,14 +216,37 @@
 .pulse-chip.is-stale .pulse-chip__price { color: var(--text-2); }
 .pulse-tile.is-stale .pulse-tile__age { color: var(--warn); }
 
-@media (max-width: 1100px) {
-  .pulse__grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-}
-@media (max-width: 860px) {
-  .pulse__row { grid-template-columns: 1fr; }
-  .pulse__grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
+/* A phone: two tiles and three chips across, a size down, so the pulse is a
+   screen and a half rather than four. */
 @media (max-width: 520px) {
-  .pulse__big { grid-template-columns: 1fr; }
-  .pulse__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pulse-tile { padding: 9px 10px 8px; }
+  .pulse-tile__price { font-size: 18px; }
+  .pulse-tile__change { font-size: 12px; }
+  .pulse__grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .pulse-chip { padding: 7px 8px; }
+  .pulse-chip__price { font-size: 13px; }
+  .pulse-chip__pct { font-size: 11px; }
+}
+
+/* --- the Watchlist page (pages/trader/WatchlistPage.tsx) ----------------
+   The pulse and the trader's own list are one page, and its few rules live
+   with the tiles. On a phone the list the page is named for comes first,
+   and its table keeps Symbol, LTP, Change, Age and Remove: the day's open,
+   high and low are on the pulse tiles already. */
+@media (max-width: 760px) {
+  .page.wl { display: flex; flex-direction: column; }
+  .wl > .page__header { order: -2; }
+  .wl > .wl__own { order: -1; }
+  .wl-ohl { display: none; }
+}
+
+/* --- Markets → Commodity (pages/data/CommodityPage.tsx) -------------------
+   The same tiles as the pulse's commodities, one per contract, over the
+   contracts table. On a phone the table keeps the price beside the name; the
+   contract code and expiry are on the desk's screen only, and on the tile. */
+.mcx-hint { font-size: 12px; }
+.mcx-group { font-size: 11.5px; }
+.mcx-note { margin: 10px 0 0; font-size: 12px; }
+@media (max-width: 760px) {
+  .mcx-desk { display: none; }
 }

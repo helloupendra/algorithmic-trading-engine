@@ -99,8 +99,11 @@
 
 /* --- status items --------------------------------------------------------- */
 .shell__status {
-  /* The one part of the bar that gives way: on a narrow screen the health
-     label shortens to fit, and nothing is pushed off the edge. */
+  /* The one part of the bar that gives way. What goes first is decided by
+     the breakpoints at the end of this file (words, in order of use), so
+     that the health label is only ever ellipsised as a last resort, on a
+     phone narrower than any in use; clipping the bar instead would take
+     the avatar or the kill switch off it, which is worse than "API u…". */
   flex: 0 1 auto;
   min-width: 0;
   display: flex;
@@ -212,7 +215,9 @@ a.st--neg:hover { color: var(--neg); filter: brightness(1.15); }
 .pop {
   position: fixed;
   top: calc(var(--topbar-h) + 6px);
-  right: max(12px, env(safe-area-inset-right));
+  /* The bar's own padding, so the menu's edge meets the avatar's; the
+     health popover overrides `left` to sit under the words that opened it. */
+  right: max(16px, env(safe-area-inset-right));
   z-index: 60;
   width: min(380px, calc(100vw - 24px));
   padding: 6px 0;
@@ -256,7 +261,10 @@ a.st--neg:hover { color: var(--neg); filter: brightness(1.15); }
 a.pop__row:hover,
 a.pop__row:focus-visible,
 button.pop__row:hover,
-button.pop__row:focus-visible { background: var(--surface2); outline: none; }
+button.pop__row:focus-visible { background: var(--surface2); }
+/* The ring sits inside the row: the hover fill alone is 1.1:1 on paper. */
+a.pop__row:focus-visible,
+button.pop__row:focus-visible { outline-offset: -2px; }
 .pop__row .st__dot { grid-row: 1; }
 .pop__name { font-weight: 550; }
 .pop__name small { font-weight: 400; color: var(--text-3); font-size: var(--fs-s); margin-left: 4px; }
@@ -274,7 +282,6 @@ button.pop__row:focus-visible { background: var(--surface2); outline: none; }
 .pop__who { padding: 4px 12px 8px; border-bottom: 1px solid var(--line-soft); margin-bottom: 4px; }
 .pop__who b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
 .pop__who span { font-size: var(--fs-xs); letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-3); }
-.pop__who span[data-role='Admin'] { color: var(--warn); }
 .pop__item {
   display: flex;
   align-items: center;
@@ -291,7 +298,8 @@ button.pop__row:focus-visible { background: var(--surface2); outline: none; }
 }
 .pop__item svg { width: 14px; height: 14px; }
 .pop__item:hover,
-.pop__item:focus-visible { background: var(--surface2); color: var(--text); outline: none; }
+.pop__item:focus-visible { background: var(--surface2); color: var(--text); }
+.pop__item:focus-visible { outline-offset: -2px; }
 
 /* The theme: three words in one segmented control, the way the Desk's phase switch reads. */
 .pop__theme { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 12px 8px; margin-top: 2px; border-top: 1px solid var(--line-soft); }
@@ -314,14 +322,23 @@ button.pop__row:focus-visible { background: var(--surface2); outline: none; }
 .pop__seg button:focus-visible { outline-offset: -2px; }
 
 /* --- workspace tab strip ---------------------------------------------------- */
+/* Sticky under the bar it hangs from: a long page keeps its sub-navigation.
+   Under the bar's stacking context, so the popovers (fixed, inside the bar)
+   still paint over it. The Desk's strip is the exception: it carries the
+   page's own switches and wraps to two rows on a phone. */
 .shell__tabs {
+  position: sticky;
+  top: var(--topbar-h);
+  z-index: 29;
   height: var(--tabbar-h);
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 0 max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left));
+  background: var(--bg0);
   border-bottom: 1px solid var(--line-soft);
 }
+.shell__tabs--desk { position: static; }
 .shell__tabs-title { font-size: 13px; font-weight: 600; white-space: nowrap; }
 .shell__tabs-meta { color: var(--text-3); font-size: var(--fs-s); white-space: nowrap; }
 /* Where a page puts its own switches (the Desk's phase and account). */
@@ -354,8 +371,9 @@ button.pop__row:focus-visible { background: var(--surface2); outline: none; }
 .shell__tab:hover { color: var(--text); }
 .shell__tab[aria-current='page'] { color: var(--text); background: var(--surface2); }
 .shell__tab:focus-visible { outline-offset: -2px; }
-/* Where one tab of the final layout ends and the next begins: the pages
-   between two rules are the ones that merge into one tab. */
+/* Brackets a tab that holds more than one page (Backtests: overview, new,
+   runs), so the pages between two rules read as one tab; never drawn
+   between two single-page tabs, where it would only be rhythm. */
 .shell__tabsep {
   flex: none;
   width: 1px;
@@ -462,9 +480,12 @@ button.pop__row:focus-visible { background: var(--surface2); outline: none; }
 
 /* --- narrower screens ------------------------------------------------------------ */
 /* What gives way as the bar narrows, least useful first, so the health label
-   (the item that says what needs a hand) keeps its words longest: the search
-   field's words, the clock, the kill switch's words, then the brand's word
-   and the long market label. */
+   (the item that says what needs a hand) keeps its words longest, and in
+   full: the search field's words; the clock, the kill switch's words and
+   the health's long form ("Backend up 6m" → "API up"); the brand's word and
+   the long market and live labels; on a phone the market's word, and on a
+   narrow phone the live item's, leaving their dots and titles. Every state
+   stays written in a title or aria-label at every width. */
 @media (max-width: 1320px) {
   .shell__search { width: auto; }
   .shell__search span { display: none; }
@@ -473,13 +494,15 @@ button.pop__row:focus-visible { background: var(--surface2); outline: none; }
 
 @media (max-width: 1100px) {
   .st--clock { display: none; }
+  .st__long { display: none; }
+  .st__short { display: inline; }
+  .st--health .st__wide { display: none; }
+  .st--health .st__narrow { display: inline; }
 }
 
 @media (max-width: 980px) {
   .shell__top { gap: 12px; }
   .shell__status { gap: 11px; }
-  .st__long { display: none; }
-  .st__short { display: inline; }
 }
 
 @media (max-width: 900px) {
@@ -495,18 +518,66 @@ button.pop__row:focus-visible { background: var(--surface2); outline: none; }
 @media (max-width: 760px) {
   .shell__top { gap: 9px; padding: 0 max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left)); }
   .shell__ws { display: none; }
-  .shell__search { width: 28px; height: 28px; justify-content: center; padding: 0; }
+  /* overflow: visible, or the hit frame below is clipped (the words it hid are gone at this width). */
+  .shell__search { width: 28px; height: 28px; justify-content: center; padding: 0; overflow: visible; }
   .shell__search kbd { display: none; }
   .shell__status { gap: 9px; }
+  .st--market .st__label { display: none; }
 
   .shell__avatar { width: 28px; height: 28px; }
+  /* A finger's width between the kill switch and the account menu. */
+  .shell__user { margin-left: 3px; }
+
+  /* Every control in the bar gets a hand-sized target without a bigger
+     drawing: the button's own box where nothing is drawn (the health
+     words, the kill switch), an invisible frame around the drawn box
+     elsewhere (the incidents ring, the halted pill, the search, the avatar). */
+  .st--health,
+  .st--ks { min-height: 36px; }
+  .st--ks { min-width: 36px; justify-content: center; }
+  .st--badge,
+  .st--halted,
+  .shell__search,
+  .shell__avatar { position: relative; }
+  .st--badge::after,
+  .st--halted::after,
+  .shell__search::after,
+  .shell__avatar::after { content: ''; position: absolute; inset: -8px -4px; }
+  /* The 20px ring and pill reach 40px this way; the 28px boxes already do. */
+  .st--badge::after,
+  .st--halted::after { inset: -10px -4px; }
+
+  .pop { right: max(12px, env(safe-area-inset-right)); }
 
   .shell__tabs { padding: 0 max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left)); gap: 10px; }
-  /* The Desk's switches wrap under its title rather than off the edge. */
-  .shell__tabs--desk { height: auto; min-height: var(--tabbar-h); flex-wrap: wrap; padding-top: 7px; padding-bottom: 7px; row-gap: 7px; }
-  .shell__tabs--desk .shell__tabs-tools { flex-basis: 100%; }
-  /* The strip runs off the edge on a phone; the fade says there is more. */
-  .shell__tablist { mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); padding-right: 20px; }
+  /* The Desk's strip: its title over the date on the left, the page's
+     switches flowing on the right, so they take two rows, not three. */
+  .shell__tabs--desk {
+    height: auto;
+    min-height: var(--tabbar-h);
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    grid-auto-rows: minmax(24px, auto);
+    column-gap: 12px;
+    row-gap: 4px;
+    align-items: center;
+    padding-top: 7px;
+    padding-bottom: 7px;
+  }
+  .shell__tabs--desk .shell__tabs-title { grid-column: 1; grid-row: 1; }
+  .shell__tabs--desk .shell__tabs-meta { grid-column: 1; grid-row: 2; }
+  .shell__tabs--desk .shell__tabs-tools { grid-column: 2; grid-row: 1 / 3; }
+
+  /* The strip runs off the edge on a phone. lib/scrollCues fades the edge
+     that hides more (the strip is a .scroll-x), and the current tab is
+     scrolled to the middle, so a cut word is always under a fade. The tab
+     itself fills the strip's height as a target, with its box drawn on a
+     pseudo-element at the desktop size. */
+  .shell__tablist { align-self: stretch; padding-right: 20px; }
+  .shell__tab { align-self: stretch; height: auto; position: relative; z-index: 0; }
+  .shell__tab[aria-current='page'] { background: none; }
+  .shell__tab::before { content: ''; position: absolute; inset: 6px 0; z-index: -1; border-radius: var(--radius-sm); }
+  .shell__tab[aria-current='page']::before { background: var(--surface2); }
 
   .shell__main {
     padding: 12px max(12px, env(safe-area-inset-right)) calc(var(--bottombar-h) + 24px + env(safe-area-inset-bottom))
@@ -538,11 +609,22 @@ button.pop__row:focus-visible { background: var(--surface2); outline: none; }
     font-size: 10px;
   }
   .shell__bottom .shell__ws-link svg { width: 18px; height: 18px; }
-  .shell__bottom .shell__ws-link[aria-current] { color: var(--text); }
+  .shell__bottom .shell__ws-link[aria-current] { color: var(--text); font-weight: 600; }
   .shell__bottom .shell__ws-link[aria-current] svg { color: var(--brand-hi); }
 
-  .palette { padding: 8px; }
-  .palette__card { max-height: calc(100dvh - 16px); }
+  /* Under the notch and the home bar (index.html sets viewport-fit=cover). */
+  .palette {
+    padding: max(8px, env(safe-area-inset-top, 0px)) max(8px, env(safe-area-inset-right, 0px)) 8px max(8px, env(safe-area-inset-left, 0px));
+  }
+  .palette__card { max-height: calc(100dvh - 8px - max(8px, env(safe-area-inset-top, 0px))); }
+  /* 16px: under that iOS zooms the page when the field takes focus, and the
+     palette is the phone's main way around the console. */
+  .palette__input { font-size: 16px; }
   .palette__foot { display: none; }
   .palette__option { padding: 8px 12px; }
+}
+
+/* The narrowest phones: the live item keeps its dot and its title only. */
+@media (max-width: 400px) {
+  .st--conn .st__label { display: none; }
 }

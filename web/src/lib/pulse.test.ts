@@ -256,6 +256,16 @@ describe('connectorsSummary', () => {
     const notSetUp = provider('dhan', 'Dhan', { isConfigured: false, session: { isConnected: false, connectedUtc: null, ageSeconds: null, needsReconnect: true } })
     expect(connectorsSummary([fyersP, notSetUp], [], true, at)!.pulse).toMatchObject({ label: 'Connectors 1/1 ready', tone: 'pos' })
   })
+
+  it('gives each headline a short form for a narrow bar', () => {
+    const expired = provider('dhan', 'Dhan', { session: { isConnected: true, connectedUtc: '2026-09-14T02:15:00Z', ageSeconds: 90000, needsReconnect: true, expiresUtc: '2026-09-15T02:15:00Z' } })
+    const fyersOut = provider('fyers', 'FYERS', { kind: 'Both', isBroker: true, session: { isConnected: false, connectedUtc: null, ageSeconds: null, needsReconnect: true } })
+    expect(connectorsSummary([fyersP, expired], [], true, at)!.pulse.short).toBe('Dhan sign-in')
+    expect(connectorsSummary([fyersOut, expired], [], true, at)!.pulse.short).toBe('2 sign-ins')
+    expect(connectorsSummary([fyersOut, dhanP], [feed('fyers', false), feed('dhan', true)], true, at)!.pulse.short).toBe('Backup sign-in')
+    expect(connectorsSummary([fyersP, dhanP], [feed('fyers', true), feed('dhan', true)], true, at)!.pulse.short).toBe('2 feeds')
+    expect(connectorsSummary([fyersP, dhanP], [], true, at)!.pulse.short).toBe('Ready')
+  })
 })
 
 describe('backendPulse', () => {
@@ -326,5 +336,27 @@ describe('short market labels for a phone', () => {
     expect(marketPulses(nseClosed, mcxOpen, [])[0].short).toBeUndefined()
     expect(marketPulses(nseClosed, mcxClosed, [])[0].short).toBe('Closed')
     expect(marketPulses(nseOpen, mcxOpen, ['TrueData']).map((p) => p.short)).toEqual(['Open', 'Recap'])
+  })
+})
+
+describe('short labels for the health item', () => {
+  // The top bar's health item shows `short` from 1100px down, so every pulse
+  // that can head it needs one that fits beside the market and the incidents.
+  const status = { uptimeSeconds: 6 * 60, startedUtc: '2026-09-28T01:00:00Z', environment: null }
+
+  it('gives every backend state a word or two', () => {
+    expect(backendPulse({ isDown: true, restartedAt: null })?.short).toBe('API down')
+    expect(backendPulse({ isDown: false, restartedAt: '2026-09-28T06:10:00Z', status })?.short).toBe('Restarted')
+    expect(backendPulse({ isDown: false, restartedAt: null, status })).toMatchObject({ label: 'Backend up 6m', short: 'API up' })
+  })
+
+  it('shortens the calendar warning and the feed alarms, keeping the vendor\'s name', () => {
+    const missing = { ...nseClosed, calendarWarning: 'No NSE holiday calendar is loaded for 2027.' }
+    expect(calendarPulse(missing)?.short).toBe('No calendar')
+    expect(feedPulses([fyers], [], false, NOW).map((p) => [p.label, p.short])).toEqual([['FYERS no heartbeat', 'FYERS silent']])
+    expect(feedPulses([fyers], [beat('python-live-ingestor', 40, { status: 'Refused' })], false, NOW)[0]).toMatchObject({ label: 'FYERS refused', short: 'FYERS down', tone: 'neg' })
+    expect(feedPulses([truedataOff], [], true, NOW)[0]).toMatchObject({ label: 'No feed running', short: 'No feed' })
+    // A feed that is simply on keeps its name: it was short already.
+    expect(feedPulses([fyers], [beat('python-live-ingestor', 3)], false, NOW)[0].short).toBeUndefined()
   })
 })

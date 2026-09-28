@@ -53,6 +53,8 @@ import {
 import './chart.css'
 
 const DEFAULT_SYMBOL = 'NSE:NIFTY50-INDEX'
+/** A price pushed within this long is "live"; the same rule as the pulse's stale mark. */
+const LIVE_WITHIN_MS = 5 * 60 * 1000
 
 export function ChartPage() {
   const coverage = useDataCoverage()
@@ -144,6 +146,9 @@ export function ChartPage() {
     })
   }, [tick, candles, barsAnsweredAt, structureOn, symbol, resolution, mcxCloseUtc])
   const shown = forming && forming.base === candles ? forming.candles : candles
+  // "live" only while prices are arriving. hasLive says bars were once
+  // recorded for the symbol, which decides what to fetch, not what to claim.
+  const isLive = !!tick && Date.now() - tick.receivedAtMs < LIVE_WITHIN_MS
 
   const summary = useMemo(() => {
     if (!shown.length) return null
@@ -198,6 +203,8 @@ export function ChartPage() {
             placeholder="Search a symbol…"
           />
         </div>
+        {/* One row of switches; on a phone it scrolls sideways rather than wrapping to three rows. */}
+        <div className="charts__segs scroll-x">
         <div className="seg" role="group" aria-label="Resolution">
           {RESOLUTIONS.map((r) => (
             <button
@@ -237,12 +244,13 @@ export function ChartPage() {
             SMC
           </button>
         </div>
+        </div>
       </div>
 
       {structureOn && <StructureControls value={structure} onChange={setStructure} />}
 
       {picks.length > 0 && (
-        <div className="charts__picks" aria-label="Quick picks">
+        <div className="charts__picks scroll-x" aria-label="Quick picks">
           {picks.map((p) => (
             <button
               key={p.symbol}
@@ -261,7 +269,12 @@ export function ChartPage() {
         <div className="charts__title">
           <span className="charts__name">{pulseItem?.name ?? shortSymbol(symbol)}</span>
           <span className="charts__sym mono">{symbol}</span>
-          {hasLive && <span className="charts__live">● live</span>}
+          {isLive && (
+            <span className="pill pill--live">
+              <span className="pill__dot" />
+              live
+            </span>
+          )}
         </div>
         <div className="charts__quote">
           <span className="charts__price">{lastPrice != null ? formatPrice(lastPrice) : '—'}</span>
@@ -279,8 +292,15 @@ export function ChartPage() {
       {structureOn && <StructureLadder data={smcData} higher={higher} />}
 
       <div className="charts__stage">
-        {error && <InlineError error={error} />}
-        {nothingHere ? (
+        {/* One state at a time: a failed request is not an empty range. A
+            failure beside candles that did arrive (the live bars, say) is
+            noted over the chart rather than in place of it. */}
+        {error && candles.length > 0 && <InlineError error={error} />}
+        {error && candles.length === 0 ? (
+          <div className="charts__empty">
+            <InlineError error={error} />
+          </div>
+        ) : nothingHere ? (
           <div className="charts__empty">
             <b>No candles for {shortSymbol(symbol)} on this installation yet.</b>
             <span>Add it to your watchlist and it will start recording on the next session; a backfill brings in history.</span>
@@ -324,6 +344,7 @@ export function ChartPage() {
       {coverage.data && (
         <details className="charts__data">
           <summary>Data on this symbol</summary>
+          <div className="tablewrap">
           <table className="table charts__data-table">
             <tbody>
               {RESOLUTIONS.flatMap((r) =>
@@ -340,6 +361,7 @@ export function ChartPage() {
               )}
             </tbody>
           </table>
+          </div>
         </details>
       )}
     </div>
