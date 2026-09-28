@@ -36,6 +36,16 @@ class GreeksEnricher:
     def __init__(self):
         self.latest_spots: dict[str, float] = {}
 
+    @staticmethod
+    def unavailable_reason() -> str | None:
+        """
+        Why no option tick can be priced in this process, or None when they can.
+        Reported in the feed's heartbeat: a feed whose pricing library is
+        missing otherwise looks exactly like one whose options have no spot yet.
+        """
+        from core.greeks_calculator import unavailable_reason
+        return unavailable_reason()
+
     def enrich(self, tick: dict) -> dict:
         symbol = tick.get("symbol")
         ltp = tick.get("lastTradedPrice")
