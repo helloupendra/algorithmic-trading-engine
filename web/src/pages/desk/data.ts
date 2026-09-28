@@ -12,12 +12,16 @@ import { dayOf, deskDay, deskLegs, figureTone, istDay, planView, shiftDay } from
 import {
   RUN_HISTORY_PAGE,
   deskLegsPoll,
+  useCheckupLatest,
   useDeskPlan as useDeskPlanQuery,
+  useFeeds,
   useForecasts,
   useLiveRunHistory,
   useMarketSession,
   useOpenPositions,
+  useProviders,
 } from '../../lib/queries'
+import { checkupNow } from '../../lib/checkupNow'
 import { useLiveConnection, useLivePrices } from '../../lib/live'
 import { answerAsOf } from '../../lib/asOf'
 import { withLegMarks, withLiveMarks } from '../../lib/liveMarks'
@@ -197,4 +201,37 @@ export function useDeskPlan(view: DeskView): {
 /** The forecasts of the Desk's day (analysis grant). */
 export function useDayForecasts(view: DeskView) {
   return useForecasts({ from: view.day, to: view.day })
+}
+
+/**
+ * Sentinel's latest checkup with what the Desk can read now laid over it
+ * (lib/checkupNow.ts): the plan for every account, not the Desk's scope, as
+ * Sentinel checks it; the connectors; the feeds. Every read goes through the
+ * key the rest of the Desk already asks, so this adds no request. `waiting`
+ * polls the checkup fast while an asked-for one is on its way.
+ */
+export function useCheckupNow(view: DeskView, waiting = false) {
+  const latest = useCheckupLatest(waiting)
+  const strategies = allows(view.access, 'strategies')
+  const plan = useDeskPlanQuery(view.isAdmin && strategies)
+  const runs = useLiveRunHistory({ fromDate: view.today, toDate: view.today, take: RUN_HISTORY_PAGE }, strategies)
+  const providers = useProviders()
+  const feeds = useFeeds()
+  const c = latest.data?.latest ?? null
+  const now = useMemo(
+    () =>
+      c
+        ? checkupNow(c, {
+            nowMs: view.nowMs,
+            plan: { data: plan.data, atMs: plan.dataUpdatedAt },
+            runs: runs.data,
+            providers: { data: providers.data, atMs: providers.dataUpdatedAt },
+            feeds: { data: feeds.data, atMs: feeds.dataUpdatedAt },
+            nse: view.nse,
+            mcx: view.mcx,
+          })
+        : null,
+    [c, view.nowMs, plan.data, plan.dataUpdatedAt, runs.data, providers.data, providers.dataUpdatedAt, feeds.data, feeds.dataUpdatedAt, view.nse, view.mcx],
+  )
+  return { latest, checkup: c, now }
 }
