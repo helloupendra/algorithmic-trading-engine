@@ -219,6 +219,17 @@ public static class DependencyInjection
         });
         services.AddHostedService<TickRetentionService>();
 
+        // The live runs' P&L minutes (28 Sep) had no ceiling either: a row per
+        // run per minute, for good. Only old days' intraday curves go; a run's
+        // figures are always worked out from its positions and fills.
+        services.AddSingleton(sp =>
+        {
+            var options = new RunPnlRetentionOptions();
+            sp.GetService<IConfiguration>()?.GetSection(RunPnlRetentionOptions.SectionName).Bind(options);
+            return options;
+        });
+        services.AddHostedService<RunPnlRetentionService>();
+
         services.AddScoped<IEquityGroupService, EquityGroupService>();
 
         services.AddScoped<ReferenceDataSeeder>();
