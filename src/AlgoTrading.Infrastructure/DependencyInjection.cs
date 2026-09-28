@@ -44,8 +44,11 @@ public static class DependencyInjection
         services.Configure<RiskManagementSettings>(
             configuration.GetSection("RiskManagement"));
 
+        // Capped pool (TradingDbConnectionString): one API must never be able
+        // to take every Postgres connection, as two overlapping ones did on 28 Sep.
+        var tradingDb = TradingDbConnectionString.WithPoolCap(configuration.GetConnectionString("TradingDb"));
         services.AddDbContext<TradingDbContext>(options =>
-            options.UseNpgsql(configuration.GetConnectionString("TradingDb")));
+            options.UseNpgsql(tradingDb));
 
         services.AddScoped<IRiskManagementService, RiskManagementService>();
         services.AddSingleton<IRiskLimitsStore, RiskLimitsStore>();
