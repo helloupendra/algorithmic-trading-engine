@@ -21,14 +21,18 @@
       (function () {
         try {
           var path = location.pathname
-          var isPublic = path === '/' || path === '/login' || path.indexOf('/invite/') === 0
+          // /login bounces a signed-in visitor into the console, so with a
+          // session it is painted as the console, not as the public page.
+          var signedIn = !!localStorage.getItem('algotrading.accessToken')
+          var isPublic = path === '/' || path.indexOf('/invite/') === 0 || (path === '/login' && !signedIn)
           var pref = localStorage.getItem('openfno.theme')
           var light = !isPublic && (pref === 'light' || (pref === 'system' && matchMedia('(prefers-color-scheme: light)').matches))
           var theme = light ? 'light' : 'dark'
           document.documentElement.setAttribute('data-theme', theme)
+          if (isPublic) document.documentElement.setAttribute('data-public', '')
           document.documentElement.style.colorScheme = theme
           var meta = document.querySelector('meta[name="theme-color"]')
-          if (meta) meta.setAttribute('content', light ? '#f4f6f9' : '#030406')
+          if (meta) meta.setAttribute('content', light ? '#f4f6f9' : isPublic ? '#030406' : '#070b11')
         } catch (e) {}
       })()
     </script>
@@ -47,11 +51,12 @@
          older iPhones — and Apple's status bar style below is documented as
          having no effect without it. -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <!-- "black", not "black-translucent": translucent hands the status bar's
+    <!-- "default", not "black-translucent": translucent hands the status bar's
          height to the page, and the console's topbar has no top inset to give
-         it, so the clock would sit on the health chips. Black is within a few
-         points of --bg0 anyway. -->
-    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+         it, so the clock would sit on the health chips. Default follows the
+         theme-color the script above keeps in step, so a light console does not
+         get a black strip. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <!-- Without this iOS offers the <title> below as the home-screen name, and
          the SEO title is a sentence. -->
     <meta name="apple-mobile-web-app-title" content="OpenFNO" />
@@ -92,7 +97,9 @@
          app shows while it loads (components/CandleLoader). React replaces the
          contents of #root on mount, so this needs no teardown. -->
     <style>
-      #boot { position: fixed; inset: 0; display: grid; place-items: center; background: #030406; }
+      /* The console's ground (--bg0); the public pages' black on their routes. */
+      #boot { position: fixed; inset: 0; display: grid; place-items: center; background: #070b11; }
+      :root[data-public] #boot { background: #030406; }
       #boot .b { display: flex; align-items: flex-end; gap: 7px; height: 64px; }
       #boot .b span { display: block; width: 10px; border-radius: 2px; transform-origin: bottom; animation: bootc 1.9s cubic-bezier(.45,0,.3,1) infinite; }
       #boot .b span:nth-child(odd) { background: #25d69a; }
@@ -106,13 +113,27 @@
       #boot .b span:nth-child(7) { height: 50%; animation-delay: .72s }
       #boot .b span:nth-child(8) { height: 78%; animation-delay: .84s }
       #boot .b span:nth-child(9) { height: 44%; animation-delay: .96s }
-      #boot p { margin: 22px 0 0; font: 500 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .18em; text-transform: uppercase; color: rgba(233,238,250,.42); text-align: center; }
+      /* The label waits 400ms so a fast load never flashes it. */
+      #boot p { margin: 22px 0 0; font: 500 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .18em; text-transform: uppercase; color: rgba(233,238,250,.42); text-align: center; animation: bootp .01s .4s both; }
+      @keyframes bootp { from { opacity: 0 } to { opacity: 1 } }
       @keyframes bootc { 0% { transform: scaleY(.25); opacity: .35 } 35% { transform: scaleY(1); opacity: 1 } 70% { transform: scaleY(.62); opacity: .85 } 100% { transform: scaleY(.25); opacity: .35 } }
       @media (prefers-reduced-motion: reduce) { #boot .b span { animation: none } }
       :root[data-theme='light'] #boot { background: #f4f6f9; }
       :root[data-theme='light'] #boot p { color: rgba(17,24,39,.5); }
+      :root[data-theme='light'] #boot .b span:nth-child(odd) { background: #147951; }
+      :root[data-theme='light'] #boot .b span:nth-child(even) { background: #c13833; }
     </style>
     <div id="root"><div id="boot"><div><div class="b"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><p>Loading the console</p></div></div></div>
+    <!-- A visitor to the homepage, the sign-in or an invitation is not loading
+         the console; the same public paths as the theme script above. -->
+    <script>
+      (function () {
+        try {
+          var path = location.pathname
+          if (path === '/' || path === '/login' || path.indexOf('/invite/') === 0) document.querySelector('#boot p').textContent = 'OpenFNO'
+        } catch (e) {}
+      })()
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

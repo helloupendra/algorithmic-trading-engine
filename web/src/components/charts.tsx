@@ -6,11 +6,11 @@
  * app theme without duplicating hex values here.
  */
 
+import { chartOptions } from '../lib/chartTheme'
 import { useTheme } from '../lib/theme'
 import { useEffect, useRef } from 'react'
 import {
   CandlestickSeries,
-  ColorType,
   createChart,
   HistogramSeries,
   type IChartApi,
@@ -22,24 +22,6 @@ function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
 }
 
-function baseOptions(container: HTMLElement) {
-  return {
-    width: container.clientWidth,
-    height: container.clientHeight,
-    layout: {
-      background: { type: ColorType.Solid, color: 'transparent' },
-      textColor: cssVar('--fg-muted'),
-      fontSize: 11,
-    },
-    grid: {
-      vertLines: { color: cssVar('--border-soft') },
-      horzLines: { color: cssVar('--border-soft') },
-    },
-    rightPriceScale: { borderColor: cssVar('--border') },
-    timeScale: { borderColor: cssVar('--border'), timeVisible: true, secondsVisible: false },
-    crosshair: { mode: 0 },
-  }
-}
 
 function useResize(chartRef: React.RefObject<IChartApi | null>, ref: React.RefObject<HTMLDivElement | null>) {
   useEffect(() => {
@@ -115,7 +97,7 @@ export function PriceChart({ candles, fitKey = '' }: { candles: readonly PriceCa
     const el = ref.current
     if (!el) return
 
-    const chart = createChart(el, baseOptions(el))
+    const chart = createChart(el, chartOptions(el))
     chartRef.current = chart
 
     const up = cssVar('--success')

@@ -7,11 +7,11 @@
  * the viewport). Only an explicit symbol/resolution change refits the view.
  */
 
+import { chartOptions } from '../lib/chartTheme'
 import { useTheme } from '../lib/theme'
 import { useEffect, useMemo, useRef } from 'react'
 import {
   CandlestickSeries,
-  ColorType,
   createChart,
   HistogramSeries,
   type IChartApi,
@@ -63,23 +63,7 @@ export function CandleChart({
     const el = containerRef.current
     if (!el) return
 
-    const chart = createChart(el, {
-      width: el.clientWidth,
-      height: el.clientHeight,
-      layout: {
-        background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: cssVar('--text-2'),
-        fontSize: 11,
-        attributionLogo: false,
-      },
-      grid: {
-        vertLines: { color: cssVar('--line-soft') },
-        horzLines: { color: cssVar('--line-soft') },
-      },
-      rightPriceScale: { borderColor: cssVar('--line') },
-      timeScale: { borderColor: cssVar('--line'), timeVisible: true, secondsVisible: false },
-      crosshair: { mode: 0 },
-    })
+    const chart = createChart(el, chartOptions(el))
 
     const price = chart.addSeries(CandlestickSeries, {
       upColor: cssVar('--pos'),
