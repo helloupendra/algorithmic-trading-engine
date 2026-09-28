@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { LogLevel } from '@microsoft/signalr'
 
 import {
   LiveFeed,
   allEventedKeys,
   deskEventKeys,
   foldsIntoQuotes,
+  hubLogger,
   hubUrl,
   invalidationBatcher,
   isMissingMethod,
@@ -707,6 +709,24 @@ describe('livePoll', () => {
     expect(livePoll('reconnecting', 60_000, 5_000)).toBe(5_000)
     expect(livePoll('disconnected', 60_000, 5_000)).toBe(5_000)
     expect(livePoll('connected', false, 1_000)).toBe(false)
+  })
+})
+
+describe('hubLogger', () => {
+  it("keeps SignalR's warnings and errors, but not the failed start a deliberate stop reports", () => {
+    const sink = { error: vi.fn(), warn: vi.fn() }
+    const log = hubLogger(sink)
+    // React StrictMode in development: the shell's effect runs twice and the first connection is stopped mid-negotiation.
+    log.log(LogLevel.Error, 'Failed to start the connection: Error: The connection was stopped during negotiation.')
+    log.log(LogLevel.Error, 'Failed to start the HttpConnection before stop() was called.')
+    log.log(LogLevel.Information, 'WebSocket connected to wss://example.test/hubs/livefeed?v=2')
+    expect(sink.error).not.toHaveBeenCalled()
+    expect(sink.warn).not.toHaveBeenCalled()
+
+    log.log(LogLevel.Error, 'Failed to start the connection: Error: Failed to complete negotiation with the server: 401')
+    log.log(LogLevel.Warning, "No client method with the name 'deskevent' found.")
+    expect(sink.error).toHaveBeenCalledWith(expect.stringContaining('Error: Failed to start the connection: Error: Failed to complete negotiation'))
+    expect(sink.warn).toHaveBeenCalledWith(expect.stringContaining("Warning: No client method with the name 'deskevent'"))
   })
 })
 
