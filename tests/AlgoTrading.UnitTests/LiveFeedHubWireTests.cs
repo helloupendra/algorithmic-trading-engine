@@ -143,6 +143,34 @@ public class LiveFeedHubWireTests
         await Assert.ThrowsAnyAsync<Exception>(() => host.ConnectAsync(userId: null));
     }
 
+    // TEMPORARY with the hub's legacy branch (28 Sep 2026): a console built
+    // before 28 Sep connects without ?v=2 and never subscribes.
+
+    [Fact]
+    public async Task A_console_from_before_28_Sep_still_gets_the_whole_feed_where_its_account_may()
+    {
+        await using var host = await WireHost.StartAsync();
+        await using var oldAdmin = await host.ConnectAsync(WireHost.AdminId, legacy: true);
+        await using var oldGranted = await host.ConnectAsync(WireHost.GrantedTrader, legacy: true);
+        await using var oldPlain = await host.ConnectAsync(WireHost.PlainTrader, legacy: true);
+        await using var newAdmin = await host.ConnectAsync(WireHost.AdminId);
+        // Every OnConnectedAsync has run once a call has come back.
+        foreach (var tab in new[] { oldAdmin, oldGranted, oldPlain, newAdmin })
+            await tab.InvokeAsync("Unsubscribe", Symbols());
+
+        host.Dispatcher.Enqueue(new UpsertLiveTickRequest { Symbol = Nifty, LastTradedPrice = 25_010.5m });
+        host.Dispatcher.Flush();
+
+        foreach (var tab in new[] { oldAdmin, oldGranted })
+        {
+            var tick = Assert.Single((await tab.NextAsync("ReceiveTicks")).GetProperty("arguments")[0].EnumerateArray());
+            Assert.Equal(Nifty, tick.GetProperty("symbol").GetString());
+            Assert.Equal(25_010.5m, tick.GetProperty("lastTradedPrice").GetDecimal());
+        }
+        Assert.Null(await oldPlain.NextOrNullAsync("ReceiveTicks", TimeSpan.FromMilliseconds(300)));
+        Assert.Null(await newAdmin.NextOrNullAsync("ReceiveTicks", TimeSpan.FromMilliseconds(100)));
+    }
+
     // Until 28 Sep the token decided role:admin once, at connect, and nothing
     // looked again: a demoted or disabled admin's open console kept every
     // account's desk events for as long as the socket stayed up.
@@ -208,6 +236,7 @@ public class LiveFeedHubWireTests
         public const long Owner = 7;
         public const long PlainTrader = 8;
         public const long Disabled = 9;
+        public const long GrantedTrader = 11;
 
         /// <summary>A Trader in the row, whose token was issued while it was an admin.</summary>
         public const long DemotedAdmin = 10;
@@ -237,7 +266,9 @@ public class LiveFeedHubWireTests
                 new AppUser { Id = 7, UserName = "coderforchange", Role = UserRoles.Trader, IsActive = true },
                 new AppUser { Id = PlainTrader, UserName = "mallory", Role = UserRoles.Trader, IsActive = true },
                 new AppUser { Id = Disabled, UserName = "gone", Role = UserRoles.Admin, IsActive = false },
-                new AppUser { Id = DemotedAdmin, UserName = "demoted", Role = UserRoles.Trader, IsActive = true });
+                new AppUser { Id = DemotedAdmin, UserName = "demoted", Role = UserRoles.Trader, IsActive = true },
+                new AppUser { Id = GrantedTrader, UserName = "granted", Role = UserRoles.Trader, IsActive = true });
+            db.UserModuleGrants.Add(new UserModuleGrant { UserId = GrantedTrader, ModuleKey = PlatformModules.MarketData, GrantedBy = "admin" });
             await db.SaveChangesAsync();
 
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Test" });
@@ -267,7 +298,8 @@ public class LiveFeedHubWireTests
         }
 
         /// <param name="expiresIn">When the sign-in expires, as a token's would; none by default.</param>
-        public async Task<HubWire> ConnectAsync(long? userId, TimeSpan? expiresIn = null)
+        /// <param name="legacy">Connect as a console built before 28 Sep does: without <c>?v=2</c>.</param>
+        public async Task<HubWire> ConnectAsync(long? userId, TimeSpan? expiresIn = null, bool legacy = false)
         {
             var client = _app.GetTestServer().CreateWebSocketClient();
             client.ConfigureRequest = request =>
@@ -278,7 +310,8 @@ public class LiveFeedHubWireTests
             };
 
             // Straight to the websocket, as the console's client does with skipNegotiation.
-            var socket = await client.ConnectAsync(new Uri($"ws://localhost{LiveFeedHubSetup.Path}"), CancellationToken.None);
+            string query = legacy ? "" : $"?{LiveFeedHub.ProtocolQueryKey}={LiveFeedHub.CurrentProtocol}";
+            var socket = await client.ConnectAsync(new Uri($"ws://localhost{LiveFeedHubSetup.Path}{query}"), CancellationToken.None);
             var wire = new HubWire(socket);
             await wire.HandshakeAsync();
             return wire;
