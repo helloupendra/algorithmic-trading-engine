@@ -4,7 +4,8 @@
  * part of the day's jobs: readiness and the outlook before the open, runs and
  * net P&L in the session, the result and what is held overnight after the
  * close. It reorders itself at 09:15 and 15:30; the phase switches let the
- * viewer look at any part, and the pin holds one for the rest of the day.
+ * viewer look at any part, and the pin holds one across reloads until the
+ * clock next moves or the day ends.
  *
  * The API scopes every answer to the viewer (a trader's runs are their own)
  * and each panel checks its own grant, so the same page serves both roles.
@@ -27,6 +28,8 @@ import {
   deskAccounts,
   deskLayout,
   isTradingRun,
+  pinHolds,
+  pinUntil,
   readPin,
   scopeRuns,
   shownPhase,
@@ -115,8 +118,8 @@ function DeskBar({ view, pin, onPick, onPin, onScope, updatedAt }: {
         className="dk-pin"
         aria-pressed={pin}
         onClick={onPin}
-        title={pin ? 'Held for today. Click to follow the clock again.' : 'Hold this view for today, even as the market opens or closes'}
-        aria-label={pin ? 'Stop holding this view' : 'Hold this view for today'}
+        title={pin ? `Held ${pinUntil(view.clock)}. Click to follow the clock again.` : `Hold this view ${pinUntil(view.clock)}, across reloads`}
+        aria-label={pin ? 'Stop holding this view' : `Hold this view ${pinUntil(view.clock)}`}
       >
         <IconPin />
       </button>
@@ -155,11 +158,22 @@ export function DeskPage() {
 
   const [pick, setPick] = useState<PhasePick | null>(null)
   const [pin, setPin] = useState<PhasePin | null>(() => readPin(deskStorage()))
-  const shown = shownPhase(clock, pick, pin, today)
+  // The session's answer (or its failure) makes the clock the real one; until
+  // then it is the standard hours' guess, which must not end a holiday's pin.
+  const clockKnown = nse.data !== undefined || nse.isError
+  const shown = shownPhase(clock, pick, pin, today, clockKnown)
   // A pick lasts until the clock moves; drop it then, so an old one cannot come back.
   useEffect(() => {
     if (pick && pick.from !== clock) setPick(null)
   }, [pick, clock])
+  // So does a pin, and the day's end: drop it from storage too, so no tab
+  // opened later brings back a view whose part of the day is over.
+  useEffect(() => {
+    if (pin && clockKnown && !pinHolds(pin, clock, today)) {
+      writePin(deskStorage(), null)
+      setPin(null)
+    }
+  }, [pin, clock, today, clockKnown])
 
   const dayRuns = shownDay.runs
   const trading = useMemo(() => dayRuns?.filter(isTradingRun), [dayRuns])
@@ -199,7 +213,7 @@ export function DeskPage() {
   function pickPhase(phase: DeskView['phase']) {
     if (shown.how === 'pinned') {
       // Choosing another part of the day moves the pin with it.
-      const next = { phase, date: today }
+      const next = { phase, date: today, from: clock }
       writePin(deskStorage(), next)
       setPin(next)
       return
@@ -208,7 +222,7 @@ export function DeskPage() {
   }
 
   function togglePin() {
-    const next = shown.how === 'pinned' ? null : { phase: shown.phase, date: today }
+    const next = shown.how === 'pinned' ? null : { phase: shown.phase, date: today, from: clock }
     writePin(deskStorage(), next)
     setPin(next)
     setPick(null)
