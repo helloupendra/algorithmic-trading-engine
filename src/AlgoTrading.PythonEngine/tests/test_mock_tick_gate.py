@@ -62,5 +62,27 @@ class MockTickGateTests(unittest.TestCase):
             self.assertFalse(mock_ticks.should_mock_symbol("MCX:GOLD26SEPFUT"))
 
 
+class MockTickMarkingTests(unittest.TestCase):
+    def test_a_fabricated_tick_is_filed_under_mock_not_under_a_vendor(self):
+        """
+        Without a source key the API fills in the one connector that claims a
+        live feed, and the invented price reads as that vendor's.
+        """
+        offered = []
+
+        class Stop(BaseException):
+            pass
+
+        source = mock_ticks.MockTickSource(subscribed=lambda: {"MCX:GOLD-FUT"}, offer=offered.append)
+        with mock.patch.object(mock_ticks, "ENABLE_MOCK_TICKS", True), \
+             mock.patch.object(mock_ticks.time, "sleep", side_effect=Stop):
+            with self.assertRaises(Stop):
+                source.run_forever()
+
+        tick = offered[0]
+        self.assertEqual("mock", tick["sourceKey"])
+        self.assertEqual('{"mock": true}', tick["rawPayload"])
+
+
 if __name__ == "__main__":
     unittest.main()

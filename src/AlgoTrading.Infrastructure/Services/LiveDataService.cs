@@ -319,6 +319,8 @@ public class LiveDataService : ILiveDataService
         UpsertHeartbeatRequest request,
         CancellationToken cancellationToken = default)
     {
+        FeedHeartbeatMetrics.Record(request);
+
         var existing = await _dbContext.LiveIngestorStatuses
             .FirstOrDefaultAsync(x => x.SourceName == request.SourceName, cancellationToken);
 

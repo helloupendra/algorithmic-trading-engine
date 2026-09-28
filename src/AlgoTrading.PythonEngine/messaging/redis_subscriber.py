@@ -46,6 +46,10 @@ class RedisTickSubscriber:
         # gap is reported (see the restart log below) rather than closed.
         self.last_id = "$"
 
+        # Entries whose payload is not JSON. They used to be skipped with a bare
+        # `pass`: a tick the strategy never saw, and nothing anywhere saying so.
+        self.undecodable = 0
+
     def ping(self) -> bool:
         try:
             return bool(self.client.ping())
@@ -92,9 +96,13 @@ class RedisTickSubscriber:
                             if raw_payload:
                                 try:
                                     tick = json.loads(raw_payload)
-                                    yield tick
-                                except json.JSONDecodeError:
-                                    pass
+                                except json.JSONDecodeError as ex:
+                                    self.undecodable += 1
+                                    if self.undecodable in (1, 100, 1000) or self.undecodable % 10000 == 0:
+                                        print(f"[RedisTickSubscriber] skipped {message_id}: its payload is not "
+                                              f"JSON ({ex}); {self.undecodable} skipped so far.", flush=True)
+                                    continue
+                                yield tick
                 elif yield_idle:
                     yield None
 
