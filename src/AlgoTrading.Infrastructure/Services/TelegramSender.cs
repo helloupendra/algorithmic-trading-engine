@@ -106,6 +106,13 @@ public sealed class TelegramSender : IDisposable
         !string.IsNullOrWhiteSpace(_configuration["Telegram:ChatId"]);
 
     /// <summary>
+    /// Whether the system channel has a chat of its own. False means system
+    /// messages (patterns, indicators, the desk's own) go to the trades chat
+    /// (<see cref="ChatIdFor"/>), which a page naming the channel must say.
+    /// </summary>
+    public bool IsSystemChatConfigured => !string.IsNullOrWhiteSpace(_configuration["Telegram:SystemChatId"]);
+
+    /// <summary>
     /// The chat a channel's messages go to. Until 27 Sep everything went to the
     /// one live channel, and the owner found deploys, feed restarts and candle
     /// patterns mixed in with the trades. A system chat that is not configured

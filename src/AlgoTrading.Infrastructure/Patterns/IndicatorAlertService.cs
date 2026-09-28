@@ -151,16 +151,26 @@ public sealed class IndicatorAlertService : BackgroundService
     }
 
     /// <summary><c>IndicatorAlerts:Enabled</c>, or <c>PatternAlerts:Enabled</c> when that is not set; on by default.</summary>
-    public static bool IsEnabled(IConfiguration configuration) =>
-        configuration.GetValue<bool?>("IndicatorAlerts:Enabled") ?? configuration.GetValue("PatternAlerts:Enabled", true);
+    public static bool IsEnabled(IConfiguration configuration) => IsEnabled(configuration, out _);
+
+    /// <summary>As <see cref="IsEnabled(IConfiguration)"/>; a value that is neither on nor off is off, and <paramref name="problem"/> says so.</summary>
+    public static bool IsEnabled(IConfiguration configuration, out string? problem) =>
+        AlertSwitch.Read(configuration, fallback: true, out problem, "IndicatorAlerts:Enabled", "PatternAlerts:Enabled");
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        bool enabled = IsEnabled(_configuration);
+        bool enabled = IsEnabled(_configuration, out var problem);
         _state.SetEnabled(enabled);
+        if (problem is not null)
+        {
+            // Off, and said where it is read: the log and the page's error line.
+            _logger.LogWarning("Indicator alerts are off: {Problem}", problem);
+            _state.ScanFailed(DateTime.UtcNow, problem);
+        }
+
         if (!enabled)
         {
-            _logger.LogInformation("Indicator alerts are off (IndicatorAlerts:Enabled / PatternAlerts:Enabled is false).");
+            if (problem is null) _logger.LogInformation("Indicator alerts are off (IndicatorAlerts:Enabled / PatternAlerts:Enabled is false).");
             return;
         }
 
@@ -233,28 +243,38 @@ public sealed class IndicatorAlertService : BackgroundService
 
         foreach (var batch in batches)
         {
-            if (!_limiter.TryAcquire(DateTime.UtcNow))
+            // Telegram refuses a message over 4096 characters, and a broad move
+            // at the open (25 lines of two or more rules each) passed that: the
+            // whole minute's batch was refused and lost. Each part is a message
+            // of its own, counted against the limit like any other.
+            foreach (var part in IndicatorAlertText.TelegramMessages(batch.ClosedAtUtc, batch.Alerts.Select(a => a.Occurrence).ToList()))
             {
-                _logger.LogWarning(
-                    "Indicator alerts: {Count} alert(s) for candles closed {Clock} IST not sent — more than {Max} messages in {Minutes} minutes. They are on the Pattern alerts page.",
-                    batch.Alerts.Count, PatternAlertText.IstClock(batch.ClosedAtUtc), MaxMessages, MessageWindow.TotalMinutes);
-                _state.TelegramSuppressed($"Rate limit: more than {MaxMessages} messages in {MessageWindow.TotalMinutes:0} minutes; {batch.Alerts.Count} alert(s) recorded only.");
-                continue;
-            }
+                var alerts = part.Items.Select(i => batch.Alerts[i]).ToList();
+                if (!_limiter.TryAcquire(DateTime.UtcNow))
+                {
+                    _logger.LogWarning(
+                        "Indicator alerts: {Count} alert(s) for candles closed {Clock} IST not sent — more than {Max} messages in {Minutes} minutes. They are on the Pattern alerts page.",
+                        alerts.Count, PatternAlertText.IstClock(batch.ClosedAtUtc), MaxMessages, MessageWindow.TotalMinutes);
+                    _state.TelegramSuppressed($"Rate limit: more than {MaxMessages} messages in {MessageWindow.TotalMinutes:0} minutes; {alerts.Count} alert(s) recorded only.");
+                    continue;
+                }
 
-            var text = IndicatorAlertText.TelegramMessage(batch.ClosedAtUtc, batch.Alerts.Select(a => a.Occurrence).ToList());
-            // Market information, not trades: the system channel, with the patterns.
-            if (!await _telegram.SendHtmlAsync(text, TelegramChannel.System, cancellationToken))
-            {
-                _state.TelegramFailed("Telegram refused or could not be reached; see the API log.");
-                continue;
-            }
+                // Market information, not trades: the system channel, with the patterns.
+                if (!await _telegram.SendHtmlAsync(part.Text, TelegramChannel.System, cancellationToken))
+                {
+                    _state.TelegramFailed("Telegram refused or could not be reached; see the API log.");
+                    continue;
+                }
 
-            _state.TelegramSent(DateTime.UtcNow);
-            var ids = batch.Alerts.Select(a => a.EventId).ToList();
-            var rows = await db.AlertEvents.Where(e => ids.Contains(e.Id)).ToListAsync(cancellationToken);
-            foreach (var row in rows) row.DeliveredToTelegram = true;
-            await db.SaveChangesAsync(cancellationToken);
+                _state.TelegramSent(DateTime.UtcNow);
+                // Only the alerts whose line went out: one counted in "+N more"
+                // was not sent, and starts no cooldown.
+                var ids = alerts.Select(a => a.EventId).ToList();
+                if (ids.Count == 0) continue;
+                var rows = await db.AlertEvents.Where(e => ids.Contains(e.Id)).ToListAsync(cancellationToken);
+                foreach (var row in rows) row.DeliveredToTelegram = true;
+                await db.SaveChangesAsync(cancellationToken);
+            }
         }
     }
 }

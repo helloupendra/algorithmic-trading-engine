@@ -34,6 +34,12 @@ public sealed class IndicatorAlertsResponse
     public List<string> Unresolved { get; set; } = [];
 
     public bool TelegramConfigured { get; set; }
+
+    /// <summary>
+    /// Whether Telegram:SystemChatId is set. When it is not, indicator alerts
+    /// go to the trades channel (Live Algotrading), not Desk System.
+    /// </summary>
+    public bool TelegramSystemChatConfigured { get; set; }
     public int TelegramMaxMessages { get; set; }
     public int TelegramWindowMinutes { get; set; }
     public DateTime? LastTelegramUtc { get; set; }
