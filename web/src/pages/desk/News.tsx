@@ -11,7 +11,7 @@ import type { NewsTab } from '../../lib/desk'
 import { NEWS_TABS, istHm, newsLines, shiftDay, tickerOf } from '../../lib/desk'
 import { useDeskWatchlist, useIntelAnnouncements, useIntelNews } from '../../lib/queries'
 import type { DeskLinks, DeskView } from './data'
-import { useDeskLegs } from './data'
+import { useHeldUnderlyings } from './data'
 import { Chip, Failed, PanelHead, Sentiment, Waiting } from './parts'
 
 export function News({ view, links, limit = 6 }: { view: DeskView; links: DeskLinks; limit?: number }) {
@@ -21,13 +21,14 @@ export function News({ view, links, limit = 6 }: { view: DeskView; links: DeskLi
   const news = useIntelNews(from, true)
   const filings = useIntelAnnouncements(from, true)
   const watch = useDeskWatchlist(true)
-  const { legs } = useDeskLegs(view)
+  // The names held, not their prices: a push of a leg does not re-render the news.
+  const held = useHeldUnderlyings(view)
   const names = useMemo(
     () => ({
-      held: new Set((legs ?? []).map((l) => l.underlying)),
+      held,
       watched: new Set((watch.data ?? []).map((w) => tickerOf(w.symbol))),
     }),
-    [legs, watch.data],
+    [held, watch.data],
   )
   const lines = newsLines(news.data?.items, filings.data?.items, tab, names).slice(0, limit)
   const waiting = !news.data && !filings.data && !news.isError && !filings.isError

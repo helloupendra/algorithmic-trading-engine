@@ -8,15 +8,20 @@
  * the `mode` only decides what the page offers).
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   RUN_HISTORY_PAGE,
+  pagedRowsAsOf,
   useFnoUnderlyings,
+  useLiveRun,
   useLiveRunHistoryPages,
   useLiveRunUserSummary,
+  useLiveRuns,
+  useRunLegs,
   useStrategies,
 } from '../../lib/queries'
+import type { ListAsOf, RunLegs } from '../../lib/liveMarks'
 import type { LiveRunHistoryFilters } from '../../lib/queries'
 import { formatDateTime, formatDuration, formatInr, formatInrSigned, formatLots, formatNumber } from '../../lib/format'
 import { riskChips } from '../../lib/risk'
@@ -131,6 +136,106 @@ function UserRollup({
   )
 }
 
+/* ------------------------------------------------------------ live figures */
+
+/**
+ * The Net P&L tile: every loaded row's net, the live ones' open books at the
+ * pushed prices of their legs. Its own component, so a push re-renders the
+ * tile and the rows it moved, not the page and its five hundred rows.
+ */
+function NetPnlTile({ rows, asOf, legs, pending, hasOlder, activeCount }: {
+  rows: readonly LiveRunSummary[]
+  asOf: ListAsOf
+  legs: RunLegs | null
+  pending: boolean
+  hasOlder: boolean
+  activeCount: number
+}) {
+  const live = useLiveRuns(rows, asOf, legs) ?? rows
+  const netPnl = live.reduce((n, r) => n + runNetPnl(r), 0)
+  return (
+    <StatTile
+      label="Net P&L"
+      value={pending ? '—' : <PnlValue value={netPnl} />}
+      tone={netPnl > 0 ? 'pos' : netPnl < 0 ? 'neg' : undefined}
+      sub={
+        hasOlder
+          ? `realized of the ${formatNumber(rows.length)} loaded runs${activeCount > 0 ? ' + open book of live ones' : ''}`
+          : `realized of every run in range${activeCount > 0 ? ' + open book of live ones' : ''}`
+      }
+    />
+  )
+}
+
+/**
+ * One run's row. Memoised, and holding only its own legs' prices: a push
+ * re-renders the live rows it moves, never the stopped ones, whose figures
+ * are final.
+ */
+const HistoryRow = memo(function HistoryRow({ run: answered, to, isAdmin, asOf, legs, onOpen }: {
+  run: LiveRunSummary
+  to: string
+  isAdmin: boolean
+  asOf: number
+  legs: RunLegs | null
+  onOpen: (to: string) => void
+}) {
+  const run = useLiveRun(answered, asOf, legs)
+  const pnl = runNetPnl(run)
+  return (
+    <tr
+      className={run.isActive ? 'row--live' : ''}
+      onClick={(e) => {
+        // Plain clicks open the detail; modified clicks and clicks on
+        // the explicit link keep their browser behaviour.
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+        if ((e.target as HTMLElement).closest('a')) return
+        onOpen(to)
+      }}
+    >
+      {/* The row opens the run on a click; the number is the same target for a keyboard. */}
+      <td className="mono">
+        <Link to={to} className="run-link">
+          #{run.runId}
+        </Link>
+      </td>
+      {isAdmin && <td>{run.userName || <span className="faint">user {run.userId}</span>}</td>}
+      <td>
+        <b>{run.strategyName}</b> <CategoryBadge category={run.category} />
+      </td>
+      <td className="mono" title={run.spotSymbol || undefined}>
+        {run.underlying}
+      </td>
+      <td className="r">{run.role === 'alerts' ? <span className="muted">alerts only</span> : formatLots(run.lots, run.lotSize)}</td>
+      <td>
+        <RiskChips run={run} />
+      </td>
+      <td className="muted run-when" title={`${formatDateTime(run.startedUtc)} → ${run.isActive ? 'running' : formatDateTime(run.stoppedUtc)}`}>
+        {runSpan(run)}
+        <span className="cell-sub">{formatDuration(runDurationSeconds(run))}</span>
+      </td>
+      <td className="r" title={run.openPositions > 0 ? `${run.openPositions} open` : undefined}>
+        {formatNumber(run.trades)}
+        {run.openPositions > 0 && <span className="cell-sub">{run.openPositions} open</span>}
+      </td>
+      <td className="r">
+        <PnlValue value={pnl} />
+        {run.charges != null && run.charges > 0 && (
+          <span className="cell-sub" title={`gross ${formatInrSigned(run.grossPnl ?? run.realizedPnl)}`}>
+            after {formatInr(run.charges)} charges
+          </span>
+        )}
+        {run.isActive && run.unrealizedPnl !== 0 && (
+          <span className="cell-sub">unrealized {formatInrSigned(run.unrealizedPnl)}</span>
+        )}
+      </td>
+      <td>
+        <RunStatusCell run={run} />
+      </td>
+    </tr>
+  )
+})
+
 /* -------------------------------------------------------------------- page */
 
 export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
@@ -180,6 +285,9 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
   const fno = useFnoUnderlyings()
 
   const rows = useMemo(() => history.data?.pages.flat() ?? [], [history.data])
+  // The live rows are re-priced from their open legs, each against the page it came in.
+  const legs = useRunLegs(rows)
+  const asOfByRun = useMemo(() => pagedRowsAsOf(history.data, history.dataUpdatedAt), [history.data, history.dataUpdatedAt])
   const hasOlder = history.hasNextPage
   const loadingOlder = history.isFetchingNextPage
   /** "500" or "500+": the loaded count, flagged while older runs are still unloaded. */
@@ -213,7 +321,6 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
   )
 
   const activeCount = rows.filter((r) => r.isActive).length
-  const netPnl = rows.reduce((n, r) => n + runNetPnl(r), 0)
   const trades = rows.reduce((n, r) => n + r.trades, 0)
   const today = todayIst()
   const runsToday = rows.filter((r) => istDate(r.startedUtc) === today).length
@@ -279,16 +386,7 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
           tone={activeCount > 0 ? 'pos' : undefined}
           sub={activeCount > 0 ? 'this list refreshes every 10 s' : 'no runner alive in this range'}
         />
-        <StatTile
-          label="Net P&L"
-          value={history.isPending ? '—' : <PnlValue value={netPnl} />}
-          tone={netPnl > 0 ? 'pos' : netPnl < 0 ? 'neg' : undefined}
-          sub={
-            hasOlder
-              ? `realized of the ${formatNumber(rows.length)} loaded runs${activeCount > 0 ? ' + open book of live ones' : ''}`
-              : `realized of every run in range${activeCount > 0 ? ' + open book of live ones' : ''}`
-          }
-        />
+        <NetPnlTile rows={rows} asOf={asOfByRun} legs={legs} pending={history.isPending} hasOlder={hasOlder} activeCount={activeCount} />
         <StatTile
           label="Trades"
           value={history.isPending ? '—' : countLabel(trades)}
@@ -444,63 +542,17 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {visible.map((run) => {
-                      const to = routes.detail(run.runId)
-                      const pnl = runNetPnl(run)
-                      return (
-                        <tr
-                          key={run.runId}
-                          className={run.isActive ? 'row--live' : ''}
-                          onClick={(e) => {
-                            // Plain clicks open the detail; modified clicks and clicks on
-                            // the explicit link keep their browser behaviour.
-                            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
-                            if ((e.target as HTMLElement).closest('a')) return
-                            navigate(to)
-                          }}
-                        >
-                          {/* The row opens the run on a click; the number is the same target for a keyboard. */}
-                          <td className="mono">
-                            <Link to={to} className="run-link">
-                              #{run.runId}
-                            </Link>
-                          </td>
-                          {isAdmin && <td>{run.userName || <span className="faint">user {run.userId}</span>}</td>}
-                          <td>
-                            <b>{run.strategyName}</b> <CategoryBadge category={run.category} />
-                          </td>
-                          <td className="mono" title={run.spotSymbol || undefined}>
-                            {run.underlying}
-                          </td>
-                          <td className="r">{run.role === 'alerts' ? <span className="muted">alerts only</span> : formatLots(run.lots, run.lotSize)}</td>
-                          <td>
-                            <RiskChips run={run} />
-                          </td>
-                          <td className="muted run-when" title={`${formatDateTime(run.startedUtc)} → ${run.isActive ? 'running' : formatDateTime(run.stoppedUtc)}`}>
-                            {runSpan(run)}
-                            <span className="cell-sub">{formatDuration(runDurationSeconds(run))}</span>
-                          </td>
-                          <td className="r" title={run.openPositions > 0 ? `${run.openPositions} open` : undefined}>
-                            {formatNumber(run.trades)}
-                            {run.openPositions > 0 && <span className="cell-sub">{run.openPositions} open</span>}
-                          </td>
-                          <td className="r">
-                            <PnlValue value={pnl} />
-                            {run.charges != null && run.charges > 0 && (
-                              <span className="cell-sub" title={`gross ${formatInrSigned(run.grossPnl ?? run.realizedPnl)}`}>
-                                after {formatInr(run.charges)} charges
-                              </span>
-                            )}
-                            {run.isActive && run.unrealizedPnl !== 0 && (
-                              <span className="cell-sub">unrealized {formatInrSigned(run.unrealizedPnl)}</span>
-                            )}
-                          </td>
-                          <td>
-                            <RunStatusCell run={run} />
-                          </td>
-                        </tr>
-                      )
-                    })}
+                    {visible.map((run) => (
+                      <HistoryRow
+                        key={run.runId}
+                        run={run}
+                        to={routes.detail(run.runId)}
+                        isAdmin={isAdmin}
+                        asOf={asOfByRun.get(run.runId) ?? history.dataUpdatedAt}
+                        legs={legs}
+                        onOpen={navigate}
+                      />
+                    ))}
                   </tbody>
                 </table>
               </div>

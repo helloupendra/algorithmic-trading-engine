@@ -20,9 +20,12 @@ import type { LiveTick } from './live'
 import type {
   LivePosition,
   LiveQuote,
+  LiveRunSummary,
   MarketPulseResponse,
   MyWatchlistItem,
   OpenPosition,
+  OptionChainPosition,
+  RiskExposureResponse,
   StrategyLiveView,
 } from './types'
 
@@ -198,6 +201,173 @@ export function runViewWithTicks(view: StrategyLiveView, prices: Prices, answere
     pnl,
     groups,
   }
+}
+
+// ---------------------------------------------------------------- a run list (GET /api/Strategy/runs), from the open legs
+
+/**
+ * The open legs of GET /api/Positions/open by run, with when that answer was
+ * asked for: what a list of runs is re-priced from.
+ *
+ * A list of runs cannot be re-priced from itself: a history row carries its
+ * open book as one number, not the legs behind it. Fetching every live run's
+ * own view (what a run card reads) would be a request per run on a page of a
+ * hundred rows. The open legs are one request for every run the viewer may
+ * see, the Desk and Positions already hold it, and a fill re-reads it by desk
+ * event; each leg is priced there by the function the list's figure is
+ * (RunPnl.MarkOpenLegsAsync and OpenPositionsBuilder both value a leg with
+ * PaperPnl.Unrealized at its latest quote).
+ */
+export interface RunLegs {
+  byRun: ReadonlyMap<number, readonly OpenPosition[]>
+  /** When the legs answer was asked for (lib/asOf.ts). */
+  asOfMs: number
+}
+
+export function runLegs(positions: readonly OpenPosition[] | undefined, asOfMs: number): RunLegs | null {
+  if (!positions) return null
+  const byRun = new Map<number, OpenPosition[]>()
+  for (const p of positions) {
+    const list = byRun.get(p.runId)
+    if (list) list.push(p)
+    else byRun.set(p.runId, [p])
+  }
+  return { byRun, asOfMs }
+}
+
+/** A run whose figure can move with a price: live, and holding a leg. */
+const repriceable = (run: Pick<LiveRunSummary, 'isActive' | 'openPositions'>) => run.isActive && run.openPositions > 0
+
+/** The symbols a list of runs is re-priced from: the open legs of its live runs. */
+export function runLegSymbols(runs: ReadonlyArray<Pick<LiveRunSummary, 'runId' | 'isActive' | 'openPositions'>> | undefined, legs: RunLegs | null): string[] {
+  if (!runs || !legs) return []
+  const out: string[] = []
+  for (const run of runs) {
+    if (!repriceable(run)) continue
+    for (const leg of legs.byRun.get(run.runId) ?? []) out.push(leg.symbol)
+  }
+  return out
+}
+
+/**
+ * A live run's open book now, from its legs at their newest marks: the
+ * pushed price where it is newer than the legs answer's mark, else that mark
+ * (withLiveMarks, the rule the Desk's legs and the Positions page use). Null
+ * when the list's own figure stands, which is whenever this one would not be
+ * a better number:
+ *
+ * - The run is not live, or holds no leg: nothing a price moves.
+ * - The two answers disagree on how many legs it holds. One of them is from
+ *   before a fill the other has seen, and a sum over the wrong legs is a
+ *   wrong number, not an old one. The fill's desk event re-reads both, so
+ *   this lasts a moment.
+ * - No leg has a price pushed after the list was asked for: the list already
+ *   has the newest prices there are. So a dropped socket falls back to the
+ *   list's figure, which keeps being polled, instead of freezing at the last
+ *   pushes.
+ * - A leg has no mark at all. The list counted it at its stored P&L, which
+ *   is not known here, and a sum that drops it would be a guess.
+ */
+export function liveOpenPnl(
+  run: Pick<LiveRunSummary, 'runId' | 'isActive' | 'openPositions'>,
+  legs: RunLegs | null,
+  prices: Prices,
+  listAsOfMs: number,
+): number | null {
+  if (!legs || !repriceable(run)) return null
+  const own = legs.byRun.get(run.runId)
+  if (!own || own.length !== run.openPositions) return null
+  if (!own.some((leg) => freshPrice(prices.get(leg.symbol), listAsOfMs) != null)) return null
+  let open = 0
+  for (const leg of withLiveMarks(own, prices, { nowMs: legs.asOfMs, answeredAtMs: legs.asOfMs })) {
+    if (leg.unrealizedPnl == null) return null
+    open += leg.unrealizedPnl
+  }
+  return open
+}
+
+/**
+ * A history row with its open book at the pushed prices (liveOpenPnl); the
+ * same row when nothing newer is known. Realized P&L, charges, trades and
+ * status are the list's: a price does not change them, and `netPnl` stays
+ * the realized net it always is (runNetPnl adds the open book).
+ */
+export function runWithTicks<T extends LiveRunSummary>(run: T, legs: RunLegs | null, prices: Prices, listAsOfMs: number): T {
+  const open = liveOpenPnl(run, legs, prices, listAsOfMs)
+  return open == null || open === run.unrealizedPnl ? run : { ...run, unrealizedPnl: open }
+}
+
+/**
+ * When each row of a list was asked for: one time for a list read in one
+ * request, or a time per run for a paged one, whose pages are separate
+ * requests (a run missing from the map is never taken as older than a push).
+ */
+export type ListAsOf = number | ReadonlyMap<number, number>
+
+const rowAsOf = (asOf: ListAsOf, runId: number) => (typeof asOf === 'number' ? asOf : (asOf.get(runId) ?? Infinity))
+
+/**
+ * A list of runs re-priced row by row; the same array when no row moved, and
+ * every row that did not move the same object, so a memoised row or a total
+ * built from the list is not rebuilt for a price that did not reach it.
+ */
+export function runsWithTicks<T extends LiveRunSummary>(runs: readonly T[], legs: RunLegs | null, prices: Prices, listAsOf: ListAsOf): readonly T[] {
+  if (!legs || prices.size === 0) return runs
+  let changed = false
+  const out = runs.map((run) => {
+    const next = runWithTicks(run, legs, prices, rowAsOf(listAsOf, run.runId))
+    if (next !== run) changed = true
+    return next
+  })
+  return changed ? out : runs
+}
+
+/**
+ * The risk page's exposure (GET /api/Risk/exposure, admin) with each live
+ * run's open book at the pushed prices of its legs, by liveOpenPnl, and the
+ * total the sum of the rows. The answer carries no count of a run's legs to
+ * check the legs answer against, so a run is re-priced from whatever legs
+ * that answer holds for it; a fill re-reads both by desk event. Realized P&L
+ * stays the answer's. The same answer when no row moved.
+ */
+export function exposureWithTicks(exposure: RiskExposureResponse, legs: RunLegs | null, prices: Prices, answeredAtMs: number): RiskExposureResponse {
+  if (!legs || prices.size === 0) return exposure
+  let changed = false
+  const activeRuns = exposure.activeRuns.map((r) => {
+    const held = legs.byRun.get(r.runId)?.length ?? 0
+    const open = liveOpenPnl({ runId: r.runId, isActive: true, openPositions: held }, legs, prices, answeredAtMs)
+    if (open == null || open === r.unrealizedPnL) return r
+    changed = true
+    return { ...r, unrealizedPnL: open }
+  })
+  if (!changed) return exposure
+  return { ...exposure, activeRuns, totalUnrealizedPnL: activeRuns.reduce((n, r) => n + r.unrealizedPnL, 0) }
+}
+
+/** The symbols the exposure's rows are re-priced from: the legs of its live runs. */
+export function exposureLegSymbols(exposure: RiskExposureResponse | undefined, legs: RunLegs | null): string[] {
+  if (!exposure || !legs) return []
+  return exposure.activeRuns.flatMap((r) => (legs.byRun.get(r.runId) ?? []).map((l) => l.symbol))
+}
+
+// ---------------------------------------------------------------- the chain's positions panel (GET /api/OptionChain/positions)
+
+/**
+ * The chain page's held legs at their newer pushed prices: mark, its time and
+ * the P&L at it, by PaperPnl.Unrealized as the endpoint values them there
+ * (`quantity` is lots on this answer). The same list when nothing moved.
+ */
+export function chainPositionsWithTicks(positions: OptionChainPosition[], prices: Prices, answeredAtMs: number): OptionChainPosition[] {
+  let changed = false
+  const out = positions.map((p) => {
+    const tick = prices.get(p.symbol)
+    const price = freshPrice(tick, answeredAtMs)
+    if (price == null || price === p.markPrice) return p
+    changed = true
+    const leg = { direction: p.direction as OpenPosition['direction'], entryPrice: p.averagePrice, lots: p.quantity, lotSize: p.lotSize }
+    return { ...p, markPrice: price, markUtc: iso(tick!.receivedAtMs), unrealizedPnl: unrealizedAt(leg, price) }
+  })
+  return changed ? out : positions
 }
 
 // ---------------------------------------------------------------- latest quotes (GET /api/LiveData/latest/all)

@@ -622,7 +622,7 @@ describe('normalizeTick', () => {
 })
 
 describe('deskEventKeys', () => {
-  it('re-reads the legs, the run and the day after a fill or an order', () => {
+  it('re-reads the legs, the run, the day and every figure a fill moves after a fill or an order', () => {
     const keys = deskEventKeys({ kind: 'fill', runId: 612 })
     expect(keys).toEqual([
       ['positions'],
@@ -632,8 +632,23 @@ describe('deskEventKeys', () => {
       ['orders'],
       ['strategy', 'pnl-series'],
       ['strategy', 'history'],
+      ['risk', 'exposure'],
+      ['strategy', 'track-record'],
     ])
     expect(deskEventKeys({ kind: 'order', runId: 612 })).toEqual(keys)
+  })
+
+  it('re-reads the run lists and the exposure whenever it re-reads the legs they are re-priced from', () => {
+    // liveMarks.liveOpenPnl sums a run's legs from ['positions', 'open'] over
+    // the list's realized P&L; one re-read without the other is a moment
+    // where the two disagree on which legs are open.
+    const has = (keys: readonly (readonly unknown[])[], key: readonly unknown[]) => keys.some((k) => JSON.stringify(k) === JSON.stringify(key))
+    for (const kind of ['order', 'fill', 'run', 'risk', 'position', 'carry'] as const) {
+      const keys = deskEventKeys({ kind, runId: 7 })
+      expect(has(keys, ['positions']), kind).toBe(true)
+      expect(has(keys, ['strategy', 'history']), kind).toBe(true)
+      expect(has(keys, ['risk', 'exposure']), kind).toBe(true)
+    }
   })
 
   it("re-reads the day's orders across runs (Trade → Orders) after an order, a fill or a risk trip, whatever the run", () => {
@@ -649,20 +664,38 @@ describe('deskEventKeys', () => {
     expect(allEventedKeys()).toContainEqual(['orders'])
   })
 
-  it('re-reads the run lists, the plan and the run after a run starts or stops', () => {
+  it('re-reads the run lists, the plan, the run and the legs after a run starts or stops', () => {
     expect(deskEventKeys({ kind: 'run', runId: 7 })).toEqual([
       ['strategies'],
       ['strategy', 'history'],
+      ['risk', 'exposure'],
       ['desk', 'plan'],
       ['strategy', 'live', 7],
       ['strategy', 'track-record'],
+      ['positions'],
+      ['optionChainPositions'],
     ])
   })
 
-  it('re-reads the run and the legs after a risk trip, and the legs after a position or carry change', () => {
-    expect(deskEventKeys({ kind: 'risk', runId: 7 })).toEqual([['strategy', 'live', 7], ['positions'], ['optionChainPositions'], ['orders']])
-    expect(deskEventKeys({ kind: 'carry', runId: 7 })).toEqual([['positions'], ['optionChainPositions'], ['strategy', 'live', 7]])
-    expect(deskEventKeys({ kind: 'position', runId: 7 })).toEqual(deskEventKeys({ kind: 'carry', runId: 7 }))
+  it('re-reads the run, the legs and the figures a square-off moves after a risk trip, and the legs and lists after a position or carry change', () => {
+    expect(deskEventKeys({ kind: 'risk', runId: 7 })).toEqual([
+      ['strategy', 'live', 7],
+      ['positions'],
+      ['optionChainPositions'],
+      ['orders'],
+      ['strategy', 'history'],
+      ['risk', 'exposure'],
+      ['strategy', 'track-record'],
+    ])
+    expect(deskEventKeys({ kind: 'carry', runId: 7 })).toEqual([
+      ['positions'],
+      ['optionChainPositions'],
+      ['strategy', 'live', 7],
+      ['strategy', 'history'],
+      ['risk', 'exposure'],
+    ])
+    // A settlement at expiry closes a leg at a price: realized P&L, which the track record totals.
+    expect(deskEventKeys({ kind: 'position', runId: 7 })).toEqual([...deskEventKeys({ kind: 'carry', runId: 7 }), ['strategy', 'track-record']])
   })
 
   it("reads every run's views when the event names none, and nothing for a kind it does not know", () => {
@@ -690,7 +723,8 @@ describe('invalidationBatcher', () => {
     const sent = invalidateQueries.mock.calls.map(([arg]) => JSON.stringify(arg.queryKey))
     expect(new Set(sent).size).toBe(sent.length)
     expect(sent).toEqual(expect.arrayContaining(['["strategy","live",1]', '["strategy","live",2]', '["positions"]']))
-    expect(sent).toHaveLength(9)
+    // Seven keys every fill shares, and each run's own view and ledger.
+    expect(sent).toHaveLength(11)
   })
 
   it('drops what is pending when cancelled', async () => {
