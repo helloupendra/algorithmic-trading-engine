@@ -117,7 +117,8 @@ from core.metrics import (
     ORDERS_EMITTED,
     SIGNALS_FILTERED,
     STRATEGY_LOOP_DURATION,
-    TICK_PROCESSED
+    TICK_PROCESSED,
+    TICK_ERRORS,
 )
 from datetime import datetime, timezone
 
@@ -822,6 +823,10 @@ if __name__ == "__main__":
     subscriber = build_subscriber_from_env()
 
     ticks_processed = 0
+    # Ticks the loop raised on and skipped. Each prints a traceback, but a
+    # strategy failing on every tick looked, on the [STATUS] line, exactly like
+    # one that was simply quiet.
+    tick_errors = 0
     last_status_print = 0.0
     last_tick_at: Optional[float] = None
     last_spot_price: Optional[float] = None
@@ -919,6 +924,8 @@ if __name__ == "__main__":
                 f"open_groups={count_open_groups(state)} ticks={ticks_processed} "
                 f"contracts={last_contract_count} last_tick={age}"
             )
+        if tick_errors:
+            status += f" tick_errors={tick_errors}"
         # A structure reader says how far it has read, so one that has stopped
         # reading shows here instead of as a quiet day (SMC, 22–25 Sep).
         if isinstance(state, dict) and "structure_candles" in state:
@@ -1178,7 +1185,9 @@ if __name__ == "__main__":
 
             except Exception as ex:
                 import traceback
-                print("ERROR PROCESSING TICK:", ex)
+                tick_errors += 1
+                TICK_ERRORS.inc()
+                print(f"ERROR PROCESSING TICK ({tick_errors} so far):", ex)
                 traceback.print_exc()
 
     finally:

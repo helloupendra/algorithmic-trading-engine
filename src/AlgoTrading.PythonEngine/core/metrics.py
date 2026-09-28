@@ -31,6 +31,8 @@ ORDERS_EMITTED = Counter('algotrading_orders_emitted_total', 'Total number of or
 SIGNALS_FILTERED = Counter("algotrading_signals_filtered_total", "Opening signals blocked by the run market-context filters")
 STRATEGY_LOOP_DURATION = Histogram('algotrading_strategy_loop_duration_seconds', 'Time spent in a single strategy loop')
 TICK_PROCESSED = Counter('algotrading_ticks_processed_total', 'Total market ticks processed')
+TICK_ERRORS = Counter('algotrading_tick_errors_total',
+                      'Ticks the strategy loop raised on and skipped (ERROR PROCESSING TICK)')
 
 # `--metrics-port 0` means "pick the first free port in this range".
 AUTO_METRICS_PORT_RANGE: Tuple[int, int] = (8000, 8019)
