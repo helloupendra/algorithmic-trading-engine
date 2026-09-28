@@ -154,5 +154,195 @@ class BoundedClientTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 3.0)
 
 
+class Clock:
+    def __init__(self, t=1000.0):
+        self.t = t
+
+    def __call__(self):
+        return self.t
+
+
+class BatchOnly:
+    """A publisher with both methods, recording what it was asked and when."""
+
+    def __init__(self, log, fail=False):
+        self.log = log
+        self.fail = fail
+        self.batches = []
+
+    def publish_ticks(self, messages):
+        self.log.append(("publish", len(messages)))
+        if self.fail:
+            raise ConnectionError("redis is not answering")
+        self.batches.append(list(messages))
+
+    def publish_tick(self, message):
+        self.log.append(("publish_tick", 1))
+        if self.fail:
+            raise ConnectionError("redis is not answering")
+        self.batches.append([message])
+
+
+class OneAtATime:
+    """The old shape: publish_tick only (the TrueData and older test fakes)."""
+
+    def __init__(self):
+        self.published = []
+
+    def publish_tick(self, message):
+        self.published.append(message)
+
+
+def _ticks(n):
+    return [{"symbol": f"NSE:S{i}-EQ", "lastTradedPrice": 100.0 + i, "exchangeTimestampUtc": "2026-09-28T04:00:00Z",
+             "rawPayload": '{"type":"quote"}'} for i in range(n)]
+
+
+class RunnerBatchTests(unittest.TestCase):
+    def _runner(self, publisher, **kwargs):
+        from _feed_fakes import FakeFeed, runner_for
+
+        runner = runner_for(FakeFeed(), publisher=publisher)
+        for name, value in kwargs.items():
+            setattr(runner, name, value)
+        return runner
+
+    def test_a_batch_of_ticks_is_one_publish_after_every_tick_is_on_its_way_to_the_api(self):
+        log = []
+        publisher = BatchOnly(log)
+        runner = self._runner(publisher)
+        offer = runner.pump.offer
+        runner.pump.offer = lambda tick: (log.append(("offer", tick["symbol"])), offer(tick))
+
+        runner.on_ticks(_ticks(5))
+
+        self.assertEqual([("offer", f"NSE:S{i}-EQ") for i in range(5)] + [("publish", 5)], log)
+        self.assertEqual([f"NSE:S{i}-EQ" for i in range(5)], [m["symbol"] for m in publisher.batches[0]])
+        self.assertEqual(5, runner.pump.depth())
+
+    def test_a_publisher_with_only_publish_tick_still_gets_every_tick(self):
+        publisher = OneAtATime()
+        runner = self._runner(publisher)
+        runner.on_ticks(_ticks(3))
+        self.assertEqual(["NSE:S0-EQ", "NSE:S1-EQ", "NSE:S2-EQ"], [m["symbol"] for m in publisher.published])
+
+    def test_feed_stream_batch_off_goes_back_to_one_at_a_time(self):
+        log = []
+        runner = self._runner(BatchOnly(log), _stream_batch=False)
+        runner.on_ticks(_ticks(3))
+        self.assertEqual([("publish_tick", 1)] * 3, log)
+
+    def test_a_failed_batch_is_counted_the_ticks_are_stored_and_the_stream_rests_five_seconds(self):
+        log = []
+        publisher = BatchOnly(log, fail=True)
+        runner = self._runner(publisher)
+        clock = Clock()
+        printed = []
+        with mock.patch("core.live.feed_runner.time.monotonic", clock), \
+             mock.patch("builtins.print", side_effect=lambda *a, **_: printed.append(" ".join(map(str, a)))):
+            runner.on_ticks(_ticks(4))
+            self.assertEqual(4, runner._publish_errors)
+            self.assertEqual(4, runner.pump.depth(), "storage does not wait on Redis")
+            self.assertEqual(1, len(printed), "said on crossing 1")
+            self.assertIn("redis is not answering", printed[0])
+
+            publisher.fail = False
+            clock.t += 4.9
+            runner.on_ticks(_ticks(97))
+            self.assertEqual([("publish", 4)], log, "Redis is left alone for five seconds")
+            self.assertEqual(101, runner._publish_errors)
+            self.assertEqual(2, len(printed), "said again on crossing 100, although the total jumped past it")
+
+            clock.t += 0.1
+            runner.on_ticks(_ticks(2))
+            self.assertEqual([("publish", 4), ("publish", 2)], log, "and then written to again")
+            self.assertEqual(101, runner._publish_errors)
+        self.assertEqual(4 + 97 + 2, runner.pump.depth())
+
+    def test_the_counts_cross_every_ten_thousand(self):
+        runner = self._runner(OneAtATime())
+        printed = []
+        with mock.patch("builtins.print", side_effect=lambda *a, **_: printed.append(a[0])):
+            runner._count_publish_errors(999)      # crosses 1 and 100: one line
+            runner._count_publish_errors(9000)     # crosses 1000
+            runner._count_publish_errors(1)        # reaches 10,000
+            runner._count_publish_errors(5)        # crosses nothing
+            runner._count_publish_errors(19000)    # crosses 20,000
+        self.assertEqual(["(999 so far)", "(9999 so far)", "(10000 so far)", "(29005 so far)"],
+                         [line[line.index("("):line.index(")") + 1] for line in printed])
+
+    def test_a_message_that_cannot_be_built_is_a_publish_error_not_a_rejected_tick(self):
+        runner = self._runner(OneAtATime())
+        with mock.patch("core.live.feed_runner.normalize_tick", side_effect=ValueError("odd tick")), \
+             mock.patch("builtins.print"):
+            runner.on_ticks(_ticks(1))
+        self.assertEqual((1, 0, 1), (runner._publish_errors, runner.ticks_rejected, runner.pump.depth()))
+
+
+class GoldenMessageTests(unittest.TestCase):
+    """The stream message is what it was before batching, for every vendor's shape of tick."""
+
+    @staticmethod
+    def _old_message(tick, publish_raw_payload):
+        # FeedRunner._publish as it stood at ee27219, less the XADD.
+        message = normalize_tick(tick)
+        message["sourceKey"] = tick.get("sourceKey")
+        message["isReplay"] = bool(tick.get("isReplay"))
+        message["rawPayload"] = tick.get("rawPayload", "") if publish_raw_payload else ""
+        return message
+
+    def _dhan_tick(self):
+        import struct
+        from market_data.live.vendors.dhan import DhanFeed
+
+        feed = DhanFeed("client-id-for-tests", "token-for-tests", http=mock.MagicMock(),
+                        credentials_source=lambda: None, min_tick_interval_ms=0,
+                        vendor_names={"NSE:NIFTY2692925000CE": "NSE_FNO:47317:OPTIDX"})
+        feed._send = lambda message: True
+        feed.subscribe(["NSE:NIFTY2692925000CE"])
+        out = []
+        feed._on_ticks = out.extend
+        feed._on_event = lambda e, d="": None
+        body = struct.pack("<BHBIfHIfIIIIIIffff", 8, 162, 2, 47317, 134.25, 50, 1790000000, 112.4,
+                           387600000, 1241, 1443, 6543875, 6600000, 5900000, 120.0, 0.0, 140.0, 110.0)
+        levels = [(425, 300, 3, 2, 134.2, 134.5)] + [(0, 0, 0, 0, 0.0, 0.0)] * 4
+        feed._on_message(body + b"".join(struct.pack("<IIHHff", *level) for level in levels))
+        return out[0], feed
+
+    def _fyers_tick(self):
+        from market_data.live.vendors.fyers import message_to_tick
+
+        return message_to_tick({"symbol": "NSE:NIFTY50-INDEX", "ltp": 25012.35, "open_price": 25000.0,
+                                "high_price": 25100.0, "low_price": 24900.0, "prev_close_price": 24950.0,
+                                "exch_feed_time": 1790000000, "type": "if", "ch": 62.35, "chp": 0.25})
+
+    def _truedata_tick(self):
+        return {"symbol": "NSE:BANKNIFTY26SEP56400CE", "dataType": "symbolUpdate",
+                "exchangeTimestampUtc": "2026-09-11T03:55:02Z", "lastTradedPrice": 116.4, "bidPrice": 116.3,
+                "askPrice": 116.5, "bidSize": 150, "askSize": 90, "open": 110.0, "high": 120.0, "low": 105.5,
+                "prevClose": 112.0, "volume": 123456, "openInterest": 45000,
+                "rawPayload": '{"kind":"trade","atp":114.2}'}
+
+    def test_the_new_message_is_the_old_one_for_every_vendor(self):
+        from _feed_fakes import FakeFeed, runner_for
+
+        dhan_tick, dhan_feed = self._dhan_tick()
+        cases = [("dhan", dhan_tick, False), ("fyers", self._fyers_tick(), True),
+                 ("truedata", self._truedata_tick(), True), ("truedata replay", self._truedata_tick(), True)]
+        for name, tick, raw_on_stream in cases:
+            with self.subTest(name):
+                feed = FakeFeed(is_replay=name.endswith("replay"), publish_raw_payload=raw_on_stream)
+                feed.key = name.split()[0]
+                runner = runner_for(feed, publisher=OneAtATime())
+                message = runner._accept(dict(tick))
+                stored = runner.pump.drain(1)[0]
+                old = self._old_message(stored, raw_on_stream)
+                for either in (message, old):
+                    either.pop("receivedUtc")
+                self.assertEqual(old, message)
+                self.assertEqual(name.endswith("replay"), message["isReplay"])
+                self.assertEqual(stored["rawPayload"] if raw_on_stream else "", message["rawPayload"])
+
+
 if __name__ == "__main__":
     unittest.main()
