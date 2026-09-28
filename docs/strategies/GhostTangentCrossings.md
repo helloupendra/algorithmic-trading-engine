@@ -557,10 +557,10 @@ and trading less is why the totals shrink.
 
 `smc_filter` reads market structure on the same candles this strategy draws its
 pivots on, through `strategies/market_structure.py` — the same reader the chart
-uses, so what gates a signal is what Data → Market structure would have shown at
-that moment. It only ever removes signals; it never creates one, and with
-`"off"` (the default) the strategy behaves exactly as it did before the filter
-existed.
+uses, so what gates a signal is what Markets → Chart's structure layer
+(`/markets/chart?layer=structure`) would have shown at that moment. It only
+ever removes signals; it never creates one, and with `"off"` (the default) the
+strategy behaves exactly as it did before the filter existed.
 
 A live run holds back the forming candle before feeding the reader, as the
 structure module requires; a replay feeds every closed candle.

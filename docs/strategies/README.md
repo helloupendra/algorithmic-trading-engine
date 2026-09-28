@@ -6,7 +6,7 @@ where `<StrategyName>` is exactly the key `strategies.registry.load_strategy_fac
 returns (the class's `name` attribute, or the factory name in `variants.py`).
 Nothing else lives here: the test treats any other `.md` file as a spec for a
 strategy that no longer exists (usually a rename) and fails.
-The console renders the file on the Strategies → Library page (GET
+The console renders the file on the Trade → Library page (GET
 `/api/Strategy/{id}/spec`), so what is written here is what a trader reads
 before starting a run.
 
@@ -212,7 +212,7 @@ spec_version: 1               # bump when the rule changes, not for wording
    .venv/bin/python -m unittest src/AlgoTrading.PythonEngine/tests/test_strategy_specs.py -v
    ```
 
-4. The page renders: open Strategies → Library, select the strategy, read
+4. The page renders: open Trade → Library, select the strategy, read
    the spec. Maths that looks right on GitHub but not in the console (or the
    other way round) is a bug in the spec, not in the renderer — stick to
    what both support.
