@@ -16,7 +16,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useLiveFeed } from '../lib/live'
-import { ACCOUNT_PAGE, accessFor, locate, navFor } from '../lib/modules'
+import { ACCOUNT_PAGE, accessFor, locate, nameRoute, navFor, routeTitle, tabGroups } from '../lib/modules'
 import type { NavPage, NavWorkspace } from '../lib/modules'
 import { isPaletteShortcut } from '../lib/palette'
 import { installScrollCues } from '../lib/scrollCues'
@@ -47,32 +47,44 @@ function DeskTitle({ slotRef }: { slotRef: (el: HTMLDivElement | null) => void }
 
 /**
  * The current workspace's pages, one per tab but for the few tabs that hold
- * more than one (Backtests' overview, new backtest and runs); a thin rule
- * separates one tab's pages from the next.
+ * more than one (Backtests' overview, new backtest and runs). A thin rule
+ * brackets such a group, and only such a group: between two single-page
+ * tabs it would say nothing.
  */
 function TabStrip({ workspace, current }: { workspace: NavWorkspace; current: NavPage }) {
   const listRef = useRef<HTMLElement>(null)
+  const groups = tabGroups(workspace.pages)
 
-  // On a narrow screen the current tab may sit past the edge: bring it in by
-  // scrolling the strip sideways only, never the page.
+  // On a narrow screen the current tab may sit past the edge: bring it to the
+  // middle by scrolling the strip sideways only, never the page. The strip is
+  // a .scroll-x, so lib/scrollCues fades whichever edge hides more.
   useEffect(() => {
     const list = listRef.current
-    const tab = list?.querySelector<HTMLElement>('[aria-current="page"]')
-    if (!list || !tab) return
-    const left = tab.offsetLeft - list.offsetLeft
-    if (left < list.scrollLeft || left + tab.offsetWidth > list.scrollLeft + list.clientWidth) {
-      list.scrollLeft = Math.max(0, left - 24)
+    if (!list) return
+    const reveal = () => {
+      const tab = list.querySelector<HTMLElement>('[aria-current="page"]')
+      if (!tab) return
+      const left = tab.offsetLeft - list.offsetLeft
+      const hidden = left < list.scrollLeft || left + tab.offsetWidth > list.scrollLeft + list.clientWidth
+      if (!hidden) return
+      const centred = left - (list.clientWidth - tab.offsetWidth) / 2
+      list.scrollLeft = Math.max(0, Math.min(centred, list.scrollWidth - list.clientWidth))
     }
+    reveal()
+    window.addEventListener('resize', reveal)
+    return () => window.removeEventListener('resize', reveal)
   }, [current])
 
   return (
-    <nav className="shell__tablist" aria-label={`${workspace.label} pages`} ref={listRef}>
-      {workspace.pages.map((page, i) => (
-        <Fragment key={page.to}>
-          {i > 0 && workspace.pages[i - 1].tab.key !== page.tab.key && <span className="shell__tabsep" aria-hidden="true" />}
-          <Link to={page.to} className="shell__tab" aria-current={page === current ? 'page' : undefined}>
-            {page.label}
-          </Link>
+    <nav className="shell__tablist scroll-x" aria-label={`${workspace.label} pages`} ref={listRef}>
+      {groups.map((group, g) => (
+        <Fragment key={group[0].tab.key}>
+          {g > 0 && (group.length > 1 || groups[g - 1].length > 1) && <span className="shell__tabsep" aria-hidden="true" />}
+          {group.map((page) => (
+            <Link key={page.to} to={page.to} className="shell__tab" aria-current={page === current ? 'page' : undefined}>
+              {page.label}
+            </Link>
+          ))}
         </Fragment>
       ))}
     </nav>
@@ -97,7 +109,6 @@ export function AppLayout() {
     () => (isAdmin ? [] : [{ label: ACCOUNT_PAGE.label, to: ACCOUNT_PAGE.to, keywords: ['broker', 'capital', 'profile'] }]),
     [isAdmin],
   )
-  const onAccount = !isAdmin && pathname === ACCOUNT_PAGE.to
 
   // ⌘K / Ctrl-K from anywhere in the console, even from inside a field.
   useEffect(() => {
@@ -116,18 +127,14 @@ export function AppLayout() {
   // Sideways-scrolling tables and strips fade the edge that hides more.
   useEffect(() => installScrollCues(document), [])
 
-  // The browser tab names the page: several consoles open side by side
+  // One name per route (lib/modules.ts), for the strip when it has no tabs
+  // to show and for the browser tab: several consoles open side by side
   // otherwise all read as the site's title.
-  const title = here
-    ? here.page.label === here.workspace.label
-      ? here.page.label
-      : `${here.page.label} · ${here.workspace.label}`
-    : onAccount
-      ? ACCOUNT_PAGE.label
-      : null
+  const name = nameRoute(pathname, nav)
+  const title = routeTitle(name)
   useEffect(() => {
     const previous = document.title
-    document.title = title ? `${title} · OpenFNO` : 'OpenFNO console'
+    document.title = `${title} · OpenFNO`
     return () => {
       document.title = previous
     }
@@ -184,13 +191,15 @@ export function AppLayout() {
         <UserMenu user={user} isAdmin={isAdmin} onSignOut={handleSignOut} />
       </header>
 
+      {/* A workspace with one page has nothing to switch between: its strip
+          is the page's name, as it is for a page outside the workspaces. */}
       <div className={`shell__tabs${onDesk ? ' shell__tabs--desk' : ''}`}>
         {onDesk ? (
           <DeskTitle slotRef={setStripSlot} />
-        ) : here ? (
+        ) : here && here.workspace.pages.length > 1 ? (
           <TabStrip workspace={here.workspace} current={here.page} />
         ) : (
-          title && <span className="shell__tabs-title">{title}</span>
+          <span className="shell__tabs-title">{name.page}</span>
         )}
       </div>
 

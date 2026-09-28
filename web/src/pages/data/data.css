@@ -1,0 +1,82 @@
+/* Data module pages (Overview, Feeds, Historical, Instruments): the rules the
+   shared sheet has no reason to carry. Every selector is scoped to .data-page
+   because the pages sit in the eager bundle, so this file loads everywhere. */
+
+/* Coverage matrix: six columns of "574 sym · 5,11,777 bars" need ~900px. A
+   phone shows the symbol count under a short heading ("1m live") and keeps
+   the bar count in the cell's title. */
+.data-page .cov-matrix__short { display: none; }
+@media (max-width: 760px) {
+  .data-page .cov-matrix__long,
+  .data-page .cov-cell__sym,
+  .data-page .cov-cell__bars { display: none; }
+  .data-page .cov-matrix__short { display: inline; }
+}
+
+/* Columns a phone has no room for, and the lines only a phone shows in
+   their place (an age under the symbol, a master's coverage under its name). */
+.data-page .col--phone { display: none; }
+@media (max-width: 760px) {
+  .data-page .col--wide { display: none; }
+  .data-page .col--phone { display: block; }
+  .data-page .table th,
+  .data-page .table td { padding-left: 8px; padding-right: 8px; }
+}
+
+/* The symbol column stays put while the rest of a wide table scrolls, so a
+   price is never read against the wrong row. */
+.data-page .table--sticky th:first-child,
+.data-page .table--sticky td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--bg1);
+}
+.data-page .table--sticky th:first-child { z-index: 3; }
+.data-page .table--sticky tbody tr:hover td:first-child { background: var(--surface2); }
+
+/* Instruments: the symbol in a results row is a button that reads as the
+   cell's text, so a row can be picked from the keyboard (the shared
+   :focus-visible outline marks it). */
+.data-page .row-pick {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+/* Instruments: on a phone the detail card sits above the results, so a tap
+   on a row is answered where the eye already is. */
+@media (max-width: 760px) {
+  .data-page .two-col__lead { order: -1; }
+}
+
+/* Historical: the empty chart slot matches the ranges rail beside it, and
+   shrinks to a one-line hint once the rail is stacked above it. */
+.data-page .cov-placeholder { min-height: 320px; align-self: stretch; }
+@media (max-width: 1100px) {
+  .data-page .cov-placeholder { min-height: 96px; }
+}
+
+/* Ticker tiles: the figure is a stat value like every other tile's, not code. */
+.data-page .stat__value .mono { font-family: inherit; }
+
+@media (max-width: 760px) {
+  /* Needs attention: the shared rule lets the row wrap, but the body's zero
+     flex basis never asks it to; a basis wider than half the row puts the
+     button under the note. */
+  .data-page .checklist__body { flex: 1 1 200px; }
+
+  /* A master's coverage under its name: two lines, the rest in the title. */
+  .data-page .cell-sub--clamp {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+}

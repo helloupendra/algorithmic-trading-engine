@@ -14,16 +14,20 @@
  * change) is the one to read: above zero, puts are being written faster than
  * calls.
  *
- * Drawn as inline SVG. The series is a few hundred points of two or three
- * lines, which is a polyline — a charting library would be more code than the
- * chart.
+ * Drawn as inline SVG, in pixel units at the panel's width like the charts
+ * under the chain. The series is a few hundred points of two or three lines,
+ * which is a polyline — a charting library would be more code than the chart.
  */
 
 import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useOptionChainSeries, useOptionChainView } from '../../../lib/queries'
 import type { OptionChainSeries, OptionChainSeriesPoint } from '../../../lib/types'
+import { capturedExpiry, expiryLabel, istDate } from '../../../lib/optionChain'
+import { formatPrice } from '../../../lib/format'
 import { EmptyState, InlineError, Loading, Panel, QueryBoundary } from '../../../components/ui'
+import { useWidth } from './useWidth'
+import './chain-views.css'
 
 type View = 'oiChange' | 'oiLevel' | 'price' | 'volume'
 
@@ -76,6 +80,7 @@ function compact(value: number): string {
 
 function SeriesChart({ series, view }: { series: OptionChainSeries; view: View }) {
   const lines = useMemo(() => linesFor(view, series.points), [view, series.points])
+  const [ref, width] = useWidth<HTMLDivElement>()
 
   const { min, max } = useMemo(() => {
     const all = lines.flatMap((l) => l.values).filter((v): v is number => v != null)
@@ -93,8 +98,10 @@ function SeriesChart({ series, view }: { series: OptionChainSeries; view: View }
     return { min: lo - pad, max: hi + pad }
   }, [lines, view])
 
-  const W = 900
-  const H = 320
+  // The panel's width, 300px tall on a desk screen and 240px on a phone: the
+  // ticks are 10px text at either. The right pad holds the value labels.
+  const W = width
+  const H = width < 560 ? 240 : 300
   const PAD = { top: 12, right: 64, bottom: 26, left: 8 }
   const plotW = W - PAD.left - PAD.right
   const plotH = H - PAD.top - PAD.bottom
@@ -112,7 +119,7 @@ function SeriesChart({ series, view }: { series: OptionChainSeries; view: View }
 
   return (
     <div>
-      <div className="chip-row" style={{ marginBottom: 6 }}>
+      <div className="chip-row oih-legend">
         {lines.map((l) => (
           <span key={l.label} className="oi-legend">
             <span className="oi-swatch" style={{ background: l.colour }} />
@@ -121,8 +128,9 @@ function SeriesChart({ series, view }: { series: OptionChainSeries; view: View }
         ))}
       </div>
 
-      <div className="tablewrap">
-        <svg viewBox={`0 0 ${W} ${H}`} className="oi-chart" role="img"
+      <div ref={ref} className="oih-plot">
+        {width > 0 && (
+        <svg width={W} height={H} role="img"
              aria-label={`${series.underlying} ${series.strikePrice} ${view}`}>
           {ticks.map((t, i) => (
             <g key={i}>
@@ -165,6 +173,7 @@ function SeriesChart({ series, view }: { series: OptionChainSeries; view: View }
             {new Date(series.points[n - 1].capturedUtc).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })}
           </text>
         </svg>
+        )}
       </div>
     </div>
   )
@@ -190,6 +199,8 @@ export function OiHistoryView({ underlying }: { underlying: string }) {
   const selectedIndex = selected != null ? strikes.indexOf(selected) : -1
 
   const series = useOptionChainSeries(underlying, selected, data?.expiryDate)
+  // The expiry as the chain's toolbar prints it ("29 Sep 2026 (+2 days)"), not the ISO date.
+  const expiryNote = data && capturedExpiry(data.expiryDate)
 
   if (chain.isError && !data) return <InlineError error={chain.error} />
   if (!data) return <Loading label={`Loading the ${underlying} chain…`} />
@@ -257,12 +268,13 @@ export function OiHistoryView({ underlying }: { underlying: string }) {
         title={`${underlying} ${selected != null ? selected.toLocaleString('en-IN') : '—'}${selected === data.atTheMoneyStrike ? ' · ATM' : ''}`}
         actions={
           <span className="faint small">
-            {data.spotPrice > 0 && `spot ${data.spotPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })} · `}expiry{' '}
-            {data.expiryDate}
+            {data.spotPrice > 0 && `spot ${formatPrice(data.spotPrice)}`}
+            {data.spotPrice > 0 && expiryNote && ' · '}
+            {expiryNote && `expiry ${expiryLabel(expiryNote, istDate(Date.now()))}`}
           </span>
         }
       >
-        {series.isError && <InlineError error={series.error} />}
+        {/* QueryBoundary shows the series' error itself; a second InlineError here drew it twice. */}
         <QueryBoundary query={series}>
           {(points) =>
             points.openInterestUnavailable && view.startsWith('oi') ? (

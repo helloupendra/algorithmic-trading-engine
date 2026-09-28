@@ -13,6 +13,8 @@
 .charts__symbol { width: 300px; max-width: 100%; }
 .charts__symbol .combo { width: 100%; }
 .charts__symbol .combo .field__input { width: 100%; box-sizing: border-box; }
+/* The switches (resolution, range, layers) as one row that wraps on a desk. */
+.charts__segs { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
 
 .charts__picks { display: flex; flex-wrap: wrap; gap: 6px; }
 .charts__pick {
@@ -42,7 +44,8 @@
 .charts__title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .charts__name { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
 .charts__sym { font-size: 12px; color: var(--text-3); }
-.charts__live { font-size: 11px; color: var(--pos); font-weight: 650; letter-spacing: 0.04em; }
+/* The live mark is the topbar's .pill--live, shown only while prices arrive (ChartPage.tsx). */
+.charts__title .pill { padding: 2px 9px; font-size: 11px; align-self: center; }
 .charts__quote { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .charts__price { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
 .charts__change { font-size: 13px; font-variant-numeric: tabular-nums; color: var(--text-2); }
@@ -104,12 +107,21 @@
 
 @media (max-width: 720px) {
   .charts__symbol { width: 100%; }
-  /* On a phone the picks and the structure switches are one row each that
-     scrolls sideways in its own box, so the chart is not four rows down. */
+  /* On a phone the switches, the picks and the structure switches are one
+     row each that scrolls sideways in its own box (the hidden edge fades:
+     .scroll-x, lib/scrollCues.ts), so the chart is not four rows down. The
+     switches are padded a size down so all eight fit a 390 screen as it is. */
+  .charts__segs,
   .charts__picks,
   .smc__bar { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .charts__segs::-webkit-scrollbar,
+  .charts__picks::-webkit-scrollbar { display: none; }
+  .charts__segs { flex: 0 0 100%; gap: 8px; }
+  .charts__segs .seg,
   .charts__pick,
   .smc__bar .seg { flex: 0 0 auto; }
+  .charts__segs .seg__btn { padding-left: 8px; padding-right: 8px; min-height: 36px; }
+  .charts__pick { min-height: 36px; display: inline-flex; align-items: center; }
   .charts__stage .chart { height: 46vh; }
   .charts__price { font-size: 22px; }
 }

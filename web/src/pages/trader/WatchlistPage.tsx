@@ -49,28 +49,24 @@ export function WatchlistPage() {
   const [symbol, setSymbol] = useState('')
 
   return (
-    <div className="page">
+    <div className="page wl">
       <header className="page__header">
         <h1 className="page__title">Watchlist</h1>
         <p className="page__subtitle">
           Your own list of symbols, with the last saved quote for each. It is stored against your
-          account, so it is the same on every device. The indices, large caps and commodities
-          first are the same for everyone; your list, under them, is for what you want on top.
+          account, so it is the same on every device. The indices, large caps and commodities are
+          the same for everyone; your list is for what you want on top of them.
         </p>
       </header>
 
       <MarketPulse />
 
-      {add.isError && <InlineError error={add.error} />}
-      {remove.isError && <InlineError error={remove.error} />}
-      {(add.isSuccess || remove.isSuccess || reset.isSuccess) && (
-        <div className="alert alert--success" role="status">
-          {add.data?.message ?? remove.data?.message ?? reset.data?.message}
-        </div>
-      )}
-
+      {/* On a phone this panel comes before the pulse (market-pulse.css): the
+          list the page is named for, first. The add/remove notes live inside
+          it so they travel with it. */}
       <Panel
         title="Symbols"
+        className="wl__own"
         actions={
           <form
             className="chip-row"
@@ -108,6 +104,13 @@ export function WatchlistPage() {
           </form>
         }
       >
+        {add.isError && <InlineError error={add.error} />}
+        {remove.isError && <InlineError error={remove.error} />}
+        {(add.isSuccess || remove.isSuccess || reset.isSuccess) && (
+          <div className="alert alert--success" role="status">
+            {add.data?.message ?? remove.data?.message ?? reset.data?.message}
+          </div>
+        )}
         <QueryBoundary query={watchlist}>
           {(answered) => {
             const list = rows ?? answered
@@ -121,9 +124,9 @@ export function WatchlistPage() {
                       <th>Symbol</th>
                       <th className="r">LTP</th>
                       <th className="r">Change</th>
-                      <th className="r">Open</th>
-                      <th className="r">High</th>
-                      <th className="r">Low</th>
+                      <th className="r wl-ohl">Open</th>
+                      <th className="r wl-ohl">High</th>
+                      <th className="r wl-ohl">Low</th>
                       <th>Quote age</th>
                       <th />
                     </tr>
@@ -143,9 +146,9 @@ export function WatchlistPage() {
                           </td>
                           <td className="r">{formatPrice(item.lastTradedPrice)}</td>
                           <td className={`r ${ch.cls}`}>{ch.text}</td>
-                          <td className="r">{formatPrice(item.open)}</td>
-                          <td className="r">{formatPrice(item.high)}</td>
-                          <td className="r">{formatPrice(item.low)}</td>
+                          <td className="r wl-ohl">{formatPrice(item.open)}</td>
+                          <td className="r wl-ohl">{formatPrice(item.high)}</td>
+                          <td className="r wl-ohl">{formatPrice(item.low)}</td>
                           <td>
                             {item.updatedUtc ? (
                               formatAge(item.updatedUtc)

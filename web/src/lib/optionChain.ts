@@ -7,6 +7,13 @@
 
 import type { OptionChain, OptionChainHeader, OptionChainLeg, OptionChainQuote, OptionChainStrike } from './types'
 
+/**
+ * The underlyings the chain recorder captures: the picker's row. The API has
+ * no endpoint saying which underlyings have chains on this installation, and
+ * its derivatives list is every F&O name (some 250), so this row is still a
+ * list here; any name that list knows is accepted from a link all the same
+ * (chainUnderlying) and joins the row while it is open.
+ */
 export const UNDERLYINGS = [
   'NIFTY',
   'BANKNIFTY',
@@ -17,6 +24,9 @@ export const UNDERLYINGS = [
   'CRUDEOIL',
   'NATURALGAS',
 ] as const
+
+/** What an underlying's name looks like in the instrument master: NIFTY, M&M, BAJAJ-AUTO, 360ONE. */
+const UNDERLYING_SHAPE = /^[A-Z0-9][A-Z0-9&-]{1,19}$/
 
 /* ------------------------------------------------------------------ views -- */
 
@@ -33,10 +43,19 @@ export const CHAIN_VIEWS: ReadonlyArray<{ key: ChainViewKey; label: string; path
   { key: 'levels', label: 'Levels', path: '/markets/chain/levels' },
 ]
 
-/** The underlying a URL asks for, when the recorder captures it; NIFTY otherwise. */
-export function chainUnderlying(requested: string | null | undefined): (typeof UNDERLYINGS)[number] {
+/**
+ * The underlying a URL asks for. The recorder's row is accepted at once; so
+ * is any other name the instrument master lists as an F&O underlying (`known`,
+ * the derivatives list), so a link to a ninth captured underlying opens that
+ * chain and not NIFTY's. While that list has not answered, a name shaped like
+ * one is taken at its word rather than shown as NIFTY and then swapped; once
+ * it has, a name it does not know falls back to the first of the row.
+ */
+export function chainUnderlying(requested: string | null | undefined, known?: readonly string[]): string {
   const wanted = (requested ?? '').trim().toUpperCase()
-  return (UNDERLYINGS as readonly string[]).includes(wanted) ? (wanted as (typeof UNDERLYINGS)[number]) : 'NIFTY'
+  if ((UNDERLYINGS as readonly string[]).includes(wanted)) return wanted
+  if (known ? known.includes(wanted) : UNDERLYING_SHAPE.test(wanted)) return wanted
+  return UNDERLYINGS[0]
 }
 
 /**

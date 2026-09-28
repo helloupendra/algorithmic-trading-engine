@@ -1,0 +1,40 @@
+/* Risk & kill switch — rules scoped to the page. */
+
+/* Trading limits: four fields in one row that align on their TOP edge, so the
+   one with two lines of help no longer floats above its neighbours (.form-row
+   aligns to the bottom). A fixed count per breakpoint: four, then two by two,
+   then one — never three and an orphan. */
+.limits-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px 14px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .limits-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 520px) {
+  .limits-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* "In force from …" is a line above the form, not a caption glued to the
+   first label. */
+.limits-source {
+  margin: 0 0 12px;
+  /* Tall enough for the source pill, so it does not lean on the first label. */
+  line-height: 20px;
+}
+
+/* A save result above the form keeps its distance from the line below it. */
+.limits-panel .alert { margin-bottom: 10px; }
+
+/* The button on its own line at its own width, as the package editor's
+   .edit-grid__actions — not a fifth cell of the field grid. */
+.limits-actions {
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
