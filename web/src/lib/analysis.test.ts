@@ -14,29 +14,48 @@ import {
   deskAnswer,
   displayStatus,
   forecastCells,
+  describeValue,
   forecastsQuery,
   formatCiSkill,
-  formatInputs,
+  formatInputValue,
+  formatIstClock,
+  formatIstStamp,
   formatProb,
   formatProbDelta,
   formatRangeForecast,
+  formatSentiment,
+  formatSigned,
+  formatSignedPct,
   formatSkill,
   formatSkillSigned,
   groupScoreboard,
+  humanizeKey,
+  inputLabel,
+  inputsView,
   intervalBar,
   isProven,
   issueNote,
+  issuedText,
   istMinutes,
   istToday,
+  modelAbout,
+  modelShort,
+  modelTitle,
+  newsLabel,
   pickSession,
   rangeScale,
   readForecastList,
+  readLiveContext,
   readScoreboard,
   reliabilityLabel,
   reliabilityPoints,
   scoringNote,
+  sentimentTone,
+  sessionContexts,
   sharedExtent,
+  shortDay,
   sortForecasts,
+  sortNewsRows,
   statusMeta,
   todayCards,
   verdict,
@@ -554,20 +573,25 @@ describe('forecast cells', () => {
     expect(asRange({ p: 0.4 })).toBeNull()
   })
 
-  it('shows the model inputs with readable names', () => {
-    expect(formatInputs({ vixPrevClose: 11.9, expiryDay: false, custom: 'x', gap: null })).toEqual([
-      ['India VIX, previous close', '11.9'],
-      ['Expiry day', 'no'],
-      ['custom', 'x'],
-      ['gap', '—'],
-    ])
-    expect(formatInputs(null)).toEqual([])
-    // The models send the calendar facts as 0/1.
-    expect(formatInputs({ expiryDay: 1, monday: 0, trainingSessions: 1277 })).toEqual([
-      ['Expiry day', 'yes'],
-      ['Monday', 'no'],
-      ['Training sessions', '1,277'],
-    ])
+  it('shows each input with a readable name, in its unit', () => {
+    expect(inputLabel('vixPrevClose')).toBe('India VIX, previous close')
+    expect(inputLabel('customThing')).toBe('Custom thing')
+    expect(formatInputValue('vixPrevClose', 11.9)).toBe('11.90')
+    expect(formatInputValue('r1', 0.6146)).toBe('0.61%')
+    expect(formatInputValue('prevReturn', 0.336)).toBe('+0.34%')
+    expect(formatInputValue('prevReturn', -0.2)).toBe('−0.20%')
+    expect(formatInputValue('vixChange5', 0.75)).toBe('+0.75')
+    expect(formatInputValue('rangeRatio', 0.8641)).toBe('0.86×')
+    expect(formatInputValue('prevClose', 23140.5)).toBe('23,140.50')
+    expect(formatInputValue('trainingSessions', 1277)).toBe('1,277')
+    expect(formatInputValue('trainedThrough', '2026-09-22')).toBe('22 Sept')
+    expect(formatInputValue('expiryDay', false)).toBe('no')
+    // The models send the calendar facts as 0/1 too.
+    expect(formatInputValue('expiryDay', 1)).toBe('yes')
+    expect(formatInputValue('monday', 0)).toBe('no')
+    expect(formatInputValue('events', '')).toBe('none')
+    expect(formatInputValue('gap', null)).toBe('—')
+    expect(formatInputValue('custom', 'x')).toBe('x')
   })
 
   it('sorts newest session first, then index, target and model', () => {
@@ -578,6 +602,303 @@ describe('forecast cells', () => {
       forecast({ id: 4 }),
     ]
     expect(sortForecasts(list).map((f) => f.id)).toEqual([4, 3, 2, 1])
+  })
+})
+
+/** inputs.liveOnly as the 08:50 job recorded it on 28 Sep 2026 (every forecast carries the same one). */
+const LIVE_ONLY = {
+  usedByModels: false,
+  giftNiftyGapPct: 0,
+  giftNiftyChangePct: -0.41,
+  giftNiftyAsOf: '2026-09-28T03:13:18Z',
+  giftNiftyFetchedUtc: '2026-09-28T03:15:03Z',
+  news: {
+    auto: { n: 50, scored: 50, sentiment: 0.705, maxImportance: 3 },
+    banking: { n: 57, scored: 57, sentiment: 0.038, maxImportance: 2 },
+    commodities: { n: 67, scored: 67, sentiment: -0.334, maxImportance: 3 },
+    fmcg: { n: 55, scored: 54, sentiment: 0.325, maxImportance: 3 },
+    global: { n: 377, scored: 375, sentiment: -0.14, maxImportance: 3 },
+    india: { n: 490, scored: 488, sentiment: 0.167, maxImportance: 3 },
+    it: { n: 75, scored: 75, sentiment: 0.095, maxImportance: 2 },
+    'nifty50 announcements': { n: 9, scored: 9, sentiment: -0.046, maxImportance: 3 },
+    uncategorised: { n: 2, scored: 0, sentiment: null, maxImportance: null },
+  },
+  earningsToday: 0,
+  earningsSincePrev: 0,
+}
+
+describe('the models, in words', () => {
+  it('gives each known model a short label and a description, the registered one first', () => {
+    expect(modelShort('range.har-vix')).toBe('recent ranges + India VIX')
+    expect(modelShort('direction.logit')).toBe('logistic, 7 inputs · control')
+    expect(modelShort('direction.logit-cues')).toBe('logistic, 7 inputs + pre-open cues · control')
+    expect(modelShort('range.new')).toBe('')
+    expect(modelAbout('range.har')).toMatch(/1-, 5- and 22-session mean ranges/)
+    expect(modelAbout('range.har', 'As registered.')).toBe('As registered.')
+    expect(modelAbout('trend.logit-cues')).toMatch(/^trend\.logit plus the pre-open context/)
+    expect(modelTitle('range.har', '2026-09-27.1')).toMatch(/^range\.har · version 2026-09-27\.1 — Log-range/)
+    expect(modelTitle('mystery.model')).toBe('mystery.model')
+  })
+})
+
+describe('times and signs', () => {
+  it('reads UTC stamps on the IST clock', () => {
+    expect(formatIstClock('2026-09-28T03:13:18Z')).toBe('08:43 IST')
+    expect(formatIstClock('2026-09-27T20:00:00Z')).toBe('01:30 IST')
+    expect(formatIstClock(null)).toBe('—')
+    expect(formatIstClock('not a time')).toBe('—')
+    expect(formatIstStamp('2026-09-27T20:00:00Z')).toBe('28 Sept, 01:30 IST')
+    expect(shortDay('2026-09-25')).toBe('25 Sept')
+  })
+
+  it('says when a session was issued, as a span when its forecasts went out at different minutes', () => {
+    expect(issuedText([{ issuedUtc: '2026-09-28T03:20:05.66Z' }, { issuedUtc: '2026-09-28T03:20:05.53Z' }])).toBe('issued 08:50 IST')
+    expect(issuedText([{ issuedUtc: '2026-09-28T03:20:05Z' }, { issuedUtc: '2026-09-28T03:35:00Z' }])).toBe('issued 08:50–09:05 IST')
+    expect(issuedText([])).toBe('')
+  })
+
+  it('signs numbers with a true minus and never signs a zero', () => {
+    expect(formatSigned(0.336)).toBe('+0.34')
+    expect(formatSigned(-2184.4, 0)).toBe('−2,184')
+    expect(formatSigned(-0.001)).toBe('0.00')
+    expect(formatSignedPct(0)).toBe('0.00%')
+    expect(formatSignedPct(-0.41)).toBe('−0.41%')
+    expect(formatSignedPct(null)).toBe('—')
+  })
+})
+
+describe('sentiment', () => {
+  it('is level within ±0.15, as on the Desk, and unknown when nothing was scored', () => {
+    expect(sentimentTone(0.705)).toBe('pos')
+    expect(sentimentTone(-0.334)).toBe('neg')
+    expect(sentimentTone(0.15)).toBe('flat')
+    expect(sentimentTone(-0.14)).toBe('flat')
+    expect(sentimentTone(0)).toBe('flat')
+    expect(sentimentTone(null)).toBeNull()
+    expect(formatSentiment(0.705)).toBe('+0.71')
+    expect(formatSentiment(-0.046)).toBe('−0.05')
+    expect(formatSentiment(null)).toBe('—')
+  })
+
+  it('orders the news India, Global, the sectors A–Z, uncategorised, then the NIFTY 50 filings', () => {
+    const c = readLiveContext(LIVE_ONLY)!
+    expect(c.news!.map((r) => r.label)).toEqual([
+      'India',
+      'Global',
+      'Auto',
+      'Banking',
+      'Commodities',
+      'FMCG',
+      'IT',
+      'Uncategorised',
+      'NIFTY 50 filings',
+    ])
+    const again = sortNewsRows([...c.news!].reverse())
+    expect(again.map((r) => r.key)).toEqual(c.news!.map((r) => r.key))
+    expect(newsLabel('real estate')).toBe('Real estate')
+  })
+})
+
+describe('the pre-open context', () => {
+  it('reads GIFT Nifty, the news and the earnings load, and says no model used them', () => {
+    const c = readLiveContext(LIVE_ONLY)!
+    expect(c.usedByModels).toBe(false)
+    expect(c.gift).toEqual({
+      gapPct: 0,
+      changePct: -0.41,
+      asOfUtc: '2026-09-28T03:13:18Z',
+      fetchedUtc: '2026-09-28T03:15:03Z',
+    })
+    expect(c.news!.find((r) => r.key === 'india')).toEqual({
+      key: 'india',
+      label: 'India',
+      group: 'market',
+      n: 490,
+      scored: 488,
+      sentiment: 0.167,
+      maxImportance: 3,
+    })
+    expect(c.earnings).toEqual({ today: 0, sincePrev: 0 })
+    expect(c.other).toEqual([])
+    expect(readLiveContext('x')).toBeNull()
+    expect(readLiveContext(null)).toBeNull()
+  })
+
+  it('keeps a part the job could not read as its sentence, never as a zero', () => {
+    const c = readLiveContext({
+      usedByModels: false,
+      giftNifty: 'no snapshot this morning',
+      news: 'unavailable (UndefinedTable)',
+      earnings: 'unavailable (OperationalError)',
+    })!
+    expect(c.gift).toBeNull()
+    expect(c.giftNote).toBe('no snapshot this morning')
+    expect(c.news).toBeNull()
+    expect(c.newsNote).toBe('unavailable (UndefinedTable)')
+    expect(c.earnings).toBeNull()
+    expect(c.earningsNote).toBe('unavailable (OperationalError)')
+    expect(readLiveContext({ news: {} })!.news).toEqual([])
+  })
+
+  it('passes anything it has no layout for to the generic view', () => {
+    const c = readLiveContext({ ...LIVE_ONLY, breadth: { advancing: 31, asOf: '2026-09-28T03:10:00Z' } })!
+    expect(c.other).toEqual([
+      {
+        key: 'breadth',
+        label: 'Breadth',
+        node: {
+          kind: 'fields',
+          fields: [
+            { key: 'advancing', label: 'Advancing', node: { kind: 'text', text: '31' } },
+            { key: 'asOf', label: 'As of', node: { kind: 'text', text: '28 Sept, 08:40 IST' } },
+          ],
+        },
+      },
+    ])
+  })
+
+  it('shows a session\'s context once, and each distinct one when a later run recorded another', () => {
+    const f = (id: number, underlying: string, liveOnly: unknown, issuedUtc = '2026-09-28T03:20:05Z') =>
+      forecast({ id, underlying, issuedUtc, inputs: { r1: 0.6, liveOnly } })
+    // Same record, keys in another order: still one.
+    const reordered = Object.fromEntries(Object.entries(LIVE_ONLY).reverse())
+    const one = sessionContexts([f(1, 'SENSEX', LIVE_ONLY), f(2, 'NIFTY', reordered), f(3, 'BANKNIFTY', LIVE_ONLY)])
+    expect(one).toHaveLength(1)
+    expect(one[0].count).toBe(3)
+    expect(one[0].underlyings).toEqual(['NIFTY', 'BANKNIFTY', 'SENSEX'])
+
+    const later = { ...LIVE_ONLY, giftNiftyGapPct: 0.12 }
+    const two = sessionContexts([f(1, 'NIFTY', LIVE_ONLY), f(2, 'NIFTY', LIVE_ONLY), f(3, 'SENSEX', later, '2026-09-28T03:36:00Z')])
+    expect(two.map((c) => [c.count, c.underlyings])).toEqual([
+      [2, ['NIFTY']],
+      [1, ['SENSEX']],
+    ])
+    expect(sessionContexts([forecast()])).toEqual([])
+  })
+})
+
+describe('the generic value view', () => {
+  it('draws any value as nested labels and values, never as JSON', () => {
+    expect(describeValue(null)).toEqual({ kind: 'text', text: '—' })
+    expect(describeValue(true)).toEqual({ kind: 'text', text: 'yes' })
+    expect(describeValue(12345.6789)).toEqual({ kind: 'text', text: '12,345.679' })
+    expect(describeValue('2026-09-25')).toEqual({ kind: 'text', text: 'Fri, 25 Sept' })
+    expect(describeValue([1, 'two', null])).toEqual({ kind: 'text', text: '1, two, —' })
+    expect(describeValue([])).toEqual({ kind: 'text', text: 'none' })
+    expect(describeValue({})).toEqual({ kind: 'text', text: 'none' })
+    expect(describeValue({ maxImportance: 3, inner: { n: 2 } })).toEqual({
+      kind: 'fields',
+      fields: [
+        { key: 'maxImportance', label: 'Max importance', node: { kind: 'text', text: '3' } },
+        { key: 'inner', label: 'Inner', node: { kind: 'fields', fields: [{ key: 'n', label: 'N', node: { kind: 'text', text: '2' } }] } },
+      ],
+    })
+    expect(describeValue([{ a: 1 }])).toEqual({
+      kind: 'items',
+      items: [{ kind: 'fields', fields: [{ key: 'a', label: 'A', node: { kind: 'text', text: '1' } }] }],
+    })
+  })
+
+  it('stops at four levels and at forty entries, saying how many are left', () => {
+    const deep = { a: { b: { c: { d: { e: 1, f: 2 } } } } }
+    const walk = (n: ReturnType<typeof describeValue>): ReturnType<typeof describeValue> =>
+      n.kind === 'fields' ? walk(n.fields[0].node) : n
+    expect(walk(describeValue(deep))).toEqual({ kind: 'text', text: '2 fields' })
+    const wide = describeValue(Object.fromEntries(Array.from({ length: 45 }, (_, i) => [`k${i}`, i])))
+    expect(wide.kind === 'fields' && wide.fields.length).toBe(41)
+    expect(wide.kind === 'fields' && wide.fields[40].node).toEqual({ kind: 'text', text: 'and 5 more' })
+  })
+
+  it('makes a readable label of any key', () => {
+    expect(humanizeKey('giftNiftyGapPct')).toBe('Gift nifty gap pct')
+    expect(humanizeKey('trained_through')).toBe('Trained through')
+    expect(humanizeKey('r22')).toBe('R22')
+  })
+})
+
+describe('what the models saw', () => {
+  const card = [
+    forecast({
+      id: 1,
+      modelKey: 'range.har',
+      inputs: { prevSession: '2026-09-25', prevClose: 23140.5, r1: 0.6146, trainingSessions: 1491, liveOnly: LIVE_ONLY },
+    }),
+    forecast({
+      id: 2,
+      modelKey: 'range.har-vix',
+      inputs: { prevSession: '2026-09-25', r1: 0.6146, vixPrevClose: 12.13, trainingSessions: 1238, liveOnly: LIVE_ONLY },
+    }),
+    forecast({
+      id: 3,
+      modelKey: 'trend.logit',
+      target: 'trend',
+      prediction: { p: 0.33 },
+      baseline: { p: 0.38 },
+      inputs: { prevSession: '2026-09-25', monday: true, vixPrevClose: 12.13, custom: { a: 1 }, liveOnly: LIVE_ONLY },
+    }),
+  ]
+
+  const text = (n: unknown) => (n && (n as { kind: string }).kind === 'text' ? (n as { text: string }).text : n)
+
+  it('shows each fact once, under the models that record it, in the documented order; the context left out', () => {
+    const v = inputsView(card)!
+    expect(v.prevSession).toBe('2026-09-25')
+    expect(v.groups.map((g) => [g.models, g.all, g.facts.map((f) => [f.label, text(f.value)])])).toEqual([
+      [['range.har'], false, [['Previous close', '23,140.50']]],
+      [['range.har', 'range.har-vix'], false, [['Range, last session', '0.61%']]],
+      [['range.har-vix', 'trend.logit'], false, [['India VIX, previous close', '12.13']]],
+      [['trend.logit'], false, [['Monday', 'yes'], ['Custom', { kind: 'fields', fields: [{ key: 'a', label: 'A', node: { kind: 'text', text: '1' } }] }]]],
+    ])
+  })
+
+  it('puts what differs by model in a table of its own, a row per model', () => {
+    const v = inputsView(card)!
+    expect(v.perModel!.keys).toEqual([{ key: 'trainingSessions', label: 'Training sessions' }])
+    expect(v.perModel!.rows.map((r) => [r.model, r.cells.map(text)])).toEqual([
+      ['range.har', ['1,491']],
+      ['range.har-vix', ['1,238']],
+      ['trend.logit', [null]],
+    ])
+  })
+
+  it('names a group "all" only when every model on the card records it', () => {
+    const both = [
+      forecast({ id: 1, inputs: { vixPrevClose: 12.13, trainedThrough: '2026-09-22' } }),
+      forecast({ id: 2, modelKey: 'trend.logit', target: 'trend', inputs: { vixPrevClose: 12.13, trainedThrough: '2026-09-22' } }),
+    ]
+    const v = inputsView(both)!
+    expect(v.groups).toEqual([
+      {
+        models: ['range.har-vix', 'trend.logit'],
+        all: true,
+        facts: [
+          { key: 'vixPrevClose', label: 'India VIX, previous close', value: { kind: 'text', text: '12.13' } },
+          { key: 'trainedThrough', label: 'Trained through', value: { kind: 'text', text: '22 Sept' } },
+        ],
+      },
+    ])
+    expect(v.perModel).toBeNull()
+  })
+
+  it('lists the session when the models disagree on it, and has nothing to show without inputs', () => {
+    const split = [
+      forecast({ id: 1, inputs: { prevSession: '2026-09-25', r1: 0.6 } }),
+      forecast({ id: 2, modelKey: 'range.har', inputs: { prevSession: '2026-09-24', r1: 0.6 } }),
+    ]
+    const v = inputsView(split)!
+    expect(v.prevSession).toBeNull()
+    expect(v.perModel!.keys.map((k) => k.key)).toEqual(['prevSession'])
+    expect(v.perModel!.rows.map((r) => r.cells.map(text))).toEqual([['25 Sept'], ['24 Sept']])
+    expect(v.groups[0].all).toBe(true)
+    expect(inputsView([forecast({ inputs: null }), forecast({ inputs: { liveOnly: LIVE_ONLY } })])).toBeNull()
+  })
+
+  it('tells two versions of one model apart', () => {
+    const v = inputsView([
+      forecast({ id: 1, modelVersion: '2026-09-27.1', inputs: { trainingSessions: 1200 } }),
+      forecast({ id: 2, modelVersion: '2026-10-05.1', inputs: { trainingSessions: 1206 } }),
+    ])!
+    expect(v.perModel!.rows.map((r) => r.model)).toEqual(['range.har-vix 2026-09-27.1', 'range.har-vix 2026-10-05.1'])
   })
 })
 
@@ -643,6 +964,16 @@ describe('the fixture', () => {
     expect(today.length).toBeGreaterThan(0)
     expect(today.every((f) => f.outcome === null && f.scores === null)).toBe(true)
     expect(afterClose.forecasts.filter((f) => f.sessionDate === '2026-09-28').every((f) => f.scores)).toBe(true)
+  })
+
+  it('records one pre-open context per session on every forecast, as the morning job does', () => {
+    const today = afterClose.forecasts.filter((f) => f.sessionDate === '2026-09-28')
+    const contexts = sessionContexts(today)
+    expect(contexts).toHaveLength(1)
+    expect(contexts[0].count).toBe(today.length)
+    expect(contexts[0].context.usedByModels).toBe(false)
+    expect(contexts[0].context.news!.slice(0, 2).map((r) => r.key)).toEqual(['india', 'global'])
+    expect(inputsView(today.filter((f) => f.underlying === 'NIFTY'))!.groups.length).toBeGreaterThan(0)
   })
 
   it('answers GET like the API: filtered, newest session first; an unknown path is a 404', () => {
