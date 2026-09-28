@@ -45,7 +45,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import type { QueryClient, QueryKey } from '@tanstack/react-query'
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr'
 import type { ILogger } from '@microsoft/signalr'
-import { API_BASE_URL, tokenStore } from './api'
+import { API_BASE_URL, freshAccessToken, tokenStore } from './api'
 import { foldTicks } from './liveMarks'
 import type { LiveQuote } from './types'
 
@@ -841,8 +841,10 @@ function connectHub(): HubLike {
   return new HubConnectionBuilder()
     // The hub is authorized: it carries market data the platform pays a
     // vendor for. The factory is read on every (re)connect, so a token the
-    // API layer refreshed in the meantime is the one sent.
-    .withUrl(hubUrl(API_BASE_URL), { accessTokenFactory: () => tokenStore.access ?? '' })
+    // API layer refreshed in the meantime is the one sent, and it refreshes
+    // one that has expired itself: the API closes a connection when its token
+    // expires, and the reconnect that follows must not send that same token.
+    .withUrl(hubUrl(API_BASE_URL), { accessTokenFactory: async () => (await freshAccessToken()) ?? '' })
     .configureLogging(hubLogger())
     .withAutomaticReconnect({ nextRetryDelayInMilliseconds: (ctx) => retryDelay(ctx.previousRetryCount) })
     .build()
