@@ -63,18 +63,21 @@ public static partial class MarketFactorParsers
     /// whitespace are dropped before anything is compared; the column names and
     /// their order have never changed, and are still checked.
     /// </para>
+    /// <para>
+    /// A few titles name no year: 8 Jun 2021's reads <c>as on Jun 08</c>. The
+    /// year is then taken from the file's name in <paramref name="source"/>
+    /// (<c>fao_participant_oi_08062021.csv</c>), and only when the title's
+    /// month and day are that name's: the name alone cannot tell a day's file
+    /// from the previous day's served under it, the title's day can. A title
+    /// with no date at all is still refused.
+    /// </para>
     /// </remarks>
     public static IReadOnlyList<MarketParticipantOpenInterest> ParseParticipantOpenInterest(string csv, DateOnly expectedDate, string source)
     {
         var lines = csv.Replace("\r", string.Empty).Split('\n', StringSplitOptions.RemoveEmptyEntries);
         if (lines.Length < 7) throw new FormatException($"participant OI file has {lines.Length} lines, expected at least 7");
 
-        string title = lines[0].Replace("\"", string.Empty);
-        var dated = ParticipantTitleDate().Match(title);
-        if (!dated.Success) throw new FormatException("participant OI title does not name its date");
-        string dateText = $"{dated.Groups[1].Value} {dated.Groups[2].Value} {dated.Groups[3].Value}";
-        if (!DateOnly.TryParseExact(dateText, ["MMM d yyyy", "MMM dd yyyy"], CultureInfo.InvariantCulture, DateTimeStyles.None, out var fileDate))
-            throw new FormatException($"participant OI title date '{dateText}' does not parse");
+        var fileDate = ParticipantFileDate(lines[0].Replace("\"", string.Empty), source);
         if (fileDate != expectedDate)
             throw new FormatException($"participant OI file is dated {fileDate:yyyy-MM-dd}, expected {expectedDate:yyyy-MM-dd}");
 
@@ -251,9 +254,44 @@ public static partial class MarketFactorParsers
             price.Value, previous, asOf);
     }
 
-    // "as on Sep 16, 2026", "as on Jan 02 2020", "as on Feb 01,2021".
-    [GeneratedRegex(@"as on\s+([A-Za-z]{3})\s*(\d{1,2})\s*,?\s*(\d{4})", RegexOptions.IgnoreCase)]
+    /// <summary>
+    /// The day a participant OI file's title names, its year read from the
+    /// file's name in <paramref name="source"/> when the title has none.
+    /// </summary>
+    private static DateOnly ParticipantFileDate(string title, string source)
+    {
+        var dated = ParticipantTitleDate().Match(title);
+        if (!dated.Success) throw new FormatException("participant OI title does not name its date");
+        string monthDay = $"{dated.Groups[1].Value} {dated.Groups[2].Value}";
+
+        if (dated.Groups[3].Success)
+        {
+            string dateText = $"{monthDay} {dated.Groups[3].Value}";
+            if (!DateOnly.TryParseExact(dateText, ["MMM d yyyy", "MMM dd yyyy"], CultureInfo.InvariantCulture, DateTimeStyles.None, out var titled))
+                throw new FormatException($"participant OI title date '{dateText}' does not parse");
+            return titled;
+        }
+
+        var named = ParticipantFileName().Match(source);
+        if (!named.Success
+            || !DateOnly.TryParseExact(named.Groups[1].Value, "ddMMyyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out var nameDate))
+            throw new FormatException($"participant OI title reads '{monthDay}' with no year, and '{source}' names no dated file to take it from");
+
+        if (!DateOnly.TryParseExact($"{monthDay} {nameDate.Year}", ["MMM d yyyy", "MMM dd yyyy"], CultureInfo.InvariantCulture, DateTimeStyles.None, out var titledDay)
+            || titledDay != nameDate)
+            throw new FormatException($"participant OI title reads '{monthDay}' with no year, but the file is named for {nameDate:yyyy-MM-dd}");
+
+        return nameDate;
+    }
+
+    // "as on Sep 16, 2026", "as on Jan 02 2020", "as on Feb 01,2021", and a
+    // few with no year at all: "as on Jun 08" (2021-06-08).
+    [GeneratedRegex(@"as on\s+([A-Za-z]{3})\s*(\d{1,2})(?!\d)(?:\s*,?\s*(\d{4})(?!\d))?", RegexOptions.IgnoreCase)]
     private static partial Regex ParticipantTitleDate();
+
+    // fao_participant_oi_08062021.csv: the day, ddMMyyyy, the file is published for.
+    [GeneratedRegex(@"fao_participant_oi_(\d{8})\.csv", RegexOptions.IgnoreCase)]
+    private static partial Regex ParticipantFileName();
 
     private static string Text(JsonElement item, string name) =>
         item.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()!.Trim() : string.Empty;

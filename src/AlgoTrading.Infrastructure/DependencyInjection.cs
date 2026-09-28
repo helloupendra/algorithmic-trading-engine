@@ -219,6 +219,18 @@ public static class DependencyInjection
         });
         services.AddHostedService<TickRetentionService>();
 
+        // The live runs' P&L minutes (28 Sep): a row per run per minute, for
+        // good. The sweep is off unless RunPnlRetention:RetentionDays is set;
+        // every datum is kept by default, and the nightly Drive archive copies
+        // each closed day.
+        services.AddSingleton(sp =>
+        {
+            var options = new RunPnlRetentionOptions();
+            sp.GetService<IConfiguration>()?.GetSection(RunPnlRetentionOptions.SectionName).Bind(options);
+            return options;
+        });
+        services.AddHostedService<RunPnlRetentionService>();
+
         services.AddScoped<IEquityGroupService, EquityGroupService>();
 
         services.AddScoped<ReferenceDataSeeder>();

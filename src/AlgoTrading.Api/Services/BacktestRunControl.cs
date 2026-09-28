@@ -35,6 +35,7 @@ public sealed class BacktestRunControl
     private readonly IPaperTradingService _paperTradingService;
     private readonly IProcessSettingsStore _processSettings;
     private readonly BacktestProcessRegistry _registry;
+    private readonly IProcessProbe _probe;
     private readonly ILogger<BacktestRunControl> _logger;
 
     public BacktestRunControl(
@@ -42,18 +43,28 @@ public sealed class BacktestRunControl
         IPaperTradingService paperTradingService,
         IProcessSettingsStore processSettings,
         BacktestProcessRegistry registry,
+        IProcessProbe probe,
         ILogger<BacktestRunControl> logger)
     {
         _dbContext = dbContext;
         _paperTradingService = paperTradingService;
         _processSettings = processSettings;
         _registry = registry;
+        _probe = probe;
         _logger = logger;
     }
 
+    /// <summary>
+    /// The waits before a runner that could not be verified is probed again at
+    /// startup: 2, 4 and 8 seconds, as for a live run's runner.
+    /// </summary>
+    public IReadOnlyList<TimeSpan> UnknownProbeRetryDelays { get; init; } =
+        new[] { TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(8) };
+
     public sealed record StopResult(bool WasRunning, int Flattened);
 
-    public sealed record ReconcileResult(int Adopted, int Closed);
+    /// <param name="Unverified">Runs whose runner could be neither confirmed nor ruled out: left as they were.</param>
+    public sealed record ReconcileResult(int Adopted, int Closed, int Unverified = 0);
 
     public static bool IsOpenStatus(string? status) => status is RunStatusRunning or RunStatusPending;
 
@@ -130,9 +141,22 @@ public sealed class BacktestRunControl
     /// Once at startup: every OfflineReplay run left Running/Pending with no
     /// registry entry is either ADOPTED (its stored pid is alive and is a
     /// backtest_runner for that run — the entry is rebuilt from the row and its
-    /// exit monitor attached) or squared off at last mark and marked Failed
-    /// with <paramref name="reason"/>, as before.
+    /// exit monitor attached), squared off at last mark and marked Failed with
+    /// <paramref name="reason"/> when its runner is known to be gone — or, when
+    /// its pid could not be verified either way, LEFT exactly as it is.
     /// </summary>
+    /// <remarks>
+    /// "Could not verify" is not "gone", for a backtest runner as for a live
+    /// one (<see cref="StrategyRunControl.ReconcileOrphanedRunsAsync"/>, 28 Sep).
+    /// Until then a runner whose command line could not be read at that moment
+    /// (ps timing out on a loaded box) had its run failed and squared off while
+    /// the replay was still writing to it. Such a pid is probed again after 2,
+    /// 4 and 8 seconds, all of them together; one still unverified keeps its row
+    /// and its pid. A runner that is the run's own finishes the replay and
+    /// closes the row through /complete (a refused progress report only warns
+    /// it); one that is not is probed again at the next start, and the Stop
+    /// button closes the row meanwhile.
+    /// </remarks>
     public async Task<ReconcileResult> ReconcileOrphanedRunsAsync(string reason, CancellationToken cancellationToken = default)
     {
         var orphans = await _dbContext.SimulationRuns
@@ -141,65 +165,132 @@ public sealed class BacktestRunControl
             .ToListAsync(cancellationToken);
 
         int adopted = 0, closed = 0;
+        var unverified = new List<SimulationRun>();
 
         foreach (var run in orphans)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (_registry.Contains(run.Id)) continue;
 
-            bool wasAdopted = false;
-            try
+            switch (await ReconcileOneAsync(run, reason, cancellationToken))
             {
-                wasAdopted = await TryAdoptAsync(run, cancellationToken);
+                case Adoption.Adopted: adopted++; break;
+                case Adoption.Closed: closed++; break;
+                case Adoption.Unverified: unverified.Add(run); break;
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Adoption of backtest run {RunId} failed; marking it Failed instead.", run.Id);
-            }
-
-            if (wasAdopted)
-            {
-                adopted++;
-                continue;
-            }
-
-            try
-            {
-                int flattened = await _paperTradingService.FlattenRunAsync(run.Id, reason, cancellationToken);
-                if (flattened > 0)
-                {
-                    _logger.LogInformation("Squared off {Count} open position(s) of orphaned backtest run {RunId} at last mark.", flattened, run.Id);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Flatten failed for orphaned backtest run {RunId}.", run.Id);
-            }
-
-            await RecordRunEndedAsync(run, run.StrategyName, RunStatusFailed, reason, by: "api", lastError: reason);
-            await ClearRunnerPidAsync(run.Id);
-            closed++;
-            _logger.LogWarning("Backtest run {RunId} ({Strategy}) was {Status} with no runner process; marked Failed: {Reason}",
-                run.Id, run.StrategyName, run.Status, reason);
         }
 
-        return new ReconcileResult(adopted, closed);
+        // Probed again together, so a box that cannot read command lines costs
+        // the startup 14 seconds, not 14 per run.
+        foreach (var delay in UnknownProbeRetryDelays)
+        {
+            if (unverified.Count == 0) break;
+
+            _logger.LogWarning("Could not verify the runner of {Count} backtest run(s) ({RunIds}); probing again in {Seconds}s.",
+                unverified.Count, string.Join(", ", unverified.Select(x => x.Id)), delay.TotalSeconds);
+            await Task.Delay(delay, cancellationToken);
+
+            var still = new List<SimulationRun>();
+            foreach (var run in unverified)
+            {
+                // The runner may have finished the replay meanwhile, closed its
+                // row through /complete and exited: a probe now reads "gone",
+                // and failing the row would overwrite its real verdict.
+                await _dbContext.Entry(run).ReloadAsync(cancellationToken);
+                if (!IsOpenStatus(run.Status) || _registry.Contains(run.Id)) continue;
+
+                switch (await ReconcileOneAsync(run, reason, cancellationToken))
+                {
+                    case Adoption.Adopted: adopted++; break;
+                    case Adoption.Closed: closed++; break;
+                    case Adoption.Unverified: still.Add(run); break;
+                }
+            }
+            unverified = still;
+        }
+
+        foreach (var run in unverified)
+        {
+            var pid = await _processSettings.GetPidAsync(SystemSettingKeys.BacktestRunPid(run.Id), cancellationToken);
+            _logger.LogError(
+                "Backtest run {RunId} ({Strategy}) is {Status} with runner pid {Pid} alive, but its command line could not be read "
+                + "after {Tries} tries; it was neither adopted nor failed. If that pid is its runner, the run closes itself when the "
+                + "replay ends; if not, stop the run from its page.",
+                run.Id, run.StrategyName, run.Status, pid, UnknownProbeRetryDelays.Count + 1);
+        }
+
+        return new ReconcileResult(adopted, closed, unverified.Count);
     }
 
-    /// <summary>Adopts the run when its stored pid is a live backtest_runner for it.</summary>
-    private async Task<bool> TryAdoptAsync(SimulationRun run, CancellationToken cancellationToken)
+    /// <summary>What reconciling one run came to.</summary>
+    private enum Adoption
+    {
+        /// <summary>Its runner is alive and verified: the run is in the registry again.</summary>
+        Adopted,
+
+        /// <summary>Its runner is gone: the run was squared off and marked Failed.</summary>
+        Closed,
+
+        /// <summary>Its runner could not be verified either way: nothing was touched.</summary>
+        Unverified,
+
+        /// <summary>Something else registered it meanwhile: nothing to do.</summary>
+        Skipped
+    }
+
+    private async Task<Adoption> ReconcileOneAsync(SimulationRun run, string reason, CancellationToken cancellationToken)
+    {
+        Adoption outcome;
+        try
+        {
+            outcome = await TryAdoptAsync(run, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Adoption of backtest run {RunId} failed; marking it Failed instead.", run.Id);
+            outcome = Adoption.Closed;
+        }
+
+        if (outcome != Adoption.Closed) return outcome;
+
+        try
+        {
+            int flattened = await _paperTradingService.FlattenRunAsync(run.Id, reason, cancellationToken);
+            if (flattened > 0)
+            {
+                _logger.LogInformation("Squared off {Count} open position(s) of orphaned backtest run {RunId} at last mark.", flattened, run.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Flatten failed for orphaned backtest run {RunId}.", run.Id);
+        }
+
+        await RecordRunEndedAsync(run, run.StrategyName, RunStatusFailed, reason, by: "api", lastError: reason);
+        await ClearRunnerPidAsync(run.Id);
+        _logger.LogWarning("Backtest run {RunId} ({Strategy}) was left open with no runner process; marked Failed: {Reason}",
+            run.Id, run.StrategyName, reason);
+        return Adoption.Closed;
+    }
+
+    /// <summary>
+    /// Adopts the run when its stored pid is a live backtest_runner for it.
+    /// Returns <see cref="Adoption.Closed"/> for a run to close (no stored pid,
+    /// or one that is gone or recycled) — the caller closes it — and
+    /// <see cref="Adoption.Unverified"/> when the pid is alive but could not be
+    /// told apart from a recycled one.
+    /// </summary>
+    private async Task<Adoption> TryAdoptAsync(SimulationRun run, CancellationToken cancellationToken)
     {
         var pid = await _processSettings.GetPidAsync(SystemSettingKeys.BacktestRunPid(run.Id), cancellationToken);
         if (pid is null)
         {
-            return false;
+            return Adoption.Closed;
         }
 
-        var process = ProcessProbe.TryGetAlive(pid.Value, ProcessProbe.BacktestRunnerMarker, run.Id, _logger);
-        if (process is null)
-        {
-            return false;
-        }
+        var probe = _probe.Probe(pid.Value, ProcessProbe.BacktestRunnerMarker, run.Id);
+        if (probe.IsUnknown) return Adoption.Unverified;
+        if (!probe.IsAlive || probe.Process is not { } process) return Adoption.Closed;
 
         var p = BacktestRunParameters.Parse(run.ParametersJson);
         var underlying = p.Underlying
@@ -237,13 +328,14 @@ public sealed class BacktestRunControl
 
         if (!_registry.TryAdd(entry))
         {
+            // Registered meanwhile: it has a runner, and failing it would square off under it.
             process.Dispose();
-            return false;
+            return Adoption.Skipped;
         }
 
         _logger.LogWarning("Adopted backtest run {RunId} ({Strategy} on {Underlying}) pid {Pid} after API restart — output not captured.",
             run.Id, run.StrategyName, underlying, pid);
-        return true;
+        return Adoption.Adopted;
     }
 
     /// <summary>
