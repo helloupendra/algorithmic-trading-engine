@@ -18,16 +18,27 @@ public class RiskController : ControllerBase
     private readonly IPaperTradingService _paperTradingService;
 
     private readonly ISystemNotifier _notifier;
+    private readonly IDeskEventPublisher? _deskEvents;
 
     public RiskController(
         IRiskManagementService riskManagementService,
         IPaperTradingService paperTradingService,
-        ISystemNotifier notifier)
+        ISystemNotifier notifier,
+        IDeskEventPublisher? deskEvents = null)
     {
         _riskManagementService = riskManagementService;
         _paperTradingService = paperTradingService;
         _notifier = notifier;
+        _deskEvents = deskEvents;
     }
+
+    /// <summary>
+    /// The kill switch changed: every admin's console is told. It is no one
+    /// run's, so no one owner's; each run it flattened tells its owner itself
+    /// (PaperTradingService.FlattenAllPositionsAsync).
+    /// </summary>
+    private void PublishKillSwitch(string detail)
+        => _deskEvents.TryPublish(new DeskEvent(DeskEventKinds.Risk, RunId: null, UserId: null, Symbol: null, DateTime.UtcNow, detail));
 
     [HttpPost("killswitch/activate")]
     [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
@@ -39,6 +50,7 @@ public class RiskController : ControllerBase
             User.GetUserName(), reason, cancellationToken);
 
         await _paperTradingService.FlattenAllPositionsAsync(cancellationToken);
+        PublishKillSwitch($"Kill switch activated by {User.GetUserName() ?? "admin"}: every position flattened");
 
         HttpContext.Describe(
             "Pulled the kill switch — every strategy paused and all positions flattened"
@@ -64,6 +76,7 @@ public class RiskController : ControllerBase
     {
         await _riskManagementService.DeactivateKillSwitchAsync(
             User.GetUserName(), reason, cancellationToken);
+        PublishKillSwitch($"Kill switch released by {User.GetUserName() ?? "admin"}: trading resumed");
 
         HttpContext.Describe(
             "Released the kill switch — trading resumed"

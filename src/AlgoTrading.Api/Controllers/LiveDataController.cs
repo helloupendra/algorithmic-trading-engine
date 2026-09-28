@@ -3,7 +3,6 @@ using AlgoTrading.Application.UseCases.LiveData;
 using AlgoTrading.Api.Services;
 using AlgoTrading.Contracts.LiveData;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.SignalR;
 using AlgoTrading.Api.Hubs;
 
 namespace AlgoTrading.Api.Controllers;
@@ -33,7 +32,7 @@ public class LiveDataController : ControllerBase
     private readonly UpsertLiveTicksUseCase _upsertLiveTicksUseCase;
     private readonly GetRecentTicksUseCase _getRecentTicksUseCase;
     private readonly GetRecentBarsUseCase _getRecentBarsUseCase;
-    private readonly IHubContext<LiveFeedHub> _hubContext;
+    private readonly LiveTickDispatcher _liveFeed;
 
     public LiveDataController(
         GetWatchlistUseCase getWatchlistUseCase,
@@ -50,10 +49,10 @@ public class LiveDataController : ControllerBase
         UpsertLiveTicksUseCase upsertLiveTicksUseCase,
         GetRecentTicksUseCase getRecentTicksUseCase,
         GetRecentBarsUseCase getRecentBarsUseCase,
-        IHubContext<LiveFeedHub> hubContext)
+        LiveTickDispatcher liveFeed)
     {
         _getWatchlistUseCase = getWatchlistUseCase;
-        _hubContext = hubContext;
+        _liveFeed = liveFeed;
         _upsertWatchlistItemUseCase = upsertWatchlistItemUseCase;
         _removeWatchlistItemUseCase = removeWatchlistItemUseCase;
         _getLatestQuoteUseCase = getLatestQuoteUseCase;
@@ -211,17 +210,12 @@ public class LiveDataController : ControllerBase
 
         await _upsertLiveTickUseCase.ExecuteAsync(request, cancellationToken);
 
-        // Not awaited, and not the whole request.
-        //
-        // Awaited, every open browser tab sat in the ingest path: a slow or
-        // stalled SignalR client applied back pressure straight to the tick
-        // write, so watching the dashboard could slow down the feed the
-        // strategies trade on. The broadcast is a convenience for a screen —
-        // it must never be able to delay storing a price.
-        //
-        // Only the fields a screen renders are sent. `RawPayload` is the
-        // broker's complete message and has no business on a websocket.
-        _ = BroadcastTickAsync(request);
+        // Queued, not sent. Awaited, every open browser tab sat in the ingest
+        // path: a slow or stalled SignalR client applied back pressure straight
+        // to the tick write, so watching the dashboard could slow down the feed
+        // the strategies trade on. The dispatcher pushes it on its own clock,
+        // to the connections that asked for this symbol.
+        _liveFeed.Enqueue(request);
 
         return Ok(new { message = "Live tick appended successfully." });
     }
@@ -266,12 +260,13 @@ public class LiveDataController : ControllerBase
         var usable = requests.Where(r => !string.IsNullOrWhiteSpace(r.Symbol)).ToList();
         int skipped = requests.Count - usable.Count;
 
-        // Pushed before the write, not after it, and not awaited. Awaited, a
-        // screen could apply back pressure to the feed the strategies trade on
-        // (the single-tick path explains that). After the write, every open
+        // Queued before the write, not after it. After the write, every open
         // chain waited for the database too: 60 ms at p50 on 2026-09-15, and
-        // whatever an open-bell write burst costs on top.
-        _ = BroadcastTickBatchAsync(usable);
+        // whatever an open-bell write burst costs on top. Queuing is a
+        // dictionary write; the push happens on the dispatcher's clock and can
+        // never apply back pressure to this request (the single-tick path
+        // explains why that matters).
+        _liveFeed.Enqueue(usable);
 
         if (usable.Count > 0)
         {
@@ -343,75 +338,6 @@ public class LiveDataController : ControllerBase
         catch (InvalidOperationException ex)
         {
             return BadRequest(new { message = ex.Message });
-        }
-    }
-
-
-    /// <summary>
-    /// Pushes a trimmed tick to the console, and never lets that failing matter.
-    /// </summary>
-    private async Task BroadcastTickAsync(UpsertLiveTickRequest request)
-    {
-        try
-        {
-            await _hubContext.Clients.All.SendAsync("ReceiveTick", new
-            {
-                symbol = request.Symbol,
-                lastTradedPrice = request.LastTradedPrice,
-                bidPrice = request.BidPrice,
-                askPrice = request.AskPrice,
-                volume = request.Volume,
-                openInterest = request.OpenInterest,
-                impliedVolatility = request.ImpliedVolatility,
-                exchangeTimestampUtc = request.ExchangeTimestampUtc,
-            });
-        }
-        catch
-        {
-            // Deliberately swallowed. The tick is already stored; a browser
-            // that could not be reached is not a data problem, and letting it
-            // surface here would only add noise to every session.
-        }
-    }
-
-    /// <summary>
-    /// Pushes a whole flush to the console as one message.
-    /// </summary>
-    /// <remarks>
-    /// One send per batch rather than one per tick: the console applies each
-    /// price into the same cache either way, and a batch of forty individual
-    /// SignalR frames costs forty round-trips to every open tab for no extra
-    /// information. Sent under "ReceiveTicks" — plural — so an older client
-    /// that only knows "ReceiveTick" keeps working off its poll instead of
-    /// mis-reading an array as a single quote.
-    /// </remarks>
-    private async Task BroadcastTickBatchAsync(IReadOnlyList<UpsertLiveTickRequest> requests)
-    {
-        try
-        {
-            var payload = requests
-                .Where(r => !string.IsNullOrWhiteSpace(r.Symbol))
-                .Select(r => new
-                {
-                    symbol = r.Symbol,
-                    lastTradedPrice = r.LastTradedPrice,
-                    bidPrice = r.BidPrice,
-                    askPrice = r.AskPrice,
-                    volume = r.Volume,
-                    openInterest = r.OpenInterest,
-                    impliedVolatility = r.ImpliedVolatility,
-                    exchangeTimestampUtc = r.ExchangeTimestampUtc,
-                })
-                .ToList();
-
-            if (payload.Count == 0)
-                return;
-
-            await _hubContext.Clients.All.SendAsync("ReceiveTicks", payload);
-        }
-        catch
-        {
-            // As above: an unreachable browser is not a data problem.
         }
     }
 }

@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Text;
 using AlgoTrading.Api.Services;
+using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Domain.Entities;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 using static AlgoTrading.Api.Services.ProcessProbe;
@@ -145,6 +147,70 @@ public class StrategyRunControlTests
         // This test host's own: readable without spawning ps.
         var commandLine = ReadCommandLine(Environment.ProcessId, NullLogger.Instance);
         Assert.False(string.IsNullOrWhiteSpace(commandLine));
+    }
+
+    // ------------------------------------------------------- desk events --
+
+    [Fact]
+    public async Task A_start_and_a_stop_tell_the_runs_owner()
+    {
+        using var desk = new RunnerDesk();
+
+        // An admin starting a run in a trader's account: the trader is who is told.
+        Assert.IsType<OkObjectResult>(await desk.Start("NIFTY", ownerUserId: RunnerDesk.TraderId));
+        long run = desk.Runs().Single().Id;
+
+        await using (var db = desk.Db())
+        {
+            var stop = await desk.RunControl(db).StopAsync(run, "Stopped by admin", flatten: true, by: "admin");
+            Assert.True(stop.WasRunning);
+        }
+
+        // Between the two, "Stopping: …" once the row is flipped — an UPDATE the
+        // in-memory provider cannot run, so it is not seen here.
+        var events = desk.DeskEvents.Of(DeskEventKinds.Run);
+        Assert.Equal("Started Ghost on NIFTY, 1 lot(s)", events[0].Detail);
+        Assert.Equal("Stopped: Stopped by admin", events[^1].Detail);
+        Assert.All(events, x =>
+        {
+            Assert.Equal(run, x.RunId);
+            Assert.Equal(RunnerDesk.TraderId, x.UserId);
+            Assert.Null(x.Symbol);
+        });
+    }
+
+    [Fact]
+    public async Task A_run_closed_or_adopted_at_restart_tells_its_owner()
+    {
+        using var desk = new RunnerDesk();
+        long gone = desk.SeedRun(RunnerDesk.TraderId, "NIFTY", "Running");
+        long alive = desk.SeedRun(RunnerDesk.OtherTraderId, "BANKNIFTY", "Running");
+        var runner = desk.RunnerFor(alive);
+        await desk.Pids.SetPidAsync(SystemSettingKeys.StrategyRunPid(gone), 424242);
+        await desk.Pids.SetPidAsync(SystemSettingKeys.StrategyRunPid(alive), runner.Id);
+        desk.Probe = new PidProbe(runner.Id);
+
+        await using (var db = desk.Db())
+        {
+            Assert.Equal(new StrategyRunControl.ReconcileResult(1, 1, 0), await desk.RunControl(db).ReconcileOrphanedRunsAsync());
+        }
+
+        var events = desk.DeskEvents.Of(DeskEventKinds.Run);
+        var closed = Assert.Single(events, x => x.RunId == gone);
+        Assert.Equal(RunnerDesk.TraderId, closed.UserId);
+        Assert.Equal($"Stopped: {StrategyRunControl.RestartReason}", closed.Detail);
+        var adopted = Assert.Single(events, x => x.RunId == alive);
+        Assert.Equal(RunnerDesk.OtherTraderId, adopted.UserId);
+        Assert.StartsWith("Adopted after an API restart", adopted.Detail);
+    }
+
+    /// <summary>Alive, and this run's runner, for one pid; gone for every other.</summary>
+    private sealed class PidProbe(int alivePid) : IProcessProbe
+    {
+        public ProbeResult Probe(int pid, string marker, long? runId)
+            => pid == alivePid
+                ? new ProbeResult(Outcome.Alive, Process.GetProcessById(pid))
+                : new ProbeResult(Outcome.Dead, null);
     }
 
     /// <summary>Answers each probe with the next result in turn, then keeps giving the last.</summary>
