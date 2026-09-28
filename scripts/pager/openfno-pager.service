@@ -1,0 +1,23 @@
+# The OpenFNO pager's systemd unit, as installed on the server at
+# /etc/systemd/system/openfno-pager.service (docs/modules/pager.md).
+#
+# It runs a copy of pager.py from ~/openfno-pager, not the checkout: a deploy
+# never changes the running pager, and the pager keeps working while deploys
+# are gated. It uses the desk's virtualenv (requests, redis) and reads the
+# checkout only for .env and sentinel/clock.py. Its own log is
+# ~/openfno-pager/pager.log; systemd restarts it 15 s after any exit.
+[Unit]
+Description=OpenFNO pager: phones the owner when the live desk is in serious trouble
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/openfno-pager
+ExecStart=/home/ubuntu/algorithmic-trading-engine/.venv/bin/python /home/ubuntu/openfno-pager/pager.py
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
