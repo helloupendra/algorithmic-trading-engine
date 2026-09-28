@@ -12,14 +12,29 @@
  *  market is closed these queries simply keep returning the stored snapshot.
  */
 
-import { keepPreviousData, useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { InfiniteData } from '@tanstack/react-query'
+import { keepPreviousData, replaceEqualDeep, useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import type { InfiniteData, UseQueryResult } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
-import { answerAsOf, keepSentStamp, stampSent } from './asOf'
+import { answerAsOf, keepPageStamps, keepSentStamp, stampSent } from './asOf'
 import { livePoll, useLiveAllState, useLiveConnection, useLivePrices } from './live'
 import type { LiveConnection } from './live'
-import { pulseBehind, pulseWithTicks, runViewSymbols, runViewWithTicks, watchlistBehind, watchlistWithTicks } from './liveMarks'
+import {
+  chainPositionsWithTicks,
+  exposureLegSymbols,
+  exposureWithTicks,
+  pulseBehind,
+  pulseWithTicks,
+  runLegs,
+  runLegSymbols,
+  runViewSymbols,
+  runViewWithTicks,
+  runWithTicks,
+  runsWithTicks,
+  watchlistBehind,
+  watchlistWithTicks,
+} from './liveMarks'
+import type { ListAsOf, RunLegs } from './liveMarks'
 import { ordersQuery } from './orders'
 import type { OrdersFilter } from './orders'
 import type {
@@ -910,6 +925,72 @@ export function useStrategyLivesRepriced(runIds: number[]): Array<StrategyLiveVi
   return lives.map((q) => (q.data ? runViewWithTicks(q.data, prices, answerAsOf(q)) : undefined))
 }
 
+// ---------- Run lists re-priced from their open legs ----------
+
+/** How often a list of runs re-reads the open legs it is re-priced from; pushes and desk events do the rest. */
+const POLL_RUN_LEGS = 60_000
+
+/**
+ * The open legs a list of runs is re-priced from (GET /api/Positions/open,
+ * the query the Desk and Positions already hold), asked for only while a row
+ * of the list is live with a leg open and prices are being pushed: without
+ * pushes nothing is newer than the list itself, which keeps polling. Null
+ * then, and while the legs have not arrived.
+ */
+export function useRunLegs(
+  runs: ReadonlyArray<Pick<LiveRunSummary, 'isActive' | 'openPositions'>> | undefined,
+  enabled = true,
+): RunLegs | null {
+  const connection = useLiveConnection()
+  const pushed = connection === 'connected' || connection === 'legacy'
+  const wanted = enabled && pushed && (runs?.some((r) => r.isActive && r.openPositions > 0) ?? false)
+  const open = useOpenPositions(POLL_RUN_LEGS, wanted)
+  const positions = wanted ? open.data?.positions : undefined
+  const asOf = answerAsOf(open)
+  return useMemo(() => runLegs(positions, asOf), [positions, asOf])
+}
+
+/**
+ * A list of runs with each live row's open book at the pushed prices of its
+ * legs (liveMarks.runsWithTicks); the list itself while nothing newer is
+ * known. The caller re-renders when one of those legs is pushed, and for
+ * nothing else: a list of stopped runs asks the hub for nothing.
+ */
+export function useLiveRuns<T extends LiveRunSummary>(
+  runs: readonly T[] | undefined,
+  listAsOf: ListAsOf,
+  legs: RunLegs | null,
+): readonly T[] | undefined {
+  const symbols = useMemo(() => runLegSymbols(runs, legs), [runs, legs])
+  const prices = useLivePrices(symbols)
+  return useMemo(() => (runs ? runsWithTicks(runs, legs, prices, listAsOf) : runs), [runs, legs, prices, listAsOf])
+}
+
+/**
+ * `value` with every part that equals the last render's kept as that object
+ * (TanStack's structural sharing, across renders). A table rebuilt from a
+ * list on every push then hands a memoised row the same object unless that
+ * row's own figures moved, and only the rows a price reached re-render.
+ */
+export function useStructuralSharing<T>(value: T): T {
+  const kept = useRef<T>(value)
+  const shared = replaceEqualDeep(kept.current, value)
+  useEffect(() => {
+    kept.current = shared
+  })
+  return shared
+}
+
+/**
+ * useLiveRuns for one row, for a long table: each live row holds its own
+ * legs, so a push re-renders the rows it moves and not the other hundred.
+ */
+export function useLiveRun<T extends LiveRunSummary>(run: T, listAsOfMs: number, legs: RunLegs | null): T {
+  const symbols = useMemo(() => runLegSymbols([run], legs), [run, legs])
+  const prices = useLivePrices(symbols)
+  return useMemo(() => runWithTicks(run, legs, prices, listAsOfMs), [run, legs, prices, listAsOfMs])
+}
+
 /**
  * Runner stdout/stderr ring buffer of one run. The API keeps a snapshot of the
  * last lines after the process exits (bounded to the newest finished runs), so
@@ -965,7 +1046,9 @@ export function useLiveRunHistory(filters: LiveRunHistoryFilters, enabled = true
   const query = runHistoryQuery(filters)
   return useQuery({
     queryKey: ['strategy', 'history', query],
-    queryFn: () => api.get<LiveRunSummary[]>(`/api/Strategy/runs${query}`),
+    // Stamped with when it was asked (lib/asOf.ts): its live rows are re-priced from pushes.
+    queryFn: stampSent(() => api.get<LiveRunSummary[]>(`/api/Strategy/runs${query}`)),
+    structuralSharing: keepSentStamp,
     enabled,
     // Changing a filter keeps the last list on screen instead of blanking the
     // table while the new one loads.
@@ -991,8 +1074,10 @@ export function useLiveRunHistoryPages(filters: Omit<LiveRunHistoryFilters, 'ski
   const key = runHistoryQuery(base)
   return useInfiniteQuery({
     queryKey: ['strategy', 'history', 'pages', key],
-    queryFn: ({ pageParam }) =>
-      api.get<LiveRunSummary[]>(`/api/Strategy/runs${runHistoryQuery({ ...base, skip: pageParam })}`),
+    // Each page stamped with when it was asked, as the single list is.
+    queryFn: ({ pageParam }: { pageParam: number }) =>
+      stampSent(() => api.get<LiveRunSummary[]>(`/api/Strategy/runs${runHistoryQuery({ ...base, skip: pageParam })}`))(),
+    structuralSharing: keepPageStamps,
     initialPageParam: 0,
     // Every earlier page was full (that is the only way a next page is asked
     // for), so the next offset is simply pages × take.
@@ -1003,6 +1088,19 @@ export function useLiveRunHistoryPages(filters: Omit<LiveRunHistoryFilters, 'ski
     refetchInterval: (q: { state: { data?: InfiniteData<LiveRunSummary[]> } }) =>
       q.state.data?.pages.some((page) => page.some((r) => r.isActive)) ? POLL_RUN_HISTORY_ACTIVE : false,
   })
+}
+
+/**
+ * When each row of a paged run list was asked for, by run id: a row is
+ * re-priced against the request that brought it, not the list's first page.
+ */
+export function pagedRowsAsOf(data: InfiniteData<LiveRunSummary[]> | undefined, dataUpdatedAt: number): Map<number, number> {
+  const out = new Map<number, number>()
+  for (const page of data?.pages ?? []) {
+    const at = answerAsOf({ data: page, dataUpdatedAt })
+    for (const run of page) out.set(run.runId, at)
+  }
+  return out
 }
 
 /** Per-user rollup (runs, active, net P&L, last run) — every user for an admin, own row for a trader. */
@@ -1447,12 +1545,39 @@ export function useStopAlerter() {
   })
 }
 
+/**
+ * What is live and at risk (admin), with each run's open book. Stamped with
+ * when it was asked (lib/asOf.ts), since its rows are re-priced from pushes.
+ * A run starting or stopping, a fill and a risk trip arrive as desk events
+ * (['risk', 'exposure'] is in their keys), so with the socket up the poll is
+ * a safety net.
+ */
 export function useRiskExposure() {
   return useQuery({
     queryKey: ['risk', 'exposure'],
-    queryFn: () => api.get<RiskExposureResponse>('/api/Risk/exposure'),
-    refetchInterval: POLL_FAST,
+    queryFn: stampSent(() => api.get<RiskExposureResponse>('/api/Risk/exposure')),
+    structuralSharing: keepSentStamp,
+    refetchInterval: livePoll(useLiveConnection(), 30_000, POLL_FAST),
   })
+}
+
+/** A stand-in run list that makes useRunLegs ask for the legs: "something is live and holds a leg". */
+const ANY_LIVE_LEG = [{ isActive: true, openPositions: 1 }] as const
+
+/**
+ * useRiskExposure with each live run's open book, and the total, at the
+ * pushed prices of its legs (liveMarks.exposureWithTicks), for the risk
+ * page's "What is at risk right now". The caller re-renders on a push of one
+ * of those legs; the query's own state (pending, error) is the exposure's.
+ */
+export function useLiveRiskExposure(): UseQueryResult<RiskExposureResponse> {
+  const query = useRiskExposure()
+  const answer = query.data
+  const legs = useRunLegs(answer && answer.activeRuns.length > 0 ? ANY_LIVE_LEG : undefined)
+  const prices = useLivePrices(useMemo(() => exposureLegSymbols(answer, legs), [answer, legs]))
+  const answeredAt = answerAsOf(query)
+  const data = useMemo(() => (answer ? exposureWithTicks(answer, legs, prices, answeredAt) : answer), [answer, legs, prices, answeredAt])
+  return data === answer ? query : ({ ...query, data } as UseQueryResult<RiskExposureResponse>)
 }
 
 // ---------- Connectors (data vendors and brokers) ----------
@@ -2010,20 +2135,43 @@ export function useOptionChainExpiries(underlying: string) {
 function chainPositionsQuery(underlying: string) {
   return {
     queryKey: ['optionChainPositions', underlying] as const,
-    queryFn: () =>
+    // Stamped with when it was asked (lib/asOf.ts): the panel re-prices its legs from pushes.
+    queryFn: stampSent(() =>
       api.get<import('./types').OptionChainPosition[]>(
         `/api/OptionChain/positions?${new URLSearchParams({ underlying, mode: 'LivePaper' })}`,
       ),
+    ),
+    structuralSharing: keepSentStamp,
     enabled: Boolean(underlying),
   }
 }
 
+/**
+ * Every 3 s in the session without the socket, as before. With it each held
+ * leg's price is pushed and a fill, a close or a carry arrives as a desk
+ * event (['optionChainPositions'] is in their keys), so the list is read
+ * every 15 s as a safety net.
+ */
 export function useOptionChainPositions(underlying: string, live: boolean) {
+  const connection = useLiveConnection()
   return useQuery({
     ...chainPositionsQuery(underlying),
-    refetchInterval: live ? 3_000 : 30_000,
+    refetchInterval: live ? livePoll(connection, 15_000, 3_000) : 30_000,
     placeholderData: keepPreviousData,
   })
+}
+
+/**
+ * The chain page's held legs with each mark and P&L moved to its newer
+ * pushed price (liveMarks.chainPositionsWithTicks), so the panel's rows and
+ * its total move with the chain beside them.
+ */
+export function useRepricedChainPositions(
+  positions: import('./types').OptionChainPosition[],
+  answeredAtMs: number,
+): import('./types').OptionChainPosition[] {
+  const prices = useLivePrices(useMemo(() => positions.map((p) => p.symbol), [positions]))
+  return useMemo(() => chainPositionsWithTicks(positions, prices, answeredAtMs), [positions, prices, answeredAtMs])
 }
 
 function chainViewQuery(underlying: string, expiry?: string, asOfUtc?: string) {

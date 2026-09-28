@@ -47,6 +47,31 @@ export function keepSentStamp(previous: unknown, next: unknown): unknown {
   return shared
 }
 
+const pagesOf = (data: unknown): unknown[] | null => {
+  const pages = isObject(data) ? (data as { pages?: unknown }).pages : undefined
+  return Array.isArray(pages) ? pages : null
+}
+
+/**
+ * keepSentStamp for a paged query (useInfiniteQuery), which asks once per
+ * page: each page the cache keeps carries the send time of the request that
+ * brought it, whether it is that request's copy or the previous page it
+ * matched. Read a page's time with `answerAsOf({ data: page, dataUpdatedAt })`.
+ */
+export function keepPageStamps(previous: unknown, next: unknown): unknown {
+  const shared = replaceEqualDeep(previous, next)
+  const nextPages = pagesOf(next)
+  const keptPages = pagesOf(shared)
+  if (nextPages && keptPages) {
+    nextPages.forEach((page, i) => {
+      const at = isObject(page) ? sentAt.get(page) : undefined
+      const kept = keptPages[i]
+      if (at != null && isObject(kept)) sentAt.set(kept, at)
+    })
+  }
+  return shared
+}
+
 /**
  * When the answer a query holds is as of: when its request was sent, else
  * (an answer written here, or a query without the stamp) when it arrived.

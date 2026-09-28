@@ -334,6 +334,36 @@ export interface DayCurves {
 }
 
 /**
+ * The day's curves with each live account's line carried on to its figure
+ * now, at `nowMinute` (fractional: the instant, not the minute it falls in).
+ * The recorder writes a point a minute; between two, the Desk's own figure,
+ * re-priced at every push, is newer, and a line that stopped at the last
+ * minute sat beside a number that had moved on. So the line steps to that
+ * figure now and its end, dot and label follow it, while every recorded
+ * point stays what the recorder wrote. An account not in `tips` (nothing of
+ * it live) ends at its last point, which is its figure. Only on the day that
+ * is today, with now on the axis (`curves.now`), and only past the last
+ * point: a point the recorder wrote at or after now is as new.
+ *
+ * Across an open gap at the end (the recorder stopped writing), the figure
+ * sits on its own past the gap, not joined to a line across what nobody saw.
+ */
+export function withLiveTips(curves: DayCurves, tips: ReadonlyMap<number, number>, nowMinute: number): DayCurves {
+  if (tips.size === 0 || curves.now == null || !Number.isFinite(nowMinute)) return curves
+  let changed = false
+  const accounts = curves.accounts.map((a) => {
+    const v = tips.get(a.userId)
+    const last = a.points[a.points.length - 1]
+    if (v == null || !Number.isFinite(v) || (last && last.m >= nowMinute)) return a
+    changed = true
+    const tip = { m: nowMinute, v }
+    const points = [...a.points, tip]
+    return { ...a, points, segments: splitAtGaps(points, curves.gaps), last: tip }
+  })
+  return changed ? { ...curves, accounts, any: true } : curves
+}
+
+/**
  * The Day P&L chart's content from one answer: a curve per account in
  * scope (in the order asked for), the recorder's gaps among those accounts'
  * strategy runs, the axis the points need, and "now".

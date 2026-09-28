@@ -224,33 +224,48 @@ function normalizeEvent(raw: unknown): LiveDeskEvent | null {
  *
  * - order, fill: the open legs (Positions, the Desk, the chain's positions
  *   panel), the run's order ledger and live view, the day's orders across
- *   runs (Trade → Orders), the day's P&L series and the run lists, whose
- *   P&L and trade counts moved.
+ *   runs (Trade → Orders), the day's P&L series, the run lists, whose
+ *   P&L and trade counts moved, the track records, whose realized total
+ *   moved, and the risk page's exposure.
  * - run (started, stopped): the strategy list the Live runner reads its
  *   running runs from, the run lists, the morning plan's live count, the
- *   run's live view and the strategies' track records.
- * - risk (a rule tripped or was changed): the run's live view, the legs it
- *   may have squared off, and the day's orders, which hold those
- *   square-offs and the orders the risk gate refused.
- * - position, carry: the open legs, and the run's view that shows the same
- *   leg with its Carry tick.
+ *   run's live view, the strategies' track records, the exposure's list of
+ *   live runs, and the open legs, which list the legs of live runs only.
+ * - risk (a rule tripped, the kill switch squared off, a rule was changed):
+ *   the run's live view, the legs it may have squared off, the day's
+ *   orders, which hold those square-offs and the orders the risk gate
+ *   refused, and every figure a square-off moves: the run lists, the track
+ *   records and the exposure.
+ * - position (closed, settled at expiry, its own levels set), carry (moved
+ *   to the manual book, ticked): the open legs, the run's view that shows
+ *   the same leg with its Carry tick, the run lists, whose open-leg counts
+ *   and realized P&L changed with it, and the exposure. A settlement is
+ *   realized P&L, so the track records too.
+ *
+ * The run lists and the exposure are re-priced from the open legs between
+ * answers (liveMarks.liveOpenPnl), so whatever moves one moves both: a leg
+ * gone from the legs while the list still counts it is a figure that does
+ * not add up until the list is read again.
  */
 export function deskEventKeys(event: Pick<LiveDeskEvent, 'kind' | 'runId'>): QueryKey[] {
   const run = event.runId
   const live: QueryKey = run != null ? ['strategy', 'live', run] : ['strategy', 'live']
   const orders: QueryKey = run != null ? ['strategy', 'orders', run] : ['strategy', 'orders']
   const legs: QueryKey[] = [['positions'], ['optionChainPositions']]
+  const lists: QueryKey[] = [['strategy', 'history'], ['risk', 'exposure']]
+  const records: QueryKey = ['strategy', 'track-record']
   switch (event.kind) {
     case 'order':
     case 'fill':
-      return [...legs, orders, live, ['orders'], ['strategy', 'pnl-series'], ['strategy', 'history']]
+      return [...legs, orders, live, ['orders'], ['strategy', 'pnl-series'], ...lists, records]
     case 'run':
-      return [['strategies'], ['strategy', 'history'], ['desk', 'plan'], live, ['strategy', 'track-record']]
+      return [['strategies'], ...lists, ['desk', 'plan'], live, records, ...legs]
     case 'risk':
-      return [live, ...legs, ['orders']]
+      return [live, ...legs, ['orders'], ...lists, records]
     case 'position':
+      return [...legs, live, ...lists, records]
     case 'carry':
-      return [...legs, live]
+      return [...legs, live, ...lists]
     default:
       return []
   }
