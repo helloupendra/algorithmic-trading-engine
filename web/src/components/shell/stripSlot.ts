@@ -1,4 +1,6 @@
-import { useOutletContext } from 'react-router-dom'
+import { useLocation, useOutletContext } from 'react-router-dom'
+import { useAuth } from '../../lib/auth'
+import { accessFor, nameRoute, navFor } from '../../lib/modules'
 
 /** What the shell hands the page under it. */
 export interface ShellOutlet {
@@ -13,4 +15,20 @@ export interface ShellOutlet {
  */
 export function useStripSlot(): HTMLElement | null {
   return useOutletContext<ShellOutlet | undefined>()?.stripSlot ?? null
+}
+
+/** Whether the page is drawn inside the console shell, whose strip then names it. */
+export function useInShell(): boolean {
+  return useOutletContext<ShellOutlet | undefined>() != null
+}
+
+/**
+ * The page's name as the registry has it (lib/modules.ts): the word on its
+ * tab, in the browser's title and in the strip. A page that needs the word
+ * in its own heading takes it from here rather than spelling a second one.
+ */
+export function usePageTitle(): string {
+  const { user } = useAuth()
+  const { pathname } = useLocation()
+  return nameRoute(pathname, navFor(accessFor(user))).page
 }

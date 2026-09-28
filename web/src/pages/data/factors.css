@@ -32,7 +32,14 @@
   min-width: 0;
 }
 .mf-metric__label { font-size: 11.5px; color: var(--text-2); }
-.mf-metric__value { font-size: 19px; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.mf-metric__value {
+  font-family: var(--mono);
+  font-size: 19px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  margin-top: 2px;
+}
 .mf-metric__sub { margin-top: 2px; overflow-wrap: anywhere; }
 
 .mf-grid {
@@ -62,7 +69,12 @@
 .mf-bar__fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; opacity: 0.55; }
 .mf-bar__fill.pos { background: var(--pos); }
 .mf-bar__fill.neg { background: var(--neg); }
-.mf-bar__label { position: relative; padding-left: 6px; line-height: 16px; color: var(--text); }
+/* A bar with its reading beside it, never over it: painted on the track, a
+   short fill (an 11% long share) put the label's first digits on the colour
+   and the rest on the track, which read as a glitch on every row. */
+.mf-bar-read { display: flex; align-items: center; gap: 8px; min-width: 150px; }
+.mf-bar-read .mf-bar { flex: 1 1 auto; }
+.mf-bar__label { flex: none; min-width: 4.5ch; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
 .mf-barcell { width: 18%; }
 
 .mf-status {

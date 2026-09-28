@@ -1,15 +1,22 @@
 /**
- * Data module — Commodity: the MCX futures desk in one screen.
+ * Markets → Commodity: the MCX futures desk in one screen.
  *
- * Gold, Silver, Crude and Natural Gas (with the mini contracts alongside the
- * full-size ones), each showing the near-month future's last price, its move
- * from the previous close, the day's range and how old the quote is.
+ * One tile per near-month future — the pulse's own tile, so a contract reads
+ * the same here as on the Watchlist (name, price, change, the day's range,
+ * the quote's age) — then the contracts table with the open, high, low,
+ * previous close and volume a tile does not carry.
  *
- * The contract is resolved, not hardcoded. MCX expiries roll every month, so a
- * pinned symbol would quietly go stale and then dead: the page asks the
- * instrument master for that root's futures and takes the nearest expiry that
- * has not passed. On 7 Sep 2026 that is GOLD26OCTFUT; in November it will be a
- * different symbol without anyone editing this file.
+ * Which commodities: the pulse's commodity group, in its order, each with
+ * its mini contract beside it when the instrument master lists one (GOLDM
+ * beside GOLD, CRUDEOILM beside CRUDEOIL); and the desk's usual four until
+ * the pulse answers, or for a root it does not carry. A commodity added to
+ * the pulse on the server appears here without a change in this file.
+ *
+ * The contract is resolved, not hardcoded. MCX expiries roll every month, so
+ * a pinned symbol would quietly go stale and then dead: the page asks the
+ * instrument master for a root's futures and takes the nearest expiry that
+ * has not passed. On 7 Sep 2026 that is GOLD26OCTFUT; in November it will be
+ * a different symbol without anyone editing this file.
  *
  * There is no "market open" badge here on purpose. MCX runs to 23:30 IST while
  * NSE closes at 15:30, and the API's session endpoint only models NSE — asking
@@ -18,39 +25,39 @@
  * says the feed is live far more honestly than a rule that does not know this
  * exchange exists.
  *
- * The six contracts' prices are pushed (lib/live.ts) and laid over the latest
+ * The contracts' prices are pushed (lib/live.ts) and laid over the latest
  * quotes, which are still polled for the open, the previous close and the
  * volume a tick does not carry.
  */
 
 import { useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useQueries } from '@tanstack/react-query'
 import { api } from '../../lib/api'
-import { useAddWatchlistSymbol, useLatestQuotes, useWatchlist } from '../../lib/queries'
+import { useAddWatchlistSymbol, useLatestQuotes, useMarketPulse, useWatchlist } from '../../lib/queries'
 import { useLivePrices } from '../../lib/live'
 import { answerAsOf } from '../../lib/asOf'
 import { quotesWithTicks } from '../../lib/liveMarks'
 import { formatAge, formatPrice } from '../../lib/format'
 import { Badge, FlashPrice, InlineError, Loading, Panel } from '../../components/ui'
+import { BigTile } from '../../components/MarketPulse'
 import { IconPlus } from '../../components/icons'
-import type { Instrument, LiveQuote } from '../../lib/types'
+import type { Instrument, LiveQuote, MarketPulseItem } from '../../lib/types'
 
 /* --------------------------------------------------------------- contracts */
 
-interface Commodity {
-  /** The MCX root as it appears in the symbol, e.g. GOLDM in MCX:GOLDM26OCTFUT. */
+interface CommodityRoot {
+  /** The MCX root as it appears in the symbol, e.g. GOLD in MCX:GOLD26OCTFUT. */
   root: string
   label: string
   /** Grouped so the mini sits under its full-size contract. */
   group: string
 }
 
-const COMMODITIES: Commodity[] = [
+/** The desk's usual four: shown until the pulse answers, and for a root the pulse does not carry. */
+const FALLBACK: CommodityRoot[] = [
   { root: 'GOLD', label: 'Gold', group: 'Gold' },
-  { root: 'GOLDM', label: 'Gold Mini', group: 'Gold' },
   { root: 'SILVER', label: 'Silver', group: 'Silver' },
-  { root: 'SILVERM', label: 'Silver Mini', group: 'Silver' },
   { root: 'CRUDEOIL', label: 'Crude Oil', group: 'Energy' },
   { root: 'NATURALGAS', label: 'Natural Gas', group: 'Energy' },
 ]
@@ -66,6 +73,25 @@ const SYMBOL_SHAPE = /^MCX:([A-Z]+?)(\d{2})([A-Z]{3})FUT$/
 
 function rootOf(symbol: string): string | null {
   return SYMBOL_SHAPE.exec(symbol)?.[1] ?? null
+}
+
+/** The full-size roots to show: the pulse's commodities in its order, then the fallback's it lacks. */
+function commodityRoots(pulseItems: MarketPulseItem[] | undefined): CommodityRoot[] {
+  const out: CommodityRoot[] = []
+  const seen = new Set<string>()
+  for (const item of pulseItems ?? []) {
+    const root = rootOf(item.symbol)
+    if (!root || seen.has(root)) continue
+    seen.add(root)
+    const known = FALLBACK.find((f) => f.root === root)
+    out.push(known ?? { root, label: item.name, group: item.name })
+  }
+  for (const f of FALLBACK) {
+    if (seen.has(f.root)) continue
+    seen.add(f.root)
+    out.push(f)
+  }
+  return out
 }
 
 /** The nearest future of this root whose expiry has not passed. */
@@ -102,7 +128,7 @@ function changePct(quote: LiveQuote | undefined): number | null {
   return ((quote.lastTradedPrice - quote.close) / quote.close) * 100
 }
 
-/** "05 Oct" from an ISO date, so a card can say which contract it is showing. */
+/** "05 Oct" from an ISO date, for the table's expiry column. */
 function expiryLabel(iso: string | null | undefined): string {
   if (!iso) return '—'
   const d = new Date(iso)
@@ -110,17 +136,64 @@ function expiryLabel(iso: string | null | undefined): string {
   return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
 }
 
+/** "Oct 2026" from an ISO date: the contract month, as the pulse prints it on its tiles. */
+function contractMonth(iso: string | null | undefined): string | null {
+  if (!iso) return null
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return null
+  return d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })
+}
+
+interface Row {
+  root: string
+  label: string
+  group: string
+  contract: Instrument | null
+  quote: LiveQuote | undefined
+  isWatched: boolean
+}
+
+/** A row as the pulse's tile reads it. */
+function tileItem(r: Row): MarketPulseItem {
+  const q = r.quote
+  const ltp = q?.lastTradedPrice ?? null
+  const close = q?.close ?? null
+  const change = ltp != null && close != null ? ltp - close : null
+  return {
+    symbol: r.contract?.symbol ?? `MCX:${r.root}`,
+    name: r.label,
+    contract: contractMonth(r.contract?.expiryDate),
+    lastTradedPrice: ltp,
+    previousClose: close,
+    open: q?.open ?? null,
+    high: q?.high ?? null,
+    low: q?.low ?? null,
+    volume: q?.volume ?? null,
+    change,
+    changePercent: change != null && close ? (change / close) * 100 : null,
+    updatedUtc: priceAgeSource(q) ?? null,
+    isSubscribed: r.isWatched,
+  }
+}
+
 /* ------------------------------------------------------------------- page */
 
 export function CommodityPage() {
   const quotes = useLatestQuotes()
   const watchlist = useWatchlist()
+  const pulse = useMarketPulse()
   const add = useAddWatchlistSymbol()
+  const navigate = useNavigate()
 
-  // One search per root. They are cached for a minute and the roots never
-  // change, so this costs a single round each on the first visit.
+  const roots = useMemo(
+    () => commodityRoots(pulse.data?.groups.find((g) => g.key === 'commodity')?.items),
+    [pulse.data],
+  )
+
+  // One search per full-size root, nearest expiry first, which also lists the
+  // root's mini (GOLDM with GOLD). Cached for an hour: the roots rarely change.
   const searches = useQueries({
-    queries: COMMODITIES.map((c) => ({
+    queries: roots.map((c) => ({
       queryKey: ['instruments', 'search', `MCX:${c.root}`, 'FUT'],
       queryFn: () =>
         api.get<Instrument[]>(
@@ -130,8 +203,14 @@ export function CommodityPage() {
     })),
   })
 
-  const contracts = COMMODITIES.map((c, i) => nearMonth(searches[i].data, c.root))
-  const prices = useLivePrices(contracts.flatMap((c) => (c ? [c.symbol] : [])))
+  // The full-size contract, then the mini beside it when the master has one.
+  const contracts = roots.flatMap((c, i) => {
+    const found = searches[i].data
+    const full = { ...c, contract: nearMonth(found, c.root) }
+    const mini = nearMonth(found, `${c.root}M`)
+    return mini ? [full, { root: `${c.root}M`, label: `${c.label} Mini`, group: c.group, contract: mini }] : [full]
+  })
+  const prices = useLivePrices(contracts.flatMap((c) => (c.contract ? [c.contract.symbol] : [])))
   const quotesAsOf = answerAsOf(quotes)
   const bySymbol = useMemo(
     () => quotesWithTicks(quotes.data, prices, quotesAsOf),
@@ -142,21 +221,17 @@ export function CommodityPage() {
     [watchlist.data],
   )
 
-  const rows = COMMODITIES.map((c, i) => {
-    const contract = contracts[i]
-    return {
-      ...c,
-      contract,
-      quote: contract ? bySymbol.get(contract.symbol) : undefined,
-      isWatched: contract ? watched.has(contract.symbol) : false,
-      loading: searches[i].isLoading,
-      error: searches[i].error as Error | undefined,
-    }
-  })
+  const rows: Row[] = contracts.map((c) => ({
+    ...c,
+    quote: c.contract ? bySymbol.get(c.contract.symbol) : undefined,
+    isWatched: c.contract ? watched.has(c.contract.symbol) : false,
+  }))
 
-  const resolving = rows.some((r) => r.loading)
+  const resolving = searches.some((s) => s.isLoading)
   const unwatched = rows.filter((r) => r.contract && !r.isWatched)
-  const firstError = rows.find((r) => r.error)?.error
+  const firstError = searches.find((s) => s.error)?.error as Error | undefined
+
+  const watch = (symbol: string) => add.mutate({ symbol, dataType: 'symbolUpdate', priority: 40 })
 
   return (
     <div className="page">
@@ -164,20 +239,16 @@ export function CommodityPage() {
         <div>
           <h1 className="page__title">Commodity</h1>
           <p className="page__subtitle">
-            MCX near-month futures — gold, silver, crude and natural gas, with the mini
-            contracts beside the full-size ones. The contract rolls with the expiry; the age
-            beside each price is how long ago that contract last traded.
+            MCX near-month futures, with the mini contracts beside the full-size ones. The
+            contract rolls with the expiry; the age under each price is how long ago that
+            contract last traded.
           </p>
         </div>
         {unwatched.length > 0 && (
           <button
             className="btn btn--primary"
             disabled={add.isPending}
-            onClick={() =>
-              unwatched.forEach((r) =>
-                add.mutate({ symbol: r.contract!.symbol, dataType: 'symbolUpdate', priority: 40 }),
-              )
-            }
+            onClick={() => unwatched.forEach((r) => watch(r.contract!.symbol))}
             title="Subscribe every contract on this page to the live feed"
           >
             <IconPlus /> Watch all {unwatched.length}
@@ -186,76 +257,42 @@ export function CommodityPage() {
       </header>
 
       {firstError && <InlineError error={firstError} />}
+      {add.isError && <InlineError error={add.error} />}
 
       {resolving ? (
         <Loading label="Resolving near-month contracts…" />
       ) : (
         <>
-          <div
-            className="stat-grid"
-            style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}
-          >
-            {rows.map((r) => {
-              const chg = changePct(r.quote)
-              return (
-                <div className="stat" key={r.root}>
-                  <div className="stat__value">
-                    <FlashPrice value={r.quote?.lastTradedPrice} bold />
-                  </div>
-                  <div className="stat__label">{r.label}</div>
-                  <div className="stat__sub">
-                    {r.quote ? (
-                      <>
-                        <span className={chg == null ? 'muted' : chg >= 0 ? 'pos' : 'neg'}>
-                          {chg == null ? '' : `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`}
-                        </span>{' '}
-                        <span className="faint" title="Time since this contract last traded">
-                          · {formatAge(priceAgeSource(r.quote))}
-                        </span>
-                      </>
-                    ) : !r.contract ? (
-                      <span className="faint">no live contract</span>
-                    ) : r.isWatched ? (
-                      <span className="faint">awaiting first tick…</span>
-                    ) : (
-                      <button
-                        className="btn btn--ghost btn--sm"
-                        style={{ padding: '1px 8px' }}
-                        disabled={add.isPending}
-                        onClick={() =>
-                          add.mutate({
-                            symbol: r.contract!.symbol,
-                            dataType: 'symbolUpdate',
-                            priority: 40,
-                          })
-                        }
-                      >
-                        <IconPlus style={{ width: 11, height: 11 }} /> Watch
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
+          {/* The pulse's tiles (components/MarketPulse.tsx): as many across as fit, two on a phone. */}
+          <div className="pulse__big">
+            {rows.map((r) => (
+              <BigTile
+                key={r.root}
+                item={tileItem(r)}
+                onOpen={() => r.contract && navigate(`/markets/chart?symbol=${encodeURIComponent(r.contract.symbol)}`)}
+              />
+            ))}
           </div>
 
           <Panel
             title="Contracts"
             actions={
-              <span className="faint" style={{ fontSize: 12 }}>
+              <span className="faint mcx-hint">
                 Nearest expiry per commodity, resolved from the instrument master
               </span>
             }
           >
+            {/* Price and change beside the name; the contract code and expiry
+                (on the tile already) are the desk's columns, hidden on a phone. */}
             <div className="tablewrap">
               <table className="table">
                 <thead>
                   <tr>
                     <th>Commodity</th>
-                    <th>Contract</th>
-                    <th>Expiry</th>
                     <th className="r">LTP</th>
                     <th className="r">Change</th>
+                    <th className="mcx-desk">Contract</th>
+                    <th className="mcx-desk">Expiry</th>
                     <th className="r">Open</th>
                     <th className="r">High</th>
                     <th className="r">Low</th>
@@ -271,19 +308,16 @@ export function CommodityPage() {
                     return (
                       <tr key={r.root}>
                         <td>
-                          {r.label}{' '}
-                          <span className="faint" style={{ fontSize: 11.5 }}>
-                            {r.group}
-                          </span>
+                          {r.label} <span className="faint mcx-group">{r.group}</span>
                         </td>
-                        <td className="mono">{r.contract?.symbol ?? '—'}</td>
-                        <td className="muted">{expiryLabel(r.contract?.expiryDate)}</td>
                         <td className="r">
                           <FlashPrice value={q?.lastTradedPrice} />
                         </td>
                         <td className={`r ${chg == null ? 'muted' : chg >= 0 ? 'pos' : 'neg'}`}>
                           {chg == null ? '—' : `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`}
                         </td>
+                        <td className="mono mcx-desk">{r.contract?.symbol ?? '—'}</td>
+                        <td className="muted mcx-desk">{expiryLabel(r.contract?.expiryDate)}</td>
                         <td className="r mono">{q?.open == null ? '—' : formatPrice(q.open)}</td>
                         <td className="r mono">{q?.high == null ? '—' : formatPrice(q.high)}</td>
                         <td className="r mono">{q?.low == null ? '—' : formatPrice(q.low)}</td>
@@ -299,7 +333,15 @@ export function CommodityPage() {
                           ) : r.isWatched ? (
                             <Badge tone="accent">subscribed</Badge>
                           ) : (
-                            <Badge tone="warn">not watched</Badge>
+                            <button
+                              type="button"
+                              className="btn btn--ghost btn--sm"
+                              disabled={add.isPending}
+                              onClick={() => watch(r.contract!.symbol)}
+                              title="Subscribe this contract to the live feed"
+                            >
+                              Watch
+                            </button>
                           )}
                         </td>
                       </tr>
@@ -308,7 +350,7 @@ export function CommodityPage() {
                 </tbody>
               </table>
             </div>
-            <p className="faint" style={{ fontSize: 12, marginTop: 10 }}>
+            <p className="faint mcx-note">
               MCX trades late into the evening, well past the equity close. "Last trade" is
               the exchange's own clock, so a quiet contract can read minutes old while the
               feed is perfectly healthy — the full-size gold and silver futures print far

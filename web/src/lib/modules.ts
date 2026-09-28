@@ -395,6 +395,10 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
 
 /** A page outside the workspaces, reached from the avatar menu (traders only: an admin has no account page). */
 export const ACCOUNT_PAGE = { label: 'Account', to: '/account' } as const
+/** Where the router sends a user who may not open a page (RequireRole). */
+export const FORBIDDEN_PAGE = { label: 'Not permitted', to: '/forbidden' } as const
+/** What a route no page claims is called. */
+export const NOT_FOUND_LABEL = 'Page not found'
 
 // ---------- who sees what -----------------------------------------------------
 
@@ -449,15 +453,12 @@ function shows(access: Access, tab: TabDef, page: PageDef): boolean {
   return allows(access, tab.requires) && (!page.only || page.only === (access.isAdmin ? 'admin' : 'trader'))
 }
 
-/**
- * The workspaces and pages this user can reach. A tab with no page left and a
- * workspace with no tab left are dropped, never shown empty.
- */
-export function navFor(access: Access): NavWorkspace[] {
+/** The registry as a nav, keeping the pages `keep` says to. */
+function collect(keep: (tab: TabDef, page: PageDef) => boolean): NavWorkspace[] {
   return WORKSPACES.flatMap((ws) => {
     const pages = ws.tabs.flatMap((tab) =>
       tab.pages
-        .filter((p) => shows(access, tab, p))
+        .filter((p) => keep(tab, p))
         .map((p) => ({ label: p.label, to: p.to, exact: p.exact ?? false, owns: p.owns ?? [], keywords: p.keywords ?? [], tab, workspace: ws.key })),
     )
     if (pages.length === 0) return []
@@ -465,6 +466,17 @@ export function navFor(access: Access): NavWorkspace[] {
     return [{ key: ws.key, label: ws.label, icon: ws.icon, to: landing.to, pages }]
   })
 }
+
+/**
+ * The workspaces and pages this user can reach. A tab with no page left and a
+ * workspace with no tab left are dropped, never shown empty.
+ */
+export function navFor(access: Access): NavWorkspace[] {
+  return collect((tab, page) => shows(access, tab, page))
+}
+
+/** Every page of every console, for naming a route this user has no tab for. */
+const EVERY_PAGE: readonly NavWorkspace[] = collect(() => true)
 
 /** Whether `path` is `prefix` or a route under it, on a segment boundary. */
 function under(path: string, prefix: string): boolean {
@@ -492,4 +504,48 @@ export function locate(pathname: string, nav: readonly NavWorkspace[]): { worksp
     }
   }
   return best ? { workspace: best.workspace, page: best.page } : null
+}
+
+/** What a route is called: the page's word, and its workspace when that adds something. */
+export interface RouteName {
+  /** "Runs", "Account", "Page not found". */
+  page: string
+  /** "Trade"; absent for the Desk (whose page and workspace share a name) and for pages outside the workspaces. */
+  workspace?: string
+}
+
+/**
+ * The one name a route goes by, for the tab strip's title, the browser tab
+ * and any page heading the shell draws. This user's nav first; then the whole
+ * registry, so a page the user has no tab for (a grant the API will refuse)
+ * is still called what it is rather than "not found"; then the pages outside
+ * the workspaces; and "Page not found" only for a route no page claims,
+ * which is the router's fallback.
+ */
+export function nameRoute(pathname: string, nav: readonly NavWorkspace[]): RouteName {
+  const hit = locate(pathname, nav) ?? locate(pathname, EVERY_PAGE)
+  if (hit) return hit.page.label === hit.workspace.label ? { page: hit.page.label } : { page: hit.page.label, workspace: hit.workspace.label }
+  const path = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname
+  if (path === ACCOUNT_PAGE.to) return { page: ACCOUNT_PAGE.label }
+  if (path === FORBIDDEN_PAGE.to) return { page: FORBIDDEN_PAGE.label }
+  return { page: NOT_FOUND_LABEL }
+}
+
+/** "Runs · Trade", "Desk", "Account": one line for the strip and the browser tab. */
+export function routeTitle(name: RouteName): string {
+  return name.workspace ? `${name.page} · ${name.workspace}` : name.page
+}
+
+/**
+ * A workspace's pages grouped by the tab they share, in order. Most groups
+ * are one page; the strip brackets the few that are more (the Backtests tab).
+ */
+export function tabGroups(pages: readonly NavPage[]): NavPage[][] {
+  const groups: NavPage[][] = []
+  for (const page of pages) {
+    const last = groups[groups.length - 1]
+    if (last && last[0].tab.key === page.tab.key) last.push(page)
+    else groups.push([page])
+  }
+  return groups
 }

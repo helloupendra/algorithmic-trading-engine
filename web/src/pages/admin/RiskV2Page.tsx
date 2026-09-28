@@ -7,26 +7,12 @@
  */
 
 import { useEffect, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { api } from '../../lib/api'
-import {
-  useKillSwitch,
-  useRiskEvents,
-  useRiskLimits,
-  useSetKillSwitch,
-  useUpdateRiskLimits,
-} from '../../lib/queries'
-import type { RiskExposureResponse, RiskLimits } from '../../lib/types'
+import { useKillSwitch, useLiveRiskExposure, useRiskEvents, useRiskLimits, useSetKillSwitch, useUpdateRiskLimits } from '../../lib/queries'
+import type { RiskLimits } from '../../lib/types'
 import { formatDateTime, formatInr } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Panel, QueryBoundary, StatTile } from '../../components/ui'
+import './risk.css'
 
-function useRiskExposure() {
-  return useQuery({
-    queryKey: ['risk', 'exposure'],
-    queryFn: () => api.get<RiskExposureResponse>('/api/Risk/exposure'),
-    refetchInterval: 20_000,
-  })
-}
 
 function KillSwitchPanel() {
   const killSwitch = useKillSwitch()
@@ -127,12 +113,12 @@ function LimitsPanel() {
         value={form?.[key] ?? 0}
         onChange={(e) => form && setForm({ ...form, [key]: Number(e.target.value) })}
       />
-      <span className="small-note muted">{hint}</span>
+      <p className="field__help">{hint}</p>
     </div>
   )
 
   return (
-    <Panel title="Trading limits">
+    <Panel title="Trading limits" className="limits-panel">
       {update.isError && <InlineError error={update.error} />}
       {update.isSuccess && (
         <div className="alert alert--success" role="status">
@@ -142,26 +128,32 @@ function LimitsPanel() {
       <QueryBoundary query={limits}>
         {(data) => (
           <>
-            <p className="small-note muted">
+            <p className="small-note muted limits-source">
               In force from <Badge tone="accent">{data.source}</Badge>
               {data.updatedBy && (
                 <> · last changed by {data.updatedBy} at {formatDateTime(data.updatedUtc)}</>
               )}
             </p>
+            {/* Not .form-row: that aligns fields on their bottom edge, so the one
+                with two lines of help floated above the other three and the
+                button sat in the grid like a fifth field. */}
             <form
-              className="form-row"
               onSubmit={(e) => {
                 e.preventDefault()
                 if (form) update.mutate(form)
               }}
             >
-              {field('maxOrdersPerMinute', 'Max orders / minute', 'Throttles a runaway strategy.')}
-              {field('maxDailyLoss', 'Max daily loss (₹)', 'Per run, before charges: a run below it cannot open new positions; exits stay allowed.')}
-              {field('maxConcurrentRuns', 'Max concurrent runs', 'Total live runners allowed at once.')}
-              {field('maxRunsPerUser', 'Max runs per trader', 'How many one trader may hold open.')}
-              <button className="btn btn--primary" disabled={update.isPending || !form}>
-                {update.isPending ? 'Saving…' : 'Save limits'}
-              </button>
+              <div className="limits-grid">
+                {field('maxOrdersPerMinute', 'Max orders / minute', 'Throttles a runaway strategy.')}
+                {field('maxDailyLoss', 'Max daily loss (₹)', 'Per run, before charges: a run below it cannot open new positions; exits stay allowed.')}
+                {field('maxConcurrentRuns', 'Max concurrent runs', 'Total live runners allowed at once.')}
+                {field('maxRunsPerUser', 'Max runs per trader', 'How many one trader may hold open.')}
+              </div>
+              <div className="limits-actions">
+                <button className="btn btn--primary" disabled={update.isPending || !form}>
+                  {update.isPending ? 'Saving…' : 'Save limits'}
+                </button>
+              </div>
             </form>
           </>
         )}
@@ -171,7 +163,7 @@ function LimitsPanel() {
 }
 
 function ExposurePanel() {
-  const exposure = useRiskExposure()
+  const exposure = useLiveRiskExposure()
 
   return (
     <Panel title="What is at risk right now">
@@ -236,42 +228,43 @@ function RiskEventsPanel() {
 
   return (
     <Panel title="Risk log">
-      {events.isError && <InlineError error={events.error} />}
-      {events.data && events.data.length === 0 ? (
-        <EmptyState>Nothing recorded yet.</EmptyState>
-      ) : (
-        <div className="tablewrap tablewrap--tall">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>When</th>
-                <th>Event</th>
-                <th>By</th>
-                <th>Reason</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(events.data ?? []).map((ev) => (
-                <tr key={ev.id}>
-                  <td className="mono">{formatDateTime(ev.occurredUtc)}</td>
-                  <td>
-                    {ev.kind}
-                    {(ev.symbol || ev.simulationRunId) && (
-                      <div className="small-note muted mono">
-                        {ev.symbol}
-                        {ev.symbol && ev.simulationRunId ? ' · ' : ''}
-                        {ev.simulationRunId ? `run #${ev.simulationRunId}` : ''}
-                      </div>
-                    )}
-                  </td>
-                  <td>{ev.actorName ?? <span className="muted">system</span>}</td>
-                  <td className="muted">{ev.reason}</td>
+      {/* One state at a time: a failed read used to show its error AND a bare
+          table head with no rows under it. */}
+      <QueryBoundary query={events} empty="Nothing recorded yet.">
+        {(rows) => (
+          <div className="tablewrap tablewrap--tall">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Event</th>
+                  <th>By</th>
+                  <th>Reason</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              </thead>
+              <tbody>
+                {rows.map((ev) => (
+                  <tr key={ev.id}>
+                    <td className="mono">{formatDateTime(ev.occurredUtc)}</td>
+                    <td>
+                      {ev.kind}
+                      {(ev.symbol || ev.simulationRunId) && (
+                        <div className="small-note muted mono">
+                          {ev.symbol}
+                          {ev.symbol && ev.simulationRunId ? ' · ' : ''}
+                          {ev.simulationRunId ? `run #${ev.simulationRunId}` : ''}
+                        </div>
+                      )}
+                    </td>
+                    <td>{ev.actorName ?? <span className="muted">system</span>}</td>
+                    <td className="muted">{ev.reason}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </QueryBoundary>
     </Panel>
   )
 }
@@ -280,11 +273,13 @@ export function RiskV2Page() {
   return (
     <div className="page">
       <header className="page__header">
-        <h1 className="page__title">Risk &amp; kill switch</h1>
-        <p className="page__subtitle">
-          The controls that stop money moving, what is exposed right now, and the log of every risk
-          action taken.
-        </p>
+        <div>
+          <h1 className="page__title">Risk &amp; kill switch</h1>
+          <p className="page__subtitle">
+            The controls that stop money moving, what is exposed right now, and the log of every risk
+            action taken.
+          </p>
+        </div>
       </header>
 
       <KillSwitchPanel />

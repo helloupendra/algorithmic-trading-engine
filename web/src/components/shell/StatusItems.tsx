@@ -41,7 +41,7 @@ import type { IngestorStatus, MarketSessionInfo } from '../../lib/types'
 import { useMarketClock } from '../../lib/marketClock'
 import { severityTone, silenceNote } from '../../lib/incidents'
 import { formatDateTime } from '../../lib/format'
-import { IconPower, IconWarning, IconX } from '../icons'
+import { IconPower, IconShield, IconWarning, IconX } from '../icons'
 import { InlineError } from '../ui'
 import { useDialogChrome } from '../../pages/strategies/shared'
 import { useDismiss } from './useDismiss'
@@ -90,7 +90,7 @@ function LiveItem() {
   const p = livePulse(connection, down)
   if (!p) return null
   return (
-    <span className={`st st--${p.tone}`} role={p.tone === 'warn' ? 'status' : undefined} title={p.title}>
+    <span className={`st st--conn st--${p.tone}`} role={p.tone === 'warn' ? 'status' : undefined} title={p.title}>
       <span className="st__dot" aria-hidden="true" />
       {p.short ? (
         <>
@@ -102,6 +102,16 @@ function LiveItem() {
       )}
     </span>
   )
+}
+
+/**
+ * Where the health popover's left edge goes: under the words that were
+ * clicked, kept inside the window. Null on a phone, where the popover spans
+ * the width and hangs from the right like the account menu.
+ */
+export function popoverLeft(triggerLeft: number | null, viewportWidth: number, width = 380, margin = 12): number | null {
+  if (triggerLeft == null || viewportWidth <= 760) return null
+  return Math.round(Math.max(margin, Math.min(triggerLeft, viewportWidth - width - margin)))
 }
 
 const CONNECTOR_TONE: Record<ConnectorState, Tone> = {
@@ -127,9 +137,15 @@ function HealthItem({ backend, nse, mcx, heartbeats }: {
   const providers = useProviders()
   const feeds = useFeeds()
   const [open, setOpen] = useState(false)
+  const [left, setLeft] = useState<number | null>(null)
   const boxRef = useRef<HTMLDivElement>(null)
   const close = useCallback(() => setOpen(false), [])
   useDismiss(boxRef, open, close)
+
+  function toggle() {
+    if (!open) setLeft(popoverLeft(boxRef.current?.getBoundingClientRect().left ?? null, window.innerWidth))
+    setOpen((v) => !v)
+  }
 
   const down = backend.isDown
   const now = Date.now()
@@ -152,14 +168,21 @@ function HealthItem({ backend, nse, mcx, heartbeats }: {
         aria-expanded={open}
         aria-label={`Desk health: ${pulse.label}${more ? `, and ${more} more` : ''}`}
         title={open ? undefined : pulse.title}
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggle}
       >
         <span className="st__dot" aria-hidden="true" />
-        <span className="st__label">{pulse.label}</span>
+        {pulse.short ? (
+          <>
+            <span className="st__label st__wide">{pulse.label}</span>
+            <span className="st__label st__narrow">{pulse.short}</span>
+          </>
+        ) : (
+          <span className="st__label">{pulse.label}</span>
+        )}
         {more > 0 && <span className="st__more">+{more}</span>}
       </button>
       {open && (
-        <div className="pop" role="dialog" aria-label="Desk health">
+        <div className="pop" role="dialog" aria-label="Desk health" style={left != null ? { left, right: 'auto' } : undefined}>
           <div className="pop__head">
             <span>Desk health</span>
             {summary && <span>Live data: {summary.liveFeeds.length ? summary.liveFeeds.join(', ') : 'no feed running'}</span>}
@@ -235,7 +258,7 @@ function IncidentsItem() {
   const title = silence ?? (live === 0 ? 'No live incidents' : `${live} live incident${live === 1 ? '' : 's'}${s.newestTitle ? `. Newest: ${s.newestTitle}` : ''}`)
   return (
     <Link to="/system/incidents" className={`st st--badge st--${tone}`} title={title} aria-label={`Incidents: ${title}`}>
-      <IconWarning aria-hidden="true" />
+      {tone === 'idle' ? <IconShield aria-hidden="true" /> : <IconWarning aria-hidden="true" />}
       <span className="st__label">{silence ? 'Sentinel quiet' : live}</span>
     </Link>
   )

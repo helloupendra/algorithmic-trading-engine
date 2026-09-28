@@ -38,7 +38,7 @@ import {
   useWatchlist,
 } from '../../lib/queries'
 import { formatAge, formatDateTime, formatPrice, shortSymbol } from '../../lib/format'
-import { classifySymbol } from '../../lib/symbols'
+import { classifySymbol, indexLabel, indexTileSymbols } from '../../lib/symbols'
 import { feedDiagnostics } from '../../lib/feeds'
 import { Badge, EmptyState, FlashPrice, InlineError, Panel, QueryBoundary } from '../../components/ui'
 import {
@@ -51,6 +51,7 @@ import {
   IconWarning,
 } from '../../components/icons'
 import type { LiveQuote } from '../../lib/types'
+import './data.css'
 
 /* ---------------------------------------------------------------- helpers */
 
@@ -110,7 +111,7 @@ function ChainPollerPanel() {
             </button>
           ) : (
             <button
-              className="btn btn--pos"
+              className="btn"
               disabled={start.isPending || status.isPending}
               onClick={() => start.mutate()}
               title={status.isPending ? 'Checking whether the poller is running…' : undefined}
@@ -188,12 +189,20 @@ function ChainPollerPanel() {
 
 /* ------------------------------------------------------------ index cards */
 
+/**
+ * The indices the desk reads first, with the names traders use. Any other
+ * index on the recording list gets a tile after them (lib/symbols
+ * indexTileSymbols), so bringing BANKEX or MIDCPNIFTY onto the feed needs
+ * no change here.
+ */
 const INDEX_CARDS = [
   { symbol: 'NSE:NIFTYBANK-INDEX', label: 'BANKNIFTY' },
   { symbol: 'NSE:NIFTY50-INDEX', label: 'NIFTY 50' },
   { symbol: 'NSE:FINNIFTY-INDEX', label: 'FINNIFTY' },
   { symbol: 'BSE:SENSEX-INDEX', label: 'SENSEX' },
 ]
+const INDEX_LABELS = new Map(INDEX_CARDS.map((c) => [c.symbol, c.label]))
+const PREFERRED_INDICES = INDEX_CARDS.map((c) => c.symbol)
 
 function IndexTickerRow() {
   const quotes = useLatestQuotes()
@@ -208,10 +217,12 @@ function IndexTickerRow() {
     () => new Set((watchlist.data ?? []).map((w) => w.symbol)),
     [watchlist.data],
   )
+  const symbols = useMemo(() => indexTileSymbols(PREFERRED_INDICES, [...watched]), [watched])
 
   return (
-    <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
-      {INDEX_CARDS.map(({ symbol, label }) => {
+    <div className="stat-grid stat-grid--pair">
+      {symbols.map((symbol) => {
+        const label = INDEX_LABELS.get(symbol) ?? indexLabel(symbol)
         const quote = bySymbol.get(symbol)
         const chg = changePct(quote)
         return (
@@ -223,10 +234,18 @@ function IndexTickerRow() {
             <div className="stat__sub">
               {quote ? (
                 <>
-                  <span className={chg == null ? 'muted' : chg >= 0 ? 'pos' : 'neg'}>
-                    {chg == null ? '' : `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`}
-                  </span>{' '}
-                  <span className="faint">· {formatAge(quote.updatedUtc)}</span>
+                  {chg != null && (
+                    <>
+                      <span className={chg >= 0 ? 'pos' : 'neg'}>
+                        {chg >= 0 ? '+' : ''}
+                        {chg.toFixed(2)}%
+                      </span>{' '}
+                    </>
+                  )}
+                  <span className="faint">
+                    {chg != null ? '· ' : ''}
+                    {formatAge(quote.updatedUtc)}
+                  </span>
                 </>
               ) : watched.has(symbol) ? (
                 <span className="faint">awaiting first tick…</span>
@@ -293,11 +312,11 @@ function AddSymbolForm() {
   const results = search.data ?? []
 
   return (
-    <div style={{ flex: 1, minWidth: 260 }}>
+    <div style={{ flex: '1 1 260px', minWidth: 0 }}>
       <div className="inline-form">
         <input
           className="field__input field__input--sm"
-          style={{ flex: 1, minWidth: 180 }}
+          style={{ flex: 1, minWidth: 0 }}
           placeholder="Search and add symbol to save to database…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -371,6 +390,7 @@ function AddGroupForm() {
     <div className="inline-form">
       <select
         className="field__input field__input--sm"
+        style={{ flex: '1 1 160px', minWidth: 0 }}
         value={selected}
         onChange={(e) => setSelected(e.target.value)}
       >
@@ -446,6 +466,10 @@ function LiveWatchlistPanel() {
     if (window.confirm(msg)) remove.mutate(id)
   }
 
+  // An old quote is only a warning while the market is open; on a Sunday
+  // every row is two days old and none of that is wrong.
+  const marketOpen = session.data?.isMarketOpen ?? false
+
   return (
     <Panel
       title={
@@ -455,6 +479,13 @@ function LiveWatchlistPanel() {
       }
       actions={
         <div className="toolbar" style={{ gap: 8 }}>
+          <input
+            className="field__input field__input--sm"
+            style={{ flex: '1 1 160px', minWidth: 0 }}
+            placeholder="Filter…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
           <button
             type="button"
             className={`btn btn--sm ${staleCount > 0 ? 'btn--danger' : 'btn--ghost'}`}
@@ -468,12 +499,6 @@ function LiveWatchlistPanel() {
           >
             <IconTrash /> {prune.isPending ? 'Removing…' : staleCount > 0 ? `Remove stale (${staleCount})` : 'Nothing stale'}
           </button>
-          <input
-            className="field__input field__input--sm"
-            placeholder="Filter…"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-          />
         </div>
       }
     >
@@ -499,19 +524,22 @@ function LiveWatchlistPanel() {
             .filter((w) => (needle ? w.symbol.toUpperCase().includes(needle) : true))
           return (
             <div className="tablewrap tablewrap--tall">
-              <table className="table">
+              {/* A phone keeps Symbol, LTP, Chg% and the remove button; the age
+                  moves under the symbol and the rest of the columns go
+                  (data.css col--wide / col--phone). */}
+              <table className="table table--sticky">
                 <thead>
                   <tr>
                     <th>Symbol</th>
-                    <th>Type</th>
+                    <th className="col--wide">Type</th>
                     <th className="r">LTP</th>
-                    <th className="r">Chg%</th>
-                    <th className="r">Open</th>
-                    <th className="r">High</th>
-                    <th className="r">Low</th>
-                    <th className="r">Volume</th>
-                    <th>Updated</th>
-                    <th>Feed</th>
+                    <th className="r col--wide">Chg%</th>
+                    <th className="r col--wide">Open</th>
+                    <th className="r col--wide">High</th>
+                    <th className="r col--wide">Low</th>
+                    <th className="r col--wide">Volume</th>
+                    <th className="col--wide">Updated</th>
+                    <th className="col--wide">Feed</th>
                     <th className="r"></th>
                   </tr>
                 </thead>
@@ -520,10 +548,23 @@ function LiveWatchlistPanel() {
                     const quote = quoteBySymbol.get(item.symbol)
                     const chg = changePct(quote)
                     const ageMs = quote ? Date.now() - new Date(quote.updatedUtc).getTime() : null
+                    const staleItem = staleById.get(item.id)
+                    const ageWarn = marketOpen && ageMs != null && ageMs > 120_000
                     return (
                       <tr key={item.id}>
-                        <td className="mono">{shortSymbol(item.symbol)}</td>
-                        <td>
+                        <td className="mono">
+                          {shortSymbol(item.symbol)}
+                          <span className="cell-sub col--phone">
+                            {quote && <span className={ageWarn ? 'warn' : undefined}>{formatAge(quote.updatedUtc)}</span>}
+                            {staleItem && (
+                              <>
+                                {quote && ' · '}
+                                <Badge tone="neg">{staleItem.detail}</Badge>
+                              </>
+                            )}
+                          </span>
+                        </td>
+                        <td className="col--wide">
                           <Badge tone="neutral">{classifySymbol(item.symbol)}</Badge>
                         </td>
                         <td className="r">
@@ -532,25 +573,35 @@ function LiveWatchlistPanel() {
                           ) : (
                             <span className="faint">awaiting tick</span>
                           )}
-                        </td>
-                        <td className={`r ${chg == null ? 'muted' : chg >= 0 ? 'pos' : 'neg'}`}>
-                          {chg == null ? '—' : `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`}
-                        </td>
-                        <td className="r muted">{formatPrice(quote?.open)}</td>
-                        <td className="r muted">{formatPrice(quote?.high)}</td>
-                        <td className="r muted">{formatPrice(quote?.low)}</td>
-                        <td className="r muted">
-                          {quote?.volume == null ? '—' : quote.volume.toLocaleString('en-IN')}
-                        </td>
-                        <td className={ageMs != null && ageMs > 120_000 ? 'warn' : 'muted'}>
-                          {quote ? formatAge(quote.updatedUtc) : '—'}
-                          {staleById.has(item.id) && (
-                            <span className="cell-sub">
-                              <Badge tone="neg">{staleById.get(item.id)!.detail}</Badge>
+                          {/* On a phone the change sits under the price: measured at 390,
+                              a Chg% column of its own pushed the remove button off-screen. */}
+                          {chg != null && (
+                            <span className="cell-sub col--phone">
+                              <span className={chg >= 0 ? 'pos' : 'neg'}>
+                                {chg >= 0 ? '+' : ''}
+                                {chg.toFixed(2)}%
+                              </span>
                             </span>
                           )}
                         </td>
-                        <td>
+                        <td className={`r col--wide ${chg == null ? 'muted' : chg >= 0 ? 'pos' : 'neg'}`}>
+                          {chg == null ? '—' : `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`}
+                        </td>
+                        <td className="r muted col--wide">{formatPrice(quote?.open)}</td>
+                        <td className="r muted col--wide">{formatPrice(quote?.high)}</td>
+                        <td className="r muted col--wide">{formatPrice(quote?.low)}</td>
+                        <td className="r muted col--wide">
+                          {quote?.volume == null ? '—' : quote.volume.toLocaleString('en-IN')}
+                        </td>
+                        <td className={`col--wide ${ageWarn ? 'warn' : 'muted'}`}>
+                          {quote ? formatAge(quote.updatedUtc) : '—'}
+                          {staleItem && (
+                            <span className="cell-sub">
+                              <Badge tone="neg">{staleItem.detail}</Badge>
+                            </span>
+                          )}
+                        </td>
+                        <td className="col--wide">
                           <span className="muted">{item.dataType === 'symbolUpdate' ? 'Full' : 'Lite'}</span>{' '}
                           {!item.isActive && <Badge tone="warn">off</Badge>}
                         </td>
@@ -628,7 +679,9 @@ function DiagnosticsPanel() {
                       )}
                     </td>
                     <td className="r">{row.symbols ?? <span className="faint">—</span>}</td>
-                    <td className={row.error ? 'neg' : 'faint'}>{row.error ?? '—'}</td>
+                    {/* Empty, not a dash: beside the Symbols dash it read as one "— —",
+                        and only a real error should draw the eye here. */}
+                    <td className={row.error ? 'neg' : 'faint'}>{row.error}</td>
                   </tr>
                 ))}
               </tbody>
@@ -779,7 +832,7 @@ function InspectorPanel() {
 export function LiveFeedsPage() {
   useLiveAll()
   return (
-    <div className="page">
+    <div className="page data-page">
       <header className="page__header">
         <div>
           <h1 className="page__title">Live feeds</h1>

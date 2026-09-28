@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { GRANT_KEYS, WORKSPACES, accessFor, allows, locate, navFor } from './modules'
+import { GRANT_KEYS, WORKSPACES, accessFor, allows, locate, nameRoute, navFor, routeTitle, tabGroups } from './modules'
 import type { Access, NavWorkspace } from './modules'
 
 const admin: Access = accessFor({ role: 'Admin' })
@@ -195,5 +195,43 @@ describe('locate', () => {
   it('respects segment boundaries', () => {
     expect(at(adminNav, '/data/feeds')).toBe('Data / Feeds')
     expect(at(adminNav, '/data/feedsx')).toBeNull()
+  })
+})
+
+describe('nameRoute', () => {
+  const adminNav = navFor(admin)
+  const traderNav = navFor(traderWith('strategies'))
+
+  it('names a page by its tab and its workspace, and the Desk once', () => {
+    expect(nameRoute('/trade/runs', adminNav)).toEqual({ page: 'Runs', workspace: 'Trade' })
+    expect(routeTitle(nameRoute('/trade/runs/412', adminNav))).toBe('Runs · Trade')
+    expect(nameRoute('/desk', adminNav)).toEqual({ page: 'Desk' })
+    expect(routeTitle(nameRoute('/desk', adminNav))).toBe('Desk')
+  })
+
+  it('still names a page the user has no tab for, rather than calling it missing', () => {
+    expect(locate('/markets/chain', traderNav)).toBeNull()
+    expect(nameRoute('/markets/chain', traderNav)).toEqual({ page: 'Option chain', workspace: 'Markets' })
+  })
+
+  it('names the pages outside the workspaces, and only a route nobody claims as not found', () => {
+    expect(nameRoute('/account', traderNav)).toEqual({ page: 'Account' })
+    expect(nameRoute('/forbidden/', adminNav)).toEqual({ page: 'Not permitted' })
+    expect(nameRoute('/nope', adminNav)).toEqual({ page: 'Page not found' })
+    expect(nameRoute('/desk/nowhere', adminNav)).toEqual({ page: 'Page not found' })
+  })
+})
+
+describe('tabGroups', () => {
+  it('keeps a tab of several pages together and every other page on its own', () => {
+    const research = navFor(admin).find((w) => w.key === 'research')!
+    expect(tabGroups(research.pages).map((g) => g.map((p) => p.label))).toEqual([
+      ['Backtests', 'New backtest', 'Runs'],
+      ['Forecasts'],
+      ['Filter lab'],
+      ['Notebook'],
+    ])
+    const trade = navFor(admin).find((w) => w.key === 'trade')!
+    expect(tabGroups(trade.pages).every((g) => g.length === 1)).toBe(true)
   })
 })

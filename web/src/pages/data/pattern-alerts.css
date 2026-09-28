@@ -89,3 +89,12 @@
   white-space: normal;
   min-width: 180px;
 }
+
+/* A phone: the rule tables' cells wrap in the column they have. The desk's
+   minimum widths (hits 140px, rule name 180px) added up to more than the
+   screen, so a row scrolled sideways although every cell may wrap. */
+@media (max-width: 760px) {
+  .pa-hits,
+  .pa-rule-name { min-width: 0; }
+  .pa-reason { max-width: none; }
+}

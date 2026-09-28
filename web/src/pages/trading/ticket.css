@@ -1,0 +1,13 @@
+/* Manual order ticket — rules scoped to the page. */
+
+/* The instrument box fills its field (styles.css: .field > .combo) up to a
+   symbol's width — not the whole panel, which would put a 1,300px suggestion
+   list under it on a desktop. The same 48ch as the Risk page's reason field. */
+.ticket__symbol { max-width: 48ch; }
+
+/* .empty's side padding is for a table well; as a panel's own line it indented
+   "Pick an instrument…" 4px past the field above it. */
+.ticket-page .panel > .empty {
+  padding-left: 0;
+  padding-right: 0;
+}
