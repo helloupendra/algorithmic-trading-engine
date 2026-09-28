@@ -134,6 +134,10 @@ export interface PatternScannerStatus {
   symbols: PatternSymbolStatus[]
   unresolved: string[]
   telegramConfigured: boolean
+  /** The channel as set (TelegramChannelReport); absent on API builds from before the 28 Sep move. */
+  telegramChannel?: TelegramChannelName
+  telegramChannelProblem?: string | null
+  telegramSystemChatConfigured?: boolean
   telegramMaxMessages: number
   telegramWindowMinutes: number
   lastTelegramUtc: string | null
@@ -380,30 +384,68 @@ export interface IndicatorWatch {
   problem: string | null
 }
 
+export type TelegramChannelName = 'trades' | 'system'
+
+/** Where the server says its market alerts (candle patterns, indicators) go. */
+export interface TelegramChannelReport {
+  /**
+   * The channel as set: PatternAlerts:TelegramChannel, or for the indicators
+   * IndicatorAlerts:TelegramChannel when set. Absent on API builds from before
+   * the owner moved these alerts to the trades channel (28 Sep 2026).
+   */
+  telegramChannel?: TelegramChannelName
+  /** Why the setting was not read as written; the server then sends to the trades channel. */
+  telegramChannelProblem?: string | null
+  /** Whether the server has a system chat (Telegram:SystemChatId); "system" without one reaches the trades chat. */
+  telegramSystemChatConfigured?: boolean
+}
+
 /**
- * What the indicator status line says of Telegram, and which chat the
- * messages reach as the server reports it. The server sends them to its
- * system chat (the Desk System channel) and, when no system chat is set, to
- * the trades chat. The line read "Desk System channel" whatever the server
- * was doing, so a box without a system chat sent every indicator batch among
- * the trades while the page said otherwise. An API from before 28 Sep does
- * not report it, and then no chat is named.
+ * The channel the server's market alerts reach, in the page's words, or null
+ * when the server does not say. On 28 Sep 2026 the owner moved the candle
+ * patterns, and the indicator alerts with them, from the Desk System channel
+ * to the one the live trade alerts go to, and the channel became a setting;
+ * the page names whichever the server reports rather than assuming one.
+ * "system" with no system chat set still reaches the trades chat, and the
+ * page says so: it once read "Desk System channel" while a box without a
+ * system chat sent every batch among the trades. An API from before the move
+ * reports only whether it has a system chat, and sent these there.
  */
-export function indicatorTelegramNote(
-  s: Pick<IndicatorAlertsStatus, 'telegram' | 'telegramConfigured' | 'telegramSystemChatConfigured'>,
-): { text: string; title: string | null } {
-  if (!s.telegram) return { text: 'off in the file', title: null }
-  if (!s.telegramConfigured) return { text: 'on, but no bot is configured on this server', title: null }
-  if (s.telegramSystemChatConfigured === true) return { text: 'on (Desk System channel)', title: null }
+export function telegramChannelNote(
+  s: TelegramChannelReport,
+): { text: string; title: string | null; problem: string | null } | null {
+  const channel = s.telegramChannel ?? (s.telegramSystemChatConfigured === undefined ? undefined : 'system')
+  if (channel === undefined) return null
+  const problem = s.telegramChannelProblem ?? null
+  if (channel === 'trades') {
+    return { text: 'Live trades channel', title: 'The channel the live trade alerts go to (Telegram:ChatId).', problem }
+  }
   if (s.telegramSystemChatConfigured === false) {
     return {
-      text: 'on (trades channel: no Desk System chat is set on this server)',
-      title: 'Telegram:SystemChatId is not set, so the server sends its system messages, these included, to the trades chat.',
+      text: 'Live trades channel: no Desk System chat is set on this server',
+      title: 'Set to the Desk System channel, but Telegram:SystemChatId is not set, so the server sends these to the trades chat.',
+      problem,
     }
   }
+  return { text: 'Desk System channel', title: "The desk's own channel (Telegram:SystemChatId).", problem }
+}
+
+/**
+ * What the indicator status line says of Telegram: on or off, and the channel
+ * the server says the messages reach (telegramChannelNote). An API that
+ * reports no channel at all is from before 28 Sep, and then none is named.
+ */
+export function indicatorTelegramNote(
+  s: Pick<IndicatorAlertsStatus, 'telegram' | 'telegramConfigured'> & TelegramChannelReport,
+): { text: string; title: string | null; problem: string | null } {
+  if (!s.telegram) return { text: 'off in the file', title: null, problem: null }
+  if (!s.telegramConfigured) return { text: 'on, but no bot is configured on this server', title: null, problem: null }
+  const channel = telegramChannelNote(s)
+  if (channel) return { text: `on (${channel.text})`, title: channel.title, problem: channel.problem }
   return {
     text: 'on',
     title: "Sent to the server's system Telegram chat (Telegram:SystemChatId), or to its trades chat when no system chat is set.",
+    problem: null,
   }
 }
 
@@ -429,11 +471,14 @@ export interface IndicatorAlertsStatus {
   unresolved: string[]
   telegramConfigured: boolean
   /**
-   * Whether the server has a system chat (Telegram:SystemChatId): indicator
-   * alerts go there, else to the trades chat. Absent on API builds from
-   * before 28 Sep.
+   * Whether the server has a system chat (Telegram:SystemChatId): a "system"
+   * telegramChannel reaches it, else the trades chat. Absent on API builds
+   * from before 28 Sep.
    */
   telegramSystemChatConfigured?: boolean
+  /** The channel as set (TelegramChannelReport); absent on API builds from before the 28 Sep move. */
+  telegramChannel?: TelegramChannelName
+  telegramChannelProblem?: string | null
   telegramMaxMessages: number
   telegramWindowMinutes: number
   lastTelegramUtc: string | null

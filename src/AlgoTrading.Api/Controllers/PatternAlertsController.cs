@@ -224,9 +224,12 @@ public class PatternAlertsController : ControllerBase
     public async Task<ActionResult<PatternScannerStatusResponse>> GetStatus(
         [FromServices] PatternScannerState state,
         [FromServices] TelegramSender telegram,
+        [FromServices] IConfiguration configuration,
         CancellationToken cancellationToken)
     {
         var snap = state.Snapshot;
+        // The setting the service reads at every send, so the page names the channel the next message goes to.
+        var channel = AlertChannel.ForPatterns(configuration, out var channelProblem);
         var outcome = snap.LastOutcome;
         var since = IstTime.StartOfDayUtc(IstTime.DateOf(DateTime.UtcNow));
 
@@ -260,6 +263,9 @@ public class PatternAlertsController : ControllerBase
             }).ToList(),
             Unresolved = outcome?.Unresolved.ToList() ?? [],
             TelegramConfigured = telegram.IsConfigured,
+            TelegramChannel = AlertChannel.Name(channel),
+            TelegramChannelProblem = channelProblem,
+            TelegramSystemChatConfigured = telegram.IsSystemChatConfigured,
             TelegramMaxMessages = CandlePatternAlertService.MaxMessages,
             TelegramWindowMinutes = (int)CandlePatternAlertService.MessageWindow.TotalMinutes,
             LastTelegramUtc = snap.LastTelegramUtc,
@@ -290,9 +296,11 @@ public class PatternAlertsController : ControllerBase
         [FromServices] IndicatorScannerState state,
         [FromServices] PatternWatchPlanner planner,
         [FromServices] TelegramSender telegram,
+        [FromServices] IConfiguration configuration,
         CancellationToken cancellationToken)
     {
         var read = source.Read();
+        var channel = AlertChannel.ForIndicators(configuration, out var channelProblem);
         var config = read.Config ?? IndicatorAlertConfig.Empty;
         var snap = state.Snapshot;
         var since = IstTime.StartOfDayUtc(IstTime.DateOf(DateTime.UtcNow));
@@ -353,6 +361,8 @@ public class PatternAlertsController : ControllerBase
             Unresolved = snap.LastOutcome?.Unresolved.ToList() ?? [],
             TelegramConfigured = telegram.IsConfigured,
             TelegramSystemChatConfigured = telegram.IsSystemChatConfigured,
+            TelegramChannel = AlertChannel.Name(channel),
+            TelegramChannelProblem = channelProblem,
             TelegramMaxMessages = IndicatorAlertService.MaxMessages,
             TelegramWindowMinutes = (int)IndicatorAlertService.MessageWindow.TotalMinutes,
             LastTelegramUtc = snap.LastTelegramUtc,

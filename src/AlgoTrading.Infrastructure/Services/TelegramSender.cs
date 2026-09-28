@@ -11,12 +11,16 @@ namespace AlgoTrading.Infrastructure.Services;
 /// <summary>Which of the desk's two Telegram channels a message belongs in.</summary>
 public enum TelegramChannel
 {
-    /// <summary>Trading: runs started and stopped, legs, risk, the morning plan. <c>Telegram:ChatId</c>.</summary>
+    /// <summary>
+    /// Trading: runs started and stopped, legs, risk, the morning plan, and the
+    /// candle-pattern and indicator alerts (owner, 28 Sep 2026; the setting is
+    /// <c>PatternAlerts:TelegramChannel</c>, see <c>AlertChannel</c>). <c>Telegram:ChatId</c>.
+    /// </summary>
     Trades,
 
     /// <summary>
-    /// The desk itself: feeds, sign-ins, deploys, Sentinel, candle patterns.
-    /// <c>Telegram:SystemChatId</c>, or the trades channel while that is not set.
+    /// The desk itself: feeds, sign-ins, deploys, Sentinel. <c>Telegram:SystemChatId</c>,
+    /// or the trades channel while that is not set.
     /// </summary>
     System,
 }
@@ -107,15 +111,17 @@ public sealed class TelegramSender : IDisposable
 
     /// <summary>
     /// Whether the system channel has a chat of its own. False means system
-    /// messages (patterns, indicators, the desk's own) go to the trades chat
-    /// (<see cref="ChatIdFor"/>), which a page naming the channel must say.
+    /// messages (the desk's own, and the market alerts when their setting says
+    /// system) go to the trades chat (<see cref="ChatIdFor"/>), which a page
+    /// naming the channel must say.
     /// </summary>
     public bool IsSystemChatConfigured => !string.IsNullOrWhiteSpace(_configuration["Telegram:SystemChatId"]);
 
     /// <summary>
     /// The chat a channel's messages go to. Until 27 Sep everything went to the
     /// one live channel, and the owner found deploys, feed restarts and candle
-    /// patterns mixed in with the trades. A system chat that is not configured
+    /// patterns mixed in with the trades (the patterns went back to the trades
+    /// channel on 28 Sep, by his choice). A system chat that is not configured
     /// falls back to the trades chat: a message in the wrong channel beats one
     /// that is never sent.
     /// </summary>

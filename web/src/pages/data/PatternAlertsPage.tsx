@@ -9,9 +9,11 @@
  * watched symbols are not receiving data, and the rules themselves.
  *
  * Indicator alerts (RSI, EMA crosses, Supertrend, VWAP — IndicatorAlertService)
- * share the page: same candles, same Telegram channel. Their rules live in
- * config/indicator-alerts.txt on the server, so their section reads the file
- * back rather than editing it.
+ * share the page: same candles, same Telegram channel unless the server sets
+ * theirs apart. Both sections name the channel the server reports: the live
+ * trades channel since the owner's move of 28 Sep 2026, or Desk System when
+ * set so. Their rules live in config/indicator-alerts.txt on the server, so
+ * their section reads the file back rather than editing it.
  *
  * A sibling of the Alerts page rather than a section of it: that page is the
  * delivery channel every producer shares; this is one producer, with rules
@@ -40,6 +42,7 @@ import {
   ruleToForm,
   scannerHealth,
   sortWatches,
+  telegramChannelNote,
   toggle,
 } from '../../lib/patterns'
 import type {
@@ -134,6 +137,7 @@ function Hits({ hits }: { hits: PatternHit[] }) {
 
 function StatusStrip({ status }: { status: PatternScannerStatus }) {
   const health = scannerHealth(status, Date.now())
+  const channel = telegramChannelNote(status)
   return (
     <div className="stat-grid">
       <div className="stat">
@@ -162,6 +166,12 @@ function StatusStrip({ status }: { status: PatternScannerStatus }) {
         </div>
         <div className="stat__label">Delivery</div>
         <div className="stat__sub">
+          {status.telegramConfigured && channel && (
+            <>
+              To the <span title={channel.title ?? undefined}>{channel.text}</span>.
+              {channel.problem && <span className="warn"> {channel.problem}</span>}{' '}
+            </>
+          )}
           {status.telegramConfigured
             ? `One message per closing minute, at most ${status.telegramMaxMessages} in ${status.telegramWindowMinutes} min.`
             : 'No bot token or chat id on the server; alerts are recorded here only.'}
@@ -579,10 +589,15 @@ function IndicatorsPanel() {
   )
 }
 
-/** Telegram on or off for the indicator alerts, and the chat the server says they reach (indicatorTelegramNote). */
+/** Telegram on or off for the indicator alerts, and the channel the server says they reach (indicatorTelegramNote). */
 function TelegramNote({ status }: { status: IndicatorAlertsStatus }) {
   const note = indicatorTelegramNote(status)
-  return <span title={note.title ?? undefined}>{note.text}</span>
+  return (
+    <>
+      <span title={note.title ?? undefined}>{note.text}</span>
+      {note.problem && <span className="warn"> · {note.problem}</span>}
+    </>
+  )
 }
 
 function IndicatorLines({ lines }: { lines: IndicatorLine[] }) {
