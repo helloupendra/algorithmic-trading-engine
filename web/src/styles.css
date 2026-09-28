@@ -369,6 +369,11 @@ a.btn, a.btn:hover, a.btn:visited { text-decoration: none; }
 }
 
 .field__input {
+  box-sizing: border-box;
+  /* 18px of line, 8px each side, the border: 36px, the same for a select,
+     whose UA box used to sit 2px short and pull its label off the row. */
+  min-height: 36px;
+  line-height: 18px;
   background: var(--bg1);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
@@ -389,6 +394,7 @@ a.btn, a.btn:hover, a.btn:visited { text-decoration: none; }
 }
 
 .field__input--sm {
+  min-height: 30px;
   padding: 5px 9px;
   font-size: 12.5px;
   width: auto;
@@ -534,6 +540,8 @@ select.field__input { appearance: auto; }
   border-radius: var(--radius);
   padding: 16px 18px;
   box-shadow: var(--shadow-1);
+  /* A grid child: its tables scroll inside it rather than widening the column. */
+  min-width: 0;
 }
 
 .panel--danger { border-color: color-mix(in srgb, var(--neg) 50%, transparent); }
@@ -645,6 +653,22 @@ select.field__input { appearance: auto; }
   background: var(--bg1);
 }
 
+/* A row or table that scrolls sideways fades the edge its hidden part is on
+   (lib/scrollCues.ts sets data-overflow on .tablewrap, .oc-tabs and .scroll-x
+   as they scroll and resize), so a cut column reads as "more", not "all". */
+[data-overflow='right'] {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+}
+[data-overflow='left'] {
+  -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent);
+}
+[data-overflow='both'] {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+}
+
 .tablewrap--tall {
   max-height: 520px;
   overflow-y: auto;
@@ -671,6 +695,9 @@ select.field__input { appearance: auto; }
    input inside a wider box left a gap. */
 .wl__search { width: 220px; max-width: 100%; }
 .wl__search .combo { width: 100%; }
+/* In a form the combobox fills its field like the date field beside it. */
+.field > .combo { display: block; }
+.field > .combo > .field__input { width: 100%; }
 .wl__search .combo .field__input {
   width: 100%;
   box-sizing: border-box;
@@ -716,6 +743,7 @@ select.field__input { appearance: auto; }
 .row--selected td { background: var(--brand-soft); }
 
 .table .r { text-align: right; }
+.table .num { text-align: right; white-space: nowrap; }
 .table .c { text-align: center; }
 .table .strike { font-weight: 700; background: var(--bg0); }
 
@@ -772,22 +800,30 @@ select.field__input { appearance: auto; }
   gap: 12px;
   align-items: end;
 }
+/* A button in a form row keeps its own width; it used to stretch to the cell. */
+.form-row > .btn { justify-self: start; }
 
+/* minmax(0, 1fr), not 1fr: a column may hold a table, and 1fr's auto minimum
+   would let that table widen the column past the page on a phone. */
 .two-col {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 16px;
 }
 
 @media (max-width: 980px) {
-  .two-col { grid-template-columns: 1fr; }
+  .two-col { grid-template-columns: minmax(0, 1fr); }
 }
 
+/* Label-and-value pairs: up to 340px each, so two of them in a wide panel
+   do not put the value half a screen from its label. */
 .kv-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(190px, 340px));
   gap: 8px 22px;
 }
+/* Three short pairs that should stay on one row down to a 430px panel. */
+.kv-grid--3 { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
 
 .kv-grid > div {
   display: flex;
@@ -930,7 +966,7 @@ a.module-card:hover {
 }
 
 @media (max-width: 1100px) {
-  .cov-layout { grid-template-columns: 1fr; }
+  .cov-layout { grid-template-columns: minmax(0, 1fr); }
 }
 
 .cov-list {
@@ -1236,6 +1272,17 @@ a.checklist__item:hover { background: var(--brand-soft); }
 
   .page__title { font-size: 16px; }
   .page__subtitle { font-size: 12.5px; }
+  /* The header's action stays a button, not a full-width label. */
+  .page__header > .btn { align-self: flex-start; }
+
+  /* Short fields pair up; a symbol or an underlying takes the row, as does the button. */
+  .form-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .form-row .field--wide, .form-row > .btn { grid-column: 1 / -1; }
+  .form-row > .btn { justify-self: stretch; }
+
+  /* A long note wraps under its state mark and the button drops beneath it. */
+  .checklist__item { flex-wrap: wrap; }
+  .checklist__item > .btn { margin-left: 38px; }
 
   /* Tables already scroll inside .tablewrap; this just stops the scroll from
      rubber-banding the whole page on iOS. */
@@ -1244,8 +1291,10 @@ a.checklist__item:hover { background: var(--brand-soft); }
     -webkit-overflow-scrolling: touch;
   }
 
-  /* One card per row reads better than two cramped ones. */
+  /* One card per row reads better than two cramped ones; tiles that are one
+     figure and a label (a price ticker) pair up. */
   .stat-grid { grid-template-columns: 1fr !important; }
+  .stat-grid--pair { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
 
   /* Buttons and inputs are touch targets first on a phone. */
   .btn { min-height: 40px; }
@@ -2667,7 +2716,7 @@ a.oc-tab { text-decoration: none; }
 .oc-itm { background: color-mix(in srgb, var(--warn) 10%, transparent); }
 .oc-table tbody tr.oc-row--atm td { background: var(--brand-soft); }
 .oc-table tbody tr.oc-row--atm td.oc-strike { background: color-mix(in srgb, var(--brand) 26%, var(--bg1)); }
-.oc-table tbody tr.oc-row--atm td.oc-strike b { color: #fff; }
+.oc-table tbody tr.oc-row--atm td.oc-strike b { color: var(--text); }
 
 .oc-peak .oc-value { font-weight: 700; color: var(--text); }
 .oc-peak .oc-bar { opacity: 0.55; }
@@ -2710,7 +2759,7 @@ a.oc-tab { text-decoration: none; }
   font-variant-numeric: tabular-nums;
   box-shadow: 0 0 0 2px var(--surface);
 }
-.oc-spot-pill--static { background: var(--line-strong); }
+.oc-spot-pill--static { background: var(--surface3); color: var(--text); }
 .oc-spot-chg { font-weight: 600; opacity: 0.9; }
 
 .oc-legend {
