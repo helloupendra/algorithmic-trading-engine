@@ -155,11 +155,13 @@ internal sealed class TestCallerContext : HubCallerContext
 {
     private readonly string _connectionId;
     private readonly ClaimsPrincipal? _user;
+    private readonly CancellationToken _aborted;
 
-    public TestCallerContext(string connectionId, ClaimsPrincipal? user, string query = "?v=2")
+    public TestCallerContext(string connectionId, ClaimsPrincipal? user, string query = "?v=2", CancellationToken aborted = default)
     {
         _connectionId = connectionId;
         _user = user;
+        _aborted = aborted;
         var http = new DefaultHttpContext();
         http.Request.QueryString = new QueryString(query);
         Features.Set<IHttpContextFeature>(new HttpContextFeature(http));
@@ -170,7 +172,7 @@ internal sealed class TestCallerContext : HubCallerContext
     public override ClaimsPrincipal? User => _user;
     public override IDictionary<object, object?> Items { get; } = new Dictionary<object, object?>();
     public override IFeatureCollection Features { get; } = new FeatureCollection();
-    public override CancellationToken ConnectionAborted => CancellationToken.None;
+    public override CancellationToken ConnectionAborted => _aborted;
 
     /// <summary>Whether the hub aborted this connection.</summary>
     public bool Aborted { get; private set; }

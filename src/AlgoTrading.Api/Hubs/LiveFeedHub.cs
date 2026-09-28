@@ -61,6 +61,26 @@ public class LiveFeedHub : Hub
     /// </remarks>
     public override async Task OnConnectedAsync()
     {
+        try
+        {
+            await ConnectAsync();
+        }
+        catch (OperationCanceledException) when (Context.ConnectionAborted.IsCancellationRequested)
+        {
+            // A tab that went away during its own handshake: a reload, React's
+            // double mount in development, a phone losing signal. Not an error:
+            // on 28 Sep each one was logged as "Error when dispatching
+            // 'OnConnectedAsync'" with a stack trace (50 of 50 quick
+            // disconnects). SignalR does not call OnDisconnectedAsync after a
+            // failed connect, so an entry Connect already made is forgotten
+            // here, or it would stay among the admin connections for the life
+            // of the process.
+            _subscriptions.Disconnect(Context.ConnectionId);
+        }
+    }
+
+    private async Task ConnectAsync()
+    {
         long? userId = Context.User?.GetUserId();
         var account = userId is { } uid ? await _users.GetAsync(uid, Context.ConnectionAborted) : null;
         if (userId is not { } id || account is null || !account.IsActive)
