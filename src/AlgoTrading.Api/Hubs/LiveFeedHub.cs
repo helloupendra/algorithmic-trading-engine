@@ -7,7 +7,8 @@ using Microsoft.AspNetCore.SignalR;
 namespace AlgoTrading.Api.Hubs;
 
 /// <summary>
-/// The console's websocket: live prices for the symbols a page asked for.
+/// The console's websocket: live prices for the symbols a page asked for, and
+/// desk events that tell a page what to fetch again.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -15,10 +16,16 @@ namespace AlgoTrading.Api.Hubs;
 /// broker for, and it used to go to anyone who knew the URL.
 /// </para>
 /// <para>
-/// A connection names its symbols (<see cref="Subscribe"/>) and gets
+/// Prices: a connection names its symbols (<see cref="Subscribe"/>) and gets
 /// <c>ReceiveTicks</c> with those and no others, coalesced by
 /// <see cref="LiveTickDispatcher"/>. Until 28 Sep every browser was sent every
 /// tick of every symbol on the feed.
+/// </para>
+/// <para>
+/// Desk events: each connection joins <c>user:{id}</c>, and an admin's also
+/// <c>role:admin</c>; an order, fill, run, risk, position or carry change is
+/// sent to its owner and to the admins as <c>DeskEvent</c>
+/// (<see cref="SignalRDeskEventPublisher"/>).
 /// </para>
 /// </remarks>
 [Authorize]
@@ -36,12 +43,28 @@ public class LiveFeedHub : Hub
     public override async Task OnConnectedAsync()
     {
         var user = Context.User;
-        _subscriptions.Connect(Context.ConnectionId, user?.GetUserId(), user?.IsAdmin() == true);
+        long? userId = user?.GetUserId();
+        bool admin = user?.IsAdmin() == true;
+
+        _subscriptions.Connect(Context.ConnectionId, userId, admin);
+
+        if (userId is { } id)
+        {
+            await Groups.AddToGroupAsync(Context.ConnectionId, DeskEventGroups.User(id));
+        }
+
+        if (admin)
+        {
+            await Groups.AddToGroupAsync(Context.ConnectionId, DeskEventGroups.Admins);
+        }
+
         await base.OnConnectedAsync();
     }
 
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
+        // SignalR drops the connection from its groups by itself; the
+        // subscriptions are ours to forget.
         _subscriptions.Disconnect(Context.ConnectionId);
         await base.OnDisconnectedAsync(exception);
     }

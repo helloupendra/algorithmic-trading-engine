@@ -30,6 +30,9 @@ namespace AlgoTrading.Api.Services;
 /// left, and a stop or target tripped on it closes at a level nobody could
 /// trade. The overall rules still run on every sweep — they are the run's last
 /// line, and what they trip is a square-off.
+///
+/// Whatever a rule closes is told to the console as a <c>risk</c> desk event,
+/// with the rule's own reason, once the close has been booked.
 /// </summary>
 public sealed class StrategyRiskGuardService : BackgroundService
 {
@@ -170,6 +173,7 @@ public sealed class StrategyRiskGuardService : BackgroundService
         if (pending.Count == 0) return;
 
         var paperTrading = scope.ServiceProvider.GetRequiredService<IPaperTradingService>();
+        var deskEvents = scope.ServiceProvider.GetService<IDeskEventPublisher>();
         var maxAge = MaxMarkAge();
 
         foreach (var runId in pending)
@@ -201,8 +205,13 @@ public sealed class StrategyRiskGuardService : BackgroundService
                     _logger.LogWarning("Risk guard closing position {PositionId} of run {RunId}: {Reason}",
                         pos.Id, runId, reason);
 
-                    await paperTrading.ClosePositionsAsync(
+                    int closed = await paperTrading.ClosePositionsAsync(
                         runId, new[] { pos.Id }, reason, "risk-guard", CancellationToken.None);
+
+                    if (closed > 0 && deskEvents is not null)
+                    {
+                        PublishRisk(deskEvents, runId, await OwnerOfAsync(dbContext, runId), pos.Symbol, reason);
+                    }
                 }
             }
             catch (Exception ex)
@@ -229,6 +238,7 @@ public sealed class StrategyRiskGuardService : BackgroundService
         var rules = current.Risk;
         long runId = current.RunId;
         var trail = current.Trail;
+        var deskEvents = services.GetService<IDeskEventPublisher>();
 
         // a. Marks open positions to market from the latest live quotes.
         var positions = await paperTrading.GetPaperPositionsAsync(runId, cancellationToken);
@@ -267,7 +277,7 @@ public sealed class StrategyRiskGuardService : BackgroundService
             if (reason is null) continue;
 
             closedThisSweep.Add(pos.Id);
-            await CloseAsync(current, paperTrading, new[] { pos.Id }, reason, cancellationToken);
+            await CloseAsync(current, paperTrading, new[] { pos.Id }, reason, pos.Symbol, deskEvents, cancellationToken);
         }
 
         if (closedThisSweep.Count > 0)
@@ -286,7 +296,7 @@ public sealed class StrategyRiskGuardService : BackgroundService
                 if (reason is null) continue;
 
                 closedThisSweep.Add(pos.Id);
-                await CloseAsync(current, paperTrading, new[] { pos.Id }, reason, cancellationToken);
+                await CloseAsync(current, paperTrading, new[] { pos.Id }, reason, pos.Symbol, deskEvents, cancellationToken);
             }
         }
 
@@ -316,7 +326,9 @@ public sealed class StrategyRiskGuardService : BackgroundService
                 }
 
                 foreach (var id in ids) closedThisSweep.Add(id);
-                await CloseAsync(current, paperTrading, ids, reason, cancellationToken);
+                var legSymbols = openLegs.Where(x => ids.Contains(x.Id)).Select(x => x.Symbol).Distinct().ToList();
+                await CloseAsync(current, paperTrading, ids, reason, legSymbols.Count == 1 ? legSymbols[0] : null,
+                    deskEvents, cancellationToken);
             }
         }
 
@@ -334,7 +346,11 @@ public sealed class StrategyRiskGuardService : BackgroundService
             _logger.LogWarning("Risk guard tripping strategy {StrategyId} ({Name}) run {RunId} on {Underlying}: {Reason}",
                 current.StrategyId, current.Name, runId, current.Underlying, reason);
 
-            await control.StopAsync(runId, reason, flatten: true, by: By, cancellationToken);
+            var stop = await control.StopAsync(runId, reason, flatten: true, by: By, cancellationToken);
+            if (stop.WasRunning)
+            {
+                PublishRisk(deskEvents, runId, current.UserId, symbol: null, $"Run stopped — {reason}");
+            }
         }
     }
 
@@ -522,11 +538,14 @@ public sealed class StrategyRiskGuardService : BackgroundService
         return null;
     }
 
+    /// <param name="symbol">The contract, when one leg (or a group of one contract) is closed.</param>
     private async Task CloseAsync(
         RunningStrategy entry,
         IPaperTradingService paperTrading,
         IReadOnlyList<long> positionIds,
         string reason,
+        string? symbol,
+        IDeskEventPublisher? deskEvents,
         CancellationToken cancellationToken)
     {
         _logger.LogWarning("Risk guard closing {Count} position(s) of strategy {StrategyId} ({Name}) run {RunId} on {Underlying}: {Reason}",
@@ -539,6 +558,10 @@ public sealed class StrategyRiskGuardService : BackgroundService
             // leave it half done.
             int closed = await paperTrading.ClosePositionsAsync(entry.RunId, positionIds, reason, By, CancellationToken.None);
             _registry.AppendLog(entry.RunId, $"risk guard closed {closed} position(s)");
+            if (closed > 0)
+            {
+                PublishRisk(deskEvents, entry.RunId, entry.UserId, symbol, reason);
+            }
             if (closed < positionIds.Count)
             {
                 _logger.LogInformation("Run {RunId}: {Closed} of {Requested} position(s) closed ({Reason}); the rest were already closed.",
@@ -552,6 +575,35 @@ public sealed class StrategyRiskGuardService : BackgroundService
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+    }
+
+    /// <summary>
+    /// A rule acted: told to the run's owner and the admins, with the rule's
+    /// own words. After the close is booked; never throws.
+    /// </summary>
+    private static void PublishRisk(IDeskEventPublisher? deskEvents, long runId, long? ownerUserId, string? symbol, string reason)
+        => deskEvents.TryPublish(new DeskEvent(DeskEventKinds.Risk, runId, ownerUserId, symbol, DateTime.UtcNow, reason));
+
+    /// <summary>
+    /// Whose run this is, for a run with no registry entry to say so (a
+    /// manual book): the row knows, and its owner is who needs to be told.
+    /// Null, and a debug line, when it cannot be read — the close is booked
+    /// either way, and the admins are still told.
+    /// </summary>
+    private async Task<long?> OwnerOfAsync(TradingDbContext dbContext, long runId)
+    {
+        try
+        {
+            return await dbContext.SimulationRuns.AsNoTracking()
+                .Where(x => x.Id == runId)
+                .Select(x => (long?)x.UserId)
+                .FirstOrDefaultAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not read the owner of run {RunId} for its risk event.", runId);
+            return null;
+        }
     }
 
     private static bool IsOpen(PaperPositionResponse pos)

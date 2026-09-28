@@ -101,6 +101,41 @@ public class LiveFeedHubWireTests
     }
 
     [Fact]
+    public async Task A_desk_event_reaches_its_owner_and_every_admin_once_and_nobody_else()
+    {
+        await using var host = await WireHost.StartAsync();
+        await using var owner = await host.ConnectAsync(WireHost.Owner);
+        await using var ownersOtherTab = await host.ConnectAsync(WireHost.Owner);
+        await using var admin = await host.ConnectAsync(WireHost.AdminId);
+        await using var stranger = await host.ConnectAsync(WireHost.PlainTrader);
+        // Every OnConnectedAsync, group joins included, has run once a call has come back.
+        foreach (var tab in new[] { owner, ownersOtherTab, admin, stranger })
+            await tab.InvokeAsync("Unsubscribe", Symbols());
+
+        await host.DeskEvents.SendAsync(new DeskEvent(DeskEventKinds.Fill, 42, WireHost.Owner, Nifty,
+            new DateTime(2026, 9, 28, 4, 30, 0, DateTimeKind.Utc), "SELL 2 at 99.50"));
+
+        foreach (var tab in new[] { owner, ownersOtherTab, admin })
+        {
+            var message = await tab.NextAsync("DeskEvent");
+            var deskEvent = message.GetProperty("arguments")[0];
+            Assert.Equal(
+                new[] { "kind", "runId", "userId", "symbol", "atUtc", "detail" },
+                deskEvent.EnumerateObject().Select(x => x.Name));
+            Assert.Equal("fill", deskEvent.GetProperty("kind").GetString());
+            Assert.Equal(WireHost.Owner, deskEvent.GetProperty("userId").GetInt64());
+            Assert.Equal("2026-09-28T04:30:00Z", deskEvent.GetProperty("atUtc").GetString());
+        }
+        Assert.Null(await stranger.NextOrNullAsync("DeskEvent", TimeSpan.FromMilliseconds(300)));
+
+        // The admin's own run: in both groups, told once.
+        await host.DeskEvents.SendAsync(new DeskEvent(DeskEventKinds.Run, 43, WireHost.AdminId, null, DateTime.UtcNow, "Stopped: Stopped by admin"));
+        Assert.Equal(43, (await admin.NextAsync("DeskEvent")).GetProperty("arguments")[0].GetProperty("runId").GetInt64());
+        Assert.Null(await admin.NextOrNullAsync("DeskEvent", TimeSpan.FromMilliseconds(300)));
+        Assert.Null(await owner.NextOrNullAsync("DeskEvent", TimeSpan.FromMilliseconds(100)));
+    }
+
+    [Fact]
     public async Task A_caller_without_a_sign_in_is_refused()
     {
         await using var host = await WireHost.StartAsync();
@@ -118,6 +153,7 @@ public class LiveFeedHubWireTests
     internal sealed class WireHost : IAsyncDisposable
     {
         public const long AdminId = 1;
+        public const long Owner = 7;
         public const long PlainTrader = 8;
 
         private readonly WebApplication _app;
@@ -131,9 +167,9 @@ public class LiveFeedHubWireTests
 
         public LiveTickDispatcher Dispatcher => _app.Services.GetRequiredService<LiveTickDispatcher>();
 
-        public IServiceProvider Services => _app.Services;
+        public SignalRDeskEventPublisher DeskEvents => (SignalRDeskEventPublisher)_app.Services.GetRequiredService<IDeskEventPublisher>();
 
-        /// <param name="configure">Extra registrations, for the desk event tests.</param>
+        /// <param name="configure">Extra registrations.</param>
         public static async Task<WireHost> StartAsync(Action<IServiceCollection>? configure = null)
         {
             var db = new TradingDbContext(new DbContextOptionsBuilder<TradingDbContext>()
@@ -157,6 +193,7 @@ public class LiveFeedHubWireTests
             builder.Services.Configure<LiveFeedOptions>(_ => { });
             builder.Services.AddSingleton<LiveFeedSubscriptions>();
             builder.Services.AddSingleton<LiveTickDispatcher>();
+            builder.Services.AddSingleton<IDeskEventPublisher, SignalRDeskEventPublisher>();
             configure?.Invoke(builder.Services);
 
             var app = builder.Build();

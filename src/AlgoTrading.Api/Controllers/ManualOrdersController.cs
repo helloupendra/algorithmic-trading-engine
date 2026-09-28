@@ -63,19 +63,23 @@ public class ManualOrdersController : ControllerBase
     private readonly ILotSizeResolver _lotSizeResolver;
     private readonly UpsertWatchlistItemUseCase _upsertWatchlistItem;
     private readonly ILogger<ManualOrdersController> _logger;
+    private readonly IDeskEventPublisher? _deskEvents;
 
+    /// <param name="deskEvents">Tells the console what changed; null where nobody is watching (tests).</param>
     public ManualOrdersController(
         TradingDbContext dbContext,
         IPaperTradingService paperTrading,
         ILotSizeResolver lotSizeResolver,
         UpsertWatchlistItemUseCase upsertWatchlistItem,
-        ILogger<ManualOrdersController> logger)
+        ILogger<ManualOrdersController> logger,
+        IDeskEventPublisher? deskEvents = null)
     {
         _dbContext = dbContext;
         _paperTrading = paperTrading;
         _lotSizeResolver = lotSizeResolver;
         _upsertWatchlistItem = upsertWatchlistItem;
         _logger = logger;
+        _deskEvents = deskEvents;
     }
 
     // ----------------------------------------------------------- instrument --
@@ -446,6 +450,22 @@ public class ManualOrdersController : ControllerBase
             }
 
             await _dbContext.SaveChangesAsync(cancellationToken);
+
+            // The fill's own events went out when the signal was booked, a
+            // moment before these levels and the tick were written; a page that
+            // fetched on those could show the position without them. This one
+            // says the position is now complete.
+            var now = DateTime.UtcNow;
+            if (request.StopLossPrice is not null || request.TargetPrice is not null)
+            {
+                _deskEvents.TryPublish(new DeskEvent(DeskEventKinds.Position, book.Id, userId, symbol, now,
+                    $"Own levels set: stop-loss {Level(request.StopLossPrice)}, target {Level(request.TargetPrice)}"));
+            }
+            if (request.CarryForward)
+            {
+                _deskEvents.TryPublish(new DeskEvent(DeskEventKinds.Carry, book.Id, userId, symbol, now,
+                    "Carry forward ticked: held overnight"));
+            }
         }
 
         int units = request.Quantity * Math.Max(1, lot.LotSize);
@@ -480,6 +500,9 @@ public class ManualOrdersController : ControllerBase
     }
 
     // -------------------------------------------------------------- helpers --
+
+    private static string Level(decimal? price) =>
+        price is { } value ? value.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) : "none";
 
     private static bool IsDerivative(string? instrumentType) =>
         instrumentType is "CE" or "PE" or "FUT";

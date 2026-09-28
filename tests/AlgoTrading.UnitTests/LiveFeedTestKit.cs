@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using AlgoTrading.Api.Hubs;
+using AlgoTrading.Application.Interfaces;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.SignalR;
 
@@ -115,6 +116,30 @@ internal sealed class RecordingHubContext : IHubContext<LiveFeedHub>
             lock (owner._lock) owner.Joined.Remove((connectionId, groupName));
             return Task.CompletedTask;
         }
+    }
+}
+
+/// <summary>Keeps every desk event it is given, in order.</summary>
+internal sealed class RecordingDeskEvents : IDeskEventPublisher
+{
+    private readonly object _lock = new();
+    private readonly List<DeskEvent> _events = new();
+
+    public IReadOnlyList<DeskEvent> All
+    {
+        get { lock (_lock) return _events.ToList(); }
+    }
+
+    public IReadOnlyList<DeskEvent> Of(string kind) => All.Where(x => x.Kind == kind).ToList();
+
+    public void Publish(DeskEvent deskEvent)
+    {
+        lock (_lock) _events.Add(deskEvent);
+    }
+
+    public void Clear()
+    {
+        lock (_lock) _events.Clear();
     }
 }
 

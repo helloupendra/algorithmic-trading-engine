@@ -125,6 +125,9 @@ internal sealed class RunnerDesk : IDisposable
 
     private readonly RecordingNotifier _notifier = new();
 
+    /// <summary>What the console was told (desk events), in order.</summary>
+    public RecordingDeskEvents DeskEvents { get; } = new();
+
     /// <summary>The stop and adoption paths, on <paramref name="db"/>. No waits between re-probes.</summary>
     public StrategyRunControl RunControl(TradingDbContext db) => new(
         db,
@@ -135,7 +138,8 @@ internal sealed class RunnerDesk : IDisposable
         _locator,
         Probe,
         _notifier,
-        NullLogger<StrategyRunControl>.Instance)
+        NullLogger<StrategyRunControl>.Instance,
+        DeskEvents)
     {
         UnknownProbeRetryDelays = new[] { TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero }
     };

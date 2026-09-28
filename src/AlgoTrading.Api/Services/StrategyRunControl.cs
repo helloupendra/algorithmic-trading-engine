@@ -26,6 +26,10 @@ namespace AlgoTrading.Api.Services;
 /// first moves the legs the owner ticked "carry forward" into their manual
 /// book, then flattens the rest. Every other trigger flattens every leg,
 /// ticked or not — see <see cref="PositionCarryForward"/>.
+///
+/// Every change of a run's state — started, stopping, stopped, adopted, its
+/// rules changed — is told to the console as a <c>run</c> desk event
+/// (<see cref="PublishRunEvent"/>), once the row says so.
 /// </summary>
 public sealed class StrategyRunControl
 {
@@ -49,7 +53,9 @@ public sealed class StrategyRunControl
     private readonly IProcessProbe _probe;
     private readonly ISystemNotifier _notifier;
     private readonly ILogger<StrategyRunControl> _logger;
+    private readonly IDeskEventPublisher? _deskEvents;
 
+    /// <param name="deskEvents">Tells the console a run changed; null where nobody is watching (tests).</param>
     public StrategyRunControl(
         TradingDbContext dbContext,
         IPaperTradingService paperTradingService,
@@ -59,7 +65,8 @@ public sealed class StrategyRunControl
         PythonEngineLocator engine,
         IProcessProbe probe,
         ISystemNotifier notifier,
-        ILogger<StrategyRunControl> logger)
+        ILogger<StrategyRunControl> logger,
+        IDeskEventPublisher? deskEvents = null)
     {
         _dbContext = dbContext;
         _paperTradingService = paperTradingService;
@@ -70,6 +77,7 @@ public sealed class StrategyRunControl
         _probe = probe;
         _notifier = notifier;
         _logger = logger;
+        _deskEvents = deskEvents;
     }
 
     /// <summary>
@@ -186,7 +194,7 @@ public sealed class StrategyRunControl
         _logger.LogWarning("Strategy run {RunId} ({Strategy}) is {Status} but has no runner process; closing it without a process to stop.",
             runId, run.StrategyName, run.Status);
 
-        await MarkRunStoppingAsync(runId);
+        await MarkRunStoppingAsync(runId, run.UserId, reason);
 
         int flattened = 0;
         if (flatten)
@@ -465,6 +473,7 @@ public sealed class StrategyRunControl
 
         _logger.LogWarning("Adopted strategy run {RunId} ({Strategy} on {Underlying}) pid {Pid} after API restart; its output is read from {LogFile}.",
             run.Id, run.StrategyName, underlying, pid, entry.OutputLogPath);
+        PublishRunEvent(run.Id, run.UserId, "Adopted after an API restart: watched and stoppable again");
         return Adoption.Adopted;
     }
 
@@ -532,7 +541,7 @@ public sealed class StrategyRunControl
             // Closes the signal endpoint for this run before the flatten starts:
             // an in-flight OPEN_GROUP/CLOSE_GROUP from the runner is rejected
             // instead of racing the square-off.
-            await MarkRunStoppingAsync(entry.RunId);
+            await MarkRunStoppingAsync(entry.RunId, entry.UserId, reason);
 
             if (!runnerAlreadyExited)
             {
@@ -657,19 +666,39 @@ public sealed class StrategyRunControl
         }, cancellationToken);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
+
+        PublishRunEvent(runId, run?.UserId, $"Stopped: {reason}");
     }
+
+    /// <summary>
+    /// Tells the console that run <paramref name="runId"/> changed: its owner's
+    /// connections and every admin's. Call it once the row says so. Never throws.
+    /// </summary>
+    /// <remarks>
+    /// Here rather than in each caller so that "run" events have one source:
+    /// the start endpoint, the stop pipeline, the startup reconcile and the
+    /// risk-rules edit all come through it.
+    /// </remarks>
+    public void PublishRunEvent(long runId, long? ownerUserId, string detail)
+        => _deskEvents.TryPublish(new DeskEvent(DeskEventKinds.Run, runId, ownerUserId, Symbol: null, DateTime.UtcNow, detail));
 
     /// <summary>
     /// Flips a Running run to Stopping with a single conditional UPDATE (no
     /// tracking, no read), so PaperTradingService rejects new signals for it.
+    /// The console is told, so a card says "stopping" during the seconds the
+    /// runner takes to exit and the legs to square off, not only after.
     /// </summary>
-    private async Task MarkRunStoppingAsync(long runId)
+    private async Task MarkRunStoppingAsync(long runId, long? ownerUserId, string reason)
     {
         try
         {
-            await _dbContext.SimulationRuns
+            int marked = await _dbContext.SimulationRuns
                 .Where(x => x.Id == runId && x.Status == RunStatusRunning)
                 .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, RunStatusStopping), CancellationToken.None);
+            if (marked > 0)
+            {
+                PublishRunEvent(runId, ownerUserId, $"Stopping: {reason}");
+            }
         }
         catch (Exception ex)
         {
