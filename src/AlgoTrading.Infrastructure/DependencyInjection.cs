@@ -267,6 +267,15 @@ public static class DependencyInjection
         services.AddScoped<Patterns.CandlePatternScanner>();
         services.AddHostedService<Patterns.CandlePatternAlertService>();
 
+        // Indicator alerts (RSI, EMA cross, Supertrend, VWAP) beside them: the
+        // same bars, candles, session gate, table and Telegram channel, with
+        // their rules in config/indicator-alerts.txt.
+        services.AddSingleton<Patterns.IndicatorScannerState>();
+        services.AddSingleton<Patterns.IndicatorHistoryCache>();
+        services.AddSingleton<Patterns.IndicatorAlertConfigSource>();
+        services.AddScoped<Patterns.IndicatorAlertScanner>();
+        services.AddHostedService<Patterns.IndicatorAlertService>();
+
         return services;
     }
 }

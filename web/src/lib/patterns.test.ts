@@ -4,16 +4,20 @@ import {
   EMPTY_RULE_FORM,
   NO_FILTERS,
   candleSpan,
+  crossTone,
   filterAlerts,
   filterChoices,
   formToRequest,
+  indicatorNumbers,
   parseList,
+  ruleStateTone,
   ruleSummary,
   ruleToForm,
   scannerHealth,
+  sortWatches,
   toggle,
 } from './patterns'
-import type { PatternAlert, PatternCatalog, PatternRule, PatternScannerStatus } from './patterns'
+import type { IndicatorWatch, PatternAlert, PatternCatalog, PatternRule, PatternScannerStatus } from './patterns'
 
 const status: PatternScannerStatus = {
   enabled: true,
@@ -176,5 +180,60 @@ describe('rule form', () => {
 describe('candleSpan', () => {
   it('reads in IST', () => {
     expect(candleSpan('2026-09-15T05:00:00Z', '2026-09-15T05:15:00Z')).toBe('10:30–10:45')
+  })
+})
+
+describe('indicator alerts', () => {
+  it('uses the same health rules for the indicator scanner, with its own switch named when off', () => {
+    const indicators = { enabled: false, intervalSeconds: 20, lastScanUtc: null, lastErrorUtc: null, lastError: null }
+    expect(scannerHealth(indicators, at('2026-09-15T05:00:00Z'), 'IndicatorAlerts:Enabled is false.')).toEqual({
+      label: 'Off',
+      tone: 'warn',
+      detail: 'IndicatorAlerts:Enabled is false.',
+    })
+  })
+
+  it('shows the numbers behind each kind of alert, briefly', () => {
+    expect(indicatorNumbers({ ruleName: 'rsi-above', values: { rsiBefore: 68.44, rsi: 71.2 } })).toBe('RSI 68.4 → 71.2')
+    expect(indicatorNumbers({ ruleName: 'ema-cross', values: { emaFast: 25061.3, emaSlow: 25058.9 } })).toBe(
+      'EMA 25,061.30 / 25,058.90',
+    )
+    expect(indicatorNumbers({ ruleName: 'supertrend-flip', values: { through: 25080, line: 25161.33 } })).toBe(
+      'band 25,080.00 · line 25,161.33',
+    )
+    expect(indicatorNumbers({ ruleName: 'vwap-cross', values: { vwap: 100.01 } })).toBe('VWAP 100.01')
+    // A value the API sent without it: a dash, never "undefined".
+    expect(indicatorNumbers({ ruleName: 'rsi-below', values: { rsi: 28.7 } })).toBe('RSI — → 28.7')
+  })
+
+  it('colours crosses by direction and rule states by readiness', () => {
+    expect(crossTone('up')).toBe('pos')
+    expect(crossTone('down')).toBe('neg')
+    expect(ruleStateTone('ready')).toBe('neutral')
+    expect(ruleStateTone('warming up')).toBe('warn')
+    expect(ruleStateTone('skipped')).toBe('neutral')
+  })
+
+  it('lists watches with a problem first, then those still warming up', () => {
+    const watch = (over: Partial<IndicatorWatch>): IndicatorWatch => ({
+      symbol: 'NSE:NIFTY50-INDEX',
+      displayName: 'NIFTY',
+      timeframe: 15,
+      exchange: 'NSE',
+      inSession: true,
+      historyCandles: 250,
+      todayCandles: 4,
+      lastBarUtc: null,
+      rules: [{ rule: 'rsi-above(14,70)', label: 'RSI(14) crosses above 70', state: 'ready', detail: null }],
+      problem: null,
+      ...over,
+    })
+    const sorted = sortWatches([
+      watch({ displayName: 'NIFTY', timeframe: 5 }),
+      watch({ displayName: 'SENSEX', rules: [{ rule: 'x', label: 'x', state: 'warming up', detail: '40 of 84 candles' }] }),
+      watch({ displayName: 'BANKNIFTY', problem: 'no live bars — not streamed by any feed' }),
+      watch({ displayName: 'NIFTY', timeframe: 15 }),
+    ])
+    expect(sorted.map((w) => `${w.displayName} ${w.timeframe}`)).toEqual(['BANKNIFTY 15', 'SENSEX 15', 'NIFTY 5', 'NIFTY 15'])
   })
 })
