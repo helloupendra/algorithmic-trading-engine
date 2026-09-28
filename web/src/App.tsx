@@ -7,7 +7,7 @@ import { ByRole, MovedTo, RedirectIfAuthenticated, RequireAuth, RequireRole, Wor
 import { LoginPage } from './pages/LoginPage'
 import { AcceptInvitePage } from './pages/AcceptInvitePage'
 import { LandingPage } from './pages/LandingPage'
-import { ForbiddenPage, NotFoundPage } from './pages/Placeholders'
+import { FallbackShell, ForbiddenPage, NotFoundPage } from './pages/Placeholders'
 import { DeskPage } from './pages/desk/DeskPage'
 import { WatchlistPage } from './pages/trader/WatchlistPage'
 import { ChartPage } from './pages/markets/chart/ChartPage'
@@ -142,6 +142,8 @@ export default function App() {
 
                 {/* Outside the workspaces: the trader's own account, from the avatar menu. */}
                 <Route path="/account" element={<AccountPage />} />
+                {/* Where RequireRole sends a user who may not open a page: still their console, one line short. */}
+                <Route path="/forbidden" element={<ForbiddenPage />} />
 
                 {/* Admin only. */}
                 <Route element={<RequireRole role="Admin" />}>
@@ -179,8 +181,12 @@ export default function App() {
               </Route>
             </Route>
 
-            <Route path="/forbidden" element={<ForbiddenPage />} />
-            <Route path="*" element={<NotFoundPage />} />
+            {/* A route nothing claims: inside the console for a signed-in user, on its own for a visitor. */}
+            <Route element={<FallbackShell />}>
+              <Route element={<AppLayout />}>
+                <Route path="*" element={<NotFoundPage />} />
+              </Route>
+            </Route>
           </Routes>
         </AuthProvider>
       </BrowserRouter>

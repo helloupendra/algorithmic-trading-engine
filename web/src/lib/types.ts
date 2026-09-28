@@ -2008,6 +2008,10 @@ export interface MarketPulseGroup {
   key: 'index' | 'equity' | 'commodity' | string
   title: string
   items: MarketPulseItem[]
+  /** A line after the title ("MCX, nearest contract"); the console shows it only when the API sends one. */
+  hint?: string | null
+  /** `compact` draws the group as the small chip grid; anything else (or nothing) as big tiles. */
+  layout?: 'tiles' | 'compact' | null
 }
 
 export interface MarketPulseResponse {

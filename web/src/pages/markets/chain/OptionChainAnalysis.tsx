@@ -8,31 +8,16 @@
  * is only an accident of the two scales.
  */
 
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { MouseEvent, RefObject } from 'react'
+import { useMemo, useState } from 'react'
+import type { MouseEvent } from 'react'
 import type { OptionChain, OptionChainHeader, OptionChainTrend } from '../../../lib/types'
 import { EmptyState } from '../../../components/ui'
 import { compactIndian, compactSigned, istTime, price, strikeWindow } from '../../../lib/optionChain'
+import { useWidth } from './useWidth'
+import './chain-views.css'
 
 const CALL = 'var(--neg)'
 const PUT = 'var(--pos)'
-
-function useWidth<T extends HTMLElement>(): [RefObject<T | null>, number] {
-  const ref = useRef<T>(null)
-  const [width, setWidth] = useState(0)
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    setWidth(el.clientWidth)
-    const observer = new ResizeObserver((entries) => {
-      const w = Math.floor(entries[0]?.contentRect.width ?? 0)
-      setWidth((prev) => (prev === w ? prev : w))
-    })
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [])
-  return [ref, width]
-}
 
 function niceMax(value: number): number {
   if (value <= 0) return 1
@@ -110,6 +95,9 @@ function StrikeBars({
   const labelEvery = Math.max(1, Math.ceil(n / Math.max(1, plotW / 52)))
   const ticks = signed && lo < 0 ? [hi, 0, lo] : [hi, hi / 2, 0]
   const hovered = hover != null ? points[hover] : null
+  // A strike label near either edge hangs inward, so the last one is not cut in half.
+  const anchorAt = (x0: number): 'start' | 'middle' | 'end' =>
+    x0 < pad.left + 16 ? 'start' : x0 > width - pad.right - 16 ? 'end' : 'middle'
 
   return (
     <figure className="oc-chart">
@@ -152,7 +140,7 @@ function StrikeBars({
                     ),
                   )}
                   {i % labelEvery === 0 && (
-                    <text x={x0} y={H - pad.bottom + 14} className="oc-tick" textAnchor="middle">{p.strike}</text>
+                    <text x={x0} y={H - pad.bottom + 14} className="oc-tick" textAnchor={anchorAt(x0)}>{p.strike}</text>
                   )}
                   {i === painIndex && (
                     <text x={x0} y={H - 4} className="oc-tick oc-tick--pain" textAnchor="middle">max pain</text>
@@ -333,8 +321,10 @@ export function OptionChainAnalysis({
   const points = trend?.points ?? []
   const times = points.map((p) => p.capturedUtc)
 
+  // Four charts as the grid's own children (two columns, chain-views.css):
+  // wrapped together, the two session lines took one cell and stacked.
   return (
-    <div className="oc-analysis-grid">
+    <div className="oc-analysis-grid oca-grid">
       <StrikeBars
         title="Open interest by strike"
         points={oi}
@@ -356,7 +346,7 @@ export function OptionChainAnalysis({
       ) : points.length === 0 ? (
         <EmptyState>No captures this session to draw a trend from.</EmptyState>
       ) : (
-        <div className="oc-trend">
+        <>
           <TrendLine
             title={`PCR through the session${trend?.sessionDate ? ` · ${trend.sessionDate.slice(8, 10)}/${trend.sessionDate.slice(5, 7)}` : ''}`}
             times={times}
@@ -383,12 +373,12 @@ export function OptionChainAnalysis({
               colour="var(--text-2)"
             />
           )}
-          <p className="oc-chart__note">
+          <p className="oc-chart__note oca-note">
             {trend?.captures ?? 0} {trend?.captures === 1 ? 'capture' : 'captures'}
             {trend && trend.captures > points.length ? `, ${points.length} drawn` : ''}. Per-minute captures only — the live
             overlay is not part of the trend.
           </p>
-        </div>
+        </>
       )}
     </div>
   )

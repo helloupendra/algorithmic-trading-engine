@@ -1,0 +1,33 @@
+/* Markets → Option chain: what the views draw under the page's head (the OI
+   analysis under the chain, OI history, Levels). chain.css holds the head and
+   the row of underlyings; the chart strokes and ticks are the console's own
+   (.oc-*, .oi-* in styles.css). */
+
+/* The OI analysis: the two strike charts side by side, the two session lines
+   under them, the captures note across the row. Two columns at every desk
+   width — the third column the auto-fit grid found at 1440 left the two
+   session lines stacked at half width beside an empty half at 1024. */
+.oc-analysis-grid.oca-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.oca-note { grid-column: 1 / -1; }
+@media (max-width: 760px) {
+  .oc-analysis-grid.oca-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* OI history: drawn in pixel units at the panel's width (useWidth.ts), 300px
+   tall on a desk screen and 240px on a phone, the axis text 10px at either.
+   It was a 900×320 viewBox scaled to the container: 127px tall on a phone
+   with 4px ticks, 500px tall at 1440. */
+.oih-plot { position: relative; width: 100%; }
+.oih-plot svg { display: block; overflow: visible; }
+.oih-legend { margin-bottom: 6px; }
+
+/* Levels: the eight readings in one row on a desk screen, four to a row at a
+   laptop's width, two on a phone — and each label on one line, so the values
+   share a baseline across the row. */
+.lv .lv-metrics { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+@media (max-width: 1200px) {
+  .lv .lv-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .lv .lv-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

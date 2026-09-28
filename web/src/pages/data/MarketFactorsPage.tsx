@@ -86,6 +86,7 @@ function FlowsSection() {
               {!latest ? (
                 <EmptyState>No participant file stored yet.</EmptyState>
               ) : (
+                <div className="tablewrap">
                 <table className="table">
                   <thead>
                     <tr>
@@ -117,6 +118,7 @@ function FlowsSection() {
                     })}
                   </tbody>
                 </table>
+                </div>
               )}
               <p className="muted small">
                 Contracts open at the end of the day in NIFTY, BANKNIFTY and other index futures. FII long share is the number
@@ -128,6 +130,10 @@ function FlowsSection() {
               {fiiHistory.length === 0 ? (
                 <EmptyState>No history yet.</EmptyState>
               ) : (
+                // Twenty sessions scroll in place past eight, so this panel
+                // is the height of its neighbour and the cash market stays on
+                // the first screen.
+                <div className={`tablewrap${fiiHistory.length > 8 ? ' tablewrap--rows8' : ''}`}>
                 <table className="table">
                   <thead>
                     <tr>
@@ -143,11 +149,13 @@ function FlowsSection() {
                         <td>{formatDay(h.date)}</td>
                         <td className={`num mono ${signTone(h.fii?.futureIndexNet)}`}>{formatSignedContracts(h.fii?.futureIndexNet)}</td>
                         <td>
-                          <div className="mf-bar">
-                            <span
-                              className={`mf-bar__fill ${(h.fii?.futureIndexLongPercent ?? 0) >= 50 ? 'pos' : 'neg'}`}
-                              style={{ width: `${h.fii?.futureIndexLongPercent ?? 0}%` }}
-                            />
+                          <div className="mf-bar-read">
+                            <div className="mf-bar">
+                              <span
+                                className={`mf-bar__fill ${(h.fii?.futureIndexLongPercent ?? 0) >= 50 ? 'pos' : 'neg'}`}
+                                style={{ width: `${h.fii?.futureIndexLongPercent ?? 0}%` }}
+                              />
+                            </div>
                             <span className="mf-bar__label mono small">
                               {h.fii?.futureIndexLongPercent != null ? `${h.fii.futureIndexLongPercent.toFixed(1)}%` : '—'}
                             </span>
@@ -158,6 +166,7 @@ function FlowsSection() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               )}
             </Panel>
           </div>
@@ -181,6 +190,7 @@ function FlowsSection() {
                     tone={signTone(diiCash.total)}
                   />
                 </div>
+                <div className={`tablewrap${data.cash.length > 8 ? ' tablewrap--rows8' : ''}`}>
                 <table className="table">
                   <thead>
                     <tr>
@@ -215,6 +225,7 @@ function FlowsSection() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               </>
             )}
           </Panel>

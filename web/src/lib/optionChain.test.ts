@@ -320,8 +320,20 @@ describe('the chain page views', () => {
   it('reads the underlying from the URL, falling back to NIFTY', () => {
     expect(chainUnderlying('banknifty')).toBe('BANKNIFTY')
     expect(chainUnderlying(' CRUDEOIL ')).toBe('CRUDEOIL')
-    expect(chainUnderlying('RELIANCE')).toBe('NIFTY')
     expect(chainUnderlying(null)).toBe('NIFTY')
+    expect(chainUnderlying('')).toBe('NIFTY')
+  })
+
+  it('accepts a name the instrument master knows, and only a plausible one before it has answered', () => {
+    const known = ['NIFTY', 'RELIANCE', 'M&M', 'BAJAJ-AUTO']
+    expect(chainUnderlying('RELIANCE', known)).toBe('RELIANCE')
+    expect(chainUnderlying('m&m', known)).toBe('M&M')
+    expect(chainUnderlying('HDFCBANK', known)).toBe('NIFTY')
+    // Not answered yet: a link to a real-looking name opens that chain rather than NIFTY and then a swap.
+    expect(chainUnderlying('RELIANCE')).toBe('RELIANCE')
+    expect(chainUnderlying('bajaj-auto')).toBe('BAJAJ-AUTO')
+    expect(chainUnderlying('not a name')).toBe('NIFTY')
+    expect(chainUnderlying('<script>')).toBe('NIFTY')
   })
 
   it('carries the underlying and expiry between views, and leaves the replay clock behind', () => {

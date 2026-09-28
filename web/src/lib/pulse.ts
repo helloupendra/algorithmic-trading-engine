@@ -27,7 +27,11 @@ export type PulseTone = 'pos' | 'neg' | 'warn' | 'live' | 'idle'
 export interface Pulse {
   key: string
   label: string
-  /** A shorter label for a phone's top bar, where it would not fit; `label` when absent. */
+  /**
+   * A shorter label for a narrow top bar, where `label` would not fit;
+   * `label` when absent. The health item shows it from 1100px down, the
+   * market and live items from 900px down (shell.css).
+   */
   short?: string
   tone: PulseTone
   title: string
@@ -184,7 +188,7 @@ export function marketPulses(
 export function calendarPulse(...sessions: (MarketSessionInfo | undefined)[]): Pulse | null {
   const warning = sessions.map((s) => s?.calendarWarning).find((w): w is string => !!w)
   return warning
-    ? { key: 'calendar', label: 'Holiday calendar missing', tone: 'warn', title: `${warning} Add it under System → Market calendar.` }
+    ? { key: 'calendar', label: 'Holiday calendar missing', short: 'No calendar', tone: 'warn', title: `${warning} Add it under System → Market calendar.` }
     : null
 }
 
@@ -231,6 +235,7 @@ export function feedPulses(
       pulses.push({
         key: feed.key,
         label: `${name} ${beat.row.status.toLowerCase()}`,
+        short: `${name} down`,
         tone: beat.row.status === 'Refused' ? 'neg' : 'warn',
         title: `${meaningfulError(beat.row.lastError) ?? beat.row.status}${pid}`,
       })
@@ -238,6 +243,7 @@ export function feedPulses(
       pulses.push({
         key: feed.key,
         label: `${name} no heartbeat`,
+        short: `${name} silent`,
         tone: 'warn',
         title: beat
           ? `The process is up but last reported ${secondsSince(beat.row.lastHeartbeatUtc, nowMs)}s ago${pid}`
@@ -250,6 +256,7 @@ export function feedPulses(
     pulses.push({
       key: 'no-feed',
       label: 'No feed running',
+      short: 'No feed',
       tone: 'neg',
       title: 'NSE is open and no feed is recording it. Start one from Live feeds.',
     })
@@ -373,6 +380,7 @@ export function connectorsSummary(
     pulse = {
       key: 'connectors',
       label,
+      short: backupsDown.length === 1 ? 'Backup sign-in' : `${backupsDown.length} backups`,
       // A backup is worth a sign-in, not an alarm: the data runs on dataOn.
       tone: tradingDay ? 'warn' : 'idle',
       title: `Live data runs on ${dataOn!.name}. ${backupsDown.map((l) => l.name).join(' and ')} ${backupsDown.length === 1 ? 'is' : 'are'} the fallback; sign in so it is ready if ${dataOn!.name} fails.\n${detail}`,
@@ -380,13 +388,20 @@ export function connectorsSummary(
   } else if (needHand.length > 0) {
     const label = needHand.length === 1 ? `${needHand[0].name} sign-in needed` : `${needHand.length} connectors need sign-in`
     // A missing sign-in is an alarm only on a day the market trades.
-    pulse = { key: 'connectors', label, tone: tradingDay ? 'neg' : 'idle', title: detail }
+    pulse = {
+      key: 'connectors',
+      label,
+      short: needHand.length === 1 ? `${needHand[0].name} sign-in` : `${needHand.length} sign-ins`,
+      tone: tradingDay ? 'neg' : 'idle',
+      title: detail,
+    }
   } else if (liveFeeds.length > 1) {
     // Bars and latest quotes are kept per symbol, not per vendor: two feeds on
     // the same contracts build one bar from two vendors' volume counters.
     pulse = {
       key: 'connectors',
       label: `${liveFeeds.length} feeds running`,
+      short: `${liveFeeds.length} feeds`,
       tone: 'warn',
       title: `${liveFeeds.join(' and ')} are both feeding live data; keep one running.\n${detail}`,
     }
@@ -394,6 +409,7 @@ export function connectorsSummary(
     pulse = {
       key: 'connectors',
       label: configured.length === 0 ? 'No connectors' : `Connectors ${configured.length}/${configured.length} ready`,
+      short: configured.length === 0 ? 'No connectors' : 'Ready',
       tone: configured.length === 0 ? 'warn' : 'pos',
       title: detail,
     }
@@ -429,13 +445,14 @@ export interface BackendReading {
  */
 export function backendPulse(b: BackendReading): Pulse | null {
   if (b.isDown) {
-    return { key: 'backend', label: 'Backend down', tone: 'neg', title: 'The API is not answering. It may be restarting.' }
+    return { key: 'backend', label: 'Backend down', short: 'API down', tone: 'neg', title: 'The API is not answering. It may be restarting.' }
   }
   if (b.restartedAt) {
     const at = new Date(b.restartedAt).toLocaleTimeString('en-IN', { ...IST, hour: '2-digit', minute: '2-digit' })
     return {
       key: 'backend',
       label: `Backend restarted ${at}`,
+      short: 'Restarted',
       tone: 'warn',
       title: 'A new backend process is running. Refresh if a page looks stale.',
     }
@@ -444,6 +461,7 @@ export function backendPulse(b: BackendReading): Pulse | null {
   return {
     key: 'backend',
     label: `Backend up ${formatUptime(b.status.uptimeSeconds)}`,
+    short: 'API up',
     tone: 'pos',
     title: `Started ${dateTimeIst(b.status.startedUtc)} IST${b.status.environment ? ` · ${b.status.environment}` : ''}`,
   }

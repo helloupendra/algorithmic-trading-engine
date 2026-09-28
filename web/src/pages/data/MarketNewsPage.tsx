@@ -26,6 +26,7 @@ const GROUPS: { key: NewsCategory['group']; label: string }[] = [
 
 const DEFAULT_CATEGORY = 'india'
 
+/** One group's categories as the console's tab strip (.oc-tabs, as Movers and Factors), its name over it. */
 function TabRow({
   label,
   categories,
@@ -39,19 +40,22 @@ function TabRow({
 }) {
   if (categories.length === 0) return null
   return (
-    <div className="newstabs" role="group" aria-label={label}>
-      <span className="newstabs__label">{label}</span>
-      {categories.map((c) => (
-        <button
-          key={c.key}
-          type="button"
-          className={`btn btn--sm ${selected === c.key ? 'btn--primary' : 'btn--ghost'}`}
-          aria-pressed={selected === c.key}
-          onClick={() => onSelect(c.key)}
-        >
-          {c.label}
-        </button>
-      ))}
+    <div>
+      <div className="oc-control__label">{label}</div>
+      <div className="oc-tabs" role="tablist" aria-label={label}>
+        {categories.map((c) => (
+          <button
+            key={c.key}
+            type="button"
+            role="tab"
+            aria-selected={selected === c.key}
+            className={`oc-tab ${selected === c.key ? 'oc-tab--on' : ''}`}
+            onClick={() => onSelect(c.key)}
+          >
+            {c.label}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }
@@ -95,53 +99,58 @@ export function MarketNewsPage() {
         )}
       </header>
 
+      {/* The headlines wait for the categories: with those failed, the
+          headline query never starts, and a panel reading "Loading…" for ever
+          under the error said the wrong thing. One error, nothing else. */}
       {categories.isPending ? (
         <Loading label="Loading categories…" />
       ) : categories.isError ? (
         <InlineError error={categories.error} />
       ) : (
-        <div className="newstabs__wrap">
-          {GROUPS.map((g) => (
-            <TabRow
-              key={g.key}
-              label={g.label}
-              categories={(categories.data ?? []).filter((c) => c.group === g.key)}
-              selected={selected}
-              onSelect={select}
-            />
-          ))}
-        </div>
-      )}
+        <>
+          <div className="newstabs__wrap">
+            {GROUPS.map((g) => (
+              <TabRow
+                key={g.key}
+                label={g.label}
+                categories={(categories.data ?? []).filter((c) => c.group === g.key)}
+                selected={selected}
+                onSelect={select}
+              />
+            ))}
+          </div>
 
-      <Panel>
-        <QueryBoundary query={news}>
-          {(data) =>
-            // A NewsResponse is an object, so QueryBoundary's own empty check
-            // (null, or an empty array) never fires for a category whose feeds
-            // all came back dry. Said here instead of painting an empty list.
-            data.items.length === 0 ? (
-              <EmptyState>
-                No headlines for {current?.label ?? selected} right now — the feeds may be unreachable.
-              </EmptyState>
-            ) : (
-              <ul className="newslist">
-                {data.items.map((item) => (
-                  <li key={item.link} className="newsitem">
-                    <a href={item.link} target="_blank" rel="noreferrer noopener" className="newsitem__title">
-                      {item.title}
-                    </a>
-                    {item.summary && <p className="newsitem__summary">{item.summary}</p>}
-                    <div className="newsitem__meta">
-                      <span>{item.source}</span>
-                      {item.publishedUtc && <span>· {formatAge(item.publishedUtc)}</span>}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )
-          }
-        </QueryBoundary>
-      </Panel>
+          <Panel>
+            <QueryBoundary query={news}>
+              {(data) =>
+                // A NewsResponse is an object, so QueryBoundary's own empty check
+                // (null, or an empty array) never fires for a category whose feeds
+                // all came back dry. Said here instead of painting an empty list.
+                data.items.length === 0 ? (
+                  <EmptyState>
+                    No headlines for {current?.label ?? selected} right now — the feeds may be unreachable.
+                  </EmptyState>
+                ) : (
+                  <ul className="newslist">
+                    {data.items.map((item) => (
+                      <li key={item.link} className="newsitem">
+                        <a href={item.link} target="_blank" rel="noreferrer noopener" className="newsitem__title">
+                          {item.title}
+                        </a>
+                        {item.summary && <p className="newsitem__summary">{item.summary}</p>}
+                        <div className="newsitem__meta">
+                          <span>{item.source}</span>
+                          {item.publishedUtc && <span>· {formatAge(item.publishedUtc)}</span>}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )
+              }
+            </QueryBoundary>
+          </Panel>
+        </>
+      )}
     </div>
   )
 }

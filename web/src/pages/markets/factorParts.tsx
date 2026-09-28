@@ -28,7 +28,8 @@ export function Metric({ label, value, sub, tone }: { label: string; value: Reac
   return (
     <div className="mf-metric">
       <div className="mf-metric__label">{label}</div>
-      <div className={`mf-metric__value mono ${tone ?? ''}`}>{value}</div>
+      {/* The mono face is the tile's own rule (factors.css): the shared .mono class also sets 0.94em, which shrank the value to the label's size. */}
+      <div className={`mf-metric__value ${tone ?? ''}`}>{value}</div>
       {sub != null && <div className="mf-metric__sub small muted">{sub}</div>}
     </div>
   )
