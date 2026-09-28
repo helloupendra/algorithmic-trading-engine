@@ -45,6 +45,9 @@
     <!-- For the process supervisors, whose safety rules (which pid may be
          adopted and killed) are plain logic that needs no host to test. -->
     <ProjectReference Include="../../src/AlgoTrading.Api/AlgoTrading.Api.csproj" />
+    <!-- For the tick drain's retry and dead-letter rules, tested against a
+         fake stream rather than a Redis server. -->
+    <ProjectReference Include="../../src/AlgoTrading.Worker.MarketData/AlgoTrading.Worker.MarketData.csproj" />
   </ItemGroup>
 
 </Project>
