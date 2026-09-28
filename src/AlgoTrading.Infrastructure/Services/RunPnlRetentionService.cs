@@ -9,15 +9,24 @@ using Microsoft.Extensions.Logging;
 namespace AlgoTrading.Infrastructure.Services;
 
 /// <summary>
-/// Trims the live runs' minute-by-minute P&amp;L (<c>run_pnl_minutes</c>) to a
-/// window of days, the way <see cref="TickRetentionService"/> trims raw ticks.
+/// Can trim the live runs' minute-by-minute P&amp;L (<c>run_pnl_minutes</c>)
+/// to a window of days, the way <see cref="TickRetentionService"/> trims raw
+/// ticks. Off unless <see cref="RunPnlRetentionOptions.RetentionDays"/> is set.
 /// </summary>
 /// <remarks>
 /// <para>
 /// The API's minute recorder writes one row per live run per minute, from 28
-/// Sep, and nothing removed them: some 375 rows a session for every NSE run,
-/// more for an MCX run into the evening, and a row for every manual book whose
-/// figures moved. The table only ever grew.
+/// Sep: some 375 rows a session for every NSE run, more for an MCX run into
+/// the evening, and a row for every manual book whose figures moved. The table
+/// only ever grows.
+/// </para>
+/// <para>
+/// Off by default, because the owner's rule is that every datum is kept and
+/// nothing is deleted that is not on Drive. The nightly archive
+/// (<c>scripts/archive_to_drive.py</c>) copies each closed day of this table
+/// and verifies it; that archive's own drop option is the way to free the
+/// disk of verified days. The sweep is for a desk that chooses a window
+/// instead: it deletes whether or not a day is on Drive.
 /// </para>
 /// <para>
 /// What a sweep takes away is the intraday curve of an old day, nothing else.
@@ -60,7 +69,7 @@ public class RunPnlRetentionService : BackgroundService
     {
         if (_options.RetentionDays <= 0)
         {
-            _logger.LogInformation("Run P&L retention is disabled (RetentionDays <= 0); run_pnl_minutes will grow without bound.");
+            _logger.LogInformation("Run P&L retention is off (RunPnlRetention:RetentionDays <= 0); every run_pnl_minutes row is kept.");
             return;
         }
 
@@ -150,8 +159,11 @@ public sealed class RunPnlRetentionOptions
 {
     public const string SectionName = "RunPnlRetention";
 
-    /// <summary>Days of minutes to keep. Zero or less disables the sweep.</summary>
-    public int RetentionDays { get; set; } = 90;
+    /// <summary>
+    /// Days of minutes to keep. Zero or less (the default) keeps every row: the
+    /// owner's rule is that nothing is deleted that is not on Drive.
+    /// </summary>
+    public int RetentionDays { get; set; }
 
     /// <summary>Rows per DELETE. Small enough not to hold a long lock.</summary>
     public int BatchSize { get; set; } = 10_000;

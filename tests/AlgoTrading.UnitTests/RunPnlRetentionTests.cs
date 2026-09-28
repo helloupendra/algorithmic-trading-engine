@@ -10,12 +10,13 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace AlgoTrading.UnitTests;
 
 /// <summary>
-/// run_pnl_minutes keeps a window of days: the sweep removes what is older,
-/// a batch at a time, and nothing inside the window.
+/// run_pnl_minutes keeps every row unless a window of days is set; with one,
+/// the sweep removes what is older, a batch at a time, and nothing inside it.
 /// </summary>
 /// <remarks>
-/// The recorder writes a row per live run per minute (28 Sep) and nothing ever
-/// removed one, so the table only grew.
+/// The recorder writes a row per live run per minute (28 Sep). The owner's
+/// rule is that every datum is kept and nothing is deleted that is not on
+/// Drive, so the sweep ships switched off; the tests that delete set a window.
 /// </remarks>
 public class RunPnlRetentionTests
 {
@@ -94,12 +95,38 @@ public class RunPnlRetentionTests
     }
 
     [Fact]
-    public void The_defaults_keep_ninety_days()
+    public async Task By_default_nothing_is_deleted()
     {
+        // The owner's rule: every datum is kept, and nothing is deleted that
+        // is not on Drive. The sweep exists, but only a setting turns it on.
+        using var desk = new Table();
+        desk.Seed(runId: 1, Now.AddDays(-400), minutes: 3);
+        desk.Seed(runId: 1, Now.AddDays(-100), minutes: 2);
         var options = new RunPnlRetentionOptions();
+        var sweeper = desk.Sweeper(options);
 
-        Assert.Equal(90, options.RetentionDays);
+        Assert.Equal(0, options.RetentionDays);
         Assert.Equal("RunPnlRetention", RunPnlRetentionOptions.SectionName);
+        Assert.Equal(0, await sweeper.SweepAsync(Now, CancellationToken.None));
+        Assert.Empty(sweeper.Batches);
+        Assert.Equal(5, desk.Rows().Count);
+    }
+
+    [Fact]
+    public void The_committed_settings_keep_everything()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "src", "AlgoTrading.Api", "appsettings.json")))
+        {
+            dir = dir.Parent;
+        }
+        Assert.NotNull(dir);
+
+        using var settings = System.Text.Json.JsonDocument.Parse(
+            File.ReadAllText(Path.Combine(dir!.FullName, "src", "AlgoTrading.Api", "appsettings.json")));
+        var days = settings.RootElement.GetProperty(RunPnlRetentionOptions.SectionName).GetProperty("RetentionDays").GetInt32();
+
+        Assert.Equal(0, days);
     }
 
     /// <summary>run_pnl_minutes in memory, and the sweep over it.</summary>
