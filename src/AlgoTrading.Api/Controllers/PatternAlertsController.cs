@@ -352,6 +352,7 @@ public class PatternAlertsController : ControllerBase
             }).ToList(),
             Unresolved = snap.LastOutcome?.Unresolved.ToList() ?? [],
             TelegramConfigured = telegram.IsConfigured,
+            TelegramSystemChatConfigured = telegram.IsSystemChatConfigured,
             TelegramMaxMessages = IndicatorAlertService.MaxMessages,
             TelegramWindowMinutes = (int)IndicatorAlertService.MessageWindow.TotalMinutes,
             LastTelegramUtc = snap.LastTelegramUtc,

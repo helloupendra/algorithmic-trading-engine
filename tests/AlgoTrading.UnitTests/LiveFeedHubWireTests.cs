@@ -81,6 +81,14 @@ public class LiveFeedHubWireTests
 
         Assert.Contains("at most 400 symbols", error);
         Assert.Equal(0, (await trader.InvokeAsync("Subscribe", Symbols())).GetInt32());
+
+        // An answer to a page, not a fault of the server: a warning of the
+        // hub's own, and no "fail:" line from SignalR's dispatcher.
+        Assert.DoesNotContain(host.Log.Entries, x => x.Level >= LogLevel.Error);
+        var refused = Assert.Single(host.Log.Entries, x => x.Category == typeof(LiveFeedHub).FullName);
+        Assert.Equal(LogLevel.Warning, refused.Level);
+        Assert.Contains("refused Subscribe", refused.Message);
+        Assert.Contains("at most 400 symbols", refused.Message);
     }
 
     [Fact]
@@ -143,6 +151,86 @@ public class LiveFeedHubWireTests
         await Assert.ThrowsAnyAsync<Exception>(() => host.ConnectAsync(userId: null));
     }
 
+    // TEMPORARY with the hub's legacy branch (28 Sep 2026): a console built
+    // before 28 Sep connects without ?v=2 and never subscribes.
+
+    [Fact]
+    public async Task A_console_from_before_28_Sep_still_gets_the_whole_feed_where_its_account_may()
+    {
+        await using var host = await WireHost.StartAsync();
+        await using var oldAdmin = await host.ConnectAsync(WireHost.AdminId, legacy: true);
+        await using var oldGranted = await host.ConnectAsync(WireHost.GrantedTrader, legacy: true);
+        await using var oldPlain = await host.ConnectAsync(WireHost.PlainTrader, legacy: true);
+        await using var newAdmin = await host.ConnectAsync(WireHost.AdminId);
+        // Every OnConnectedAsync has run once a call has come back.
+        foreach (var tab in new[] { oldAdmin, oldGranted, oldPlain, newAdmin })
+            await tab.InvokeAsync("Unsubscribe", Symbols());
+
+        host.Dispatcher.Enqueue(new UpsertLiveTickRequest { Symbol = Nifty, LastTradedPrice = 25_010.5m });
+        host.Dispatcher.Flush();
+
+        foreach (var tab in new[] { oldAdmin, oldGranted })
+        {
+            var tick = Assert.Single((await tab.NextAsync("ReceiveTicks")).GetProperty("arguments")[0].EnumerateArray());
+            Assert.Equal(Nifty, tick.GetProperty("symbol").GetString());
+            Assert.Equal(25_010.5m, tick.GetProperty("lastTradedPrice").GetDecimal());
+        }
+        Assert.Null(await oldPlain.NextOrNullAsync("ReceiveTicks", TimeSpan.FromMilliseconds(300)));
+        Assert.Null(await newAdmin.NextOrNullAsync("ReceiveTicks", TimeSpan.FromMilliseconds(100)));
+    }
+
+    // Until 28 Sep the token decided role:admin once, at connect, and nothing
+    // looked again: a demoted or disabled admin's open console kept every
+    // account's desk events for as long as the socket stayed up.
+
+    [Fact]
+    public async Task A_connection_is_closed_when_its_token_expires()
+    {
+        await using var host = await WireHost.StartAsync();
+        await using var tab = await host.ConnectAsync(WireHost.AdminId, expiresIn: TimeSpan.FromSeconds(1));
+        await using var other = await host.ConnectAsync(WireHost.AdminId);
+
+        Assert.True(await tab.ClosedWithinAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(0, (await other.InvokeAsync("Unsubscribe", Symbols())).GetInt32());
+    }
+
+    [Fact]
+    public async Task An_admin_demoted_since_the_token_was_issued_gets_no_one_elses_desk_events()
+    {
+        await using var host = await WireHost.StartAsync();
+        await using var demoted = await host.ConnectAsync(WireHost.DemotedAdmin);
+        await using var admin = await host.ConnectAsync(WireHost.AdminId);
+        foreach (var tab in new[] { demoted, admin })
+            await tab.InvokeAsync("Unsubscribe", Symbols());
+
+        await host.DeskEvents.SendAsync(new DeskEvent(DeskEventKinds.Fill, 42, WireHost.Owner, Nifty, DateTime.UtcNow, "SELL 2 at 99.50"));
+
+        Assert.NotNull(await admin.NextOrNullAsync("DeskEvent", TimeSpan.FromSeconds(5)));
+        Assert.Null(await demoted.NextOrNullAsync("DeskEvent", TimeSpan.FromMilliseconds(300)));
+    }
+
+    [Fact]
+    public async Task A_disabled_account_is_closed_at_connect()
+    {
+        await using var host = await WireHost.StartAsync();
+
+        HubWire? gone = null;
+        try
+        {
+            gone = await host.ConnectAsync(WireHost.Disabled);
+        }
+        catch (InvalidOperationException)
+        {
+            // Closed before the handshake reply was read: refused all the same.
+        }
+
+        if (gone is not null)
+        {
+            Assert.True(await gone.ClosedWithinAsync(TimeSpan.FromSeconds(5)));
+            await gone.DisposeAsync();
+        }
+    }
+
     /// <summary>
     /// One argument, the array. Passed bare, a string[] would BE the params
     /// array (covariance) and the hub would be sent one argument per symbol.
@@ -155,65 +243,85 @@ public class LiveFeedHubWireTests
         public const long AdminId = 1;
         public const long Owner = 7;
         public const long PlainTrader = 8;
+        public const long Disabled = 9;
+        public const long GrantedTrader = 11;
+
+        /// <summary>A Trader in the row, whose token was issued while it was an admin.</summary>
+        public const long DemotedAdmin = 10;
 
         private readonly WebApplication _app;
         private readonly TradingDbContext _db;
 
-        private WireHost(WebApplication app, TradingDbContext db)
+        private WireHost(WebApplication app, TradingDbContext db, CapturingLoggerProvider log)
         {
             _app = app;
             _db = db;
+            Log = log;
         }
 
         public LiveTickDispatcher Dispatcher => _app.Services.GetRequiredService<LiveTickDispatcher>();
+
+        /// <summary>Everything the host logged, through the API's own logging rules.</summary>
+        public CapturingLoggerProvider Log { get; }
 
         public SignalRDeskEventPublisher DeskEvents => (SignalRDeskEventPublisher)_app.Services.GetRequiredService<IDeskEventPublisher>();
 
         /// <param name="configure">Extra registrations.</param>
         public static async Task<WireHost> StartAsync(Action<IServiceCollection>? configure = null)
         {
-            var db = new TradingDbContext(new DbContextOptionsBuilder<TradingDbContext>()
+            var options = new DbContextOptionsBuilder<TradingDbContext>()
                 .UseInMemoryDatabase($"live-feed-wire-{Guid.NewGuid():N}")
-                .Options);
+                .Options;
+            var db = new TradingDbContext(options);
             db.AppUsers.AddRange(
                 new AppUser { Id = AdminId, UserName = "admin", Role = UserRoles.Admin, IsActive = true },
                 new AppUser { Id = 7, UserName = "coderforchange", Role = UserRoles.Trader, IsActive = true },
-                new AppUser { Id = PlainTrader, UserName = "mallory", Role = UserRoles.Trader, IsActive = true });
+                new AppUser { Id = PlainTrader, UserName = "mallory", Role = UserRoles.Trader, IsActive = true },
+                new AppUser { Id = Disabled, UserName = "gone", Role = UserRoles.Admin, IsActive = false },
+                new AppUser { Id = DemotedAdmin, UserName = "demoted", Role = UserRoles.Trader, IsActive = true },
+                new AppUser { Id = GrantedTrader, UserName = "granted", Role = UserRoles.Trader, IsActive = true });
+            db.UserModuleGrants.Add(new UserModuleGrant { UserId = GrantedTrader, ModuleKey = PlatformModules.MarketData, GrantedBy = "admin" });
             await db.SaveChangesAsync();
 
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Test" });
             builder.WebHost.UseTestServer();
             builder.Logging.ClearProviders();
-            builder.Services.AddSignalR();
+            var log = new CapturingLoggerProvider();
+            builder.Logging.AddProvider(log);
+            builder.Services.AddLiveFeedHub(builder.Configuration);
             builder.Services.AddAuthentication(HeaderAuth.SchemeName)
                 .AddScheme<AuthenticationSchemeOptions, HeaderAuth>(HeaderAuth.SchemeName, null);
             builder.Services.AddAuthorization();
-            builder.Services.AddSingleton<IUserAdminService>(new UserAdminService(
-                db, new PasswordHasher<AppUser>(), RecapClockTests.Inert<ITokenValidityService>.Create(), NullLogger<UserAdminService>.Instance));
-            builder.Services.Configure<LiveFeedOptions>(_ => { });
-            builder.Services.AddSingleton<LiveFeedSubscriptions>();
-            builder.Services.AddSingleton<LiveTickDispatcher>();
-            builder.Services.AddSingleton<IDeskEventPublisher, SignalRDeskEventPublisher>();
+            // One context per hub call, as in the API: tabs connect at once.
+            builder.Services.AddScoped(_ => new TradingDbContext(options));
+            builder.Services.AddScoped<IUserAdminService>(sp => new UserAdminService(
+                sp.GetRequiredService<TradingDbContext>(), new PasswordHasher<AppUser>(), RecapClockTests.Inert<ITokenValidityService>.Create(),
+                NullLogger<UserAdminService>.Instance));
             configure?.Invoke(builder.Services);
 
             var app = builder.Build();
             app.UseAuthentication();
             app.UseAuthorization();
-            app.MapHub<LiveFeedHub>("/hubs/livefeed").RequireAuthorization();
+            app.MapLiveFeedHub();
             await app.StartAsync();
-            return new WireHost(app, db);
+            return new WireHost(app, db, log);
         }
 
-        public async Task<HubWire> ConnectAsync(long? userId)
+        /// <param name="expiresIn">When the sign-in expires, as a token's would; none by default.</param>
+        /// <param name="legacy">Connect as a console built before 28 Sep does: without <c>?v=2</c>.</param>
+        public async Task<HubWire> ConnectAsync(long? userId, TimeSpan? expiresIn = null, bool legacy = false)
         {
             var client = _app.GetTestServer().CreateWebSocketClient();
             client.ConfigureRequest = request =>
             {
                 if (userId is { } id) request.Headers[HeaderAuth.UserHeader] = id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                if (expiresIn is { } span)
+                    request.Headers[HeaderAuth.ExpiresHeader] = DateTimeOffset.UtcNow.Add(span).ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture);
             };
 
             // Straight to the websocket, as the console's client does with skipNegotiation.
-            var socket = await client.ConnectAsync(new Uri("ws://localhost/hubs/livefeed"), CancellationToken.None);
+            string query = legacy ? "" : $"?{LiveFeedHub.ProtocolQueryKey}={LiveFeedHub.CurrentProtocol}";
+            var socket = await client.ConnectAsync(new Uri($"ws://localhost{LiveFeedHubSetup.Path}{query}"), CancellationToken.None);
             var wire = new HubWire(socket);
             await wire.HandshakeAsync();
             return wire;
@@ -259,6 +367,27 @@ public class LiveFeedHubWireTests
             var completion = await CompleteAsync(target, arguments);
             Assert.True(completion.TryGetProperty("error", out var error), $"{target} did not fail.");
             return error.GetString()!;
+        }
+
+        /// <summary>Whether the server closes this connection within <paramref name="within"/>.</summary>
+        public async Task<bool> ClosedWithinAsync(TimeSpan within)
+        {
+            var until = DateTime.UtcNow + within;
+            while (true)
+            {
+                var left = until - DateTime.UtcNow;
+                if (left <= TimeSpan.Zero) return false;
+                try
+                {
+                    // 7 is the protocol's close message; the socket closing follows it.
+                    if (await ReadAsync(left) is { } message && message.TryGetProperty("type", out var type) && type.GetInt32() == 7)
+                        return true;
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or WebSocketException or IOException)
+                {
+                    return true;
+                }
+            }
         }
 
         /// <summary>The next message sent to the client method <paramref name="target"/>.</summary>
@@ -356,12 +485,17 @@ public class LiveFeedHubWireTests
         }
     }
 
-    /// <summary>Signs a request in as the user named by X-Test-User; user 1 holds the Admin role, as its row says.</summary>
+    /// <summary>
+    /// Signs a request in as the user named by X-Test-User. Users 1, 9 and 10
+    /// carry the Admin claim, as tokens issued while they were admins would;
+    /// X-Test-Expires (Unix ms) sets when the sign-in expires, as a JWT's exp does.
+    /// </summary>
     private sealed class HeaderAuth(IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder)
         : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
     {
         public const string SchemeName = "Test";
         public const string UserHeader = "X-Test-User";
+        public const string ExpiresHeader = "X-Test-Expires";
 
         protected override Task<AuthenticateResult> HandleAuthenticateAsync()
         {
@@ -369,9 +503,14 @@ public class LiveFeedHubWireTests
                 return Task.FromResult(AuthenticateResult.NoResult());
 
             var claims = new List<Claim> { new(ClaimTypes.NameIdentifier, userId.ToString(System.Globalization.CultureInfo.InvariantCulture)) };
-            if (userId == WireHost.AdminId) claims.Add(new Claim(ClaimTypes.Role, UserRoles.Admin));
+            if (userId is WireHost.AdminId or WireHost.Disabled or WireHost.DemotedAdmin) claims.Add(new Claim(ClaimTypes.Role, UserRoles.Admin));
             var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, SchemeName));
-            return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(principal, SchemeName)));
+
+            var properties = new AuthenticationProperties();
+            if (Request.Headers.TryGetValue(ExpiresHeader, out var expires) && long.TryParse(expires, out var unixMs))
+                properties.ExpiresUtc = DateTimeOffset.FromUnixTimeMilliseconds(unixMs);
+
+            return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(principal, properties, SchemeName)));
         }
     }
 }

@@ -204,8 +204,13 @@ the cooldown has passed since that alert's candle closed; the next one after
 that is sent and starts a new window. Measured from the last alert, not from the
 last cross, so a choppy market still gets one message per window rather than
 none. Direction does not matter: an EMA crossing up, down and up again inside
-30 minutes is one message. The cooldown is worked out from the day's candles on
-every scan, so a restart decides every alert exactly as the first run did.
+30 minutes is one message. Only an alert that reached Telegram (or is about to)
+starts a window: one found late, page-only, sent with `telegram: off`, dropped
+by the rate limit or refused by Telegram does not, so the next cross is sent.
+Until 28 Sep every alert started one, and an API down across a close heard of
+neither that cross nor the one back. The cooldown is worked out from the day's
+candles and the stored alerts on every scan, so a restart decides every alert
+exactly as the first run did.
 
 ### Market hours and delivery
 
@@ -220,13 +225,26 @@ Indicator alerts · candles closed 10:45 IST
 BANKNIFTY 15m at 10:30 IST — close 57,214 · RSI(14) crossed above 70 (RSI 68.4 → 71.2) · EMA(9) crossed above EMA(21) (EMA(9) 57,190.46, EMA(21) 57,188.10)
 ```
 
+A minute whose lines pass Telegram's 4096-character limit goes as several
+messages, whole lines each, the later ones headed "(continued)"; each counts
+against the 4-in-5-minutes limit. Until 28 Sep it went as one, which Telegram
+refused, and the whole minute was lost. At most 25 lines a minute, the rest
+counted as "+N more on the Pattern alerts page".
+
 As with patterns, an alert found late (after a restart) is recorded but not
 sent. Each recorded alert says why it was not sent when it was not: cooldown,
 page-only, `telegram: off`, or found late.
 
+At most 200 (symbol, timeframe) pairs are scanned, in the config's order; the
+page names the line past which pairs were left out. Each pair reads its warm-up
+with a query of its own, all at 09:15.
+
 `IndicatorAlerts:Enabled=false` turns this scanner off; when it is not set it
 follows `PatternAlerts:Enabled`, so the one switch a second API on the same
-database already sets turns both off.
+database already sets turns both off. Both take true/false, on/off, yes/no or
+1/0; anything else turns the scanner off and says so in the log and on the
+page. Until 28 Sep `IndicatorAlerts__Enabled=off` threw at startup and stopped
+the whole API.
 
 ### API
 

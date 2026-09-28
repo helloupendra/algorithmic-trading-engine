@@ -175,7 +175,12 @@ public static class IndicatorEvaluator
     /// so a restart decides every hit exactly as the first run did.
     /// </remarks>
     /// <param name="hits">Hits of one symbol and timeframe.</param>
-    public static IReadOnlyList<CooledHit> ApplyCooldown(IEnumerable<IndicatorHit> hits, TimeSpan cooldown)
+    /// <param name="startsWindow">
+    /// Whether an alert starts a window; every alert does when not given. The
+    /// scanner passes "was sent, or is about to be": a window started by an
+    /// alert nobody was told of withheld the next one too.
+    /// </param>
+    public static IReadOnlyList<CooledHit> ApplyCooldown(IEnumerable<IndicatorHit> hits, TimeSpan cooldown, Func<IndicatorHit, bool>? startsWindow = null)
     {
         var result = new List<CooledHit>();
         foreach (var rule in hits.GroupBy(h => h.Rule.Key, StringComparer.Ordinal))
@@ -190,7 +195,7 @@ public static class IndicatorEvaluator
                 }
 
                 result.Add(new CooledHit(hit, null));
-                lastAlert = hit.Candle.EndUtc;
+                if (startsWindow is null || startsWindow(hit)) lastAlert = hit.Candle.EndUtc;
             }
         }
 

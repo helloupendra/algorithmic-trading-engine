@@ -2,6 +2,8 @@ using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Application.UseCases.LiveData;
 using AlgoTrading.Api.Services;
 using AlgoTrading.Contracts.LiveData;
+using AlgoTrading.Domain.Constants;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using AlgoTrading.Api.Hubs;
 
@@ -11,10 +13,22 @@ namespace AlgoTrading.Api.Controllers;
 /// Exposes endpoints to query the active watchlist, fetch the latest cached market quotes, and view live ingestor health.
 /// Also provides endpoints to view locally built real-time bars and ticks.
 /// </summary>
+/// <remarks>
+/// The price and feed-health writes (<c>latest/upsert</c>, <c>heartbeat</c>,
+/// <c>ticks/upsert</c>, <c>ticks/upsert-batch</c>) are for the feeds, which
+/// sign in as the Service account, and for an admin. Until 28 Sep any signed-in
+/// trader could post them: a price for any contract, stamped in 2030 so every
+/// real tick after it read as older and was refused, and every account's paper
+/// fills and risk marks priced from it — pushed to every browser following the
+/// symbol as well. The reads stay open to every signed-in caller.
+/// </remarks>
 [ApiController]
 [Route("api/[controller]")]
 public class LiveDataController : ControllerBase
 {
+    /// <summary>Who may write prices and feed health: the feeds' Service account, and an admin.</summary>
+    public const string Writers = $"{UserRoles.Admin},{UserRoles.Service}";
+
     private readonly GetWatchlistUseCase _getWatchlistUseCase;
     private readonly UpsertWatchlistItemUseCase _upsertWatchlistItemUseCase;
     private readonly RemoveWatchlistItemUseCase _removeWatchlistItemUseCase;
@@ -140,6 +154,7 @@ public class LiveDataController : ControllerBase
     }
 
     [HttpPost("latest/upsert")]
+    [Authorize(Roles = Writers)]
     public async Task<IActionResult> UpsertLatest(
         [FromBody] UpsertLiveQuoteRequest request,
         CancellationToken cancellationToken)
@@ -151,8 +166,10 @@ public class LiveDataController : ControllerBase
         return Ok(new { message = "Live quote upserted successfully." });
     }
 
-    // NEW
+    // A heartbeat also records the feed's pid, which the API later adopts and
+    // may stop, and it sets the feed's gauges on /metrics.
     [HttpPost("heartbeat")]
+    [Authorize(Roles = Writers)]
     public async Task<IActionResult> UpsertHeartbeat(
         [FromBody] UpsertHeartbeatRequest request,
         CancellationToken cancellationToken)
@@ -201,6 +218,7 @@ public class LiveDataController : ControllerBase
 
 
     [HttpPost("ticks/upsert")]
+    [Authorize(Roles = Writers)]
     public async Task<IActionResult> UpsertTick(
             [FromBody] UpsertLiveTickRequest request,
             CancellationToken cancellationToken)
@@ -247,6 +265,7 @@ public class LiveDataController : ControllerBase
     /// worse failure than the one it guards against.
     /// </remarks>
     [HttpPost("ticks/upsert-batch")]
+    [Authorize(Roles = Writers)]
     public async Task<IActionResult> UpsertTickBatch(
         [FromBody] List<UpsertLiveTickRequest> requests,
         CancellationToken cancellationToken)

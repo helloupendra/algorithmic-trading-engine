@@ -84,11 +84,18 @@ public sealed class CandlePatternAlertService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        bool enabled = _configuration.GetValue("PatternAlerts:Enabled", true);
+        // Read so that a value like "off" cannot throw and stop the host (AlertSwitch).
+        bool enabled = AlertSwitch.Read(_configuration, fallback: true, out var problem, "PatternAlerts:Enabled");
         _state.SetEnabled(enabled);
+        if (problem is not null)
+        {
+            _logger.LogWarning("Candle-pattern alerts are off: {Problem}", problem);
+            _state.ScanFailed(DateTime.UtcNow, problem);
+        }
+
         if (!enabled)
         {
-            _logger.LogInformation("Candle-pattern alerts are off (PatternAlerts:Enabled=false).");
+            if (problem is null) _logger.LogInformation("Candle-pattern alerts are off (PatternAlerts:Enabled=false).");
             return;
         }
 

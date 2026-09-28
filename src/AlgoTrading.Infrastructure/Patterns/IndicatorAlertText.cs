@@ -39,6 +39,9 @@ public sealed record IndicatorOccurrence(
     }
 }
 
+/// <summary>One Telegram message of a batch, and the batch's alerts (by index) whose lines it carries.</summary>
+public sealed record IndicatorTelegramPart(string Text, IReadOnlyList<int> Items);
+
 /// <summary>
 /// The words for indicator alerts, in the pattern alerts' voice: what happened,
 /// on which candle, with the numbers that show it. Never what to do about it —
@@ -80,38 +83,76 @@ public static class IndicatorAlertText
         $"{Title(o)} at {PatternAlertText.IstClock(o.BarStartUtc)} IST — close {PatternAlertText.Price(o.Close)}; {Numbers(o)}{Partial(o)}";
 
     /// <summary>
-    /// One Telegram message for every alert on candles that closed at the same
-    /// minute, in parse_mode HTML: one line per symbol and candle, with every
-    /// rule that fired on that candle on the same line.
+    /// The longest message sent. Telegram refuses one over 4096 characters;
+    /// this leaves room for the entities it counts differently.
     /// </summary>
-    public static string TelegramMessage(DateTime closedAtUtc, IReadOnlyList<IndicatorOccurrence> occurrences)
-    {
-        var lines = new List<string>
-        {
-            $"<b>Indicator alerts · candles closed {PatternAlertText.IstClock(closedAtUtc)} IST</b>",
-        };
+    public const int MaxTelegramChars = 4000;
 
+    /// <summary>
+    /// The Telegram messages for every alert on candles that closed at the
+    /// same minute, in parse_mode HTML: one line per symbol and candle, with
+    /// every rule that fired on that candle on the same line, at most
+    /// <see cref="PatternAlertText.MaxTelegramLines"/> lines and the rest
+    /// counted. One message unless the lines pass
+    /// <paramref name="maxChars"/>; then as many as it takes, each whole lines
+    /// under the same heading, marked "(continued)".
+    /// </summary>
+    /// <remarks>
+    /// The pattern alerts' 25-line cap was sized for their short lines. An
+    /// indicator line quotes its numbers for every rule: about 194 characters
+    /// for two rules, 285 for four, so 25 of them passed Telegram's limit and
+    /// the whole batch was refused.
+    /// </remarks>
+    public static IReadOnlyList<IndicatorTelegramPart> TelegramMessages(
+        DateTime closedAtUtc,
+        IReadOnlyList<IndicatorOccurrence> occurrences,
+        int maxChars = MaxTelegramChars)
+    {
+        var heading = $"<b>Indicator alerts · candles closed {PatternAlertText.IstClock(closedAtUtc)} IST</b>";
         var candles = occurrences
-            .GroupBy(o => (o.Symbol, o.TimeframeMinutes, o.BarStartUtc))
+            .Select((o, i) => (Occurrence: o, Index: i))
+            .GroupBy(x => (x.Occurrence.Symbol, x.Occurrence.TimeframeMinutes, x.Occurrence.BarStartUtc))
             .ToList();
+
+        var parts = new List<IndicatorTelegramPart>();
+        var lines = new List<string> { heading };
+        var items = new List<int>();
+        int length = heading.Length;
+
+        void Add(string line, IEnumerable<int> carried)
+        {
+            if (lines.Count > 1 && length + 1 + line.Length > maxChars)
+            {
+                parts.Add(new IndicatorTelegramPart(string.Join('\n', lines), items));
+                var continued = heading.Replace("</b>", " (continued)</b>", StringComparison.Ordinal);
+                lines = [continued];
+                items = [];
+                length = continued.Length;
+            }
+
+            lines.Add(line);
+            items.AddRange(carried);
+            length += 1 + line.Length;
+        }
 
         foreach (var candle in candles.Take(PatternAlertText.MaxTelegramLines))
         {
             // Only the pieces are escaped (a symbol can hold "&", as M&M does);
             // the separators are the message's own.
-            var first = candle.First();
+            var first = candle.First().Occurrence;
             var head = $"{PatternAlertText.DisplayName(first.Symbol)} {first.TimeframeMinutes}m at {PatternAlertText.IstClock(first.BarStartUtc)} IST — " +
                        $"close {PatternAlertText.Price(first.Close)}";
-            var rules = candle.Select(o => WebUtility.HtmlEncode($"{What(o)} ({Numbers(o)})"));
-            lines.Add($"{WebUtility.HtmlEncode(head)} · {string.Join(" · ", rules)}{WebUtility.HtmlEncode(Partial(first))}");
+            var rules = candle.Select(x => WebUtility.HtmlEncode($"{What(x.Occurrence)} ({Numbers(x.Occurrence)})"));
+            Add($"{WebUtility.HtmlEncode(head)} · {string.Join(" · ", rules)}{WebUtility.HtmlEncode(Partial(first))}", candle.Select(x => x.Index));
         }
 
         if (candles.Count > PatternAlertText.MaxTelegramLines)
         {
-            lines.Add($"+{candles.Count - PatternAlertText.MaxTelegramLines} more on the Pattern alerts page.");
+            Add($"+{candles.Count - PatternAlertText.MaxTelegramLines} more on the Pattern alerts page.", []);
         }
 
-        return string.Join('\n', lines);
+        parts.Add(new IndicatorTelegramPart(string.Join('\n', lines), items));
+        return parts;
     }
 
     private static string Partial(IndicatorOccurrence o) =>
