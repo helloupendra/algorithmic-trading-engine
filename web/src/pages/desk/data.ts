@@ -202,6 +202,22 @@ export function useDeskLegs(view: DeskView): { legs: DeskLeg[] | null; error: un
 }
 
 /**
+ * The underlyings held in the Desk's scope, from the same open legs as
+ * useDeskLegs but without their prices: the news panel's "held" tab needs
+ * which names are held, and a panel that holds the legs' prices is
+ * re-rendered by every push of every leg.
+ */
+export function useHeldUnderlyings(view: DeskView): ReadonlySet<string> {
+  const open = useOpenPositions(deskLegsPoll(view.clock === 'live', useLiveConnection()), allows(view.access, 'strategies'))
+  const positions = open.data?.positions
+  const userId = view.scope === 'all' ? null : view.scope
+  return useMemo(
+    () => new Set((positions ?? []).filter((p) => userId == null || p.userId === userId).map((p) => p.underlying.toUpperCase())),
+    [positions, userId],
+  )
+}
+
+/**
  * The morning plan against what is live (admin: GET /api/Desk/plan), in the
  * Desk's scope. `missing` when the server has no plan file, which is a thing
  * to say, not an empty plan.
