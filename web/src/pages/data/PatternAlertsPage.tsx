@@ -8,6 +8,11 @@
  * today, what the candles still forming would be if they closed now, which
  * watched symbols are not receiving data, and the rules themselves.
  *
+ * Indicator alerts (RSI, EMA crosses, Supertrend, VWAP — IndicatorAlertService)
+ * share the page: same candles, same Telegram channel. Their rules live in
+ * config/indicator-alerts.txt on the server, so their section reads the file
+ * back rather than editing it.
+ *
  * A sibling of the Alerts page rather than a section of it: that page is the
  * delivery channel every producer shares; this is one producer, with rules
  * and a live view of its own. Its alerts appear in that stream too.
@@ -22,18 +27,26 @@ import {
   EMPTY_RULE_FORM,
   NO_FILTERS,
   candleSpan,
+  crossTone,
   directionTone,
   filterAlerts,
   filterChoices,
   formToRequest,
+  indicatorNumbers,
   istClock,
+  ruleStateTone,
   ruleSummary,
   ruleToForm,
   scannerHealth,
+  sortWatches,
   toggle,
 } from '../../lib/patterns'
 import type {
   AlertFilters,
+  IndicatorAlert,
+  IndicatorAlertsStatus,
+  IndicatorLine,
+  IndicatorWatch,
   PatternAlert,
   PatternCatalog,
   PatternForming,
@@ -84,6 +97,22 @@ function useRules() {
   return useQuery({
     queryKey: ['patterns', 'rules'],
     queryFn: () => api.get<PatternRule[]>('/api/PatternAlerts/rules'),
+  })
+}
+
+function useIndicators() {
+  return useQuery({
+    queryKey: ['patterns', 'indicators'],
+    queryFn: () => api.get<IndicatorAlertsStatus>('/api/PatternAlerts/indicators'),
+    refetchInterval: 10_000,
+  })
+}
+
+function useIndicatorAlerts() {
+  return useQuery({
+    queryKey: ['patterns', 'indicator-events'],
+    queryFn: () => api.get<IndicatorAlert[]>('/api/PatternAlerts/indicators/events?limit=500'),
+    refetchInterval: 20_000,
   })
 }
 
@@ -477,6 +506,264 @@ function AlertsPanel() {
   )
 }
 
+// ------------------------------------------------------------- indicators --
+
+function IndicatorsPanel() {
+  const status = useIndicators()
+  const health = status.data
+    ? scannerHealth(status.data, Date.now(), 'IndicatorAlerts:Enabled (or PatternAlerts:Enabled) is false on this API.')
+    : null
+
+  return (
+    <Panel
+      title="Indicator alerts"
+      actions={
+        health && (
+          <span title={health.detail}>
+            <Badge tone={health.tone}>{health.label}</Badge>
+          </span>
+        )
+      }
+    >
+      <p className="muted" style={{ marginTop: 0, maxWidth: '84ch' }}>
+        RSI, EMA crosses, Supertrend flips and VWAP crosses on the same candles, read only once a candle has closed, so an
+        alert is never withdrawn by the rest of its candle. Each rule warms up on earlier sessions first and stays quiet
+        until it has settled. The rules live in <code>config/indicator-alerts.txt</code> on the server; an edit there
+        applies at the next scan.
+      </p>
+      <QueryBoundary query={status}>
+        {(s) => (
+          <>
+            {s.file === null && (
+              <div className="alert alert--warn alert--stack" role="status">
+                <div>No indicator config file was found, so nothing is watched. Looked for:</div>
+                {s.searched.map((p) => (
+                  <div key={p} className="mono">
+                    {p}
+                  </div>
+                ))}
+              </div>
+            )}
+            {s.fileError && (
+              <div className="alert alert--warn" role="status">
+                <span>{s.fileError}</span>
+              </div>
+            )}
+            {s.warnings.length + s.unresolved.length > 0 && (
+              <div className="alert alert--warn alert--stack" role="status">
+                <div>Not read as written (the rest of the file still applies):</div>
+                {[...s.warnings, ...s.unresolved].map((w) => (
+                  <div key={w}>{w}</div>
+                ))}
+              </div>
+            )}
+            {s.file !== null && (
+              <p className="small-note muted">
+                <span className="mono">{s.file}</span>
+                {s.fileModifiedUtc && <> · edited {formatAge(s.fileModifiedUtc)}</>} · cooldown{' '}
+                {s.cooldownMinutes > 0 ? `${s.cooldownMinutes} min per symbol, timeframe and rule` : 'off'} · warm-up{' '}
+                {s.warmupCandles} candles · Telegram{' '}
+                {!s.telegram
+                  ? 'off in the file'
+                  : s.telegramConfigured
+                    ? 'on (Desk System channel)'
+                    : 'on, but no bot is configured on this server'}
+                {s.telegramMessagesSuppressed + s.telegramMessagesFailed > 0 && s.lastTelegramProblem && (
+                  <span className="warn"> · {s.lastTelegramProblem}</span>
+                )}
+              </p>
+            )}
+            <IndicatorLines lines={s.lines} />
+            <IndicatorWatches watches={s.watches} scanned={s.lastScanUtc} />
+          </>
+        )}
+      </QueryBoundary>
+    </Panel>
+  )
+}
+
+function IndicatorLines({ lines }: { lines: IndicatorLine[] }) {
+  if (lines.length === 0) return null
+  return (
+    <div className="tablewrap">
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Line</th>
+            <th>Watches</th>
+            <th>Timeframes</th>
+            <th>Rules</th>
+            <th>Telegram</th>
+          </tr>
+        </thead>
+        <tbody>
+          {lines.map((l) => (
+            <tr key={l.number}>
+              <td className="mono">{l.number}</td>
+              <td className="pa-rule-name" title={l.resolvedSymbols.join('\n')}>
+                {l.resolvedSymbols.map((x) => x.slice(x.indexOf(':') + 1)).join(', ') || <span className="faint">nothing</span>}
+                {l.groups.length > 0 && <span className="cell-sub mono">{l.groups.join(', ')}</span>}
+              </td>
+              <td className="mono">{l.timeframes.map((t) => `${t}m`).join(', ')}</td>
+              <td>
+                <span className="pa-hits">
+                  {l.rules.map((r) => (
+                    <span key={r.key} title={`${r.definition} Alerts once ${r.settleCandles} candles have been read.`}>
+                      <Badge tone="accent">{r.label}</Badge>
+                    </span>
+                  ))}
+                </span>
+              </td>
+              <td>{l.pageOnly ? <span className="faint">page only</span> : 'sent'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function IndicatorWatches({ watches, scanned }: { watches: IndicatorWatch[]; scanned: string | null }) {
+  if (watches.length === 0) {
+    return (
+      <p className="small-note muted">
+        {scanned ? 'No symbol is watched right now.' : 'The indicator scanner has not finished a scan since the API started.'}
+      </p>
+    )
+  }
+
+  return (
+    <div className="tablewrap tablewrap--rows8" style={{ marginTop: 10 }}>
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Symbol</th>
+            <th>Candles read</th>
+            <th>Rules</th>
+            <th>State</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sortWatches(watches).map((w) => (
+            <tr key={`${w.symbol}|${w.timeframe}`}>
+              <td>
+                {w.displayName} <span className="faint">{w.timeframe}m</span>
+                <span className="cell-sub mono">{w.symbol}</span>
+              </td>
+              <td className="mono">
+                {w.inSession ? (
+                  <>
+                    {w.historyCandles + w.todayCandles}
+                    <span className="cell-sub">
+                      {w.historyCandles} earlier · {w.todayCandles} today
+                    </span>
+                  </>
+                ) : (
+                  '—'
+                )}
+              </td>
+              <td>
+                <span className="pa-hits">
+                  {w.rules.map((r) => (
+                    <span key={r.rule} title={r.detail ?? r.state}>
+                      <Badge tone={w.inSession || r.state === 'skipped' ? ruleStateTone(r.state) : 'neutral'}>
+                        {r.label}
+                        {(w.inSession || r.state === 'skipped') && r.state !== 'ready'
+                          ? ` · ${r.state === 'warming up' ? r.detail : r.state}`
+                          : ''}
+                      </Badge>
+                    </span>
+                  ))}
+                </span>
+              </td>
+              <td>
+                {w.problem ? (
+                  <Badge tone="warn">{w.problem}</Badge>
+                ) : w.inSession ? (
+                  <Badge tone="pos">receiving</Badge>
+                ) : (
+                  <span className="faint">{w.exchange} closed</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function IndicatorAlertsTable() {
+  const alerts = useIndicatorAlerts()
+  return (
+    <Panel
+      title="Today's indicator alerts"
+      actions={
+        alerts.data && (
+          <span className="small-note muted" style={{ margin: 0 }}>
+            {alerts.data.length} since 00:00 IST
+          </span>
+        )
+      }
+    >
+      <QueryBoundary query={alerts}>
+        {(list) =>
+          list.length === 0 ? (
+            <EmptyState>
+              No indicator rule has fired today on a watched symbol. Alerts appear here within about twenty seconds of
+              their candle closing.
+            </EmptyState>
+          ) : (
+            <div className="tablewrap tablewrap--tall">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Symbol · candle (IST)</th>
+                    <th>What happened</th>
+                    <th>Values</th>
+                    <th>Close</th>
+                    <th>Telegram</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {list.map((a) => (
+                    <tr key={a.id}>
+                      <td>
+                        {a.displayName} <span className="faint">{a.timeframe}m</span>
+                        <span className="cell-sub mono">
+                          {candleSpan(a.barStartUtc, a.barEndUtc)}
+                          {a.minutesInBar < a.minutesExpected && ` · ${a.minutesInBar} of ${a.minutesExpected} min had data`}
+                        </span>
+                      </td>
+                      <td>
+                        <Badge tone={crossTone(a.direction)}>{a.what}</Badge>
+                      </td>
+                      <td className="mono">{indicatorNumbers(a)}</td>
+                      <td className="mono">{formatPrice(a.close)}</td>
+                      <td>
+                        {a.deliveredToTelegram ? (
+                          <Badge tone="pos">sent</Badge>
+                        ) : (
+                          <span title={a.notifySkippedReason ?? (a.notify ? 'not sent: rate limit or Telegram unavailable' : '')}>
+                            <Badge tone="neutral">{a.cooledDown ? 'cooldown' : 'recorded only'}</Badge>
+                            <span className="cell-sub pa-reason">
+                              {a.notifySkippedReason ?? (a.notify ? 'not delivered' : '')}
+                            </span>
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        }
+      </QueryBoundary>
+    </Panel>
+  )
+}
+
 // ------------------------------------------------------------------- rules --
 
 function RulesPanel({ catalog }: { catalog: PatternCatalog }) {
@@ -825,8 +1112,8 @@ function GuidePanel({ catalog }: { catalog: PatternCatalog }) {
       </p>
       <p className="small-note muted" style={{ maxWidth: '84ch' }}>
         Chart patterns such as head and shoulders, double tops and triangles are not detected yet: they span dozens of
-        candles and need swing highs and lows found first. Alerts from your own indicators (a breakout above a level, an
-        RSI cross) are not here yet either.
+        candles and need swing highs and lows found first. Indicator alerts (RSI, EMA, Supertrend, VWAP) are in their
+        own section above; a breakout above a price level of your choosing is not built yet.
       </p>
     </Panel>
   )
@@ -842,8 +1129,9 @@ export function PatternAlertsPage() {
         <div>
           <h1 className="page__title">Pattern alerts</h1>
           <p className="page__subtitle">
-            Candle patterns on live bars — doji, hammer, engulfing, stars and more — on 3 to 60-minute candles, recorded
-            the moment a candle closes and sent to Telegram when a rule asks.
+            Candle patterns on live bars — doji, hammer, engulfing, stars and more — and indicator crosses (RSI, EMA,
+            Supertrend, VWAP) on 3 to 60-minute candles, recorded the moment a candle closes and sent to Telegram when a
+            rule asks.
           </p>
         </div>
         <Link to="/system/log?source=alerts" className="btn btn--ghost btn--sm">
@@ -862,6 +1150,8 @@ export function PatternAlertsPage() {
 
       <FormingPanel />
       <AlertsPanel />
+      <IndicatorsPanel />
+      <IndicatorAlertsTable />
 
       {catalog.isPending ? (
         <Loading label="Loading the pattern catalog…" />
