@@ -157,6 +157,18 @@ public sealed class PatternScannerStatusResponse
     public List<string> Unresolved { get; set; } = [];
 
     public bool TelegramConfigured { get; set; }
+
+    /// <summary>
+    /// The channel candle-pattern alerts are sent to, as set: "trades" (the
+    /// default since 28 Sep 2026) or "system". <c>PatternAlerts:TelegramChannel</c>.
+    /// </summary>
+    public string TelegramChannel { get; set; } = "trades";
+
+    /// <summary>Why the channel setting was not read as written (it is then "trades"); null when it was.</summary>
+    public string? TelegramChannelProblem { get; set; }
+
+    /// <summary>Whether Telegram:SystemChatId is set: a "system" channel without it reaches the trades chat.</summary>
+    public bool TelegramSystemChatConfigured { get; set; }
     public int TelegramMaxMessages { get; set; }
     public int TelegramWindowMinutes { get; set; }
     public DateTime? LastTelegramUtc { get; set; }

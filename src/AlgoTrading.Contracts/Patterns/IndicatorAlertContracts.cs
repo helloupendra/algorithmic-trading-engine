@@ -36,10 +36,22 @@ public sealed class IndicatorAlertsResponse
     public bool TelegramConfigured { get; set; }
 
     /// <summary>
-    /// Whether Telegram:SystemChatId is set. When it is not, indicator alerts
-    /// go to the trades channel (Live Algotrading), not Desk System.
+    /// Whether Telegram:SystemChatId is set. When it is not, a "system"
+    /// <see cref="TelegramChannel"/> still reaches the trades channel (Live
+    /// Algotrading), not Desk System. Kept for consoles from before
+    /// <see cref="TelegramChannel"/>, which read it alone.
     /// </summary>
     public bool TelegramSystemChatConfigured { get; set; }
+
+    /// <summary>
+    /// The channel indicator alerts are sent to, as set: "trades" (the default
+    /// since 28 Sep 2026) or "system". <c>IndicatorAlerts:TelegramChannel</c>,
+    /// else <c>PatternAlerts:TelegramChannel</c>.
+    /// </summary>
+    public string TelegramChannel { get; set; } = "trades";
+
+    /// <summary>Why the channel setting was not read as written (it is then "trades"); null when it was.</summary>
+    public string? TelegramChannelProblem { get; set; }
     public int TelegramMaxMessages { get; set; }
     public int TelegramWindowMinutes { get; set; }
     public DateTime? LastTelegramUtc { get; set; }
