@@ -15,7 +15,7 @@ IMPORT_ERROR: Optional[str] = None
 try:
     from vollib.black_scholes_merton.implied_volatility import implied_volatility
     from vollib.black_scholes_merton.greeks.analytical import delta, gamma, theta, vega, rho
-except ImportError as _vollib_missing:
+except Exception as _vollib_missing:  # noqa: BLE001 — a library that loads badly is as missing as an absent one
     try:
         # requirements.txt asks for py_vollib, unpinned. From 1.0.12 it installs
         # `vollib` too; before that `py_vollib` is the only name it has.
@@ -23,7 +23,7 @@ except ImportError as _vollib_missing:
         from py_vollib.black_scholes_merton.implied_volatility import implied_volatility
         # pyrefly: ignore [missing-import]
         from py_vollib.black_scholes_merton.greeks.analytical import delta, gamma, theta, vega, rho
-    except ImportError as _py_vollib_missing:
+    except Exception as _py_vollib_missing:  # noqa: BLE001 — see above
         IMPORT_ERROR = f"{_vollib_missing}; {_py_vollib_missing}"
 
 _unavailable_reported = False
