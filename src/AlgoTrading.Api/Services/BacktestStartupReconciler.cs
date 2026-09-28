@@ -7,8 +7,10 @@ namespace AlgoTrading.Api.Services;
 /// replaying on its own. At startup every OfflineReplay run left
 /// Running/Pending is reconciled: a runner whose stored pid is alive (and is
 /// the backtest_runner for that run) is ADOPTED into the registry — it keeps
-/// posting progress/marks/complete and can be stopped — and the rest are
-/// squared off at their last mark and marked Failed with a clear LastError.
+/// posting progress/marks/complete and can be stopped — one whose runner is
+/// gone is squared off at its last mark and marked Failed with a clear
+/// LastError, and one whose pid is alive but cannot be verified is left open
+/// (see <see cref="BacktestRunControl.ReconcileOrphanedRunsAsync"/>).
 /// </summary>
 public sealed class BacktestStartupReconciler : IHostedService
 {
@@ -37,6 +39,10 @@ public sealed class BacktestStartupReconciler : IHostedService
             if (result.Closed > 0)
             {
                 _logger.LogWarning("Closed {Count} orphaned backtest run(s) left Running by a previous API process.", result.Closed);
+            }
+            if (result.Unverified > 0)
+            {
+                _logger.LogError("Left {Count} backtest run(s) open without a runner: their pids are alive but could not be verified.", result.Unverified);
             }
         }
         catch (Exception ex)

@@ -45,6 +45,8 @@ A backtest is persisted as a `SimulationRun` with mode `OfflineReplay`, and its 
 3. After each bar: marks open positions and applies the run's risk rules exactly as the live guard does — per-leg (premium points / % of entry, closes that leg), per-group (₹, closes that group), then overall (₹, ends the backtest) — appends an equity point, and posts progress every two seconds.
 4. Squares off at the EOD time and at the end of the range, then posts the equity curve and a summary (`BACKTEST_SUMMARY` signal: bars, sessions, trades, skipped entries, EOD square-offs, stop reason, data notes).
 
+The runner reports its pid with its progress, stored in `system_settings`. On startup the API reads each backtest left Pending or Running the way it reads a live run: a runner still alive and verified as that run's is adopted (its Stop works again), a run whose runner is gone is squared off at its last mark and marked Failed ("API restarted while the backtest was running"), and one whose pid is alive but whose command line cannot be read is probed again after 2, 4 and 8 s and, if still unverified, left exactly as it is with its pid kept. If that pid is the runner, the replay ends and closes the run through `/complete`; if not, the next start probes it again, and **Stop** closes it meanwhile.
+
 ### 3. Reading results
 `GET /api/Backtest/runs/{id}` returns everything the results page needs: header, progress, P&L (realized, unrealized, charges, return %), metrics (win rate, profit factor, average and largest win/loss, expectancy, max drawdown in ₹ and %, profitable days), daily P&L by IST day, positions with exit price and exit reason, activity, data notes and the equity curve. `GET /api/Backtest/runs` lists all backtests with net P&L, trades and win rate.
 
