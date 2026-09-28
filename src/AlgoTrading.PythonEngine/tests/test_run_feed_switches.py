@@ -30,7 +30,7 @@ class RunFeedSwitchTests(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, {}, clear=False)
         patcher.start()
         self.addCleanup(patcher.stop)
-        for key in ("FEED_GIL_SWITCH_MS", "FEED_REDIS_TIMEOUT_SECONDS"):
+        for key in ("FEED_GIL_SWITCH_MS", "FEED_REDIS_TIMEOUT_SECONDS", "FEED_GC_FREEZE"):
             os.environ.pop(key, None)
         os.environ.update(env)
         feed = mock.MagicMock(key="fake", source_name="python-fake-feed", is_replay=False)
@@ -42,9 +42,22 @@ class RunFeedSwitchTests(unittest.TestCase):
              mock.patch("core.safe_output.install_safe_stdio"), \
              mock.patch("signal.signal"), \
              mock.patch.object(sys, "setswitchinterval") as switch, \
+             mock.patch("gc.freeze") as freeze, mock.patch("gc.collect"), \
              mock.patch("builtins.print", side_effect=lambda *a, **_: printed.append(" ".join(map(str, a)))):
             run_feed.main(["--vendor", "fake"])
+        self.freeze = freeze
         return build, switch, printed
+
+    def test_the_startup_heap_is_frozen_after_the_greeks_libraries_load(self):
+        _, _, printed = self._main()
+        self.freeze.assert_called_once_with()
+        self.assertIn("core.greeks_calculator", sys.modules, "loaded before the freeze, not on the first tick")
+        self.assertTrue(any("frozen out of the cyclic GC" in line for line in printed), printed)
+
+    def test_feed_gc_freeze_0_leaves_the_collector_alone(self):
+        _, _, printed = self._main(FEED_GC_FREEZE="0")
+        self.freeze.assert_not_called()
+        self.assertTrue(any("FEED_GC_FREEZE=0" in line for line in printed), printed)
 
     def test_the_defaults_are_the_fix(self):
         build, switch, printed = self._main()

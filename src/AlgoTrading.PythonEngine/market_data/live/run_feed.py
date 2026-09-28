@@ -63,6 +63,38 @@ def stream_timeout_from_env(vendor: str) -> float | None:
     return seconds if seconds > 0 else None
 
 
+def freeze_startup_heap(vendor: str) -> int:
+    """
+    FEED_GC_FREEZE (default 1; 0 leaves the collector alone): load the greeks
+    libraries now, then move everything startup made out of the cyclic garbage
+    collector's reach (gc.freeze), and return how many objects that was.
+
+    A full collection stops every thread in the process, the socket reader
+    with them, for as long as it takes to walk every tracked object — most of
+    them numpy, scipy and vollib's, made once at startup and never garbage.
+    Measured in the load test on two contended vCPUs, one such pass took
+    391 ms mid-session. Frozen, those objects are not walked again; what the
+    feed makes afterwards is collected as before, and reference counting
+    frees frozen objects as it always did. The import itself moves here too:
+    otherwise the first option tick pays for it, on the emitter, about 4 s.
+    """
+    raw = os.getenv("FEED_GC_FREEZE", "1").strip()
+    if raw == "0":
+        print(f"[{vendor}] cyclic GC left as it is (FEED_GC_FREEZE=0).", flush=True)
+        return 0
+    import gc
+    try:
+        import core.greeks_calculator  # noqa: F401
+    except Exception as ex:  # noqa: BLE001 - the heartbeat reports a missing library
+        print(f"[{vendor}] greeks libraries did not load at startup ({ex}).", flush=True)
+    gc.collect()
+    gc.freeze()
+    frozen = gc.get_freeze_count()
+    print(f"[{vendor}] {frozen} startup objects frozen out of the cyclic GC (FEED_GC_FREEZE), so a full "
+          f"collection does not stop the socket reader to walk them.", flush=True)
+    return frozen
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description="Run one vendor's live data feed.")
     parser.add_argument("--vendor", required=True, help="connector key, e.g. fyers or truedata")
@@ -101,6 +133,8 @@ def main(argv=None) -> None:
 
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
+
+    freeze_startup_heap(feed.key)
 
     print(f"[{feed.key}] STARTING LIVE FEED ({'replay' if feed.is_replay else 'live'}) — "
           f"source {runner.source_name}"
