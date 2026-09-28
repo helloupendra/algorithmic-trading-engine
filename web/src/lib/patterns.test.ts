@@ -240,12 +240,24 @@ describe('indicator alerts', () => {
 })
 
 describe('indicatorTelegramNote', () => {
-  it('says whether indicator alerts go to Telegram, without naming a chat the server does not report', () => {
-    expect(indicatorTelegramNote({ telegram: false, telegramConfigured: true })).toEqual({ text: 'off in the file', title: null })
-    expect(indicatorTelegramNote({ telegram: true, telegramConfigured: false }).text).toBe('on, but no bot is configured on this server')
+  it('says whether indicator alerts go to Telegram at all', () => {
+    expect(indicatorTelegramNote({ telegram: false, telegramConfigured: true, telegramSystemChatConfigured: true })).toEqual({ text: 'off in the file', title: null })
+    expect(indicatorTelegramNote({ telegram: true, telegramConfigured: false, telegramSystemChatConfigured: true }).text).toBe(
+      'on, but no bot is configured on this server',
+    )
+  })
+
+  it('names the Desk System channel only when the server says it has a system chat', () => {
+    expect(indicatorTelegramNote({ telegram: true, telegramConfigured: true, telegramSystemChatConfigured: true }).text).toBe('on (Desk System channel)')
+    // No system chat: the server sends these among the trades, and the page says so.
+    const trades = indicatorTelegramNote({ telegram: true, telegramConfigured: true, telegramSystemChatConfigured: false })
+    expect(trades.text).toBe('on (trades channel: no Desk System chat is set on this server)')
+    expect(trades.title).toMatch(/Telegram:SystemChatId is not set/)
+  })
+
+  it('names no chat when an older API does not report which', () => {
     const on = indicatorTelegramNote({ telegram: true, telegramConfigured: true })
     expect(on.text).toBe('on')
-    expect(on.text).not.toMatch(/Desk System/)
     expect(on.title).toMatch(/trades chat when no system chat is set/)
   })
 })
