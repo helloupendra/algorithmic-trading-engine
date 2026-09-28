@@ -28,6 +28,8 @@ import {
   modelStanding,
   newsLines,
   overnightRows,
+  pinHolds,
+  pinUntil,
   planView,
   rangeSoFar,
   readPin,
@@ -179,10 +181,46 @@ describe('shownPhase', () => {
     expect(shownPhase('live', { phase: 'live', from: 'live' }, null, TODAY).how).toBe('clock')
   })
 
-  it('holds a pin through the clock moving, for the day it was set only', () => {
-    const pin = { phase: 'live' as const, date: TODAY }
-    expect(shownPhase('post', null, pin, TODAY)).toEqual({ phase: 'live', how: 'pinned' })
+  it('holds a pin while the clock stays where it was set', () => {
+    const pin = { phase: 'post' as const, date: TODAY, from: 'live' as const }
+    expect(shownPhase('live', null, pin, TODAY)).toEqual({ phase: 'post', how: 'pinned' })
+  })
+
+  it('ends a pin set before the open at the open, so the Desk cannot stay on the readiness list all day', () => {
+    // 28 Sep: "Before open" pinned at 08:50 still showed the 08:55 checkup at 13:15.
+    const pin = { phase: 'pre' as const, date: TODAY, from: 'pre' as const }
+    expect(shownPhase('pre', null, pin, TODAY)).toEqual({ phase: 'pre', how: 'pinned' })
+    expect(shownPhase('live', null, pin, TODAY)).toEqual({ phase: 'live', how: 'clock' })
+    expect(pinHolds(pin, 'live', TODAY)).toBe(false)
+  })
+
+  it('ends a pin set in the session at the close, and one set after the close with the day', () => {
+    const inSession = { phase: 'pre' as const, date: TODAY, from: 'live' as const }
+    expect(pinHolds(inSession, 'live', TODAY)).toBe(true)
+    expect(pinHolds(inSession, 'post', TODAY)).toBe(false)
+    const evening = { phase: 'live' as const, date: TODAY, from: 'post' as const }
+    expect(pinHolds(evening, 'post', TODAY)).toBe(true)
+    expect(pinHolds(evening, 'post', '2026-09-29')).toBe(false)
+    expect(pinHolds(evening, 'pre', '2026-09-29')).toBe(false)
+  })
+
+  it('never opens a later day on an earlier day\'s pin', () => {
+    const pin = { phase: 'pre' as const, date: TODAY, from: 'pre' as const }
     expect(shownPhase('pre', null, pin, '2026-09-29')).toEqual({ phase: 'pre', how: 'clock' })
+    expect(shownPhase('live', null, pin, '2026-09-29', false)).toEqual({ phase: 'live', how: 'clock' })
+  })
+
+  it("honours today's pin while the session is unread, since the clock is only a guess then", () => {
+    // A holiday: the standard hours say "live", the pin was set after the (non-)session.
+    const pin = { phase: 'live' as const, date: TODAY, from: 'post' as const }
+    expect(shownPhase('live', null, pin, TODAY, false)).toEqual({ phase: 'live', how: 'pinned' })
+    expect(shownPhase('live', null, pin, TODAY, true)).toEqual({ phase: 'live', how: 'clock' })
+  })
+
+  it('says when a pin set now would end', () => {
+    expect(pinUntil('pre')).toBe('until the open')
+    expect(pinUntil('live')).toBe('until the close')
+    expect(pinUntil('post')).toBe('for the rest of the day')
   })
 })
 
@@ -199,15 +237,28 @@ describe('the pin in storage', () => {
 
   it('round-trips and clears', () => {
     const s = memory()
-    writePin(s, { phase: 'post', date: TODAY })
-    expect(readPin(s)).toEqual({ phase: 'post', date: TODAY })
+    writePin(s, { phase: 'post', date: TODAY, from: 'live' })
+    expect(readPin(s)).toEqual({ phase: 'post', date: TODAY, from: 'live' })
     writePin(s, null)
+    expect(readPin(s)).toBeNull()
+  })
+
+  it('reads a pin from before 28 Sep, which held the whole day, as no pin', () => {
+    const s = memory()
+    s.raw.set(PIN_KEY, JSON.stringify({ phase: 'pre', date: TODAY }))
     expect(readPin(s)).toBeNull()
   })
 
   it('reads garbage, an unknown phase or a bad date as no pin', () => {
     const s = memory()
-    for (const bad of ['{', '"x"', JSON.stringify({ phase: 'lunch', date: TODAY }), JSON.stringify({ phase: 'pre', date: 'today' })]) {
+    for (const bad of [
+      '{',
+      '"x"',
+      'null',
+      JSON.stringify({ phase: 'lunch', date: TODAY, from: 'pre' }),
+      JSON.stringify({ phase: 'pre', date: 'today', from: 'pre' }),
+      JSON.stringify({ phase: 'pre', date: TODAY, from: 'noon' }),
+    ]) {
       s.raw.set(PIN_KEY, bad)
       expect(readPin(s)).toBeNull()
     }
@@ -226,7 +277,7 @@ describe('the pin in storage', () => {
       },
     }
     expect(readPin(throwing)).toBeNull()
-    expect(() => writePin(throwing, { phase: 'pre', date: TODAY })).not.toThrow()
+    expect(() => writePin(throwing, { phase: 'pre', date: TODAY, from: 'pre' })).not.toThrow()
     expect(readPin(null)).toBeNull()
     expect(() => writePin(null, null)).not.toThrow()
   })

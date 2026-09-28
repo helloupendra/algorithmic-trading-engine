@@ -99,6 +99,34 @@ A check that *should* have been possible but was not is never shown as fine:
 - **A check crashes on a bug:** it becomes a *worth a look* item naming the
   file, and the rest of the report is unaffected.
 
+## On the Desk
+
+The Desk (`/desk`, admin) shows the latest checkup in its status strip and, in
+the before-the-open and after-the-close views, as a panel. A checkup is what
+Sentinel saw when it ran. On 28 Sep the 08:55 one said "23 of 23 planned runs
+are not live" (true then: the plan deploys after the open), all 23 were live by
+09:19, and at 13:15 the Desk still read *Needs action*. So the Desk now reads
+again the items it can check itself, from the answers it already has
+(`web/src/lib/checkupNow.ts`):
+
+| Item | Read again from |
+| --- | --- |
+| Morning plan | `GET /api/Desk/plan` for every account, and the day's runs for when each first went live: "Done 09:19 — 23 of 23 planned runs live". A planned run stopped by its stop-loss, target, the close or a person counts as started; one stopped by a fault does not. |
+| Dhan token, FYERS backup | `GET /api/Providers`: signed in or out, and whether Dhan's token outlasts the day's last close. |
+| Live feeds | `GET /api/Feeds`, between 08:50 and the NSE close on a trading day only. |
+
+Each item is marked **now** (read again) or with the checkup's time (as
+Sentinel saw it). An item that changed shows its current state, with
+Sentinel's words one click away. The verdict line is Sentinel's own while its
+numbers still hold; otherwise the Desk says its own, marked *as of now*, with
+"At 08:55 Sentinel said: …" under it. When everything Sentinel listed is fine
+again it reads **Before the open: done 09:19**, and after the open the morning
+list folds to that one line unless something is still wrong. A live answer
+counts only if it arrived after the checkup and within the last five minutes;
+a failed checkup, one older than a day and the weekly one are shown as they
+are. **Check again** asks Sentinel for an on-request checkup (`POST
+/api/Checkups/run`) and shows it waiting until the new report lands.
+
 ## Runs stuck in Pending
 
 Before the Live Runner rebuild (3 Sep 2026), a live run was created Pending
