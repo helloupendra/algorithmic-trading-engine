@@ -8,12 +8,13 @@
  * the ladder went; the chain is read in one place.
  */
 
-import { useState } from 'react'
-import { useAddWatchlistSymbol, useInstrumentSearch } from '../../lib/queries'
+import { useEffect, useRef, useState } from 'react'
+import { useAddWatchlistSymbol, useInstrumentMasters, useInstrumentSearch } from '../../lib/queries'
 import { formatNumber } from '../../lib/format'
 import { Badge, InlineError, Panel, QueryBoundary } from '../../components/ui'
 import { IconPlus, IconSearch } from '../../components/icons'
 import type { Instrument } from '../../lib/types'
+import './data.css'
 
 const TYPE_FILTERS = [
   { key: undefined, label: 'All' },
@@ -101,6 +102,25 @@ function MasterSearchPanel() {
   const [type, setType] = useState<string | undefined>(undefined)
   const [selected, setSelected] = useState<Instrument | null>(null)
   const search = useInstrumentSearch(query, type)
+  const masters = useInstrumentMasters()
+  const leadRef = useRef<HTMLDivElement>(null)
+
+  // On a phone the detail card sits above the results (data.css), so a tap
+  // on a row further down is answered by bringing the card back into view.
+  useEffect(() => {
+    if (!selected || !window.matchMedia('(max-width: 760px)').matches) return
+    leadRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [selected])
+
+  // What the search covers, from the masters on this host: the copy used to
+  // say "1.7 lakh" and "NSE + BSE" by hand while an MCX master sat below it.
+  const masterList = masters.data?.masters ?? []
+  const instrumentCount = masterList.reduce((sum, m) => sum + m.activeRowsInDb, 0)
+  const exchanges = [...new Set(masterList.map((m) => m.exchange))]
+  const scope =
+    instrumentCount > 0
+      ? `${formatNumber(instrumentCount)} instruments across ${exchanges.join(', ')}`
+      : 'the instrument master'
 
   return (
     <Panel
@@ -127,7 +147,7 @@ function MasterSearchPanel() {
       <input
         className="field__input"
         style={{ width: '100%', marginBottom: 10 }}
-        placeholder="Search 1.7 lakh instruments — symbol or company name, e.g. RELIANCE, BANKNIFTY, GOLD…"
+        placeholder="Symbol or company name…"
         value={query}
         onChange={(e) => {
           setQuery(e.target.value)
@@ -137,8 +157,8 @@ function MasterSearchPanel() {
 
       {query.trim().length < 2 ? (
         <p className="empty">
-          Type at least two characters. The master covers NSE cash + F&O and BSE F&O (top 50
-          matches shown).
+          Type at least two characters to search {scope} — a symbol or a company name, e.g. RELIANCE,
+          BANKNIFTY, GOLD. Top 50 matches shown.
         </p>
       ) : (
         <div className="two-col" style={{ alignItems: 'start' }}>
@@ -160,7 +180,21 @@ function MasterSearchPanel() {
                         className={selected?.id === inst.id ? 'row--selected' : ''}
                         onClick={() => setSelected(inst)}
                       >
-                        <td className="mono">{inst.symbol}</td>
+                        <td className="mono">
+                          {/* A real button, so the keyboard can pick a row too (the
+                              row's onClick keeps the whole row a pointer target). */}
+                          <button
+                            type="button"
+                            className="row-pick"
+                            aria-pressed={selected?.id === inst.id}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setSelected(inst)
+                            }}
+                          >
+                            {inst.symbol}
+                          </button>
+                        </td>
                         <td className="muted">{inst.description}</td>
                         <td>
                           <Badge tone="neutral">{inst.instrumentType}</Badge>
@@ -173,17 +207,19 @@ function MasterSearchPanel() {
             )}
           </QueryBoundary>
 
-          {selected ? (
-            /* key remounts the card per instrument so mutation state
-               (the "added" alert) never leaks across selections */
-            <InstrumentDetail key={selected.id} instrument={selected} />
-          ) : (
-            <div className="card card--dashed" style={{ textAlign: 'center' }}>
-              <p className="card__muted" style={{ margin: 0 }}>
-                Click a row to see lot size, tick size, expiry and watch it live.
-              </p>
-            </div>
-          )}
+          <div className="two-col__lead" ref={leadRef}>
+            {selected ? (
+              /* key remounts the card per instrument so mutation state
+                 (the "added" alert) never leaks across selections */
+              <InstrumentDetail key={selected.id} instrument={selected} />
+            ) : (
+              <div className="card card--dashed" style={{ textAlign: 'center' }}>
+                <p className="card__muted" style={{ margin: 0 }}>
+                  Select a row to see lot size, tick size, expiry and watch it live.
+                </p>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </Panel>
@@ -192,7 +228,7 @@ function MasterSearchPanel() {
 
 export function InstrumentsFnoPage() {
   return (
-    <div className="page">
+    <div className="page data-page">
       <header className="page__header">
         <div>
           <h1 className="page__title">Instruments</h1>

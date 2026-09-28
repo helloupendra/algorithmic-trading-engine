@@ -95,6 +95,22 @@ const LEVELS: LevelSpec[] = [
   },
 ]
 
+/**
+ * Fields in pairs. The per-leg level has four; laid out as one auto-fit grid
+ * they split 3 + 1 wherever four abreast do not fit (the launch dialog's
+ * ~376px stack), so each pair is its own two-column grid and the pairs sit
+ * side by side only when both fit — a quartet reads as a row of four or as
+ * 2 × 2, never as three and an orphan.
+ */
+function inPairs(fields: FieldSpec[]): FieldSpec[][] {
+  const out: FieldSpec[][] = []
+  for (let i = 0; i < fields.length; i += 2) out.push(fields.slice(i, i + 2))
+  return out
+}
+
+/** Two pairs side by side from 2 × (2 × 118px + 8px) + 8px; one under the other below that. */
+const PAIRS_GRID = { gridTemplateColumns: 'repeat(auto-fit, minmax(244px, 1fr))' } as const
+
 /** "· a 20-point stop is ₹1,300" — what the typed points are worth at this size. */
 function legPointsHint(value: RiskDraft, unitValue: number): string {
   const parts: string[] = []
@@ -163,6 +179,17 @@ export function RiskRulesForm({
   }
 
   let first = true
+  function renderFields(fields: FieldSpec[]) {
+    return (
+      <div className="risk-form__fields" style={PAIRS_GRID}>
+        {inPairs(fields).map((pair) => (
+          <div key={pair[0].key} className="risk-form__fields">
+            {pair.map(renderField)}
+          </div>
+        ))}
+      </div>
+    )
+  }
   function renderField(f: FieldSpec) {
     const id = `${idPrefix}-${f.key}`
     const invalid = invalidField === f.key || riskFieldInvalid(value[f.key])
@@ -232,10 +259,10 @@ export function RiskRulesForm({
                   : 'A hit closes that day and the next one starts again from zero, as running it live every morning would.'}
               </span>
             )}
-            <div className="risk-form__fields">{level.fields.map(renderField)}</div>
+            {renderFields(level.fields)}
             <div className="risk-form__trail" role="group" aria-label={`${level.name} trailing`}>
               <span className="risk-form__trail-name">Trailing</span>
-              <div className="risk-form__fields">{level.trailing.fields.map(renderField)}</div>
+              {renderFields(level.trailing.fields)}
               <span className="risk-form__help">{level.trailing.help}</span>
             </div>
           </div>

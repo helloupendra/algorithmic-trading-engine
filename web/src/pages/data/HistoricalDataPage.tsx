@@ -10,6 +10,7 @@ import { useSearchParams } from 'react-router-dom'
 import {
   useBackfillHistory,
   useDataCoverage,
+  useInstrumentMasters,
   useLiveBars,
   useOptionsBackfill,
   useStoredCandles,
@@ -34,11 +35,14 @@ import { IconCandles, IconDownload, IconLayers } from '../../components/icons'
 import {
   CATEGORY_ORDER,
   classifySymbol,
+  formatBars,
   formatResolution,
+  parseOptionSymbol,
   resolutionRank,
   type SymbolCategory,
 } from '../../lib/symbols'
 import type { CandleDto } from '../../lib/types'
+import './data.css'
 
 type SourceFilter = 'all' | 'backfill' | 'live'
 
@@ -142,7 +146,7 @@ function CoverageBrowser({
               <span>
                 {formatDateTime(row.fromUtc)} → {formatDateTime(row.toUtc)}
               </span>
-              <span>{formatNumber(row.barCount)} bars</span>
+              <span>{formatBars(row.barCount)}</span>
             </span>
           </button>
         ))}
@@ -196,7 +200,7 @@ function SelectionDetail({ row }: { row: CoverageRow }) {
         }
         actions={
           <span className="muted" style={{ fontSize: 12 }}>
-            {formatNumber(row.barCount)} bars · {formatDateTime(row.fromUtc)} →{' '}
+            {formatBars(row.barCount)} · {formatDateTime(row.fromUtc)} →{' '}
             {formatDateTime(row.toUtc)}
           </span>
         }
@@ -311,7 +315,7 @@ function BackfillPanel({ selected, initialSymbol }: { selected: CoverageRow | nu
       }
     >
       <div className="form-row">
-        <div className="field">
+        <div className="field field--wide">
           <label className="field__label" htmlFor="backfill-symbol">Symbol</label>
           <SymbolCombobox
               includeExpired id="backfill-symbol" value={symbol} onChange={setSymbol} />
@@ -411,10 +415,34 @@ function BackfillPanel({ selected, initialSymbol }: { selected: CoverageRow | nu
 }
 
 /** ATM±N option-chain backfill around an index underlying. */
-function OptionsBackfillPanel() {
+function OptionsBackfillPanel({ rows }: { rows: CoverageRow[] }) {
   const mutate = useOptionsBackfill()
+  const masters = useInstrumentMasters()
   const [underlying, setUnderlying] = useState('BANKNIFTY')
   const [exchange, setExchange] = useState('NSE')
+
+  // The exchanges are the symbol masters on this host, so a master added
+  // later (MCX arrived after this form was written) is offered without a
+  // code change; NSE and BSE stand in until the masters have loaded.
+  const exchanges = useMemo(() => {
+    const known = [...new Set((masters.data?.masters ?? []).map((m) => m.exchange.toUpperCase()))]
+    const list = known.length > 0 ? known : ['NSE', 'BSE']
+    return list.includes(exchange) ? list : [...list, exchange]
+  }, [masters.data, exchange])
+
+  // The underlyings already stored on that exchange, read off the option
+  // symbols in the coverage list — the names the API resolves a chain by
+  // (BANKNIFTY, not NIFTYBANK-INDEX). Typing stays allowed for a first chain.
+  const underlyings = useMemo(() => {
+    const seen = new Set<string>()
+    for (const r of rows) {
+      const i = r.symbol.indexOf(':')
+      if (i === -1 || r.symbol.slice(0, i).toUpperCase() !== exchange) continue
+      const parsed = parseOptionSymbol(r.symbol)
+      if (parsed) seen.add(parsed.underlying)
+    }
+    return [...seen].sort()
+  }, [rows, exchange])
   const [strikes, setStrikes] = useState(2)
   const [step, setStep] = useState(100)
   // Canonical resolution strings ('1'/'5'/'15'/'D') — the store and the
@@ -440,17 +468,30 @@ function OptionsBackfillPanel() {
         <label className="field">
           <span className="field__label">Exchange</span>
           <select className="field__input" value={exchange} onChange={(e) => setExchange(e.target.value)}>
-            <option value="NSE">NSE</option>
-            <option value="BSE">BSE</option>
+            {exchanges.map((x) => (
+              <option key={x} value={x}>
+                {x}
+              </option>
+            ))}
           </select>
         </label>
+        {/* Not field--wide: an underlying fits half a phone row, and pairing it
+            with Exchange saves the row that Exchange alone would waste. */}
         <label className="field">
           <span className="field__label">Underlying</span>
           <input
             className="field__input"
+            list="chain-underlyings"
+            autoComplete="off"
+            placeholder="BANKNIFTY"
             value={underlying}
             onChange={(e) => setUnderlying(e.target.value.toUpperCase())}
           />
+          <datalist id="chain-underlyings">
+            {underlyings.map((u) => (
+              <option key={u} value={u} />
+            ))}
+          </datalist>
         </label>
         <label className="field">
           <span className="field__label">Strikes each side</span>
@@ -598,7 +639,7 @@ export function HistoricalDataPage() {
     setSelectedKey({ symbol: row.symbol, resolution: row.resolution, source: row.source })
 
   return (
-    <div className="page">
+    <div className="page data-page">
       <header className="page__header">
         <div>
           <h1 className="page__title">Historical data</h1>
@@ -625,9 +666,9 @@ export function HistoricalDataPage() {
             {selected ? (
               <SelectionDetail row={selected} />
             ) : (
-              <div className="card card--dashed page--centered" style={{ minHeight: 320 }}>
+              <div className="card card--dashed page--centered cov-placeholder">
                 <IconCandles style={{ width: 28, height: 28, color: 'var(--text-3)' }} />
-                <p className="card__muted">Select a range on the left to chart it.</p>
+                <p className="card__muted">Select a range to chart it.</p>
               </div>
             )}
           </div>
@@ -635,7 +676,7 @@ export function HistoricalDataPage() {
       </QueryBoundary>
 
       <BackfillPanel selected={selected} initialSymbol={wantedSymbol} />
-      <OptionsBackfillPanel />
+      <OptionsBackfillPanel rows={rows} />
     </div>
   )
 }

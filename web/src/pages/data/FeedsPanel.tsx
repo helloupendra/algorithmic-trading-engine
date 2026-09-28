@@ -125,7 +125,8 @@ export function FeedsPanel() {
                       </td>
                       <td className={tone}>{state}</td>
                       <td className="r">
-                        <div className="toolbar" style={{ justifyContent: 'flex-end', gap: 6 }}>
+                        {/* nowrap: inside a nowrap cell the toolbar's wrap put Output under Start on a phone. */}
+                        <div className="toolbar" style={{ justifyContent: 'flex-end', gap: 6, flexWrap: 'nowrap' }}>
                           {control === 'stop' && (
                             <button
                               className="btn btn--danger btn--sm"

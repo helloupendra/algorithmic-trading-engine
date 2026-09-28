@@ -33,6 +33,28 @@ export function classifySymbol(symbol: string): SymbolCategory {
   return 'Other'
 }
 
+/**
+ * The index ticker tiles: the well-known indices first, in the order given,
+ * then every other index on the recording list — a new index on the list
+ * gets a tile without a code change.
+ */
+export function indexTileSymbols(preferred: readonly string[], watched: readonly string[]): string[] {
+  const out = [...preferred]
+  const seen = new Set(preferred)
+  for (const symbol of [...watched].sort()) {
+    if (seen.has(symbol) || classifySymbol(symbol) !== 'Index') continue
+    seen.add(symbol)
+    out.push(symbol)
+  }
+  return out
+}
+
+/** "BANKEX" from "BSE:BANKEX-INDEX", for a tile with no hand-written label. */
+export function indexLabel(symbol: string): string {
+  const body = symbol.includes(':') ? symbol.slice(symbol.indexOf(':') + 1) : symbol
+  return body.replace(/-INDEX$/i, '')
+}
+
 /** Sensible ordering for resolution columns: intraday minutes first, then D. */
 export function resolutionRank(resolution: string): number {
   const r = resolution.toLowerCase()
@@ -45,6 +67,13 @@ export function resolutionRank(resolution: string): number {
 export interface CoverageColumn {
   key: string
   label: string
+  /** The heading a phone shows: "1m", "1m live", "D" — the matrix has six columns in 320px. */
+  short: string
+}
+
+/** A range's bar count, "1 bar" when there is one — the list printed "1 bars". */
+export function formatBars(n: number): string {
+  return `${n.toLocaleString('en-IN')} ${n === 1 ? 'bar' : 'bars'}`
 }
 
 /** A coverage row's column: its source and resolution, for the matrix to group by. */
@@ -70,8 +99,11 @@ export function coverageColumns(rows: readonly { resolution: string; source: str
     .map(([key, c]) => {
       const r = c.resolution.toLowerCase()
       const minutes = /^(\d+)m?$/.exec(r)?.[1]
-      const base = r === 'd' || r === '1d' ? 'Day' : minutes ? `${minutes} min` : c.resolution
-      return { key, label: c.source === 'live' ? `${base} · live` : base }
+      const day = r === 'd' || r === '1d'
+      const base = day ? 'Day' : minutes ? `${minutes} min` : c.resolution
+      const shortBase = day ? 'D' : minutes ? `${minutes}m` : c.resolution
+      const live = c.source === 'live'
+      return { key, label: live ? `${base} · live` : base, short: live ? `${shortBase} live` : shortBase }
     })
 }
 
