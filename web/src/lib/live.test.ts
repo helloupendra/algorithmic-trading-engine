@@ -469,6 +469,42 @@ describe('LiveFeed pushes', () => {
     expect(feed.tick('A')).toMatchObject({ lastTradedPrice: 102, bidPrice: 99.5, receivedAtMs: 1_000_250 })
   })
 
+  it("lands a push in the feed's spelling on a page that asked in another, as the hub matches it", async () => {
+    const { feed, made } = feedWith()
+    feed.start()
+    feed.acquire(['nse:nifty50-index '])
+    await settle()
+    expect(made[0].sent('Subscribe')).toEqual([['nse:nifty50-index ']])
+    const woken = vi.fn()
+    feed.listen(['nse:nifty50-index '], woken)
+
+    made[0].push([{ symbol: 'NSE:NIFTY50-INDEX', lastTradedPrice: 25_100 }])
+    expect(woken).toHaveBeenCalledTimes(1)
+    expect(feed.versionOf('nse:nifty50-index ')).toBeGreaterThan(0)
+    // Read back under the page's spelling, carrying it, so its overlay finds its rows.
+    expect(feed.ticksFor(['nse:nifty50-index '])).toEqual(
+      new Map([['nse:nifty50-index ', expect.objectContaining({ symbol: 'nse:nifty50-index ', lastTradedPrice: 25_100 })]]),
+    )
+  })
+
+  it('holds two spellings of one symbol as one subscription, given back when the last goes', async () => {
+    const { feed, made } = feedWith()
+    feed.start()
+    const upper = feed.acquire(['MCX:CRUDEOIL26OCTFUT'])
+    const lower = feed.acquire(['mcx:crudeoil26octfut'])
+    await settle()
+    expect(made[0].sent('Subscribe')).toEqual([['MCX:CRUDEOIL26OCTFUT']])
+    upper()
+    await settle()
+    expect(made[0].count('Unsubscribe')).toBe(0)
+    made[0].push([{ symbol: 'MCX:CRUDEOIL26OCTFUT', lastTradedPrice: 5_310 }])
+    expect(feed.tick('mcx:crudeoil26octfut')).toMatchObject({ lastTradedPrice: 5_310 })
+    lower()
+    await settle()
+    expect(made[0].sent('Unsubscribe')).toEqual([['MCX:CRUDEOIL26OCTFUT']])
+    expect(feed.subscribed.size).toBe(0)
+  })
+
   it('hands every push to the tick listeners, the symbols nobody asked for included', async () => {
     const { feed, made } = feedWith()
     const heard = vi.fn()

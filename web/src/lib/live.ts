@@ -9,6 +9,8 @@
  *
  * - Symbols are reference-counted. Two panels showing NIFTY are one server
  *   subscription, and it is dropped only when the last of them unmounts.
+ *   They are matched as the hub matches them, trimmed and in any case, so a
+ *   push in the feed's spelling reaches a page that spelled it otherwise.
  * - Asks are batched. A route change unmounts one page and mounts the next
  *   in the same moment; gathering the changes for a tenth of a second turns
  *   that into one Unsubscribe and one Subscribe, and the symbols both pages
@@ -117,6 +119,16 @@ export interface HubLike {
 
 /** The hub's per-connection symbol limit; Subscribe throws past it. */
 export const SYMBOL_CAP = 400
+
+/**
+ * How the hub matches a symbol (LiveFeedSubscriptions.KeyOf): trimmed and
+ * upper-cased. It pushes in the feed's own spelling whatever spelling was
+ * asked, so the console matches the same way or it drops every push for a
+ * symbol a page spelled differently.
+ */
+export function symbolKey(symbol: string): string {
+  return symbol.trim().toUpperCase()
+}
 
 /** How long symbol changes are gathered before they go to the hub. */
 const BATCH_MS = 100
@@ -325,12 +337,17 @@ export class LiveFeed {
   private allState: LiveAllState = 'off'
   private allHolders = 0
 
+  // Every map below is keyed by symbolKey(), the hub's own matching rule, so
+  // a page asking for "nse:nifty50-index" gets the pushes the hub sends in the
+  // feed's spelling, and two spellings of one symbol are one subscription.
   private readonly refs = new Map<string, number>()
+  /** The spelling each held symbol is asked of the hub in: the first a page used. */
+  private readonly spellings = new Map<string, string>()
   /** When each symbol was last asked for (a counter): the cap keeps the newest. */
   private readonly askedAt = new Map<string, number>()
   private asks = 0
-  /** What the hub has been told to send this connection. */
-  private readonly onServer = new Set<string>()
+  /** What the hub has been told to send this connection, with the spelling it was told. */
+  private readonly onServer = new Map<string, string>()
 
   private readonly latest = new Map<string, LiveTick>()
   private readonly versions = new Map<string, number>()
@@ -360,17 +377,31 @@ export class LiveFeed {
     return this.allState
   }
 
-  /** The symbols the hub is sending this connection now. */
+  /** The symbols the hub is sending this connection now, as they were asked for. */
   get subscribed(): ReadonlySet<string> {
-    return this.onServer
+    return new Set(this.onServer.values())
   }
 
   tick(symbol: string): LiveTick | undefined {
-    return this.latest.get(symbol)
+    return this.latest.get(symbolKey(symbol))
   }
 
   versionOf(symbol: string): number {
-    return this.versions.get(symbol) ?? 0
+    return this.versions.get(symbolKey(symbol)) ?? 0
+  }
+
+  /**
+   * The newest tick of each symbol that has one, under the spelling asked
+   * and carrying it: an overlay matches its rows by the symbol it asked for,
+   * not by the feed's spelling of it.
+   */
+  ticksFor(symbols: readonly string[]): Map<string, LiveTick> {
+    const map = new Map<string, LiveTick>()
+    for (const s of symbols) {
+      const tick = this.tick(s)
+      if (tick) map.set(s, tick.symbol === s ? tick : { ...tick, symbol: s })
+    }
+    return map
   }
 
   // ---- listening (arrow properties: handed straight to useSyncExternalStore)
@@ -381,16 +412,17 @@ export class LiveFeed {
   }
 
   readonly listen = (symbols: readonly string[], listener: Listener): (() => void) => {
-    for (const s of symbols) {
-      let set = this.symbolListeners.get(s)
-      if (!set) this.symbolListeners.set(s, (set = new Set()))
+    const keys = [...new Set(symbols.map(symbolKey))]
+    for (const k of keys) {
+      let set = this.symbolListeners.get(k)
+      if (!set) this.symbolListeners.set(k, (set = new Set()))
       set.add(listener)
     }
     return () => {
-      for (const s of symbols) {
-        const set = this.symbolListeners.get(s)
+      for (const k of keys) {
+        const set = this.symbolListeners.get(k)
         set?.delete(listener)
-        if (set?.size === 0) this.symbolListeners.delete(s)
+        if (set?.size === 0) this.symbolListeners.delete(k)
       }
     }
   }
@@ -414,23 +446,30 @@ export class LiveFeed {
 
   /** Ask for these symbols' prices; the returned function gives them back. */
   acquire(symbols: readonly string[]): () => void {
-    const list = [...new Set(symbols.filter((s) => typeof s === 'string' && s.length > 0))]
-    for (const s of list) {
-      this.refs.set(s, (this.refs.get(s) ?? 0) + 1)
-      this.askedAt.set(s, ++this.asks)
+    const asked = new Map<string, string>()
+    for (const s of symbols) {
+      const k = typeof s === 'string' ? symbolKey(s) : ''
+      if (k && !asked.has(k)) asked.set(k, s)
+    }
+    const list = [...asked.keys()]
+    for (const k of list) {
+      this.refs.set(k, (this.refs.get(k) ?? 0) + 1)
+      this.askedAt.set(k, ++this.asks)
+      if (!this.spellings.has(k)) this.spellings.set(k, asked.get(k)!)
     }
     if (list.length) this.schedule()
     let released = false
     return () => {
       if (released) return
       released = true
-      for (const s of list) {
-        const n = (this.refs.get(s) ?? 0) - 1
+      for (const k of list) {
+        const n = (this.refs.get(k) ?? 0) - 1
         if (n > 0) {
-          this.refs.set(s, n)
+          this.refs.set(k, n)
         } else {
-          this.refs.delete(s)
-          this.askedAt.delete(s)
+          this.refs.delete(k)
+          this.askedAt.delete(k)
+          this.spellings.delete(k)
         }
       }
       if (list.length) this.schedule()
@@ -624,15 +663,16 @@ export class LiveFeed {
     const still = () => this.hub === hub && this.generation === generation
 
     const desired = this.desired()
-    const drop = [...this.onServer].filter((s) => !desired.has(s))
-    const add = [...desired].filter((s) => !this.onServer.has(s))
+    const drop = [...this.onServer.keys()].filter((k) => !desired.has(k))
+    const add = [...desired].filter((k) => !this.onServer.has(k))
 
     if (drop.length) {
-      for (const s of drop) this.onServer.delete(s)
+      const told = drop.map((k) => this.onServer.get(k)!)
+      for (const k of drop) this.onServer.delete(k)
       // A symbol no longer sent must not go on being shown as the latest price.
-      this.forget(drop.filter((s) => !this.refs.has(s) || this.allState !== 'on'))
+      this.forget(drop.filter((k) => !this.refs.has(k) || this.allState !== 'on'))
       try {
-        await hub.invoke('Unsubscribe', drop)
+        await hub.invoke('Unsubscribe', told)
       } catch {
         // Nothing to undo: a price it goes on sending is still a real price
         // (and is not kept unless a screen holds it); a reconnect starts from none.
@@ -641,12 +681,12 @@ export class LiveFeed {
     }
 
     if (add.length) {
-      for (const s of add) this.onServer.add(s)
+      for (const k of add) this.onServer.set(k, this.spellings.get(k) ?? k)
       try {
-        await hub.invoke('Subscribe', add)
+        await hub.invoke('Subscribe', add.map((k) => this.onServer.get(k)!))
       } catch (err) {
         if (!still()) return
-        for (const s of add) this.onServer.delete(s)
+        for (const k of add) this.onServer.delete(k)
         if (isMissingMethod(err)) {
           this.toLegacy()
           return
@@ -707,15 +747,16 @@ export class LiveFeed {
     for (const item of raw) {
       const symbol = (item as { symbol?: unknown } | null)?.symbol
       if (typeof symbol !== 'string') continue
-      const tick = normalizeTick(item, at, this.latest.get(symbol))
+      const key = symbolKey(symbol)
+      const tick = normalizeTick(item, at, this.latest.get(key))
       if (!tick) continue
       changed.push(tick)
       // Kept only for what a screen asked for; the everything-feed's other
       // symbols reach the quotes cache through the tick listeners alone.
-      if (!this.refs.has(symbol)) continue
-      this.latest.set(symbol, tick)
-      this.versions.set(symbol, ++this.version)
-      for (const l of this.symbolListeners.get(symbol) ?? []) notify.add(l)
+      if (!this.refs.has(key)) continue
+      this.latest.set(key, tick)
+      this.versions.set(key, ++this.version)
+      for (const l of this.symbolListeners.get(key) ?? []) notify.add(l)
     }
     if (!changed.length) return
     // Once each, however many of its symbols the push carried: one render a push.
@@ -728,12 +769,12 @@ export class LiveFeed {
     if (event) each(this.eventListeners, event)
   }
 
-  private forget(symbols: readonly string[]): void {
+  private forget(keys: readonly string[]): void {
     const notify = new Set<Listener>()
-    for (const s of symbols) {
-      if (!this.latest.delete(s)) continue
-      this.versions.set(s, ++this.version)
-      for (const l of this.symbolListeners.get(s) ?? []) notify.add(l)
+    for (const k of keys) {
+      if (!this.latest.delete(k)) continue
+      this.versions.set(k, ++this.version)
+      for (const l of this.symbolListeners.get(k) ?? []) notify.add(l)
     }
     each(notify, undefined)
   }
@@ -852,11 +893,7 @@ export function useLivePrices(symbols: readonly string[]): ReadonlyMap<string, L
     const versions = list.map((s) => liveFeed.versionOf(s))
     const held = cache.current
     if (held && held.list === list && held.versions.every((v, i) => v === versions[i])) return held.map
-    const map = new Map<string, LiveTick>()
-    for (const s of list) {
-      const tick = liveFeed.tick(s)
-      if (tick) map.set(s, tick)
-    }
+    const map = liveFeed.ticksFor(list)
     cache.current = { list, versions, map }
     return map
   }, [list])
