@@ -158,6 +158,48 @@ async function refreshAccessToken(): Promise<string | null> {
   return refreshInFlight
 }
 
+/** When a JWT's `exp` says it stops working, in ms since the epoch; null when it cannot be read. */
+export function tokenExpiresAtMs(token: string | null | undefined): number | null {
+  const payload = token?.split('.')[1]
+  if (!payload) return null
+  try {
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const json = atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, '='))
+    const exp = (JSON.parse(json) as { exp?: unknown } | null)?.exp
+    return typeof exp === 'number' && Number.isFinite(exp) ? exp * 1000 : null
+  } catch {
+    return null
+  }
+}
+
+/** How long before its expiry a token is refreshed: a connect takes a moment, and clocks drift. */
+const TOKEN_REFRESH_SKEW_MS = 60_000
+
+/**
+ * The access token, refreshed first when it has expired or expires within a
+ * minute. For a caller that cannot replay a request on a 401 the way apiFetch
+ * does: the live hub's websocket reads a token on every (re)connect, and the
+ * API closes a hub connection when the token it opened with expires (about an
+ * hour), so the reconnect sent that expired token and was refused until some
+ * REST call happened to refresh it.
+ *
+ * A token whose expiry cannot be read is returned as it is, and so is the old
+ * one when the refresh fails: whether the session is over is for apiFetch's
+ * 401 handling to decide, not for a socket that cannot tell a refused
+ * refresh from a network blip.
+ */
+export async function freshAccessToken(
+  store: { readonly access: string | null } = tokenStore,
+  refresh: () => Promise<string | null> = refreshAccessToken,
+  now: () => number = Date.now,
+): Promise<string | null> {
+  const token = store.access
+  if (!token) return null
+  const expiresAt = tokenExpiresAtMs(token)
+  if (expiresAt == null || expiresAt - TOKEN_REFRESH_SKEW_MS > now()) return token
+  return (await refresh()) ?? token
+}
+
 interface RequestOptions extends Omit<RequestInit, 'body'> {
   body?: unknown
   /** Skip auth entirely — used by login, which has no token yet. */
