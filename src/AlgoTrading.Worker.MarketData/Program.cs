@@ -37,6 +37,7 @@ builder.Services.AddDbContext<TradingDbContext>(options =>
 builder.Services.AddScoped<ITickBatchProcessor, TickBatchProcessor>();
 
 // Worker
+builder.Services.AddSingleton<ITickStream, RedisTickStream>();
 builder.Services.AddHostedService<RedisTickConsumerService>();
 
 var host = builder.Build();
