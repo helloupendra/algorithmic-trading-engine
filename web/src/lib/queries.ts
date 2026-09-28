@@ -16,9 +16,10 @@ import { keepPreviousData, useInfiniteQuery, useMutation, useQueries, useQuery, 
 import type { InfiniteData } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
+import { answerAsOf, keepSentStamp, stampSent } from './asOf'
 import { livePoll, useLiveAllState, useLiveConnection, useLivePrices } from './live'
 import type { LiveConnection } from './live'
-import { pulseBehind, pulseWithTicks } from './liveMarks'
+import { pulseBehind, pulseWithTicks, runViewSymbols, runViewWithTicks, watchlistBehind, watchlistWithTicks } from './liveMarks'
 import { ordersQuery } from './orders'
 import type { OrdersFilter } from './orders'
 import type {
@@ -106,7 +107,9 @@ export function useLatestQuotes() {
   const all = useLiveAllState()
   return useQuery({
     queryKey: ['quotes', 'all'],
-    queryFn: () => api.get<LiveQuote[]>('/api/LiveData/latest/all'),
+    // Stamped with when it was asked (lib/asOf.ts): pushes are laid over it.
+    queryFn: stampSent(() => api.get<LiveQuote[]>('/api/LiveData/latest/all')),
+    structuralSharing: keepSentStamp,
     refetchInterval: all === 'off' || all === 'on' ? POLL_SLOW : POLL_FAST,
   })
 }
@@ -114,10 +117,12 @@ export function useLatestQuotes() {
 export function useLiveBars(symbol: string | null, take = 500) {
   return useQuery({
     queryKey: ['bars', symbol, take],
-    queryFn: () =>
+    queryFn: stampSent(() =>
       api.get<LiveBar[]>(
         `/api/LiveData/bars?symbol=${encodeURIComponent(symbol!)}&take=${take}`,
       ),
+    ),
+    structuralSharing: keepSentStamp,
     enabled: !!symbol,
     refetchInterval: POLL_SLOW,
   })
@@ -850,7 +855,9 @@ function liveViewQuery(runId: number, enabled: boolean, connection: LiveConnecti
   const pollMs = livePoll(connection, POLL_LIVE_VIEW_PUSHED, POLL_LIVE_VIEW)
   return {
     queryKey: ['strategy', 'live', runId] as const,
-    queryFn: () => api.get<StrategyLiveView>(`/api/Strategy/runs/${runId}/live`),
+    // Stamped with when it was asked (lib/asOf.ts): the run card re-prices it from pushes.
+    queryFn: stampSent(() => api.get<StrategyLiveView>(`/api/Strategy/runs/${runId}/live`)),
+    structuralSharing: keepSentStamp,
     enabled,
     // A finished run's view cannot change, so a stopped card is fetched once and
     // then left alone (the server marks-to-market on every call). A run id is
@@ -866,15 +873,41 @@ export function useStrategyLive(runId: number, enabled: boolean) {
 }
 
 /**
- * Live views for a set of runs at once (page-level totals). Shares the cache
- * key with useStrategyLive, so a RunCard and the stat row never double fetch
- * the same run.
+ * Live views for a set of runs at once. Shares the cache key with
+ * useStrategyLive, so a RunCard and the stat row never double fetch the same
+ * run. Page totals read useStrategyLivesRepriced instead.
  */
 export function useStrategyLives(runIds: number[]) {
   const connection = useLiveConnection()
   return useQueries({
     queries: runIds.map((runId) => liveViewQuery(runId, true, connection)),
   })
+}
+
+/**
+ * One run's view as its card shows it: re-priced at the pushed prices of its
+ * open legs and spot (liveMarks.runViewWithTicks), so the LTP column, each
+ * row's P&L, the tiles and the risk meters move together. The poll still
+ * brings everything a price does not: fills, stops, realized P&L, charges.
+ */
+export function useRepricedRunView(answer: StrategyLiveView | undefined, answeredAtMs: number): StrategyLiveView | undefined {
+  const symbols = useMemo(() => (answer ? runViewSymbols(answer) : []), [answer])
+  const prices = useLivePrices(symbols)
+  return useMemo(() => (answer ? runViewWithTicks(answer, prices, answeredAtMs) : answer), [answer, prices, answeredAtMs])
+}
+
+/**
+ * useStrategyLives with each view re-priced exactly as its card re-prices it,
+ * for the totals above the cards (the Live runner's "Live P&L", the trader's
+ * Library). With the socket up a view is read every 15 s; the totals summed
+ * the raw answers, so they sat up to 15 s behind the cards under them, which
+ * move with every push, and the header was not the sum of the cards.
+ */
+export function useStrategyLivesRepriced(runIds: number[]): Array<StrategyLiveView | undefined> {
+  const lives = useStrategyLives(runIds)
+  // useLivePrices keys on the sorted set, so a fresh array each render asks the hub nothing new.
+  const prices = useLivePrices(lives.flatMap((q) => (q.data ? runViewSymbols(q.data) : [])))
+  return lives.map((q) => (q.data ? runViewWithTicks(q.data, prices, answerAsOf(q)) : undefined))
 }
 
 /**
@@ -1708,38 +1741,61 @@ export function useMarketPulse() {
   const connection = useLiveConnection()
   const query = useQuery({
     queryKey: ['market', 'pulse'],
-    queryFn: () => api.get<import('./types').MarketPulseResponse>('/api/MarketPulse'),
+    queryFn: stampSent(() => api.get<import('./types').MarketPulseResponse>('/api/MarketPulse')),
+    structuralSharing: keepSentStamp,
     refetchInterval: livePoll(connection, 30_000, POLL_FAST),
   })
   const answer = query.data
-  const answeredAt = query.dataUpdatedAt
+  const answeredAt = answerAsOf(query)
   const symbols = useMemo(() => (answer?.groups ?? []).flatMap((g) => g.items.map((i) => i.symbol)), [answer])
   const prices = useLivePrices(symbols)
   const data = useMemo(() => (answer ? pulseWithTicks(answer, prices, answeredAt) : answer), [answer, prices, answeredAt])
+  useRefetchWhenBehind(answer ? pulseBehind(answer, prices, answeredAt) : false, query.refetch)
+  return { ...query, data }
+}
 
-  // The first pushes of a session land on yesterday's answer, which they are
-  // not laid over (its high, low and previous close are the last session's):
-  // ask for today's at once rather than at the next poll, at most every 10 s.
-  const behind = answer ? pulseBehind(answer, prices, answeredAt) : false
+/**
+ * The first pushes of a session land on yesterday's answer, which they are
+ * not laid over (its high, low and previous close are the last session's):
+ * ask for today's at once rather than at the next poll, at most every 10 s.
+ */
+function useRefetchWhenBehind(behind: boolean, refetch: () => Promise<unknown>): void {
   const askedAt = useRef(0)
-  const { refetch } = query
   useEffect(() => {
     if (!behind || Date.now() - askedAt.current < 10_000) return
     askedAt.current = Date.now()
     void refetch()
   }, [behind, refetch])
-
-  return { ...query, data }
 }
 
 const myWatchlistQuery = {
   queryKey: ['watchlist', 'me'] as const,
-  queryFn: () => api.get<import('./types').MyWatchlistItem[]>('/api/Watchlist/me'),
+  queryFn: stampSent(() => api.get<import('./types').MyWatchlistItem[]>('/api/Watchlist/me')),
+  structuralSharing: keepSentStamp,
 }
 
 /** The viewer's list; its rows' prices are pushed on the page that shows them, so the socket slows the poll. */
 export function useMyWatchlist() {
   return useQuery({ ...myWatchlistQuery, refetchInterval: livePoll(useLiveConnection(), 30_000, POLL_FAST) })
+}
+
+/**
+ * The viewer's list as the Watchlist page shows it: each row moved to its
+ * newer pushed price (price, the day's range, the quote's age), and asked for
+ * again at once when those prices are from a later day than the rows. With
+ * the socket up the list is read only twice a minute, so at the open every
+ * row showed yesterday's price for up to 30 s while the pulse above it,
+ * which asked again, moved.
+ */
+export function useMyWatchlistLive() {
+  const query = useMyWatchlist()
+  const answer = query.data
+  const answeredAt = answerAsOf(query)
+  const symbols = useMemo(() => (answer ?? []).map((w) => w.symbol), [answer])
+  const prices = useLivePrices(symbols)
+  const rows = useMemo(() => (answer ? watchlistWithTicks(answer, prices, answeredAt) : answer), [answer, prices, answeredAt])
+  useRefetchWhenBehind(answer ? watchlistBehind(answer, prices, answeredAt) : false, query.refetch)
+  return { query, rows }
 }
 
 export function useAddToMyWatchlist() {
@@ -1973,12 +2029,13 @@ export function useOptionChainPositions(underlying: string, live: boolean) {
 function chainViewQuery(underlying: string, expiry?: string, asOfUtc?: string) {
   return {
     queryKey: ['optionChainView', underlying, expiry ?? null, asOfUtc ?? null] as const,
-    queryFn: () => {
+    queryFn: stampSent(() => {
       const params = new URLSearchParams({ underlying })
       if (expiry) params.set('expiry', expiry)
       if (asOfUtc) params.set('asOfUtc', asOfUtc)
       return api.get<OptionChain>(`/api/OptionChain/view?${params}`)
-    },
+    }),
+    structuralSharing: keepSentStamp,
     enabled: Boolean(underlying),
   }
 }
@@ -2532,7 +2589,8 @@ export function useRunPnlSeries(date: string | null, live: boolean, enabled = tr
 export function useOpenPositions(pollMs: number | false, enabled = true) {
   return useQuery({
     queryKey: ['positions', 'open'],
-    queryFn: () => api.get<OpenPositionsResponse>('/api/Positions/open'),
+    queryFn: stampSent(() => api.get<OpenPositionsResponse>('/api/Positions/open')),
+    structuralSharing: keepSentStamp,
     enabled,
     refetchInterval: pollMs,
   })

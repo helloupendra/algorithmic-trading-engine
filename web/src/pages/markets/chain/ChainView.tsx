@@ -24,11 +24,13 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { useOptionChainExpiries, useOptionChainPositions, useOptionChainTrend, useOptionChainView } from '../../../lib/queries'
 import { useLivePrices } from '../../../lib/live'
+import { answerAsOf } from '../../../lib/asOf'
 import type { OptionChain, OptionChainHeader, OptionChainLeg, OptionChainPosition, OptionChainQuote, OptionChainStrike } from '../../../lib/types'
 import { EmptyState, InlineError, Loading, Panel } from '../../../components/ui'
 import {
   BUILD_UP,
   arrowPercent,
+  capturedExpiry,
   columnPeak,
   compactIndian,
   compactSigned,
@@ -679,8 +681,10 @@ export function ChainView({ underlying }: { underlying: string }) {
   const prices = useLivePrices(liveSymbols)
   const queryClient = useQueryClient()
   // The chain last written here, and the newest push already laid over it. A
-  // chain the cache holds that is not this one is a fresh poll, which already
-  // carries every push received before it arrived.
+  // chain the cache holds that is not this one is a fresh poll, which carries
+  // every push received before it was asked for (lib/asOf.ts); the ones that
+  // came while it was in flight are laid over it as it lands, which is why the
+  // chain is in the effect's dependencies and not only the prices.
   const overlaid = useRef<{ chain: OptionChain | null; upToMs: number }>({ chain: null, upToMs: 0 })
   useEffect(() => {
     if (asOfUtc || prices.size === 0) return
@@ -689,7 +693,7 @@ export function ChainView({ underlying }: { underlying: string }) {
     const chain = state?.data
     const serverUtc = chain?.header?.serverUtc
     if (!chain || !serverUtc) return
-    const since = overlaid.current.chain === chain ? overlaid.current.upToMs : state.dataUpdatedAt
+    const since = overlaid.current.chain === chain ? overlaid.current.upToMs : answerAsOf(state)
     const fresh = [...prices.values()].filter((t) => t.receivedAtMs > since)
     if (fresh.length === 0) return
     // The server's clock now: its stamp on the data plus the time since it arrived.
@@ -697,9 +701,11 @@ export function ChainView({ underlying }: { underlying: string }) {
     const next = applyTicksToChain(chain, fresh, nowIso)
     overlaid.current = { chain: next, upToMs: Math.max(...fresh.map((t) => t.receivedAtMs)) }
     if (next !== chain) queryClient.setQueryData(key, next)
-  }, [prices, queryClient, underlying, expiry, asOfUtc])
+  }, [prices, data, queryClient, underlying, expiry, asOfUtc])
   const header = data?.header ?? null
-  const trend = useOptionChainTrend(underlying, expiry ?? data?.expiryDate, asOfUtc, header?.marketOpen)
+  // An empty chain (nothing captured) names .NET's default date as its expiry; it is none.
+  const chainExpiry = capturedExpiry(data?.expiryDate)
+  const trend = useOptionChainTrend(underlying, expiry ?? chainExpiry ?? undefined, asOfUtc, header?.marketOpen)
   // Positions are today's, not the replay clock's: hidden while replaying.
   const positionsQuery = useOptionChainPositions(underlying, Boolean(header?.marketOpen))
   const positions = !asOfUtc && positionsQuery.data ? positionsQuery.data : []
@@ -720,11 +726,10 @@ export function ChainView({ underlying }: { underlying: string }) {
 
   const todayIso = istDate(Date.now())
   const expiryOptions = useMemo(() => {
-    const list = (expiries.data ?? []).filter((d) => d >= todayIso)
-    const current = data?.expiryDate
-    if (current && !list.includes(current)) list.unshift(current)
+    const list = (expiries.data ?? []).filter((d) => capturedExpiry(d) != null && d >= todayIso)
+    if (chainExpiry && !list.includes(chainExpiry)) list.unshift(chainExpiry)
     return list.sort()
-  }, [expiries.data, todayIso, data?.expiryDate])
+  }, [expiries.data, todayIso, chainExpiry])
 
   const firstCapture = trendData?.points[0]?.capturedUtc
   const lastCapture = trendData?.points[trendData.points.length - 1]?.capturedUtc
@@ -736,7 +741,7 @@ export function ChainView({ underlying }: { underlying: string }) {
           <span className="oc-control__label">Expiry</span>
           <select
             className="field__input field__input--sm"
-            value={data?.expiryDate ?? expiry ?? ''}
+            value={chainExpiry ?? expiry ?? ''}
             onChange={(e) => setParam('expiry', e.target.value)}
             aria-label="Expiry"
             disabled={expiryOptions.length === 0}

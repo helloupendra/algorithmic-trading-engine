@@ -33,6 +33,7 @@ import { ageText, groupPositions, markState, positionAccounts, totalSums } from 
 import type { PositionAccount, PositionRun } from '../../lib/openPositions'
 import { useClosePositions, useMarketSession, useOpenPositions, useSetCarryForward } from '../../lib/queries'
 import { livePoll, useLiveConnection, useLivePrices } from '../../lib/live'
+import { answerAsOf } from '../../lib/asOf'
 import { withLiveMarks } from '../../lib/liveMarks'
 import type { OpenPosition } from '../../lib/types'
 import { InlineError } from '../../components/ui'
@@ -257,7 +258,8 @@ export function PositionsPage() {
   const open = useOpenPositions(livePoll(connection, POLL_PUSHED_MS, marketOpen ? POLL_OPEN_MS : POLL_CLOSED_MS))
   const [scope, setScope] = useState<Scope>('all')
   const answer = open.data?.positions
-  const answeredAt = open.dataUpdatedAt
+  // When it was asked, so a price pushed while it was in flight is not thrown away (lib/asOf.ts).
+  const answeredAt = answerAsOf(open)
   const prices = useLivePrices(useMemo(() => (answer ?? []).map((p) => p.symbol), [answer]))
   // Ages are counted to now, so a leg nothing is pushed for still turns stale at 30 s between answers.
   const nowMs = useNow(1_000)

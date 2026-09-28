@@ -7,21 +7,20 @@
  * keeps carrying the symbol — another trader or a running strategy may still
  * need it, and quietly unsubscribing the feed would starve them of data.
  *
- * Both halves move with the pushed prices: the pulse in its hook, the list's
- * rows here (their price, the day's range and the quote's age), between
- * answers of the list, which with the socket up is read twice a minute.
+ * Both halves move with the pushed prices, each in its hook: the pulse, and
+ * the list's rows (their price, the day's range and the quote's age) between
+ * answers of the list, which with the socket up is read twice a minute, and
+ * at once when the first prices of a session arrive.
  */
 
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import {
   useAddToMyWatchlist,
-  useMyWatchlist,
+  useMyWatchlistLive,
   useRemoveFromMyWatchlist,
   useResetMyWatchlist,
 } from '../../lib/queries'
 import type { MyWatchlistItem } from '../../lib/types'
-import { useLivePrices } from '../../lib/live'
-import { watchlistWithTicks } from '../../lib/liveMarks'
 import { formatAge, formatPrice, pnlClass } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Panel, QueryBoundary } from '../../components/ui'
 import { SymbolCombobox } from '../../components/SymbolCombobox'
@@ -42,11 +41,8 @@ function change(item: MyWatchlistItem): { text: string; cls: string } {
 }
 
 export function WatchlistPage() {
-  const watchlist = useMyWatchlist()
-  const answer = watchlist.data
-  const answeredAt = watchlist.dataUpdatedAt
-  const prices = useLivePrices(useMemo(() => (answer ?? []).map((w) => w.symbol), [answer]))
-  const rows = useMemo(() => (answer ? watchlistWithTicks(answer, prices, answeredAt) : answer), [answer, prices, answeredAt])
+  // Rows moved by their pushed prices, and asked for again the moment those are a new session's.
+  const { query: watchlist, rows } = useMyWatchlistLive()
   const add = useAddToMyWatchlist()
   const remove = useRemoveFromMyWatchlist()
   const reset = useResetMyWatchlist()

@@ -225,6 +225,17 @@ export function daysBetween(fromIso: string, toIso: string): number {
 }
 
 /** "29 Sep 2026 (+15 days)", "(today)", "(expired)". */
+/**
+ * The expiry a chain answer names, or null when it names none. With nothing
+ * captured for an underlying the API answers an empty chain whose expiry is
+ * .NET's default date, 0001-01-01, and the picker listed it as "1 Jan 1
+ * (expired)". No real contract expires before 1900.
+ */
+export function capturedExpiry(expiryIso: string | null | undefined): string | null {
+  if (!expiryIso || !/^\d{4}-\d{2}-\d{2}/.test(expiryIso)) return null
+  return expiryIso.slice(0, 4) < '1900' ? null : expiryIso
+}
+
 export function expiryLabel(expiryIso: string, todayIso: string): string {
   const [y, m, d] = expiryIso.split('-').map(Number)
   const name = `${d} ${MONTHS[m - 1]} ${y}`

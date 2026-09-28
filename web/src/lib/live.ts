@@ -9,6 +9,8 @@
  *
  * - Symbols are reference-counted. Two panels showing NIFTY are one server
  *   subscription, and it is dropped only when the last of them unmounts.
+ *   They are matched as the hub matches them, trimmed and in any case, so a
+ *   push in the feed's spelling reaches a page that spelled it otherwise.
  * - Asks are batched. A route change unmounts one page and mounts the next
  *   in the same moment; gathering the changes for a tenth of a second turns
  *   that into one Unsubscribe and one Subscribe, and the symbols both pages
@@ -34,20 +36,34 @@
  *   SubscribeAll() → true for admins and the market-data grant · UnsubscribeAll()
  *   ReceiveTicks(ticks[]): subscribed symbols only, coalesced every ~250 ms
  *   DeskEvent({ kind, runId, userId, symbol, atUtc, detail }) to the owner and admins
+ * An API from before 28 Sep has none of these methods; each connection asks
+ * first which hub it reached (see LiveConnection's 'legacy').
  */
 
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { QueryClient, QueryKey } from '@tanstack/react-query'
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr'
-import { API_BASE_URL, tokenStore } from './api'
+import type { ILogger } from '@microsoft/signalr'
+import { API_BASE_URL, freshAccessToken, tokenStore } from './api'
 import { foldTicks } from './liveMarks'
 import type { LiveQuote } from './types'
 
 // ---------------------------------------------------------------- shapes
 
-/** Whether prices are being pushed right now. */
-export type LiveConnection = 'connected' | 'reconnecting' | 'disconnected'
+/**
+ * Whether prices are being pushed right now.
+ *
+ * 'legacy' is a hub from an API build older than this console: a rollback,
+ * or an API build that failed after the console was rebuilt. It has none of
+ * the subscription methods and sends no desk events, but broadcasts every
+ * tick to every browser, as the API did until 28 Sep. So prices still move,
+ * while a fill or a stop reaches the screen only by a poll: the pages poll at
+ * their old pace (`livePoll` counts it as not pushed) and the top bar does not
+ * say "Live". A later API restart drops the socket, and the reconnect asks
+ * again, so the state clears by itself once the API is updated.
+ */
+export type LiveConnection = 'connected' | 'legacy' | 'reconnecting' | 'disconnected'
 
 /**
  * The everything-feed: nobody holds it (off), held but not asked for yet
@@ -105,6 +121,16 @@ export interface HubLike {
 /** The hub's per-connection symbol limit; Subscribe throws past it. */
 export const SYMBOL_CAP = 400
 
+/**
+ * How the hub matches a symbol (LiveFeedSubscriptions.KeyOf): trimmed and
+ * upper-cased. It pushes in the feed's own spelling whatever spelling was
+ * asked, so the console matches the same way or it drops every push for a
+ * symbol a page spelled differently.
+ */
+export function symbolKey(symbol: string): string {
+  return symbol.trim().toUpperCase()
+}
+
 /** How long symbol changes are gathered before they go to the hub. */
 const BATCH_MS = 100
 
@@ -122,6 +148,27 @@ export function retryDelay(attempt: number): number {
  */
 export function livePoll(connection: LiveConnection, connectedMs: number | false, fallbackMs: number | false): number | false {
   return connection === 'connected' ? connectedMs : fallbackMs
+}
+
+/**
+ * Whether a push belongs in the ['quotes', 'all'] list: with the
+ * everything-feed on it is the whole feed, and a legacy hub sends the whole
+ * feed to everyone. Otherwise a push is only the symbols some screen asked
+ * for, which those screens lay over their own answers.
+ */
+export function foldsIntoQuotes(connection: LiveConnection, all: LiveAllState): boolean {
+  return all === 'on' || connection === 'legacy'
+}
+
+/**
+ * Whether a hub call failed because the hub has no such method: an API build
+ * from before the subscription contract. SignalR reports it as "Failed to
+ * invoke 'Subscribe' due to an error on the server. HubException: Method does
+ * not exist." (older servers: "Unknown hub method 'Subscribe'").
+ */
+export function isMissingMethod(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : typeof err === 'string' ? err : ''
+  return /Method does not exist|Unknown hub method/i.test(message)
 }
 
 function num(value: unknown): number | null {
@@ -291,12 +338,17 @@ export class LiveFeed {
   private allState: LiveAllState = 'off'
   private allHolders = 0
 
+  // Every map below is keyed by symbolKey(), the hub's own matching rule, so
+  // a page asking for "nse:nifty50-index" gets the pushes the hub sends in the
+  // feed's spelling, and two spellings of one symbol are one subscription.
   private readonly refs = new Map<string, number>()
+  /** The spelling each held symbol is asked of the hub in: the first a page used. */
+  private readonly spellings = new Map<string, string>()
   /** When each symbol was last asked for (a counter): the cap keeps the newest. */
   private readonly askedAt = new Map<string, number>()
   private asks = 0
-  /** What the hub has been told to send this connection. */
-  private readonly onServer = new Set<string>()
+  /** What the hub has been told to send this connection, with the spelling it was told. */
+  private readonly onServer = new Map<string, string>()
 
   private readonly latest = new Map<string, LiveTick>()
   private readonly versions = new Map<string, number>()
@@ -326,17 +378,31 @@ export class LiveFeed {
     return this.allState
   }
 
-  /** The symbols the hub is sending this connection now. */
+  /** The symbols the hub is sending this connection now, as they were asked for. */
   get subscribed(): ReadonlySet<string> {
-    return this.onServer
+    return new Set(this.onServer.values())
   }
 
   tick(symbol: string): LiveTick | undefined {
-    return this.latest.get(symbol)
+    return this.latest.get(symbolKey(symbol))
   }
 
   versionOf(symbol: string): number {
-    return this.versions.get(symbol) ?? 0
+    return this.versions.get(symbolKey(symbol)) ?? 0
+  }
+
+  /**
+   * The newest tick of each symbol that has one, under the spelling asked
+   * and carrying it: an overlay matches its rows by the symbol it asked for,
+   * not by the feed's spelling of it.
+   */
+  ticksFor(symbols: readonly string[]): Map<string, LiveTick> {
+    const map = new Map<string, LiveTick>()
+    for (const s of symbols) {
+      const tick = this.tick(s)
+      if (tick) map.set(s, tick.symbol === s ? tick : { ...tick, symbol: s })
+    }
+    return map
   }
 
   // ---- listening (arrow properties: handed straight to useSyncExternalStore)
@@ -347,16 +413,17 @@ export class LiveFeed {
   }
 
   readonly listen = (symbols: readonly string[], listener: Listener): (() => void) => {
-    for (const s of symbols) {
-      let set = this.symbolListeners.get(s)
-      if (!set) this.symbolListeners.set(s, (set = new Set()))
+    const keys = [...new Set(symbols.map(symbolKey))]
+    for (const k of keys) {
+      let set = this.symbolListeners.get(k)
+      if (!set) this.symbolListeners.set(k, (set = new Set()))
       set.add(listener)
     }
     return () => {
-      for (const s of symbols) {
-        const set = this.symbolListeners.get(s)
+      for (const k of keys) {
+        const set = this.symbolListeners.get(k)
         set?.delete(listener)
-        if (set?.size === 0) this.symbolListeners.delete(s)
+        if (set?.size === 0) this.symbolListeners.delete(k)
       }
     }
   }
@@ -380,23 +447,30 @@ export class LiveFeed {
 
   /** Ask for these symbols' prices; the returned function gives them back. */
   acquire(symbols: readonly string[]): () => void {
-    const list = [...new Set(symbols.filter((s) => typeof s === 'string' && s.length > 0))]
-    for (const s of list) {
-      this.refs.set(s, (this.refs.get(s) ?? 0) + 1)
-      this.askedAt.set(s, ++this.asks)
+    const asked = new Map<string, string>()
+    for (const s of symbols) {
+      const k = typeof s === 'string' ? symbolKey(s) : ''
+      if (k && !asked.has(k)) asked.set(k, s)
+    }
+    const list = [...asked.keys()]
+    for (const k of list) {
+      this.refs.set(k, (this.refs.get(k) ?? 0) + 1)
+      this.askedAt.set(k, ++this.asks)
+      if (!this.spellings.has(k)) this.spellings.set(k, asked.get(k)!)
     }
     if (list.length) this.schedule()
     let released = false
     return () => {
       if (released) return
       released = true
-      for (const s of list) {
-        const n = (this.refs.get(s) ?? 0) - 1
+      for (const k of list) {
+        const n = (this.refs.get(k) ?? 0) - 1
         if (n > 0) {
-          this.refs.set(s, n)
+          this.refs.set(k, n)
         } else {
-          this.refs.delete(s)
-          this.askedAt.delete(s)
+          this.refs.delete(k)
+          this.askedAt.delete(k)
+          this.spellings.delete(k)
         }
       }
       if (list.length) this.schedule()
@@ -447,11 +521,37 @@ export class LiveFeed {
     hub?.stop().catch(() => {})
   }
 
+  /**
+   * The API is answering again: connect now. The retry waits grow to 30 s
+   * (SignalR's own reconnect, or a new connection after a close), so without
+   * this the prices stayed polled for up to half a minute after the API was
+   * back. The waiting connection is dropped and a fresh one opened; nothing
+   * happens while connected, or before start.
+   */
+  nudge(): void {
+    if (!this.wanted || this.status === 'connected' || this.status === 'legacy') return
+    if (this.retryTimer != null) clearTimeout(this.retryTimer)
+    this.retryTimer = null
+    const waiting = this.hub
+    // Unhooked first, so its close is not taken for a new loss.
+    this.hub = null
+    this.generation++
+    this.onServer.clear()
+    this.attempt = 0
+    waiting?.stop().catch(() => {})
+    this.open()
+  }
+
   private open(): void {
     const hub = this.connectHub()
     this.hub = hub
     hub.on('ReceiveTicks', (ticks: unknown) => {
       if (this.hub === hub) this.receive(ticks)
+    })
+    // A legacy hub's single-tick endpoint broadcast one tick at a time under
+    // the singular name; the current hub never sends it.
+    hub.on('ReceiveTick', (tick: unknown) => {
+      if (this.hub === hub) this.receive([tick])
     })
     hub.on('DeskEvent', (event: unknown) => {
       if (this.hub === hub) this.dispatch(event)
@@ -462,7 +562,7 @@ export class LiveFeed {
       this.setStatus('reconnecting')
     })
     hub.onreconnected(() => {
-      if (this.hub === hub) this.connected()
+      if (this.hub === hub) this.connected(hub)
     })
     hub.onclose(() => {
       if (this.hub !== hub || !this.wanted) return
@@ -473,7 +573,7 @@ export class LiveFeed {
       () => {
         if (this.hub !== hub) return
         this.attempt = 0
-        this.connected()
+        this.connected(hub)
       },
       () => {
         if (this.hub === hub) this.lost()
@@ -495,15 +595,40 @@ export class LiveFeed {
     }, retryDelay(this.attempt++))
   }
 
-  private connected(): void {
+  private connected(hub: HubLike): void {
     // A new server connection: none of the old subscriptions came with it.
     this.generation++
+    const generation = this.generation
     this.onServer.clear()
     this.setAll(this.allHolders > 0 ? 'waiting' : 'off')
-    this.setStatus('connected')
+    // Which hub answered decides what "connected" means, so it is asked before
+    // anything is claimed: an API older than this console has no subscription
+    // methods, and a page holding no symbols would never find that out by
+    // subscribing. Unsubscribing nothing changes nothing on a current hub.
+    const settle = (legacy: boolean) => {
+      if (this.hub !== hub || this.generation !== generation) return
+      if (legacy) {
+        this.toLegacy()
+      } else {
+        this.setStatus('connected')
+        this.flush()
+      }
+      if (this.everConnected) each(this.reconnectListeners, undefined)
+      this.everConnected = true
+    }
+    hub.invoke('Unsubscribe', []).then(
+      () => settle(false),
+      // Any other failure is the connection's own trouble, which its
+      // reconnecting and close callbacks report.
+      (err: unknown) => settle(isMissingMethod(err)),
+    )
+  }
+
+  /** The hub is an older API's (see LiveConnection): nothing to ask of it, everything it sends is kept as before. */
+  private toLegacy(): void {
+    this.onServer.clear()
+    this.setStatus('legacy')
     this.flush()
-    if (this.everConnected) each(this.reconnectListeners, undefined)
-    this.everConnected = true
   }
 
   private setStatus(next: LiveConnection): void {
@@ -551,19 +676,25 @@ export class LiveFeed {
   private async sync(): Promise<void> {
     const hub = this.hub
     const generation = this.generation
-    if (!hub || this.status !== 'connected') return
+    if (!hub) return
+    if (this.status === 'legacy') {
+      this.syncLegacy()
+      return
+    }
+    if (this.status !== 'connected') return
     const still = () => this.hub === hub && this.generation === generation
 
     const desired = this.desired()
-    const drop = [...this.onServer].filter((s) => !desired.has(s))
-    const add = [...desired].filter((s) => !this.onServer.has(s))
+    const drop = [...this.onServer.keys()].filter((k) => !desired.has(k))
+    const add = [...desired].filter((k) => !this.onServer.has(k))
 
     if (drop.length) {
-      for (const s of drop) this.onServer.delete(s)
+      const told = drop.map((k) => this.onServer.get(k)!)
+      for (const k of drop) this.onServer.delete(k)
       // A symbol no longer sent must not go on being shown as the latest price.
-      this.forget(drop.filter((s) => !this.refs.has(s) || this.allState !== 'on'))
+      this.forget(drop.filter((k) => !this.refs.has(k) || this.allState !== 'on'))
       try {
-        await hub.invoke('Unsubscribe', drop)
+        await hub.invoke('Unsubscribe', told)
       } catch {
         // Nothing to undo: a price it goes on sending is still a real price
         // (and is not kept unless a screen holds it); a reconnect starts from none.
@@ -572,12 +703,16 @@ export class LiveFeed {
     }
 
     if (add.length) {
-      for (const s of add) this.onServer.add(s)
+      for (const k of add) this.onServer.set(k, this.spellings.get(k) ?? k)
       try {
-        await hub.invoke('Subscribe', add)
+        await hub.invoke('Subscribe', add.map((k) => this.onServer.get(k)!))
       } catch (err) {
         if (!still()) return
-        for (const s of add) this.onServer.delete(s)
+        for (const k of add) this.onServer.delete(k)
+        if (isMissingMethod(err)) {
+          this.toLegacy()
+          return
+        }
         this.warn(`Live prices: the hub refused ${add.length} symbol(s); their pages keep polling. ${err instanceof Error ? err.message : ''}`.trim())
       }
       if (!still()) return
@@ -588,7 +723,11 @@ export class LiveFeed {
       let granted = false
       try {
         granted = (await hub.invoke<boolean>('SubscribeAll')) === true
-      } catch {
+      } catch (err) {
+        if (still() && isMissingMethod(err)) {
+          this.toLegacy()
+          return
+        }
         granted = false
       }
       if (!still()) return
@@ -610,6 +749,16 @@ export class LiveFeed {
     }
   }
 
+  /**
+   * A legacy hub sends every symbol whatever is asked, so there is nothing to
+   * tell it: the everything-feed is on for whoever holds it, and only what a
+   * screen still holds is kept.
+   */
+  private syncLegacy(): void {
+    this.setAll(this.allHolders > 0 ? 'on' : 'off')
+    this.forget([...this.latest.keys()].filter((s) => !this.refs.has(s)))
+  }
+
   // ---- hearing from the hub
 
   private receive(raw: unknown): void {
@@ -620,15 +769,16 @@ export class LiveFeed {
     for (const item of raw) {
       const symbol = (item as { symbol?: unknown } | null)?.symbol
       if (typeof symbol !== 'string') continue
-      const tick = normalizeTick(item, at, this.latest.get(symbol))
+      const key = symbolKey(symbol)
+      const tick = normalizeTick(item, at, this.latest.get(key))
       if (!tick) continue
       changed.push(tick)
       // Kept only for what a screen asked for; the everything-feed's other
       // symbols reach the quotes cache through the tick listeners alone.
-      if (!this.refs.has(symbol)) continue
-      this.latest.set(symbol, tick)
-      this.versions.set(symbol, ++this.version)
-      for (const l of this.symbolListeners.get(symbol) ?? []) notify.add(l)
+      if (!this.refs.has(key)) continue
+      this.latest.set(key, tick)
+      this.versions.set(key, ++this.version)
+      for (const l of this.symbolListeners.get(key) ?? []) notify.add(l)
     }
     if (!changed.length) return
     // Once each, however many of its symbols the push carried: one render a push.
@@ -641,12 +791,12 @@ export class LiveFeed {
     if (event) each(this.eventListeners, event)
   }
 
-  private forget(symbols: readonly string[]): void {
+  private forget(keys: readonly string[]): void {
     const notify = new Set<Listener>()
-    for (const s of symbols) {
-      if (!this.latest.delete(s)) continue
-      this.versions.set(s, ++this.version)
-      for (const l of this.symbolListeners.get(s) ?? []) notify.add(l)
+    for (const k of keys) {
+      if (!this.latest.delete(k)) continue
+      this.versions.set(k, ++this.version)
+      for (const l of this.symbolListeners.get(k) ?? []) notify.add(l)
     }
     each(notify, undefined)
   }
@@ -654,13 +804,48 @@ export class LiveFeed {
 
 // ---------------------------------------------------------------- the console's instance
 
+/**
+ * The hub's address, with the protocol this console speaks. `v=2` is the
+ * subscribe-for-what-you-show contract above; a connection without it is a
+ * console bundle from before 28 Sep, which never calls Subscribe, and the API
+ * sends it the old whole-feed broadcast for one release so a tab left open
+ * across the deploy does not go quiet.
+ */
+export function hubUrl(apiBase: string): string {
+  return `${apiBase}/hubs/livefeed?v=2`
+}
+
+/** What SignalR logs when a connection is stopped before its start finished. */
+const STOPPED_WHILE_STARTING = /stopped during negotiation|before stop\(\) was called/i
+
+/**
+ * SignalR's console logging from Warning up, without the "errors" a
+ * deliberate stop makes. Stopping a connection that is still negotiating
+ * (signing out, a nudge, and in development React StrictMode running the
+ * shell's effect twice, on every sign-in) is logged as a failed start, but
+ * nothing failed: the stop was asked for.
+ */
+export function hubLogger(sink: Pick<Console, 'error' | 'warn'> = console): ILogger {
+  return {
+    log(level: LogLevel, message: string) {
+      if (level < LogLevel.Warning || level === LogLevel.None) return
+      if (STOPPED_WHILE_STARTING.test(message)) return
+      const line = `[${new Date().toISOString()}] ${LogLevel[level]}: ${message}`
+      if (level >= LogLevel.Error) sink.error(line)
+      else sink.warn(line)
+    },
+  }
+}
+
 function connectHub(): HubLike {
   return new HubConnectionBuilder()
     // The hub is authorized: it carries market data the platform pays a
     // vendor for. The factory is read on every (re)connect, so a token the
-    // API layer refreshed in the meantime is the one sent.
-    .withUrl(`${API_BASE_URL}/hubs/livefeed`, { accessTokenFactory: () => tokenStore.access ?? '' })
-    .configureLogging(LogLevel.Warning)
+    // API layer refreshed in the meantime is the one sent, and it refreshes
+    // one that has expired itself: the API closes a connection when its token
+    // expires, and the reconnect that follows must not send that same token.
+    .withUrl(hubUrl(API_BASE_URL), { accessTokenFactory: async () => (await freshAccessToken()) ?? '' })
+    .configureLogging(hubLogger())
     .withAutomaticReconnect({ nextRetryDelayInMilliseconds: (ctx) => retryDelay(ctx.previousRetryCount) })
     .build()
 }
@@ -674,6 +859,9 @@ export const liveFeed = new LiveFeed({ connect: connectHub })
  * into the query cache: desk events invalidate the queries they make stale,
  * a reconnect re-reads all of them, and with the everything-feed held each
  * price is folded into ['quotes', 'all'] for the pages that read that list.
+ * A legacy hub (an API older than this console) broadcasts every tick to
+ * everyone, and those are folded in as the console did before 28 Sep, held
+ * or not.
  *
  * Mounted once, in the signed-in shell: signing in opens it, signing out
  * (the shell unmounting) closes it.
@@ -684,7 +872,7 @@ export function useLiveFeed(): void {
     if (!tokenStore.access) return
     const batch = invalidationBatcher(qc)
     const offTicks = liveFeed.onTicks((ticks) => {
-      if (liveFeed.all !== 'on') return
+      if (!foldsIntoQuotes(liveFeed.connection, liveFeed.all)) return
       qc.setQueryData<LiveQuote[]>(['quotes', 'all'], (old) => (old ? foldTicks(old, ticks) : old))
     })
     const offEvents = liveFeed.onDeskEvent((event) => batch.push(deskEventKeys(event)))
@@ -698,6 +886,23 @@ export function useLiveFeed(): void {
       liveFeed.stop()
     }
   }, [qc])
+}
+
+/**
+ * Connects at once when the API answers again after an outage (`apiDown`,
+ * the backend status check, turns false after being true), instead of at the
+ * end of the live connection's retry wait.
+ */
+export function useLiveNudgeWhenApiBack(apiDown: boolean): void {
+  const wasDown = useRef(false)
+  useEffect(() => {
+    if (apiDown) {
+      wasDown.current = true
+    } else if (wasDown.current) {
+      wasDown.current = false
+      liveFeed.nudge()
+    }
+  }, [apiDown])
 }
 
 export function useLiveConnection(): LiveConnection {
@@ -751,11 +956,7 @@ export function useLivePrices(symbols: readonly string[]): ReadonlyMap<string, L
     const versions = list.map((s) => liveFeed.versionOf(s))
     const held = cache.current
     if (held && held.list === list && held.versions.every((v, i) => v === versions[i])) return held.map
-    const map = new Map<string, LiveTick>()
-    for (const s of list) {
-      const tick = liveFeed.tick(s)
-      if (tick) map.set(s, tick)
-    }
+    const map = liveFeed.ticksFor(list)
     cache.current = { list, versions, map }
     return map
   }, [list])
