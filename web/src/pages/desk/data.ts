@@ -19,6 +19,7 @@ import {
   useOpenPositions,
 } from '../../lib/queries'
 import { useLiveConnection, useLivePrices } from '../../lib/live'
+import { answerAsOf } from '../../lib/asOf'
 import { withLegMarks, withLiveMarks } from '../../lib/liveMarks'
 import type { LiveRunSummary, MarketSessionInfo } from '../../lib/types'
 
@@ -147,7 +148,7 @@ export type DeskLinks = ReturnType<typeof useDeskLinks>
 export function useDeskLegs(view: DeskView): { legs: DeskLeg[] | null; error: unknown } {
   const open = useOpenPositions(deskLegsPoll(view.clock === 'live', useLiveConnection()), allows(view.access, 'strategies'))
   const positions = open.data?.positions
-  const answeredAt = open.dataUpdatedAt
+  const answeredAt = answerAsOf(open)
   const prices = useLivePrices(useMemo(() => (positions ?? []).map((p) => p.symbol), [positions]))
   const ordered = useMemo(
     () =>

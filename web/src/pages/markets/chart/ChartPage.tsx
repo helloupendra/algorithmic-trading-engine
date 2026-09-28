@@ -37,6 +37,7 @@ import {
 } from '../../../lib/chart'
 import type { Candle, RangeKey, Resolution, StructureSettings } from '../../../lib/chart'
 import { useLivePrices } from '../../../lib/live'
+import { answerAsOf } from '../../../lib/asOf'
 import { formatAge, formatDateTime, formatNumber, formatPrice, shortSymbol } from '../../../lib/format'
 import { SymbolCombobox } from '../../../components/SymbolCombobox'
 import { InlineError, Loading } from '../../../components/ui'
@@ -132,7 +133,8 @@ export function ChartPage() {
   // says which it is today (the top bar already asks, so this is its cache).
   const mcxCloseUtc = useMarketSession('MCX', 'COM').data?.sessionCloseUtc ?? null
   const [forming, setForming] = useState<{ base: readonly Candle[]; candles: readonly Candle[] } | null>(null)
-  const barsAnsweredAt = live.dataUpdatedAt
+  // When the bars were asked for: a price pushed while they were in flight is newer than they are (lib/asOf.ts).
+  const barsAnsweredAt = answerAsOf(live)
   useEffect(() => {
     if (structureOn || !tick || tick.receivedAtMs <= barsAnsweredAt) return
     setForming((f) => {
