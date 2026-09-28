@@ -28,6 +28,14 @@ import os
 # Add the parent directory to sys.path so that absolute-style imports work
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+# First of all, while this is the only thread: give way on the CPU to the live
+# feed every runner reads (RUNNER_NICE, default 10). On Linux a thread keeps
+# the nice value it started with, so this must come before anything that
+# starts threads — the safe stdio tee, redis, requests, numpy's pools.
+if __name__ == "__main__":
+    from core.process_priority import lower_priority_from_env
+    lower_priority_from_env()
+
 # Before anything prints: the API that spawned us may die (restart, crash);
 # then stdout is a closed pipe and a plain print() raises BrokenPipeError.
 # Every line also goes to logs/engine/runner-<run_id>-<pid>.log from the first
@@ -820,7 +828,16 @@ if __name__ == "__main__":
         print(f"[{args.underlying}] WARN: Warmup failed: {ex}")
 
     print(f"[{args.underlying}] Listening for live ticks on Redis Stream...")
-    subscriber = build_subscriber_from_env()
+    # Only the spot drives the loop, so only the spot is decoded: every other
+    # contract on the stream is passed over on its symbol field.
+    subscriber = build_subscriber_from_env(symbols={args.spot_symbol})
+    niceness = os.nice(0) if hasattr(os, "nice") else None
+    print(f"[{args.underlying}] Reading "
+          + (f"only {args.spot_symbol}" if subscriber.symbols else "every symbol")
+          + " from the stream"
+          + (f", in {subscriber.min_read_interval * 1000:.0f} ms batches" if subscriber.min_read_interval else "")
+          + (f", at nice {niceness}" if niceness is not None else "")
+          + " (RUNNER_STREAM_FILTER, RUNNER_STREAM_BATCH_MS, RUNNER_NICE).", flush=True)
 
     ticks_processed = 0
     # Ticks the loop raised on and skipped. Each prints a traceback, but a
