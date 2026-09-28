@@ -62,6 +62,10 @@ public static class DhanInstruments
             ["NSE:MIDCPNIFTY-INDEX"] = new(IndexSegment, 442, "INDEX"),
             ["BSE:SENSEX-INDEX"] = new(IndexSegment, 51, "INDEX"),
             ["BSE:BANKEX-INDEX"] = new(IndexSegment, 69, "INDEX"),
+            // Not an option underlying on this desk; streamed so the candle-pattern
+            // "indices" group gets its live bars (28 Sep: "1 watched symbol is not
+            // receiving live bars"). Master row: NSE,I,38,NIFTYNXT50,Nifty Next 50.
+            ["NSE:NIFTYNXT50-INDEX"] = new(IndexSegment, 38, "INDEX"),
             // Not an option underlying; the universe streams it anyway, because
             // the option chain's header reads it. Master row: NSE,I,21,INDIA VIX.
             // Platform symbol from the FYERS master's instruments row.
