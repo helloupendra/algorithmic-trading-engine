@@ -105,6 +105,28 @@
 .dk-meta { font-size: var(--fs-xs); color: var(--text-3); }
 .dk-more { margin-left: auto; font-size: var(--fs-xs); color: var(--text-3); text-decoration: none; white-space: nowrap; }
 .dk-more:hover { color: var(--brand-hi); }
+.dk-tools { display: inline-flex; align-items: center; align-self: center; gap: 6px; margin-left: auto; }
+.dk-tools + .dk-more { margin-left: 0; }
+
+/* A panel's one small control, as quiet as the pin beside the phase switch. */
+.dk-btn {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dk-btn:hover:not(:disabled) { color: var(--text); border-color: var(--line-strong); }
+.dk-btn:disabled { color: var(--text-3); cursor: default; }
+.dk-linkbtn { padding: 0; border: 0; background: none; color: var(--text-3); font: inherit; font-size: var(--fs-xs); cursor: pointer; white-space: nowrap; }
+.dk-linkbtn:hover { color: var(--text); }
 
 .dk-wait, .dk-fail, .dk-note {
   margin: 0;
@@ -170,6 +192,31 @@
 .dk-sw { display: inline-block; flex: none; width: 8px; height: 2px; border-radius: 1px; margin-right: 5px; vertical-align: middle; background: var(--text-3); }
 .dk-sw--1 { background: var(--acct-1); }
 .dk-sw--2 { background: var(--acct-2); }
+
+/* --- the checkup ------------------------------------------------------------------- */
+/* Its verdict line, and what Sentinel said when the line is the Desk's own. */
+.dk-ck { align-items: center; margin-bottom: 4px; }
+.dk-ck-said { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 2px 12px; margin: 0 0 8px; }
+/* Each item says whose reading it is: "now" (read again, in the indigo of now) or the checkup's time. */
+.dk-ck-t td.dk-when {
+  width: 36px;
+  padding-left: 8px;
+  text-align: right;
+  font-size: var(--fs-xs);
+  /* The detail's line height, so the mark sits on the detail's first line. */
+  line-height: calc(var(--fs) * 1.4);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.dk-nowmark { color: var(--brand-hi); }
+.dk-was { margin-top: 2px; font-size: var(--fs-xs); color: var(--text-3); }
+.dk-was summary { width: fit-content; cursor: pointer; list-style: none; }
+.dk-was summary::-webkit-details-marker { display: none; }
+.dk-was summary::after { content: ' ▸'; font-size: 9px; }
+.dk-was[open] summary::after { content: ' ▾'; }
+.dk-was summary:hover { color: var(--text-2); }
+.dk-was p { margin: 2px 0 0; line-height: 1.4; }
 
 /* --- the status strip -------------------------------------------------------------- */
 .dk-strip {

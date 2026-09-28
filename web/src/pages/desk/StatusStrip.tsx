@@ -29,12 +29,11 @@ import {
   weekdayOf,
 } from '../../lib/desk'
 import { statusMeta } from '../../lib/analysis'
-import { verdictBadge, slotLabel } from '../../lib/checkup'
+import { slotLabel } from '../../lib/checkup'
 import { formatInrWhole } from '../../lib/format'
 import { connectorsSummary, feedPulses } from '../../lib/pulse'
 import { silenceNote } from '../../lib/incidents'
 import {
-  useCheckupLatest,
   useFeeds,
   useForecastScoreboard,
   useIncidentSummary,
@@ -45,7 +44,7 @@ import {
   useProviders,
 } from '../../lib/queries'
 import type { DeskView } from './data'
-import { toneClass, useDayForecasts, useDeskLegs, useDeskPlan } from './data'
+import { toneClass, useCheckupNow, useDayForecasts, useDeskLegs, useDeskPlan } from './data'
 import { Dot, Money, Swatch } from './parts'
 
 type Kind = 'lead' | 'account' | 'other'
@@ -301,20 +300,37 @@ function IncidentsCell({ view }: { view: DeskView }) {
   return <Cell label="Incidents" value={`${live} open`} tone={tone} sub={live ? by : 'none live'} />
 }
 
-function CheckupCell({ lead = false }: { lead?: boolean }) {
-  const latest = useCheckupLatest()
-  const c = latest.data?.latest
+/**
+ * Sentinel's latest checkup, with what the Desk re-read now laid over it
+ * (lib/checkupNow.ts): "Done · before the open · done 09:19" rather than
+ * the 08:55 "Needs action" all afternoon. The title says whose words the
+ * cell holds.
+ */
+function CheckupCell({ view, lead = false }: { view: DeskView; lead?: boolean }) {
+  const { latest, checkup: c, now } = useCheckupNow(view)
   if (!latest.data) return <Cell lead={lead} label={lead ? 'Desk' : 'Checkup'} value={null} />
-  if (!c) return <Cell lead={lead} label={lead ? 'Desk' : 'Checkup'} value="no checkup yet" />
-  const badge = verdictBadge(c)
+  if (!c || !now) return <Cell lead={lead} label={lead ? 'Desk' : 'Checkup'} value="no checkup yet" />
+  const { badge } = now
   const tone: Tone = badge.tone === 'pos' ? 'pos' : badge.tone === 'neg' ? 'neg' : badge.tone === 'warn' ? 'warn' : null
+  const at = istHm(c.completedUtc)
+  const slot = slotLabel(c.slot).toLowerCase()
+  const doneAt = now.done && now.doneMs != null ? istHm(new Date(now.doneMs).toISOString()) : ''
+  // The lead cell is wide enough for the sentence; the small one says the same in two words and its slot.
+  let value = badge.label
+  let sub: string
+  if (lead) sub = now.done ? now.headline : now.voice === 'now' ? `${now.headline} · as of now` : `${at} · ${now.headline}`
+  else if (now.done) {
+    value = doneAt ? `Done ${doneAt}` : 'Done'
+    sub = slot
+  } else sub = `${slot} · ${now.voice === 'now' ? 'as of now' : at}`
   return (
     <Cell
       lead={lead}
       label={lead ? 'Desk' : 'Checkup'}
-      value={badge.label}
+      value={value}
       tone={tone}
-      sub={lead ? `${istHm(c.completedUtc)} · ${c.headline}` : `${slotLabel(c.slot).toLowerCase()} · ${istHm(c.completedUtc)}`}
+      title={now.voice === 'now' ? `As of now: ${now.headline}. At ${at} Sentinel said: ${c.headline}.` : `Sentinel at ${at}: ${c.headline}`}
+      sub={sub}
     />
   )
 }
@@ -434,7 +450,7 @@ function specs(view: DeskView): Spec[] {
 
   if (view.phase === 'pre') {
     if (view.isAdmin) {
-      add('checkup', 'lead', <CheckupCell lead />)
+      add('checkup', 'lead', <CheckupCell view={view} lead />)
       add('dhan', 'other', <DhanCell />)
       add('feed', 'other', <FeedCell view={view} />)
       if (strategies) add('plan', 'other', <PlanCell view={view} />)
@@ -470,9 +486,9 @@ function specs(view: DeskView): Spec[] {
   add('legs', 'other', <LegsCell view={view} />)
   if (view.isAdmin) {
     if (view.phase === 'live') add('feed', 'other', <FeedCell view={view} />)
-    if (view.phase === 'post') add('checkup', 'other', <CheckupCell />)
+    if (view.phase === 'post') add('checkup', 'other', <CheckupCell view={view} />)
     add('incidents', 'other', <IncidentsCell view={view} />)
-    if (view.phase === 'live') add('checkup', 'other', <CheckupCell />)
+    if (view.phase === 'live') add('checkup', 'other', <CheckupCell view={view} />)
   } else {
     add('charges', 'other', <ChargesCell view={view} />)
     add('nifty', 'other', <NiftyCell />)
