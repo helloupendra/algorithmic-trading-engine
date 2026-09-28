@@ -163,3 +163,7 @@ data/session-watchlist-state.json
 # What this machine did with the last pushes (scripts/auto-deploy.ps1).
 # One box's operational record; pushing it would mix machines' histories.
 data/deploy-history.json
+
+# The throwaway local stack (scripts/dev/local-live.sh): its generated
+# passwords and JWT key, the API's environment, logs, pids and build output.
+.dev-live/
