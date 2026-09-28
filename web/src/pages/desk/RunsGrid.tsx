@@ -190,6 +190,8 @@ function GridList({ view, links, multi }: { view: DeskView; links: DeskLinks; mu
 export function RunsGrid({ view, links }: { view: DeskView; links: DeskLinks }) {
   const meta = view.phase === 'post' ? 'final · net after charges' : 'net after charges · live'
   const head = <PanelHead title="Runs · net P&L" meta={meta} more={links.runs ? { to: links.runs, label: view.isAdmin ? 'Live runner' : 'My runs' } : null} />
+  // Before any early return: a hook's place in the render must not move when the runs arrive.
+  const [wrapRef, overflows] = useOverflowX<HTMLDivElement>()
   if (view.runsError && !view.grid) return <>{head}<Failed what="The runs" error={view.runsError} /></>
   if (!view.grid) return <>{head}<Waiting>Reading today’s runs…</Waiting></>
   const { grid } = view
@@ -203,7 +205,6 @@ export function RunsGrid({ view, links }: { view: DeskView; links: DeskLinks }) 
   }
   const multi = grid.accounts.length > 1
   const anyMark = grid.rows.some((r) => Object.values(r.cells).some((cs) => cs.some((c) => c && c.marks.length)))
-  const [wrapRef, overflows] = useOverflowX<HTMLDivElement>()
   return (
     <>
       {head}
