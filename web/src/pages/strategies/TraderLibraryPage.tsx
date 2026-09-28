@@ -26,7 +26,7 @@ import { IconClock, IconFlask, IconPlay } from '../../components/icons'
 import type { StrategyActiveRun, StrategyListItem, StrategyLiveView } from '../../lib/types'
 import { CategoryBadge, LaunchDialog, PnlValue, StrategyCard } from './shared'
 import { RunStatusCell } from './RunHistoryPage'
-import { liveNet, runningSummary } from '../../lib/strategyList'
+import { liveNet, runningTileSub } from '../../lib/strategyList'
 import { todayIst } from '../backtesting/shared'
 
 interface RunRow {
@@ -42,7 +42,6 @@ const runLink = (runId: number) => `/trade/runs/${runId}`
 export function TraderLibraryPage() {
   const strategies = useStrategies()
   const list = useMemo(() => strategies.data ?? [], [strategies.data])
-  const runningStrategies = useMemo(() => list.filter((s) => s.activeRuns.length > 0), [list])
   const rows = useMemo<RunRow[]>(
     () => list.flatMap((s) => s.activeRuns.map((run) => ({ strategy: s, run }))),
     [list],
@@ -134,16 +133,7 @@ export function TraderLibraryPage() {
           label={rows.length === 1 ? 'Running run' : 'Running runs'}
           value={rows.length}
           tone={rows.length > 0 ? 'pos' : undefined}
-          sub={
-            runningStrategies.length > 0
-              ? runningStrategies.map((s, i) => (
-                  <span key={s.id}>
-                    {i > 0 && <br />}
-                    {runningSummary(s)}
-                  </span>
-                ))
-              : 'nothing running'
-          }
+          sub={runningTileSub(list)}
           to={POSITIONS}
         />
         <StatTile label="Open positions" value={openPositions} sub="across running runs" to={POSITIONS} />

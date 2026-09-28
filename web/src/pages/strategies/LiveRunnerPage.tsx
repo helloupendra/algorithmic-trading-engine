@@ -19,7 +19,6 @@
  */
 
 import { Fragment, useEffect, useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import type { Scope } from '../../lib/desk'
 import { useStrategies, useStrategyLivesRepriced } from '../../lib/queries'
@@ -29,7 +28,7 @@ import type { StrategyActiveRun, StrategyLastExit, StrategyListItem, StrategyLiv
 import { LaunchDialog, PnlValue, ReadinessStrip, StrategyCard } from './shared'
 import { RunCard } from './RunCard'
 import { RunTracks } from './RunTracks'
-import { liveNet, realizedNet, runOwner, runningSummary } from '../../lib/strategyList'
+import { liveNet, realizedNet, runOwner, runningTileSub } from '../../lib/strategyList'
 import { readTrackUnderlying, writeTrackUnderlying } from '../../lib/tracks'
 
 /* ------------------------------------------------------------------ helpers */
@@ -136,7 +135,6 @@ function RunCards({ onView }: { onView: (view: RunsView) => void }) {
   const listUnknown = strategies.isError && strategies.data === undefined
 
   const list = useMemo(() => strategies.data ?? [], [strategies.data])
-  const runningStrategies = useMemo(() => list.filter((s) => s.activeRuns.length > 0), [list])
 
   // One card per live run, in start order within each strategy.
   const running = useMemo<CardSpec[]>(
@@ -194,16 +192,6 @@ function RunCards({ onView }: { onView: (view: RunsView) => void }) {
   // another browser greys its underlying out while the dialog is open.
   const launch = launchId != null ? (list.find((s) => s.id === launchId) ?? null) : null
 
-  let runningSub: ReactNode = 'nothing running'
-  if (runningStrategies.length > 0) {
-    runningSub = runningStrategies.map((s, i) => (
-      <span key={s.id}>
-        {i > 0 && <br />}
-        {runningSummary(s)}
-      </span>
-    ))
-  }
-
   return (
     <div className="page">
       <header className="page__header">
@@ -235,7 +223,7 @@ function RunCards({ onView }: { onView: (view: RunsView) => void }) {
               label={running.length === 1 ? 'Running run' : 'Running runs'}
               value={running.length}
               tone={running.length > 0 ? 'pos' : undefined}
-              sub={runningSub}
+              sub={runningTileSub(list)}
             />
             <StatTile label="Open positions" value={openPositions} sub="across running runs" />
             <StatTile
