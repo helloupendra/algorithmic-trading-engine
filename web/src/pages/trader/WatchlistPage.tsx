@@ -21,6 +21,7 @@ import {
 } from '../../lib/queries'
 import type { MyWatchlistItem } from '../../lib/types'
 import { useLivePrices } from '../../lib/live'
+import { answerAsOf } from '../../lib/asOf'
 import { watchlistWithTicks } from '../../lib/liveMarks'
 import { formatAge, formatPrice, pnlClass } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Panel, QueryBoundary } from '../../components/ui'
@@ -44,7 +45,7 @@ function change(item: MyWatchlistItem): { text: string; cls: string } {
 export function WatchlistPage() {
   const watchlist = useMyWatchlist()
   const answer = watchlist.data
-  const answeredAt = watchlist.dataUpdatedAt
+  const answeredAt = answerAsOf(watchlist)
   const prices = useLivePrices(useMemo(() => (answer ?? []).map((w) => w.symbol), [answer]))
   const rows = useMemo(() => (answer ? watchlistWithTicks(answer, prices, answeredAt) : answer), [answer, prices, answeredAt])
   const add = useAddToMyWatchlist()

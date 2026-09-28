@@ -42,6 +42,7 @@ import { effectiveRisk, isRiskEmpty, parseRiskDraft, riskChips, riskDraftFrom } 
 import { carriedNote, carryControl, carryHint, positionCountsNote, stopCarryWarning } from '../../lib/carry'
 import type { CarryContext } from '../../lib/carry'
 import { liveNet } from '../../lib/strategyList'
+import { answerAsOf } from '../../lib/asOf'
 import type { RiskDraft, RiskDraftField } from '../../lib/risk'
 import { Badge, FlashPrice, InlineError, Loading } from '../../components/ui'
 import { RiskRulesForm } from '../../components/RiskRulesForm'
@@ -688,7 +689,7 @@ export function RunCard({
   // with it) still brings everything else: fills, stops, realized, charges.
   // The page totals above the cards re-price the same way
   // (useStrategyLivesRepriced), so a total is always the sum of its cards.
-  const view = useRepricedRunView(live.data, live.dataUpdatedAt)
+  const view = useRepricedRunView(live.data, answerAsOf(live))
   const isActive = view ? view.isActive : run != null
   const positions = view?.positions ?? []
   const openCount = positions.filter((p) => p.status === 'Open').length

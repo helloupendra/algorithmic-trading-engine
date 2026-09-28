@@ -9,10 +9,11 @@
  * would give it now, without asking it again.
  *
  * One rule runs through all of them: a tick replaces a polled price only when
- * it is newer. Received after the answer arrived, it is; received before, the
- * answer already carries it or something newer, since the API marks from the
- * same quotes the hub pushes. Open positions compare the two ages instead,
- * because that answer says how old each mark was.
+ * it is newer. Received after the answer's request was sent, it is (the
+ * `answeredAtMs` each takes is lib/asOf.ts's answerAsOf); received before,
+ * the answer already carries it or something newer, since the API marks from
+ * the same quotes the hub pushes. Open positions compare the two ages
+ * instead, because that answer says how old each mark was.
  */
 
 import type { LiveTick } from './live'

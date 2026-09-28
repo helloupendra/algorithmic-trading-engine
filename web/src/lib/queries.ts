@@ -16,6 +16,7 @@ import { keepPreviousData, useInfiniteQuery, useMutation, useQueries, useQuery, 
 import type { InfiniteData } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
+import { answerAsOf, keepSentStamp, stampSent } from './asOf'
 import { livePoll, useLiveAllState, useLiveConnection, useLivePrices } from './live'
 import type { LiveConnection } from './live'
 import { pulseBehind, pulseWithTicks, runViewSymbols, runViewWithTicks } from './liveMarks'
@@ -106,7 +107,9 @@ export function useLatestQuotes() {
   const all = useLiveAllState()
   return useQuery({
     queryKey: ['quotes', 'all'],
-    queryFn: () => api.get<LiveQuote[]>('/api/LiveData/latest/all'),
+    // Stamped with when it was asked (lib/asOf.ts): pushes are laid over it.
+    queryFn: stampSent(() => api.get<LiveQuote[]>('/api/LiveData/latest/all')),
+    structuralSharing: keepSentStamp,
     refetchInterval: all === 'off' || all === 'on' ? POLL_SLOW : POLL_FAST,
   })
 }
@@ -114,10 +117,12 @@ export function useLatestQuotes() {
 export function useLiveBars(symbol: string | null, take = 500) {
   return useQuery({
     queryKey: ['bars', symbol, take],
-    queryFn: () =>
+    queryFn: stampSent(() =>
       api.get<LiveBar[]>(
         `/api/LiveData/bars?symbol=${encodeURIComponent(symbol!)}&take=${take}`,
       ),
+    ),
+    structuralSharing: keepSentStamp,
     enabled: !!symbol,
     refetchInterval: POLL_SLOW,
   })
@@ -850,7 +855,9 @@ function liveViewQuery(runId: number, enabled: boolean, connection: LiveConnecti
   const pollMs = livePoll(connection, POLL_LIVE_VIEW_PUSHED, POLL_LIVE_VIEW)
   return {
     queryKey: ['strategy', 'live', runId] as const,
-    queryFn: () => api.get<StrategyLiveView>(`/api/Strategy/runs/${runId}/live`),
+    // Stamped with when it was asked (lib/asOf.ts): the run card re-prices it from pushes.
+    queryFn: stampSent(() => api.get<StrategyLiveView>(`/api/Strategy/runs/${runId}/live`)),
+    structuralSharing: keepSentStamp,
     enabled,
     // A finished run's view cannot change, so a stopped card is fetched once and
     // then left alone (the server marks-to-market on every call). A run id is
@@ -900,7 +907,7 @@ export function useStrategyLivesRepriced(runIds: number[]): Array<StrategyLiveVi
   const lives = useStrategyLives(runIds)
   // useLivePrices keys on the sorted set, so a fresh array each render asks the hub nothing new.
   const prices = useLivePrices(lives.flatMap((q) => (q.data ? runViewSymbols(q.data) : [])))
-  return lives.map((q) => (q.data ? runViewWithTicks(q.data, prices, q.dataUpdatedAt) : undefined))
+  return lives.map((q) => (q.data ? runViewWithTicks(q.data, prices, answerAsOf(q)) : undefined))
 }
 
 /**
@@ -1734,11 +1741,12 @@ export function useMarketPulse() {
   const connection = useLiveConnection()
   const query = useQuery({
     queryKey: ['market', 'pulse'],
-    queryFn: () => api.get<import('./types').MarketPulseResponse>('/api/MarketPulse'),
+    queryFn: stampSent(() => api.get<import('./types').MarketPulseResponse>('/api/MarketPulse')),
+    structuralSharing: keepSentStamp,
     refetchInterval: livePoll(connection, 30_000, POLL_FAST),
   })
   const answer = query.data
-  const answeredAt = query.dataUpdatedAt
+  const answeredAt = answerAsOf(query)
   const symbols = useMemo(() => (answer?.groups ?? []).flatMap((g) => g.items.map((i) => i.symbol)), [answer])
   const prices = useLivePrices(symbols)
   const data = useMemo(() => (answer ? pulseWithTicks(answer, prices, answeredAt) : answer), [answer, prices, answeredAt])
@@ -1760,7 +1768,8 @@ export function useMarketPulse() {
 
 const myWatchlistQuery = {
   queryKey: ['watchlist', 'me'] as const,
-  queryFn: () => api.get<import('./types').MyWatchlistItem[]>('/api/Watchlist/me'),
+  queryFn: stampSent(() => api.get<import('./types').MyWatchlistItem[]>('/api/Watchlist/me')),
+  structuralSharing: keepSentStamp,
 }
 
 /** The viewer's list; its rows' prices are pushed on the page that shows them, so the socket slows the poll. */
@@ -1999,12 +2008,13 @@ export function useOptionChainPositions(underlying: string, live: boolean) {
 function chainViewQuery(underlying: string, expiry?: string, asOfUtc?: string) {
   return {
     queryKey: ['optionChainView', underlying, expiry ?? null, asOfUtc ?? null] as const,
-    queryFn: () => {
+    queryFn: stampSent(() => {
       const params = new URLSearchParams({ underlying })
       if (expiry) params.set('expiry', expiry)
       if (asOfUtc) params.set('asOfUtc', asOfUtc)
       return api.get<OptionChain>(`/api/OptionChain/view?${params}`)
-    },
+    }),
+    structuralSharing: keepSentStamp,
     enabled: Boolean(underlying),
   }
 }
@@ -2558,7 +2568,8 @@ export function useRunPnlSeries(date: string | null, live: boolean, enabled = tr
 export function useOpenPositions(pollMs: number | false, enabled = true) {
   return useQuery({
     queryKey: ['positions', 'open'],
-    queryFn: () => api.get<OpenPositionsResponse>('/api/Positions/open'),
+    queryFn: stampSent(() => api.get<OpenPositionsResponse>('/api/Positions/open')),
+    structuralSharing: keepSentStamp,
     enabled,
     refetchInterval: pollMs,
   })
