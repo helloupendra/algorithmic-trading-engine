@@ -1,7 +1,9 @@
 namespace AlgoTrading.Infrastructure.Patterns;
 
 /// <summary>One live 1-minute bar, as the aggregator needs it.</summary>
-public readonly record struct MinuteBar(DateTime StartUtc, decimal Open, decimal High, decimal Low, decimal Close);
+/// <param name="Volume">The minute's traded volume (live_bars' VolumeDelta); 0 for an index,
+/// which trades none. Only the indicator alerts' VWAP reads it.</param>
+public readonly record struct MinuteBar(DateTime StartUtc, decimal Open, decimal High, decimal Low, decimal Close, long Volume = 0);
 
 /// <summary>An exchange's trading window for one day, in UTC.</summary>
 public readonly record struct SessionWindow(DateTime OpenUtc, DateTime CloseUtc);
