@@ -2469,6 +2469,8 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CreatedUtc");
+
                     b.HasIndex("GroupId");
 
                     b.HasIndex("SimulationRunId");
