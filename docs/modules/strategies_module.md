@@ -159,6 +159,20 @@ A strategy changes its own state inside `on_bar`: by the time the runner posts a
 
 The runner saves the strategy's state to Redis (`strategy:state:{runId}`) once right after warm-up and after every tick whose signals were booked. A strategy that keeps objects in its state writes and reads them through `state_to_json` / `state_from_json` (SmcStructureBreak and Ghost save their structure readers as the candles they read). A restarted runner recovers a saved state — and skips warm-up — only when it reads back as it was saved; one that lost a value to text, or that its strategy cannot read, is dropped and the runner warms up. When the runner exits, which stops its run, it deletes the run's state, heartbeat and lock; a saved state also expires after three days.
 
+### 13. Desk events: telling a page what changed
+Every write a desk page shows is announced over the live feed hub as a `DeskEvent` once it has committed (the hub itself is in the data module, section 3): `{ kind, runId, userId, symbol, atUtc, detail }`, sent to the run's owner and to every admin. A page fetches again when told, rather than polling every few seconds to find out. An event is a hint, never the data: one that is lost costs a page a refresh on its slower timer.
+
+| `kind` | Sent when | From |
+|---|---|---|
+| `order` | A signal was booked: a strategy's `OPEN_GROUP` / `CLOSE_GROUP`, a manual ticket order, or a square-off (Stop, the risk guard, the close, a leg closed by hand). One per signal, `symbol` set when all its legs are one contract. | `PaperTradingService` |
+| `fill` | Each leg of that signal that filled ("SELL 2 at 99.50"). | `PaperTradingService` |
+| `position` | A fill took a position to zero (with the square-off's reason), an expired contract was settled, or a ticket order's own stop-loss and target were written. | `PaperTradingService`, `ManualOrdersController` |
+| `carry` | A position's carry-forward tick changed, a ticket order was placed as carry forward, or the close moved a ticked leg into the manual book (one event for the run, one for the book). | `PaperTradingService`, `ManualOrdersController` |
+| `run` | A run started, failed to start, is stopping, stopped (for any reason: the Stop button, a risk rule, the market close, a runner that exited, an API restart that found it gone), was adopted after a restart, or had its risk rules changed. | `StrategyRunControl` (`PublishRunEvent`), `StrategyController` |
+| `risk` | A leg, group, own-level or overall rule closed something (the rule's own reason; "Run stopped — …" for an overall rule), or the kill switch flattened a run. Pulling or releasing the kill switch itself is one event to the admins, with no run. | `StrategyRiskGuardService`, `PaperTradingService`, `RiskController` |
+
+Rules that hold for every kind: nothing is sent for a write that did not happen (a refused signal, a retry of a signal already booked) or for a backtest replay; an event is sent after the commit, never before; and publishing never throws into, nor waits in, the fill, the stop or the guard that reports it (`IDeskEventPublisher`, whose SignalR implementation logs a failed send at Debug and moves on). A place with no owner at hand looks it up from the run.
+
 ## Module Components
 
 ### Python
@@ -171,6 +185,7 @@ The runner saves the strategy's state to Redis (`strategy:state:{runId}`) once r
 ### .NET
 - `src/AlgoTrading.Api/Controllers/StrategyController.cs`, `InstrumentsController.cs`, `PositionsController.cs`
 - `src/AlgoTrading.Api/Services/StrategyCatalogService.cs`, `StrategyProcessRegistry.cs`, `StrategyRunControl.cs`, `StrategyRiskGuardService.cs`, `PythonEngineLocator.cs`, `MarketHoursService.cs`, `PositionCarryForward.cs`, `ManualBook.cs`
+- `src/AlgoTrading.Api/Hubs/SignalRDeskEventPublisher.cs`, `src/AlgoTrading.Application/Interfaces/IDeskEventPublisher.cs` — desk events (section 13)
 - `src/AlgoTrading.Api/Services/RunPnl.cs` (a run's realized, unrealized, charges and net), `RunPnlRecorder.cs` (the minute recorder and its hosted service), `RunPnlSeriesBuilder.cs` (the day's series), `OpenPositionsBuilder.cs` (every open leg)
 - `src/AlgoTrading.Domain/Entities/RunPnlMinute.cs` — one run's P&L at one minute (`run_pnl_minutes`).
 - `src/AlgoTrading.Contracts/Strategies/*.cs` — request/response DTOs.
