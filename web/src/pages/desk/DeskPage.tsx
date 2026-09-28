@@ -35,10 +35,12 @@ import {
 } from '../../lib/desk'
 import { deskLegsPoll, useMarketSession, useOpenPositions } from '../../lib/queries'
 import { useLiveConnection } from '../../lib/live'
+import { answerAsOf } from '../../lib/asOf'
+import { runLegs } from '../../lib/liveMarks'
 import { IconPin } from '../../components/icons'
 import { useStripSlot } from '../../components/shell/stripSlot'
 import type { DeskLinks, DeskView } from './data'
-import { useDeskLinks, useNow, useShownDay } from './data'
+import { useDeskLinks, useLiveGrid, useNow, useShownDay } from './data'
 import { StatusStrip } from './StatusStrip'
 import { PlanGrid, RunsGrid } from './RunsGrid'
 import { DayPnl } from './DayPnl'
@@ -60,8 +62,18 @@ function deskStorage(): Storage | null {
   }
 }
 
+/**
+ * The runs grid with its money at the pushed prices (useLiveGrid). Its own
+ * component, so a push re-renders the grid and not the Desk around it; the
+ * markup is RunsGrid's, handed the live grid in place of the answered one.
+ */
+function LiveRunsGrid({ view, links }: { view: DeskView; links: DeskLinks }) {
+  const grid = useLiveGrid(view)
+  return <RunsGrid view={grid === view.grid ? view : { ...view, grid }} links={links} />
+}
+
 const PANELS: Record<PanelKey, (p: { view: DeskView; links: DeskLinks }) => ReactNode> = {
-  grid: RunsGrid,
+  grid: LiveRunsGrid,
   plan: PlanGrid,
   pnl: DayPnl,
   indices: Indices,
@@ -169,12 +181,15 @@ export function DeskPage() {
   const accounts = useMemo(() => (scope === 'all' ? allAccounts : allAccounts.filter((a) => a.id === scope)), [scope, allAccounts])
   const runs = useMemo(() => (trading ? scopeRuns(trading, scope) : undefined), [trading, scope])
 
-  // Which runs carried a leg into a manual book, in any account: a carried leg names its run.
+  // Which runs carried a leg into a manual book, in any account: a carried leg
+  // names its run. The same legs are what the live runs' figures are re-priced
+  // from (useLiveGrid), so the grid and the legs panel never disagree on a run.
   const open = useOpenPositions(deskLegsPoll(clock === 'live', useLiveConnection()), strategies)
-  const grid = useMemo(
-    () => (runs ? buildGrid(runs, accounts, carriedRunIds(open.data?.positions)) : null),
-    [runs, accounts, open.data],
-  )
+  const positions = open.data?.positions
+  const legsAsOf = answerAsOf(open)
+  const carried = useMemo(() => carriedRunIds(positions), [positions])
+  const legs = useMemo(() => runLegs(positions, legsAsOf), [positions, legsAsOf])
+  const grid = useMemo(() => (runs ? buildGrid(runs, accounts, carried) : null), [runs, accounts, carried])
 
   const view: DeskView = {
     phase: shown.phase,
@@ -188,8 +203,11 @@ export function DeskPage() {
     accounts,
     allAccounts,
     runs,
+    runsAsOf: shownDay.asOf,
     runsError: shownDay.error,
     grid,
+    carried,
+    legs,
     scopeName: scope === 'all' ? null : (accounts[0]?.name ?? null),
     nse: nse.data,
     mcx: mcx.data,
