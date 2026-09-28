@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Copies each finished trading day of market data to Google Drive, proves the
-copy, and only then (when asked) frees the server's disk.
+Copies each finished trading day of market data (and the live runs' minute-by-
+minute P&L) to Google Drive, proves the copy, and only then (when asked) frees
+the server's disk.
 
 Why: the owner wants every tick kept for analysis, and the server's 40 GB disk
 took about 6 GB a day once Dhan's full feed and chain were recorded
@@ -74,10 +75,14 @@ RETRY_WAIT_SECONDS = int(os.environ.get("ARCHIVE_RETRY_WAIT_SECONDS", "90"))
 #: market_ticks is not here: it is a second copy of every live tick (same rows,
 #: same columns, written by MarketTickBatchWriterService), and one copy on
 #: Drive is enough.
+#: run_pnl_minutes is each live run's P&L at every minute (from 2026-09-28).
+#: It is not market data, but it is the only record of what each run card
+#: showed minute by minute, and the owner keeps every datum.
 TABLES: Dict[str, str] = {
     "live_ticks": "ReceivedUtc",
     "option_chain_snapshots": "CapturedUtc",
     "live_bars": "BarStartUtc",
+    "run_pnl_minutes": "AtUtc",
 }
 
 #: Tables that are TimescaleDB hypertables, freed with drop_chunks; the rest
