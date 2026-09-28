@@ -19,6 +19,7 @@
  * session is not "closed", and an unknown feed list is not "no feed".
  */
 
+import type { LiveConnection } from './live'
 import type { IngestorStatus, LiveFeed, MarketSessionInfo, Provider } from './types'
 
 export type PulseTone = 'pos' | 'neg' | 'warn' | 'live' | 'idle'
@@ -445,6 +446,39 @@ export function backendPulse(b: BackendReading): Pulse | null {
     label: `Backend up ${formatUptime(b.status.uptimeSeconds)}`,
     tone: 'pos',
     title: `Started ${dateTimeIst(b.status.startedUtc)} IST${b.status.environment ? ` · ${b.status.environment}` : ''}`,
+  }
+}
+
+/**
+ * Whether prices, fills and stops are reaching this screen as they happen.
+ * "Live" only while a current hub is connected: it pushes the prices a page
+ * asked for and the desk events that bring fills and stops. An older API's hub
+ * (legacy) pushes prices but no events, so it says so instead of "Live". Down
+ * is said once it has lasted (`sustained`): the first connect and a blip take
+ * well under that, and a warning nobody could act on is noise.
+ */
+export function livePulse(connection: LiveConnection, sustained: boolean): Pulse | null {
+  if (connection === 'connected') {
+    return { key: 'live', label: 'Live', tone: 'live', title: 'Prices, fills and stops are pushed to this screen as they happen' }
+  }
+  if (connection === 'legacy') {
+    return {
+      key: 'live',
+      label: 'Prices only — fills polled',
+      short: 'Prices only',
+      tone: 'warn',
+      title:
+        'The API is an older build than this console: it pushes prices, but not fills, stops or position changes, ' +
+        'so pages read those every few seconds, as they did before the live connection. It clears by itself once the API is updated.',
+    }
+  }
+  if (!sustained) return null
+  return {
+    key: 'live',
+    label: 'Reconnecting — prices may be stale',
+    short: 'Reconnecting',
+    tone: 'warn',
+    title: 'The live connection dropped and is being retried. Prices are read every few seconds meanwhile, so they may be behind the market.',
   }
 }
 

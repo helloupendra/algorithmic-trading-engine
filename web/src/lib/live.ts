@@ -34,6 +34,8 @@
  *   SubscribeAll() → true for admins and the market-data grant · UnsubscribeAll()
  *   ReceiveTicks(ticks[]): subscribed symbols only, coalesced every ~250 ms
  *   DeskEvent({ kind, runId, userId, symbol, atUtc, detail }) to the owner and admins
+ * An API from before 28 Sep has none of these methods; each connection asks
+ * first which hub it reached (see LiveConnection's 'legacy').
  */
 
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
@@ -46,8 +48,19 @@ import type { LiveQuote } from './types'
 
 // ---------------------------------------------------------------- shapes
 
-/** Whether prices are being pushed right now. */
-export type LiveConnection = 'connected' | 'reconnecting' | 'disconnected'
+/**
+ * Whether prices are being pushed right now.
+ *
+ * 'legacy' is a hub from an API build older than this console: a rollback,
+ * or an API build that failed after the console was rebuilt. It has none of
+ * the subscription methods and sends no desk events, but broadcasts every
+ * tick to every browser, as the API did until 28 Sep. So prices still move,
+ * while a fill or a stop reaches the screen only by a poll: the pages poll at
+ * their old pace (`livePoll` counts it as not pushed) and the top bar does not
+ * say "Live". A later API restart drops the socket, and the reconnect asks
+ * again, so the state clears by itself once the API is updated.
+ */
+export type LiveConnection = 'connected' | 'legacy' | 'reconnecting' | 'disconnected'
 
 /**
  * The everything-feed: nobody holds it (off), held but not asked for yet
@@ -122,6 +135,27 @@ export function retryDelay(attempt: number): number {
  */
 export function livePoll(connection: LiveConnection, connectedMs: number | false, fallbackMs: number | false): number | false {
   return connection === 'connected' ? connectedMs : fallbackMs
+}
+
+/**
+ * Whether a push belongs in the ['quotes', 'all'] list: with the
+ * everything-feed on it is the whole feed, and a legacy hub sends the whole
+ * feed to everyone. Otherwise a push is only the symbols some screen asked
+ * for, which those screens lay over their own answers.
+ */
+export function foldsIntoQuotes(connection: LiveConnection, all: LiveAllState): boolean {
+  return all === 'on' || connection === 'legacy'
+}
+
+/**
+ * Whether a hub call failed because the hub has no such method: an API build
+ * from before the subscription contract. SignalR reports it as "Failed to
+ * invoke 'Subscribe' due to an error on the server. HubException: Method does
+ * not exist." (older servers: "Unknown hub method 'Subscribe'").
+ */
+export function isMissingMethod(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : typeof err === 'string' ? err : ''
+  return /Method does not exist|Unknown hub method/i.test(message)
 }
 
 function num(value: unknown): number | null {
@@ -453,6 +487,11 @@ export class LiveFeed {
     hub.on('ReceiveTicks', (ticks: unknown) => {
       if (this.hub === hub) this.receive(ticks)
     })
+    // A legacy hub's single-tick endpoint broadcast one tick at a time under
+    // the singular name; the current hub never sends it.
+    hub.on('ReceiveTick', (tick: unknown) => {
+      if (this.hub === hub) this.receive([tick])
+    })
     hub.on('DeskEvent', (event: unknown) => {
       if (this.hub === hub) this.dispatch(event)
     })
@@ -462,7 +501,7 @@ export class LiveFeed {
       this.setStatus('reconnecting')
     })
     hub.onreconnected(() => {
-      if (this.hub === hub) this.connected()
+      if (this.hub === hub) this.connected(hub)
     })
     hub.onclose(() => {
       if (this.hub !== hub || !this.wanted) return
@@ -473,7 +512,7 @@ export class LiveFeed {
       () => {
         if (this.hub !== hub) return
         this.attempt = 0
-        this.connected()
+        this.connected(hub)
       },
       () => {
         if (this.hub === hub) this.lost()
@@ -495,15 +534,40 @@ export class LiveFeed {
     }, retryDelay(this.attempt++))
   }
 
-  private connected(): void {
+  private connected(hub: HubLike): void {
     // A new server connection: none of the old subscriptions came with it.
     this.generation++
+    const generation = this.generation
     this.onServer.clear()
     this.setAll(this.allHolders > 0 ? 'waiting' : 'off')
-    this.setStatus('connected')
+    // Which hub answered decides what "connected" means, so it is asked before
+    // anything is claimed: an API older than this console has no subscription
+    // methods, and a page holding no symbols would never find that out by
+    // subscribing. Unsubscribing nothing changes nothing on a current hub.
+    const settle = (legacy: boolean) => {
+      if (this.hub !== hub || this.generation !== generation) return
+      if (legacy) {
+        this.toLegacy()
+      } else {
+        this.setStatus('connected')
+        this.flush()
+      }
+      if (this.everConnected) each(this.reconnectListeners, undefined)
+      this.everConnected = true
+    }
+    hub.invoke('Unsubscribe', []).then(
+      () => settle(false),
+      // Any other failure is the connection's own trouble, which its
+      // reconnecting and close callbacks report.
+      (err: unknown) => settle(isMissingMethod(err)),
+    )
+  }
+
+  /** The hub is an older API's (see LiveConnection): nothing to ask of it, everything it sends is kept as before. */
+  private toLegacy(): void {
+    this.onServer.clear()
+    this.setStatus('legacy')
     this.flush()
-    if (this.everConnected) each(this.reconnectListeners, undefined)
-    this.everConnected = true
   }
 
   private setStatus(next: LiveConnection): void {
@@ -551,7 +615,12 @@ export class LiveFeed {
   private async sync(): Promise<void> {
     const hub = this.hub
     const generation = this.generation
-    if (!hub || this.status !== 'connected') return
+    if (!hub) return
+    if (this.status === 'legacy') {
+      this.syncLegacy()
+      return
+    }
+    if (this.status !== 'connected') return
     const still = () => this.hub === hub && this.generation === generation
 
     const desired = this.desired()
@@ -578,6 +647,10 @@ export class LiveFeed {
       } catch (err) {
         if (!still()) return
         for (const s of add) this.onServer.delete(s)
+        if (isMissingMethod(err)) {
+          this.toLegacy()
+          return
+        }
         this.warn(`Live prices: the hub refused ${add.length} symbol(s); their pages keep polling. ${err instanceof Error ? err.message : ''}`.trim())
       }
       if (!still()) return
@@ -588,7 +661,11 @@ export class LiveFeed {
       let granted = false
       try {
         granted = (await hub.invoke<boolean>('SubscribeAll')) === true
-      } catch {
+      } catch (err) {
+        if (still() && isMissingMethod(err)) {
+          this.toLegacy()
+          return
+        }
         granted = false
       }
       if (!still()) return
@@ -608,6 +685,16 @@ export class LiveFeed {
         }
       }
     }
+  }
+
+  /**
+   * A legacy hub sends every symbol whatever is asked, so there is nothing to
+   * tell it: the everything-feed is on for whoever holds it, and only what a
+   * screen still holds is kept.
+   */
+  private syncLegacy(): void {
+    this.setAll(this.allHolders > 0 ? 'on' : 'off')
+    this.forget([...this.latest.keys()].filter((s) => !this.refs.has(s)))
   }
 
   // ---- hearing from the hub
@@ -685,6 +772,9 @@ export const liveFeed = new LiveFeed({ connect: connectHub })
  * into the query cache: desk events invalidate the queries they make stale,
  * a reconnect re-reads all of them, and with the everything-feed held each
  * price is folded into ['quotes', 'all'] for the pages that read that list.
+ * A legacy hub (an API older than this console) broadcasts every tick to
+ * everyone, and those are folded in as the console did before 28 Sep, held
+ * or not.
  *
  * Mounted once, in the signed-in shell: signing in opens it, signing out
  * (the shell unmounting) closes it.
@@ -695,7 +785,7 @@ export function useLiveFeed(): void {
     if (!tokenStore.access) return
     const batch = invalidationBatcher(qc)
     const offTicks = liveFeed.onTicks((ticks) => {
-      if (liveFeed.all !== 'on') return
+      if (!foldsIntoQuotes(liveFeed.connection, liveFeed.all)) return
       qc.setQueryData<LiveQuote[]>(['quotes', 'all'], (old) => (old ? foldTicks(old, ticks) : old))
     })
     const offEvents = liveFeed.onDeskEvent((event) => batch.push(deskEventKeys(event)))
