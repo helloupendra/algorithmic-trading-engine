@@ -213,6 +213,41 @@ public class MarketIntelligenceParserTests
         Assert.Throws<FormatException>(() => MarketFactorParsers.ParseParticipantOpenInterest(Fixture(file), date.AddDays(1), "test"));
     }
 
+    [Fact]
+    public void A_participant_title_with_no_year_takes_it_from_the_file_name()
+    {
+        // 8 Jun 2021's title reads "as on Jun 08": the history backfill
+        // reported "participant OI title does not name its date" and the day
+        // stayed empty.
+        var day = new DateOnly(2021, 6, 8);
+        var rows = MarketFactorParsers.ParseParticipantOpenInterest(
+            Fixture("participant_oi_08062021.csv"), day, MarketFactorsSync.ParticipantUrl(day));
+
+        Assert.Equal(5, rows.Count);
+        Assert.All(rows, r => Assert.Equal(day, r.Date));
+        Assert.Equal(100133L, rows.Single(r => r.ClientType == "FII").FutureIndexLong);
+        Assert.Equal(7803705L, rows.Single(r => r.ClientType == "TOTAL").TotalLong);
+    }
+
+    [Fact]
+    public void A_participant_title_with_no_year_is_read_only_when_its_day_is_the_file_names()
+    {
+        string csv = Fixture("participant_oi_08062021.csv");
+        var day = new DateOnly(2021, 6, 8);
+        var next = day.AddDays(1);
+        IReadOnlyList<Domain.Entities.MarketParticipantOpenInterest> Read(string text, DateOnly asked, string source)
+            => MarketFactorParsers.ParseParticipantOpenInterest(text, asked, source);
+
+        // The day's file served under the next day's name: the title's day disagrees.
+        Assert.Throws<FormatException>(() => Read(csv, next, MarketFactorsSync.ParticipantUrl(next)));
+        // Nothing to take the year from.
+        Assert.Throws<FormatException>(() => Read(csv, day, "test"));
+        // A file named for one day, asked for as another.
+        Assert.Throws<FormatException>(() => Read(csv, next, MarketFactorsSync.ParticipantUrl(day)));
+        // No date in the title at all: the name alone is not proof of the day.
+        Assert.Throws<FormatException>(() => Read(csv.Replace("as on Jun 08", "as on"), day, MarketFactorsSync.ParticipantUrl(day)));
+    }
+
     // ---------- breadth ----------
 
     [Fact]
