@@ -62,6 +62,13 @@ class LowerPriorityTests(unittest.TestCase):
         self.assertEqual(1, len(logged))
         self.assertIn("RUNNER_NICE", logged[0])
 
+    def test_a_closed_stdout_cannot_take_the_runner_down(self):
+        def broken_pipe(_):
+            raise BrokenPipeError("the API that spawned the runner has gone")
+
+        with mock.patch.dict(os.environ, {"RUNNER_NICE": "low"}, clear=False):
+            self.assertEqual(0, lower_priority_from_env(log=broken_pipe))
+
     def test_the_environment_beats_the_file(self):
         with mock.patch.dict(os.environ, {"RUNNER_NICE": "3"}, clear=False), \
              mock.patch("dotenv.dotenv_values", return_value={"RUNNER_NICE": "12"}) as from_file:
