@@ -152,5 +152,9 @@ internal sealed class TestCallerContext(string connectionId, ClaimsPrincipal? us
     public override IDictionary<object, object?> Items { get; } = new Dictionary<object, object?>();
     public override IFeatureCollection Features { get; } = new FeatureCollection();
     public override CancellationToken ConnectionAborted => CancellationToken.None;
-    public override void Abort() { }
+
+    /// <summary>Whether the hub aborted this connection.</summary>
+    public bool Aborted { get; private set; }
+
+    public override void Abort() => Aborted = true;
 }

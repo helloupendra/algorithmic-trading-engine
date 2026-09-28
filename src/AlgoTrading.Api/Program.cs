@@ -525,11 +525,9 @@ app.MapMetrics().AllowAnonymous();
 // exactly one URL for search engines and for people.
 app.MapFallbackToFile("{*path:regex(^(?!api(/|$)|hubs(/|$)|swagger(/|$)|docs(/|$)).*$)}", "index.html").AllowAnonymous();
 
-// Signed-in callers only. Anonymous, this hub shipped the broker's full raw
-// tick payload to anyone who had the URL — including every browser sitting on
-// the public landing and login pages, which mount the client outside the
-// authenticated part of the app.
-app.MapHub<LiveFeedHub>("/hubs/livefeed").RequireAuthorization();
+// Signed-in callers only, and closed when the token it opened with expires;
+// see LiveFeedHubSetup for why each.
+app.MapLiveFeedHub();
 
 
 
