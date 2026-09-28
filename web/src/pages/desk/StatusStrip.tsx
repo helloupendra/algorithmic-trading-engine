@@ -45,7 +45,7 @@ import {
   useProviders,
 } from '../../lib/queries'
 import type { DeskView } from './data'
-import { toneClass, useDayForecasts, useDeskLegs, useDeskPlan } from './data'
+import { toneClass, useDayForecasts, useDeskLegs, useDeskPlan, useLiveGrid } from './data'
 import { Dot, Money, Swatch } from './parts'
 
 type Kind = 'lead' | 'account' | 'other'
@@ -82,12 +82,12 @@ function NetLead({ view }: { view: DeskView }) {
   const day = view.phase === 'post' ? 'result' : 'net today'
   const whose = all ? 'all accounts' : (view.scopeName ?? view.accounts[0]?.name)
   const label = who ? `${who} ${day}` : `${view.phase === 'post' ? 'Day result' : 'Net today'}${whose ? ` · ${whose}` : ''}`
-  const f = view.grid?.figures
+  const f = useLiveGrid(view)?.figures
   return (
     <Cell
       lead
       label={label}
-      value={view.grid ? <Money value={f!.net} /> : null}
+      value={f ? <Money value={f.net} /> : null}
       sub={f ? `after ${formatInrWhole(f.charges)} charges` : undefined}
     />
   )
@@ -97,7 +97,7 @@ function NetLead({ view }: { view: DeskView }) {
 // checked on each new order), so an account's total measured against it read
 // as "144% of max daily loss" on a day no run was near it.
 function AccountCell({ view, index }: { view: DeskView; index: number }) {
-  const totals = view.grid?.totals[index]
+  const totals = useLiveGrid(view)?.totals[index]
   const account = view.accounts[index]
   return (
     <Cell
@@ -229,7 +229,7 @@ function LegsCell({ view }: { view: DeskView }) {
 }
 
 function ChargesCell({ view }: { view: DeskView }) {
-  const f = view.grid?.figures
+  const f = useLiveGrid(view)?.figures
   return (
     <Cell
       label="Charges today"
