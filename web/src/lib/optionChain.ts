@@ -92,6 +92,20 @@ export function signedPercent(value: number | null | undefined, digits = 2): str
   return `${value > 0 ? '+' : MINUS}${fixed}%`
 }
 
+/**
+ * How far a level (max pain, say) sits from the spot, in whole points:
+ * "+110 vs spot", "−45 vs spot", "at the spot". Short enough for the second
+ * line of a quarter-width cell on a phone. Null when either side is unknown,
+ * so the line is left out instead of showing a dash that looks like a zero.
+ */
+export function pointsVsSpot(level: number | null | undefined, spot: number | null | undefined): string | null {
+  if (level == null || spot == null || !Number.isFinite(level) || !Number.isFinite(spot) || !(spot > 0)) return null
+  // Half a point rounds away from zero on both sides (Math.round alone takes −40.5 to −40).
+  const points = Math.sign(level - spot) * Math.round(Math.abs(level - spot))
+  if (points === 0) return 'at the spot'
+  return `${points > 0 ? '+' : MINUS}${Math.abs(points).toLocaleString('en-IN')} vs spot`
+}
+
 /** "▲0.02%" / "▼0.02%" for the spot marker. */
 export function arrowPercent(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return ''
