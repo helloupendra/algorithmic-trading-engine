@@ -81,6 +81,14 @@ public class LiveFeedHubWireTests
 
         Assert.Contains("at most 400 symbols", error);
         Assert.Equal(0, (await trader.InvokeAsync("Subscribe", Symbols())).GetInt32());
+
+        // An answer to a page, not a fault of the server: a warning of the
+        // hub's own, and no "fail:" line from SignalR's dispatcher.
+        Assert.DoesNotContain(host.Log.Entries, x => x.Level >= LogLevel.Error);
+        var refused = Assert.Single(host.Log.Entries, x => x.Category == typeof(LiveFeedHub).FullName);
+        Assert.Equal(LogLevel.Warning, refused.Level);
+        Assert.Contains("refused Subscribe", refused.Message);
+        Assert.Contains("at most 400 symbols", refused.Message);
     }
 
     [Fact]
@@ -244,13 +252,17 @@ public class LiveFeedHubWireTests
         private readonly WebApplication _app;
         private readonly TradingDbContext _db;
 
-        private WireHost(WebApplication app, TradingDbContext db)
+        private WireHost(WebApplication app, TradingDbContext db, CapturingLoggerProvider log)
         {
             _app = app;
             _db = db;
+            Log = log;
         }
 
         public LiveTickDispatcher Dispatcher => _app.Services.GetRequiredService<LiveTickDispatcher>();
+
+        /// <summary>Everything the host logged, through the API's own logging rules.</summary>
+        public CapturingLoggerProvider Log { get; }
 
         public SignalRDeskEventPublisher DeskEvents => (SignalRDeskEventPublisher)_app.Services.GetRequiredService<IDeskEventPublisher>();
 
@@ -274,7 +286,9 @@ public class LiveFeedHubWireTests
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Test" });
             builder.WebHost.UseTestServer();
             builder.Logging.ClearProviders();
-            builder.Services.AddSignalR();
+            var log = new CapturingLoggerProvider();
+            builder.Logging.AddProvider(log);
+            builder.Services.AddLiveFeedHub(builder.Configuration);
             builder.Services.AddAuthentication(HeaderAuth.SchemeName)
                 .AddScheme<AuthenticationSchemeOptions, HeaderAuth>(HeaderAuth.SchemeName, null);
             builder.Services.AddAuthorization();
@@ -283,10 +297,6 @@ public class LiveFeedHubWireTests
             builder.Services.AddScoped<IUserAdminService>(sp => new UserAdminService(
                 sp.GetRequiredService<TradingDbContext>(), new PasswordHasher<AppUser>(), RecapClockTests.Inert<ITokenValidityService>.Create(),
                 NullLogger<UserAdminService>.Instance));
-            builder.Services.Configure<LiveFeedOptions>(_ => { });
-            builder.Services.AddSingleton<LiveFeedSubscriptions>();
-            builder.Services.AddSingleton<LiveTickDispatcher>();
-            builder.Services.AddSingleton<IDeskEventPublisher, SignalRDeskEventPublisher>();
             configure?.Invoke(builder.Services);
 
             var app = builder.Build();
@@ -294,7 +304,7 @@ public class LiveFeedHubWireTests
             app.UseAuthorization();
             app.MapLiveFeedHub();
             await app.StartAsync();
-            return new WireHost(app, db);
+            return new WireHost(app, db, log);
         }
 
         /// <param name="expiresIn">When the sign-in expires, as a token's would; none by default.</param>

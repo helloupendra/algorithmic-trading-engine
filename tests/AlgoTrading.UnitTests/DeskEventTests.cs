@@ -252,6 +252,30 @@ public class DeskEventTests
     }
 
     [Fact]
+    public async Task The_owner_is_sent_the_event_while_an_admin_connection_is_still_being_written()
+    {
+        // A group send completes when every member's write has. The owner's
+        // used to wait for the admins': one admin phone on a bad network held
+        // every trader's fills until its socket drained or timed out.
+        var subs = new LiveFeedSubscriptions();
+        subs.Connect("admin-phone", 1, isAdmin: true);
+        subs.Connect("owner-tab", Owner, isAdmin: false);
+        var hub = new RecordingHubContext();
+        var stalled = new TaskCompletionSource();
+        hub.OnSend = target => target == "group:role:admin" ? stalled.Task : Task.CompletedTask;
+        var publisher = new SignalRDeskEventPublisher(hub, subs, NullLogger<SignalRDeskEventPublisher>.Instance);
+
+        var sending = publisher.SendAsync(new DeskEvent(DeskEventKinds.Fill, 42, Owner, Call, DateTime.UtcNow, "SELL 2 at 99.50"));
+
+        Assert.Equal(new[] { "group:user:7 except admin-phone" }, hub.All.Select(x => x.Target));
+        Assert.False(sending.IsCompleted);
+
+        stalled.SetResult();
+        await sending;
+        Assert.Equal(2, hub.All.Count);
+    }
+
+    [Fact]
     public async Task An_event_without_an_owner_goes_to_the_admins_only_and_a_failed_send_is_swallowed()
     {
         var subs = new LiveFeedSubscriptions();
