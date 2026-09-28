@@ -346,6 +346,11 @@ export function pulseBehind(pulse: MarketPulseResponse, prices: Prices, answered
   return pulse.groups.some((g) => g.items.some((item) => behind(item, prices.get(item.symbol), answeredAtMs)))
 }
 
+/** Whether any watchlist row's pushed price is from a later day than the row: the list is worth asking for again now. */
+export function watchlistBehind(items: readonly MyWatchlistItem[], prices: Prices, answeredAtMs: number): boolean {
+  return items.some((item) => behind(item, prices.get(item.symbol), answeredAtMs))
+}
+
 /** The viewer's watchlist rows moved to their newer pushed prices; the same list when none moved. */
 export function watchlistWithTicks(items: MyWatchlistItem[], prices: Prices, answeredAtMs: number): MyWatchlistItem[] {
   let changed = false
