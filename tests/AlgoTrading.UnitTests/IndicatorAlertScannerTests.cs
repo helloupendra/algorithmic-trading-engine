@@ -227,6 +227,7 @@ public class IndicatorAlertScannerTests
         var config = Config($"cooldown: 30\n{Nifty} 5 ema-cross(2,3)");
         var first = Assert.Single((await Scanner(db).ScanAsync(Ist(9, 20, 20), config, Settings)).Recorded);
         Assert.True(first.Notify);
+        Delivered(db, first);
         var second = Assert.Single((await Scanner(db).ScanAsync(Ist(9, 25, 20), config, Settings)).Recorded);
         Assert.False(second.Notify);
         Assert.False(second.Occurrence.Up);
@@ -245,6 +246,57 @@ public class IndicatorAlertScannerTests
         var off = Config($"cooldown: 0\n{Nifty} 5 ema-cross(2,3)");
         await Scanner(db2).ScanAsync(Ist(9, 20, 20), off, Settings);
         Assert.True(Assert.Single((await Scanner(db2).ScanAsync(Ist(9, 25, 20), off, Settings)).Recorded).Notify);
+    }
+
+    // Until 28 Sep every alert started a cooldown window, sent or not, and the
+    // next cross inside it was withheld too: Telegram heard of neither.
+
+    [Fact]
+    public async Task An_alert_found_late_after_a_restart_starts_no_cooldown()
+    {
+        using var db = Db();
+        SeedFallingMonday(db, timeframe: 5);
+        // Up through the EMAs on the candle closing 09:20, back down on the one closing 09:25.
+        db.LiveBars.AddRange(Candles(Nifty, Ist(9, 15), 5, [25_500m, 23_000m]));
+        db.SaveChanges();
+        var config = Config($"cooldown: 30\n{Nifty} 5 ema-cross(2,3)");
+
+        // The API was down across the 09:20 close and first scans at 09:24.
+        var late = Assert.Single((await Scanner(db).ScanAsync(Ist(9, 24), config, Settings)).Recorded);
+        Assert.False(late.Notify);
+
+        var next = Assert.Single((await Scanner(db).ScanAsync(Ist(9, 25, 20), config, Settings)).Recorded);
+        Assert.False(next.Occurrence.Up);
+        Assert.True(next.Notify);
+        Assert.Null(IndicatorEventMetadata.TryRead(db.AlertEvents.Single(e => e.Id == next.EventId).MetadataJson)!.NotifySkippedReason);
+    }
+
+    [Fact]
+    public async Task An_alert_that_never_reached_telegram_starts_no_cooldown_and_one_that_did_does()
+    {
+        // Recorded to be sent, then dropped by the limiter or refused by Telegram.
+        foreach (bool delivered in new[] { false, true })
+        {
+            using var db = Db();
+            SeedFallingMonday(db, timeframe: 5);
+            db.LiveBars.AddRange(Candles(Nifty, Ist(9, 15), 5, [25_500m, 23_000m]));
+            db.SaveChanges();
+            var config = Config($"cooldown: 30\n{Nifty} 5 ema-cross(2,3)");
+
+            var first = Assert.Single((await Scanner(db).ScanAsync(Ist(9, 20, 20), config, Settings)).Recorded);
+            Assert.True(first.Notify);
+            if (delivered) Delivered(db, first);
+
+            var next = Assert.Single((await Scanner(db).ScanAsync(Ist(9, 25, 20), config, Settings)).Recorded);
+            Assert.Equal(!delivered, next.Notify);
+        }
+    }
+
+    /// <summary>What IndicatorAlertService does once Telegram has taken the alert.</summary>
+    private static void Delivered(TradingDbContext db, RecordedIndicator alert)
+    {
+        db.AlertEvents.Single(e => e.Id == alert.EventId).DeliveredToTelegram = true;
+        db.SaveChanges();
     }
 
     [Fact]
@@ -356,12 +408,44 @@ public class IndicatorAlertScannerTests
         Assert.Equal([1L, 3L, 2L], batches[0].Alerts.Select(a => a.EventId).ToArray());
         Assert.Equal([4L], batches[1].Alerts.Select(a => a.EventId).ToArray());
 
-        var text = IndicatorAlertText.TelegramMessage(batches[0].ClosedAtUtc, batches[0].Alerts.Select(a => a.Occurrence).ToList());
+        var part = Assert.Single(IndicatorAlertText.TelegramMessages(batches[0].ClosedAtUtc, batches[0].Alerts.Select(a => a.Occurrence).ToList()));
+        Assert.Equal([0, 1, 2], part.Items);
+        var text = part.Text;
         Assert.Equal(
             "<b>Indicator alerts · candles closed 10:45 IST</b>\n" +
             "NIFTY 5m at 10:40 IST — close 25,072.50 · Supertrend(10, 3) flipped down (closed below its band at 25,080.00, line now 25,161.33)\n" +
             "BANKNIFTY 15m at 10:30 IST — close 57,214 · RSI(14) crossed above 70 (RSI 68.4 → 71.2) · EMA(9) crossed above EMA(21) (EMA(9) 57,190.46, EMA(21) 57,188.10)",
             text);
+    }
+
+    [Fact]
+    public void A_batch_past_telegrams_limit_goes_as_several_whole_messages_none_lost()
+    {
+        // A broad move at the open: 30 stocks cross on the same 5-minute candle,
+        // four rules each. One message was about 8,000 characters; Telegram
+        // refused it and the whole minute was lost.
+        var occurrences = new List<IndicatorOccurrence>();
+        for (int k = 0; k < 30; k++)
+        {
+            var symbol = $"NSE:STOCK{k:00}-EQ";
+            occurrences.Add(Occurrence(symbol, 5, Ist(9, 15), IndicatorRule.RsiAboveDefault, true, 1_234.5m, new("rsiBefore", 68.44), new("rsi", 71.23)));
+            occurrences.Add(Occurrence(symbol, 5, Ist(9, 15), IndicatorRule.EmaCrossDefault, true, 1_234.5m, new("emaFast", 1_230.456), new("emaSlow", 1_229.1)));
+            occurrences.Add(Occurrence(symbol, 5, Ist(9, 15), IndicatorRule.SupertrendFlipDefault, true, 1_234.5m, new("through", 1_220), new("line", 1_201.3349)));
+            occurrences.Add(Occurrence(symbol, 5, Ist(9, 15), IndicatorRule.VwapCrossDefault, true, 1_234.5m, new IndicatorValue("vwap", 1_225.1)));
+        }
+
+        var parts = IndicatorAlertText.TelegramMessages(Ist(9, 20), occurrences);
+
+        Assert.True(parts.Count > 1);
+        Assert.All(parts, p => Assert.True(p.Text.Length <= IndicatorAlertText.MaxTelegramChars, $"{p.Text.Length} characters"));
+        Assert.StartsWith("<b>Indicator alerts · candles closed 09:20 IST</b>\n", parts[0].Text);
+        Assert.All(parts.Skip(1), p => Assert.StartsWith("<b>Indicator alerts · candles closed 09:20 IST (continued)</b>\n", p.Text));
+
+        // The first 25 candles, each whole in one message and in order; the rest counted.
+        var carried = parts.SelectMany(p => p.Items).ToList();
+        Assert.Equal(Enumerable.Range(0, 25 * 4), carried);
+        Assert.EndsWith("\n+5 more on the Pattern alerts page.", parts[^1].Text);
+        Assert.Equal(26, parts.Sum(p => p.Text.Split('\n').Length - 1));
     }
 
     [Fact]
@@ -433,6 +517,39 @@ public class IndicatorAlertScannerTests
         Assert.False(IndicatorAlertService.IsEnabled(Settings(("PatternAlerts:Enabled", "false"))));
         Assert.True(IndicatorAlertService.IsEnabled(Settings(("PatternAlerts:Enabled", "false"), ("IndicatorAlerts:Enabled", "true"))));
         Assert.False(IndicatorAlertService.IsEnabled(Settings(("IndicatorAlerts:Enabled", "false"))));
+
+        // The indicator file's own wording, in .env: read, not thrown on.
+        Assert.False(IndicatorAlertService.IsEnabled(Settings(("IndicatorAlerts:Enabled", "off")), out var none));
+        Assert.Null(none);
+        Assert.True(IndicatorAlertService.IsEnabled(Settings(("IndicatorAlerts:Enabled", "On"), ("PatternAlerts:Enabled", "0")), out _));
+
+        // Neither on nor off: off, and said, never a stopped API.
+        foreach (var (key, value) in new[] { ("IndicatorAlerts:Enabled", "maybe"), ("PatternAlerts:Enabled", "enabled") })
+        {
+            Assert.False(IndicatorAlertService.IsEnabled(Settings((key, value)), out var problem));
+            Assert.Equal($"{key} is \"{value}\", which is neither on nor off (true/false, on/off, yes/no, 1/0); treated as off.", problem);
+        }
+    }
+
+    [Fact]
+    public async Task Past_the_cap_symbol_and_timeframe_pairs_are_left_out_in_the_configs_order_and_the_page_is_told()
+    {
+        using var db = Db();
+        var stocks = Enumerable.Range(0, 120).Select(i => $"NSE:S{i:000}-EQ").ToList();
+        var config = Config($"""
+            {Nifty}  5,15  ema-cross
+            {string.Join(',', stocks)}  5,15  rsi-above
+            """);
+
+        var (watches, unresolved) = await Scanner(db).PlanAsync(config, new DateOnly(2026, 9, 15), CancellationToken.None);
+
+        Assert.Equal(IndicatorAlertScanner.MaxWatches, watches.Count);
+        Assert.Contains(watches, w => w.Symbol == Nifty && w.TimeframeMinutes == 15);
+        Assert.Contains(watches, w => w.Symbol == "NSE:S098-EQ" && w.TimeframeMinutes == 15);
+        Assert.DoesNotContain(watches, w => w.Symbol == "NSE:S099-EQ");
+        Assert.Equal(
+            "Line 2: the config asks for more than 200 symbol × timeframe pairs; the first 200 are scanned and 42 from this line on are left out.",
+            Assert.Single(unresolved));
     }
 
     [Fact]
@@ -489,6 +606,11 @@ public class IndicatorAlertScannerTests
             Assert.Equal(1, response.AlertsToday);
             Assert.Equal(1, response.DeliveredToday);
             Assert.False(response.TelegramConfigured);
+            // No system chat: the page must not say "Desk System" when the trades chat gets them.
+            Assert.False(response.TelegramSystemChatConfigured);
+            Assert.True(new TelegramSender(new NoHttp(),
+                new ConfigurationBuilder().AddInMemoryCollection([new("Telegram:SystemChatId", "-100123")]).Build(),
+                NullLogger<TelegramSender>.Instance).IsSystemChatConfigured);
 
             var events = Assert.IsType<List<AlgoTrading.Contracts.Patterns.IndicatorAlertDto>>(
                 Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>((await controller.GetIndicatorEvents(null, 15)).Result).Value);

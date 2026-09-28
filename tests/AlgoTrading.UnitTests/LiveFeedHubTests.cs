@@ -11,6 +11,8 @@ using AlgoTrading.Application.Interfaces;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -81,11 +83,13 @@ public class LiveFeedHubTests
     [Fact]
     public async Task A_closed_connection_is_forgotten_and_sent_nothing()
     {
+        await using var db = Users();
         var subs = new LiveFeedSubscriptions();
         var hubContext = new RecordingHubContext();
         var dispatcher = Dispatcher(subs, hubContext);
-        var hub = Hub(subs, "c1", Trader(7));
+        var hub = Hub(subs, "c1", Trader(GrantedTrader), db);
         await hub.OnConnectedAsync();
+        Assert.Equal(1, subs.ConnectionCount);
         hub.Subscribe(new[] { Nifty });
 
         await hub.OnDisconnectedAsync(null);
@@ -95,6 +99,58 @@ public class LiveFeedHubTests
         Assert.Equal(0, subs.CountFor("c1"));
         Assert.Equal(0, dispatcher.Flush());
         Assert.Empty(hubContext.All);
+    }
+
+    [Fact]
+    public async Task A_call_that_lands_after_the_connection_closed_makes_no_entry()
+    {
+        // SignalR does not wait for a hub call still running when the
+        // connection closes. A SubscribeAll awaiting its grant check used to
+        // land after OnDisconnectedAsync and make a new entry, with All set,
+        // that every flush then fed the whole feed for the life of the process.
+        await using var db = Users();
+        var subs = new LiveFeedSubscriptions();
+        var hubContext = new RecordingHubContext();
+        var dispatcher = Dispatcher(subs, hubContext);
+        var hub = Hub(subs, "c1", Admin(AdminId), db);
+        await hub.OnConnectedAsync();
+        await hub.OnDisconnectedAsync(null);
+
+        Assert.True(await hub.SubscribeAll());
+        Assert.Equal(0, hub.Subscribe(new[] { Nifty }));
+        Assert.Equal(0, hub.Unsubscribe(new[] { Nifty }));
+        Assert.True(hub.UnsubscribeAll());
+
+        Assert.Equal(0, subs.ConnectionCount);
+        Assert.False(subs.IsAll("c1"));
+        dispatcher.Enqueue(Tick(Nifty, 100m));
+        Assert.Equal(0, dispatcher.Flush());
+        Assert.Empty(hubContext.All);
+    }
+
+    // ------------------------------------------------------------- logging --
+
+    [Fact]
+    public async Task A_refusal_is_logged_as_a_warning_and_anything_else_as_an_error_and_both_still_reach_the_browser()
+    {
+        var log = new CapturingLoggerProvider();
+        using var factory = LoggerFactory.Create(b => b.AddProvider(log));
+        var filter = new LiveFeedHubLogging(factory.CreateLogger<LiveFeedHub>());
+        var subs = new LiveFeedSubscriptions();
+        var hub = Hub(subs, "c1", Trader(PlainTrader));
+        var call = new HubInvocationContext(hub.Context, new ServiceCollection().BuildServiceProvider(), hub,
+            typeof(LiveFeedHub).GetMethod(nameof(LiveFeedHub.Subscribe))!, new object?[] { new[] { Nifty } });
+
+        var refused = await Assert.ThrowsAsync<HubException>(async () =>
+            await filter.InvokeMethodAsync(call, _ => throw new HubException("A page may follow at most 400 symbols")));
+        var broken = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await filter.InvokeMethodAsync(call, _ => throw new InvalidOperationException("a bug")));
+        Assert.Equal(7, await filter.InvokeMethodAsync(call, _ => ValueTask.FromResult<object?>(7)));
+
+        Assert.Equal(new[] { LogLevel.Warning, LogLevel.Error }, log.Entries.Select(x => x.Level));
+        Assert.Contains("refused Subscribe on connection c1: A page may follow at most 400 symbols", log.Entries[0].Message);
+        Assert.Same(broken, log.Entries[1].Exception);
+        Assert.NotNull(refused);
     }
 
     // ---------------------------------------------------------- dispatcher --
@@ -112,6 +168,66 @@ public class LiveFeedHubTests
         var message = Assert.Single(hubContext.TicksTo("c1"));
         var tick = Assert.Single(message);
         Assert.Equal(102m, tick.LastTradedPrice);
+    }
+
+    // At the open the feed posts from six threads at once, and a batch holding
+    // 09:15:07 can reach the API after one holding 09:15:08. The quote table
+    // refuses the older price; the push used to send it anyway.
+
+    [Fact]
+    public void An_older_tick_that_arrives_second_in_the_same_flush_is_not_pushed()
+    {
+        var (subs, hubContext, dispatcher) = Desk();
+        Follow(subs, "c1", Nifty);
+
+        dispatcher.Enqueue(Tick(Nifty, 146.5m, At(9, 15, 8)));
+        dispatcher.Enqueue(Tick(Nifty, 142.0m, At(9, 15, 7)));
+        dispatcher.Flush();
+
+        Assert.Equal(146.5m, Assert.Single(Assert.Single(hubContext.TicksTo("c1"))).LastTradedPrice);
+    }
+
+    [Fact]
+    public void An_older_tick_that_arrives_after_the_newer_one_was_pushed_is_not_pushed()
+    {
+        var (subs, hubContext, dispatcher) = Desk();
+        Follow(subs, "c1", Nifty);
+
+        dispatcher.Enqueue(Tick(Nifty, 146.5m, At(9, 15, 8)));
+        Assert.Equal(1, dispatcher.Flush());
+        dispatcher.Enqueue(new[] { Tick(Nifty, 142.0m, At(9, 15, 7)) });
+        Assert.Equal(0, dispatcher.Flush());
+
+        // A tick at the same second, or later, is news again.
+        dispatcher.Enqueue(Tick(Nifty, 147.0m, At(9, 15, 8)));
+        dispatcher.Flush();
+        Assert.Equal(new decimal?[] { 146.5m, 147.0m }, hubContext.TicksTo("c1").Select(m => Assert.Single(m).LastTradedPrice));
+    }
+
+    [Fact]
+    public void Only_that_symbol_is_held_back_and_a_replay_or_an_unstamped_tick_never_is()
+    {
+        var (subs, hubContext, dispatcher) = Desk();
+        Follow(subs, "c1", Nifty, BankNifty, Sbin);
+        dispatcher.Enqueue(new[] { Tick(Nifty, 25_000m, At(15, 29, 59)), Tick(BankNifty, 57_000m, At(15, 29, 59)) });
+        dispatcher.Flush();
+        hubContext.Clear();
+
+        // The evening recap replays the session behind the stamps the live
+        // session already wrote; refusing it would freeze the price at the close.
+        var replay = Tick(Nifty, 24_900m, At(9, 20));
+        replay.IsReplay = true;
+        var unstamped = Tick(Sbin, 801m, null);
+        dispatcher.Enqueue(new[] { replay, Tick(BankNifty, 56_000m, At(9, 20)), unstamped });
+        dispatcher.Flush();
+
+        var pushed = Assert.Single(hubContext.TicksTo("c1")).ToDictionary(x => x.Symbol, x => x.LastTradedPrice);
+        Assert.Equal(new Dictionary<string, decimal?> { [Nifty] = 24_900m, [Sbin] = 801m }, pushed);
+
+        // The replay's stamp is the one now held, as the quote table holds it.
+        dispatcher.Enqueue(Tick(Nifty, 24_910m, At(9, 21)));
+        dispatcher.Flush();
+        Assert.Equal(24_910m, Assert.Single(hubContext.TicksTo("c1")[1]).LastTradedPrice);
     }
 
     [Fact]
@@ -277,12 +393,71 @@ public class LiveFeedHubTests
         Assert.False(subs.IsAll("c1"));
     }
 
+    // ------------------------------------------------ who the connection is --
+
+    [Fact]
+    public async Task The_account_row_decides_admin_not_the_token()
+    {
+        // Demoted ten minutes ago: the token, good for an hour, still says Admin.
+        await using var db = Users();
+        var subs = new LiveFeedSubscriptions();
+        var groups = new RecordingHubContext();
+
+        await Hub(subs, "demoted", Admin(DemotedAdmin), db, groups).OnConnectedAsync();
+        await Hub(subs, "admin", Admin(AdminId), db, groups).OnConnectedAsync();
+
+        Assert.Equal(
+            new[] { ("demoted", DeskEventGroups.User(DemotedAdmin)), ("admin", DeskEventGroups.User(AdminId)), ("admin", DeskEventGroups.Admins) },
+            groups.Joined);
+        Assert.Equal(new[] { "admin" }, subs.AdminConnectionIds());
+    }
+
+    [Fact]
+    public async Task A_disabled_or_unknown_account_is_closed_and_not_registered()
+    {
+        await using var db = Users();
+        var subs = new LiveFeedSubscriptions();
+        var groups = new RecordingHubContext();
+
+        foreach (var (id, user) in new[] { ("gone", Trader(DisabledGrantedTrader)), ("nobody", Trader(404)) })
+        {
+            var hub = Hub(subs, id, user, db, groups);
+            await hub.OnConnectedAsync();
+            Assert.True(((TestCallerContext)hub.Context).Aborted);
+        }
+
+        Assert.Equal(0, subs.ConnectionCount);
+        Assert.Empty(groups.Joined);
+    }
+
+    // ------------------------------------------------ a pre-28-Sep console --
+
+    [Theory]
+    [InlineData(AdminId, true)]
+    [InlineData(GrantedTrader, true)]
+    [InlineData(PlainTrader, false)]
+    public async Task A_console_without_v2_gets_the_whole_feed_if_its_account_may_have_it(long userId, bool everything)
+    {
+        await using var db = Users();
+        var subs = new LiveFeedSubscriptions();
+        var user = userId == AdminId ? Admin(userId) : Trader(userId);
+
+        var legacy = Hub(subs, "old", user, db, query: "");
+        await legacy.OnConnectedAsync();
+        var current = Hub(subs, "new", user, db);
+        await current.OnConnectedAsync();
+
+        Assert.Equal(everything, subs.IsAll("old"));
+        Assert.False(subs.IsAll("new"));
+    }
+
     // ------------------------------------------------------------- helpers --
 
     private const long AdminId = 1;
     private const long GrantedTrader = 7;
     private const long PlainTrader = 8;
     private const long DisabledGrantedTrader = 9;
+    private const long DemotedAdmin = 10;
 
     private static (LiveFeedSubscriptions, RecordingHubContext, LiveTickDispatcher) Desk()
     {
@@ -300,17 +475,24 @@ public class LiveFeedHubTests
         Assert.True(subs.Subscribe(connectionId, symbols).Accepted);
     }
 
-    private static UpsertLiveTickRequest Tick(string symbol, decimal ltp) => new()
+    private static UpsertLiveTickRequest Tick(string symbol, decimal ltp)
+        => Tick(symbol, ltp, new DateTime(2026, 9, 28, 4, 0, 0, DateTimeKind.Utc));
+
+    private static UpsertLiveTickRequest Tick(string symbol, decimal ltp, DateTime? exchangeUtc) => new()
     {
         Symbol = symbol,
         LastTradedPrice = ltp,
         BidPrice = ltp - 0.05m,
         AskPrice = ltp + 0.05m,
         Volume = 1_000,
-        ExchangeTimestampUtc = new DateTime(2026, 9, 28, 4, 0, 0, DateTimeKind.Utc)
+        ExchangeTimestampUtc = exchangeUtc
     };
 
-    private static LiveFeedHub Hub(LiveFeedSubscriptions subs, string connectionId, ClaimsPrincipal user, TradingDbContext? db = null)
+    /// <summary>IST wall time on 28 Sep 2026, in UTC.</summary>
+    private static DateTime At(int h, int m, int s = 0) => new DateTime(2026, 9, 28, h, m, s, DateTimeKind.Utc).AddMinutes(-330);
+
+    private static LiveFeedHub Hub(LiveFeedSubscriptions subs, string connectionId, ClaimsPrincipal user, TradingDbContext? db = null,
+        RecordingHubContext? groups = null, string query = "?v=2")
     {
         var users = db is null
             ? RecapClockTests.Inert<IUserAdminService>.Create()
@@ -319,8 +501,8 @@ public class LiveFeedHubTests
 
         return new LiveFeedHub(subs, users)
         {
-            Context = new TestCallerContext(connectionId, user),
-            Groups = new RecordingHubContext().Groups
+            Context = new TestCallerContext(connectionId, user, query),
+            Groups = (groups ?? new RecordingHubContext()).Groups
         };
     }
 
@@ -333,7 +515,8 @@ public class LiveFeedHubTests
             new AppUser { Id = AdminId, UserName = "admin", Role = UserRoles.Admin, IsActive = true },
             new AppUser { Id = GrantedTrader, UserName = "coderforchange", Role = UserRoles.Trader, IsActive = true },
             new AppUser { Id = PlainTrader, UserName = "mallory", Role = UserRoles.Trader, IsActive = true },
-            new AppUser { Id = DisabledGrantedTrader, UserName = "gone", Role = UserRoles.Trader, IsActive = false });
+            new AppUser { Id = DisabledGrantedTrader, UserName = "gone", Role = UserRoles.Trader, IsActive = false },
+            new AppUser { Id = DemotedAdmin, UserName = "demoted", Role = UserRoles.Trader, IsActive = true });
         db.UserModuleGrants.AddRange(
             new UserModuleGrant { UserId = GrantedTrader, ModuleKey = PlatformModules.MarketData, GrantedBy = "admin" },
             new UserModuleGrant { UserId = PlainTrader, ModuleKey = PlatformModules.Strategies, GrantedBy = "admin" },

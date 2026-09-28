@@ -1,8 +1,12 @@
+using System.Collections.Concurrent;
 using System.Security.Claims;
 using AlgoTrading.Api.Hubs;
 using AlgoTrading.Application.Interfaces;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Connections.Features;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Logging;
 
 namespace AlgoTrading.UnitTests;
 
@@ -143,14 +147,64 @@ internal sealed class RecordingDeskEvents : IDeskEventPublisher
     }
 }
 
-/// <summary>The caller a hub method sees: a connection id and who signed in on it.</summary>
-internal sealed class TestCallerContext(string connectionId, ClaimsPrincipal? user) : HubCallerContext
+/// <summary>
+/// The caller a hub method sees: a connection id, who signed in on it, and the
+/// query it connected with (a current console's <c>?v=2</c> unless said).
+/// </summary>
+internal sealed class TestCallerContext : HubCallerContext
 {
-    public override string ConnectionId => connectionId;
+    private readonly string _connectionId;
+    private readonly ClaimsPrincipal? _user;
+
+    public TestCallerContext(string connectionId, ClaimsPrincipal? user, string query = "?v=2")
+    {
+        _connectionId = connectionId;
+        _user = user;
+        var http = new DefaultHttpContext();
+        http.Request.QueryString = new QueryString(query);
+        Features.Set<IHttpContextFeature>(new HttpContextFeature(http));
+    }
+
+    public override string ConnectionId => _connectionId;
     public override string? UserIdentifier => null;
-    public override ClaimsPrincipal? User => user;
+    public override ClaimsPrincipal? User => _user;
     public override IDictionary<object, object?> Items { get; } = new Dictionary<object, object?>();
     public override IFeatureCollection Features { get; } = new FeatureCollection();
     public override CancellationToken ConnectionAborted => CancellationToken.None;
-    public override void Abort() { }
+
+    /// <summary>Whether the hub aborted this connection.</summary>
+    public bool Aborted { get; private set; }
+
+    public override void Abort() => Aborted = true;
+
+    private sealed class HttpContextFeature(HttpContext context) : IHttpContextFeature
+    {
+        public HttpContext? HttpContext { get; set; } = context;
+    }
+}
+
+/// <summary>Keeps every log line a host writes past its filters: category, level, message.</summary>
+internal sealed class CapturingLoggerProvider : ILoggerProvider
+{
+    private readonly ConcurrentQueue<Entry> _entries = new();
+
+    public sealed record Entry(string Category, LogLevel Level, string Message, Exception? Exception);
+
+    public IReadOnlyList<Entry> Entries => _entries.ToList();
+
+    public ILogger CreateLogger(string categoryName) => new Logger(this, categoryName);
+
+    public void Dispose()
+    {
+    }
+
+    private sealed class Logger(CapturingLoggerProvider owner, string category) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => logLevel != LogLevel.None;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            => owner._entries.Enqueue(new Entry(category, logLevel, formatter(state, exception), exception));
+    }
 }

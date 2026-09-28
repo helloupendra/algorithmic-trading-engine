@@ -18,6 +18,15 @@ namespace AlgoTrading.Api.Hubs;
 /// and trimmed, so "nse:nifty50-index" and "NSE:NIFTY50-INDEX " are one
 /// subscription; the prices pushed still carry the feed's own spelling.
 /// </para>
+/// <para>
+/// Only <see cref="Connect"/> makes an entry. SignalR does not wait for a
+/// hub call still running when the connection closes: a SubscribeAll awaiting
+/// its grant check could land after OnDisconnectedAsync had removed the
+/// entry, and it used to make a new one, with All set, that nothing would
+/// ever remove. Every flush then copied the whole feed into it and sent it to
+/// a connection that no longer existed, for the life of the process. A call
+/// for a connection that is not open now changes nothing.
+/// </para>
 /// </remarks>
 public sealed class LiveFeedSubscriptions
 {
@@ -48,21 +57,23 @@ public sealed class LiveFeedSubscriptions
     /// <summary>
     /// Adds <paramref name="symbols"/> to the connection's set, all or none:
     /// a call that would take the set past <see cref="MaxSymbolsPerConnection"/>
-    /// adds nothing and says so.
+    /// adds nothing and says so. A connection that is not open (see the
+    /// remarks on the class) follows nothing and is not added.
     /// </summary>
     public SubscribeResult Subscribe(string connectionId, IEnumerable<string?>? symbols)
-    {
-        var connection = Get(connectionId);
-        var keys = Keys(symbols);
-        return connection.Add(keys);
-    }
+        => _connections.TryGetValue(connectionId, out var connection)
+            ? connection.Add(Keys(symbols))
+            : new SubscribeResult(true, 0);
 
     /// <summary>Removes <paramref name="symbols"/>; returns how many the connection still follows.</summary>
     public int Unsubscribe(string connectionId, IEnumerable<string?>? symbols)
-        => Get(connectionId).Remove(Keys(symbols));
+        => _connections.TryGetValue(connectionId, out var connection) ? connection.Remove(Keys(symbols)) : 0;
 
-    /// <summary>Whether the connection receives every symbol, whatever it subscribed.</summary>
-    public void SetAll(string connectionId, bool all) => Get(connectionId).All = all;
+    /// <summary>Whether the connection receives every symbol, whatever it subscribed. Nothing for a connection that is not open.</summary>
+    public void SetAll(string connectionId, bool all)
+    {
+        if (_connections.TryGetValue(connectionId, out var connection)) connection.All = all;
+    }
 
     /// <summary>How many symbols the connection follows (not counting a <see cref="SetAll"/>).</summary>
     public int CountFor(string connectionId)
@@ -93,12 +104,6 @@ public sealed class LiveFeedSubscriptions
         }
         return ids;
     }
-
-    // A method on a hub that the client calls before OnConnectedAsync has run
-    // cannot happen, but a test (or a later refactor) may; it gets an entry
-    // with nobody behind it rather than an exception.
-    private LiveFeedConnection Get(string connectionId)
-        => _connections.GetOrAdd(connectionId, id => new LiveFeedConnection(id, null, false));
 
     private static HashSet<string> Keys(IEnumerable<string?>? symbols)
     {
