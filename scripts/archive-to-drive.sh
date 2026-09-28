@@ -20,9 +20,12 @@ args=()
 
 before="$(df -h / | awk 'NR==2 {print $4}')"
 if python3 scripts/archive_to_drive.py "${args[@]}" >>"$LOG" 2>&1; then
-  archived="$(grep -c -- '-> VERIFIED$' "$LOG" 2>/dev/null || echo 0)"
+  # grep -c prints 0 and exits 1 on no match, so "|| echo 0" made it "0\n0":
+  # the ok line broke in two, and the checkup could not read the count.
+  archived="$(grep -c -- '-> VERIFIED$' "$LOG" 2>/dev/null)" || true
+  archived="${archived:-0}"
   say "archive to Drive: ok, ${archived} file(s) verified; disk free ${before} -> $(df -h / | awk 'NR==2 {print $4}')"
-  [ "${archived:-0}" -gt 0 ] && notify "AlgoTrading" "Archive to Drive: ${archived} file(s) copied and verified. Disk free: $(df -h / | awk 'NR==2 {print $4}')."
+  [ "$archived" -gt 0 ] && notify "AlgoTrading" "Archive to Drive: ${archived} file(s) copied and verified. Disk free: $(df -h / | awk 'NR==2 {print $4}')."
 else
   warn "archive to Drive FAILED — see $LOG"
   notify "AlgoTrading" "Archive to Drive FAILED at $(date '+%H:%M'). Nothing was deleted. Log: logs/archive-$(date +%F).log"
