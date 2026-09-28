@@ -9,6 +9,7 @@ import {
   filterChoices,
   formToRequest,
   indicatorNumbers,
+  indicatorTelegramNote,
   parseList,
   ruleStateTone,
   ruleSummary,
@@ -235,5 +236,16 @@ describe('indicator alerts', () => {
       watch({ displayName: 'NIFTY', timeframe: 15 }),
     ])
     expect(sorted.map((w) => `${w.displayName} ${w.timeframe}`)).toEqual(['BANKNIFTY 15', 'SENSEX 15', 'NIFTY 5', 'NIFTY 15'])
+  })
+})
+
+describe('indicatorTelegramNote', () => {
+  it('says whether indicator alerts go to Telegram, without naming a chat the server does not report', () => {
+    expect(indicatorTelegramNote({ telegram: false, telegramConfigured: true })).toEqual({ text: 'off in the file', title: null })
+    expect(indicatorTelegramNote({ telegram: true, telegramConfigured: false }).text).toBe('on, but no bot is configured on this server')
+    const on = indicatorTelegramNote({ telegram: true, telegramConfigured: true })
+    expect(on.text).toBe('on')
+    expect(on.text).not.toMatch(/Desk System/)
+    expect(on.title).toMatch(/trades chat when no system chat is set/)
   })
 })

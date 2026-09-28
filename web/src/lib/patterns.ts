@@ -380,6 +380,23 @@ export interface IndicatorWatch {
   problem: string | null
 }
 
+/**
+ * What the indicator status line says of Telegram. Which chat the messages
+ * reach is the server's to say (its system chat, or the trades chat when no
+ * system chat is set) and the status does not report it, so the note names
+ * none. It read "Desk System channel" whatever the server was doing, so a box
+ * without a system chat sent every indicator batch among the trades while the
+ * page said otherwise.
+ */
+export function indicatorTelegramNote(s: Pick<IndicatorAlertsStatus, 'telegram' | 'telegramConfigured'>): { text: string; title: string | null } {
+  if (!s.telegram) return { text: 'off in the file', title: null }
+  if (!s.telegramConfigured) return { text: 'on, but no bot is configured on this server', title: null }
+  return {
+    text: 'on',
+    title: "Sent to the server's system Telegram chat (Telegram:SystemChatId), or to its trades chat when no system chat is set.",
+  }
+}
+
 export interface IndicatorAlertsStatus {
   enabled: boolean
   intervalSeconds: number
