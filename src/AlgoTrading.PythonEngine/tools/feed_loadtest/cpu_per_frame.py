@@ -69,10 +69,6 @@ def socketless_redis():
     return redis.Redis(connection_pool=redis.ConnectionPool(connection_class=Connection, decode_responses=True))
 
 
-class Pipeline:
-    """redis-py's pipeline packs commands itself; answer execute() with one id per command."""
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tree", required=True, help="repository root of the tree to measure")

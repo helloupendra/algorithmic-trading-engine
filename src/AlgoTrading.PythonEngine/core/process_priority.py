@@ -34,6 +34,18 @@ def _configured(var: str):
         return None
 
 
+def _say(log, text: str) -> None:
+    """
+    One line, which must never take the process down: this runs before the
+    runner's safe stdio is installed, and when the API that spawned it has
+    died a plain print() to its closed pipe raises.
+    """
+    try:
+        log(text)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def lower_priority_from_env(var: str = "RUNNER_NICE", default: int = 10, log=print) -> int:
     """
     Add `var` (default 10) to this process's nice value. Returns the increment
@@ -47,13 +59,13 @@ def lower_priority_from_env(var: str = "RUNNER_NICE", default: int = 10, log=pri
         try:
             increment = int(str(raw).strip())
         except ValueError:
-            log(f"[priority] {var}={raw!r} is not a whole number — the priority is left as it is.")
+            _say(log, f"[priority] {var}={raw!r} is not a whole number — the priority is left as it is.")
             return 0
     if increment <= 0 or not hasattr(os, "nice"):
         return 0
     try:
         os.nice(increment)
     except OSError as ex:
-        log(f"[priority] could not lower the priority by {increment}: {ex}")
+        _say(log, f"[priority] could not lower the priority by {increment}: {ex}")
         return 0
     return increment
