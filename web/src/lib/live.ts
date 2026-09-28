@@ -654,12 +654,23 @@ export class LiveFeed {
 
 // ---------------------------------------------------------------- the console's instance
 
+/**
+ * The hub's address, with the protocol this console speaks. `v=2` is the
+ * subscribe-for-what-you-show contract above; a connection without it is a
+ * console bundle from before 28 Sep, which never calls Subscribe, and the API
+ * sends it the old whole-feed broadcast for one release so a tab left open
+ * across the deploy does not go quiet.
+ */
+export function hubUrl(apiBase: string): string {
+  return `${apiBase}/hubs/livefeed?v=2`
+}
+
 function connectHub(): HubLike {
   return new HubConnectionBuilder()
     // The hub is authorized: it carries market data the platform pays a
     // vendor for. The factory is read on every (re)connect, so a token the
     // API layer refreshed in the meantime is the one sent.
-    .withUrl(`${API_BASE_URL}/hubs/livefeed`, { accessTokenFactory: () => tokenStore.access ?? '' })
+    .withUrl(hubUrl(API_BASE_URL), { accessTokenFactory: () => tokenStore.access ?? '' })
     .configureLogging(LogLevel.Warning)
     .withAutomaticReconnect({ nextRetryDelayInMilliseconds: (ctx) => retryDelay(ctx.previousRetryCount) })
     .build()

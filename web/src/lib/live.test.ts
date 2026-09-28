@@ -4,6 +4,7 @@ import {
   LiveFeed,
   allEventedKeys,
   deskEventKeys,
+  hubUrl,
   invalidationBatcher,
   livePoll,
   normalizeTick,
@@ -459,6 +460,13 @@ describe('livePoll', () => {
     expect(livePoll('reconnecting', 60_000, 5_000)).toBe(5_000)
     expect(livePoll('disconnected', 60_000, 5_000)).toBe(5_000)
     expect(livePoll('connected', false, 1_000)).toBe(false)
+  })
+})
+
+describe('hubUrl', () => {
+  it('names the protocol, so the API can tell this console from a bundle that never subscribes', () => {
+    expect(hubUrl('')).toBe('/hubs/livefeed?v=2')
+    expect(hubUrl('https://openfno.com')).toBe('https://openfno.com/hubs/livefeed?v=2')
   })
 })
 
