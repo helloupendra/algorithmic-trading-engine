@@ -298,7 +298,8 @@ describe('livePulse', () => {
   it('warns of a dropped connection only once it has lasted', () => {
     expect(livePulse('reconnecting', false)).toBeNull()
     expect(livePulse('disconnected', false)).toBeNull()
-    expect(livePulse('reconnecting', true)).toMatchObject({ label: 'Reconnecting — prices may be stale', short: 'Reconnecting', tone: 'warn' })
+    expect(livePulse('reconnecting', true)).toMatchObject({ label: 'Reconnecting', tone: 'warn' })
+    expect(livePulse('reconnecting', true)?.title).toMatch(/may be behind the market/)
   })
 })
 

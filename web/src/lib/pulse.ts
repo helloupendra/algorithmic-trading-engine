@@ -475,8 +475,10 @@ export function livePulse(connection: LiveConnection, sustained: boolean): Pulse
   if (!sustained) return null
   return {
     key: 'live',
-    label: 'Reconnecting — prices may be stale',
-    short: 'Reconnecting',
+    // One short word at every width: the long "— prices may be stale" pushed
+    // the feed item to its dot and the kill switch under the avatar at 1440 px
+    // (28 Sep). What it means is in the title.
+    label: 'Reconnecting',
     tone: 'warn',
     title: 'The live connection dropped and is being retried. Prices are read every few seconds meanwhile, so they may be behind the market.',
   }
