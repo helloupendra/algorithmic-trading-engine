@@ -25,6 +25,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
+import { useForcedTheme } from '../lib/theme'
 import { ApiError } from '../lib/api'
 import { useMarketClock } from '../lib/marketClock'
 import { liveSceneWanted } from '../lib/sceneMode'
@@ -37,6 +38,7 @@ import type { Rect } from '../scene/story'
 import './landing.css'
 
 export function LoginPage() {
+  useForcedTheme('dark')
   const { login } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()

@@ -11,10 +11,12 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useAuth } from '../lib/auth'
+import { useForcedTheme } from '../lib/theme'
 import { IconLogo } from '../components/icons'
 import type { InvitePreview } from '../lib/types'
 
 export function AcceptInvitePage() {
+  useForcedTheme('dark')
   const { token = '' } = useParams()
   const navigate = useNavigate()
   const { login } = useAuth()

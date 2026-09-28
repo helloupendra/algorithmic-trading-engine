@@ -7,6 +7,7 @@
  * the viewport). Only an explicit symbol/resolution change refits the view.
  */
 
+import { useTheme } from '../lib/theme'
 import { useEffect, useMemo, useRef } from 'react'
 import {
   CandlestickSeries,
@@ -21,6 +22,14 @@ import type { CandleDto } from '../lib/types'
 
 function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+}
+
+/** A token's colour at an alpha: "#31c48d" → "rgba(49,196,141,0.35)" (a non-hex token is returned as it is). */
+function tint(hex: string, alpha: number): string {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex)
+  if (!m) return hex
+  const n = parseInt(m[1], 16)
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`
 }
 
 export function CandleChart({
@@ -48,6 +57,8 @@ export function CandleChart({
     return [...byTime.entries()].sort((a, b) => a[0] - b[0])
   }, [candles])
 
+  // The tokens are read once, when the chart is created: a theme change makes a new chart.
+  const { theme } = useTheme()
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
@@ -104,7 +115,7 @@ export function CandleChart({
       volumeRef.current = null
       lastFitKey.current = null
     }
-  }, [])
+  }, [theme])
 
   useEffect(() => {
     const price = priceRef.current
@@ -112,6 +123,8 @@ export function CandleChart({
     const chart = chartRef.current
     if (!price || !volume || !chart) return
 
+    const up = tint(cssVar('--pos'), 0.35)
+    const down = tint(cssVar('--neg'), 0.35)
     price.setData(
       sorted.map(([t, c]) => ({
         time: t as UTCTimestamp,
@@ -125,7 +138,7 @@ export function CandleChart({
       sorted.map(([t, c]) => ({
         time: t as UTCTimestamp,
         value: c.volume,
-        color: c.close >= c.open ? 'rgba(49,196,141,0.35)' : 'rgba(244,99,94,0.35)',
+        color: c.close >= c.open ? up : down,
       })),
     )
 
@@ -133,7 +146,7 @@ export function CandleChart({
       lastFitKey.current = fitKey
       chart.timeScale().fitContent()
     }
-  }, [sorted, fitKey])
+  }, [sorted, fitKey, theme])
 
   return <div ref={containerRef} className={tall ? 'chart chart--tall' : 'chart'} />
 }
