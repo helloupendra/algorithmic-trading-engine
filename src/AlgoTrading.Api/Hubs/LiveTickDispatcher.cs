@@ -51,8 +51,9 @@ public sealed record LiveTickPush(
 /// on was already falling a minute behind without that help.
 /// </para>
 /// <para>
-/// Each flush takes what changed since the last one (the last tick of a
-/// symbol wins) and gives every connection its share. A connection whose
+/// Each flush takes what changed since the last one (the newest tick of a
+/// symbol wins, by exchange stamp; see <see cref="Enqueue(IEnumerable{UpsertLiveTickRequest})"/>)
+/// and gives every connection its share. A connection whose
 /// previous message is still being written — a phone on a bad network, a tab
 /// the browser has throttled — is not sent a second one on top: its share
 /// waits, merged, until the first is through. So a slow browser holds at most
@@ -70,8 +71,19 @@ public sealed class LiveTickDispatcher : BackgroundService
     private readonly LiveFeedOptions _options;
     private readonly ILogger<LiveTickDispatcher> _logger;
 
+    /// <summary>
+    /// The most symbols whose last exchange stamp is remembered. A day's feed
+    /// carries a few thousand; the map is emptied when it passes this, which
+    /// costs one moment without the ordering rule rather than memory that
+    /// grows with every expired contract until the API restarts.
+    /// </summary>
+    internal const int MaxStampedSymbols = 100_000;
+
     private readonly object _pendingGate = new();
     private Dictionary<string, LiveTickPush> _pending = new(StringComparer.Ordinal);
+
+    // The newest exchange stamp queued for each symbol; touched only under _pendingGate.
+    private readonly Dictionary<string, DateTime> _lastStamp = new(StringComparer.Ordinal);
 
     // Touched only inside Flush, which holds _flushGate.
     private readonly object _flushGate = new();
@@ -101,24 +113,44 @@ public sealed class LiveTickDispatcher : BackgroundService
     /// replaces an earlier one. Blank symbols are skipped. Never throws: the
     /// caller is storing prices, and a screen is not a reason to fail that.
     /// </summary>
+    /// <remarks>
+    /// "Later" is by exchange stamp, as <c>live_quotes_latest</c> decides it
+    /// (LiveDataService, UpsertLatestQuoteAsync and ApplyLatestQuote): the
+    /// feed posts from six threads at once, so at the open a batch holding
+    /// 09:15:07 can arrive after one holding 09:15:08. The table refused the
+    /// older price, but the last arrival won here and was pushed, and the
+    /// Positions page, run cards and Desk marked to a price the backend had
+    /// thrown away until that contract ticked again. A live tick older than
+    /// one already queued for its symbol — pending, or pushed in an earlier
+    /// flush — is dropped. A replay runs behind the live stamps on purpose and
+    /// is never dropped; a tick without a stamp has no order to keep.
+    /// </remarks>
     public void Enqueue(IEnumerable<UpsertLiveTickRequest> ticks)
     {
         try
         {
-            // Built outside the lock, so the lock is held for dictionary writes only.
-            var batch = new List<KeyValuePair<string, LiveTickPush>>();
+            // Built outside the lock, so the lock is held for dictionary work only.
+            var batch = new List<(string Key, LiveTickPush Push, DateTime? Stamp, bool Replay)>();
             foreach (var tick in ticks)
             {
                 if (tick is null || LiveFeedSubscriptions.KeyOf(tick.Symbol) is not { } key) continue;
-                batch.Add(new(key, LiveTickPush.From(tick)));
+                batch.Add((key, LiveTickPush.From(tick), tick.ExchangeTimestampUtc?.ToUniversalTime(), tick.IsReplay));
             }
 
             if (batch.Count == 0) return;
 
             lock (_pendingGate)
             {
-                foreach (var (key, push) in batch)
+                if (_lastStamp.Count > MaxStampedSymbols) _lastStamp.Clear();
+
+                foreach (var (key, push, stamp, replay) in batch)
                 {
+                    if (stamp is { } at)
+                    {
+                        if (!replay && _lastStamp.TryGetValue(key, out var newest) && at < newest) continue;
+                        _lastStamp[key] = at;
+                    }
+
                     _pending[key] = push;
                 }
             }
