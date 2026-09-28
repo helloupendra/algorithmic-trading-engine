@@ -30,6 +30,7 @@ import { LaunchDialog, PnlValue, ReadinessStrip, StrategyCard } from './shared'
 import { RunCard } from './RunCard'
 import { RunTracks } from './RunTracks'
 import { liveNet, realizedNet, runOwner, runningSummary } from '../../lib/strategyList'
+import { readTrackUnderlying, writeTrackUnderlying } from '../../lib/tracks'
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -94,11 +95,17 @@ export function LiveRunnerPage() {
   const [params, setParams] = useSearchParams()
   const view: RunsView = params.get('view') === 'tracks' ? 'tracks' : 'cards'
   const [tracksScope, setTracksScope] = useState<Scope>('all')
+  // The Tracks view's underlying rides in the URL with the view, so a board
+  // narrowed to BANKNIFTY can be linked to; the cards leave it alone.
+  const tracksUnderlying = readTrackUnderlying(params)
   function setView(next: RunsView) {
     const p = new URLSearchParams(params)
     if (next === 'cards') p.delete('view')
     else p.set('view', next)
     setParams(p, { replace: true })
+  }
+  function setTracksUnderlying(next: string | null) {
+    setParams(writeTrackUnderlying(params, next), { replace: true })
   }
 
   if (view === 'tracks') {
@@ -111,7 +118,7 @@ export function LiveRunnerPage() {
           </div>
           <ViewSwitch view={view} onView={setView} />
         </header>
-        <RunTracks scope={tracksScope} onScope={setTracksScope} />
+        <RunTracks scope={tracksScope} onScope={setTracksScope} underlying={tracksUnderlying} onUnderlying={setTracksUnderlying} />
       </div>
     )
   }

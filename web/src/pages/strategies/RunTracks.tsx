@@ -13,6 +13,10 @@
  *
  * Drawn in pixels at the measured width of the lane column, with the Desk's
  * tokens; the phone keeps the same rows at about 200 px of axis.
+ *
+ * The board can be narrowed to one underlying (in the URL, &underlying=),
+ * offered from the runs it draws: its tracks, the price of that underlying
+ * instead of NIFTY's, and each account's line on it alone.
  */
 
 import { memo, useId, useMemo, useState } from 'react'
@@ -33,7 +37,7 @@ import {
 import type { CurvePoint, DayAxis, Gap } from '../../lib/pnlSeries'
 import { gapText, minuteLabel, NSE_CLOSE, NSE_OPEN, stepPath, timeTicks, valueAt, valueDomain } from '../../lib/pnlSeries'
 import type { Track, TracksLayout } from '../../lib/tracks'
-import { barPoints, trackHeight, tracksLayout, underlyingCode } from '../../lib/tracks'
+import { barPoints, priceTrace, trackHeight, trackUnderlyings, tracksLayout, underlyingCode, validUnderlying } from '../../lib/tracks'
 import {
   deskLegsPoll,
   useIntradayTrace,
@@ -48,8 +52,6 @@ import { Money, Swatch, Waiting } from '../desk/parts'
 import { InlineError } from '../../components/ui'
 import '../desk/desk.css'
 import './tracks.css'
-
-const NIFTY = 'NSE:NIFTY50-INDEX'
 
 interface Frame {
   axis: DayAxis
@@ -234,7 +236,18 @@ function At({ points, hover, fallback, compact = true }: { points: CurvePoint[];
   return <Money value={v} compact={compact} />
 }
 
-export function RunTracks({ scope, onScope }: { scope: Scope; onScope: (scope: Scope) => void }) {
+export function RunTracks({
+  scope,
+  onScope,
+  underlying,
+  onUnderlying,
+}: {
+  scope: Scope
+  onScope: (scope: Scope) => void
+  /** From the URL; null for every underlying. */
+  underlying: string | null
+  onUnderlying: (underlying: string | null) => void
+}) {
   const nowMs = useNow(15_000)
   const shownDay = useShownDay(nowMs, true)
   const { day, today } = shownDay
@@ -247,6 +260,13 @@ export function RunTracks({ scope, onScope }: { scope: Scope; onScope: (scope: S
     () => (shownScope === 'all' ? allAccounts : allAccounts.filter((a) => a.id === shownScope)),
     [shownScope, allAccounts],
   )
+  // Offered from the runs the board draws for the accounts shown, so every choice has tracks.
+  const underlyings = useMemo(
+    () => trackUnderlyings(trading.filter((r) => accounts.some((a) => a.id === r.userId))),
+    [trading, accounts],
+  )
+  const shownUnderlying = validUnderlying(underlying, underlyings)
+  const trace = priceTrace(trading, shownUnderlying)
 
   const series = useRunPnlSeries(day, isToday, shownDay.runs !== undefined)
   const read = useRunsOrders(
@@ -265,7 +285,7 @@ export function RunTracks({ scope, onScope }: { scope: Scope; onScope: (scope: S
   )
   const open = useOpenPositions(deskLegsPoll(isToday, useLiveConnection()))
   const carried = useMemo(() => carriedRunIds(open.data?.positions), [open.data])
-  const bars = useIntradayTrace(NIFTY, isToday)
+  const bars = useIntradayTrace(trace.symbol, isToday)
   const price = useMemo(() => barPoints(bars.data, day), [bars.data, day])
 
   const layout = useMemo(
@@ -280,8 +300,9 @@ export function RunTracks({ scope, onScope }: { scope: Scope; onScope: (scope: S
         nowMs,
         isToday,
         mcxCloseUtc: isToday ? mcx.data?.sessionCloseUtc : null,
+        underlying: shownUnderlying,
       }),
-    [trading, accounts, series.data, fills, carried, day, nowMs, isToday, mcx.data?.sessionCloseUtc],
+    [trading, accounts, series.data, fills, carried, day, nowMs, isToday, mcx.data?.sessionCloseUtc, shownUnderlying],
   )
 
   const [laneRef, width] = useWidth<HTMLDivElement>()
@@ -322,6 +343,19 @@ export function RunTracks({ scope, onScope }: { scope: Scope; onScope: (scope: S
             ))}
           </span>
         )}
+        {underlyings.length > 1 && (
+          <span className="dk-seg" role="group" aria-label="Underlying">
+            <button type="button" aria-pressed={shownUnderlying == null} onClick={() => onUnderlying(null)}>
+              All
+            </button>
+            {underlyings.map((u) => (
+              <button key={u} type="button" aria-pressed={shownUnderlying === u} onClick={() => onUnderlying(u)} title={u}>
+                <span className="dk-long">{u}</span>
+                <span className="dk-short">{underlyingShort(u)}</span>
+              </button>
+            ))}
+          </span>
+        )}
         <span className="dk-t2">
           {isToday ? 'Today' : dayLabel(day)} · {minuteLabel(layout.axis.from)}–{minuteLabel(layout.axis.to)} IST
           {layout.axis.evening && <span className="dk-t3"> · on to the MCX close</span>}
@@ -341,7 +375,8 @@ export function RunTracks({ scope, onScope }: { scope: Scope; onScope: (scope: S
           label={
             <>
               <span className="dk-t3 dk-xs">
-                NIFTY 50<span className="tk-hide-s"> · 1 min</span>
+                {trace.label}
+                <span className="tk-hide-s"> · 1 min</span>
               </span>
               <span className="tk-big dk-n">{priceLast ? plainNumber(priceLast.v) : '—'}</span>
             </>
@@ -361,7 +396,7 @@ export function RunTracks({ scope, onScope }: { scope: Scope; onScope: (scope: S
           label={
             <>
               <span className="dk-t3 dk-xs">
-                Net P&L<span className="tk-hide-s"> by account</span>
+                Net P&L<span className="tk-hide-s">{shownUnderlying ? ` on ${underlyingShort(shownUnderlying)}` : ''} by account</span>
               </span>
               {layout.groups.map((g) => (
                 <span key={g.account.id} className="tk-legend tk-hide-s">
