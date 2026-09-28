@@ -808,7 +808,15 @@ class ConflationTests(unittest.TestCase):
         self.assertEqual([130.0, 131.0, 132.0, 133.0, 134.0], [t["lastTradedPrice"] for t in ticks])
         with mock.patch.object(dhan.websocket, "WebSocketApp"), mock.patch.object(dhan.threading, "Thread") as thread:
             feed.connect((FAKE_CLIENT_ID, FAKE_TOKEN), ticks.extend, lambda e, d="": None)
-        self.assertIsNone(feed._flusher, "no flusher when nothing is held")
+        # The emitter is how a stored packet leaves, so it runs even when
+        # nothing is ever held.
+        self.assertEqual(["dhan-emit", "dhan-socket"], [c.kwargs["name"] for c in thread.call_args_list])
+
+        inline = DhanFeed(FAKE_CLIENT_ID, FAKE_TOKEN, http=mock.MagicMock(), credentials_source=lambda: None,
+                          min_tick_interval_ms=0, ingest="inline")
+        with mock.patch.object(dhan.websocket, "WebSocketApp"), mock.patch.object(dhan.threading, "Thread") as thread:
+            inline.connect((FAKE_CLIENT_ID, FAKE_TOKEN), ticks.extend, lambda e, d="": None)
+        self.assertIsNone(inline._emitter, "inline, nothing is held and nothing stored: no emitter")
         self.assertEqual(["dhan-socket"], [c.kwargs["name"] for c in thread.call_args_list])
 
     def test_close_hands_on_what_is_held_and_starts_the_next_connection_afresh(self):
@@ -821,22 +829,23 @@ class ConflationTests(unittest.TestCase):
         self.assertEqual(135.5, self.ticks[-1]["lastTradedPrice"], "a new connection's first update is not held")
 
 
-class FlusherThreadTests(unittest.TestCase):
-    """The real thread, on the real clock, with a short interval."""
+class EmitterThreadTests(unittest.TestCase):
+    """The real "dhan-emit" thread, on the real clock, with short periods."""
 
-    def _connected(self, interval_ms):
-        feed, ticks, _, _ = _feed(interval_ms=interval_ms)
+    def _connected(self, interval_ms, emit_period_ms=dhan.DEFAULT_EMIT_PERIOD_MS, on_ticks=None):
+        feed, _, _, _ = _feed(interval_ms=interval_ms)
+        feed._emit_period = min(max(emit_period_ms, 10), 1000) / 1000
         received = []
         lock = threading.Lock()
 
-        def on_ticks(batch):
+        def record(batch):
             with lock:
                 received.extend(batch)
 
         with mock.patch.object(dhan.websocket, "WebSocketApp"):
-            feed.connect((FAKE_CLIENT_ID, FAKE_TOKEN), on_ticks, lambda e, d="": None)
+            feed.connect((FAKE_CLIENT_ID, FAKE_TOKEN), on_ticks or record, lambda e, d="": None)
         self.addCleanup(feed.close)
-        feed.subscribe([OPTION])
+        feed.subscribe([OPTION, EQUITY])
         return feed, received
 
     def _wait_for(self, condition, seconds=3.0):
@@ -844,38 +853,397 @@ class FlusherThreadTests(unittest.TestCase):
         while time.monotonic() < deadline:
             if condition():
                 return True
-            time.sleep(0.01)
+            time.sleep(0.005)
         return False
 
-    def test_the_flusher_sends_a_quiet_symbols_last_state_on_its_own(self):
-        feed, received = self._connected(interval_ms=50)
-        thread, _ = feed._flusher
+    @staticmethod
+    def _emitters():
+        return [t for t in threading.enumerate() if t.name == "dhan-emit" and t.is_alive()]
+
+    def test_a_stored_packet_is_delivered_within_two_periods(self):
+        feed, received = self._connected(interval_ms=1000, emit_period_ms=250)
+        stored_at = time.monotonic()
+        feed._store_frame(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
+        self.assertEqual([], received, "the socket thread hands nothing on itself")
+        self.assertTrue(self._wait_for(lambda: len(received) == 1, seconds=0.5), received)
+        self.assertLess(time.monotonic() - stored_at, 0.5, "within two 250 ms periods")
+        self.assertEqual(134.25, received[0]["lastTradedPrice"])
+
+    def test_the_emitter_sends_a_quiet_symbols_last_state_on_its_own(self):
+        feed, received = self._connected(interval_ms=50, emit_period_ms=10)
+        thread, _ = feed._emitter
         self.assertTrue(thread.is_alive())
         feed._on_message(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
         feed._on_message(ticker(NSE_FNO, OPTION_ID, 136.0, TRADE_UTC))
         self.assertTrue(self._wait_for(lambda: len(received) == 2), received)
         self.assertEqual(136.0, received[-1]["lastTradedPrice"])
 
-    def test_close_stops_the_flusher(self):
-        feed, received = self._connected(interval_ms=60000)
-        thread, stop = feed._flusher
-        feed._on_message(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
-        feed._on_message(ticker(NSE_FNO, OPTION_ID, 136.0, TRADE_UTC))
+    def test_a_quiet_symbols_stored_state_goes_out_once_it_is_due(self):
+        feed, received = self._connected(interval_ms=50, emit_period_ms=10)
+        feed._store_frame(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
+        self.assertTrue(self._wait_for(lambda: len(received) == 1), received)
+        feed._store_frame(ticker(NSE_FNO, OPTION_ID, 136.0, TRADE_UTC))
+        self.assertTrue(self._wait_for(lambda: len(received) == 2), received)
+        self.assertEqual([134.25, 136.0], [t["lastTradedPrice"] for t in received])
+
+    def test_close_joins_the_emitter_and_hands_on_everything_pending_and_held(self):
+        feed, received = self._connected(interval_ms=60000, emit_period_ms=1000)
+        thread, stop = feed._emitter
+        feed._on_message(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))       # out at once
+        feed._on_message(ticker(NSE_FNO, OPTION_ID, 136.0, TRADE_UTC))        # held for a minute
+        feed._store_frame(quote(NSE_EQ, EQUITY_ID, 2913.05, TRADE_UTC))       # stored, no pass yet
         feed.close()
         self.assertFalse(thread.is_alive())
         self.assertTrue(stop.is_set())
-        self.assertIsNone(feed._flusher)
-        self.assertEqual([134.25, 136.0], [t["lastTradedPrice"] for t in received],
-                         "the held state went out with the close, not a minute later")
+        self.assertIsNone(feed._emitter)
+        self.assertEqual([(OPTION, 134.25), (EQUITY, 2913.05), (OPTION, 136.0)],
+                         [(t["symbol"], t["lastTradedPrice"]) for t in received],
+                         "the stored and the held states went out with the close, not a minute later")
+        self.assertEqual({}, feed._pending)
 
-    def test_a_reconnect_replaces_the_flusher_rather_than_adding_one(self):
-        feed, _ = self._connected(interval_ms=50)
-        first, _ = feed._flusher
+    def test_a_reconnect_replaces_the_emitter_rather_than_adding_one(self):
+        feed, _ = self._connected(interval_ms=50, emit_period_ms=10)
+        first, _ = feed._emitter
         with mock.patch.object(dhan.websocket, "WebSocketApp"):
             feed.connect((FAKE_CLIENT_ID, FAKE_TOKEN), lambda ticks: None, lambda e, d="": None)
-        second, _ = feed._flusher
+        second, _ = feed._emitter
         self.assertFalse(first.is_alive())
         self.assertTrue(second.is_alive())
+        self.assertEqual([second], [t for t in self._emitters() if t is first or t is second],
+                         "exactly one dhan-emit thread for this feed")
+
+    def test_an_exception_in_on_ticks_does_not_kill_the_emitter(self):
+        calls, received = [], []
+
+        def on_ticks(batch):
+            calls.append(len(batch))
+            if len(calls) == 1:
+                raise RuntimeError("the runner could not take them")
+            received.extend(batch)
+
+        events = []
+        feed, _ = self._connected(interval_ms=0, emit_period_ms=10, on_ticks=on_ticks)
+        feed._on_event = lambda e, d="": events.append((e, d))
+        feed._store_frame(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
+        self.assertTrue(self._wait_for(lambda: len(calls) == 1))
+        feed._store_frame(ticker(NSE_FNO, OPTION_ID, 136.0, TRADE_UTC))
+        self.assertTrue(self._wait_for(lambda: len(received) == 1), calls)
+        thread, _ = feed._emitter
+        self.assertTrue(thread.is_alive())
+        self.assertEqual(136.0, received[0]["lastTradedPrice"])
+        self.assertEqual(1, sum(1 for e, d in events if e == FeedEvent.ERROR and "could not hand on" in d))
+
+
+class ReaderIsolationTests(unittest.TestCase):
+    """
+    What the socket thread does per frame, and what it must never do. On 28
+    Sep it decoded, conflated and published every frame itself, and waited on
+    the lock the flusher held across a Redis write: Dhan's bytes piled up in
+    the kernel and the feed went quiet every few minutes.
+    """
+
+    def _wide_feed(self, count=300, interval_ms=0):
+        names = {f"NSE:OPT{i}": f"NSE_FNO:{40000 + i}:OPTIDX" for i in range(count)}
+        feed, ticks, events, _ = _feed(vendor_names=names, interval_ms=interval_ms)
+        feed.subscribe(list(names))
+        return feed, ticks, events, names
+
+    def test_a_flood_while_delivery_is_blocked_is_stored_fast_and_bounded(self):
+        feed, _, _, names = self._wide_feed()
+        entered, release = threading.Event(), threading.Event()
+        delivered = []
+
+        def slow_on_ticks(batch):
+            delivered.extend(batch)
+            entered.set()
+            release.wait(10)
+
+        feed._on_ticks = slow_on_ticks
+        feed._store_frame(ticker(NSE_FNO, 40000, 1.0, TRADE_UTC))
+        blocked = threading.Thread(target=feed.emit_pass, daemon=True)
+        blocked.start()
+        self.assertTrue(entered.wait(5), "the pass is inside on_ticks, holding _emit_lock")
+        self.assertTrue(feed._emit_lock.locked())
+
+        # Each round of 300 frames names every instrument once, and the rounds
+        # cycle through ticker, quote and full packets.
+        last_price, frames = {}, []
+        for n in range(20000):
+            i, kind = n % 300, (n // 300) % 3
+            price = 100.0 + n / 100
+            make = (ticker, quote, full)[kind]
+            frames.append(make(NSE_FNO, 40000 + i, price, TRADE_UTC))
+            last_price[f"NSE:OPT{i}"] = round(price, 2)
+
+        started = time.perf_counter()
+        for frame in frames:
+            feed._store_frame(frame)
+        elapsed = time.perf_counter() - started
+
+        self.assertLess(elapsed, 2.0, f"20,000 frames took {elapsed:.2f}s to store")
+        self.assertLessEqual(sum(len(slot) for slot in feed._pending.values()), 300 * 3)
+        self.assertEqual(20000 - 300 * 3, feed._superseded)
+
+        release.set()
+        blocked.join(5)
+        delivered.clear()
+        feed.emit_pass()
+        self.assertEqual(300, len(delivered))
+        for tick in delivered:
+            self.assertAlmostEqual(last_price[tick["symbol"]], tick["lastTradedPrice"], places=2,
+                                   msg=tick["symbol"])
+
+    def test_the_socket_thread_does_no_io(self):
+        import builtins
+        import socket
+        import redis
+
+        feed, _, events, _ = self._wide_feed(count=50)
+
+        def refuse(*_, **__):
+            raise AssertionError("the socket thread did I/O")
+
+        with mock.patch.object(socket.socket, "send", refuse), \
+             mock.patch.object(redis.Redis, "execute_command", refuse), \
+             mock.patch.object(requests.Session, "request", refuse), \
+             mock.patch.object(builtins, "print", refuse):
+            for n in range(1000):
+                feed._store_frame(full(NSE_FNO, 40000 + n % 50, 100.0 + n, TRADE_UTC))
+        self.assertEqual(1000, feed._frames_in)
+        self.assertEqual([], events)
+
+    def test_a_pass_merges_to_the_same_state_as_one_packet_at_a_time(self):
+        import random
+
+        rng = random.Random(20260928)
+        ids = [40000 + i for i in range(5)]
+        names = {f"NSE:OPT{i}": f"NSE_FNO:{sid}:OPTIDX" for i, sid in enumerate(ids)}
+
+        def price():
+            return round(rng.uniform(1.0, 500.0), 2)
+
+        def packet():
+            sid = rng.choice(ids)
+            kind = rng.randrange(5)
+            ltt = TRADE_UTC + rng.randrange(1, 600)
+            if kind == 0:
+                return ticker(NSE_FNO, sid, price(), ltt)
+            if kind == 1:
+                return quote(NSE_FNO, sid, price(), ltt, volume=rng.randrange(1, 10 ** 6), day_open=price(),
+                             high=price(), low=price(), close=price(), ltq=rng.randrange(1, 900), atp=price(),
+                             sell=rng.randrange(0, 10 ** 5), buy=rng.randrange(0, 10 ** 5))
+            if kind == 2:
+                return oi(NSE_FNO, sid, rng.randrange(0, 10 ** 7))
+            if kind == 3:
+                return prev_close(NSE_FNO, sid, price(), prev_oi=rng.randrange(0, 10 ** 7))
+            levels = [(rng.randrange(1, 5000), rng.randrange(1, 5000), rng.randrange(1, 50), rng.randrange(1, 50),
+                       price(), price()) for _ in range(rng.randrange(1, 6))]
+            levels += [(0, 0, 0, 0, 0.0, 0.0)] * (5 - len(levels))
+            return full(NSE_FNO, sid, price(), ltt, open_interest=rng.randrange(0, 10 ** 7), depth=levels)
+
+        for sequence in range(2000):
+            packets = [packet() for _ in range(rng.randrange(1, 41))]
+            one_by_one, _, _, _ = _feed(vendor_names=names)
+            one_by_one.subscribe(list(names))
+            in_one_pass, _, _, _ = _feed(vendor_names=names)
+            in_one_pass.subscribe(list(names))
+            for p in packets:
+                one_by_one._on_message(p)
+                in_one_pass._store_frame(p)
+            in_one_pass.emit_pass()
+            self.assertEqual(one_by_one._state, in_one_pass._state, f"sequence {sequence}")
+
+    def test_a_zero_field_in_the_latest_packet_keeps_the_value_from_before_the_pass(self):
+        # The one place a pass differs from packet-at-a-time: only each kind's
+        # latest packet is merged, so a field an earlier, superseded packet
+        # carried and the latest one leaves at zero is not seen at all.
+        feed, ticks, _, _ = _feed()
+        feed.subscribe([EQUITY])
+        feed._on_message(quote(NSE_EQ, EQUITY_ID, 2900.0, TRADE_UTC, high=2905.0))
+        feed._store_frame(quote(NSE_EQ, EQUITY_ID, 2910.0, TRADE_UTC, high=2920.0))
+        feed._store_frame(quote(NSE_EQ, EQUITY_ID, 2915.0, TRADE_UTC, high=0.0))
+        feed.emit_pass()
+        self.assertEqual(2915.0, ticks[-1]["lastTradedPrice"])
+        self.assertEqual(2905.0, ticks[-1]["high"], "the 2920 high was superseded before the pass saw it")
+
+    def test_kinds_merge_in_the_order_their_latest_packets_arrived(self):
+        feed, ticks, _, _ = _feed()
+        feed.subscribe([OPTION])
+        merged = []
+        original = feed._merge
+
+        def recording(code, *args):
+            merged.append(code)
+            return original(code, *args)
+
+        feed._merge = recording
+        feed._store_frame(quote(NSE_FNO, OPTION_ID, 133.0, TRADE_UTC))
+        feed._store_frame(full(NSE_FNO, OPTION_ID, 134.0, TRADE_UTC))
+        feed._store_frame(oi(NSE_FNO, OPTION_ID, 7000000))
+        feed.emit_pass()
+        self.assertEqual([dhan.QUOTE_PACKET, dhan.FULL_PACKET, dhan.OI_PACKET], merged)
+        self.assertEqual(1, len(ticks), "one tick for the instrument, carrying all three")
+        self.assertEqual((134.0, 7000000), (ticks[0]["lastTradedPrice"], ticks[0]["openInterest"]))
+        self.assertEqual("oi", json.loads(ticks[0]["rawPayload"])["type"])
+
+    def test_a_disconnect_packet_is_heard_at_once(self):
+        feed, ticks, events, _ = _feed()
+        feed._store_frame(disconnect(805))
+        self.assertEqual(FeedEvent.REFUSED, events[-1][0], "no pass needed")
+        self.assertEqual({}, feed._pending)
+
+    def test_market_status_text_and_truncated_frames_are_each_said_once(self):
+        feed, ticks, events, _ = _feed()
+        feed.subscribe([EQUITY])
+        for _ in range(2):
+            feed._store_frame(struct.pack("<BHBI", 7, 8, 0, 0))
+            feed._store_frame("hello")
+            feed._store_frame(quote(NSE_EQ, EQUITY_ID, 2913.05, TRADE_UTC)[:30])
+        self.assertEqual(1, sum(1 for e, d in events if "market status" in d))
+        self.assertEqual(1, sum(1 for e, d in events if "unexpected text" in d))
+        self.assertEqual(1, sum(1 for e, d in events if "needs 50" in d))
+        self.assertEqual({}, feed._pending)
+
+    def test_stacked_packets_become_one_entry_each(self):
+        feed, _, _, _ = _feed()
+        feed.subscribe([OPTION, EQUITY])
+        feed._store_frame(quote(NSE_EQ, EQUITY_ID, 2913.05, TRADE_UTC) + oi(NSE_FNO, OPTION_ID, 10)
+                          + ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
+        self.assertEqual(3, sum(len(slot) for slot in feed._pending.values()))
+        self.assertEqual(1, feed._frames_in)
+
+    def test_packets_for_unknown_instruments_are_dropped_and_counted(self):
+        feed, ticks, _, _ = _feed()
+        feed._store_frame(ticker(NSE_FNO, 99999, 10.0, TRADE_UTC))
+        self.assertEqual({}, feed._pending)
+        self.assertEqual(1, feed._dropped_unknown)
+        feed.emit_pass()
+        self.assertEqual([], ticks)
+
+    def test_an_instrument_unsubscribed_between_store_and_pass_emits_nothing(self):
+        feed, ticks, _, _ = _feed()
+        feed.subscribe([OPTION, EQUITY])
+        feed._store_frame(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
+        feed._store_frame(quote(NSE_EQ, EQUITY_ID, 2913.05, TRADE_UTC))
+        feed.unsubscribe([OPTION])
+        feed.emit_pass()
+        self.assertEqual([EQUITY], [t["symbol"] for t in ticks])
+
+    def test_deliveries_never_overlap(self):
+        feed, _, _, names = self._wide_feed(count=100)
+        feed._emit_period = 0.01
+        active, most, delivered = [0], [0], [0]
+        guard = threading.Lock()
+
+        def on_ticks(batch):
+            with guard:
+                active[0] += 1
+                most[0] = max(most[0], active[0])
+            time.sleep(0.001)
+            delivered[0] += len(batch)
+            with guard:
+                active[0] -= 1
+
+        with mock.patch.object(dhan.websocket, "WebSocketApp"):
+            feed.connect((FAKE_CLIENT_ID, FAKE_TOKEN), on_ticks, lambda e, d="": None)
+        stop = threading.Event()
+
+        def flood():
+            n = 0
+            while not stop.is_set():
+                feed._store_frame(ticker(NSE_FNO, 40000 + n % 100, 100.0 + n % 7, TRADE_UTC))
+                n += 1
+
+        flooder = threading.Thread(target=flood, daemon=True)
+        flooder.start()
+        # Passes from the test thread too, as the inline path makes them.
+        deadline = time.monotonic() + 0.5
+        while time.monotonic() < deadline:
+            feed.emit_pass()
+        feed.close()
+        stop.set()
+        flooder.join(2)
+        self.assertGreater(delivered[0], 0)
+        self.assertEqual(1, most[0], "on_ticks was never entered twice at once")
+
+    @unittest.skipIf(dhan.fcntl is None, "FIONREAD needs fcntl (not on Windows)")
+    def test_the_socket_backlog_is_the_kernels_unread_count(self):
+        import socket
+        from types import SimpleNamespace
+
+        feed, _, _, _ = _feed()
+        self.assertIsNone(feed.socket_backlog_bytes(), "no socket yet")
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        client = socket.create_connection(server.getsockname())
+        accepted, _ = server.accept()
+        self.addCleanup(lambda: [s.close() for s in (client, accepted, server)])
+        feed._app = SimpleNamespace(sock=SimpleNamespace(sock=client))
+        self.assertEqual(0, feed.socket_backlog_bytes())
+        accepted.sendall(b"x" * 5000)
+        deadline = time.monotonic() + 3
+        while feed.socket_backlog_bytes() != 5000 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(5000, feed.socket_backlog_bytes())
+        client.recv(3000)
+        self.assertEqual(2000, feed.socket_backlog_bytes())
+        feed._app = SimpleNamespace(sock=None)
+        self.assertIsNone(feed.socket_backlog_bytes())
+
+    def test_transport_idle_time_moves_on_frames_and_pings(self):
+        clock = Clock()
+        feed, _, _, _ = _feed(clock=clock)
+        feed.subscribe([OPTION])
+        self.assertIsNone(feed.transport_idle_seconds(), "nothing yet")
+        feed._store_frame(ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
+        clock.t += 30
+        self.assertEqual(30, feed.transport_idle_seconds())
+        feed._note_ping()
+        self.assertEqual(0, feed.transport_idle_seconds(), "a ping is proof of life")
+        clock.t += 12
+        feed._store_frame(ticker(NSE_FNO, 99999, 1.0, TRADE_UTC))
+        self.assertEqual(0, feed.transport_idle_seconds(), "any frame is, even one for nobody")
+        self.assertEqual({"frames": 2, "pings": 1, "dropped_unknown": 1},
+                         {k: feed.stats()[k] for k in ("frames", "pings", "dropped_unknown")})
+
+    def test_the_ingest_mode_and_period_come_from_the_environment(self):
+        patcher = mock.patch.dict(os.environ, {}, clear=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        for key in ("DHAN_CLIENT_ID", "DHAN_ACCESS_TOKEN", "DHAN_FEED_URL", "DHAN_SYMBOLS",
+                    "DHAN_MIN_TICK_INTERVAL_MS", "DHAN_INGEST", "DHAN_EMIT_PERIOD_MS"):
+            os.environ.pop(key, None)
+
+        feed = DhanFeed.from_env()
+        self.assertEqual(("emitter", 0.1), (feed._ingest, feed._emit_period), "the defaults are the fix")
+
+        os.environ.update(DHAN_INGEST="Inline", DHAN_EMIT_PERIOD_MS="5000")
+        feed = DhanFeed.from_env()
+        self.assertEqual(("inline", 1.0), (feed._ingest, feed._emit_period), "the period is clamped to 1 s")
+        os.environ["DHAN_EMIT_PERIOD_MS"] = "1"
+        self.assertEqual(0.01, DhanFeed.from_env()._emit_period, "and to 10 ms")
+
+        for key, bad in (("DHAN_INGEST", "threaded"), ("DHAN_EMIT_PERIOD_MS", "fast"), ("DHAN_EMIT_PERIOD_MS", "0")):
+            os.environ.update(DHAN_INGEST="emitter", DHAN_EMIT_PERIOD_MS="100")
+            os.environ[key] = bad
+            with self.assertRaises(SystemExit) as failure:
+                DhanFeed.from_env()
+            self.assertIn(key, str(failure.exception))
+
+    def test_inline_mode_hands_every_frame_on_from_the_socket_thread(self):
+        feed = DhanFeed(FAKE_CLIENT_ID, FAKE_TOKEN, http=mock.MagicMock(), credentials_source=lambda: None,
+                        min_tick_interval_ms=1000, ingest="inline",
+                        vendor_names={OPTION: f"NSE_FNO:{OPTION_ID}:OPTIDX"})
+        feed._send = lambda message: True
+        received = []
+        with mock.patch.object(dhan.websocket, "WebSocketApp") as app:
+            feed.connect((FAKE_CLIENT_ID, FAKE_TOKEN), received.extend, lambda e, d="": None)
+        self.addCleanup(feed.close)
+        feed.subscribe([OPTION])
+        on_message = app.call_args.kwargs["on_message"]
+        on_message(None, ticker(NSE_FNO, OPTION_ID, 134.25, TRADE_UTC))
+        self.assertEqual([134.25], [t["lastTradedPrice"] for t in received], "handed on inside the callback")
 
 
 class UniverseTests(unittest.TestCase):
