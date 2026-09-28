@@ -78,6 +78,13 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 builder.Services.AddSignalR();
+// The live feed hub: which symbols each browser asked for, and the dispatcher
+// that pushes each one its prices every LiveFeed:PushIntervalMs, coalesced.
+builder.Services.Configure<AlgoTrading.Api.Configuration.LiveFeedOptions>(
+    builder.Configuration.GetSection(AlgoTrading.Api.Configuration.LiveFeedOptions.SectionName));
+builder.Services.AddSingleton<LiveFeedSubscriptions>();
+builder.Services.AddSingleton<LiveTickDispatcher>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<LiveTickDispatcher>());
 builder.Services.AddInfrastructure(builder.Configuration);
 
 // Strategy runner plumbing: where Python lives, the catalog it reports, the
