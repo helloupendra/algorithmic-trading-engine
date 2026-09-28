@@ -227,6 +227,7 @@ public class IndicatorAlertScannerTests
         var config = Config($"cooldown: 30\n{Nifty} 5 ema-cross(2,3)");
         var first = Assert.Single((await Scanner(db).ScanAsync(Ist(9, 20, 20), config, Settings)).Recorded);
         Assert.True(first.Notify);
+        Delivered(db, first);
         var second = Assert.Single((await Scanner(db).ScanAsync(Ist(9, 25, 20), config, Settings)).Recorded);
         Assert.False(second.Notify);
         Assert.False(second.Occurrence.Up);
@@ -245,6 +246,57 @@ public class IndicatorAlertScannerTests
         var off = Config($"cooldown: 0\n{Nifty} 5 ema-cross(2,3)");
         await Scanner(db2).ScanAsync(Ist(9, 20, 20), off, Settings);
         Assert.True(Assert.Single((await Scanner(db2).ScanAsync(Ist(9, 25, 20), off, Settings)).Recorded).Notify);
+    }
+
+    // Until 28 Sep every alert started a cooldown window, sent or not, and the
+    // next cross inside it was withheld too: Telegram heard of neither.
+
+    [Fact]
+    public async Task An_alert_found_late_after_a_restart_starts_no_cooldown()
+    {
+        using var db = Db();
+        SeedFallingMonday(db, timeframe: 5);
+        // Up through the EMAs on the candle closing 09:20, back down on the one closing 09:25.
+        db.LiveBars.AddRange(Candles(Nifty, Ist(9, 15), 5, [25_500m, 23_000m]));
+        db.SaveChanges();
+        var config = Config($"cooldown: 30\n{Nifty} 5 ema-cross(2,3)");
+
+        // The API was down across the 09:20 close and first scans at 09:24.
+        var late = Assert.Single((await Scanner(db).ScanAsync(Ist(9, 24), config, Settings)).Recorded);
+        Assert.False(late.Notify);
+
+        var next = Assert.Single((await Scanner(db).ScanAsync(Ist(9, 25, 20), config, Settings)).Recorded);
+        Assert.False(next.Occurrence.Up);
+        Assert.True(next.Notify);
+        Assert.Null(IndicatorEventMetadata.TryRead(db.AlertEvents.Single(e => e.Id == next.EventId).MetadataJson)!.NotifySkippedReason);
+    }
+
+    [Fact]
+    public async Task An_alert_that_never_reached_telegram_starts_no_cooldown_and_one_that_did_does()
+    {
+        // Recorded to be sent, then dropped by the limiter or refused by Telegram.
+        foreach (bool delivered in new[] { false, true })
+        {
+            using var db = Db();
+            SeedFallingMonday(db, timeframe: 5);
+            db.LiveBars.AddRange(Candles(Nifty, Ist(9, 15), 5, [25_500m, 23_000m]));
+            db.SaveChanges();
+            var config = Config($"cooldown: 30\n{Nifty} 5 ema-cross(2,3)");
+
+            var first = Assert.Single((await Scanner(db).ScanAsync(Ist(9, 20, 20), config, Settings)).Recorded);
+            Assert.True(first.Notify);
+            if (delivered) Delivered(db, first);
+
+            var next = Assert.Single((await Scanner(db).ScanAsync(Ist(9, 25, 20), config, Settings)).Recorded);
+            Assert.Equal(!delivered, next.Notify);
+        }
+    }
+
+    /// <summary>What IndicatorAlertService does once Telegram has taken the alert.</summary>
+    private static void Delivered(TradingDbContext db, RecordedIndicator alert)
+    {
+        db.AlertEvents.Single(e => e.Id == alert.EventId).DeliveredToTelegram = true;
+        db.SaveChanges();
     }
 
     [Fact]
