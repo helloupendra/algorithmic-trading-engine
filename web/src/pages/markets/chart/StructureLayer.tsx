@@ -45,7 +45,7 @@ export function StructureControls({ value, onChange }: { value: StructureSetting
   const { layers } = value
   const flip = (key: keyof SmcLayers) => onChange({ ...value, layers: { ...layers, [key]: !layers[key] } })
   return (
-    <div className="smc__bar" aria-label="Structure layer">
+    <div className="smc__bar" aria-label="SMC layer">
       <div className="seg" role="group" aria-label="Marks">
         <Toggle on={layers.swings} onClick={() => flip('swings')}>Swings</Toggle>
         <Toggle on={layers.minorSwings} onClick={() => flip('minorSwings')} title="Every pullback, not only the swings the structure turned on">
@@ -144,7 +144,7 @@ function Rung({ tf, chart }: { tf: SmcStructure; chart: boolean }) {
 export function StructureLadder({ data, higher }: { data: SmcStructure | undefined; higher: SmcStructure[] }) {
   if (higher.length === 0) return null
   return (
-    <div className="smc__ladder" aria-label="Structure by timeframe">
+    <div className="smc__ladder" aria-label="SMC by timeframe">
       {[...higher, ...(data ? [data] : [])].map((tf, i) => (
         <Rung key={tf.resolution} tf={tf} chart={i === higher.length} />
       ))}
@@ -168,7 +168,7 @@ export function StructureStats({ data }: { data: SmcStructure | undefined }) {
   const trend = data?.trend === 'bullish' ? 'Bullish' : data?.trend === 'bearish' ? 'Bearish' : 'Not set yet'
   return (
     <div className="charts__stats">
-      <Stat label="Structure" value={trend} tone={`smc__trend--${data?.trend ?? 'none'}`} />
+      <Stat label="SMC trend" value={trend} tone={`smc__trend--${data?.trend ?? 'none'}`} />
       <Stat
         label="Latest mark"
         value={latest ? `${latest.kind === 'CHOCH' ? 'CHoCH' : 'BOS'} ${formatPrice(latest.level)}` : '—'}
@@ -213,7 +213,7 @@ export function StructureNotes({ data }: { data: SmcStructure | undefined }) {
 export function StructureLegend() {
   return (
     <details className="charts__data smc__legend-box">
-      <summary>What the structure layer draws</summary>
+      <summary>What the SMC layer draws</summary>
       <ul className="smc__legend">
         <li>
           <span className="smc__key smc__key--swing" />

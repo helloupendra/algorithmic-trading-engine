@@ -118,7 +118,7 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         label: 'Chart',
         home: '/markets/chart',
         requires: 'market-data',
-        pages: [{ label: 'Chart', to: '/markets/chart', keywords: ['candles', 'structure', 'smc', 'bos', 'choch'] }],
+        pages: [{ label: 'Chart', to: '/markets/chart', keywords: ['candles', 'smc', 'smart money', 'structure', 'bos', 'choch'] }],
       },
       {
         key: 'chain',
