@@ -850,6 +850,7 @@ rm -rf .venv data/instruments/*.csv
 | [docs/modules/activity_log.md](docs/modules/activity_log.md) | Who did what, across every module — what is recorded, what deliberately is not |
 | [docs/modules/dhan_connector.md](docs/modules/dhan_connector.md) | The primary data vendor: its daily token (taken automatically with PIN + TOTP), live feed, option chain recording and expired-options history |
 | [docs/modules/sentinel.md](docs/modules/sentinel.md) | The desk's watchman: its agents and rules, how a finding becomes an incident, and what it will never do |
+| [docs/modules/pager.md](docs/modules/pager.md) | The phone call: which failures wake the owner, which never do, how a page escalates, and how the pager itself is watched |
 | [docs/roadmap/broker-and-data-provider-module.md](docs/roadmap/broker-and-data-provider-module.md) | Multi-vendor architecture: decisions taken, phases delivered, what is left |
 
 ---

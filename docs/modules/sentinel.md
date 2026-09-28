@@ -97,6 +97,9 @@ content root upwards; `Desk:PlanFile` overrides it.
 
 ## Getting the message out
 
+- Sentinel texts; it never phones. Waking the owner for the few failures that
+  cannot wait until morning is the [pager](pager.md)'s job, a separate process
+  outside the deploy path.
 - A message Telegram does not take — no network, a 429 — **waits and is sent
   later**: in order, a few per round, after a pause that grows from 15 s to
   5 minutes (or as long as Telegram's own retry-after asks, up to 15). The
