@@ -520,6 +520,27 @@ export class LiveFeed {
     hub?.stop().catch(() => {})
   }
 
+  /**
+   * The API is answering again: connect now. The retry waits grow to 30 s
+   * (SignalR's own reconnect, or a new connection after a close), so without
+   * this the prices stayed polled for up to half a minute after the API was
+   * back. The waiting connection is dropped and a fresh one opened; nothing
+   * happens while connected, or before start.
+   */
+  nudge(): void {
+    if (!this.wanted || this.status === 'connected' || this.status === 'legacy') return
+    if (this.retryTimer != null) clearTimeout(this.retryTimer)
+    this.retryTimer = null
+    const waiting = this.hub
+    // Unhooked first, so its close is not taken for a new loss.
+    this.hub = null
+    this.generation++
+    this.onServer.clear()
+    this.attempt = 0
+    waiting?.stop().catch(() => {})
+    this.open()
+  }
+
   private open(): void {
     const hub = this.connectHub()
     this.hub = hub
@@ -840,6 +861,23 @@ export function useLiveFeed(): void {
       liveFeed.stop()
     }
   }, [qc])
+}
+
+/**
+ * Connects at once when the API answers again after an outage (`apiDown`,
+ * the backend status check, turns false after being true), instead of at the
+ * end of the live connection's retry wait.
+ */
+export function useLiveNudgeWhenApiBack(apiDown: boolean): void {
+  const wasDown = useRef(false)
+  useEffect(() => {
+    if (apiDown) {
+      wasDown.current = true
+    } else if (wasDown.current) {
+      wasDown.current = false
+      liveFeed.nudge()
+    }
+  }, [apiDown])
 }
 
 export function useLiveConnection(): LiveConnection {

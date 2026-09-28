@@ -15,7 +15,7 @@ import type { FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../lib/auth'
-import { useLiveConnection } from '../../lib/live'
+import { useLiveConnection, useLiveNudgeWhenApiBack } from '../../lib/live'
 import {
   useBackendStatus,
   useFeeds,
@@ -377,6 +377,9 @@ export function StatusItems() {
   const feeds = useFeeds({ enabled: isAdmin })
 
   const down = backend.isDown
+  // The moment the API answers again, the live connection tries at once
+  // rather than at the end of a retry wait that has grown to 30 s.
+  useLiveNudgeWhenApiBack(down)
   const nse = down ? undefined : nseSession.data
   const mcx = down ? undefined : mcxSession.data
   const heartbeats = down ? undefined : ingestors.data

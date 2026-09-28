@@ -251,6 +251,57 @@ describe('LiveFeed subscriptions', () => {
     expect(made[3].sent('Subscribe')).toEqual([['X']])
   })
 
+  it('connects at once when nudged after the API is back, instead of waiting out a 30 s retry', async () => {
+    const failing = new FakeHub()
+    failing.startWith = () => Promise.reject(new Error('Failed to fetch'))
+    const { feed, made } = feedWith({ hubs: [new FakeHub(), failing, failing, failing, failing] })
+    feed.start()
+    feed.acquire(['X'])
+    await settle()
+    made[0].close()
+    // The API is down: the retries back off to 30 s.
+    await vi.advanceTimersByTimeAsync(10 + 2_000 + 5_000 + 10_000)
+    expect(made).toHaveLength(5)
+    expect(feed.connection).toBe('reconnecting')
+
+    // The status check answers again: a fresh connection now, not in 30 s.
+    feed.nudge()
+    await settle()
+    expect(made).toHaveLength(6)
+    expect(feed.connection).toBe('connected')
+    expect(made[5].sent('Subscribe')).toEqual([['X']])
+    // The retry it replaced does not fire as well.
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(made).toHaveLength(6)
+  })
+
+  it("drops SignalR's own waiting reconnect for a fresh connection when nudged, and ignores that one's close", async () => {
+    const { feed, made } = feedWith()
+    feed.start()
+    feed.acquire(['X'])
+    await settle()
+    made[0].drop()
+    feed.nudge()
+    expect(made[0].stopped).toBe(true)
+    made[0].close()
+    await settle()
+    expect(made).toHaveLength(2)
+    expect(feed.connection).toBe('connected')
+    expect(made[1].sent('Subscribe')).toEqual([['X']])
+  })
+
+  it('leaves a working connection alone when nudged', async () => {
+    const { feed, made } = feedWith()
+    feed.nudge()
+    expect(made).toHaveLength(0)
+    feed.start()
+    await settle()
+    feed.nudge()
+    await settle()
+    expect(made).toHaveLength(1)
+    expect(made[0].stopped).toBe(false)
+  })
+
   it('keeps the most recently asked-for symbols at the cap, and says so once', async () => {
     const { feed, made, warn } = feedWith({ cap: 3 })
     feed.start()
