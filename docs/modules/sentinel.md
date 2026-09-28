@@ -73,7 +73,38 @@ content root upwards; `Desk:PlanFile` overrides it.
   "resolved" message, since nothing was ever open.
 - A person can acknowledge ("someone is on it") or resolve an incident from the
   console. Resolving one whose condition is still there makes Sentinel open a
-  fresh one on its next check — which is the honest answer.
+  fresh one on its next check — which is the honest answer. But only a fresh
+  observation counts: a finding an agent repeats from memory (a log finding
+  held open after its last line, the trading agent's last answer while the
+  runs cannot be read) carries when it was observed (`observed_utc`), and never
+  reopens an incident resolved at or after that. The logs agent then stops
+  holding it, so a line read later opens a new incident counted from that line.
+  On 28 Sep the operator resolved the four API errors of a deliberate Postgres
+  restart (13:05–13:06) at 13:08, and at 13:11 their four-hour holds opened
+  them again as new incidents, counting the same lines.
+- **A flapping problem is one incident.** A problem that comes back within
+  **30 minutes** of Sentinel resolving it (`FLAP_WINDOW` in `sentinel/model.py`)
+  reopens that incident instead of opening another — not a notice, and not one
+  a person resolved (their resolve was a judgement; its return is a new
+  episode). An incident acknowledged before it cleared comes back
+  acknowledged. Its messages are the ones that change what a person knows: the
+  first NEW at once, as always; its first RESOLVED at once (nobody can know yet
+  that it will flap); its first return at once, *"🔴 AGAIN … Back again: the
+  2nd time since 13:07 IST"* — the person was told it was over. From then on
+  its returns are quiet unless nothing has been said about it for 30 minutes
+  (then *"Back again: the 12th time …"*) or it got worse, and its RESOLVED is
+  held back until it has stayed clear for 30 minutes (*"It happened 8 times
+  since 13:07 IST; clear since 13:30 IST"*), dropped if it comes back first. So
+  nobody is ever left believing it is over while it is not. The console shows
+  the count as an evidence line beginning `flapping: `; the count and what was
+  last said are kept in `logs/sentinel/state-engine.json`, across restarts.
+  28 Sep 13:06–13:28: the feed stalled for about two minutes every few minutes,
+  and every stall opened a new CRITICAL *"ticks have stopped"* incident for
+  NSE/BSE and for MCX, each with its NEW and its RESOLVED: four messages a
+  stall. Now that is six messages for the whole run (NEW, RESOLVED and AGAIN
+  per exchange group), and one RESOLVED each half an hour after the last stall.
+  It applies to every rule — runs missing, a run dying again after a restart —
+  since it lives in the engine and the store, not in an agent.
 - An agent whose own check crashes — or returns something that is not a list of
   findings — opens an incident about itself, and **its other incidents stay as
   they are** that round: a check that did not run is not evidence that a problem
@@ -150,8 +181,10 @@ evidence, and a line that may carry a credential is dropped whole.
 
 Every incident is kept, resolved ones included, one row per **episode** of a
 problem: the fingerprint is the problem, and it opens a new row each time it
-comes back after being resolved. So the table is the desk's own record of what
-went wrong, how often, and what was done about it.
+comes back after being resolved — except within 30 minutes of Sentinel itself
+resolving it, when the same row is reopened (a flapping problem is one
+episode; see above). So the table is the desk's own record of what went wrong,
+how often, and what was done about it.
 
 **Notes on each incident.** Three columns a person fills from the console —
 **root cause**, **what was done**, and a **fix reference** (a commit sha, a pull

@@ -109,7 +109,7 @@ import math
 import re
 import statistics
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Optional
 
@@ -573,11 +573,16 @@ class TradingAgent(Agent):
         return findings
 
     def _carry(self, data: dict) -> list[Finding]:
-        """The findings of the last check that could read the runs today (``data`` is today's)."""
+        """
+        The findings of the last check that could read the runs today (``data`` is today's), as observed then:
+        one a person resolved while Sentinel could not look is not reopened by what it saw before.
+        """
         last = data.get("last")
         if not isinstance(last, dict) or not isinstance(last.get("findings"), list):
             return []
-        return [f for f in (_load(d, self.name) for d in last["findings"]) if f is not None]
+        observed = _parse_time(last.get("at"))
+        return [replace(f, observed_utc=observed) for f in (_load(d, self.name) for d in last["findings"])
+                if f is not None]
 
     def _blind(self, session, now: datetime, data: dict, path: str, error: str) -> list[Finding]:
         """
