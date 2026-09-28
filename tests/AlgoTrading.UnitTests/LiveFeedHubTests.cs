@@ -11,6 +11,8 @@ using AlgoTrading.Application.Interfaces;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -97,6 +99,58 @@ public class LiveFeedHubTests
         Assert.Equal(0, subs.CountFor("c1"));
         Assert.Equal(0, dispatcher.Flush());
         Assert.Empty(hubContext.All);
+    }
+
+    [Fact]
+    public async Task A_call_that_lands_after_the_connection_closed_makes_no_entry()
+    {
+        // SignalR does not wait for a hub call still running when the
+        // connection closes. A SubscribeAll awaiting its grant check used to
+        // land after OnDisconnectedAsync and make a new entry, with All set,
+        // that every flush then fed the whole feed for the life of the process.
+        await using var db = Users();
+        var subs = new LiveFeedSubscriptions();
+        var hubContext = new RecordingHubContext();
+        var dispatcher = Dispatcher(subs, hubContext);
+        var hub = Hub(subs, "c1", Admin(AdminId), db);
+        await hub.OnConnectedAsync();
+        await hub.OnDisconnectedAsync(null);
+
+        Assert.True(await hub.SubscribeAll());
+        Assert.Equal(0, hub.Subscribe(new[] { Nifty }));
+        Assert.Equal(0, hub.Unsubscribe(new[] { Nifty }));
+        Assert.True(hub.UnsubscribeAll());
+
+        Assert.Equal(0, subs.ConnectionCount);
+        Assert.False(subs.IsAll("c1"));
+        dispatcher.Enqueue(Tick(Nifty, 100m));
+        Assert.Equal(0, dispatcher.Flush());
+        Assert.Empty(hubContext.All);
+    }
+
+    // ------------------------------------------------------------- logging --
+
+    [Fact]
+    public async Task A_refusal_is_logged_as_a_warning_and_anything_else_as_an_error_and_both_still_reach_the_browser()
+    {
+        var log = new CapturingLoggerProvider();
+        using var factory = LoggerFactory.Create(b => b.AddProvider(log));
+        var filter = new LiveFeedHubLogging(factory.CreateLogger<LiveFeedHub>());
+        var subs = new LiveFeedSubscriptions();
+        var hub = Hub(subs, "c1", Trader(PlainTrader));
+        var call = new HubInvocationContext(hub.Context, new ServiceCollection().BuildServiceProvider(), hub,
+            typeof(LiveFeedHub).GetMethod(nameof(LiveFeedHub.Subscribe))!, new object?[] { new[] { Nifty } });
+
+        var refused = await Assert.ThrowsAsync<HubException>(async () =>
+            await filter.InvokeMethodAsync(call, _ => throw new HubException("A page may follow at most 400 symbols")));
+        var broken = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await filter.InvokeMethodAsync(call, _ => throw new InvalidOperationException("a bug")));
+        Assert.Equal(7, await filter.InvokeMethodAsync(call, _ => ValueTask.FromResult<object?>(7)));
+
+        Assert.Equal(new[] { LogLevel.Warning, LogLevel.Error }, log.Entries.Select(x => x.Level));
+        Assert.Contains("refused Subscribe on connection c1: A page may follow at most 400 symbols", log.Entries[0].Message);
+        Assert.Same(broken, log.Entries[1].Exception);
+        Assert.NotNull(refused);
     }
 
     // ---------------------------------------------------------- dispatcher --

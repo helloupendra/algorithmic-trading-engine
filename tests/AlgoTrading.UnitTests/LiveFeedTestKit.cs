@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Claims;
 using AlgoTrading.Api.Hubs;
 using AlgoTrading.Application.Interfaces;
@@ -5,6 +6,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Connections.Features;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Logging;
 
 namespace AlgoTrading.UnitTests;
 
@@ -178,5 +180,31 @@ internal sealed class TestCallerContext : HubCallerContext
     private sealed class HttpContextFeature(HttpContext context) : IHttpContextFeature
     {
         public HttpContext? HttpContext { get; set; } = context;
+    }
+}
+
+/// <summary>Keeps every log line a host writes past its filters: category, level, message.</summary>
+internal sealed class CapturingLoggerProvider : ILoggerProvider
+{
+    private readonly ConcurrentQueue<Entry> _entries = new();
+
+    public sealed record Entry(string Category, LogLevel Level, string Message, Exception? Exception);
+
+    public IReadOnlyList<Entry> Entries => _entries.ToList();
+
+    public ILogger CreateLogger(string categoryName) => new Logger(this, categoryName);
+
+    public void Dispose()
+    {
+    }
+
+    private sealed class Logger(CapturingLoggerProvider owner, string category) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => logLevel != LogLevel.None;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            => owner._entries.Enqueue(new Entry(category, logLevel, formatter(state, exception), exception));
     }
 }

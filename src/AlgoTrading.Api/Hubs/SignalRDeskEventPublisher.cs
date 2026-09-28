@@ -31,6 +31,13 @@ public static class DeskEventGroups
 /// just booked a fill or stopped a run, and a browser is no reason to wait
 /// or to fail.
 /// </para>
+/// <para>
+/// The admins' send and the owner's start together. A group send completes
+/// when every member's write has, and until 28 Sep the owner's waited for the
+/// admins': one admin phone on a bad network, with the whole feed open, held
+/// every trader's fills and stops until its socket drained or timed out
+/// (about 30 s), while their pages polled at the slow connected pace.
+/// </para>
 /// </remarks>
 public sealed class SignalRDeskEventPublisher : IDeskEventPublisher
 {
@@ -78,14 +85,25 @@ public sealed class SignalRDeskEventPublisher : IDeskEventPublisher
                 detail = deskEvent.Detail,
             };
 
-            await _hub.Clients.Group(DeskEventGroups.Admins).SendAsync(ClientMethod, payload);
+            var toAdmins = SendToAsync(_hub.Clients.Group(DeskEventGroups.Admins), payload, deskEvent);
+            var toOwner = deskEvent.UserId is { } owner
+                ? SendToAsync(_hub.Clients.GroupExcept(DeskEventGroups.User(owner), _subscriptions.AdminConnectionIds()), payload, deskEvent)
+                : Task.CompletedTask;
 
-            if (deskEvent.UserId is { } owner)
-            {
-                await _hub.Clients
-                    .GroupExcept(DeskEventGroups.User(owner), _subscriptions.AdminConnectionIds())
-                    .SendAsync(ClientMethod, payload);
-            }
+            await Task.WhenAll(toAdmins, toOwner);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Desk event {Kind} for run {RunId} could not be pushed.", deskEvent.Kind, deskEvent.RunId);
+        }
+    }
+
+    /// <summary>One group's send; the task never faults, so one group's failure is not the other's.</summary>
+    private async Task SendToAsync(IClientProxy clients, object payload, DeskEvent deskEvent)
+    {
+        try
+        {
+            await clients.SendAsync(ClientMethod, payload);
         }
         catch (Exception ex)
         {
