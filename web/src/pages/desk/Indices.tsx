@@ -6,12 +6,17 @@
  * Market factors reads them.
  *
  * Prices come from the market pulse, VIX from the NIFTY chain's header (the
- * pulse does not carry it), the levels from three chain views polled every
- * 30 s in the session, the traces from one-minute bars once a minute.
+ * pulse does not carry it), both moved by their pushed prices between
+ * answers; the levels from three chain views polled every 30 s in the
+ * session, the traces from one-minute bars once a minute.
  */
 
+import { useMemo } from 'react'
 import type { ChainLevels, ForecastRow, IndexRow } from '../../lib/desk'
-import { chainLevels, dayLabel, dayOf, dayTrace, forecastRows, indexRows, plainNumber, rangeSoFar, signedNumber, weekdayOf } from '../../lib/desk'
+import { VIX_SYMBOL, chainLevels, dayLabel, dayOf, dayTrace, forecastRows, indexRows, plainNumber, rangeSoFar, signedNumber, weekdayOf } from '../../lib/desk'
+import { useLivePrices } from '../../lib/live'
+import { freshPrice } from '../../lib/liveMarks'
+import { applyTickToQuote } from '../../lib/optionChain'
 import { allows } from '../../lib/modules'
 import { formatCrore } from '../../lib/factors'
 import { useDeskChainViews, useIntradayTrace, useMarketEvents, useMarketFlows, useMarketPulse } from '../../lib/queries'
@@ -20,6 +25,7 @@ import { toneClass, useDayForecasts } from './data'
 import { Failed, PanelHead, RangeMeter, Spark, Waiting } from './parts'
 
 const CHAINED = ['NIFTY', 'BANKNIFTY', 'SENSEX'] as const
+const VIX = [VIX_SYMBOL]
 
 function Trace({ row, view }: { row: IndexRow; view: DeskView }) {
   const bars = useIntradayTrace(row.symbol, view.clock === 'live')
@@ -144,7 +150,16 @@ function IndexTable({ view, links, forecasts }: { view: DeskView; links: DeskLin
   const pulse = useMarketPulse()
   const chains = useDeskChainViews(CHAINED, view.clock === 'live')
   const byUnd = new Map((forecasts ?? []).map((f) => [f.underlying, f]))
-  const vix = chains[0].data?.header?.vix ?? null
+  const vixAnswer = chains[0].data?.header?.vix ?? null
+  const vixAnsweredAt = chains[0].dataUpdatedAt
+  const vixTick = useLivePrices(VIX).get(VIX_SYMBOL)
+  const vix = useMemo(
+    () =>
+      vixTick && freshPrice(vixTick, vixAnsweredAt) != null
+        ? applyTickToQuote(vixAnswer, vixTick, new Date(vixTick.receivedAtMs).toISOString())
+        : vixAnswer,
+    [vixAnswer, vixTick, vixAnsweredAt],
+  )
   const rows = indexRows(pulse.data, vix)
   const closeDay = view.phase === 'pre' ? dayOf(rows[0]?.updatedUtc) : null
   const lastLabel = closeDay && closeDay < view.today ? `${weekdayOf(closeDay)} close` : 'LTP'

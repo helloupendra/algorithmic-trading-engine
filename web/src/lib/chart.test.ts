@@ -11,6 +11,7 @@ import {
   rollUp,
   stitch,
   structureTimeframes,
+  withLiveTick,
 } from './chart'
 import type { Candle } from './chart'
 import type { CoverageRow } from './queries'
@@ -116,5 +117,45 @@ describe('structureTimeframes', () => {
     expect(structureTimeframes('5')).toBe('1D,15m,5m')
     expect(structureTimeframes('15')).toBe('1D,15m')
     expect(structureTimeframes('D')).toBe('1D')
+  })
+})
+
+describe('withLiveTick', () => {
+  const NIFTY = 'NSE:NIFTY50-INDEX'
+  // The forming 5-minute candle opened 10:10 IST (04:40Z).
+  const candles = [bar('2026-09-28T04:35:00.000Z', 100), bar('2026-09-28T04:40:00.000Z', 102)]
+  const at = (iso: string, lastTradedPrice: number) => ({ lastTradedPrice, exchangeTimestampUtc: iso, receivedAtMs: Date.parse(iso) + 80 })
+
+  it('moves the forming candle: its close, and its high and low when the price passes them', () => {
+    const up = withLiveTick(candles, at('2026-09-28T04:42:10Z', 104.5), { symbol: NIFTY, resolution: '5' })
+    expect(up).toHaveLength(2)
+    expect(up[0]).toBe(candles[0])
+    expect(up[1]).toMatchObject({ open: 102, close: 104.5, high: 104.5, low: 101 })
+    const down = withLiveTick(up, at('2026-09-28T04:43:00Z', 100.5), { symbol: NIFTY, resolution: '5' })
+    // The high reached in between stays on the candle.
+    expect(down[1]).toMatchObject({ close: 100.5, high: 104.5, low: 100.5 })
+  })
+
+  it('opens the next candle when the price is past the forming one, on the same session', () => {
+    const next = withLiveTick(candles, at('2026-09-28T04:45:02Z', 103), { symbol: NIFTY, resolution: '5' })
+    expect(next).toHaveLength(3)
+    expect(next[2]).toEqual({ timeUtc: '2026-09-28T04:45:00.000Z', open: 103, high: 103, low: 103, close: 103, volume: null })
+  })
+
+  it('leaves the candles alone for a day chart, an older price, a new session, a pre-open print or no price', () => {
+    const same = (tick: ReturnType<typeof at> | undefined, resolution: '1' | '5' | 'D' = '5', symbol = NIFTY) =>
+      expect(withLiveTick(candles, tick, { symbol, resolution })).toBe(candles)
+    same(at('2026-09-28T04:42:10Z', 104), 'D')
+    same(at('2026-09-28T04:39:59Z', 104))
+    same(at('2026-09-29T03:46:00Z', 104))
+    same({ ...at('2026-09-28T04:42:10Z', 0) })
+    same(undefined)
+    const opening = [bar('2026-09-28T03:45:00.000Z', 100)]
+    expect(withLiveTick(opening, at('2026-09-28T03:40:00Z', 90), { symbol: NIFTY, resolution: '1' })).toBe(opening)
+  })
+
+  it('reads the arrival time when the exchange sent no stamp', () => {
+    const next = withLiveTick(candles, { lastTradedPrice: 101.5, exchangeTimestampUtc: null, receivedAtMs: Date.parse('2026-09-28T04:41:00Z') }, { symbol: NIFTY, resolution: '5' })
+    expect(next[1]).toMatchObject({ close: 101.5 })
   })
 })

@@ -14,9 +14,11 @@
 
 import { keepPreviousData, useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { InfiniteData } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
-import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr'
-import { api, API_BASE_URL, tokenStore } from './api'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { api } from './api'
+import { livePoll, useLiveAllState, useLiveConnection, useLivePrices } from './live'
+import type { LiveConnection } from './live'
+import { pulseBehind, pulseWithTicks } from './liveMarks'
 import type {
   AlertEvent,
   BackfillHistoryResponse,
@@ -89,111 +91,21 @@ export function useWatchlist() {
   })
 }
 
+/**
+ * Every symbol's latest quote. Pushed prices are folded into this list while
+ * a page holds the everything-feed (lib/live.ts, useLiveAll); the poll then
+ * only brings what a tick does not carry and new rows. A page that holds it
+ * and is refused it, or has lost the socket, polls fast instead; one that
+ * does not hold it (it lays its own symbols' pushes over this list) polls as
+ * it always has.
+ */
 export function useLatestQuotes() {
+  const all = useLiveAllState()
   return useQuery({
     queryKey: ['quotes', 'all'],
     queryFn: () => api.get<LiveQuote[]>('/api/LiveData/latest/all'),
-    refetchInterval: POLL_SLOW, // Relies on SignalR for fast updates
+    refetchInterval: all === 'off' || all === 'on' ? POLL_SLOW : POLL_FAST,
   })
-}
-
-/**
- * Pages that want every pushed price as it lands (the option chain) listen
- * here, rather than opening a second hub connection of their own.
- */
-type LiveTicksListener = (ticks: any[]) => void
-const liveTicksListeners = new Set<LiveTicksListener>()
-
-export function onLiveTicks(listener: LiveTicksListener): () => void {
-  liveTicksListeners.add(listener)
-  return () => {
-    liveTicksListeners.delete(listener)
-  }
-}
-
-export function useLiveFeedSignalR() {
-  const qc = useQueryClient()
-
-  useEffect(() => {
-    // Nothing to subscribe to while signed out. The component that calls this
-    // is mounted above the router, so it also runs on the public landing and
-    // login pages — where it would otherwise open a socket, fail to authorize,
-    // and retry forever.
-    if (!tokenStore.access) return
-
-    const connection = new HubConnectionBuilder()
-      // The hub is authorized now — it carries live market data the platform
-      // pays a broker for, and used to accept anyone with the URL.
-      .withUrl(`${API_BASE_URL}/hubs/livefeed`, {
-        accessTokenFactory: () => tokenStore.access ?? '',
-      })
-      .configureLogging(LogLevel.Warning)
-      .withAutomaticReconnect()
-      .build()
-
-    // Applies a whole delivery in one cache write.
-    //
-    // The ingestor posts ticks in batches now, so the hub sends "ReceiveTicks"
-    // with an array. Folding the array in here rather than looping the single
-    // handler means one render per delivery instead of one per price, which is
-    // what keeps a busy open-bell burst from thrashing the tree.
-    const applyTicks = (ticks: any[]) => {
-      if (!ticks.length) return
-      for (const listener of liveTicksListeners) {
-        try {
-          listener(ticks)
-        } catch {
-          // One page's handler must not stop the prices reaching the rest.
-        }
-      }
-      qc.setQueryData(['quotes', 'all'], (old: LiveQuote[] | undefined) => {
-        if (!old) return old
-
-        const bySymbol = new Map<string, any>()
-        // Last one wins: within a batch the newest price for a symbol is the
-        // one worth rendering.
-        for (const tick of ticks) {
-          if (tick?.symbol) bySymbol.set(tick.symbol, tick)
-        }
-        if (!old.some((q) => bySymbol.has(q.symbol))) return old
-
-        return old.map((q) => {
-          const tick = bySymbol.get(q.symbol)
-          if (!tick) return q
-          return {
-            ...q,
-            lastTradedPrice: tick.lastTradedPrice ?? q.lastTradedPrice,
-            bidPrice: tick.bidPrice ?? q.bidPrice,
-            askPrice: tick.askPrice ?? q.askPrice,
-            volume: tick.volume ?? q.volume,
-            // Arrival time, to match what the REST snapshot puts here. This
-            // used to be assigned the tick's EXCHANGE stamp, so the field meant
-            // "when we got it" after a poll and "when it last traded" after a
-            // push - and a quiet contract's age jumped between 1s and minutes
-            // depending on which had landed last.
-            updatedUtc: new Date().toISOString(),
-            exchangeTimestampUtc: tick.exchangeTimestampUtc ?? q.exchangeTimestampUtc,
-          }
-        })
-      })
-    }
-
-    // Both shapes are handled: the batch endpoint sends the plural, and the
-    // single-tick endpoint is still there for anything that posts one at a time.
-    connection.on('ReceiveTicks', (ticks: any[]) => applyTicks(ticks ?? []))
-    connection.on('ReceiveTick', (tick: any) => applyTicks(tick ? [tick] : []))
-
-    let isMounted = true
-
-    connection.start().catch((err) => {
-      if (isMounted) console.error(err)
-    })
-
-    return () => {
-      isMounted = false
-      connection.stop()
-    }
-  }, [qc])
 }
 
 export function useLiveBars(symbol: string | null, take = 500) {
@@ -738,9 +650,13 @@ export function useSmcLadder(params: {
 
 // Halved once the tick write path stopped being the bottleneck (a tick cost
 // ~30ms to store and now costs ~2ms), so the run view can be asked for a
-// fresh mark twice as often without crowding the run's lock. The LTP column
-// itself no longer waits for this — it re-prices off the live quote cache.
+// fresh mark twice as often without crowding the run's lock. That is the
+// pace without the socket; with it the prices are pushed (the run card
+// re-prices its legs from them) and a fill or a stop arrives as a desk event,
+// so the view and its orders are read again only as a safety net.
 const POLL_LIVE_VIEW = 1_000
+const POLL_LIVE_VIEW_PUSHED = 15_000
+const POLL_RUN_ORDERS_PUSHED = 30_000
 const POLL_RUNNER_LOGS = 3_000
 
 /**
@@ -927,7 +843,8 @@ export function useUpdateRunRisk() {
   })
 }
 
-function liveViewQuery(runId: number, enabled: boolean) {
+function liveViewQuery(runId: number, enabled: boolean, connection: LiveConnection) {
+  const pollMs = livePoll(connection, POLL_LIVE_VIEW_PUSHED, POLL_LIVE_VIEW)
   return {
     queryKey: ['strategy', 'live', runId] as const,
     queryFn: () => api.get<StrategyLiveView>(`/api/Strategy/runs/${runId}/live`),
@@ -936,13 +853,13 @@ function liveViewQuery(runId: number, enabled: boolean) {
     // then left alone (the server marks-to-market on every call). A run id is
     // never reused, so a restart is simply a new key that polls from scratch.
     refetchInterval: (query: { state: { data?: StrategyLiveView } }) =>
-      query.state.data && !query.state.data.isActive ? false : POLL_LIVE_VIEW,
+      query.state.data && !query.state.data.isActive ? false : pollMs,
   }
 }
 
 /** Position-based live view of one run (works for finished runs too). */
 export function useStrategyLive(runId: number, enabled: boolean) {
-  return useQuery(liveViewQuery(runId, enabled))
+  return useQuery(liveViewQuery(runId, enabled, useLiveConnection()))
 }
 
 /**
@@ -951,8 +868,9 @@ export function useStrategyLive(runId: number, enabled: boolean) {
  * the same run.
  */
 export function useStrategyLives(runIds: number[]) {
+  const connection = useLiveConnection()
   return useQueries({
-    queries: runIds.map((runId) => liveViewQuery(runId, true)),
+    queries: runIds.map((runId) => liveViewQuery(runId, true, connection)),
   })
 }
 
@@ -1077,13 +995,18 @@ export function useStrategyTrackRecord(strategyId: number | null, enabled = true
   })
 }
 
-/** Paper orders of one live run, newest first (fetched once; `live` re-polls while the run is active). */
+/**
+ * Paper orders of one live run, newest first (fetched once; `live` re-polls
+ * while the run is active: every second without the socket, every 30 s with
+ * it, since each order and fill then arrives as a desk event).
+ */
 export function useLiveRunOrders(runId: number, live = false, enabled = true) {
+  const connection = useLiveConnection()
   return useQuery({
     queryKey: ['strategy', 'orders', runId],
     queryFn: () => api.get<PaperOrderRow[]>(`/api/Strategy/runs/${runId}/orders`),
     enabled,
-    refetchInterval: live ? POLL_LIVE_VIEW : false,
+    refetchInterval: live ? livePoll(connection, POLL_RUN_ORDERS_PUSHED, POLL_LIVE_VIEW) : false,
   })
 }
 
@@ -1771,13 +1694,39 @@ export function useRevealSimBrokerCredentials() {
   })
 }
 
-/** The market at a glance — indices, large caps, commodities — the same for everyone. */
+/**
+ * The market at a glance — indices, large caps, commodities — the same for
+ * everyone, with each tile moved by its pushed price between answers (the
+ * Desk, the status strip, the watchlist page and the chart all read it
+ * here). With the socket up the answer is only asked for twice a minute: it
+ * brings what a tick does not carry, the previous close and the day's open.
+ */
 export function useMarketPulse() {
-  return useQuery({
+  const connection = useLiveConnection()
+  const query = useQuery({
     queryKey: ['market', 'pulse'],
     queryFn: () => api.get<import('./types').MarketPulseResponse>('/api/MarketPulse'),
-    refetchInterval: POLL_FAST,
+    refetchInterval: livePoll(connection, 30_000, POLL_FAST),
   })
+  const answer = query.data
+  const answeredAt = query.dataUpdatedAt
+  const symbols = useMemo(() => (answer?.groups ?? []).flatMap((g) => g.items.map((i) => i.symbol)), [answer])
+  const prices = useLivePrices(symbols)
+  const data = useMemo(() => (answer ? pulseWithTicks(answer, prices, answeredAt) : answer), [answer, prices, answeredAt])
+
+  // The first pushes of a session land on yesterday's answer, which they are
+  // not laid over (its high, low and previous close are the last session's):
+  // ask for today's at once rather than at the next poll, at most every 10 s.
+  const behind = answer ? pulseBehind(answer, prices, answeredAt) : false
+  const askedAt = useRef(0)
+  const { refetch } = query
+  useEffect(() => {
+    if (!behind || Date.now() - askedAt.current < 10_000) return
+    askedAt.current = Date.now()
+    void refetch()
+  }, [behind, refetch])
+
+  return { ...query, data }
 }
 
 const myWatchlistQuery = {
@@ -1785,8 +1734,9 @@ const myWatchlistQuery = {
   queryFn: () => api.get<import('./types').MyWatchlistItem[]>('/api/Watchlist/me'),
 }
 
+/** The viewer's list; its rows' prices are pushed on the page that shows them, so the socket slows the poll. */
 export function useMyWatchlist() {
-  return useQuery({ ...myWatchlistQuery, refetchInterval: POLL_FAST })
+  return useQuery({ ...myWatchlistQuery, refetchInterval: livePoll(useLiveConnection(), 30_000, POLL_FAST) })
 }
 
 export function useAddToMyWatchlist() {
@@ -2569,9 +2519,11 @@ export function useRunPnlSeries(date: string | null, live: boolean, enabled = tr
 
 /**
  * Every open leg the viewer may see, across runs and manual books, marked at
- * the live price (strategies grant; a trader gets their own). The Desk reads
- * it every 15 s in the session; the Positions page, where legs are closed
- * and ticked, every 5 s.
+ * the live price (strategies grant; a trader gets their own). Without the
+ * socket the Desk reads it every 15 s in the session and the Positions page,
+ * where legs are closed and ticked, every 5 s; with it both lay the pushed
+ * prices over the legs and read the list once a minute, a fill or a carry
+ * arriving as a desk event in between.
  */
 export function useOpenPositions(pollMs: number | false, enabled = true) {
   return useQuery({
@@ -2582,8 +2534,9 @@ export function useOpenPositions(pollMs: number | false, enabled = true) {
   })
 }
 
-/** How often the Desk reads the open legs: every 15 s in the session, every minute otherwise. */
-export const deskLegsPoll = (live: boolean) => (live ? DESK_LEGS_LIVE : 60_000)
+/** How often the Desk reads the open legs: every 15 s in the session without the socket, every minute otherwise. */
+export const deskLegsPoll = (live: boolean, connection: LiveConnection) =>
+  livePoll(connection, 60_000, live ? DESK_LEGS_LIVE : 60_000)
 
 /**
  * The morning plan against what is live (admin). A 404 means there is no

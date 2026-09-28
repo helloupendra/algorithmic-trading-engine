@@ -33,7 +33,7 @@ Once subscribed, the `Python Ingestor` receives a continuous stream of market ti
 To provide a lag-free experience in the React dashboard:
 - The `.NET API` utilizes `Microsoft.AspNetCore.SignalR`.
 - Whenever the `LiveDataController` detects a database UPSERT (or through background polling services), it pushes the latest data directly to the web client over WebSockets.
-- The React frontend uses `@microsoft/signalr` to connect to `/hubs/livefeed` and directly updates the `react-query` cache, preventing the need for aggressive REST API polling.
+- The React frontend keeps one connection to `/hubs/livefeed` (`web/src/lib/live.ts`) and asks it only for the symbols on screen, reference-counted across panels and asked for again after a reconnect. Pushed prices are laid over the polled answers (positions, run cards, the market pulse, the watchlist, the option chain, the chart's forming candle), and desk events (orders, fills, runs, risk trips, carry changes) invalidate the queries they make stale. Polling stays as a slow safety net while the socket is up, and returns to its old pace while it is down; the top bar says "Live" or "Reconnecting — prices may be stale".
 
 ### 4. Automatic Expired Contract Cleanup
 Since F&O (Futures & Options) contracts expire frequently, leaving them in the database can bloat storage and cause subscription failures.
@@ -95,7 +95,8 @@ Run it by hand for any day with `POST /api/Backfill/archive?day=YYYY-MM-DD` (adm
 ### React UI Pages
 - `web/src/pages/data/DataOverviewPage.tsx`: High-level dashboard showing ingestor health, stored history counts, and stale quotes warnings.
 - `web/src/pages/data/LiveFeedsPage.tsx`: The granular control page. Allows adding/removing symbols from the Database Recording List, viewing real-time LTPs, and inspecting raw DB entries.
-- `web/src/lib/queries.ts`: Contains the `useLiveFeedSignalR()` hook that manages the WebSocket connection lifecycle.
+- `web/src/lib/live.ts`: The one hub connection: symbol subscriptions, reconnects, desk events, and the `useLivePrices` / `useLiveAll` / `useLiveConnection` hooks.
+- `web/src/lib/liveMarks.ts`: Lays pushed prices over polled answers with the server's own arithmetic.
 
 ---
 
