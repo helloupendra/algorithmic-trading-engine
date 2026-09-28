@@ -33,5 +33,11 @@ public class PaperOrderConfiguration : IEntityTypeConfiguration<PaperOrder>
         builder.HasIndex(x => x.SimulationRunId);
         builder.HasIndex(x => x.SimulationSignalId);
         builder.HasIndex(x => x.GroupId);
+
+        // GET /api/Orders reads one IST day across every run. Backtests keep
+        // their bar-stamped orders in this table too, so without it each read
+        // of the day's blotter (again on every fill, while the page is open)
+        // walked every order ever booked.
+        builder.HasIndex(x => x.CreatedUtc);
     }
 }
