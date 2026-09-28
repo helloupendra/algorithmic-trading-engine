@@ -9,6 +9,10 @@
  * backfills) and today's live 1-minute bars, rolled up in the browser with
  * the server's bucket rule; daily comes from the stored candles alone.
  *
+ * Between polls of the bars the forming candle moves with the symbol's pushed
+ * price (lib/live.ts): its close, and its high and low when the price passes
+ * them, so the last candle is as live as the price over the chart.
+ *
  * The structure layer (Smart Money Concepts) was a page of its own with its
  * own symbol, timeframe and range pickers; it reads the same chart now. The
  * symbol and the layer live in the URL, so a chart can be linked to as it
@@ -29,8 +33,10 @@ import {
   rangeFromDate,
   stitch,
   structureTimeframes,
+  withLiveTick,
 } from '../../../lib/chart'
 import type { Candle, RangeKey, Resolution, StructureSettings } from '../../../lib/chart'
+import { useLivePrices } from '../../../lib/live'
 import { formatAge, formatDateTime, formatNumber, formatPrice, shortSymbol } from '../../../lib/format'
 import { SymbolCombobox } from '../../../components/SymbolCombobox'
 import { InlineError, Loading } from '../../../components/ui'
@@ -116,22 +122,40 @@ export function ChartPage() {
     return stitch(storedCandles, liveCandles, { symbol, resolution, range, fromDate })
   }, [structureOn, smcData, stored.data, live.data, symbol, resolution, range, fromDate])
 
+  // The forming candle between polls. Each push after the bars' answer is
+  // folded into the candles as they stand, so a high reached and left between
+  // two polls stays on the candle; a new answer starts again from its own bars,
+  // which carry every price before it. The structure layer is left to its
+  // marks, which were read from the candles as they came.
+  const tick = useLivePrices(useMemo(() => [symbol], [symbol])).get(symbol)
+  const [forming, setForming] = useState<{ base: readonly Candle[]; candles: readonly Candle[] } | null>(null)
+  const barsAnsweredAt = live.dataUpdatedAt
+  useEffect(() => {
+    if (structureOn || !tick || tick.receivedAtMs <= barsAnsweredAt) return
+    setForming((f) => {
+      const from = f && f.base === candles ? f.candles : candles
+      const next = withLiveTick(from, tick, { symbol, resolution })
+      return next === from && f?.base === candles ? f : { base: candles, candles: next }
+    })
+  }, [tick, candles, barsAnsweredAt, structureOn, symbol, resolution])
+  const shown = forming && forming.base === candles ? forming.candles : candles
+
   const summary = useMemo(() => {
-    if (!candles.length) return null
-    const first = candles[0]
-    const last = candles[candles.length - 1]
+    if (!shown.length) return null
+    const first = shown[0]
+    const last = shown[shown.length - 1]
     const change = last.close - first.open
     return {
       first,
       last,
-      high: Math.max(...candles.map((c) => c.high)),
-      low: Math.min(...candles.map((c) => c.low)),
-      volume: candles.reduce((s, c) => s + (c.volume ?? 0), 0),
+      high: Math.max(...shown.map((c) => c.high)),
+      low: Math.min(...shown.map((c) => c.low)),
+      volume: shown.reduce((s, c) => s + (c.volume ?? 0), 0),
       change,
       changePct: first.open ? (change / first.open) * 100 : 0,
-      count: candles.length,
+      count: shown.length,
     }
-  }, [candles])
+  }, [shown])
 
   // Quote for the header: the pulse carries the big names; otherwise the last candle.
   const pulseItem = useMemo(
@@ -266,7 +290,7 @@ export function ChartPage() {
         ) : structureOn ? (
           <SmcChart data={smcData} higher={higher} layers={structure.layers} fitKey={`${symbol}|${resolution}|${range}`} />
         ) : (
-          <PriceChart candles={candles} />
+          <PriceChart candles={shown} fitKey={`${symbol}|${resolution}|${range}`} />
         )}
       </div>
 
