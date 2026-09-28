@@ -38,9 +38,10 @@ export function TrueDataSymbolImport() {
   return (
     <div style={{ marginTop: 14 }}>
       <div className="inline-form" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-        <b style={{ fontSize: 13 }}>TrueData names</b>
+        {/* One sentence in one span, so it reads the same when the button wraps under it. */}
         <span className="muted" style={{ fontSize: 12.5 }}>
-          futures and monthly options, which cannot be worked out from our own symbol
+          <b style={{ fontSize: 13, color: 'var(--text)' }}>TrueData names</b> — the vendor&apos;s own symbols for
+          futures and monthly options, which cannot be derived from ours.
         </span>
         <button className="btn btn--sm" disabled={run.isPending} onClick={() => run.mutate()}>
           {run.isPending ? 'Importing…' : 'Import'}

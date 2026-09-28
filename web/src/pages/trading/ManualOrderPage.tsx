@@ -31,8 +31,9 @@ import { Badge, EmptyState, FlashPrice, InlineError, Loading, Panel } from '../.
 import { RunCard } from '../strategies/RunCard'
 import { formatAge, formatDateTime, formatNumber, formatPrice } from '../../lib/format'
 import { ticketCarryHint } from '../../lib/carry'
-import { useManualBook, useManualInstrument, usePlaceManualOrder } from '../../lib/queries'
+import { useManualBook, useManualInstrument, usePlaceManualOrder, useStrategyLive } from '../../lib/queries'
 import type { ManualInstrument } from '../../lib/queries'
+import './ticket.css'
 
 /** One side of the book, with the size resting there. */
 function BookSide({
@@ -132,6 +133,13 @@ export function ManualOrderPage() {
 
   const instrumentQuery = useManualInstrument(symbol)
   const book = useManualBook()
+  const bookRunId = book.data?.runId ?? null
+  // The book's card paints its header from the run's live view, and without
+  // one it falls back to "Stopped · started —": a known-nothing rendered as a
+  // fact for the seconds before the view arrives, and for ever when the call
+  // fails. Asking for the view here as well (same cache key, one request) lets
+  // the panel say "opening" or show the failure until the view is known.
+  const bookLive = useStrategyLive(bookRunId ?? 0, bookRunId != null)
   const place = usePlaceManualOrder()
 
   const instrument = instrumentQuery.data
@@ -177,7 +185,7 @@ export function ManualOrderPage() {
   const units = instrument && qtyValid ? qty * instrument.lotSize : null
 
   return (
-    <div className="page">
+    <div className="page ticket-page">
       <header className="page__header">
         <div>
           <h1 className="page__title">Manual order</h1>
@@ -190,19 +198,23 @@ export function ManualOrderPage() {
       </header>
 
       <Panel title="Ticket">
-        <div className="form-row">
-          <div className="field">
-            <label className="field__label" htmlFor="manual-symbol">
-              Instrument
-            </label>
-            <SymbolCombobox
-              id="manual-symbol"
-              value={symbol}
-              onChange={setSymbol}
-              placeholder="MCX:CRUDEOIL26SEPFUT, NSE:SBIN-EQ, NSE:BANKNIFTY26SEP56800CE"
-            />
-            <p className="field__help">Commodity, equity or option — search by name or symbol.</p>
-          </div>
+        {/* The example shows the search's grammar, not a contract: a dated
+            symbol in a placeholder expires with the contract and was wrong
+            eleven months of the year on a ticket that refuses expired ones. */}
+        <div className="field ticket__symbol">
+          <label className="field__label" htmlFor="manual-symbol">
+            Instrument
+          </label>
+          <SymbolCombobox
+            id="manual-symbol"
+            value={symbol}
+            onChange={setSymbol}
+            placeholder="SBIN, CRUDEOIL, NIFTY 25000 CE…"
+          />
+          <p className="field__help">
+            Commodity, equity or option — a name, a strike with CE or PE, or the exact symbol
+            (NSE:SBIN-EQ). Expired contracts are hidden.
+          </p>
         </div>
 
         {instrumentQuery.isError && <InlineError error={instrumentQuery.error} />}
@@ -280,6 +292,7 @@ export function ManualOrderPage() {
                   <button
                     type="button"
                     className={`seg__btn ${orderType === 'market' ? 'is-active' : ''}`}
+                    aria-pressed={orderType === 'market'}
                     onClick={() => setOrderType('market')}
                   >
                     Market
@@ -287,6 +300,7 @@ export function ManualOrderPage() {
                   <button
                     type="button"
                     className={`seg__btn ${orderType === 'limit' ? 'is-active' : ''}`}
+                    aria-pressed={orderType === 'limit'}
                     onClick={() => setOrderType('limit')}
                   >
                     Limit
@@ -401,12 +415,16 @@ export function ManualOrderPage() {
       </Panel>
 
       <Panel title="Manual book">
-        {book.isLoading ? (
+        {book.isLoading || (bookRunId != null && bookLive.isPending) ? (
           <Loading label="Opening your book…" />
-        ) : book.data?.runId ? (
+        ) : book.isError && book.data === undefined ? (
+          <InlineError error={book.error} />
+        ) : bookRunId != null && bookLive.isError && bookLive.data === undefined ? (
+          <InlineError error={bookLive.error} />
+        ) : bookRunId != null ? (
           <RunCard
             strategy={{ name: 'Manual', category: 'Manual' }}
-            runId={book.data.runId}
+            runId={bookRunId}
             run={null}
             exit={null}
             allowStop={false}

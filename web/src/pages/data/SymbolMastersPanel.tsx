@@ -100,8 +100,17 @@ function MasterRow({
         <span className="cell-sub">
           {m.exchange} · {m.segment}
         </span>
+        {/* A phone drops the Covers column and reads it here instead (data.css). */}
+        <span
+          className="cell-sub col--phone cell-sub--clamp"
+          style={{ whiteSpace: 'normal', maxWidth: 200, fontFamily: 'var(--sans)' }}
+          title={m.label}
+        >
+          {m.label}
+        </span>
       </td>
-      <td className="muted" style={{ whiteSpace: 'normal', maxWidth: 360 }}>
+      {/* A minimum, or the nowrap table squeezes this one column to its narrowest word. */}
+      <td className="muted col--wide" style={{ whiteSpace: 'normal', minWidth: 220, maxWidth: 360 }}>
         {m.label}
       </td>
       <td className="r">
