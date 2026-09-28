@@ -18,6 +18,50 @@ import sys
 # Absolute imports from the engine root, however this file was launched.
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
+#: FEED_GIL_SWITCH_MS: how long a Python thread may hold the interpreter before
+#: another that wants it gets a turn. Python's own is 5 ms. The socket thread
+#: needs only a sliver per frame, but waits a whole interval whenever another
+#: thread is busy; measured on 28 Sep, a store-only reader fell behind a thread
+#: that was always busy at 5 ms and kept up at 1 ms. 0 leaves Python's.
+DEFAULT_GIL_SWITCH_MS = 1.0
+
+#: FEED_REDIS_TIMEOUT_SECONDS: the strategy stream's own client gives up on a
+#: write after this long, with no retries. 0 keeps the shared client and its
+#: defaults (a 5 s timeout, retried ten times).
+DEFAULT_REDIS_TIMEOUT_SECONDS = 2.0
+
+
+def _number_from_env(name: str, default: float, vendor: str) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+        if value < 0:
+            raise ValueError
+        return value
+    except ValueError:
+        print(f"[{vendor}] {name}={raw!r} is not a number of 0 or more — using {default:g}.", flush=True)
+        return default
+
+
+def apply_gil_switch_interval(vendor: str) -> None:
+    """Shorten the interpreter's switch interval for this feed process (FEED_GIL_SWITCH_MS)."""
+    ms = _number_from_env("FEED_GIL_SWITCH_MS", DEFAULT_GIL_SWITCH_MS, vendor)
+    if ms <= 0:
+        print(f"[{vendor}] GIL switch interval left at Python's {sys.getswitchinterval() * 1000:g} ms "
+              f"(FEED_GIL_SWITCH_MS=0).", flush=True)
+        return
+    sys.setswitchinterval(ms / 1000.0)
+    print(f"[{vendor}] GIL switch interval {ms:g} ms (FEED_GIL_SWITCH_MS; Python's default is 5 ms), so the "
+          f"socket thread is not kept waiting behind a busy one.", flush=True)
+
+
+def stream_timeout_from_env(vendor: str) -> float | None:
+    """The strategy stream client's timeout in seconds (FEED_REDIS_TIMEOUT_SECONDS), or None for the shared client."""
+    seconds = _number_from_env("FEED_REDIS_TIMEOUT_SECONDS", DEFAULT_REDIS_TIMEOUT_SECONDS, vendor)
+    return seconds if seconds > 0 else None
+
 
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description="Run one vendor's live data feed.")
@@ -35,6 +79,8 @@ def main(argv=None) -> None:
     # so credentials and feed settings exist only in that file.
     import core.config  # noqa: F401
 
+    apply_gil_switch_interval(vendor)
+
     from core.live.feed_runner import FeedRunner
     from core.live.symbol_list import symbols_for
     from market_data.live.vendors import build_feed
@@ -43,7 +89,7 @@ def main(argv=None) -> None:
     feed = build_feed(vendor)
     fixed, _ = symbols_for(feed.key)
 
-    publisher = build_publisher_from_env()
+    publisher = build_publisher_from_env(stream_timeout=stream_timeout_from_env(vendor))
     publisher.ensure_connection()
 
     runner = FeedRunner(feed, publisher=publisher, fixed_symbols=fixed or None)
