@@ -10,6 +10,7 @@ when the connection itself has none.
 
 import contextlib
 import io
+import sys
 import unittest
 from unittest import mock
 
@@ -90,6 +91,14 @@ class FeedDeliveryCountTests(unittest.TestCase):
 
         self.assertEqual("No module named 'vollib'", payload["greeksUnavailable"])
         self.assertIn("option greeks unavailable", payload["lastError"])
+
+    def test_a_pricing_module_that_will_not_load_does_not_stop_the_heartbeat(self):
+        # A heartbeat that raised every beat would make a working feed look dead.
+        runner = self._runner()
+        with mock.patch.dict(sys.modules, {"core.greeks_calculator": None}):
+            payload = self._heartbeat(runner)
+
+        self.assertIn("did not load", payload["greeksUnavailable"])
 
     def test_a_healthy_feed_reports_zeros_and_no_error(self):
         payload = self._heartbeat(self._runner())

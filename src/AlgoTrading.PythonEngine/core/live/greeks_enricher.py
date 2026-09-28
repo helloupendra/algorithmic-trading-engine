@@ -43,7 +43,12 @@ class GreeksEnricher:
         Reported in the feed's heartbeat: a feed whose pricing library is
         missing otherwise looks exactly like one whose options have no spot yet.
         """
-        from core.greeks_calculator import unavailable_reason
+        # Asked from the heartbeat thread, so it must not raise: a heartbeat that
+        # fails every beat makes a working feed look dead.
+        try:
+            from core.greeks_calculator import unavailable_reason
+        except Exception as ex:  # noqa: BLE001
+            return f"core.greeks_calculator did not load: {ex}"
         return unavailable_reason()
 
     def enrich(self, tick: dict) -> dict:
