@@ -204,8 +204,13 @@ the cooldown has passed since that alert's candle closed; the next one after
 that is sent and starts a new window. Measured from the last alert, not from the
 last cross, so a choppy market still gets one message per window rather than
 none. Direction does not matter: an EMA crossing up, down and up again inside
-30 minutes is one message. The cooldown is worked out from the day's candles on
-every scan, so a restart decides every alert exactly as the first run did.
+30 minutes is one message. Only an alert that reached Telegram (or is about to)
+starts a window: one found late, page-only, sent with `telegram: off`, dropped
+by the rate limit or refused by Telegram does not, so the next cross is sent.
+Until 28 Sep every alert started one, and an API down across a close heard of
+neither that cross nor the one back. The cooldown is worked out from the day's
+candles and the stored alerts on every scan, so a restart decides every alert
+exactly as the first run did.
 
 ### Market hours and delivery
 

@@ -209,6 +209,13 @@ public sealed class IndicatorAlertScanner
         var states = new List<IndicatorWatchState>();
         var found = new List<(IndicatorOccurrence Occurrence, CooledHit Hit, IndicatorWatch Watch)>();
 
+        // Every alert is stamped with its candle's close, inside today's
+        // session, so the earliest open bounds the keys today can hold.
+        var since = sessions.Values.Where(s => s.InSession).Select(s => s.Window.OpenUtc).DefaultIfEmpty(nowUtc.AddDays(-1)).Min();
+        var (recordedKeys, deliveredKeys) = scannable.Count > 0
+            ? await TodayAsync(since, cancellationToken)
+            : (new HashSet<string>(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal));
+
         foreach (var watch in watches)
         {
             var exchange = CandlePatternRules.ExchangeOf(watch.Symbol);
@@ -243,8 +250,25 @@ public sealed class IndicatorAlertScanner
             var vwap = hasVwap ? IndicatorMath.SessionVwap(candles, todayMinutes, session.Window) : null;
             bool tradedToday = vwap is not null && vwap.Skip(history.Count).Any(v => v is not null);
 
+            // A cooldown window starts only at an alert that reached Telegram,
+            // or that this scan is about to send. Until 28 Sep every alert
+            // started one: an API down across the 10:05 close found that cross
+            // late and did not send it, and the cross back at 10:20 was then
+            // withheld as inside its window, so Telegram heard of neither. A
+            // batch the limiter dropped, or Telegram refused, did the same.
+            // Decided from stored rows, so a restart decides it the same way.
+            bool StartsWindow(IndicatorHit h)
+            {
+                var key = IndicatorOccurrence.From(watch.Symbol, h).DedupeKey;
+                if (deliveredKeys.Contains(key)) return true;
+                return !recordedKeys.Contains(key)
+                       && config.Telegram
+                       && watch.NotifyRules.Contains(h.Rule.Key)
+                       && h.Candle.EndUtc >= nowUtc - settings.NotifyWindow;
+            }
+
             var hits = IndicatorEvaluator.Evaluate(candles, history.Count, watch.Rules, vwap);
-            foreach (var hit in IndicatorEvaluator.ApplyCooldown(hits, config.Cooldown))
+            foreach (var hit in IndicatorEvaluator.ApplyCooldown(hits, config.Cooldown, StartsWindow))
             {
                 found.Add((IndicatorOccurrence.From(watch.Symbol, hit.Hit), hit, watch));
             }
@@ -255,8 +279,20 @@ public sealed class IndicatorAlertScanner
                 lastBar, ruleStates, Problem(session.Window, lastBar, nowUtc, settings)));
         }
 
-        var recorded = await RecordAsync(found, config, sessions, nowUtc, settings, cancellationToken);
+        var recorded = await RecordAsync(found, config, recordedKeys, nowUtc, settings, cancellationToken);
         return new IndicatorScanOutcome(nowUtc, config.Lines.Count, states, unresolved, recorded);
+    }
+
+    /// <summary>Today's indicator alerts already recorded, and those of them that reached Telegram, by key.</summary>
+    private async Task<(HashSet<string> Recorded, HashSet<string> Delivered)> TodayAsync(DateTime sinceUtc, CancellationToken cancellationToken)
+    {
+        var rows = await _db.AlertEvents.AsNoTracking()
+            .Where(e => e.Source == Source && e.OccurredUtc >= sinceUtc && e.DedupeKey != null)
+            .Select(e => new { e.DedupeKey, e.DeliveredToTelegram })
+            .ToListAsync(cancellationToken);
+
+        return (rows.Select(r => r.DedupeKey!).ToHashSet(StringComparer.Ordinal),
+            rows.Where(r => r.DeliveredToTelegram).Select(r => r.DedupeKey!).ToHashSet(StringComparer.Ordinal));
     }
 
     /// <summary>The config's lines as (symbol, timeframe) watches, groups resolved as of today.</summary>
@@ -439,24 +475,16 @@ public sealed class IndicatorAlertScanner
         return result;
     }
 
+    /// <param name="existing">Today's keys already recorded; this scan's are added.</param>
     private async Task<List<RecordedIndicator>> RecordAsync(
         List<(IndicatorOccurrence Occurrence, CooledHit Hit, IndicatorWatch Watch)> found,
         IndicatorAlertConfig config,
-        IReadOnlyDictionary<string, ExchangeSession> sessions,
+        HashSet<string> existing,
         DateTime nowUtc,
         PatternScanSettings settings,
         CancellationToken cancellationToken)
     {
         if (found.Count == 0) return [];
-
-        // Every alert is stamped with its candle's close, inside today's session,
-        // so the earliest open bounds the keys today can hold.
-        var since = sessions.Values.Where(s => s.InSession).Select(s => s.Window.OpenUtc).DefaultIfEmpty(nowUtc.AddDays(-1)).Min();
-        var existing = (await _db.AlertEvents.AsNoTracking()
-                .Where(e => e.Source == Source && e.OccurredUtc >= since && e.DedupeKey != null)
-                .Select(e => e.DedupeKey!)
-                .ToListAsync(cancellationToken))
-            .ToHashSet(StringComparer.Ordinal);
 
         var fresh = new List<(AlertEvent Row, IndicatorOccurrence Occurrence, bool Notify)>();
         foreach (var (o, hit, watch) in found)

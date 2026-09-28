@@ -6,9 +6,10 @@
 # is skipped, never fatal.
 #
 # Settings (each optional; the defaults are shown):
-#   cooldown: 30    minutes. After an alert, the same rule on the same symbol
-#                   and timeframe is recorded on the page but not sent again
-#                   until this long after that alert's candle closed. 0 = off.
+#   cooldown: 30    minutes. After an alert is sent, the same rule on the same
+#                   symbol and timeframe is recorded on the page but not sent
+#                   again until this long after that alert's candle closed.
+#                   An alert that was not sent starts no cooldown. 0 = off.
 #   telegram: on    off = record on the page only; send nothing.
 #   warmup: 250     candles of earlier sessions read before today's first, from
 #                   the stored live 1-minute bars, so the day's first alert is
