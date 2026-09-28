@@ -135,6 +135,18 @@ export function repricePosition(p: LivePosition, price: number, atMs: number): L
 }
 
 /**
+ * The symbols a run's view is re-priced from: its open legs and, while the
+ * run is live, its spot. The run card and the page totals above the cards ask
+ * for the same ones, so both are priced from the same pushes.
+ */
+export function runViewSymbols(view: StrategyLiveView): string[] {
+  return [
+    ...view.positions.filter((p) => p.status === 'Open').map((p) => p.symbol),
+    ...(view.isActive && view.spotSymbol ? [view.spotSymbol] : []),
+  ]
+}
+
+/**
  * A run's live view with its open rows and its spot re-priced at the newer
  * pushed prices. The run's unrealized, total and net move by exactly what
  * the rows moved, and so does each group's P&L, so the tiles, the risk

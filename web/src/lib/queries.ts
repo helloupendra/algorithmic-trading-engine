@@ -18,7 +18,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 import { livePoll, useLiveAllState, useLiveConnection, useLivePrices } from './live'
 import type { LiveConnection } from './live'
-import { pulseBehind, pulseWithTicks } from './liveMarks'
+import { pulseBehind, pulseWithTicks, runViewSymbols, runViewWithTicks } from './liveMarks'
 import { ordersQuery } from './orders'
 import type { OrdersFilter } from './orders'
 import type {
@@ -866,15 +866,41 @@ export function useStrategyLive(runId: number, enabled: boolean) {
 }
 
 /**
- * Live views for a set of runs at once (page-level totals). Shares the cache
- * key with useStrategyLive, so a RunCard and the stat row never double fetch
- * the same run.
+ * Live views for a set of runs at once. Shares the cache key with
+ * useStrategyLive, so a RunCard and the stat row never double fetch the same
+ * run. Page totals read useStrategyLivesRepriced instead.
  */
 export function useStrategyLives(runIds: number[]) {
   const connection = useLiveConnection()
   return useQueries({
     queries: runIds.map((runId) => liveViewQuery(runId, true, connection)),
   })
+}
+
+/**
+ * One run's view as its card shows it: re-priced at the pushed prices of its
+ * open legs and spot (liveMarks.runViewWithTicks), so the LTP column, each
+ * row's P&L, the tiles and the risk meters move together. The poll still
+ * brings everything a price does not: fills, stops, realized P&L, charges.
+ */
+export function useRepricedRunView(answer: StrategyLiveView | undefined, answeredAtMs: number): StrategyLiveView | undefined {
+  const symbols = useMemo(() => (answer ? runViewSymbols(answer) : []), [answer])
+  const prices = useLivePrices(symbols)
+  return useMemo(() => (answer ? runViewWithTicks(answer, prices, answeredAtMs) : answer), [answer, prices, answeredAtMs])
+}
+
+/**
+ * useStrategyLives with each view re-priced exactly as its card re-prices it,
+ * for the totals above the cards (the Live runner's "Live P&L", the trader's
+ * Library). With the socket up a view is read every 15 s; the totals summed
+ * the raw answers, so they sat up to 15 s behind the cards under them, which
+ * move with every push, and the header was not the sum of the cards.
+ */
+export function useStrategyLivesRepriced(runIds: number[]): Array<StrategyLiveView | undefined> {
+  const lives = useStrategyLives(runIds)
+  // useLivePrices keys on the sorted set, so a fresh array each render asks the hub nothing new.
+  const prices = useLivePrices(lives.flatMap((q) => (q.data ? runViewSymbols(q.data) : [])))
+  return lives.map((q) => (q.data ? runViewWithTicks(q.data, prices, q.dataUpdatedAt) : undefined))
 }
 
 /**

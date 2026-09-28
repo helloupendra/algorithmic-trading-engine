@@ -7,6 +7,7 @@ import {
   pulseBehind,
   pulseWithTicks,
   quotesWithTicks,
+  runViewSymbols,
   runViewWithTicks,
   unrealizedAt,
   watchlistWithTicks,
@@ -14,6 +15,7 @@ import {
   withLiveMarks,
 } from './liveMarks'
 import { groupPositions, markState, totalSums } from './openPositions'
+import { liveNet } from './strategyList'
 import { openPosition } from './openPositions.fixture'
 import type { LivePosition, LiveQuote, MarketPulseItem, MarketPulseResponse, MyWatchlistItem, StrategyLiveView } from './types'
 
@@ -207,6 +209,28 @@ describe('runViewWithTicks', () => {
   it('leaves the view alone for pushes the answer already carries', () => {
     const view = runView([bought, sold])
     expect(runViewWithTicks(view, prices(tick(bought.symbol, 70, ANSWERED - 100), tick('NSE:NIFTY50-INDEX', 23_600, ANSWERED)), ANSWERED)).toBe(view)
+  })
+
+  it('asks for the open legs and, while the run is live, its spot', () => {
+    expect(runViewSymbols(runView([bought, sold, closed]))).toEqual([bought.symbol, sold.symbol, 'NSE:NIFTY50-INDEX'])
+    expect(runViewSymbols({ ...runView([bought, closed]), isActive: false })).toEqual([bought.symbol])
+  })
+
+  it('gives a page total that is the sum of its run cards between two polls', () => {
+    // Two runs on the Live runner; each card re-prices its own view, the header adds the views up.
+    const first = runView([bought, sold, closed])
+    const second = { ...runView([livePosition({ id: 9, symbol: 'NSE:NIFTY2692923400PE', entryPrice: 50, ltp: 52, pnl: 260 })]), runId: 613 }
+    const views = [first, second]
+    const pushed = prices(tick(bought.symbol, 71, ANSWERED + 300), tick('NSE:NIFTY2692923400PE', 49, ANSWERED + 400))
+    const pushedSymbols = views.flatMap(runViewSymbols)
+    expect(pushedSymbols).toEqual(expect.arrayContaining([bought.symbol, 'NSE:NIFTY2692923400PE']))
+
+    const cards = views.map((v) => liveNet(runViewWithTicks(v, pushed, ANSWERED).pnl))
+    const header = views.map((v) => runViewWithTicks(v, pushed, ANSWERED)).reduce((n, v) => n + liveNet(v.pnl), 0)
+    expect(header).toBeCloseTo(cards[0] + cards[1], 6)
+    // And it moved with the pushes: the raw answers would have read 15 s old.
+    const raw = views.reduce((n, v) => n + liveNet(v.pnl), 0)
+    expect(header - raw).toBeCloseTo((71 - 69.57) * 130 + (49 - 52) * 130, 6)
   })
 
   it('keeps the net absent when an older API sent none', () => {
