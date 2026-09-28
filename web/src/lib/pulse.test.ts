@@ -8,6 +8,7 @@ import {
   formatUptime,
   headlinePulse,
   heartbeatFeed,
+  livePulse,
   marketPulses,
   recapVendors,
 } from './pulse'
@@ -279,6 +280,25 @@ describe('backendPulse', () => {
 
   it('formats an uptime short enough for the bar', () => {
     expect([48, 360, 7200, 7260].map(formatUptime)).toEqual(['48s', '6m', '2h', '2h 1m'])
+  })
+})
+
+describe('livePulse', () => {
+  it('says Live only while a current hub pushes prices and desk events', () => {
+    expect(livePulse('connected', false)).toMatchObject({ label: 'Live', tone: 'live' })
+  })
+
+  it('does not call an older API\'s hub Live: its prices are pushed, its fills and stops are not', () => {
+    const p = livePulse('legacy', false)
+    expect(p).toMatchObject({ label: 'Prices only — fills polled', short: 'Prices only', tone: 'warn' })
+    expect(p!.title).toMatch(/older build/)
+    expect(livePulse('legacy', true)).toEqual(p)
+  })
+
+  it('warns of a dropped connection only once it has lasted', () => {
+    expect(livePulse('reconnecting', false)).toBeNull()
+    expect(livePulse('disconnected', false)).toBeNull()
+    expect(livePulse('reconnecting', true)).toMatchObject({ label: 'Reconnecting — prices may be stale', short: 'Reconnecting', tone: 'warn' })
   })
 })
 

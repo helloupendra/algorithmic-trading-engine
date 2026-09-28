@@ -4,8 +4,10 @@ import {
   LiveFeed,
   allEventedKeys,
   deskEventKeys,
+  foldsIntoQuotes,
   hubUrl,
   invalidationBatcher,
+  isMissingMethod,
   livePoll,
   normalizeTick,
   retryDelay,
@@ -61,6 +63,10 @@ class FakeHub implements HubLike {
   push(ticks: unknown[]) {
     ;(this.handlers.get('ReceiveTicks') as (ticks: unknown) => void)(ticks)
   }
+  /** One tick under the singular name, as an older API's single-tick endpoint sent it. */
+  pushOne(tick: unknown) {
+    ;(this.handlers.get('ReceiveTick') as (tick: unknown) => void)(tick)
+  }
   event(event: unknown) {
     ;(this.handlers.get('DeskEvent') as (event: unknown) => void)(event)
   }
@@ -74,13 +80,40 @@ class FakeHub implements HubLike {
     this.closed(new Error('gone'))
   }
 
+  /**
+   * The calls a page's asks made, in order: not the probe each connection
+   * opens with (Unsubscribe of nothing), which only tells a current hub from
+   * an older API's.
+   */
+  private asked(method: string) {
+    return this.calls.filter((c) => c.method === method && !isProbe(c))
+  }
   /** The symbol lists sent with one method, in order. */
   sent(method: string): string[][] {
-    return this.calls.filter((c) => c.method === method).map((c) => [...(c.args[0] as string[])].sort())
+    return this.asked(method).map((c) => [...(c.args[0] as string[])].sort())
   }
   count(method: string): number {
-    return this.calls.filter((c) => c.method === method).length
+    return this.asked(method).length
   }
+  probes(): number {
+    return this.calls.filter(isProbe).length
+  }
+}
+
+const isProbe = (c: { method: string; args: unknown[] }) =>
+  c.method === 'Unsubscribe' && Array.isArray(c.args[0]) && c.args[0].length === 0
+
+/** What SignalR rejects an invoke with when the hub has no such method (an API build from before 28 Sep). */
+const missing = (method: string) =>
+  new Error(`Failed to invoke '${method}' due to an error on the server. HubException: Method does not exist.`)
+
+/** A hub from an API older than this console: it connects, and every method call fails. */
+function legacyHub(): FakeHub {
+  const hub = new FakeHub()
+  hub.answer = (method) => {
+    throw missing(method)
+  }
+  return hub
 }
 
 function feedWith(options: { cap?: number; hubs?: FakeHub[] } = {}) {
@@ -276,6 +309,133 @@ describe('LiveFeed subscriptions', () => {
     await settle()
     expect(made[0].count('UnsubscribeAll')).toBe(1)
     expect(feed.all).toBe('off')
+  })
+})
+
+describe('LiveFeed against an older API (legacy hub)', () => {
+  it('asks which hub it reached before claiming to be connected, and a current hub is connected', async () => {
+    const hub = new FakeHub()
+    let answer!: () => void
+    hub.answer = (method, args) => (method === 'Unsubscribe' && (args[0] as string[]).length === 0 ? new Promise<number>((r) => (answer = () => r(0))) : 1)
+    const { feed } = feedWith({ hubs: [hub] })
+    feed.start()
+    feed.acquire(['X'])
+    await settle()
+    // Until the hub answers, nothing is claimed and nothing is asked of it.
+    expect(feed.connection).toBe('reconnecting')
+    expect(hub.count('Subscribe')).toBe(0)
+    answer()
+    await settle()
+    expect(feed.connection).toBe('connected')
+    expect(hub.probes()).toBe(1)
+    expect(hub.sent('Subscribe')).toEqual([['X']])
+  })
+
+  it('does not call a hub without the subscription methods connected: pages poll at their old pace', async () => {
+    const { feed, made } = feedWith({ hubs: [legacyHub()] })
+    feed.start()
+    feed.acquire(['NSE:NIFTY50-INDEX'])
+    await settle()
+    expect(feed.connection).toBe('legacy')
+    expect(livePoll(feed.connection, 15_000, 1_000)).toBe(1_000)
+    // Nothing more is asked of it: it has nothing to answer with.
+    await settle()
+    expect(made[0].count('Subscribe')).toBe(0)
+  })
+
+  it('keeps the prices the older hub broadcasts for what a screen holds, and forgets them when released', async () => {
+    const { feed, made } = feedWith({ hubs: [legacyHub()] })
+    const heard = vi.fn()
+    feed.onTicks(heard)
+    feed.start()
+    const release = feed.acquire(['A'])
+    await settle()
+    made[0].push([{ symbol: 'A', lastTradedPrice: 101 }, { symbol: 'B', lastTradedPrice: 7 }])
+    expect(feed.tick('A')).toMatchObject({ lastTradedPrice: 101 })
+    expect(feed.tick('B')).toBeUndefined()
+    expect(heard).toHaveBeenCalledWith([expect.objectContaining({ symbol: 'A' }), expect.objectContaining({ symbol: 'B' })])
+    // The old API's single-tick endpoint sent the singular name.
+    made[0].pushOne({ symbol: 'A', lastTradedPrice: 102 })
+    expect(feed.tick('A')).toMatchObject({ lastTradedPrice: 102 })
+
+    release()
+    await settle()
+    expect(feed.tick('A')).toBeUndefined()
+  })
+
+  it('counts the everything-feed as on without asking, and folds every push into the quotes list, held or not', async () => {
+    const { feed, made } = feedWith({ hubs: [legacyHub()] })
+    feed.start()
+    await settle()
+    expect(feed.connection).toBe('legacy')
+    expect(foldsIntoQuotes(feed.connection, feed.all)).toBe(true)
+    const release = feed.holdAll()
+    await settle()
+    expect(feed.all).toBe('on')
+    expect(made[0].count('SubscribeAll')).toBe(0)
+    release()
+    await settle()
+    expect(feed.all).toBe('off')
+    expect(made[0].count('UnsubscribeAll')).toBe(0)
+  })
+
+  it('finds an older hub from a refused Subscribe too, without a warning about the cap', async () => {
+    const hub = new FakeHub()
+    hub.answer = (method, args) => {
+      if (method === 'Unsubscribe' && (args[0] as string[]).length === 0) return 0
+      throw missing(method)
+    }
+    const { feed, warn } = feedWith({ hubs: [hub] })
+    feed.start()
+    await settle()
+    expect(feed.connection).toBe('connected')
+    feed.acquire(['X'])
+    await settle()
+    expect(feed.connection).toBe('legacy')
+    expect(feed.subscribed.size).toBe(0)
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('takes a probe that failed for another reason as a current hub', async () => {
+    const hub = new FakeHub()
+    hub.answer = (method, args) => {
+      if (method === 'Unsubscribe' && (args[0] as string[]).length === 0) throw new Error('Invocation canceled due to the underlying connection being closed.')
+      return 1
+    }
+    const { feed } = feedWith({ hubs: [hub] })
+    feed.start()
+    await settle()
+    expect(feed.connection).toBe('connected')
+  })
+
+  it('becomes a current connection again once the API is updated and the socket comes back', async () => {
+    const hub = legacyHub()
+    const { feed } = feedWith({ hubs: [hub] })
+    const reconnects = vi.fn()
+    feed.onReconnected(reconnects)
+    feed.start()
+    feed.acquire(['X'])
+    await settle()
+    expect(feed.connection).toBe('legacy')
+
+    // The API restarts onto the new build: the socket drops and comes back to a hub that answers.
+    hub.drop()
+    expect(feed.connection).toBe('reconnecting')
+    hub.answer = (_method, args) => (Array.isArray(args[0]) ? args[0].length : true)
+    hub.restore()
+    await settle()
+    expect(feed.connection).toBe('connected')
+    expect(hub.sent('Subscribe')).toEqual([['X']])
+    expect(reconnects).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('isMissingMethod', () => {
+  it("reads SignalR's missing-method errors, and nothing else", () => {
+    expect(isMissingMethod(missing('Subscribe'))).toBe(true)
+    expect(isMissingMethod(new Error("Unknown hub method 'Subscribe'"))).toBe(true)
+    expect(isMissingMethod(new Error('A page may follow at most 400 symbols'))).toBe(false)
+    expect(isMissingMethod(undefined)).toBe(false)
   })
 })
 
