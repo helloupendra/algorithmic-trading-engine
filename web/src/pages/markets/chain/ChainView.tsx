@@ -19,7 +19,7 @@
  */
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { PointerEvent, ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { useOptionChainExpiries, useOptionChainPositions, useOptionChainTrend, useOptionChainView } from '../../../lib/queries'
@@ -40,6 +40,7 @@ import {
   isPutItm,
   applyTicksToChain,
   istDate,
+  pointsVsSpot,
   positionMarker,
   positionsBySymbol,
   istStamp,
@@ -490,86 +491,116 @@ function quoteAge(quote: OptionChainQuote | null, serverUtc: string): string {
   return `last ${when}`
 }
 
-function HeadItem({ label, children, sub, wide, title }: { label: ReactNode; children: ReactNode; sub?: ReactNode; wide?: boolean; title?: string }) {
+/**
+ * A line cut short by its cell (an ellipsis) carries its whole text as a
+ * tooltip, set on the way in so it always matches the width the cell has now.
+ * A line that fits gets none, so the cell's own explanation shows instead.
+ */
+function titleWhenCut(e: PointerEvent<HTMLElement>) {
+  const el = e.currentTarget
+  // Strictly wider: a line over by less than a pixel still ends in an ellipsis.
+  if (el.scrollWidth > el.clientWidth) el.title = el.textContent ?? ''
+  else el.removeAttribute('title')
+}
+
+/** Where each reading sits in the strip's grid (grid-area names in styles.css). */
+type HeadArea = 'spot' | 'fut' | 'vix' | 'pcr' | 'pain' | 'atm' | 'sr' | 'oi' | 'lot'
+
+function HeadItem({ area, label, children, sub, title }: { area: HeadArea; label: ReactNode; children: ReactNode; sub?: ReactNode; title?: string }) {
   return (
-    <div className={`oc-head-item ${wide ? 'oc-head-item--wide' : ''}`} title={title}>
-      <span className="oc-head-label">{label}</span>
+    <div className={`oc-head-item oc-head-item--${area}`} title={title}>
+      <span className="oc-head-label" onPointerEnter={titleWhenCut}>{label}</span>
       <span className="oc-head-value">{children}</span>
-      {sub != null && <span className="oc-head-sub">{sub}</span>}
+      {sub != null && <span className="oc-head-sub" onPointerEnter={titleWhenCut}>{sub}</span>}
     </div>
   )
 }
 
+/**
+ * The chain's readings in one strip. Its layout is chosen by the strip's own
+ * width in styles.css: one row on a desk screen, two rows (where the price is,
+ * over what the chain says) on a laptop, four short rows on a phone. Every
+ * arrangement is filled edge to edge, so no reading is left alone on a row.
+ */
 function HeaderStrip({ chain, header }: { chain: OptionChain; header: OptionChainHeader }) {
   const spot = header.spot
   const future = header.future
   const vix = header.vix
   const symbol = spot?.symbol ? spot.symbol.split(':')[1] ?? spot.symbol : chain.underlying
+  const spotPrice = spot?.lastPrice ?? (chain.spotPrice > 0 ? chain.spotPrice : null)
+  const painVsSpot = pointsVsSpot(header.maxPainStrike, spotPrice)
 
   return (
     <div className="oc-header">
-      <HeadItem
-        wide
-        label={<>{symbol} · {header.exchange}{header.spotIsFuture ? ' · nearest future' : ''}</>}
-        sub={header.spotIsFuture && spot?.basis === 'snapshot'
-          ? <span className="warn">chain-reported price, not the future's own quote</span>
-          : <>{quoteAge(spot, header.serverUtc)}{spot?.sourceKey ? ` · ${sourceLabel(spot.sourceKey)}` : ''}{spot && spot.change == null ? ' · previous close not known' : ''}</>}
-        title={header.spotIsFuture ? 'MCX has no spot: the chain is read against the future its options are written on.' : undefined}
-      >
-        <span className={spot?.isLive ? '' : 'oc-dim'}>{price(spot?.lastPrice)}</span> <Change quote={spot} />
-      </HeadItem>
-
-      {!header.spotIsFuture && (
+      <div className={`oc-head-grid ${header.spotIsFuture ? 'oc-head-grid--no-future' : ''}`}>
         <HeadItem
-          label={<>Future{future?.expiryDate ? ` · ${future.expiryDate.slice(8, 10)} ${new Date(`${future.expiryDate}T00:00:00Z`).toLocaleString('en-IN', { month: 'short', timeZone: 'UTC' })}` : ''}</>}
-          sub={future?.premiumOverSpot != null
-            ? <>prem {future.premiumOverSpot >= 0 ? '+' : '−'}{price(Math.abs(future.premiumOverSpot))} ({signedPercent(future.premiumPercent)}) · {quoteAge(future, header.serverUtc)}</>
-            : future ? quoteAge(future, header.serverUtc) : header.mode === 'replay' ? 'not in replay' : 'no quote'}
+          area="spot"
+          label={<>{symbol} · {header.exchange}{header.spotIsFuture ? ' · nearest future' : ''}</>}
+          sub={header.spotIsFuture && spot?.basis === 'snapshot'
+            ? <span className="warn">chain-reported price, not the future's own quote</span>
+            : <>{quoteAge(spot, header.serverUtc)}{spot?.sourceKey ? ` · ${sourceLabel(spot.sourceKey)}` : ''}{spot && spot.change == null ? ' · previous close not known' : ''}</>}
+          title={header.spotIsFuture ? 'MCX has no spot: the chain is read against the future its options are written on.' : undefined}
         >
-          <span className={future?.isLive ? '' : 'oc-dim'}>{price(future?.lastPrice)}</span> <Change quote={future} />
+          <span className={spot?.isLive ? '' : 'oc-dim'}>{price(spot?.lastPrice)}</span> <Change quote={spot} />
         </HeadItem>
-      )}
 
-      <HeadItem
-        label="India VIX"
-        sub={vix ? quoteAge(vix, header.serverUtc) : header.mode === 'replay' ? 'not in replay' : 'not streamed'}
-        title={vix ? undefined : 'No quote for NSE:INDIAVIX-INDEX. Add it to the live watchlist and the Dhan feed will stream it.'}
-      >
-        <span className={vix?.isLive ? '' : 'oc-dim'}>{price(vix?.lastPrice)}</span> <Change quote={vix} />
-      </HeadItem>
+        {!header.spotIsFuture && (
+          <HeadItem
+            area="fut"
+            label={<>Future{future?.expiryDate ? ` · ${future.expiryDate.slice(8, 10)} ${new Date(`${future.expiryDate}T00:00:00Z`).toLocaleString('en-IN', { month: 'short', timeZone: 'UTC' })}` : ''}</>}
+            sub={future?.premiumOverSpot != null
+              ? <>prem {future.premiumOverSpot >= 0 ? '+' : '−'}{price(Math.abs(future.premiumOverSpot))} ({signedPercent(future.premiumPercent)}) · {quoteAge(future, header.serverUtc)}</>
+              : future ? quoteAge(future, header.serverUtc) : header.mode === 'replay' ? 'not in replay' : 'no quote'}
+          >
+            <span className={future?.isLive ? '' : 'oc-dim'}>{price(future?.lastPrice)}</span> <Change quote={future} />
+          </HeadItem>
+        )}
 
-      <HeadItem label="PCR" sub={<>of OI chg {header.putCallRatioOfChange != null ? header.putCallRatioOfChange.toFixed(2) : '—'}</>}
-        title="Total put OI over total call OI. The second figure is the same ratio on today's OI change, given only when both sides added contracts.">
-        {header.putCallRatio != null ? header.putCallRatio.toFixed(2) : '—'}
-      </HeadItem>
+        <HeadItem
+          area="vix"
+          label="India VIX"
+          sub={vix ? quoteAge(vix, header.serverUtc) : header.mode === 'replay' ? 'not in replay' : 'not streamed'}
+          title={vix ? undefined : 'No quote for NSE:INDIAVIX-INDEX. Add it to the live watchlist and the Dhan feed will stream it.'}
+        >
+          <span className={vix?.isLive ? '' : 'oc-dim'}>{price(vix?.lastPrice)}</span> <Change quote={vix} />
+        </HeadItem>
 
-      <HeadItem label="Max pain" title="The expiry price at which option buyers, in total, would be paid the least.">
-        {header.maxPainStrike != null ? header.maxPainStrike.toLocaleString('en-IN') : '—'}
-      </HeadItem>
+        <HeadItem area="pcr" label="PCR" sub={<>of OI chg {header.putCallRatioOfChange != null ? header.putCallRatioOfChange.toFixed(2) : '—'}</>}
+          title="Total put OI over total call OI. The second figure is the same ratio on today's OI change, given only when both sides added contracts.">
+          {header.putCallRatio != null ? header.putCallRatio.toFixed(2) : '—'}
+        </HeadItem>
 
-      <HeadItem label="ATM" sub={<>IV {header.atTheMoneyIv != null ? `${header.atTheMoneyIv.toFixed(1)}%` : '—'}</>}
-        title="The strike nearest the spot, and the mean implied volatility of its call and put.">
-        {header.atTheMoneyStrike != null ? header.atTheMoneyStrike.toLocaleString('en-IN') : '—'}
-      </HeadItem>
+        {/* The one reading that had no second line, so its cell read as empty: it now says how far it is from the spot. */}
+        <HeadItem area="pain" label="Max pain" sub={painVsSpot ?? undefined}
+          title="The expiry price at which option buyers, in total, would be paid the least. The second line is how far it is from the spot, in points.">
+          {header.maxPainStrike != null ? header.maxPainStrike.toLocaleString('en-IN') : '—'}
+        </HeadItem>
 
-      <HeadItem wide label="Support · Resistance"
-        sub={<>PE {compactIndian(header.supportOpenInterest)} · CE {compactIndian(header.resistanceOpenInterest)}</>}
-        title="Support: the strike with the most put OI. Resistance: the strike with the most call OI.">
-        <span className="pos">{header.supportStrike != null ? header.supportStrike.toLocaleString('en-IN') : '—'}</span>
-        {' · '}
-        <span className="neg">{header.resistanceStrike != null ? header.resistanceStrike.toLocaleString('en-IN') : '—'}</span>
-      </HeadItem>
+        <HeadItem area="atm" label="ATM" sub={<>IV {header.atTheMoneyIv != null ? `${header.atTheMoneyIv.toFixed(1)}%` : '—'}</>}
+          title="The strike nearest the spot, and the mean implied volatility of its call and put.">
+          {header.atTheMoneyStrike != null ? header.atTheMoneyStrike.toLocaleString('en-IN') : '—'}
+        </HeadItem>
 
-      <HeadItem wide label="Total OI · CE vs PE"
-        sub={<>chg <span className={tone(header.totalCallOpenInterestChange)}>{compactSigned(header.totalCallOpenInterestChange)}</span> vs <span className={tone(header.totalPutOpenInterestChange)}>{compactSigned(header.totalPutOpenInterestChange)}</span></>}>
-        <span className="neg">{compactIndian(header.totalCallOpenInterest)}</span>
-        <span className="faint"> vs </span>
-        <span className="pos">{compactIndian(header.totalPutOpenInterest)}</span>
-      </HeadItem>
+        <HeadItem area="sr" label="Support · Resistance"
+          sub={<>PE {compactIndian(header.supportOpenInterest)} · CE {compactIndian(header.resistanceOpenInterest)}</>}
+          title="Support: the strike with the most put OI. Resistance: the strike with the most call OI.">
+          <span className="pos">{header.supportStrike != null ? header.supportStrike.toLocaleString('en-IN') : '—'}</span>
+          {' · '}
+          <span className="neg">{header.resistanceStrike != null ? header.resistanceStrike.toLocaleString('en-IN') : '—'}</span>
+        </HeadItem>
 
-      <HeadItem label="Lot" sub={header.lotSizeSource === 'configured' ? 'from config' : header.lotSizeSource === 'master' ? 'from master' : undefined}>
-        {header.lotSize ?? '—'}
-      </HeadItem>
+        <HeadItem area="oi" label="Total OI · CE vs PE"
+          sub={<>chg <span className={tone(header.totalCallOpenInterestChange)}>{compactSigned(header.totalCallOpenInterestChange)}</span> vs <span className={tone(header.totalPutOpenInterestChange)}>{compactSigned(header.totalPutOpenInterestChange)}</span></>}>
+          <span className="neg">{compactIndian(header.totalCallOpenInterest)}</span>
+          <span className="faint"> vs </span>
+          <span className="pos">{compactIndian(header.totalPutOpenInterest)}</span>
+        </HeadItem>
+
+        {/* A fact about the contract rather than a reading of the market: the narrow, quiet cell at the end. */}
+        <HeadItem area="lot" label="Lot" sub={header.lotSizeSource === 'configured' ? 'from config' : header.lotSizeSource === 'master' ? 'from master' : undefined}>
+          {header.lotSize ?? '—'}
+        </HeadItem>
+      </div>
     </div>
   )
 }

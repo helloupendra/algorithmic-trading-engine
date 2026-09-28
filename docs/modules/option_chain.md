@@ -37,9 +37,13 @@ other tabs, at `/markets/chain/oi` and `/markets/chain/levels`) is laid out like
 and every number on it says where it came from.
 
 * **Header:** spot with its day change, the nearest future and its premium, India
-  VIX, PCR and PCR of OI change, max pain, the ATM strike and ATM IV, support
-  (heaviest put OI) and resistance (heaviest call OI), total call and put OI with
-  their change, days to expiry and lot size.
+  VIX, PCR and PCR of OI change, max pain and its distance from the spot, the ATM
+  strike and ATM IV, support (heaviest put OI) and resistance (heaviest call OI),
+  total call and put OI with their change, days to expiry and lot size. The strip
+  lays itself out by its own width: one row on a desk screen (from about 1,350px),
+  two rows below that (the prices over the chain's readings), four short rows on
+  a phone, every row filled. A line too long for its cell ends in an ellipsis and
+  shows in full on hover; on a phone it wraps instead.
 * **Freshness line:** "live · updated 2 s ago · Dhan · 31/402 legs live", or
   "snapshot 10:41 IST (1 min old)", or "market closed". A capture more than 3
   minutes old during the session warns that the recorder may be behind. A stale
