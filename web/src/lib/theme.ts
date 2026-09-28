@@ -24,8 +24,14 @@ export const THEME_KEY = 'openfno.theme'
 export const THEME_EVENT = 'openfno:theme'
 export const THEME_PREFS: readonly ThemePref[] = ['dark', 'light', 'system']
 
-/** The colour the browser paints around the page (the iOS status bar, Android's task switcher). */
-export const THEME_COLOR: Record<Theme, string> = { dark: '#030406', light: '#f4f6f9' }
+/**
+ * The colour the browser paints around the page (the iOS status bar, the
+ * task switcher): the console's own ground (--bg0), so the chrome and the
+ * top bar are one colour. The public pages are blacker; their forced theme
+ * uses PUBLIC_COLOR.
+ */
+export const THEME_COLOR: Record<Theme, string> = { dark: '#070b11', light: '#f4f6f9' }
+export const PUBLIC_COLOR = '#030406'
 
 /** A stored value read back: anything but the three words is the default. */
 export function parseThemePref(raw: string | null | undefined): ThemePref {
@@ -79,12 +85,12 @@ export function currentTheme(doc: Pick<Document, 'documentElement'> = document):
  * the browser's own chrome colour. Fires THEME_EVENT only on a real change,
  * so listeners can rebuild charts without debouncing.
  */
-export function applyTheme(theme: Theme, doc: Document = document): void {
+export function applyTheme(theme: Theme, doc: Document = document, chrome: string = THEME_COLOR[theme]): void {
   const root = doc.documentElement
   const before = currentTheme(doc)
   root.setAttribute('data-theme', theme)
   root.style.colorScheme = theme
-  doc.querySelector('meta[name="theme-color"]')?.setAttribute('content', THEME_COLOR[theme])
+  doc.querySelector('meta[name="theme-color"]')?.setAttribute('content', chrome)
   if (before !== theme) doc.dispatchEvent(new CustomEvent(THEME_EVENT, { detail: theme }))
 }
 
@@ -106,29 +112,38 @@ function wanted(): Theme {
 }
 
 function notify() {
-  applyTheme(wanted())
+  applyTheme(wanted(), document, forced ? PUBLIC_COLOR : undefined)
   for (const l of listeners) l()
+}
+
+// One media-query listener and one storage listener for the whole console,
+// held while anyone subscribes: the first subscriber to unmount (a chart, in
+// React's children-first cleanup order) must not take them with it.
+let media: MediaQueryList | null = null
+const onStorage = (e: StorageEvent) => {
+  // Another tab changed it: follow, so two consoles side by side agree.
+  if (e.key === THEME_KEY) {
+    prefCache = parseThemePref(e.newValue)
+    notify()
+  }
 }
 
 function subscribe(listener: Listener): () => void {
   listeners.add(listener)
-  let media: MediaQueryList | null = null
-  if (listeners.size === 1 && typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
-    media = window.matchMedia('(prefers-color-scheme: light)')
-    media.addEventListener('change', notify)
-  }
-  const onStorage = (e: StorageEvent) => {
-    // Another tab changed it: follow, so two consoles side by side agree.
-    if (e.key === THEME_KEY) {
-      prefCache = parseThemePref(e.newValue)
-      notify()
+  if (listeners.size === 1 && typeof window !== 'undefined') {
+    if (typeof window.matchMedia === 'function') {
+      media = window.matchMedia('(prefers-color-scheme: light)')
+      media.addEventListener('change', notify)
     }
+    window.addEventListener('storage', onStorage)
   }
-  window.addEventListener('storage', onStorage)
   return () => {
     listeners.delete(listener)
-    media?.removeEventListener('change', notify)
-    window.removeEventListener('storage', onStorage)
+    if (listeners.size === 0 && typeof window !== 'undefined') {
+      media?.removeEventListener('change', notify)
+      media = null
+      window.removeEventListener('storage', onStorage)
+    }
   }
 }
 
