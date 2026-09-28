@@ -579,7 +579,7 @@ function IndicatorsPanel() {
   )
 }
 
-/** Telegram on or off for the indicator alerts; which chat they reach is the server's to say (indicatorTelegramNote). */
+/** Telegram on or off for the indicator alerts, and the chat the server says they reach (indicatorTelegramNote). */
 function TelegramNote({ status }: { status: IndicatorAlertsStatus }) {
   const note = indicatorTelegramNote(status)
   return <span title={note.title ?? undefined}>{note.text}</span>
