@@ -160,10 +160,10 @@ public class AiToolLoopTests
     }
 
     [Fact]
-    public async Task A_model_that_failed_is_not_asked_again_in_a_later_round()
+    public async Task A_model_whose_failure_cost_a_long_wait_is_not_asked_again_in_a_later_round()
     {
-        var ai = Build(tools: Runs());
-        ai.Provider.On(Judge1, Script.Status(429));
+        var ai = Build(Settings(s => { s.FirstTokenTimeoutSeconds = 0.3; s.SlowFailureSeconds = 0.2; }), tools: Runs());
+        ai.Provider.On(Judge1, Script.SseThenHang());
         ai.Provider.On(Judge2, Tools((AiToolNames.Runs, "{}")), Answer("Done."));
 
         var result = await ai.Gateway.AskAsync(Question(), new RecordingSink(), CancellationToken.None);
@@ -171,6 +171,64 @@ public class AiToolLoopTests
         Assert.Equal(new[] { Judge1, Judge2, Judge2 }, ai.Provider.Requests.Select(r => r.Model));
         Assert.Equal(1, result.Fallbacks);
         Assert.Equal(new[] { 1, 1, 2 }, result.Attempts.Select(a => a.Round));
+    }
+
+    [Fact]
+    public async Task A_model_that_refused_at_once_is_asked_again_in_a_later_round()
+    {
+        // 30 Sep: Ultra refused "overloaded" in 0.6 s; skipping it for the rest of the
+        // question left only a model queueing for 90 s when Super refused too.
+        var ai = Build(tools: Runs());
+        ai.Provider.On(Judge1, Script.Status(429), Answer("Ultra again, with the runs read."));
+        ai.Provider.On(Judge2, Tools((AiToolNames.Runs, "{}")));
+
+        var result = await ai.Gateway.AskAsync(Question(), new RecordingSink(), CancellationToken.None);
+
+        Assert.Equal(new[] { Judge1, Judge2, Judge1 }, ai.Provider.Requests.Select(r => r.Model));
+        Assert.Equal(Judge1, result.Model);
+    }
+
+    [Theory]
+    [InlineData(503)]
+    [InlineData(429)]
+    public async Task A_capacity_refusal_is_asked_once_more_after_a_pause_before_the_chain_moves_on(int status)
+    {
+        var ai = Build(Settings(s => s.CapacityRetrySeconds = 0.05));
+        ai.Provider.On(Judge1, Script.Status(status), Answer("Room now."));
+        var sink = new RecordingSink();
+
+        var result = await ai.Gateway.AskAsync(Question(), sink, CancellationToken.None);
+
+        Assert.Equal(Judge1, result.Model);
+        Assert.Equal(new[] { Judge1, Judge1 }, ai.Provider.Requests.Select(r => r.Model));
+        Assert.Contains(sink.Events, e => e.StartsWith($"fallback {Judge1} -> {Judge1}", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task An_overloaded_stream_counts_as_a_capacity_refusal_and_is_asked_again_only_once()
+    {
+        var ai = Build(Settings(s => s.CapacityRetrySeconds = 0.05));
+        ai.Provider.On(Judge1,
+            Script.Sse("""{"error":{"message":"Service temporarily overloaded"}}"""),
+            Script.Sse("""{"error":{"message":"Service temporarily overloaded"}}"""));
+        ai.Provider.On(Judge2, Answer("Super answered."));
+
+        var result = await ai.Gateway.AskAsync(Question(), new RecordingSink(), CancellationToken.None);
+
+        Assert.Equal(new[] { Judge1, Judge1, Judge2 }, ai.Provider.Requests.Select(r => r.Model));
+        Assert.Equal(Judge2, result.Model);
+    }
+
+    [Fact]
+    public async Task A_refusal_that_is_not_about_capacity_moves_straight_on()
+    {
+        var ai = Build(Settings(s => s.CapacityRetrySeconds = 0.05));
+        ai.Provider.On(Judge1, Script.Status(404, """{"detail":"Not found for account"}"""));
+        ai.Provider.On(Judge2, Answer("Next model."));
+
+        var result = await ai.Gateway.AskAsync(Question(), new RecordingSink(), CancellationToken.None);
+
+        Assert.Equal(new[] { Judge1, Judge2 }, ai.Provider.Requests.Select(r => r.Model));
     }
 
     [Fact]

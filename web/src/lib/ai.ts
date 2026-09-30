@@ -1279,7 +1279,11 @@ export function initialChat(conversationId: string = newConversationId()): ChatS
   return { conversationId, turns: [] }
 }
 
-/** "Nemotron 3 Ultra timed out, asking Kimi K3". */
+/**
+ * "Nemotron 3 Ultra timed out, asking Kimi K3". When the next model is the
+ * same one, the API is asking it once more after a capacity refusal
+ * ("Service temporarily overloaded"): "…, asking it again in a moment".
+ */
 export function fallbackNote(e: { model: string; reason: string; next: string | null }): string {
   const who = modelName(e.model)
   const reason = e.reason.trim().toLowerCase()
@@ -1293,6 +1297,7 @@ export function fallbackNote(e: { model: string; reason: string; next: string | 
           : reason
             ? `failed (${e.reason.trim()})`
             : 'failed'
+  if (e.next && e.next === e.model) return `${who} ${what}, asking it again in a moment`
   return e.next ? `${who} ${what}, asking ${modelName(e.next)}` : `${who} ${what}, and no model is left to ask`
 }
 

@@ -49,6 +49,14 @@ A tier is an ordered chain of models. When a model fails, the call moves to the 
 
 Whatever that model had streamed is dropped. An answer is never half one model's and half another's.
 
+A refusal for capacity is treated differently. This covers "Service temporarily overloaded", 429, 502 and 503
+when they come back at once. The same model is asked once more after `Ai:CapacityRetrySeconds` (2 s) before the
+chain moves on. On 30 Sep both Nemotrons refused like this for moments at a time, while the next model in the chain
+queued for 90 s.
+
+In a question with several rounds, a model is left out of the later rounds only if its failure cost a long wait
+(`Ai:SlowFailureSeconds`, 10 s). A model that refused at once is asked again in the next round.
+
 | Tier | Chain (first model first) | For |
 | --- | --- | --- |
 | Judge | Nemotron 3 Ultra → Nemotron 3 Super → Kimi K3 | The hardest reasoning, few calls a day |
@@ -169,8 +177,8 @@ Each limit is an `Ai` setting.
 | Time per tool | 30 s |
 
 After the last tool round the tools close (`tool_choice: none`). If a model still asks for one, the question moves on
-to the next model. The same call made twice in one question is read once. A model that failed in an earlier round is
-not asked again in the same question.
+to the next model. The same call made twice in one question is read once. A model whose failure in an earlier round
+cost a long wait is not asked again in the same question.
 
 Every way a tool call can go wrong is answered to the model in words, so it can correct itself. This covers:
 

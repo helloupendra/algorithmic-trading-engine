@@ -257,6 +257,14 @@ describe('labels', () => {
     expect(fallbackNote({ model: 'z-ai/glm-5.3', reason: 'empty answer', next: null })).toBe(
       'GLM-5.3 failed (empty answer), and no model is left to ask',
     )
+    // A capacity refusal is asked once more before the chain moves on.
+    expect(
+      fallbackNote({
+        model: 'nvidia/nemotron-3-ultra-550b-a55b',
+        reason: 'provider error: Service temporarily overloaded',
+        next: 'nvidia/nemotron-3-ultra-550b-a55b',
+      }),
+    ).toBe('Nemotron 3 Ultra failed (provider error: Service temporarily overloaded), asking it again in a moment')
   })
 })
 

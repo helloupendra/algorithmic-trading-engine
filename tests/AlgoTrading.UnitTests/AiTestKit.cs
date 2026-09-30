@@ -38,6 +38,8 @@ internal static class AiTestKit
             FirstTokenTimeoutSeconds = 5,
             IdleTimeoutSeconds = 5,
             AttemptTimeoutSeconds = 10,
+            // Off unless a test is about it: a pause per refusal would slow every fallback test.
+            CapacityRetrySeconds = 0,
         };
         tweak?.Invoke(s);
         return s;

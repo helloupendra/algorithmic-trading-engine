@@ -36,6 +36,22 @@ public sealed class AiSettings
     /// <summary>Seconds one model may take in all.</summary>
     public double AttemptTimeoutSeconds { get; set; } = 300;
 
+    /// <summary>
+    /// A model that refuses at once for capacity ("Service temporarily
+    /// overloaded", 429, 502, 503) is asked once more after this many seconds
+    /// before the chain moves on; 0 turns it off. On 30 Sep the free tier's
+    /// Nemotrons refused like this for a moment at a time, while the next
+    /// models in the chain queued for 90 s.
+    /// </summary>
+    public double CapacityRetrySeconds { get; set; } = 2;
+
+    /// <summary>
+    /// A model whose failure took at least this long (a timeout, a queue) is
+    /// not asked again in later rounds of the same question; one that failed
+    /// quickly is, since it may have capacity again by then.
+    /// </summary>
+    public double SlowFailureSeconds { get; set; } = 10;
+
     /// <summary>Rounds in which a model may ask for tools before it must answer with what it has.</summary>
     public int MaxToolRounds { get; set; } = 4;
 
