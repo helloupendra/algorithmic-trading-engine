@@ -379,6 +379,38 @@ public class AiController : ControllerBase
         }
     }
 
+    // ---------- telegram ----------------------------------------------------
+
+    /// <summary>The Assistant on Telegram: whether it runs, and which Telegram accounts are linked to which console users.</summary>
+    [HttpGet("telegram")]
+    public async Task<IActionResult> Telegram(
+        [FromServices] AlgoTrading.Api.Services.AiTelegram.TelegramAssistant telegram,
+        CancellationToken cancellationToken)
+    {
+        var owners = await telegram.OwnersAsync(cancellationToken);
+        return Ok(new AiTelegramStatus(telegram.Enabled, _settings.CurrentValue.TelegramAssistantEnabled,
+            owners.Select(o => new AiTelegramOwnerDto(o.TelegramUserId.ToString(System.Globalization.CultureInfo.InvariantCulture), o.TelegramName, o.ConsoleUser, o.LinkedUtc)).ToList()));
+    }
+
+    /// <summary>A six-digit code for the signed-in admin, valid ten minutes: sent to the bot as "/pair CODE", it links that Telegram account.</summary>
+    [HttpPost("telegram/pair")]
+    public IActionResult PairTelegram([FromServices] AlgoTrading.Api.Services.AiTelegram.TelegramPairing pairing)
+    {
+        var code = pairing.Create(Actor());
+        return Ok(new AiTelegramPairCode(code.Code, DateTime.SpecifyKind(code.ExpiresUtc, DateTimeKind.Utc),
+            $"Send /pair {code.Code} to the desk's Telegram bot in a private chat within 10 minutes."));
+    }
+
+    /// <summary>Unlinks a Telegram account: its chat no longer reaches the desk.</summary>
+    [HttpDelete("telegram/owners/{telegramUserId:long}")]
+    public async Task<IActionResult> UnlinkTelegram(
+        long telegramUserId,
+        [FromServices] AlgoTrading.Api.Services.AiTelegram.TelegramAssistant telegram,
+        CancellationToken cancellationToken)
+    {
+        return await telegram.UnlinkAsync(telegramUserId, cancellationToken) ? NoContent() : NotFound(new { error = "No such linked account." });
+    }
+
     // ---------- reports -----------------------------------------------------
 
     /// <summary>What the scheduled agents wrote, newest first: all, one agent's, one subject's (a run's review), one status, one IST day.</summary>
@@ -1141,6 +1173,13 @@ public sealed record AiReportStats(string Since, int Days, IReadOnlyList<AiRepor
 public sealed record AiAgentRunRequest(string? SubjectId);
 
 public sealed record AiDocIndexStatusDto(int Files, int Passages, DateTime? IndexedUtc, string Model);
+
+public sealed record AiTelegramOwnerDto(string TelegramUserId, string TelegramName, string ConsoleUser, DateTime LinkedUtc);
+
+/// <summary><c>running</c>: enabled, a bot token and a model key are all there; <c>enabled</c>: the setting alone.</summary>
+public sealed record AiTelegramStatus(bool Running, bool Enabled, IReadOnlyList<AiTelegramOwnerDto> Owners);
+
+public sealed record AiTelegramPairCode(string Code, DateTime ExpiresUtc, string Instruction);
 
 public sealed record AiSearchHit(string File, string Section, double Score, string Text);
 

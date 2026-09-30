@@ -55,6 +55,9 @@ public sealed class AiSettings
     /// <summary>Whether the docs are indexed for the Assistant's <c>search_docs</c> (embedding calls at start and every 6 hours, only for passages that changed).</summary>
     public bool DocSearchEnabled { get; set; } = true;
 
+    /// <summary>Whether the Desk Assistant answers its linked owner on the desk's Telegram bot (private chats only).</summary>
+    public bool TelegramAssistantEnabled { get; set; } = true;
+
     /// <summary>Whether <see cref="AiHealthProbe"/> asks a model whose cooling has ended one tiny question.</summary>
     public bool HealthProbeEnabled { get; set; } = true;
 
