@@ -45,7 +45,11 @@ function Levels({ levels }: { levels: ChainLevels | null }) {
   // on a phone it is one wrapping line under the price.
   return (
     <span className="dk-ix__levels">
-      {cell('dk-ix__w1', 'walls', levels && levels.putWall != null && levels.callWall != null ? `${n(levels.putWall)}·${n(levels.callWall)}` : null)}
+      {/* Each wall is read on its own side of spot since 30 Sep, so one can be
+          unknown (no open interest on that side) while the other is not. */}
+      {cell('dk-ix__w1', 'walls', levels && (levels.putWall != null || levels.callWall != null)
+        ? `${n(levels.putWall) ?? '—'}·${n(levels.callWall) ?? '—'}`
+        : null)}
       {cell('dk-ix__w2', 'PCR', levels?.pcr != null ? levels.pcr.toFixed(2) : null)}
       {cell('dk-ix__w3', 'pain', n(levels?.maxPain ?? null))}
       {cell('dk-ix__w4', 'IV', levels?.iv != null ? levels.iv.toFixed(1) : null)}
