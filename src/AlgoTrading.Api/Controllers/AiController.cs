@@ -388,17 +388,22 @@ public class AiController : ControllerBase
         CancellationToken cancellationToken)
     {
         var owners = await telegram.OwnersAsync(cancellationToken);
-        return Ok(new AiTelegramStatus(telegram.Enabled, _settings.CurrentValue.TelegramAssistantEnabled,
+        return Ok(new AiTelegramStatus(telegram.Enabled, _settings.CurrentValue.TelegramAssistantEnabled, await telegram.BotUsernameAsync(cancellationToken),
             owners.Select(o => new AiTelegramOwnerDto(o.TelegramUserId.ToString(System.Globalization.CultureInfo.InvariantCulture), o.TelegramName, o.ConsoleUser, o.LinkedUtc)).ToList()));
     }
 
     /// <summary>A six-digit code for the signed-in admin, valid ten minutes: sent to the bot as "/pair CODE", it links that Telegram account.</summary>
     [HttpPost("telegram/pair")]
-    public IActionResult PairTelegram([FromServices] AlgoTrading.Api.Services.AiTelegram.TelegramPairing pairing)
+    public async Task<IActionResult> PairTelegram(
+        [FromServices] AlgoTrading.Api.Services.AiTelegram.TelegramPairing pairing,
+        [FromServices] AlgoTrading.Api.Services.AiTelegram.TelegramAssistant telegram,
+        CancellationToken cancellationToken)
     {
         var code = pairing.Create(Actor());
-        return Ok(new AiTelegramPairCode(code.Code, DateTime.SpecifyKind(code.ExpiresUtc, DateTimeKind.Utc),
-            $"Send /pair {code.Code} to the desk's Telegram bot in a private chat within 10 minutes."));
+        string? bot = await telegram.BotUsernameAsync(cancellationToken);
+        string to = bot is null ? "the desk's Telegram bot" : $"@{bot}";
+        return Ok(new AiTelegramPairCode(code.Code, DateTime.SpecifyKind(code.ExpiresUtc, DateTimeKind.Utc), bot,
+            $"Send /pair {code.Code} to {to} in a private chat within 10 minutes."));
     }
 
     /// <summary>Unlinks a Telegram account: its chat no longer reaches the desk.</summary>
@@ -1177,9 +1182,9 @@ public sealed record AiDocIndexStatusDto(int Files, int Passages, DateTime? Inde
 public sealed record AiTelegramOwnerDto(string TelegramUserId, string TelegramName, string ConsoleUser, DateTime LinkedUtc);
 
 /// <summary><c>running</c>: enabled, a bot token and a model key are all there; <c>enabled</c>: the setting alone.</summary>
-public sealed record AiTelegramStatus(bool Running, bool Enabled, IReadOnlyList<AiTelegramOwnerDto> Owners);
+public sealed record AiTelegramStatus(bool Running, bool Enabled, string? BotUsername, IReadOnlyList<AiTelegramOwnerDto> Owners);
 
-public sealed record AiTelegramPairCode(string Code, DateTime ExpiresUtc, string Instruction);
+public sealed record AiTelegramPairCode(string Code, DateTime ExpiresUtc, string? BotUsername, string Instruction);
 
 public sealed record AiSearchHit(string File, string Section, double Score, string Text);
 
