@@ -292,6 +292,65 @@ public sealed class NvidiaChatClient
         }
     }
 
+    /// <summary>
+    /// Vectors for <paramref name="inputs"/>, in order, from an embedding model:
+    /// <paramref name="inputType"/> is <c>passage</c> for what is stored and
+    /// <c>query</c> for what is searched with (the model embeds the two
+    /// differently). Throws <see cref="AiAttemptFailedException"/> on any failure.
+    /// </summary>
+    public async Task<(IReadOnlyList<float[]> Vectors, int? Tokens)> EmbedAsync(
+        string model, IReadOnlyList<string> inputs, string inputType, CancellationToken cancellationToken)
+    {
+        var s = _settings.CurrentValue;
+        var body = new JsonObject
+        {
+            ["model"] = model,
+            ["input"] = new JsonArray(inputs.Select(i => (JsonNode)i).ToArray()),
+            ["input_type"] = inputType,
+            ["encoding_format"] = "float",
+            ["truncate"] = "END",
+        };
+        using var message = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/embeddings")
+        {
+            Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
+        };
+        message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", s.ApiKey);
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(60));
+        try
+        {
+            using var response = await _httpClientFactory.CreateClient(HttpClientName).SendAsync(message, timeout.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                int code = (int)response.StatusCode;
+                string detail = await ErrorDetailAsync(response, timeout.Token);
+                throw new AiAttemptFailedException(detail.Length > 0 ? $"http {code}: {detail}" : $"http {code}", code);
+            }
+
+            var root = JsonNode.Parse(await response.Content.ReadAsStringAsync(timeout.Token));
+            var data = root?["data"] as JsonArray ?? throw new AiAttemptFailedException("no vectors in the answer");
+            var vectors = data
+                .OrderBy(d => d?["index"]?.GetValue<int>() ?? 0)
+                .Select(d => (d?["embedding"] as JsonArray ?? []).Select(x => x!.GetValue<float>()).ToArray())
+                .ToList();
+            if (vectors.Count != inputs.Count || vectors.Any(v => v.Length == 0)) throw new AiAttemptFailedException("the answer's vectors do not match the inputs");
+            return (vectors, Int(root?["usage"]?["total_tokens"]));
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new AiAttemptFailedException("timeout");
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new AiAttemptFailedException($"unreachable ({ex.HttpRequestError})");
+        }
+        catch (JsonException)
+        {
+            throw new AiAttemptFailedException("unreadable answer");
+        }
+    }
+
     /// <summary>The provider's model list. Throws <see cref="AiAttemptFailedException"/> when it cannot be read.</summary>
     public async Task<IReadOnlyList<ProviderModel>> ListModelsAsync(CancellationToken cancellationToken)
     {

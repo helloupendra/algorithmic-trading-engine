@@ -242,6 +242,21 @@ internal static class AiTestKit
         public string ModelsJson { get; set; } =
             """{"data":[{"id":"nvidia/nemotron-3-ultra-550b-a55b","owned_by":"nvidia"},{"id":"nvidia/nemotron-3-super-120b-a12b","owned_by":"nvidia"},{"id":"moonshotai/kimi-k3","owned_by":"moonshotai"},{"id":"z-ai/glm-5.3","owned_by":"z-ai"},{"id":"meta/llama-4-maverick","owned_by":"meta"},{"id":"nvidia/nemotron-3-embed-1b","owned_by":"nvidia"}]}""";
 
+        /// <summary>The embeddings endpoint answers 503.</summary>
+        public bool EmbeddingsFail { get; set; }
+
+        /// <summary>A stand-in embedding: word counts hashed into 64 dimensions, so texts sharing words are close.</summary>
+        public static float[] WordVector(string text)
+        {
+            var v = new float[64];
+            foreach (var word in text.ToLowerInvariant().Split((char[])[' ', '\n', '.', ',', '?', '›'], StringSplitOptions.RemoveEmptyEntries))
+            {
+                v[(int)((uint)word.GetHashCode(StringComparison.Ordinal) % 64)] += 1;
+            }
+
+            return v;
+        }
+
         public FakeProvider On(string model, params Script[] scripts)
         {
             if (!_scripts.TryGetValue(model, out var queue)) _scripts[model] = queue = new Queue<Script>();
@@ -261,6 +276,19 @@ internal static class AiTestKit
             string body = await request.Content!.ReadAsStringAsync(cancellationToken);
             string model = JsonNode.Parse(body)!["model"]!.GetValue<string>();
             Requests.Add(new Seen(model, body, request.Headers.Authorization?.ToString(), path));
+
+            if (path.EndsWith("/embeddings", StringComparison.Ordinal))
+            {
+                if (EmbeddingsFail) return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("busy") };
+                var inputs = JsonNode.Parse(body)!["input"]!.AsArray().Select(i => i!.GetValue<string>()).ToList();
+                var data = new JsonArray(inputs.Select((text, i) => (JsonNode)new JsonObject
+                {
+                    ["index"] = i,
+                    ["embedding"] = new JsonArray(WordVector(text).Select(x => (JsonNode)x).ToArray()),
+                }).ToArray());
+                string json = new JsonObject { ["data"] = data, ["usage"] = new JsonObject { ["total_tokens"] = inputs.Count * 10 } }.ToJsonString();
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
+            }
 
             if (!_scripts.TryGetValue(model, out var queue) || queue.Count == 0)
             {

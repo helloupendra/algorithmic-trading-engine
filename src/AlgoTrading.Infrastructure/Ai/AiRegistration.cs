@@ -26,6 +26,7 @@ public static class AiRegistration
         services.AddSingleton<AiModelCatalog>();
         services.AddSingleton<AiRateLimiter>();
         services.AddSingleton<AiModelHealth>();
+        services.AddSingleton<AiDocIndex>();
         services.AddHostedService<AiHealthProbe>();
         services.AddScoped<AiSettingsStore>();
         // The desk tools (IAiTool) are registered by the API, which owns the read services they use.
