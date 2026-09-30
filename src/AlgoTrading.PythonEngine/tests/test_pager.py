@@ -5,7 +5,7 @@ Two failures matter and they pull against each other: a real outage that never
 rings, and a ring on a normal trading day. Every test below is named after the
 scenario it pins; most come from the 28 Sep adversarial review of v1.1 (21
 confirmed findings), which replayed each one through the real rules. Nothing
-here reaches the network: the API, Redis, Telegram and CallMeBot are fakes.
+here reaches the network: the API, Redis, Telegram and the call service are fakes.
 """
 import contextlib
 import errno
@@ -75,7 +75,7 @@ def recorder(call_ok=True, configured=True):
         calls.append(words)
         return call_ok
     call.configured = configured
-    call.last_error = "" if call_ok else "CallMeBot answered 500"
+    call.last_error = "" if call_ok else "the call service answered 500"
     return texts, calls, (lambda m: texts.append(m) or True), call
 
 
@@ -326,54 +326,25 @@ class Escalation(unittest.TestCase):
         self.assertEqual(0, state.open["no-ticks"].placed)
         failed = [t for t in texts if t.startswith("📵 CALL FAILED")]
         self.assertEqual(1, len(failed))                        # rate-limited to one per half hour
-        self.assertIn("CallMeBot answered 500", failed[0])
+        self.assertIn("the call service answered 500", failed[0])
         self.assertGreaterEqual(sum(t.startswith("🚨 STILL") for t in texts), 1)
 
     def test_the_page_text_claims_a_call_only_when_one_will_be_tried(self):
         _, texts, calls = self.run_minutes(5, lambda i: {"no-ticks": "x"}, configured=False)
         self.assertEqual([], calls)
-        self.assertIn("No call: PAGER_CALLMEBOT_USER is not set.", texts[0])
+        self.assertIn("No phone call: no call service is set up.", texts[0])
         self.assertNotIn("Calling the owner", texts[0])
         _, texts, calls = self.run_minutes(5, lambda i: {"no-ticks": "x"})
         self.assertIn("Calling the owner.", texts[0])
         self.assertEqual(1, len(calls))
 
-    def test_call_sender_without_a_user_says_it_cannot_call(self):
-        call = pager.call_sender(None)
+    def test_with_the_call_slot_empty_every_page_is_a_text_and_nothing_is_dialled(self):
+        call = pager.no_call()
         self.assertFalse(call.configured)
         with mock.patch.object(pager.requests, "get") as net:
             self.assertFalse(call("x"))
             net.assert_not_called()
-        self.assertIn("PAGER_CALLMEBOT_USER", call.last_error)
-
-    # CallMeBot's real reply of 1 Oct 2026: a 200 page whose error sits after an analytics script.
-    SPAMMER_PAGE = (
-        '<head><!-- Global site tag (gtag.js) - Google Analytics --> <script async '
-        'src="https://www.googletagmanager.com/gtag/js?id=UA-1"></script> <script> window.dataLayer = '
-        'window.dataLayer || []; function gtag(){dataLayer.push(arguments);} gtag("js", new Date()); </script>'
-        + " " * 300 + '</head><body><p>Checking Authorization for @owner...<br>Autorization OK<br>'
-        'Starting Telegram Audio Call.<br>Error: Someone reported CallMeBot as spammer. Please, add '
-        '@CallMeBot_API16 into your contacts and send it a text message to initiate a conversation.<br>End.-</p></body>')
-
-    def test_an_error_deep_in_callmebots_page_is_a_failed_call_with_its_reason(self):
-        call = pager.call_sender("@owner")
-        reply = mock.Mock(ok=True, status_code=200, text=self.SPAMMER_PAGE)
-        with mock.patch.object(pager.requests, "get", return_value=reply):
-            self.assertFalse(call("x"))
-        self.assertIn("Someone reported CallMeBot as spammer", call.last_error)
-        self.assertIn("@CallMeBot_API16", call.last_error)
-
-    def test_a_page_without_an_error_is_a_placed_call(self):
-        call = pager.call_sender("@owner")
-        page = '<head><script>var e = "error";</script></head><body>Starting Telegram Audio Call. Script ended. End.-</body>'
-        reply = mock.Mock(ok=True, status_code=200, text=page)
-        with mock.patch.object(pager.requests, "get", return_value=reply):
-            self.assertTrue(call("x"))
-        self.assertEqual("", call.last_error)
-
-    def test_callmebots_page_is_read_as_its_words(self):
-        self.assertEqual("Status: Successful", pager.callmebot_reply(
-            '<!-- c --><script>var a = "<b>";</script><style>p{}</style><p>Status:<br> Successful</p>'))
+        self.assertIn("no phone-call service", call.last_error)
 
     # -- C16: "could not tell" and a window's end were announced as RESOLVED
 

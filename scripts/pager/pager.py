@@ -1,8 +1,10 @@
 """
-OpenFNO pager: wakes the owner with a phone call when the live desk is in serious trouble.
+OpenFNO pager: pages the owner when the live desk is in serious trouble.
 
-Sentinel watches the desk all day and writes to Telegram, and a Telegram message does not wake a sleeping
-owner. This rings his phone (a CallMeBot Telegram call) and says why in the Desk System channel. It runs on the
+Sentinel watches the desk all day and writes to Telegram about everything; this pages only for the few things
+that cannot wait, in the Desk System channel, with the reason. It has a slot for a phone-call service and none
+is set up: CallMeBot filled it until 1 Oct 2026 and was removed, because its calls were refused as spam and it
+asked the owner for money. It runs on the
 server beside the desk as its own systemd unit, openfno-pager, from ~/openfno-pager: outside the deploy path,
 because a deploy is gated while runs are live and the pager has to work on the day it is needed
 (docs/modules/pager.md). From the desk's checkout it reads only .env (the admin sign-in, Telegram, Redis) and
@@ -33,18 +35,18 @@ run is live. The calendar is the API's, kept through an API outage as it said ea
 A reading it cannot make is never a page by itself, and one slow minute never rings: a problem pages only
 after it has been seen on as many passes as its grace period holds, and it is over only after 3 clean passes
 in a row. A pass where the API is down is "could not tell" for every rule that reads through the API. A page is
-a Telegram text plus a CallMeBot call, again every 10 minutes, at most 3 calls per episode and 9 per problem
-per day; a text every 30 minutes while it lasts; one "resolved" text when it is over. A rule whose window ends
+a Telegram text, again every 30 minutes while it lasts, and one "resolved" text when it is over. With a call
+service in the slot a page also calls, again every 10 minutes, at most 3 calls per episode and 9 per problem
+per day. A rule whose window ends
 while it is open says so, and never that it was resolved.
 
 Config: pager.env beside this file (never the repo's .env, which it only reads):
-  PAGER_CALLMEBOT_USER   @username the call goes to; unset, it texts but cannot call, and says so
   PAGER_HEARTBEAT_URL    optional dead-man's switch (healthchecks.io style), pinged each pass on weekdays
                          from 08:00 IST, so a dead box, network or pager is noticed from outside
 
   python pager.py            run forever
   python pager.py --once     one pass: print what it sees, page nothing, write nothing
-  python pager.py --test     send one test text and one test call
+  python pager.py --test     send one test text
 """
 from __future__ import annotations
 
@@ -55,7 +57,6 @@ import re
 import shutil
 import sys
 import time
-import urllib.parse
 from dataclasses import asdict, dataclass, field, fields
 from datetime import date, datetime, time as dtime, timedelta, timezone
 from pathlib import Path
@@ -597,7 +598,7 @@ class Problem:
     clear_passes: int = 0                # clean passes in a row
     paged: bool = False
     attempts: int = 0                    # call attempts this episode
-    placed: int = 0                      # of those, the ones CallMeBot accepted
+    placed: int = 0                      # of those, the ones the call service placed
     last_call: Optional[str] = None
     last_text: Optional[str] = None
     last_fail_text: Optional[str] = None
@@ -967,7 +968,7 @@ def step(state: State, seen: Seen, reading: Reading,
                 if may_call:
                     tail = "Calling the owner."
                 elif not can_call:
-                    tail = "No call: PAGER_CALLMEBOT_USER is not set."
+                    tail = "No phone call: no call service is set up."
                 else:
                     tail = f"No call: {today} made today for {key}, the most a day allows."
                 text(f"🚨 PAGE {ist} — {key}: {detail} (for {int(held // 60)} min). {tail}")
@@ -1029,45 +1030,19 @@ def telegram_sender(env: dict[str, str]) -> Callable[[str], bool]:
     return send
 
 
-def callmebot_reply(html: str) -> str:
-    """The words CallMeBot's page shows, without its scripts, comments and tags.
-
-    The page opens with an analytics script, so its verdict sits far past the
-    first few hundred characters of the raw HTML: on 1 Oct 2026 "Error: Someone
-    reported CallMeBot as spammer" came back as a 200 and was taken for a call.
+def no_call() -> Callable[[str], bool]:
     """
-    html = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", html)
-    html = re.sub(r"(?s)<!--.*?-->", " ", html)
-    return " ".join(re.sub(r"<[^>]+>", " ", html).split())
+    The phone-call slot with nothing in it, so every page is a text.
 
-
-def call_sender(user: Optional[str]) -> Callable[[str], bool]:
+    CallMeBot filled it until 1 Oct 2026. Its calls were refused ("Someone reported CallMeBot as spammer") and
+    it asked the owner for money, so it was removed. A call service put here returns True only when a call
+    really went out, and sets last_error when it did not; step() does the rest.
+    """
     def call(words: str) -> bool:
-        log.info("CALL %s", words)
-        call.last_error = ""
-        if not user:
-            call.last_error = "PAGER_CALLMEBOT_USER not set"
-            log.warning("PAGER_CALLMEBOT_USER not set: cannot call")
-            return False
-        url = "https://api.callmebot.com/start.php?" + urllib.parse.urlencode(
-            {"user": user, "text": words[:250], "rpt": "3", "cc": "yes"})
-        try:
-            r = requests.get(url, timeout=60)
-        except requests.RequestException as exc:
-            call.last_error = type(exc).__name__
-            log.warning("callmebot failed: %s", type(exc).__name__)
-            return False
-        reply = callmebot_reply(r.text)
-        at = reply.lower().find("error")
-        ok = r.ok and at < 0
-        if ok:
-            log.info("callmebot answered %s: %s", r.status_code, reply[:400])   # the real success phrase, for --test
-        else:
-            call.last_error = f"CallMeBot: {reply[at:at + 200]}" if at >= 0 else f"CallMeBot answered {r.status_code}"
-            log.warning("callmebot answered %s: %s", r.status_code, reply[:600])
-        return ok
+        call.last_error = "no phone-call service is set up"
+        return False
 
-    call.configured = bool(user)
+    call.configured = False
     call.last_error = ""
     return call
 
@@ -1075,8 +1050,8 @@ def call_sender(user: Optional[str]) -> Callable[[str], bool]:
 def heartbeat_sender(url: Optional[str]) -> Optional[Callable[[datetime], bool]]:
     """
     A ping to a dead-man's switch each pass on weekdays from 08:00 IST, so a dead box, a lost network or a dead
-    pager rings from outside (healthchecks.io, cron "* 8-23 * * 1-5" in Asia/Kolkata, its "down" action a
-    CallMeBot call). It reports that the pager is alive, not that the desk is healthy. It never raises.
+    pager is noticed from outside (healthchecks.io, cron "* 8-23 * * 1-5" in Asia/Kolkata, its "down" action
+    an email or push from healthchecks.io). It reports that the pager is alive, not that the desk is healthy. It never raises.
     """
     if not url:
         return None
@@ -1198,13 +1173,12 @@ def main(argv: list[str]) -> int:
     cfg = load_env(HERE / "pager.env")
     api = Api(env.get("API_BASE_URL", "http://localhost:5025"), env.get("ADMIN_USERNAME", ""),
               env.get("ADMIN_PASSWORD", ""))
-    text, call = telegram_sender(env), call_sender(cfg.get("PAGER_CALLMEBOT_USER"))
+    text, call = telegram_sender(env), no_call()
 
     if "--test" in argv:
         t_ok = text("🔔 Pager test: this is the channel a real page would use.")
-        c_ok = call("OpenFNO pager test. If you hear or see this call, the wake up alarm works.")
-        print(f"text sent: {t_ok}; call placed: {c_ok}")
-        return 0 if (t_ok and c_ok) else 1
+        print(f"text sent: {t_ok}")
+        return 0 if t_ok else 1
 
     stream, disk = redis_stream_reader(env), disk_free_reader("/")
     if once:
