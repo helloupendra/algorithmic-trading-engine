@@ -1,10 +1,14 @@
 # The pager
 
-[Sentinel](sentinel.md) watches the desk all day and writes to Telegram. A
-Telegram message does not wake a sleeping owner. The pager does one thing:
-when the live desk is in the kind of trouble that costs money while he sleeps,
-it rings his phone (a [CallMeBot](https://www.callmebot.com/) Telegram call)
-and says why in the Desk System channel.
+[Sentinel](sentinel.md) watches the desk all day and writes to Telegram about
+everything. The pager does one thing: when the live desk is in the kind of
+trouble that costs money while the owner is away, it pages in the Desk System
+channel and says why.
+
+It has a slot for a phone-call service, and none is set up. CallMeBot filled it
+until 1 Oct 2026 and was removed: its calls were refused ("Someone reported
+CallMeBot as spammer") and it asked the owner for money. Any call service put
+back in the slot must return true only when a call really went out.
 
 Code: `scripts/pager/pager.py`. Tests:
 `src/AlgoTrading.PythonEngine/tests/test_pager.py`. Unit:
@@ -17,12 +21,12 @@ deploy would break it. From the desk's checkout it reads only `.env` (the
 admin sign-in, Telegram, Redis) and `sentinel/clock.py`. Everything it does to
 the desk is a GET, and one read-only `XREVRANGE` on the tick stream.
 
-## What rings
+## What pages
 
 Once a minute it reads the desk and judges each rule: *found*, *healthy*,
 *could not tell*, or *outside its window*. All times IST.
 
-| Rule | When | Rings when | Grace |
+| Rule | When | Pages when | Grace |
 | --- | --- | --- | --- |
 | `api-down` | 08:40 to the day's last close | `GET /health` does not answer, or the API has gone down 3 times in 30 minutes (a crash loop the desk keeps restarting, each outage too short to page alone) | 3 min |
 | `api-degraded` | same | `/health` answers but every signed-in read fails, or one read has failed 5 checks in a row. `/health` is not a health check: it is the console's `index.html` (the SPA fallback in `Program.cs`) and never touches the database | 3 min |
@@ -46,12 +50,12 @@ plan readable, runs outside it do not count either.
 "The day's last close" is the MCX close when MCX trades today, unless the plan
 is known to have no MCX runs; then 15:30.
 
-## What never rings
+## What never pages
 
-A false call on a normal trading day is the worst thing it can do after
+A false page on a normal trading day is the worst thing it can do after
 missing a real outage, so:
 
-- **One slow minute never rings.** A problem pages only once it has held for
+- **One slow minute never pages.** A problem pages only once it has held for
   its grace *and* been seen on as many checks as that grace holds. It is over
   only after 3 clean checks in a row, so one that flaps (down two checks of
   three) still pages.
@@ -65,10 +69,10 @@ missing a real outage, so:
   not run at weekends.
 - **A holiday the calendar does not know.** When the calendar warns it cannot
   vouch for today (a year's holidays not loaded) and no index has priced since
-  the 09:15 open, `no-ticks` and `runs-not-up` do not call; one text says it is
+  the 09:15 open, `no-ticks` and `runs-not-up` do not page; one text says it is
   probably a holiday — the morning job's own conclusion. On a day the calendar
   vouches for, the same silence is a feed dead from the open (10 Sep), and it
-  rings.
+  pages.
 - **Planned restarts.** API outages count toward a crash loop only from 08:40,
   when the deploy gate shuts; the 08:45 restart alone is one outage.
 - **The owner's own pre-open deploys**, for the same reason.
@@ -78,21 +82,19 @@ missing a real outage, so:
 
 ## How a page escalates
 
-- **PAGE** — a text, then a call. The text says "Calling the owner." only when
-  a call will be tried; otherwise why not (no CallMeBot user set, or the day's
-  limit reached).
-- The call again every **10 minutes**, at most **3 per episode** and **9 per
-  problem per day** (the flood guard). A second outage of the same kind later
-  the same day rings again. Attempts count, not only calls CallMeBot accepted.
-- **CALL FAILED** — a text when CallMeBot refuses or times out, at most one per
-  half hour, so a broken call path is visible in the channel.
-- **STILL** — a text every 30 minutes while it lasts, whether or not the calls
-  got through.
+- **PAGE** — a text. With no call service it ends "No phone call: no call
+  service is set up."
+- **STILL** — a text every 30 minutes while it lasts.
 - **RESOLVED** — one text after 3 clean checks in a row.
 - A rule whose window closes while it is open says so — "NOT verified fixed"
   — and never that it was resolved.
 
-Texts that are never calls: the probable holiday; no morning plan file
+With a call service in the slot, a page also calls: again every **10 minutes**,
+at most **3 per episode** and **9 per problem per day** (the flood guard),
+attempts counted whether or not they got through, and a **CALL FAILED** text at
+most once per half hour when one does not.
+
+Texts that are never pages: the probable holiday; no morning plan file
 (`GET /api/Desk/plan` answers 404); Dhan's token ending before today's close
 with FYERS signed out; the pager itself blind (the admin sign-in refused, or
 no read has worked for 15 minutes); its own state file unwritable (a full disk
@@ -104,13 +106,11 @@ Nothing on the box can report the box dying. Set `PAGER_HEARTBEAT_URL` to a
 dead-man's switch and the pager pings it after each completed check on
 weekdays from 08:00 IST. With [healthchecks.io](https://healthchecks.io/):
 
-- schedule `* 8-23 * * 1-5`, time zone `Asia/Kolkata`, grace 5 minutes (a check
-  that places a call can take a minute or more);
-- its "down" integration a webhook GET to
-  `https://api.callmebot.com/start.php?user=@owner&text=OpenFNO+pager+is+silent&rpt=3&cc=yes`.
+- schedule `* 8-23 * * 1-5`, time zone `Asia/Kolkata`, grace 5 minutes;
+- its "down" integration an email or a push notification.
 
 A dead box, a lost network, a crashed pager or one stuck in a restart loop all
-stop the pings, and the phone rings from outside. A ping that fails is logged
+stop the pings, and healthchecks.io says so from outside. A ping that fails is logged
 once and never stops a check.
 
 ## Install and update
@@ -121,27 +121,16 @@ On the server, as `ubuntu`:
 mkdir -p ~/openfno-pager
 cp ~/algorithmic-trading-engine/scripts/pager/pager.py ~/openfno-pager/
 # First install only — the settings, readable by ubuntu alone:
-printf 'PAGER_CALLMEBOT_USER=@username\nPAGER_HEARTBEAT_URL=https://hc-ping.com/<uuid>\n' > ~/openfno-pager/pager.env
+printf 'PAGER_HEARTBEAT_URL=https://hc-ping.com/<uuid>\n' > ~/openfno-pager/pager.env
 chmod 600 ~/openfno-pager/pager.env
 sudo cp ~/algorithmic-trading-engine/scripts/pager/openfno-pager.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now openfno-pager
 
 cd ~/openfno-pager
 ~/algorithmic-trading-engine/.venv/bin/python pager.py --once   # what it sees now; pages nothing, writes nothing
-~/algorithmic-trading-engine/.venv/bin/python pager.py --test   # one test text and one test call
+~/algorithmic-trading-engine/.venv/bin/python pager.py --test   # one test text
 tail -f ~/openfno-pager/pager.log                               # or: journalctl -u openfno-pager -f
 ```
-
-The owner's phone must accept the calls first, once:
-
-1. Send `/start` to `@CallMeBot_txtbot` in Telegram. `https://api.callmebot.com/text.php?user=@username&text=hi`
-   then answers "Status: Successful".
-2. Add the calling account CallMeBot names to the Telegram contacts and send it a message; on 1 Oct 2026 that was
-   `@CallMeBot_API16`. Without it the call API answers "Error: Someone reported CallMeBot as spammer … add
-   @CallMeBot_API16 into your contacts" and no call is made.
-
-`--test` passes only when a call really goes out. `pager.log` keeps CallMeBot's reply as words, and a failed call's
-reason reaches the Desk System text. Until 1 Oct 2026 an error in the reply's body counted as a placed call.
 
 To update: copy `pager.py` again and `sudo systemctl restart openfno-pager`.
 Its `state.json` is kept, and one written by an older version still loads. A
@@ -150,7 +139,6 @@ starts the grace again for anything not yet paged.
 
 | Setting | Where | What |
 | --- | --- | --- |
-| `PAGER_CALLMEBOT_USER` | `pager.env` | the `@username` the call goes to; unset, it texts but cannot call, and each PAGE says so |
 | `PAGER_HEARTBEAT_URL` | `pager.env` | optional dead-man's switch pinged each check |
 | `API_BASE_URL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` | repo `.env` | the admin's read-only GETs |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_SYSTEM_CHAT_ID` (else `TELEGRAM_CHAT_ID`) | repo `.env` | where the texts go |

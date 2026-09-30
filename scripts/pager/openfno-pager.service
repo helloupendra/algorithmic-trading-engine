@@ -7,7 +7,7 @@
 # checkout only for .env and sentinel/clock.py. Its own log is
 # ~/openfno-pager/pager.log; systemd restarts it 15 s after any exit.
 [Unit]
-Description=OpenFNO pager: phones the owner when the live desk is in serious trouble
+Description=OpenFNO pager: pages the owner in Telegram when the live desk is in serious trouble
 After=network-online.target
 Wants=network-online.target
 
