@@ -128,8 +128,10 @@ public sealed record AiAskResult(
 /// does: a timeout, a 429 or 5xx, a 4xx (a model withdrawn from the free
 /// tier answers 404), a broken stream, an empty answer. What it had streamed
 /// is dropped (the sink is told), so an answer is never half one model's and
-/// half another's. A model that failed is not asked again within the same
-/// question: on a bad day each retry would cost the full first-token wait.
+/// half another's. A model refused at once for capacity is asked once more
+/// after a short pause before the chain moves on. A model whose failure cost
+/// a long wait (a timeout, a queue) is not asked again within the same
+/// question; one that failed quickly is, in a later round.
 /// </para>
 /// <para>
 /// An agent with tools answers in rounds. In each round the model either
@@ -286,6 +288,7 @@ public sealed class AiGateway
         var working = new StringBuilder();
         AiUsage? usage = null;
         int round = 0;
+        string inFlight = string.Empty;
         bool finished = false;
 
         try
@@ -303,50 +306,69 @@ public sealed class AiGateway
                 AiAttemptEnd? end = null;
                 string model = string.Empty;
 
-                for (int i = 0; i < live.Count; i++)
+                for (int i = 0; i < live.Count && end is null; i++)
                 {
                     string candidate = live[i];
-                    answer.Clear();
-                    reasoning.Clear();
-                    await sink.AttemptAsync(candidate, i + 1, live.Count, round);
-                    var clock = Stopwatch.StartNew();
-
-                    try
+                    bool askedAgain = false;
+                    while (true)
                     {
-                        var got = await _client.StreamAsync(candidate, request, async piece =>
+                        answer.Clear();
+                        reasoning.Clear();
+                        inFlight = candidate;
+                        await sink.AttemptAsync(candidate, i + 1, live.Count, round);
+                        var clock = Stopwatch.StartNew();
+
+                        try
                         {
-                            switch (piece)
+                            var got = await _client.StreamAsync(candidate, request, async piece =>
                             {
-                                case AiStreamPiece.Reasoning r:
-                                    reasoning.Append(r.Text);
-                                    await sink.ReasoningAsync(r.Text);
-                                    break;
-                                case AiStreamPiece.Content c:
-                                    answer.Append(c.Text);
-                                    await sink.DeltaAsync(c.Text);
-                                    break;
+                                switch (piece)
+                                {
+                                    case AiStreamPiece.Reasoning r:
+                                        reasoning.Append(r.Text);
+                                        await sink.ReasoningAsync(r.Text);
+                                        break;
+                                    case AiStreamPiece.Content c:
+                                        answer.Append(c.Text);
+                                        await sink.DeltaAsync(c.Text);
+                                        break;
+                                }
+                            }, cancellationToken);
+
+                            // Told the tools are closed, it asked for one and said nothing else.
+                            if (!open && got.ToolCalls.Count > 0 && string.IsNullOrWhiteSpace(answer.ToString()))
+                            {
+                                throw new AiAttemptFailedException("asked for a tool after the tools were closed");
                             }
-                        }, cancellationToken);
 
-                        // Told the tools are closed, it asked for one and said nothing else.
-                        if (!open && got.ToolCalls.Count > 0 && string.IsNullOrWhiteSpace(answer.ToString()))
-                        {
-                            throw new AiAttemptFailedException("asked for a tool after the tools were closed");
+                            attempts.Add(new AiAttempt(candidate, "ok", Round(clock.Elapsed.TotalSeconds), 200, round));
+                            end = got;
+                            model = candidate;
+                            break;
                         }
+                        catch (AiAttemptFailedException ex)
+                        {
+                            string outcome = Redact(ex.Outcome);
+                            double took = clock.Elapsed.TotalSeconds;
+                            attempts.Add(new AiAttempt(candidate, outcome, Round(took), ex.HttpStatus, round));
+                            _logger.LogWarning("AI call {CallId} ({Agent}) round {Round}: {Model} failed: {Outcome}", row.Id, agent.Key, round, candidate, outcome);
 
-                        attempts.Add(new AiAttempt(candidate, "ok", Round(clock.Elapsed.TotalSeconds), 200, round));
-                        end = got;
-                        model = candidate;
-                        break;
-                    }
-                    catch (AiAttemptFailedException ex)
-                    {
-                        string outcome = Redact(ex.Outcome);
-                        attempts.Add(new AiAttempt(candidate, outcome, Round(clock.Elapsed.TotalSeconds), ex.HttpStatus, round));
-                        failed.Add(candidate);
-                        _logger.LogWarning("AI call {CallId} ({Agent}) round {Round}: {Model} failed: {Outcome}", row.Id, agent.Key, round, candidate, outcome);
-                        string? next = i + 1 < live.Count ? live[i + 1] : null;
-                        if (next is not null) await sink.FallbackAsync(candidate, outcome, next);
+                            // Refused at once for capacity: a moment later it often has room, and the next
+                            // model in the chain may be a 90-second queue.
+                            if (!askedAgain && s.CapacityRetrySeconds > 0 && took < s.SlowFailureSeconds && IsCapacityRefusal(ex))
+                            {
+                                askedAgain = true;
+                                await sink.FallbackAsync(candidate, outcome, candidate);
+                                await Task.Delay(TimeSpan.FromSeconds(s.CapacityRetrySeconds), _time, cancellationToken);
+                                continue;
+                            }
+
+                            // Only a failure that cost a long wait keeps the model out of later rounds.
+                            if (took >= s.SlowFailureSeconds) failed.Add(candidate);
+                            string? next = i + 1 < live.Count ? live[i + 1] : null;
+                            if (next is not null) await sink.FallbackAsync(candidate, outcome, next);
+                            break;
+                        }
                     }
                 }
 
@@ -389,8 +411,9 @@ public sealed class AiGateway
         {
             // The asker stopped it, or their connection went mid-answer: either
             // way nobody is reading, and no other model should be asked.
-            string inFlight = chain.FirstOrDefault(m => !failed.Contains(m)) ?? string.Empty;
-            if (inFlight.Length > 0 && (attempts.Count == 0 || attempts[^1].Outcome != "ok" || attempts[^1].Round < round))
+            // The model being asked when it stopped, unless its attempt is already recorded
+            // (it failed, or it answered and a tool was running).
+            if (inFlight.Length > 0 && (attempts.Count == 0 || attempts[^1].Model != inFlight || attempts[^1].Round < round))
             {
                 double spent = total.Elapsed.TotalSeconds - attempts.Sum(a => a.Seconds);
                 attempts.Add(new AiAttempt(inFlight, "cancelled", Round(Math.Max(0, spent)), null, round));
@@ -415,6 +438,13 @@ public sealed class AiGateway
             }
         }
     }
+
+    /// <summary>The provider said it has no room right now, rather than that the request was wrong.</summary>
+    public static bool IsCapacityRefusal(AiAttemptFailedException ex) =>
+        ex.HttpStatus is 429 or 502 or 503
+        || ex.Outcome.Contains("overloaded", StringComparison.OrdinalIgnoreCase)
+        || ex.Outcome.Contains("temporarily", StringComparison.OrdinalIgnoreCase)
+        || ex.Outcome.Contains("capacity", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Runs one tool call and writes what the model is given back. A tool that
