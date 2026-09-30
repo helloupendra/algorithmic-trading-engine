@@ -254,3 +254,12 @@ export const IconPin = (p: SVGProps<SVGSVGElement>) => (
     <path d="M12 12.5v8" />
   </Icon>
 )
+
+/** A processor with its pins: the AI workspace, its models and agents. */
+export const IconChip = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <rect x="6.5" y="6.5" width="11" height="11" rx="1.5" />
+    <rect x="9.75" y="9.75" width="4.5" height="4.5" rx=".6" />
+    <path d="M9.5 3.5v3M14.5 3.5v3M9.5 17.5v3M14.5 17.5v3M3.5 9.5h3M3.5 14.5h3M17.5 9.5h3M17.5 14.5h3" />
+  </Icon>
+)

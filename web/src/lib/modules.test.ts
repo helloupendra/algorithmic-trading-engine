@@ -13,8 +13,8 @@ const pagesOf = (nav: NavWorkspace[], key: string) => nav.find((w) => w.key === 
 const allUrls = (nav: NavWorkspace[]) => nav.flatMap((w) => w.pages.map((p) => p.to))
 
 describe('the registry', () => {
-  it('is the six workspaces, in order', () => {
-    expect(WORKSPACES.map((w) => w.label)).toEqual(['Desk', 'Markets', 'Trade', 'Research', 'Data', 'System'])
+  it('is the seven workspaces, in order', () => {
+    expect(WORKSPACES.map((w) => w.label)).toEqual(['Desk', 'Markets', 'Trade', 'Research', 'AI', 'Data', 'System'])
   })
 
   it('uses only the grant keys the server knows', () => {
@@ -45,8 +45,8 @@ describe('the registry', () => {
     }
   })
 
-  it('keeps every System and Data tab admin-only', () => {
-    for (const key of ['system', 'data']) {
+  it('keeps every System, Data and AI tab admin-only', () => {
+    for (const key of ['system', 'data', 'ai']) {
       const ws = WORKSPACES.find((w) => w.key === key)!
       expect(ws.tabs.every((t) => t.requires === 'admin')).toBe(true)
     }
@@ -82,9 +82,10 @@ describe('accessFor and allows', () => {
 })
 
 describe('navFor', () => {
-  it('gives an admin all six workspaces, opening Markets on the chain', () => {
+  it('gives an admin all seven workspaces, opening Markets on the chain', () => {
     const nav = navFor(admin)
-    expect(labels(nav)).toEqual(['Desk', 'Markets', 'Trade', 'Research', 'Data', 'System'])
+    expect(labels(nav)).toEqual(['Desk', 'Markets', 'Trade', 'Research', 'AI', 'Data', 'System'])
+    expect(nav.find((w) => w.key === 'ai')!.to).toBe('/ai')
     expect(nav.find((w) => w.key === 'markets')!.to).toBe('/markets/chain')
     expect(nav[0].to).toBe('/desk')
   })
@@ -95,14 +96,16 @@ describe('navFor', () => {
     expect(pagesOf(nav, 'trade')).toEqual(['Runs', 'Library', 'History', 'Positions', 'Orders', 'Manual order', 'Risk'])
     expect(pagesOf(nav, 'research')).toEqual(['Backtests', 'New backtest', 'Runs', 'Forecasts', 'Filter lab', 'Notebook'])
     expect(pagesOf(nav, 'system')).toEqual(['Health', 'Incidents', 'Log', 'Calendar', 'Connectors', 'People'])
+    expect(pagesOf(nav, 'ai')).toEqual(['Overview', 'Assistant', 'Agents', 'Models', 'Calls'])
   })
 
-  it('never shows a trader System, Data, connectors, feeds or Sentinel pages', () => {
+  it('never shows a trader System, Data, AI, connectors, feeds or Sentinel pages', () => {
     const nav = navFor(traderWith(...GRANT_KEYS))
     expect(labels(nav)).not.toContain('System')
     expect(labels(nav)).not.toContain('Data')
+    expect(labels(nav)).not.toContain('AI')
     const urls = allUrls(nav)
-    expect(urls.filter((u) => u.startsWith('/system') || u.startsWith('/data'))).toEqual([])
+    expect(urls.filter((u) => u.startsWith('/system') || u.startsWith('/data') || u.startsWith('/ai'))).toEqual([])
     expect(urls).toContain('/desk')
     for (const hidden of ['Connectors', 'Feeds', 'Health', 'Incidents', 'Patterns', 'Risk', 'Commodity', 'Runs']) {
       expect(nav.flatMap((w) => w.pages.map((p) => p.label))).not.toContain(hidden)
@@ -158,6 +161,8 @@ describe('locate', () => {
     expect(at(adminNav, '/research/backtests/new')).toBe('Research / New backtest')
     expect(at(adminNav, '/data')).toBe('Data / Overview')
     expect(at(adminNav, '/data/feeds')).toBe('Data / Feeds')
+    expect(at(adminNav, '/ai')).toBe('AI / Overview')
+    expect(at(adminNav, '/ai/calls')).toBe('AI / Calls')
   })
 
   it('lights up the tab a detail page belongs to', () => {
@@ -195,6 +200,7 @@ describe('locate', () => {
   it('respects segment boundaries', () => {
     expect(at(adminNav, '/data/feeds')).toBe('Data / Feeds')
     expect(at(adminNav, '/data/feedsx')).toBeNull()
+    expect(at(adminNav, '/aircraft')).toBeNull()
   })
 })
 
