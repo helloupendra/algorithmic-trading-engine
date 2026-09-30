@@ -540,6 +540,14 @@ def _gift(conn, day_start: datetime, cutoff: datetime, prev_close: Optional[floa
     """
     The latest snapshot the desk had taken by the cutoff this morning. Chosen
     by FetchedUtc, when the desk had it; the source's own AsOfUtc may be null.
+
+    The two numbers the gap is made of are recorded beside it. The vendor's
+    change is against GIFT Nifty's own previous close (its night session
+    included), the gap against NIFTY's 15:30 close, and the two can disagree
+    in sign and size. On 28 Sep GIFT printed 23,140.5 at 08:43 IST, NIFTY's
+    Friday close to the paisa: a true 0.00% gap beside the vendor's -0.41%
+    (against 23,236), which read as a bug with nothing on the page to check.
+    Either number unknown leaves the gap null, never 0.
     """
     with conn.cursor() as cur:
         cur.execute('SELECT "Price", "ChangePct", "AsOfUtc", "FetchedUtc" FROM market_quote_snapshots '
@@ -549,9 +557,13 @@ def _gift(conn, day_start: datetime, cutoff: datetime, prev_close: Optional[floa
     if row is None:
         return {"giftNifty": "no snapshot this morning"}
     price, change, as_of, fetched = row
-    gap = (float(price) / prev_close - 1.0) * 100.0 if price and prev_close else None
+    price = float(price) if price is not None and float(price) > 0 else None
+    base = float(prev_close) if prev_close is not None and float(prev_close) > 0 else None
+    gap = (price / base - 1.0) * 100.0 if price is not None and base is not None else None
     stamp = lambda t: None if t is None else _aware(t).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
     return {"giftNiftyGapPct": None if gap is None else round(gap, 3),
+            "giftNiftyPrice": price,
+            "niftyPrevClose": None if base is None else round(base, 2),
             "giftNiftyChangePct": None if change is None else round(float(change), 3),
             "giftNiftyAsOf": stamp(as_of), "giftNiftyFetchedUtc": stamp(fetched)}
 
