@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
+using AlgoTrading.Api.Services.AgentMemory;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Ai;
 using AlgoTrading.Infrastructure.Persistence;
@@ -67,6 +68,14 @@ public sealed record TelegramOwner(long TelegramUserId, string ConsoleUser, stri
 /// bot: nothing else on the desk reads this one (checked 30 Sep), and the
 /// offset is kept in settings so a restart does not answer twice.
 /// </para>
+/// <para>
+/// It is also where the owner teaches the Assistant from the phone
+/// (<see cref="AiMemoryService"/>): 👍 and 👎 under every answer, a reply to
+/// the bot's "what should it have said?" as a correction, <c>/remember</c>,
+/// <c>/forget</c> and <c>/memory</c>, and Approve or Reject on each lesson
+/// the daily check proposes. Buttons pressed by anyone but a linked owner do
+/// nothing.
+/// </para>
 /// </remarks>
 public sealed class TelegramAssistant(
     IServiceScopeFactory scopes,
@@ -75,7 +84,7 @@ public sealed class TelegramAssistant(
     TelegramPairing pairing,
     IOptionsMonitor<AiSettings> settings,
     ILogger<TelegramAssistant> logger,
-    TimeProvider? time = null) : BackgroundService
+    TimeProvider? time = null) : BackgroundService, IAiLessonNotifier
 {
     public const string HttpClientName = "telegram-assistant";
     public const string OffsetKey = "ai.telegram.offset";
@@ -85,6 +94,12 @@ public sealed class TelegramAssistant(
 
     private readonly TimeProvider _time = time ?? TimeProvider.System;
     private readonly ConcurrentDictionary<long, (List<AiMessage> Turns, DateTime LastUtc)> _history = new();
+
+    /// <summary>The bot's "what should it have said?" prompts by message id: a reply to one is a correction of that call.</summary>
+    private readonly ConcurrentDictionary<long, (long CallId, DateTime AskedUtc)> _corrections = new();
+
+    /// <summary>How long a "what should it have said?" prompt takes a reply.</summary>
+    public static readonly TimeSpan CorrectionWindow = TimeSpan.FromHours(6);
     private bool _conflictLogged;
 
     private string? _botUsername;
@@ -147,7 +162,7 @@ public sealed class TelegramAssistant(
         long offset = await ReadOffsetAsync(cancellationToken);
         var client = http.CreateClient(HttpClientName);
         using var response = await client.GetAsync(
-            $"https://api.telegram.org/bot{Token}/getUpdates?timeout=50&offset={offset}&allowed_updates=%5B%22message%22%5D", cancellationToken);
+            $"https://api.telegram.org/bot{Token}/getUpdates?timeout=50&offset={offset}&allowed_updates=%5B%22message%22%2C%22callback_query%22%5D", cancellationToken);
 
         if (response.StatusCode == HttpStatusCode.Conflict)
         {
@@ -169,6 +184,7 @@ public sealed class TelegramAssistant(
             // Kept before answering: a question that crashes the handler is not asked again and again.
             await SaveOffsetAsync(next, cancellationToken);
             if (update["message"] is JsonObject message) await HandleAsync(message, cancellationToken);
+            else if (update["callback_query"] is JsonObject press) await HandleButtonAsync(press, cancellationToken);
         }
     }
 
@@ -223,6 +239,61 @@ public sealed class TelegramAssistant(
             return;
         }
 
+        // A reply to "what should it have said?" is the correction of that answer.
+        if (message["reply_to_message"]?["message_id"]?.GetValue<long>() is long repliedTo
+            && _corrections.TryGetValue(repliedTo, out var pending)
+            && _time.GetUtcNow().UtcDateTime - pending.AskedUtc < CorrectionWindow
+            && !text.StartsWith('/'))
+        {
+            _corrections.TryRemove(repliedTo, out _);
+            await MemoryAsync(chatId, async memory =>
+            {
+                var (_, saved) = await memory.FeedbackAsync(pending.CallId, -1, text, owner.ConsoleUser, "telegram", cancellationToken);
+                return $"Saved as correction M{saved!.Id}. The Assistant reads it from the next question. /forget {saved.Id} takes it out.";
+            }, cancellationToken);
+            return;
+        }
+
+        if (IsCommand(text, "/remember"))
+        {
+            string note = text["/remember".Length..].Trim();
+            if (note.Length == 0)
+            {
+                await SendAsync(chatId, "Write it after the command, for example: /remember weekly NIFTY options expire on Tuesday.", cancellationToken);
+                return;
+            }
+
+            await MemoryAsync(chatId, async memory =>
+            {
+                var saved = await memory.RememberAsync(AiCatalog.DeskAssistant, note, owner.ConsoleUser, "telegram", cancellationToken);
+                return $"Saved as note M{saved.Id}. The Assistant reads it from the next question. /forget {saved.Id} takes it out.";
+            }, cancellationToken);
+            return;
+        }
+
+        if (IsCommand(text, "/forget"))
+        {
+            string arg = text["/forget".Length..].Trim().TrimStart('M', 'm');
+            if (!long.TryParse(arg, NumberStyles.Integer, CultureInfo.InvariantCulture, out long id))
+            {
+                await SendAsync(chatId, "Which one? For example /forget 12. /memory lists them.", cancellationToken);
+                return;
+            }
+
+            await MemoryAsync(chatId, async memory =>
+            {
+                await memory.UpdateAsync(id, null, AiMemoryStatus.Retired, owner.ConsoleUser, cancellationToken);
+                return $"M{id} is retired: the Assistant no longer reads it. It can be restored on AI → Memory.";
+            }, cancellationToken);
+            return;
+        }
+
+        if (IsCommand(text, "/memory"))
+        {
+            await SendAsync(chatId, await MemoryListAsync(cancellationToken), cancellationToken);
+            return;
+        }
+
         await AskAsync(chatId, owner, text.Length <= 4000 ? text : text[..4000], cancellationToken);
     }
 
@@ -261,10 +332,150 @@ public sealed class TelegramAssistant(
         _history[chatId] = (messages.Append(new AiMessage("assistant", result.Text)).TakeLast(HistoryMessages).ToList(), _time.GetUtcNow().UtcDateTime);
         string footer = $"— {ShortModel(result.Model)} · {result.Seconds:0} s" +
             (result.Tools.Count > 0 ? $" · {result.Tools.Count} tool call{(result.Tools.Count == 1 ? "" : "s")}" : string.Empty) +
+            (result.MemoryIds.Count > 0 ? $" · read {result.MemoryIds.Count} memor{(result.MemoryIds.Count == 1 ? "y" : "ies")}" : string.Empty) +
             $" · call #{result.CallId}";
-        foreach (string part in TelegramText.Split(result.Text.Trim() + "\n\n" + footer))
+        var parts = TelegramText.Split(result.Text.Trim() + "\n\n" + footer);
+        for (int i = 0; i < parts.Count; i++)
         {
-            await SendAsync(chatId, part, cancellationToken, html: true);
+            // The verdict buttons go under the last part of the answer.
+            await SendAsync(chatId, parts[i], cancellationToken, html: true, markup: i == parts.Count - 1 ? VerdictButtons(result.CallId) : null);
+        }
+    }
+
+    private static JsonObject VerdictButtons(long callId) => Keyboard(("👍", $"fb:1:{callId}"), ("👎", $"fb:-1:{callId}"));
+
+    private static JsonObject Keyboard(params (string Text, string Data)[] buttons) => new()
+    {
+        ["inline_keyboard"] = new JsonArray(new JsonArray(buttons.Select(b => (JsonNode)new JsonObject { ["text"] = b.Text, ["callback_data"] = b.Data }).ToArray())),
+    };
+
+    private static bool IsCommand(string text, string command) =>
+        text.Equals(command, StringComparison.OrdinalIgnoreCase)
+        || text.StartsWith(command + " ", StringComparison.OrdinalIgnoreCase)
+        || text.StartsWith(command + "@", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>A button under a message. Public for tests.</summary>
+    public async Task HandleButtonAsync(JsonObject press, CancellationToken cancellationToken)
+    {
+        string pressId = press["id"]?.GetValue<string>() ?? string.Empty;
+        long userId = press["from"]?["id"]?.GetValue<long>() ?? 0;
+        string data = press["data"]?.GetValue<string>() ?? string.Empty;
+        long chatId = press["message"]?["chat"]?["id"]?.GetValue<long>() ?? 0;
+        long messageId = press["message"]?["message_id"]?.GetValue<long>() ?? 0;
+
+        var owner = (await OwnersAsync(cancellationToken)).FirstOrDefault(o => o.TelegramUserId == userId);
+        if (owner is null || chatId == 0)
+        {
+            await CallApiAsync("answerCallbackQuery", new JsonObject { ["callback_query_id"] = pressId }, cancellationToken);
+            return;
+        }
+
+        string[] f = data.Split(':');
+        string toast;
+        JsonObject? markup = null;
+        try
+        {
+            await using var scope = scopes.CreateAsyncScope();
+            var memory = scope.ServiceProvider.GetRequiredService<AiMemoryService>();
+            switch (f)
+            {
+                case ["fb", var sc, var idText] when int.TryParse(sc, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out int score)
+                    && long.TryParse(idText, NumberStyles.Integer, CultureInfo.InvariantCulture, out long callId):
+                    await memory.FeedbackAsync(callId, score, null, owner.ConsoleUser, "telegram", cancellationToken);
+                    toast = score == 1 ? "Noted: a good answer." : "Noted: a bad answer.";
+                    markup = Keyboard((score == 1 ? "👍 noted" : "👎 noted", "noop"));
+                    if (score == -1)
+                    {
+                        long? prompt = await SendAsync(chatId,
+                            $"What should it have said? Reply to this message with the right answer or rule (call #{callId}). It becomes a correction the Assistant reads from the next question.",
+                            cancellationToken, markup: new JsonObject { ["force_reply"] = true, ["input_field_placeholder"] = "The right answer or rule" });
+                        if (prompt is long promptId) _corrections[promptId] = (callId, _time.GetUtcNow().UtcDateTime);
+                    }
+
+                    break;
+                case ["mem", var verb, var idText] when verb is "a" or "r"
+                    && long.TryParse(idText, NumberStyles.Integer, CultureInfo.InvariantCulture, out long memoryId):
+                    var saved = await memory.UpdateAsync(memoryId, null, verb == "a" ? AiMemoryStatus.Active : AiMemoryStatus.Rejected, owner.ConsoleUser, cancellationToken);
+                    toast = verb == "a" ? $"M{saved.Id} approved: the Assistant reads it from now on." : $"M{saved.Id} rejected.";
+                    markup = Keyboard((verb == "a" ? $"Approved by {owner.ConsoleUser}" : $"Rejected by {owner.ConsoleUser}", "noop"));
+                    break;
+                default:
+                    toast = string.Empty;
+                    break;
+            }
+        }
+        catch (AiMemoryException ex)
+        {
+            toast = ex.Message;
+        }
+
+        await CallApiAsync("answerCallbackQuery", new JsonObject { ["callback_query_id"] = pressId, ["text"] = toast.Length > 190 ? toast[..190] : toast }, cancellationToken);
+        if (markup is not null && messageId > 0)
+        {
+            await CallApiAsync("editMessageReplyMarkup", new JsonObject { ["chat_id"] = chatId, ["message_id"] = messageId, ["reply_markup"] = markup }, cancellationToken);
+        }
+    }
+
+    /// <summary>Lessons from the daily check, one message each with Approve and Reject, to every linked owner.</summary>
+    public async Task LessonsProposedAsync(IReadOnlyList<AiMemory> lessons, CancellationToken cancellationToken)
+    {
+        if (!Enabled || lessons.Count == 0) return;
+        foreach (var owner in await OwnersAsync(cancellationToken))
+        {
+            foreach (var lesson in lessons)
+            {
+                string text = $"New lesson M{lesson.Id} for the {AiCatalog.AgentName(lesson.AgentKey)}, from today's check. It is not used until you approve it.\n\n" +
+                    $"\"{lesson.Text}\"\n\nFrom the question: {lesson.Context}" +
+                    (lesson.SourceCallId is long call ? $" (call #{call})" : string.Empty);
+                await SendAsync(owner.TelegramUserId, text, cancellationToken, markup: Keyboard(("Approve", $"mem:a:{lesson.Id}"), ("Reject", $"mem:r:{lesson.Id}")));
+            }
+        }
+    }
+
+    private async Task MemoryAsync(long chatId, Func<AiMemoryService, Task<string>> action, CancellationToken cancellationToken)
+    {
+        string reply;
+        try
+        {
+            await using var scope = scopes.CreateAsyncScope();
+            reply = await action(scope.ServiceProvider.GetRequiredService<AiMemoryService>());
+        }
+        catch (AiMemoryException ex)
+        {
+            reply = ex.Message;
+        }
+
+        await SendAsync(chatId, reply, cancellationToken);
+    }
+
+    private async Task<string> MemoryListAsync(CancellationToken cancellationToken)
+    {
+        await using var scope = scopes.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
+        var rows = await db.AiMemories.AsNoTracking()
+            .Where(m => m.AgentKey == AiCatalog.DeskAssistant && (m.Status == AiMemoryStatus.Active || m.Status == AiMemoryStatus.Proposed))
+            .OrderByDescending(m => m.Id)
+            .ToListAsync(cancellationToken);
+        var active = rows.Where(m => m.Status == AiMemoryStatus.Active).ToList();
+        int waiting = rows.Count - active.Count;
+        if (active.Count == 0 && waiting == 0) return "The Assistant has no memories yet. Teach it with /remember, or 👎 an answer and reply with what it should have said.";
+
+        var lines = active.Take(15).Select(m => $"M{m.Id} ({m.Kind}): {(m.Text.Length <= 160 ? m.Text : m.Text[..159] + "…")}").ToList();
+        if (active.Count > 15) lines.Add($"…and {active.Count - 15} more on AI → Memory.");
+        if (waiting > 0) lines.Add($"{waiting} lesson{(waiting == 1 ? "" : "s")} waiting for your approval on AI → Memory.");
+        return $"The Assistant reads {active.Count} memor{(active.Count == 1 ? "y" : "ies")}:\n" + string.Join("\n", lines) + "\n/forget N takes one out.";
+    }
+
+    private async Task CallApiAsync(string method, JsonObject body, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var response = await http.CreateClient(HttpClientName).PostAsJsonAsync($"https://api.telegram.org/bot{Token}/{method}", body, cancellationToken);
+            if (!response.IsSuccessStatusCode) logger.LogInformation("Telegram assistant: {Method} was refused (HTTP {Status})", method, (int)response.StatusCode);
+        }
+        catch (HttpRequestException ex)
+        {
+            logger.LogInformation("Telegram assistant: {Method} failed ({Error})", method, ex.HttpRequestError);
         }
     }
 
@@ -287,20 +498,44 @@ public sealed class TelegramAssistant(
         }
     }
 
-    /// <summary>Sends one message; as HTML when asked, and as plain text if Telegram refuses the HTML.</summary>
-    private async Task SendAsync(long chatId, string text, CancellationToken cancellationToken, bool html = false)
+    /// <summary>
+    /// Sends one message, with buttons or a reply prompt when given; as HTML
+    /// when asked, and as plain text if Telegram refuses the HTML. The sent
+    /// message's id, or null when it was not sent.
+    /// </summary>
+    private async Task<long?> SendAsync(long chatId, string text, CancellationToken cancellationToken, bool html = false, JsonObject? markup = null)
     {
         var client = http.CreateClient(HttpClientName);
         if (html)
         {
-            using var rich = await client.PostAsJsonAsync($"https://api.telegram.org/bot{Token}/sendMessage",
-                new { chat_id = chatId, text = TelegramText.ToHtml(text), parse_mode = "HTML", disable_web_page_preview = true }, cancellationToken);
-            if (rich.IsSuccessStatusCode) return;
+            var rich = new JsonObject { ["chat_id"] = chatId, ["text"] = TelegramText.ToHtml(text), ["parse_mode"] = "HTML", ["disable_web_page_preview"] = true };
+            if (markup is not null) rich["reply_markup"] = markup.DeepClone();
+            using var sent = await client.PostAsJsonAsync($"https://api.telegram.org/bot{Token}/sendMessage", rich, cancellationToken);
+            if (sent.IsSuccessStatusCode) return await MessageIdAsync(sent, cancellationToken);
         }
 
-        using var plain = await client.PostAsJsonAsync($"https://api.telegram.org/bot{Token}/sendMessage",
-            new { chat_id = chatId, text, disable_web_page_preview = true }, cancellationToken);
-        if (!plain.IsSuccessStatusCode) logger.LogWarning("Telegram assistant: a reply was refused (HTTP {Status})", (int)plain.StatusCode);
+        var plain = new JsonObject { ["chat_id"] = chatId, ["text"] = text, ["disable_web_page_preview"] = true };
+        if (markup is not null) plain["reply_markup"] = markup.DeepClone();
+        using var response = await client.PostAsJsonAsync($"https://api.telegram.org/bot{Token}/sendMessage", plain, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            logger.LogWarning("Telegram assistant: a reply was refused (HTTP {Status})", (int)response.StatusCode);
+            return null;
+        }
+
+        return await MessageIdAsync(response, cancellationToken);
+    }
+
+    private static async Task<long?> MessageIdAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken))?["result"]?["message_id"]?.GetValue<long>();
+        }
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException or FormatException)
+        {
+            return null;
+        }
     }
 
     public async Task<IReadOnlyList<TelegramOwner>> OwnersAsync(CancellationToken cancellationToken)

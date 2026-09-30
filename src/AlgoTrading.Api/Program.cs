@@ -178,6 +178,10 @@ builder.Services.AddHttpClient(AlgoTrading.Api.Services.AiTelegram.TelegramAssis
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiTelegram.TelegramPairing>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiTelegram.TelegramAssistant>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AlgoTrading.Api.Services.AiTelegram.TelegramAssistant>());
+// The agents' memory: the owner's notes, verdicts and corrections, and the check's lessons (AI → Memory).
+builder.Services.AddScoped<AlgoTrading.Api.Services.AgentMemory.AiMemoryService>();
+// New lessons reach the owner on Telegram with Approve and Reject.
+builder.Services.AddSingleton<AlgoTrading.Api.Services.AgentMemory.IAiLessonNotifier>(sp => sp.GetRequiredService<AlgoTrading.Api.Services.AiTelegram.TelegramAssistant>());
 
 // The scheduled AI agents (Phase 3): advisory reports, each behind its switch on the AI page.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiAgents.AiSchedulerState>();

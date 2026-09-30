@@ -100,5 +100,35 @@ public sealed class AiSettings
     /// <summary>Tries for one report before a scheduled agent gives up on its subject.</summary>
     public int MaxReportAttempts { get; set; } = 3;
 
+    /// <summary>Whether agents read their memories (<see cref="AiMemoryBook"/>) before answering.</summary>
+    public bool MemoryEnabled { get; set; } = true;
+
+    /// <summary>The agents that have memory, comma-separated. The Desk Assistant first (owner, 1 Oct).</summary>
+    public string MemoryAgents { get; set; } = AiCatalog.DeskAssistant;
+
+    /// <summary>Characters of memories one call may carry in its system prompt; past it the closest to the question win.</summary>
+    public int MemoryBudgetChars { get; set; } = 2400;
+
+    /// <summary>Memories one call may carry at most.</summary>
+    public int MemoryMaxItems { get; set; } = 12;
+
+    /// <summary>
+    /// Once the memories outgrow the budget, the lowest cosine similarity to
+    /// the question a memory may have and still be read. Unrelated passages
+    /// score about 0.1 to 0.3 with Nemotron 3 Embed; a matching one 0.5 or more.
+    /// </summary>
+    public double MemoryMinScore { get; set; } = 0.3;
+
+    /// <summary>Whether the daily check proposes a lesson for a question the Assistant got wrong (for the owner to approve).</summary>
+    public bool LessonsFromCheck { get; set; } = true;
+
+    /// <summary>Lessons the daily check may propose in one day: each is one Judge call on the free tier.</summary>
+    public int MaxLessonsPerCheck { get; set; } = 3;
+
     public bool KeyConfigured => !string.IsNullOrWhiteSpace(ApiKey);
+
+    /// <summary>Whether <paramref name="agentKey"/> reads memories.</summary>
+    public bool HasMemory(string agentKey) =>
+        MemoryEnabled && MemoryAgents.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Contains(agentKey, StringComparer.OrdinalIgnoreCase);
 }

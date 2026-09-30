@@ -319,7 +319,7 @@ public class AiController : ControllerBase
             .Take(take + 1)
             .Select(x => new CallRow(x.Id, x.CreatedUtc, x.CompletedUtc, x.AgentKey, x.Tier, x.Source, x.RequestedBy, x.Model,
                 x.Outcome, x.AttemptsJson, x.Seconds, x.PromptTokens, x.CompletionTokens, x.TotalTokens, x.Summary, x.Error, x.ConversationId,
-                x.ToolCalls, x.Rounds))
+                x.ToolCalls, x.Rounds, x.FeedbackScore, x.MemoryIdsJson))
             .ToListAsync(cancellationToken);
 
         var now = Now();
@@ -336,7 +336,7 @@ public class AiController : ControllerBase
 
         var summary = ToSummary(new CallRow(x.Id, x.CreatedUtc, x.CompletedUtc, x.AgentKey, x.Tier, x.Source, x.RequestedBy, x.Model,
             x.Outcome, x.AttemptsJson, x.Seconds, x.PromptTokens, x.CompletionTokens, x.TotalTokens, x.Summary, x.Error, x.ConversationId,
-            x.ToolCalls, x.Rounds), Now());
+            x.ToolCalls, x.Rounds, x.FeedbackScore, x.MemoryIdsJson), Now());
 
         return Ok(new AiCallDetail(
             summary.Id, summary.Utc, summary.CompletedUtc, summary.AgentKey, summary.AgentName, summary.Tier, summary.Source,
@@ -351,7 +351,13 @@ public class AiController : ControllerBase
             ReadList<string>(x.ChainJson),
             ReadAttempts(x.AttemptsJson),
             ReadTools(x.ToolsJson),
-            new AiRequestDto($"POST {ChatEndpoint()}", x.MaxTokens, x.Temperature, true)));
+            new AiRequestDto($"POST {ChatEndpoint()}", x.MaxTokens, x.Temperature, true))
+        {
+            MemoryIds = AiGateway.MemoryIds(x.MemoryIdsJson),
+            Feedback = x.FeedbackScore is int score
+                ? new AiFeedbackDto(score, x.FeedbackNote, x.FeedbackBy, Utc(x.FeedbackUtc) ?? Utc(x.CreatedUtc)!.Value)
+                : null,
+        });
     }
 
     // ---------- search ------------------------------------------------------
@@ -639,6 +645,7 @@ public class AiController : ControllerBase
                     fallbacks = result.Fallbacks,
                     toolCalls = result.Tools.Count,
                     rounds = result.Rounds,
+                    memoryIds = result.MemoryIds,
                 });
             }
             else
@@ -671,7 +678,10 @@ public class AiController : ControllerBase
             result.Attempts.Select(a => new AiAttemptDto(a.Model, a.Outcome, a.Seconds, a.HttpStatus, a.Round)).ToList(), result.Error,
             result.Tools.Select(t => new AiToolCallDto(t.Round, t.Id, t.Name, t.Arguments, t.Ok, t.Error, t.Seconds, t.Rows,
                 t.AsOfUtc is DateTime at ? DateTime.SpecifyKind(at, DateTimeKind.Utc) : null, t.Summary, t.ResultChars, t.Result)).ToList(),
-            result.Rounds);
+            result.Rounds)
+        {
+            MemoryIds = result.MemoryIds,
+        };
 
         return result.Outcome == AiCallOutcome.Ok ? Ok(answer) : StatusCode(StatusCodes.Status502BadGateway, answer);
     }
@@ -804,7 +814,11 @@ public class AiController : ControllerBase
             abandoned ? "Never finished: the API stopped while the call was running." : r.Error,
             r.ConversationId,
             r.ToolCalls,
-            r.Rounds);
+            r.Rounds)
+        {
+            Feedback = r.FeedbackScore,
+            MemoryCount = AiGateway.MemoryIds(r.MemoryIdsJson).Count,
+        };
     }
 
     private static string ModelNote(string id, AiState state)
@@ -837,7 +851,8 @@ public class AiController : ControllerBase
     private sealed record CallRow(
         long Id, DateTime CreatedUtc, DateTime? CompletedUtc, string AgentKey, string Tier, string Source, string RequestedBy,
         string Model, string Outcome, string AttemptsJson, double Seconds, int? PromptTokens, int? CompletionTokens,
-        int? TotalTokens, string Summary, string Error, string ConversationId, int ToolCalls, int Rounds);
+        int? TotalTokens, string Summary, string Error, string ConversationId, int ToolCalls, int Rounds,
+        int? FeedbackScore = null, string MemoryIdsJson = "[]");
 
     private sealed record TodayRow(
         long Id, string AgentKey, string Model, string Outcome, double Seconds, int? PromptTokens, int? CompletionTokens,
@@ -1136,7 +1151,14 @@ public sealed record AiCallSummary(
     long Id, DateTime Utc, DateTime? CompletedUtc, string AgentKey, string AgentName, string Tier, string Source,
     string RequestedBy, string? Model, string Outcome, int AttemptCount, int Fallbacks, double Seconds,
     int? PromptTokens, int? CompletionTokens, int? TotalTokens, string Summary, string Error, string ConversationId,
-    int ToolCalls, int Rounds);
+    int ToolCalls, int Rounds)
+{
+    /// <summary>The owner's verdict on the answer: 1, -1, or null.</summary>
+    public int? Feedback { get; init; }
+
+    /// <summary>How many memories the call was given.</summary>
+    public int MemoryCount { get; init; }
+}
 
 public sealed record AiCallPage(IReadOnlyList<AiCallSummary> Calls, long? NextBeforeId);
 
@@ -1159,7 +1181,16 @@ public sealed record AiCallDetail(
     int ToolCalls, int Rounds,
     string System, IReadOnlyList<AiMessageDto> Messages, string Answer, string Reasoning,
     string FinishReason, IReadOnlyList<string> Chain, IReadOnlyList<AiAttemptDto> Attempts, IReadOnlyList<AiToolCallDto> Tools,
-    AiRequestDto Request);
+    AiRequestDto Request)
+{
+    /// <summary>The memories the call was given, in the order its prompt lists them.</summary>
+    public IReadOnlyList<long> MemoryIds { get; init; } = [];
+
+    public AiFeedbackDto? Feedback { get; init; }
+}
+
+/// <summary>The owner's verdict on an answer, and what it should have said with a 👎.</summary>
+public sealed record AiFeedbackDto(int Score, string Note, string By, DateTime Utc);
 
 public sealed record AiReportSummary(
     long Id, string AgentKey, string AgentName, string SubjectType, string SubjectId, string? SessionDate,
@@ -1201,4 +1232,8 @@ public sealed record AiUsageDto(int? PromptTokens, int? CompletionTokens, int? T
 
 public sealed record AiAnswer(
     long CallId, string Outcome, string Model, string Text, string Reasoning, double Seconds, string FinishReason,
-    AiUsageDto? Usage, int Fallbacks, IReadOnlyList<AiAttemptDto> Attempts, string Error, IReadOnlyList<AiToolCallDto> Tools, int Rounds);
+    AiUsageDto? Usage, int Fallbacks, IReadOnlyList<AiAttemptDto> Attempts, string Error, IReadOnlyList<AiToolCallDto> Tools, int Rounds)
+{
+    /// <summary>The memories the answer was given.</summary>
+    public IReadOnlyList<long> MemoryIds { get; init; } = [];
+}

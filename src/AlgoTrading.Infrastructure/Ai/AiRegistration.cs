@@ -31,6 +31,7 @@ public static class AiRegistration
         services.AddScoped<AiSettingsStore>();
         // The desk tools (IAiTool) are registered by the API, which owns the read services they use.
         services.AddScoped<AiToolbox>();
+        services.AddScoped<AiMemoryBook>();
         services.AddScoped<AiGateway>();
         return services;
     }
