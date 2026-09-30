@@ -17,6 +17,8 @@
  *   - the assistant's stream: a server-sent-events parser fed raw chunks, the
  *     runner that POSTs the question (EventSource can neither POST nor send a
  *     bearer token), and the chat reducer the page keeps its conversation in;
+ *   - the agents' memory: notes, corrections and approved lessons, the 👍/👎
+ *     on answers, and whether the check's score moves with them;
  *   - a small, safe reader of the answers' markdown. The page renders the
  *     blocks it returns as React text nodes, never as HTML, so nothing a model
  *     writes can become markup;
@@ -259,6 +261,10 @@ export interface AiCallSummary {
   toolCalls: number
   /** Model rounds: one, plus one per round of tool results sent back. */
   rounds: number
+  /** The owner's 👍 (1) or 👎 (-1) on the answer; null when none was given. */
+  feedback: FeedbackScore | null
+  /** Memories the answer was given; null from an API without memory. */
+  memoryCount: number | null
 }
 
 export interface AiCallsPage {
@@ -305,7 +311,12 @@ export interface AiToolStep {
   result: string
 }
 
-export interface AiCallDetail extends AiCallSummary {
+/** The detail's feedback is the whole record; the list row carries only its score. */
+export interface AiCallDetail extends Omit<AiCallSummary, 'feedback'> {
+  /** Who said 👍 or 👎, when, and the correction written with a 👎; null when none was given. */
+  feedback: AiCallFeedback | null
+  /** The memories the answer was given, by id; null from an API without memory. */
+  memoryIds: number[] | null
   system: string
   messages: ChatMessage[]
   answer: string
@@ -390,7 +401,10 @@ function withRounds<T extends { toolCalls?: number; rounds?: number }>(c: T): T 
 
 export function readCallsPage(raw: unknown): AiCallsPage {
   const o = need<AiCallsPage>(raw, ['calls'], 'call log')
-  return { calls: list<AiCallSummary>(o.calls).map(withRounds), nextBeforeId: o.nextBeforeId ?? null }
+  return {
+    calls: list<AiCallSummary>(o.calls).map((c) => ({ ...withRounds(c), feedback: feedbackScore(c.feedback), memoryCount: num(c.memoryCount) })),
+    nextBeforeId: o.nextBeforeId ?? null,
+  }
 }
 
 export function readCall(raw: unknown): AiCallDetail {
@@ -402,6 +416,9 @@ export function readCall(raw: unknown): AiCallDetail {
     tools: list<unknown>(o.tools).map(readToolStep),
     chain: list(o.chain),
     request: o.request ?? null,
+    memoryCount: num(o.memoryCount),
+    memoryIds: memoryIds(o.memoryIds),
+    feedback: readCallFeedback(o.feedback),
   }
 }
 
@@ -1239,6 +1256,453 @@ export function useUnlinkTelegram() {
   })
 }
 
+// ---------- memory ------------------------------------------------------------------------
+
+/*
+ * What an agent reads before every answer (the Desk Assistant is the first):
+ * the owner's notes (/remember) and corrections (a 👎 with what the answer
+ * should have said), active at once, and lessons an agent proposed from a
+ * failed check, read only once the owner approves them. Every memory counts
+ * the 👍/👎 and the check results of the answers it was part of; one that
+ * keeps turning up in bad answers is flagged for review. Nothing is retired
+ * on its own.
+ */
+
+/** note: the owner's /remember; correction: a 👎 with text; lesson: proposed by an agent. */
+export type MemoryKind = 'note' | 'correction' | 'lesson'
+export type MemoryStatus = 'active' | 'proposed' | 'rejected' | 'retired'
+export type MemorySource = 'owner' | 'feedback' | 'check'
+export type MemoryVia = 'console' | 'telegram' | 'check'
+export type FeedbackScore = 1 | -1
+
+export interface AiMemory {
+  id: number
+  agentKey: string
+  agentName: string
+  kind: MemoryKind | string
+  status: MemoryStatus | string
+  /** What the agent reads, at most MEMORY_MAX_CHARS. */
+  text: string
+  /** The question it came from; '' for a plain note. */
+  context: string
+  source: MemorySource | string
+  via: MemoryVia | string
+  /** The answer it corrects, or the failed check answer a lesson came from. */
+  sourceCallId: number | null
+  /** The check report a lesson came from. */
+  sourceReportId: number | null
+  createdBy: string
+  createdUtc: string
+  /** Who approved, rejected or retired it last; '' if nobody. */
+  decidedBy: string
+  decidedUtc: string | null
+  activatedUtc: string | null
+  retiredUtc: string | null
+  updatedUtc: string
+  /** Answers it was given to. */
+  uses: number
+  lastUsedUtc: string | null
+  /** 👍 and 👎 on the answers it was part of. */
+  ups: number
+  downs: number
+  /** Check questions answered right, and wrong, while it was part of the answer. */
+  checkPasses: number
+  checkFails: number
+  /** The outcomes say: look at this one. */
+  review: boolean
+  reviewReason: string | null
+}
+
+/** An agent that has a memory, and whether it is on. */
+export interface AiMemoryAgent {
+  key: string
+  name: string
+  on: boolean
+}
+
+export interface AiMemories {
+  enabled: boolean
+  agents: AiMemoryAgent[]
+  counts: Record<MemoryStatus, number>
+  /** How many characters of active memory an answer is given at most; null when not sent. */
+  budgetChars: number | null
+  activeChars: number | null
+  /** Newest first. */
+  memories: AiMemory[]
+}
+
+/** One IST day with a check or feedback. The check's figures are null on a day without a check. */
+export interface MemoryProgressDay {
+  date: string
+  checkPassed: number | null
+  checkTotal: number | null
+  /** 0 to 1. */
+  score: number | null
+  activeMemories: number | null
+  ups: number
+  downs: number
+}
+
+export interface MemoryProgress {
+  /** Oldest first. */
+  days: MemoryProgressDay[]
+}
+
+/** A call's feedback as its detail carries it. */
+export interface AiCallFeedback {
+  score: FeedbackScore
+  /** The correction written with a 👎; '' when none. */
+  note: string
+  by: string
+  utc: string | null
+}
+
+/** What POST /api/Ai/calls/{id}/feedback answers: 0 is feedback cleared; `memory` is the correction it made. */
+export interface CallFeedbackResult {
+  callId: number
+  score: FeedbackScore | 0
+  note: string
+  memory: AiMemory | null
+}
+
+/** The longest memory the API takes. */
+export const MEMORY_MAX_CHARS = 600
+
+const record = (v: unknown): v is Record<string, unknown> => v != null && typeof v === 'object' && !Array.isArray(v)
+const words = (v: unknown): string => str(v) ?? ''
+const count = (v: unknown): number => num(v) ?? 0
+
+function feedbackScore(v: unknown): FeedbackScore | null {
+  return v === 1 || v === -1 ? v : null
+}
+
+/** Memory ids as sent, whole and positive; null when the API did not send the list. */
+function memoryIds(v: unknown): number[] | null {
+  if (!Array.isArray(v)) return null
+  return v.filter((n): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0)
+}
+
+/** One memory, every field made safe to show; null for a row without an id, which nothing can act on. */
+function readMemoryRow(raw: unknown): AiMemory | null {
+  if (!record(raw)) return null
+  const id = num(raw.id)
+  if (id == null) return null
+  return {
+    id,
+    agentKey: words(raw.agentKey),
+    agentName: words(raw.agentName),
+    kind: words(raw.kind) || 'note',
+    status: words(raw.status) || 'active',
+    text: words(raw.text),
+    context: words(raw.context),
+    source: words(raw.source),
+    via: words(raw.via),
+    sourceCallId: num(raw.sourceCallId),
+    sourceReportId: num(raw.sourceReportId),
+    createdBy: words(raw.createdBy),
+    createdUtc: words(raw.createdUtc),
+    decidedBy: words(raw.decidedBy),
+    decidedUtc: str(raw.decidedUtc),
+    activatedUtc: str(raw.activatedUtc),
+    retiredUtc: str(raw.retiredUtc),
+    updatedUtc: words(raw.updatedUtc),
+    uses: count(raw.uses),
+    lastUsedUtc: str(raw.lastUsedUtc),
+    ups: count(raw.ups),
+    downs: count(raw.downs),
+    checkPasses: count(raw.checkPasses),
+    checkFails: count(raw.checkFails),
+    review: raw.review === true,
+    reviewReason: str(raw.reviewReason),
+  }
+}
+
+/** One memory, as POST and PUT answer with it; a body without one is an error, not an empty row. */
+export function readMemory(raw: unknown): AiMemory {
+  const m = readMemoryRow(need<Record<string, unknown>>(raw, ['id', 'text'], 'memory'))
+  if (!m) throw new Error("The API's memory came back in a shape this page cannot read. Is the API build current?")
+  return m
+}
+
+export function readMemories(raw: unknown): AiMemories {
+  const o = need<Record<string, unknown>>(raw, ['memories'], 'memory list')
+  const memories = list<unknown>(o.memories)
+    .map(readMemoryRow)
+    .filter((m): m is AiMemory => m != null)
+  const c = record(o.counts) ? o.counts : {}
+  // Counted from the rows when the API left a count out: the list holds every status.
+  const counted = (s: MemoryStatus) => num(c[s]) ?? memories.filter((m) => m.status === s).length
+  return {
+    // Only an API that says so switches the page's warning on; a missing flag is not "off".
+    enabled: o.enabled !== false,
+    agents: list<unknown>(o.agents)
+      .filter(record)
+      .map((a) => ({ key: words(a.key), name: words(a.name) || words(a.key), on: a.on !== false }))
+      .filter((a) => a.key !== ''),
+    counts: { active: counted('active'), proposed: counted('proposed'), rejected: counted('rejected'), retired: counted('retired') },
+    budgetChars: num(o.budgetChars),
+    activeChars: num(o.activeChars),
+    memories,
+  }
+}
+
+export function readMemoryProgress(raw: unknown): MemoryProgress {
+  const o = need<Record<string, unknown>>(raw, ['days'], 'memory progress')
+  return {
+    days: list<unknown>(o.days)
+      .filter(record)
+      .filter((d) => typeof d.date === 'string' && d.date !== '')
+      .map((d) => {
+        const checkPassed = num(d.checkPassed)
+        const checkTotal = num(d.checkTotal)
+        return {
+          date: d.date as string,
+          checkPassed,
+          checkTotal,
+          score: num(d.score) ?? (checkPassed != null && checkTotal != null && checkTotal > 0 ? checkPassed / checkTotal : null),
+          activeMemories: num(d.activeMemories),
+          ups: count(d.ups),
+          downs: count(d.downs),
+        }
+      }),
+  }
+}
+
+/** A call detail's feedback; null when there is none, or its score is neither 1 nor -1. */
+export function readCallFeedback(raw: unknown): AiCallFeedback | null {
+  if (!record(raw)) return null
+  const score = feedbackScore(raw.score)
+  if (score == null) return null
+  return { score, note: words(raw.note), by: words(raw.by), utc: str(raw.utc) }
+}
+
+export function readFeedbackResult(raw: unknown): CallFeedbackResult {
+  const o = need<Record<string, unknown>>(raw, ['callId', 'score'], 'feedback')
+  const score = o.score === 0 ? 0 : feedbackScore(o.score)
+  if (score == null) throw new Error("The API's feedback came back in a shape this page cannot read. Is the API build current?")
+  return { callId: count(o.callId), score, note: words(o.note), memory: record(o.memory) ? readMemoryRow(o.memory) : null }
+}
+
+/** "M12": how every page names a memory. */
+export function memoryLabel(id: number): string {
+  return `M${id}`
+}
+
+/** Where a memory is on the Memory tab. */
+export function memoryHref(id: number): string {
+  return `/ai/memory#memory-${id}`
+}
+
+/** The memories waiting for a decision, the active ones, and the retired and rejected, each newest first as sent. */
+export function splitMemories(memories: readonly AiMemory[]): { proposed: AiMemory[]; active: AiMemory[]; closed: AiMemory[] } {
+  return {
+    proposed: memories.filter((m) => m.status === 'proposed'),
+    active: memories.filter((m) => m.status === 'active'),
+    closed: memories.filter((m) => m.status === 'retired' || m.status === 'rejected'),
+  }
+}
+
+const MEMORY_KINDS: Record<MemoryKind, { label: string; tone: Tone; means: string }> = {
+  note: { label: 'Note', tone: 'neutral', means: 'written by the owner, with /remember or on this page' },
+  correction: { label: 'Correction', tone: 'warn', means: 'what an answer should have said, written with a 👎' },
+  lesson: { label: 'Lesson', tone: 'accent', means: 'proposed by an agent from a failed check; read only once approved' },
+}
+
+export function memoryKind(kind: string | null | undefined): { label: string; tone: Tone; means: string } {
+  return MEMORY_KINDS[kind as MemoryKind] ?? { label: kind || 'unknown', tone: 'neutral', means: '' }
+}
+
+const MEMORY_STATUSES: Record<MemoryStatus, { label: string; tone: Tone; means: string }> = {
+  active: { label: 'Active', tone: 'pos', means: 'read before every answer' },
+  proposed: { label: 'Waiting', tone: 'warn', means: 'proposed; not read until approved' },
+  rejected: { label: 'Rejected', tone: 'neutral', means: 'turned down; never read' },
+  retired: { label: 'Retired', tone: 'neutral', means: 'no longer read' },
+}
+
+export function memoryStatus(status: string | null | undefined): { label: string; tone: Tone; means: string } {
+  return MEMORY_STATUSES[status as MemoryStatus] ?? { label: status || 'unknown', tone: 'neutral', means: '' }
+}
+
+const MEMORY_SOURCES: Record<string, string> = { owner: 'Owner', feedback: 'Feedback', check: 'Daily check' }
+const MEMORY_VIAS: Record<string, string> = { console: 'Console', telegram: 'Telegram', check: 'Daily check' }
+
+/** "Owner · Console", "Feedback · Telegram", "Daily check": who made it, and through what. */
+export function memorySourceText(source: string | null | undefined, via: string | null | undefined): string {
+  const who = MEMORY_SOURCES[source ?? ''] ?? (source || 'unknown')
+  const through = MEMORY_VIAS[via ?? ''] ?? (via || '')
+  return through && through !== who ? `${who} · ${through}` : who
+}
+
+/** "From the check on 1 Oct": where a memory came from and on which IST day. */
+export function memoryOrigin(m: Pick<AiMemory, 'source' | 'createdUtc'>): string {
+  const ms = Date.parse(m.createdUtc)
+  const day = Number.isNaN(ms) ? '' : ` on ${shortDate(istDay(ms))}`
+  switch (m.source) {
+    case 'check':
+      return `From the check${day}`
+    case 'feedback':
+      return `From a 👎${day}`
+    case 'owner':
+      return `From a note${day}`
+    default:
+      return `From ${m.source || 'somewhere not recorded'}${day}`
+  }
+}
+
+/**
+ * The note in "/remember use net after charges"; '' for a bare "/remember";
+ * null when the text is not a /remember at all (it is a question). The bot's
+ * "/remember@name" form counts too, as Telegram sends it in a group.
+ */
+export function parseRemember(input: string): string | null {
+  const m = /^\s*\/remember(?:@\w+)?(?:\s+([\s\S]*))?$/i.exec(input)
+  return m ? (m[1] ?? '').trim() : null
+}
+
+/** Why a memory's text cannot be saved, or null when it can. The API checks again. */
+export function memoryTextProblem(text: string): string | null {
+  const t = text.trim()
+  if (!t) return 'Write the text first.'
+  if (t.length > MEMORY_MAX_CHARS) return `A memory holds at most ${MEMORY_MAX_CHARS} characters; this one has ${formatTokens(t.length)}.`
+  return null
+}
+
+/** "812 of 2,400 characters"; what is known when the budget is not. */
+export function budgetText(activeChars: number | null, budgetChars: number | null): string {
+  if (activeChars == null) return 'size not known'
+  if (budgetChars == null || budgetChars <= 0) return `${formatTokens(activeChars)} characters`
+  return `${formatTokens(activeChars)} of ${formatTokens(budgetChars)} characters`
+}
+
+/** The IST day `days` days back from today's, so a window of `days` + 1 days ends today. */
+export function istDaysAgo(nowMs: number, days: number): string {
+  // IST has no daylight saving: a day is always 24 hours.
+  return istDay(nowMs - days * 86_400_000)
+}
+
+export interface ProgressWindow {
+  /** Days in the window that had a check. */
+  checks: number
+  checkPassed: number
+  checkTotal: number
+  /** 0 to 1; null when there was no check. */
+  score: number | null
+  ups: number
+  downs: number
+}
+
+/** The checks and the 👍/👎 of every day from `fromDay` on, summed. */
+export function progressSince(days: readonly MemoryProgressDay[], fromDay: string): ProgressWindow {
+  const w: ProgressWindow = { checks: 0, checkPassed: 0, checkTotal: 0, score: null, ups: 0, downs: 0 }
+  for (const d of days) {
+    if (d.date < fromDay) continue
+    w.ups += d.ups
+    w.downs += d.downs
+    if (d.checkTotal != null && d.checkTotal > 0) {
+      w.checks++
+      w.checkTotal += d.checkTotal
+      w.checkPassed += d.checkPassed ?? 0
+    }
+  }
+  w.score = w.checkTotal > 0 ? w.checkPassed / w.checkTotal : null
+  return w
+}
+
+/**
+ * A memory or feedback request's failure in words: the API's own { error }
+ * when it sent one, and what the status means when it did not.
+ */
+export function memoryErrorText(error: unknown, subject: 'memory' | 'call' = 'memory'): string {
+  if (error instanceof ApiError) {
+    const said = error.message.split('\n')[0].trim()
+    if (said && !/^Request failed with status \d+$/.test(said)) return withStop(said)
+    switch (error.status) {
+      case 400:
+        return 'The API refused it as sent.'
+      case 404:
+        return subject === 'memory' ? 'That memory is not on the server any more.' : 'That call is not on the server.'
+      case 409:
+        return 'That call was not answered, so it cannot take feedback.'
+      default:
+        return `The API failed (HTTP ${error.status}).`
+    }
+  }
+  const message = error instanceof Error ? error.message.split('\n')[0] : String(error ?? '')
+  return `The request did not reach the API${message ? `: ${withStop(message)}` : '.'} Check the connection, and that the API is running.`
+}
+
+/** Every memory of one agent (or of every agent), all statuses. Re-read every 30 s while the tab is open. */
+export function useAiMemories(agent?: string) {
+  return useQuery({
+    queryKey: ['ai', 'memories', agent ?? ''],
+    queryFn: async () => readMemories(await api.get<unknown>(`/api/Ai/memories${agent ? `?${new URLSearchParams({ agent })}` : ''}`)),
+    refetchInterval: 30_000,
+  })
+}
+
+/** The days with a check or feedback, oldest first. */
+export function useMemoryProgress(days = 30) {
+  return useQuery({
+    queryKey: ['ai', 'memory-progress', days],
+    queryFn: async () => readMemoryProgress(await api.get<unknown>(`/api/Ai/memories/progress?days=${days}`)),
+    refetchInterval: 60_000,
+  })
+}
+
+/** POST /api/Ai/memories: a note, active at once. */
+export function useAddMemory() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ agent, text }: { agent?: string | null; text: string }) =>
+      readMemory(await api.post<unknown>('/api/Ai/memories', agent ? { agent, text: text.trim() } : { text: text.trim() })),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['ai', 'memories'] }),
+  })
+}
+
+export interface MemoryUpdate {
+  id: number
+  text?: string
+  /** Approve or restore (active), reject (rejected), retire (retired). */
+  status?: 'active' | 'rejected' | 'retired'
+}
+
+/** PUT /api/Ai/memories/{id}: new text, a decision, or both (edit and approve). */
+export function useUpdateMemory() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ id, text, status }: MemoryUpdate) => {
+      const body: { text?: string; status?: string } = {}
+      if (text != null) body.text = text.trim()
+      if (status) body.status = status
+      return readMemory(await api.put<unknown>(`/api/Ai/memories/${id}`, body))
+    },
+    onSuccess: (memory) => {
+      // The answer is the updated row: show it at once, then re-read the counts and the budget.
+      qc.setQueriesData<AiMemories>({ queryKey: ['ai', 'memories'] }, (old) =>
+        old ? { ...old, memories: old.memories.map((m) => (m.id === memory.id ? memory : m)) } : old,
+      )
+      void qc.invalidateQueries({ queryKey: ['ai', 'memories'] })
+    },
+  })
+}
+
+/** POST /api/Ai/calls/{id}/feedback: 👍 (1), 👎 (-1, with an optional correction) or cleared (0). */
+export function useCallFeedback() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ callId, score, correction }: { callId: number; score: FeedbackScore | 0; correction?: string }) => {
+      const text = correction?.trim()
+      return readFeedbackResult(await api.post<unknown>(`/api/Ai/calls/${callId}/feedback`, score === -1 && text ? { score, correction: text } : { score }))
+    },
+    onSuccess: (_, { callId }) => {
+      void qc.invalidateQueries({ queryKey: ['ai', 'calls'] })
+      void qc.invalidateQueries({ queryKey: ['ai', 'call', callId] })
+      void qc.invalidateQueries({ queryKey: ['ai', 'memories'] })
+      void qc.invalidateQueries({ queryKey: ['ai', 'memory-progress'] })
+    },
+  })
+}
+
 // ---------- server-sent events ------------------------------------------------
 
 export interface SseMessage {
@@ -1313,6 +1777,8 @@ export type AiStreamEvent =
       fallbacks: number
       toolCalls: number
       rounds: number
+      /** The memories the answer was given, by id; null from an API without memory. */
+      memoryIds: number[] | null
     }
   | { type: 'error'; callId: number | null; error: string }
 
@@ -1383,6 +1849,7 @@ export function decodeStreamEvent(message: SseMessage): AiStreamEvent | null {
         fallbacks: num(d.fallbacks) ?? 0,
         toolCalls: num(d.toolCalls) ?? 0,
         rounds: num(d.rounds) ?? 1,
+        memoryIds: memoryIds(d.memoryIds),
       }
     }
     case 'error':
@@ -1616,6 +2083,8 @@ export interface ChatTurn {
   toolCalls: number
   /** Rounds in all, from `done`; null until then. */
   roundCount: number | null
+  /** The memories the answer was given, from `done`; null until then, or from an API without memory. */
+  memoryIds: number[] | null
   /** One line per model that failed and handed over, in order. */
   notes: string[]
   seconds: number | null
@@ -1753,6 +2222,7 @@ function applyEvent(turn: ChatTurn, e: AiStreamEvent): ChatTurn {
         fallbacks: Math.max(turn.fallbacks, e.fallbacks),
         toolCalls: Math.max(turn.toolCalls, e.toolCalls),
         roundCount: e.rounds,
+        memoryIds: e.memoryIds,
       }
     case 'error':
       return { ...turn, status: 'error', callId: e.callId ?? turn.callId, error: e.error, errorStatus: null }
@@ -1777,6 +2247,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       mark: null,
       toolCalls: 0,
       roundCount: null,
+      memoryIds: null,
       notes: [],
       seconds: null,
       usage: null,

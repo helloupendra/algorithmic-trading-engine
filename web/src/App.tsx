@@ -49,6 +49,7 @@ import { NotebookPage } from './pages/notebook/NotebookPage'
 import { WhiteboardPage } from './pages/notebook/WhiteboardPage'
 import { AiOverviewPage } from './pages/ai/AiOverviewPage'
 import { AiAssistantPage } from './pages/ai/AiAssistantPage'
+import { AiMemoryPage } from './pages/ai/AiMemoryPage'
 import { AiAgentsPage } from './pages/ai/AiAgentsPage'
 import { AiReportsPage } from './pages/ai/AiReportsPage'
 import { AiModelsPage } from './pages/ai/AiModelsPage'
@@ -171,6 +172,8 @@ export default function App() {
                   {/* AI: the models, the agents, every call, and the assistant. A call opens in place (?id=). */}
                   <Route path="/ai" element={<AiOverviewPage />} />
                   <Route path="/ai/assistant" element={<AiAssistantPage />} />
+                  {/* What the agents read before every answer; a memory is named by its anchor (#memory-12). */}
+                  <Route path="/ai/memory" element={<AiMemoryPage />} />
                   <Route path="/ai/agents" element={<AiAgentsPage />} />
                   {/* What the scheduled agents wrote; a report opens in place (?id=). */}
                   <Route path="/ai/reports" element={<AiReportsPage />} />

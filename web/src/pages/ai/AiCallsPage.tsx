@@ -14,7 +14,10 @@
  * sent (endpoint, limits, the system prompt, every message), each model tried
  * with its round, outcome and HTTP status (this is where a fallback shows),
  * each tool the model called with the exact JSON it was given back, the
- * model's reasoning, the answer, the tokens and the finish reason.
+ * model's reasoning, the answer, the tokens and the finish reason; and, for
+ * an agent with memory, the memories the answer was given (M3 · M7) and the
+ * 👍 or 👎 it got, with the correction written with a 👎. A rated row carries
+ * a small 👍 or 👎 by its outcome.
  */
 
 import { useMemo } from 'react'
@@ -40,7 +43,7 @@ import type { AiCallDetail, AiCallFilters, AiCallSummary } from '../../lib/ai'
 import { formatAge, formatDateTime } from '../../lib/format'
 import { EmptyState, InlineError, Loading, Panel } from '../../components/ui'
 import { AnswerText } from './AnswerText'
-import { ChainChips, ModelLabel, OutcomeBadge, ToolStepRow } from './parts'
+import { ChainChips, FeedbackMark, MemoryLinks, ModelLabel, OutcomeBadge, ToolStepRow } from './parts'
 import { useNow } from './common'
 import '../system/health/health.css'
 import './ai.css'
@@ -138,6 +141,12 @@ function CallDetail({ call, now }: { call: AiCallDetail; now: number }) {
           <span className="muted">Conversation</span>
           <span className="mono ai-call__conv">{call.conversationId || <span className="faint">—</span>}</span>
         </div>
+        {call.memoryIds != null && (
+          <div>
+            <span className="muted">Memories read</span>
+            <span className="ai-call__mems">{call.memoryIds.length > 0 ? <MemoryLinks ids={call.memoryIds} /> : <span className="faint">none</span>}</span>
+          </div>
+        )}
       </div>
 
       <section className="ai-call__sec">
@@ -255,6 +264,26 @@ function CallDetail({ call, now }: { call: AiCallDetail; now: number }) {
           <p className="faint ai-flush">{running ? 'Not finished yet.' : 'No answer.'}</p>
         )}
       </section>
+
+      {call.feedback && (
+        <section className="ai-call__sec">
+          <h4 className="ai-call__h">Feedback</h4>
+          <p className="ai-call__fb">
+            <FeedbackMark score={call.feedback.score} />
+            <span>
+              {call.feedback.score === 1 ? 'Marked good' : 'Marked wrong'}
+              {call.feedback.by ? ` by ${call.feedback.by}` : ''}
+              {call.feedback.utc && <span className="faint"> · {callTime(call.feedback.utc, now)}</span>}
+            </span>
+          </p>
+          {call.feedback.note && (
+            <p className="ai-call__fbnote">
+              <span className="faint">What it should have said: </span>
+              {call.feedback.note}
+            </p>
+          )}
+        </section>
+      )}
     </div>
   )
 }
@@ -276,6 +305,7 @@ function CallRow({ call, selected, now, onOpen }: { call: AiCallSummary; selecte
       <td className={`ai-c-model ${call.model ? '' : 'ai-c-none'}`}>{call.model ? <span title={call.model}>{modelName(call.model)}</span> : <span className="faint">—</span>}</td>
       <td className="ai-c-outcome">
         <OutcomeBadge outcome={call.outcome} />
+        {call.feedback != null && <FeedbackMark score={call.feedback} />}
       </td>
       <td className={`num ai-c-tools ${call.toolCalls > 0 ? '' : 'faint ai-c-none'}`} title={call.rounds > 1 ? `${call.rounds} rounds` : undefined}>
         {call.toolCalls > 0 ? call.toolCalls : '—'}

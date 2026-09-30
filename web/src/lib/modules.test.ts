@@ -96,7 +96,7 @@ describe('navFor', () => {
     expect(pagesOf(nav, 'trade')).toEqual(['Runs', 'Library', 'History', 'Positions', 'Orders', 'Manual order', 'Risk'])
     expect(pagesOf(nav, 'research')).toEqual(['Backtests', 'New backtest', 'Runs', 'Forecasts', 'Filter lab', 'Notebook'])
     expect(pagesOf(nav, 'system')).toEqual(['Health', 'Incidents', 'Log', 'Calendar', 'Connectors', 'People'])
-    expect(pagesOf(nav, 'ai')).toEqual(['Overview', 'Assistant', 'Agents', 'Reports', 'Models', 'Calls'])
+    expect(pagesOf(nav, 'ai')).toEqual(['Overview', 'Assistant', 'Memory', 'Agents', 'Reports', 'Models', 'Calls'])
   })
 
   it('never shows a trader System, Data, AI, connectors, feeds or Sentinel pages', () => {
@@ -163,6 +163,7 @@ describe('locate', () => {
     expect(at(adminNav, '/data/feeds')).toBe('Data / Feeds')
     expect(at(adminNav, '/ai')).toBe('AI / Overview')
     expect(at(adminNav, '/ai/calls')).toBe('AI / Calls')
+    expect(at(adminNav, '/ai/memory')).toBe('AI / Memory')
   })
 
   it('lights up the tab a detail page belongs to', () => {
