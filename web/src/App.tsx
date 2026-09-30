@@ -50,6 +50,7 @@ import { WhiteboardPage } from './pages/notebook/WhiteboardPage'
 import { AiOverviewPage } from './pages/ai/AiOverviewPage'
 import { AiAssistantPage } from './pages/ai/AiAssistantPage'
 import { AiAgentsPage } from './pages/ai/AiAgentsPage'
+import { AiReportsPage } from './pages/ai/AiReportsPage'
 import { AiModelsPage } from './pages/ai/AiModelsPage'
 import { AiCallsPage } from './pages/ai/AiCallsPage'
 import './styles.css'
@@ -171,6 +172,8 @@ export default function App() {
                   <Route path="/ai" element={<AiOverviewPage />} />
                   <Route path="/ai/assistant" element={<AiAssistantPage />} />
                   <Route path="/ai/agents" element={<AiAgentsPage />} />
+                  {/* What the scheduled agents wrote; a report opens in place (?id=). */}
+                  <Route path="/ai/reports" element={<AiReportsPage />} />
                   <Route path="/ai/models" element={<AiModelsPage />} />
                   <Route path="/ai/calls" element={<AiCallsPage />} />
 

@@ -484,6 +484,388 @@ export function useTestModel() {
   })
 }
 
+// ---------- reports (the scheduled agents) ----------------------------------------
+
+/** run, news, filing or incident; kept a string so a subject the server adds later still shows. */
+export type ReportSubjectType = string
+/** ok: written and its check passed; invalid: answered but failed its check; failed: no model answered. */
+export type ReportStatus = 'ok' | 'invalid' | 'failed'
+
+export interface AiReportSummary {
+  id: number
+  agentKey: string
+  agentName: string
+  subjectType: ReportSubjectType
+  subjectId: string
+  /** The IST trading day it is about, "yyyy-MM-dd"; null when it is about no one day. */
+  sessionDate: string | null
+  createdUtc: string
+  updatedUtc: string | null
+  status: ReportStatus | string
+  attempts: number
+  callId: number | null
+  model: string | null
+  title: string
+  /** Why it is invalid or failed; null when ok. */
+  error: string | null
+  /** A console path (a run, an incident) or an https URL (the article, the filing); null when there is none. */
+  link: string | null
+}
+
+export interface AiReportsPage {
+  reports: AiReportSummary[]
+  nextBeforeId: number | null
+}
+
+export interface AiReportDetail {
+  report: AiReportSummary
+  /** Markdown; for an invalid report, the model's raw text. */
+  body: string
+  data: Record<string, unknown> | null
+}
+
+export interface AiReportDay {
+  date: string
+  ok: number
+  invalid: number
+  failed: number
+}
+
+export interface AiReportAgentStats {
+  agentKey: string
+  agentName: string
+  total: number
+  ok: number
+  invalid: number
+  failed: number
+  /** ok / (ok + invalid) × 100; null when there were none of either. */
+  validPercent: number | null
+  days: AiReportDay[]
+}
+
+export interface AiReportStats {
+  since: string
+  days: number
+  agents: AiReportAgentStats[]
+}
+
+/** The Trade Reviewer's verdict on a run against its written spec. */
+export interface TradeReview {
+  verdict: string
+  followed: string[]
+  deviations: string[]
+  staleFills: number | null
+  marketContext: string | null
+  lesson: string | null
+}
+
+export interface NewsNumber {
+  what: string
+  value: string
+  unit: string
+  /** The words in the item the number was read from; the check requires them to be there. */
+  quote: string
+}
+
+/** The News Analyst's structured event for one headline or filing. */
+export interface NewsEvent {
+  event: string
+  direction: string
+  symbols: string[]
+  numbers: NewsNumber[]
+  /** 0 to 1; null when not given. */
+  confidence: number | null
+  summary: string
+}
+
+/** The Incident Explainer's judgement of how soon a person is needed. */
+export interface IncidentExplanation {
+  urgency: string
+  confidence: number | null
+}
+
+/** The agents that run on a schedule and write reports, with what "Run now" may name. */
+export const SCHEDULED_AGENTS: Readonly<Record<string, { subject: 'run' | 'incident' | null; writes: string }>> = {
+  'trade-reviewer': { subject: 'run', writes: 'after 15:45 IST, a review of each run stopped that day' },
+  'news-analyst': { subject: null, writes: "every 10 minutes, a structured event for each unread news item or filing of the last 24 hours" },
+  'incident-explainer': { subject: 'incident', writes: 'for each live incident of medium severity or worse, what happened, why and what to do' },
+}
+
+export function readReportsPage(raw: unknown): AiReportsPage {
+  const o = need<AiReportsPage>(raw, ['reports'], 'report list')
+  return { reports: list<AiReportSummary>(o.reports).map(readReportSummary), nextBeforeId: o.nextBeforeId ?? null }
+}
+
+function readReportSummary(r: AiReportSummary): AiReportSummary {
+  return {
+    ...r,
+    subjectId: r.subjectId == null ? '' : String(r.subjectId),
+    sessionDate: r.sessionDate ?? null,
+    updatedUtc: r.updatedUtc ?? null,
+    attempts: r.attempts ?? 1,
+    callId: r.callId ?? null,
+    model: r.model ?? null,
+    title: r.title ?? '',
+    error: r.error ?? null,
+    link: r.link ?? null,
+  }
+}
+
+export function readReport(raw: unknown): AiReportDetail {
+  const o = need<AiReportDetail>(raw, ['report'], 'report')
+  const data = o.data && typeof o.data === 'object' && !Array.isArray(o.data) ? o.data : null
+  return { report: readReportSummary(need<AiReportSummary>(o.report, ['id', 'agentKey'], 'report')), body: typeof o.body === 'string' ? o.body : '', data }
+}
+
+export function readReportStats(raw: unknown): AiReportStats {
+  const o = need<AiReportStats>(raw, ['agents'], 'report statistics')
+  return {
+    ...o,
+    agents: list<AiReportAgentStats>(o.agents).map((a) => ({ ...a, validPercent: a.validPercent ?? null, days: list(a.days) })),
+  }
+}
+
+const strings = (v: unknown): string[] => list<unknown>(v).filter((x): x is string => typeof x === 'string' && x.trim() !== '')
+
+/** A report's data read as a trade review; missing lists are empty, missing figures null. */
+export function readTradeReview(data: Record<string, unknown> | null): TradeReview | null {
+  if (!data) return null
+  return {
+    verdict: str(data.verdict) ?? 'unclear',
+    followed: strings(data.followed),
+    deviations: strings(data.deviations),
+    staleFills: num(data.staleFills),
+    marketContext: str(data.marketContext),
+    lesson: str(data.lesson),
+  }
+}
+
+export function readNewsEvent(data: Record<string, unknown> | null): NewsEvent | null {
+  if (!data) return null
+  const text = (v: unknown) => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '')
+  return {
+    event: str(data.event) ?? 'other',
+    direction: str(data.direction) ?? 'unclear',
+    symbols: strings(data.symbols),
+    numbers: list<Record<string, unknown>>(data.numbers)
+      .filter((n) => n && typeof n === 'object')
+      .map((n) => ({ what: text(n.what), value: text(n.value), unit: text(n.unit), quote: text(n.quote) })),
+    confidence: num(data.confidence),
+    summary: str(data.summary) ?? '',
+  }
+}
+
+export function readIncidentExplanation(data: Record<string, unknown> | null): IncidentExplanation | null {
+  if (!data) return null
+  return { urgency: str(data.urgency) ?? 'unclear', confidence: num(data.confidence) }
+}
+
+export interface AiReportFilters {
+  agent?: string
+  subjectType?: string
+  subjectId?: string
+  status?: string
+  /** An IST day, "yyyy-MM-dd". */
+  date?: string
+  take?: number
+}
+
+/** GET /api/Ai/reports's query string; empty filters are left out. */
+export function reportsQuery(filters: AiReportFilters, beforeId: number | null = null): string {
+  const p = new URLSearchParams()
+  if (filters.agent) p.set('agent', filters.agent)
+  if (filters.subjectType) p.set('subjectType', filters.subjectType)
+  if (filters.subjectId) p.set('subjectId', filters.subjectId)
+  if (filters.status) p.set('status', filters.status)
+  if (filters.date) p.set('date', filters.date)
+  p.set('take', String(filters.take ?? 50))
+  if (beforeId != null) p.set('beforeId', String(beforeId))
+  return p.toString()
+}
+
+/** The reports, newest first, a page at a time; re-read every 30 s while the tab is open. */
+export function useAiReports(filters: AiReportFilters) {
+  return useInfiniteQuery({
+    queryKey: ['ai', 'reports', filters],
+    queryFn: async ({ pageParam }: { pageParam: number | null }) =>
+      readReportsPage(await api.get<unknown>(`/api/Ai/reports?${reportsQuery(filters, pageParam)}`)),
+    initialPageParam: null as number | null,
+    getNextPageParam: (last: AiReportsPage) => last.nextBeforeId ?? undefined,
+    placeholderData: keepPreviousData,
+    refetchInterval: 30_000,
+  })
+}
+
+export function useAiReport(id: number | null) {
+  return useQuery({
+    queryKey: ['ai', 'report', id],
+    queryFn: async () => readReport(await api.get<unknown>(`/api/Ai/reports/${id}`)),
+    enabled: id != null,
+    // A report is rewritten only by a retry after a failure; a minute is fresh enough.
+    staleTime: 60_000,
+  })
+}
+
+export function useAiReportStats(days = 7) {
+  return useQuery({
+    queryKey: ['ai', 'report-stats', days],
+    queryFn: async () => readReportStats(await api.get<unknown>(`/api/Ai/reports/stats?days=${days}`)),
+    refetchInterval: 60_000,
+  })
+}
+
+/**
+ * The newest report an agent wrote about one subject, in full, or null when
+ * it has written none. For a panel on the subject's own page (a run's
+ * review): the list names it, the detail carries the body. Admin-only on the
+ * server, so the caller enables it for an admin only.
+ */
+export function useLatestReport(agent: string, subjectType: string, subjectId: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ['ai', 'latest-report', agent, subjectType, subjectId],
+    queryFn: async () => {
+      const page = readReportsPage(
+        await api.get<unknown>(`/api/Ai/reports?${reportsQuery({ agent, subjectType, subjectId: subjectId ?? '', take: 1 })}`),
+      )
+      const first = page.reports[0]
+      return first ? readReport(await api.get<unknown>(`/api/Ai/reports/${first.id}`)) : null
+    },
+    enabled: enabled && subjectId != null,
+    staleTime: 60_000,
+    retry: 1,
+  })
+}
+
+/** The Incident Explainer's newest reports by incident id, for the Incidents page (admin-only). */
+export function useIncidentExplanations(enabled = true) {
+  return useQuery({
+    queryKey: ['ai', 'reports', 'incident-explainer', 'by-incident'],
+    queryFn: async () => {
+      const page = readReportsPage(await api.get<unknown>(`/api/Ai/reports?${reportsQuery({ agent: 'incident-explainer', subjectType: 'incident', take: 200 })}`))
+      // Newest first, so the first report seen for an incident is its latest.
+      const byIncident = new Map<string, AiReportSummary>()
+      for (const r of page.reports) if (!byIncident.has(r.subjectId)) byIncident.set(r.subjectId, r)
+      return byIncident
+    },
+    enabled,
+    refetchInterval: 60_000,
+    retry: 1,
+  })
+}
+
+/** POST /api/Ai/agents/{key}/run: start a scheduled agent now; the report arrives later. */
+export function useRunAgent() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ key, subjectId }: { key: string; subjectId: string | null }) =>
+      api.post<{ started: boolean; agent: string; subjectId: string | null }>(`/api/Ai/agents/${encodeURIComponent(key)}/run`, {
+        subjectId: subjectId && subjectId.trim() ? subjectId.trim() : null,
+      }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['ai', 'reports'] }),
+  })
+}
+
+const REPORT_STATUSES: Record<ReportStatus, { label: string; tone: Tone; means: string }> = {
+  ok: { label: 'OK', tone: 'pos', means: 'written, and its check passed' },
+  invalid: { label: 'Invalid', tone: 'warn', means: 'the model answered, but the answer failed its check' },
+  failed: { label: 'Failed', tone: 'neg', means: 'no model answered; retried after 15 minutes, up to 3 attempts' },
+}
+
+export const REPORT_STATUS_KEYS = Object.keys(REPORT_STATUSES) as ReportStatus[]
+
+export function reportStatus(status: string | null | undefined): { label: string; tone: Tone; means: string } {
+  return REPORT_STATUSES[status as ReportStatus] ?? { label: status || 'unknown', tone: 'neutral', means: '' }
+}
+
+const VERDICTS: Record<string, { label: string; tone: Tone }> = {
+  followed: { label: 'Followed the spec', tone: 'pos' },
+  deviated: { label: 'Deviated from the spec', tone: 'neg' },
+  unclear: { label: 'Unclear', tone: 'neutral' },
+}
+const DIRECTIONS: Record<string, { label: string; tone: Tone }> = {
+  positive: { label: 'Positive', tone: 'pos' },
+  negative: { label: 'Negative', tone: 'neg' },
+  neutral: { label: 'Neutral', tone: 'neutral' },
+  unclear: { label: 'Unclear', tone: 'neutral' },
+}
+const URGENCIES: Record<string, { label: string; tone: Tone }> = {
+  now: { label: 'Act now', tone: 'neg' },
+  today: { label: 'Today', tone: 'warn' },
+  later: { label: 'Later', tone: 'neutral' },
+  unclear: { label: 'Unclear', tone: 'neutral' },
+}
+const unknownWord = (v: string | null | undefined) => ({ label: v || 'unknown', tone: 'neutral' as Tone })
+
+export function verdictBadge(v: string | null | undefined): { label: string; tone: Tone } {
+  return VERDICTS[v ?? ''] ?? unknownWord(v)
+}
+export function directionBadge(v: string | null | undefined): { label: string; tone: Tone } {
+  return DIRECTIONS[v ?? ''] ?? unknownWord(v)
+}
+export function urgencyBadge(v: string | null | undefined): { label: string; tone: Tone } {
+  return URGENCIES[v ?? ''] ?? unknownWord(v)
+}
+
+/** The News Analyst's target share of reports that pass their check. */
+export const NEWS_VALID_TARGET = 98
+
+/**
+ * How a valid share reads against its target: at or above it is fine, up to
+ * eight points under is a warning, further under is a problem; unknown (no
+ * report yet) is plain, not green.
+ */
+export function validityTone(percent: number | null | undefined, target = NEWS_VALID_TARGET): 'pos' | 'warn' | 'neg' | 'neutral' {
+  if (percent == null || !Number.isFinite(percent)) return 'neutral'
+  if (percent >= target) return 'pos'
+  return percent >= target - 8 ? 'warn' : 'neg'
+}
+
+/** "Run #412", "Incident #9", "News", "Filing": what a report is about, in a word or two. */
+export function reportSubjectLabel(r: Pick<AiReportSummary, 'subjectType' | 'subjectId'>): string {
+  switch (r.subjectType) {
+    case 'run':
+      return `Run #${r.subjectId}`
+    case 'incident':
+      return `Incident #${r.subjectId}`
+    case 'news':
+      return 'News'
+    case 'filing':
+      return 'Filing'
+    default:
+      return `${r.subjectType || 'subject'} ${r.subjectId}`.trim()
+  }
+}
+
+/**
+ * Where a report's link may go: a console path (one leading slash, never
+ * two) or an https page opened in a new tab. Anything else, a javascript:
+ * or a plain-http address included, is not a link.
+ */
+export function reportLink(link: string | null | undefined): { kind: 'internal'; to: string } | { kind: 'external'; href: string } | null {
+  if (!link) return null
+  const l = link.trim()
+  if (/^\/(?!\/)/.test(l)) return { kind: 'internal', to: l }
+  if (/^https:\/\/[^\s]+$/i.test(l)) return { kind: 'external', href: l }
+  return null
+}
+
+/** The first paragraph of a Markdown body, headings skipped: a review folded to its opening. */
+export function firstParagraph(markdown: string): string {
+  const blocks = markdown.replace(/\r\n?/g, '\n').split(/\n\s*\n/)
+  for (const block of blocks) {
+    const lines = block.split('\n').filter((line) => !/^\s{0,3}#{1,6}\s/.test(line))
+    const text = lines.join('\n').trim()
+    if (text) return text
+  }
+  return ''
+}
+
+/** 0.82 → "82%"; null → "—". */
+export function confidenceText(c: number | null | undefined): string {
+  if (c == null || !Number.isFinite(c)) return '—'
+  return `${Math.round((c <= 1 ? c * 100 : c))}%`
+}
+
 // ---------- server-sent events ------------------------------------------------
 
 export interface SseMessage {

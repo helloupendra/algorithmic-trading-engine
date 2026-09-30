@@ -4,6 +4,8 @@
    stacked rows and nothing scrolls the page sideways. */
 
 .ai-flush { margin: 0; }
+/* styles.css loads after this file, so its .small-note margin would win a tie. */
+.small-note.ai-flush { margin: 0; }
 .ai-title-note { font-weight: 500; font-size: 12px; }
 .ai-cols > * { min-width: 0; }
 
@@ -732,6 +734,103 @@ a.ai-c-link:hover { color: var(--brand-hi); text-decoration: underline; }
 .ai-msgs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .ai-msg--user .ai-pre { color: var(--text); }
 
+/* --- reports ------------------------------------------------------------------------ */
+.ai-rstats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+.ai-rstat {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+}
+.ai-rstat__head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 12.5px; }
+a.ai-rstat__name { color: var(--text); font-weight: 650; text-decoration: none; }
+a.ai-rstat__name:hover { color: var(--brand-hi); }
+.ai-rstat__counts { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 12.5px; }
+.ai-rstat__valid { font-size: 12px; }
+/* A day a column: failed on top, invalid, ok at the foot, scaled to the busiest day. */
+.ai-daybars { display: flex; align-items: stretch; gap: 3px; height: 24px; margin-top: 2px; }
+.ai-daybars__day {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  flex: 1 1 0;
+  max-width: 22px;
+  background: var(--bg1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.ai-daybars__seg { display: block; width: 100%; }
+.ai-daybars__seg--ok { background: color-mix(in srgb, var(--pos) 75%, transparent); }
+.ai-daybars__seg--invalid { background: var(--warn); }
+.ai-daybars__seg--failed { background: var(--neg); }
+
+.ai-report__title { font-size: 14px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.ai-call > .ai-report__title { margin: 6px 0 0; }
+.ai-call > .ai-report-data,
+.ai-call > .ai-report-numbers { margin-top: 12px; }
+.ai-report-data {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 14px;
+  margin: 0;
+  font-size: 12.5px;
+}
+.ai-report-data > div { display: contents; }
+.ai-report-data > div > dt {
+  padding-top: 2px;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.ai-report-data > div > dd { margin: 0; min-width: 0; color: var(--text-2); overflow-wrap: anywhere; }
+.ai-report-data--inline { display: flex; flex-wrap: wrap; gap: 4px 20px; }
+.ai-report-data--inline > div { display: flex; align-items: baseline; gap: 8px; }
+.ai-report-list { margin: 0; padding-left: 18px; }
+.ai-report-list li { margin: 1px 0; }
+.table td.ai-report-quote { min-width: 220px; white-space: normal; font-style: italic; color: var(--text-2); overflow-wrap: anywhere; }
+a.ai-subject { color: var(--brand-hi); text-decoration: none; }
+a.ai-subject:hover { text-decoration: underline; }
+.ai-c-summary__err--warn { color: var(--warn); }
+
+/* Run now, on a scheduled agent's card. */
+.ai-runnow { display: flex; flex-direction: column; gap: 6px; }
+.ai-runnow__form { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.field__input.ai-runnow__id { width: 160px; min-width: 0; }
+.ai-runnow__hint { font-size: 11.5px; }
+
+/* The review on a run's page, the explanation in an opened incident. */
+.ai-review__line,
+.ai-explain__line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin: 0 0 8px;
+  font-size: 12.5px;
+}
+.ai-review__title { color: var(--text); overflow-wrap: anywhere; }
+.btn.ai-review__more { margin-top: 6px; padding-left: 0; padding-right: 0; }
+.ai-review .ai-md { font-size: 13px; }
+.ai-explain { margin-top: 12px; }
+.ai-explain__body {
+  padding: 8px 11px;
+  background: var(--bg1);
+  border: 1px solid var(--line-soft);
+  border-left: 2px solid var(--brand-line);
+  border-radius: var(--radius-sm);
+}
+.ai-explain .ai-md { font-size: 13px; }
+
 @media (prefers-reduced-motion: reduce) {
   .ai-a__meta--live::before { animation: none; }
   .ai-mini { transition: none; }
@@ -843,6 +942,36 @@ a.ai-c-link:hover { color: var(--brand-hi); text-decoration: underline; }
   .ai-c-summary__text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 
   .ai-call__close { margin-left: 0; }
+
+  /* Reports as stacked rows: when, agent and status; what it is about, the model and the call; the title. */
+  .table.ai-reports .ai-r-when,
+  .table.ai-reports .ai-r-agent { order: 1; }
+  .table.ai-reports .ai-r-agent { font-weight: 600; }
+  .table.ai-reports .ai-r-status { order: 2; margin-left: auto; display: flex; align-items: baseline; gap: 6px; }
+  .table.ai-reports .ai-r-subject,
+  .table.ai-reports .ai-r-model,
+  .table.ai-reports .ai-r-call { order: 4; font-size: 12px; }
+  .table.ai-reports .ai-r-title { order: 6; flex-basis: 100%; }
+  .table.ai-reports .ai-r-status .cell-sub { margin: 0; }
+  .ai-report-data { grid-template-columns: minmax(0, 1fr); gap: 1px; }
+  /* A news report's numbers stacked: the number, its value and unit, then the words it came from. */
+  .ai-report-numbers .table thead { display: none; }
+  .ai-report-numbers .table,
+  .ai-report-numbers .table tbody { display: block; }
+  .ai-report-numbers .table tbody tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .ai-report-numbers .table tbody tr:last-child { border-bottom: 0; }
+  .ai-report-numbers .table tbody td { display: block; padding: 0; border: 0; }
+  .ai-report-numbers .table tbody td:first-child { font-weight: 600; }
+  .ai-report-numbers .table td.ai-report-quote { flex-basis: 100%; min-width: 0; }
+  .ai-report-data > div + div > dt { margin-top: 7px; }
+  .field__input.ai-runnow__id { flex: 1 1 140px; width: auto; }
   /* The call's figures two across, each label over its value. */
   .kv-grid.ai-call__kv { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
   .kv-grid.ai-call__kv > div { flex-direction: column; justify-content: flex-start; gap: 0; }

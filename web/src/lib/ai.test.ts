@@ -35,6 +35,20 @@ import {
   toolLabel,
   toolsLine,
   turnReasoning,
+  confidenceText,
+  directionBadge,
+  firstParagraph,
+  readNewsEvent,
+  readReport,
+  readReportsPage,
+  readTradeReview,
+  reportLink,
+  reportStatus,
+  reportSubjectLabel,
+  reportsQuery,
+  urgencyBadge,
+  validityTone,
+  verdictBadge,
 } from './ai'
 import type { AiModel, AiStreamEvent, AiToolStep, ChatAction, ChatState, SseMessage } from './ai'
 
@@ -763,5 +777,92 @@ describe('parseAnswer', () => {
   it('reads a list with blank lines between items as one list', () => {
     const blocks = parseAnswer('1. a\n\n2. b\n\nAfter.')
     expect(blocks.map((b) => b.kind)).toEqual(['list', 'para'])
+  })
+})
+
+// ---------- reports ----------
+
+describe('reports', () => {
+  it('names what a report is about', () => {
+    expect(reportSubjectLabel({ subjectType: 'run', subjectId: '412' })).toBe('Run #412')
+    expect(reportSubjectLabel({ subjectType: 'incident', subjectId: '9' })).toBe('Incident #9')
+    expect(reportSubjectLabel({ subjectType: 'news', subjectId: 'a1b2' })).toBe('News')
+    expect(reportSubjectLabel({ subjectType: 'filing', subjectId: 'bse-77' })).toBe('Filing')
+    expect(reportSubjectLabel({ subjectType: 'order', subjectId: '5' })).toBe('order 5')
+  })
+
+  it('links only to a console path or an https page', () => {
+    expect(reportLink('/trade/runs/412')).toEqual({ kind: 'internal', to: '/trade/runs/412' })
+    expect(reportLink('/system/incidents?id=9')).toEqual({ kind: 'internal', to: '/system/incidents?id=9' })
+    expect(reportLink('https://www.bseindia.com/xml-data/corpfiling/AttachLive/abc.pdf')).toEqual({
+      kind: 'external',
+      href: 'https://www.bseindia.com/xml-data/corpfiling/AttachLive/abc.pdf',
+    })
+    expect(reportLink('//evil.example/x')).toBeNull()
+    expect(reportLink('javascript:alert(1)')).toBeNull()
+    expect(reportLink('http://plain.example/')).toBeNull()
+    expect(reportLink(null)).toBeNull()
+  })
+
+  it('says each status, verdict, direction and urgency in a word, with a tone', () => {
+    expect(reportStatus('ok')).toMatchObject({ label: 'OK', tone: 'pos' })
+    expect(reportStatus('invalid')).toMatchObject({ label: 'Invalid', tone: 'warn' })
+    expect(reportStatus('failed')).toMatchObject({ label: 'Failed', tone: 'neg' })
+    expect(reportStatus('queued')).toMatchObject({ label: 'queued', tone: 'neutral' })
+    expect(verdictBadge('followed')).toEqual({ label: 'Followed the spec', tone: 'pos' })
+    expect(verdictBadge('deviated')).toEqual({ label: 'Deviated from the spec', tone: 'neg' })
+    expect(verdictBadge(null)).toEqual({ label: 'unknown', tone: 'neutral' })
+    expect(directionBadge('negative')).toEqual({ label: 'Negative', tone: 'neg' })
+    expect(urgencyBadge('now')).toEqual({ label: 'Act now', tone: 'neg' })
+    expect(urgencyBadge('today')).toEqual({ label: 'Today', tone: 'warn' })
+  })
+
+  it('reads a valid share against the 98% target, and unknown as plain', () => {
+    expect(validityTone(99.1)).toBe('pos')
+    expect(validityTone(98)).toBe('pos')
+    expect(validityTone(94.5)).toBe('warn')
+    expect(validityTone(80)).toBe('neg')
+    expect(validityTone(null)).toBe('neutral')
+  })
+
+  it('folds a review to its first paragraph, headings skipped', () => {
+    expect(firstParagraph('## Verdict\n\nFollowed the spec, **one** stale fill.\nSecond line.\n\n## Lesson\n\nNone.')).toBe(
+      'Followed the spec, **one** stale fill.\nSecond line.',
+    )
+    expect(firstParagraph('')).toBe('')
+    expect(confidenceText(0.82)).toBe('82%')
+    expect(confidenceText(null)).toBe('—')
+  })
+
+  it("reads each agent's data, filling what is missing honestly", () => {
+    expect(readTradeReview({ verdict: 'deviated', deviations: ['Third entry after the limit of 2', ''], staleFills: 1 })).toEqual({
+      verdict: 'deviated',
+      followed: [],
+      deviations: ['Third entry after the limit of 2'],
+      staleFills: 1,
+      marketContext: null,
+      lesson: null,
+    })
+    expect(
+      readNewsEvent({ event: 'results', direction: 'positive', symbols: ['TCS'], numbers: [{ what: 'Net profit', value: 12380, unit: 'crore', quote: 'net profit of Rs 12,380 crore' }], confidence: 0.9 }),
+    ).toEqual({
+      event: 'results',
+      direction: 'positive',
+      symbols: ['TCS'],
+      numbers: [{ what: 'Net profit', value: '12380', unit: 'crore', quote: 'net profit of Rs 12,380 crore' }],
+      confidence: 0.9,
+      summary: '',
+    })
+    expect(readTradeReview(null)).toBeNull()
+  })
+
+  it('reads the list and a report strictly, and builds the query without blanks', () => {
+    const page = readReportsPage({ reports: [{ id: 3, agentKey: 'trade-reviewer', subjectType: 'run', subjectId: 412, title: 'Run 412' }], nextBeforeId: null })
+    expect(page.reports[0]).toMatchObject({ subjectId: '412', attempts: 1, link: null, error: null })
+    expect(() => readReportsPage({ items: [] })).toThrow(/cannot read/)
+    expect(readReport({ report: { id: 3, agentKey: 'news-analyst' }, body: 'x', data: [1] }).data).toBeNull()
+    expect(reportsQuery({ agent: 'trade-reviewer', subjectType: 'run', subjectId: '412', status: '', take: 1 })).toBe(
+      'agent=trade-reviewer&subjectType=run&subjectId=412&take=1',
+    )
   })
 })

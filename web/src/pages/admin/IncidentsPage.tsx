@@ -17,6 +17,7 @@
  */
 
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import type { FormEvent, ReactNode } from 'react'
 import {
   useAcknowledgeIncident,
@@ -65,6 +66,9 @@ import {
 } from '../../lib/incidents'
 import type { IncidentView, NotesForm, WatchmanNote } from '../../lib/incidents'
 import { formatAge, formatDateTime } from '../../lib/format'
+import { useIncidentExplanations } from '../../lib/ai'
+import type { AiReportSummary } from '../../lib/ai'
+import { IncidentAiExplanation } from '../ai/reportParts'
 import { Badge, EmptyState, InlineError, Loading, Panel, StatTile } from '../../components/ui'
 import './incidents.css'
 
@@ -265,8 +269,8 @@ function NotesList({ notes }: { notes: { rootCause?: string | null; resolution?:
   )
 }
 
-function IncidentRow({ incident }: { incident: Incident }) {
-  const [open, setOpen] = useState(false)
+function IncidentRow({ incident, explanation, startOpen }: { incident: Incident; explanation?: AiReportSummary; startOpen: boolean }) {
+  const [open, setOpen] = useState(startOpen)
   // Resolve and "Edit notes" open the notes form in place of the buttons.
   const [editing, setEditing] = useState<'resolve' | 'notes' | null>(null)
   const acknowledge = useAcknowledgeIncident()
@@ -360,6 +364,8 @@ function IncidentRow({ incident }: { incident: Incident }) {
                   )}
                 </p>
               )}
+
+              {explanation && <IncidentAiExplanation summary={explanation} />}
 
               {incident.evidence?.length > 0 && (
                 <div>
@@ -474,7 +480,14 @@ function IncidentRow({ incident }: { incident: Incident }) {
   )
 }
 
+/**
+ * The incidents, with the Incident Explainer's newest report for each (read
+ * once for the page, by incident id), and the one a link named (?id=) open.
+ */
 function IncidentTable({ incidents }: { incidents: Incident[] }) {
+  const explanations = useIncidentExplanations()
+  const [params] = useSearchParams()
+  const openId = Number(params.get('id'))
   return (
     <div className="tablewrap tablewrap--tall incident-tablewrap">
       <table className="table">
@@ -490,7 +503,12 @@ function IncidentTable({ incidents }: { incidents: Incident[] }) {
         </thead>
         <tbody>
           {incidents.map((incident) => (
-            <IncidentRow key={incident.id} incident={incident} />
+            <IncidentRow
+              key={incident.id}
+              incident={incident}
+              explanation={explanations.data?.get(String(incident.id))}
+              startOpen={incident.id === openId}
+            />
           ))}
         </tbody>
       </table>
