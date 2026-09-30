@@ -6,6 +6,7 @@ using AlgoTrading.Application.UseCases.MarketData;
 using AlgoTrading.Application.UseCases.Simulator;
 using AlgoTrading.Contracts.MarketData;
 using AlgoTrading.Application.Providers;
+using AlgoTrading.Infrastructure.Ai;
 using AlgoTrading.Infrastructure.Config;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Providers;
@@ -62,6 +63,9 @@ public static class DependencyInjection
         services.AddHttpClient(nameof(MarketIntelService));
         services.AddMemoryCache();
         services.AddScoped<IMarketIntelService, MarketIntelService>();
+
+        // Hosted language models (the AI workspace): owner/admin only, see AiGateway.
+        services.AddAi(configuration);
 
         // ---- Connectors -------------------------------------------------
         // Every vendor registers itself; this composition root never names one.

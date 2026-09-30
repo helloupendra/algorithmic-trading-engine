@@ -1,0 +1,851 @@
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using AlgoTrading.Api.Security;
+using AlgoTrading.Api.Services;
+using AlgoTrading.Domain.Entities;
+using AlgoTrading.Infrastructure.Ai;
+using AlgoTrading.Infrastructure.Persistence;
+using AlgoTrading.Infrastructure.Services;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+
+namespace AlgoTrading.Api.Controllers;
+
+/// <summary>
+/// The AI workspace: the desk's hosted-model agents, the models they use,
+/// every call they made, and the Assistant's questions.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Admin-only, and not only because the answers can name accounts: the
+/// models run on NVIDIA's free tier, whose terms cover development, testing,
+/// research and evaluation. Serving traders would be production use.
+/// </para>
+/// <para>
+/// Every call goes through <see cref="AiGateway"/>, which holds the agent's
+/// switch, the rate limit, the fallback chain and the audit row. This
+/// controller shapes requests and answers; the key never appears in either
+/// (<c>keyConfigured</c> is all a browser learns).
+/// </para>
+/// </remarks>
+[Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+[ApiController]
+[Route("api/Ai")]
+public class AiController : ControllerBase
+{
+    private const int DefaultTake = 50;
+    private const int MaxTake = 200;
+    private const int MaxMessages = 40;
+    private const int MaxPromptChars = 60_000;
+    private const int MaxSystemChars = 8_000;
+    private const int DefaultMaxTokens = 4096;
+    private const int MaxMaxTokens = 16_384;
+    private const double DefaultTemperature = 0.2;
+
+    /// <summary>
+    /// A call still "running" after this long never finished (the API
+    /// restarted under it): three models at the five-minute ceiling, and some.
+    /// </summary>
+    public static readonly TimeSpan AbandonedAfter = TimeSpan.FromMinutes(20);
+
+    private static readonly Regex ConversationIdShape = new("^[A-Za-z0-9_-]{1,64}$", RegexOptions.CultureInvariant);
+
+    private readonly TradingDbContext _db;
+    private readonly AiSettingsStore _store;
+    private readonly AiGateway _gateway;
+    private readonly AiModelCatalog _catalog;
+    private readonly AiRateLimiter _limiter;
+    private readonly IOptionsMonitor<AiSettings> _settings;
+    private readonly TimeProvider _time;
+
+    public AiController(
+        TradingDbContext db,
+        AiSettingsStore store,
+        AiGateway gateway,
+        AiModelCatalog catalog,
+        AiRateLimiter limiter,
+        IOptionsMonitor<AiSettings> settings,
+        TimeProvider? time = null)
+    {
+        _db = db;
+        _store = store;
+        _gateway = gateway;
+        _catalog = catalog;
+        _limiter = limiter;
+        _settings = settings;
+        _time = time ?? TimeProvider.System;
+    }
+
+    // ---------- overview ----------------------------------------------------
+
+    /// <summary>The provider, the tiers, today's numbers and the agents at a glance.</summary>
+    [HttpGet("overview")]
+    public async Task<IActionResult> Overview(CancellationToken cancellationToken)
+    {
+        var state = await _store.LoadAsync(cancellationToken);
+        var now = Now();
+        var today = await TodayRowsAsync(now, cancellationToken);
+        var s = _settings.CurrentValue;
+
+        var lastOk = await _db.AiCalls.AsNoTracking()
+            .Where(x => x.Outcome == AiCallOutcome.Ok)
+            .OrderByDescending(x => x.Id)
+            .Select(x => new { x.Id, x.CompletedUtc, x.Model })
+            .FirstOrDefaultAsync(cancellationToken);
+        var lastError = await _db.AiCalls.AsNoTracking()
+            .Where(x => x.Outcome == AiCallOutcome.Failed)
+            .OrderByDescending(x => x.Id)
+            .Select(x => new { x.Id, x.CompletedUtc, x.CreatedUtc, x.Error })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return Ok(new AiOverview(
+            Provider(s),
+            new AiLimits(s.PerUserPer10Min, s.GlobalPerMinute, s.MaxConcurrent, _limiter.UsedLastMinute, _limiter.InFlight, AiCatalog.ProviderLimitNote),
+            state.Tiers.Select(ToTier).ToList(),
+            TodayTotals(today, now),
+            ByModel(today),
+            lastOk is null ? null : new AiLastOk(Utc(lastOk.CompletedUtc), lastOk.Model, lastOk.Id),
+            lastError is null ? null : new AiLastError(Utc(lastError.CompletedUtc ?? lastError.CreatedUtc), lastError.Error, lastError.Id),
+            new AiAgentCounts(
+                state.Agents.Count,
+                state.Agents.Count(a => a.Def.Built),
+                state.Agents.Count(a => a.Status == "on"),
+                state.Agents.Count(a => a.Status == "off"),
+                state.Agents.Count(a => a.Status == "planned"))));
+    }
+
+    // ---------- agents ------------------------------------------------------
+
+    /// <summary>Every agent, built or planned, with its chain, switch and recent use; and the parts that are not AI.</summary>
+    [HttpGet("agents")]
+    public async Task<IActionResult> Agents(CancellationToken cancellationToken)
+    {
+        var state = await _store.LoadAsync(cancellationToken);
+        var now = Now();
+        var today = await TodayRowsAsync(now, cancellationToken);
+        var last = await LastCallsAsync(cancellationToken);
+
+        return Ok(new AiAgentList(
+            state.Agents.Select(a => ToAgent(a, state, today, last)).ToList(),
+            AiCatalog.RuleBased.Select(r => new AiRuleBasedDto(r.Name, r.What, r.Where, r.Model)).ToList()));
+    }
+
+    /// <summary>Switches an agent on or off, or gives it its own chain.</summary>
+    [HttpPut("agents/{key}")]
+    public async Task<IActionResult> UpdateAgent(string key, [FromBody] AiAgentUpdate body, CancellationToken cancellationToken)
+    {
+        var def = AiCatalog.Agents.FirstOrDefault(a => a.Key == key);
+        if (def is null) return NotFound(new { error = $"No agent {key}." });
+        if (!def.Built) return Conflict(new { error = $"{def.Name} is not built yet (planned for phase {def.Phase}): there is nothing to switch on." });
+
+        string? reason = Reason(body.Reason);
+        if (body.Chain is not null && body.ResetChain)
+        {
+            return BadRequest(new { error = "Give a chain or reset it, not both." });
+        }
+
+        if (body.Chain is not null)
+        {
+            var models = await _catalog.GetAsync(cancellationToken: cancellationToken);
+            if (AiSettingsStore.ChainProblem(body.Chain, models.KnownIds()) is string problem) return BadRequest(new { error = problem });
+        }
+
+        string by = Actor();
+        if (body.Enabled is bool enabled) await _store.SetAgentEnabledAsync(key, enabled, by, reason, cancellationToken);
+        if (body.Chain is not null) await _store.SetAgentChainAsync(key, body.Chain, by, reason, cancellationToken);
+        if (body.ResetChain) await _store.SetAgentChainAsync(key, null, by, reason, cancellationToken);
+
+        var state = await _store.LoadAsync(cancellationToken);
+        var today = await TodayRowsAsync(Now(), cancellationToken);
+        var last = await LastCallsAsync(cancellationToken);
+        return Ok(ToAgent(state.Agent(key)!, state, today, last));
+    }
+
+    /// <summary>Sets a tier's chain, or back to its default.</summary>
+    [HttpPut("tiers/{tier}")]
+    public async Task<IActionResult> UpdateTier(string tier, [FromBody] AiTierUpdate body, CancellationToken cancellationToken)
+    {
+        var def = AiCatalog.Tier(tier);
+        if (def is null) return NotFound(new { error = $"No tier {tier}." });
+        if (!def.Chat) return BadRequest(new { error = "The embedding tier is not used yet: nothing searches with it." });
+
+        if (body.Chain is { Count: > 0 })
+        {
+            var models = await _catalog.GetAsync(cancellationToken: cancellationToken);
+            if (AiSettingsStore.ChainProblem(body.Chain, models.KnownIds()) is string problem) return BadRequest(new { error = problem });
+        }
+
+        await _store.SetTierChainAsync(def.Key, body.Chain, Actor(), Reason(body.Reason), cancellationToken);
+        var state = await _store.LoadAsync(cancellationToken);
+        return Ok(ToTier(state.Tier(def.Key)));
+    }
+
+    // ---------- models ------------------------------------------------------
+
+    /// <summary>The provider's catalog, the models in use first, with each one's last test and today's use.</summary>
+    /// <param name="refresh">Read the provider's list now rather than the one up to ten minutes old.</param>
+    [HttpGet("models")]
+    public async Task<IActionResult> Models([FromQuery] bool refresh = false, CancellationToken cancellationToken = default)
+    {
+        var list = await _catalog.GetAsync(refresh, cancellationToken);
+        var state = await _store.LoadAsync(cancellationToken);
+        var today = await TodayRowsAsync(Now(), cancellationToken);
+        var tests = await LastTestsAsync(cancellationToken);
+        var usage = AttemptUsage(today);
+
+        // In use: every model a chat tier's chain or a built agent's chain names, in chain order.
+        var inUse = new List<string>();
+        foreach (var tier in state.Tiers)
+        {
+            foreach (string id in tier.Chain) if (!inUse.Contains(id)) inUse.Add(id);
+        }
+
+        foreach (var agent in state.Agents.Where(a => a.Def.Built))
+        {
+            foreach (string id in agent.Chain) if (!inUse.Contains(id)) inUse.Add(id);
+        }
+
+        var owners = list.Models.ToDictionary(m => m.Id, m => m.OwnedBy, StringComparer.Ordinal);
+        var ids = inUse.Concat(list.Models.Select(m => m.Id).Where(id => !inUse.Contains(id)).OrderBy(id => id, StringComparer.Ordinal));
+
+        var models = ids.Select(id => new AiModelDto(
+            id,
+            owners.TryGetValue(id, out string? owner) && owner.Length > 0 ? owner : id.Split('/')[0],
+            inUse.Contains(id),
+            state.Tiers.Where(t => t.Chain.Contains(id)).Select(t => t.Def.Key).ToList(),
+            state.Agents.Where(a => a.Def.Built && a.Chain.Contains(id)).Select(a => a.Def.Key).ToList(),
+            ModelNote(id, state),
+            tests.TryGetValue(id, out var test) ? test : null,
+            usage.TryGetValue(id, out var used) ? used : new AiModelUsage(0, 0, 0, null),
+            AiCatalog.IsEmbeddingModel(id),
+            list.Models.Count == 0 || owners.ContainsKey(id))).ToList();
+
+        return Ok(new AiModelsDto(
+            Utc(list.FetchedUtc),
+            list.Source,
+            list.Error,
+            models,
+            AiCatalog.LocalModels.Select(m => new AiLocalModelDto(m.Id, m.Kind, m.Where, m.UsedBy)).ToList()));
+    }
+
+    /// <summary>One tiny question to one model, to see that it answers and how fast. Logged like any call.</summary>
+    [HttpPost("models/test")]
+    public async Task<IActionResult> TestModel([FromBody] AiModelTestRequest body, CancellationToken cancellationToken)
+    {
+        string model = (body.Model ?? string.Empty).Trim();
+        var list = await _catalog.GetAsync(cancellationToken: cancellationToken);
+        if (!list.KnownIds().Contains(model)) return BadRequest(new { error = $"{model} is not in the provider's model list." });
+        if (AiCatalog.IsEmbeddingModel(model)) return BadRequest(new { error = $"{model} makes vectors, not answers: a chat test cannot reach it." });
+
+        var result = await _gateway.AskAsync(new AiAskInput(
+            AiCatalog.ModelTest,
+            null,
+            [new AiMessage("user", "Reply with the word OK and nothing else.")],
+            string.Empty,
+            512,
+            0,
+            string.Empty,
+            "console",
+            Actor(),
+            User.GetUserId(),
+            [model]), NullAiStreamSink.Instance, cancellationToken);
+
+        if (result.RefusalStatus is int status) return Refused(result, status);
+
+        return Ok(new AiModelTestResult(
+            result.Outcome == AiCallOutcome.Ok,
+            model,
+            result.Seconds,
+            result.Text.Trim(),
+            result.Outcome == AiCallOutcome.Ok ? null : result.Attempts.LastOrDefault()?.Outcome ?? result.Error,
+            result.CallId));
+    }
+
+    // ---------- calls -------------------------------------------------------
+
+    /// <summary>The newest calls first, optionally one agent's, one outcome or one model's.</summary>
+    [HttpGet("calls")]
+    public async Task<IActionResult> Calls(
+        [FromQuery] string? agent = null,
+        [FromQuery] string? outcome = null,
+        [FromQuery] string? model = null,
+        [FromQuery] int take = DefaultTake,
+        [FromQuery] long? beforeId = null,
+        CancellationToken cancellationToken = default)
+    {
+        take = Math.Clamp(take, 1, MaxTake);
+        var query = _db.AiCalls.AsNoTracking();
+        if (!string.IsNullOrWhiteSpace(agent)) query = query.Where(x => x.AgentKey == agent);
+        if (!string.IsNullOrWhiteSpace(outcome)) query = query.Where(x => x.Outcome == outcome);
+        if (!string.IsNullOrWhiteSpace(model)) query = query.Where(x => x.Model == model || x.ChainJson.Contains("\"" + model + "\""));
+        if (beforeId is long before) query = query.Where(x => x.Id < before);
+
+        var rows = await query
+            .OrderByDescending(x => x.Id)
+            .Take(take + 1)
+            .Select(x => new CallRow(x.Id, x.CreatedUtc, x.CompletedUtc, x.AgentKey, x.Tier, x.Source, x.RequestedBy, x.Model,
+                x.Outcome, x.AttemptsJson, x.Seconds, x.PromptTokens, x.CompletionTokens, x.TotalTokens, x.Summary, x.Error, x.ConversationId))
+            .ToListAsync(cancellationToken);
+
+        var now = Now();
+        var page = rows.Take(take).Select(r => ToSummary(r, now)).ToList();
+        return Ok(new AiCallPage(page, rows.Count > take ? page[^1].Id : null));
+    }
+
+    /// <summary>One call in full: what was sent, every model tried, the reasoning and the answer.</summary>
+    [HttpGet("calls/{id:long}")]
+    public async Task<IActionResult> Call(long id, CancellationToken cancellationToken)
+    {
+        var x = await _db.AiCalls.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id, cancellationToken);
+        if (x is null) return NotFound(new { error = $"No call {id}." });
+
+        var summary = ToSummary(new CallRow(x.Id, x.CreatedUtc, x.CompletedUtc, x.AgentKey, x.Tier, x.Source, x.RequestedBy, x.Model,
+            x.Outcome, x.AttemptsJson, x.Seconds, x.PromptTokens, x.CompletionTokens, x.TotalTokens, x.Summary, x.Error, x.ConversationId), Now());
+
+        return Ok(new AiCallDetail(
+            summary.Id, summary.Utc, summary.CompletedUtc, summary.AgentKey, summary.AgentName, summary.Tier, summary.Source,
+            summary.RequestedBy, summary.Model, summary.Outcome, summary.AttemptCount, summary.Fallbacks, summary.Seconds,
+            summary.PromptTokens, summary.CompletionTokens, summary.TotalTokens, summary.Summary, summary.Error, summary.ConversationId,
+            x.SystemPrompt,
+            ReadMessages(x.MessagesJson),
+            x.Answer,
+            x.Reasoning,
+            x.FinishReason,
+            ReadList<string>(x.ChainJson),
+            ReadAttempts(x.AttemptsJson),
+            new AiRequestDto($"POST {ChatEndpoint()}", x.MaxTokens, x.Temperature, true)));
+    }
+
+    // ---------- asking ------------------------------------------------------
+
+    /// <summary>
+    /// Asks and streams the answer as server-sent events. Refusals come back
+    /// as plain JSON before any event: 400, 409 agent off, 429 limit, 503 no key.
+    /// </summary>
+    [HttpPost("ask/stream")]
+    public async Task<IActionResult> AskStream([FromBody] AiAskRequest body, CancellationToken cancellationToken)
+    {
+        if (Validate(body, out var input) is IActionResult bad) return bad;
+
+        await using var stream = new AiEventStream(Response, cancellationToken);
+        AiAskResult result;
+        try
+        {
+            result = await _gateway.AskAsync(input!, stream, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return new EmptyResult();
+        }
+
+        if (!stream.Started)
+        {
+            return result.RefusalStatus is int status ? Refused(result, status) : StatusCode(500, new { error = result.Error });
+        }
+
+        // Stopped, or the connection went mid-answer: nobody is reading.
+        if (cancellationToken.IsCancellationRequested || result.Outcome == AiCallOutcome.Cancelled) return new EmptyResult();
+
+        try
+        {
+            if (result.Outcome == AiCallOutcome.Ok)
+            {
+                await stream.SendAsync("done", new
+                {
+                    callId = result.CallId,
+                    model = result.Model,
+                    seconds = result.Seconds,
+                    finishReason = result.FinishReason,
+                    usage = Usage(result.Usage),
+                    fallbacks = result.Fallbacks,
+                });
+            }
+            else
+            {
+                await stream.SendAsync("error", new { callId = result.CallId, error = result.Error });
+            }
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or IOException)
+        {
+            // The browser left after the answer was recorded.
+        }
+
+        return new EmptyResult();
+    }
+
+    /// <summary>
+    /// Asks and waits for the whole answer. For scripts; behind Cloudflare a
+    /// request over 100 seconds is cut, so the console uses the stream.
+    /// </summary>
+    [HttpPost("ask")]
+    public async Task<IActionResult> Ask([FromBody] AiAskRequest body, CancellationToken cancellationToken)
+    {
+        if (Validate(body, out var input) is IActionResult bad) return bad;
+
+        var result = await _gateway.AskAsync(input! with { Source = "api" }, NullAiStreamSink.Instance, cancellationToken);
+        if (result.RefusalStatus is int status) return Refused(result, status);
+
+        var answer = new AiAnswer(result.CallId, result.Outcome, result.Model, result.Text, result.Reasoning, result.Seconds,
+            result.FinishReason, Usage(result.Usage), result.Fallbacks,
+            result.Attempts.Select(a => new AiAttemptDto(a.Model, a.Outcome, a.Seconds, a.HttpStatus)).ToList(), result.Error);
+
+        return result.Outcome == AiCallOutcome.Ok ? Ok(answer) : StatusCode(StatusCodes.Status502BadGateway, answer);
+    }
+
+    // ---------- shaping -----------------------------------------------------
+
+    /// <summary>Checks a question's shape and turns it into the gateway's input, or answers 400.</summary>
+    private IActionResult? Validate(AiAskRequest? body, out AiAskInput? input)
+    {
+        input = null;
+        if (body?.Messages is not { Count: > 0 } messages) return BadRequest(new { error = "Ask something: messages is empty." });
+        if (messages.Count > MaxMessages) return BadRequest(new { error = $"At most {MaxMessages} messages; start a new conversation." });
+
+        foreach (var m in messages)
+        {
+            if (m.Role is not ("user" or "assistant")) return BadRequest(new { error = "Each message's role is user or assistant." });
+            if (string.IsNullOrWhiteSpace(m.Content)) return BadRequest(new { error = "A message is empty." });
+        }
+
+        if (messages[^1].Role != "user") return BadRequest(new { error = "The last message must be the question (role user)." });
+        if (messages.Sum(m => m.Content!.Length) > MaxPromptChars) return BadRequest(new { error = $"The conversation is over {MaxPromptChars:N0} characters; start a new one." });
+        if (body.System is { Length: > MaxSystemChars }) return BadRequest(new { error = $"The system prompt is over {MaxSystemChars:N0} characters." });
+
+        string agentKey = string.IsNullOrWhiteSpace(body.Agent) ? AiCatalog.DeskAssistant : body.Agent.Trim();
+        if (AiCatalog.Agents.All(a => a.Key != agentKey)) return BadRequest(new { error = $"No agent {agentKey}." });
+
+        string? tier = string.IsNullOrWhiteSpace(body.Tier) ? null : body.Tier.Trim().ToLowerInvariant();
+        if (tier is not null && AiCatalog.Tier(tier) is not { Chat: true }) return BadRequest(new { error = $"No chat tier {tier}: judge, analyst or extract." });
+
+        int maxTokens = body.MaxTokens ?? DefaultMaxTokens;
+        if (maxTokens is < 1 or > MaxMaxTokens) return BadRequest(new { error = $"maxTokens is 1 to {MaxMaxTokens:N0}." });
+
+        double temperature = body.Temperature ?? DefaultTemperature;
+        if (temperature is < 0 or > 1.5 || double.IsNaN(temperature)) return BadRequest(new { error = "temperature is 0 to 1.5." });
+
+        string conversation = body.ConversationId?.Trim() ?? string.Empty;
+        if (conversation.Length > 0 && !ConversationIdShape.IsMatch(conversation)) return BadRequest(new { error = "conversationId is up to 64 letters, digits, - or _." });
+
+        input = new AiAskInput(
+            agentKey,
+            tier,
+            messages.Select(m => new AiMessage(m.Role!, m.Content!)).ToList(),
+            string.IsNullOrWhiteSpace(body.System) ? null : body.System,
+            maxTokens,
+            temperature,
+            conversation,
+            "console",
+            Actor(),
+            User.GetUserId());
+        return null;
+    }
+
+    private IActionResult Refused(AiAskResult result, int status)
+    {
+        if (status == StatusCodes.Status429TooManyRequests && result.RetryAfterSeconds > 0)
+        {
+            Response.Headers.RetryAfter = result.RetryAfterSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        return StatusCode(status, new { error = result.Error, callId = result.CallId, retryAfterSeconds = result.RetryAfterSeconds });
+    }
+
+    private AiProviderDto Provider(AiSettings s) => new(
+        AiCatalog.ProviderKey,
+        AiCatalog.ProviderName,
+        (s.BaseUrl is { Length: > 0 } b ? b : AiCatalog.DefaultBaseUrl).TrimEnd('/'),
+        s.KeyConfigured,
+        AiCatalog.ProviderCatalogUrl,
+        AiCatalog.ProviderTerms);
+
+    private string ChatEndpoint() =>
+        $"{(_settings.CurrentValue.BaseUrl is { Length: > 0 } b ? b : AiCatalog.DefaultBaseUrl).TrimEnd('/')}/chat/completions";
+
+    private static AiTierDto ToTier(AiTierState t) => new(
+        t.Def.Key, t.Def.Label, t.Def.Purpose, t.Chain, t.Def.DefaultChain, t.Overridden, t.Def.Chat, Utc(t.UpdatedUtc), t.UpdatedBy);
+
+    private static AiAgentDto ToAgent(AiAgentState a, AiState state, IReadOnlyList<TodayRow> today, IReadOnlyDictionary<string, AiLastCallDto> last)
+    {
+        var mine = today.Where(r => r.AgentKey == a.Def.Key).ToList();
+        var tier = AiCatalog.Tier(a.Def.Tier);
+        return new AiAgentDto(
+            a.Def.Key,
+            a.Def.Number,
+            a.Def.Name,
+            a.Def.Job,
+            a.Def.UseCase,
+            a.Def.Schedule,
+            a.Def.Phase,
+            a.Status,
+            a.Def.Built,
+            a.Enabled,
+            a.Def.Tier,
+            tier?.Label ?? a.Def.Tier,
+            a.Chain,
+            a.ChainOverridden,
+            a.Def.Reads,
+            a.Def.Limits,
+            last.TryGetValue(a.Def.Key, out var l) ? l : null,
+            null,
+            new AiAgentToday(mine.Count, mine.Count(r => r.Outcome == AiCallOutcome.Ok), mine.Count(r => r.Outcome == AiCallOutcome.Failed),
+                mine.Sum(r => r.TotalTokens ?? 0)),
+            Utc(a.UpdatedUtc),
+            a.UpdatedBy,
+            a.Reason);
+    }
+
+    private static AiCallSummary ToSummary(CallRow r, DateTime now)
+    {
+        var attempts = ReadAttempts(r.AttemptsJson);
+        bool abandoned = r.Outcome == AiCallOutcome.Running && now - r.CreatedUtc > AbandonedAfter;
+        return new AiCallSummary(
+            r.Id,
+            Utc(r.CreatedUtc)!.Value,
+            Utc(r.CompletedUtc),
+            r.AgentKey,
+            AiCatalog.AgentName(r.AgentKey),
+            r.Tier,
+            r.Source,
+            r.RequestedBy,
+            r.Model.Length > 0 ? r.Model : null,
+            abandoned ? AiCallOutcome.Failed : r.Outcome,
+            attempts.Count,
+            Math.Max(0, attempts.Count - 1),
+            r.Seconds,
+            r.PromptTokens,
+            r.CompletionTokens,
+            r.TotalTokens,
+            r.Summary,
+            abandoned ? "Never finished: the API stopped while the call was running." : r.Error,
+            r.ConversationId);
+    }
+
+    private static string ModelNote(string id, AiState state)
+    {
+        var parts = new List<string>();
+        foreach (var tier in state.Tiers)
+        {
+            int at = -1;
+            for (int i = 0; i < tier.Chain.Count; i++)
+            {
+                if (tier.Chain[i] == id) { at = i; break; }
+            }
+
+            if (at == 0) parts.Add($"first model of the {tier.Def.Label} tier");
+            else if (at > 0) parts.Add($"fallback {at} of the {tier.Def.Label} tier");
+        }
+
+        foreach (var agent in state.Agents.Where(a => a.Def.Built && a.ChainOverridden && a.Chain.Contains(id)))
+        {
+            parts.Add($"in {agent.Def.Name}'s own chain");
+        }
+
+        if (parts.Count == 0) return string.Empty;
+        string text = string.Join("; ", parts);
+        return char.ToUpperInvariant(text[0]) + text[1..] + ".";
+    }
+
+    // ---------- reading the log ---------------------------------------------
+
+    private sealed record CallRow(
+        long Id, DateTime CreatedUtc, DateTime? CompletedUtc, string AgentKey, string Tier, string Source, string RequestedBy,
+        string Model, string Outcome, string AttemptsJson, double Seconds, int? PromptTokens, int? CompletionTokens,
+        int? TotalTokens, string Summary, string Error, string ConversationId);
+
+    private sealed record TodayRow(
+        long Id, string AgentKey, string Model, string Outcome, double Seconds, int? PromptTokens, int? CompletionTokens,
+        int? TotalTokens, string AttemptsJson, DateTime CreatedUtc);
+
+    private async Task<IReadOnlyList<TodayRow>> TodayRowsAsync(DateTime now, CancellationToken cancellationToken)
+    {
+        var since = IstTime.StartOfDayUtc(IstTime.DateOf(now));
+        return await _db.AiCalls.AsNoTracking()
+            .Where(x => x.CreatedUtc >= since)
+            .Select(x => new TodayRow(x.Id, x.AgentKey, x.Model, x.Outcome, x.Seconds, x.PromptTokens, x.CompletionTokens,
+                x.TotalTokens, x.AttemptsJson, x.CreatedUtc))
+            .ToListAsync(cancellationToken);
+    }
+
+    /// <summary>Each agent's newest call.</summary>
+    private async Task<IReadOnlyDictionary<string, AiLastCallDto>> LastCallsAsync(CancellationToken cancellationToken)
+    {
+        var ids = await _db.AiCalls.AsNoTracking()
+            .GroupBy(x => x.AgentKey)
+            .Select(g => g.Max(x => x.Id))
+            .ToListAsync(cancellationToken);
+
+        var now = Now();
+        var rows = await _db.AiCalls.AsNoTracking()
+            .Where(x => ids.Contains(x.Id))
+            .Select(x => new { x.Id, x.AgentKey, x.CreatedUtc, x.Outcome, x.Model })
+            .ToListAsync(cancellationToken);
+
+        return rows.ToDictionary(
+            x => x.AgentKey,
+            x => new AiLastCallDto(
+                x.Id,
+                Utc(x.CreatedUtc)!.Value,
+                x.Outcome == AiCallOutcome.Running && now - x.CreatedUtc > AbandonedAfter ? AiCallOutcome.Failed : x.Outcome,
+                x.Model.Length > 0 ? x.Model : null));
+    }
+
+    /// <summary>Each model's newest health test in the last week, by the model it tested.</summary>
+    private async Task<IReadOnlyDictionary<string, AiModelTestDto>> LastTestsAsync(CancellationToken cancellationToken)
+    {
+        var since = Now().AddDays(-7);
+        var rows = await _db.AiCalls.AsNoTracking()
+            .Where(x => x.AgentKey == AiCatalog.ModelTest && x.CreatedUtc >= since && x.Outcome != AiCallOutcome.Running)
+            .OrderByDescending(x => x.Id)
+            .Take(500)
+            .Select(x => new { x.Id, x.CreatedUtc, x.Outcome, x.Seconds, x.Error, x.AttemptsJson, x.ChainJson })
+            .ToListAsync(cancellationToken);
+
+        var tests = new Dictionary<string, AiModelTestDto>(StringComparer.Ordinal);
+        foreach (var row in rows)
+        {
+            string? model = ReadList<string>(row.ChainJson).FirstOrDefault();
+            if (model is null || tests.ContainsKey(model)) continue;
+            bool ok = row.Outcome == AiCallOutcome.Ok;
+            string? error = ok ? null : ReadAttempts(row.AttemptsJson).LastOrDefault()?.Outcome ?? row.Error;
+            tests[model] = new AiModelTestDto(Utc(row.CreatedUtc)!.Value, ok, row.Seconds, error, row.Id);
+        }
+
+        return tests;
+    }
+
+    private static AiToday TodayTotals(IReadOnlyList<TodayRow> rows, DateTime now)
+    {
+        var done = rows.Where(r => r.Outcome == AiCallOutcome.Ok).Select(r => r.Seconds).OrderBy(s => s).ToList();
+        return new AiToday(
+            rows.Count,
+            done.Count,
+            rows.Count(r => r.Outcome == AiCallOutcome.Failed || (r.Outcome == AiCallOutcome.Running && now - r.CreatedUtc > AbandonedAfter)),
+            rows.Count(r => r.Outcome == AiCallOutcome.Refused),
+            rows.Count(r => r.Outcome == AiCallOutcome.Cancelled),
+            rows.Count(r => r.Outcome == AiCallOutcome.Running && now - r.CreatedUtc <= AbandonedAfter),
+            rows.Sum(r => r.PromptTokens ?? 0),
+            rows.Sum(r => r.CompletionTokens ?? 0),
+            rows.Sum(r => r.TotalTokens ?? 0),
+            done.Count == 0 ? null : Math.Round(done.Average(), 2),
+            done.Count == 0 ? null : Percentile(done, 0.95),
+            rows.Sum(r => Math.Max(0, ReadAttempts(r.AttemptsJson).Count - 1)));
+    }
+
+    /// <summary>Per model, from every attempt today: so a model that keeps failing over shows its failures, not only its answers.</summary>
+    private static IReadOnlyDictionary<string, AiModelUsage> AttemptUsage(IReadOnlyList<TodayRow> rows)
+    {
+        var usage = new Dictionary<string, (int Calls, int Ok, int Failed, List<double> Seconds)>(StringComparer.Ordinal);
+        foreach (var row in rows)
+        {
+            foreach (var a in ReadAttempts(row.AttemptsJson))
+            {
+                if (!usage.TryGetValue(a.Model, out var u)) u = (0, 0, 0, []);
+                u.Calls++;
+                if (a.Outcome == "ok")
+                {
+                    u.Ok++;
+                    u.Seconds.Add(a.Seconds);
+                }
+                else if (a.Outcome != "cancelled")
+                {
+                    u.Failed++;
+                }
+
+                usage[a.Model] = u;
+            }
+        }
+
+        return usage.ToDictionary(
+            kv => kv.Key,
+            kv => new AiModelUsage(kv.Value.Calls, kv.Value.Ok, kv.Value.Failed,
+                kv.Value.Seconds.Count == 0 ? null : Math.Round(kv.Value.Seconds.Average(), 2)));
+    }
+
+    private static IReadOnlyList<AiModelToday> ByModel(IReadOnlyList<TodayRow> rows)
+    {
+        var usage = AttemptUsage(rows);
+        return usage
+            .Select(kv => new AiModelToday(kv.Key, kv.Value.Calls, kv.Value.Ok, kv.Value.Failed,
+                rows.Where(r => r.Model == kv.Key).Sum(r => r.TotalTokens ?? 0), kv.Value.AvgSeconds))
+            .OrderByDescending(m => m.Calls)
+            .ThenBy(m => m.Model, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private static double Percentile(List<double> sorted, double p)
+    {
+        int index = (int)Math.Ceiling(p * sorted.Count) - 1;
+        return Math.Round(sorted[Math.Clamp(index, 0, sorted.Count - 1)], 2);
+    }
+
+    private static IReadOnlyList<AiAttemptDto> ReadAttempts(string json)
+    {
+        try
+        {
+            var root = JsonDocument.Parse(json).RootElement;
+            if (root.ValueKind != JsonValueKind.Array) return [];
+            var list = new List<AiAttemptDto>();
+            foreach (var a in root.EnumerateArray())
+            {
+                if (a.ValueKind != JsonValueKind.Object) continue;
+                list.Add(new AiAttemptDto(
+                    a.TryGetProperty("model", out var m) && m.ValueKind == JsonValueKind.String ? m.GetString()! : string.Empty,
+                    a.TryGetProperty("outcome", out var o) && o.ValueKind == JsonValueKind.String ? o.GetString()! : string.Empty,
+                    a.TryGetProperty("seconds", out var s) && s.ValueKind == JsonValueKind.Number ? s.GetDouble() : 0,
+                    a.TryGetProperty("httpStatus", out var h) && h.ValueKind == JsonValueKind.Number ? h.GetInt32() : null));
+            }
+
+            return list;
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    private static IReadOnlyList<AiMessageDto> ReadMessages(string json)
+    {
+        try
+        {
+            var root = JsonDocument.Parse(json).RootElement;
+            if (root.ValueKind != JsonValueKind.Array) return [];
+            return root.EnumerateArray()
+                .Where(m => m.ValueKind == JsonValueKind.Object)
+                .Select(m => new AiMessageDto(
+                    m.TryGetProperty("role", out var r) ? r.GetString() ?? string.Empty : string.Empty,
+                    m.TryGetProperty("content", out var c) ? c.GetString() ?? string.Empty : string.Empty))
+                .ToList();
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            return [];
+        }
+    }
+
+    private static IReadOnlyList<T> ReadList<T>(string json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<List<T>>(json) ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    private static AiUsageDto? Usage(AiUsage? u) => u is null ? null : new AiUsageDto(u.PromptTokens, u.CompletionTokens, u.TotalTokens);
+
+    private DateTime Now() => _time.GetUtcNow().UtcDateTime;
+
+    /// <summary>The signed-in user's name, cut to the column's 100 characters.</summary>
+    private string Actor()
+    {
+        string by = User.GetUserName() ?? User.Identity?.Name ?? "admin";
+        return by.Length > 100 ? by[..100] : by;
+    }
+
+    private static string? Reason(string? reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason)) return null;
+        string r = reason.Trim();
+        return r.Length > 300 ? r[..300] : r;
+    }
+
+    private static DateTime? Utc(DateTime? value) =>
+        value is null ? null : DateTime.SpecifyKind(value.Value, DateTimeKind.Utc);
+}
+
+// ---------- wire shapes (camelCase on the wire; docs/ai_module.md) ----------
+
+public sealed record AiProviderDto(string Key, string Name, string BaseUrl, bool KeyConfigured, string CatalogUrl, string Terms);
+
+public sealed record AiLimits(int PerUserPer10Min, int GlobalPerMinute, int MaxConcurrent, int UsedLastMinute, int InFlight, string ProviderNote);
+
+public sealed record AiTierDto(
+    string Key, string Label, string Purpose, IReadOnlyList<string> Chain, IReadOnlyList<string> DefaultChain,
+    bool Overridden, bool Chat, DateTime? UpdatedUtc, string? UpdatedBy);
+
+public sealed record AiToday(
+    int Calls, int Ok, int Failed, int Refused, int Cancelled, int Running,
+    int PromptTokens, int CompletionTokens, int TotalTokens, double? AvgSeconds, double? P95Seconds, int Fallbacks);
+
+public sealed record AiModelToday(string Model, int Calls, int Ok, int Failed, int TotalTokens, double? AvgSeconds);
+
+public sealed record AiLastOk(DateTime? Utc, string Model, long CallId);
+
+public sealed record AiLastError(DateTime? Utc, string Error, long CallId);
+
+public sealed record AiAgentCounts(int Total, int Built, int On, int Off, int Planned);
+
+public sealed record AiOverview(
+    AiProviderDto Provider, AiLimits Limits, IReadOnlyList<AiTierDto> Tiers, AiToday Today, IReadOnlyList<AiModelToday> ByModel,
+    AiLastOk? LastOk, AiLastError? LastError, AiAgentCounts Agents);
+
+public sealed record AiLastCallDto(long Id, DateTime Utc, string Outcome, string? Model);
+
+public sealed record AiAgentToday(int Calls, int Ok, int Failed, int TotalTokens);
+
+public sealed record AiAgentDto(
+    string Key, int Number, string Name, string Job, string UseCase, string Schedule, string Phase, string Status,
+    bool Built, bool Enabled, string Tier, string TierLabel, IReadOnlyList<string> Chain, bool ChainOverridden,
+    string Reads, string Limits, AiLastCallDto? LastCall, DateTime? NextRunUtc, AiAgentToday Today,
+    DateTime? UpdatedUtc, string? UpdatedBy, string? Reason);
+
+public sealed record AiRuleBasedDto(string Name, string What, string Where, string Model);
+
+public sealed record AiAgentList(IReadOnlyList<AiAgentDto> Agents, IReadOnlyList<AiRuleBasedDto> RuleBased);
+
+public sealed record AiAgentUpdate(bool? Enabled, List<string>? Chain, bool ResetChain, string? Reason);
+
+public sealed record AiTierUpdate(List<string>? Chain, string? Reason);
+
+public sealed record AiModelTestDto(DateTime Utc, bool Ok, double Seconds, string? Error, long CallId);
+
+public sealed record AiModelUsage(int Calls, int Ok, int Failed, double? AvgSeconds);
+
+public sealed record AiModelDto(
+    string Id, string OwnedBy, bool InUse, IReadOnlyList<string> Tiers, IReadOnlyList<string> Agents, string Note,
+    AiModelTestDto? LastTest, AiModelUsage Today, bool Embedding, bool Listed);
+
+public sealed record AiLocalModelDto(string Id, string Kind, string Where, string UsedBy);
+
+public sealed record AiModelsDto(DateTime? FetchedUtc, string Source, string? Error, IReadOnlyList<AiModelDto> Models, IReadOnlyList<AiLocalModelDto> Local);
+
+public sealed record AiModelTestRequest(string? Model);
+
+public sealed record AiModelTestResult(bool Ok, string Model, double Seconds, string Answer, string? Error, long CallId);
+
+public sealed record AiCallSummary(
+    long Id, DateTime Utc, DateTime? CompletedUtc, string AgentKey, string AgentName, string Tier, string Source,
+    string RequestedBy, string? Model, string Outcome, int AttemptCount, int Fallbacks, double Seconds,
+    int? PromptTokens, int? CompletionTokens, int? TotalTokens, string Summary, string Error, string ConversationId);
+
+public sealed record AiCallPage(IReadOnlyList<AiCallSummary> Calls, long? NextBeforeId);
+
+public sealed record AiMessageDto(string Role, string Content);
+
+public sealed record AiAttemptDto(string Model, string Outcome, double Seconds, int? HttpStatus);
+
+public sealed record AiRequestDto(string Endpoint, int MaxTokens, double Temperature, bool Stream);
+
+/// <summary>A call in full: the summary's fields, then what was sent and what came back.</summary>
+public sealed record AiCallDetail(
+    long Id, DateTime Utc, DateTime? CompletedUtc, string AgentKey, string AgentName, string Tier, string Source,
+    string RequestedBy, string? Model, string Outcome, int AttemptCount, int Fallbacks, double Seconds,
+    int? PromptTokens, int? CompletionTokens, int? TotalTokens, string Summary, string Error, string ConversationId,
+    string System, IReadOnlyList<AiMessageDto> Messages, string Answer, string Reasoning,
+    string FinishReason, IReadOnlyList<string> Chain, IReadOnlyList<AiAttemptDto> Attempts, AiRequestDto Request);
+
+public sealed record AiAskMessage(string? Role, string? Content);
+
+public sealed record AiAskRequest(
+    List<AiAskMessage>? Messages, string? Tier, string? System, int? MaxTokens, double? Temperature, string? ConversationId, string? Agent);
+
+public sealed record AiUsageDto(int? PromptTokens, int? CompletionTokens, int? TotalTokens);
+
+public sealed record AiAnswer(
+    long CallId, string Outcome, string Model, string Text, string Reasoning, double Seconds, string FinishReason,
+    AiUsageDto? Usage, int Fallbacks, IReadOnlyList<AiAttemptDto> Attempts, string Error);

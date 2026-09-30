@@ -54,4 +54,19 @@ PY
 check "the system chat is carried to the API"  "-100111 -100222" "$(telegram TELEGRAM_CHAT_ID=-100111 TELEGRAM_SYSTEM_CHAT_ID=-100222)"
 check "and is empty when .env has none"        "-100111 -"       "$(telegram TELEGRAM_CHAT_ID=-100111)"
 
+echo "Ai section"
+ai() {  # key=value ... -> the Ai section's key and base URL
+  python3 - "$@" <<'PY'
+import json, sys
+sys.path.insert(0, "scripts")
+from _gen_local_settings import build_api_settings
+env = dict(arg.split("=", 1) for arg in sys.argv[1:])
+a = build_api_settings(env)["Ai"]
+print(a["ApiKey"] or "-", a["BaseUrl"])
+PY
+}
+check "the NVIDIA key reaches the API"            "nvapi-x https://integrate.api.nvidia.com/v1" "$(ai NVIDIA_API_KEY=nvapi-x)"
+check "no key is written empty, with the default endpoint" "- https://integrate.api.nvidia.com/v1" "$(ai)"
+check "the endpoint can be moved"                 "- http://localhost:8000/v1"                  "$(ai NVIDIA_API_BASE_URL=http://localhost:8000/v1)"
+
 [ "$FAILS" -eq 0 ] && echo "all passed" || { echo "$FAILS failed"; exit 1; }
