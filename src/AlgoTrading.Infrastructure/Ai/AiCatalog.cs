@@ -18,6 +18,11 @@ public sealed record AiTierDef(string Key, string Label, string Purpose, IReadOn
 /// <param name="Limits">What it may never do.</param>
 /// <param name="SystemPrompt">Sent first on every call, when the asker gives none.</param>
 /// <param name="Tools">The read-only desk tools it may ask for (<see cref="AiToolNames"/>); none when null.</param>
+/// <param name="StartsOn">
+/// Whether a built agent is on before the owner has touched its switch. The
+/// scheduled agents start off: they call the provider by themselves, so the
+/// owner turns each one on from the AI page when they want it.
+/// </param>
 public sealed record AiAgentDef(
     string Key,
     int Number,
@@ -31,7 +36,8 @@ public sealed record AiAgentDef(
     string Reads,
     string Limits,
     string SystemPrompt = "",
-    IReadOnlyList<string>? Tools = null);
+    IReadOnlyList<string>? Tools = null,
+    bool StartsOn = true);
 
 /// <summary>The desk tools' names, as models call them.</summary>
 public static class AiToolNames
@@ -102,12 +108,16 @@ public static class AiCatalog
 
     public static readonly IReadOnlyList<AiTierDef> Tiers =
     [
+        // Nemotron 3 Super is every tier's first fallback (owner, 30 Sep): on the
+        // free tier NVIDIA's own models answered in about a second all evening
+        // while Kimi K3, GLM-5.3 and DeepSeek V4.1 Flash often sent nothing,
+        // not even headers, for 100 s (docs/modules/ai.md, latency).
         new("judge", "Judge", "The hardest reasoning, few calls a day.",
-            ["nvidia/nemotron-3-ultra-550b-a55b", "moonshotai/kimi-k3", "z-ai/glm-5.3"]),
+            ["nvidia/nemotron-3-ultra-550b-a55b", "nvidia/nemotron-3-super-120b-a12b", "moonshotai/kimi-k3"]),
         new("analyst", "Analyst", "Reading data the code computed and writing a view.",
-            ["moonshotai/kimi-k3", "z-ai/glm-5.3", "nvidia/nemotron-3-super-120b-a12b"]),
+            ["moonshotai/kimi-k3", "nvidia/nemotron-3-super-120b-a12b", "z-ai/glm-5.3"]),
         new("extract", "Extract", "High volume: classifying, pulling numbers out of text, strict JSON.",
-            ["deepseek-ai/deepseek-v4.1-flash", "nvidia/nemotron-3.5-lightning-30b-a3b", "z-ai/glm-5.3-flash"]),
+            ["deepseek-ai/deepseek-v4.1-flash", "nvidia/nemotron-3-super-120b-a12b", "nvidia/nemotron-3.5-lightning-30b-a3b"]),
         new("embed", "Embed", "Search across docs, news and research (vectors, not answers).",
             ["nvidia/nemotron-3-embed-1b"], Chat: false),
     ];
@@ -181,18 +191,18 @@ public static class AiCatalog
             "Which rules the run kept and which it did not, fills at stale prices, the market around it, one thing worth testing; a Telegram digest when a batch is done.",
             "After 15:45 IST, each run 10 minutes after it stops (MCX runs after 23:30)", "3", Built: true, "judge",
             "The run's legs, orders, fills and signals; its strategy spec; quotes and the option chain.",
-            NoOrders, ReviewerPrompt, [AiToolNames.Run, AiToolNames.StrategySpec, AiToolNames.Quotes, AiToolNames.OptionChain]),
+            NoOrders, ReviewerPrompt, [AiToolNames.Run, AiToolNames.StrategySpec, AiToolNames.Quotes, AiToolNames.OptionChain], StartsOn: false),
         new(NewsAnalyst, 3, "News Analyst",
             "Turns headlines and exchange filings into structured events.",
             "One record per headline or filing: event type, direction, symbols, and each number with the exact words it came from; a number whose quote is not in the text makes the record invalid.",
             "Every 10 minutes, the last 24 hours' unread items", "3", Built: true, "extract",
-            "The recorded news and filings; nothing else.", NoOrders, NewsPrompt),
+            "The recorded news and filings; nothing else.", NoOrders, NewsPrompt, StartsOn: false),
         new(IncidentExplainer, 4, "Incident Explainer",
             "Explains a Sentinel incident: what happened, why, what to do.",
             "A few lines per medium, high or critical incident, from the evidence Sentinel gathered and the desk's state.",
             "When Sentinel raises a medium or worse incident", "3", Built: true, "analyst",
             "The incident and its evidence; other incidents, the latest checkup, runs, positions and quotes.",
-            NoOrders, IncidentPrompt, [AiToolNames.Incidents, AiToolNames.Checkup, AiToolNames.Runs, AiToolNames.OpenPositions, AiToolNames.Quotes]),
+            NoOrders, IncidentPrompt, [AiToolNames.Incidents, AiToolNames.Checkup, AiToolNames.Runs, AiToolNames.OpenPositions, AiToolNames.Quotes], StartsOn: false),
         new("technical-analyst", 5, "Technical Analyst",
             "Grades setups on levels and trends the code computes.",
             "A grade and a reason for each setup before the open and for open positions.",

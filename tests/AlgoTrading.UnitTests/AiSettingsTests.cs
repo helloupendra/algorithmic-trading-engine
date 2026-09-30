@@ -17,7 +17,7 @@ public class AiSettingsTests
     private static readonly IReadOnlySet<string> Known = new HashSet<string>(AiCatalog.DefaultModels) { "meta/llama-4-maverick" };
 
     [Fact]
-    public async Task With_nothing_stored_the_tiers_are_the_defaults_and_only_the_built_agent_is_on()
+    public async Task With_nothing_stored_the_tiers_are_the_defaults_the_assistant_is_on_and_the_scheduled_agents_off()
     {
         var ai = Build();
 
@@ -26,9 +26,12 @@ public class AiSettingsTests
         Assert.All(state.Tiers, t => Assert.Equal(t.Def.DefaultChain, t.Chain));
         Assert.All(state.Tiers, t => Assert.False(t.Overridden));
         Assert.Equal(14, state.Agents.Count);
-        string[] built = [AiCatalog.DeskAssistant, AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer];
-        Assert.All(built, key => Assert.Equal("on", state.Agent(key)!.Status));
-        Assert.All(state.Agents.Where(a => !built.Contains(a.Def.Key)), a => Assert.Equal("planned", a.Status));
+        Assert.Equal("on", state.Agent(AiCatalog.DeskAssistant)!.Status);
+        // The scheduled agents call the provider by themselves: off until the owner turns them on.
+        string[] scheduled = [AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer];
+        Assert.All(scheduled, key => Assert.Equal("off", state.Agent(key)!.Status));
+        Assert.All(state.Agents.Where(a => a.Def.Key != AiCatalog.DeskAssistant && !scheduled.Contains(a.Def.Key)),
+            a => Assert.Equal("planned", a.Status));
         Assert.Equal(new[] { Judge1, Judge2, Judge3 }, state.Agent(AiCatalog.DeskAssistant)!.Chain);
     }
 
@@ -76,6 +79,16 @@ public class AiSettingsTests
         await ai.Db.SaveChangesAsync();
 
         Assert.Equal("planned", (await ai.Store.LoadAsync()).Agent("technical-analyst")!.Status);
+    }
+
+    [Fact]
+    public async Task A_scheduled_agent_switched_on_stays_on()
+    {
+        var ai = Build();
+
+        await ai.Store.SetAgentEnabledAsync(AiCatalog.TradeReviewer, true, "upendra", "two weeks of reviews");
+
+        Assert.Equal("on", (await ai.Store.LoadAsync()).Agent(AiCatalog.TradeReviewer)!.Status);
     }
 
     [Theory]

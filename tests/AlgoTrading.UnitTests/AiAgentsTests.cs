@@ -30,7 +30,7 @@ public class AiAgentsTests
     [InlineData(15, 46, true)]
     public async Task An_NSE_run_is_reviewed_after_15_45(int hour, int minute, bool due)
     {
-        var ai = Build();
+        var ai = BuildOn();
         long runId = SeedRun(ai, stoppedAt: Ist(15, 31));
 
         long? next = await Reviewer(ai).NextDueAsync(Ist(hour, minute), CancellationToken.None);
@@ -41,7 +41,7 @@ public class AiAgentsTests
     [Fact]
     public async Task A_run_is_reviewed_only_once_it_has_been_stopped_ten_minutes()
     {
-        var ai = Build();
+        var ai = BuildOn();
         long runId = SeedRun(ai, stoppedAt: Ist(23, 31), started: Ist(9, 0));
         var reviewer = Reviewer(ai);
 
@@ -52,7 +52,7 @@ public class AiAgentsTests
     [Fact]
     public async Task Manual_books_alert_runs_and_running_runs_are_not_reviewed()
     {
-        var ai = Build();
+        var ai = BuildOn();
         SeedRun(ai, stoppedAt: Ist(15, 31), strategy: "Manual");
         SeedRun(ai, stoppedAt: Ist(15, 31), parameters: """{"role":"alerts"}""");
         SeedRun(ai, stoppedAt: null, status: "Running");
@@ -63,7 +63,7 @@ public class AiAgentsTests
     [Fact]
     public async Task A_failed_review_is_tried_again_later_and_given_up_after_three_tries()
     {
-        var ai = Build();
+        var ai = BuildOn();
         long runId = SeedRun(ai, stoppedAt: Ist(15, 31));
         ai.Db.AiReports.Add(new AiReport
         {
@@ -86,7 +86,7 @@ public class AiAgentsTests
     [Fact]
     public async Task A_review_hands_the_model_the_run_and_its_spec_and_keeps_its_verdict()
     {
-        var ai = Build(tools: [new FakeTool(AiToolNames.Run, _ => new { run = new { runId = 1, strategy = "Ghost" }, pnl = new { net = -3672.5 } }),
+        var ai = BuildOn(tools: [new FakeTool(AiToolNames.Run, _ => new { run = new { runId = 1, strategy = "Ghost" }, pnl = new { net = -3672.5 } }),
             new FakeTool(AiToolNames.StrategySpec, _ => new { name = "Ghost", spec = "Sell the straddle at 09:20; stop at -3,500." })]);
         long runId = SeedRun(ai, stoppedAt: Ist(15, 31));
         ai.Provider.On(Judge1, Answer("""
@@ -115,7 +115,7 @@ public class AiAgentsTests
     [Fact]
     public async Task A_review_not_in_the_asked_shape_is_kept_as_invalid_with_its_text()
     {
-        var ai = Build();
+        var ai = BuildOn();
         long runId = SeedRun(ai, stoppedAt: Ist(15, 31));
         ai.Provider.On(Judge1, Answer("The run lost money because the market went up."));
 
@@ -128,7 +128,7 @@ public class AiAgentsTests
     [Fact]
     public async Task When_the_reviews_are_done_one_digest_goes_to_Telegram_and_not_twice()
     {
-        var ai = Build();
+        var ai = BuildOn();
         long runId = SeedRun(ai, stoppedAt: Ist(15, 31));
         ai.Provider.On(Judge1, Answer("""{"verdict":"deviated","title":"Entered at 09:47, not 09:20","journal":"Late entry."}"""));
         var notifier = new Notifier();
@@ -149,7 +149,7 @@ public class AiAgentsTests
     [Fact]
     public async Task The_news_batch_takes_recent_unread_items_filings_first_and_never_the_backfill()
     {
-        var ai = Build();
+        var ai = BuildOn();
         var now = DateTime.UtcNow;
         ai.Db.NewsItems.AddRange(
             News(1, "RBI holds the repo rate at 6.5%", now.AddHours(-2)),
@@ -169,7 +169,7 @@ public class AiAgentsTests
     [Fact]
     public async Task Each_extracted_record_is_checked_against_its_source_and_stored()
     {
-        var ai = Build();
+        var ai = BuildOn();
         var now = DateTime.UtcNow;
         ai.Db.NewsItems.AddRange(
             News(1, "Infosys Q2 net profit rises 8% to Rs 6,506 crore", now.AddHours(-1)),
@@ -219,7 +219,7 @@ public class AiAgentsTests
     [Fact]
     public async Task The_news_analyst_waits_its_interval_between_batches()
     {
-        var ai = Build();
+        var ai = BuildOn();
         ai.Db.NewsItems.Add(News(1, "Headline", DateTime.UtcNow.AddHours(-1)));
         await ai.Db.SaveChangesAsync();
         ai.Provider.On(Extract1, Answer("""{"items":[]}"""));
@@ -237,7 +237,7 @@ public class AiAgentsTests
     [Fact]
     public async Task Only_live_incidents_of_medium_or_worse_from_the_last_day_are_explained()
     {
-        var ai = Build();
+        var ai = BuildOn();
         var now = DateTime.UtcNow;
         ai.Db.Incidents.AddRange(
             Incident(1, IncidentSeverity.Low, IncidentStatus.Open, now.AddHours(-1)),
@@ -252,7 +252,7 @@ public class AiAgentsTests
     [Fact]
     public async Task An_explanation_reads_the_masked_evidence_and_is_stored_in_three_parts()
     {
-        var ai = Build();
+        var ai = BuildOn();
         ai.Db.Incidents.Add(Incident(9, IncidentSeverity.High, IncidentStatus.Open, DateTime.UtcNow.AddMinutes(-5),
             evidence: """["feed silent 120s","db password=hunter2"]"""));
         await ai.Db.SaveChangesAsync();
@@ -270,7 +270,7 @@ public class AiAgentsTests
     [Fact]
     public async Task Reports_list_by_subject_and_the_news_validity_is_counted_per_agent()
     {
-        var ai = Build();
+        var ai = BuildOn();
         var day = IstTime.DateOf(DateTime.UtcNow);
         ai.Db.AiReports.AddRange(
             Report(AiCatalog.TradeReviewer, AiReportSubject.Run, "412", AiReportStatus.Ok, day),
@@ -307,7 +307,7 @@ public class AiAgentsTests
     [Fact]
     public async Task The_scheduler_runs_each_switched_on_agent_and_survives_one_that_throws()
     {
-        var ai = Build();
+        var ai = BuildOn();
         await ai.Store.SetAgentEnabledAsync(AiCatalog.IncidentExplainer, false, "upendra", null);
         var throws = new StubAgent(AiCatalog.TradeReviewer, fail: true);
         var off = new StubAgent(AiCatalog.IncidentExplainer);
@@ -335,6 +335,18 @@ public class AiAgentsTests
     }
 
     // ---------- helpers ----------
+
+    /// <summary>The kit with the three scheduled agents switched on, as the owner would.</summary>
+    private static Services BuildOn(AiSettings? settings = null, params IAiTool[] tools)
+    {
+        var ai = Build(settings, null, tools);
+        foreach (var key in new[] { AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer })
+        {
+            ai.Store.SetAgentEnabledAsync(key, true, "upendra", null).GetAwaiter().GetResult();
+        }
+
+        return ai;
+    }
 
     private const string AnalystFirst = "moonshotai/kimi-k3";
 

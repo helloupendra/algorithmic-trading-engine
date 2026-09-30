@@ -13,6 +13,10 @@ wins; a timeout, a refusal to serve (429, 5xx) or an empty answer moves on to
 the next. The free tier has no published rate limits and a model can go quiet
 for minutes (30 Sep: deepseek-v4.1-flash gave nothing in 90 s while glm-5.3-flash
 answered), so a single-model client would fail exactly when it is busiest.
+Nemotron 3 Super is every tier's first fallback: that evening NVIDIA's own
+models answered in about a second while Kimi K3, GLM-5.3 and DeepSeek V4.1
+Flash often sent not even headers for 100 s. The API's AiCatalog keeps the
+same chains (AiSettingsTests checks they match).
 
     judge    the hardest reasoning, low volume: validator, risk memo, researcher
     analyst  reading computed data and writing a view
@@ -42,9 +46,9 @@ DEFAULT_BASE_URL = "https://integrate.api.nvidia.com/v1"
 # question it priced a 2-lot option plan's risk at 3,900 against a 1,000 limit
 # and rejected it, in 14 s.
 DEFAULT_CHAINS: dict[str, tuple[str, ...]] = {
-    "judge": ("nvidia/nemotron-3-ultra-550b-a55b", "moonshotai/kimi-k3", "z-ai/glm-5.3"),
-    "analyst": ("moonshotai/kimi-k3", "z-ai/glm-5.3", "nvidia/nemotron-3-super-120b-a12b"),
-    "extract": ("deepseek-ai/deepseek-v4.1-flash", "nvidia/nemotron-3.5-lightning-30b-a3b", "z-ai/glm-5.3-flash"),
+    "judge": ("nvidia/nemotron-3-ultra-550b-a55b", "nvidia/nemotron-3-super-120b-a12b", "moonshotai/kimi-k3"),
+    "analyst": ("moonshotai/kimi-k3", "nvidia/nemotron-3-super-120b-a12b", "z-ai/glm-5.3"),
+    "extract": ("deepseek-ai/deepseek-v4.1-flash", "nvidia/nemotron-3-super-120b-a12b", "nvidia/nemotron-3.5-lightning-30b-a3b"),
 }
 
 # Statuses that say "not now" rather than "your request is wrong": worth the next model.
