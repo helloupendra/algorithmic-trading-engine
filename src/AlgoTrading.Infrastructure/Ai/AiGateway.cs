@@ -131,7 +131,9 @@ public sealed record AiAskResult(
 /// half another's. A model refused at once for capacity is asked once more
 /// after a short pause before the chain moves on. A model whose failure cost
 /// a long wait (a timeout, a queue) is not asked again within the same
-/// question; one that failed quickly is, in a later round.
+/// question; one that failed quickly is, in a later round. Across questions,
+/// a model that keeps failing or queueing cools and is asked after the
+/// chain's healthy models (<see cref="AiModelHealth"/>).
 /// </para>
 /// <para>
 /// An agent with tools answers in rounds. In each round the model either
@@ -167,6 +169,7 @@ public sealed class AiGateway
     private readonly NvidiaChatClient _client;
     private readonly AiRateLimiter _limiter;
     private readonly AiToolbox _toolbox;
+    private readonly AiModelHealth _health;
     private readonly IOptionsMonitor<AiSettings> _settings;
     private readonly ILogger<AiGateway> _logger;
     private readonly TimeProvider _time;
@@ -177,6 +180,7 @@ public sealed class AiGateway
         NvidiaChatClient client,
         AiRateLimiter limiter,
         AiToolbox toolbox,
+        AiModelHealth health,
         IOptionsMonitor<AiSettings> settings,
         ILogger<AiGateway> logger,
         TimeProvider? time = null)
@@ -186,6 +190,7 @@ public sealed class AiGateway
         _client = client;
         _limiter = limiter;
         _toolbox = toolbox;
+        _health = health;
         _settings = settings;
         _logger = logger;
         _time = time ?? TimeProvider.System;
@@ -302,7 +307,9 @@ public sealed class AiGateway
                 var request = new AiChatRequest(conversation, systemPrompt, input.MaxTokens, input.Temperature,
                     specs.Count > 0 ? specs : null, ToolsClosed: specs.Count > 0 && !open);
 
-                var live = chain.Where(m => !failed.Contains(m)).ToList();
+                // A model queueing on the provider waits at the back of the chain for a while (AiModelHealth).
+                var remaining = chain.Where(m => !failed.Contains(m));
+                var live = input.Chain is null ? _health.Order(remaining, _time.GetUtcNow().UtcDateTime) : remaining.ToList();
                 AiAttemptEnd? end = null;
                 string model = string.Empty;
 
@@ -342,6 +349,7 @@ public sealed class AiGateway
                             }
 
                             attempts.Add(new AiAttempt(candidate, "ok", Round(clock.Elapsed.TotalSeconds), 200, round));
+                            _health.Record(candidate, true, clock.Elapsed.TotalSeconds, false, "ok", _time.GetUtcNow().UtcDateTime);
                             end = got;
                             model = candidate;
                             break;
@@ -351,6 +359,7 @@ public sealed class AiGateway
                             string outcome = Redact(ex.Outcome);
                             double took = clock.Elapsed.TotalSeconds;
                             attempts.Add(new AiAttempt(candidate, outcome, Round(took), ex.HttpStatus, round));
+                            _health.Record(candidate, false, took, took >= s.SlowFailureSeconds, outcome, _time.GetUtcNow().UtcDateTime);
                             // Information, not a warning: a model handing over is the chain working, and the
                             // attempt is on the call's row. As a warning, Sentinel's log agent opened an
                             // incident per fallback (30 Sep, #197-#201).

@@ -58,6 +58,7 @@ public class AiController : ControllerBase
     private readonly AiModelCatalog _catalog;
     private readonly AiRateLimiter _limiter;
     private readonly AiToolbox _toolbox;
+    private readonly AiModelHealth _health;
     private readonly IOptionsMonitor<AiSettings> _settings;
     private readonly IServiceScopeFactory? _scopes;
     private readonly ILogger<AiController>? _logger;
@@ -70,6 +71,7 @@ public class AiController : ControllerBase
         AiModelCatalog catalog,
         AiRateLimiter limiter,
         AiToolbox toolbox,
+        AiModelHealth health,
         IOptionsMonitor<AiSettings> settings,
         IServiceScopeFactory? scopes = null,
         ILogger<AiController>? logger = null,
@@ -81,6 +83,7 @@ public class AiController : ControllerBase
         _catalog = catalog;
         _limiter = limiter;
         _toolbox = toolbox;
+        _health = health;
         _settings = settings;
         _scopes = scopes;
         _logger = logger;
@@ -122,8 +125,23 @@ public class AiController : ControllerBase
                 state.Agents.Count(a => a.Def.Built),
                 state.Agents.Count(a => a.Status == "on"),
                 state.Agents.Count(a => a.Status == "off"),
-                state.Agents.Count(a => a.Status == "planned"))));
+                state.Agents.Count(a => a.Status == "planned")))
+        {
+            Health = state.Tiers.Where(t => t.Def.Chat).SelectMany(t => t.Chain).Distinct().Select(m => ToHealth(_health.State(m, now))).ToList(),
+        });
     }
+
+    /// <summary>What the desk has learnt about each model it has asked lately: answering, failed, or cooling at the back of its chains.</summary>
+    [HttpGet("health")]
+    public IActionResult Health()
+    {
+        var now = Now();
+        return Ok(_health.Snapshot(now).Select(ToHealth).ToList());
+    }
+
+    private static AiModelHealthDto ToHealth(AiModelHealthState h) => new(
+        h.Model, h.State, Utc(h.CoolingUntilUtc), h.ConsecutiveFailures, h.LastFailure, Utc(h.LastFailureUtc), h.LastOkSeconds,
+        Utc(h.LastOkUtc), Utc(h.LastProbeUtc));
 
     // ---------- agents ------------------------------------------------------
 
@@ -229,7 +247,10 @@ public class AiController : ControllerBase
             tests.TryGetValue(id, out var test) ? test : null,
             usage.TryGetValue(id, out var used) ? used : new AiModelUsage(0, 0, 0, null),
             AiCatalog.IsEmbeddingModel(id),
-            list.Models.Count == 0 || owners.ContainsKey(id))).ToList();
+            list.Models.Count == 0 || owners.ContainsKey(id))
+        {
+            Health = inUse.Contains(id) ? ToHealth(_health.State(id, Now())) : null,
+        }).ToList();
 
         return Ok(new AiModelsDto(
             Utc(list.FetchedUtc),
@@ -988,7 +1009,16 @@ public sealed record AiAgentCounts(int Total, int Built, int On, int Off, int Pl
 
 public sealed record AiOverview(
     AiProviderDto Provider, AiLimits Limits, IReadOnlyList<AiTierDto> Tiers, AiToday Today, IReadOnlyList<AiModelToday> ByModel,
-    AiLastOk? LastOk, AiLastError? LastError, AiAgentCounts Agents);
+    AiLastOk? LastOk, AiLastError? LastError, AiAgentCounts Agents)
+{
+    /// <summary>The health of every model a chat tier names.</summary>
+    public IReadOnlyList<AiModelHealthDto> Health { get; init; } = [];
+}
+
+/// <summary>A model's health: <c>healthy</c>, <c>failed</c> (last attempt), <c>cooling</c> (asked after the healthy ones until <c>coolingUntilUtc</c>), <c>unknown</c>.</summary>
+public sealed record AiModelHealthDto(
+    string Model, string State, DateTime? CoolingUntilUtc, int ConsecutiveFailures, string? LastFailure, DateTime? LastFailureUtc,
+    double? LastOkSeconds, DateTime? LastOkUtc, DateTime? LastProbeUtc);
 
 public sealed record AiLastCallDto(long Id, DateTime Utc, string Outcome, string? Model);
 
@@ -1017,7 +1047,11 @@ public sealed record AiModelUsage(int Calls, int Ok, int Failed, double? AvgSeco
 
 public sealed record AiModelDto(
     string Id, string OwnedBy, bool InUse, IReadOnlyList<string> Tiers, IReadOnlyList<string> Agents, string Note,
-    AiModelTestDto? LastTest, AiModelUsage Today, bool Embedding, bool Listed);
+    AiModelTestDto? LastTest, AiModelUsage Today, bool Embedding, bool Listed)
+{
+    /// <summary>Its health, for a model in use; null for the rest of the catalog.</summary>
+    public AiModelHealthDto? Health { get; init; }
+}
 
 public sealed record AiLocalModelDto(string Id, string Kind, string Where, string UsedBy);
 

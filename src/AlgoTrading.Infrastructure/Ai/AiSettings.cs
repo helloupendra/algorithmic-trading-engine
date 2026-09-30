@@ -52,6 +52,9 @@ public sealed class AiSettings
     /// </summary>
     public double SlowFailureSeconds { get; set; } = 10;
 
+    /// <summary>Whether <see cref="AiHealthProbe"/> asks a model whose cooling has ended one tiny question.</summary>
+    public bool HealthProbeEnabled { get; set; } = true;
+
     /// <summary>Rounds in which a model may ask for tools before it must answer with what it has.</summary>
     public int MaxToolRounds { get; set; } = 4;
 
