@@ -101,6 +101,9 @@ public static class AiCatalog
     /// <summary>A model's health test from the Models tab: one tiny question, logged like any call.</summary>
     public const string ModelTest = "model-test";
 
+    /// <summary>The Desk Assistant's daily check: known answers, graded by code. A utility, not one of the roadmap's agents.</summary>
+    public const string AssistantCheck = "assistant-check";
+
     /// <summary>The scheduled agents of Phase 3.</summary>
     public const string TradeReviewer = "trade-reviewer";
     public const string NewsAnalyst = "news-analyst";
@@ -283,10 +286,16 @@ public static class AiCatalog
     public static AiTierDef? Tier(string? key) =>
         Tiers.FirstOrDefault(t => string.Equals(t.Key, key, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>The assistant-check pseudo-agent: not listed as an agent, but named on its reports.</summary>
+    public static readonly AiAgentDef AssistantCheckAgent = new(
+        AssistantCheck, 0, "Assistant check", "Asks the Desk Assistant questions the code knows the answer to, after the close.",
+        "Catches a model or prompt change that makes the Assistant misread the desk.", "Weekdays after 16:40 IST", "2",
+        Built: true, "judge", "The desk, through the Assistant's tools.", NoOrders);
+
     public static AiAgentDef? Agent(string? key) =>
-        string.Equals(key, ModelTest, StringComparison.OrdinalIgnoreCase)
-            ? ModelTestAgent
-            : Agents.FirstOrDefault(a => string.Equals(a.Key, key, StringComparison.OrdinalIgnoreCase));
+        string.Equals(key, ModelTest, StringComparison.OrdinalIgnoreCase) ? ModelTestAgent
+        : string.Equals(key, AssistantCheck, StringComparison.OrdinalIgnoreCase) ? AssistantCheckAgent
+        : Agents.FirstOrDefault(a => string.Equals(a.Key, key, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>A name for any agent key a call carries, known or not.</summary>
     public static string AgentName(string key) => Agent(key)?.Name ?? key;
