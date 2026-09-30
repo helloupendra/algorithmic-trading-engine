@@ -333,11 +333,12 @@ public class AiController : ControllerBase
 
     // ---------- reports -----------------------------------------------------
 
-    /// <summary>What the scheduled agents wrote, newest first: all, one agent's, one status, one IST day.</summary>
+    /// <summary>What the scheduled agents wrote, newest first: all, one agent's, one subject's (a run's review), one status, one IST day.</summary>
     [HttpGet("reports")]
     public async Task<IActionResult> Reports(
         [FromQuery] string? agent = null,
         [FromQuery] string? subjectType = null,
+        [FromQuery] string? subjectId = null,
         [FromQuery] string? status = null,
         [FromQuery] DateOnly? date = null,
         [FromQuery] int take = DefaultTake,
@@ -348,6 +349,7 @@ public class AiController : ControllerBase
         var query = _db.AiReports.AsNoTracking();
         if (!string.IsNullOrWhiteSpace(agent)) query = query.Where(r => r.AgentKey == agent);
         if (!string.IsNullOrWhiteSpace(subjectType)) query = query.Where(r => r.SubjectType == subjectType);
+        if (!string.IsNullOrWhiteSpace(subjectId)) query = query.Where(r => r.SubjectId == subjectId);
         if (!string.IsNullOrWhiteSpace(status)) query = query.Where(r => r.Status == status);
         if (date is DateOnly day) query = query.Where(r => r.SessionDate == day);
         if (beforeId is long before) query = query.Where(r => r.Id < before);

@@ -265,6 +265,43 @@ public class AiAgentsTests
         Assert.DoesNotContain("hunter2", ai.Provider.Requests.Single().Body);
     }
 
+    // ---------- the reports endpoints ----------
+
+    [Fact]
+    public async Task Reports_list_by_subject_and_the_news_validity_is_counted_per_agent()
+    {
+        var ai = Build();
+        var day = IstTime.DateOf(DateTime.UtcNow);
+        ai.Db.AiReports.AddRange(
+            Report(AiCatalog.TradeReviewer, AiReportSubject.Run, "412", AiReportStatus.Ok, day),
+            Report(AiCatalog.TradeReviewer, AiReportSubject.Run, "413", AiReportStatus.Ok, day),
+            Report(AiCatalog.NewsAnalyst, AiReportSubject.News, "1", AiReportStatus.Ok, day),
+            Report(AiCatalog.NewsAnalyst, AiReportSubject.News, "2", AiReportStatus.Ok, day),
+            Report(AiCatalog.NewsAnalyst, AiReportSubject.News, "3", AiReportStatus.Ok, day),
+            Report(AiCatalog.NewsAnalyst, AiReportSubject.News, "4", AiReportStatus.Invalid, day),
+            Report(AiCatalog.NewsAnalyst, AiReportSubject.News, "5", AiReportStatus.Failed, day));
+        await ai.Db.SaveChangesAsync();
+        var controller = ai.Controller();
+
+        var one = Body<AlgoTrading.Api.Controllers.AiReportPage>(await controller.Reports(agent: AiCatalog.TradeReviewer, subjectId: "412"));
+        var stats = Body<AlgoTrading.Api.Controllers.AiReportStats>(await controller.ReportStats(7, CancellationToken.None));
+
+        var review = Assert.Single(one.Reports);
+        Assert.Equal("/trade/runs/412", review.Link);
+        var news = stats.Agents.Single(a => a.AgentKey == AiCatalog.NewsAnalyst);
+        Assert.Equal((5, 3, 1, 1), (news.Total, news.Ok, news.Invalid, news.Failed));
+        Assert.Equal(75.0, news.ValidPercent); // failures are not counted against validity: no answer was checked
+    }
+
+    private static AiReport Report(string agent, string subjectType, string subjectId, string status, DateOnly day) => new()
+    {
+        AgentKey = agent, SubjectType = subjectType, SubjectId = subjectId, Status = status, SessionDate = day,
+        CreatedUtc = DateTime.UtcNow, UpdatedUtc = DateTime.UtcNow, Title = $"{subjectType} {subjectId}", Attempts = 1,
+    };
+
+    private static T Body<T>(Microsoft.AspNetCore.Mvc.IActionResult result) =>
+        Assert.IsType<T>(Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>(result).Value);
+
     // ---------- the scheduler ----------
 
     [Fact]
