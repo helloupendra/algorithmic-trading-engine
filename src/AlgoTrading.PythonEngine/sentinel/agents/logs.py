@@ -251,6 +251,10 @@ _RUNNER_FILE = re.compile(r"^runner-(?P<run>\d+)-\d+\.log$")
 _BACKTEST_FILE = re.compile(r"^backtest-(?P<run>\d+)-\d+\.log$")
 _FEED_FILE = re.compile(r"^(?P<vendor>[a-z]+)-feed-\d+\.log$")
 _INGESTOR_FILE = re.compile(r"^ingestor-\d+\.log$")
+_CHAIN_POLLER_FILE = re.compile(r"^chain-poller-\d+\.log$")
+#: A line a process kept of itself from its first one (core/safe_output.py's
+#: tee): "2026-09-30T03:45:01.123Z | text".
+_TEED_LINE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z [|!] ")
 
 # --- signatures -------------------------------------------------------------
 _ERRORISH = re.compile(r"(?i)error|exception|failed")
@@ -367,6 +371,9 @@ class _LogFile:
     run_id: Optional[str] = None
     vendor: Optional[str] = None
     backtest: bool = False
+    #: A daemon the API follows into api.log (a feed, the chain poller): its
+    #: teed lines are read there, not here. See _parse.
+    mirrored: bool = False
 
 
 @dataclass(frozen=True)
@@ -785,9 +792,11 @@ class LogsAgent(Agent):
             return _LogFile(path, label, "engine", f"backtest {m['run']}", run_id=m["run"], backtest=True)
         if m := _FEED_FILE.match(path.name):
             vendor = m["vendor"]
-            return _LogFile(path, label, "feed", f"{vendor.capitalize()} feed", vendor=vendor)
+            return _LogFile(path, label, "feed", f"{vendor.capitalize()} feed", vendor=vendor, mirrored=True)
         if _INGESTOR_FILE.match(path.name):
-            return _LogFile(path, label, "feed", "ingestor")
+            return _LogFile(path, label, "feed", "ingestor", mirrored=True)
+        if _CHAIN_POLLER_FILE.match(path.name):
+            return _LogFile(path, label, "engine", "chain-poller", mirrored=True)
         return _LogFile(path, label, "engine", path.stem.rsplit("-", 1)[0])
 
     def _new_lines(self, ctx: SentinelContext, f: _LogFile, files_state: dict[str, dict[str, Any]],
@@ -864,6 +873,15 @@ class LogsAgent(Agent):
             return
         base = _Origin(f.label, f.kind, f.component, vendor=f.vendor, run_id=f.run_id, backtest=f.backtest)
         for raw in lines:
+            if f.mirrored and _TEED_LINE.match(raw):
+                # Since 30 Sep the API launches a feed or the chain poller with
+                # its log kept from the first line, and writes every line of it
+                # into api.log, launched or adopted, where it is read. Read here
+                # as well, each line would count twice: two lost connections
+                # would be four, and "Connection to remote host was lost" three
+                # times pages a reconnect loop. An unstamped line is from a
+                # daemon started before then, written only once its pipe died.
+                continue
             line_time: Optional[str] = None
             text = raw
             stream = f.label + "|out"

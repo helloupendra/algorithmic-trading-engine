@@ -413,6 +413,25 @@ class SignatureTests(LogsAgentTestCase):
         self.advance(30)
         self.assertEqual(Severity.CRITICAL, self.check()["logs:feed-reconnect-loop:dhan"].severity)
 
+    def test_a_feed_the_API_follows_into_api_log_is_read_there_and_counted_once(self):
+        # From 30 Sep a feed keeps its log from the first line and the API
+        # writes each line into api.log too. Two lost connections are two, not
+        # four: three in one check page a reconnect loop.
+        lost = "[dhan] error: Connection to remote host was lost."
+        self.start_watching("api.log")
+        self.start_watching("engine/dhan-feed-2096838.log")
+        self.append("engine/dhan-feed-2096838.log",
+                    f"2026-09-30T04:01:00.000Z ! {lost}\n2026-09-30T04:01:20.000Z ! {lost}\n")
+        self.append("api.log", warn(FEEDS, f"[Dhan feed:err] {lost}") + warn(FEEDS, f"[Dhan feed:err] {lost}"))
+        self.assertNotIn("logs:feed-reconnect-loop:dhan", self.check())
+
+        # Three in one check are the loop, read from api.log alone.
+        self.append("engine/dhan-feed-2096838.log",
+                    "".join(f"2026-09-30T04:0{m}:40.000Z ! {lost}\n" for m in (3, 4, 5)))
+        self.append("api.log", warn(FEEDS, f"[Dhan feed:err] {lost}") * 3)
+        self.advance(30)
+        self.assertIn("logs:feed-reconnect-loop:dhan", self.check())
+
     def test_a_single_tickless_reconnect_that_recovers_is_never_reported(self):
         store, notifier = MemoryIncidentStore(), RecordingNotifier()
         engine = SentinelEngine([self.agent], store, notifier, self.ctx, monotonic=clock_ticks())
