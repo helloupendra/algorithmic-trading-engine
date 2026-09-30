@@ -114,6 +114,9 @@ public class TradingDbContext : DbContext
     /// <summary>The docs' passages and their embeddings, for the Assistant's search. See <see cref="AiDocChunk"/>.</summary>
     public DbSet<AiDocChunk> AiDocChunks => Set<AiDocChunk>();
 
+    /// <summary>What the agents read before they answer: the owner's notes and corrections, approved lessons. See <see cref="AiMemory"/>.</summary>
+    public DbSet<AiMemory> AiMemories => Set<AiMemory>();
+
     /// <summary>The Analysis module's forecasts: written before the open, scored after the close. See <see cref="Forecast"/>.</summary>
     public DbSet<Forecast> Forecasts => Set<Forecast>();
 

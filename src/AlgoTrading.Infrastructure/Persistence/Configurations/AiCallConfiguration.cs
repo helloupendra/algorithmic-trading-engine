@@ -33,6 +33,9 @@ public class AiCallConfiguration : IEntityTypeConfiguration<AiCall>
         builder.Property(x => x.Answer).IsRequired().HasColumnType("text").HasDefaultValue(string.Empty);
         builder.Property(x => x.Reasoning).IsRequired().HasColumnType("text").HasDefaultValue(string.Empty);
         builder.Property(x => x.FinishReason).IsRequired().HasMaxLength(32).HasDefaultValue(string.Empty);
+        builder.Property(x => x.MemoryIdsJson).IsRequired().HasColumnType("text").HasDefaultValue("[]");
+        builder.Property(x => x.FeedbackNote).IsRequired().HasMaxLength(600).HasDefaultValue(string.Empty);
+        builder.Property(x => x.FeedbackBy).IsRequired().HasMaxLength(100).HasDefaultValue(string.Empty);
 
         // The console reads the newest calls, all or one agent's.
         builder.HasIndex(x => x.CreatedUtc, "IX_ai_calls_CreatedUtc");

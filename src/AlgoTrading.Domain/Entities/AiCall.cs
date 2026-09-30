@@ -108,6 +108,19 @@ public class AiCall
     public int MaxTokens { get; set; }
 
     public double Temperature { get; set; }
+
+    /// <summary>The <see cref="AiMemory"/> ids put into the system prompt, as a JSON array; empty for an agent without memory.</summary>
+    public string MemoryIdsJson { get; set; } = "[]";
+
+    /// <summary>The owner's verdict on the answer: 1 (👍), -1 (👎), or null when none was given.</summary>
+    public int? FeedbackScore { get; set; }
+
+    /// <summary>What the owner said it should have been, with a 👎.</summary>
+    public string FeedbackNote { get; set; } = string.Empty;
+
+    public string FeedbackBy { get; set; } = string.Empty;
+
+    public DateTime? FeedbackUtc { get; set; }
 }
 
 /// <summary>What became of an <see cref="AiCall"/>.</summary>

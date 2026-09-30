@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using AlgoTrading.Api.Services.AgentMemory;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Ai;
@@ -51,10 +52,21 @@ public sealed class AssistantCheckAgent(
     IOptionsMonitor<AiSettings> settings,
     ILogger<AssistantCheckAgent> logger,
     IMarketSessionService? sessions = null,
+    AiMemoryService? memory = null,
+    IEnumerable<IAiLessonNotifier>? notifiers = null,
     TimeProvider? time = null) : IAiScheduledAgent
 {
     /// <summary>The share of questions that must pass for the day's check to count as ok.</summary>
     public const double PassMark = 0.8;
+
+    /// <summary>The Judge's brief for turning a wrong answer into one lesson for the owner to approve.</summary>
+    public const string LessonPrompt =
+        "You help improve the desk assistant of an Indian F&O paper-trading desk. It answered a question wrong. You get " +
+        "the question, the right answer (read by code from the desk's own records), the assistant's answer, and the tools " +
+        "it called. Write ONE lesson, under 250 characters, that would make it answer this kind of question right next " +
+        "time: which tool or field to read, or a convention of the desk (net of charges, Indian digit grouping, IST). " +
+        "Make it general, with no numbers from today. If the mistake is a slip no rule would prevent, or the right answer " +
+        "itself looks doubtful, reply NONE. Reply with the lesson or NONE, nothing else.";
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -71,7 +83,11 @@ public sealed class AssistantCheckAgent(
     /// <param name="Also">The answer the tools gave after the model answered, when it moved: a number then passes anywhere between the two, an id as either.</param>
     public sealed record Question(string Text, string Kind, string Expected, double? Number, double Tolerance, double? Also = null);
 
-    public sealed record Graded(Question Question, bool Pass, string Answer, long? CallId, string Model, double Seconds, string? Error);
+    public sealed record Graded(Question Question, bool Pass, string Answer, long? CallId, string Model, double Seconds, string? Error)
+    {
+        /// <summary>The memories the answer was given.</summary>
+        public IReadOnlyList<long> MemoryIds { get; init; } = [];
+    }
 
     public async Task<bool> RunOnceAsync(DateTime nowUtc, CancellationToken cancellationToken)
     {
@@ -127,9 +143,17 @@ public sealed class AssistantCheckAgent(
             var after = (await QuestionsAsync(cancellationToken)).FirstOrDefault(a => a.Text == q.Text);
             var asked = Moved(q, after);
             bool answered = result.Outcome == AiCallOutcome.Ok;
-            graded.Add(new Graded(asked, answered && Grade(asked, result.Text), result.Text, result.CallId, result.Model, result.Seconds,
-                answered ? null : result.Error));
+            bool pass = answered && Grade(asked, result.Text);
+            graded.Add(new Graded(asked, pass, result.Text, result.CallId, result.Model, result.Seconds, answered ? null : result.Error)
+            {
+                MemoryIds = result.MemoryIds,
+            });
+
+            // Outcomes: the grade counts on every memory the answer was given.
+            if (answered && memory is not null) await memory.CountCheckAsync(result.CallId, pass, cancellationToken);
         }
+
+        var lessons = await ProposeLessonsAsync(graded, day, cancellationToken);
 
         int passed = graded.Count(g => g.Pass);
         double share = (double)passed / graded.Count;
@@ -143,6 +167,15 @@ public sealed class AssistantCheckAgent(
             var g = graded[i];
             string answer = g.Error is not null ? $"no answer: {g.Error}" : OneLine(g.Answer, 140);
             body.Append($"| {i + 1} | {Cell(g.Question.Text)} | {Cell(g.Question.Expected)} | {Cell(answer)} | {(g.Pass ? "✓" : "✗")} | {Cell(g.Model)} | {g.Seconds:0} |\n");
+        }
+
+        int withMemory = graded.Count(g => g.MemoryIds.Count > 0);
+        if (withMemory > 0 || lessons.Count > 0)
+        {
+            body.Append($"\nMemory: {withMemory} of {graded.Count} answers read memories");
+            body.Append(lessons.Count > 0
+                ? $"; {lessons.Count} new lesson{(lessons.Count == 1 ? "" : "s")} waiting for approval on AI → Memory ({string.Join(", ", lessons.Select(l => $"M{l.Id}"))}).\n"
+                : ".\n");
         }
 
         var data = new JsonObject
@@ -161,12 +194,94 @@ public sealed class AssistantCheckAgent(
                 ["model"] = g.Model,
                 ["seconds"] = g.Seconds,
                 ["error"] = g.Error,
+                ["memoryIds"] = new JsonArray(g.MemoryIds.Select(id => (JsonNode)id).ToArray()),
             }).ToArray()),
+            ["lessons"] = new JsonArray(lessons.Select(l => (JsonNode)l.Id).ToArray()),
         };
 
-        return await reports.SaveAsync(AgentKey, AiReportSubject.Check, day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), day, status, null,
+        var report = await reports.SaveAsync(AgentKey, AiReportSubject.Check, day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), day, status, null,
             $"Assistant check: {passed} of {graded.Count} right", body.ToString(), data.ToJsonString(Json),
             status == AiReportStatus.Ok ? string.Empty : $"Below the pass mark: {passed} of {graded.Count}.", cancellationToken);
+
+        if (lessons.Count > 0)
+        {
+            foreach (var lesson in lessons) lesson.SourceReportId = report?.Id;
+            await db.SaveChangesAsync(cancellationToken);
+            foreach (var notifier in notifiers ?? [])
+            {
+                try
+                {
+                    await notifier.LessonsProposedAsync(lessons, cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger.LogWarning(ex, "Assistant check: telling the owner about {Count} new lessons failed", lessons.Count);
+                }
+            }
+        }
+
+        return report;
+    }
+
+    /// <summary>
+    /// For each question it got wrong (at most <see cref="AiSettings.MaxLessonsPerCheck"/>), the Judge
+    /// writes one lesson, kept as proposed until the owner approves it. A question of a kind that already
+    /// has a lesson waiting or active, or had one turned down lately, is not asked about again.
+    /// </summary>
+    private async Task<List<AiMemory>> ProposeLessonsAsync(List<Graded> graded, DateOnly day, CancellationToken cancellationToken)
+    {
+        var s = settings.CurrentValue;
+        var proposed = new List<AiMemory>();
+        if (memory is null || !s.LessonsFromCheck || !s.HasMemory(AiCatalog.DeskAssistant)) return proposed;
+
+        int asked = 0;
+        foreach (var g in graded.Where(g => !g.Pass && g.Error is null && g.CallId is not null))
+        {
+            if (asked >= s.MaxLessonsPerCheck) break;
+            if (await memory.LessonBlockedAsync(AiCatalog.DeskAssistant, g.Question.Text, cancellationToken)) continue;
+            asked++;
+
+            string? lesson = await LessonAsync(g, day, asked, cancellationToken);
+            if (lesson is null) continue;
+            var saved = await memory.ProposeAsync(AiCatalog.DeskAssistant, lesson, g.Question.Text, g.CallId, null, cancellationToken);
+            if (saved is not null) proposed.Add(saved);
+        }
+
+        return proposed;
+    }
+
+    private async Task<string?> LessonAsync(Graded g, DateOnly day, int n, CancellationToken cancellationToken)
+    {
+        string tools = "none";
+        string? toolsJson = await db.AiCalls.AsNoTracking().Where(c => c.Id == g.CallId).Select(c => c.ToolsJson).FirstOrDefaultAsync(cancellationToken);
+        if (!string.IsNullOrWhiteSpace(toolsJson) && JsonNode.Parse(toolsJson) is JsonArray steps && steps.Count > 0)
+        {
+            tools = string.Join("; ", steps.OfType<JsonObject>().Select(t =>
+                $"{t["name"]?.GetValue<string>()} {t["arguments"]?.GetValue<string>()} ({(t["ok"]?.GetValue<bool>() == true ? "ok" : "failed")})"));
+        }
+
+        string question =
+            $"Question: {g.Question.Text}\n" +
+            $"Right answer: {g.Question.Expected}\n" +
+            $"Assistant's answer: {OneLine(g.Answer, 1500)}\n" +
+            $"Tools it called: {tools}";
+
+        var judge = (await new AiSettingsStore(db).LoadAsync(cancellationToken)).Tier("judge").Chain;
+        var result = await gateway.AskAsync(new AiAskInput(
+            AgentKey, null, [new AiMessage("user", question)], LessonPrompt, 600, 0.2,
+            $"check-{day:yyyyMMdd}-lesson-{n}", "check", AgentKey, null, judge), NullAiStreamSink.Instance, cancellationToken);
+        return result.Outcome == AiCallOutcome.Ok ? LessonFrom(result.Text) : null;
+    }
+
+    /// <summary>The lesson in a Judge's reply, or null for NONE or nothing. Public for tests.</summary>
+    public static string? LessonFrom(string reply)
+    {
+        string text = string.Join(' ', (reply ?? string.Empty).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).Trim().Trim('"', '\'', '`').Trim();
+        text = Regex.Replace(text, @"^lesson\s*[:\-]\s*", string.Empty, RegexOptions.IgnoreCase).Trim();
+        if (text.Length < 12 || text.StartsWith("NONE", StringComparison.OrdinalIgnoreCase)) return null;
+        if (text.Length <= 300) return text;
+        int cut = text.LastIndexOf(' ', 299);
+        return text[..(cut > 200 ? cut : 299)] + "…";
     }
 
     /// <summary>Today's questions, each with the answer the desk's own tools give.</summary>

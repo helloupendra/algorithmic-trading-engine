@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json.Nodes;
+using AlgoTrading.Api.Services.AgentMemory;
 using AlgoTrading.Api.Services.AiTelegram;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Ai;
@@ -188,6 +189,96 @@ public sealed class AiTelegramTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => assistant.PollOnceAsync(cts.Token));
     }
 
+    // ---------- teaching it from the phone ----------
+
+    [Fact]
+    public async Task Remember_saves_a_note_memory_lists_it_and_forget_retires_it()
+    {
+        var (ai, bot, assistant) = Setup();
+        await Link(assistant, Owner);
+        bot.Sent.Clear();
+
+        await assistant.HandleAsync(Private(Owner, "/remember Weekly NIFTY options expire on Tuesday."), CancellationToken.None);
+        await using var db = NewDb(_dbName);
+        var note = await db.AiMemories.SingleAsync();
+        await assistant.HandleAsync(Private(Owner, "/memory"), CancellationToken.None);
+        await assistant.HandleAsync(Private(Owner, $"/forget M{note.Id}"), CancellationToken.None);
+
+        Assert.Equal(("telegram", "upendra", AiMemoryKind.Note), (note.Via, note.CreatedBy, note.Kind));
+        Assert.StartsWith($"Saved as note M{note.Id}.", bot.Texts[0]);
+        Assert.Contains($"M{note.Id} (note): Weekly NIFTY options expire on Tuesday.", bot.Texts[1]);
+        Assert.StartsWith($"M{note.Id} is retired", bot.Texts[2]);
+        await using var after = NewDb(_dbName);
+        Assert.Equal(AiMemoryStatus.Retired, (await after.AiMemories.SingleAsync()).Status);
+        Assert.DoesNotContain(ai.Provider.Requests, r => r.Path.EndsWith("/chat/completions", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task An_answer_carries_thumbs_and_a_thumbs_down_asks_what_it_should_have_said()
+    {
+        var (ai, bot, assistant) = Setup();
+        await Link(assistant, Owner);
+        ai.Provider.On(Judge1, Answer("The desk made ₹2,22,414 today."));
+        await assistant.HandleAsync(Private(Owner, "How much did the desk make today?"), CancellationToken.None);
+        var answer = bot.Sent.Last(s => s["method"] == "sendMessage");
+        long callId = (await ai.Db.AiCalls.SingleAsync()).Id;
+        Assert.Contains($"fb:-1:{callId}", answer["reply_markup"]);
+        bot.Sent.Clear();
+
+        await assistant.HandleButtonAsync(Press(Owner, $"fb:-1:{callId}", messageId: 7), CancellationToken.None);
+        var prompt = bot.Sent.Single(s => s["method"] == "sendMessage");
+        long promptId = long.Parse(prompt["message_id_sent"]);
+        await assistant.HandleAsync(Reply(Owner, "Always give net after charges, not gross.", promptId), CancellationToken.None);
+
+        await using var db = NewDb(_dbName);
+        var call = await db.AiCalls.SingleAsync(c => c.Id == callId);
+        var correction = await db.AiMemories.SingleAsync();
+        Assert.Contains("force_reply", prompt["reply_markup"]);
+        Assert.Contains(bot.Sent, s => s["method"] == "editMessageReplyMarkup" && s["reply_markup"].Contains(" noted"));
+        Assert.Equal((-1, "Always give net after charges, not gross."), (call.FeedbackScore, call.FeedbackNote));
+        Assert.Equal((AiMemoryKind.Correction, AiMemoryStatus.Active, callId, "telegram"), (correction.Kind, correction.Status, correction.SourceCallId, correction.Via));
+        Assert.StartsWith($"Saved as correction M{correction.Id}.", bot.Texts.Last());
+    }
+
+    [Fact]
+    public async Task A_strangers_button_changes_nothing()
+    {
+        var (ai, bot, assistant) = Setup();
+        await Link(assistant, Owner);
+        ai.Provider.On(Judge1, Answer("ok"));
+        await assistant.HandleAsync(Private(Owner, "Anything?"), CancellationToken.None);
+        long callId = (await ai.Db.AiCalls.SingleAsync()).Id;
+        bot.Sent.Clear();
+
+        await assistant.HandleButtonAsync(Press(Stranger, $"fb:1:{callId}", messageId: 7), CancellationToken.None);
+
+        await using var db = NewDb(_dbName);
+        Assert.Null((await db.AiCalls.SingleAsync()).FeedbackScore);
+        Assert.Equal(new[] { "answerCallbackQuery" }, bot.Sent.Select(s => s["method"]));
+    }
+
+    [Fact]
+    public async Task A_new_lesson_reaches_each_owner_with_approve_and_reject_and_approve_makes_it_active()
+    {
+        var (ai, bot, assistant) = Setup();
+        await Link(assistant, Owner);
+        bot.Sent.Clear();
+        await using var seed = NewDb(_dbName);
+        var memory = new AiMemoryService(seed, new AiMemoryBook(seed, ai.Client, ai.Options), ai.Options);
+        var lesson = await memory.ProposeAsync(AiCatalog.DeskAssistant, "Read totals.netPnl for the day's total.", "What is the net P&L of all of today's runs?", 12, null, CancellationToken.None);
+
+        await assistant.LessonsProposedAsync([lesson!], CancellationToken.None);
+        var sent = bot.Sent.Single(s => s["method"] == "sendMessage");
+        await assistant.HandleButtonAsync(Press(Owner, $"mem:a:{lesson!.Id}", messageId: 9), CancellationToken.None);
+
+        Assert.Equal(Owner.ToString(System.Globalization.CultureInfo.InvariantCulture), sent["chat_id"]);
+        Assert.Contains($"mem:a:{lesson.Id}", sent["reply_markup"]);
+        Assert.Contains($"mem:r:{lesson.Id}", sent["reply_markup"]);
+        await using var db = NewDb(_dbName);
+        var approved = await db.AiMemories.SingleAsync();
+        Assert.Equal((AiMemoryStatus.Active, "upendra"), (approved.Status, approved.DecidedBy));
+    }
+
     // ---------- helpers ----------
 
     private (Services Ai, FakeBot Bot, TelegramAssistant Assistant) Setup() => Setup(out _);
@@ -199,6 +290,8 @@ public sealed class AiTelegramTests
         var services = new ServiceCollection();
         services.AddScoped(_ => NewDb(_dbName));
         services.AddScoped(_ => ai.Gateway);
+        services.AddScoped(sp => new AiMemoryService(sp.GetRequiredService<TradingDbContext>(),
+            new AiMemoryBook(sp.GetRequiredService<TradingDbContext>(), ai.Client, ai.Options), ai.Options));
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Telegram:BotToken"] = "123:TEST" }).Build();
         pairing = _pairing = new TelegramPairing();
         var assistant = new TelegramAssistant(services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), new Factory(bot), config,
@@ -217,9 +310,30 @@ public sealed class AiTelegramTests
         ["text"] = text,
     };
 
-    /// <summary>api.telegram.org: records sendMessage and sendChatAction, answers getUpdates from <see cref="Updates"/>.</summary>
+    private static JsonObject Reply(long user, string text, long toMessageId)
+    {
+        var message = Private(user, text);
+        message["reply_to_message"] = new JsonObject { ["message_id"] = toMessageId };
+        return message;
+    }
+
+    private static JsonObject Press(long user, string data, long messageId) => new()
+    {
+        ["id"] = "press-1",
+        ["from"] = new JsonObject { ["id"] = user },
+        ["data"] = data,
+        ["message"] = new JsonObject { ["message_id"] = messageId, ["chat"] = new JsonObject { ["id"] = user, ["type"] = "private" } },
+    };
+
+    /// <summary>
+    /// api.telegram.org: records every method called, answers getUpdates from
+    /// <see cref="Updates"/>, and gives each sent message an id (kept on the
+    /// record as <c>message_id_sent</c>).
+    /// </summary>
     private sealed class FakeBot : HttpMessageHandler
     {
+        private long _nextMessageId = 100;
+
         public List<Dictionary<string, string>> Sent { get; } = [];
         public List<string> Polls { get; } = [];
         public string Updates { get; set; } = """{"ok":true,"result":[]}""";
@@ -240,8 +354,10 @@ public sealed class AiTelegramTests
             var body = JsonNode.Parse(await request.Content!.ReadAsStringAsync(cancellationToken))!.AsObject();
             var entry = body.ToDictionary(kv => kv.Key, kv => kv.Value?.ToString() ?? string.Empty);
             entry["method"] = method;
+            long id = Interlocked.Increment(ref _nextMessageId);
+            entry["message_id_sent"] = id.ToString(System.Globalization.CultureInfo.InvariantCulture);
             Sent.Add(entry);
-            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"ok":true}""") };
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"ok\":true,\"result\":{\"message_id\":" + id.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}}") };
         }
     }
 }

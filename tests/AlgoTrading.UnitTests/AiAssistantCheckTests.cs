@@ -104,12 +104,12 @@ public class AiAssistantCheckTests
     }
 
     [Fact]
-    public void It_asks_only_while_the_assistant_is_on_and_it_is_enabled()
+    public async Task It_asks_only_while_the_assistant_is_on_and_it_is_enabled()
     {
         var on = new AiSettings();
         var off = new AiSettings { AssistantCheckEnabled = false };
         var ai = Build();
-        var state = ai.Store.LoadAsync().GetAwaiter().GetResult();
+        var state = await ai.Store.LoadAsync();
 
         Assert.True(AiAgentScheduler.IsOn(AiCatalog.AssistantCheck, state, on));
         Assert.False(AiAgentScheduler.IsOn(AiCatalog.AssistantCheck, state, off));

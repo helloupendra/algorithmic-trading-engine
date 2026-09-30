@@ -271,6 +271,13 @@ All under `api/Ai`, admin only.
 | `GET calls/{id}` | One call in full: system prompt, messages, attempts, reasoning, answer, usage, the request's parameters |
 | `POST ask/stream`, `POST ask` | Ask: `{ messages, tier, system, maxTokens, temperature, conversationId, agent }` |
 
+Since memory (1 Oct):
+- A row of `GET calls` also carries `feedback` (1, -1 or null) and `memoryCount`.
+- `GET calls/{id}` carries `memoryIds` and `feedback`.
+- The stream's `done` event and `POST ask` carry `memoryIds`.
+
+The memory endpoints are under [Memory](#memory).
+
 ## Scheduled agents (Phase 3)
 
 The three scheduled agents **start switched off**: they call the provider by themselves, so the owner turns each one
@@ -383,6 +390,57 @@ The desk's bot answers its linked owner in a private chat, as the Assistant tab 
   twice. Only one program may read a bot's updates; nothing else on the desk reads this one.
 - **Settings.** `Ai:TelegramAssistantEnabled` turns it off. `GET telegram` shows whether it runs, the bot's name and
   the linked accounts; `DELETE telegram/owners/{id}` unlinks one.
+- **Teaching.** 👍 and 👎 sit under every answer. After a 👎 the bot asks "What should it have said?", and a reply to
+  that message becomes a correction. `/remember …` saves a note, `/memory` lists what the Assistant reads, and
+  `/forget N` retires memory MN. Each lesson the daily check proposes arrives as its own message with Approve and
+  Reject. A button pressed by anyone but a linked owner does nothing.
+
+## Memory
+
+The models do not learn: their weights are the provider's. What an agent learns is kept as **memories**, short
+notes put into its system prompt on every call (`AiMemoryBook`). Each one can be read, edited, traced to where it
+came from, and taken out. The Desk Assistant has memory first (`Ai:MemoryAgents`, owner decision 1 Oct).
+
+| Kind | Written by | Used |
+|---|---|---|
+| `note` | The owner: `/remember` on Telegram, or Add a note on AI → Memory | At once |
+| `correction` | The owner: 👎 on an answer with what it should have said; its question is kept as context | At once |
+| `lesson` | The daily check: the Judge's one-line lesson from a question the Assistant got wrong | **Only after the owner approves it** |
+
+A lesson waits because a wrong lesson in the prompt would repeat its mistake on every answer. The check asks the
+Judge about at most `Ai:MaxLessonsPerCheck` (3) failed questions a day. It does not ask about a kind of question
+(the question with its numbers taken out) that already has a lesson waiting or active, or one the owner rejected in
+the last 14 days.
+
+**What reaches the prompt:**
+- Only `active` memories of the agent that asks. Corrections come first, then notes, then lessons.
+- While they fit `Ai:MemoryBudgetChars` (2,400) and `Ai:MemoryMaxItems` (12), all of them go.
+- Past that, the question is embedded and the memories closest to it go. Any below `Ai:MemoryMinScore` (0.3) stay
+  out, and if the embedding fails the newest go instead.
+- They are introduced as guidance, not data: numbers still come from the tools, and a note that disagrees with a
+  tool is out of date.
+- A caller with its own system prompt, and a model's health test, get no memories.
+
+**Outcomes.** Every call keeps the ids of the memories it was given (`ai_calls.MemoryIdsJson`). The owner's verdict
+on an answer adds to `Ups` or `Downs` of each of those memories, and the check's grade adds to `CheckPasses` or
+`CheckFails`. A memory is flagged for review in two cases:
+- two 👎 and more 👎 than 👍;
+- three failed check answers and more failed than passed.
+
+The flag never retires anything; the owner decides. `GET memories/progress` shows by day the check's score, the
+memories active that night and the owner's 👍 and 👎: whether memory is making the Assistant better, as numbers.
+
+**Kept safe.** Texts are masked like the tools' output (a secret's shape, the server's name, addresses, home paths),
+because a memory goes to the provider with every answer. A text is at most 600 characters. Embedding calls are rows
+on the Calls tab under the pseudo-agent `memory`.
+
+| Endpoint | What |
+|---|---|
+| `GET memories?agent=&status=` | The memories, their counts, the budget and the characters in use |
+| `POST memories` | A note (active) |
+| `PUT memories/{id}` | Edit the text; approve or restore (`active`), reject, retire |
+| `POST calls/{id}/feedback` | 👍 `1`, 👎 `-1` with an optional correction, or `0` to take it back |
+| `GET memories/progress?days=30` | The day-by-day effect |
 
 ## Adding a tool
 

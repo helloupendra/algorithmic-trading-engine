@@ -109,6 +109,9 @@ public static class AiCatalog
     /// <summary>The docs search index's embedding runs, named on their calls.</summary>
     public const string DocIndex = "doc-index";
 
+    /// <summary>The agents' memory: its embedding calls (a memory's text, a question when the memories outgrow the prompt) are named after it.</summary>
+    public const string Memory = "memory";
+
     /// <summary>The model that embeds the docs and the queries: the embed tier's one model.</summary>
     public const string EmbeddingModel = "nvidia/nemotron-3-embed-1b";
 
@@ -307,10 +310,17 @@ public static class AiCatalog
         DocIndex, 0, "Docs index", "Embeds the desk's docs for the Assistant's search.", "Keeps search_docs current.",
         "At start and every 6 hours; only passages that changed", "2", Built: true, "embed", "docs/ in the repo.", NoOrders);
 
+    /// <summary>The memory's pseudo-agent: named on its embedding calls.</summary>
+    public static readonly AiAgentDef MemoryAgent = new(
+        Memory, 0, "Agent memory", "Embeds the agents' memories, and a question when they outgrow the prompt.",
+        "Picks the memories closest to a question.", "When a memory is saved; when a question is asked past the memory budget", "2",
+        Built: true, "embed", "The memories' own text.", NoOrders);
+
     public static AiAgentDef? Agent(string? key) =>
         string.Equals(key, ModelTest, StringComparison.OrdinalIgnoreCase) ? ModelTestAgent
         : string.Equals(key, AssistantCheck, StringComparison.OrdinalIgnoreCase) ? AssistantCheckAgent
         : string.Equals(key, DocIndex, StringComparison.OrdinalIgnoreCase) ? DocIndexAgent
+        : string.Equals(key, Memory, StringComparison.OrdinalIgnoreCase) ? MemoryAgent
         : Agents.FirstOrDefault(a => string.Equals(a.Key, key, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>A name for any agent key a call carries, known or not.</summary>

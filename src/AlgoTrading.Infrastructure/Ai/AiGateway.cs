@@ -107,6 +107,9 @@ public sealed record AiAskResult(
 
     public int Rounds { get; init; }
 
+    /// <summary>The memories the answer was given (<see cref="AiMemoryBook"/>).</summary>
+    public IReadOnlyList<long> MemoryIds { get; init; } = [];
+
     public int Fallbacks => AiGateway.CountFallbacks(Attempts.Select(a => a.Outcome));
 }
 
@@ -149,6 +152,13 @@ public sealed record AiAskResult(
 /// The key is scrubbed from every stored text as a second layer: the client
 /// never puts it anywhere but the Authorization header.
 /// </para>
+/// <para>
+/// An agent with memory gets its active memories after its own prompt
+/// (<see cref="AiMemoryBook"/>), and the row keeps which ones, so the owner's
+/// verdict on the answer and the daily check's grade can be counted on them.
+/// A caller that brings its own system prompt, and a model's health test, get
+/// none.
+/// </para>
 /// </remarks>
 public sealed class AiGateway
 {
@@ -173,6 +183,7 @@ public sealed class AiGateway
     private readonly IOptionsMonitor<AiSettings> _settings;
     private readonly ILogger<AiGateway> _logger;
     private readonly TimeProvider _time;
+    private readonly AiMemoryBook _memory;
 
     public AiGateway(
         TradingDbContext db,
@@ -183,7 +194,8 @@ public sealed class AiGateway
         AiModelHealth health,
         IOptionsMonitor<AiSettings> settings,
         ILogger<AiGateway> logger,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        AiMemoryBook? memory = null)
     {
         _db = db;
         _store = store;
@@ -194,6 +206,7 @@ public sealed class AiGateway
         _settings = settings;
         _logger = logger;
         _time = time ?? TimeProvider.System;
+        _memory = memory ?? new AiMemoryBook(db, client, settings, logger, _time);
     }
 
     /// <summary>Failed attempts that handed over to another: every failure but a last one.</summary>
@@ -270,6 +283,11 @@ public sealed class AiGateway
         var specs = tools.Select(t => new AiToolSpec(t.Name, t.Description, t.Parameters)).ToList();
 
         string systemPrompt = input.SystemPrompt ?? agent.SystemPrompt;
+        var recalled = input.SystemPrompt is null && input.Chain is null
+            ? await RecallAsync(agent.Key, input.Messages, cancellationToken)
+            : [];
+        if (recalled.Count > 0) systemPrompt += "\n\n" + AiMemoryBook.Block(recalled);
+
         if (input.SystemPrompt is null && specs.Count > 0)
         {
             // The model has no clock, and "today" is the question more often than not.
@@ -279,6 +297,7 @@ public sealed class AiGateway
 
         var row = NewRow(input, chain, systemPrompt);
         row.Outcome = AiCallOutcome.Running;
+        row.MemoryIdsJson = JsonSerializer.Serialize(recalled.Select(r => r.Id));
         _db.AiCalls.Add(row);
         await _db.SaveChangesAsync(cancellationToken);
 
@@ -621,7 +640,40 @@ public sealed class AiGateway
         {
             Tools = steps,
             Rounds = rounds,
+            MemoryIds = MemoryIds(row.MemoryIdsJson),
         };
+
+    /// <summary>The memory ids a call row carries; none when the column cannot be read.</summary>
+    public static IReadOnlyList<long> MemoryIds(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            return JsonSerializer.Deserialize<List<long>>(json) ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    /// <summary>
+    /// The agent's memories for this question. Memory is help, not a
+    /// dependency: a failure to read it is logged and the call goes on without.
+    /// </summary>
+    private async Task<IReadOnlyList<AiRecalled>> RecallAsync(string agentKey, IReadOnlyList<AiMessage> messages, CancellationToken cancellationToken)
+    {
+        try
+        {
+            string question = messages.LastOrDefault(m => m.Role == "user")?.Content ?? string.Empty;
+            return await _memory.RecallAsync(agentKey, question, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "AI memory for {Agent} could not be read; answering without it", agentKey);
+            return [];
+        }
+    }
 
     /// <summary>A tool round's reasoning, and anything it said before asking, kept as the model's working.</summary>
     private static void Commit(StringBuilder working, int round, StringBuilder reasoning, StringBuilder said)

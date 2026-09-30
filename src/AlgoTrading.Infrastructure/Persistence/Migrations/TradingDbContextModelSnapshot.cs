@@ -155,6 +155,26 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         .HasColumnType("text")
                         .HasDefaultValue("");
 
+                    b.Property<string>("FeedbackBy")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("FeedbackNote")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(600)
+                        .HasColumnType("character varying(600)")
+                        .HasDefaultValue("");
+
+                    b.Property<int?>("FeedbackScore")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("FeedbackUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("FinishReason")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -164,6 +184,12 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
 
                     b.Property<int>("MaxTokens")
                         .HasColumnType("integer");
+
+                    b.Property<string>("MemoryIdsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("[]");
 
                     b.Property<string>("MessagesJson")
                         .IsRequired()
@@ -313,6 +339,141 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.HasIndex(new[] { "Path", "Ordinal" }, "IX_ai_doc_chunks_Path_Ordinal");
 
                     b.ToTable("ai_doc_chunks", (string)null);
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.AiMemory", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime?>("ActivatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("AgentKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("CheckFails")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<int>("CheckPasses")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<string>("Context")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(400)
+                        .HasColumnType("character varying(400)")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasDefaultValue("");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DecidedBy")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasDefaultValue("");
+
+                    b.Property<DateTime?>("DecidedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Downs")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.PrimitiveCollection<float[]>("Embedding")
+                        .IsRequired()
+                        .HasColumnType("real[]");
+
+                    b.Property<string>("EmbeddingModel")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<DateTime?>("LastUsedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("RetiredUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<long?>("SourceCallId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("SourceReportId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasMaxLength(600)
+                        .HasColumnType("character varying(600)");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Ups")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<int>("Uses")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<string>("Via")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("console");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "AgentKey", "Status" }, "IX_ai_memories_AgentKey_Status");
+
+                    b.ToTable("ai_memories", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ai_memories_Kind", "\"Kind\" IN ('note', 'correction', 'lesson')");
+
+                            t.HasCheckConstraint("CK_ai_memories_Source", "\"Source\" IN ('owner', 'feedback', 'check')");
+
+                            t.HasCheckConstraint("CK_ai_memories_Status", "\"Status\" IN ('active', 'proposed', 'rejected', 'retired')");
+                        });
                 });
 
             modelBuilder.Entity("AlgoTrading.Domain.Entities.AiReport", b =>
