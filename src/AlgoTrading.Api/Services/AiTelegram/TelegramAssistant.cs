@@ -87,7 +87,27 @@ public sealed class TelegramAssistant(
     private readonly ConcurrentDictionary<long, (List<AiMessage> Turns, DateTime LastUtc)> _history = new();
     private bool _conflictLogged;
 
+    private string? _botUsername;
+
     private string? Token => configuration["Telegram:BotToken"];
+
+    /// <summary>The bot's @username (from getMe, kept once read), for the console's "send /pair CODE to …"; null when it cannot be read.</summary>
+    public async Task<string?> BotUsernameAsync(CancellationToken cancellationToken)
+    {
+        if (_botUsername is not null || string.IsNullOrWhiteSpace(Token)) return _botUsername;
+        try
+        {
+            using var response = await http.CreateClient(HttpClientName).GetAsync($"https://api.telegram.org/bot{Token}/getMe", cancellationToken);
+            if (!response.IsSuccessStatusCode) return null;
+            var root = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            _botUsername = root?["result"]?["username"]?.GetValue<string>();
+            return _botUsername;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
 
     public bool Enabled => settings.CurrentValue.TelegramAssistantEnabled && !string.IsNullOrWhiteSpace(Token) && settings.CurrentValue.KeyConfigured;
 
