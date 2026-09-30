@@ -105,6 +105,9 @@ public class TradingDbContext : DbContext
     /// <summary>Sentinel's scheduled and on-request desk checkups. Sentinel writes the reports; see <see cref="DeskCheckup"/>.</summary>
     public DbSet<DeskCheckup> DeskCheckups => Set<DeskCheckup>();
 
+    /// <summary>Every question put to a hosted language model and its answer. See <see cref="AiCall"/>.</summary>
+    public DbSet<AiCall> AiCalls => Set<AiCall>();
+
     /// <summary>The Analysis module's forecasts: written before the open, scored after the close. See <see cref="Forecast"/>.</summary>
     public DbSet<Forecast> Forecasts => Set<Forecast>();
 

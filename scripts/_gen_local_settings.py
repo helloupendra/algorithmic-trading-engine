@@ -217,6 +217,13 @@ def build_api_settings(env: dict[str, str]) -> dict:
             "StaticIp": env.get("SIMBROKER_STATIC_IP", ""),
         },
         "Dhan": build_dhan_settings(env),
+        # NVIDIA's hosted models for the AI workspace (admin-only: the free
+        # tier's terms cover development and evaluation, not serving users).
+        # The key is used by the API alone and never returned by an endpoint.
+        "Ai": {
+            "ApiKey": env.get("NVIDIA_API_KEY", ""),
+            "BaseUrl": env.get("NVIDIA_API_BASE_URL", "https://integrate.api.nvidia.com/v1"),
+        },
     }
 
 
