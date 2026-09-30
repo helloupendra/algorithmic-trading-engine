@@ -2,8 +2,8 @@
  * AI → Agents (/ai/agents): every agent the desk has or plans.
  *
  * Each agent says what it does and why, when it runs, which tier and chain
- * of models it uses (in fallback order), what it may read and what it may
- * never do, when it last ran and what that call came to, and today's calls,
+ * of models it uses (in fallback order), what it may read and the read-only
+ * tools it may call to read it, what it may never do, when it last ran and what that call came to, and today's calls,
  * tokens and errors. A built agent can be switched off (and on) with a
  * reason, and given a chain of its own or put back on its tier's. A planned
  * agent is code still to write: it is shown dimmer with its phase, and has
@@ -15,8 +15,8 @@
 
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
-import { AGENT_STATUSES, agentStatus, callTime, formatTokens, modelName, useAiAgents, useAiModels, useAiOverview, useUpdateAgent } from '../../lib/ai'
-import type { AgentStatus, AiAgent, AiModel } from '../../lib/ai'
+import { AGENT_STATUSES, agentStatus, callTime, formatTokens, modelName, toolLabel, useAiAgents, useAiModels, useAiOverview, useUpdateAgent } from '../../lib/ai'
+import type { AgentStatus, AiAgent, AiAgentTool, AiModel } from '../../lib/ai'
 import { formatDateTime } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components/ui'
 import { CallLink, ChainChips, ChainEditor, OutcomeBadge, StatusPill } from './parts'
@@ -135,6 +135,36 @@ function AgentChain({ agent, catalog, catalogNote, tierChain }: { agent: AiAgent
   )
 }
 
+/** Open where there is room for it; on a phone ten tools would be a screen of their own. */
+function wideScreen(): boolean {
+  try {
+    return window.matchMedia('(min-width: 761px)').matches
+  } catch {
+    return true
+  }
+}
+
+/** The read-only tools an agent may call, folded behind their count, each with what it returns. */
+function AgentTools({ tools }: { tools: AiAgentTool[] }) {
+  const [open, setOpen] = useState(wideScreen)
+  return (
+    <details className="ai-agent-tools" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary className="ai-agent-tools__summary">
+        {tools.length} tool{tools.length === 1 ? '' : 's'}, read-only
+        {!open && <span className="faint"> · {tools.map((t) => toolLabel(t.name, '').label).join(', ')}</span>}
+      </summary>
+      <dl className="ai-agent-tools__list">
+        {tools.map((t) => (
+          <div key={t.name}>
+            <dt className="mono">{t.name}</dt>
+            <dd>{t.description}</dd>
+          </div>
+        ))}
+      </dl>
+    </details>
+  )
+}
+
 function LastCall({ agent, now }: { agent: AiAgent; now: number }) {
   const c = agent.lastCall
   if (!c) return <span className="faint">{agent.built ? 'never called' : 'never: not built yet'}</span>
@@ -200,6 +230,14 @@ function AgentCard({
           <dt>Reads</dt>
           <dd>{agent.reads}</dd>
         </div>
+        {agent.tools.length > 0 && (
+          <div>
+            <dt>Tools</dt>
+            <dd>
+              <AgentTools tools={agent.tools} />
+            </dd>
+          </div>
+        )}
         <div>
           <dt>Never</dt>
           <dd>{agent.limits}</dd>

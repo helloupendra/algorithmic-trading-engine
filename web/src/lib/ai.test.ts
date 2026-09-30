@@ -27,9 +27,16 @@ import {
   readModels,
   readOverview,
   retryAfterSeconds,
+  prettyJson,
+  readToolStep,
+  rowsText,
+  clockTime,
   streamAsk,
+  toolLabel,
+  toolsLine,
+  turnReasoning,
 } from './ai'
-import type { AiModel, AiStreamEvent, ChatAction, ChatState, SseMessage } from './ai'
+import type { AiModel, AiStreamEvent, AiToolStep, ChatAction, ChatState, SseMessage } from './ai'
 
 /** Feeds chunks one after another, as a stream would, and collects every message. */
 function feed(chunks: string[]): { messages: SseMessage[]; carry: string } {
@@ -98,7 +105,7 @@ describe('parseSse', () => {
 describe('decodeStreamEvent', () => {
   it('reads each event the stream sends', () => {
     expect(decodeStreamEvent({ event: 'start', data: '{"callId":41,"chain":["m1","m2"]}' })).toEqual({ type: 'start', callId: 41, chain: ['m1', 'm2'] })
-    expect(decodeStreamEvent({ event: 'attempt', data: '{"model":"m1","n":1,"of":3}' })).toEqual({ type: 'attempt', model: 'm1', n: 1, of: 3 })
+    expect(decodeStreamEvent({ event: 'attempt', data: '{"model":"m1","n":1,"of":3}' })).toEqual({ type: 'attempt', model: 'm1', n: 1, of: 3, round: 1 })
     expect(decodeStreamEvent({ event: 'reasoning', data: '{"text":"hmm"}' })).toEqual({ type: 'reasoning', text: 'hmm' })
     expect(decodeStreamEvent({ event: 'fallback', data: '{"model":"m1","reason":"timeout","next":"m2"}' })).toEqual({
       type: 'fallback',
@@ -119,11 +126,57 @@ describe('decodeStreamEvent', () => {
       finishReason: 'stop',
       usage: { promptTokens: 23, completionTokens: 16, totalTokens: 39 },
       fallbacks: 1,
+      // An API from before tools: none called, one round.
+      toolCalls: 0,
+      rounds: 1,
     })
     expect(decodeStreamEvent({ event: 'error', data: '{"callId":41,"error":"every model failed"}' })).toEqual({
       type: 'error',
       callId: 41,
       error: 'every model failed',
+    })
+  })
+
+  it('reads a tool step and the round an attempt is for', () => {
+    expect(decodeStreamEvent({ event: 'attempt', data: '{"model":"m1","n":1,"of":2,"round":3}' })).toEqual({
+      type: 'attempt',
+      model: 'm1',
+      n: 1,
+      of: 2,
+      round: 3,
+    })
+    const sent = {
+      round: 1,
+      id: 'call_1',
+      name: 'get_runs',
+      arguments: '{"date":"today"}',
+      ok: true,
+      error: null,
+      seconds: 0.21,
+      rows: 3,
+      asOfUtc: '2026-09-30T10:00:00Z',
+      summary: '3 runs on 30 Sep, net ₹-4,210.00',
+      resultChars: 812,
+      result: '{"runs":[]}',
+    }
+    expect(decodeStreamEvent({ event: 'tool', data: JSON.stringify(sent) })).toEqual({ type: 'tool', step: sent })
+    expect(decodeStreamEvent({ event: 'done', data: '{"callId":1,"toolCalls":2,"rounds":2}' })).toMatchObject({ toolCalls: 2, rounds: 2 })
+  })
+
+  it('makes a tool step safe to show: arguments as text, missing numbers as not known', () => {
+    expect(readToolStep({ name: 'get_run', arguments: { runId: 412 }, ok: false, error: 'Run 412 not found' })).toEqual({
+      round: 1,
+      id: '',
+      name: 'get_run',
+      arguments: '{"runId":412}',
+      ok: false,
+      error: 'Run 412 not found',
+      seconds: null,
+      rows: null,
+      asOfUtc: null,
+      summary: '',
+      resultChars: null,
+      result: '',
     })
   })
 
@@ -274,7 +327,7 @@ describe('chatReducer', () => {
     const s = run([
       ask('t1'),
       ev('t1', { type: 'start', callId: 41, chain: ['nvidia/nemotron-3-ultra-550b-a55b', 'moonshotai/kimi-k3'] }),
-      ev('t1', { type: 'attempt', model: 'nvidia/nemotron-3-ultra-550b-a55b', n: 1, of: 2 }),
+      ev('t1', { type: 'attempt', model: 'nvidia/nemotron-3-ultra-550b-a55b', n: 1, of: 2, round: 1 }),
       ev('t1', { type: 'reasoning', text: 'Look at ' }),
       ev('t1', { type: 'reasoning', text: 'GIFT Nifty.' }),
       ev('t1', { type: 'delta', text: 'Because ' }),
@@ -282,7 +335,7 @@ describe('chatReducer', () => {
     ])
     const t = s.turns[0]
     expect(t).toMatchObject({ status: 'streaming', callId: 41, model: 'nvidia/nemotron-3-ultra-550b-a55b', attempt: { n: 1, of: 2 } })
-    expect(t.reasoning).toBe('Look at GIFT Nifty.')
+    expect(turnReasoning(t)).toBe('Look at GIFT Nifty.')
     expect(t.answer).toBe('Because of the US close.')
 
     const done = chatReducer(
@@ -295,9 +348,11 @@ describe('chatReducer', () => {
         finishReason: 'stop',
         usage: { promptTokens: 23, completionTokens: 16, totalTokens: 39 },
         fallbacks: 0,
+        toolCalls: 0,
+        rounds: 1,
       }),
     ).turns[0]
-    expect(done).toMatchObject({ status: 'done', callId: 41, seconds: 8.1, finishReason: 'stop', fallbacks: 0 })
+    expect(done).toMatchObject({ status: 'done', callId: 41, seconds: 8.1, finishReason: 'stop', fallbacks: 0, toolCalls: 0, roundCount: 1 })
     expect(done.usage?.totalTokens).toBe(39)
     expect(done.answer).toBe('Because of the US close.')
   })
@@ -305,23 +360,24 @@ describe('chatReducer', () => {
   it('discards the partial answer and reasoning on a fallback, and notes why', () => {
     const s = run([
       ask('t1'),
-      ev('t1', { type: 'attempt', model: 'nvidia/nemotron-3-ultra-550b-a55b', n: 1, of: 3 }),
+      ev('t1', { type: 'attempt', model: 'nvidia/nemotron-3-ultra-550b-a55b', n: 1, of: 3, round: 1 }),
       ev('t1', { type: 'reasoning', text: 'half a thought' }),
       ev('t1', { type: 'delta', text: 'half an ans' }),
       ev('t1', { type: 'fallback', model: 'nvidia/nemotron-3-ultra-550b-a55b', reason: 'timeout', next: 'moonshotai/kimi-k3' }),
     ])
-    expect(s.turns[0]).toMatchObject({ answer: '', reasoning: '', fallbacks: 1, status: 'streaming' })
+    expect(s.turns[0]).toMatchObject({ answer: '', fallbacks: 1, status: 'streaming' })
+    expect(turnReasoning(s.turns[0])).toBe('')
     expect(s.turns[0].notes).toEqual(['Nemotron 3 Ultra timed out, asking Kimi K3'])
 
     const after = run(
       [
-        ev('t1', { type: 'attempt', model: 'moonshotai/kimi-k3', n: 2, of: 3 }),
+        ev('t1', { type: 'attempt', model: 'moonshotai/kimi-k3', n: 2, of: 3, round: 1 }),
         ev('t1', { type: 'delta', text: 'The whole answer.' }),
-        ev('t1', { type: 'done', callId: 42, model: 'moonshotai/kimi-k3', seconds: 97.3, finishReason: 'stop', usage: null, fallbacks: 1 }),
+        ev('t1', { type: 'done', callId: 42, model: 'moonshotai/kimi-k3', seconds: 97.3, finishReason: 'stop', usage: null, fallbacks: 1, toolCalls: 0, rounds: 1 }),
       ],
       s,
     ).turns[0]
-    expect(after).toMatchObject({ status: 'done', model: 'moonshotai/kimi-k3', answer: 'The whole answer.', fallbacks: 1 })
+    expect(after).toMatchObject({ status: 'done', model: 'moonshotai/kimi-k3', answer: 'The whole answer.', fallbacks: 1, toolCalls: 0, roundCount: 1 })
   })
 
   it('records an error event, a refusal and a dropped connection as errors', () => {
@@ -337,7 +393,7 @@ describe('chatReducer', () => {
     // A stream that ended after its answer changes nothing.
     const fine = run([
       ask('t1'),
-      ev('t1', { type: 'done', callId: 1, model: 'm', seconds: 1, finishReason: 'stop', usage: null, fallbacks: 0 }),
+      ev('t1', { type: 'done', callId: 1, model: 'm', seconds: 1, finishReason: 'stop', usage: null, fallbacks: 0, toolCalls: 0, rounds: 1 }),
       { type: 'closed', id: 't1' },
     ]).turns[0]
     expect(fine.status).toBe('done')
@@ -354,11 +410,120 @@ describe('chatReducer', () => {
   })
 })
 
+describe('chatReducer with tools', () => {
+  const step = (round: number, name: string, args: string): AiToolStep => ({
+    round,
+    id: `${name}-${round}`,
+    name,
+    arguments: args,
+    ok: true,
+    error: null,
+    seconds: 0.2,
+    rows: 3,
+    asOfUtc: '2026-09-30T10:00:00Z',
+    summary: '',
+    resultChars: 11,
+    result: '{"runs":[]}',
+  })
+  const runs = step(1, 'get_runs', '{"date":"today"}')
+  const run412 = step(1, 'get_run', '{"runId":412}')
+  const roundOne: ChatAction[] = [
+    ask('t1', 'Why did the worst run today lose money?'),
+    ev('t1', { type: 'attempt', model: 'nvidia/nemotron-3-ultra-550b-a55b', n: 1, of: 3, round: 1 }),
+    ev('t1', { type: 'reasoning', text: 'Need the runs first.' }),
+    ev('t1', { type: 'delta', text: "Let me read today's runs." }),
+    ev('t1', { type: 'tool', step: runs }),
+    ev('t1', { type: 'tool', step: run412 }),
+  ]
+
+  it("moves what the model wrote before calling a tool into that round's working, keeping its reasoning", () => {
+    const t = run(roundOne).turns[0]
+    expect(t.answer).toBe('')
+    expect(t.toolCalls).toBe(2)
+    expect(t.rounds).toEqual([{ round: 1, reasoning: 'Need the runs first.', working: "Let me read today's runs.", tools: [runs, run412] }])
+  })
+
+  it('keeps the earlier round and its tools when a model fails in a later one, and labels the answer', () => {
+    const t = run([
+      ...roundOne,
+      ev('t1', { type: 'attempt', model: 'nvidia/nemotron-3-ultra-550b-a55b', n: 1, of: 3, round: 2 }),
+      ev('t1', { type: 'reasoning', text: 'half a thought' }),
+      ev('t1', { type: 'delta', text: 'Run 41' }),
+      ev('t1', { type: 'fallback', model: 'nvidia/nemotron-3-ultra-550b-a55b', reason: 'timeout', next: 'moonshotai/kimi-k3' }),
+      ev('t1', { type: 'attempt', model: 'moonshotai/kimi-k3', n: 1, of: 2, round: 2 }),
+      ev('t1', { type: 'reasoning', text: 'Run 412 was the worst.' }),
+      ev('t1', { type: 'delta', text: 'Run 412 lost ₹4,210 (get_run, 15:30 IST).' }),
+      ev('t1', {
+        type: 'done',
+        callId: 9,
+        model: 'moonshotai/kimi-k3',
+        seconds: 12,
+        finishReason: 'stop',
+        usage: null,
+        fallbacks: 1,
+        toolCalls: 2,
+        rounds: 2,
+      }),
+    ]).turns[0]
+    expect(t.rounds.map((r) => [r.round, r.reasoning, r.working, r.tools.length])).toEqual([
+      [1, 'Need the runs first.', "Let me read today's runs.", 2],
+      [2, 'Run 412 was the worst.', '', 0],
+    ])
+    expect(t).toMatchObject({ status: 'done', answer: 'Run 412 lost ₹4,210 (get_run, 15:30 IST).', toolCalls: 2, roundCount: 2, fallbacks: 1 })
+    expect(t.notes).toEqual(['Nemotron 3 Ultra timed out, asking Kimi K3'])
+    expect(toolsLine(t.toolCalls, t.roundCount)).toBe('2 tool calls · 2 rounds')
+  })
+
+  it('says nothing about tools for an answer that needed none', () => {
+    expect(toolsLine(0, 1)).toBe('')
+    expect(toolsLine(null, null)).toBe('')
+    expect(toolsLine(1, 2)).toBe('1 tool call · 2 rounds')
+  })
+})
+
+describe('tool words', () => {
+  it('names each tool, with the argument that says what it read', () => {
+    expect(toolLabel('get_runs', '{"date":"today"}')).toEqual({ label: 'Runs', detail: 'date: today' })
+    expect(toolLabel('get_run', '{"runId":412}')).toEqual({ label: 'Run #412', detail: '' })
+    expect(toolLabel('get_option_chain_summary', '{"underlying":"NIFTY","expiry":"2026-10-06"}')).toEqual({
+      label: 'Option chain NIFTY',
+      detail: 'expiry: 2026-10-06',
+    })
+    expect(toolLabel('get_news', '{"query":"HDFC Bank","limit":5}')).toEqual({ label: 'News HDFC Bank', detail: 'limit: 5' })
+    expect(toolLabel('get_strategy_spec', '{"strategy":"IronCondor"}').label).toBe('Strategy spec IronCondor')
+    expect(toolLabel('get_quotes', '{"symbols":["NIFTY","BANKNIFTY"]}')).toEqual({ label: 'Quotes', detail: 'symbols: NIFTY, BANKNIFTY' })
+    expect(toolLabel('get_latest_checkup', '')).toEqual({ label: 'Latest checkup', detail: '' })
+  })
+
+  it('keeps an unknown tool its own name, and arguments it cannot read as written', () => {
+    expect(toolLabel('get_run', '{}')).toEqual({ label: 'Run', detail: '' })
+    expect(toolLabel('get_brand_new', '{"x":1}')).toEqual({ label: 'get_brand_new', detail: 'x: 1' })
+    expect(toolLabel('get_runs', '{"date": "tod')).toEqual({ label: 'Runs', detail: '{"date": "tod' })
+  })
+
+  it('lays out JSON to read, and shows a cut or broken result as it is', () => {
+    expect(prettyJson('{"a":1,"b":[1,2]}')).toEqual({ text: '{\n  "a": 1,\n  "b": [\n    1,\n    2\n  ]\n}', json: true })
+    expect(prettyJson('{"runs":[{"runId":4')).toEqual({ text: '{"runs":[{"runId":4', json: false })
+    expect(prettyJson('')).toEqual({ text: '', json: false })
+    expect(prettyJson(null)).toEqual({ text: '', json: false })
+  })
+
+  it('counts rows and gives the IST clock without seconds', () => {
+    expect(rowsText(1)).toBe('1 row')
+    expect(rowsText(1234)).toBe('1,234 rows')
+    expect(rowsText(null)).toBe('')
+    const now = Date.parse('2026-09-30T10:30:00Z')
+    expect(clockTime('2026-09-30T10:00:00Z', now)).toBe('15:30')
+    expect(clockTime('2026-09-29T10:00:00Z', now)).toMatch(/^29 Sept? 15:30$/)
+    expect(clockTime(null, now)).toBe('—')
+  })
+})
+
 describe('historyFor', () => {
   const finished = run([
     ask('t1', 'first?'),
     ev('t1', { type: 'delta', text: 'first answer' }),
-    ev('t1', { type: 'done', callId: 1, model: 'm', seconds: 1, finishReason: 'stop', usage: null, fallbacks: 0 }),
+    ev('t1', { type: 'done', callId: 1, model: 'm', seconds: 1, finishReason: 'stop', usage: null, fallbacks: 0, toolCalls: 0, rounds: 1 }),
     ask('t2', 'failed?'),
     ev('t2', { type: 'error', callId: 2, error: 'x' }),
     ask('t3', 'stopped?'),
@@ -379,7 +544,7 @@ describe('historyFor', () => {
       Array.from({ length: 30 }, (_, i): ChatAction[] => [
         ask(`t${i}`, `q${i}`),
         ev(`t${i}`, { type: 'delta', text: `a${i}` }),
-        ev(`t${i}`, { type: 'done', callId: i, model: 'm', seconds: 1, finishReason: 'stop', usage: null, fallbacks: 0 }),
+        ev(`t${i}`, { type: 'done', callId: i, model: 'm', seconds: 1, finishReason: 'stop', usage: null, fallbacks: 0, toolCalls: 0, rounds: 1 }),
       ]).flat(),
     )
     const messages = historyFor(many.turns, 'last?')

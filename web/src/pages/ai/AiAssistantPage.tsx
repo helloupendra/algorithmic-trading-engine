@@ -6,16 +6,22 @@
  * question and answer is in the Calls tab either way). The unsent draft and
  * the tier choice survive a reload in localStorage, where storage allows.
  *
- * The answer arrives over server-sent events on a POST (lib/ai streamAsk):
- * the model's reasoning first, shown dim and folded, then the answer. When a
- * model fails mid-answer the server asks the next one in the chain; what the
- * failed model had written is dropped and one line says who timed out and
- * who was asked next. Each finished answer names the model that gave it,
- * how long it took, the tokens it cost, and links to its call. Stop aborts
+ * The answer arrives over server-sent events on a POST (lib/ai streamAsk).
+ * The Desk Assistant reads the desk itself, through read-only tools, in
+ * rounds: in each round the model either answers or asks for tools, and the
+ * server runs them and asks again with the results. So a turn shows, round
+ * by round, the model's reasoning (dim and folded), anything it wrote before
+ * asking (its working, not the answer), and each tool step as a row that
+ * opens to the arguments and the exact JSON the model was given; then the
+ * answer. When a model fails mid-round the server asks the next one in the
+ * chain; what the failed model had written since its attempt began is
+ * dropped, earlier rounds stay, and one line says who timed out and who was
+ * asked next. Each finished answer names the model that gave it, how long it
+ * took, the tokens and tool calls it cost, and links to its call. Stop aborts
  * the request, which also cancels the call on the server.
  *
- * The Desk Assistant reads only what is typed here (Phase 1) and holds no
- * order tool; the page says so from the agent's own record.
+ * No tool places, changes or cancels an order; the page says so from the
+ * agent's own record.
  */
 
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
@@ -31,6 +37,8 @@ import {
   formatTokens,
   historyFor,
   initialChat,
+  toolLabel,
+  toolsLine,
   isAbort,
   modelName,
   newConversationId,
@@ -39,15 +47,23 @@ import {
   useAiAgents,
   useAiOverview,
 } from '../../lib/ai'
-import type { AskTier, ChatTurn } from '../../lib/ai'
+import type { AskTier, ChatTurn, TurnRound } from '../../lib/ai'
 import { IconStop } from '../../components/icons'
 import { AnswerText } from './AnswerText'
-import { CallLink, ChainChips } from './parts'
+import { CallLink, ChainChips, ToolStepRow } from './parts'
 import { useNow } from './common'
 import '../system/health/health.css'
 import './ai.css'
 
 const AGENT = 'desk-assistant'
+
+/** Questions that show what reading the desk is for; a click puts one in the box, it does not send it. */
+const STARTERS = [
+  'How did the runs do today?',
+  'Why did the worst run today lose money?',
+  'What is open right now, and what is it worth?',
+  'Anything wrong on the desk: open incidents or checkup items?',
+]
 const DRAFT_KEY = 'openfno.ai.draft'
 const TIER_KEY = 'openfno.ai.tier'
 
@@ -102,14 +118,17 @@ function CopyButton({ text }: { text: string }) {
 }
 
 /** The model's reasoning: folded and dim; while it is still thinking, its last words show in the fold. */
-function Thinking({ text, live }: { text: string; live: boolean }) {
+function Thinking({ text, live, round }: { text: string; live: boolean; round: number | null }) {
   const words = text.trim() ? text.trim().split(/\s+/).length : 0
   const tail = text.length > 180 ? `…${text.slice(-180)}` : text
   return (
     <details className={`ai-think ${live ? 'ai-think--live' : ''}`}>
       <summary className="ai-think__summary">
-        <span className="ai-think__label">{live ? 'Thinking' : 'Reasoning'}</span>
-        <span className="faint"> · {formatTokens(words)} words</span>
+        <span className="ai-think__text">
+          {round != null && <span className="ai-think__round">Round {round} · </span>}
+          <span className="ai-think__label">{live ? 'Thinking' : 'Reasoning'}</span>
+          <span className="faint"> · {formatTokens(words)} words</span>
+        </span>
         {live && <span className="ai-think__tail">{tail}</span>}
       </summary>
       <div className="ai-think__body">{text}</div>
@@ -136,6 +155,7 @@ function AnswerMeta({ turn, now }: { turn: ChatTurn; now: number }) {
                 · model {turn.attempt.n} of {turn.attempt.of}
               </span>
             )}
+            {turn.round > 1 && <span className="faint"> · round {turn.round}</span>}
           </>
         ) : (
           'Sending'
@@ -146,6 +166,7 @@ function AnswerMeta({ turn, now }: { turn: ChatTurn; now: number }) {
   }
   if (turn.status === 'done') {
     const tokens = turn.usage?.totalTokens
+    const tools = toolsLine(turn.toolCalls, turn.roundCount)
     return (
       <span className="ai-a__meta">
         <b title={turn.model ?? undefined}>{modelName(turn.model)}</b>
@@ -153,6 +174,7 @@ function AnswerMeta({ turn, now }: { turn: ChatTurn; now: number }) {
           {' '}
           · {formatSeconds(turn.seconds)}
           {tokens != null && ` · ${formatTokens(tokens)} tokens`}
+          {tools && ` · ${tools}`}
           {turn.fallbacks > 0 && ` · ${turn.fallbacks} fallback${turn.fallbacks === 1 ? '' : 's'}`} ·{' '}
         </span>
         <CallLink id={turn.callId} />
@@ -172,8 +194,34 @@ function AnswerMeta({ turn, now }: { turn: ChatTurn; now: number }) {
   )
 }
 
+/** One round on the way to the answer: its reasoning, what it wrote before asking, and the tools it called. */
+function RoundSteps({ round, numbered, live, now }: { round: TurnRound; numbered: boolean; live: boolean; now: number }) {
+  if (!round.reasoning && !round.working && round.tools.length === 0) return null
+  return (
+    <div className="ai-round">
+      {round.reasoning && <Thinking text={round.reasoning} live={live} round={numbered ? round.round : null} />}
+      {round.working && (
+        <p className="ai-working" title="Written before it asked for data: the model's working, not the answer">
+          {round.working}
+        </p>
+      )}
+      {round.tools.length > 0 && (
+        <div className="ai-tools-steps">
+          {round.tools.map((step, i) => (
+            <ToolStepRow key={step.id || i} step={step} now={now} showRound={numbered && !round.reasoning} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Turn({ turn, now }: { turn: ChatTurn; now: number }) {
   const streaming = turn.status === 'streaming'
+  // Rounds are worth numbering once there is more than one.
+  const many = turn.rounds.length > 1 || (turn.roundCount ?? 1) > 1
+  const last = turn.rounds[turn.rounds.length - 1]
+  const lastHasTools = !!last && last.tools.length > 0
   return (
     <article className="ai-turn">
       <div className="ai-q">
@@ -194,11 +242,21 @@ function Turn({ turn, now }: { turn: ChatTurn; now: number }) {
             {note}
           </p>
         ))}
-        {turn.reasoning && <Thinking text={turn.reasoning} live={streaming && !turn.answer} />}
+        {turn.rounds.map((r, i) => (
+          <RoundSteps
+            key={r.round}
+            round={r}
+            numbered={many}
+            live={streaming && i === turn.rounds.length - 1 && !turn.answer && r.tools.length === 0}
+            now={now}
+          />
+        ))}
         {turn.answer ? (
           <AnswerText text={turn.answer} />
-        ) : streaming && !turn.reasoning ? (
+        ) : streaming && !turn.rounds.some((r) => r.reasoning || r.tools.length > 0) ? (
           <p className="ai-a__pending faint">No words yet. A reasoning model can think for a while before it writes.</p>
+        ) : streaming && lastHasTools ? (
+          <p className="ai-a__pending faint">Sending what the desk said back to the model…</p>
         ) : null}
         {turn.status === 'done' && turn.finishReason === 'length' && (
           <p className="small-note warn ai-flush">The answer was cut at the token limit.</p>
@@ -328,8 +386,8 @@ export function AiAssistantPage() {
     <div className="page hp ai ai-assistant">
       <div className="hp-bar">
         <p className="hp-bar__lead muted">
-          Ask the desk's AI. Answers stream from the NVIDIA-hosted models of the tier you pick, and every question is logged in
-          the Calls tab.
+          Ask the desk's AI. It reads the desk through read-only tools, answers stream from the NVIDIA-hosted models of the
+          tier you pick, and every question is logged in the Calls tab.
         </p>
         {questions > 0 && (
           <span className="ai-assistant__conv">
@@ -363,7 +421,27 @@ export function AiAssistantPage() {
       <section className="ai-chat" aria-label="Conversation" aria-live="polite">
         {questions === 0 ? (
           <div className="ai-chat__empty">
-            <p className="ai-chat__lead">A new conversation. Pick how hard the AI should think, then ask.</p>
+            <p className="ai-chat__lead">
+              It can read the desk's runs, orders, positions, quotes, option chains, incidents, checkups, forecasts, news
+              and strategy specs, read-only: it never places or changes an order. Numbers it takes from the desk are cited
+              like <span className="mono">(get_runs, 15:30 IST)</span>.
+            </p>
+            <div className="ai-starters" aria-label="Questions to start with">
+              {STARTERS.map((q) => (
+                <button
+                  key={q}
+                  type="button"
+                  className="btn btn--sm ai-starter"
+                  disabled={blocked}
+                  onClick={() => {
+                    setDraft(q)
+                    inputRef.current?.focus()
+                  }}
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
             <dl className="ai-chat__facts">
               {ASK_TIERS.map((t) => (
                 <div key={t.key}>
@@ -377,8 +455,20 @@ export function AiAssistantPage() {
               {assistant && (
                 <>
                   <div>
-                    <dt>Reads</dt>
-                    <dd>{assistant.reads}</dd>
+                    <dt>Tools</dt>
+                    <dd>
+                      {assistant.tools.length === 0 ? (
+                        <span className="faint">none: it reads only what you type</span>
+                      ) : (
+                        <span className="ai-toolchips">
+                          {assistant.tools.map((t) => (
+                            <span key={t.name} className="ai-toolchip" title={`${t.name}: ${t.description}`}>
+                              {toolLabel(t.name, '').label}
+                            </span>
+                          ))}
+                        </span>
+                      )}
+                    </dd>
                   </div>
                   <div>
                     <dt>Never</dt>
