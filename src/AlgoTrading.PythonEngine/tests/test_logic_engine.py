@@ -38,11 +38,16 @@ def bar(day: str, hh: int, mm: int, close: float, volume: float) -> dict:
     }
 
 
+# A week ahead of whenever the suite runs: the engine only reads expiries on or
+# after today, and a fixed "2026-09-29" made these tests fail from 30 Sep on.
+EXPIRY = (datetime.now(timezone.utc).date() + timedelta(days=7)).isoformat()
+
+
 def chain_row(strike: float, option_type: str) -> dict:
     return {
         "symbol": f"NSE:BANKNIFTY26SEP{int(strike)}{option_type}",
         "underlying": "BANKNIFTY",
-        "expiryDate": "2026-09-29",
+        "expiryDate": EXPIRY,
         "strikePrice": strike,
         "optionType": option_type,
     }
@@ -148,7 +153,7 @@ class LogicEngineTests(unittest.TestCase):
     # --- rule 2 (open interest) ------------------------------------------
 
     def test_oi_rule_is_skipped_when_the_feed_has_no_open_interest(self):
-        self.engine.api.get_expiries.return_value = [{"expiryDate": "2026-09-29"}]
+        self.engine.api.get_expiries.return_value = [{"expiryDate": EXPIRY}]
         self.engine.api.get_option_chain.return_value = [chain_row(57500, "CE"), chain_row(57600, "CE")]
         self.engine.api.get_all_latest_quotes.return_value = [
             {"symbol": "NSE:BANKNIFTY26SEP57500CE", "openInterest": None},
@@ -162,7 +167,7 @@ class LogicEngineTests(unittest.TestCase):
 
     def test_highest_oi_strike_comes_from_the_chain_within_the_window(self):
         self.engine.strike_window = 2      # +/- 200 points on a 100-point grid
-        self.engine.api.get_expiries.return_value = [{"expiryDate": "2026-09-29"}]
+        self.engine.api.get_expiries.return_value = [{"expiryDate": EXPIRY}]
         self.engine.api.get_option_chain.return_value = [
             chain_row(57400, "CE"), chain_row(57500, "CE"), chain_row(57600, "CE"),
             chain_row(58200, "CE"),                       # outside the window
