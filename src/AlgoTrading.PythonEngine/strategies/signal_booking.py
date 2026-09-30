@@ -31,6 +31,16 @@ kept, the tick's remaining signals are still sent, and the runner says loudly
 that the strategy and the book disagree. A CLOSE_GROUP booked earlier in the
 tick is no obstacle: emitted again, it closes nothing twice (reduce-only).
 
+A CLOSE_GROUP that was booked and is emitted again is not posted again
+(`ClosedGroups`). The pattern is common: a strategy rolls (closes group A,
+opens group B), the close is booked, the open is refused, and the state goes
+back to "A is open", so every tick asks to close A again. On 30 Sep a Fulcrum
+run hit the account's daily loss limit at 12:16; its roll's OPEN was refused
+until the close, and the runner posted the same CLOSE_GROUP 9,292 times in
+three hours, each one a quotes read, a signal row and a dashboard event. The
+API books a signal whole or not at all, so a close that was booked closed its
+legs, and the same close again would close nothing.
+
 A strategy put back emits its refused OPEN_GROUP again on the very next tick,
 and a refusal rarely clears that fast: a rate limit lasts up to a minute, a
 stale quote as long as the feed is stalled. Posted every tick, each one is a
@@ -47,7 +57,7 @@ import json
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import requests
 
@@ -93,6 +103,8 @@ class Booking:
     held: bool = False
     #: On a refused OPEN: how long the run's OPENs are now held, in seconds.
     holds_opens_for: Optional[float] = None
+    #: A CLOSE_GROUP already booked, emitted again: counted as booked, not posted.
+    repeated: bool = False
     status: Optional[int] = None
     detail: str = ""
     attempts: int = 0
@@ -207,6 +219,67 @@ class SignalBooker:
                     pass
             pause = BACKOFF_SECONDS[min(attempts, len(BACKOFF_SECONDS)) - 1]
             self._sleep(0.0 if confirming else min(pause, max(0.0, budget - elapsed)))
+
+
+LegsKey = Tuple[Tuple[str, str, int], ...]
+
+
+class ClosedGroups:
+    """
+    The CLOSE_GROUPs this run has booked, by group, so the same close emitted
+    again is answered from here instead of being posted.
+
+    "The same" means the same group and the same legs (symbol, side, lots) as
+    the strategy emitted them, before the runner resolves symbols and prices:
+    a close of other legs of the group is posted as usual. A group opened again
+    under the same id (booked OPEN_GROUP) forgets its close.
+    """
+
+    def __init__(self) -> None:
+        self._closed: Dict[str, LegsKey] = {}
+        self._repeats: Dict[str, int] = {}
+
+    @staticmethod
+    def group_of(sig: StrategySignal) -> str:
+        return str((sig.metadata or {}).get("group_id") or "")
+
+    @staticmethod
+    def legs_key(sig: StrategySignal) -> LegsKey:
+        legs = []
+        for leg in sig.legs or []:
+            try:
+                lots = int(leg.get("quantity") or 0)
+            except (TypeError, ValueError):
+                lots = 0
+            legs.append((str(leg.get("symbol") or "").upper(), str(leg.get("side") or "").upper(), lots))
+        return tuple(sorted(legs))
+
+    def repeat_of(self, sig: StrategySignal, key: Optional[LegsKey] = None) -> Optional[Booking]:
+        """A booking for a close that was already booked, else None (post it)."""
+        if str(sig.signal_type or "").upper() != "CLOSE_GROUP":
+            return None
+        group = self.group_of(sig)
+        if not group or self._closed.get(group) != (key if key is not None else self.legs_key(sig)):
+            return None
+        self._repeats[group] = self._repeats.get(group, 0) + 1
+        return Booking("CLOSE_GROUP", group, "", booked=True, repeated=True,
+                       detail="booked before; the same close is not posted again")
+
+    def booked(self, sig: StrategySignal, key: Optional[LegsKey] = None) -> None:
+        """Remembers what a booked signal did to its group."""
+        group = self.group_of(sig)
+        if not group:
+            return
+        kind = str(sig.signal_type or "").upper()
+        if kind == "CLOSE_GROUP":
+            self._closed[group] = key if key is not None else self.legs_key(sig)
+        elif kind == "OPEN_GROUP":
+            self._closed.pop(group, None)
+            self._repeats.pop(group, None)
+
+    def repeats(self, group: str) -> int:
+        """How many times the strategy emitted this group's booked close again."""
+        return self._repeats.get(group, 0)
 
 
 @dataclass
