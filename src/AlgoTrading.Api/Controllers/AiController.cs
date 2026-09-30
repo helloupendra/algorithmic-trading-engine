@@ -295,7 +295,7 @@ public class AiController : ControllerBase
 
     // ---------- calls -------------------------------------------------------
 
-    /// <summary>The newest calls first, optionally one agent's, one outcome or one model's.</summary>
+    /// <summary>The newest calls first, optionally one agent's, one outcome's, one model's or one source's (console, telegram, check...).</summary>
     [HttpGet("calls")]
     public async Task<IActionResult> Calls(
         [FromQuery] string? agent = null,
@@ -303,10 +303,12 @@ public class AiController : ControllerBase
         [FromQuery] string? model = null,
         [FromQuery] int take = DefaultTake,
         [FromQuery] long? beforeId = null,
+        [FromQuery] string? source = null,
         CancellationToken cancellationToken = default)
     {
         take = Math.Clamp(take, 1, MaxTake);
         var query = _db.AiCalls.AsNoTracking();
+        if (!string.IsNullOrWhiteSpace(source)) query = query.Where(x => x.Source == source);
         if (!string.IsNullOrWhiteSpace(agent)) query = query.Where(x => x.AgentKey == agent);
         if (!string.IsNullOrWhiteSpace(outcome)) query = query.Where(x => x.Outcome == outcome);
         if (!string.IsNullOrWhiteSpace(model)) query = query.Where(x => x.Model == model || x.ChainJson.Contains("\"" + model + "\""));
