@@ -113,6 +113,12 @@ export interface AiCallRef {
   model: string | null
 }
 
+/** A read-only tool an agent may call on its own: a name the model uses and what it returns. */
+export interface AiAgentTool {
+  name: string
+  description: string
+}
+
 export interface AiAgent {
   key: string
   number: number
@@ -130,6 +136,8 @@ export interface AiAgent {
   chainOverridden: boolean
   reads: string
   limits: string
+  /** The desk reads it may make itself (Phase 2); empty for a planned agent. */
+  tools: AiAgentTool[]
   lastCall: AiCallRef | null
   nextRunUtc: string | null
   today: { calls: number; ok: number; failed: number; totalTokens: number } | null
@@ -222,6 +230,10 @@ export interface AiCallSummary {
   summary: string
   error: string
   conversationId: string
+  /** Tools the model called while answering. */
+  toolCalls: number
+  /** Model rounds: one, plus one per round of tool results sent back. */
+  rounds: number
 }
 
 export interface AiCallsPage {
@@ -240,6 +252,32 @@ export interface AiAttempt {
   outcome: string
   seconds: number | null
   httpStatus: number | null
+  /** The model round it belongs to, from 1. */
+  round: number
+}
+
+/**
+ * One tool the model called and what came back, as the stream's `tool` event
+ * and the call's detail carry it. `result` is exactly what the model was
+ * given (the first 16,000 characters of `resultChars`).
+ */
+export interface AiToolStep {
+  round: number
+  /** The model's id for the call, unique within the question. */
+  id: string
+  name: string
+  /** The JSON text the model wrote as the arguments. */
+  arguments: string
+  ok: boolean
+  error: string | null
+  seconds: number | null
+  rows: number | null
+  /** When the data it read was true; null when the tool cannot say. */
+  asOfUtc: string | null
+  /** One line: "3 runs on 30 Sep, net ₹-4,210.00". */
+  summary: string
+  resultChars: number | null
+  result: string
 }
 
 export interface AiCallDetail extends AiCallSummary {
@@ -251,6 +289,7 @@ export interface AiCallDetail extends AiCallSummary {
   /** The chain the call would walk, in order. */
   chain: string[]
   attempts: AiAttempt[]
+  tools: AiToolStep[]
   request: { endpoint: string; maxTokens: number | null; temperature: number | null; stream: boolean } | null
 }
 
@@ -285,7 +324,7 @@ export function readOverview(raw: unknown): AiOverview {
 
 export function readAgents(raw: unknown): AiAgentsResponse {
   const o = need<AiAgentsResponse>(raw, ['agents'], 'agent list')
-  return { agents: list(o.agents), ruleBased: list(o.ruleBased) }
+  return { agents: list<AiAgent>(o.agents).map((a) => ({ ...a, tools: list(a.tools) })), ruleBased: list(o.ruleBased) }
 }
 
 export function readModels(raw: unknown): AiModelsResponse {
@@ -299,14 +338,26 @@ export function readModels(raw: unknown): AiModelsResponse {
   }
 }
 
+/** A call from an API build before tools: none called, one round. */
+function withRounds<T extends { toolCalls?: number; rounds?: number }>(c: T): T & { toolCalls: number; rounds: number } {
+  return { ...c, toolCalls: c.toolCalls ?? 0, rounds: c.rounds ?? 1 }
+}
+
 export function readCallsPage(raw: unknown): AiCallsPage {
   const o = need<AiCallsPage>(raw, ['calls'], 'call log')
-  return { calls: list(o.calls), nextBeforeId: o.nextBeforeId ?? null }
+  return { calls: list<AiCallSummary>(o.calls).map(withRounds), nextBeforeId: o.nextBeforeId ?? null }
 }
 
 export function readCall(raw: unknown): AiCallDetail {
   const o = need<AiCallDetail>(raw, ['id', 'outcome'], 'call')
-  return { ...o, messages: list(o.messages), attempts: list(o.attempts), chain: list(o.chain), request: o.request ?? null }
+  return {
+    ...withRounds(o),
+    messages: list(o.messages),
+    attempts: list<AiAttempt>(o.attempts).map((a) => ({ ...a, round: a.round ?? 1 })),
+    tools: list<unknown>(o.tools).map(readToolStep),
+    chain: list(o.chain),
+    request: o.request ?? null,
+  }
 }
 
 // ---------- queries ---------------------------------------------------------
@@ -490,8 +541,11 @@ function readSseBlock(block: string): SseMessage | null {
 
 export type AiStreamEvent =
   | { type: 'start'; callId: number | null; chain: string[] }
-  | { type: 'attempt'; model: string; n: number; of: number }
+  /** A model asked for `round` (from 1); n of `of` models still available in that round. */
+  | { type: 'attempt'; model: string; n: number; of: number; round: number }
   | { type: 'reasoning'; text: string }
+  /** A tool the model called has run; `step` is what the model got back. */
+  | { type: 'tool'; step: AiToolStep }
   | { type: 'delta'; text: string }
   | { type: 'fallback'; model: string; reason: string; next: string | null }
   | {
@@ -502,11 +556,37 @@ export type AiStreamEvent =
       finishReason: string | null
       usage: AiUsage | null
       fallbacks: number
+      toolCalls: number
+      rounds: number
     }
   | { type: 'error'; callId: number | null; error: string }
 
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
 const str = (v: unknown): string | null => (typeof v === 'string' ? v : null)
+
+/**
+ * A tool step from the stream or a call's detail, every field made safe to
+ * show: arguments sent as an object become its JSON text, and a missing
+ * number is null, never a zero that would read as a fact.
+ */
+export function readToolStep(raw: unknown): AiToolStep {
+  const d = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  const args = d.arguments
+  return {
+    round: num(d.round) ?? 1,
+    id: str(d.id) ?? '',
+    name: str(d.name) ?? 'unknown tool',
+    arguments: typeof args === 'string' ? args : args == null ? '' : JSON.stringify(args),
+    ok: d.ok === true,
+    error: str(d.error),
+    seconds: num(d.seconds),
+    rows: num(d.rows),
+    asOfUtc: str(d.asOfUtc),
+    summary: str(d.summary) ?? '',
+    resultChars: num(d.resultChars),
+    result: str(d.result) ?? '',
+  }
+}
 
 /**
  * One SSE message as the stream's event, or null for one this page does not
@@ -526,12 +606,14 @@ export function decodeStreamEvent(message: SseMessage): AiStreamEvent | null {
     case 'start':
       return { type: 'start', callId: num(d.callId), chain: list<unknown>(d.chain).filter((m): m is string => typeof m === 'string') }
     case 'attempt':
-      return { type: 'attempt', model: str(d.model) ?? '', n: num(d.n) ?? 1, of: num(d.of) ?? 1 }
+      return { type: 'attempt', model: str(d.model) ?? '', n: num(d.n) ?? 1, of: num(d.of) ?? 1, round: num(d.round) ?? 1 }
     case 'reasoning':
     case 'delta': {
       const text = str(d.text)
       return text == null ? null : { type: message.event, text }
     }
+    case 'tool':
+      return { type: 'tool', step: readToolStep(d) }
     case 'fallback':
       return { type: 'fallback', model: str(d.model) ?? '', reason: str(d.reason) ?? '', next: str(d.next) }
     case 'done': {
@@ -544,6 +626,8 @@ export function decodeStreamEvent(message: SseMessage): AiStreamEvent | null {
         finishReason: str(d.finishReason),
         usage: u ? { promptTokens: num(u.promptTokens), completionTokens: num(u.completionTokens), totalTokens: num(u.totalTokens) } : null,
         fallbacks: num(d.fallbacks) ?? 0,
+        toolCalls: num(d.toolCalls) ?? 0,
+        rounds: num(d.rounds) ?? 1,
       }
     }
     case 'error':
@@ -734,6 +818,27 @@ export function parseAskTier(raw: string | null | undefined): AskTier {
 
 export type TurnStatus = 'streaming' | 'done' | 'error' | 'stopped'
 
+/**
+ * What one model round produced on the way to the answer: its reasoning,
+ * any text it wrote before asking for tools (its working, not the answer),
+ * and the tools it called with what they returned.
+ */
+export interface TurnRound {
+  round: number
+  reasoning: string
+  working: string
+  tools: AiToolStep[]
+}
+
+/** Where the last attempt began, so a fallback drops only what came after it. */
+interface AttemptMark {
+  /** Index into `rounds` of the round the attempt is for. */
+  index: number
+  reasoning: number
+  working: number
+  tools: number
+}
+
 /** One question and its answer, as the page shows it while it streams and after. */
 export interface ChatTurn {
   id: string
@@ -745,8 +850,17 @@ export interface ChatTurn {
   /** The model being asked now; once done, the one that answered. */
   model: string | null
   attempt: { n: number; of: number } | null
+  /** The round being asked now, from 1; 0 before the first attempt. */
+  round: number
+  /** Every round so far, in order, with its reasoning, working and tool steps. */
+  rounds: TurnRound[]
+  /** Text streamed in the current round; once done, the answer. */
   answer: string
-  reasoning: string
+  mark: AttemptMark | null
+  /** Tools called so far; once done, the server's count. */
+  toolCalls: number
+  /** Rounds in all, from `done`; null until then. */
+  roundCount: number | null
   /** One line per model that failed and handed over, in order. */
   notes: string[]
   seconds: number | null
@@ -800,19 +914,73 @@ export function fallbackNote(e: { model: string; reason: string; next: string | 
   return e.next ? `${who} ${what}, asking ${modelName(e.next)}` : `${who} ${what}, and no model is left to ask`
 }
 
+/** The rounds with `round` present (added at the end when new), and its index. */
+function withRound(rounds: readonly TurnRound[], round: number): { rounds: TurnRound[]; index: number } {
+  const index = rounds.findIndex((r) => r.round === round)
+  if (index >= 0) return { rounds: rounds.slice(), index }
+  return { rounds: [...rounds, { round, reasoning: '', working: '', tools: [] }], index: rounds.length }
+}
+
+/** Text streamed as the answer that turned out not to be one, moved into round `index`'s working. */
+function keepAsWorking(rounds: TurnRound[], index: number, text: string): void {
+  if (!text) return
+  const r = rounds[index]
+  rounds[index] = { ...r, working: r.working ? `${r.working}\n\n${text}` : text }
+}
+
 function applyEvent(turn: ChatTurn, e: AiStreamEvent): ChatTurn {
   switch (e.type) {
     case 'start':
       return { ...turn, callId: e.callId ?? turn.callId, chain: e.chain }
-    case 'attempt':
-      return { ...turn, model: e.model, attempt: { n: e.n, of: e.of } }
-    case 'reasoning':
-      return { ...turn, reasoning: turn.reasoning + e.text }
+    case 'attempt': {
+      const { rounds, index } = withRound(turn.rounds, e.round)
+      // Text left over from the round before is not this attempt's answer: it was that round's working.
+      if (turn.answer) {
+        const before = rounds.findIndex((r) => r.round === Math.max(1, turn.round))
+        keepAsWorking(rounds, before >= 0 ? before : index, turn.answer)
+      }
+      const r = rounds[index]
+      return {
+        ...turn,
+        model: e.model,
+        attempt: { n: e.n, of: e.of },
+        round: e.round,
+        rounds,
+        answer: '',
+        mark: { index, reasoning: r.reasoning.length, working: r.working.length, tools: r.tools.length },
+      }
+    }
+    case 'reasoning': {
+      const { rounds, index } = withRound(turn.rounds, Math.max(1, turn.round))
+      rounds[index] = { ...rounds[index], reasoning: rounds[index].reasoning + e.text }
+      return { ...turn, rounds }
+    }
     case 'delta':
       return { ...turn, answer: turn.answer + e.text }
-    case 'fallback':
-      // What the failed model had said so far is not an answer: start clean for the next one.
-      return { ...turn, answer: '', reasoning: '', fallbacks: turn.fallbacks + 1, notes: [...turn.notes, fallbackNote(e)] }
+    case 'tool': {
+      // The model asked for data, so what it wrote this round was working, not the answer.
+      const current = withRound(turn.rounds, Math.max(1, turn.round))
+      keepAsWorking(current.rounds, current.index, turn.answer)
+      const { rounds, index } = withRound(current.rounds, e.step.round)
+      rounds[index] = { ...rounds[index], tools: [...rounds[index].tools, e.step] }
+      return { ...turn, rounds, answer: '', toolCalls: turn.toolCalls + 1 }
+    }
+    case 'fallback': {
+      // What the failed model said since its attempt began is dropped; earlier rounds and their tools stay.
+      const m = turn.mark
+      let rounds = turn.rounds
+      if (m && m.index < rounds.length) {
+        const r = rounds[m.index]
+        rounds = [
+          ...rounds.slice(0, m.index),
+          { ...r, reasoning: r.reasoning.slice(0, m.reasoning), working: r.working.slice(0, m.working), tools: r.tools.slice(0, m.tools) },
+        ]
+      } else if (!m && rounds.length > 0) {
+        const last = rounds[rounds.length - 1]
+        rounds = [...rounds.slice(0, -1), { ...last, reasoning: '', working: '' }]
+      }
+      return { ...turn, rounds, answer: '', fallbacks: turn.fallbacks + 1, notes: [...turn.notes, fallbackNote(e)] }
+    }
     case 'done':
       return {
         ...turn,
@@ -823,6 +991,8 @@ function applyEvent(turn: ChatTurn, e: AiStreamEvent): ChatTurn {
         usage: e.usage,
         finishReason: e.finishReason,
         fallbacks: Math.max(turn.fallbacks, e.fallbacks),
+        toolCalls: Math.max(turn.toolCalls, e.toolCalls),
+        roundCount: e.rounds,
       }
     case 'error':
       return { ...turn, status: 'error', callId: e.callId ?? turn.callId, error: e.error, errorStatus: null }
@@ -841,8 +1011,12 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       chain: [],
       model: null,
       attempt: null,
+      round: 0,
+      rounds: [],
       answer: '',
-      reasoning: '',
+      mark: null,
+      toolCalls: 0,
+      roundCount: null,
       notes: [],
       seconds: null,
       usage: null,
@@ -880,6 +1054,22 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
   const turns = state.turns.slice()
   turns[index] = next
   return { ...state, turns }
+}
+
+/** Every round's reasoning, in order: what the model thought on the way to the answer. */
+export function turnReasoning(turn: Pick<ChatTurn, 'rounds'>): string {
+  return turn.rounds.map((r) => r.reasoning).join('')
+}
+
+/** "2 tool calls · 2 rounds", or '' for an answer that needed neither. */
+export function toolsLine(toolCalls: number | null | undefined, rounds: number | null | undefined): string {
+  const t = toolCalls ?? 0
+  const r = rounds ?? 1
+  if (t <= 0 && r <= 1) return ''
+  const parts: string[] = []
+  if (t > 0) parts.push(`${t} tool call${t === 1 ? '' : 's'}`)
+  if (r > 1) parts.push(`${r} rounds`)
+  return parts.join(' · ')
 }
 
 /** What one ask may carry (the API's limits). */
@@ -1028,6 +1218,102 @@ export function callTime(iso: string | null | undefined, nowMs: number): string 
   if (Number.isNaN(ms)) return '—'
   const d = new Date(ms)
   return istDay(ms) === istDay(nowMs) ? istClock.format(d) : `${istDayMonth.format(d)} ${istHourMinute.format(d)}`
+}
+
+/** An instant's IST clock without seconds: "15:30" today, "29 Sep 15:30" on an earlier day, "—" when there is none. */
+export function clockTime(iso: string | null | undefined, nowMs: number): string {
+  if (!iso) return '—'
+  const ms = Date.parse(iso)
+  if (Number.isNaN(ms)) return '—'
+  const d = new Date(ms)
+  return istDay(ms) === istDay(nowMs) ? istHourMinute.format(d) : `${istDayMonth.format(d)} ${istHourMinute.format(d)}`
+}
+
+// ---------- tools ---------------------------------------------------------------
+
+/** The Desk Assistant's tools as the console names them. */
+const TOOL_NAMES: Record<string, string> = {
+  get_runs: 'Runs',
+  get_open_positions: 'Open positions',
+  get_quotes: 'Quotes',
+  get_incidents: 'Incidents',
+  get_latest_checkup: 'Latest checkup',
+  get_forecasts: 'Forecasts',
+}
+
+/** Tools whose main argument names the thing read, so it joins the label: "Run #412", "Option chain NIFTY". */
+const TOOL_SUBJECTS: Record<string, { keys: string[]; label: (value: string) => string; bare: string }> = {
+  get_run: { keys: ['runId', 'run_id', 'id'], label: (v) => `Run #${v}`, bare: 'Run' },
+  get_option_chain_summary: { keys: ['underlying', 'symbol'], label: (v) => `Option chain ${v}`, bare: 'Option chain' },
+  get_news: { keys: ['query', 'q', 'symbol'], label: (v) => `News ${v}`, bare: 'News' },
+  get_strategy_spec: { keys: ['strategy', 'name'], label: (v) => `Strategy spec ${v}`, bare: 'Strategy spec' },
+}
+
+/** The arguments the model wrote, when they are a JSON object; null otherwise. */
+export function parseToolArgs(text: string | null | undefined): Record<string, unknown> | null {
+  if (!text || !text.trim()) return {}
+  try {
+    const v = JSON.parse(text) as unknown
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null
+  } catch {
+    return null
+  }
+}
+
+function argText(value: unknown): string {
+  if (value == null) return 'none'
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (Array.isArray(value)) return value.map(argText).join(', ')
+  return JSON.stringify(value)
+}
+
+/**
+ * A tool call in words: its label ("Runs", "Run #412", "News HDFC Bank") and
+ * the other arguments ("date: today"). An unknown tool keeps its own name;
+ * arguments that are not a JSON object are shown as written, cut short.
+ */
+export function toolLabel(name: string, argumentsJson: string | null | undefined): { label: string; detail: string } {
+  const args = parseToolArgs(argumentsJson)
+  const subject = TOOL_SUBJECTS[name]
+  const base = TOOL_NAMES[name] ?? subject?.bare ?? name
+  if (args == null) {
+    const raw = (argumentsJson ?? '').trim()
+    return { label: base, detail: raw.length > 80 ? `${raw.slice(0, 79)}…` : raw }
+  }
+  let label = base
+  const rest = { ...args }
+  if (subject) {
+    const key = subject.keys.find((k) => rest[k] != null && argText(rest[k]).trim() !== '')
+    if (key) {
+      label = subject.label(argText(rest[key]))
+      delete rest[key]
+    }
+  }
+  const detail = Object.entries(rest)
+    .filter(([, v]) => v != null && v !== '')
+    .map(([k, v]) => `${k}: ${argText(v)}`)
+    .join(', ')
+  return { label, detail }
+}
+
+/**
+ * A JSON text laid out to read, or the text as it is when it is not JSON (a
+ * result cut at 16,000 characters, say): never an error, and never a guess.
+ */
+export function prettyJson(text: string | null | undefined): { text: string; json: boolean } {
+  const t = (text ?? '').trim()
+  if (!t) return { text: '', json: false }
+  try {
+    return { text: JSON.stringify(JSON.parse(t), null, 2), json: true }
+  } catch {
+    return { text: text ?? '', json: false }
+  }
+}
+
+/** "3 rows", "1 row"; '' when the tool did not say. */
+export function rowsText(rows: number | null | undefined): string {
+  return rows == null ? '' : `${grouped.format(rows)} row${rows === 1 ? '' : 's'}`
 }
 
 // ---------- chains ------------------------------------------------------------

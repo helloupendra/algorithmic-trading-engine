@@ -96,7 +96,8 @@
 .ai-model-label { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; min-width: 0; }
 .ai-model-label__id { font-size: 11px; color: var(--text-3); overflow-wrap: anywhere; }
 
-.ai-pill { padding: 1px 8px; gap: 5px; font-size: 11px; }
+/* Prefixed with the class they refine: styles.css loads after this file and would win a tie. */
+.pill.ai-pill { padding: 1px 8px; gap: 5px; font-size: 11px; }
 .ai-pill .pill__dot { width: 6px; height: 6px; }
 
 a.ai-call-link { color: var(--brand-hi); text-decoration: none; white-space: nowrap; }
@@ -136,8 +137,8 @@ a.ai-call-link:hover { text-decoration: underline; }
 .ai-last__row:first-child { padding-top: 0; }
 .ai-last__row:last-child { border-bottom: 0; padding-bottom: 0; }
 .ai-last__label,
-.ai-facts dt,
-.ai-chat__facts dt,
+.ai-facts > div > dt,
+.ai-chat__facts > div > dt,
 .ai-msg__role,
 .ai-call__h {
   font-size: 10.5px;
@@ -209,8 +210,8 @@ a.ai-call-link:hover { text-decoration: underline; }
 }
 .ai-chat__facts > div,
 .ai-facts > div { display: contents; }
-.ai-chat__facts dt { padding-top: 3px; }
-.ai-chat__facts dd {
+.ai-chat__facts > div > dt { padding-top: 3px; }
+.ai-chat__facts > div > dd {
   margin: 0;
   display: flex;
   flex-wrap: wrap;
@@ -284,23 +285,19 @@ a.ai-call-link:hover { text-decoration: underline; }
 /* The model's reasoning: folded, dim, its last words showing while it thinks. */
 .ai-think { margin: 0 0 8px; font-size: 12px; color: var(--text-3); }
 .ai-think__summary {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0 2px;
+  display: block;
   width: fit-content;
   max-width: 100%;
   cursor: pointer;
   list-style: none;
 }
 .ai-think__summary::-webkit-details-marker { display: none; }
-.ai-think__summary::before { content: '▸'; width: 12px; color: var(--text-3); }
+.ai-think__summary::before { content: '▸'; display: inline-block; width: 12px; color: var(--text-3); }
 .ai-think[open] > .ai-think__summary::before { content: '▾'; }
 .ai-think__summary:hover .ai-think__label { color: var(--text); }
 .ai-think__label { color: var(--text-2); font-weight: 600; }
 .ai-think--live .ai-think__label { color: var(--live); }
 .ai-think__tail {
-  flex-basis: 100%;
   margin: 3px 0 0 12px;
   color: var(--text-3);
   font-style: italic;
@@ -326,6 +323,78 @@ a.ai-call-link:hover { text-decoration: underline; }
   overflow-wrap: anywhere;
 }
 
+/* What the model wrote before it asked for data: its working, set apart from the answer. */
+.ai-working {
+  margin: 0 0 8px;
+  padding-left: 11px;
+  border-left: 2px solid var(--line);
+  font-size: 12.5px;
+  font-style: italic;
+  line-height: 1.5;
+  color: var(--text-3);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ai-think__round { color: var(--text-3); }
+
+/* A tool step: one line saying what was read, opening to what the model saw. */
+.ai-tools-steps { display: flex; flex-direction: column; gap: 3px; margin: 0 0 8px; }
+.ai-tool {
+  background: var(--bg1);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  min-width: 0;
+}
+.ai-tool--err { border-color: color-mix(in srgb, var(--warn) 40%, var(--line-soft)); }
+.ai-tool__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 1px 7px;
+  padding: 4px 9px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-2);
+}
+.ai-tool__row::-webkit-details-marker { display: none; }
+.ai-tool__row::before { content: '▸'; width: 9px; color: var(--text-3); }
+.ai-tool[open] > .ai-tool__row::before { content: '▾'; }
+.ai-tool__row:hover .ai-tool__label { color: var(--brand-hi); }
+.ai-tool__round { font-size: 11px; color: var(--text-3); }
+.ai-tool__verb {
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.ai-tool__label { color: var(--text); font-weight: 600; }
+.ai-tool__args { overflow-wrap: anywhere; }
+.ai-tool__fact::before,
+.ai-tool__error::before { content: '· '; color: var(--text-3); }
+.ai-tool__error { color: var(--warn); overflow-wrap: anywhere; }
+.ai-tool__summary { flex-basis: 100%; padding-left: 16px; font-size: 11.5px; color: var(--text-3); overflow-wrap: anywhere; }
+.ai-tool__body { padding: 0 10px 9px 25px; }
+.ai-tool__line { margin: 2px 0 4px; color: var(--text-2); overflow-wrap: anywhere; }
+.ai-tool__h { margin-top: 8px; font-size: 11px; color: var(--text-3); }
+.ai-tool__h .mono { font-size: 11px; }
+.ai-pre.ai-tool__pre { max-height: 300px; font-size: 11.5px; }
+
+/* Starter questions: small, and they wrap on a phone rather than run off it. */
+.ai-starters { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+.btn.ai-starter { max-width: 100%; white-space: normal; text-align: left; font-weight: 500; }
+.ai-toolchips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.ai-toolchip {
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg1);
+  font-size: 11.5px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
 /* The composer stays at the foot of the window while a long answer scrolls. */
 .ai-composer {
   position: sticky;
@@ -338,7 +407,7 @@ a.ai-call-link:hover { text-decoration: underline; }
   background: var(--bg0);
   border-top: 1px solid var(--line-soft);
 }
-.ai-composer__input {
+.field__input.ai-composer__input {
   width: 100%;
   min-height: 58px;
   max-height: 40vh;
@@ -412,7 +481,7 @@ a.ai-call-link:hover { text-decoration: underline; }
 .ai-agent--planned { background: transparent; border-style: dashed; }
 .ai-agent--planned .ai-agent__name,
 .ai-agent--planned .ai-agent__job { color: var(--text-2); }
-.ai-agent--planned .ai-facts dd { color: var(--text-3); }
+.ai-agent--planned .ai-facts > div > dd { color: var(--text-3); }
 .ai-agent--target { border-color: var(--brand-line); }
 .ai-agent__head {
   display: flex;
@@ -436,8 +505,41 @@ a.ai-call-link:hover { text-decoration: underline; }
   margin: 10px 0 0;
   font-size: 12.5px;
 }
-.ai-facts dt { padding-top: 2px; }
-.ai-facts dd { margin: 0; min-width: 0; color: var(--text-2); overflow-wrap: anywhere; }
+.ai-facts > div > dt { padding-top: 2px; }
+.ai-facts > div > dd { margin: 0; min-width: 0; color: var(--text-2); overflow-wrap: anywhere; }
+
+/* An agent's tools: folded behind their count, name and what it returns. */
+.ai-agent-tools > summary {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-2);
+}
+.ai-agent-tools > summary::-webkit-details-marker { display: none; }
+.ai-agent-tools > summary::before { content: '▸ '; color: var(--text-3); }
+.ai-agent-tools[open] > summary::before { content: '▾ '; }
+.ai-agent-tools > summary:hover { color: var(--text); }
+.ai-agent-tools__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 400px), 1fr));
+  gap: 0 20px;
+  margin: 6px 0 0;
+}
+.ai-agent-tools__list > div {
+  display: grid;
+  grid-template-columns: 188px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 0;
+  border-bottom: 1px dashed var(--line-soft);
+  font-size: 12px;
+}
+.ai-agent-tools__list dt { color: var(--text); font-size: 11.5px; overflow-wrap: anywhere; }
+.ai-agent-tools__list dd { margin: 0; color: var(--text-2); }
 
 /* The switch sits at the end of the header; its question takes a row of its own under it. */
 .ai-switch { display: contents; }
@@ -603,7 +705,7 @@ a.ai-c-link:hover { color: var(--brand-hi); text-decoration: underline; }
 .ai-call__conv { overflow-wrap: anywhere; text-align: right; }
 .ai-call__sec { min-width: 0; }
 .ai-call__h { margin: 0 0 6px; }
-.ai-call__h .faint { font-weight: 500; letter-spacing: 0; }
+.ai-call__h .faint { font-weight: 500; letter-spacing: 0; text-transform: none; }
 .ai-call__req { margin: 0; font-size: 12.5px; overflow-wrap: anywhere; }
 .ai-call__chain { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 8px; font-size: 12px; }
 .ai-call__answer { padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); }
@@ -650,11 +752,14 @@ a.ai-c-link:hover { color: var(--brand-hi); text-decoration: underline; }
   .ai-composer__hint { display: none; }
   .ai-composer__go { margin-left: auto; }
   .ai-chat__facts { grid-template-columns: minmax(0, 1fr); gap: 2px; }
-  .ai-chat__facts dd + dt { margin-top: 8px; }
+  .ai-chat__facts > div + div > dt { margin-top: 8px; }
   .ai-a { padding: 8px 11px 11px; }
+  .ai-tool__body { padding-left: 10px; }
+  .ai-tool__summary { padding-left: 0; }
 
   .ai-facts { grid-template-columns: minmax(0, 1fr); gap: 1px; }
-  .ai-facts dd + dt { margin-top: 7px; }
+  .ai-facts > div + div > dt { margin-top: 7px; }
+  .ai-agent-tools__list > div { grid-template-columns: minmax(0, 1fr); gap: 0; }
   .ai-switch__reason { max-width: none; }
 
   .ai-rule { grid-template-columns: minmax(0, 1fr); gap: 1px; }
@@ -724,6 +829,7 @@ a.ai-c-link:hover { color: var(--brand-hi); text-decoration: underline; }
   .table.ai-calls .ai-c-model,
   .table.ai-calls .ai-c-secs,
   .table.ai-calls .ai-c-tokens,
+  .table.ai-calls .ai-c-tools,
   .table.ai-calls .ai-c-fb { order: 4; font-size: 12px; text-align: left; }
   .table.ai-calls .ai-c-who { order: 5; font-size: 12px; }
   /* A dash says nothing in a line of figures; the outcome already says why it is missing. */

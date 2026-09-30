@@ -1,7 +1,8 @@
 /**
  * The pieces every AI page shares: a model's name, a call's outcome, an
- * agent's status, a chain in fallback order and its editor, and a link to a
- * call. Kept here so the five tabs say each thing the same way.
+ * agent's status, a chain in fallback order and its editor, a link to a
+ * call, and a tool step with what the model saw. Kept here so the five tabs
+ * say each thing the same way.
  */
 
 import { useMemo, useState } from 'react'
@@ -11,13 +12,19 @@ import {
   MAX_CHAIN,
   agentStatus,
   chainProblem,
+  clockTime,
+  formatSeconds,
+  formatTokens,
   isEmbeddingModel,
   modelName,
   moveInChain,
   outcomeBadge,
+  prettyJson,
+  rowsText,
   sameChain,
+  toolLabel,
 } from '../../lib/ai'
-import type { AiModel } from '../../lib/ai'
+import type { AiModel, AiToolStep } from '../../lib/ai'
 import { Badge } from '../../components/ui'
 
 /** "Nemotron 3 Ultra" with its full id beside it (or in its title when `bare`). */
@@ -258,4 +265,77 @@ export function NotKnown({ children = 'not known yet' }: { children?: ReactNode 
 /** A tone badge for "key configured". */
 export function KeyBadge({ configured }: { configured: boolean }) {
   return <Badge tone={configured ? 'pos' : 'warn'}>{configured ? 'key configured' : 'no key on the server'}</Badge>
+}
+
+/**
+ * One tool the model called, as a row: what it read, with which arguments,
+ * how many rows as of when, and how long it took; an error in the warning
+ * colour. Opening it shows the arguments and the JSON the model was given
+ * back, laid out to read ("what the model saw"), or as sent when it is not
+ * valid JSON (a result cut at the limit).
+ */
+export function ToolStepRow({
+  step,
+  now,
+  showRound,
+  showSummary,
+  istSuffix,
+}: {
+  step: AiToolStep
+  now: number
+  /** Say which round it was in: only worth saying when there was more than one. */
+  showRound?: boolean
+  /** The tool's own one-line summary under the row, not only inside it. */
+  showSummary?: boolean
+  /** "as of 15:30 IST" where no other time on the page says IST. */
+  istSuffix?: boolean
+}) {
+  const { label, detail } = toolLabel(step.name, step.arguments)
+  const args = prettyJson(step.arguments)
+  const result = prettyJson(step.result)
+  const rows = rowsText(step.rows)
+  const cut = step.resultChars != null && step.resultChars > step.result.length
+  return (
+    <details className={`ai-tool ${step.ok ? '' : 'ai-tool--err'}`}>
+      <summary className="ai-tool__row">
+        {showRound && <span className="ai-tool__round">round {step.round}</span>}
+        <span className="ai-tool__verb">Read</span>
+        <span className="ai-tool__label" title={step.name}>
+          {label}
+        </span>
+        {detail && <span className="ai-tool__args">({detail})</span>}
+        {step.ok ? (
+          <>
+            {rows && <span className="ai-tool__fact">{rows}</span>}
+            {step.asOfUtc && (
+              <span className="ai-tool__fact">
+                as of {clockTime(step.asOfUtc, now)}
+                {istSuffix ? ' IST' : ''}
+              </span>
+            )}
+          </>
+        ) : (
+          <span className="ai-tool__error">{step.error || 'failed, no reason given'}</span>
+        )}
+        {step.seconds != null && <span className="ai-tool__fact">{formatSeconds(step.seconds)}</span>}
+        {showSummary && step.summary && <span className="ai-tool__summary">{step.summary}</span>}
+      </summary>
+      <div className="ai-tool__body">
+        {!showSummary && step.summary && <p className="ai-tool__line">{step.summary}</p>}
+        <div className="ai-tool__h">
+          Arguments <span className="mono faint">{step.name}</span>
+        </div>
+        <pre className="ai-pre ai-tool__pre">{args.text || '{}'}</pre>
+        <div className="ai-tool__h">
+          What the model saw{' '}
+          <span className="faint">
+            {step.result ? `${formatTokens(step.result.length)} characters` : step.ok ? 'nothing' : 'only the error above, no data'}
+            {cut && ` of ${formatTokens(step.resultChars)}: the rest was cut before it reached the model`}
+            {step.result && !result.json && !cut && ' · not valid JSON, shown as sent'}
+          </span>
+        </div>
+        {step.result && <pre className="ai-pre ai-tool__pre">{result.text}</pre>}
+      </div>
+    </details>
+  )
 }

@@ -12,7 +12,8 @@
  * ?id= opens a call in full above the list, one URL per call so the
  * assistant, the agents and the overview can link to it: the request as
  * sent (endpoint, limits, the system prompt, every message), each model tried
- * with its outcome and HTTP status (this is where a fallback shows), the
+ * with its round, outcome and HTTP status (this is where a fallback shows),
+ * each tool the model called with the exact JSON it was given back, the
  * model's reasoning, the answer, the tokens and the finish reason.
  */
 
@@ -36,7 +37,7 @@ import type { AiCallDetail, AiCallFilters, AiCallSummary } from '../../lib/ai'
 import { formatAge, formatDateTime } from '../../lib/format'
 import { EmptyState, InlineError, Loading, Panel } from '../../components/ui'
 import { AnswerText } from './AnswerText'
-import { ChainChips, ModelLabel, OutcomeBadge } from './parts'
+import { ChainChips, ModelLabel, OutcomeBadge, ToolStepRow } from './parts'
 import { useNow } from './common'
 import '../system/health/health.css'
 import './ai.css'
@@ -68,6 +69,7 @@ function Sent({ text }: { text: string }) {
 function CallDetail({ call, now }: { call: AiCallDetail; now: number }) {
   const running = call.outcome === 'running'
   const req = call.request
+  const manyRounds = call.rounds > 1 || call.attempts.some((a) => a.round > 1) || call.tools.some((t) => t.round > 1)
   return (
     <div className="ai-call">
       <div className="ai-call__head">
@@ -124,6 +126,12 @@ function CallDetail({ call, now }: { call: AiCallDetail; now: number }) {
           <span className={call.fallbacks > 0 ? 'warn' : ''}>{call.fallbacks}</span>
         </div>
         <div>
+          <span className="muted">Tool calls · rounds</span>
+          <span>
+            {call.toolCalls} · {call.rounds}
+          </span>
+        </div>
+        <div>
           <span className="muted">Conversation</span>
           <span className="mono ai-call__conv">{call.conversationId || <span className="faint">—</span>}</span>
         </div>
@@ -159,6 +167,7 @@ function CallDetail({ call, now }: { call: AiCallDetail; now: number }) {
               <thead>
                 <tr>
                   <th>#</th>
+                  {manyRounds && <th>Round</th>}
                   <th>Model</th>
                   <th>Outcome</th>
                   <th className="num">Seconds</th>
@@ -169,6 +178,7 @@ function CallDetail({ call, now }: { call: AiCallDetail; now: number }) {
                 {call.attempts.map((a, i) => (
                   <tr key={i}>
                     <td className="faint">{i + 1}</td>
+                    {manyRounds && <td className="faint">{a.round}</td>}
                     <td>
                       <ModelLabel id={a.model} bare />
                     </td>
@@ -179,6 +189,21 @@ function CallDetail({ call, now }: { call: AiCallDetail; now: number }) {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </section>
+
+      <section className="ai-call__sec">
+        <h4 className="ai-call__h">
+          Tools <span className="faint">{call.tools.length > 0 ? `${call.tools.length} · what the model read, and exactly what it was given` : ''}</span>
+        </h4>
+        {call.tools.length === 0 ? (
+          <p className="faint ai-flush">{running ? 'None called yet.' : 'None: the model answered without reading the desk.'}</p>
+        ) : (
+          <div className="ai-tools-steps">
+            {call.tools.map((step, i) => (
+              <ToolStepRow key={step.id || i} step={step} now={now} showRound={manyRounds} showSummary istSuffix />
+            ))}
           </div>
         )}
       </section>
@@ -245,6 +270,10 @@ function CallRow({ call, selected, now, onOpen }: { call: AiCallSummary; selecte
       <td className={`ai-c-model ${call.model ? '' : 'ai-c-none'}`}>{call.model ? <span title={call.model}>{modelName(call.model)}</span> : <span className="faint">—</span>}</td>
       <td className="ai-c-outcome">
         <OutcomeBadge outcome={call.outcome} />
+      </td>
+      <td className={`num ai-c-tools ${call.toolCalls > 0 ? '' : 'faint ai-c-none'}`} title={call.rounds > 1 ? `${call.rounds} rounds` : undefined}>
+        {call.toolCalls > 0 ? call.toolCalls : '—'}
+        {call.toolCalls > 0 && <span className="ai-only-s"> tool{call.toolCalls === 1 ? '' : 's'}</span>}
       </td>
       <td className={`num ai-c-fb ${call.fallbacks > 0 ? 'warn' : 'faint'}`}>
         {call.fallbacks}
@@ -405,6 +434,9 @@ export function AiCallsPage() {
                   <th>Asked by</th>
                   <th>Model</th>
                   <th>Outcome</th>
+                  <th className="num" title="Tools the model called to read the desk">
+                    Tools
+                  </th>
                   <th className="num" title="Models that failed before one answered">
                     Fallbacks
                   </th>
