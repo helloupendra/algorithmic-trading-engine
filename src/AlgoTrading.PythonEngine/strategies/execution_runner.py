@@ -97,6 +97,7 @@ from strategies.signal_utils import (  # noqa: F401
 from strategies.signal_booking import (
     OPEN_REFUSAL_COOLDOWN_SECONDS as DEFAULT_OPEN_REFUSAL_COOLDOWN_SECONDS,
     Booking,
+    ClosedGroups,
     SignalBooker,
     report as report_booking,
     run_tick,
@@ -968,6 +969,9 @@ if __name__ == "__main__":
     # and holds the run's OPENs for a while after one is refused.
     booker = (SignalBooker(api, run_id, on_wait=housekeeping, open_cooldown_seconds=OPEN_REFUSAL_COOLDOWN_SECONDS)
               if run_id else None)
+    # Closes already booked: the same close emitted again (a roll whose OPEN
+    # was refused puts the strategy back) is not enriched, posted or published.
+    closed_groups = ClosedGroups()
 
     def evaluate_tick(tick_state: Dict[str, Any], inp: StrategyInput) -> List[StrategySignal]:
         """The strategy's on_bar for one tick, timed and printed."""
@@ -1015,6 +1019,18 @@ if __name__ == "__main__":
         if sig.signal_type not in {"OPEN_GROUP", "CLOSE_GROUP"}:
             return None
 
+        # Keyed on the legs as the strategy emitted them: enrichment below
+        # rewrites them with resolved symbols and prices.
+        legs_key = ClosedGroups.legs_key(sig)
+        if booker is not None:
+            repeat = closed_groups.repeat_of(sig, legs_key)
+            if repeat is not None:
+                group = repeat.group_id
+                if closed_groups.repeats(group) == 1:
+                    print(f"CLOSE_GROUP {group} was booked already; the strategy emits it again (its state was put "
+                          f"back after a refused signal). The same close is not posted again.", flush=True)
+                return repeat
+
         # The live loop is always handed a bar that is still
         # forming, so the gate judges the one before it.
         verdict = signal_filters.evaluate(
@@ -1034,6 +1050,8 @@ if __name__ == "__main__":
         booking = booker.book(sig) if booker is not None else None
         if booking is not None and not booking.booked:
             return booking
+        if booking is not None:
+            closed_groups.booked(sig, legs_key)
 
         ORDERS_EMITTED.inc()
         if booking is None:

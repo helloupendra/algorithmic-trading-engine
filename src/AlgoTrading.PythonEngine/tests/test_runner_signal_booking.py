@@ -20,6 +20,7 @@ import _bootstrap  # noqa: F401
 from strategies.base_strategy import StrategySignal
 from strategies.signal_booking import (
     CLOSE_RETRY_SECONDS,
+    ClosedGroups,
     OPEN_REFUSAL_COOLDOWN_SECONDS,
     OPEN_RETRY_SECONDS,
     Booking,
@@ -31,6 +32,7 @@ from strategies.signal_booking import (
 CALL = "NSE:NIFTY2692925000CE"
 PUT = "NSE:NIFTY2692925000PE"
 RATE_LIMITED = '{"error":"RATE LIMIT EXCEEDED: More than 50 orders placed in the last minute for run 214 (leg BUY 1)."}'
+DAILY_LOSS = '{"error":"MAX DAILY LOSS EXCEEDED: Current PnL -50358.000000 is below the limit of -50000.0. Exits remain allowed."}'
 
 
 def http_error(status: int, body: str = "") -> requests.exceptions.HTTPError:
@@ -421,3 +423,107 @@ class TickTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RollingStrategy:
+    """Fulcrum's shape: every tick it wants its group at ``strike``; a new strike closes the old group and opens one."""
+
+    def __init__(self) -> None:
+        self.strike = "B"
+
+    def on_bar(self, state: Dict[str, Any]) -> List[StrategySignal]:
+        if state["open"] == self.strike:
+            return []
+        old, state["open"] = state["open"], self.strike
+        return [signal("CLOSE_GROUP", old, leg(CALL, "BUY", None), leg(PUT, "BUY", None)),
+                signal("OPEN_GROUP", self.strike, leg(CALL, "SELL", None), leg(PUT, "SELL", None))]
+
+
+class RepeatedCloseTests(unittest.TestCase):
+    """
+    30 Sep: a Fulcrum run's roll was cut in half by the account's daily loss
+    limit. Its close was booked; its open was refused until the close of the
+    day, and every refusal put the strategy back to "the old group is open",
+    so it asked to close that group on every tick: 9,292 posts in three hours.
+    """
+
+    def post_like_the_runner(self, api: FakeApi, clock: Clock):
+        closed = ClosedGroups()
+        book = booker(api, clock).book
+
+        def post(sig: StrategySignal) -> Booking:
+            key = ClosedGroups.legs_key(sig)
+            repeat = closed.repeat_of(sig, key)
+            if repeat is not None:
+                return repeat
+            booking = book(sig)
+            if booking.booked:
+                closed.booked(sig, key)
+            return booking
+
+        return post, closed
+
+    def test_a_booked_close_is_posted_once_while_its_roll_keeps_being_refused(self):
+        clock = Clock()
+        api = FakeApi(None, *[(409, DAILY_LOSS)] * 10)
+        post, closed = self.post_like_the_runner(api, clock)
+        strategy = RollingStrategy()
+        state = {"open": "A"}
+
+        for _ in range(61):  # one tick a second for a minute
+            state = run_tick(state, strategy.on_bar, post).state
+            clock.now += 1.0
+
+        kinds = [p["signalType"] for p in api.posts]
+        self.assertEqual(kinds.count("CLOSE_GROUP"), 1)
+        # The refused open is still asked for, once per hold (30 s): at 0, 30 and 60 s.
+        self.assertEqual(kinds.count("OPEN_GROUP"), 3)
+        self.assertEqual(state, {"open": "A"})
+        self.assertEqual(closed.repeats("A"), 60)
+
+    def test_when_the_refusal_clears_the_roll_completes_and_the_close_is_not_sent_again(self):
+        clock = Clock()
+        api = FakeApi(None, (409, DAILY_LOSS), None)
+        post, _ = self.post_like_the_runner(api, clock)
+        strategy = RollingStrategy()
+        state = {"open": "A"}
+
+        for _ in range(40):
+            state = run_tick(state, strategy.on_bar, post).state
+            clock.now += 1.0
+
+        self.assertEqual([p["signalType"] for p in api.posts], ["CLOSE_GROUP", "OPEN_GROUP", "OPEN_GROUP"])
+        self.assertEqual(state, {"open": "B"})
+
+    def test_only_the_same_close_counts_as_a_repeat(self):
+        closed = ClosedGroups()
+        close_both = signal("CLOSE_GROUP", "A", leg(CALL, "BUY", 90.0), leg(PUT, "BUY", 80.0))
+        closed.booked(close_both)
+
+        # Same legs, other prices and order: a repeat.
+        self.assertTrue(closed.repeat_of(signal("CLOSE_GROUP", "A", leg(PUT, "BUY", None), leg(CALL, "BUY", 95.0))).repeated)
+        # Other legs of the group, or another group: posted.
+        self.assertIsNone(closed.repeat_of(signal("CLOSE_GROUP", "A", leg(CALL, "BUY", 90.0))))
+        self.assertIsNone(closed.repeat_of(signal("CLOSE_GROUP", "B", leg(CALL, "BUY", 90.0), leg(PUT, "BUY", 80.0))))
+        # An open is never answered from here.
+        self.assertIsNone(closed.repeat_of(signal("OPEN_GROUP", "A", leg(CALL, "SELL", 90.0))))
+
+    def test_a_group_opened_again_under_its_id_forgets_its_close(self):
+        closed = ClosedGroups()
+        close = signal("CLOSE_GROUP", "A", leg(CALL, "BUY", 90.0))
+        closed.booked(close)
+        closed.booked(signal("OPEN_GROUP", "A", leg(CALL, "SELL", 90.0)))
+
+        self.assertIsNone(closed.repeat_of(close))
+
+    def test_a_repeat_neither_logs_nor_puts_the_state_back_by_itself(self):
+        closed = ClosedGroups()
+        close = signal("CLOSE_GROUP", "A", leg(CALL, "BUY", 90.0))
+        closed.booked(close)
+        lines: List[str] = []
+
+        tick = run_tick({"open": "A"}, lambda st: [close], lambda sig: closed.repeat_of(sig))
+        report(tick, lines.append)
+
+        self.assertFalse(tick.restored)
+        self.assertEqual(lines, [])
