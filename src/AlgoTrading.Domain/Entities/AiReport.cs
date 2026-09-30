@@ -72,7 +72,10 @@ public static class AiReportSubject
     public const string Filing = "filing";
     public const string Incident = "incident";
 
-    public static readonly IReadOnlyList<string> All = [Run, News, Filing, Incident];
+    /// <summary>The Desk Assistant's daily check; the subject id is the IST day.</summary>
+    public const string Check = "check";
+
+    public static readonly IReadOnlyList<string> All = [Run, News, Filing, Incident, Check];
 }
 
 /// <summary>How a report came out.</summary>

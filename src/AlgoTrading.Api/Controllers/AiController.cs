@@ -450,15 +450,20 @@ public class AiController : ControllerBase
     public async Task<IActionResult> RunAgent(string key, [FromBody] AiAgentRunRequest? body, CancellationToken cancellationToken)
     {
         if (_scopes is null) return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "Scheduled agents are not available on this host." });
-        var def = AiCatalog.Agents.FirstOrDefault(a => a.Key == key);
+        var def = key == AiCatalog.AssistantCheck ? AiCatalog.AssistantCheckAgent : AiCatalog.Agents.FirstOrDefault(a => a.Key == key);
         if (def is null) return NotFound(new { error = $"No agent {key}." });
-        if (key is not (AiCatalog.TradeReviewer or AiCatalog.NewsAnalyst or AiCatalog.IncidentExplainer))
+        if (key is not (AiCatalog.TradeReviewer or AiCatalog.NewsAnalyst or AiCatalog.IncidentExplainer or AiCatalog.AssistantCheck))
         {
             return Conflict(new { error = $"{def.Name} is not a scheduled agent." });
         }
 
         var state = await _store.LoadAsync(cancellationToken);
-        if (state.Agent(key) is not { Status: "on" }) return Conflict(new { error = $"{def.Name} is switched off." });
+        if (!AlgoTrading.Api.Services.AiAgents.AiAgentScheduler.IsOn(key, state, _settings.CurrentValue))
+        {
+            return Conflict(new { error = key == AiCatalog.AssistantCheck
+                ? "The assistant check runs only while the Desk Assistant is on and Ai:AssistantCheckEnabled is true."
+                : $"{def.Name} is switched off." });
+        }
         if (!_settings.CurrentValue.KeyConfigured) return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "No NVIDIA_API_KEY on the server." });
 
         string? subject = string.IsNullOrWhiteSpace(body?.SubjectId) ? null : body.SubjectId.Trim();

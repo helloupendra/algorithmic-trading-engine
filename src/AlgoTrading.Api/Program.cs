@@ -175,6 +175,7 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.AiReportWriter>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.TradeReviewerAgent>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.IncidentExplainerAgent>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.NewsAnalystAgent>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.AssistantCheckAgent>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.AiAgents.AiAgentScheduler>();
 // The morning plan against what is live (GET /api/Desk/plan); Desk:PlanFile overrides where it is read from.
 builder.Services.Configure<AlgoTrading.Api.Configuration.DeskOptions>(

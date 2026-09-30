@@ -85,6 +85,12 @@ public sealed class AiSettings
     /// <summary>How far back the News Analyst looks for items it has not read: never the 2020 backfills.</summary>
     public int NewsLookbackHours { get; set; } = 24;
 
+    /// <summary>Whether the Desk Assistant's daily check runs (it asks only while the Assistant is on).</summary>
+    public bool AssistantCheckEnabled { get; set; } = true;
+
+    /// <summary>IST time after which the weekday check runs: after the NSE close has settled.</summary>
+    public string AssistantCheckAfterIst { get; set; } = "16:40";
+
     /// <summary>Tries for one report before a scheduled agent gives up on its subject.</summary>
     public int MaxReportAttempts { get; set; } = 3;
 

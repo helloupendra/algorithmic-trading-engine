@@ -179,7 +179,7 @@ public sealed class AiAgentScheduler(
 
         foreach (var agent in scope.ServiceProvider.GetServices<IAiScheduledAgent>())
         {
-            if (state.Agent(agent.AgentKey) is not { Status: "on" }) continue;
+            if (!IsOn(agent.AgentKey, state, s)) continue;
             try
             {
                 await agent.RunOnceAsync(_time.GetUtcNow().UtcDateTime, cancellationToken);
@@ -190,4 +190,12 @@ public sealed class AiAgentScheduler(
             }
         }
     }
+
+    /// <summary>
+    /// An agent's switch; the assistant check, a utility with no switch of its
+    /// own, runs while it is enabled in settings and the Desk Assistant is on.
+    /// </summary>
+    public static bool IsOn(string key, AiState state, AiSettings settings) => key == AiCatalog.AssistantCheck
+        ? settings.AssistantCheckEnabled && state.Agent(AiCatalog.DeskAssistant) is { Status: "on" }
+        : state.Agent(key) is { Status: "on" };
 }
