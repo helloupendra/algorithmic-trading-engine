@@ -22,9 +22,21 @@ Layouts follow Dhan's v2 documentation and its Python SDK's struct formats.
 Three things they leave open are handled defensively and named where they are
 handled: whether a trade time is true UTC or IST wall-clock, the index packet's
 layout, and whether one websocket frame can carry several packets.
+
+The socket thread reads and does almost nothing else (DHAN_INGEST=emitter, the
+default). Per frame it reads the header, looks the instrument up and keeps the
+frame as that instrument's latest packet of its kind; one "dhan-emit" thread
+decodes, merges, conflates and hands the ticks on every DHAN_EMIT_PERIOD_MS.
+On 28 Sep 2026, with 23 strategy runners on the 2-vCPU server, the socket
+thread did all of that itself, waited on the lock the flusher held across a
+Redis write, and topped out near 300 frames a second: the kernel's receive
+queue grew past 900 KB, the line went silent (Dhan stopping on a full window is
+inferred, not proven), and the watchdog rebuilt the connection every few
+minutes. DHAN_INGEST=inline restores that path, as the rollback.
 """
 
 import base64
+import collections
 import json
 import math
 import os
@@ -36,6 +48,13 @@ from typing import NamedTuple
 from urllib.parse import urlencode
 
 import websocket
+
+try:                                        # FIONREAD, for socket_backlog_bytes(); not on Windows
+    import fcntl
+    import termios
+    from array import array
+except ImportError:                         # pragma: no cover - Windows
+    fcntl = termios = array = None
 
 from core.api_client import build_session
 from core.config import API_BASE_URL, ENV_FILE, VERIFY_SSL
@@ -89,6 +108,19 @@ MAX_SYMBOLS_PER_RESOLVE = 5000
 #: platform builds and than any strategy here decides on, and it cuts Full
 #: mode's ~10 packets a second to one row. 0 hands on every packet.
 DEFAULT_MIN_TICK_INTERVAL_MS = 1000
+
+#: How frames get from the socket to the runner (DHAN_INGEST). "emitter": the
+#: socket thread only stores each instrument's latest packet per kind, and the
+#: "dhan-emit" thread decodes and hands them on. "inline": every frame is
+#: decoded and handed on on the socket thread itself — the path until 28 Sep
+#: 2026, kept as the rollback.
+INGEST_MODES = ("emitter", "inline")
+DEFAULT_INGEST = "emitter"
+
+#: How often the emitter thread runs a pass (DHAN_EMIT_PERIOD_MS), clamped to
+#: 10–1000. It is the latency the hand-off adds; the flusher it replaced also
+#: woke every 100 ms.
+DEFAULT_EMIT_PERIOD_MS = 100
 
 
 class DhanInstrument(NamedTuple):
@@ -436,7 +468,8 @@ class DhanFeed(VendorFeed):
 
     def __init__(self, client_id=None, access_token=None, feed_url=FEED_URL, max_symbols=5000, vendor_names=None,
                  http=None, api_base_url=None, verify_ssl=None, credentials_source=None, now=None,
-                 sleep=time.sleep, min_tick_interval_ms=DEFAULT_MIN_TICK_INTERVAL_MS, clock=None):
+                 sleep=time.sleep, min_tick_interval_ms=DEFAULT_MIN_TICK_INTERVAL_MS, clock=None,
+                 ingest=DEFAULT_INGEST, emit_period_ms=DEFAULT_EMIT_PERIOD_MS):
         # The credential this process was started with, if any. The API's
         # session and .env are asked first (see acquire_credentials); this is
         # the last resort, and the pair actually in use afterwards.
@@ -492,16 +525,42 @@ class DhanFeed(VendorFeed):
         self._universe_failing = False
         self._universe_lock = threading.Lock()
 
-        # Conflation. `_emit_lock` covers merging a packet into its instrument's
-        # state, deciding whether it goes out, and handing it on — on the socket
-        # thread and the flusher alike — so the runner is never called from two
-        # threads at once and an instrument's ticks leave in the order they
-        # were built.
+        # Conflation. `_emit_lock` covers merging packets into an instrument's
+        # state, deciding whether it goes out, and handing it on, so the runner
+        # is never called from two threads at once and an instrument's ticks
+        # leave in the order they were built. In emitter mode the socket thread
+        # never takes it: only the emitter's passes, and close(), do. (Inline
+        # mode, the rollback, runs a pass per frame on the socket thread.)
         self._min_interval = max(int(min_tick_interval_ms or 0), 0) / 1000.0
         self._emit_lock = threading.Lock()
         self._last_emitted: dict[str, float] = {}           # canonical -> clock time
         self._held: dict[str, tuple[int, int]] = {}          # canonical -> key, updated since then
-        self._flusher = None                                 # (thread, stop event)
+
+        # The hand-off from the socket thread. Per instrument, the latest raw
+        # packet of each kind (response code) since the last pass: a newer one
+        # replaces an older one of the same kind, which the merge would have
+        # overwritten anyway. `_pending_lock` is held only to store one packet
+        # or to swap the whole buffer out, never across any other work.
+        ingest = str(ingest or DEFAULT_INGEST).strip().lower()
+        if ingest not in INGEST_MODES:
+            raise ValueError(f"ingest must be one of {', '.join(INGEST_MODES)}; it is {ingest!r}")
+        self._ingest = ingest
+        self._emit_period = min(max(float(emit_period_ms or 0), 10.0), 1000.0) / 1000.0
+        self._pending: dict[tuple[int, int], dict[int, bytes]] = {}
+        self._pending_lock = threading.Lock()
+        self._emitter = None                                 # (thread, stop event)
+
+        # Read-path counters. Written only by the socket thread; read by stats().
+        self._frames_in = 0
+        self._bytes_in = 0
+        self._pings_in = 0
+        self._superseded = 0          # packets replaced by a newer one of their kind before a pass
+        self._dropped_unknown = 0     # packets for an instrument this socket does not carry
+        self._last_frame_at = None    # clock time of the last frame or ping; None before the first
+        # Written only under _emit_lock: ticks handed on, and how long each
+        # pass took in milliseconds (the last two minutes' worth at 100 ms).
+        self._ticks_out = 0
+        self._pass_ms = collections.deque(maxlen=1200)
 
         self._app = None
         self._closing = False
@@ -536,11 +595,24 @@ class DhanFeed(VendorFeed):
         except ValueError:
             raise SystemExit(f"DHAN_MIN_TICK_INTERVAL_MS must be a whole number of milliseconds, 0 or more "
                              f"(0 hands on every packet); it is {interval!r}.")
+        ingest = os.getenv("DHAN_INGEST", "").strip().lower() or DEFAULT_INGEST
+        if ingest not in INGEST_MODES:
+            raise SystemExit(f"DHAN_INGEST must be {' or '.join(INGEST_MODES)} (inline is the pre-29-Sep "
+                             f"path, kept as the rollback); it is {ingest!r}.")
+        period = os.getenv("DHAN_EMIT_PERIOD_MS", "").strip()
+        try:
+            period_ms = int(period) if period else DEFAULT_EMIT_PERIOD_MS
+            if period_ms <= 0:
+                raise ValueError
+        except ValueError:
+            raise SystemExit(f"DHAN_EMIT_PERIOD_MS must be a whole number of milliseconds above 0 (10 to 1000 "
+                             f"are used); it is {period!r}.")
         _, names = symbols_for(cls.key)
         try:
             return cls(client_id or None, token or None,
                        feed_url=os.getenv("DHAN_FEED_URL", "").strip() or FEED_URL,
-                       vendor_names=names, min_tick_interval_ms=interval_ms)
+                       vendor_names=names, min_tick_interval_ms=interval_ms,
+                       ingest=ingest, emit_period_ms=period_ms)
         except ValueError as ex:
             raise SystemExit(str(ex))
 
@@ -746,86 +818,198 @@ class DhanFeed(VendorFeed):
                     handler(*args)
             return wrapped
 
+        # A connection starts with nothing carried over from the last one: a
+        # packet stored for the old socket is not this socket's news, and its
+        # silence clock starts at the first frame this socket brings.
+        with self._pending_lock:
+            self._pending = {}
+        self._last_frame_at = None
+
+        if self._ingest == "emitter":
+            on_message = live(lambda _, raw: self._store_frame(raw))
+        else:
+            on_message = live(lambda _, raw: self._on_message(raw))
+
         query = urlencode({"version": 2, "token": token, "clientId": client_id, "authType": 2})
         # No client pings: Dhan pings every 10 s and websocket-client answers
-        # each with a pong on its own.
+        # each with a pong on its own, before on_ping is called — so on_ping
+        # only notes that the line is alive.
         self._app = websocket.WebSocketApp(
             f"{self._feed_url}?{query}",
             on_open=live(lambda _: on_event(FeedEvent.CONNECTED, self.url)),
-            on_message=live(lambda _, raw: self._on_message(raw)),
+            on_message=on_message,
+            on_ping=live(lambda _, data: self._note_ping()),
             on_error=live(lambda _, err: self._on_error(err)),
             on_close=live(lambda _, code, msg: on_event(FeedEvent.DISCONNECTED,
                                                         self._redact(close_detail(code, msg)))),
         )
-        self._start_flusher()
+        self._start_emitter()
         threading.Thread(target=self._app.run_forever, name="dhan-socket", daemon=True).start()
 
     def close(self):
         self._closing = True
-        self._stop_flusher()
+        self._stop_emitter()
+        # Every instrument still inside its interval gets its last state handed
+        # on, and so does every packet stored since the last pass: those
+        # packets arrived, and a price that moved and then went quiet would
+        # otherwise be stored a step behind until it next traded — possibly
+        # tomorrow. It runs before the subscriptions are forgotten, because a
+        # stored packet is named only by the instrument map.
+        try:
+            self.emit_pass(everything=True)
+        except Exception as ex:
+            print(f"[dhan] could not hand on the last held ticks while closing: {self._redact(ex)}", flush=True)
         with self._emit_lock:
-            # Every instrument still inside its interval gets its last state
-            # handed on: those packets arrived, and a price that moved and then
-            # went quiet would otherwise be stored a step behind until it next
-            # traded — possibly tomorrow. The next connection starts each
-            # instrument's interval afresh.
-            try:
-                self._deliver(self._take_held(everything=True))
-            except Exception as ex:
-                print(f"[dhan] could not hand on the last held ticks while closing: {self._redact(ex)}", flush=True)
+            # The next connection starts each instrument's interval afresh.
             self._last_emitted.clear()
         with self._lock:
             self._subscribed.clear()
             self._canonical_by_key.clear()
+        with self._pending_lock:
+            self._pending.clear()
         if self._app is not None:
             try:
                 self._app.close()
             except Exception:
                 pass
 
-    # ------------------------------------------------------------ conflation
+    # ------------------------------------------------------ transport health
 
-    def _start_flusher(self):
-        """One flusher per connection, and none when every packet goes straight out."""
-        self._stop_flusher()
-        if self._min_interval <= 0:
+    def socket_backlog_bytes(self):
+        """
+        Bytes the kernel has received on the socket that this process has not
+        read yet — the Recv-Q `ss -tn` shows. A reader that keeps up holds it
+        near zero; one that falls behind lets it climb until the TCP window
+        closes and the sender stops. None when there is no socket, on Windows,
+        or when the kernel will not say.
+        """
+        if fcntl is None:
+            return None
+        try:
+            sock = self._app.sock.sock
+            count = array("i", [0])
+            fcntl.ioctl(sock.fileno(), termios.FIONREAD, count, True)
+            return int(count[0])
+        except Exception:
+            return None
+
+    def transport_idle_seconds(self):
+        """Seconds since this socket's last frame or ping; None before its first."""
+        last = self._last_frame_at
+        return None if last is None else self._clock() - last
+
+    def stats(self) -> dict:
+        """
+        The read path's counters since the process started, for the runner's
+        stats line: frames and bytes read, pings, packets replaced before a
+        pass, packets for unknown instruments, ticks handed on, and how long
+        the recent passes took.
+        """
+        with self._pending_lock:
+            pending = len(self._pending)
+        passes = sorted(self._pass_ms.copy())
+        return {
+            "frames": self._frames_in,
+            "bytes": self._bytes_in,
+            "pings": self._pings_in,
+            "superseded": self._superseded,
+            "dropped_unknown": self._dropped_unknown,
+            "ticks_out": self._ticks_out,
+            "pending_keys": pending,
+            "pass_ms_p99": round(passes[min(len(passes) - 1, int(len(passes) * 0.99))], 2) if passes else None,
+            "pass_ms_max": round(passes[-1], 2) if passes else None,
+        }
+
+    # ------------------------------------------------------------ the emitter
+
+    def _start_emitter(self):
+        """
+        One emitter per connection. In emitter mode it always runs: it is the
+        only way a stored packet leaves. Inline, it only hands on held states,
+        so none runs when every packet goes straight out.
+        """
+        self._stop_emitter()
+        if self._ingest == "inline" and self._min_interval <= 0:
             return
         stop = threading.Event()
-        thread = threading.Thread(target=self._flush_until, args=(stop,), name="dhan-conflation", daemon=True)
-        self._flusher = (thread, stop)
+        thread = threading.Thread(target=self._emit_until, args=(stop,), name="dhan-emit", daemon=True)
+        self._emitter = (thread, stop)
         thread.start()
 
-    def _stop_flusher(self):
-        flusher, self._flusher = self._flusher, None
-        if flusher is None:
+    def _stop_emitter(self):
+        emitter, self._emitter = self._emitter, None
+        if emitter is None:
             return
-        thread, stop = flusher
+        thread, stop = emitter
         stop.set()
         if thread is not threading.current_thread():
             # Bounded: a runner stuck on a dead Redis must not hang the close.
             thread.join(timeout=2)
 
-    def _flush_until(self, stop):
+    def _emit_until(self, stop):
         """
-        Hands on the instruments whose interval has run out since their last
-        update — the ones that moved and then went quiet, which no later packet
-        would ever carry out. Wakes ten times an interval (at most every 100 ms),
-        so a held state leaves at most that late.
+        A pass every DHAN_EMIT_PERIOD_MS: the packets stored since the last
+        one, and the held instruments whose interval has run out — the ones
+        that moved and then went quiet, which no later packet would ever carry
+        out. Inline, only the second, at the old flusher's pace (ten times an
+        interval, at most every 100 ms).
         """
-        period = min(max(self._min_interval / 10, 0.01), 0.1)
+        if self._ingest == "emitter":
+            period = self._emit_period
+        else:
+            period = min(max(self._min_interval / 10, 0.01), 0.1)
         while not stop.wait(period):
             try:
-                self.flush_due()
+                self.emit_pass()
             except Exception as ex:
-                self._once(("flush-failed",), FeedEvent.ERROR,
-                           f"could not hand on conflated ticks: {self._redact(ex)}")
+                self._once(("emit-failed",), FeedEvent.ERROR,
+                           f"could not hand on ticks: {self._redact(ex)}")
+
+    def emit_pass(self, everything=False, held=True) -> int:
+        """
+        Decode, merge and hand on everything stored since the last pass, then
+        every held instrument that is due (all of them when `everything`).
+        Returns how many ticks went out.
+
+        Several packets for one instrument in one pass are merged in the order
+        their latest copies arrived and leave as one tick carrying the merged
+        state. The conflation rules are the same as ever: the first update
+        after a quiet interval goes out at once, later ones are held until the
+        interval runs out.
+        """
+        started = time.perf_counter()
+        with self._pending_lock:
+            pending, self._pending = self._pending, {}
+        with self._emit_lock:
+            try:
+                ticks = []
+                for key, slot in pending.items():
+                    canonical = self._canonical_by_key.get(key)
+                    if canonical is None:
+                        # Unsubscribed since the packet was stored.
+                        continue
+                    merged = False
+                    for code, packet in slot.items():
+                        try:
+                            merged = self._merge(code, key[0], key[1], packet, 0, len(packet)) or merged
+                        except Exception as ex:
+                            # One packet that will not read must not take the
+                            # rest of the pass with it.
+                            self._once(("merge-failed", code), FeedEvent.ERROR,
+                                       f"could not read a code-{code} packet: {self._redact(ex)}")
+                    if merged:
+                        self._conflate(canonical, key, ticks)
+                if held:
+                    ticks += self._take_held(everything)
+                self._ticks_out += len(ticks)
+                self._deliver(ticks)
+                return len(ticks)
+            finally:
+                self._pass_ms.append((time.perf_counter() - started) * 1000.0)
 
     def flush_due(self) -> int:
-        """Hand on every held instrument whose interval has elapsed. Returns how many."""
-        with self._emit_lock:
-            ticks = self._take_held(everything=False)
-            self._deliver(ticks)
-            return len(ticks)
+        """Hand on what is stored and every held instrument whose interval has elapsed. Returns how many."""
+        return self.emit_pass()
 
     def _take_held(self, everything):
         """Ticks for the held instruments that are due (or all of them). Call under _emit_lock."""
@@ -1007,44 +1191,91 @@ class DhanFeed(VendorFeed):
     # --------------------------------------------------------------- messages
 
     def _on_message(self, raw):
+        """
+        One frame, handed on at once: stored, then a pass over what is stored.
+        The inline path (DHAN_INGEST=inline) and the tests use it; each frame
+        behaves exactly as it did when the socket thread did everything. Held
+        states are left to the emitter, as they were left to the flusher.
+        """
+        self._store_frame(raw)
+        self.emit_pass(held=False)
+
+    def _store_frame(self, raw):
+        """
+        The socket thread's whole job in emitter mode, and it must stay this
+        small: read the header, look the instrument up, and keep the packet as
+        that instrument's latest of its kind. No price is decoded, no lock but
+        `_pending_lock` is taken, and nothing is printed, sent or published
+        here in normal running — every one of those is a chance for this
+        thread to wait while Dhan's bytes pile up in the kernel. The rare
+        packets that carry no price (a disconnect, market status, an unknown
+        code) are still handled at once, as they always were.
+        """
         if isinstance(raw, str):
             self._once(("text",), FeedEvent.INFO, f"unexpected text message: {self._redact(raw[:120])}")
             return
-        data = bytes(raw)
-        if len(data) < HEADER_SIZE:
-            self._once(("short",), FeedEvent.ERROR, f"a {len(data)}-byte frame is shorter than a packet header")
+        data = raw if type(raw) is bytes else bytes(raw)
+        length = len(data)
+        if length < HEADER_SIZE:
+            self._once(("short",), FeedEvent.ERROR, f"a {length}-byte frame is shorter than a packet header")
             return
+        self._last_frame_at = self._clock()
+        self._frames_in += 1
+        self._bytes_in += length
 
-        # Held from the first packet's merge to the hand-off, so the flusher
-        # cannot slip a tick for the same instrument in between.
-        with self._emit_lock:
-            ticks = []
-            offset = 0
-            while True:
-                remaining = len(data) - offset
-                code, declared, segment, security_id = _HEADER.unpack_from(data, offset)
-                size = PACKET_SIZES.get(code)
-                if size is None:
-                    size = declared if HEADER_SIZE <= declared <= remaining else remaining
-                elif remaining < size:
-                    self._once(("truncated", code), FeedEvent.ERROR,
-                               f"a code-{code} packet arrived with {remaining} bytes; it needs {size}")
-                    break
+        known = self._canonical_by_key
+        offset = 0
+        while True:
+            remaining = length - offset
+            code, declared, segment, security_id = _HEADER.unpack_from(data, offset)
+            size = PACKET_SIZES.get(code)
+            if size is None:
+                size = declared if HEADER_SIZE <= declared <= remaining else remaining
+            elif remaining < size:
+                self._once(("truncated", code), FeedEvent.ERROR,
+                           f"a code-{code} packet arrived with {remaining} bytes; it needs {size}")
+                break
 
-                self._handle(code, segment, security_id, data, offset, size, ticks)
-                offset += size
-                if offset >= len(data):
-                    break
-                # Dhan documents one packet per message. Should it ever stack
-                # them, the rest is read too — but only when it starts like a
-                # packet, so padding or a longer layout is never read as prices.
-                if not _looks_like_header(data, offset):
-                    self._once(("trailing", code), FeedEvent.INFO,
-                               f"{len(data) - offset} byte(s) after a code-{code} packet are not another packet; "
-                               f"ignored")
-                    break
+            if code not in _DECODERS:
+                # Disconnect, market status or a code nobody knows: no price,
+                # rare, and a disconnect must be heard now, not a pass later.
+                self._handle(code, segment, security_id, data, offset, size, [])
+            else:
+                key = (segment, security_id)
+                if key not in known:
+                    # A price for something not asked for cannot be stored
+                    # under a symbol we trust.
+                    self._dropped_unknown += 1
+                else:
+                    packet = data if offset == 0 and size == length else data[offset:offset + size]
+                    with self._pending_lock:
+                        slot = self._pending.get(key)
+                        if slot is None:
+                            self._pending[key] = {code: packet}
+                        else:
+                            # Popped before it is put back, so the slot stays in
+                            # the order each kind's latest packet arrived — the
+                            # order the pass merges them in.
+                            if slot.pop(code, None) is not None:
+                                self._superseded += 1
+                            slot[code] = packet
 
-            self._deliver(ticks)
+            offset += size
+            if offset >= length:
+                break
+            # Dhan documents one packet per message. Should it ever stack
+            # them, the rest is read too — but only when it starts like a
+            # packet, so padding or a longer layout is never read as prices.
+            if not _looks_like_header(data, offset):
+                self._once(("trailing", code), FeedEvent.INFO,
+                           f"{length - offset} byte(s) after a code-{code} packet are not another packet; "
+                           f"ignored")
+                break
+
+    def _note_ping(self):
+        """Dhan's ping (every 10 s): the line is alive even when nothing trades."""
+        self._last_frame_at = self._clock()
+        self._pings_in += 1
 
     def _handle(self, code, segment, security_id, data, offset, size, ticks):
         if code == DISCONNECT_PACKET:
@@ -1063,10 +1294,21 @@ class DhanFeed(VendorFeed):
 
         key = (segment, security_id)
         canonical = self._canonical_by_key.get(key)
+        if canonical is not None and self._merge(code, segment, security_id, data, offset, size):
+            self._conflate(canonical, key, ticks)
+
+    def _merge(self, code, segment, security_id, data, offset, size) -> bool:
+        """
+        One packet into its instrument's state. False when nothing was merged:
+        an instrument not asked for, or a packet too short to read. Call under
+        _emit_lock.
+        """
+        key = (segment, security_id)
+        canonical = self._canonical_by_key.get(key)
         if canonical is None:
             # A price for something not asked for cannot be stored under a
             # symbol we trust.
-            return
+            return False
 
         kind, decode = _DECODERS[code]
         decimals = PRICE_DECIMALS.get(_SEGMENT_BY_NUMBER.get(segment), _DEFAULT_PRICE_DECIMALS)
@@ -1074,7 +1316,7 @@ class DhanFeed(VendorFeed):
         if fields is None:
             self._once(("undecodable", code), FeedEvent.ERROR,
                        f"a code-{code} packet of {size} bytes is too short to read")
-            return
+            return False
 
         state = self._state.setdefault(key, {})
         for name in _STATE_FIELDS:
@@ -1103,7 +1345,11 @@ class DhanFeed(VendorFeed):
                 raw["depth"] = depth
             else:
                 raw.pop("depth", None)
+        return True
 
+    def _conflate(self, canonical, key, ticks):
+        """Whether an instrument's merged state goes out now or is held. Call under _emit_lock."""
+        state = self._state.get(key) or {}
         if state.get("ltp") is None:
             # OI or a previous close before any price: kept for the first tick.
             return
@@ -1113,7 +1359,7 @@ class DhanFeed(VendorFeed):
             return
         # Conflation: the first update after a quiet interval goes out at once,
         # so a move out of calm is not delayed at all; updates inside the
-        # interval only mark the instrument, and the flusher sends its state as
+        # interval only mark the instrument, and the emitter sends its state as
         # it stands when the interval runs out — at most one interval (plus a
         # wake-up) late, never lost.
         now = self._clock()

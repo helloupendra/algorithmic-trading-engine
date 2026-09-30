@@ -170,3 +170,25 @@ class VendorFeed(ABC):
         The default is a feed that streams the watchlist and nothing else.
         """
         return []
+
+    # ----------------------------------------------------- transport health
+    #
+    # What the runner's watchdogs can ask of a feed that knows its own socket.
+    # None means "cannot say", and every rule built on these stays quiet then:
+    # a feed that does not implement them behaves exactly as before.
+
+    def socket_backlog_bytes(self) -> int | None:
+        """Bytes the kernel holds on the socket that this process has not read yet."""
+        return None
+
+    def transport_idle_seconds(self) -> float | None:
+        """
+        Seconds since the socket last carried anything at all — a data frame
+        or a ping — or None before the first one. Unlike the runner's tick
+        clock this moves on a line that is alive but has nothing to price.
+        """
+        return None
+
+    def stats(self) -> dict:
+        """Cumulative read-path counters for the runner's periodic stats line; {} for none."""
+        return {}
