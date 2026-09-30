@@ -322,7 +322,15 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         label: 'Agents',
         home: '/ai/agents',
         requires: 'admin',
-        pages: [{ label: 'Agents', to: '/ai/agents', keywords: ['switch off', 'roadmap', 'planned'] }],
+        pages: [{ label: 'Agents', to: '/ai/agents', keywords: ['switch off', 'roadmap', 'planned', 'run now'] }],
+      },
+      {
+        key: 'ai-reports',
+        label: 'Reports',
+        home: '/ai/reports',
+        requires: 'admin',
+        // What the scheduled agents wrote: trade reviews, news events, incident explanations.
+        pages: [{ label: 'Reports', to: '/ai/reports', keywords: ['trade review', 'journal', 'news analyst', 'incident explainer'] }],
       },
       {
         key: 'ai-models',

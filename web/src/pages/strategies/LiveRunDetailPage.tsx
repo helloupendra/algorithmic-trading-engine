@@ -5,7 +5,9 @@
  * plus the paper order ledger, under a "Started by <user> · run #id ·
  * <duration>" header. A running run shows the live card with Stop for an
  * admin or the user who started it; anyone else gets a read-only view (the
- * API answers 403 to a trader opening someone else's run).
+ * API answers 403 to a trader opening someone else's run). An admin also
+ * sees the Trade Reviewer's review of the run, when it has written one (the
+ * reports are admin-only, so a trader's page never asks for them).
  */
 
 import { useEffect, useState } from 'react'
@@ -20,6 +22,7 @@ import { IconClock } from '../../components/icons'
 import type { PaperOrderRow } from '../../lib/types'
 import { CategoryBadge, Disclosure } from './shared'
 import { RunCard } from './RunCard'
+import { RunAiReview } from '../ai/reportParts'
 
 /* ---------------------------------------------------------- order ledger */
 
@@ -211,6 +214,8 @@ export function LiveRunDetailPage() {
           <OrdersDisclosure runId={runId} isActive={isActive} lotSize={view?.lotSize ?? null} />
         </RunCard>
       )}
+
+      {isAdmin && view && <RunAiReview runId={runId} stopped={!view.isActive} />}
 
       {view && !canControl && view.isActive && (
         <p className="small-note">

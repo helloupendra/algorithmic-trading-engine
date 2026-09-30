@@ -15,7 +15,20 @@
 
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
-import { AGENT_STATUSES, agentStatus, callTime, formatTokens, modelName, toolLabel, useAiAgents, useAiModels, useAiOverview, useUpdateAgent } from '../../lib/ai'
+import {
+  AGENT_STATUSES,
+  SCHEDULED_AGENTS,
+  agentStatus,
+  callTime,
+  formatTokens,
+  modelName,
+  toolLabel,
+  useAiAgents,
+  useAiModels,
+  useAiOverview,
+  useRunAgent,
+  useUpdateAgent,
+} from '../../lib/ai'
 import type { AgentStatus, AiAgent, AiAgentTool, AiModel } from '../../lib/ai'
 import { formatDateTime } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components/ui'
@@ -165,6 +178,64 @@ function AgentTools({ tools }: { tools: AiAgentTool[] }) {
   )
 }
 
+/**
+ * Starts a scheduled agent now, on one run or incident when an id is given,
+ * or on its next due work. The API only accepts the job (202); the report
+ * arrives on the Reports tab when the model answers.
+ */
+function RunNow({ agent }: { agent: AiAgent }) {
+  const run = useRunAgent()
+  const [subject, setSubject] = useState('')
+  const kind = SCHEDULED_AGENTS[agent.key]?.subject ?? null
+  const bad = subject.trim() !== '' && !/^\d+$/.test(subject.trim())
+  const go = () => {
+    if (bad) return
+    run.mutate({ key: agent.key, subjectId: kind ? subject : null })
+  }
+  return (
+    <div className="ai-runnow">
+      <div className="ai-runnow__form">
+        {kind && (
+          <input
+            className="field__input field__input--sm ai-runnow__id"
+            inputMode="numeric"
+            placeholder={kind === 'run' ? 'Run id (optional)' : 'Incident id (optional)'}
+            aria-label={kind === 'run' ? 'Run id' : 'Incident id'}
+            aria-invalid={bad || undefined}
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') go()
+            }}
+          />
+        )}
+        <button type="button" className="btn btn--sm" disabled={run.isPending || bad} onClick={go}>
+          {run.isPending ? 'Starting…' : 'Run now'}
+        </button>
+        <span className="faint ai-runnow__hint">
+          {kind === 'run'
+            ? 'Blank reviews the runs that are due.'
+            : kind === 'incident'
+              ? 'Blank explains the incidents that are due.'
+              : 'Reads its next batch of unread items.'}
+        </span>
+      </div>
+      {bad && <p className="small-note warn ai-flush">An id is a whole number.</p>}
+      {run.isSuccess && (
+        <p className="small-note ai-flush ai-runnow__said">
+          Started{run.data?.subjectId ? ` on ${kind === 'incident' ? 'incident' : 'run'} #${run.data.subjectId}` : ''}. The report appears on
+          the <Link to={`/ai/reports?agent=${encodeURIComponent(agent.key)}`}>Reports tab</Link> when the model answers (usually 1–3 minutes).
+        </p>
+      )}
+      {run.isError && (
+        <div className="alert alert--error ai-flush" role="alert">
+          {errorText(run.error)}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function LastCall({ agent, now }: { agent: AiAgent; now: number }) {
   const c = agent.lastCall
   if (!c) return <span className="faint">{agent.built ? 'never called' : 'never: not built yet'}</span>
@@ -230,6 +301,23 @@ function AgentCard({
           <dt>Reads</dt>
           <dd>{agent.reads}</dd>
         </div>
+        {agent.built && SCHEDULED_AGENTS[agent.key] && (
+          <>
+            <div>
+              <dt>Writes</dt>
+              <dd>
+                Reports: {SCHEDULED_AGENTS[agent.key].writes}.{' '}
+                <Link to={`/ai/reports?agent=${encodeURIComponent(agent.key)}`}>Its reports</Link>
+              </dd>
+            </div>
+            <div>
+              <dt>By hand</dt>
+              <dd>
+                <RunNow agent={agent} />
+              </dd>
+            </div>
+          </>
+        )}
         {agent.tools.length > 0 && (
           <div>
             <dt>Tools</dt>
