@@ -339,7 +339,7 @@ what the index holds.
 
 ## The Assistant check
 
-After 16:40 IST on weekdays (`Ai:AssistantCheckAfterIst`), `AssistantCheckAgent` reads the desk through the
+After 16:40 IST on NSE trading days (`Ai:AssistantCheckAfterIst`; exchange holidays are skipped), `AssistantCheckAgent` reads the desk through the
 Assistant's own tools and turns what it finds into up to a dozen questions with known answers:
 
 - the day's run count;

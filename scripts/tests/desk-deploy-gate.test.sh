@@ -48,5 +48,7 @@ check "weekday after the close"                             0 "$(clock 1 2340 1)
 echo "deploy_block_reason"
 r="$(deploy_block_reason 4 1128 0 13)"; case "$r" in *"13 live run"*) check "names the live runs" 0 0 ;; *) check "names the live runs: $r" 0 1 ;; esac
 r="$(deploy_block_reason 4 1128 0 -1)"; case "$r" in *unknown*) check "says when the count is unknown" 0 0 ;; *) check "says when the count is unknown: $r" 0 1 ;; esac
+r="$(deploy_block_reason 3 2253 0 0)"; case "$r" in *"at 23:58"*) check "names the time the close job opens the gate" 0 0 ;; *) check "names the time the close job opens the gate: $r" 0 1 ;; esac
+r="$(CLOSE_AT=2340 deploy_block_reason 3 2253 0 0)"; case "$r" in *"at 23:40"*) check "follows a moved close time" 0 0 ;; *) check "follows a moved close time: $r" 0 1 ;; esac
 
 [ "$FAILS" -eq 0 ] && echo "all passed" || { echo "$FAILS failed"; exit 1; }
