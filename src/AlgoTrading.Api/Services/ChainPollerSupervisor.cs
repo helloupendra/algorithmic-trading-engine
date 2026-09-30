@@ -28,7 +28,9 @@ public sealed class ChainPollerSupervisor : PythonDaemonSupervisor
                 Name: "chain poller",
                 ScriptParts: new[] { "market_data", "live", "option_chain_poller.py" },
                 ProcessMarker: ProcessProbe.ChainPollerMarker,
-                PidSettingKey: SystemSettingKeys.ChainPollerPid),
+                PidSettingKey: SystemSettingKeys.ChainPollerPid,
+                // The name option_chain_poller.py gives its own log.
+                LogName: "chain-poller"),
             engine, scopeFactory, logger)
     {
     }

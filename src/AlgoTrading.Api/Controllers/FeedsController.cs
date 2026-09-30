@@ -95,8 +95,9 @@ public class FeedsController : ControllerBase
 
     /// <summary>
     /// Recent stdout/stderr from the feed process — the place to look when a
-    /// start flips straight back to stopped. Empty for an adopted feed, whose
-    /// pipes belonged to the API instance that launched it.
+    /// start flips straight back to stopped. Read from the log the feed keeps
+    /// of itself (logs/engine/&lt;name&gt;-&lt;pid&gt;.log), so a feed adopted after
+    /// an API restart shows its output as well.
     /// </summary>
     [HttpGet("{key}/logs")]
     public IActionResult Logs(string key, [FromQuery] int take = 200)

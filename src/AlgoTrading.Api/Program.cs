@@ -171,6 +171,9 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.ExpirySettler>();
 // every minute, so that would now cost a minute, not an evening.)
 builder.Services.AddHostedService<AlgoTrading.Api.Services.BacktestStartupReconciler>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.LiveRunStartupReconciler>();
+// Feeds and the chain poller left running by the previous API: adopted now, so
+// their own log files are read into api.log from the start (28 Sep).
+builder.Services.AddHostedService<AlgoTrading.Api.Services.DaemonOutputAdoption>();
 // Register the background service that guards active runs against global kill-switches and rate limits
 builder.Services.AddHostedService<AlgoTrading.Api.Services.StrategyRiskGuardService>();
 // Squares off each run at its market's close (NSE/BSE 15:30, MCX at the MCX close) and stops the feeds
