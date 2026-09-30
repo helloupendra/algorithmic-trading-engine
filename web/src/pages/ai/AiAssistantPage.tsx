@@ -22,15 +22,23 @@
  *
  * No tool places, changes or cancels an order; the page says so from the
  * agent's own record.
+ *
+ * Memory: under each finished answer, 👍 and 👎. A 👎 asks what the answer
+ * should have said; saved, that becomes a correction the Assistant reads
+ * from the next question on. A quiet line names the memories the answer was
+ * given ("Read 3 memories: M3 · M7 · M9"), each linked to the Memory tab.
+ * Text sent as "/remember …" is not asked: it is saved as a note, read from
+ * the next question, and a line in the conversation says under which id.
  */
 
-import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   ASK_TIERS,
   AskRefusal,
+  MEMORY_MAX_CHARS,
   askFailureText,
   chatReducer,
   formatSeconds,
@@ -40,17 +48,24 @@ import {
   toolLabel,
   toolsLine,
   isAbort,
+  memoryErrorText,
+  memoryHref,
+  memoryLabel,
+  memoryTextProblem,
   modelName,
   newConversationId,
   parseAskTier,
+  parseRemember,
   streamAsk,
+  useAddMemory,
   useAiAgents,
   useAiOverview,
+  useCallFeedback,
 } from '../../lib/ai'
-import type { AskTier, ChatTurn, TurnRound } from '../../lib/ai'
+import type { AskTier, ChatTurn, FeedbackScore, TurnRound } from '../../lib/ai'
 import { IconStop } from '../../components/icons'
 import { AnswerText } from './AnswerText'
-import { CallLink, ChainChips, ToolStepRow } from './parts'
+import { CallLink, ChainChips, MemoriesRead, ToolStepRow } from './parts'
 import { DocsSearchCard, TelegramCard } from './AssistantSide'
 import { useNow } from './common'
 import '../system/health/health.css'
@@ -217,6 +232,148 @@ function RoundSteps({ round, numbered, live, now }: { round: TurnRound; numbered
   )
 }
 
+/**
+ * 👍 and 👎 under a finished answer. A vote is sent at once, and shows as
+ * chosen once the API has it; a second click on the chosen one clears it.
+ * 👎 then asks what the answer should have said: saved, that becomes a
+ * correction the Assistant reads from the next question on.
+ */
+function AnswerVotes({ callId }: { callId: number }) {
+  const feedback = useCallFeedback()
+  const [score, setScore] = useState<FeedbackScore | null>(null)
+  const [asking, setAsking] = useState(false)
+  const [correction, setCorrection] = useState('')
+  const [saved, setSaved] = useState<{ memoryId: number | null } | null>(null)
+  const busy = feedback.isPending
+  const problem = memoryTextProblem(correction)
+
+  const vote = (next: FeedbackScore) => {
+    feedback.mutate(
+      { callId, score: score === next ? 0 : next },
+      {
+        onSuccess: (r) => {
+          const chosen = r.score === 0 ? null : r.score
+          setScore(chosen)
+          setSaved(null)
+          setAsking(chosen === -1)
+        },
+      },
+    )
+  }
+  const save = () =>
+    feedback.mutate(
+      { callId, score: -1, correction },
+      {
+        onSuccess: (r) => {
+          setScore(-1)
+          setAsking(false)
+          setCorrection('')
+          setSaved({ memoryId: r.memory?.id ?? null })
+        },
+      },
+    )
+
+  const voteButton = (value: FeedbackScore) => {
+    const chosen = score === value
+    // This button's own vote is on its way: a click on the chosen one sends 0 (clear).
+    const pending = busy && !feedback.variables?.correction && feedback.variables?.score === (chosen ? 0 : value)
+    return (
+      <button
+        type="button"
+        className="btn btn--ghost btn--sm ai-vote"
+        aria-pressed={chosen}
+        aria-busy={pending || undefined}
+        aria-label={value === 1 ? 'A good answer' : 'A wrong answer'}
+        title={chosen ? 'Chosen: click again to clear' : value === 1 ? 'A good answer' : 'A wrong answer: say what it should have said'}
+        disabled={busy}
+        onClick={() => vote(value)}
+      >
+        {value === 1 ? '👍' : '👎'}
+      </button>
+    )
+  }
+
+  return (
+    <div className="ai-votes">
+      <span className="ai-votes__btns" role="group" aria-label="Was this answer right?">
+        {voteButton(1)}
+        {voteButton(-1)}
+      </span>
+      {saved && (
+        <span className="ai-votes__said" role="status">
+          {saved.memoryId != null ? (
+            <>
+              Saved as correction <Link to={memoryHref(saved.memoryId)}>{memoryLabel(saved.memoryId)}</Link>.
+            </>
+          ) : (
+            'Saved.'
+          )}
+        </span>
+      )}
+      {asking && (
+        <div className="ai-votes__ask">
+          <label className="ai-votes__q" htmlFor={`fix-${callId}`}>
+            What should it have said? It becomes a correction the Assistant reads from the next question.
+          </label>
+          <textarea
+            id={`fix-${callId}`}
+            className="field__input ai-memtext"
+            rows={3}
+            maxLength={MEMORY_MAX_CHARS}
+            value={correction}
+            onChange={(e) => setCorrection(e.target.value)}
+          />
+          <div className="ai-mem__editfoot">
+            <button type="button" className="btn btn--primary btn--sm" disabled={busy || problem != null} onClick={save}>
+              {busy && feedback.variables?.correction ? 'Saving…' : 'Save'}
+            </button>
+            <button type="button" className="btn btn--ghost btn--sm" disabled={busy} onClick={() => setAsking(false)}>
+              Skip
+            </button>
+            <span className="ai-mem__count faint">
+              {correction.trim().length} / {MEMORY_MAX_CHARS}
+            </span>
+          </div>
+        </div>
+      )}
+      {feedback.isError && (
+        <div className="alert alert--error ai-flush ai-votes__error" role="alert">
+          {memoryErrorText(feedback.error, 'call')}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** A note sent as /remember: saving, saved under its id, or not saved and why. */
+interface RememberLine {
+  key: string
+  /** How many turns the conversation had when it was sent: it shows after them. */
+  at: number
+  text: string
+  state: 'saving' | 'saved' | 'failed'
+  id: number | null
+  error: string | null
+}
+
+function RememberNote({ line }: { line: RememberLine }) {
+  return (
+    <div className={`ai-remember ai-remember--${line.state}`} role="status">
+      {line.state === 'saving' ? (
+        <span className="faint">Saving the note…</span>
+      ) : line.state === 'saved' ? (
+        <span>
+          Saved as note {line.id != null && <Link to={memoryHref(line.id)}>{memoryLabel(line.id)}</Link>}.{' '}
+          <span className="faint">The Assistant reads it from the next question.</span>
+        </span>
+      ) : (
+        <span>The note was not saved: {line.error}</span>
+      )}
+      <span className="ai-remember__text">{line.text}</span>
+    </div>
+  )
+}
+
 function Turn({ turn, now }: { turn: ChatTurn; now: number }) {
   const streaming = turn.status === 'streaming'
   // Rounds are worth numbering once there is more than one.
@@ -262,6 +419,12 @@ function Turn({ turn, now }: { turn: ChatTurn; now: number }) {
         {turn.status === 'done' && turn.finishReason === 'length' && (
           <p className="small-note warn ai-flush">The answer was cut at the token limit.</p>
         )}
+        {turn.status === 'done' && (turn.callId != null || turn.memoryIds != null) && (
+          <div className="ai-a__foot">
+            {turn.callId != null && <AnswerVotes callId={turn.callId} />}
+            <MemoriesRead ids={turn.memoryIds} />
+          </div>
+        )}
         {turn.status === 'stopped' && (
           <p className="small-note ai-flush">Stopped{turn.answer ? ' here' : ''}. The call is recorded as cancelled.</p>
         )}
@@ -283,10 +446,13 @@ function Turn({ turn, now }: { turn: ChatTurn; now: number }) {
 export function AiAssistantPage() {
   const overview = useAiOverview()
   const agents = useAiAgents()
+  const addMemory = useAddMemory()
   const qc = useQueryClient()
   const [chat, dispatch] = useReducer(chatReducer, undefined, () => initialChat())
   const [draft, setDraft] = useState(() => readStored(DRAFT_KEY) ?? '')
   const [tier, setTier] = useState<AskTier>(() => parseAskTier(readStored(TIER_KEY)))
+  const [remembered, setRemembered] = useState<RememberLine[]>([])
+  const [composerNote, setComposerNote] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const endRef = useRef<HTMLDivElement>(null)
@@ -309,8 +475,8 @@ export function AiAssistantPage() {
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
   useLayoutEffect(() => {
-    if (follow.current && chat.turns.length > 0) endRef.current?.scrollIntoView({ block: 'end' })
-  }, [chat.turns])
+    if (follow.current && (chat.turns.length > 0 || remembered.length > 0)) endRef.current?.scrollIntoView({ block: 'end' })
+  }, [chat.turns, remembered])
 
   const tiers = overview.data?.tiers
   const assistant = agents.data?.agents.find((a) => a.key === AGENT)
@@ -361,27 +527,65 @@ export function AiAssistantPage() {
     }
   }
 
+  /**
+   * "/remember …" is saved as a note, not asked. A note with nothing in it, or
+   * too long, stays in the box with the reason under it; one the API refuses
+   * comes back to the box (unless something new was typed) with the reason
+   * in the conversation.
+   */
+  const remember = (text: string) => {
+    const problem = text === '' ? 'Write the note after /remember, for example: /remember quote P&L net of charges.' : memoryTextProblem(text)
+    if (problem) {
+      setComposerNote(problem)
+      return
+    }
+    const key = `n-${Date.now().toString(36)}-${remembered.length}`
+    const typed = draft
+    follow.current = true
+    setRemembered((lines) => [...lines, { key, at: chat.turns.length, text, state: 'saving', id: null, error: null }])
+    setDraft('')
+    // mutateAsync, not mutate: each note needs its own answer, even when two are in flight.
+    addMemory.mutateAsync({ agent: AGENT, text }).then(
+      (m) => setRemembered((lines) => lines.map((l) => (l.key === key ? { ...l, state: 'saved', id: m.id, text: m.text || l.text } : l))),
+      (error: unknown) => {
+        setRemembered((lines) => lines.map((l) => (l.key === key ? { ...l, state: 'failed', error: `${memoryErrorText(error)} It is back in the box.` } : l)))
+        setDraft((d) => (d.trim() === '' ? typed : d))
+      },
+    )
+  }
+
+  const submit = () => {
+    const note = parseRemember(draft)
+    if (note != null) remember(note)
+    else void ask()
+  }
+
   const stop = () => abortRef.current?.abort()
 
   const startOver = () => {
     abortRef.current?.abort()
     dispatch({ type: 'reset', conversationId: newConversationId() })
+    setRemembered([])
+    setComposerNote(null)
     inputRef.current?.focus()
   }
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault()
-    void ask()
+    submit()
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && finePointer) {
       e.preventDefault()
-      void ask()
+      submit()
     }
   }
 
   const questions = chat.turns.length
+  const isNote = parseRemember(draft) != null
+  // The notes sent after the first `k` turns, in the order they were sent.
+  const notesAt = (k: number) => remembered.filter((l) => l.at === k).map((l) => <RememberNote key={l.key} line={l} />)
 
   return (
     <div className="page ai ai-assistant">
@@ -482,8 +686,14 @@ export function AiAssistantPage() {
             </dl>
           </div>
         ) : (
-          chat.turns.map((turn) => <Turn key={turn.id} turn={turn} now={now} />)
+          chat.turns.map((turn, i) => (
+            <Fragment key={turn.id}>
+              {notesAt(i)}
+              <Turn turn={turn} now={now} />
+            </Fragment>
+          ))
         )}
+        {notesAt(questions)}
       </section>
 
       <form className="ai-composer" onSubmit={onSubmit}>
@@ -495,9 +705,17 @@ export function AiAssistantPage() {
           aria-label="Your question"
           value={draft}
           maxLength={20_000}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            setDraft(e.target.value)
+            setComposerNote(null)
+          }}
           onKeyDown={onKeyDown}
         />
+        {composerNote && (
+          <p className="small-note warn ai-flush" role="alert">
+            {composerNote}
+          </p>
+        )}
         <div className="ai-composer__foot">
           <div className="seg ai-tierpick" role="radiogroup" aria-label="Which models answer">
             {ASK_TIERS.map((t) => {
@@ -519,15 +737,16 @@ export function AiAssistantPage() {
             })}
           </div>
           <span className="faint ai-composer__hint">
-            {finePointer ? 'Enter to ask · Shift+Enter for a new line' : 'The button asks; Enter is a new line'}
+            {finePointer ? 'Enter to ask · Shift+Enter for a new line · /remember … saves a note' : 'The button asks; Enter is a new line'}
           </span>
-          {streaming ? (
+          {streaming && (
             <button type="button" className="btn btn--danger btn--sm ai-composer__go" onClick={stop}>
               <IconStop /> Stop
             </button>
-          ) : (
-            <button type="submit" className="btn btn--primary btn--sm ai-composer__go" disabled={!draft.trim() || blocked}>
-              Ask
+          )}
+          {(!streaming || isNote) && (
+            <button type="submit" className="btn btn--primary btn--sm ai-composer__go" disabled={!draft.trim() || (blocked && !isNote)}>
+              {isNote ? 'Save note' : 'Ask'}
             </button>
           )}
         </div>

@@ -1,4 +1,4 @@
-/* AI workspace (Overview, Assistant, Agents, Models, Calls): the parts the
+/* AI workspace (Overview, Assistant, Memory, Agents, Reports, Models, Calls): the parts the
    shared classes do not cover. Tokens only, so both themes hold; hairlines
    and small type like the System pages. On a phone every list folds to
    stacked rows and nothing scrolls the page sideways. */
@@ -927,6 +927,115 @@ a.ai-subject:hover { text-decoration: underline; }
 }
 .ai-explain .ai-md { font-size: 13px; }
 
+/* --- memory -------------------------------------------------------------------------- */
+/* A memory a row: its id, kind and actions; the text; where it came from; how it has done. */
+.ai-mems { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.ai-mem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px 0;
+  border-bottom: 1px dashed var(--line-soft);
+  font-size: 12.5px;
+  scroll-margin-top: calc(var(--topbar-h) + var(--tabbar-h) + 12px);
+}
+.ai-mem:first-child { padding-top: 0; }
+.ai-mem:last-child { border-bottom: 0; padding-bottom: 0; }
+/* The memory a link named (#memory-12): a brand bar at its edge. */
+.ai-mem.ai-mem--target { padding-left: 10px; box-shadow: inset 2px 0 0 var(--brand); }
+.ai-mem__head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-height: 26px; }
+.ai-mem__id { font-size: 11.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.ai-mem__act { margin-left: auto; display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.ai-mem__act--row { margin: 2px 0 0; }
+.ai-mem__confirm { gap: 6px; font-size: 12px; }
+.ai-mem__text { margin: 0; max-width: 92ch; font-size: 13px; line-height: 1.5; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai-mem--closed .ai-mem__text { color: var(--text-2); }
+.ai-mem__origin { margin: 0; max-width: 92ch; color: var(--text-2); overflow-wrap: anywhere; }
+.ai-mem__q { color: var(--text); }
+.ai-mem__review { margin: 0; font-size: 12px; color: var(--warn); overflow-wrap: anywhere; }
+.ai-mem__facts { margin: 0; display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 11.5px; color: var(--text-3); }
+.ai-mem__edit { display: flex; flex-direction: column; gap: 6px; max-width: 720px; }
+.ai-mem__editfoot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.ai-mem__count { margin-left: auto; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.field__input.ai-memtext {
+  width: 100%;
+  min-height: 64px;
+  max-height: 40vh;
+  resize: vertical;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.ai-note { display: flex; flex-direction: column; gap: 8px; max-width: 720px; }
+.ai-note__foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12.5px; }
+.ai-mem-closed > summary { font-size: 12.5px; }
+.ai-mem-closed[open] > summary { margin-bottom: 8px; }
+.ai-mem-closed > .ai-mems {
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+}
+/* As wide as its five columns, not the panel: a narrow table in a wide frame reads as missing data. */
+.tablewrap.ai-progress-wrap { width: fit-content; max-width: 100%; }
+.tablewrap.ai-progress-wrap + .small-note { margin-top: 8px; }
+
+/* The memories an answer read, and the 👍 or 👎 it got. */
+.ai-memlinks { overflow-wrap: anywhere; }
+.ai-memread { font-size: 12px; }
+.ai-vote-mark { margin-left: 6px; font-size: 12px; line-height: 1; }
+.ai-call__mems { text-align: right; overflow-wrap: anywhere; }
+.ai-call__fb { margin: 0; display: flex; align-items: baseline; gap: 6px; font-size: 12.5px; }
+.ai-call__fb .ai-vote-mark { margin-left: 0; }
+.ai-call__fbnote { margin: 6px 0 0; max-width: 92ch; font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Under a finished answer: the votes, what was saved, the memories line; a 👎's question takes a row of its own. */
+.ai-a__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line-soft);
+  font-size: 12px;
+}
+.ai-votes { display: contents; }
+.ai-votes__btns { display: inline-flex; gap: 2px; }
+.btn.ai-vote { min-width: 32px; padding: 2px 8px; font-size: 13px; line-height: 1.3; border: 1px solid transparent; }
+.btn.ai-vote[aria-pressed='true'] { background: var(--brand-soft); border-color: var(--brand-line); }
+.ai-votes__btns:has([aria-pressed='true']) .btn.ai-vote[aria-pressed='false'] { opacity: 0.5; }
+.ai-votes__said { color: var(--text-2); }
+.ai-a__foot .ai-memread { order: 1; margin-left: auto; }
+.ai-votes__ask,
+.ai-votes__error { order: 2; flex-basis: 100%; }
+.ai-votes__ask {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 720px;
+  padding: 8px 10px;
+  background: var(--bg1);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+}
+.ai-votes__q { font-size: 12.5px; color: var(--text-2); }
+
+/* A note sent as /remember, in the conversation where it was sent. */
+.ai-remember {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 12px;
+  border-left: 2px solid var(--brand-line);
+  border-radius: var(--radius-sm);
+  background: var(--bg1);
+  font-size: 12.5px;
+}
+.ai-remember--failed { border-left-color: var(--neg); color: var(--neg); }
+.ai-remember__text { color: var(--text-3); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai-remember__text::before { content: '/remember '; font-family: var(--mono); font-size: 11.5px; }
+
 @media (prefers-reduced-motion: reduce) {
   .ai-a__meta--live::before { animation: none; }
   .ai-mini { transition: none; }
@@ -1092,5 +1201,13 @@ a.ai-subject:hover { text-decoration: underline; }
   /* The call's figures two across, each label over its value. */
   .kv-grid.ai-call__kv { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
   .kv-grid.ai-call__kv > div { flex-direction: column; justify-content: flex-start; gap: 0; }
-  .ai-call__conv { text-align: left; }
+  .ai-call__conv,
+  .ai-call__mems { text-align: left; }
+
+  /* Memory: the five columns of "Is it learning?" fit a phone without scrolling. */
+  .table.ai-progress th,
+  .table.ai-progress td { padding-left: 6px; padding-right: 6px; }
+  /* Retire's question takes a row of its own under the chips. */
+  .ai-mem__confirm { flex-basis: 100%; margin-left: 0; }
+  .ai-mem.ai-mem--target { padding-left: 8px; }
 }

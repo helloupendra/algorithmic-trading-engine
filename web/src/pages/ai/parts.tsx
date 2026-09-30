@@ -1,11 +1,12 @@
 /**
  * The pieces every AI page shares: a model's name, a call's outcome, an
  * agent's status, a chain in fallback order and its editor, a link to a
- * call, and a tool step with what the model saw. Kept here so the five tabs
- * say each thing the same way.
+ * call, a tool step with what the model saw, and the memories an answer
+ * read with the 👍 or 👎 it got. Kept here so the tabs say each thing the
+ * same way.
  */
 
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
@@ -17,6 +18,9 @@ import {
   formatTokens,
   healthBadge,
   isEmbeddingModel,
+  memoryHref,
+  memoryKind,
+  memoryLabel,
   modelName,
   moveInChain,
   outcomeBadge,
@@ -25,7 +29,7 @@ import {
   sameChain,
   toolLabel,
 } from '../../lib/ai'
-import type { AiModel, AiModelHealth, AiToolStep } from '../../lib/ai'
+import type { AiModel, AiModelHealth, AiToolStep, FeedbackScore } from '../../lib/ai'
 import { Badge } from '../../components/ui'
 
 /** "Nemotron 3 Ultra" with its full id beside it (or in its title when `bare`). */
@@ -379,5 +383,58 @@ export function ToolStepRow({
         {step.result && <pre className="ai-pre ai-tool__pre">{result.text}</pre>}
       </div>
     </details>
+  )
+}
+
+/** "M3 · M7 · M9", each to its row on the Memory tab. */
+export function MemoryLinks({ ids }: { ids: readonly number[] }) {
+  return (
+    <span className="ai-memlinks">
+      {ids.map((id, i) => (
+        <Fragment key={id}>
+          {i > 0 && <span className="faint"> · </span>}
+          <Link className="ai-call-link" to={memoryHref(id)}>
+            {memoryLabel(id)}
+          </Link>
+        </Fragment>
+      ))}
+    </span>
+  )
+}
+
+/**
+ * The quiet line under an answer: "Read 3 memories: M3 · M7 · M9". An empty
+ * list is said as such; an API that sent no list at all says nothing.
+ */
+export function MemoriesRead({ ids }: { ids: readonly number[] | null }) {
+  if (ids == null) return null
+  if (ids.length === 0) return <span className="ai-memread faint">Read no memories</span>
+  return (
+    <span className="ai-memread">
+      <span className="faint">
+        Read {ids.length} memor{ids.length === 1 ? 'y' : 'ies'}:{' '}
+      </span>
+      <MemoryLinks ids={ids} />
+    </span>
+  )
+}
+
+/** A small 👍 or 👎 where an answer was rated. */
+export function FeedbackMark({ score }: { score: FeedbackScore }) {
+  const said = score === 1 ? 'Marked good' : 'Marked wrong'
+  return (
+    <span className="ai-vote-mark" title={said} aria-label={said} role="img">
+      {score === 1 ? '👍' : '👎'}
+    </span>
+  )
+}
+
+/** A memory's kind as a chip: Note, Correction or Lesson, with what it means in the title. */
+export function KindChip({ kind }: { kind: string }) {
+  const k = memoryKind(kind)
+  return (
+    <span className={`badge badge--${k.tone}`} title={k.means || undefined}>
+      {k.label}
+    </span>
   )
 }

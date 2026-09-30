@@ -318,6 +318,15 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         pages: [{ label: 'Assistant', to: '/ai/assistant', keywords: ['ask', 'chat', 'nemotron', 'question'] }],
       },
       {
+        // What the agents read before every answer: the owner's notes and
+        // corrections, and the lessons the owner approved.
+        key: 'ai-memory',
+        label: 'Memory',
+        home: '/ai/memory',
+        requires: 'admin',
+        pages: [{ label: 'Memory', to: '/ai/memory', keywords: ['memory', 'learning', 'lessons', 'corrections', 'remember', 'feedback'] }],
+      },
+      {
         key: 'ai-agents',
         label: 'Agents',
         home: '/ai/agents',

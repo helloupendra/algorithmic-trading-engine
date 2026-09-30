@@ -60,8 +60,28 @@ import {
   shortDate,
   sourceLabel,
   telegramState,
+  budgetText,
+  istDaysAgo,
+  memoryErrorText,
+  memoryHref,
+  memoryKind,
+  memoryLabel,
+  memoryOrigin,
+  memorySourceText,
+  memoryStatus,
+  memoryTextProblem,
+  parseRemember,
+  progressSince,
+  readCall,
+  readCallFeedback,
+  readFeedbackResult,
+  readMemories,
+  readMemory,
+  readMemoryProgress,
+  splitMemories,
 } from './ai'
-import type { AiModel, AiStreamEvent, AiToolStep, ChatAction, ChatState, SseMessage } from './ai'
+import type { AiMemory, AiModel, AiStreamEvent, AiToolStep, ChatAction, ChatState, SseMessage } from './ai'
+import { ApiError } from './api'
 
 /** Feeds chunks one after another, as a stream would, and collects every message. */
 function feed(chunks: string[]): { messages: SseMessage[]; carry: string } {
@@ -151,9 +171,10 @@ describe('decodeStreamEvent', () => {
       finishReason: 'stop',
       usage: { promptTokens: 23, completionTokens: 16, totalTokens: 39 },
       fallbacks: 1,
-      // An API from before tools: none called, one round.
+      // An API from before tools: none called, one round; and from before memory: not known.
       toolCalls: 0,
       rounds: 1,
+      memoryIds: null,
     })
     expect(decodeStreamEvent({ event: 'error', data: '{"callId":41,"error":"every model failed"}' })).toEqual({
       type: 'error',
@@ -383,9 +404,10 @@ describe('chatReducer', () => {
         fallbacks: 0,
         toolCalls: 0,
         rounds: 1,
+        memoryIds: [3, 7],
       }),
     ).turns[0]
-    expect(done).toMatchObject({ status: 'done', callId: 41, seconds: 8.1, finishReason: 'stop', fallbacks: 0, toolCalls: 0, roundCount: 1 })
+    expect(done).toMatchObject({ status: 'done', callId: 41, seconds: 8.1, finishReason: 'stop', fallbacks: 0, toolCalls: 0, roundCount: 1, memoryIds: [3, 7] })
     expect(done.usage?.totalTokens).toBe(39)
     expect(done.answer).toBe('Because of the US close.')
   })
@@ -406,7 +428,7 @@ describe('chatReducer', () => {
       [
         ev('t1', { type: 'attempt', model: 'moonshotai/kimi-k3', n: 2, of: 3, round: 1 }),
         ev('t1', { type: 'delta', text: 'The whole answer.' }),
-        ev('t1', { type: 'done', callId: 42, model: 'moonshotai/kimi-k3', seconds: 97.3, finishReason: 'stop', usage: null, fallbacks: 1, toolCalls: 0, rounds: 1 }),
+        ev('t1', { type: 'done', callId: 42, model: 'moonshotai/kimi-k3', seconds: 97.3, finishReason: 'stop', usage: null, fallbacks: 1, toolCalls: 0, rounds: 1, memoryIds: null }),
       ],
       s,
     ).turns[0]
@@ -426,7 +448,7 @@ describe('chatReducer', () => {
     // A stream that ended after its answer changes nothing.
     const fine = run([
       ask('t1'),
-      ev('t1', { type: 'done', callId: 1, model: 'm', seconds: 1, finishReason: 'stop', usage: null, fallbacks: 0, toolCalls: 0, rounds: 1 }),
+      ev('t1', { type: 'done', callId: 1, model: 'm', seconds: 1, finishReason: 'stop', usage: null, fallbacks: 0, toolCalls: 0, rounds: 1, memoryIds: null }),
       { type: 'closed', id: 't1' },
     ]).turns[0]
     expect(fine.status).toBe('done')
@@ -496,6 +518,7 @@ describe('chatReducer with tools', () => {
         fallbacks: 1,
         toolCalls: 2,
         rounds: 2,
+        memoryIds: [],
       }),
     ]).turns[0]
     expect(t.rounds.map((r) => [r.round, r.reasoning, r.working, r.tools.length])).toEqual([
@@ -556,7 +579,7 @@ describe('historyFor', () => {
   const finished = run([
     ask('t1', 'first?'),
     ev('t1', { type: 'delta', text: 'first answer' }),
-    ev('t1', { type: 'done', callId: 1, model: 'm', seconds: 1, finishReason: 'stop', usage: null, fallbacks: 0, toolCalls: 0, rounds: 1 }),
+    ev('t1', { type: 'done', callId: 1, model: 'm', seconds: 1, finishReason: 'stop', usage: null, fallbacks: 0, toolCalls: 0, rounds: 1, memoryIds: null }),
     ask('t2', 'failed?'),
     ev('t2', { type: 'error', callId: 2, error: 'x' }),
     ask('t3', 'stopped?'),
@@ -577,7 +600,7 @@ describe('historyFor', () => {
       Array.from({ length: 30 }, (_, i): ChatAction[] => [
         ask(`t${i}`, `q${i}`),
         ev(`t${i}`, { type: 'delta', text: `a${i}` }),
-        ev(`t${i}`, { type: 'done', callId: i, model: 'm', seconds: 1, finishReason: 'stop', usage: null, fallbacks: 0, toolCalls: 0, rounds: 1 }),
+        ev(`t${i}`, { type: 'done', callId: i, model: 'm', seconds: 1, finishReason: 'stop', usage: null, fallbacks: 0, toolCalls: 0, rounds: 1, memoryIds: null }),
       ]).flat(),
     )
     const messages = historyFor(many.turns, 'last?')
@@ -1018,5 +1041,282 @@ describe('telegram and sources', () => {
       'Telegram',
     ])
     expect(sourceLabel('carrier-pigeon')).toBe('carrier-pigeon')
+  })
+})
+
+// ---------- memory ----------
+
+/** One memory exactly as the contract (MEMORY-CONTRACT.md) writes it. */
+const memoryJson = {
+  id: 12,
+  agentKey: 'desk-assistant',
+  agentName: 'Desk Assistant',
+  kind: 'correction',
+  status: 'active',
+  text: 'Quote P&L net of charges.',
+  context: 'How did the runs do today?',
+  source: 'feedback',
+  via: 'console',
+  sourceCallId: 31,
+  sourceReportId: null,
+  createdBy: 'admin',
+  createdUtc: '2026-10-01T10:32:00Z',
+  decidedBy: '',
+  decidedUtc: null,
+  activatedUtc: '2026-10-01T10:32:00Z',
+  retiredUtc: null,
+  updatedUtc: '2026-10-01T10:32:00Z',
+  uses: 4,
+  lastUsedUtc: '2026-10-01T11:02:00Z',
+  ups: 2,
+  downs: 0,
+  checkPasses: 5,
+  checkFails: 1,
+  review: false,
+  reviewReason: null,
+}
+
+const lessonJson = {
+  ...memoryJson,
+  id: 13,
+  kind: 'lesson',
+  status: 'proposed',
+  text: 'When asked for the worst run, sort by net after charges.',
+  context: 'Which run lost the most today, after charges?',
+  source: 'check',
+  via: 'check',
+  sourceCallId: 57,
+  sourceReportId: 9,
+  createdBy: 'assistant-check',
+  activatedUtc: null,
+  uses: 0,
+  lastUsedUtc: null,
+  ups: 0,
+  checkPasses: 0,
+  checkFails: 0,
+}
+
+describe('reading the memory list', () => {
+  const body = {
+    enabled: true,
+    agents: [{ key: 'desk-assistant', name: 'Desk Assistant', on: true }],
+    counts: { active: 3, proposed: 1, rejected: 0, retired: 0 },
+    budgetChars: 2400,
+    activeChars: 812,
+    memories: [lessonJson, memoryJson],
+  }
+
+  it('reads the body as the contract sends it', () => {
+    const r = readMemories(body)
+    expect(r.enabled).toBe(true)
+    expect(r.agents).toEqual([{ key: 'desk-assistant', name: 'Desk Assistant', on: true }])
+    expect(r.counts).toEqual({ active: 3, proposed: 1, rejected: 0, retired: 0 })
+    expect([r.budgetChars, r.activeChars]).toEqual([2400, 812])
+    expect(r.memories).toEqual([lessonJson, memoryJson])
+  })
+
+  it('refuses a body it cannot read, rather than showing an empty page', () => {
+    expect(() => readMemories({ enabled: true })).toThrow(/shape this page cannot read/)
+    expect(() => readMemories('<!doctype html>')).toThrow()
+    expect(() => readMemory({ text: 'no id' })).toThrow(/shape this page cannot read/)
+    expect(() => readMemory({ id: 'twelve', text: 'x' })).toThrow(/shape this page cannot read/)
+  })
+
+  it('counts from the rows when the counts are missing, drops a row without an id, and keeps unknown words as sent', () => {
+    const r = readMemories({
+      memories: [{ ...memoryJson, kind: 'hunch' }, { text: 'no id' }, { ...lessonJson, status: 'retired' }, 'junk'],
+      agents: [{ key: 'desk-assistant', name: '' }, { name: 'no key' }],
+    })
+    expect(r.memories.map((m) => m.id)).toEqual([12, 13])
+    expect(r.counts).toEqual({ active: 1, proposed: 0, rejected: 0, retired: 1 })
+    // A missing flag is not "off": only an API that says so turns the warnings on.
+    expect(r.enabled).toBe(true)
+    expect(r.agents).toEqual([{ key: 'desk-assistant', name: 'desk-assistant', on: true }])
+    expect([r.budgetChars, r.activeChars]).toEqual([null, null])
+    expect(memoryKind(r.memories[0].kind)).toEqual({ label: 'hunch', tone: 'neutral', means: '' })
+    expect(readMemories({ enabled: false, memories: [] }).enabled).toBe(false)
+  })
+
+  it('fills what a row left out honestly: times as null, counts as zero, review off', () => {
+    const m = readMemory({ id: 5, text: 'Keep answers short.' })
+    expect(m).toMatchObject({
+      id: 5,
+      kind: 'note',
+      status: 'active',
+      context: '',
+      sourceCallId: null,
+      sourceReportId: null,
+      decidedUtc: null,
+      lastUsedUtc: null,
+      uses: 0,
+      ups: 0,
+      downs: 0,
+      review: false,
+      reviewReason: null,
+    })
+  })
+
+  it('splits the list into waiting, active, and retired or rejected, keeping the order sent', () => {
+    const rows = readMemories({
+      memories: [
+        { ...memoryJson, id: 4, status: 'retired' },
+        { ...memoryJson, id: 3 },
+        { ...lessonJson, id: 2 },
+        { ...lessonJson, id: 1, status: 'rejected' },
+        { ...memoryJson, id: 7 },
+      ],
+    }).memories
+    const s = splitMemories(rows)
+    expect(s.proposed.map((m) => m.id)).toEqual([2])
+    expect(s.active.map((m) => m.id)).toEqual([3, 7])
+    expect(s.closed.map((m) => m.id)).toEqual([4, 1])
+  })
+})
+
+describe('memory progress', () => {
+  const body = {
+    days: [
+      { date: '2026-09-22', checkPassed: 9, checkTotal: 12, score: 0.75, activeMemories: 1, ups: 0, downs: 2 },
+      { date: '2026-09-29', checkPassed: null, checkTotal: null, score: null, activeMemories: 2, ups: 1, downs: 0 },
+      { date: '2026-09-30', checkPassed: 10, checkTotal: 12, activeMemories: 3, ups: 0, downs: 1 },
+      { date: '2026-10-01', checkPassed: 11, checkTotal: 12, score: 0.917, activeMemories: 3, ups: 2, downs: 1 },
+    ],
+  }
+
+  it('reads the days as sent, a day without a check as not known, and the score from the counts when left out', () => {
+    const p = readMemoryProgress(body)
+    expect(p.days.map((d) => d.date)).toEqual(['2026-09-22', '2026-09-29', '2026-09-30', '2026-10-01'])
+    expect(p.days[1]).toEqual({ date: '2026-09-29', checkPassed: null, checkTotal: null, score: null, activeMemories: 2, ups: 1, downs: 0 })
+    expect(p.days[2].score).toBeCloseTo(10 / 12)
+    expect(p.days[3]).toEqual({ date: '2026-10-01', checkPassed: 11, checkTotal: 12, score: 0.917, activeMemories: 3, ups: 2, downs: 1 })
+    expect(readMemoryProgress({ days: [{ checkTotal: 3 }, 'x'] }).days).toEqual([])
+    expect(() => readMemoryProgress({})).toThrow(/shape this page cannot read/)
+  })
+
+  it('sums the last 7 IST days: the checks that ran, and the 👍 and 👎', () => {
+    const now = Date.parse('2026-10-01T10:00:00Z')
+    expect(istDaysAgo(now, 6)).toBe('2026-09-25')
+    // 18:40 UTC on 30 Sep is already 1 Oct in IST.
+    expect(istDaysAgo(Date.parse('2026-09-30T18:40:00Z'), 0)).toBe('2026-10-01')
+    const w = progressSince(readMemoryProgress(body).days, istDaysAgo(now, 6))
+    expect(w).toEqual({ checks: 2, checkPassed: 21, checkTotal: 24, score: 21 / 24, ups: 3, downs: 2 })
+    expect(progressSince([], '2026-09-25')).toEqual({ checks: 0, checkPassed: 0, checkTotal: 0, score: null, ups: 0, downs: 0 })
+  })
+})
+
+describe('feedback on a call', () => {
+  it('reads what POST feedback answers: the score, the note and the correction it made', () => {
+    const r = readFeedbackResult({ callId: 31, score: -1, note: 'use net after charges', memory: memoryJson })
+    expect(r).toEqual({ callId: 31, score: -1, note: 'use net after charges', memory: memoryJson })
+    expect(readFeedbackResult({ callId: 31, score: 1, note: '', memory: null })).toEqual({ callId: 31, score: 1, note: '', memory: null })
+    // 0 is feedback cleared.
+    expect(readFeedbackResult({ callId: 31, score: 0 })).toEqual({ callId: 31, score: 0, note: '', memory: null })
+    expect(() => readFeedbackResult({ callId: 31, score: 2 })).toThrow(/shape this page cannot read/)
+    expect(() => readFeedbackResult({ score: 1 })).toThrow(/shape this page cannot read/)
+  })
+
+  it("reads a call's feedback, or none", () => {
+    expect(readCallFeedback({ score: -1, note: 'use net after charges', by: 'admin', utc: '2026-10-01T10:32:00Z' })).toEqual({
+      score: -1,
+      note: 'use net after charges',
+      by: 'admin',
+      utc: '2026-10-01T10:32:00Z',
+    })
+    expect(readCallFeedback(null)).toBeNull()
+    expect(readCallFeedback({ score: 0 })).toBeNull()
+  })
+
+  it('reads the feedback and memories on the call log and a call, and not known from an API without memory', () => {
+    const page = readCallsPage({
+      calls: [
+        { id: 31, outcome: 'ok', feedback: -1, memoryCount: 3 },
+        { id: 30, outcome: 'ok', feedback: 1, memoryCount: 0 },
+        { id: 29, outcome: 'ok' },
+      ],
+    })
+    expect(page.calls.map((c) => [c.feedback, c.memoryCount])).toEqual([
+      [-1, 3],
+      [1, 0],
+      [null, null],
+    ])
+
+    const call = readCall({
+      id: 31,
+      outcome: 'ok',
+      memoryCount: 3,
+      memoryIds: [3, 7, 9],
+      feedback: { score: -1, note: 'use net after charges', by: 'admin', utc: '2026-10-01T10:32:00Z' },
+    })
+    expect(call.memoryIds).toEqual([3, 7, 9])
+    expect(call.feedback).toEqual({ score: -1, note: 'use net after charges', by: 'admin', utc: '2026-10-01T10:32:00Z' })
+    expect(call.memoryCount).toBe(3)
+
+    const older = readCall({ id: 12, outcome: 'ok' })
+    expect([older.memoryIds, older.feedback, older.memoryCount]).toEqual([null, null, null])
+    expect(readCall({ id: 13, outcome: 'ok', memoryIds: [], feedback: null }).memoryIds).toEqual([])
+  })
+
+  it("reads the stream's done event with the memories the answer was given", () => {
+    expect(decodeStreamEvent({ event: 'done', data: '{"callId":31,"memoryIds":[3,7,9]}' })).toMatchObject({ type: 'done', callId: 31, memoryIds: [3, 7, 9] })
+    expect(decodeStreamEvent({ event: 'done', data: '{"callId":31,"memoryIds":[]}' })).toMatchObject({ memoryIds: [] })
+    // Only whole, positive ids are ids.
+    expect(decodeStreamEvent({ event: 'done', data: '{"callId":31,"memoryIds":[3,"7",1.5,-2,9]}' })).toMatchObject({ memoryIds: [3, 9] })
+    expect(decodeStreamEvent({ event: 'done', data: '{"callId":31,"memoryIds":"3,7"}' })).toMatchObject({ memoryIds: null })
+  })
+})
+
+describe('memory words', () => {
+  it('reads /remember, and leaves everything else a question', () => {
+    expect(parseRemember('/remember quote P&L net of charges')).toBe('quote P&L net of charges')
+    expect(parseRemember('  /remember   two\nlines  ')).toBe('two\nlines')
+    expect(parseRemember('/Remember@codefortrade_bot use IST')).toBe('use IST')
+    expect(parseRemember('/remember')).toBe('')
+    expect(parseRemember('/remember   ')).toBe('')
+    expect(parseRemember('/remembering things')).toBeNull()
+    expect(parseRemember('please /remember this')).toBeNull()
+    expect(parseRemember('How did the runs do today?')).toBeNull()
+  })
+
+  it('says why a text cannot be saved', () => {
+    expect(memoryTextProblem('  ')).toBe('Write the text first.')
+    expect(memoryTextProblem('x'.repeat(600))).toBeNull()
+    expect(memoryTextProblem('x'.repeat(601))).toBe('A memory holds at most 600 characters; this one has 601.')
+    // Only what is kept counts: the spaces around it are trimmed first.
+    expect(memoryTextProblem(` ${'x'.repeat(600)} `)).toBeNull()
+  })
+
+  it('names a memory, its kind, status, source and where it came from', () => {
+    expect(memoryLabel(12)).toBe('M12')
+    expect(memoryHref(12)).toBe('/ai/memory#memory-12')
+    expect(['note', 'correction', 'lesson'].map((k) => memoryKind(k).label)).toEqual(['Note', 'Correction', 'Lesson'])
+    expect(['active', 'proposed', 'rejected', 'retired'].map((s) => memoryStatus(s).label)).toEqual(['Active', 'Waiting', 'Rejected', 'Retired'])
+    expect(memorySourceText('owner', 'console')).toBe('Owner · Console')
+    expect(memorySourceText('feedback', 'telegram')).toBe('Feedback · Telegram')
+    expect(memorySourceText('check', 'check')).toBe('Daily check')
+    expect(memorySourceText('pigeon', '')).toBe('pigeon')
+    const lesson: Pick<AiMemory, 'source' | 'createdUtc'> = { source: 'check', createdUtc: '2026-10-01T11:15:00Z' }
+    expect(memoryOrigin(lesson)).toBe('From the check on 1 Oct')
+    // The IST day: 19:00 UTC on 30 Sep is 00:30 on 1 Oct in India.
+    expect(memoryOrigin({ source: 'feedback', createdUtc: '2026-09-30T19:00:00Z' })).toBe('From a 👎 on 1 Oct')
+    expect(memoryOrigin({ source: 'owner', createdUtc: '' })).toBe('From a note')
+  })
+
+  it('says how much of the budget the active memories use', () => {
+    expect(budgetText(812, 2400)).toBe('812 of 2,400 characters')
+    expect(budgetText(812, null)).toBe('812 characters')
+    expect(budgetText(null, 2400)).toBe('size not known')
+  })
+
+  it("says a memory request's failure in words, the API's own when it sent some", () => {
+    expect(memoryErrorText(new ApiError(400, 'The text is over 600 characters'))).toBe('The text is over 600 characters.')
+    expect(memoryErrorText(new ApiError(400, 'Request failed with status 400'))).toBe('The API refused it as sent.')
+    expect(memoryErrorText(new ApiError(404, 'Request failed with status 404'))).toBe('That memory is not on the server any more.')
+    expect(memoryErrorText(new ApiError(404, 'Request failed with status 404'), 'call')).toBe('That call is not on the server.')
+    expect(memoryErrorText(new ApiError(409, 'Request failed with status 409'), 'call')).toBe('That call was not answered, so it cannot take feedback.')
+    expect(memoryErrorText(new ApiError(409, 'Call 31 was not answered.'), 'call')).toBe('Call 31 was not answered.')
+    expect(memoryErrorText(new ApiError(502, 'Request failed with status 502'))).toBe('The API failed (HTTP 502).')
+    expect(memoryErrorText(new TypeError('Failed to fetch'))).toBe(
+      'The request did not reach the API: Failed to fetch. Check the connection, and that the API is running.',
+    )
   })
 })
