@@ -51,9 +51,9 @@ Whatever that model had streamed is dropped. An answer is never half one model's
 
 | Tier | Chain (first model first) | For |
 | --- | --- | --- |
-| Judge | Nemotron 3 Ultra → Kimi K3 → GLM-5.3 | The hardest reasoning, few calls a day |
-| Analyst | Kimi K3 → GLM-5.3 → Nemotron 3 Super | Reading data the code computed |
-| Extract | DeepSeek V4.1 Flash → Nemotron 3.5 Lightning → GLM-5.3 Flash | High volume, strict JSON |
+| Judge | Nemotron 3 Ultra → Nemotron 3 Super → Kimi K3 | The hardest reasoning, few calls a day |
+| Analyst | Kimi K3 → Nemotron 3 Super → GLM-5.3 | Reading data the code computed |
+| Extract | DeepSeek V4.1 Flash → Nemotron 3 Super → Nemotron 3.5 Lightning | High volume, strict JSON |
 | Embed | Nemotron 3 Embed 1B | Search (vectors, not answers); not used yet |
 
 The owner can change a tier's chain, or give one agent its own chain, from the Models and Agents tabs. The change is
@@ -72,8 +72,22 @@ which Python scripts use directly. `AiSettingsTests` fails if the two drift.
 | DeepSeek V4.1 Flash | no first token in 90 s (none in 170 s unstreamed) |
 | Nemotron 3.5 Lightning | no first token in 90 s (none in 170 s unstreamed) |
 
-The non-NVIDIA models queue on the free tier: each one in a chain can cost the full first-token limit before it
-hands over. The Models tab's **Test** button measures this at any time, and each test is kept in the call log.
+Measured again at 18:46 IST:
+
+| Model | Result |
+| --- | --- |
+| Ultra | 0.9 s |
+| Super | 1.1 s |
+| Lightning | 74 s |
+| GLM-5.3 Flash | 85 s |
+| Kimi K3, DeepSeek V4.1 Flash and GLM-5.3 | No response headers at all in 100 s |
+
+Around 17:30 Ultra twice answered "Service temporarily overloaded".
+
+The free endpoint queues the other vendors' models behind demand, and NVIDIA publishes no limits for it. A model in
+the queue can cost the full first-token limit before it hands over. So since 30 Sep **Nemotron 3 Super is every
+tier's first fallback**; `core/llm.py` keeps the same chains. The Models tab's **Test** button measures latency at any
+time, and each test is kept in the call log.
 
 ## A call
 
@@ -231,6 +245,9 @@ All under `api/Ai`, admin only.
 | `POST ask/stream`, `POST ask` | Ask: `{ messages, tier, system, maxTokens, temperature, conversationId, agent }` |
 
 ## Scheduled agents (Phase 3)
+
+The three scheduled agents **start switched off**: they call the provider by themselves, so the owner turns each one
+on from AI → Agents. The Desk Assistant starts on.
 
 `AiAgentScheduler`, a hosted service, runs once a minute:
 - It waits 90 s after a start before its first round.

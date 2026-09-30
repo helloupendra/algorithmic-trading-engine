@@ -23,8 +23,8 @@ internal static class AiTestKit
     public const string Key = "nvapi-TEST-SECRET-0123456789";
 
     public const string Judge1 = "nvidia/nemotron-3-ultra-550b-a55b";
-    public const string Judge2 = "moonshotai/kimi-k3";
-    public const string Judge3 = "z-ai/glm-5.3";
+    public const string Judge2 = "nvidia/nemotron-3-super-120b-a12b";
+    public const string Judge3 = "moonshotai/kimi-k3";
     public const string Extract1 = "deepseek-ai/deepseek-v4.1-flash";
 
     public static TradingDbContext NewDb(string? name = null) =>
@@ -234,7 +234,7 @@ internal static class AiTestKit
         public List<Seen> Requests { get; } = [];
 
         public string ModelsJson { get; set; } =
-            """{"data":[{"id":"nvidia/nemotron-3-ultra-550b-a55b","owned_by":"nvidia"},{"id":"moonshotai/kimi-k3","owned_by":"moonshotai"},{"id":"z-ai/glm-5.3","owned_by":"z-ai"},{"id":"meta/llama-4-maverick","owned_by":"meta"},{"id":"nvidia/nemotron-3-embed-1b","owned_by":"nvidia"}]}""";
+            """{"data":[{"id":"nvidia/nemotron-3-ultra-550b-a55b","owned_by":"nvidia"},{"id":"nvidia/nemotron-3-super-120b-a12b","owned_by":"nvidia"},{"id":"moonshotai/kimi-k3","owned_by":"moonshotai"},{"id":"z-ai/glm-5.3","owned_by":"z-ai"},{"id":"meta/llama-4-maverick","owned_by":"meta"},{"id":"nvidia/nemotron-3-embed-1b","owned_by":"nvidia"}]}""";
 
         public FakeProvider On(string model, params Script[] scripts)
         {

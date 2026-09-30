@@ -38,7 +38,8 @@ public sealed record AiState(IReadOnlyList<AiTierState> Tiers, IReadOnlyList<AiA
 /// </summary>
 /// <remarks>
 /// A missing row means the default: the tier's chain from <see cref="AiCatalog"/>,
-/// an agent on when it is built and walking its tier's chain. A row whose
+/// an agent as its catalog entry starts (the Desk Assistant on, the scheduled
+/// agents off) and walking its tier's chain. A row whose
 /// value cannot be read (hand-edited, say) also counts as the default rather
 /// than failing every call; the console shows the chain actually used.
 /// </remarks>
@@ -87,7 +88,8 @@ public sealed class AiSettingsStore
             rows.TryGetValue(AgentChainKey(def.Key), out var chainRow);
 
             // A planned agent is off whatever a row says: it has no code to run.
-            bool enabled = def.Built && (enabledRow is null || !bool.TryParse(enabledRow.Value, out bool on) || on);
+            // Without a readable row, a built agent is as its catalog entry starts.
+            bool enabled = def.Built && (enabledRow is not null && bool.TryParse(enabledRow.Value, out bool on) ? on : def.StartsOn);
             var own = ReadChain(chainRow?.Value);
             var tierChain = tiers.FirstOrDefault(t => t.Def.Key == def.Tier)?.Chain ?? [];
 
