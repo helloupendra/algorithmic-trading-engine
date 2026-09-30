@@ -193,8 +193,14 @@ public static class OptionChainLiveView
             strike.IsAtTheMoney = strike.StrikePrice == chain.AtTheMoneyStrike;
 
         chain.MaxPainStrike = OptionChainAnalytics.MaxPain(interests);
-        chain.HeaviestCallStrike = OptionChainAnalytics.HeaviestStrike(interests, "CE");
-        chain.HeaviestPutStrike = OptionChainAnalytics.HeaviestStrike(interests, "PE");
+        // These two are the header's resistance and support, so each is read on
+        // its own side of the spot. Reading the whole chain named BANKNIFTY's
+        // 27 Oct 58,000 strike both (30 Sep, spot 54,810): heaviest in calls and
+        // in puts. Without a spot there are no sides, so both stay unknown
+        // rather than fall back to that reading.
+        bool hasSpot = chain.SpotPrice > 0;
+        chain.HeaviestCallStrike = hasSpot ? OptionChainAnalytics.HeaviestStrike(interests, "CE", chain.SpotPrice) : null;
+        chain.HeaviestPutStrike = hasSpot ? OptionChainAnalytics.HeaviestStrike(interests, "PE", chain.SpotPrice) : null;
         chain.PutCallRatio = OptionChainAnalytics.PutCallRatio(chain.TotalPutOpenInterest, chain.TotalCallOpenInterest);
     }
 

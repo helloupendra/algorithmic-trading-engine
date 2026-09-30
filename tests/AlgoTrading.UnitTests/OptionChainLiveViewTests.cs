@@ -121,7 +121,7 @@ public class OptionChainLiveViewTests
     // ------------------------------------------------------------- header
 
     [Fact]
-    public void Support_is_the_heaviest_put_strike_and_resistance_the_heaviest_call_strike()
+    public void Support_is_the_heaviest_put_at_or_below_the_spot_and_resistance_the_heaviest_call_at_or_above_it()
     {
         var chain = Chain(spot: 57369.65m,
             (57200m, 80_000, 196_000),
@@ -133,12 +133,73 @@ public class OptionChainLiveViewTests
 
         var header = OptionChainLiveView.Header(chain, Now, Now);
 
-        Assert.Equal(57500m, header.SupportStrike);
-        Assert.Equal(1_943_000, header.SupportOpenInterest);
+        // 57,500 holds the most put OI too, but it is above the spot: an
+        // in-the-money put wall is not support. The heaviest put below is 57,300.
+        Assert.Equal(57300m, header.SupportStrike);
+        Assert.Equal(347_000, header.SupportOpenInterest);
         Assert.Equal(57500m, header.ResistanceStrike);
         Assert.Equal(1_949_000, header.ResistanceOpenInterest);
         Assert.Equal(57400m, header.AtTheMoneyStrike);
         Assert.Equal(chain.TotalPutOpenInterest, header.TotalPutOpenInterest);
+    }
+
+    [Fact]
+    public void A_far_wall_heaviest_on_both_sides_is_resistance_only()
+    {
+        // The shape of BANKNIFTY's 27 Oct chain on 30 Sep: spot 54,810 and the
+        // 58,000 strike heaviest in calls and in puts alike. Read over the whole
+        // chain it was support and resistance at once, 3,200 points above spot.
+        var chain = Chain(spot: 54810.20m,
+            (54000m, 300_000, 900_000),
+            (54500m, 450_000, 700_000),
+            (55000m, 1_100_000, 650_000),
+            (58000m, 2_400_000, 1_500_000));
+        OptionChainLiveView.Summarise(chain);
+
+        var header = OptionChainLiveView.Header(chain, Now, Now);
+
+        Assert.Equal(58000m, header.ResistanceStrike);
+        Assert.Equal(54000m, header.SupportStrike);
+        Assert.Equal(900_000, header.SupportOpenInterest);
+        Assert.NotEqual(header.SupportStrike, header.ResistanceStrike);
+    }
+
+    [Fact]
+    public void Support_and_resistance_share_a_strike_only_when_the_spot_is_on_it()
+    {
+        var chain = Chain(spot: 57400m,
+            (57300m, 50_000, 200_000),
+            (57400m, 900_000, 800_000),
+            (57500m, 300_000, 40_000));
+        OptionChainLiveView.Summarise(chain);
+
+        var header = OptionChainLiveView.Header(chain, Now, Now);
+
+        Assert.Equal(57400m, header.SupportStrike);
+        Assert.Equal(57400m, header.ResistanceStrike);
+    }
+
+    [Fact]
+    public void With_nothing_on_one_side_of_the_spot_that_side_is_unknown_not_a_far_strike()
+    {
+        // The recorded window ends below the spot: no call at or above it.
+        var above = Chain(spot: 57650m,
+            (57400m, 900_000, 100_000),
+            (57500m, 700_000, 600_000));
+        OptionChainLiveView.Summarise(above);
+        var header = OptionChainLiveView.Header(above, Now, Now);
+        Assert.Null(header.ResistanceStrike);
+        Assert.Null(header.ResistanceOpenInterest);
+        Assert.Equal(57500m, header.SupportStrike);
+
+        // No spot at all: no sides, so neither wall.
+        var blind = Chain(spot: 0m,
+            (57400m, 900_000, 100_000),
+            (57500m, 700_000, 600_000));
+        OptionChainLiveView.Summarise(blind);
+        header = OptionChainLiveView.Header(blind, Now, Now);
+        Assert.Null(header.SupportStrike);
+        Assert.Null(header.ResistanceStrike);
     }
 
     [Fact]
