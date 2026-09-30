@@ -17,7 +17,8 @@ Every five minutes it reads the platform's own activity log and the machine:
   attack. Sign-ins from this machine that keep failing (more than 5) are a
   runner with a wrong password. Once crossed, the incident is held open for
   30 minutes after the last failure, so a guess that pauses and resumes stays
-  one incident instead of a new alarm on every crossing.
+  one incident instead of a new alarm on every crossing — unless a person
+  resolves it, which ends the hold (see below).
 * ``privileged-change`` (MEDIUM): an account created or deleted, a role or
   grant changed, a password reset, an invite issued or used, a broker account
   issued or its credentials revealed, a kill switch pulled, connector
@@ -68,12 +69,24 @@ scans replay their last result until the next scan, login-failures holds for
 30 minutes — so one clean check really does mean the condition is gone. When a
 source cannot be read (the API is down, ``ss`` failed), the previous findings
 of that rule are carried forward instead: "could not look" is not "fixed".
+
+A finding repeated from memory says when Sentinel observed what is behind it
+(``observed_utc``): a login-failure hold, or failures read again while they are
+still in the 15-minute window, when their newest failure (or the sign-in after
+them) was first read; a replayed scan or a carried answer, the check that made
+it. An incident a person resolved at or after that is not reopened by it, and
+the engine tells the agent (``let_go``), which drops the hold and the replayed
+finding. A failure or a sign-in read after the resolve, or the next scan that
+still finds the problem, opens a new incident, counted from then. On 30 Sep
+Sentinel re-raised security incidents a person had already resolved, from its
+login-failure holds and replayed scans, with nothing new behind them.
 """
 from __future__ import annotations
 
 import gzip
 import ipaddress
 import json
+import logging
 import os
 import re
 import stat
@@ -92,6 +105,8 @@ from sentinel.context import SentinelContext
 from sentinel.model import Finding, Severity
 
 AGENT = "security"
+
+log = logging.getLogger("sentinel.agents.security")
 
 FIRST_LOOKBACK = timedelta(minutes=15)   # how far back the very first check looks
 
@@ -180,27 +195,61 @@ def _ist(moment: datetime) -> str:
     return to_ist(moment).strftime("%d %b %H:%M IST").lstrip("0")
 
 
-def _dump(finding: Finding) -> dict:
+def _dump(finding: Finding, observed: Optional[datetime] = None) -> dict:
+    """
+    A finding as the state file keeps it, stamped with when it was observed: its own ``observed_utc``, or
+    ``observed`` (the check that saw it) for one seen fresh. Replayed later, it says so (see _load).
+    """
     data = asdict(finding)
     data["severity"] = finding.severity.value
+    moment = finding.observed_utc or observed
+    data["observed_utc"] = _iso(moment) if moment is not None else None
     return data
 
 
 def _load(data: dict) -> Optional[Finding]:
+    """
+    A kept finding, as observed when it was kept: repeated from memory, it must not reopen an incident a person
+    resolved since (30 Sep). One kept before then has no stamp and counts as observed now, as it did then.
+    """
     try:
-        return Finding(**{**data, "severity": Severity(data["severity"])})
-    except (TypeError, ValueError, KeyError):
+        return Finding(**{**data, "severity": Severity(data["severity"]),
+                          "observed_utc": _parse_time(data.get("observed_utc"))})
+    except (TypeError, ValueError, KeyError, AttributeError):
         return None
 
 
 def _carry(st: dict, key: str) -> list[Finding]:
-    """The last findings of a rule whose source could not be read this time."""
+    """
+    The last findings of a rule whose source could not be read this time, or of a scan replayed until the
+    next one — each as observed when it was kept, not now.
+    """
     return [f for f in (_load(d) for d in st.get(key, []) if isinstance(d, dict)) if f is not None]
 
 
-def _remember(st: dict, key: str, findings: list[Finding]) -> list[Finding]:
-    st[key] = [_dump(f) for f in findings]
+def _remember(st: dict, key: str, findings: list[Finding], observed: datetime) -> list[Finding]:
+    """Keep a rule's findings for the checks that replay or carry them, stamped with when they were observed."""
+    st[key] = [_dump(f, observed) for f in findings]
     return findings
+
+
+def _first_read(seen: dict, fingerprint: str, newest: Optional[datetime], now: datetime) -> Optional[datetime]:
+    """
+    When Sentinel first read the newest evidence behind a login finding — a failure, or the sign-in that
+    followed them — or None when that was this check. Failures stay in the 15-minute window and are read again
+    on every check, after a person resolved their incident too: read again, they are not news. The time they
+    were *read*, not the time they happened, is what a resolve is weighed against: a sign-in at 10:06 that no
+    check had read yet when a person resolved the guessing at 10:07 is news to them, and makes it critical.
+    """
+    if newest is None:
+        return None
+    entry = seen.get(fingerprint)
+    if isinstance(entry, dict):
+        last, read = _parse_time(entry.get("newest")), _parse_time(entry.get("read"))
+        if last is not None and read is not None and newest <= last:
+            return read
+    seen[fingerprint] = {"newest": _iso(newest), "read": _iso(now)}
+    return None
 
 
 def _ip(text: str) -> Optional[ipaddress.IPv4Address | ipaddress.IPv6Address]:
@@ -739,6 +788,36 @@ class SecurityAgent(Agent):
         state.save()
         return findings
 
+    def let_go(self, ctx: SentinelContext, fingerprints: set[str]) -> None:
+        """
+        A person resolved these after everything behind them was observed, and the engine did not reopen them:
+        forget them — the login-failure hold, and the findings kept to replay (a scan's result until the next
+        scan, a last answer carried while a source cannot be read). A failure or sign-in read after the
+        resolve, or the next scan that still finds the problem, opens a new incident, counted from then. 30 Sep:
+        Sentinel re-raised security incidents a person had resolved, from its holds and replayed scans.
+
+        What was already read is not forgotten (``login_seen``): failures still in the window, read again on
+        the next check, are old news and are let go again, until they leave it.
+        """
+        state = ctx.state(self.name)
+        st = state.data
+        dropped: set[str] = set()
+        hold = st.get("login_hold")
+        if isinstance(hold, dict):
+            dropped.update(fp for fp in fingerprints if hold.pop(fp, None) is not None)
+        for memo, key in ((st, "login_failures"), (st, "open_ports"), (st.get("git"), "findings"),
+                          (st.get("deps"), "findings")):
+            kept = memo.get(key) if isinstance(memo, dict) else None
+            if not isinstance(kept, list):
+                continue
+            gone = {d.get("fingerprint") for d in kept if isinstance(d, dict)} & fingerprints
+            if gone:
+                memo[key] = [d for d in kept if not (isinstance(d, dict) and d.get("fingerprint") in gone)]
+                dropped |= gone
+        if dropped:
+            log.info("no longer holding %s: resolved after it was last observed", ", ".join(sorted(dropped)))
+            state.save()
+
     # ── login-failures ──
 
     def _login_failures(self, ctx: SentinelContext, st: dict, now: datetime) -> list[Finding]:
@@ -766,6 +845,14 @@ class SecurityAgent(Agent):
             if t:
                 g["times"].append(t)
 
+        # What each fingerprint's newest evidence was, and when it was first read (see _first_read). Past the
+        # hold, that evidence has left the window and cannot be read again.
+        seen = st.get("login_seen") if isinstance(st.get("login_seen"), dict) else {}
+        for fingerprint, entry in list(seen.items()):
+            newest = _parse_time(entry.get("newest")) if isinstance(entry, dict) else None
+            if newest is None or newest < now - LOGIN_HOLD:
+                seen.pop(fingerprint, None)
+
         ranked = sorted(groups.items(), key=lambda kv: -kv[1]["n"])
         per_address = [f"{label}: {g['n']} failed, {len(g['names'])} name(s) tried" for label, g in ranked[:5]]
         if len(ranked) > 5:
@@ -792,6 +879,7 @@ class SecurityAgent(Agent):
                     + f", {len(g['names'])} different name(s) tried; {count} failed sign-ins in all.")
             evidence = list(per_address)
             severity = Severity.HIGH
+            newest = max(g["times"]) if g["times"] else None   # the newest evidence behind it: see _first_read
             if g["local"]:
                 if g["n"] <= LOOPBACK_LIMIT:
                     continue
@@ -818,6 +906,7 @@ class SecurityAgent(Agent):
                 said += (f" A sign-in from the same address then succeeded at {_ist(g['then_ok'])}, and that "
                          f"address had not signed in during the day before.")
                 evidence.insert(0, f"{label}: sign-in succeeded at {_ist(g['then_ok'])}, after the failures")
+                newest = max(newest, g["then_ok"]) if newest else g["then_ok"]   # getting in is evidence too
                 suggestion = ("Find the account that signed in (Activity log → auth, around that time). Unless it "
                               "was someone on the desk who had forgotten their password: revoke that account's "
                               "sessions (Users → revoke sessions), reset its password, block the address in the AWS "
@@ -828,30 +917,33 @@ class SecurityAgent(Agent):
                               "group or Cloudflare, and make sure every account has a long password. The limiter "
                               "already holds each address to 10 tries a minute. The names tried are in "
                               "Activity log → auth, failures only.")
+            fingerprint = f"{self.name}:login-failures:{'loopback' if g['local'] else label}"
             current.append((Finding(
                 agent=self.name, rule="login-failures", severity=severity, title=title, summary=said,
-                fingerprint=f"{self.name}:login-failures:{'loopback' if g['local'] else label}",
-                where="POST /api/UserAuth/login", evidence=evidence[:6], suggestion=suggestion,
+                fingerprint=fingerprint, where="POST /api/UserAuth/login", evidence=evidence[:6],
+                suggestion=suggestion, observed_utc=_first_read(seen, fingerprint, newest, now),
             ), max(g["times"]) if g["times"] else now))
 
         spread = [g for label, g in remote if label not in over and not g["known_since"]]
         spread_n = sum(g["n"] for g in spread)
         if spread_n > LOGIN_TOTAL_LIMIT and len(spread) >= SPREAD_MIN_ADDRESSES:
             times = [t for g in spread for t in g["times"]]
+            fingerprint = f"{self.name}:login-failures:spread"
             current.append((Finding(
                 agent=self.name, rule="login-failures", severity=Severity.HIGH,
                 title="Many failed sign-ins, spread across addresses",
                 summary=(f"{spread_n} failed sign-ins in the last 15 minutes from {len(spread)} address(es), none "
                          f"above {LOGIN_PER_ADDRESS_LIMIT} on its own and none that had signed in before — the "
                          f"pattern of a distributed guess."),
-                fingerprint=f"{self.name}:login-failures:spread",
-                where="POST /api/UserAuth/login", evidence=per_address,
+                fingerprint=fingerprint, where="POST /api/UserAuth/login", evidence=per_address,
                 suggestion=("A per-address limiter does not stop a guess spread over many addresses. Turn on "
                             "Cloudflare's bot protection for the sign-in path and check that no account still has "
                             "a short password."),
+                observed_utc=_first_read(seen, fingerprint, max(times) if times else None, now),
             ), max(times) if times else now))
 
-        return _remember(st, "login_failures", self._hold_login_findings(st, current, now))
+        st["login_seen"] = seen
+        return _remember(st, "login_failures", self._hold_login_findings(st, current, now), now)
 
     def _successful_sign_ins(self, ctx: SentinelContext, now: datetime) -> dict[str, list[datetime]]:
         """Address group → times of its successful sign-ins in the last day. Unreadable: none, so nothing is excused."""
@@ -880,12 +972,14 @@ class SecurityAgent(Agent):
                              now: datetime) -> list[Finding]:
         """
         Keep a crossed fingerprint open until LOGIN_HOLD after its last failure over the bar, so a guess that
-        hovers around the threshold is one incident, not a fresh alarm on every crossing.
+        hovers around the threshold is one incident, not a fresh alarm on every crossing. A held finding is
+        repeated as observed when its newest evidence was read, so a person resolving its incident ends the hold
+        (let_go) instead of the hold opening it again (30 Sep).
         """
         hold = st.get("login_hold") if isinstance(st.get("login_hold"), dict) else {}
         out = []
         for finding, last_bad in current:
-            hold[finding.fingerprint] = {"until": _iso(last_bad + LOGIN_HOLD), "finding": _dump(finding)}
+            hold[finding.fingerprint] = {"until": _iso(last_bad + LOGIN_HOLD), "finding": _dump(finding, now)}
             out.append(finding)
         reported = {f.fingerprint for f in out}
         for fingerprint, held in list(hold.items()):
@@ -895,6 +989,7 @@ class SecurityAgent(Agent):
                 hold.pop(fingerprint, None)
                 continue
             if fingerprint not in reported:
+                # From memory: _load gives it the stamp _dump kept, when its newest evidence was read.
                 out.append(replace(finding, summary=finding.summary + (
                     f" Below the bar now; held open until {to_ist(until).strftime('%H:%M IST')} in case it resumes.")))
         st["login_hold"] = hold
@@ -1143,7 +1238,7 @@ class SecurityAgent(Agent):
 
         unexpected = sorted(p for p in exposed if p not in allowed)
         if not unexpected:
-            return _remember(st, "open_ports", [])
+            return _remember(st, "open_ports", [], now)
         # One finding for all of them, whatever they are. Every strategy runner served its metrics on
         # 0.0.0.0 at the first free port of 8000-8019 (core/metrics.py, until 28 Sep): a finding per port
         # would have opened about twenty HIGH incidents at every morning's start and closed them at 15:30.
@@ -1186,7 +1281,7 @@ class SecurityAgent(Agent):
             fingerprint=f"{self.name}:open-port",
             where=f"tcp/{_trim_list(listing, 60)}", evidence=evidence,
             suggestion=" ".join(advice),
-        )])
+        )], now)
 
     # ── secret-file-permissions ──
 
@@ -1271,7 +1366,7 @@ class SecurityAgent(Agent):
             findings[-1] = replace(findings[-1], summary=findings[-1].summary + (
                 f" {len(hits)} file/pattern pairs matched in all; only {GIT_SCAN_MAX_FILES} are listed."))
         memo["day"] = today
-        _remember(memo, "findings", findings)
+        _remember(memo, "findings", findings, now)   # replayed until tomorrow's scan, as observed now
         return findings
 
     # ── vulnerable-dependency ──
@@ -1308,7 +1403,8 @@ class SecurityAgent(Agent):
             memo["last_success"] = _iso(now)
             if inputs is not None:
                 memo["inputs_mtime"] = inputs
-        _remember(memo, "findings", findings)
+        # Replayed until the next scan, as observed now; a half kept from an earlier scan keeps its own stamp.
+        _remember(memo, "findings", findings, now)
         return findings
 
     @staticmethod

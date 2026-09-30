@@ -51,6 +51,18 @@ public sealed class FeedSupervisor : PythonDaemonSupervisor
     /// </summary>
     public static string MarkerFor(string providerKey) => $"--vendor {providerKey}";
 
+    /// <summary>
+    /// The name of the log <paramref name="providerKey"/>'s feed keeps of
+    /// itself: the name run_feed.py has always given its fallback log
+    /// ("ingestor" for FYERS, "&lt;vendor&gt;-feed" otherwise), so a feed started
+    /// before the API pinned it is still found by pid once adopted.
+    /// </summary>
+    public static string LogNameFor(string providerKey)
+    {
+        var key = providerKey.Trim().ToLowerInvariant();
+        return key == FyersProvider.Key ? "ingestor" : $"{key}-feed";
+    }
+
     /// <summary>How <paramref name="providerKey"/>'s feed is launched, recognised and recorded.</summary>
     /// <param name="providerKey">The connector key, passed to the script exactly as declared.</param>
     /// <param name="name">What logs and messages call it: "ingestor", "TrueData feed".</param>
@@ -61,5 +73,6 @@ public sealed class FeedSupervisor : PythonDaemonSupervisor
         ProcessMarker: MarkerFor(providerKey),
         PidSettingKey: pidSettingKey,
         Args: new[] { "--vendor", providerKey },
-        LegacyMarkers: RetiredScriptMarkers.TryGetValue(providerKey, out var retired) ? retired.ToArray() : null);
+        LegacyMarkers: RetiredScriptMarkers.TryGetValue(providerKey, out var retired) ? retired.ToArray() : null,
+        LogName: LogNameFor(providerKey));
 }

@@ -37,6 +37,13 @@ see `LineLog`): every line, stamped with its time and stream, whether or not
 the pipe is alive. After an API restart the API adopts a runner with no pipes
 at all, and that file is the only place its output exists. `install_exit_line()`
 ends that output with one line saying how the process ended.
+
+A daemon the API launches (a live feed, the chain poller) is told to do the
+same through the environment: `ENGINE_LOG_NAME=<name>` turns the tee on and
+pins the file to `logs/engine/<name>-<pid>.log`, whatever name the script
+itself asks for. The API tails that file into its own log, so a feed it adopts
+after a restart keeps being logged; on 28 Sep, twice, an adopted feed's pipes
+had no reader and everything it said until the next restart was lost.
 """
 
 from __future__ import annotations
@@ -55,6 +62,17 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 ENGINE_LOG_DIR = REPO_ROOT / "logs" / "engine"
 
 _BROKEN = (OSError, ValueError)   # BrokenPipeError is an OSError; ValueError = closed file
+
+#: Set by the API's daemon supervisor (PythonDaemonSupervisor) on a process it
+#: launches. The API computes the file's path from this name and the pid it
+#: launched, so the name the script passes cannot be allowed to differ from it.
+LOG_NAME_ENV = "ENGINE_LOG_NAME"
+
+
+def pinned_log_name() -> Optional[str]:
+    """The log name the launching API pinned (`ENGINE_LOG_NAME`), or None."""
+    value = (os.environ.get(LOG_NAME_ENV) or "").strip()
+    return value or None
 
 
 def default_log_path(name: Optional[str] = None) -> str:
@@ -441,8 +459,17 @@ def install_safe_stdio(log_path: Optional[str] = None, *, name: Optional[str] = 
     With `tee=True` the file is kept from the first line, every line stamped
     (`LineLog`), instead of only once the pipe has died. It takes effect on
     the first install; a later call only re-points the file.
+
+    With `ENGINE_LOG_NAME` in the environment both are decided by the API that
+    launched the process: the tee is on and the file is
+    `logs/engine/<that name>-<pid>.log`, whatever the arguments say. The API
+    reads that exact path; a script choosing its own name would be tailed at
+    a file that never appears.
     """
     _ignore_sigpipe()
+    pinned = pinned_log_name()
+    if pinned:
+        log_path, name, tee = None, pinned, True
     path = log_path or default_log_path(name)
     shared = next((s.tee for s in (sys.stdout, sys.stderr) if isinstance(s, SafeStream) and s.tee), None)
     if tee and shared is None:
