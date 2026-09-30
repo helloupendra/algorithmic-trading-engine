@@ -108,7 +108,8 @@ public sealed class IncidentExplainerAgent(
         if (result.Outcome != AiCallOutcome.Ok)
         {
             string why = result.RefusalStatus is null ? result.Error : $"Refused: {result.Error}";
-            logger.LogWarning("Explaining incident {IncidentId} failed: {Error}", incidentId, why);
+            // The provider, not the desk: recorded as a failed report and retried.
+            logger.LogInformation("Explaining incident {IncidentId} failed: {Error}", incidentId, why);
             return await reports.SaveAsync(AgentKey, AiReportSubject.Incident, Id(incidentId), day, AiReportStatus.Failed, result,
                 $"Incident {incidentId}: no explanation", string.Empty, "{}", why, cancellationToken);
         }

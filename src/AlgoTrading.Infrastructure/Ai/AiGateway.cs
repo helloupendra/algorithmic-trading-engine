@@ -351,7 +351,10 @@ public sealed class AiGateway
                             string outcome = Redact(ex.Outcome);
                             double took = clock.Elapsed.TotalSeconds;
                             attempts.Add(new AiAttempt(candidate, outcome, Round(took), ex.HttpStatus, round));
-                            _logger.LogWarning("AI call {CallId} ({Agent}) round {Round}: {Model} failed: {Outcome}", row.Id, agent.Key, round, candidate, outcome);
+                            // Information, not a warning: a model handing over is the chain working, and the
+                            // attempt is on the call's row. As a warning, Sentinel's log agent opened an
+                            // incident per fallback (30 Sep, #197-#201).
+                            _logger.LogInformation("AI call {CallId} ({Agent}) round {Round}: {Model} failed: {Outcome}", row.Id, agent.Key, round, candidate, outcome);
 
                             // Refused at once for capacity: a moment later it often has room, and the next
                             // model in the chain may be a 90-second queue.
