@@ -74,9 +74,11 @@ internal static class AiTestKit
 
         public required AiToolbox Toolbox { get; init; }
 
+        public required AiModelHealth Health { get; init; }
+
         public AiController Controller(string user = "upendra")
         {
-            var controller = new AiController(Db, Store, Gateway, Catalog, Limiter, Toolbox, Options);
+            var controller = new AiController(Db, Store, Gateway, Catalog, Limiter, Toolbox, Health, Options);
             controller.ControllerContext = new ControllerContext
             {
                 HttpContext = new DefaultHttpContext
@@ -99,6 +101,7 @@ internal static class AiTestKit
         var store = new AiSettingsStore(db);
         var limiter = new AiRateLimiter(monitor);
         var toolbox = new AiToolbox(tools);
+        var health = new AiModelHealth();
         return new Services
         {
             Db = db,
@@ -108,8 +111,9 @@ internal static class AiTestKit
             Limiter = limiter,
             Client = client,
             Toolbox = toolbox,
+            Health = health,
             Catalog = new AiModelCatalog(client, monitor),
-            Gateway = new AiGateway(db, store, client, limiter, toolbox, monitor, NullLogger<AiGateway>.Instance),
+            Gateway = new AiGateway(db, store, client, limiter, toolbox, health, monitor, NullLogger<AiGateway>.Instance),
         };
     }
 
