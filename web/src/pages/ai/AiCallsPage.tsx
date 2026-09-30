@@ -21,8 +21,11 @@ import { useMemo } from 'react'
 import type { MouseEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
+  AI_UTILITIES,
   CALL_OUTCOMES,
+  CALL_SOURCES,
   attemptLabel,
+  sourceLabel,
   callTime,
   formatSeconds,
   formatTokens,
@@ -77,7 +80,7 @@ function CallDetail({ call, now }: { call: AiCallDetail; now: number }) {
         <OutcomeBadge outcome={call.outcome} />
         <span className="ai-call__who muted">
           {call.agentName || call.agentKey} · asked by {call.requestedBy || 'unknown'}
-          {call.source ? ` from the ${call.source}` : ''}
+          {call.source ? ` · ${sourceLabel(call.source)}` : ''}
         </span>
         <Link className="btn btn--ghost btn--sm ai-call__close" to={PAGE}>
           Close
@@ -266,7 +269,10 @@ function CallRow({ call, selected, now, onOpen }: { call: AiCallSummary; selecte
         </Link>
       </td>
       <td className="ai-c-agent">{call.agentName || call.agentKey}</td>
-      <td className="ai-c-who muted">{call.requestedBy}</td>
+      <td className="ai-c-who muted">
+        {call.requestedBy}
+        {call.source && call.source !== 'console' && <span className="cell-sub">{sourceLabel(call.source)}</span>}
+      </td>
       <td className={`ai-c-model ${call.model ? '' : 'ai-c-none'}`}>{call.model ? <span title={call.model}>{modelName(call.model)}</span> : <span className="faint">—</span>}</td>
       <td className="ai-c-outcome">
         <OutcomeBadge outcome={call.outcome} />
@@ -303,6 +309,7 @@ export function AiCallsPage() {
     agent: params.get('agent') ?? '',
     outcome: params.get('outcome') ?? '',
     model: params.get('model') ?? '',
+    source: params.get('source') ?? '',
     take: TAKE,
   }
   const calls = useAiCalls(filters)
@@ -311,13 +318,17 @@ export function AiCallsPage() {
   const models = useAiModels()
   const now = useNow(10_000)
 
-  const rows = useMemo(() => calls.data?.pages.flatMap((p) => p.calls) ?? [], [calls.data])
+  // Filtered here as well as asked of the API, so the rows always match the source chosen.
+  const rows = useMemo(
+    () => (calls.data?.pages.flatMap((p) => p.calls) ?? []).filter((c) => !filters.source || c.source === filters.source),
+    [calls.data, filters.source],
+  )
 
   // The filters offer what exists: the built agents and the model test, the models in use, and anything the rows name.
   const agentOptions = useMemo(() => {
     const m = new Map<string, string>()
     for (const a of agents.data?.agents ?? []) if (a.built) m.set(a.key, a.name)
-    m.set('model-test', 'Model test')
+    for (const [key, name] of Object.entries(AI_UTILITIES)) m.set(key, name)
     for (const r of rows) if (!m.has(r.agentKey)) m.set(r.agentKey, r.agentName || r.agentKey)
     if (filters.agent && !m.has(filters.agent)) m.set(filters.agent, filters.agent)
     return [...m.entries()]
@@ -330,13 +341,13 @@ export function AiCallsPage() {
     return [...s].sort((a, b) => modelName(a).localeCompare(modelName(b)))
   }, [models.data, rows, filters.model])
 
-  const setFilter = (key: 'agent' | 'outcome' | 'model', value: string) => {
+  const setFilter = (key: 'agent' | 'outcome' | 'model' | 'source', value: string) => {
     const p = new URLSearchParams(params)
     if (value) p.set(key, value)
     else p.delete(key)
     setParams(p, { replace: true })
   }
-  const filtered = !!(filters.agent || filters.outcome || filters.model)
+  const filtered = !!(filters.agent || filters.outcome || filters.model || filters.source)
   const clear = () => {
     const p = new URLSearchParams()
     if (selectedId != null) p.set('id', String(selectedId))
@@ -403,6 +414,14 @@ export function AiCallsPage() {
           {modelOptions.map((m) => (
             <option key={m} value={m}>
               {modelName(m)}
+            </option>
+          ))}
+        </select>
+        <select className="field__input field__input--sm ai-select" aria-label="Source" value={filters.source} onChange={(e) => setFilter('source', e.target.value)}>
+          <option value="">Every source</option>
+          {CALL_SOURCES.map((s) => (
+            <option key={s} value={s}>
+              {sourceLabel(s)}
             </option>
           ))}
         </select>

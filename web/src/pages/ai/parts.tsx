@@ -15,6 +15,7 @@ import {
   clockTime,
   formatSeconds,
   formatTokens,
+  healthBadge,
   isEmbeddingModel,
   modelName,
   moveInChain,
@@ -24,7 +25,7 @@ import {
   sameChain,
   toolLabel,
 } from '../../lib/ai'
-import type { AiModel, AiToolStep } from '../../lib/ai'
+import type { AiModel, AiModelHealth, AiToolStep } from '../../lib/ai'
 import { Badge } from '../../components/ui'
 
 /** "Nemotron 3 Ultra" with its full id beside it (or in its title when `bare`). */
@@ -72,19 +73,60 @@ export function CallLink({ id, children }: { id: number | null | undefined; chil
 
 /**
  * A chain in fallback order, as numbered chips: the first answers, the next
- * only when the one before it fails. Full ids are in each chip's title.
+ * only when the one before it fails. Full ids are in each chip's title. With
+ * `health`, each chip carries its model's state as a dot, and a cooling model
+ * says until when (its last failure is in the title).
  */
-export function ChainChips({ chain, empty = 'no models' }: { chain: readonly string[]; empty?: string }) {
+export function ChainChips({
+  chain,
+  empty = 'no models',
+  health,
+  now,
+}: {
+  chain: readonly string[]
+  empty?: string
+  health?: ReadonlyMap<string, AiModelHealth>
+  now?: number
+}) {
   if (chain.length === 0) return <span className="faint">{empty}</span>
   return (
     <ol className="ai-chain" aria-label="Models in fallback order">
-      {chain.map((m, i) => (
-        <li key={`${m}-${i}`} className={`ai-chain__item ${i === 0 ? 'ai-chain__item--first' : ''}`} title={m}>
-          <span className="ai-chain__n">{i + 1}</span>
-          {modelName(m)}
-        </li>
-      ))}
+      {chain.map((m, i) => {
+        const h = health?.get(m)
+        const b = h ? healthBadge(h, now ?? Date.now()) : null
+        const said = b ? `${m}: ${b.label}${b.detail ? ` · ${b.detail}` : ''}` : m
+        return (
+          <li key={`${m}-${i}`} className={`ai-chain__item ${i === 0 ? 'ai-chain__item--first' : ''} ${h?.state === 'cooling' ? 'ai-chain__item--cooling' : ''}`} title={said}>
+            <span className="ai-chain__n">{i + 1}</span>
+            {modelName(m)}
+            {b && <span className={`ai-dot ai-dot--${b.tone}`} aria-label={b.label} />}
+            {h && h.state === 'cooling' && <span className="ai-chain__state">{b!.label}</span>}
+            {h && h.state === 'failed' && <span className="ai-chain__state">failed</span>}
+          </li>
+        )
+      })}
     </ol>
+  )
+}
+
+/** One model's health in a line: its state, why, and when it was last probed. */
+export function HealthLine({ health, now }: { health: AiModelHealth | null | undefined; now: number }) {
+  if (!health) return <span className="faint">health not known</span>
+  const b = healthBadge(health, now)
+  return (
+    <span className="ai-health">
+      <span className={`ai-dot ai-dot--${b.tone}`} aria-hidden="true" />
+      <span className={b.tone === 'warn' ? 'warn' : b.tone === 'pos' ? '' : 'faint'}>{b.label}</span>
+      {b.detail && <span className="faint"> · {b.detail}</span>}
+      {health.state !== 'healthy' && health.lastOkSeconds != null && (
+        <span className="faint">
+          {' '}
+          · last answer in {formatSeconds(health.lastOkSeconds)}
+          {health.lastOkUtc ? ` (${clockTime(health.lastOkUtc, now)})` : ''}
+        </span>
+      )}
+      {health.lastProbeUtc && <span className="faint"> · probed {clockTime(health.lastProbeUtc, now)}</span>}
+    </span>
   )
 }
 

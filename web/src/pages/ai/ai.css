@@ -190,10 +190,104 @@ a.ai-call-link:hover { text-decoration: underline; }
 .ai-mini__tier { font-size: 11px; }
 
 /* --- the assistant -------------------------------------------------------------- */
-.ai-assistant > .hp-bar,
-.ai-assistant > .alert,
-.ai-assistant > .ai-chat,
-.ai-assistant > .ai-composer { max-width: 920px; }
+/* The conversation at a reading width, Telegram and the docs search beside it; one column under 1240 px. */
+.ai-assistant__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 920px) minmax(300px, 400px);
+  align-items: start;
+  gap: 20px;
+}
+.ai-assistant__main { min-width: 0; }
+.ai-assistant__side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+@media (max-width: 1240px) {
+  .ai-assistant__grid { grid-template-columns: minmax(0, 1fr); }
+  .ai-assistant__main,
+  .ai-assistant__side { max-width: 920px; }
+}
+.panel.ai-side { padding: 12px 14px; }
+.panel.ai-side > .panel__head { margin-bottom: 6px; }
+.panel.ai-side > * + * { margin-top: 8px; }
+.ai-side__line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0; font-size: 12.5px; }
+.ai-side__sub {
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.ai-owners { list-style: none; margin: 0; padding: 0; }
+.ai-owner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 8px;
+  padding: 5px 0;
+  border-bottom: 1px dashed var(--line-soft);
+  font-size: 12.5px;
+}
+.ai-owner:last-child { border-bottom: 0; }
+.ai-owner__who { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+.ai-owner__confirm { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ai-pair {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--bg1);
+  border: 1px solid var(--brand-line);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+}
+.ai-pair .ai-pair__code { font-size: 26px; font-weight: 700; letter-spacing: 0.18em; line-height: 1.2; color: var(--text); }
+.ai-pair__tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.ai-docs__form { display: flex; gap: 6px; }
+.field__input.ai-docs__input { flex: 1 1 auto; width: auto; min-width: 0; }
+.ai-hits { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ai-hit {
+  padding: 8px 10px;
+  background: var(--bg1);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  min-width: 0;
+}
+.ai-hit__head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.ai-hit__file { font-size: 11.5px; overflow-wrap: anywhere; }
+.ai-hit__score { font-variant-numeric: tabular-nums; }
+.ai-hit__section { margin-top: 2px; font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.ai-hit__text {
+  margin: 4px 0 0;
+  max-height: 11.5em;
+  overflow-y: auto;
+  line-height: 1.45;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* A model's health: a dot in its chip, and a line where there is room. */
+.ai-dot { display: inline-block; width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--text-3); }
+.ai-dot--pos { background: var(--pos); }
+.ai-dot--warn { background: var(--warn); }
+.ai-dot--neg { background: var(--neg); }
+.ai-chain__item .ai-dot { margin-left: 1px; }
+.ai-chain__item--cooling { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
+.ai-chain__state { font-size: 11px; color: var(--warn); }
+.ai-troubled { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.ai-troubled li { overflow-wrap: anywhere; }
+.ai-health .ai-dot { margin-right: 5px; vertical-align: middle; }
+
+/* The assistant check: the score, then each question with the answer and the mark. */
+.ai-check-score { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.ai-call > .ai-check-score,
+.ai-call > .ai-check { margin-top: 12px; }
+.ai-check-score__big { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+.ai-check .table td.ai-check__q { min-width: 200px; white-space: normal; }
+.ai-check .table td.ai-check__answer { min-width: 240px; max-width: 420px; white-space: normal; overflow-wrap: anywhere; color: var(--text-2); }
+.ai-check__mark { font-weight: 700; }
+.ai-check .table tr.ai-check__miss td { background: color-mix(in srgb, var(--neg) 5%, transparent); }
+.ai-utility__what { margin: 0 0 8px; max-width: 92ch; font-size: 12.5px; color: var(--text-2); }
 .ai-assistant__conv { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12px; }
 
 .ai-chat { display: flex; flex-direction: column; gap: 16px; }
@@ -624,6 +718,7 @@ a.ai-call-link:hover { text-decoration: underline; }
   grid-template-areas:
     'name today last act'
     'use use use act'
+    'health health health act'
     'res res res res';
   align-items: baseline;
   gap: 3px 16px;
@@ -640,6 +735,7 @@ a.ai-call-link:hover { text-decoration: underline; }
 .ai-model__today { grid-area: today; color: var(--text-2); }
 .ai-model__last { grid-area: last; color: var(--text-2); min-width: 0; }
 .ai-model__act { grid-area: act; justify-self: end; align-self: center; }
+.ai-model__health { grid-area: health; font-size: 12px; min-width: 0; overflow-wrap: anywhere; }
 .ai-model__resultrow { grid-area: res; }
 .ai-model__resultrow:empty { display: none; }
 .ai-model__err { display: block; font-size: 11.5px; color: var(--neg); overflow-wrap: anywhere; }
@@ -865,7 +961,7 @@ a.ai-subject:hover { text-decoration: underline; }
 
   .ai-model {
     grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas: 'name act' 'use use' 'today today' 'last last' 'res res';
+    grid-template-areas: 'name act' 'use use' 'today today' 'last last' 'health health' 'res res';
   }
   .ai-cat {
     grid-template-columns: minmax(0, 1fr) auto;
@@ -954,6 +1050,27 @@ a.ai-subject:hover { text-decoration: underline; }
   .table.ai-reports .ai-r-title { order: 6; flex-basis: 100%; }
   .table.ai-reports .ai-r-status .cell-sub { margin: 0; }
   .ai-report-data { grid-template-columns: minmax(0, 1fr); gap: 1px; }
+  /* The check's questions stacked: the mark and the question, then the expected value and the answer, then who answered. */
+  .ai-check .table thead { display: none; }
+  .ai-check .table,
+  .ai-check .table tbody { display: block; }
+  .ai-check .table tbody tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 10px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .ai-check .table tbody tr:last-child { border-bottom: 0; }
+  .ai-check .table tbody td { display: block; padding: 0; border: 0; background: transparent; }
+  .ai-check .table td.ai-check__q { flex: 1 1 0; min-width: 0; font-weight: 600; }
+  .ai-check .table td.ai-check__expected::before { content: 'expected '; font-family: var(--sans); color: var(--text-3); }
+  .ai-check .table td.ai-check__answer { flex-basis: 100%; max-width: none; min-width: 0; }
+  .ai-check .table td.ai-check__model,
+  .ai-check .table td.ai-check__secs,
+  .ai-check .table td.ai-check__call { font-size: 12px; }
+  .ai-check .table tr.ai-check__miss { background: color-mix(in srgb, var(--neg) 5%, transparent); }
   /* A news report's numbers stacked: the number, its value and unit, then the words it came from. */
   .ai-report-numbers .table thead { display: none; }
   .ai-report-numbers .table,

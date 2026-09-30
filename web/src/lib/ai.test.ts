@@ -49,6 +49,17 @@ import {
   urgencyBadge,
   validityTone,
   verdictBadge,
+  botLink,
+  checkScoreText,
+  countdownText,
+  docsLink,
+  healthBadge,
+  readAssistantCheck,
+  readDocsSearch,
+  readTelegram,
+  shortDate,
+  sourceLabel,
+  telegramState,
 } from './ai'
 import type { AiModel, AiStreamEvent, AiToolStep, ChatAction, ChatState, SseMessage } from './ai'
 
@@ -694,6 +705,7 @@ describe('chains', () => {
       listed: true,
       lastTest: null,
       today: null,
+      health: null,
     })
     const models = [m('nvidia/nemotron-3-ultra-550b-a55b', true), m('moonshotai/kimi-k3', true), m('meta/llama-4'), m('google/gemma-4'), m('meta/llama-3.3')]
     const all = catalogGroups(models, '')
@@ -872,5 +884,139 @@ describe('reports', () => {
     expect(reportsQuery({ agent: 'trade-reviewer', subjectType: 'run', subjectId: '412', status: '', take: 1 })).toBe(
       'agent=trade-reviewer&subjectType=run&subjectId=412&take=1',
     )
+  })
+})
+
+// ---------- model health, the assistant check, docs search, telegram ----------
+
+describe('model health', () => {
+  const now = Date.parse('2026-09-30T10:40:00Z') // 16:10 IST
+  const h = (state: string, extra = {}) => ({
+    model: 'moonshotai/kimi-k3',
+    state,
+    coolingUntilUtc: null,
+    consecutiveFailures: 0,
+    lastFailure: null,
+    lastFailureUtc: null,
+    lastOkSeconds: null,
+    lastOkUtc: null,
+    lastProbeUtc: null,
+    ...extra,
+  })
+
+  it('says until when a model cools, in IST, with its last failure', () => {
+    expect(
+      healthBadge(h('cooling', { coolingUntilUtc: '2026-09-30T11:10:00Z', lastFailure: 'timeout: no answer within 90 s', lastFailureUtc: '2026-09-30T10:30:00Z', consecutiveFailures: 2 }), now),
+    ).toEqual({ label: 'cooling until 16:40', tone: 'warn', detail: 'timeout: no answer within 90 s (16:00)' })
+    expect(healthBadge(h('cooling'), now)).toMatchObject({ label: 'cooling', detail: 'failed; no reason recorded' })
+  })
+
+  it('names the other states plainly, and unknown as not asked yet', () => {
+    expect(healthBadge(h('healthy', { lastOkSeconds: 4.2, lastOkUtc: '2026-09-30T10:32:00Z' }), now)).toEqual({
+      label: 'healthy',
+      tone: 'pos',
+      detail: 'last answer in 4.2 s (16:02)',
+    })
+    expect(healthBadge(h('failed', { consecutiveFailures: 1, lastFailure: 'http 503' }), now)).toMatchObject({ label: 'failed last time', tone: 'warn', detail: 'http 503' })
+    expect(healthBadge(h('unknown'), now)).toMatchObject({ label: 'not asked yet', tone: 'neutral' })
+    expect(healthBadge(null, now).label).toBe('not known')
+  })
+})
+
+describe('the assistant check', () => {
+  it('reads its questions and counts, and says the score', () => {
+    const c = readAssistantCheck({
+      questions: [
+        { question: 'How many runs today?', kind: 'number', expected: '3', pass: true, answer: 'Three runs.', callId: 301, model: 'nvidia/nemotron-3-ultra-550b-a55b', seconds: 12.4 },
+        { question: 'Worst run id?', kind: 'id', expected: 412, pass: false, answer: 'Run 411', callId: 302, model: null, seconds: 9, error: null },
+      ],
+    })!
+    expect(c).toMatchObject({ passed: 1, total: 2, score: 0.5 })
+    expect(c.questions[1]).toMatchObject({ expected: '412', pass: false, model: null })
+    expect(checkScoreText({ passed: 8, total: 9, score: 8 / 9 })).toBe('8 of 9, 89%')
+    expect(checkScoreText({ passed: 0, total: 0, score: null })).toBe('no questions')
+    expect(readAssistantCheck(null)).toBeNull()
+  })
+
+  it('names a check report by its day', () => {
+    expect(reportSubjectLabel({ subjectType: 'check', subjectId: '2026-09-30' })).toBe('Assistant check · 30 Sep')
+    expect(shortDate('2026-01-05')).toBe('5 Jan')
+    expect(shortDate('not a day')).toBe('not a day')
+  })
+})
+
+describe('docs search', () => {
+  it('links a passage to its page on openfno.com/docs, with its heading as the anchor', () => {
+    expect(docsLink('docs/modules/option_chain.md', 'Option chain › Max pain and walls')).toBe(
+      'https://openfno.com/docs/modules/option-chain/#max-pain-and-walls',
+    )
+    expect(docsLink('docs/modules/data_module.md', 'Data')).toBe('https://openfno.com/docs/modules/data/')
+    expect(docsLink('docs/strategies/IronCondor.md', 'IronCondor › Exit')).toBe('https://openfno.com/docs/strategies/iron-condor/#exit')
+  })
+
+  it('does not invent a page for a file the site does not publish', () => {
+    expect(docsLink('docs/modules/ai.md', 'AI workspace › Desk tools')).toBeNull()
+    expect(docsLink('docs/roadmap/private-notes.md')).toBeNull()
+  })
+
+  it('reads the index state and the hits', () => {
+    const r = readDocsSearch({ index: { files: 56, passages: 1297, indexedUtc: null, model: 'nvidia/nemotron-3-embed-1b' }, hits: [{ file: 'docs/x.md', text: 'a' }] })
+    expect(r.query).toBeNull()
+    expect(r.hits).toEqual([{ file: 'docs/x.md', section: '', score: null, text: 'a' }])
+    expect(() => readDocsSearch({ hits: [] })).toThrow(/cannot read/)
+  })
+
+  it('labels a strategy history read with what it names and its period', () => {
+    expect(toolLabel('get_strategy_history', '{"strategy":"IronCondor","underlying":"BANKNIFTY","period":"this_month"}')).toEqual({
+      label: 'Strategy history · IronCondor · BANKNIFTY · this month',
+      detail: '',
+    })
+    expect(toolLabel('get_strategy_history', '{"account":"admin","from":"2026-09-01","to":"2026-09-15"}').label).toBe('Strategy history · admin · 1 Sep–15 Sep')
+    expect(toolLabel('get_strategy_history', '{}').label).toBe('Strategy history')
+  })
+
+  it('labels the tool call with its query', () => {
+    expect(toolLabel('search_docs', '{"query":"re-entry limit","limit":5}')).toEqual({ label: 'Docs search “re-entry limit”', detail: 'limit: 5' })
+  })
+})
+
+describe('telegram and sources', () => {
+  it('counts a pairing code down to its expiry', () => {
+    const now = Date.parse('2026-09-30T10:40:00Z')
+    expect(countdownText('2026-09-30T10:49:42Z', now)).toBe('9:42 left')
+    expect(countdownText('2026-09-30T10:40:05Z', now)).toBe('0:05 left')
+    expect(countdownText('2026-09-30T10:39:59Z', now)).toBe('expired')
+    expect(countdownText(null, now)).toBe('expiry not known')
+  })
+
+  it("says why the bot is not running, from what the API can tell", () => {
+    expect(telegramState({ running: true, enabled: true }).label).toBe('running')
+    expect(telegramState({ running: false, enabled: true })).toMatchObject({ label: 'not running', tone: 'warn' })
+    expect(telegramState({ running: false, enabled: true }).note).toMatch(/bot token and the model key/)
+    expect(telegramState({ running: false, enabled: false }).label).toBe('off')
+  })
+
+  it("links the bot only when its name is one", () => {
+    expect(botLink('codefortrade_bot')).toBe('https://t.me/codefortrade_bot')
+    expect(botLink('@codefortrade_bot')).toBe('https://t.me/codefortrade_bot')
+    expect(botLink('javascript:alert(1)')).toBeNull()
+    expect(botLink(null)).toBeNull()
+    expect(readTelegram({ running: true, enabled: true, owners: [{ telegramUserId: 123, telegramName: '@owner', consoleUser: 'admin' }] }).owners[0]).toMatchObject({
+      telegramUserId: '123',
+      linkedUtc: null,
+    })
+  })
+
+  it('names every call source', () => {
+    expect(['console', 'api', 'schedule', 'check', 'health', 'index', 'telegram'].map(sourceLabel)).toEqual([
+      'Console',
+      'API',
+      'Schedule',
+      'Assistant check',
+      'Health probe',
+      'Docs index',
+      'Telegram',
+    ])
+    expect(sourceLabel('carrier-pigeon')).toBe('carrier-pigeon')
   })
 })
