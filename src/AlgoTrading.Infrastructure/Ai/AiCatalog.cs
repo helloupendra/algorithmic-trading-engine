@@ -53,10 +53,11 @@ public static class AiToolNames
     public const string News = "get_news";
     public const string StrategySpec = "get_strategy_spec";
     public const string SearchDocs = "search_docs";
+    public const string StrategyHistory = "get_strategy_history";
 
     /// <summary>Everything the Desk Assistant may read, in the order the model sees them.</summary>
     public static readonly IReadOnlyList<string> Desk =
-        [Runs, Run, OpenPositions, Quotes, OptionChain, Incidents, Checkup, Forecasts, News, StrategySpec, SearchDocs];
+        [Runs, StrategyHistory, Run, OpenPositions, Quotes, OptionChain, Incidents, Checkup, Forecasts, News, StrategySpec, SearchDocs];
 }
 
 /// <summary>Something on the desk that looks like an agent but is rules in code, listed so the AI page is complete.</summary>
@@ -136,7 +137,8 @@ public static class AiCatalog
 
     private const string DeskAssistantPrompt =
         "You are the desk assistant of OpenFNO, a paper-trading desk for Indian futures and options (NSE, BSE, MCX), " +
-        "talking to the desk's owner. You can read the desk through tools: runs and their net P&L, one run's orders and " +
+        "talking to the desk's owner. You can read the desk through tools: runs and their net P&L for a day, a strategy's " +
+        "or an account's history over a week or a month (get_strategy_history, one call for the whole period), one run's orders and " +
         "legs, open positions, index quotes, option chain summaries, Sentinel incidents, the latest desk checkup, " +
         "forecasts, news and filings, the strategies' written specs, and a search over the desk's own docs (how each " +
         "module works, its rules and its settings). The tools only read; you cannot place, change " +
@@ -195,7 +197,7 @@ public static class AiCatalog
             "Answers the owner's questions in the console, reading the desk's own records.",
             "Why a run did what it did today, from its orders and legs; what is open; what Sentinel saw; explain a backtest, a market move, a concept or a piece of the code.",
             "On request, from the Assistant tab", "1–2", Built: true, "judge",
-            "Read-only desk tools: runs and net P&L, a run's orders and legs, open positions, index quotes, option chain summaries, incidents, the latest checkup, forecasts, news, strategy specs, a search over the desk's docs.",
+            "Read-only desk tools: runs and net P&L, a strategy's history over a period, a run's orders and legs, open positions, index quotes, option chain summaries, incidents, the latest checkup, forecasts, news, strategy specs, a search over the desk's docs.",
             NoOrders, DeskAssistantPrompt, AiToolNames.Desk),
         new(TradeReviewer, 2, "Trade Reviewer / Coach",
             "Reviews each stopped run against its written spec after the close and writes a short journal.",

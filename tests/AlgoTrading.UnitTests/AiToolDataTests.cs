@@ -144,6 +144,66 @@ public sealed class AiToolDataTests : IDisposable
     }
 
     [Fact]
+    public async Task A_period_is_read_in_one_call_with_the_money_by_day_and_the_trades()
+    {
+        var today = AlgoTrading.Infrastructure.Services.IstTime.DateOf(DateTime.UtcNow);
+        DateTime At(int daysAgo) => AlgoTrading.Infrastructure.Services.IstTime.FromIst(today.AddDays(-daysAgo).ToDateTime(new TimeOnly(10, 0)));
+        long Seed(string strategy, string underlying, int daysAgo, params decimal[] legs)
+        {
+            long id = _desk.SeedRun(RunnerDesk.TraderId, underlying, "Stopped", strategy);
+            using var db = _desk.Db();
+            var run = db.SimulationRuns.Single(r => r.Id == id);
+            run.StartedUtc = run.CreatedUtc = At(daysAgo);
+            run.CompletedUtc = At(daysAgo).AddHours(5);
+            for (int i = 0; i < legs.Length; i++)
+            {
+                db.PaperPositions.Add(new PaperPosition
+                {
+                    SimulationRunId = id, StrategyName = strategy, GroupId = $"G{i}", Symbol = $"NSE:{underlying}26OCT25000CE", Direction = "SHORT",
+                    Quantity = 0, AveragePrice = 100m, RealizedPnl = legs[i], Status = "Closed",
+                    OpenedUtc = At(daysAgo).AddMinutes(10 * i), ClosedUtc = At(daysAgo).AddMinutes(10 * i + 30),
+                });
+            }
+
+            db.SaveChanges();
+            return id;
+        }
+
+        Seed("Ghost", "NIFTY", 0, 300m, -100m);
+        Seed("Ghost", "NIFTY", 1, -500m);
+        Seed("Ghost", "BANKNIFTY", 2, 200m, 200m, -50m);
+        Seed("Fulcrum", "NIFTY", 1, -900m);
+        await using var db2 = _desk.Db();
+
+        var output = await new StrategyHistoryTool(History(db2), db2).RunAsync(
+            AiToolArgs.Parse($$"""{"strategy":"ghost","from":"{{today.AddDays(-5):yyyy-MM-dd}}"}"""), CancellationToken.None);
+        var json = JsonDocument.Parse(JsonSerializer.Serialize(output.Data, Wire)).RootElement;
+
+        var totals = json.GetProperty("totals");
+        Assert.Equal(3, totals.GetProperty("runs").GetInt32());
+        Assert.Equal(3, totals.GetProperty("daysTraded").GetInt32());
+        Assert.Equal(50m, totals.GetProperty("gross").GetDecimal()); // 200 − 500 + 350; Fulcrum is left out
+        Assert.Equal(3, json.GetProperty("byDay").GetArrayLength());
+        Assert.Equal(2, json.GetProperty("byUnderlying").GetArrayLength());
+        var trades = json.GetProperty("trades");
+        Assert.Equal(6, trades.GetProperty("closedLegs").GetInt32());
+        Assert.Equal(50.0, trades.GetProperty("winRate").GetDouble()); // 300, 200, 200 of six
+        Assert.Equal(1.08m, trades.GetProperty("profitFactor").GetDecimal()); // 700 / 650 = 1.0769
+        Assert.Equal(30.0, trades.GetProperty("averageHoldMinutes").GetDouble());
+        Assert.Equal(-500m, trades.GetProperty("largestLoss").GetDecimal());
+    }
+
+    [Theory]
+    [InlineData("""{"period":"next_year"}""", "period is")]
+    [InlineData("""{"from":"2026-09-30","to":"2026-09-01"}""", "from is after to")]
+    public async Task A_period_the_tool_cannot_read_is_answered_in_words(string args, string expected)
+    {
+        await using var db = _desk.Db();
+        var ex = await Assert.ThrowsAsync<AiToolArgumentException>(() => new StrategyHistoryTool(History(db), db).RunAsync(AiToolArgs.Parse(args), CancellationToken.None));
+        Assert.Contains(expected, ex.Message);
+    }
+
+    [Fact]
     public async Task A_run_that_does_not_exist_is_answered_in_words()
     {
         SeedDesk();
@@ -206,6 +266,7 @@ public sealed class AiToolDataTests : IDisposable
     private IEnumerable<(IAiTool Tool, string Args)> Tools(TradingDbContext db, long runId)
     {
         yield return (new RunsTool(History(db)), "{}");
+        yield return (new StrategyHistoryTool(History(db), db), """{"period":"last_7_days"}""");
         yield return (RunToolFor(db), $$"""{"runId":{{runId}}}""");
         yield return (new IncidentsTool(db), """{"which":"recent","days":3}""");
         yield return (new CheckupTool(db), "{}");
