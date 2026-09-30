@@ -186,6 +186,10 @@ public class IndexOptionHistoryTests
         Assert.Equal(4500, chain.TotalCallOpenInterest);
         Assert.Equal(5400, chain.TotalPutOpenInterest);
         Assert.Equal(1.2m, chain.PutCallRatio);
+        // Every strike ties on OI; the spot sits on 15,100, so each side's
+        // heaviest is the tie nearest it: that strike, for both.
+        Assert.Equal(15100m, chain.HeaviestCallStrike);
+        Assert.Equal(15100m, chain.HeaviestPutStrike);
 
         var atm = chain.Strikes.Single(s => s.StrikePrice == 15100m);
         Assert.True(atm.IsAtTheMoney);

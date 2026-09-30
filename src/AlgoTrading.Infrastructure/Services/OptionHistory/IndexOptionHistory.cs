@@ -220,10 +220,15 @@ public sealed class IndexOptionHistory
         response.PutCallRatio = response.TotalCallOpenInterest > 0
             ? Math.Round((decimal)response.TotalPutOpenInterest / response.TotalCallOpenInterest, 4)
             : null;
-        response.HeaviestCallStrike = response.Strikes.OrderByDescending(s => s.Call?.OpenInterest ?? 0)
-            .Select(s => (decimal?)s.StrikePrice).FirstOrDefault();
-        response.HeaviestPutStrike = response.Strikes.OrderByDescending(s => s.Put?.OpenInterest ?? 0)
-            .Select(s => (decimal?)s.StrikePrice).FirstOrDefault();
+        // The live view's rule, from the one implementation: calls at or above
+        // the spot, puts at or below it, and nothing without a spot. Ordering the
+        // whole window by OI instead named a strike with no OI at all when the
+        // window had none, and could name one strike as both walls.
+        var interests = response.Strikes
+            .Select(s => new OptionChainAnalytics.StrikeInterest(s.StrikePrice, s.Call?.OpenInterest ?? 0, s.Put?.OpenInterest ?? 0))
+            .ToList();
+        response.HeaviestCallStrike = spot > 0 ? OptionChainAnalytics.HeaviestStrike(interests, "CE", spot) : null;
+        response.HeaviestPutStrike = spot > 0 ? OptionChainAnalytics.HeaviestStrike(interests, "PE", spot) : null;
         // Max pain over five strikes either side of ATM would be a number about the
         // window, not about the market, so it is left unanswered.
         return response;

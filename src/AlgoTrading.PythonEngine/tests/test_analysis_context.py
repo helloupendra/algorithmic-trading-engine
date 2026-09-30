@@ -410,6 +410,33 @@ class LiveOnlyTests(unittest.TestCase):
         self.assertEqual((out["giftNiftyAsOf"], out["giftNiftyFetchedUtc"]), (None, "2026-09-28T03:15:00Z"))
         json.dumps(out)
 
+    def test_a_zero_gap_is_recorded_with_the_two_prices_that_make_it(self):
+        # 28 Sep: GIFT Nifty printed 23,140.5 at 08:43 IST, NIFTY's 25 Sep close
+        # to the paisa, while the vendor's change was -0.41% against GIFT's own
+        # previous close of 23,236. Both are right; they measure from different closes.
+        conn = FakeConn({"market_quote_snapshots": [(23140.5, -0.41, datetime(2026, 9, 28, 3, 13, 18, tzinfo=timezone.utc),
+                                                     datetime(2026, 9, 28, 3, 15, 3, tzinfo=timezone.utc))]})
+        out = ctx.load_live_only(conn, date(2026, 9, 28), date(2026, 9, 25), 23140.5, self.NOW)
+        self.assertEqual(out["giftNiftyGapPct"], 0.0)
+        self.assertEqual((out["giftNiftyPrice"], out["niftyPrevClose"]), (23140.5, 23140.5))
+        self.assertEqual(out["giftNiftyChangePct"], -0.41)
+
+    def test_an_unknown_gap_is_null_never_zero(self):
+        snapshot = (23140.5, -0.41, None, datetime(2026, 9, 28, 3, 15, tzinfo=timezone.utc))
+        # NIFTY's previous session missing from the series: no close to measure from.
+        out = ctx.load_live_only(FakeConn({"market_quote_snapshots": [snapshot]}), date(2026, 9, 28),
+                                 date(2026, 9, 25), None, self.NOW)
+        self.assertIsNone(out["giftNiftyGapPct"])
+        self.assertIsNone(out["niftyPrevClose"])
+        self.assertEqual(out["giftNiftyPrice"], 23140.5)
+        self.assertIn('"giftNiftyGapPct": null', json.dumps(out))
+        # A snapshot with no price: nothing to measure.
+        for price in (None, 0.0):
+            out = ctx.load_live_only(FakeConn({"market_quote_snapshots": [(price, None, None, snapshot[3])]}),
+                                     date(2026, 9, 28), date(2026, 9, 25), 23140.5, self.NOW)
+            self.assertIsNone(out["giftNiftyGapPct"])
+            self.assertIsNone(out["giftNiftyPrice"])
+
     def test_a_table_that_is_not_there_yet_never_stops_the_morning(self):
         conn = FakeConn({"market_quote_snapshots": RuntimeError("no table"), "news_items": RuntimeError("no table"),
                          "corporate_calendar": RuntimeError("no table")})

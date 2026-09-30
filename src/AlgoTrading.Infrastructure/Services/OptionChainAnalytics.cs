@@ -134,17 +134,26 @@ public static class OptionChainAnalytics
 
     /// <summary>
     /// The strike carrying the most open interest — where the market has written
-    /// the most contracts, and so where it is most heavily defended.
+    /// the most contracts, and so where it is most heavily defended. Given a
+    /// spot, only its own side counts: calls at or above it (resistance), puts
+    /// at or below it (support). A deep in-the-money wall left from an older
+    /// price is not a level the market has to cross, and without the rule one
+    /// heavy strike 2,000 points away read as both support and resistance.
+    /// No strike on that side with open interest is null, never the far side.
     /// </summary>
-    public static decimal? HeaviestStrike(IReadOnlyCollection<StrikeInterest> strikes, string optionType)
+    public static decimal? HeaviestStrike(IReadOnlyCollection<StrikeInterest> strikes, string optionType, decimal spot = 0m)
     {
         if (strikes is null || strikes.Count == 0) return null;
 
         bool calls = string.Equals(optionType, "CE", StringComparison.OrdinalIgnoreCase);
 
         var heaviest = strikes
+            .Where(x => spot <= 0 || (calls ? x.Strike >= spot : x.Strike <= spot))
             .Where(x => (calls ? x.CallOpenInterest : x.PutOpenInterest) > 0)
             .OrderByDescending(x => calls ? x.CallOpenInterest : x.PutOpenInterest)
+            // A tie goes to the strike nearer the spot, the one price meets
+            // first; ascending strike alone would pick the farthest put.
+            .ThenBy(x => Math.Abs(x.Strike - spot))
             .ThenBy(x => x.Strike)
             .Select(x => (decimal?)x.Strike)
             .FirstOrDefault();
