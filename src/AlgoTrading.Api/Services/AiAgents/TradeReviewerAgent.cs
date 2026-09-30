@@ -1,0 +1,271 @@
+using System.Globalization;
+using System.Text;
+using System.Text.Encodings.Web;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
+using AlgoTrading.Api.Controllers;
+using AlgoTrading.Api.Services.AiTools;
+using AlgoTrading.Application.Interfaces;
+using AlgoTrading.Domain.Entities;
+using AlgoTrading.Infrastructure.Ai;
+using AlgoTrading.Infrastructure.Persistence;
+using AlgoTrading.Infrastructure.Services;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+
+namespace AlgoTrading.Api.Services.AiAgents;
+
+/// <summary>
+/// The Trade Reviewer: after the close, one journal per stopped run, judged
+/// against the strategy's written spec; a Telegram digest when a batch is done.
+/// </summary>
+/// <remarks>
+/// <para>
+/// A run is due once it has been stopped ten minutes (its last fills and
+/// charges are in) and its day's <see cref="AiSettings.ReviewAfterIst"/> has
+/// passed, so the NSE runs are reviewed after 15:45 and the MCX runs after
+/// they stop at 23:30. Runs from the last two days only: the reviewer is not a
+/// backfill. Manual books and alert-only runs are not strategies and are left
+/// out.
+/// </para>
+/// <para>
+/// The model is handed the run's summary and the spec as data (the same
+/// <c>get_run</c> and <c>get_strategy_spec</c> answers a tool call would
+/// give), and may read more with its tools. The verdict is its own; nothing
+/// acts on it.
+/// </para>
+/// </remarks>
+public sealed class TradeReviewerAgent(
+    TradingDbContext db,
+    AiGateway gateway,
+    AiReportWriter reports,
+    AiToolbox toolbox,
+    AiSchedulerState schedule,
+    ISystemNotifier notifier,
+    IOptionsMonitor<AiSettings> settings,
+    ILogger<TradeReviewerAgent> logger,
+    TimeProvider? time = null) : IAiScheduledAgent
+{
+    /// <summary>A run is reviewed this long after it stops, so its last fills and charges are in.</summary>
+    public static readonly TimeSpan Settle = TimeSpan.FromMinutes(10);
+
+    /// <summary>How far back a stopped run is still reviewed.</summary>
+    public static readonly TimeSpan Window = TimeSpan.FromDays(2);
+
+    private static readonly string[] Stopped = ["Stopped", "Completed", "Failed"];
+
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        WriteIndented = false,
+    };
+
+    private readonly TimeProvider _time = time ?? TimeProvider.System;
+
+    public string AgentKey => AiCatalog.TradeReviewer;
+
+    public async Task<bool> RunOnceAsync(DateTime nowUtc, CancellationToken cancellationToken)
+    {
+        long? runId = await NextDueAsync(nowUtc, cancellationToken);
+        if (runId is null)
+        {
+            await DigestIfDoneAsync(nowUtc, cancellationToken);
+            return false;
+        }
+
+        await ReviewAsync(runId.Value, cancellationToken);
+        schedule.Worked(AgentKey, nowUtc);
+        return true;
+    }
+
+    public async Task<AiReport?> RunForAsync(string? subjectId, CancellationToken cancellationToken)
+    {
+        long? runId = long.TryParse(subjectId, NumberStyles.Integer, CultureInfo.InvariantCulture, out long id)
+            ? id
+            : await NextDueAsync(_time.GetUtcNow().UtcDateTime, cancellationToken);
+        return runId is null ? null : await ReviewAsync(runId.Value, cancellationToken);
+    }
+
+    /// <summary>The oldest stopped run that is due a review, or null.</summary>
+    public async Task<long?> NextDueAsync(DateTime nowUtc, CancellationToken cancellationToken)
+    {
+        var since = nowUtc - Window;
+        var settledBy = nowUtc - Settle;
+        var candidates = await db.SimulationRuns.AsNoTracking()
+            .Where(r => r.Mode == StrategyRunControl.LivePaperMode
+                        && Stopped.Contains(r.Status)
+                        && r.CompletedUtc != null && r.CompletedUtc >= since && r.CompletedUtc <= settledBy
+                        && r.StrategyName != ManualOrdersController.BookStrategyName)
+            .OrderBy(r => r.CompletedUtc)
+            .Select(r => new { r.Id, r.StartedUtc, r.CreatedUtc, r.ParametersJson })
+            .ToListAsync(cancellationToken);
+
+        var afterClose = ReviewAfter();
+        var ready = candidates
+            .Where(r => LiveRunParameters.ReadRole(r.ParametersJson) != "alerts")
+            .Where(r => nowUtc >= IstTime.FromIst(IstTime.DateOf(r.StartedUtc ?? r.CreatedUtc).ToDateTime(afterClose)))
+            .Select(r => r.Id)
+            .ToList();
+        if (ready.Count == 0) return null;
+
+        var due = await reports.DueAsync(AgentKey, AiReportSubject.Run, ready.Select(Id).ToList(), cancellationToken);
+        return ready.FirstOrDefault(id => due.Contains(Id(id))) is long next && next != 0 ? next : null;
+    }
+
+    private async Task<AiReport> ReviewAsync(long runId, CancellationToken cancellationToken)
+    {
+        var run = await db.SimulationRuns.AsNoTracking().FirstAsync(r => r.Id == runId, cancellationToken);
+        var day = IstTime.DateOf(run.StartedUtc ?? run.CreatedUtc);
+
+        // The same answers the model would get from its tools, handed over up front.
+        string summary = await ToolText(AiToolNames.Run, $$"""{"runId":{{runId}}}""", cancellationToken);
+        string spec = await ToolText(AiToolNames.StrategySpec, JsonSerializer.Serialize(new { strategy = run.StrategyName }), cancellationToken);
+
+        string question =
+            $"Review run {runId} ({run.StrategyName}) of {day:yyyy-MM-dd} against its spec.\n\n" +
+            $"The run (get_run summary):\n{summary}\n\nThe strategy's spec (get_strategy_spec):\n{spec}";
+
+        var result = await gateway.AskAsync(new AiAskInput(
+            AgentKey, null, [new AiMessage("user", question)], null, 6000, 0.2,
+            $"review-run-{runId}", "schedule", AgentKey, null), NullAiStreamSink.Instance, cancellationToken);
+
+        if (result.Outcome != AiCallOutcome.Ok)
+        {
+            string why = result.RefusalStatus is null ? result.Error : $"Refused: {result.Error}";
+            logger.LogWarning("Trade review of run {RunId} failed: {Error}", runId, why);
+            return await reports.SaveAsync(AgentKey, AiReportSubject.Run, Id(runId), day, AiReportStatus.Failed, result,
+                $"Run {runId}: no review", string.Empty, "{}", why, cancellationToken);
+        }
+
+        var review = ParseReview(result.Text);
+        if (review is null)
+        {
+            return await reports.SaveAsync(AgentKey, AiReportSubject.Run, Id(runId), day, AiReportStatus.Invalid, result,
+                $"Run {runId} ({run.StrategyName}): review not in the asked shape", result.Text, "{}",
+                "The answer was not the JSON object asked for; its text is kept as the body.", cancellationToken);
+        }
+
+        return await reports.SaveAsync(AgentKey, AiReportSubject.Run, Id(runId), day, AiReportStatus.Ok, result,
+            review.Title, review.Body, review.Data.ToJsonString(Json), string.Empty, cancellationToken);
+    }
+
+    /// <summary>A review the model wrote, read and turned into the report's title, body and data; null when it is not the asked shape.</summary>
+    public static ParsedReview? ParseReview(string answer)
+    {
+        var obj = AiJson.Object(answer);
+        if (obj is null) return null;
+
+        string? verdict = AiJson.Str(obj, "verdict")?.ToLowerInvariant();
+        string? journal = AiJson.Str(obj, "journal");
+        if (verdict is not ("followed" or "deviated" or "unclear") || journal is null) return null;
+
+        string title = AiJson.Str(obj, "title") ?? $"Verdict: {verdict}";
+        var followed = AiJson.Strings(obj, "followed");
+        var deviations = AiJson.Strings(obj, "deviations");
+        double? stale = AiJson.Num(obj, "staleFills");
+        string? context = AiJson.Str(obj, "marketContext");
+        string? lesson = AiJson.Str(obj, "lesson");
+
+        var body = new StringBuilder();
+        body.Append("**Verdict:** ").Append(verdict switch
+        {
+            "followed" => "followed the spec",
+            "deviated" => "did not follow the spec",
+            _ => "unclear from the records",
+        }).Append("\n\n").Append(journal.Trim()).Append('\n');
+        if (deviations.Count > 0) body.Append("\n**Did not follow the spec**\n").Append(string.Concat(deviations.Select(d => $"- {d}\n")));
+        if (followed.Count > 0) body.Append("\n**Followed**\n").Append(string.Concat(followed.Select(f => $"- {f}\n")));
+        if (stale is > 0) body.Append($"\n**Fills at a stale quote:** {stale:0}\n");
+        if (context is not null) body.Append("\n**Market:** ").Append(context).Append('\n');
+        if (lesson is not null) body.Append("\n**Worth testing:** ").Append(lesson).Append('\n');
+
+        var data = new JsonObject
+        {
+            ["verdict"] = verdict,
+            ["followed"] = new JsonArray(followed.Select(f => (JsonNode)f).ToArray()),
+            ["deviations"] = new JsonArray(deviations.Select(d => (JsonNode)d).ToArray()),
+            ["staleFills"] = stale,
+            ["marketContext"] = context,
+            ["lesson"] = lesson,
+        };
+        return new ParsedReview(title, body.ToString().TrimEnd(), data);
+    }
+
+    public sealed record ParsedReview(string Title, string Body, JsonObject Data);
+
+    /// <summary>
+    /// When the queue is empty, one Telegram message for the reviews written
+    /// since the last digest: how many, how many kept to their spec, and the
+    /// ones that did not. Remembered in system settings, so a restart does not
+    /// send it twice.
+    /// </summary>
+    private async Task DigestIfDoneAsync(DateTime nowUtc, CancellationToken cancellationToken)
+    {
+        if (!settings.CurrentValue.ReviewDigestToTelegram) return;
+
+        const string key = "ai.reviewer.lastDigestUtc";
+        var marker = await db.SystemSettings.FirstOrDefaultAsync(s => s.Key == key, cancellationToken);
+        var since = marker is not null && DateTime.TryParse(marker.Value, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var last)
+            ? last
+            : nowUtc - TimeSpan.FromDays(1);
+
+        var written = await db.AiReports.AsNoTracking()
+            .Where(r => r.AgentKey == AgentKey && r.SubjectType == AiReportSubject.Run && r.UpdatedUtc > since && r.Status != AiReportStatus.Failed)
+            .OrderBy(r => r.Id)
+            .Select(r => new { r.SubjectId, r.Title, r.DataJson, r.Status })
+            .ToListAsync(cancellationToken);
+        if (written.Count == 0) return;
+
+        var verdicts = written.Select(r => (r.SubjectId, r.Title, Verdict: AiJson.Object(r.DataJson) is { } d ? AiJson.Str(d, "verdict") : null)).ToList();
+        int followed = verdicts.Count(v => v.Verdict == "followed");
+        var deviated = verdicts.Where(v => v.Verdict == "deviated").ToList();
+
+        var text = new StringBuilder();
+        text.Append($"{written.Count} run review{(written.Count == 1 ? "" : "s")} written: {followed} followed the spec, {deviated.Count} did not");
+        int unclear = written.Count - followed - deviated.Count;
+        if (unclear > 0) text.Append($", {unclear} unclear");
+        text.Append('.');
+        foreach (var d in deviated.Take(5)) text.Append($"\n• #{d.SubjectId}: {d.Title}");
+        if (deviated.Count > 5) text.Append($"\n• and {deviated.Count - 5} more");
+        text.Append("\nRead them on the AI page, Reports tab.");
+
+        await notifier.NotifyAsync(NotificationCategory.System, NotificationSeverity.Info, "AI trade reviews", text.ToString(),
+            cancellationToken: cancellationToken);
+
+        if (marker is null)
+        {
+            marker = new SystemSetting { Key = key, CreatedUtc = nowUtc };
+            db.SystemSettings.Add(marker);
+        }
+
+        marker.Value = nowUtc.ToString("O", CultureInfo.InvariantCulture);
+        marker.UpdatedBy = AgentKey;
+        marker.UpdatedUtc = nowUtc;
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>A tool's answer as the model would read it; its error in words when it fails.</summary>
+    private async Task<string> ToolText(string name, string args, CancellationToken cancellationToken)
+    {
+        var tool = toolbox.Find(name);
+        if (tool is null) return $"(The {name} tool is not on this build.)";
+        try
+        {
+            var output = await tool.RunAsync(AiToolArgs.Parse(args), cancellationToken);
+            return JsonSerializer.Serialize(new { asOf = AiToolFormat.Ist(output.AsOfUtc), data = output.Data }, Json);
+        }
+        catch (AiToolArgumentException ex)
+        {
+            return $"(Not available: {ex.Message})";
+        }
+    }
+
+    private TimeOnly ReviewAfter() =>
+        TimeOnly.TryParseExact(settings.CurrentValue.ReviewAfterIst, "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var at)
+            ? at
+            : new TimeOnly(15, 45);
+
+    private static string Id(long id) => id.ToString(CultureInfo.InvariantCulture);
+}

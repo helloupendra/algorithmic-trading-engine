@@ -59,6 +59,8 @@ public class AiController : ControllerBase
     private readonly AiRateLimiter _limiter;
     private readonly AiToolbox _toolbox;
     private readonly IOptionsMonitor<AiSettings> _settings;
+    private readonly IServiceScopeFactory? _scopes;
+    private readonly ILogger<AiController>? _logger;
     private readonly TimeProvider _time;
 
     public AiController(
@@ -69,6 +71,8 @@ public class AiController : ControllerBase
         AiRateLimiter limiter,
         AiToolbox toolbox,
         IOptionsMonitor<AiSettings> settings,
+        IServiceScopeFactory? scopes = null,
+        ILogger<AiController>? logger = null,
         TimeProvider? time = null)
     {
         _db = db;
@@ -78,6 +82,8 @@ public class AiController : ControllerBase
         _limiter = limiter;
         _toolbox = toolbox;
         _settings = settings;
+        _scopes = scopes;
+        _logger = logger;
         _time = time ?? TimeProvider.System;
     }
 
@@ -324,6 +330,176 @@ public class AiController : ControllerBase
             ReadTools(x.ToolsJson),
             new AiRequestDto($"POST {ChatEndpoint()}", x.MaxTokens, x.Temperature, true)));
     }
+
+    // ---------- reports -----------------------------------------------------
+
+    /// <summary>What the scheduled agents wrote, newest first: all, one agent's, one status, one IST day.</summary>
+    [HttpGet("reports")]
+    public async Task<IActionResult> Reports(
+        [FromQuery] string? agent = null,
+        [FromQuery] string? subjectType = null,
+        [FromQuery] string? status = null,
+        [FromQuery] DateOnly? date = null,
+        [FromQuery] int take = DefaultTake,
+        [FromQuery] long? beforeId = null,
+        CancellationToken cancellationToken = default)
+    {
+        take = Math.Clamp(take, 1, MaxTake);
+        var query = _db.AiReports.AsNoTracking();
+        if (!string.IsNullOrWhiteSpace(agent)) query = query.Where(r => r.AgentKey == agent);
+        if (!string.IsNullOrWhiteSpace(subjectType)) query = query.Where(r => r.SubjectType == subjectType);
+        if (!string.IsNullOrWhiteSpace(status)) query = query.Where(r => r.Status == status);
+        if (date is DateOnly day) query = query.Where(r => r.SessionDate == day);
+        if (beforeId is long before) query = query.Where(r => r.Id < before);
+
+        var rows = await query.OrderByDescending(r => r.Id).Take(take + 1).ToListAsync(cancellationToken);
+        var page = rows.Take(take).ToList();
+        var links = await SubjectLinksAsync(page, cancellationToken);
+        return Ok(new AiReportPage(page.Select(r => ToReportSummary(r, links)).ToList(), rows.Count > take ? page[^1].Id : null));
+    }
+
+    /// <summary>One report in full: its body and the structured data the agent returned.</summary>
+    [HttpGet("reports/{id:long}")]
+    public async Task<IActionResult> Report(long id, CancellationToken cancellationToken)
+    {
+        var r = await _db.AiReports.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+        if (r is null) return NotFound(new { error = $"No report {id}." });
+        var links = await SubjectLinksAsync([r], cancellationToken);
+        JsonElement? data = null;
+        try
+        {
+            data = JsonDocument.Parse(r.DataJson).RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            // Kept as written; the body still reads.
+        }
+
+        return Ok(new AiReportDetail(ToReportSummary(r, links), r.Body, data));
+    }
+
+    /// <summary>
+    /// Each scheduled agent's reports over the last days, by status: the
+    /// News Analyst's share of valid records is the roadmap's "JSON validity
+    /// above 98%".
+    /// </summary>
+    [HttpGet("reports/stats")]
+    public async Task<IActionResult> ReportStats([FromQuery] int days = 7, CancellationToken cancellationToken = default)
+    {
+        days = Math.Clamp(days, 1, 60);
+        var since = IstTime.DateOf(Now()).AddDays(-(days - 1));
+        var rows = await _db.AiReports.AsNoTracking()
+            .Where(r => r.SessionDate >= since)
+            .GroupBy(r => new { r.AgentKey, r.SessionDate, r.Status })
+            .Select(g => new { g.Key.AgentKey, g.Key.SessionDate, g.Key.Status, Count = g.Count() })
+            .ToListAsync(cancellationToken);
+
+        var agents = rows.GroupBy(r => r.AgentKey).Select(g =>
+        {
+            int ok = g.Where(r => r.Status == AiReportStatus.Ok).Sum(r => r.Count);
+            int invalid = g.Where(r => r.Status == AiReportStatus.Invalid).Sum(r => r.Count);
+            int failed = g.Where(r => r.Status == AiReportStatus.Failed).Sum(r => r.Count);
+            return new AiReportAgentStats(
+                g.Key,
+                AiCatalog.AgentName(g.Key),
+                ok + invalid + failed,
+                ok,
+                invalid,
+                failed,
+                ok + invalid == 0 ? null : Math.Round(100.0 * ok / (ok + invalid), 1),
+                g.GroupBy(r => r.SessionDate).OrderBy(d => d.Key)
+                    .Select(d => new AiReportDay(d.Key?.ToString("yyyy-MM-dd") ?? string.Empty,
+                        d.Where(r => r.Status == AiReportStatus.Ok).Sum(r => r.Count),
+                        d.Where(r => r.Status == AiReportStatus.Invalid).Sum(r => r.Count),
+                        d.Where(r => r.Status == AiReportStatus.Failed).Sum(r => r.Count)))
+                    .ToList());
+        }).OrderBy(a => a.AgentKey).ToList();
+
+        return Ok(new AiReportStats(since.ToString("yyyy-MM-dd"), days, agents));
+    }
+
+    /// <summary>
+    /// Runs a scheduled agent now, in the background: on one subject (a run
+    /// id, an incident id) or its next due work. Answers 202 at once; the
+    /// report and its call appear on their tabs when the model has answered.
+    /// </summary>
+    [HttpPost("agents/{key}/run")]
+    public async Task<IActionResult> RunAgent(string key, [FromBody] AiAgentRunRequest? body, CancellationToken cancellationToken)
+    {
+        if (_scopes is null) return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "Scheduled agents are not available on this host." });
+        var def = AiCatalog.Agents.FirstOrDefault(a => a.Key == key);
+        if (def is null) return NotFound(new { error = $"No agent {key}." });
+        if (key is not (AiCatalog.TradeReviewer or AiCatalog.NewsAnalyst or AiCatalog.IncidentExplainer))
+        {
+            return Conflict(new { error = $"{def.Name} is not a scheduled agent." });
+        }
+
+        var state = await _store.LoadAsync(cancellationToken);
+        if (state.Agent(key) is not { Status: "on" }) return Conflict(new { error = $"{def.Name} is switched off." });
+        if (!_settings.CurrentValue.KeyConfigured) return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "No NVIDIA_API_KEY on the server." });
+
+        string? subject = string.IsNullOrWhiteSpace(body?.SubjectId) ? null : body.SubjectId.Trim();
+        if (subject is not null && !long.TryParse(subject, out _)) return BadRequest(new { error = "subjectId is a run or incident id." });
+
+        var scopes = _scopes;
+        var logger = _logger;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await using var scope = scopes.CreateAsyncScope();
+                var agent = scope.ServiceProvider.GetServices<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent>().First(a => a.AgentKey == key);
+                await agent.RunForAsync(subject, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                logger?.LogWarning(ex, "Running AI agent {Agent} on request failed", key);
+            }
+        });
+
+        return Accepted(new { started = true, agent = key, subjectId = subject });
+    }
+
+    /// <summary>Where each report's subject lives: a console page for a run or an incident, the source for news and filings.</summary>
+    private async Task<Dictionary<(string, string), string?>> SubjectLinksAsync(IReadOnlyList<AiReport> reports, CancellationToken cancellationToken)
+    {
+        var links = new Dictionary<(string, string), string?>();
+        var newsIds = reports.Where(r => r.SubjectType == AiReportSubject.News).Select(r => long.TryParse(r.SubjectId, out long v) ? v : 0).Where(v => v > 0).ToList();
+        var filingIds = reports.Where(r => r.SubjectType == AiReportSubject.Filing).Select(r => long.TryParse(r.SubjectId, out long v) ? v : 0).Where(v => v > 0).ToList();
+        var news = newsIds.Count == 0 ? [] : await _db.NewsItems.AsNoTracking().Where(n => newsIds.Contains(n.Id)).Select(n => new { n.Id, n.Link }).ToListAsync(cancellationToken);
+        var filings = filingIds.Count == 0 ? [] : await _db.CorporateAnnouncements.AsNoTracking().Where(a => filingIds.Contains(a.Id)).Select(a => new { a.Id, a.AttachmentUrl }).ToListAsync(cancellationToken);
+
+        foreach (var r in reports)
+        {
+            links[(r.SubjectType, r.SubjectId)] = r.SubjectType switch
+            {
+                AiReportSubject.Run => $"/trade/runs/{r.SubjectId}",
+                AiReportSubject.Incident => $"/system/incidents?id={r.SubjectId}",
+                AiReportSubject.News => news.FirstOrDefault(n => n.Id.ToString() == r.SubjectId)?.Link,
+                AiReportSubject.Filing => filings.FirstOrDefault(a => a.Id.ToString() == r.SubjectId)?.AttachmentUrl,
+                _ => null,
+            };
+        }
+
+        return links;
+    }
+
+    private static AiReportSummary ToReportSummary(AiReport r, Dictionary<(string, string), string?> links) => new(
+        r.Id,
+        r.AgentKey,
+        AiCatalog.AgentName(r.AgentKey),
+        r.SubjectType,
+        r.SubjectId,
+        r.SessionDate?.ToString("yyyy-MM-dd"),
+        Utc(r.CreatedUtc)!.Value,
+        Utc(r.UpdatedUtc)!.Value,
+        r.Status,
+        r.Attempts,
+        r.CallId,
+        r.Model.Length > 0 ? r.Model : null,
+        r.Title,
+        r.Error.Length > 0 ? r.Error : null,
+        links.GetValueOrDefault((r.SubjectType, r.SubjectId)) is { Length: > 0 } link ? link : null);
 
     // ---------- asking ------------------------------------------------------
 
@@ -877,6 +1053,24 @@ public sealed record AiCallDetail(
     string System, IReadOnlyList<AiMessageDto> Messages, string Answer, string Reasoning,
     string FinishReason, IReadOnlyList<string> Chain, IReadOnlyList<AiAttemptDto> Attempts, IReadOnlyList<AiToolCallDto> Tools,
     AiRequestDto Request);
+
+public sealed record AiReportSummary(
+    long Id, string AgentKey, string AgentName, string SubjectType, string SubjectId, string? SessionDate,
+    DateTime CreatedUtc, DateTime UpdatedUtc, string Status, int Attempts, long? CallId, string? Model, string Title,
+    string? Error, string? Link);
+
+public sealed record AiReportPage(IReadOnlyList<AiReportSummary> Reports, long? NextBeforeId);
+
+public sealed record AiReportDetail(AiReportSummary Report, string Body, JsonElement? Data);
+
+public sealed record AiReportDay(string Date, int Ok, int Invalid, int Failed);
+
+public sealed record AiReportAgentStats(
+    string AgentKey, string AgentName, int Total, int Ok, int Invalid, int Failed, double? ValidPercent, IReadOnlyList<AiReportDay> Days);
+
+public sealed record AiReportStats(string Since, int Days, IReadOnlyList<AiReportAgentStats> Agents);
+
+public sealed record AiAgentRunRequest(string? SubjectId);
 
 public sealed record AiAskMessage(string? Role, string? Content);
 

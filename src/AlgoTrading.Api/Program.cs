@@ -168,6 +168,14 @@ builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Ap
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.CheckupTool>();
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.ForecastsTool>();
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.StrategySpecTool>();
+
+// The scheduled AI agents (Phase 3): advisory reports, each behind its switch on the AI page.
+builder.Services.AddSingleton<AlgoTrading.Api.Services.AiAgents.AiSchedulerState>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.AiReportWriter>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.TradeReviewerAgent>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.IncidentExplainerAgent>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.NewsAnalystAgent>();
+builder.Services.AddHostedService<AlgoTrading.Api.Services.AiAgents.AiAgentScheduler>();
 // The morning plan against what is live (GET /api/Desk/plan); Desk:PlanFile overrides where it is read from.
 builder.Services.Configure<AlgoTrading.Api.Configuration.DeskOptions>(
     builder.Configuration.GetSection(AlgoTrading.Api.Configuration.DeskOptions.SectionName));

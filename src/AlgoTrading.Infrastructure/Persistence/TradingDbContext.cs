@@ -108,6 +108,9 @@ public class TradingDbContext : DbContext
     /// <summary>Every question put to a hosted language model and its answer. See <see cref="AiCall"/>.</summary>
     public DbSet<AiCall> AiCalls => Set<AiCall>();
 
+    /// <summary>What the AI agents wrote: run reviews, news extractions, incident explanations. See <see cref="AiReport"/>.</summary>
+    public DbSet<AiReport> AiReports => Set<AiReport>();
+
     /// <summary>The Analysis module's forecasts: written before the open, scored after the close. See <see cref="Forecast"/>.</summary>
     public DbSet<Forecast> Forecasts => Set<Forecast>();
 
