@@ -186,6 +186,12 @@ BENIGN_LINES: tuple[re.Pattern[str], ...] = (
     # The desk's first failed probe of the API. It restarts the API only after
     # three, and the health agent watches the API directly.
     re.compile(r"API health check failed \(1/\d+\)"),
+    # The risk guard refusing a signal at the daily loss limit, or while the
+    # kill switch is on, is the rule working (RiskManagementService). On 30 Sep
+    # a daily-loss refusal was opened as a medium "API error". The runner's
+    # "SIGNAL REFUSED by the API: {"error": …}" line carries the same reason.
+    # The order rate limit is not here: its own signature reports the churn.
+    re.compile(r"MAX DAILY LOSS EXCEEDED:|GLOBAL KILL SWITCH IS ACTIVE\."),
 )
 
 # A line carrying one of these is dropped whole: never matched, never evidence.
@@ -259,6 +265,8 @@ _TOO_MANY = re.compile(r"(?i)\b429\b.*too many requests|too many requests.*\b429
 _VENDOR_THROTTLE = re.compile(r"(?i)rate-limiting us")
 _TELEGRAM_REFUSED = re.compile(r"(?i)\btelegram\b.*\b(?:refused|429)\b")
 _URL_PATH = re.compile(r"https?://[^/\s]+(?P<path>/[^\s?\"')]*)")
+#: The exception the API's risk guard refuses an order with (answered 409).
+_RISK_REFUSAL = "RiskViolationException"
 _ORDER_LIMIT = re.compile(r"RATE LIMIT EXCEEDED: More than (?P<n>\d+) orders placed in the last minute for run (?P<run>\d+)")
 _TICKLESS = re.compile(r"(?P<n>\d+) reconnect\(s\) carried no ticks")
 _HOST_LOST = re.compile(r"Connection to remote host was lost")
@@ -1044,6 +1052,11 @@ class LogsAgent(Agent):
         if self._match_known(origin, root.removeprefix("---> "), root.removeprefix("---> "), scan, None):
             return  # e.g. the order rate limit, thrown as an exception
         root = root.removeprefix("---> ")
+        if _short_type(root) == _RISK_REFUSAL:
+            # An order the risk guard refused (409), from an API that still let
+            # the refusal reach its exception handler: a limit working, not an
+            # error. Since 30 Sep the API logs it as a warning instead.
+            return
         signature = normalise(root)
         crash = category == "process"
         match = _EXCEPTION_LINE.match(root)

@@ -502,6 +502,40 @@ class SignatureTests(LogsAgentTestCase):
         [churn] = self.check().values()  # another run of the same churn: the same incident
         self.assertIn("from run 246, 236.", churn.summary)
 
+    def test_a_risk_guard_refusal_is_the_limit_working_not_an_api_error(self):
+        # 30 Sep: "API error: RiskViolationException: MAX DAILY LOSS EXCEEDED …",
+        # medium, from an API that let the refusal reach its exception handler.
+        self.start_watching("api.log")
+        self.append("api.log", (
+            "fail: Microsoft.AspNetCore.Diagnostics.ExceptionHandlerMiddleware[1]\n"
+            f"{B}An unhandled exception has occurred while executing the request.\n"
+            f"{B}AlgoTrading.Application.Exceptions.RiskViolationException: MAX DAILY LOSS EXCEEDED: Current PnL "
+            "-5210.50 is below the limit of -5000. Exits remain allowed.\n"
+            f"{B}   at AlgoTrading.Infrastructure.Services.RiskManagementService.RejectOrderAsync()\n")
+            + info(REG, '[strategy:Fulcrum:NIFTY] SIGNAL REFUSED by the API: {"error":"MAX DAILY LOSS EXCEEDED: '
+                        'Current PnL -5210.50 is below the limit of -5000. Exits remain allowed."}'))
+        self.assertEqual({}, self.check())
+
+        # The API's own line since then, and the kill switch's refusal.
+        self.append("api.log",
+                    warn("AlgoTrading.Api.Services.RiskRefusalFilter",
+                         "Signal refused by the risk guard (409) on POST /api/Simulator/signals: MAX DAILY LOSS "
+                         "EXCEEDED: Current PnL -5400 is below the limit of -5000. Exits remain allowed.")
+                    + info(REG, '[strategy:Ghost:BANKNIFTY] SIGNAL REFUSED by the API: {"error":"GLOBAL KILL SWITCH '
+                                'IS ACTIVE. NEW POSITIONS REJECTED (exits are always allowed)."}'))
+        self.advance(30)
+        self.assertEqual({}, self.check())
+
+    def test_the_order_rate_limit_is_still_reported_from_the_refusal_warning(self):
+        self.start_watching("api.log")
+        self.append("api.log", warn(
+            "AlgoTrading.Api.Services.RiskRefusalFilter",
+            "Signal refused by the risk guard (409) on POST /api/Simulator/signals: RATE LIMIT EXCEEDED: More than "
+            "50 orders placed in the last minute for run 246 (leg SELL 2)."))
+        found = self.check()
+        self.assertEqual(["logs:order-rate-limit"], list(found))
+        self.assertIn("from run 246.", found["logs:order-rate-limit"].summary)
+
     def test_a_daemon_that_exits_on_its_own_is_reported_but_a_stopped_one_is_not(self):
         self.start_watching("api.log")
         self.append("api.log", info("AlgoTrading.Api.Services.IngestorSupervisor", "ingestor pid 1675369 exited with code 137.")

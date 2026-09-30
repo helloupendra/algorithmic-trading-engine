@@ -45,7 +45,10 @@ builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, relo
 // copies ~/.aspnet/DataProtection-Keys with the database).
 builder.Services.AddDataProtection().SetApplicationName("AlgoTrading");
 
-builder.Services.AddControllers();
+// A risk-guard refusal is answered 409 and logged as a warning inside MVC, not
+// as an unhandled exception (30 Sep: a daily-loss refusal became an "API error"
+// incident). The handler below still answers 409 for anything outside MVC.
+builder.Services.AddControllers(options => options.Filters.Add<AlgoTrading.Api.Services.RiskRefusalFilter>());
 
 builder.Services.AddSwaggerGen(c =>
 {
