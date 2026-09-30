@@ -9,8 +9,12 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  CHECK_PASS_MARK,
   confidenceText,
   directionBadge,
+  formatSeconds,
+  modelName,
+  readAssistantCheck,
   firstParagraph,
   useAiReport,
   useLatestReport,
@@ -45,9 +49,10 @@ export function ReportStatusBadge({ status }: { status: string }) {
  * the console, an article or a filing in a new tab (never with the console
  * as its opener). A link that is neither is shown as text.
  */
-export function ReportSubject({ report, children }: { report: Pick<AiReportSummary, 'subjectType' | 'subjectId' | 'link'>; children?: ReactNode }) {
+export function ReportSubject({ report, children }: { report: Pick<AiReportSummary, 'id' | 'subjectType' | 'subjectId' | 'link'>; children?: ReactNode }) {
   const label = children ?? reportSubjectLabel(report)
-  const link = reportLink(report.link)
+  // The assistant check is about a day, which has no page of its own: it links to itself.
+  const link = reportLink(report.link ?? (report.subjectType === 'check' ? `/ai/reports?id=${report.id}` : null))
   if (!link) return <span>{label}</span>
   if (link.kind === 'internal') {
     return (
@@ -190,6 +195,61 @@ export function ReportData({ detail }: { detail: AiReportDetail }) {
                     <td className="num mono">{x.value}</td>
                     <td className="muted">{x.unit}</td>
                     <td className="ai-report-quote">“{x.quote}”</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </>
+    )
+  }
+
+  if (report.agentKey === 'assistant-check') {
+    const c = readAssistantCheck(data)!
+    const good = c.total > 0 && c.passed / c.total >= CHECK_PASS_MARK
+    return (
+      <>
+        <div className="ai-check-score">
+          <span className={`ai-check-score__big ${good ? 'pos' : 'warn'}`}>
+            {c.passed} of {c.total}
+          </span>
+          <span className="muted">
+            {c.total > 0 ? `${Math.round(100 * (c.score ?? c.passed / c.total))}% right` : 'no questions'} · the pass mark is{' '}
+            {Math.round(CHECK_PASS_MARK * 100)}%
+          </span>
+        </div>
+        {c.questions.length > 0 && (
+          <div className="tablewrap ai-check">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th className="c" aria-label="Right or wrong" />
+                  <th>Question</th>
+                  <th>Expected</th>
+                  <th>The answer</th>
+                  <th>Model</th>
+                  <th className="num">Seconds</th>
+                  <th>Call</th>
+                </tr>
+              </thead>
+              <tbody>
+                {c.questions.map((q, i) => (
+                  <tr key={i} className={q.pass ? undefined : 'ai-check__miss'}>
+                    <td className={`c ai-check__mark ${q.pass ? 'pos' : 'neg'}`} aria-label={q.pass ? 'right' : 'wrong'}>
+                      {q.pass ? '✓' : '✗'}
+                    </td>
+                    <td className="ai-check__q">
+                      {q.question}
+                      <span className="cell-sub">graded as {q.kind}</span>
+                    </td>
+                    <td className="mono ai-check__expected">{q.expected || <span className="faint">—</span>}</td>
+                    <td className="ai-check__answer">
+                      {q.error ? <span className="neg">{q.error}</span> : q.answer ? <span>{q.answer}</span> : <span className="faint">no answer</span>}
+                    </td>
+                    <td className="ai-check__model">{q.model ? <span title={q.model}>{modelName(q.model)}</span> : <span className="faint">—</span>}</td>
+                    <td className="num ai-check__secs">{formatSeconds(q.seconds)}</td>
+                    <td className="ai-check__call">{q.callId != null ? <Link to={`/ai/calls?id=${q.callId}`}>call #{q.callId}</Link> : <span className="faint">—</span>}</td>
                   </tr>
                 ))}
               </tbody>

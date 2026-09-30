@@ -51,6 +51,7 @@ import type { AskTier, ChatTurn, TurnRound } from '../../lib/ai'
 import { IconStop } from '../../components/icons'
 import { AnswerText } from './AnswerText'
 import { CallLink, ChainChips, ToolStepRow } from './parts'
+import { DocsSearchCard, TelegramCard } from './AssistantSide'
 import { useNow } from './common'
 import '../system/health/health.css'
 import './ai.css'
@@ -383,7 +384,9 @@ export function AiAssistantPage() {
   const questions = chat.turns.length
 
   return (
-    <div className="page hp ai ai-assistant">
+    <div className="page ai ai-assistant">
+      <div className="ai-assistant__grid">
+      <div className="ai-assistant__main hp">
       <div className="hp-bar">
         <p className="hp-bar__lead muted">
           Ask the desk's AI. It reads the desk through read-only tools, answers stream from the NVIDIA-hosted models of the
@@ -530,6 +533,12 @@ export function AiAssistantPage() {
         </div>
       </form>
       <div ref={endRef} className="ai-end" aria-hidden="true" />
+      </div>
+      <aside className="ai-assistant__side" aria-label="Telegram and docs search">
+        <TelegramCard />
+        <DocsSearchCard />
+      </aside>
+      </div>
     </div>
   )
 }

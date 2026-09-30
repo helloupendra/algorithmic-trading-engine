@@ -13,13 +13,13 @@
  */
 
 import { Link } from 'react-router-dom'
-import { formatSeconds, formatTokens, callTime, modelName } from '../../lib/ai'
-import type { AiAgent, AiLimits, AiOverview, AiTier } from '../../lib/ai'
+import { formatSeconds, formatTokens, callTime, healthByModel, modelName } from '../../lib/ai'
+import type { AiAgent, AiLimits, AiModelHealth, AiOverview, AiTier } from '../../lib/ai'
 import { useAiAgents, useAiOverview } from '../../lib/ai'
 import { formatAge, formatDateTime, formatTime } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Loading, Panel, StatTile } from '../../components/ui'
 import { IconChip, IconClock, IconLayers, IconPulse, IconUsers } from '../../components/icons'
-import { CallLink, ChainChips, KeyBadge, ModelLabel, StatusPill } from './parts'
+import { CallLink, ChainChips, HealthLine, KeyBadge, ModelLabel, StatusPill } from './parts'
 import { errorText, useNow } from './common'
 import '../system/health/health.css'
 import './ai.css'
@@ -91,7 +91,10 @@ function TodayTiles({ o }: { o: AiOverview }) {
   )
 }
 
-function TiersPanel({ tiers }: { tiers: AiTier[] }) {
+function TiersPanel({ tiers, health, now }: { tiers: AiTier[]; health: AiModelHealth[]; now: number }) {
+  const byModel = healthByModel(health)
+  // The models not answering well, said in full under the chains: the chips only have room for a dot.
+  const troubled = health.filter((h) => h.state === 'cooling' || h.state === 'failed')
   return (
     <Panel
       title={
@@ -120,12 +123,26 @@ function TiersPanel({ tiers }: { tiers: AiTier[] }) {
                 )}
                 <span className="ai-tier__purpose muted">{t.purpose}</span>
               </div>
-              <ChainChips chain={t.chain} />
+              <ChainChips chain={t.chain} health={t.chat ? byModel : undefined} now={now} />
             </div>
           ))}
         </div>
       )}
-      <p className="small-note ai-flush">The first model answers; the next is asked only when the one before it fails or times out.</p>
+      {troubled.length > 0 && (
+        <ul className="ai-troubled">
+          {troubled.map((h) => (
+            <li key={h.model}>
+              <b title={h.model}>{modelName(h.model)}</b> <HealthLine health={h} now={now} />
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="small-note ai-flush">
+        The first model answers; the next is asked only when the one before it fails or times out. A model that failed after a
+        long wait, or twice running, cools for 10 to 60 minutes: it is asked after the healthy ones, never dropped, and one answer
+        heals it.
+        {health.length === 0 && ' This API build does not report model health yet.'}
+      </p>
     </Panel>
   )
 }
@@ -350,7 +367,7 @@ export function AiOverviewPage() {
           <ProviderPanel o={o} />
           <TodayTiles o={o} />
           <div className="two-col ai-cols">
-            <TiersPanel tiers={o.tiers} />
+            <TiersPanel tiers={o.tiers} health={o.health} now={now} />
             <div className="stack-list">
               <LimitsPanel limits={o.limits} />
               <LastPanel o={o} now={now} />

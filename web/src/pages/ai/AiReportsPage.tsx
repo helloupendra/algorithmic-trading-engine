@@ -19,7 +19,11 @@ import { useMemo } from 'react'
 import type { MouseEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
+  AI_UTILITIES,
   NEWS_VALID_TARGET,
+  checkScoreText,
+  readAssistantCheck,
+  useLatestAgentReport,
   REPORT_STATUS_KEYS,
   SCHEDULED_AGENTS,
   callTime,
@@ -70,7 +74,48 @@ function DayBars({ days }: { days: AiReportAgentStats['days'] }) {
   )
 }
 
+/**
+ * The assistant check's card: one report a day, so its counts are days
+ * passed and days below the pass mark, with the newest score.
+ */
+function CheckCard({ a }: { a: AiReportAgentStats }) {
+  const latest = useLatestAgentReport('assistant-check')
+  const d = latest.data
+  const c = d ? readAssistantCheck(d.data) : null
+  return (
+    <div className="ai-rstat">
+      <div className="ai-rstat__head">
+        <Link className="ai-rstat__name" to={`${PAGE}?agent=assistant-check`}>
+          {a.agentName || 'Assistant check'}
+        </Link>
+        <span className="faint">{a.total} in 7 days</span>
+      </div>
+      <div className="ai-rstat__counts">
+        <span className={a.ok > 0 ? 'pos' : 'faint'}>
+          {a.ok} day{a.ok === 1 ? '' : 's'} passed
+        </span>
+        <span className={a.invalid > 0 ? 'warn' : 'faint'}>{a.invalid} below the mark</span>
+        <span className={a.failed > 0 ? 'neg' : 'faint'}>{a.failed} failed</span>
+      </div>
+      <div className="ai-rstat__valid">
+        {d ? (
+          <>
+            Last: <Link to={`${PAGE}?id=${d.report.id}`}>{reportSubjectLabel(d.report).replace('Assistant check · ', '')}</Link>{' '}
+            <span className={d.report.status === 'ok' ? 'pos' : 'warn'}>{c ? checkScoreText(c) : d.report.title}</span>
+          </>
+        ) : latest.isPending ? (
+          <span className="faint">last check not read yet</span>
+        ) : (
+          <span className="faint">no check yet</span>
+        )}
+      </div>
+      {a.days.length > 0 && <DayBars days={a.days} />}
+    </div>
+  )
+}
+
 function StatsCard({ a }: { a: AiReportAgentStats }) {
+  if (a.agentKey === 'assistant-check') return <CheckCard a={a} />
   const news = a.agentKey === 'news-analyst'
   const tone = validityTone(a.validPercent)
   return (
@@ -136,14 +181,19 @@ function ReportDetailView({ detail, now }: { detail: AiReportDetail; now: number
         )}
       </p>
 
-      {r.status === 'invalid' && (
-        <div className="alert alert--warn ai-flush" role="status">
-          <span>
-            The answer failed its check, so it does not count: {r.error || 'no reason given'}. The model's text is kept below as
-            it was written.
-          </span>
-        </div>
-      )}
+      {r.status === 'invalid' &&
+        (r.agentKey === 'assistant-check' ? (
+          <div className="alert alert--warn ai-flush" role="status">
+            <span>{r.error || 'Below the pass mark.'} The questions it got wrong are marked ✗ below.</span>
+          </div>
+        ) : (
+          <div className="alert alert--warn ai-flush" role="status">
+            <span>
+              The answer failed its check, so it does not count: {r.error || 'no reason given'}. The model's text is kept below as
+              it was written.
+            </span>
+          </div>
+        ))}
       {r.status === 'failed' && (
         <div className="alert alert--error ai-flush" role="alert">
           <span>
@@ -157,6 +207,17 @@ function ReportDetailView({ detail, now }: { detail: AiReportDetail; now: number
 
       <ReportData detail={detail} />
 
+      {r.agentKey === 'assistant-check' && detail.data ? (
+        // The questions table above is the report; its Markdown twin is kept for the record.
+        detail.body.trim() && (
+          <details className="ai-fold">
+            <summary>The report as written</summary>
+            <div className="ai-call__answer">
+              <AnswerText text={detail.body} />
+            </div>
+          </details>
+        )
+      ) : (
       <section className="ai-call__sec">
         <h4 className="ai-call__h">{r.status === 'invalid' ? "The model's answer, as written" : 'Report'}</h4>
         {detail.body.trim() === '' ? (
@@ -169,6 +230,7 @@ function ReportDetailView({ detail, now }: { detail: AiReportDetail; now: number
           </div>
         )}
       </section>
+      )}
     </div>
   )
 }
@@ -218,7 +280,7 @@ export function AiReportsPage() {
   const rows = useMemo(() => reports.data?.pages.flatMap((p) => p.reports) ?? [], [reports.data])
   const agentOptions = useMemo(() => {
     const m = new Map<string, string>()
-    for (const key of Object.keys(SCHEDULED_AGENTS)) m.set(key, agents.data?.agents.find((a) => a.key === key)?.name ?? key)
+    for (const key of Object.keys(SCHEDULED_AGENTS)) m.set(key, agents.data?.agents.find((a) => a.key === key)?.name ?? AI_UTILITIES[key] ?? key)
     for (const r of rows) if (!m.has(r.agentKey)) m.set(r.agentKey, r.agentName || r.agentKey)
     if (filters.agent && !m.has(filters.agent)) m.set(filters.agent, filters.agent)
     return [...m.entries()]
@@ -243,7 +305,7 @@ export function AiReportsPage() {
     navigate(`${PAGE}?${p.toString()}`)
     window.scrollTo({ top: 0 })
   }
-  const nameOf = (key: string) => agents.data?.agents.find((a) => a.key === key)?.name ?? key
+  const nameOf = (key: string) => agents.data?.agents.find((a) => a.key === key)?.name ?? AI_UTILITIES[key] ?? key
 
   return (
     <div className="page hp ai">

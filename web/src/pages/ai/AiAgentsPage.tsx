@@ -17,9 +17,14 @@ import { useEffect, useState } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import {
   AGENT_STATUSES,
+  CHECK_PASS_MARK,
   SCHEDULED_AGENTS,
   agentStatus,
   callTime,
+  checkScoreText,
+  readAssistantCheck,
+  shortDate,
+  useLatestAgentReport,
   formatTokens,
   modelName,
   toolLabel,
@@ -183,14 +188,14 @@ function AgentTools({ tools }: { tools: AiAgentTool[] }) {
  * or on its next due work. The API only accepts the job (202); the report
  * arrives on the Reports tab when the model answers.
  */
-function RunNow({ agent }: { agent: AiAgent }) {
+function RunNow({ agentKey }: { agentKey: string }) {
   const run = useRunAgent()
   const [subject, setSubject] = useState('')
-  const kind = SCHEDULED_AGENTS[agent.key]?.subject ?? null
+  const kind = SCHEDULED_AGENTS[agentKey]?.subject ?? null
   const bad = subject.trim() !== '' && !/^\d+$/.test(subject.trim())
   const go = () => {
     if (bad) return
-    run.mutate({ key: agent.key, subjectId: kind ? subject : null })
+    run.mutate({ key: agentKey, subjectId: kind ? subject : null })
   }
   return (
     <div className="ai-runnow">
@@ -217,14 +222,16 @@ function RunNow({ agent }: { agent: AiAgent }) {
             ? 'Blank reviews the runs that are due.'
             : kind === 'incident'
               ? 'Blank explains the incidents that are due.'
-              : 'Reads its next batch of unread items.'}
+              : agentKey === 'assistant-check'
+                ? 'Asks the questions now; it takes a few minutes.'
+                : 'Reads its next batch of unread items.'}
         </span>
       </div>
       {bad && <p className="small-note warn ai-flush">An id is a whole number.</p>}
       {run.isSuccess && (
         <p className="small-note ai-flush ai-runnow__said">
           Started{run.data?.subjectId ? ` on ${kind === 'incident' ? 'incident' : 'run'} #${run.data.subjectId}` : ''}. The report appears on
-          the <Link to={`/ai/reports?agent=${encodeURIComponent(agent.key)}`}>Reports tab</Link> when the model answers (usually 1–3 minutes).
+          the <Link to={`/ai/reports?agent=${encodeURIComponent(agentKey)}`}>Reports tab</Link> when the model answers (usually 1–3 minutes).
         </p>
       )}
       {run.isError && (
@@ -233,6 +240,57 @@ function RunNow({ agent }: { agent: AiAgent }) {
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * The daily assistant check: not an agent but a test of one. After 16:40 IST
+ * on weekdays the desk asks the Desk Assistant questions the code knows the
+ * answers to, grades the answers by code, and writes one report a day.
+ */
+function AssistantCheckPanel({ now }: { now: number }) {
+  const latest = useLatestAgentReport('assistant-check')
+  const d = latest.data
+  const c = d ? readAssistantCheck(d.data) : null
+  return (
+    <Panel title={<>Assistant check</>} className="ai-utility">
+      <p className="ai-utility__what">
+        A test of the Desk Assistant, graded by code: up to 12 questions whose answers the desk knows (today's runs, the worst
+        run and its net, open legs, live incidents, the checkup's verdict, NIFTY's PCR and max pain, one sum). It passes a day at{' '}
+        {Math.round(CHECK_PASS_MARK * 100)}% right.
+      </p>
+      <dl className="ai-facts">
+        <div>
+          <dt>Runs</dt>
+          <dd>Weekdays after 16:40 IST; its calls are on the Calls tab as the Desk Assistant's, from the check.</dd>
+        </div>
+        <div>
+          <dt>Last result</dt>
+          <dd>
+            {d ? (
+              <>
+                <Link to={`/ai/reports?id=${d.report.id}`}>{d.report.subjectType === 'check' ? shortDate(d.report.subjectId) : `report #${d.report.id}`}</Link>{' '}
+                <span className={d.report.status === 'ok' ? 'pos' : 'warn'}>{c ? checkScoreText(c) : d.report.title}</span>
+                <span className="faint"> · {callTime(d.report.createdUtc, now)}</span>{' '}
+                <Link to="/ai/reports?agent=assistant-check">every check</Link>
+              </>
+            ) : latest.isPending ? (
+              <span className="faint">not read yet</span>
+            ) : latest.isError ? (
+              <span className="faint">could not be read</span>
+            ) : (
+              <span className="faint">no check has run yet</span>
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>By hand</dt>
+          <dd>
+            <RunNow agentKey="assistant-check" />
+          </dd>
+        </div>
+      </dl>
+    </Panel>
   )
 }
 
@@ -313,7 +371,7 @@ function AgentCard({
             <div>
               <dt>By hand</dt>
               <dd>
-                <RunNow agent={agent} />
+                <RunNow agentKey={agent.key} />
               </dd>
             </div>
           </>
@@ -452,6 +510,8 @@ export function AiAgentsPage() {
           ))}
         </div>
       )}
+
+      {data && filter === 'all' && <AssistantCheckPanel now={now} />}
 
       {data && (
         <Panel title={<>Also on the desk, not AI</>} className="ai-rules">

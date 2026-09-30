@@ -12,13 +12,14 @@
  * (FinBERT), which are not language models the provider serves.
  */
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   callTime,
   catalogGroups,
   catalogSourceText,
   formatSeconds,
+  healthByModel,
   modelName,
   useAiAgents,
   useAiModels,
@@ -26,11 +27,11 @@ import {
   useTestModel,
   useUpdateTier,
 } from '../../lib/ai'
-import type { AiModel, AiModelsResponse, AiTier, ModelTestResult } from '../../lib/ai'
+import type { AiModel, AiModelHealth, AiModelsResponse, AiTier, ModelTestResult } from '../../lib/ai'
 import { formatDateTime } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components/ui'
 import { IconChip, IconLayers, IconSearch, IconServer } from '../../components/icons'
-import { CallLink, ChainChips, ChainEditor, KeyBadge } from './parts'
+import { CallLink, ChainChips, ChainEditor, HealthLine, KeyBadge } from './parts'
 import { errorText, useNow } from './common'
 import '../system/health/health.css'
 import './ai.css'
@@ -38,7 +39,19 @@ import './ai.css'
 /** A test's result as it stands on this page: asked, answered, or failed to ask. */
 type TestState = { pending: true } | { pending: false; result: ModelTestResult } | { pending: false; error: string }
 
-function TierRow({ tier, catalog, catalogNote }: { tier: AiTier; catalog: AiModel[] | undefined; catalogNote: string | null }) {
+function TierRow({
+  tier,
+  catalog,
+  catalogNote,
+  health,
+  now,
+}: {
+  tier: AiTier
+  catalog: AiModel[] | undefined
+  catalogNote: string | null
+  health: ReadonlyMap<string, AiModelHealth>
+  now: number
+}) {
   const update = useUpdateTier()
   const [editing, setEditing] = useState(false)
   const done = { onSuccess: () => setEditing(false) }
@@ -58,7 +71,7 @@ function TierRow({ tier, catalog, catalogNote }: { tier: AiTier; catalog: AiMode
           </button>
         )}
       </div>
-      <ChainChips chain={tier.chain} />
+      <ChainChips chain={tier.chain} health={tier.chat ? health : undefined} now={now} />
       {tier.overridden && tier.updatedUtc && (
         <p className="small-note ai-flush">
           Changed {formatDateTime(tier.updatedUtc)} IST. The default is {tier.defaultChain.map(modelName).join(' → ')}.
@@ -189,6 +202,11 @@ function InUseRow({
       <div className="ai-model__last">
         <LastTest model={model} now={now} />
       </div>
+      {!model.embedding && (
+        <div className="ai-model__health">
+          <HealthLine health={model.health} now={now} />
+        </div>
+      )}
       <div className="ai-model__act">
         <TestButton model={model} state={test} onTest={onTest} />
       </div>
@@ -264,6 +282,7 @@ export function AiModelsPage() {
       : null
   const groups = data ? catalogGroups(data.models, query) : null
   const agentName = (key: string) => agents.data?.agents.find((a) => a.key === key)?.name ?? key
+  const healthMap = useMemo(() => healthByModel(overview.data?.health), [overview.data])
   const searching = query.trim() !== ''
 
   return (
@@ -303,7 +322,7 @@ export function AiModelsPage() {
         >
           <div className="ai-tiers">
             {overview.data.tiers.map((t) => (
-              <TierRow key={t.key} tier={t} catalog={data?.models} catalogNote={catalogNote} />
+              <TierRow key={t.key} tier={t} catalog={data?.models} catalogNote={catalogNote} health={healthMap} now={now} />
             ))}
           </div>
           <p className="small-note ai-flush">

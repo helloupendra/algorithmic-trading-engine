@@ -104,6 +104,29 @@ export interface AiOverview {
   lastOk: { utc: string; model: string; callId: number } | null
   lastError: { utc: string; error: string; callId: number } | null
   agents: { total: number; built: number; on: number; off: number; planned: number }
+  /** How each model a chat tier names has been answering; empty from an API without model health. */
+  health: AiModelHealth[]
+}
+
+/** healthy; failed (its last call failed); cooling (asked after the healthy ones until coolingUntilUtc); unknown (not asked yet). */
+export type ModelHealthState = 'healthy' | 'failed' | 'cooling' | 'unknown'
+
+/**
+ * A model's health as the router sees it. A model that failed after a long
+ * wait, or twice running, cools for 10, 20, 40, then 60 minutes: it is still
+ * asked, but after its chain's healthy models. One answer heals it; a probe
+ * asks it one tiny question when its cooling ends.
+ */
+export interface AiModelHealth {
+  model: string
+  state: ModelHealthState | string
+  coolingUntilUtc: string | null
+  consecutiveFailures: number
+  lastFailure: string | null
+  lastFailureUtc: string | null
+  lastOkSeconds: number | null
+  lastOkUtc: string | null
+  lastProbeUtc: string | null
 }
 
 export interface AiCallRef {
@@ -180,6 +203,8 @@ export interface AiModel {
   listed: boolean
   lastTest: AiModelTest | null
   today: { calls: number; ok: number; failed: number; avgSeconds: number | null } | null
+  /** For a model in use; null for one the catalog only lists. */
+  health: AiModelHealth | null
 }
 
 export interface LocalModel {
@@ -319,6 +344,21 @@ export function readOverview(raw: unknown): AiOverview {
     byModel: list(o.byModel),
     lastOk: o.lastOk ?? null,
     lastError: o.lastError ?? null,
+    health: list<AiModelHealth>(o.health).map(readHealth),
+  }
+}
+
+function readHealth(h: AiModelHealth): AiModelHealth {
+  return {
+    model: h.model,
+    state: h.state ?? 'unknown',
+    coolingUntilUtc: h.coolingUntilUtc ?? null,
+    consecutiveFailures: h.consecutiveFailures ?? 0,
+    lastFailure: h.lastFailure ?? null,
+    lastFailureUtc: h.lastFailureUtc ?? null,
+    lastOkSeconds: h.lastOkSeconds ?? null,
+    lastOkUtc: h.lastOkUtc ?? null,
+    lastProbeUtc: h.lastProbeUtc ?? null,
   }
 }
 
@@ -331,7 +371,12 @@ export function readModels(raw: unknown): AiModelsResponse {
   const o = need<AiModelsResponse>(raw, ['models'], 'model catalog')
   return {
     ...o,
-    models: list<AiModel>(o.models).map((m) => ({ ...m, embedding: m.embedding ?? isEmbeddingModel(m.id), listed: m.listed ?? true })),
+    models: list<AiModel>(o.models).map((m) => ({
+      ...m,
+      embedding: m.embedding ?? isEmbeddingModel(m.id),
+      listed: m.listed ?? true,
+      health: m.health ? readHealth(m.health) : null,
+    })),
     local: list(o.local),
     error: o.error ?? null,
     fetchedUtc: o.fetchedUtc ?? null,
@@ -366,6 +411,8 @@ export interface AiCallFilters {
   agent?: string
   outcome?: string
   model?: string
+  /** console, api, schedule, check, health, index or telegram. */
+  source?: string
   take?: number
 }
 
@@ -375,6 +422,7 @@ export function aiCallsQuery(filters: AiCallFilters, beforeId: number | null = n
   if (filters.agent) p.set('agent', filters.agent)
   if (filters.outcome) p.set('outcome', filters.outcome)
   if (filters.model) p.set('model', filters.model)
+  if (filters.source) p.set('source', filters.source)
   p.set('take', String(filters.take ?? 50))
   if (beforeId != null) p.set('beforeId', String(beforeId))
   return p.toString()
@@ -589,6 +637,31 @@ export const SCHEDULED_AGENTS: Readonly<Record<string, { subject: 'run' | 'incid
   'trade-reviewer': { subject: 'run', writes: 'after 15:45 IST, a review of each run stopped that day' },
   'news-analyst': { subject: null, writes: "every 10 minutes, a structured event for each unread news item or filing of the last 24 hours" },
   'incident-explainer': { subject: 'incident', writes: 'for each live incident of medium severity or worse, what happened, why and what to do' },
+  'assistant-check': { subject: null, writes: "on weekdays after 16:40 IST, the Desk Assistant's graded answers to questions the code knows" },
+}
+
+/** The utilities that call models without being agents, by the key their calls and reports carry. */
+export const AI_UTILITIES: Readonly<Record<string, string>> = {
+  'assistant-check': 'Assistant check',
+  'doc-index': 'Docs index',
+  'model-test': 'Model test',
+}
+
+/** What a call's source says, in words: where the question came from. */
+const SOURCES: Record<string, string> = {
+  console: 'Console',
+  api: 'API',
+  schedule: 'Schedule',
+  check: 'Assistant check',
+  health: 'Health probe',
+  index: 'Docs index',
+  telegram: 'Telegram',
+}
+
+export const CALL_SOURCES = Object.keys(SOURCES)
+
+export function sourceLabel(source: string | null | undefined): string {
+  return SOURCES[source ?? ''] ?? (source || 'unknown')
 }
 
 export function readReportsPage(raw: unknown): AiReportsPage {
@@ -821,8 +894,20 @@ export function validityTone(percent: number | null | undefined, target = NEWS_V
 }
 
 /** "Run #412", "Incident #9", "News", "Filing": what a report is about, in a word or two. */
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+/** "2026-09-30" → "30 Sep"; anything else as it came. */
+export function shortDate(isoDay: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDay)
+  if (!m) return isoDay
+  const month = MONTHS[Number(m[2]) - 1]
+  return month ? `${Number(m[3])} ${month}` : isoDay
+}
+
 export function reportSubjectLabel(r: Pick<AiReportSummary, 'subjectType' | 'subjectId'>): string {
   switch (r.subjectType) {
+    case 'check':
+      return `Assistant check · ${shortDate(r.subjectId)}`
     case 'run':
       return `Run #${r.subjectId}`
     case 'incident':
@@ -864,6 +949,294 @@ export function firstParagraph(markdown: string): string {
 export function confidenceText(c: number | null | undefined): string {
   if (c == null || !Number.isFinite(c)) return '—'
   return `${Math.round((c <= 1 ? c * 100 : c))}%`
+}
+
+// ---------- model health -------------------------------------------------------
+
+/**
+ * A model's health in a word and a tone, with the line that says why: "cooling
+ * until 16:40" (IST) with its last failure, "failed" with it, "healthy" with
+ * its last answer's time taken, or "not asked yet". Cooling is a warning, not
+ * an alarm: the model is still asked, after the healthy ones.
+ */
+export function healthBadge(h: AiModelHealth | null | undefined, nowMs: number): { label: string; tone: Tone; detail: string } {
+  if (!h) return { label: 'not known', tone: 'neutral', detail: '' }
+  const failure = h.lastFailure ? `${h.lastFailure}${h.lastFailureUtc ? ` (${clockTime(h.lastFailureUtc, nowMs)})` : ''}` : ''
+  switch (h.state) {
+    case 'cooling':
+      return {
+        label: h.coolingUntilUtc ? `cooling until ${clockTime(h.coolingUntilUtc, nowMs)}` : 'cooling',
+        tone: 'warn',
+        detail: failure || 'failed; no reason recorded',
+      }
+    case 'failed':
+      return { label: h.consecutiveFailures > 1 ? `failed ${h.consecutiveFailures}× running` : 'failed last time', tone: 'warn', detail: failure }
+    case 'healthy':
+      return {
+        label: 'healthy',
+        tone: 'pos',
+        detail: h.lastOkSeconds != null ? `last answer in ${formatSeconds(h.lastOkSeconds)}${h.lastOkUtc ? ` (${clockTime(h.lastOkUtc, nowMs)})` : ''}` : '',
+      }
+    case 'unknown':
+      return { label: 'not asked yet', tone: 'neutral', detail: '' }
+    default:
+      return { label: h.state || 'not known', tone: 'neutral', detail: failure }
+  }
+}
+
+/** The health of each model, by id. */
+export function healthByModel(list: readonly AiModelHealth[] | null | undefined): Map<string, AiModelHealth> {
+  return new Map((list ?? []).map((h) => [h.model, h]))
+}
+
+// ---------- the assistant check ---------------------------------------------------
+
+export interface CheckQuestion {
+  question: string
+  /** number, id or word: how the answer was graded. */
+  kind: string
+  expected: string
+  pass: boolean
+  answer: string
+  callId: number | null
+  model: string | null
+  seconds: number | null
+  error: string | null
+}
+
+export interface AssistantCheck {
+  passed: number
+  total: number
+  /** 0 to 1; worked out from passed and total when not sent. */
+  score: number | null
+  questions: CheckQuestion[]
+}
+
+/** An assistant-check report's data; the counts are taken from the questions when the data leaves them out. */
+export function readAssistantCheck(data: Record<string, unknown> | null): AssistantCheck | null {
+  if (!data) return null
+  const text = (v: unknown) => (typeof v === 'string' ? v : typeof v === 'number' || typeof v === 'boolean' ? String(v) : '')
+  const questions = list<Record<string, unknown>>(data.questions)
+    .filter((q) => q && typeof q === 'object')
+    .map((q) => ({
+      question: text(q.question),
+      kind: text(q.kind) || 'word',
+      expected: text(q.expected),
+      pass: q.pass === true,
+      answer: text(q.answer),
+      callId: num(q.callId),
+      model: str(q.model),
+      seconds: num(q.seconds),
+      error: str(q.error),
+    }))
+  const total = num(data.total) ?? questions.length
+  const passed = num(data.passed) ?? questions.filter((q) => q.pass).length
+  const score = num(data.score) ?? (total > 0 ? passed / total : null)
+  return { passed, total, score, questions }
+}
+
+/** "8 of 9, 89%"; "no questions" for an empty check. */
+export function checkScoreText(c: Pick<AssistantCheck, 'passed' | 'total' | 'score'>): string {
+  if (c.total <= 0) return 'no questions'
+  const pct = Math.round(100 * (c.score ?? c.passed / c.total))
+  return `${c.passed} of ${c.total}, ${pct}%`
+}
+
+/** The pass mark of the daily check, as a share of questions. */
+export const CHECK_PASS_MARK = 0.8
+
+/** The newest report one agent or utility wrote, in full; null when there is none. */
+export function useLatestAgentReport(agent: string) {
+  return useQuery({
+    queryKey: ['ai', 'latest-report', agent],
+    queryFn: async () => {
+      const page = readReportsPage(await api.get<unknown>(`/api/Ai/reports?${reportsQuery({ agent, take: 1 })}`))
+      const first = page.reports[0]
+      return first ? readReport(await api.get<unknown>(`/api/Ai/reports/${first.id}`)) : null
+    },
+    refetchInterval: 60_000,
+    retry: 1,
+  })
+}
+
+// ---------- docs search -----------------------------------------------------------
+
+export interface AiDocsIndex {
+  files: number
+  passages: number
+  indexedUtc: string | null
+  model: string
+}
+
+export interface AiDocsHit {
+  file: string
+  /** "AI workspace › Desk tools": the headings the passage sits under. */
+  section: string
+  score: number | null
+  text: string
+}
+
+export interface AiDocsSearch {
+  index: AiDocsIndex
+  query: string | null
+  hits: AiDocsHit[]
+}
+
+export function readDocsSearch(raw: unknown): AiDocsSearch {
+  const o = need<AiDocsSearch>(raw, ['index'], 'docs search')
+  return {
+    index: need<AiDocsIndex>(o.index, ['files', 'passages'], 'docs index'),
+    query: o.query ?? null,
+    hits: list<AiDocsHit>(o.hits).map((h) => ({ file: h.file ?? '', section: h.section ?? '', score: num(h.score), text: h.text ?? '' })),
+  }
+}
+
+/**
+ * GET /api/Ai/search: the index's state, and with a query the passages that
+ * match it best. The query is sent as typed; an empty one asks for the state.
+ */
+export function useDocsSearch(query: string, limit = 5) {
+  const q = query.trim()
+  return useQuery({
+    queryKey: ['ai', 'search', q, limit],
+    queryFn: async () => readDocsSearch(await api.get<unknown>(`/api/Ai/search?${new URLSearchParams(q ? { q, limit: String(limit) } : { limit: String(limit) })}`)),
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
+    retry: 1,
+  })
+}
+
+/**
+ * The published docs pages by source file, as web/docs-site/build.mjs's NAV
+ * names them (keep the two together). A file not published has no page.
+ */
+const DOCS_PAGES: Readonly<Record<string, string>> = {
+  'docs/01_ARCHITECTURE_OVERVIEW.md': 'architecture',
+  'docs/RESEARCH_AND_ARCHITECTURE.md': 'research',
+  'docs/03_ARCHITECTURE_AND_RISK_MANAGEMENT.md': 'risk-management',
+  'docs/PROJECT_STATUS.md': 'status',
+  'docs/modules/data_module.md': 'modules/data',
+  'docs/modules/strategies_module.md': 'modules/strategies',
+  'docs/modules/manual_orders.md': 'modules/manual-orders',
+  'docs/modules/backtesting_module.md': 'modules/backtesting',
+  'docs/modules/option_chain.md': 'modules/option-chain',
+  'docs/modules/pattern_alerts.md': 'modules/pattern-alerts',
+  'docs/modules/connectors_module.md': 'modules/connectors',
+  'docs/modules/dhan_connector.md': 'modules/dhan',
+  'docs/modules/users_module.md': 'modules/users',
+  'docs/modules/strategy_packages.md': 'modules/strategy-packages',
+  'docs/modules/activity_log.md': 'modules/activity-log',
+  'docs/strategies/README.md': 'strategies',
+  'docs/02_LOCAL_DEPLOYMENT_GUIDE.md': 'deploy/local',
+}
+
+export const DOCS_SITE = 'https://openfno.com/docs/'
+
+/** The docs site's anchor for a heading, as build.mjs's slugify makes it. */
+function docsAnchor(heading: string): string {
+  return heading
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .slice(0, 80)
+}
+
+/**
+ * Where a passage can be read on openfno.com/docs, or null when its file is
+ * not published there. A strategy spec's page is its registry name in
+ * kebab case, as the site builds it; the passage's own heading (the last part
+ * of its section) becomes the anchor, unless it is the page's title.
+ */
+export function docsLink(file: string, section = ''): string | null {
+  let slug = DOCS_PAGES[file] ?? null
+  const spec = /^docs\/strategies\/([A-Za-z0-9]+)\.md$/.exec(file)
+  if (!slug && spec && spec[1] !== 'README') {
+    slug = `strategies/${spec[1].replace(/([a-z0-9])([A-Z])/g, '$1-$2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1-$2').toLowerCase()}`
+  }
+  if (slug == null) return null
+  const parts = section.split('›').map((p) => p.trim()).filter(Boolean)
+  const anchor = parts.length > 1 ? docsAnchor(parts[parts.length - 1]) : ''
+  return `${DOCS_SITE}${slug}/${anchor ? `#${anchor}` : ''}`
+}
+
+// ---------- telegram ------------------------------------------------------------------
+
+export interface AiTelegramOwner {
+  telegramUserId: string
+  telegramName: string
+  consoleUser: string
+  linkedUtc: string | null
+}
+
+export interface AiTelegramStatus {
+  /** The setting is on, and the bot token and the model key are there. */
+  running: boolean
+  enabled: boolean
+  botUsername: string | null
+  owners: AiTelegramOwner[]
+}
+
+export interface AiTelegramPairing {
+  code: string
+  expiresUtc: string
+  botUsername: string | null
+  instruction: string
+}
+
+export function readTelegram(raw: unknown): AiTelegramStatus {
+  const o = need<AiTelegramStatus>(raw, ['running', 'enabled'], 'Telegram status')
+  return {
+    running: o.running === true,
+    enabled: o.enabled === true,
+    botUsername: o.botUsername ?? null,
+    owners: list<AiTelegramOwner>(o.owners).map((w) => ({ ...w, telegramUserId: String(w.telegramUserId), linkedUtc: w.linkedUtc ?? null })),
+  }
+}
+
+/** Telegram's state in words: running, not running (and what to check), or switched off. */
+export function telegramState(t: Pick<AiTelegramStatus, 'running' | 'enabled'>): { label: string; tone: Tone; note: string } {
+  if (t.running) return { label: 'running', tone: 'pos', note: 'The Desk Assistant answers linked accounts in private chats.' }
+  if (t.enabled) return { label: 'not running', tone: 'warn', note: 'The setting is on but the bot is not answering: check the bot token and the model key.' }
+  return { label: 'off', tone: 'neutral', note: 'The Telegram setting is off, so the bot answers nobody.' }
+}
+
+/** "9:42 left" until a pairing code expires; "expired" after. */
+export function countdownText(expiresUtc: string | null | undefined, nowMs: number): string {
+  const at = expiresUtc ? Date.parse(expiresUtc) : Number.NaN
+  if (Number.isNaN(at)) return 'expiry not known'
+  const left = Math.ceil((at - nowMs) / 1000)
+  if (left <= 0) return 'expired'
+  return `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} left`
+}
+
+/** The bot's Telegram link, from its user name ("codefortrade_bot" or "@codefortrade_bot"); null without one. */
+export function botLink(botUsername: string | null | undefined): string | null {
+  const name = (botUsername ?? '').trim().replace(/^@/, '')
+  return /^[A-Za-z0-9_]{3,64}$/.test(name) ? `https://t.me/${name}` : null
+}
+
+/** Telegram status; polled every 5 s while a pairing code is showing, so the new link appears. */
+export function useAiTelegram(pairing: boolean) {
+  return useQuery({
+    queryKey: ['ai', 'telegram'],
+    queryFn: async () => readTelegram(await api.get<unknown>('/api/Ai/telegram')),
+    refetchInterval: pairing ? 5_000 : 60_000,
+    retry: 1,
+  })
+}
+
+export function usePairTelegram() {
+  return useMutation({ mutationFn: () => api.post<AiTelegramPairing>('/api/Ai/telegram/pair') })
+}
+
+export function useUnlinkTelegram() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (telegramUserId: string) => api.delete<unknown>(`/api/Ai/telegram/owners/${encodeURIComponent(telegramUserId)}`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['ai', 'telegram'] }),
+  })
 }
 
 // ---------- server-sent events ------------------------------------------------
@@ -1634,6 +2007,7 @@ const TOOL_SUBJECTS: Record<string, { keys: string[]; label: (value: string) => 
   get_option_chain_summary: { keys: ['underlying', 'symbol'], label: (v) => `Option chain ${v}`, bare: 'Option chain' },
   get_news: { keys: ['query', 'q', 'symbol'], label: (v) => `News ${v}`, bare: 'News' },
   get_strategy_spec: { keys: ['strategy', 'name'], label: (v) => `Strategy spec ${v}`, bare: 'Strategy spec' },
+  search_docs: { keys: ['query', 'q'], label: (v) => `Docs search “${v}”`, bare: 'Docs search' },
 }
 
 /** The arguments the model wrote, when they are a JSON object; null otherwise. */
@@ -1662,6 +2036,7 @@ function argText(value: unknown): string {
  */
 export function toolLabel(name: string, argumentsJson: string | null | undefined): { label: string; detail: string } {
   const args = parseToolArgs(argumentsJson)
+  if (name === 'get_strategy_history' && args) return strategyHistoryLabel(args)
   const subject = TOOL_SUBJECTS[name]
   const base = TOOL_NAMES[name] ?? subject?.bare ?? name
   if (args == null) {
@@ -1682,6 +2057,38 @@ export function toolLabel(name: string, argumentsJson: string | null | undefined
     .map(([k, v]) => `${k}: ${argText(v)}`)
     .join(', ')
   return { label, detail }
+}
+
+const PERIODS: Record<string, string> = {
+  this_month: 'this month',
+  last_month: 'last month',
+  last_7_days: 'last 7 days',
+  last_30_days: 'last 30 days',
+}
+
+/**
+ * get_strategy_history in one line: "Strategy history · IronCondor ·
+ * BANKNIFTY · this month", or the dates for a from–to range. Arguments it
+ * does not know stay in the detail.
+ */
+function strategyHistoryLabel(args: Record<string, unknown>): { label: string; detail: string } {
+  const rest = { ...args }
+  const take = (key: string): string => {
+    const v = rest[key]
+    delete rest[key]
+    return v == null ? '' : argText(v).trim()
+  }
+  const parts = ['Strategy history', take('strategy'), take('underlying'), take('account')]
+  const period = take('period')
+  const from = take('from')
+  const to = take('to')
+  if (period) parts.push(PERIODS[period] ?? period.replace(/_/g, ' '))
+  else if (from || to) parts.push(`${from ? shortDate(from) : '…'}–${to ? shortDate(to) : 'today'}`)
+  const detail = Object.entries(rest)
+    .filter(([, v]) => v != null && v !== '')
+    .map(([k, v]) => `${k}: ${argText(v)}`)
+    .join(', ')
+  return { label: parts.filter(Boolean).join(' · '), detail }
 }
 
 /**
