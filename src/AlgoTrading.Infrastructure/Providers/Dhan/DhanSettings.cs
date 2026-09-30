@@ -106,17 +106,26 @@ public class DhanAutoSignInSettings
     public bool Enabled { get; set; } = true;
 
     /// <summary>
-    /// The morning window, IST. A token that would end before today's evening
-    /// session closes is replaced inside it, while nothing is streaming yet:
-    /// the 08:45 job starts the feeds, so the window ends before it.
+    /// The morning window, IST: the day's token is taken inside it, before the
+    /// 08:45 job starts the feeds.
     /// </summary>
     /// <remarks>
-    /// Also the earliest the worker signs in on any day, even with no token at
-    /// all, so each day's token is taken at the same hour (see <see cref="DhanAutoSignInPolicy"/>).
+    /// The earliest the worker signs in on any day, even with no token at all;
+    /// later when the last token ends after it (see <see cref="DhanAutoSignInPolicy"/>).
     /// </remarks>
     public TimeSpan MorningFromIst { get; set; } = new(8, 0, 0);
 
+    /// <summary>
+    /// The latest the no-token alert waits for a sign-in that could only start
+    /// late: five minutes for a person to press Connect before the 08:45 job.
+    /// </summary>
     public TimeSpan MorningUntilIst { get; set; } = new(8, 40, 0);
+
+    /// <summary>
+    /// With no valid token at this time on a trading day, one alert says the
+    /// automatic sign-in failed and to press Connect (see <see cref="DhanAutoSignInPolicy.NoTokenAlertUtc"/>).
+    /// </summary>
+    public TimeSpan NoTokenAlertIst { get; set; } = new(8, 10, 0);
 }
 
 /// <summary>"Dhan:Universe" in configuration.</summary>

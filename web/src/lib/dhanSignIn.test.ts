@@ -32,7 +32,8 @@ describe('dhanAutoSignInView', () => {
   it('says when it runs before it has ever run', () => {
     const view = dhanAutoSignInView(base)
     expect(view.tone).toBe('pos')
-    expect(view.detail).toContain('08:00 and 08:40 IST')
+    expect(view.detail).toContain('from 08:00 IST')
+    expect(view.detail).toContain('after the last token has run out')
   })
 
   it('leads with what the last sign-in said', () => {

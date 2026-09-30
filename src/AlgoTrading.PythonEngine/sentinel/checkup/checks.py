@@ -280,7 +280,9 @@ def dhan_token(inp: Inputs) -> list[Item]:
     if need is not None and now < need and expires is not None and expires < need:
         window = ""
         if isinstance(auto, dict) and auto.get("morningFromIst"):
-            window = f" (the automatic sign-in renews only between {auto['morningFromIst']} and {auto.get('morningUntilIst')})"
+            # Since 30 Sep it never replaces a live token (Dhan refused one), so
+            # a token ending in the session is gone for two minutes at least.
+            window = " (the automatic sign-in replaces it only two minutes after it ends)"
         return item(State.WARN, f"Signed in, but the token ends at {_when(expires, now)}, before today's last close "
                                 f"at {_hm(need)}.",
                     f"Sign in again on Connectors → Dhan → Connect before {_hm(expires)}{window}.")
