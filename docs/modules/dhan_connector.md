@@ -109,31 +109,45 @@ pick it up the same way. Connect keeps working alongside it.
 4. On **Connectors → Dhan**, the *Automatic sign-in* panel shows **On**. Press
    **Sign in now** once to prove it end to end.
 
-**When it signs in** (`DhanAutoSignInPolicy`, checked once a minute, weekdays
-IST, **never before 08:00**):
-- when there is no sign-in that is still valid, or it ends within 10 minutes;
-- between 08:00 and 08:40, when the token would end before 23:59 tonight plus
-  those 10 minutes. The 08:45 job starts the feeds, so nothing is streaming on
-  Dhan yet.
+**When it signs in** (`DhanAutoSignInPolicy`, weekdays IST): at the later of
+**08:00** and **two minutes after the last token ends**, and never while a token
+is live. The worker looks once a minute and wakes for that exact moment.
 
-Nothing happens before 08:00, even with no token at all: nothing streams on Dhan
-before the 08:45 job, and starting every automatic sign-in at 08:00 means each
-day's token is taken at the same hour and lasts the whole session. Before this
-rule, the sign-in crept ten minutes earlier every day, and a token that died at
-midnight was tried for at 00:00:30, which could use up the day's tries before
-the morning.
+On 30 Sep the last token ended at 08:00:02, the sign-in went at 08:00:11, and
+Dhan answered "Invalid TOTP" to a code from the same secret that had worked the
+day before. The likeliest reading is that Dhan will not issue a token while it
+still counts the last one as live. Two older rules signed in while a token was
+live (ten minutes before its end, and between 08:00 and 08:40 when it would end
+before tonight's close); both are gone. A token that ends in the session (a
+Connect pressed at 13:00 ends at 13:00 the next day) is replaced two minutes
+after it ends, and the 08:45 job asks for Connect when the token will not last
+to the MCX close; the morning job's own sign-in call is held back (409) while
+the last token is live.
 
-It never replaces a working token in the middle of the session. Dhan's
-documentation says `RenewToken` ends the token it renews, and says nothing about
-whether a new sign-in ends the previous one; a sign-in at 11:00 could cut off a
-feed that was streaming.
+Each day's token lasts exactly 24 hours, so waiting two minutes past the last
+one moves the sign-in about two minutes later each day (08:00, 08:02, 08:04 …);
+the weekend, when nothing signs in, puts Monday back at 08:00. Nothing happens
+before 08:00, even with no token at all: a token that died at midnight was once
+tried for at 00:00:30, which could use up the day's tries before the morning.
 
-**When it stops:** Dhan refusing the PIN or code, or a value missing or
-malformed, stops the automatic tries for the rest of the IST day, with one
-Telegram message. A wrong PIN is wrong every time, and repeated wrong PINs can
+**A refused code is tried again; a refused PIN is not.** When Dhan's reason is
+about the TOTP code ("Invalid TOTP"), the same sign-in sends up to two more
+codes, each read one second into a new 30-second step, so all three go within
+about a minute (the console's request must finish inside Cloudflare's 100
+seconds). Anything about the PIN, credentials or a lock stops the day at once.
+Wording not recognised gets one more code, then stops.
+
+**When it stops:** a refused PIN, three refused codes, two refusals with
+unrecognised wording, or a value missing or malformed stops the automatic tries
+for the rest of the IST day, with one Telegram message. Repeated wrong PINs can
 lock the account. Dhan unreachable (no answer, a 5xx, 408 or 429, or a token
 Dhan issued that could not be saved) is tried again after 15 minutes, three
 times a day.
+
+**The 08:10 alert.** On a trading day with no valid token at 08:10 (later when
+the last token only let the sign-in start late, never after 08:40), one Error
+message on Telegram says the automatic sign-in failed and to press Connect
+before 08:45, whatever the cause.
 
 The stop **survives API restarts.** It is saved in `system_settings` under
 `dhan.autosignin.stopped` as the IST day and a fixed reason
@@ -165,6 +179,10 @@ works clears the saved stop. To take the automatic sign-in off for longer, set
   seconds; the sign-in carries on, so a token Dhan has issued is still saved.
 - Every attempt says what it did on Telegram (Connector category), and the panel
   shows the last try and when the token it took ends.
+- **Every code is logged** in `api.log` with the IST time it was read, how many
+  seconds into its TOTP step, whether the last token was still valid (and for
+  how long) or when it ended, and Dhan's reason fields, with the PIN, secret and
+  code taken out even if Dhan echoed them.
 
 ## Checking it
 
