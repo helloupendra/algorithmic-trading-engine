@@ -172,6 +172,11 @@ builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Ap
 // Keeps the docs' search index in step with docs/ (only passages that changed are embedded again).
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiSearch.AiDocIndexer>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AlgoTrading.Api.Services.AiSearch.AiDocIndexer>());
+// The Desk Assistant on the desk's Telegram bot, for linked owners only; long polls with its own client (50 s).
+builder.Services.AddHttpClient(AlgoTrading.Api.Services.AiTelegram.TelegramAssistant.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(75));
+builder.Services.AddSingleton<AlgoTrading.Api.Services.AiTelegram.TelegramPairing>();
+builder.Services.AddSingleton<AlgoTrading.Api.Services.AiTelegram.TelegramAssistant>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AlgoTrading.Api.Services.AiTelegram.TelegramAssistant>());
 
 // The scheduled AI agents (Phase 3): advisory reports, each behind its switch on the AI page.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiAgents.AiSchedulerState>();
