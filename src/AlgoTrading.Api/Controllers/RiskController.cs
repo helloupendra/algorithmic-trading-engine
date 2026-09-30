@@ -4,6 +4,7 @@ using AlgoTrading.Api.Security;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.Risk;
 using AlgoTrading.Contracts.Strategies;
+using AlgoTrading.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -129,15 +130,28 @@ public class RiskController : ControllerBase
         return Ok(limitsStore.GetLimits());
     }
 
+    /// <summary>
+    /// The live runs and their P&amp;L: every account's for an admin, the
+    /// caller's own for a trader.
+    /// </summary>
+    /// <remarks>
+    /// Behind the strategies grant, like the runs, positions and orders it
+    /// sums, and scoped the same way (<see cref="ClaimsPrincipalExtensions.ScopeUserId"/>).
+    /// It was admin-only, so the trader Library's warning about runs already
+    /// live, which reads this, met a 403 and never showed for a trader.
+    /// </remarks>
     [HttpGet("exposure")]
-    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    [RequireModule(PlatformModules.Strategies)]
     public async Task<IActionResult> GetExposure(
         [FromServices] AlgoTrading.Api.Services.StrategyProcessRegistry registry,
         [FromServices] AlgoTrading.Api.Services.LiveRunHistoryBuilder historyBuilder,
         CancellationToken cancellationToken)
     {
-        var activeProcesses = registry.List();
-        
+        long? scopeUserId = User.ScopeUserId(null);
+        var activeProcesses = registry.List()
+            .Where(run => scopeUserId is null || run.UserId == scopeUserId)
+            .ToList();
+
         var response = new RiskExposureResponse
         {
             ActiveRunsCount = activeProcesses.Count
@@ -148,7 +162,7 @@ public class RiskController : ControllerBase
             // We use LiveRunHistoryBuilder to get the PnL calculations for active runs
             var allRuns = await historyBuilder.ListAsync(
                 new AlgoTrading.Api.Services.LiveRunHistoryFilter(
-                    null, null, null, AlgoTrading.Api.Services.StrategyRunControl.RunStatusRunning, null, null, 1000, 0),
+                    scopeUserId, null, null, AlgoTrading.Api.Services.StrategyRunControl.RunStatusRunning, null, null, 1000, 0),
                 cancellationToken);
 
             var pnlMap = allRuns.ToDictionary(r => r.RunId);
