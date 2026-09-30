@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Ai;
 using AlgoTrading.Infrastructure.Persistence;
@@ -20,7 +21,7 @@ namespace AlgoTrading.Api.Services.AiAgents;
 /// </summary>
 /// <remarks>
 /// <para>
-/// After the close on each weekday the check reads the desk through the
+/// After the close on each trading day the check reads the desk through the
 /// same tools the Assistant uses. That gives it the day's runs, the worst one
 /// and its money, the open legs, the live incidents, the latest checkup, the
 /// NIFTY chain and the forecasts. It turns each into a question with a known
@@ -49,6 +50,7 @@ public sealed class AssistantCheckAgent(
     AiSchedulerState schedule,
     IOptionsMonitor<AiSettings> settings,
     ILogger<AssistantCheckAgent> logger,
+    IMarketSessionService? sessions = null,
     TimeProvider? time = null) : IAiScheduledAgent
 {
     /// <summary>The share of questions that must pass for the day's check to count as ok.</summary>
@@ -85,11 +87,16 @@ public sealed class AssistantCheckAgent(
 
     public Task<AiReport?> RunForAsync(string? subjectId, CancellationToken cancellationToken) => CheckAsync(cancellationToken)!;
 
-    /// <summary>A weekday, after <see cref="AiSettings.AssistantCheckAfterIst"/> IST.</summary>
+    /// <summary>
+    /// An NSE trading day, after <see cref="AiSettings.AssistantCheckAfterIst"/> IST. An exchange
+    /// holiday on a weekday (Gandhi Jayanti, 2 Oct) has no runs or forecasts to ask about.
+    /// Without the calendar every weekday counts, as the market-open job assumes.
+    /// </summary>
     public bool Due(DateTime nowUtc)
     {
         var ist = IstTime.ToIst(nowUtc);
         if (ist.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) return false;
+        if (sessions is not null && !sessions.GetSessionInfo(IstTime.MiddayUtc(IstTime.DateOf(nowUtc)), "NSE", "CM").IsTradingDay) return false;
         var after = TimeOnly.TryParseExact(settings.CurrentValue.AssistantCheckAfterIst, "HH:mm", CultureInfo.InvariantCulture,
             DateTimeStyles.None, out var at) ? at : new TimeOnly(16, 40);
         return TimeOnly.FromDateTime(ist) >= after;

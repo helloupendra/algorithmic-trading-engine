@@ -93,6 +93,17 @@ public class AiAssistantCheckTests
     }
 
     [Fact]
+    public void It_does_not_run_on_an_exchange_holiday()
+    {
+        var ai = Build();
+        var agent = new AssistantCheckAgent(ai.Db, ai.Gateway, new AiReportWriter(ai.Db, ai.Options), ai.Toolbox, new AiSchedulerState(),
+            ai.Options, NullLogger<AssistantCheckAgent>.Instance, new MarketIntelligenceTestKit.Sessions(new DateOnly(2026, 10, 2)));
+
+        Assert.False(agent.Due(IstTime.FromIst(new DateTime(2026, 10, 2, 17, 0, 0)))); // Friday, Gandhi Jayanti
+        Assert.True(agent.Due(IstTime.FromIst(new DateTime(2026, 10, 1, 17, 0, 0))));
+    }
+
+    [Fact]
     public void It_asks_only_while_the_assistant_is_on_and_it_is_enabled()
     {
         var on = new AiSettings();

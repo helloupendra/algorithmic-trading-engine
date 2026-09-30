@@ -402,7 +402,10 @@ deploy_block_reason() {
   elif [ "$live" != "0" ]; then
     echo "$live live run(s)"
   else
-    echo "market day, $((10#$hhmm / 100)):$(printf '%02d' $((10#$hhmm % 100))) — waits until the evening close"
+    # The close is market-close.sh at CLOSE_AT (23:58), not the MCX bell at
+    # 23:30: on 30 Sep a deploy promised for "after 23:30" went out at 23:59.
+    local close_at="${CLOSE_AT:-${MARKET_CLOSE_AT_DEFAULT:-2358}}"
+    echo "market day, $((10#$hhmm / 100)):$(printf '%02d' $((10#$hhmm % 100))) — waits for the evening close job at $((10#$close_at / 100)):$(printf '%02d' $((10#$close_at % 100))) (market-close.sh, after the MCX close), then builds at the next check"
   fi
 }
 
