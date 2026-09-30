@@ -67,6 +67,12 @@ check "listening on every interface is a violation" 1 "$(printf '%s\n' 'p100' 'f
 check "any UDP is a violation" 1 "$(printf '%s\n' "$listen" 'f11' 'PUDP' 'n192.168.1.5:5353->8.8.8.8:53' | classify)"
 check "no listening socket in the output: cannot tell" 2 "$(printf '%s\n' 'p100' 'f11' 'PTCP' 'n127.0.0.1:50001->127.0.0.1:5544' 'TST=ESTABLISHED' | classify)"
 check "empty output: cannot tell" 2 "$(printf '' | classify)"
+# Linux lsof prints no f line between the files of a process unless asked: each
+# socket must still be judged on its own, or only the last one would be.
+check "Linux output without f lines: listening and one client, clean" 0 "$(printf '%s\n' 'p100' 'PTCP' 'n127.0.0.1:5125' 'TST=LISTEN' 'TQR=0' 'TQS=0' \
+  'PTCP' 'n127.0.0.1:50001->127.0.0.1:5544' 'TST=ESTABLISHED' 'TQR=0' 'TQS=0' | classify)"
+check "Linux output without f lines: the internet before the listening socket is a violation" 1 "$(printf '%s\n' 'p100' \
+  'PTCP' 'n192.168.1.5:50001->13.235.10.20:443' 'TST=ESTABLISHED' 'PTCP' 'n127.0.0.1:5125' 'TST=LISTEN' | classify)"
 
 echo "Stop path, against a fake API"
 if ! command -v lsof >/dev/null || ! command -v pgrep >/dev/null || ! command -v python3 >/dev/null; then

@@ -216,7 +216,7 @@ tree_pids() {
   for kid in $(pgrep -P "$1" 2>/dev/null); do tree_pids "$kid"; done
 }
 
-# Reads `lsof -F pPnT` output and judges every socket. Exit 0 all local and
+# Reads `lsof -F pfPnT` output and judges every socket. Exit 0 all local and
 # expected, 1 a violation, 2 the API's own listening socket was not in the
 # output (so lsof did not really see its sockets: unknown, not clean).
 classify() {
@@ -250,7 +250,10 @@ classify() {
     }
     /^p/    { judge(); pid = substr($0, 2); next }
     /^f/    { judge(); next }
-    /^P/    { proto = substr($0, 2); next }
+    # A file starts at its f line on macOS, but Linux lsof prints none unless
+    # asked; P comes before n in every file, so it also closes the one before.
+    # Without it only the last socket of a process was judged on Linux.
+    /^P/    { judge(); proto = substr($0, 2); next }
     /^n/    { name = substr($0, 2); next }
     /^TST=/ { tcpstate = substr($0, 5); next }
     END {
@@ -270,7 +273,7 @@ isolation_check() {
   pid="$(api_pid)" || { [ -n "$mode" ] || meh "isolation check" "API not running"; return 3; }
   pids="$(tree_pids "$pid" | paste -s -d, -)"
   # lsof exits 1 when a short-lived child is already gone; only the verdict matters.
-  raw="$(lsof -nP -a -p "$pids" -i -F pPnT 2>/dev/null)"
+  raw="$(lsof -nP -a -p "$pids" -i -F pfPnT 2>/dev/null)"
   report="$(printf '%s\n' "$raw" | classify)"; rc=$?
   if [ -e "$CONTENT/appsettings.Local.json" ]; then
     report="$report
