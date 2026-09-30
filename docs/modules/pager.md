@@ -132,6 +132,17 @@ cd ~/openfno-pager
 tail -f ~/openfno-pager/pager.log                               # or: journalctl -u openfno-pager -f
 ```
 
+The owner's phone must accept the calls first, once:
+
+1. Send `/start` to `@CallMeBot_txtbot` in Telegram. `https://api.callmebot.com/text.php?user=@username&text=hi`
+   then answers "Status: Successful".
+2. Add the calling account CallMeBot names to the Telegram contacts and send it a message; on 1 Oct 2026 that was
+   `@CallMeBot_API16`. Without it the call API answers "Error: Someone reported CallMeBot as spammer … add
+   @CallMeBot_API16 into your contacts" and no call is made.
+
+`--test` passes only when a call really goes out. `pager.log` keeps CallMeBot's reply as words, and a failed call's
+reason reaches the Desk System text. Until 1 Oct 2026 an error in the reply's body counted as a placed call.
+
 To update: copy `pager.py` again and `sudo systemctl restart openfno-pager`.
 Its `state.json` is kept, and one written by an older version still loads. A
 restart shorter than five minutes keeps each problem's grace; a longer one

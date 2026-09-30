@@ -346,6 +346,35 @@ class Escalation(unittest.TestCase):
             net.assert_not_called()
         self.assertIn("PAGER_CALLMEBOT_USER", call.last_error)
 
+    # CallMeBot's real reply of 1 Oct 2026: a 200 page whose error sits after an analytics script.
+    SPAMMER_PAGE = (
+        '<head><!-- Global site tag (gtag.js) - Google Analytics --> <script async '
+        'src="https://www.googletagmanager.com/gtag/js?id=UA-1"></script> <script> window.dataLayer = '
+        'window.dataLayer || []; function gtag(){dataLayer.push(arguments);} gtag("js", new Date()); </script>'
+        + " " * 300 + '</head><body><p>Checking Authorization for @owner...<br>Autorization OK<br>'
+        'Starting Telegram Audio Call.<br>Error: Someone reported CallMeBot as spammer. Please, add '
+        '@CallMeBot_API16 into your contacts and send it a text message to initiate a conversation.<br>End.-</p></body>')
+
+    def test_an_error_deep_in_callmebots_page_is_a_failed_call_with_its_reason(self):
+        call = pager.call_sender("@owner")
+        reply = mock.Mock(ok=True, status_code=200, text=self.SPAMMER_PAGE)
+        with mock.patch.object(pager.requests, "get", return_value=reply):
+            self.assertFalse(call("x"))
+        self.assertIn("Someone reported CallMeBot as spammer", call.last_error)
+        self.assertIn("@CallMeBot_API16", call.last_error)
+
+    def test_a_page_without_an_error_is_a_placed_call(self):
+        call = pager.call_sender("@owner")
+        page = '<head><script>var e = "error";</script></head><body>Starting Telegram Audio Call. Script ended. End.-</body>'
+        reply = mock.Mock(ok=True, status_code=200, text=page)
+        with mock.patch.object(pager.requests, "get", return_value=reply):
+            self.assertTrue(call("x"))
+        self.assertEqual("", call.last_error)
+
+    def test_callmebots_page_is_read_as_its_words(self):
+        self.assertEqual("Status: Successful", pager.callmebot_reply(
+            '<!-- c --><script>var a = "<b>";</script><style>p{}</style><p>Status:<br> Successful</p>'))
+
     # -- C16: "could not tell" and a window's end were announced as RESOLVED
 
     def test_could_not_tell_holds_an_open_problem_without_resolving_it(self):
