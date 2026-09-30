@@ -329,6 +329,77 @@ class InstallWithTeeTests(unittest.TestCase):
                           ("|", "[STATUS] NIFTY spot=25010")], stamped(path))
 
 
+class PinnedLogNameTests(unittest.TestCase):
+    """
+    ENGINE_LOG_NAME: the API launching a daemon decides the log's name, and
+    with it that the log is kept from the first line. On 28 Sep, twice, a feed
+    adopted after an API restart had pipes nobody read and its output was lost;
+    the API now tails logs/engine/<name>-<pid>.log instead, a path it computes
+    from the name it set and the pid it launched.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.saved = (sys.stdout, sys.stderr)
+
+    def tearDown(self) -> None:
+        for stream in (sys.stdout, sys.stderr):
+            if isinstance(stream, SafeStream):
+                stream.close()
+        sys.stdout, sys.stderr = self.saved
+        self.tmp.cleanup()
+
+    def test_the_pinned_name_wins_and_turns_the_tee_on(self) -> None:
+        from pathlib import Path
+        from unittest import mock
+
+        sys.stdout, sys.stderr = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, {"ENGINE_LOG_NAME": "dhan-feed"}), \
+                mock.patch("core.safe_output.ENGINE_LOG_DIR", Path(self.tmp.name)):
+            path = install_safe_stdio(name="something-else")
+            print("[dhan] STARTING LIVE FEED")
+            # A second install (a script renaming its log) cannot move it either.
+            self.assertEqual(path, install_safe_stdio(name="renamed"))
+            print("[dhan] heartbeat", file=sys.stderr)
+
+        self.assertEqual(os.path.join(self.tmp.name, f"dhan-feed-{os.getpid()}.log"), path)
+        # Stamped from the first line while the pipe is alive: the tee, not the fallback.
+        self.assertEqual([("|", "[dhan] STARTING LIVE FEED"), ("!", "[dhan] heartbeat")], stamped(path))
+
+    def test_without_it_nothing_changes(self) -> None:
+        sys.stdout, sys.stderr = io.StringIO(), io.StringIO()
+        path = os.path.join(self.tmp.name, "ingestor-1.log")
+        env = {k: v for k, v in os.environ.items() if k != "ENGINE_LOG_NAME"}
+        from unittest import mock
+        with mock.patch.dict(os.environ, env, clear=True):
+            self.assertEqual(path, install_safe_stdio(path))
+            print("[fyers] ticks flowing")
+
+        # No tee: the file is written only once the pipe has died.
+        self.assertFalse(os.path.exists(path))
+
+    def test_the_file_carries_the_pid_the_launcher_sees(self) -> None:
+        # The contract the API relies on: the pid in the name is the pid of
+        # the process it started, not of anything the script does later.
+        script = textwrap.dedent(f"""\
+            import sys
+            from pathlib import Path
+            sys.path.insert(0, {_bootstrap.ENGINE_DIR!r})
+            import core.safe_output as safe_output
+            safe_output.ENGINE_LOG_DIR = Path({self.tmp.name!r})
+            safe_output.install_safe_stdio(name="ingestor")
+            print("[fyers] connected")
+        """)
+        env = dict(os.environ, ENGINE_LOG_NAME="ingestor", PYTHONUNBUFFERED="1")
+        child = subprocess.Popen([sys.executable, "-c", script], env=env,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        out, _ = child.communicate(timeout=60)
+
+        self.assertEqual("[fyers] connected\n", out)
+        path = os.path.join(self.tmp.name, f"ingestor-{child.pid}.log")
+        self.assertEqual([("|", "[fyers] connected")], stamped(path))
+
+
 class ExitLineTests(unittest.TestCase):
     """
     The last line of a runner's log says how it ended. It is written from
