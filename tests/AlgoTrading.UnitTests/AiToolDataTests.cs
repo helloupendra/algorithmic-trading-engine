@@ -89,8 +89,11 @@ public sealed class AiToolDataTests : IDisposable
         long runId = SeedDesk();
         await using var db = _desk.Db();
         var tool = new RunsTool(History(db));
+        // The run's own IST day, not "today": it starts an hour ago, which is
+        // yesterday's IST day between 00:00 and 01:00 IST.
+        var day = AlgoTrading.Infrastructure.Services.IstTime.DateOf(db.SimulationRuns.Single(r => r.Id == runId).StartedUtc!.Value);
 
-        var output = await tool.RunAsync(AiToolArgs.Empty, CancellationToken.None);
+        var output = await tool.RunAsync(AiToolArgs.Parse($$"""{"date":"{{day:yyyy-MM-dd}}"}"""), CancellationToken.None);
         var json = JsonDocument.Parse(JsonSerializer.Serialize(output.Data, Wire)).RootElement;
 
         var run = json.GetProperty("runs").EnumerateArray().Single(r => r.GetProperty("runId").GetInt64() == runId);
