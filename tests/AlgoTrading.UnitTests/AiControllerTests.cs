@@ -171,6 +171,7 @@ public class AiControllerTests
         var first = Body<AiCallPage>(await controller.Calls(take: 2));
         var second = Body<AiCallPage>(await controller.Calls(take: 2, beforeId: first.NextBeforeId));
         var failed = Body<AiCallPage>(await controller.Calls(outcome: AiCallOutcome.Failed));
+        var fromTelegram = Body<AiCallPage>(await controller.Calls(source: "telegram"));
 
         Assert.Equal(new long[] { 5, 4 }, first.Calls.Select(c => c.Id));
         Assert.Equal(4, first.NextBeforeId);
@@ -178,6 +179,7 @@ public class AiControllerTests
         Assert.Equal(2, failed.Calls.Count);
         Assert.Null(failed.NextBeforeId);
         Assert.Equal("Desk Assistant", first.Calls[0].AgentName);
+        Assert.Empty(fromTelegram.Calls); // every seeded call came from the console
     }
 
     [Fact]
