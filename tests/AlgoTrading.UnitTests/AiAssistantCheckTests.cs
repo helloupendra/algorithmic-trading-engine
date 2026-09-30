@@ -43,6 +43,7 @@ public class AiAssistantCheckTests
     [Theory]
     [InlineData("The worst run is #339 (Fulcrum).", true)]
     [InlineData("Run 339 lost the most.", true)]
+    [InlineData("Run 339.", true)]
     [InlineData("Run 3390 lost the most.", false)]
     [InlineData("It lost 339.5 points.", false)]
     public void A_run_id_counts_only_as_a_whole_number(string answer, bool pass)
@@ -57,6 +58,26 @@ public class AiAssistantCheckTests
 
         Assert.True(AssistantCheckAgent.Grade(q, "It lost ₹1,10,132 after charges."));
         Assert.False(AssistantCheckAgent.Grade(q, "It lost ₹1,10,000 after charges."));
+    }
+
+    [Theory]
+    [InlineData("All runs together: −₹1,62,675.07.", true)]  // the second reading
+    [InlineData("All runs together: −₹1,62,500.00.", true)]  // between the two
+    [InlineData("All runs together: −₹1,63,000.00.", false)]
+    public void A_figure_that_moved_while_the_model_answered_passes_anywhere_between_the_two_readings(string answer, bool pass)
+    {
+        var q = new Question("Total?", "number", "-162,355.07 → -162,675.07", -162355.07, 1, Also: -162675.07);
+        Assert.Equal(pass, AssistantCheckAgent.Grade(q, answer));
+    }
+
+    [Fact]
+    public void A_worst_run_that_changed_while_the_model_answered_passes_as_either()
+    {
+        var q = new Question("Which run?", "id", "339 → 341", 339, 0, Also: 341);
+
+        Assert.True(AssistantCheckAgent.Grade(q, "Run 341 lost the most."));
+        Assert.True(AssistantCheckAgent.Grade(q, "Run 339 lost the most."));
+        Assert.False(AssistantCheckAgent.Grade(q, "Run 340 lost the most."));
     }
 
     // ---------- when it runs ----------
@@ -139,6 +160,33 @@ public class AiAssistantCheckTests
         Assert.Equal("Assistant check: 8 of 9 right", report.Title);
         Assert.All(data["questions"]!.AsArray(), q => Assert.NotNull(q!["callId"]));
         Assert.All(await ai.Db.AiCalls.ToListAsync(), c => Assert.Equal(("check", AiCatalog.AssistantCheck, AiCatalog.DeskAssistant), (c.Source, c.RequestedBy, c.AgentKey)));
+    }
+
+    [Fact]
+    public async Task A_run_still_trading_is_read_again_after_the_answer()
+    {
+        // The first reading builds the questions; every later one sees the MCX run ₹320 lower.
+        int reads = 0;
+        var runs = new FakeTool(AiToolNames.Runs, _ => new
+        {
+            runs = new object[] { new { runId = 339, netPnl = -110132.75, charges = 59774.75 } },
+            totals = new { runs = 1, netPnl = reads++ == 0 ? -162355.07 : -162675.07 },
+        });
+        var ai = Build(tools: [runs]);
+        ai.Provider.On(Judge1,
+            Answer("1 run today."),
+            Answer("Together: −₹1,62,675.07 after charges."),
+            Answer("Run 339."),
+            Answer("−₹1,10,132.75."),
+            Answer("₹59,774.75."),
+            Answer("₹5,525."));
+
+        var report = await Agent(ai).RunForAsync(null, CancellationToken.None);
+
+        var total = JsonNode.Parse(report!.DataJson)!["questions"]!.AsArray()[1]!;
+        Assert.True(total["pass"]!.GetValue<bool>());
+        Assert.Equal("-162,355.07 → -162,675.07", total["expected"]!.GetValue<string>());
+        Assert.Equal("Assistant check: 6 of 6 right", report.Title);
     }
 
     [Fact]

@@ -32,7 +32,10 @@ namespace AlgoTrading.Api.Services.AiAgents;
 /// Grading is plain code. Numbers are read out of the answer (₹1,10,132.75,
 /// −110,132.75, 1.1 lakh, 59.8k) after its citations, times and dates are
 /// removed, and a question passes when one of them is the known answer within
-/// its tolerance. A model or prompt change that makes the Assistant misread
+/// its tolerance. The answer is read again from the tools after the model
+/// answers, because a run still trading (MCX runs past the NSE close) moves
+/// the day's money meanwhile; a figure anywhere between the two readings
+/// passes. A model or prompt change that makes the Assistant misread
 /// the desk shows up as a lower score the same evening. The result is a report
 /// (subject <c>check</c>, one per day) on the Reports tab, each question
 /// linked to its call.
@@ -63,6 +66,7 @@ public sealed class AssistantCheckAgent(
 
     /// <summary>One question and how it is graded.</summary>
     /// <param name="Kind"><c>number</c> (within <paramref name="Tolerance"/>, sign ignored), <c>id</c> (a standalone number) or <c>word</c>.</param>
+    /// <param name="Also">The answer the tools gave after the model answered, when it moved: a number then passes anywhere between the two, an id as either.</param>
     public sealed record Question(string Text, string Kind, string Expected, double? Number, double Tolerance, double? Also = null);
 
     public sealed record Graded(Question Question, bool Pass, string Answer, long? CallId, string Model, double Seconds, string? Error);
@@ -110,8 +114,13 @@ public sealed class AssistantCheckAgent(
                 AiCatalog.DeskAssistant, null, [new AiMessage("user", q.Text + " Answer briefly.")], null, 4096, 0.2,
                 $"check-{day:yyyyMMdd}-{n}", "check", AgentKey, null), NullAiStreamSink.Instance, cancellationToken);
 
+            // A run still trading (MCX runs past the NSE close) moves the day's
+            // money while the model reads it, so the truth is read again after
+            // the answer and anything between the two readings passes.
+            var after = (await QuestionsAsync(cancellationToken)).FirstOrDefault(a => a.Text == q.Text);
+            var asked = Moved(q, after);
             bool answered = result.Outcome == AiCallOutcome.Ok;
-            graded.Add(new Graded(q, answered && Grade(q, result.Text), result.Text, result.CallId, result.Model, result.Seconds,
+            graded.Add(new Graded(asked, answered && Grade(asked, result.Text), result.Text, result.CallId, result.Model, result.Seconds,
                 answered ? null : result.Error));
         }
 
@@ -232,10 +241,20 @@ public sealed class AssistantCheckAgent(
         return q.Kind switch
         {
             "word" => text.Contains(q.Expected, StringComparison.OrdinalIgnoreCase),
-            "id" => Regex.IsMatch(text, $@"(?<![\d.]){Regex.Escape(q.Expected)}(?![\d.])"),
-            _ => q.Number is double expected && Numbers(text).Any(x => Math.Abs(Math.Abs(x) - Math.Abs(expected)) <= q.Tolerance),
+            "id" => new[] { q.Number, q.Also }.OfType<double>()
+                .Any(id => Regex.IsMatch(text, $@"(?<!\d|\d\.){id.ToString("0", CultureInfo.InvariantCulture)}(?!\d|\.\d)")),
+            _ => q.Number is double expected && Numbers(text).Any(x => Between(Math.Abs(x), Math.Abs(expected), Math.Abs(q.Also ?? expected), q.Tolerance)),
         };
     }
+
+    private static bool Between(double x, double a, double b, double tolerance) =>
+        x >= Math.Min(a, b) - tolerance && x <= Math.Max(a, b) + tolerance;
+
+    /// <summary><paramref name="before"/>, carrying the second reading when the tools' answer moved while the model answered.</summary>
+    private static Question Moved(Question before, Question? after) =>
+        before.Kind != "word" && after?.Number is double now && before.Number is double then && Math.Abs(now - then) > before.Tolerance
+            ? before with { Also = now, Expected = $"{before.Expected} → {after.Expected}" }
+            : before;
 
     /// <summary>
     /// The answer without what could look like a figure and is not one: the
