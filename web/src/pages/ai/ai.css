@@ -1,0 +1,744 @@
+/* AI workspace (Overview, Assistant, Agents, Models, Calls): the parts the
+   shared classes do not cover. Tokens only, so both themes hold; hairlines
+   and small type like the System pages. On a phone every list folds to
+   stacked rows and nothing scrolls the page sideways. */
+
+.ai-flush { margin: 0; }
+.ai-title-note { font-weight: 500; font-size: 12px; }
+.ai-cols > * { min-width: 0; }
+
+/* --- tools row --------------------------------------------------------------- */
+.ai-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.ai-tools__count { margin-left: auto; font-size: 12px; }
+.ai-select { width: auto; max-width: 220px; }
+.ai-more { display: flex; justify-content: center; }
+
+/* --- provider line ----------------------------------------------------------- */
+.ai-provider {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.ai-provider__line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  font-size: 12.5px;
+  min-width: 0;
+}
+.ai-provider__url { color: var(--text-2); overflow-wrap: anywhere; }
+.ai-provider__link { margin-left: auto; font-size: 12px; color: var(--brand-hi); text-decoration: none; }
+.ai-provider__link:hover { text-decoration: underline; }
+.ai-provider__icon { width: 15px; height: 15px; color: var(--text-3); flex: none; }
+.ai-provider .alert { display: block; }
+.ai-catline {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 12px;
+}
+.ai-catline__err { flex-basis: 100%; overflow-wrap: anywhere; }
+
+/* Five figures across on a desk screen, two on a phone. */
+.stat-grid.ai-tiles { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+
+/* --- chains: numbered chips, the first one marked -------------------------- */
+.ai-chain {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.ai-chain__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 9px 1px 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg1);
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--text);
+}
+.ai-chain__item--first { border-color: var(--brand-line); }
+.ai-chain__n {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--surface2);
+  color: var(--text-3);
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.ai-chain__item--first .ai-chain__n { background: var(--brand-soft); color: var(--brand-hi); }
+
+.ai-model-label { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; min-width: 0; }
+.ai-model-label__id { font-size: 11px; color: var(--text-3); overflow-wrap: anywhere; }
+
+.ai-pill { padding: 1px 8px; gap: 5px; font-size: 11px; }
+.ai-pill .pill__dot { width: 6px; height: 6px; }
+
+a.ai-call-link { color: var(--brand-hi); text-decoration: none; white-space: nowrap; }
+a.ai-call-link:hover { text-decoration: underline; }
+
+/* --- tiers --------------------------------------------------------------------- */
+.ai-tiers > * + * { border-top: 1px dashed var(--line-soft); }
+.ai-tier { display: flex; flex-direction: column; gap: 6px; padding: 9px 0; }
+.ai-tier:first-child { padding-top: 0; }
+.ai-tier__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  font-size: 12.5px;
+}
+.ai-tier__purpose { font-size: 12px; flex: 1 1 220px; min-width: 0; }
+.ai-tier__default { font-size: 11.5px; }
+.ai-tier__edit { margin-left: auto; align-self: center; }
+
+/* --- rate limits, last answer ------------------------------------------------ */
+.ai-meters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+.ai-last { display: flex; flex-direction: column; }
+.ai-last__row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--line-soft);
+  font-size: 12.5px;
+}
+.ai-last__row:first-child { padding-top: 0; }
+.ai-last__row:last-child { border-bottom: 0; padding-bottom: 0; }
+.ai-last__label,
+.ai-facts dt,
+.ai-chat__facts dt,
+.ai-msg__role,
+.ai-call__h {
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.ai-last__what { min-width: 0; }
+.ai-last__error { display: block; margin-top: 2px; font-size: 11.5px; color: var(--neg); overflow-wrap: anywhere; }
+
+/* --- agents at a glance (Overview) ------------------------------------------ */
+.ai-minis {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 8px;
+}
+.ai-mini {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg1);
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.14s ease;
+}
+.ai-mini:hover { border-color: var(--line-strong); }
+.ai-mini--planned { opacity: 0.62; }
+.ai-mini--planned:hover { opacity: 0.9; }
+.ai-mini__head { display: flex; align-items: baseline; gap: 6px; font-size: 12.5px; font-weight: 600; min-width: 0; }
+.ai-mini__num { color: var(--text-3); font-weight: 500; }
+.ai-mini__job {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ai-mini__foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: auto; }
+.ai-mini__tier { font-size: 11px; }
+
+/* --- the assistant -------------------------------------------------------------- */
+.ai-assistant > .hp-bar,
+.ai-assistant > .alert,
+.ai-assistant > .ai-chat,
+.ai-assistant > .ai-composer { max-width: 920px; }
+.ai-assistant__conv { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12px; }
+
+.ai-chat { display: flex; flex-direction: column; gap: 16px; }
+.ai-chat__empty {
+  padding: 14px 16px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+}
+.ai-chat__lead { margin: 0 0 12px; font-size: 13px; }
+.ai-chat__facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 9px 16px;
+  margin: 0;
+  font-size: 12.5px;
+}
+.ai-chat__facts > div,
+.ai-facts > div { display: contents; }
+.ai-chat__facts dt { padding-top: 3px; }
+.ai-chat__facts dd {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  color: var(--text-2);
+  min-width: 0;
+}
+.ai-chat__hint { font-size: 11.5px; }
+
+.ai-turn { display: flex; flex-direction: column; gap: 8px; }
+.ai-turn__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 10px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  min-height: 22px;
+}
+.ai-who {
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.ai-q {
+  padding: 8px 12px 10px;
+  background: var(--bg1);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+}
+.ai-q__tier { font-size: 11.5px; }
+.ai-q__text { margin: 0; font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai-a {
+  padding: 8px 14px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  min-width: 0;
+}
+.ai-a--streaming { border-color: color-mix(in srgb, var(--live) 30%, var(--line)); }
+.ai-a--error { border-color: color-mix(in srgb, var(--neg) 35%, var(--line)); }
+.ai-a__meta { color: var(--text-2); min-width: 0; }
+.ai-a__meta--live::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--live);
+  vertical-align: middle;
+  animation: pill-pulse 2.4s infinite;
+}
+.ai-copy { margin-left: auto; }
+.ai-a__note {
+  margin: 0 0 6px;
+  padding: 3px 9px;
+  font-size: 12px;
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-left: 2px solid var(--warn);
+  border-radius: var(--radius-sm);
+}
+.ai-a__pending { margin: 0; font-size: 12.5px; }
+.ai-a__error { margin-top: 8px; }
+.ai-a > .small-note { margin-top: 8px; }
+
+/* The model's reasoning: folded, dim, its last words showing while it thinks. */
+.ai-think { margin: 0 0 8px; font-size: 12px; color: var(--text-3); }
+.ai-think__summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 2px;
+  width: fit-content;
+  max-width: 100%;
+  cursor: pointer;
+  list-style: none;
+}
+.ai-think__summary::-webkit-details-marker { display: none; }
+.ai-think__summary::before { content: '▸'; width: 12px; color: var(--text-3); }
+.ai-think[open] > .ai-think__summary::before { content: '▾'; }
+.ai-think__summary:hover .ai-think__label { color: var(--text); }
+.ai-think__label { color: var(--text-2); font-weight: 600; }
+.ai-think--live .ai-think__label { color: var(--live); }
+.ai-think__tail {
+  flex-basis: 100%;
+  margin: 3px 0 0 12px;
+  color: var(--text-3);
+  font-style: italic;
+  line-height: 1.45;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ai-think[open] .ai-think__tail { display: none; }
+.ai-think__body {
+  margin: 6px 0 0 12px;
+  padding: 8px 10px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--bg1);
+  border-left: 2px solid var(--line-strong);
+  color: var(--text-2);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The composer stays at the foot of the window while a long answer scrolls. */
+.ai-composer {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0 12px;
+  background: var(--bg0);
+  border-top: 1px solid var(--line-soft);
+}
+.ai-composer__input {
+  width: 100%;
+  min-height: 58px;
+  max-height: 40vh;
+  resize: vertical;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.ai-composer__foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.ai-composer__hint { margin-left: auto; font-size: 11.5px; }
+.ai-end { height: 1px; margin-top: 0 !important; }
+
+/* --- an answer's text ------------------------------------------------------------ */
+.ai-md { font-size: 13.5px; line-height: 1.6; color: var(--text); overflow-wrap: anywhere; min-width: 0; }
+.ai-md > * { margin-top: 0; margin-bottom: 0; }
+.ai-md > * + * { margin-top: 10px; }
+.ai-md strong { font-weight: 650; }
+.ai-md__h { font-weight: 650; }
+.ai-md__h--1 { font-size: 14.5px; }
+.ai-md__h--2 { font-size: 14px; }
+.ai-md__h--3 { font-size: 13.5px; }
+.ai-md > .ai-md__h:not(:first-child) { margin-top: 12px; }
+.ai-md__list { display: flex; flex-direction: column; gap: 3px; }
+.ai-md__li { display: grid; grid-template-columns: 1.7em minmax(0, 1fr); }
+.ai-md__li--d1 { padding-left: 1.7em; }
+.ai-md__li--d2 { padding-left: 3.4em; }
+.ai-md__li--d3 { padding-left: 5.1em; }
+.ai-md__marker { padding-right: 0.5em; text-align: right; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.ai-md__item { min-width: 0; }
+.ai-md__code {
+  padding: 9px 11px;
+  overflow-x: auto;
+  background: var(--bg1);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+.ai-md__code code { padding: 0; border: 0; background: none; font-size: inherit; }
+.ai-md__table .table { white-space: normal; font-size: 12.5px; }
+.ai-md__quote {
+  margin-left: 0;
+  margin-right: 0;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid var(--line-strong);
+  color: var(--text-2);
+}
+.ai-md > .ai-md__rule { margin: 12px 0; border: 0; border-top: 1px solid var(--line); }
+
+/* --- agents ------------------------------------------------------------------------ */
+.ai-agents {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr));
+  gap: 10px;
+}
+.ai-agent {
+  min-width: 0;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  scroll-margin-top: calc(var(--topbar-h) + var(--tabbar-h) + 12px);
+}
+/* A built agent takes the row: it has the switch, the chain editor and a history. */
+.ai-agent--on,
+.ai-agent--off { grid-column: 1 / -1; }
+.ai-agent--on { border-left: 2px solid color-mix(in srgb, var(--pos) 55%, transparent); }
+.ai-agent--off { border-left: 2px solid color-mix(in srgb, var(--warn) 60%, transparent); }
+.ai-agent--planned { background: transparent; border-style: dashed; }
+.ai-agent--planned .ai-agent__name,
+.ai-agent--planned .ai-agent__job { color: var(--text-2); }
+.ai-agent--planned .ai-facts dd { color: var(--text-3); }
+.ai-agent--target { border-color: var(--brand-line); }
+.ai-agent__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.ai-agent__num { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.ai-agent__name { margin: 0; font-size: 13.5px; font-weight: 650; }
+.ai-agent__tag { font-size: 11.5px; }
+.ai-agent__job { margin: 8px 0 0; font-size: 13px; line-height: 1.5; }
+.ai-agent__use { margin: 3px 0 0; font-size: 12.5px; line-height: 1.5; }
+.ai-agent__chain { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.ai-agent__chainwhose { font-size: 11.5px; }
+.ai-agent__last { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; }
+
+.ai-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 14px;
+  margin: 10px 0 0;
+  font-size: 12.5px;
+}
+.ai-facts dt { padding-top: 2px; }
+.ai-facts dd { margin: 0; min-width: 0; color: var(--text-2); overflow-wrap: anywhere; }
+
+/* The switch sits at the end of the header; its question takes a row of its own under it. */
+.ai-switch { display: contents; }
+.ai-switch > .oc-toggle { margin-left: auto; }
+.ai-switch__ask {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg1);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+}
+.ai-switch__q { flex: 1 1 100%; }
+.ai-switch__reason { flex: 1 1 240px; max-width: 420px; }
+.ai-switch__tools { display: inline-flex; gap: 6px; }
+.ai-switch__error { flex-basis: 100%; }
+
+/* The chain editor, inside an agent card or a tier row. */
+.ai-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: var(--bg1);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  max-width: 720px;
+}
+.ai-editor__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.ai-editor__row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 4px 3px 7px;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+}
+.ai-editor__model { min-width: 0; }
+.ai-editor__tools { display: inline-flex; gap: 1px; }
+.ai-editor__tools .btn { min-width: 28px; padding: 2px 8px; }
+.ai-editor__add { display: flex; flex-wrap: wrap; gap: 6px; }
+.ai-editor__pick { flex: 1 1 260px; max-width: 480px; }
+.ai-editor__reason { width: 100%; max-width: 480px; }
+.ai-editor__foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+
+/* Rule-based parts and local models: name, what, where, model on one hairline. */
+.ai-rules__list { display: flex; flex-direction: column; }
+.ai-rule {
+  display: grid;
+  grid-template-columns: minmax(140px, 190px) minmax(0, 1fr) minmax(0, 230px) minmax(0, 210px);
+  align-items: baseline;
+  gap: 2px 14px;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--line-soft);
+  font-size: 12.5px;
+}
+.ai-rule:first-child { padding-top: 0; }
+.ai-rule__name { font-weight: 600; overflow-wrap: anywhere; }
+.ai-rule__what { color: var(--text-2); }
+.ai-rule__where { font-size: 11.5px; overflow-wrap: anywhere; }
+.ai-rule__model { font-size: 12px; }
+
+/* --- models ------------------------------------------------------------------------- */
+.ai-search { display: inline-flex; align-items: center; gap: 6px; }
+.ai-search svg { width: 14px; height: 14px; color: var(--text-3); flex: none; }
+.ai-search .field__input { width: 220px; min-width: 0; }
+
+.ai-models { display: flex; flex-direction: column; }
+.ai-model {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, 1fr) 84px;
+  grid-template-areas:
+    'name today last act'
+    'use use use act'
+    'res res res res';
+  align-items: baseline;
+  gap: 3px 16px;
+  padding: 9px 2px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 12.5px;
+}
+.ai-model:first-child { padding-top: 0; }
+.ai-model:last-child { border-bottom: 0; padding-bottom: 0; }
+.ai-model__name { grid-area: name; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; min-width: 0; }
+.ai-model__id { font-size: 11px; overflow-wrap: anywhere; }
+.ai-model__use { grid-area: use; color: var(--text); min-width: 0; }
+.ai-model__note { display: block; font-size: 11.5px; }
+.ai-model__today { grid-area: today; color: var(--text-2); }
+.ai-model__last { grid-area: last; color: var(--text-2); min-width: 0; }
+.ai-model__act { grid-area: act; justify-self: end; align-self: center; }
+.ai-model__resultrow { grid-area: res; }
+.ai-model__resultrow:empty { display: none; }
+.ai-model__err { display: block; font-size: 11.5px; color: var(--neg); overflow-wrap: anywhere; }
+.ai-model__notest { font-size: 11.5px; white-space: nowrap; }
+.ai-model__result { margin: 2px 0 0; font-size: 12px; overflow-wrap: anywhere; }
+
+.ai-vendors { display: flex; flex-direction: column; }
+.ai-vendor { border-bottom: 1px solid var(--line-soft); }
+.ai-vendor:last-child { border-bottom: 0; }
+.ai-vendor__summary {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: fit-content;
+  padding: 6px 2px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 12.5px;
+}
+.ai-vendor__summary::-webkit-details-marker { display: none; }
+.ai-vendor__summary::before { content: '▸'; width: 10px; color: var(--text-3); }
+.ai-vendor[open] > .ai-vendor__summary::before { content: '▾'; }
+.ai-vendor__name { font-weight: 600; }
+.ai-vendor__list { padding: 0 0 6px; }
+.ai-cat {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) auto;
+  grid-template-areas: 'id last act' 'res res res';
+  align-items: center;
+  gap: 2px 14px;
+  padding: 4px 2px 4px 16px;
+  border-top: 1px dashed var(--line-soft);
+  font-size: 12.5px;
+}
+.ai-cat__id { grid-area: id; overflow-wrap: anywhere; }
+.ai-cat__last { grid-area: last; color: var(--text-2); font-size: 12px; }
+.ai-cat__act { grid-area: act; justify-self: end; }
+.ai-cat__result { grid-area: res; }
+
+/* --- calls ---------------------------------------------------------------------------- */
+/* Words a stacked row needs that a column header says on a desk screen. */
+.ai-only-s { display: none; }
+.ai-calls .ai-c-summary { max-width: 420px; }
+.ai-c-summary__text,
+.ai-c-summary__err {
+  display: block;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-c-summary__err { font-size: 11.5px; color: var(--neg); }
+.ai-c-summary__err--quiet { color: var(--text-3); }
+a.ai-c-link { color: var(--text); text-decoration: none; font-variant-numeric: tabular-nums; }
+a.ai-c-link:hover { color: var(--brand-hi); text-decoration: underline; }
+
+.ai-call > * + * { margin-top: 12px; }
+.ai-call__head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.ai-call__title { margin: 0; font-size: 15px; font-weight: 650; }
+.ai-call__who { font-size: 12.5px; min-width: 0; }
+.ai-call__close { margin-left: auto; }
+.ai-call > .ai-call__when { margin: 3px 0 0; font-size: 12px; }
+.ai-call .alert { display: block; }
+.ai-call__error { overflow-wrap: anywhere; }
+.ai-call__conv { overflow-wrap: anywhere; text-align: right; }
+.ai-call__sec { min-width: 0; }
+.ai-call__h { margin: 0 0 6px; }
+.ai-call__h .faint { font-weight: 500; letter-spacing: 0; }
+.ai-call__req { margin: 0; font-size: 12.5px; overflow-wrap: anywhere; }
+.ai-call__chain { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 8px; font-size: 12px; }
+.ai-call__answer { padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); }
+
+.ai-fold { font-size: 12.5px; color: var(--text-2); }
+.ai-fold > summary { cursor: pointer; width: fit-content; max-width: 100%; color: var(--text-2); padding: 2px 0; }
+.ai-fold > summary:hover { color: var(--text); }
+
+.ai-pre {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  max-height: 360px;
+  overflow-y: auto;
+  background: var(--bg1);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ai-msgs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ai-msg--user .ai-pre { color: var(--text); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-a__meta--live::before { animation: none; }
+  .ai-mini { transition: none; }
+}
+
+/* --- a phone --------------------------------------------------------------------------- */
+@media (max-width: 760px) {
+  .ai-hide-s { display: none; }
+  .ai-tools__count { margin-left: 0; flex-basis: 100%; }
+  .ai-select { flex: 1 1 140px; max-width: none; }
+  .ai-provider__link { margin-left: 0; }
+  .ai-search, .ai-search .field__input { width: 100%; }
+  .ai-search { flex: 1 1 100%; }
+
+  /* In the flow on a phone: pinned above the bottom bar it left a third of the
+     screen for the answer. The page follows the answer down to it instead. */
+  .ai-composer { position: static; }
+  .ai-composer__hint { display: none; }
+  .ai-composer__go { margin-left: auto; }
+  .ai-chat__facts { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .ai-chat__facts dd + dt { margin-top: 8px; }
+  .ai-a { padding: 8px 11px 11px; }
+
+  .ai-facts { grid-template-columns: minmax(0, 1fr); gap: 1px; }
+  .ai-facts dd + dt { margin-top: 7px; }
+  .ai-switch__reason { max-width: none; }
+
+  .ai-rule { grid-template-columns: minmax(0, 1fr); gap: 1px; }
+
+  .ai-model {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: 'name act' 'use use' 'today today' 'last last' 'res res';
+  }
+  .ai-cat {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: 'id act' 'last last' 'res res';
+    padding-left: 12px;
+  }
+
+  .ai-last__row { grid-template-columns: minmax(0, 1fr); gap: 1px; }
+
+  /* Agents at a glance: a line each, the job clamped to one. */
+  .ai-minis { gap: 6px; }
+  .ai-mini { padding: 7px 10px; }
+  .ai-mini__job { -webkit-line-clamp: 1; }
+  .ai-mini__tier { display: none; }
+
+  /* Models used today as stacked rows: the name, then the figures with their words. */
+  .table.ai-bymodel thead { display: none; }
+  .table.ai-bymodel,
+  .table.ai-bymodel tbody { display: block; }
+  .table.ai-bymodel tbody tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 12px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .table.ai-bymodel tbody tr:last-child { border-bottom: 0; }
+  .table.ai-bymodel tbody td { display: block; padding: 0; border: 0; text-align: left; font-size: 12px; }
+  .table.ai-bymodel tbody tr:hover td { background: transparent; }
+  .table.ai-bymodel tbody td:first-child { flex-basis: 100%; font-size: 12.5px; font-weight: 600; }
+  .table.ai-bymodel tbody td.ai-hide-s { display: block; }
+
+  /* The call log as stacked rows: when, agent and the outcome on one line; the
+     model and the figures under it; the question under those. A table this
+     wide scrolled the one column that matters (the outcome) off the screen.
+     Prefixed with .table so they outrank the shared table rules. */
+  .table.ai-calls thead { display: none; }
+  .table.ai-calls,
+  .table.ai-calls tbody { display: block; }
+  .table.ai-calls tbody tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 3px 10px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .table.ai-calls tbody tr::before { content: ''; order: 3; flex-basis: 100%; height: 0; }
+  .table.ai-calls tbody tr:last-child { border-bottom: 0; }
+  .table.ai-calls tbody tr.row--selected { background: var(--brand-soft); }
+  .table.ai-calls tbody tr.row--live { box-shadow: inset 2px 0 0 var(--live); }
+  .table.ai-calls tbody td { display: block; padding: 0; border: 0; box-shadow: none; }
+  .table.ai-calls tbody tr:hover td,
+  .table.ai-calls tbody tr.row--selected td { background: transparent; }
+  .table.ai-calls .ai-c-when,
+  .table.ai-calls .ai-c-agent { order: 1; }
+  .table.ai-calls .ai-c-agent { font-weight: 600; }
+  .table.ai-calls .ai-c-outcome { order: 2; margin-left: auto; }
+  .table.ai-calls .ai-c-model,
+  .table.ai-calls .ai-c-secs,
+  .table.ai-calls .ai-c-tokens,
+  .table.ai-calls .ai-c-fb { order: 4; font-size: 12px; text-align: left; }
+  .table.ai-calls .ai-c-who { order: 5; font-size: 12px; }
+  /* A dash says nothing in a line of figures; the outcome already says why it is missing. */
+  .table.ai-calls .ai-c-none { display: none; }
+  .table.ai-calls .ai-c-fb.faint { display: none; }
+  .ai-only-s { display: inline; }
+  .table.ai-calls .ai-c-who { margin-left: auto; }
+  .table.ai-calls .ai-c-summary { order: 6; flex-basis: 100%; max-width: none; }
+  .ai-c-summary__text,
+  .ai-c-summary__err { max-width: none; white-space: normal; overflow-wrap: anywhere; }
+  .ai-c-summary__text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+  .ai-call__close { margin-left: 0; }
+  /* The call's figures two across, each label over its value. */
+  .kv-grid.ai-call__kv { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
+  .kv-grid.ai-call__kv > div { flex-direction: column; justify-content: flex-start; gap: 0; }
+  .ai-call__conv { text-align: left; }
+}

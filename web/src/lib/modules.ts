@@ -2,7 +2,7 @@
  * Workspace registry: the single source of truth for what this console is made
  * of, where each part lives and who may see it.
  *
- * The console is six workspaces (Desk, Markets, Trade, Research, Data,
+ * The console is seven workspaces (Desk, Markets, Trade, Research, AI, Data,
  * System), each holding tabs. A tab declares what it requires: the Admin role, or one of
  * the module grants the API enforces (PlatformModules on the server). The top
  * bar, the tab strip, the phone's bottom bar and the ⌘K palette all read from
@@ -21,7 +21,7 @@
 
 import type { ComponentType, SVGProps } from 'react'
 import type { MeResponse } from './api'
-import { IconCandles, IconDashboard, IconDatabase, IconFlask, IconServer, IconSwitch } from '../components/icons'
+import { IconCandles, IconChip, IconDashboard, IconDatabase, IconFlask, IconServer, IconSwitch } from '../components/icons'
 
 /** The module keys the server grants to traders (PlatformModules.cs). */
 export const GRANT_KEYS = ['strategies', 'backtesting', 'market-data', 'notebook', 'analysis'] as const
@@ -30,7 +30,7 @@ export type GrantKey = (typeof GRANT_KEYS)[number]
 /** What a tab needs beyond being signed in: the Admin role, or one grant. */
 export type Requirement = 'admin' | GrantKey
 
-export type WorkspaceKey = 'desk' | 'markets' | 'trade' | 'research' | 'data' | 'system'
+export type WorkspaceKey = 'desk' | 'markets' | 'trade' | 'research' | 'ai' | 'data' | 'system'
 
 /** The two consoles one registry serves. */
 export type Side = 'admin' | 'trader'
@@ -286,6 +286,57 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         requires: 'notebook',
         // A board opens full-window at /notebook/:id, outside the shell.
         pages: [{ label: 'Notebook', to: '/research/notebook', only: 'admin', keywords: ['whiteboards', 'boards'] }],
+      },
+    ],
+  },
+  {
+    // The desk's hosted language models and the agents that use them, on
+    // their own (owner, 30 Sep): which models, from where, what each agent
+    // does, when it ran, what it cost. After Research, before Data and
+    // System: like Research it is where the owner thinks with the desk, and
+    // the two after it are what the desk runs on. Admin-only throughout: the
+    // provider's free tier is for development, not for serving traders.
+    key: 'ai',
+    label: 'AI',
+    home: '/ai',
+    description: 'The desk\'s AI: the models and where they come from, the agents, every call, and the assistant.',
+    icon: IconChip,
+    tabs: [
+      {
+        key: 'ai-overview',
+        label: 'Overview',
+        home: '/ai',
+        requires: 'admin',
+        // Exact: the other AI tabs live under /ai.
+        pages: [{ label: 'Overview', to: '/ai', exact: true, keywords: ['ai', 'llm', 'nvidia', 'nim', 'usage', 'tokens', 'rate limit'] }],
+      },
+      {
+        key: 'ai-assistant',
+        label: 'Assistant',
+        home: '/ai/assistant',
+        requires: 'admin',
+        pages: [{ label: 'Assistant', to: '/ai/assistant', keywords: ['ask', 'chat', 'nemotron', 'question'] }],
+      },
+      {
+        key: 'ai-agents',
+        label: 'Agents',
+        home: '/ai/agents',
+        requires: 'admin',
+        pages: [{ label: 'Agents', to: '/ai/agents', keywords: ['switch off', 'roadmap', 'planned'] }],
+      },
+      {
+        key: 'ai-models',
+        label: 'Models',
+        home: '/ai/models',
+        requires: 'admin',
+        pages: [{ label: 'Models', to: '/ai/models', keywords: ['tiers', 'chain', 'fallback', 'catalog', 'finbert'] }],
+      },
+      {
+        key: 'ai-calls',
+        label: 'Calls',
+        home: '/ai/calls',
+        requires: 'admin',
+        pages: [{ label: 'Calls', to: '/ai/calls', keywords: ['api calls', 'prompts', 'answers', 'fallbacks'] }],
       },
     ],
   },

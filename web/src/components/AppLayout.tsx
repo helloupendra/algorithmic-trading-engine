@@ -1,8 +1,8 @@
 /**
  * The signed-in shell, v3: one console for admins and traders.
  *
- * A 44px top bar holds the brand, the six workspaces (Desk, Markets, Trade,
- * Research, Data, System), the ⌘K search, the live status items and the account
+ * A 44px top bar holds the brand, the seven workspaces (Desk, Markets, Trade,
+ * Research, AI, Data, System), the ⌘K search, the live status items and the account
  * menu. Under it, a 38px strip of the current workspace's tabs; on a phone
  * the workspaces move to a bottom bar. Which workspaces and tabs exist comes
  * from lib/modules.ts and the user's role and grants, and the current one from

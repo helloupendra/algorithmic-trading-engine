@@ -1,0 +1,354 @@
+/**
+ * AI → Agents (/ai/agents): every agent the desk has or plans.
+ *
+ * Each agent says what it does and why, when it runs, which tier and chain
+ * of models it uses (in fallback order), what it may read and what it may
+ * never do, when it last ran and what that call came to, and today's calls,
+ * tokens and errors. A built agent can be switched off (and on) with a
+ * reason, and given a chain of its own or put back on its tier's. A planned
+ * agent is code still to write: it is shown dimmer with its phase, and has
+ * no switch, because there is nothing to switch on.
+ *
+ * Under them, the parts of the desk that look like agents but are rules in
+ * code (Sentinel, the pager, the supervisor), so the list is the whole story.
+ */
+
+import { useEffect, useState } from 'react'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
+import { AGENT_STATUSES, agentStatus, callTime, formatTokens, modelName, useAiAgents, useAiModels, useAiOverview, useUpdateAgent } from '../../lib/ai'
+import type { AgentStatus, AiAgent, AiModel } from '../../lib/ai'
+import { formatDateTime } from '../../lib/format'
+import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components/ui'
+import { CallLink, ChainChips, ChainEditor, OutcomeBadge, StatusPill } from './parts'
+import { errorText, useNow } from './common'
+import '../system/health/health.css'
+import './ai.css'
+
+type Filter = AgentStatus | 'all'
+
+function filterFrom(raw: string | null): Filter {
+  return raw === 'on' || raw === 'off' || raw === 'planned' ? raw : 'all'
+}
+
+/** The on/off switch, which asks for a reason before it acts. */
+function AgentSwitch({ agent }: { agent: AiAgent }) {
+  const update = useUpdateAgent()
+  const [asking, setAsking] = useState(false)
+  const [reason, setReason] = useState('')
+  const on = agent.enabled
+  const act = () =>
+    update.mutate(
+      { key: agent.key, enabled: !on, reason: reason.trim() },
+      {
+        onSuccess: () => {
+          setAsking(false)
+          setReason('')
+        },
+      },
+    )
+
+  return (
+    <div className="ai-switch">
+      <button
+        type="button"
+        className="oc-toggle"
+        aria-pressed={on}
+        aria-expanded={asking}
+        disabled={update.isPending}
+        title={on ? 'Switch this agent off' : 'Switch this agent on'}
+        onClick={() => setAsking((v) => !v)}
+      >
+        <span className="oc-toggle__box" aria-hidden="true" />
+        {on ? 'On' : 'Off'}
+      </button>
+      {asking && (
+        <div className="ai-switch__ask">
+          <span className="ai-switch__q">
+            Switch the {agent.name} <b>{on ? 'off' : 'on'}</b>?{' '}
+            {on && <span className="muted">Questions to it are refused until it is switched back on.</span>}
+          </span>
+          <input
+            className="field__input field__input--sm ai-switch__reason"
+            placeholder="Why (optional, kept with the change)"
+            aria-label="Reason"
+            value={reason}
+            maxLength={200}
+            onChange={(e) => setReason(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') act()
+            }}
+          />
+          <span className="ai-switch__tools">
+            <button type="button" className={`btn btn--sm ${on ? 'btn--danger' : 'btn--primary'}`} disabled={update.isPending} onClick={act}>
+              {update.isPending ? 'Saving…' : on ? 'Switch off' : 'Switch on'}
+            </button>
+            <button type="button" className="btn btn--ghost btn--sm" disabled={update.isPending} onClick={() => setAsking(false)}>
+              Cancel
+            </button>
+          </span>
+          {update.isError && (
+            <div className="alert alert--error ai-switch__error" role="alert">
+              {errorText(update.error)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AgentChain({ agent, catalog, catalogNote, tierChain }: { agent: AiAgent; catalog: AiModel[] | undefined; catalogNote: string | null; tierChain: string[] | null }) {
+  const update = useUpdateAgent()
+  const [editing, setEditing] = useState(false)
+  const done = { onSuccess: () => setEditing(false) }
+  return (
+    <>
+      <div className="ai-agent__chain">
+        <ChainChips chain={agent.chain} />
+        <span className="faint ai-agent__chainwhose">
+          {agent.chainOverridden ? <Badge tone="warn">its own chain</Badge> : `the ${agent.tierLabel} tier's chain`}
+        </span>
+        {agent.built && !editing && (
+          <button type="button" className="btn btn--ghost btn--sm" onClick={() => setEditing(true)}>
+            Edit chain
+          </button>
+        )}
+      </div>
+      {editing && (
+        <ChainEditor
+          chain={agent.chain}
+          resetTo={tierChain ?? agent.chain}
+          resetLabel={`Use the ${agent.tierLabel} tier's chain`}
+          catalog={catalog}
+          catalogNote={catalogNote}
+          saving={update.isPending}
+          error={update.isError ? errorText(update.error) : null}
+          onSave={(chain, reason) => update.mutate({ key: agent.key, chain, reason }, done)}
+          onReset={(reason) => update.mutate({ key: agent.key, resetChain: true, reason }, done)}
+          onCancel={() => {
+            update.reset()
+            setEditing(false)
+          }}
+        />
+      )}
+    </>
+  )
+}
+
+function LastCall({ agent, now }: { agent: AiAgent; now: number }) {
+  const c = agent.lastCall
+  if (!c) return <span className="faint">{agent.built ? 'never called' : 'never: not built yet'}</span>
+  return (
+    <span className="ai-agent__last">
+      <span title={`${formatDateTime(c.utc)} IST`}>{callTime(c.utc, now)}</span> <OutcomeBadge outcome={c.outcome} />{' '}
+      {c.model ? (
+        <span title={c.model}>{modelName(c.model)}</span>
+      ) : (
+        <span className="faint">{c.outcome === 'running' ? 'no model has answered yet' : 'no model answered'}</span>
+      )}{' '}
+      · <CallLink id={c.id} />
+    </span>
+  )
+}
+
+function AgentCard({
+  agent,
+  now,
+  catalog,
+  catalogNote,
+  tierChain,
+  highlighted,
+}: {
+  agent: AiAgent
+  now: number
+  catalog: AiModel[] | undefined
+  catalogNote: string | null
+  tierChain: string[] | null
+  highlighted: boolean
+}) {
+  const planned = agent.status === 'planned'
+  const t = agent.today
+  return (
+    <article id={`agent-${agent.key}`} className={`ai-agent ai-agent--${agent.status} ${highlighted ? 'ai-agent--target' : ''}`}>
+      <header className="ai-agent__head">
+        <span className="ai-agent__num">#{agent.number}</span>
+        <h3 className="ai-agent__name">{agent.name}</h3>
+        <StatusPill status={agent.status} phase={agent.phase} />
+        <span className="ai-agent__tag faint">
+          {!planned && `phase ${agent.phase} · `}
+          {agent.tierLabel} tier
+        </span>
+        {agent.built && <AgentSwitch agent={agent} />}
+      </header>
+      <p className="ai-agent__job">{agent.job}</p>
+      {agent.useCase && <p className="ai-agent__use muted">{agent.useCase}</p>}
+      <dl className="ai-facts">
+        <div>
+          <dt>Runs</dt>
+          <dd>
+            {agent.schedule}
+            {agent.nextRunUtc && <span className="faint"> · next {callTime(agent.nextRunUtc, now)}</span>}
+          </dd>
+        </div>
+        <div>
+          <dt>Models</dt>
+          <dd>
+            <AgentChain agent={agent} catalog={catalog} catalogNote={catalogNote} tierChain={tierChain} />
+          </dd>
+        </div>
+        <div>
+          <dt>Reads</dt>
+          <dd>{agent.reads}</dd>
+        </div>
+        <div>
+          <dt>Never</dt>
+          <dd>{agent.limits}</dd>
+        </div>
+        {!planned && (
+          <>
+            <div>
+              <dt>Last call</dt>
+              <dd>
+                <LastCall agent={agent} now={now} />
+              </dd>
+            </div>
+            <div>
+              <dt>Today</dt>
+              <dd>
+                {t ? (
+                  <>
+                    {t.calls} call{t.calls === 1 ? '' : 's'} · {formatTokens(t.totalTokens)} tokens ·{' '}
+                    <span className={t.failed > 0 ? 'neg' : ''}>
+                      {t.failed} error{t.failed === 1 ? '' : 's'}
+                    </span>
+                    {t.calls > 0 && (
+                      <>
+                        {' · '}
+                        <Link to={`/ai/calls?agent=${encodeURIComponent(agent.key)}`}>its calls</Link>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <span className="faint">not known yet</span>
+                )}
+              </dd>
+            </div>
+          </>
+        )}
+        {agent.updatedUtc && (
+          <div>
+            <dt>Changed</dt>
+            <dd>
+              {formatDateTime(agent.updatedUtc)} IST{agent.updatedBy ? ` by ${agent.updatedBy}` : ''}
+              {agent.reason ? <span className="muted">: {agent.reason}</span> : ''}
+            </dd>
+          </div>
+        )}
+      </dl>
+    </article>
+  )
+}
+
+export function AiAgentsPage() {
+  const agents = useAiAgents()
+  const models = useAiModels()
+  const overview = useAiOverview()
+  const [params, setParams] = useSearchParams()
+  const { hash } = useLocation()
+  const filter = filterFrom(params.get('status'))
+  const now = useNow(30_000)
+  const data = agents.data
+
+  // A link from the Overview names an agent (#agent-key): bring it into view once the list is in.
+  const target = hash.startsWith('#agent-') ? hash.slice('#agent-'.length) : null
+  useEffect(() => {
+    if (!target || !data) return
+    document.getElementById(`agent-${target}`)?.scrollIntoView({ block: 'start' })
+  }, [target, data])
+
+  const counts: Record<Filter, number> = { all: data?.agents.length ?? 0, on: 0, off: 0, planned: 0 }
+  for (const a of data?.agents ?? []) if (a.status in counts) counts[a.status]++
+  const shown = (data?.agents ?? []).filter((a) => filter === 'all' || a.status === filter).sort((a, b) => a.number - b.number)
+
+  const catalogNote = models.isError
+    ? `The catalog could not be read (${errorText(models.error)}), so only the models already in chains can be kept.`
+    : models.data?.source === 'unavailable'
+      ? `The provider's list is unavailable${models.data.error ? ` (${models.data.error})` : ''}: only the models the tiers name can be picked.`
+      : null
+  // What "use the tier's chain" goes back to, from the tiers themselves.
+  const tierChains = new Map((overview.data?.tiers ?? []).map((t) => [t.key, t.chain]))
+
+  const pick = (next: Filter) => {
+    const p = new URLSearchParams(params)
+    if (next === 'all') p.delete('status')
+    else p.set('status', next)
+    setParams(p, { replace: true })
+  }
+
+  return (
+    <div className="page hp ai">
+      <div className="hp-bar">
+        <p className="hp-bar__lead muted">
+          Every agent the desk has or plans: what it does, what it may read, what it may never do, and when it last ran.
+          Only a built agent can be switched; a planned one is code still to write.
+        </p>
+      </div>
+
+      <div className="ai-tools">
+        <div className="seg" role="radiogroup" aria-label="Show">
+          {(['all', ...AGENT_STATUSES] as Filter[]).map((f) => (
+            <button key={f} type="button" role="radio" aria-checked={filter === f} className={`seg__btn ${filter === f ? 'is-active' : ''}`} onClick={() => pick(f)}>
+              {f === 'all' ? 'All' : agentStatus(f).label} <span className="faint">{data ? counts[f] : '…'}</span>
+            </button>
+          ))}
+        </div>
+        {agents.isError && data && <span className="small warn">Refresh failed: showing the last list.</span>}
+      </div>
+
+      {agents.isPending ? (
+        <Loading label="Reading the agents…" />
+      ) : !data ? (
+        <InlineError error={agents.error} />
+      ) : shown.length === 0 ? (
+        <EmptyState>{filter === 'all' ? 'The API listed no agents.' : `No agent is ${agentStatus(filter).label.toLowerCase()}.`}</EmptyState>
+      ) : (
+        <div className="ai-agents">
+          {shown.map((a) => (
+            <AgentCard
+              key={a.key}
+              agent={a}
+              now={now}
+              catalog={models.data?.models}
+              catalogNote={catalogNote}
+              tierChain={tierChains.get(a.tier) ?? null}
+              highlighted={target === a.key}
+            />
+          ))}
+        </div>
+      )}
+
+      {data && (
+        <Panel title={<>Also on the desk, not AI</>} className="ai-rules">
+          {data.ruleBased.length === 0 ? (
+            <EmptyState>None listed.</EmptyState>
+          ) : (
+            <div className="ai-rules__list">
+              {data.ruleBased.map((r) => (
+                <div key={r.name} className="ai-rule">
+                  <span className="ai-rule__name">{r.name}</span>
+                  <span className="ai-rule__what">{r.what}</span>
+                  <span className="ai-rule__where mono faint">{r.where}</span>
+                  <span className="ai-rule__model muted">{r.model}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="small-note ai-flush">
+            These watch, page and forecast with rules and statistics written in code. None of them calls a language model, and
+            none is switched from here.
+          </p>
+        </Panel>
+      )}
+    </div>
+  )
+}

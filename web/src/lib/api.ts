@@ -285,6 +285,35 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
   return parsed as T
 }
 
+/**
+ * A request whose body the caller reads itself: a stream of server-sent
+ * events (the AI assistant's answer), which apiFetch cannot hand over because
+ * it reads the whole body before returning. The same session rules apply:
+ * the token is refreshed first when it has expired or is about to
+ * (freshAccessToken), a 401 refreshes once and replays, and a second 401 ends
+ * the session. Every other status is returned for the caller to read, so the
+ * body must be one that can be sent twice (a string, not a stream).
+ */
+export async function fetchWithSession(path: string, init: RequestInit = {}): Promise<Response> {
+  const send = (token: string | null) => {
+    const headers = new Headers(init.headers)
+    if (token) headers.set('Authorization', `Bearer ${token}`)
+    return fetch(`${API_BASE_URL}${path}`, { ...init, headers, cache: 'no-store' })
+  }
+
+  let response = await send(await freshAccessToken())
+  if (response.status === 401) {
+    const fresh = await refreshAccessToken()
+    if (fresh) response = await send(fresh)
+    if (response.status === 401) {
+      tokenStore.clear()
+      onSessionExpired()
+      throw new ApiError(401, errorMessage(401, null))
+    }
+  }
+  return response
+}
+
 function isHtmlDocument(value: unknown): boolean {
   if (typeof value !== 'string') return false
   const head = value.trimStart().slice(0, 15).toLowerCase()

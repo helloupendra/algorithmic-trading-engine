@@ -47,6 +47,11 @@ import { HistoricalDataPage } from './pages/data/HistoricalDataPage'
 import { InstrumentsFnoPage } from './pages/data/InstrumentsFnoPage'
 import { NotebookPage } from './pages/notebook/NotebookPage'
 import { WhiteboardPage } from './pages/notebook/WhiteboardPage'
+import { AiOverviewPage } from './pages/ai/AiOverviewPage'
+import { AiAssistantPage } from './pages/ai/AiAssistantPage'
+import { AiAgentsPage } from './pages/ai/AiAgentsPage'
+import { AiModelsPage } from './pages/ai/AiModelsPage'
+import { AiCallsPage } from './pages/ai/AiCallsPage'
 import './styles.css'
 
 const queryClient = new QueryClient({
@@ -161,6 +166,13 @@ export default function App() {
                   <Route path="/research/forecasts" element={<AnalysisPage />} />
                   {/* The board list; a board itself is the full-window route above. */}
                   <Route path="/research/notebook" element={<NotebookPage />} />
+
+                  {/* AI: the models, the agents, every call, and the assistant. A call opens in place (?id=). */}
+                  <Route path="/ai" element={<AiOverviewPage />} />
+                  <Route path="/ai/assistant" element={<AiAssistantPage />} />
+                  <Route path="/ai/agents" element={<AiAgentsPage />} />
+                  <Route path="/ai/models" element={<AiModelsPage />} />
+                  <Route path="/ai/calls" element={<AiCallsPage />} />
 
                   <Route path="/data" element={<DataOverviewPage />} />
                   <Route path="/data/feeds" element={<LiveFeedsPage />} />
