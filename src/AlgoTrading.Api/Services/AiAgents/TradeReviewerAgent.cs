@@ -134,7 +134,8 @@ public sealed class TradeReviewerAgent(
         if (result.Outcome != AiCallOutcome.Ok)
         {
             string why = result.RefusalStatus is null ? result.Error : $"Refused: {result.Error}";
-            logger.LogWarning("Trade review of run {RunId} failed: {Error}", runId, why);
+            // The provider, not the desk: recorded as a failed report and retried.
+            logger.LogInformation("Trade review of run {RunId} failed: {Error}", runId, why);
             return await reports.SaveAsync(AgentKey, AiReportSubject.Run, Id(runId), day, AiReportStatus.Failed, result,
                 $"Run {runId}: no review", string.Empty, "{}", why, cancellationToken);
         }

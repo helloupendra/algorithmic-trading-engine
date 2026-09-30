@@ -140,7 +140,8 @@ public sealed class NewsAnalystAgent(
         if (result.Outcome != AiCallOutcome.Ok)
         {
             string why = result.RefusalStatus is null ? result.Error : $"Refused: {result.Error}";
-            logger.LogWarning("News extraction of {Count} items failed: {Error}", batch.Count, why);
+            // The provider, not the desk: recorded as failed reports and retried.
+            logger.LogInformation("News extraction of {Count} items failed: {Error}", batch.Count, why);
             foreach (var item in batch)
             {
                 written.Add(await reports.SaveAsync(AgentKey, item.SubjectType, item.SubjectId, item.Day, AiReportStatus.Failed, result,
