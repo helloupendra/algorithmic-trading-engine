@@ -169,6 +169,7 @@ builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Ap
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.ForecastsTool>();
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.StrategySpecTool>();
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.SearchDocsTool>();
+builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.StrategyHistoryTool>();
 // Keeps the docs' search index in step with docs/ (only passages that changed are embedded again).
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiSearch.AiDocIndexer>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AlgoTrading.Api.Services.AiSearch.AiDocIndexer>());
