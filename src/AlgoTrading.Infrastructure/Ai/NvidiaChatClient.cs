@@ -7,11 +7,33 @@ using Microsoft.Extensions.Options;
 
 namespace AlgoTrading.Infrastructure.Ai;
 
-/// <summary>One message of a conversation: <c>user</c>, <c>assistant</c> or <c>system</c>.</summary>
-public sealed record AiMessage(string Role, string Content);
+/// <summary>
+/// One message of a conversation: <c>user</c>, <c>assistant</c> or <c>tool</c>.
+/// An assistant message may carry the tools the model asked for; a tool
+/// message answers one of them by its id.
+/// </summary>
+public sealed record AiMessage(string Role, string Content, IReadOnlyList<AiToolCall>? ToolCalls = null, string? ToolCallId = null);
+
+/// <summary>A tool a model asked to run: its id (echoed on the answer), its name and its arguments as the JSON text the model wrote.</summary>
+public sealed record AiToolCall(string Id, string Name, string Arguments);
+
+/// <summary>A tool offered to a model: a name, what it does, and its arguments as a JSON schema.</summary>
+public sealed record AiToolSpec(string Name, string Description, JsonObject Parameters);
 
 /// <summary>What is asked of a model, whichever model of the chain it goes to.</summary>
-public sealed record AiChatRequest(IReadOnlyList<AiMessage> Messages, string SystemPrompt, int MaxTokens, double Temperature);
+/// <param name="Tools">The tools the model may ask for; none when empty.</param>
+/// <param name="ToolsClosed">
+/// The tools stay described (the conversation already holds their calls) but
+/// the model may not ask for another: the last round of a question that used
+/// its allowance.
+/// </param>
+public sealed record AiChatRequest(
+    IReadOnlyList<AiMessage> Messages,
+    string SystemPrompt,
+    int MaxTokens,
+    double Temperature,
+    IReadOnlyList<AiToolSpec>? Tools = null,
+    bool ToolsClosed = false);
 
 /// <summary>Tokens a call used, as the provider counted them.</summary>
 public sealed record AiUsage(int? PromptTokens, int? CompletionTokens, int? TotalTokens);
@@ -26,8 +48,11 @@ public abstract record AiStreamPiece
     public sealed record Content(string Text) : AiStreamPiece;
 }
 
-/// <summary>How a model's answer ended.</summary>
-public sealed record AiAttemptEnd(string FinishReason, AiUsage? Usage);
+/// <summary>How a model's answer ended: with an answer, or with the tools it wants run first.</summary>
+public sealed record AiAttemptEnd(string FinishReason, AiUsage? Usage, IReadOnlyList<AiToolCall> ToolCalls)
+{
+    public AiAttemptEnd(string finishReason, AiUsage? usage) : this(finishReason, usage, []) { }
+}
 
 /// <summary>A model that did not answer, and the reason the next one is tried.</summary>
 public sealed class AiAttemptFailedException : Exception
@@ -162,6 +187,7 @@ public sealed class NvidiaChatClient
             AiUsage? usage = null;
             bool done = false;
             bool answered = false;
+            var calls = new SortedDictionary<int, (string? Id, StringBuilder Name, StringBuilder Args)>();
 
             try
             {
@@ -198,6 +224,22 @@ public sealed class NvidiaChatClient
                         answered |= !string.IsNullOrWhiteSpace(chunk.Content);
                         await Deliver(onPiece, new AiStreamPiece.Content(chunk.Content));
                     }
+
+                    // A tool call arrives in pieces by index: the id and name
+                    // first, the arguments' JSON text in any number of parts.
+                    foreach (var part in chunk.ToolCalls)
+                    {
+                        started = true;
+                        if (!calls.TryGetValue(part.Index, out var call))
+                        {
+                            call = (null, new StringBuilder(), new StringBuilder());
+                        }
+
+                        if (part.Id is { Length: > 0 }) call.Id = part.Id;
+                        if (part.Name is { Length: > 0 }) call.Name.Append(part.Name);
+                        if (part.Arguments is { Length: > 0 }) call.Args.Append(part.Arguments);
+                        calls[part.Index] = call;
+                    }
                 }
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -215,15 +257,21 @@ public sealed class NvidiaChatClient
 
             if (!done && finish.Length == 0) throw new AiAttemptFailedException("stream broke off before the end");
 
+            var toolCalls = calls
+                .Where(c => c.Value.Name.Length > 0)
+                .Select(c => new AiToolCall(c.Value.Id ?? $"call-{c.Key}", c.Value.Name.ToString(), c.Value.Args.ToString()))
+                .ToList();
+
             // A reasoning model can spend every token thinking and say nothing.
-            if (!answered)
+            // Asking for a tool is an answer of its own.
+            if (!answered && toolCalls.Count == 0)
             {
                 throw new AiAttemptFailedException(finish == "length"
                     ? "empty answer: ran out of tokens while reasoning"
                     : "empty answer");
             }
 
-            return new AiAttemptEnd(finish, usage);
+            return new AiAttemptEnd(finish, usage, toolCalls);
         }
     }
 
@@ -290,7 +338,28 @@ public sealed class NvidiaChatClient
 
         foreach (var m in request.Messages)
         {
-            messages.Add(new JsonObject { ["role"] = m.Role, ["content"] = m.Content });
+            if (m.ToolCalls is { Count: > 0 } asked)
+            {
+                messages.Add(new JsonObject
+                {
+                    ["role"] = "assistant",
+                    ["content"] = string.IsNullOrWhiteSpace(m.Content) ? null : m.Content,
+                    ["tool_calls"] = new JsonArray(asked.Select(c => (JsonNode)new JsonObject
+                    {
+                        ["id"] = c.Id,
+                        ["type"] = "function",
+                        ["function"] = new JsonObject { ["name"] = c.Name, ["arguments"] = c.Arguments.Length > 0 ? c.Arguments : "{}" },
+                    }).ToArray()),
+                });
+            }
+            else if (m.Role == "tool")
+            {
+                messages.Add(new JsonObject { ["role"] = "tool", ["tool_call_id"] = m.ToolCallId, ["content"] = m.Content });
+            }
+            else
+            {
+                messages.Add(new JsonObject { ["role"] = m.Role, ["content"] = m.Content });
+            }
         }
 
         var body = new JsonObject
@@ -303,6 +372,22 @@ public sealed class NvidiaChatClient
             // Without it a stream never says how many tokens it used.
             ["stream_options"] = new JsonObject { ["include_usage"] = true },
         };
+
+        if (request.Tools is { Count: > 0 } tools)
+        {
+            body["tools"] = new JsonArray(tools.Select(t => (JsonNode)new JsonObject
+            {
+                ["type"] = "function",
+                ["function"] = new JsonObject
+                {
+                    ["name"] = t.Name,
+                    ["description"] = t.Description,
+                    ["parameters"] = t.Parameters.DeepClone(),
+                },
+            }).ToArray());
+            body["tool_choice"] = request.ToolsClosed ? "none" : "auto";
+        }
+
         return body.ToJsonString();
     }
 
@@ -328,6 +413,7 @@ public sealed class NvidiaChatClient
         }
 
         string? content = null, reasoning = null, finish = null;
+        var toolCalls = new List<ToolCallPart>();
         if (obj["choices"] is JsonArray { Count: > 0 } choices && choices[0] is JsonObject choice)
         {
             if (choice["delta"] is JsonObject delta)
@@ -335,6 +421,20 @@ public sealed class NvidiaChatClient
                 content = Str(delta["content"]);
                 // NVIDIA names it reasoning_content; some servers say reasoning.
                 reasoning = Str(delta["reasoning_content"]) ?? Str(delta["reasoning"]);
+
+                if (delta["tool_calls"] is JsonArray parts)
+                {
+                    for (int i = 0; i < parts.Count; i++)
+                    {
+                        if (parts[i] is not JsonObject part) continue;
+                        var function = part["function"] as JsonObject;
+                        toolCalls.Add(new ToolCallPart(
+                            Int(part["index"]) ?? i,
+                            Str(part["id"]),
+                            Str(function?["name"]),
+                            Str(function?["arguments"])));
+                    }
+                }
             }
 
             finish = Str(choice["finish_reason"]);
@@ -346,10 +446,16 @@ public sealed class NvidiaChatClient
             usage = new AiUsage(Int(u["prompt_tokens"]), Int(u["completion_tokens"]), Int(u["total_tokens"]));
         }
 
-        return new StreamChunk(content, reasoning, finish, usage, null);
+        return new StreamChunk(content, reasoning, finish, usage, null) { ToolCalls = toolCalls };
     }
 
-    public sealed record StreamChunk(string? Content, string? Reasoning, string? FinishReason, AiUsage? Usage, string? Error);
+    public sealed record StreamChunk(string? Content, string? Reasoning, string? FinishReason, AiUsage? Usage, string? Error)
+    {
+        public IReadOnlyList<ToolCallPart> ToolCalls { get; init; } = [];
+    }
+
+    /// <summary>A piece of one tool call as it streams: whatever of its id, name and arguments this chunk carries.</summary>
+    public sealed record ToolCallPart(int Index, string? Id, string? Name, string? Arguments);
 
     private static string? Str(JsonNode? node) =>
         node is JsonValue v && v.TryGetValue(out string? s) ? s : null;

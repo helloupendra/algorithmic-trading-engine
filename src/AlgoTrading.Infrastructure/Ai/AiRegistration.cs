@@ -26,6 +26,8 @@ public static class AiRegistration
         services.AddSingleton<AiModelCatalog>();
         services.AddSingleton<AiRateLimiter>();
         services.AddScoped<AiSettingsStore>();
+        // The desk tools (IAiTool) are registered by the API, which owns the read services they use.
+        services.AddScoped<AiToolbox>();
         services.AddScoped<AiGateway>();
         return services;
     }

@@ -1,8 +1,11 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
+using AlgoTrading.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -14,14 +17,18 @@ public interface IAiStreamSink
 {
     ValueTask StartAsync(long callId, IReadOnlyList<string> chain);
 
-    ValueTask AttemptAsync(string model, int number, int of);
+    /// <summary>A model is being asked: the <paramref name="number"/>th of <paramref name="of"/> left in the chain, in round <paramref name="round"/>.</summary>
+    ValueTask AttemptAsync(string model, int number, int of, int round);
 
     ValueTask ReasoningAsync(string text);
 
     ValueTask DeltaAsync(string text);
 
-    /// <summary>A model failed and the next is being asked: what was streamed so far is void.</summary>
+    /// <summary>A model failed and the next is being asked: what it streamed since its attempt began is void.</summary>
     ValueTask FallbackAsync(string model, string reason, string? next);
+
+    /// <summary>A tool the model asked for has run: what streamed in this round was the model's working, not the answer.</summary>
+    ValueTask ToolAsync(AiToolStep step);
 }
 
 /// <summary>A sink for a caller that only wants the end result.</summary>
@@ -31,19 +38,21 @@ public sealed class NullAiStreamSink : IAiStreamSink
 
     public ValueTask StartAsync(long callId, IReadOnlyList<string> chain) => ValueTask.CompletedTask;
 
-    public ValueTask AttemptAsync(string model, int number, int of) => ValueTask.CompletedTask;
+    public ValueTask AttemptAsync(string model, int number, int of, int round) => ValueTask.CompletedTask;
 
     public ValueTask ReasoningAsync(string text) => ValueTask.CompletedTask;
 
     public ValueTask DeltaAsync(string text) => ValueTask.CompletedTask;
 
     public ValueTask FallbackAsync(string model, string reason, string? next) => ValueTask.CompletedTask;
+
+    public ValueTask ToolAsync(AiToolStep step) => ValueTask.CompletedTask;
 }
 
 /// <summary>A question for the gateway, already checked for shape by the caller.</summary>
 /// <param name="Tier">Walk this tier's chain rather than the agent's own; null for the agent's.</param>
 /// <param name="SystemPrompt">Null for the agent's own system prompt.</param>
-/// <param name="Chain">Walk exactly these models (a model's health test); null otherwise.</param>
+/// <param name="Chain">Walk exactly these models, with no tools (a model's health test); null otherwise.</param>
 public sealed record AiAskInput(
     string AgentKey,
     string? Tier,
@@ -58,7 +67,25 @@ public sealed record AiAskInput(
     IReadOnlyList<string>? Chain = null);
 
 /// <summary>One model tried, as the attempts table shows it.</summary>
-public sealed record AiAttempt(string Model, string Outcome, double Seconds, int? HttpStatus);
+public sealed record AiAttempt(string Model, string Outcome, double Seconds, int? HttpStatus, int Round = 1);
+
+/// <summary>
+/// One tool the model asked for, as it ran: what it was asked, what it found,
+/// and the exact text the model was given back.
+/// </summary>
+public sealed record AiToolStep(
+    int Round,
+    string Id,
+    string Name,
+    string Arguments,
+    bool Ok,
+    string? Error,
+    double Seconds,
+    int Rows,
+    DateTime? AsOfUtc,
+    string Summary,
+    int ResultChars,
+    string Result);
 
 /// <summary>How a call ended.</summary>
 /// <param name="RefusalStatus">For a refused call, the HTTP status that fits (409 switched off, 429 limit, 503 no key); else null.</param>
@@ -76,12 +103,17 @@ public sealed record AiAskResult(
     int? RefusalStatus = null,
     int RetryAfterSeconds = 0)
 {
-    public int Fallbacks => Math.Max(0, Attempts.Count - 1);
+    public IReadOnlyList<AiToolStep> Tools { get; init; } = [];
+
+    public int Rounds { get; init; }
+
+    public int Fallbacks => AiGateway.CountFallbacks(Attempts.Select(a => a.Outcome));
 }
 
 /// <summary>
 /// Every model call the desk makes goes through here: the agent's switch,
-/// the rate limit, the chain with its fallbacks, and the audit row.
+/// the rate limit, the chain with its fallbacks, the desk tools, and the
+/// audit row.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -96,7 +128,18 @@ public sealed record AiAskResult(
 /// does: a timeout, a 429 or 5xx, a 4xx (a model withdrawn from the free
 /// tier answers 404), a broken stream, an empty answer. What it had streamed
 /// is dropped (the sink is told), so an answer is never half one model's and
-/// half another's.
+/// half another's. A model that failed is not asked again within the same
+/// question: on a bad day each retry would cost the full first-token wait.
+/// </para>
+/// <para>
+/// An agent with tools answers in rounds. In each round the model either
+/// answers or asks for tools; the gateway runs them (read-only, server side,
+/// see <see cref="IAiTool"/>) and asks again with their results. Past
+/// <see cref="AiSettings.MaxToolRounds"/> rounds or
+/// <see cref="AiSettings.MaxToolCalls"/> calls the tools close and the model
+/// must answer with what it has. Every tool call is kept on the row with the
+/// exact text the model was given, so an answer can be checked against what
+/// it read.
 /// </para>
 /// <para>
 /// The key is scrubbed from every stored text as a second layer: the client
@@ -107,12 +150,21 @@ public sealed class AiGateway
 {
     private const int MaxStoredAnswer = 200_000;
     private const int MaxStoredReasoning = 100_000;
+    private const int MaxStoredToolResult = 20_000;
     private const int SummaryLength = 160;
+
+    /// <summary>How a tool's answer is written for the model: compact, rupee signs as they are.</summary>
+    private static readonly JsonSerializerOptions ToolJson = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
 
     private readonly TradingDbContext _db;
     private readonly AiSettingsStore _store;
     private readonly NvidiaChatClient _client;
     private readonly AiRateLimiter _limiter;
+    private readonly AiToolbox _toolbox;
     private readonly IOptionsMonitor<AiSettings> _settings;
     private readonly ILogger<AiGateway> _logger;
     private readonly TimeProvider _time;
@@ -122,6 +174,7 @@ public sealed class AiGateway
         AiSettingsStore store,
         NvidiaChatClient client,
         AiRateLimiter limiter,
+        AiToolbox toolbox,
         IOptionsMonitor<AiSettings> settings,
         ILogger<AiGateway> logger,
         TimeProvider? time = null)
@@ -130,9 +183,23 @@ public sealed class AiGateway
         _store = store;
         _client = client;
         _limiter = limiter;
+        _toolbox = toolbox;
         _settings = settings;
         _logger = logger;
         _time = time ?? TimeProvider.System;
+    }
+
+    /// <summary>Failed attempts that handed over to another: every failure but a last one.</summary>
+    public static int CountFallbacks(IEnumerable<string> outcomes)
+    {
+        var list = outcomes.ToList();
+        int fallbacks = 0;
+        for (int i = 0; i < list.Count - 1; i++)
+        {
+            if (list[i] is not ("ok" or "cancelled")) fallbacks++;
+        }
+
+        return fallbacks;
     }
 
     public async Task<AiAskResult> AskAsync(AiAskInput input, IAiStreamSink sink, CancellationToken cancellationToken)
@@ -178,110 +245,252 @@ public sealed class AiGateway
 
         using (lease)
         {
-            return await RunChainAsync(input, agent, chain, sink, cancellationToken);
+            return await RunAsync(input, agent, chain, sink, cancellationToken);
         }
     }
 
-    private async Task<AiAskResult> RunChainAsync(
+    private async Task<AiAskResult> RunAsync(
         AiAskInput input,
         AiAgentDef agent,
         IReadOnlyList<string> chain,
         IAiStreamSink sink,
         CancellationToken cancellationToken)
     {
+        var s = _settings.CurrentValue;
+
+        // A health test asks one model one thing, with nothing to read.
+        var tools = input.Chain is null ? _toolbox.For(agent) : [];
+        var specs = tools.Select(t => new AiToolSpec(t.Name, t.Description, t.Parameters)).ToList();
+
         string systemPrompt = input.SystemPrompt ?? agent.SystemPrompt;
+        if (input.SystemPrompt is null && specs.Count > 0)
+        {
+            // The model has no clock, and "today" is the question more often than not.
+            var ist = IstTime.ToIst(_time.GetUtcNow().UtcDateTime);
+            systemPrompt += $"\nNow: {ist:dddd d MMMM yyyy, HH:mm} IST.";
+        }
+
         var row = NewRow(input, chain, systemPrompt);
         row.Outcome = AiCallOutcome.Running;
         _db.AiCalls.Add(row);
         await _db.SaveChangesAsync(cancellationToken);
 
-        var request = new AiChatRequest(input.Messages, systemPrompt, input.MaxTokens, input.Temperature);
+        var conversation = new List<AiMessage>(input.Messages);
         var attempts = new List<AiAttempt>();
+        var steps = new List<AiToolStep>();
+        var seen = new Dictionary<string, AiToolStep>(StringComparer.Ordinal);
+        var failed = new HashSet<string>(StringComparer.Ordinal);
         var total = Stopwatch.StartNew();
         var answer = new StringBuilder();
         var reasoning = new StringBuilder();
+        var working = new StringBuilder();
+        AiUsage? usage = null;
+        int round = 0;
         bool finished = false;
 
         try
         {
             await sink.StartAsync(row.Id, chain);
 
-            for (int i = 0; i < chain.Count; i++)
+            while (true)
             {
-                string model = chain[i];
-                answer.Clear();
-                reasoning.Clear();
-                await sink.AttemptAsync(model, i + 1, chain.Count);
-                var clock = Stopwatch.StartNew();
+                round++;
+                bool open = specs.Count > 0 && round <= s.MaxToolRounds && steps.Count < s.MaxToolCalls;
+                var request = new AiChatRequest(conversation, systemPrompt, input.MaxTokens, input.Temperature,
+                    specs.Count > 0 ? specs : null, ToolsClosed: specs.Count > 0 && !open);
 
-                try
+                var live = chain.Where(m => !failed.Contains(m)).ToList();
+                AiAttemptEnd? end = null;
+                string model = string.Empty;
+
+                for (int i = 0; i < live.Count; i++)
                 {
-                    var end = await _client.StreamAsync(model, request, async piece =>
-                    {
-                        switch (piece)
-                        {
-                            case AiStreamPiece.Reasoning r:
-                                reasoning.Append(r.Text);
-                                await sink.ReasoningAsync(r.Text);
-                                break;
-                            case AiStreamPiece.Content c:
-                                answer.Append(c.Text);
-                                await sink.DeltaAsync(c.Text);
-                                break;
-                        }
-                    }, cancellationToken);
+                    string candidate = live[i];
+                    answer.Clear();
+                    reasoning.Clear();
+                    await sink.AttemptAsync(candidate, i + 1, live.Count, round);
+                    var clock = Stopwatch.StartNew();
 
-                    attempts.Add(new AiAttempt(model, "ok", Round(clock.Elapsed.TotalSeconds), 200));
-                    Complete(row, AiCallOutcome.Ok, model, string.Empty, answer, reasoning, end.FinishReason, end.Usage, attempts, total);
+                    try
+                    {
+                        var got = await _client.StreamAsync(candidate, request, async piece =>
+                        {
+                            switch (piece)
+                            {
+                                case AiStreamPiece.Reasoning r:
+                                    reasoning.Append(r.Text);
+                                    await sink.ReasoningAsync(r.Text);
+                                    break;
+                                case AiStreamPiece.Content c:
+                                    answer.Append(c.Text);
+                                    await sink.DeltaAsync(c.Text);
+                                    break;
+                            }
+                        }, cancellationToken);
+
+                        // Told the tools are closed, it asked for one and said nothing else.
+                        if (!open && got.ToolCalls.Count > 0 && string.IsNullOrWhiteSpace(answer.ToString()))
+                        {
+                            throw new AiAttemptFailedException("asked for a tool after the tools were closed");
+                        }
+
+                        attempts.Add(new AiAttempt(candidate, "ok", Round(clock.Elapsed.TotalSeconds), 200, round));
+                        end = got;
+                        model = candidate;
+                        break;
+                    }
+                    catch (AiAttemptFailedException ex)
+                    {
+                        string outcome = Redact(ex.Outcome);
+                        attempts.Add(new AiAttempt(candidate, outcome, Round(clock.Elapsed.TotalSeconds), ex.HttpStatus, round));
+                        failed.Add(candidate);
+                        _logger.LogWarning("AI call {CallId} ({Agent}) round {Round}: {Model} failed: {Outcome}", row.Id, agent.Key, round, candidate, outcome);
+                        string? next = i + 1 < live.Count ? live[i + 1] : null;
+                        if (next is not null) await sink.FallbackAsync(candidate, outcome, next);
+                    }
+                }
+
+                if (end is null)
+                {
+                    string error = "Every model failed: " + string.Join("; ", attempts.Where(a => a.Outcome != "ok").Select(a => $"{a.Model} {a.Outcome}"));
+                    answer.Clear();
+                    Complete(row, AiCallOutcome.Failed, string.Empty, error, answer, Working(working, reasoning), string.Empty, usage, attempts, steps, round, total);
                     await SaveFinalAsync(row);
                     finished = true;
-                    return Result(row, attempts, end.Usage);
+                    return Result(row, attempts, usage, steps, round);
                 }
-                catch (AiAttemptFailedException ex)
-                {
-                    string outcome = Redact(ex.Outcome);
-                    attempts.Add(new AiAttempt(model, outcome, Round(clock.Elapsed.TotalSeconds), ex.HttpStatus));
-                    _logger.LogWarning("AI call {CallId} ({Agent}): {Model} failed: {Outcome}", row.Id, agent.Key, model, outcome);
-                    string? next = i + 1 < chain.Count ? chain[i + 1] : null;
-                    if (next is not null) await sink.FallbackAsync(model, outcome, next);
-                }
-            }
 
-            string error = "Every model failed: " + string.Join("; ", attempts.Select(a => $"{a.Model} {a.Outcome}"));
-            answer.Clear();
-            reasoning.Clear();
-            Complete(row, AiCallOutcome.Failed, string.Empty, error, answer, reasoning, string.Empty, null, attempts, total);
-            await SaveFinalAsync(row);
-            finished = true;
-            return Result(row, attempts, null);
+                usage = Add(usage, end.Usage);
+
+                if (open && end.ToolCalls.Count > 0)
+                {
+                    // This round was working, not the answer: keep it as reasoning.
+                    Commit(working, round, reasoning, answer);
+                    conversation.Add(new AiMessage("assistant", answer.ToString().Trim(), end.ToolCalls));
+
+                    foreach (var call in end.ToolCalls)
+                    {
+                        var step = await RunToolAsync(call, round, steps.Count, seen, cancellationToken);
+                        steps.Add(step);
+                        conversation.Add(new AiMessage("tool", step.Result, null, call.Id));
+                        await sink.ToolAsync(step);
+                    }
+
+                    continue;
+                }
+
+                Complete(row, AiCallOutcome.Ok, model, string.Empty, answer, Working(working, reasoning), end.FinishReason, usage, attempts, steps, round, total);
+                await SaveFinalAsync(row);
+                finished = true;
+                return Result(row, attempts, usage, steps, round);
+            }
         }
         catch (Exception ex) when ((ex is OperationCanceledException && cancellationToken.IsCancellationRequested) || ex is AiSinkFailedException)
         {
             // The asker stopped it, or their connection went mid-answer: either
             // way nobody is reading, and no other model should be asked.
-            if (attempts.Count < chain.Count && chain.Count > 0)
+            string inFlight = chain.FirstOrDefault(m => !failed.Contains(m)) ?? string.Empty;
+            if (inFlight.Length > 0 && (attempts.Count == 0 || attempts[^1].Outcome != "ok" || attempts[^1].Round < round))
             {
-                string model = chain[Math.Min(attempts.Count, chain.Count - 1)];
-                attempts.Add(new AiAttempt(model, "cancelled", Round(total.Elapsed.TotalSeconds - attempts.Sum(a => a.Seconds)), null));
+                double spent = total.Elapsed.TotalSeconds - attempts.Sum(a => a.Seconds);
+                attempts.Add(new AiAttempt(inFlight, "cancelled", Round(Math.Max(0, spent)), null, round));
             }
 
             string why = ex is AiSinkFailedException ? "The console's connection closed mid-answer." : "Stopped by the asker.";
-            Complete(row, AiCallOutcome.Cancelled, string.Empty, why, answer, reasoning, string.Empty, null, attempts, total);
+            Complete(row, AiCallOutcome.Cancelled, string.Empty, why, answer, Working(working, reasoning), string.Empty, usage, attempts, steps, round, total);
             await SaveFinalAsync(row);
             finished = true;
-            return Result(row, attempts, null);
+            return Result(row, attempts, usage, steps, round);
         }
         finally
         {
             if (!finished)
             {
                 // Something outside the model failed (the console's connection,
-                // the database): never leave the row saying "running".
+                // the database, a tool that threw past its guard): never leave
+                // the row saying "running".
                 Complete(row, AiCallOutcome.Failed, string.Empty, "The call stopped unexpectedly on the server; see api.log.",
-                    answer, reasoning, string.Empty, null, attempts, total);
+                    answer, Working(working, reasoning), string.Empty, usage, attempts, steps, round, total);
                 await SaveFinalAsync(row);
             }
         }
+    }
+
+    /// <summary>
+    /// Runs one tool call and writes what the model is given back. A tool that
+    /// is unknown, badly called, slow or failing answers the model in words,
+    /// so it can correct itself; only the asker's cancellation escapes.
+    /// </summary>
+    private async Task<AiToolStep> RunToolAsync(
+        AiToolCall call,
+        int round,
+        int callsSoFar,
+        Dictionary<string, AiToolStep> seen,
+        CancellationToken cancellationToken)
+    {
+        var s = _settings.CurrentValue;
+        var clock = Stopwatch.StartNew();
+        string args = string.IsNullOrWhiteSpace(call.Arguments) ? "{}" : call.Arguments.Trim();
+        string fetchedAt = $"{IstTime.ToIst(_time.GetUtcNow().UtcDateTime):yyyy-MM-dd HH:mm:ss} IST";
+
+        AiToolStep Refused(string error) => new(round, call.Id, call.Name, args, false, error, Round(clock.Elapsed.TotalSeconds), 0, null, error,
+            0, JsonSerializer.Serialize(new { tool = call.Name, error }, ToolJson));
+
+        if (callsSoFar >= s.MaxToolCalls)
+        {
+            return Refused($"The limit of {s.MaxToolCalls} tool calls for one question is reached: answer with what you have.");
+        }
+
+        // The same question twice in one answer gets the same answer, without reading again.
+        string key = $"{call.Name} {args}";
+        if (seen.TryGetValue(key, out var earlier))
+        {
+            return earlier with { Round = round, Id = call.Id, Seconds = 0, Summary = "Same call as before: " + earlier.Summary };
+        }
+
+        var tool = _toolbox.Find(call.Name);
+        if (tool is null)
+        {
+            return Refused($"No tool named {call.Name}. The tools are: {string.Join(", ", _toolbox.All.Select(t => t.Name))}.");
+        }
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(s.ToolTimeoutSeconds));
+        AiToolStep step;
+        try
+        {
+            var output = await tool.RunAsync(AiToolArgs.Parse(args), timeout.Token);
+            string? asOf = output.AsOfUtc is DateTime at ? $"{IstTime.ToIst(DateTime.SpecifyKind(at, DateTimeKind.Utc)):yyyy-MM-dd HH:mm:ss} IST" : null;
+            string json = JsonSerializer.Serialize(new { tool = call.Name, asOf, fetchedAt, rows = output.Rows, data = output.Data }, ToolJson);
+
+            if (json.Length > s.MaxToolResultChars)
+            {
+                string error = $"The answer is {json.Length:N0} characters, over the {s.MaxToolResultChars:N0} limit: ask for less (one run, a shorter range, fewer rows).";
+                step = new AiToolStep(round, call.Id, call.Name, args, false, error, Round(clock.Elapsed.TotalSeconds), output.Rows, output.AsOfUtc,
+                    "Too long to send", json.Length, JsonSerializer.Serialize(new { tool = call.Name, error }, ToolJson));
+            }
+            else
+            {
+                step = new AiToolStep(round, call.Id, call.Name, args, true, null, Round(clock.Elapsed.TotalSeconds), output.Rows, output.AsOfUtc,
+                    output.Summary, json.Length, json);
+            }
+        }
+        catch (AiToolArgumentException ex)
+        {
+            step = Refused(ex.Message);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            step = Refused($"The tool took longer than {s.ToolTimeoutSeconds:0} s and was stopped.");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "AI tool {Tool} failed with arguments {Arguments}", call.Name, args);
+            step = Refused($"The tool failed on the server ({ex.GetType().Name}).");
+        }
+
+        seen[key] = step;
+        return step;
     }
 
     private async Task<AiAskResult> RefuseAsync(AiAskInput input, IReadOnlyList<string> chain, string error, int status, int retryAfter)
@@ -319,22 +528,35 @@ public sealed class AiGateway
         string model,
         string error,
         StringBuilder answer,
-        StringBuilder reasoning,
+        string reasoning,
         string finishReason,
         AiUsage? usage,
         List<AiAttempt> attempts,
+        List<AiToolStep> steps,
+        int rounds,
         Stopwatch total)
     {
         row.Outcome = outcome;
         row.Model = model;
         row.Error = Redact(error);
-        row.Answer = Cut(answer, MaxStoredAnswer);
+        row.Answer = Cut(answer.ToString(), MaxStoredAnswer);
         row.Reasoning = Cut(reasoning, MaxStoredReasoning);
         row.FinishReason = finishReason;
         row.PromptTokens = usage?.PromptTokens;
         row.CompletionTokens = usage?.CompletionTokens;
         row.TotalTokens = usage?.TotalTokens;
-        row.AttemptsJson = JsonSerializer.Serialize(attempts.Select(a => new { model = a.Model, outcome = a.Outcome, seconds = a.Seconds, httpStatus = a.HttpStatus }));
+        row.AttemptsJson = JsonSerializer.Serialize(attempts.Select(a => new
+        {
+            model = a.Model, outcome = a.Outcome, seconds = a.Seconds, httpStatus = a.HttpStatus, round = a.Round,
+        }));
+        row.ToolsJson = JsonSerializer.Serialize(steps.Select(t => new
+        {
+            round = t.Round, id = t.Id, name = t.Name, arguments = t.Arguments, ok = t.Ok, error = t.Error, seconds = t.Seconds,
+            rows = t.Rows, asOfUtc = t.AsOfUtc, summary = t.Summary, resultChars = t.ResultChars,
+            result = Cut(t.Result, MaxStoredToolResult),
+        }), ToolJson);
+        row.Rounds = rounds;
+        row.ToolCalls = steps.Count;
         row.Seconds = Round(total.Elapsed.TotalSeconds);
         row.CompletedUtc = _time.GetUtcNow().UtcDateTime;
     }
@@ -352,8 +574,39 @@ public sealed class AiGateway
         }
     }
 
-    private static AiAskResult Result(AiCall row, List<AiAttempt> attempts, AiUsage? usage) =>
-        new(row.Id, row.Outcome, row.Model, row.Answer, row.Reasoning, row.Seconds, row.FinishReason, usage, attempts, row.Error);
+    private static AiAskResult Result(AiCall row, List<AiAttempt> attempts, AiUsage? usage, List<AiToolStep> steps, int rounds) =>
+        new(row.Id, row.Outcome, row.Model, row.Answer, row.Reasoning, row.Seconds, row.FinishReason, usage, attempts, row.Error)
+        {
+            Tools = steps,
+            Rounds = rounds,
+        };
+
+    /// <summary>A tool round's reasoning, and anything it said before asking, kept as the model's working.</summary>
+    private static void Commit(StringBuilder working, int round, StringBuilder reasoning, StringBuilder said)
+    {
+        string text = reasoning.ToString().Trim();
+        string note = said.ToString().Trim();
+        if (text.Length == 0 && note.Length == 0) return;
+        if (working.Length > 0) working.Append("\n\n");
+        working.Append($"[round {round}] ").Append(text);
+        if (note.Length > 0) working.Append(text.Length > 0 ? "\n" : string.Empty).Append(note);
+    }
+
+    private static string Working(StringBuilder working, StringBuilder lastRound)
+    {
+        string last = lastRound.ToString();
+        if (working.Length == 0) return last;
+        return last.Trim().Length == 0 ? working.ToString() : $"{working}\n\n[answer] {last}";
+    }
+
+    private static AiUsage? Add(AiUsage? a, AiUsage? b)
+    {
+        if (a is null) return b;
+        if (b is null) return a;
+        return new AiUsage(Sum(a.PromptTokens, b.PromptTokens), Sum(a.CompletionTokens, b.CompletionTokens), Sum(a.TotalTokens, b.TotalTokens));
+
+        static int? Sum(int? x, int? y) => x is null && y is null ? null : (x ?? 0) + (y ?? 0);
+    }
 
     /// <summary>The start of the last question, on one line, for the list view.</summary>
     public static string Summarise(IReadOnlyList<AiMessage> messages)
@@ -369,8 +622,8 @@ public sealed class AiGateway
         return key.Length >= 8 && text.Contains(key, StringComparison.Ordinal) ? text.Replace(key, "[key]", StringComparison.Ordinal) : text;
     }
 
-    private static string Cut(StringBuilder text, int max) =>
-        text.Length <= max ? text.ToString() : text.ToString(0, max) + "\n[cut: longer than the audit log keeps]";
+    private static string Cut(string text, int max) =>
+        text.Length <= max ? text : text[..max] + "\n[cut: longer than the audit log keeps]";
 
     private static double Round(double seconds) => Math.Round(seconds, 2);
 }

@@ -74,6 +74,19 @@ public class AiCall
     /// </summary>
     public string AttemptsJson { get; set; } = "[]";
 
+    /// <summary>
+    /// Every desk tool the model asked for, in order: a JSON array of
+    /// <c>{ round, id, name, arguments, ok, error, seconds, rows, asOfUtc, summary, resultChars, result }</c>,
+    /// where <c>result</c> is the text the model was given back (cut past 20,000 characters).
+    /// </summary>
+    public string ToolsJson { get; set; } = "[]";
+
+    /// <summary>Model rounds the answer took: one without tools, one more per round of tool calls.</summary>
+    public int Rounds { get; set; }
+
+    /// <summary>How many tool calls <see cref="ToolsJson"/> holds, for the list view.</summary>
+    public int ToolCalls { get; set; }
+
     /// <summary>The system prompt sent, if any.</summary>
     public string SystemPrompt { get; set; } = string.Empty;
 

@@ -8,8 +8,9 @@ The desk's hosted language models live on one console page. The page shows:
 - every call it made, in full;
 - the owner's own questions, streamed.
 
-In Phase 1 there is one agent, the **Desk Assistant**. The other thirteen are listed as planned, with the phase that
-builds them, so the page is the whole plan and not just what runs.
+There is one agent so far, the **Desk Assistant**. Since Phase 2 it reads the desk through read-only tools. The
+other thirteen agents are listed as planned, with the phase that builds them, so the page shows the whole plan and
+not just what runs.
 
 - Console: **AI**, admin only:
   - `/ai`: overview;
@@ -103,6 +104,86 @@ Timeouts per model (`Ai` settings):
 The stream is not only a nicety. Behind Cloudflare, a response that sends nothing for 100 seconds is cut, and a
 reasoning model can think for longer than that.
 
+## Desk tools (Phase 2)
+
+The Desk Assistant answers from the desk's own records. The model asks for tools itself, in rounds:
+
+1. The model either answers or asks for tools.
+2. The gateway runs the tools on the server and asks the model again with what they found.
+3. This repeats until the model answers.
+
+Every tool only reads (`IAiTool`); none places, cancels or switches anything. Each tool is built from the service the
+matching console page uses, so the numbers are the page's numbers.
+
+| Tool | Reads | Built on |
+| --- | --- | --- |
+| `get_runs` | A day's runs with net P&L (realized − charges + open legs while active, as the Desk shows) | `LiveRunHistoryBuilder` |
+| `get_run` | One run: settings, P&L, then a summary or one section (legs, orders, signals) in a time window | `PositionViewBuilder`, `RunPnl`, the run's rows |
+| `get_open_positions` | Every open leg, marked, with its mark's age | `OpenPositionsBuilder` |
+| `get_quotes` | Indices, large caps and commodities with the day's change; India VIX | `IMarketPulseService`, the NIFTY chain header |
+| `get_option_chain_summary` | PCR, max pain, walls, ATM IV, OI totals for an underlying | `OptionChainService` (the header) |
+| `get_incidents` | Sentinel's live or recent incidents | `incidents` |
+| `get_latest_checkup` | The newest finished checkup, every item with what to do | `CheckupsController.ToDetail` |
+| `get_forecasts` | A session's forecasts and scores | `ForecastsController.ToView` |
+| `get_news` | Headlines and a stock's filings, with FinBERT sentiment | `MarketIntelligenceQueries` |
+| `get_strategy_spec` | A strategy's written spec, or the list of strategies | `StrategyCatalogService`, `docs/strategies` |
+
+`get_run` starts with a summary on purpose. On 30 Sep one busy run had 344 legs, 688 orders and 9,636 signals. The
+summary gives:
+
+- counts;
+- realized P&L by IST hour;
+- the five best and worst legs;
+- the open legs;
+- the last signals.
+
+A small run gets its full lists as well. For the rest, the model asks for a section and an `HH:mm` window.
+
+### Limits
+
+Each limit is an `Ai` setting.
+
+| Limit | Default |
+| --- | --- |
+| Rounds in which tools are open | 4 |
+| Tool calls per question | 8 |
+| Characters of one tool's answer | 16,000 (past it the model is told to narrow down) |
+| Time per tool | 30 s |
+
+After the last tool round the tools close (`tool_choice: none`). If a model still asks for one, the question moves on
+to the next model. The same call made twice in one question is read once. A model that failed in an earlier round is
+not asked again in the same question.
+
+Every way a tool call can go wrong is answered to the model in words, so it can correct itself. This covers:
+
+- an unknown tool;
+- arguments that are not valid JSON, or out of range;
+- a tool that is slow or throws. The model sees the exception's type only, never its message.
+
+### What leaves the server
+
+A tool's answer is sent to the provider, so it is projected field by field, never an entity. Free text (stop reasons,
+incident evidence, checkup items) goes through `IncidentRedaction.Mask` and then `AiToolFormat.Hosts`. Between them
+they remove:
+
+- tokens and passwords;
+- the machine's name, EC2 host names and IPv4 addresses;
+- home paths.
+
+Emails, broker ids and user ids are never selected. Account user names are kept: the questions are about accounts.
+`AiToolDataTests` seeds the desk with each of these secrets and reads every tool's answer as the model would.
+
+### The audit row
+
+Each call also stores:
+
+- `ToolsJson`: every call with its round, arguments, outcome, rows, as-of time, seconds, and the exact text the model
+  was given;
+- `Rounds` and `ToolCalls`;
+- the round of each attempt.
+
+The stored reasoning keeps each round's working, labelled `[round n]`.
+
 ## The event stream
 
 `POST /api/Ai/ask/stream` answers `text/event-stream`:
@@ -110,11 +191,12 @@ reasoning model can think for longer than that.
 | Event | Data |
 | --- | --- |
 | `start` | `{ callId, chain }` |
-| `attempt` | `{ model, n, of }` |
+| `attempt` | `{ model, n, of, round }`: `n`/`of` count the models still available in that round |
 | `reasoning` | `{ text }`: a piece of the model's reasoning (Nemotron streams it first) |
 | `delta` | `{ text }`: a piece of the answer |
-| `fallback` | `{ model, reason, next }`: discard what was streamed so far |
-| `done` | `{ callId, model, seconds, finishReason, usage, fallbacks }` |
+| `fallback` | `{ model, reason, next }`: discard what streamed since the last `attempt` |
+| `tool` | `{ round, id, name, arguments, ok, error, seconds, rows, asOfUtc, summary, resultChars, result }`: a tool ran; what streamed in this round was working, not the answer |
+| `done` | `{ callId, model, seconds, finishReason, usage, fallbacks, toolCalls, rounds }` |
 | `error` | `{ callId, error }`: every model failed |
 
 A `: ping` comment goes out every 15 s. Closing the request cancels the call.
@@ -143,6 +225,17 @@ All under `api/Ai`, admin only.
 | `GET calls?agent=&outcome=&model=&take=&beforeId=` | The log, newest first, paged by id |
 | `GET calls/{id}` | One call in full: system prompt, messages, attempts, reasoning, answer, usage, the request's parameters |
 | `POST ask/stream`, `POST ask` | Ask: `{ messages, tier, system, maxTokens, temperature, conversationId, agent }` |
+
+## Adding a tool
+
+1. Implement `IAiTool` in `src/AlgoTrading.Api/Services/AiTools/`:
+   - take only query services;
+   - return a projection;
+   - pass free text through `AiToolFormat.Text`;
+   - bound the rows.
+2. Register it in `Program.cs`.
+3. Add its name to `AiToolNames` and to the agent's `Tools` in `AiCatalog`.
+4. Add it to `AiToolDataTests`.
 
 ## Adding an agent
 
