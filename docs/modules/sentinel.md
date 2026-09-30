@@ -81,7 +81,14 @@ content root upwards; `Desk:PlanFile` overrides it.
   holding it, so a line read later opens a new incident counted from that line.
   On 28 Sep the operator resolved the four API errors of a deliberate Postgres
   restart (13:05–13:06) at 13:08, and at 13:11 their four-hour holds opened
-  them again as new incidents, counting the same lines.
+  them again as new incidents, counting the same lines. The security agent
+  does the same since 30 Sep, when it re-raised incidents a person had resolved
+  from its memory: a login-failure hold, or failures read again while still in
+  the 15-minute window, counts as observed when its newest failure (or the
+  sign-in after them) was first read, and the day's secret scan and the week's
+  dependency scan, replayed between runs, as observed when they ran. So a
+  failure or sign-in read after the resolve, or the next scan that still finds
+  the problem, opens a new incident; nothing older does.
 - **A flapping problem is one incident.** A problem that comes back within
   **30 minutes** of Sentinel resolving it (`FLAP_WINDOW` in `sentinel/model.py`)
   reopens that incident instead of opening another — not a notice, and not one

@@ -221,6 +221,8 @@ class SecurityTestCase(unittest.TestCase):
         """
         The agent inside the real engine, with a clock and an activity log the test moves: returns
         (run(now, api=None), notifier) so a test can count the messages a person would actually get.
+        ``self.store`` is the engine's store (a test resolves incidents in it, as a person does from the
+        console) and ``self.ctx`` its context.
         """
         notifier = RecordingNotifier()
         box = {"now": THURSDAY_MARKET, "api": activity_api()}
@@ -228,7 +230,8 @@ class SecurityTestCase(unittest.TestCase):
                            env=env)
         ctx.clock = lambda: box["now"]
         ctx.run = self.shell
-        engine = SentinelEngine([SecurityAgent(auth_logs=auth_logs)], MemoryIncidentStore(), notifier, ctx)
+        self.store, self.ctx = MemoryIncidentStore(), ctx
+        engine = SentinelEngine([SecurityAgent(auth_logs=auth_logs)], self.store, notifier, ctx)
 
         def run(now, api=None):
             box["now"] = now
@@ -240,6 +243,12 @@ class SecurityTestCase(unittest.TestCase):
 
     def by_rule(self, findings, rule):
         return [f for f in findings if f.rule == rule]
+
+    def resolve(self, row, at, why=None):
+        """What a person does from the console: resolve, with a root cause."""
+        self.store.resolve_by_person(row["id"], at)
+        if why:
+            self.store.write_resolution(row["id"], why)
 
 
 class QuietDayTests(SecurityTestCase):
@@ -402,6 +411,107 @@ class LoginFailureTests(SecurityTestCase):
         first = self.by_rule(self.check(api=activity_api(login_rows=rows)), "login-failures")
         again = self.by_rule(self.check(api=activity_api(fail=True)), "login-failures")
         self.assertEqual([f.fingerprint for f in first], [f.fingerprint for f in again])
+
+
+GUESSER = "198.51.100.7"
+
+
+def guessing(start, first_id, n=16):
+    """``n`` failed sign-ins from GUESSER, 30 s apart from ``start``: 16 is one over the bar."""
+    return [failed_at(first_id + i, GUESSER, _z(start + timedelta(seconds=30 * i))) for i in range(n)]
+
+
+class ResolvedWhileHeldTests(SecurityTestCase):
+    """
+    30 Sep: Sentinel opened security incidents again that a person had already resolved, from what the agent
+    held in memory — its login-failure hold, the same failures read again while still in the 15-minute window —
+    with nothing new behind them. What was read before a resolve never reopens it; what is read after does.
+    """
+
+    FINGERPRINT = f"security:login-failures:{GUESSER}"
+
+    def test_a_held_finding_says_when_its_newest_failure_was_read(self):
+        t0 = THURSDAY_MARKET
+        rows = guessing(t0 - timedelta(minutes=8), 0)   # 05:52:00 – 05:59:30
+        fresh = self.by_rule(self.check(api=activity_api(login_rows=rows)), "login-failures")
+        self.assertEqual([None], [f.observed_utc for f in fresh], "read this check")
+        reread = self.by_rule(self.check(api=activity_api(login_rows=rows), now=t0 + timedelta(minutes=5)),
+                              "login-failures")
+        self.assertEqual([t0], [f.observed_utc for f in reread], "all 16 still in the window: read at 06:00")
+        held = self.by_rule(self.check(api=activity_api(login_rows=rows), now=t0 + timedelta(minutes=10)),
+                            "login-failures")
+        self.assertEqual([t0], [f.observed_utc for f in held], "held, not observed now")
+        self.assertIn("held open until", held[0].summary)
+        blind = self.by_rule(self.check(api=activity_api(fail=True), now=t0 + timedelta(minutes=15)),
+                             "login-failures")
+        self.assertEqual([t0], [f.observed_utc for f in blind], "carried while the log cannot be read")
+
+        ctx = make_context(self.tmp, api=activity_api(login_rows=rows), now=t0 + timedelta(minutes=16))
+        ctx.run = self.shell
+        agent = SecurityAgent(auth_logs=())
+        agent.let_go(ctx, {self.FINGERPRINT})
+        self.assertEqual([], self.by_rule(agent.check(ctx), "login-failures"), "let go: nothing held")
+
+    def test_a_guess_resolved_while_held_stays_resolved_until_it_resumes(self):
+        t0 = THURSDAY_MARKET
+        rows = guessing(t0 - timedelta(minutes=8), 0)                    # 05:52:00 – 05:59:30
+        run, notifier = self.engine()
+        run(t0, activity_api(login_rows=rows))                            # over the bar: NEW
+        run(t0 + timedelta(minutes=10), activity_api(login_rows=rows))    # below it: held to 06:29:30
+        first = self.store.rows()[0]
+        self.resolve(first, t0 + timedelta(minutes=12), "A penetration test we ordered; not an attack.")
+
+        for minutes in (15, 20, 25, 30):   # the hold alone would have opened it again at 06:15
+            run(t0 + timedelta(minutes=minutes), activity_api(login_rows=rows))
+        self.assertEqual(["resolved"], [r["status"] for r in self.store.rows()], "nothing reopened, nothing new")
+        self.assertEqual(1, len(notifier.sent))
+        self.assertNotIn(self.FINGERPRINT, self.ctx.state("security").data["login_hold"], "the hold is over")
+
+        # 06:31: it resumes. Those failures are news, and by the next check only they are in the window.
+        rows += guessing(t0 + timedelta(minutes=31), 100)                 # 06:31:00 – 06:38:30
+        run(t0 + timedelta(minutes=40), activity_api(login_rows=rows))
+        self.assertEqual(2, len(self.store.rows()))
+        new = self.store.rows()[-1]
+        self.assertEqual(("open", 1), (new["status"], new["occurrences"]))
+        self.assertIn(f"16 failed sign-ins in the last 15 minutes from {GUESSER} (24 Sep 12:01 IST – 12:08 IST)",
+                      new["summary"])
+        self.assertEqual(2, len(notifier.sent))
+        self.assertIn(f"NEW [HIGH] Someone is guessing passwords from {GUESSER}", notifier.sent[-1])
+        self.assertIn("Last time: A penetration test we ordered; not an attack.", notifier.sent[-1])
+
+    def test_failures_still_in_the_window_are_old_news_and_one_more_is_news(self):
+        t0 = THURSDAY_MARKET
+        rows = guessing(t0 - timedelta(minutes=8), 0)                    # 05:52:00 – 05:59:30
+        run, notifier = self.engine()
+        run(t0, activity_api(login_rows=rows))
+        self.resolve(self.store.rows()[0], t0 + timedelta(minutes=1), f"Blocked {GUESSER} in the security group.")
+        run(t0 + timedelta(minutes=5), activity_api(login_rows=rows))    # all 16 read again, still over the bar
+        self.assertEqual(["resolved"], [r["status"] for r in self.store.rows()])
+        self.assertEqual(1, len(notifier.sent))
+
+        rows.append(failed_at(50, GUESSER, "2026-09-24T06:06:40Z"))       # 11:36 IST: the block did not hold
+        run(t0 + timedelta(minutes=7), activity_api(login_rows=rows))
+        self.assertEqual(2, len(self.store.rows()))
+        new = self.store.rows()[-1]
+        self.assertEqual(("open", 1), (new["status"], new["occurrences"]))
+        self.assertIn("(24 Sep 11:22 IST – 11:36 IST)", new["summary"])
+        self.assertIn(f"NEW [HIGH] Someone is guessing passwords from {GUESSER}", notifier.sent[-1])
+        self.assertIn(f"Last time: Blocked {GUESSER} in the security group.", notifier.sent[-1])
+
+    def test_a_sign_in_read_after_the_resolve_is_news_even_if_it_happened_before(self):
+        # What a resolve is weighed against is when Sentinel read the evidence, not when it happened: the
+        # person resolving the guess at 11:34 had not been told of the sign-in at 11:33.
+        t0 = THURSDAY_MARKET
+        rows = guessing(t0 - timedelta(minutes=8), 0)
+        run, notifier = self.engine()
+        run(t0, activity_api(login_rows=rows))                            # HIGH
+        self.resolve(self.store.rows()[0], t0 + timedelta(minutes=4))
+        ok = [signed_in_at(99, GUESSER, "2026-09-24T06:03:00Z")]
+        run(t0 + timedelta(minutes=5), activity_api(login_rows=rows, ok_rows=ok))
+        self.assertEqual(2, len(self.store.rows()))
+        self.assertEqual((Severity.CRITICAL, "open"), (self.store.rows()[-1]["severity"],
+                                                       self.store.rows()[-1]["status"]))
+        self.assertIn(f"NEW [CRITICAL] Someone guessed passwords from {GUESSER}, then signed in", notifier.sent[-1])
 
 
 class PrivilegedChangeTests(SecurityTestCase):
@@ -652,9 +762,12 @@ class OpenPortTests(SecurityTestCase):
         self.shell.outputs["ss"] = (0, "LISTEN 0 128 0.0.0.0:6379 0.0.0.0:*\n")
         first = self.by_rule(self.check(), "open-port")
         self.shell.outputs["ss"] = (1, "")
-        again = self.by_rule(self.check(), "open-port")
+        again = self.by_rule(self.check(now=THURSDAY_MARKET + timedelta(minutes=5)), "open-port")
         self.assertEqual(["security:open-port"], [f.fingerprint for f in first])
         self.assertEqual([f.fingerprint for f in first], [f.fingerprint for f in again])
+        # As observed when ss last answered: an incident a person resolved since is not reopened by it (30 Sep).
+        self.assertEqual([None], [f.observed_utc for f in first])
+        self.assertEqual([THURSDAY_MARKET], [f.observed_utc for f in again])
 
     def test_a_closed_port_clears_the_finding(self):
         self.shell.outputs["ss"] = (0, "LISTEN 0 128 0.0.0.0:6379 0.0.0.0:*\n")
@@ -735,10 +848,34 @@ class SecretInGitTests(SecurityTestCase):
         again = self.by_rule(self.check(now=THURSDAY_MARKET + timedelta(hours=3)), "secret-in-git")
         self.assertEqual(scans, len(self.shell.ran("git")))
         self.assertEqual([f.fingerprint for f in first], [f.fingerprint for f in again])
+        self.assertEqual([None], [f.observed_utc for f in first])
+        self.assertEqual([THURSDAY_MARKET], [f.observed_utc for f in again], "replayed: as observed at the scan")
         self.shell.outputs["git"] = (1, "")   # fixed overnight
         tomorrow = self.check(now=THURSDAY_MARKET + timedelta(days=1))
         self.assertGreater(len(self.shell.ran("git")), scans)
         self.assertEqual([], self.by_rule(tomorrow, "secret-in-git"))
+
+    def test_a_secret_a_person_resolved_is_not_reopened_by_the_days_replay(self):
+        # 30 Sep: a scan's result, replayed every five minutes until the next scan, opened again what a person
+        # had resolved. Only the next scan that still finds it is news.
+        self.shell.outputs["git"] = self.git({"private-key": [("certs/server.key", 1, "<pem header>")]})
+        run, notifier = self.engine()
+        run(THURSDAY_MARKET)
+        scans = len(self.shell.ran("git"))
+        self.assertEqual(1, len(notifier.sent))
+        self.resolve(self.store.rows()[0], THURSDAY_MARKET + timedelta(minutes=2),
+                     "Rotated; the file is a revoked test certificate.")
+        for minutes in (5, 10, 180):
+            run(THURSDAY_MARKET + timedelta(minutes=minutes))
+        self.assertEqual(scans, len(self.shell.ran("git")), "replayed, not rescanned")
+        self.assertEqual(["resolved"], [r["status"] for r in self.store.rows()])
+        self.assertEqual(1, len(notifier.sent))
+        self.assertEqual([], self.ctx.state("security").data["git"]["findings"], "let go")
+
+        run(THURSDAY_MARKET + timedelta(days=1))   # tomorrow's scan still finds it
+        self.assertGreater(len(self.shell.ran("git")), scans)
+        self.assertEqual(["resolved", "open"], [r["status"] for r in self.store.rows()])
+        self.assertIn("NEW [CRITICAL] A private key is committed to git in certs/server.key", notifier.sent[-1])
 
     def test_git_failing_is_not_a_finding_and_is_retried(self):
         self.shell.outputs["git"] = (128, "")
@@ -858,8 +995,33 @@ class DependencyTests(SecurityTestCase):
         later = self.by_rule(self.check(now=SUNDAY + timedelta(days=3)), "vulnerable-dependency")
         self.assertEqual(1, len(self.shell.ran("dotnet")))
         self.assertEqual({f.fingerprint for f in first}, {f.fingerprint for f in later})
+        self.assertEqual({None}, {f.observed_utc for f in first})
+        self.assertEqual({SUNDAY}, {f.observed_utc for f in later}, "replayed: as observed at the scan")
         self.check(now=SUNDAY + timedelta(days=7))
         self.assertEqual(2, len(self.shell.ran("dotnet")))
+
+    def test_a_vulnerability_a_person_resolved_is_not_reopened_by_the_weekly_replay(self):
+        # 30 Sep: the week's result, replayed until the next scan, opened again what a person had resolved.
+        run, notifier = self.engine()
+        run(SUNDAY)
+        lodash = next(r for r in self.store.rows() if r["fingerprint"].endswith(":npm:lodash-es"))
+        sent = len(notifier.sent)
+        self.resolve(lodash, SUNDAY + timedelta(minutes=30), "Not reachable from the console; accepted until 4 Oct.")
+        run(SUNDAY + timedelta(hours=1))
+        run(SUNDAY + timedelta(days=2))
+        self.assertEqual(1, len(self.shell.ran("dotnet")), "replayed, not rescanned")
+        episodes = [r for r in self.store.rows() if r["fingerprint"] == lodash["fingerprint"]]
+        self.assertEqual(["resolved"], [r["status"] for r in episodes])
+        self.assertEqual(sent, len(notifier.sent))
+        self.assertEqual(4, len([r for r in self.store.rows() if r["status"] == "open"]), "the others stand")
+        kept = self.ctx.state("security").data["deps"]["findings"]
+        self.assertNotIn(lodash["fingerprint"], {d["fingerprint"] for d in kept}, "let go")
+
+        run(SUNDAY + timedelta(days=7))   # the next weekly scan still finds it
+        self.assertEqual(2, len(self.shell.ran("dotnet")))
+        episodes = [r for r in self.store.rows() if r["fingerprint"] == lodash["fingerprint"]]
+        self.assertEqual(["resolved", "open"], [r["status"] for r in episodes])
+        self.assertIn("Last time: Not reachable from the console; accepted until 4 Oct.", notifier.sent[-1])
 
     def test_a_scan_that_cannot_run_is_not_a_finding(self):
         self.shell.outputs["dotnet"] = (1, DOTNET_NO_ASSETS)
