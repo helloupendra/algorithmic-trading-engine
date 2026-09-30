@@ -48,5 +48,26 @@ public sealed class AiSettings
     /// <summary>Seconds one tool may take (the strategy catalog can take 20 s on a cold start).</summary>
     public double ToolTimeoutSeconds { get; set; } = 30;
 
+    /// <summary>Whether the scheduled agents (reviewer, news, incidents) run at all on this API. Each also has its switch on the AI page.</summary>
+    public bool SchedulerEnabled { get; set; } = true;
+
+    /// <summary>IST time after which a trading day's stopped runs are reviewed ("15:45": after the NSE close settles).</summary>
+    public string ReviewAfterIst { get; set; } = "15:45";
+
+    /// <summary>Send one Telegram digest to the desk's system channel when a batch of reviews is done.</summary>
+    public bool ReviewDigestToTelegram { get; set; } = true;
+
+    /// <summary>Minutes between the News Analyst's batches.</summary>
+    public int NewsEveryMinutes { get; set; } = 10;
+
+    /// <summary>Headlines and filings in one News Analyst call.</summary>
+    public int NewsBatchSize { get; set; } = 12;
+
+    /// <summary>How far back the News Analyst looks for items it has not read: never the 2020 backfills.</summary>
+    public int NewsLookbackHours { get; set; } = 24;
+
+    /// <summary>Tries for one report before a scheduled agent gives up on its subject.</summary>
+    public int MaxReportAttempts { get; set; } = 3;
+
     public bool KeyConfigured => !string.IsNullOrWhiteSpace(ApiKey);
 }

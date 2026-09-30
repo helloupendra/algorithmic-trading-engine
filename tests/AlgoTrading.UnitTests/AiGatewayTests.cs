@@ -179,7 +179,7 @@ public class AiGatewayTests
     {
         var ai = Build();
 
-        var result = await ai.Gateway.AskAsync(Question(agent: "trade-reviewer"), new RecordingSink(), CancellationToken.None);
+        var result = await ai.Gateway.AskAsync(Question(agent: "technical-analyst"), new RecordingSink(), CancellationToken.None);
 
         Assert.Equal(409, result.RefusalStatus);
         Assert.Contains("not built yet", result.Error);

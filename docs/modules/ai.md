@@ -8,9 +8,13 @@ The desk's hosted language models live on one console page. The page shows:
 - every call it made, in full;
 - the owner's own questions, streamed.
 
-There is one agent so far, the **Desk Assistant**. Since Phase 2 it reads the desk through read-only tools. The
-other thirteen agents are listed as planned, with the phase that builds them, so the page shows the whole plan and
-not just what runs.
+Four agents are built:
+- the **Desk Assistant**, which the owner asks and which reads the desk through read-only tools (Phase 2);
+- three scheduled, advisory agents from Phase 3: the **Trade Reviewer**, the **News Analyst** and the
+  **Incident Explainer**.
+
+The other ten are listed as planned, with the phase that builds them, so the page shows the whole plan and not just
+what runs.
 
 - Console: **AI**, admin only:
   - `/ai`: overview;
@@ -225,6 +229,53 @@ All under `api/Ai`, admin only.
 | `GET calls?agent=&outcome=&model=&take=&beforeId=` | The log, newest first, paged by id |
 | `GET calls/{id}` | One call in full: system prompt, messages, attempts, reasoning, answer, usage, the request's parameters |
 | `POST ask/stream`, `POST ask` | Ask: `{ messages, tier, system, maxTokens, temperature, conversationId, agent }` |
+
+## Scheduled agents (Phase 3)
+
+`AiAgentScheduler`, a hosted service, runs once a minute:
+- It waits 90 s after a start before its first round.
+- Each switched-on agent does one piece of its due work: one run, one batch, one incident.
+- One agent failing is logged and the next still runs.
+- A failed tick is caught, so the scheduler can never stop the API.
+- Nothing runs without a key, or with `Ai:SchedulerEnabled` false (set it false on a second API, such as a local one).
+
+Every output is a row of `ai_reports`, one per agent and subject, so an agent that runs again finds its work done:
+
+| Status | Meaning |
+| --- | --- |
+| `ok` | Written, and its check passed |
+| `invalid` | The model answered, but the answer failed its check. The text is kept. |
+| `failed` | No model answered. Tried again after 15 minutes, at most `Ai:MaxReportAttempts` times (3). |
+
+A good report is never overwritten by a later failure. Each report links to its model call.
+
+| Agent | Due | Input | Output |
+| --- | --- | --- | --- |
+| Trade Reviewer (judge) | A stopped run from the last two days, 10 minutes after it stopped and after `Ai:ReviewAfterIst` (15:45) on its day. So NSE runs after 15:45, MCX runs after 23:30. Manual books and alert runs are skipped. | The run's `get_run` summary and its spec, handed over up front. It can read more with `get_run`, `get_strategy_spec`, `get_quotes` and `get_option_chain_summary`. | Verdict (followed / deviated / unclear), what was kept and what was not, stale-quote fills, market context, one thing worth testing, a journal |
+| News Analyst (extract) | Every `Ai:NewsEveryMinutes` (10). A batch of `Ai:NewsBatchSize` (12) items it has not read, filings first, from the last `Ai:NewsLookbackHours` (24) by publication time; never the 2020 backfills. | The items' text | One record per item: event, direction, symbols, numbers with quotes, confidence |
+| Incident Explainer (analyst) | A live incident of medium or worse, first seen in the last day | The incident, its evidence masked. It can read with `get_incidents`, `get_latest_checkup`, `get_runs`, `get_open_positions` and `get_quotes`. | What happened, likely why, what to do, urgency |
+
+Each output is checked before it is stored as `ok`:
+- **Reviews and explanations** must be the JSON asked for. `AiJson` accepts a fenced block or a sentence around it.
+- **News records** must use the listed events and directions and a confidence from 0 to 1. Every number's quote must
+  appear in the item's own text; case, spacing and typographic quotes are ignored. A number the model made up
+  cannot pass. The share of `ok` among `ok` + `invalid` is the "JSON validity" the roadmap asks to keep above 98%;
+  `GET reports/stats` gives it per day.
+
+When the review queue empties, the reviewer sends one Telegram message to the system channel (`Ai:ReviewDigestToTelegram`):
+- how many runs were reviewed and how many kept to their spec;
+- the ones that did not.
+
+The last digest time is kept in `system_settings`, so a restart does not send it twice.
+
+Endpoints, admin only:
+
+| Endpoint | What |
+| --- | --- |
+| `GET reports?agent=&subjectType=&status=&date=&take=&beforeId=` | Reports, newest first |
+| `GET reports/{id}` | One report: body and data |
+| `GET reports/stats?days=` | Per agent and day: ok, invalid, failed, and the valid share |
+| `POST agents/{key}/run` | `{ subjectId }` (a run or incident id, or none for the next due work). Runs in the background and answers 202; the report appears when the model has answered. |
 
 ## Adding a tool
 

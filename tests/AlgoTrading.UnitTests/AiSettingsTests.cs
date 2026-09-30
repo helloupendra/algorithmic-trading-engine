@@ -26,8 +26,9 @@ public class AiSettingsTests
         Assert.All(state.Tiers, t => Assert.Equal(t.Def.DefaultChain, t.Chain));
         Assert.All(state.Tiers, t => Assert.False(t.Overridden));
         Assert.Equal(14, state.Agents.Count);
-        Assert.Equal("on", state.Agent(AiCatalog.DeskAssistant)!.Status);
-        Assert.All(state.Agents.Where(a => a.Def.Key != AiCatalog.DeskAssistant), a => Assert.Equal("planned", a.Status));
+        string[] built = [AiCatalog.DeskAssistant, AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer];
+        Assert.All(built, key => Assert.Equal("on", state.Agent(key)!.Status));
+        Assert.All(state.Agents.Where(a => !built.Contains(a.Def.Key)), a => Assert.Equal("planned", a.Status));
         Assert.Equal(new[] { Judge1, Judge2, Judge3 }, state.Agent(AiCatalog.DeskAssistant)!.Chain);
     }
 
@@ -71,10 +72,10 @@ public class AiSettingsTests
     public async Task A_planned_agent_stays_off_whatever_a_row_says()
     {
         var ai = Build();
-        ai.Db.SystemSettings.Add(new SystemSetting { Key = AiSettingsStore.AgentEnabledKey("trade-reviewer"), Value = "true" });
+        ai.Db.SystemSettings.Add(new SystemSetting { Key = AiSettingsStore.AgentEnabledKey("technical-analyst"), Value = "true" });
         await ai.Db.SaveChangesAsync();
 
-        Assert.Equal("planned", (await ai.Store.LoadAsync()).Agent("trade-reviewer")!.Status);
+        Assert.Equal("planned", (await ai.Store.LoadAsync()).Agent("technical-analyst")!.Status);
     }
 
     [Theory]
@@ -113,11 +114,14 @@ public class AiSettingsTests
     }
 
     [Fact]
-    public void The_catalog_numbers_fourteen_agents_once_each_and_builds_only_the_assistant()
+    public void The_catalog_numbers_fourteen_agents_once_each_and_builds_the_phase_three_four()
     {
         Assert.Equal(Enumerable.Range(1, 14), AiCatalog.Agents.Select(a => a.Number));
         Assert.Equal(AiCatalog.Agents.Count, AiCatalog.Agents.Select(a => a.Key).Distinct().Count());
-        Assert.Equal(new[] { AiCatalog.DeskAssistant }, AiCatalog.Agents.Where(a => a.Built).Select(a => a.Key));
+        Assert.Equal(
+            new[] { AiCatalog.DeskAssistant, AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer },
+            AiCatalog.Agents.Where(a => a.Built).Select(a => a.Key));
+        Assert.All(AiCatalog.Agents.Where(a => a.Built), a => Assert.False(string.IsNullOrWhiteSpace(a.SystemPrompt)));
         Assert.All(AiCatalog.Agents, a => Assert.NotNull(AiCatalog.Tier(a.Tier)));
         Assert.All(AiCatalog.Agents, a => Assert.Contains("order", a.Limits));
     }

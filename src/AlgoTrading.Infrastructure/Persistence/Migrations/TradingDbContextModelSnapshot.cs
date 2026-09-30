@@ -266,6 +266,98 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.AiReport", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("AgentKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("");
+
+                    b.Property<long?>("CallId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DataJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("{}");
+
+                    b.Property<string>("Error")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasDefaultValue("");
+
+                    b.Property<DateOnly?>("SessionDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("SubjectId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("SubjectType")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
+                        .HasDefaultValue("");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "AgentKey", "Id" }, "IX_ai_reports_AgentKey_Id");
+
+                    b.HasIndex(new[] { "SessionDate" }, "IX_ai_reports_SessionDate");
+
+                    b.HasIndex(new[] { "AgentKey", "SubjectType", "SubjectId" }, "UX_ai_reports_Agent_Subject")
+                        .IsUnique();
+
+                    b.ToTable("ai_reports", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ai_reports_Status", "\"Status\" IN ('ok', 'invalid', 'failed')");
+
+                            t.HasCheckConstraint("CK_ai_reports_SubjectType", "\"SubjectType\" IN ('run', 'news', 'filing', 'incident')");
+                        });
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.AlertEvent", b =>
                 {
                     b.Property<long>("Id")

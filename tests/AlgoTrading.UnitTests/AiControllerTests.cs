@@ -37,7 +37,7 @@ public class AiControllerTests
         Assert.Equal(Judge1, assistant.LastCall.Model);
         Assert.Equal(1, assistant.Today.Calls);
         Assert.Equal(30, assistant.Today.TotalTokens);
-        Assert.Equal(13, list.Agents.Count(a => a.Status == "planned"));
+        Assert.Equal(10, list.Agents.Count(a => a.Status == "planned"));
         Assert.Null(list.Agents.Single(a => a.Key == "news-analyst").LastCall);
         Assert.NotEmpty(list.RuleBased);
     }
@@ -47,7 +47,7 @@ public class AiControllerTests
     {
         var controller = Build().Controller();
 
-        Assert.IsType<ConflictObjectResult>(await controller.UpdateAgent("trade-reviewer", new AiAgentUpdate(true, null, false, null), CancellationToken.None));
+        Assert.IsType<ConflictObjectResult>(await controller.UpdateAgent("technical-analyst", new AiAgentUpdate(true, null, false, null), CancellationToken.None));
         Assert.IsType<NotFoundObjectResult>(await controller.UpdateAgent("nobody", new AiAgentUpdate(true, null, false, null), CancellationToken.None));
     }
 
@@ -98,7 +98,7 @@ public class AiControllerTests
         Assert.Equal("provider", models.Source);
         Assert.Equal(Judge1, models.Models[0].Id);
         Assert.Equal(new[] { "judge" }, models.Models[0].Tiers);
-        Assert.Equal(new[] { AiCatalog.DeskAssistant }, models.Models[0].Agents);
+        Assert.Equal(new[] { AiCatalog.DeskAssistant, AiCatalog.TradeReviewer }, models.Models[0].Agents);
         Assert.Equal("First model of the Judge tier.", models.Models[0].Note);
         var kimi = models.Models.Single(m => m.Id == Judge2);
         Assert.Equal("Fallback 1 of the Judge tier; first model of the Analyst tier.", kimi.Note);
@@ -233,7 +233,7 @@ public class AiControllerTests
         Assert.Equal(6, overview.Today.AvgSeconds);
         Assert.Equal(10, overview.Today.P95Seconds);
         Assert.True(overview.Provider.KeyConfigured);
-        Assert.Equal(new AiAgentCounts(14, 1, 1, 0, 13), overview.Agents);
+        Assert.Equal(new AiAgentCounts(14, 4, 4, 0, 10), overview.Agents);
         Assert.Equal(4, overview.Tiers.Count);
     }
 
