@@ -7,8 +7,8 @@ namespace AlgoTrading.Api.Services;
 
 /// <summary>
 /// A call's progress as server-sent events on the response: <c>start</c>,
-/// <c>attempt</c>, <c>reasoning</c>, <c>delta</c>, <c>fallback</c>, then
-/// <c>done</c> or <c>error</c> (written by the controller).
+/// <c>attempt</c>, <c>reasoning</c>, <c>delta</c>, <c>fallback</c>,
+/// <c>tool</c>, then <c>done</c> or <c>error</c> (written by the controller).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -62,13 +62,29 @@ public sealed class AiEventStream : IAiStreamSink, IAsyncDisposable
         _pinger = PingAsync(_pingStop.Token);
     }
 
-    public ValueTask AttemptAsync(string model, int number, int of) => SendAsync("attempt", new { model, n = number, of });
+    public ValueTask AttemptAsync(string model, int number, int of, int round) => SendAsync("attempt", new { model, n = number, of, round });
 
     public ValueTask ReasoningAsync(string text) => SendAsync("reasoning", new { text });
 
     public ValueTask DeltaAsync(string text) => SendAsync("delta", new { text });
 
     public ValueTask FallbackAsync(string model, string reason, string? next) => SendAsync("fallback", new { model, reason, next });
+
+    public ValueTask ToolAsync(AiToolStep step) => SendAsync("tool", new
+    {
+        round = step.Round,
+        id = step.Id,
+        name = step.Name,
+        arguments = step.Arguments,
+        ok = step.Ok,
+        error = step.Error,
+        seconds = step.Seconds,
+        rows = step.Rows,
+        asOfUtc = step.AsOfUtc is DateTime at ? DateTime.SpecifyKind(at, DateTimeKind.Utc) : (DateTime?)null,
+        summary = step.Summary,
+        resultChars = step.ResultChars,
+        result = step.Result,
+    });
 
     /// <summary>Writes one event and flushes it, so the browser sees it now.</summary>
     public async ValueTask SendAsync(string name, object data)

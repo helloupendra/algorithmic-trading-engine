@@ -70,9 +70,11 @@ internal static class AiTestKit
         public required AiModelCatalog Catalog { get; init; }
         public required NvidiaChatClient Client { get; init; }
 
+        public required AiToolbox Toolbox { get; init; }
+
         public AiController Controller(string user = "upendra")
         {
-            var controller = new AiController(Db, Store, Gateway, Catalog, Limiter, Options);
+            var controller = new AiController(Db, Store, Gateway, Catalog, Limiter, Toolbox, Options);
             controller.ControllerContext = new ControllerContext
             {
                 HttpContext = new DefaultHttpContext
@@ -86,7 +88,7 @@ internal static class AiTestKit
         }
     }
 
-    public static Services Build(AiSettings? settings = null, TradingDbContext? db = null)
+    public static Services Build(AiSettings? settings = null, TradingDbContext? db = null, params IAiTool[] tools)
     {
         db ??= NewDb();
         var monitor = new Monitor(settings ?? Settings());
@@ -94,6 +96,7 @@ internal static class AiTestKit
         var client = new NvidiaChatClient(new Factory(provider), monitor);
         var store = new AiSettingsStore(db);
         var limiter = new AiRateLimiter(monitor);
+        var toolbox = new AiToolbox(tools);
         return new Services
         {
             Db = db,
@@ -102,9 +105,57 @@ internal static class AiTestKit
             Store = store,
             Limiter = limiter,
             Client = client,
+            Toolbox = toolbox,
             Catalog = new AiModelCatalog(client, monitor),
-            Gateway = new AiGateway(db, store, client, limiter, monitor, NullLogger<AiGateway>.Instance),
+            Gateway = new AiGateway(db, store, client, limiter, toolbox, monitor, NullLogger<AiGateway>.Instance),
         };
+    }
+
+    /// <summary>A model round that asks for tools: one tool_calls chunk per call, then finish_reason tool_calls.</summary>
+    public static Script Tools(params (string Name, string Args)[] calls) => Script.Sse(
+        calls.Select((c, i) => new JsonObject
+        {
+            ["choices"] = new JsonArray(new JsonObject
+            {
+                ["index"] = 0,
+                ["delta"] = new JsonObject
+                {
+                    ["content"] = "",
+                    ["tool_calls"] = new JsonArray(new JsonObject
+                    {
+                        ["index"] = i,
+                        ["id"] = $"call-{c.Name}-{i}",
+                        ["type"] = "function",
+                        ["function"] = new JsonObject { ["name"] = c.Name, ["arguments"] = c.Args },
+                    }),
+                },
+                ["finish_reason"] = i == calls.Length - 1 ? "tool_calls" : null,
+            }),
+        }.ToJsonString())
+        .Append("""{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":5,"total_tokens":105}}""")
+        .Append("[DONE]")
+        .ToArray());
+
+    /// <summary>A desk tool for tests: answers what it is given, counts its calls, or throws.</summary>
+    public sealed class FakeTool(string name, Func<AiToolArgs, object>? answer = null, int rows = 1) : IAiTool
+    {
+        public int Calls { get; private set; }
+
+        public AiToolArgs? LastArgs { get; private set; }
+
+        public string Name => name;
+
+        public string Description => $"Test tool {name}.";
+
+        public JsonObject Parameters => AiToolSchema.Object(("runId", AiToolSchema.Integer("A run."), false));
+
+        public Task<AiToolOutput> RunAsync(AiToolArgs args, CancellationToken cancellationToken)
+        {
+            Calls++;
+            LastArgs = args;
+            object data = answer?.Invoke(args) ?? new { ok = true };
+            return Task.FromResult(new AiToolOutput(data, new DateTime(2026, 9, 30, 10, 0, 0, DateTimeKind.Utc), rows, $"{rows} rows"));
+        }
     }
 
     public static AiAskInput Question(string text = "What is max pain?", string agent = AiCatalog.DeskAssistant, string? tier = null) =>
@@ -119,7 +170,13 @@ internal static class AiTestKit
 
         public ValueTask StartAsync(long callId, IReadOnlyList<string> chain) { Events.Add($"start {callId}"); return ValueTask.CompletedTask; }
 
-        public ValueTask AttemptAsync(string model, int number, int of) { Events.Add($"attempt {model} {number}/{of}"); return ValueTask.CompletedTask; }
+        public ValueTask AttemptAsync(string model, int number, int of, int round)
+        {
+            Events.Add(round == 1 ? $"attempt {model} {number}/{of}" : $"attempt {model} {number}/{of} round {round}");
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask ToolAsync(AiToolStep step) { Events.Add($"tool {step.Name} {(step.Ok ? "ok" : "error")}"); return ValueTask.CompletedTask; }
 
         public ValueTask ReasoningAsync(string text) { Events.Add($"reasoning {text}"); return ValueTask.CompletedTask; }
 

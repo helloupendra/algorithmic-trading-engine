@@ -24,6 +24,9 @@ public class AiCallConfiguration : IEntityTypeConfiguration<AiCall>
         builder.Property(x => x.Outcome).IsRequired().HasMaxLength(16);
         builder.Property(x => x.Error).IsRequired().HasColumnType("text").HasDefaultValue(string.Empty);
         builder.Property(x => x.AttemptsJson).IsRequired().HasColumnType("text").HasDefaultValue("[]");
+        builder.Property(x => x.ToolsJson).IsRequired().HasColumnType("text").HasDefaultValue("[]");
+        builder.Property(x => x.Rounds).HasDefaultValue(0);
+        builder.Property(x => x.ToolCalls).HasDefaultValue(0);
         builder.Property(x => x.SystemPrompt).IsRequired().HasColumnType("text").HasDefaultValue(string.Empty);
         builder.Property(x => x.MessagesJson).IsRequired().HasColumnType("text").HasDefaultValue("[]");
         builder.Property(x => x.Summary).IsRequired().HasMaxLength(200).HasDefaultValue(string.Empty);

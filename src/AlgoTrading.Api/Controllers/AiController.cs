@@ -57,6 +57,7 @@ public class AiController : ControllerBase
     private readonly AiGateway _gateway;
     private readonly AiModelCatalog _catalog;
     private readonly AiRateLimiter _limiter;
+    private readonly AiToolbox _toolbox;
     private readonly IOptionsMonitor<AiSettings> _settings;
     private readonly TimeProvider _time;
 
@@ -66,6 +67,7 @@ public class AiController : ControllerBase
         AiGateway gateway,
         AiModelCatalog catalog,
         AiRateLimiter limiter,
+        AiToolbox toolbox,
         IOptionsMonitor<AiSettings> settings,
         TimeProvider? time = null)
     {
@@ -74,6 +76,7 @@ public class AiController : ControllerBase
         _gateway = gateway;
         _catalog = catalog;
         _limiter = limiter;
+        _toolbox = toolbox;
         _settings = settings;
         _time = time ?? TimeProvider.System;
     }
@@ -128,7 +131,7 @@ public class AiController : ControllerBase
         var last = await LastCallsAsync(cancellationToken);
 
         return Ok(new AiAgentList(
-            state.Agents.Select(a => ToAgent(a, state, today, last)).ToList(),
+            state.Agents.Select(a => ToAgent(a, today, last)).ToList(),
             AiCatalog.RuleBased.Select(r => new AiRuleBasedDto(r.Name, r.What, r.Where, r.Model)).ToList()));
     }
 
@@ -160,7 +163,7 @@ public class AiController : ControllerBase
         var state = await _store.LoadAsync(cancellationToken);
         var today = await TodayRowsAsync(Now(), cancellationToken);
         var last = await LastCallsAsync(cancellationToken);
-        return Ok(ToAgent(state.Agent(key)!, state, today, last));
+        return Ok(ToAgent(state.Agent(key)!, today, last));
     }
 
     /// <summary>Sets a tier's chain, or back to its default.</summary>
@@ -286,7 +289,8 @@ public class AiController : ControllerBase
             .OrderByDescending(x => x.Id)
             .Take(take + 1)
             .Select(x => new CallRow(x.Id, x.CreatedUtc, x.CompletedUtc, x.AgentKey, x.Tier, x.Source, x.RequestedBy, x.Model,
-                x.Outcome, x.AttemptsJson, x.Seconds, x.PromptTokens, x.CompletionTokens, x.TotalTokens, x.Summary, x.Error, x.ConversationId))
+                x.Outcome, x.AttemptsJson, x.Seconds, x.PromptTokens, x.CompletionTokens, x.TotalTokens, x.Summary, x.Error, x.ConversationId,
+                x.ToolCalls, x.Rounds))
             .ToListAsync(cancellationToken);
 
         var now = Now();
@@ -302,12 +306,14 @@ public class AiController : ControllerBase
         if (x is null) return NotFound(new { error = $"No call {id}." });
 
         var summary = ToSummary(new CallRow(x.Id, x.CreatedUtc, x.CompletedUtc, x.AgentKey, x.Tier, x.Source, x.RequestedBy, x.Model,
-            x.Outcome, x.AttemptsJson, x.Seconds, x.PromptTokens, x.CompletionTokens, x.TotalTokens, x.Summary, x.Error, x.ConversationId), Now());
+            x.Outcome, x.AttemptsJson, x.Seconds, x.PromptTokens, x.CompletionTokens, x.TotalTokens, x.Summary, x.Error, x.ConversationId,
+            x.ToolCalls, x.Rounds), Now());
 
         return Ok(new AiCallDetail(
             summary.Id, summary.Utc, summary.CompletedUtc, summary.AgentKey, summary.AgentName, summary.Tier, summary.Source,
             summary.RequestedBy, summary.Model, summary.Outcome, summary.AttemptCount, summary.Fallbacks, summary.Seconds,
             summary.PromptTokens, summary.CompletionTokens, summary.TotalTokens, summary.Summary, summary.Error, summary.ConversationId,
+            summary.ToolCalls, summary.Rounds,
             x.SystemPrompt,
             ReadMessages(x.MessagesJson),
             x.Answer,
@@ -315,6 +321,7 @@ public class AiController : ControllerBase
             x.FinishReason,
             ReadList<string>(x.ChainJson),
             ReadAttempts(x.AttemptsJson),
+            ReadTools(x.ToolsJson),
             new AiRequestDto($"POST {ChatEndpoint()}", x.MaxTokens, x.Temperature, true)));
     }
 
@@ -360,6 +367,8 @@ public class AiController : ControllerBase
                     finishReason = result.FinishReason,
                     usage = Usage(result.Usage),
                     fallbacks = result.Fallbacks,
+                    toolCalls = result.Tools.Count,
+                    rounds = result.Rounds,
                 });
             }
             else
@@ -389,7 +398,10 @@ public class AiController : ControllerBase
 
         var answer = new AiAnswer(result.CallId, result.Outcome, result.Model, result.Text, result.Reasoning, result.Seconds,
             result.FinishReason, Usage(result.Usage), result.Fallbacks,
-            result.Attempts.Select(a => new AiAttemptDto(a.Model, a.Outcome, a.Seconds, a.HttpStatus)).ToList(), result.Error);
+            result.Attempts.Select(a => new AiAttemptDto(a.Model, a.Outcome, a.Seconds, a.HttpStatus, a.Round)).ToList(), result.Error,
+            result.Tools.Select(t => new AiToolCallDto(t.Round, t.Id, t.Name, t.Arguments, t.Ok, t.Error, t.Seconds, t.Rows,
+                t.AsOfUtc is DateTime at ? DateTime.SpecifyKind(at, DateTimeKind.Utc) : null, t.Summary, t.ResultChars, t.Result)).ToList(),
+            result.Rounds);
 
         return result.Outcome == AiCallOutcome.Ok ? Ok(answer) : StatusCode(StatusCodes.Status502BadGateway, answer);
     }
@@ -466,7 +478,7 @@ public class AiController : ControllerBase
     private static AiTierDto ToTier(AiTierState t) => new(
         t.Def.Key, t.Def.Label, t.Def.Purpose, t.Chain, t.Def.DefaultChain, t.Overridden, t.Def.Chat, Utc(t.UpdatedUtc), t.UpdatedBy);
 
-    private static AiAgentDto ToAgent(AiAgentState a, AiState state, IReadOnlyList<TodayRow> today, IReadOnlyDictionary<string, AiLastCallDto> last)
+    private AiAgentDto ToAgent(AiAgentState a, IReadOnlyList<TodayRow> today, IReadOnlyDictionary<string, AiLastCallDto> last)
     {
         var mine = today.Where(r => r.AgentKey == a.Def.Key).ToList();
         var tier = AiCatalog.Tier(a.Def.Tier);
@@ -493,7 +505,8 @@ public class AiController : ControllerBase
                 mine.Sum(r => r.TotalTokens ?? 0)),
             Utc(a.UpdatedUtc),
             a.UpdatedBy,
-            a.Reason);
+            a.Reason,
+            _toolbox.For(a.Def).Select(t => new AiToolDto(t.Name, t.Description)).ToList());
     }
 
     private static AiCallSummary ToSummary(CallRow r, DateTime now)
@@ -512,14 +525,16 @@ public class AiController : ControllerBase
             r.Model.Length > 0 ? r.Model : null,
             abandoned ? AiCallOutcome.Failed : r.Outcome,
             attempts.Count,
-            Math.Max(0, attempts.Count - 1),
+            AiGateway.CountFallbacks(attempts.Select(a => a.Outcome)),
             r.Seconds,
             r.PromptTokens,
             r.CompletionTokens,
             r.TotalTokens,
             r.Summary,
             abandoned ? "Never finished: the API stopped while the call was running." : r.Error,
-            r.ConversationId);
+            r.ConversationId,
+            r.ToolCalls,
+            r.Rounds);
     }
 
     private static string ModelNote(string id, AiState state)
@@ -552,7 +567,7 @@ public class AiController : ControllerBase
     private sealed record CallRow(
         long Id, DateTime CreatedUtc, DateTime? CompletedUtc, string AgentKey, string Tier, string Source, string RequestedBy,
         string Model, string Outcome, string AttemptsJson, double Seconds, int? PromptTokens, int? CompletionTokens,
-        int? TotalTokens, string Summary, string Error, string ConversationId);
+        int? TotalTokens, string Summary, string Error, string ConversationId, int ToolCalls, int Rounds);
 
     private sealed record TodayRow(
         long Id, string AgentKey, string Model, string Outcome, double Seconds, int? PromptTokens, int? CompletionTokens,
@@ -630,7 +645,7 @@ public class AiController : ControllerBase
             rows.Sum(r => r.TotalTokens ?? 0),
             done.Count == 0 ? null : Math.Round(done.Average(), 2),
             done.Count == 0 ? null : Percentile(done, 0.95),
-            rows.Sum(r => Math.Max(0, ReadAttempts(r.AttemptsJson).Count - 1)));
+            rows.Sum(r => AiGateway.CountFallbacks(ReadAttempts(r.AttemptsJson).Select(a => a.Outcome))));
     }
 
     /// <summary>Per model, from every attempt today: so a model that keeps failing over shows its failures, not only its answers.</summary>
@@ -694,10 +709,23 @@ public class AiController : ControllerBase
                     a.TryGetProperty("model", out var m) && m.ValueKind == JsonValueKind.String ? m.GetString()! : string.Empty,
                     a.TryGetProperty("outcome", out var o) && o.ValueKind == JsonValueKind.String ? o.GetString()! : string.Empty,
                     a.TryGetProperty("seconds", out var s) && s.ValueKind == JsonValueKind.Number ? s.GetDouble() : 0,
-                    a.TryGetProperty("httpStatus", out var h) && h.ValueKind == JsonValueKind.Number ? h.GetInt32() : null));
+                    a.TryGetProperty("httpStatus", out var h) && h.ValueKind == JsonValueKind.Number ? h.GetInt32() : null,
+                    a.TryGetProperty("round", out var rd) && rd.ValueKind == JsonValueKind.Number ? rd.GetInt32() : 1));
             }
 
             return list;
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    private static IReadOnlyList<AiToolCallDto> ReadTools(string json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<List<AiToolCallDto>>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web)) ?? [];
         }
         catch (JsonException)
         {
@@ -792,7 +820,10 @@ public sealed record AiAgentDto(
     string Key, int Number, string Name, string Job, string UseCase, string Schedule, string Phase, string Status,
     bool Built, bool Enabled, string Tier, string TierLabel, IReadOnlyList<string> Chain, bool ChainOverridden,
     string Reads, string Limits, AiLastCallDto? LastCall, DateTime? NextRunUtc, AiAgentToday Today,
-    DateTime? UpdatedUtc, string? UpdatedBy, string? Reason);
+    DateTime? UpdatedUtc, string? UpdatedBy, string? Reason, IReadOnlyList<AiToolDto> Tools);
+
+/// <summary>A desk tool an agent may ask for.</summary>
+public sealed record AiToolDto(string Name, string Description);
 
 public sealed record AiRuleBasedDto(string Name, string What, string Where, string Model);
 
@@ -821,13 +852,19 @@ public sealed record AiModelTestResult(bool Ok, string Model, double Seconds, st
 public sealed record AiCallSummary(
     long Id, DateTime Utc, DateTime? CompletedUtc, string AgentKey, string AgentName, string Tier, string Source,
     string RequestedBy, string? Model, string Outcome, int AttemptCount, int Fallbacks, double Seconds,
-    int? PromptTokens, int? CompletionTokens, int? TotalTokens, string Summary, string Error, string ConversationId);
+    int? PromptTokens, int? CompletionTokens, int? TotalTokens, string Summary, string Error, string ConversationId,
+    int ToolCalls, int Rounds);
 
 public sealed record AiCallPage(IReadOnlyList<AiCallSummary> Calls, long? NextBeforeId);
 
 public sealed record AiMessageDto(string Role, string Content);
 
-public sealed record AiAttemptDto(string Model, string Outcome, double Seconds, int? HttpStatus);
+public sealed record AiAttemptDto(string Model, string Outcome, double Seconds, int? HttpStatus, int Round = 1);
+
+/// <summary>One desk tool call of a question: what was asked, what it found, and the text the model was given back.</summary>
+public sealed record AiToolCallDto(
+    int Round, string Id, string Name, string Arguments, bool Ok, string? Error, double Seconds, int Rows,
+    DateTime? AsOfUtc, string Summary, int ResultChars, string Result);
 
 public sealed record AiRequestDto(string Endpoint, int MaxTokens, double Temperature, bool Stream);
 
@@ -836,8 +873,10 @@ public sealed record AiCallDetail(
     long Id, DateTime Utc, DateTime? CompletedUtc, string AgentKey, string AgentName, string Tier, string Source,
     string RequestedBy, string? Model, string Outcome, int AttemptCount, int Fallbacks, double Seconds,
     int? PromptTokens, int? CompletionTokens, int? TotalTokens, string Summary, string Error, string ConversationId,
+    int ToolCalls, int Rounds,
     string System, IReadOnlyList<AiMessageDto> Messages, string Answer, string Reasoning,
-    string FinishReason, IReadOnlyList<string> Chain, IReadOnlyList<AiAttemptDto> Attempts, AiRequestDto Request);
+    string FinishReason, IReadOnlyList<string> Chain, IReadOnlyList<AiAttemptDto> Attempts, IReadOnlyList<AiToolCallDto> Tools,
+    AiRequestDto Request);
 
 public sealed record AiAskMessage(string? Role, string? Content);
 
@@ -848,4 +887,4 @@ public sealed record AiUsageDto(int? PromptTokens, int? CompletionTokens, int? T
 
 public sealed record AiAnswer(
     long CallId, string Outcome, string Model, string Text, string Reasoning, double Seconds, string FinishReason,
-    AiUsageDto? Usage, int Fallbacks, IReadOnlyList<AiAttemptDto> Attempts, string Error);
+    AiUsageDto? Usage, int Fallbacks, IReadOnlyList<AiAttemptDto> Attempts, string Error, IReadOnlyList<AiToolCallDto> Tools, int Rounds);

@@ -36,5 +36,17 @@ public sealed class AiSettings
     /// <summary>Seconds one model may take in all.</summary>
     public double AttemptTimeoutSeconds { get; set; } = 300;
 
+    /// <summary>Rounds in which a model may ask for tools before it must answer with what it has.</summary>
+    public int MaxToolRounds { get; set; } = 4;
+
+    /// <summary>Tool calls one question may make in all.</summary>
+    public int MaxToolCalls { get; set; } = 8;
+
+    /// <summary>Characters of one tool's answer sent to the model; past it the tool is asked to narrow down.</summary>
+    public int MaxToolResultChars { get; set; } = 16_000;
+
+    /// <summary>Seconds one tool may take (the strategy catalog can take 20 s on a cold start).</summary>
+    public double ToolTimeoutSeconds { get; set; } = 30;
+
     public bool KeyConfigured => !string.IsNullOrWhiteSpace(ApiKey);
 }
