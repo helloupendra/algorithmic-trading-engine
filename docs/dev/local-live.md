@@ -82,7 +82,10 @@ in the trader's account holding a short straddle.
    `127.0.0.1:5125`, clients of that port, and connections to `127.0.0.1:5544`
    and `127.0.0.1:6390`. Anything else stops the API, including another
    loopback port: an SSH tunnel to the server listens on loopback too. Three
-   unreadable checks in a row stop it as well.
+   unreadable checks in a row stop it as well. Each socket is judged on its
+   own on macOS and Linux alike: the check asks `lsof` for the file field,
+   which Linux leaves out unless asked. Until 1 Oct 2026 Linux judged only a
+   process's last socket.
 
 `up` also refuses to start if `local-live.env` gives any credential a value,
 points a URL anywhere but `127.0.0.1:9`, or is missing one of the lines above;
