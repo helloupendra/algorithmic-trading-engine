@@ -111,6 +111,9 @@ public class TradingDbContext : DbContext
     /// <summary>What the AI agents wrote: run reviews, news extractions, incident explanations. See <see cref="AiReport"/>.</summary>
     public DbSet<AiReport> AiReports => Set<AiReport>();
 
+    /// <summary>The docs' passages and their embeddings, for the Assistant's search. See <see cref="AiDocChunk"/>.</summary>
+    public DbSet<AiDocChunk> AiDocChunks => Set<AiDocChunk>();
+
     /// <summary>The Analysis module's forecasts: written before the open, scored after the close. See <see cref="Forecast"/>.</summary>
     public DbSet<Forecast> Forecasts => Set<Forecast>();
 

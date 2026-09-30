@@ -168,6 +168,10 @@ builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Ap
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.CheckupTool>();
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.ForecastsTool>();
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.StrategySpecTool>();
+builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.SearchDocsTool>();
+// Keeps the docs' search index in step with docs/ (only passages that changed are embedded again).
+builder.Services.AddSingleton<AlgoTrading.Api.Services.AiSearch.AiDocIndexer>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AlgoTrading.Api.Services.AiSearch.AiDocIndexer>());
 
 // The scheduled AI agents (Phase 3): advisory reports, each behind its switch on the AI page.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiAgents.AiSchedulerState>();

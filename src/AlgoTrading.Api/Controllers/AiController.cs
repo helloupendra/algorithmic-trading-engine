@@ -352,6 +352,33 @@ public class AiController : ControllerBase
             new AiRequestDto($"POST {ChatEndpoint()}", x.MaxTokens, x.Temperature, true)));
     }
 
+    // ---------- search ------------------------------------------------------
+
+    /// <summary>The docs passages closest to <paramref name="q"/>, as the Assistant's <c>search_docs</c> finds them, and what the index holds.</summary>
+    [HttpGet("search")]
+    public async Task<IActionResult> Search(
+        [FromServices] AiDocIndex docs,
+        [FromQuery] string? q = null,
+        [FromQuery] int limit = 5,
+        CancellationToken cancellationToken = default)
+    {
+        var status = await docs.StatusAsync(cancellationToken);
+        var statusDto = new AiDocIndexStatusDto(status.Files, status.Passages, Utc(status.IndexedUtc), status.Model);
+        if (string.IsNullOrWhiteSpace(q)) return Ok(new AiSearchResult(statusDto, q, []));
+        if (q.Length > 300) return BadRequest(new { error = "The query is longer than 300 characters." });
+        if (!_settings.CurrentValue.KeyConfigured) return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "No NVIDIA_API_KEY on the server." });
+
+        try
+        {
+            var hits = await docs.SearchAsync(q.Trim(), Math.Clamp(limit, 1, 20), cancellationToken);
+            return Ok(new AiSearchResult(statusDto, q.Trim(), hits.Select(h => new AiSearchHit($"docs/{h.Path}", h.Heading, h.Score, h.Text)).ToList()));
+        }
+        catch (AiAttemptFailedException ex)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = $"The query could not be embedded: {ex.Outcome}" });
+        }
+    }
+
     // ---------- reports -----------------------------------------------------
 
     /// <summary>What the scheduled agents wrote, newest first: all, one agent's, one subject's (a run's review), one status, one IST day.</summary>
@@ -1112,6 +1139,12 @@ public sealed record AiReportAgentStats(
 public sealed record AiReportStats(string Since, int Days, IReadOnlyList<AiReportAgentStats> Agents);
 
 public sealed record AiAgentRunRequest(string? SubjectId);
+
+public sealed record AiDocIndexStatusDto(int Files, int Passages, DateTime? IndexedUtc, string Model);
+
+public sealed record AiSearchHit(string File, string Section, double Score, string Text);
+
+public sealed record AiSearchResult(AiDocIndexStatusDto Index, string? Query, IReadOnlyList<AiSearchHit> Hits);
 
 public sealed record AiAskMessage(string? Role, string? Content);
 
