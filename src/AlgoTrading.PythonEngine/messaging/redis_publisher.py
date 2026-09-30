@@ -4,7 +4,7 @@ import json
 import os
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 # pyrefly: ignore [missing-import]
 import redis
 from dotenv import load_dotenv
@@ -57,18 +57,28 @@ class RedisTickPublisher:
         maxlen: int = 500_000,
         socket_timeout: int = 5,
         decode_responses: bool = True,
+        stream_timeout: Optional[float] = None,
     ) -> None:
         self.stream_name = stream_name
         self.maxlen = maxlen
 
-        self.client = redis.Redis(
-            host=host,
-            port=port,
-            db=db,
-            password=password,
-            socket_timeout=socket_timeout,
-            decode_responses=decode_responses,
-        )
+        connection = dict(host=host, port=port, db=db, password=password, decode_responses=decode_responses)
+        self.client = redis.Redis(socket_timeout=socket_timeout, **connection)
+
+        # The tick stream on a client of its own, bounded, when asked for.
+        # redis-py's default retries a timed-out command ten times with backoff
+        # on a 5 s socket timeout, so one XADD to a Redis that has stopped
+        # answering can hold the feed's emitter for about a minute. With a
+        # stream timeout a write fails once, within that many seconds, and the
+        # runner decides what to do about it. `client` stays as it was: it
+        # carries the feed's lock, the watchlist signal and the alerts.
+        if stream_timeout:
+            from redis.backoff import NoBackoff
+            from redis.retry import Retry
+            self.stream_client = redis.Redis(socket_timeout=stream_timeout, socket_connect_timeout=stream_timeout,
+                                             retry=Retry(NoBackoff(), 0), **connection)
+        else:
+            self.stream_client = self.client
 
     def ping(self) -> bool:
         try:
@@ -90,6 +100,16 @@ class RedisTickPublisher:
 
         raise RuntimeError(f"Redis connection failed after {retries} retries. Last error: {last_error}")
 
+    @staticmethod
+    def _entry(tick: Dict[str, Any]) -> Dict[str, str]:
+        """One stream entry: the tick as JSON, and the fields a reader filters on without decoding it."""
+        return {
+            "payload": json.dumps(tick, separators=(",", ":"), default=str),
+            "symbol": tick.get("symbol", ""),
+            "exchange": tick.get("exchange", ""),
+            "dataType": tick.get("dataType", "symbolUpdate"),
+        }
+
     def publish_tick(self, tick: Dict[str, Any]) -> str:
         """
         Publish one normalized tick to Redis stream.
@@ -97,27 +117,33 @@ class RedisTickPublisher:
         Returns:
             Redis stream message ID
         """
-        payload = json.dumps(tick, separators=(",", ":"), default=str)
+        return self.stream_client.xadd(self.stream_name, self._entry(tick), maxlen=self.maxlen, approximate=True)
 
-        message_id = self.client.xadd(
-            self.stream_name,
-            {
-                "payload": payload,
-                "symbol": tick.get("symbol", ""),
-                "exchange": tick.get("exchange", ""),
-                "dataType": tick.get("dataType", "symbolUpdate"),
-            },
-            maxlen=self.maxlen,
-            approximate=True,
-        )
+    def publish_ticks(self, ticks: List[Dict[str, Any]]) -> List[str]:
+        """
+        Publish several ticks in one round trip: a pipeline of XADDs, not a
+        transaction. Returns the message ids in order.
 
-        return message_id
+        Never retried, here or by the client: a pipeline that failed part way
+        may already have written some entries, and sending it again would put
+        those ticks on the stream twice.
+        """
+        if not ticks:
+            return []
+        if len(ticks) == 1:
+            return [self.publish_tick(ticks[0])]
+        pipe = self.stream_client.pipeline(transaction=False)
+        for tick in ticks:
+            pipe.xadd(self.stream_name, self._entry(tick), maxlen=self.maxlen, approximate=True)
+        return pipe.execute()
 
     def close(self) -> None:
-        try:
-            self.client.close()
-        except Exception:
-            pass
+        clients = [self.client] if self.stream_client is self.client else [self.client, self.stream_client]
+        for client in clients:
+            try:
+                client.close()
+            except Exception:
+                pass
 
 
 def normalize_tick(
@@ -125,9 +151,14 @@ def normalize_tick(
     *,
     symbol: Optional[str] = None,
     data_type: str = "symbolUpdate",
+    include_raw: bool = True,
 ) -> Dict[str, Any]:
     """
     Convert raw incoming broker tick into a generic normalized payload.
+
+    `include_raw=False` leaves rawPayload empty instead of serialising the
+    whole incoming message into it — for a caller that sets rawPayload itself
+    and would only throw that work away (the live feed runner, per tick).
 
     You may need to adjust field names depending on the exact FYERS message structure.
 
@@ -206,13 +237,13 @@ def normalize_tick(
         "theta": safe_float(raw_msg.get("theta")),
         "vega": safe_float(raw_msg.get("vega")),
         "receivedUtc": utc_now_iso(),
-        "rawPayload": json.dumps(raw_msg, default=str),
+        "rawPayload": json.dumps(raw_msg, default=str) if include_raw else "",
     }
 
     return normalized
 
 
-def build_publisher_from_env() -> RedisTickPublisher:
+def build_publisher_from_env(stream_timeout: Optional[float] = None) -> RedisTickPublisher:
     return RedisTickPublisher(
         host=os.getenv("REDIS_HOST", "localhost"),
         port=int(os.getenv("REDIS_PORT", "6379")),
@@ -220,6 +251,7 @@ def build_publisher_from_env() -> RedisTickPublisher:
         password=os.getenv("REDIS_PASSWORD") or None,
         stream_name=os.getenv("REDIS_STREAM_NAME", "market:ticks"),
         maxlen=int(os.getenv("REDIS_STREAM_MAXLEN", "500000")),
+        stream_timeout=stream_timeout,
     )
 
 

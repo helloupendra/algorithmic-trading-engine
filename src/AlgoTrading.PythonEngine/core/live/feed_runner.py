@@ -15,9 +15,11 @@ word for word; the difference is that a vendor now gets all of it by being a
   * the heartbeat, with an honest status;
   * the watchdogs: socket down, connected but silent, credential refused,
     login refused — each cause also told to the System channel, once per ten
-    minutes (core/live/watchdog_alerts.py).
+    minutes (core/live/watchdog_alerts.py) — and, for a feed that can say how
+    its socket is doing, no frame at all and bytes piling up unread.
 """
 
+import collections
 import os
 import sys
 import threading
@@ -35,10 +37,31 @@ from core.live.reconnect_policy import describe, reconnect_delay
 from core.live.vendor_feed import FeedEvent
 from core.live import watchdog_alerts
 from core.live.watchdog_alerts import WatchdogAlerts
+from messaging.redis_publisher import normalize_tick
 
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _env_number(name: str, default, cast=float):
+    """A number from the environment (.env is loaded by core.config), or the default when unset or not a number."""
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return cast(raw)
+    except ValueError:
+        print(f"[feed] {name}={raw!r} is not a number — using {default}.", flush=True)
+        return default
+
+
+def _percentile(values, fraction):
+    """The value `fraction` of the way up the sorted values; None for none."""
+    if not values:
+        return None
+    ordered = sorted(values)
+    return ordered[min(len(ordered) - 1, int(len(ordered) * fraction))]
 
 
 def feed_silent_for(now: float, connected: bool, connected_since, last_message) -> float | None:
@@ -90,11 +113,27 @@ class FeedRunner:
     #: the Data overview; short enough that a blip at 09:20 is not an error at 15:00.
     STORE_FAILURE_NOTE_SECONDS = 600
 
+    #: After the strategy stream cannot be written, how long it is left alone.
+    #: Every pass would otherwise wait out its own timeout on a Redis that is
+    #: not answering; the ticks still reach the API meanwhile, and are counted
+    #: as not published.
+    STREAM_PAUSE_SECONDS = 5
+
+    #: Consecutive once-a-second samples of the socket's unread bytes at or
+    #: above FEED_BACKLOG_ALERT_KB before FALLING BEHIND is said, and below it
+    #: before the note is cleared.
+    BACKLOG_ALERT_SAMPLES = 10
+    BACKLOG_CLEAR_SAMPLES = 10
+
+    #: How often the read-path stats line is printed, for a feed that has one.
+    STATS_EVERY_SECONDS = 60
+
     def __init__(self, feed, http=None, publisher=None, fixed_symbols=None,
                  api_base_url: str | None = None, verify_ssl: bool | None = None,
                  watchlist_refresh_seconds: float = WATCHLIST_REFRESH_SECONDS,
                  heartbeat_seconds: float = HEARTBEAT_SECONDS,
-                 market_open=None):
+                 market_open=None, frame_silence_seconds: float | None = None,
+                 backlog_alert_kb: float | None = None, stream_batch: bool | None = None):
         self._feed = feed
         self._http = http or build_session()
         self._publisher = publisher
@@ -178,32 +217,78 @@ class FeedRunner:
         # once per cause per ten minutes (core/live/watchdog_alerts.py).
         self.watchdog_alerts = WatchdogAlerts(feed.key, publisher)
 
+        # --- the read path's switches (all read once, at start) ------------
+        #: No frame at all — not even the vendor's ping — for this long in open
+        #: session, with symbols subscribed: the line is dead. 0 turns it off.
+        self._frame_silence_seconds = float(
+            frame_silence_seconds if frame_silence_seconds is not None
+            else _env_number("FEED_FRAME_SILENCE_SECONDS", 45.0))
+        #: Unread bytes on the socket at which this process is falling behind.
+        self._backlog_alert_bytes = int(1024 * float(
+            backlog_alert_kb if backlog_alert_kb is not None else _env_number("FEED_BACKLOG_ALERT_KB", 128.0)))
+        #: One pipelined write per batch of ticks (publish_ticks) rather than
+        #: one XADD per tick. FEED_STREAM_BATCH=0 goes back to one at a time.
+        self._stream_batch = bool(stream_batch if stream_batch is not None
+                                  else _env_number("FEED_STREAM_BATCH", 1, int))
+
+        # The strategy stream: paused until this monotonic time after a
+        # failure, the last failure's words, and how long each write took.
+        self._stream_paused_until = 0.0
+        self._last_publish_error = ""
+        self._stream_batches = 0
+        self._stream_batch_ms: collections.deque = collections.deque(maxlen=6000)
+
+        # The socket's unread bytes, sampled once a second by the watch loop:
+        # the samples since the last stats line, the current run above and
+        # below the alert line, and the note the heartbeat carries meanwhile.
+        self._backlog_samples: list[int] = []
+        self._backlog_high = 0
+        self._backlog_low = 0
+        self._backlog_episode_start = None
+        self._behind_note = ""
+
+        # The last stats line's baseline: (monotonic time, feed.stats(), stream batches).
+        self._stats_base = None
+
     # ================================================================ ticks
 
     def on_ticks(self, ticks) -> None:
         now = time.monotonic()
         self.last_message = now
         self.ticks_accepted += len(ticks or [])
+        messages = []
         for tick in ticks or []:
             try:
-                self._accept(tick)
+                message = self._accept(tick)
             except Exception as ex:
                 self.last_error = str(ex)
                 self.ticks_rejected += 1
                 # Neither published nor stored: the strategies never hear it.
                 print(f"[{self._feed.key}] could not accept a tick ({self.ticks_rejected} so far): {ex}",
                       flush=True)
+                continue
+            if message is not None:
+                messages.append(message)
+        # The whole batch to the stream at once, after every tick is on its
+        # way to the API: storage never waits on Redis.
+        self._publish_many(messages)
         if ticks:
             self.last_error = ""
 
-    def _accept(self, tick: dict) -> None:
+    def _accept(self, tick: dict) -> dict | None:
+        """
+        One tick: the platform's rules applied, handed to the pump for the API,
+        and returned as the strategy stream's message — None when it is not to
+        be published (no stream, a replay's snapshot, or a message that could
+        not be built, which counts as not published).
+        """
         snapshot = bool(tick.pop("snapshot", False))
         if snapshot and self._feed.is_replay:
             # A replay's snapshot is stamped with the moment it was sent, not
             # with the replay's clock, and it is not part of the session being
             # replayed. Storing it froze all 49 contracts of the first TrueData
             # recap at a 17:31 price.
-            return
+            return None
 
         tick.setdefault("sourceKey", self._feed.key)
         tick.setdefault("dataType", "symbolUpdate")
@@ -216,29 +301,85 @@ class FeedRunner:
         if symbol and not snapshot:
             self.last_real_tick[symbol] = time.time()
 
-        self._publish(tick)
+        message = self._stream_message(tick)
         self.pump.offer(tick)
+        return message
 
-    def _publish(self, tick: dict) -> None:
+    def _stream_message(self, tick: dict) -> dict | None:
+        """The tick as the strategy stream carries it; None without a stream or when it cannot be built."""
         # The strategies read the Redis stream, not the tables. The first
         # TrueData feed only posted to the API, and every running strategy sat
         # "waiting for ticks" while the tables filled.
         if self._publisher is None:
-            return
+            return None
         try:
-            from messaging.redis_publisher import normalize_tick
-            message = normalize_tick(tick)
+            # rawPayload is set here, so normalize_tick is not asked to
+            # serialise the whole tick into it only for that to be replaced.
+            message = normalize_tick(tick, include_raw=False)
             message["sourceKey"] = tick.get("sourceKey")
             message["isReplay"] = bool(tick.get("isReplay"))
             # The API still gets the full payload (see _accept); this only keeps
             # a bulky one off the stream every strategy has to read.
             message["rawPayload"] = tick.get("rawPayload", "") if self._feed.publish_raw_payload else ""
-            self._publisher.publish_tick(message)
+            return message
         except Exception as ex:
-            self._publish_errors += 1
-            if self._publish_errors in (1, 100, 1000) or self._publish_errors % 10000 == 0:
-                print(f"[{self._feed.key}] could not publish a tick to the strategy stream "
-                      f"({self._publish_errors} so far): {ex}", flush=True)
+            self._count_publish_errors(1, ex)
+            return None
+
+    def _publish(self, tick: dict) -> None:
+        """One tick to the strategy stream."""
+        message = self._stream_message(tick)
+        if message is not None:
+            self._publish_many([message])
+
+    def _publish_many(self, messages: list[dict]) -> None:
+        """
+        Messages to the strategy stream: one pipelined round trip for a batch
+        (FEED_STREAM_BATCH, publish_ticks), one XADD each otherwise. A failure
+        pauses the stream for STREAM_PAUSE_SECONDS; nothing is retried, since
+        a batch that failed part way may already be on the stream.
+        """
+        publisher = self._publisher
+        if publisher is None or not messages:
+            return
+        if time.monotonic() < self._stream_paused_until:
+            self._count_publish_errors(len(messages))
+            return
+        started = time.perf_counter()
+        sent = 0
+        try:
+            publish_ticks = getattr(publisher, "publish_ticks", None) if self._stream_batch else None
+            if publish_ticks is not None and len(messages) > 1:
+                publish_ticks(messages)
+                sent = len(messages)
+            else:
+                for message in messages:
+                    publisher.publish_tick(message)
+                    sent += 1
+        except Exception as ex:
+            self._stream_paused_until = time.monotonic() + self.STREAM_PAUSE_SECONDS
+            self._count_publish_errors(len(messages) - sent, ex)
+        finally:
+            self._stream_batches += 1
+            self._stream_batch_ms.append((time.perf_counter() - started) * 1000.0)
+
+    def _count_publish_errors(self, count: int, ex: Exception | None = None) -> None:
+        """
+        Ticks the strategies did not get. Said on the first, the 100th, the
+        1000th and every 10,000th — as the total crosses each, since a batch
+        or a pause adds many at once.
+        """
+        if count <= 0:
+            return
+        if ex is not None:
+            self._last_publish_error = str(ex)
+        before, after = self._publish_errors, self._publish_errors + count
+        self._publish_errors = after
+        if any(before < mark <= after for mark in (1, 100, 1000)) or after // 10000 > before // 10000:
+            paused = (f"; the stream is skipped for {self.STREAM_PAUSE_SECONDS}s after each failure"
+                      if after > 1 else "")
+            print(f"[{self._feed.key}] could not publish a tick to the strategy stream "
+                  f"({after} so far): {self._last_publish_error}{paused}", flush=True)
 
     def _post_batch(self, batch: list[dict]) -> None:
         url = f"{self._api}/api/LiveData/ticks/upsert-batch"
@@ -262,8 +403,9 @@ class FeedRunner:
     def health_note(self, now: float | None = None) -> str:
         """
         What the heartbeat's error says when nothing is wrong with the
-        connection itself: ticks the API did not store lately, and option
-        greeks this process cannot compute. Empty when there is neither.
+        connection itself: ticks the API did not store lately, option greeks
+        this process cannot compute, and a socket this process is not reading
+        fast enough. Empty when there is none of those.
         """
         now = time.monotonic() if now is None else now
         notes = []
@@ -274,6 +416,8 @@ class FeedRunner:
         greeks = self.enricher.unavailable_reason()
         if greeks:
             notes.append(f"option greeks unavailable: {greeks}")
+        if self._behind_note:
+            notes.append(self._behind_note)
         return "; ".join(notes)
 
     # ================================================================ events
@@ -671,10 +815,126 @@ class FeedRunner:
         detail = text if not cause_detail else f"{text} ({cause_detail})"
         self.watchdog_alerts.report(cause, detail)
 
+    # ======================================================= the read path
+
+    def check_frame_silence(self) -> None:
+        """
+        Restart a socket that has carried nothing at all — no data frame, not
+        even the vendor's own ping — for FEED_FRAME_SILENCE_SECONDS in open
+        session. The 120 s rule is about ticks; a line can be alive with
+        nothing to price. This one is about the line: a vendor that pings
+        every 10 s and has not in 45 s is gone. Only for a feed that knows its
+        own socket (transport_idle_seconds), and only once a first frame came:
+        before that the 120 s rule is the one that applies. Like that rule it
+        follows NSE's hours, so it sleeps through the MCX evening.
+        """
+        limit = self._frame_silence_seconds
+        if limit <= 0 or not self.subscribed:
+            return
+        idle = self._feed.transport_idle_seconds()
+        if idle is None or idle <= limit or self.is_market_open() is not True:
+            return
+        self._watchdog(watchdog_alerts.SILENT,
+                       f"connected but silent for {int(idle)}s in open session (no frame at all, not even a "
+                       f"ping) — forcing a full reconnect.",
+                       cause_detail=f"{len(self.subscribed)} symbol(s) subscribed")
+        self.restart_required = True
+
+    def watch_backlog(self, now: float) -> None:
+        """
+        One sample of the bytes waiting unread on the socket (once a second,
+        from the watch loop). Ten in a row at or above FEED_BACKLOG_ALERT_KB in
+        open session is this process falling behind the vendor: said once,
+        and carried in the heartbeat's error until ten in a row below it.
+        Nothing is restarted for it — a reconnect would only lose the bytes.
+        """
+        backlog = self._feed.socket_backlog_bytes()
+        if backlog is None:
+            return
+        self._backlog_samples.append(backlog)
+        high = (self._backlog_alert_bytes > 0 and backlog >= self._backlog_alert_bytes
+                and self.is_market_open() is True)
+        if high:
+            self._backlog_low = 0
+            self._backlog_high += 1
+            if self._backlog_episode_start is None:
+                self._backlog_episode_start = now
+            if self._backlog_high >= self.BACKLOG_ALERT_SAMPLES and not self._behind_note:
+                p99 = (self._feed.stats() or {}).get("pass_ms_p99")
+                print(f"[{self._feed.key}] FALLING BEHIND: {backlog // 1024} KB unread on the socket for "
+                      f"{self.BACKLOG_ALERT_SAMPLES}s (emit pass p99 {p99 if p99 is not None else '?'} ms)",
+                      flush=True)
+                self._behind_note = (f"falling behind the vendor: {backlog // 1024} KB unread on the socket "
+                                     f"for {self.BACKLOG_ALERT_SAMPLES}s or more")
+            return
+        self._backlog_high = 0
+        if not self._behind_note:
+            self._backlog_episode_start = None
+            return
+        self._backlog_low += 1
+        if self._backlog_low >= self.BACKLOG_CLEAR_SAMPLES:
+            started = self._backlog_episode_start if self._backlog_episode_start is not None else now
+            print(f"[{self._feed.key}] socket drained again after {int(now - started)}s", flush=True)
+            self._behind_note = ""
+            self._backlog_low = 0
+            self._backlog_episode_start = None
+
+    def print_stats_if_due(self, now: float) -> None:
+        """
+        Every STATS_EVERY_SECONDS, one line on how the read path did since the
+        last: frames and bytes read, the vendor's pings, packets replaced
+        before a pass could hand them on, packets for nobody, the socket's
+        unread bytes, ticks handed on, how long the passes and the stream
+        writes took, and the stream's errors so far. Only for a feed with
+        stats.
+        """
+        if self._stats_base is not None and now - self._stats_base[0] < self.STATS_EVERY_SECONDS:
+            return
+        stats = self._feed.stats()
+        if not stats:
+            return
+        if self._stats_base is None:
+            self._stats_base = (now, stats, self._stream_batches)
+            self._backlog_samples = []
+            return
+        base_at, base, base_batches = self._stats_base
+        elapsed = now - base_at
+
+        def delta(key):
+            return (stats.get(key) or 0) - (base.get(key) or 0)
+
+        frames = delta("frames")
+        batches = self._stream_batches - base_batches
+        recent = list(self._stream_batch_ms.copy())[-batches:] if batches > 0 else []
+        samples, self._backlog_samples = self._backlog_samples, []
+        self._stats_base = (now, stats, self._stream_batches)
+
+        def ms(value):
+            return "?" if value is None else f"{value:.1f}"
+
+        def kb(value):
+            return "?" if value is None else f"{value / 1024:.0f}"
+
+        print(f"[{self._feed.key}] read path: frames {frames} ({frames / elapsed:.0f}/s), "
+              f"{delta('bytes') / 1024 / elapsed:.0f} KB/s, pings {delta('pings')}, "
+              f"superseded {100.0 * delta('superseded') / frames if frames else 0:.0f}%, "
+              f"dropped {delta('dropped_unknown')}, "
+              f"socket backlog p99 {kb(_percentile(samples, 0.99))} KB max {kb(max(samples) if samples else None)} KB"
+              f" | emitted {delta('ticks_out') / elapsed:.0f} ticks/s, pass p99 {ms(stats.get('pass_ms_p99'))} ms "
+              f"max {ms(stats.get('pass_ms_max'))} | stream batches {batches}, "
+              f"p99 {ms(_percentile(recent, 0.99))} ms, errors {self._publish_errors}", flush=True)
+
     def _connect_once_and_watch(self) -> None:
         self.restart_required = False
         self.socket_connected = False
         self.disconnected_since = None
+        # A new socket's backlog is its own: a run above the alert line on the
+        # last one does not count towards this one's. A standing FALLING
+        # BEHIND note stays until this socket has drained for ten seconds.
+        self._backlog_high = 0
+        self._backlog_low = 0
+        if not self._behind_note:
+            self._backlog_episode_start = None
 
         refused = self.rejected_credential
         credential = self._feed.acquire_credentials(not_this=refused)
@@ -728,6 +988,12 @@ class FeedRunner:
                                                  + ("; not one message since the connect"
                                                     if self.last_message is None else "")))
                     self.restart_required = True
+
+            if not self.restart_required:
+                self.check_frame_silence()
+            now = time.monotonic()
+            self.watch_backlog(now)
+            self.print_stats_if_due(now)
 
         print(f"[{self._feed.key}] closing the connection", flush=True)
         try:

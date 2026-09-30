@@ -339,6 +339,160 @@ Settings, all optional, in the `Dhan:Universe` section: `StrikesEachSide` (5),
 `FuturesPerUnderlying` (2), `IndexUnderlyings`, `McxFutureUnderlyings`,
 `McxOptionUnderlyings` (comma-separated).
 
+## Read path
+
+### What went wrong on 28 Sep 2026
+
+From 09:16 IST, when the 23 strategy runners started, the 2-vCPU server ran at
+a load average of 10 to 23. The Dhan feed kept going "connected but silent for
+120 s", its watchdog rebuilt the connection, and the runners logged FEED
+STALLED for 90 to 130 s every 4 to 6 minutes. At 10:36 the socket's kernel
+receive queue grew from 750 KB to 958 KB in 25 s. Dhan was sending; the feed
+was not reading fast enough.
+
+The socket thread did everything for every frame. It decoded the packet,
+merged and conflated it, priced option greeks, and handed the ticks on, which
+included one synchronous Redis write per tick. It also waited on the lock the
+conflation flusher held across its own Redis writes. It topped out near 300
+frames a second, and each of the 23 runners then decoded every one of the ~300
+contracts' ticks only to keep its own index.
+
+Whether Dhan stops sending once our receive window is full, and for how long,
+is inferred. It is not proven.
+
+### How it reads now
+
+- **The socket thread only reads.** Per frame it reads the header, looks up the
+  instrument, and keeps the frame as that instrument's latest packet of its
+  kind (Full, Quote, OI and so on). It takes one lock, held only for that
+  store. It never decodes a price, never takes the conflation lock, and never
+  prints, publishes or calls the API in normal running. Disconnect,
+  market-status and unknown-code packets are still handled on the spot, as
+  before.
+- **One `dhan-emit` thread hands on.** Every `DHAN_EMIT_PERIOD_MS` (100) it
+  swaps the stored packets out. It merges each instrument's packets in the
+  order their latest copies arrived and applies the same conflation rule as
+  before: one tick per contract per second, the first after a quiet second at
+  once. Then it hands the ticks on in one call. A pass that carries several
+  packets for one contract sends its merged state once. A packet superseded
+  before a pass is never decoded. The only field that can differ is one the
+  superseded packet carried and the newest one sends as zero: the value from
+  before the pass stays (pinned by a test).
+- **Storage first, then one Redis write.** The runner hands every tick to the
+  API's pump, then writes the whole batch to `market:ticks` in one pipelined
+  round trip, never retried. The stream has its own Redis client that gives up
+  after `FEED_REDIS_TIMEOUT_SECONDS` (2) with no retries. redis-py's default
+  retries ten times on a 5 s timeout, so one write to a hung Redis could hold
+  the feed for about a minute. After a failed write the stream is left alone
+  for 5 s. The ticks still reach the API, and are counted as not published.
+- **The process favours the socket.** The GIL switch interval is
+  `FEED_GIL_SWITCH_MS` (1 ms; Python's is 5 ms). The objects startup made
+  (numpy, scipy and vollib for the greeks, loaded at startup now) are frozen
+  out of the cyclic GC (`FEED_GC_FREEZE`), so a full collection, which stops
+  every thread, has far less to walk. The load test caught one such pass at
+  391 ms.
+- **The runners read less, and give way.** Each runner keeps only its spot:
+  every other entry is passed over on the stream's `symbol` field without
+  decoding its JSON (`RUNNER_STREAM_FILTER`). It reads in batches of
+  `RUNNER_STREAM_BATCH_MS` (100), and runs at `RUNNER_NICE` (10), set before
+  it starts a thread. `market:ticks` itself is unchanged: Sentinel, the pager,
+  the feed failover and the Worker read every symbol on it.
+
+Every switch is read when the process starts and restores the old behaviour
+for its piece alone. See `.env.example`, where the value that restores 28 Sep
+is shown in brackets.
+
+| Switch | Default | 28 Sep behaviour |
+| --- | --- | --- |
+| `DHAN_INGEST` | `emitter` | `inline` |
+| `DHAN_EMIT_PERIOD_MS` | 100 | none needed (the old flusher also woke every 100 ms) |
+| `FEED_STREAM_BATCH` | 1 | 0 |
+| `FEED_REDIS_TIMEOUT_SECONDS` | 2 | 0 |
+| `FEED_GIL_SWITCH_MS` | 1 | 0 |
+| `FEED_GC_FREEZE` | 1 | 0 |
+| `FEED_FRAME_SILENCE_SECONDS` | 45 | 0 |
+| `FEED_BACKLOG_ALERT_KB` | 128 | none needed (an alert threshold only) |
+| `RUNNER_STREAM_FILTER` | 1 | 0 |
+| `RUNNER_STREAM_BATCH_MS` | 100 | 0 |
+| `RUNNER_NICE` | 10 | 0 |
+
+### What the feed's log says about it
+
+- **The stats line, every 60 s**, in this form:
+
+  ```
+  [dhan] read path: frames F (F/s), K KB/s, pings P, superseded S%, dropped D,
+  socket backlog p99 B KB max M KB | emitted T ticks/s, pass p99 X ms max Y |
+  stream batches N, p99 Z ms, errors E
+  ```
+
+  - **Frames and KB/s**: what Dhan sent in the minute.
+  - **Superseded**: packets replaced by a newer one of their kind before a pass
+    could hand them on. This is work saved.
+  - **Dropped**: packets for an instrument the socket no longer carries.
+  - **Socket backlog**: the kernel's unread bytes, sampled once a second. This
+    is the Recv-Q that `ss -tn` shows.
+  - **Pass**: how long the emitter's passes took.
+  - **Stream**: the Redis writes, and the publish errors since the feed started.
+- **`FALLING BEHIND: N KB unread on the socket for 10s (emit pass p99 X ms)`**:
+  ten one-second samples in a row at or above `FEED_BACKLOG_ALERT_KB` in open
+  session. It is said once per episode, and carried as the heartbeat's
+  `lastError` until ten samples in a row fall below the line. It then says
+  `socket drained again after Ns`. Nothing is restarted for it: a reconnect
+  would lose the unread bytes and serve the same load again. If it shows up
+  live, the in-process reader is not enough (see the next steps).
+- **`connected but silent for Ns in open session (no frame at all, not even a
+  ping)`**: no frame of any kind, including Dhan's own ping every 10 s, for
+  `FEED_FRAME_SILENCE_SECONDS` (45). The line is dead, and the watchdog
+  rebuilds it without waiting for the 120 s no-tick rule. That rule still
+  covers a line that pings but carries no prices, and the time before the
+  first frame. Like that rule, it follows NSE's hours, so it does not run in
+  the MCX evening session. It starts with "connected but silent", so existing
+  log readers still match it.
+
+### Proving it before a session
+
+`tools/feed_loadtest/` (Python engine) runs the real feed, the real Redis
+publisher and the real runner reader on two pinned vCPUs of Docker Desktop's
+Linux VM. They run against a local fake Dhan that sends TLS websocket frames
+(one TLS record per frame, like Dhan) and pings, and they run beside CPU
+burners and 23 runner emulators:
+
+```
+src/AlgoTrading.PythonEngine/tools/feed_loadtest/matrix.sh            # every case, 3 trials
+src/AlgoTrading.PythonEngine/tools/feed_loadtest/matrix.sh L2 G       # some cases
+```
+
+- **Baseline and fix.** It runs the baseline (`BASE_REF`, default `ee27219`,
+  unpacked with `git archive`) and this tree side by side.
+- **Checks per trial.** It prints PASS or FAIL per criterion: the socket's
+  unread bytes, the fake Dhan's pong round trip (the lag Dhan itself sees),
+  probe lag to a runner, stored ticks, restarts and cutoffs.
+- **Local only.** Nothing in it connects to Dhan, FYERS, Angel or TrueData.
+- **Run it on a development Mac, never on the live server.** Its absolute
+  numbers depend on how busy that Mac is, so compare the baseline and the fix
+  from the same run.
+
+### Rolling back
+
+- **During the session.** Set the piece's switch in `.env` and restart only the
+  affected process, and only with the owner's go-ahead: the feed for
+  `DHAN_*`/`FEED_*`, the runners for `RUNNER_*`. A runner already running
+  keeps its nice value until it restarts.
+- **After the close.** Revert the commits.
+
+### Next steps, if the live checks fail
+
+- **P1: frame the websocket ourselves** (`DHAN_WS_READER=own`). This is for
+  when live Recv-Q p99 stays above 64 KB. It saves about 3 GIL releases per
+  frame, since Dhan sends one TLS record per frame.
+- **P1: the TickPump flushers wait on a condition** instead of polling.
+- **P1: per-symbol spot streams.**
+- **P2: a child-process reader.** It must pass kill -9 tests that leave no
+  orphan socket on the Dhan account.
+- **Owner decisions.** Quote mode for the extras, or a smaller universe. These
+  change what gets recorded, so they are the owner's call.
+
 ## Option chain recording
 
 The chain recorder runs inside the API. Each round covers every configured
@@ -615,7 +769,10 @@ is.
 | `tests/AlgoTrading.UnitTests/DhanAutoSignInTests.cs` | The PIN + TOTP call, refusals that never repeat the PIN, when to sign in, the day's tries, the stop across a restart, one code per TOTP step, the morning job's call, expired pasted tokens |
 | `tests/AlgoTrading.UnitTests/DhanOptionHistoryTests.cs` | Expired options mapping against real answers, windows, the resume plan, request validation, retry rules |
 | `tests/AlgoTrading.UnitTests/DhanChainPollerTests.cs` | Chain rows, expiry choice, closed markets, rejected tokens, the on/off switch across restarts and its warning, at-the-money selection |
-| `market_data/live/vendors/dhan.py`, `tests/test_dhan_feed.py` (Python engine) | Live feed adapter: binary packets, subscribe batching, credentials from the API, one update a second per contract, the universe |
+| `market_data/live/vendors/dhan.py`, `tests/test_dhan_feed.py` (Python engine) | Live feed adapter: binary packets, subscribe batching, credentials from the API, one update a second per contract, the universe; the store-only socket thread and the `dhan-emit` thread |
+| `core/live/feed_runner.py`, `market_data/live/run_feed.py` (Python engine) | Batched stream writes, the frame-silence and FALLING BEHIND watchdogs, the stats line; the GIL switch interval, the bounded stream client, the startup-heap freeze |
+| `messaging/redis_subscriber.py`, `core/process_priority.py` (Python engine) | The runners' spot-only, batched read, and their lower CPU priority |
+| `tools/feed_loadtest/` (Python engine) | The read path's load test against a local fake Dhan: baseline against fix, pass criteria per trial |
 | `scripts/market-open.sh` | The morning: Dhan status, import, feed and recorder; FYERS as the fallback |
 | `Api/Services/FeedFailoverService.cs` (+ `FeedFailoverPorts.cs`, `FeedFailoverAdapters.cs`) | The same fallback during the session: tick ages from `market:ticks`, the FYERS profile check, the once-a-day switch; dry run by default (`FeedFailover:DryRun`) |
 | `tests/AlgoTrading.UnitTests/FeedFailoverServiceTests.cs` | The failover under a fake clock, stream and feeds: fresh, grace, one stale check, dry run, the switch, the FYERS sign-in reminder, one switch a day across a restart, closed session, before 09:20, per-exchange silence, recovery |
