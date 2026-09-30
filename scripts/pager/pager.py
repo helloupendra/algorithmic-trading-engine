@@ -1029,6 +1029,18 @@ def telegram_sender(env: dict[str, str]) -> Callable[[str], bool]:
     return send
 
 
+def callmebot_reply(html: str) -> str:
+    """The words CallMeBot's page shows, without its scripts, comments and tags.
+
+    The page opens with an analytics script, so its verdict sits far past the
+    first few hundred characters of the raw HTML: on 1 Oct 2026 "Error: Someone
+    reported CallMeBot as spammer" came back as a 200 and was taken for a call.
+    """
+    html = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", html)
+    html = re.sub(r"(?s)<!--.*?-->", " ", html)
+    return " ".join(re.sub(r"<[^>]+>", " ", html).split())
+
+
 def call_sender(user: Optional[str]) -> Callable[[str], bool]:
     def call(words: str) -> bool:
         log.info("CALL %s", words)
@@ -1045,13 +1057,14 @@ def call_sender(user: Optional[str]) -> Callable[[str], bool]:
             call.last_error = type(exc).__name__
             log.warning("callmebot failed: %s", type(exc).__name__)
             return False
-        reply = " ".join(r.text.split())[:200]
-        ok = r.ok and "error" not in r.text.lower()[:400]
+        reply = callmebot_reply(r.text)
+        at = reply.lower().find("error")
+        ok = r.ok and at < 0
         if ok:
-            log.info("callmebot answered %s: %s", r.status_code, reply)   # the real success phrase, for --test
+            log.info("callmebot answered %s: %s", r.status_code, reply[:400])   # the real success phrase, for --test
         else:
-            call.last_error = f"CallMeBot answered {r.status_code}"
-            log.warning("callmebot answered %s: %s", r.status_code, reply)
+            call.last_error = f"CallMeBot: {reply[at:at + 200]}" if at >= 0 else f"CallMeBot answered {r.status_code}"
+            log.warning("callmebot answered %s: %s", r.status_code, reply[:600])
         return ok
 
     call.configured = bool(user)
