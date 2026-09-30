@@ -57,6 +57,23 @@ queued for 90 s.
 In a question with several rounds, a model is left out of the later rounds only if its failure cost a long wait
 (`Ai:SlowFailureSeconds`, 10 s). A model that refused at once is asked again in the next round.
 
+### Model health: routing around a queue
+
+Across questions, the desk learns from its own calls which models are answering (`AiModelHealth`).
+
+- **Cooling.** A model cools in two cases: its failure cost a long wait, or it failed twice in a row. The first
+  cooling lasts 10 minutes, then 20, 40, and at most 60 if it keeps failing.
+- **Order.** While cooling, it is asked after its chain's healthy models. It is never dropped: when every healthy
+  model fails, a cooling one is still asked.
+- **Healing.** One answer makes it healthy again.
+- **Probe.** `AiHealthProbe` asks each model whose cooling ended one tiny question through the gateway (agent
+  `model-test`, source `health`, on the Calls tab), so a recovered model is back in its place before a person's
+  question has to find out.
+- **Restart.** At start the probe replays the last half hour of calls, so a deploy does not forget which models were
+  queueing.
+- **Where to see it.** The overview, the models list and `GET health` show each model's state: healthy, failed,
+  cooling (with an until time) or unknown.
+
 | Tier | Chain (first model first) | For |
 | --- | --- | --- |
 | Judge | Nemotron 3 Ultra → Nemotron 3 Super → Kimi K3 | The hardest reasoning, few calls a day |
@@ -144,6 +161,7 @@ matching console page uses, so the numbers are the page's numbers.
 | Tool | Reads | Built on |
 | --- | --- | --- |
 | `get_runs` | A day's runs with net P&L (realized − charges + open legs while active, as the Desk shows) | `LiveRunHistoryBuilder` |
+| `get_strategy_history` | A strategy's, underlying's or account's period (this or last month, 7 or 30 days, from/to) in one call: totals, net by day, best and worst runs, closed-trade stats | `LiveRunHistoryBuilder` (paged), `paper_positions` |
 | `get_run` | One run: settings, P&L, then a summary or one section (legs, orders, signals) in a time window | `PositionViewBuilder`, `RunPnl`, the run's rows |
 | `get_open_positions` | Every open leg, marked, with its mark's age | `OpenPositionsBuilder` |
 | `get_quotes` | Indices, large caps and commodities with the day's change; India VIX | `IMarketPulseService`, the NIFTY chain header |
@@ -153,6 +171,7 @@ matching console page uses, so the numbers are the page's numbers.
 | `get_forecasts` | A session's forecasts and scores | `ForecastsController.ToView` |
 | `get_news` | Headlines and a stock's filings, with FinBERT sentiment | `MarketIntelligenceQueries` |
 | `get_strategy_spec` | A strategy's written spec, or the list of strategies | `StrategyCatalogService`, `docs/strategies` |
+| `search_docs` | The passages of the desk's docs closest to a question, with file and section | `AiDocIndex` (below) |
 
 `get_run` starts with a summary on purpose. On 30 Sep one busy run had 344 legs, 688 orders and 9,636 signals. The
 summary gives:
@@ -301,6 +320,66 @@ Endpoints, admin only:
 | `GET reports/{id}` | One report: body and data |
 | `GET reports/stats?days=` | Per agent and day: ok, invalid, failed, and the valid share |
 | `POST agents/{key}/run` | `{ subjectId }` (a run or incident id, or none for the next due work). Runs in the background and answers 202; the report appears when the model has answered. |
+
+## Docs search
+
+`AiDocIndexer` keeps `ai_doc_chunks` in step with the repo's `docs/`: the public module docs and strategy specs.
+
+- **When.** At start and every six hours.
+- **Passages.** Each file is cut into passages at its sections, each under 1,500 characters. A passage carries its
+  heading trail ("AI workspace › Desk tools"); HTML comments are left out.
+- **What is embedded.** Only passages that are new or changed, with `nvidia/nemotron-3-embed-1b` as passages. A
+  deleted doc's passages are removed.
+- **Audit.** A run that did something is one row on the Calls tab (agent `doc-index`, source `index`).
+- **Scale.** On 30 Sep: 1,297 passages from 56 docs, embedded in 45 s.
+
+`AiDocIndex` holds the vectors in memory (about 16 MB) and ranks every passage by cosine against the question, which
+is embedded as a query. `search_docs` gives the Assistant the closest passages; `GET search?q=` shows the same, with
+what the index holds.
+
+## The Assistant check
+
+After 16:40 IST on weekdays (`Ai:AssistantCheckAfterIst`), `AssistantCheckAgent` reads the desk through the
+Assistant's own tools and turns what it finds into up to a dozen questions with known answers:
+
+- the day's run count;
+- the worst run's id, net and charges;
+- the total net;
+- open legs;
+- live incidents;
+- the latest checkup's verdict;
+- NIFTY's PCR and max pain;
+- the forecasts issued;
+- one sum.
+
+A question whose answer the desk does not have that day is left out.
+
+Each question goes to the Assistant in its real configuration (source `check`). Plain code grades it:
+
+- Numbers are read the way the desk writes money: ₹1,10,132.75, −110,132.75, 1.1 lakh, 59.8k.
+- Citations, times and dates are removed first. Without that, a count of 10 would match a citation's "20:10".
+
+The day's result is one report (agent `assistant-check`, subject `check`), which passes at 80%. A model or prompt
+change that makes the Assistant misread the desk shows up the same evening. It runs while the Assistant is on and
+`Ai:AssistantCheckEnabled` is true. `POST agents/assistant-check/run` runs it now.
+
+## The Assistant on Telegram
+
+The desk's bot answers its linked owner in a private chat, as the Assistant tab does (`TelegramAssistant`).
+
+- **Linking.** The console hands the admin a six-digit code (`POST telegram/pair`), valid ten minutes and used once.
+  Sent to the bot as `/pair CODE`, it links that Telegram account to that console user, kept in `system_settings`.
+- **Everyone else.** Strangers get "This bot is private." to `/start` and nothing else. Group chats are ignored: the
+  bot posts the desk's notices there.
+- **Questions.** Each goes through the gateway as the Desk Assistant (source `telegram`), with the chat's last turns
+  for half an hour. `/new` starts over and `/unlink` leaves.
+- **Answers.** The bot shows "typing…" while the model works. It answers in Telegram HTML, with tables and code in
+  monospace and only `& < >` escaped. If Telegram refuses the HTML it sends plain text. The model, the seconds and
+  the call number go under each answer.
+- **Polling.** Updates are read by long polling, with the offset kept in settings, so a restart does not answer
+  twice. Only one program may read a bot's updates; nothing else on the desk reads this one.
+- **Settings.** `Ai:TelegramAssistantEnabled` turns it off. `GET telegram` shows whether it runs, the bot's name and
+  the linked accounts; `DELETE telegram/owners/{id}` unlinks one.
 
 ## Adding a tool
 
