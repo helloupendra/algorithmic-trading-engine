@@ -90,7 +90,7 @@ public sealed class RunnerLogTail : IDisposable
     /// <summary>A console line is cut here: a runaway print must not fill the ring by itself.</summary>
     private const int MaxLineChars = 4000;
 
-    private readonly Action<RunnerOutputLog.Line> _onLine;
+    private readonly Action<RunnerOutputLog.Line, bool> _onLine;
     private readonly int _seedLines;
     private readonly object _gate = new();
     private long _offset;
@@ -101,6 +101,19 @@ public sealed class RunnerLogTail : IDisposable
     /// <param name="onLine">Receives every complete line, in file order.</param>
     /// <param name="seedLines">How many of the file's existing lines the first read hands over.</param>
     public RunnerLogTail(string path, Action<RunnerOutputLog.Line> onLine, int seedLines = RunningStrategy.LogCapacity)
+        : this(path, (line, _) => onLine(line), seedLines)
+    {
+    }
+
+    /// <param name="path">The process's log file.</param>
+    /// <param name="onLine">
+    /// Receives every complete line, in file order, and whether it came from
+    /// the first read (true: the file already held it) or was appended since.
+    /// A daemon's lines go into the API's own log, and one the file held when
+    /// the API adopted it may have been logged by the API before the restart.
+    /// </param>
+    /// <param name="seedLines">How many of the file's existing lines the first read hands over.</param>
+    public RunnerLogTail(string path, Action<RunnerOutputLog.Line, bool> onLine, int seedLines = RunningStrategy.LogCapacity)
     {
         Path = path;
         _onLine = onLine;
@@ -208,7 +221,7 @@ public sealed class RunnerLogTail : IDisposable
         _seeded = true;
 
         int skip = Math.Max(0, lines.Count - _seedLines);
-        for (int i = skip; i < lines.Count; i++) Deliver(lines[i]);
+        for (int i = skip; i < lines.Count; i++) Deliver(lines[i], seeded: true);
         return lines.Count - skip;
     }
 
@@ -230,16 +243,16 @@ public sealed class RunnerLogTail : IDisposable
         }
 
         _offset += consumed;
-        foreach (var line in lines) Deliver(line);
+        foreach (var line in lines) Deliver(line, seeded: false);
         return lines.Count;
     }
 
-    private void Deliver(string raw)
+    private void Deliver(string raw, bool seeded)
     {
         var text = raw.Length > MaxLineChars ? raw[..MaxLineChars] + "…" : raw;
         try
         {
-            _onLine(RunnerOutputLog.Parse(text));
+            _onLine(RunnerOutputLog.Parse(text), seeded);
         }
         catch
         {

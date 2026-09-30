@@ -45,7 +45,10 @@ builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, relo
 // copies ~/.aspnet/DataProtection-Keys with the database).
 builder.Services.AddDataProtection().SetApplicationName("AlgoTrading");
 
-builder.Services.AddControllers();
+// A risk-guard refusal is answered 409 and logged as a warning inside MVC, not
+// as an unhandled exception (30 Sep: a daily-loss refusal became an "API error"
+// incident). The handler below still answers 409 for anything outside MVC.
+builder.Services.AddControllers(options => options.Filters.Add<AlgoTrading.Api.Services.RiskRefusalFilter>());
 
 builder.Services.AddSwaggerGen(c =>
 {
@@ -171,6 +174,9 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.ExpirySettler>();
 // every minute, so that would now cost a minute, not an evening.)
 builder.Services.AddHostedService<AlgoTrading.Api.Services.BacktestStartupReconciler>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.LiveRunStartupReconciler>();
+// Feeds and the chain poller left running by the previous API: adopted now, so
+// their own log files are read into api.log from the start (28 Sep).
+builder.Services.AddHostedService<AlgoTrading.Api.Services.DaemonOutputAdoption>();
 // Register the background service that guards active runs against global kill-switches and rate limits
 builder.Services.AddHostedService<AlgoTrading.Api.Services.StrategyRiskGuardService>();
 // Squares off each run at its market's close (NSE/BSE 15:30, MCX at the MCX close) and stops the feeds

@@ -54,6 +54,25 @@ public abstract class PythonDaemonSupervisor
     // freezing tick capture while status still reports "running".
     private readonly ConcurrentQueue<string> _recentLogs = new();
 
+    /// <summary>
+    /// The environment variable that pins a launched daemon's log to
+    /// <c>logs/engine/&lt;LogName&gt;-&lt;pid&gt;.log</c>, kept from its first
+    /// line (core/safe_output.py reads it).
+    /// </summary>
+    public const string LogNameVariable = "ENGINE_LOG_NAME";
+
+    // The daemon's own log file being followed into api.log, for the process
+    // launched or adopted most recently. Guarded by _outputLock.
+    private readonly object _outputLock = new();
+    private DaemonOutput? _output;
+
+    /// <summary>
+    /// When this API process started. A line an adopted daemon wrote before
+    /// then may already be in api.log from the instance before the restart;
+    /// one written since cannot be.
+    /// </summary>
+    private static readonly DateTime ApiStartedUtc = ReadApiStart();
+
     protected PythonDaemonSupervisor(
         DaemonDescriptor daemon,
         PythonEngineLocator engine,
@@ -95,13 +114,23 @@ public abstract class PythonDaemonSupervisor
     /// deploy is still ours, and must stay stoppable until it is next restarted.
     /// New launches always use <paramref name="ScriptParts"/>.
     /// </param>
+    /// <param name="LogName">
+    /// The name of the log the daemon keeps of its own output,
+    /// <c>logs/engine/&lt;LogName&gt;-&lt;pid&gt;.log</c>, or null for a script
+    /// that keeps none (it does not install core/safe_output.py). With a name
+    /// the API reads the daemon's output from that file into api.log, launched
+    /// or adopted, and the pipes are only drained. Use the name the script has
+    /// always given its fallback log, so a daemon started before this was
+    /// deployed is still found once adopted.
+    /// </param>
     public sealed record DaemonDescriptor(
         string Name,
         string[] ScriptParts,
         string ProcessMarker,
         string PidSettingKey,
         string[]? Args = null,
-        string[]? LegacyMarkers = null);
+        string[]? LegacyMarkers = null,
+        string? LogName = null);
 
     /// <summary>Capitalised for the start of a sentence.</summary>
     private string Sentence => char.ToUpperInvariant(_daemon.Name[0]) + _daemon.Name[1..];
@@ -142,6 +171,7 @@ public abstract class PythonDaemonSupervisor
         {
             // Stale record from an instance that died without a clean stop.
             await ClearStoredPidAsync(stored.Value, cancellationToken);
+            StopFollowing(stored.Value);
             return new Status(false, false, null, SourceNone);
         }
 
@@ -156,6 +186,7 @@ public abstract class PythonDaemonSupervisor
         }
 
         probe.Process?.Dispose();
+        FollowAdopted(stored.Value);
         return new Status(true, false, stored.Value, SourceAdopted);
     }
 
@@ -226,33 +257,45 @@ public abstract class PythonDaemonSupervisor
             // A redirected stdout takes the locale encoding on Windows (cp1252);
             // force UTF-8 on the pipe so a non-ASCII line never trips the child.
             processInfo.Environment["PYTHONIOENCODING"] = "utf-8";
+            if (_daemon.LogName is { } logName)
+            {
+                // The daemon keeps its own log from its first line, under the
+                // name the API reads it by. See FollowOutput for why.
+                processInfo.Environment[LogNameVariable] = logName;
+            }
 
             process = new Process { StartInfo = processInfo, EnableRaisingEvents = true };
 
+            // Set once the pid is known, before the pipes are read.
+            DaemonOutput? output = null;
             process.OutputDataReceived += (_, e) =>
             {
-                if (e.Data is null) return;
+                if (e.Data is null || (output is not null && output.FileHasIt())) return;
                 AppendLog($"{DateTime.UtcNow:HH:mm:ss} | {e.Data}");
                 _logger.LogInformation("[{Daemon}] {Line}", _daemon.Name, e.Data);
             };
             process.ErrorDataReceived += (_, e) =>
             {
-                if (e.Data is null) return;
+                if (e.Data is null || (output is not null && output.FileHasIt())) return;
                 AppendLog($"{DateTime.UtcNow:HH:mm:ss} ! {e.Data}");
                 _logger.LogWarning("[{Daemon}:err] {Line}", _daemon.Name, e.Data);
             };
 
             try
             {
+                var launchedUtc = DateTime.UtcNow;
                 if (!process.Start())
                 {
                     process.Dispose();
                     return new StartOutcome(false, StatusCodes.Status500InternalServerError, "Failed to start python process.", null);
                 }
 
+                pid = process.Id;
+                // A second of slack: the child stamps its lines on its own
+                // clock, read a moment after this one.
+                output = FollowOutput(pid, adopted: false, logFromUtc: launchedUtc.AddSeconds(-1));
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
-                pid = process.Id;
             }
             catch (Exception ex)
             {
@@ -328,6 +371,7 @@ public abstract class PythonDaemonSupervisor
         if (probe.IsDead)
         {
             await ClearStoredPidAsync(stored.Value, cancellationToken);
+            StopFollowing(stored.Value);
             return new StopOutcome(false, $"{Sentence} is not running (stale pid record cleared)", null, SourceNone);
         }
 
@@ -353,6 +397,7 @@ public abstract class PythonDaemonSupervisor
         }
 
         await ClearStoredPidAsync(stored.Value, cancellationToken);
+        StopFollowing(stored.Value);
         return new StopOutcome(true, $"{Sentence} stopped (adopted process)", stored.Value, SourceAdopted);
     }
 
@@ -415,8 +460,173 @@ public abstract class PythonDaemonSupervisor
                 }
             }
 
+            // One last read, so the daemon's final lines reach api.log.
+            StopFollowing(pid);
             await ClearStoredPidAsync(pid, CancellationToken.None);
             try { process.Dispose(); } catch { /* already gone */ }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // The daemon's own log file
+    // ------------------------------------------------------------------
+
+    /// <summary>Where a daemon with <see cref="DaemonDescriptor.LogName"/> keeps its output, for one pid.</summary>
+    public string? LogPathFor(int pid)
+        => _daemon.LogName is { } name
+            ? Path.Combine(_engine.EngineLogDirectory, $"{name}-{pid.ToString(System.Globalization.CultureInfo.InvariantCulture)}.log")
+            : null;
+
+    /// <summary>The file being followed into api.log now, if any.</summary>
+    public string? FollowedLogPath
+    {
+        get
+        {
+            lock (_outputLock) return _output?.Tail.Path;
+        }
+    }
+
+    /// <summary>
+    /// Follows the daemon's own log file into api.log and the recent-lines
+    /// buffer (<see cref="GetLogs"/>), replacing whatever was followed before.
+    /// Null when the daemon keeps no file.
+    /// </summary>
+    /// <remarks>
+    /// The pipes of a launched daemon belong to the API that launched it. On
+    /// 28 Sep the API was restarted twice with the feed running; the feed was
+    /// adopted by pid, nothing read what it printed, and until it was next
+    /// restarted its warnings were in no log at all — the Sentinel, which
+    /// reads api.log, could not see them either. The file outlives the API:
+    /// read from it, the same lines reach api.log before and after a restart,
+    /// in the same "[name]" / "[name:err]" form the pipes wrote.
+    /// <para>
+    /// A line is logged when it was appended after the first read, or stamped
+    /// at or after <paramref name="logFromUtc"/>: for a launch, the launch; for
+    /// an adoption, this API's own start, since anything older may have been
+    /// logged by the API before the restart, and the Sentinel would raise its
+    /// errors again. Older lines still fill the buffer the console shows.
+    /// </para>
+    /// </remarks>
+    private DaemonOutput? FollowOutput(int pid, bool adopted, DateTime logFromUtc)
+    {
+        if (LogPathFor(pid) is not { } path) return null;
+
+        DaemonOutput output;
+        DaemonOutput? previous;
+        lock (_outputLock)
+        {
+            if (_output is { } current && current.Pid == pid) return current;
+            previous = _output;
+            DaemonOutput? created = null;
+            var tail = new RunnerLogTail(
+                path,
+                (line, seeded) => OnFileLine(created!, line, seeded),
+                // A launched daemon's file is new: all of it is news. An
+                // adopted one's start is only history for the console.
+                seedLines: adopted ? LogBufferCapacity : int.MaxValue);
+            created = new DaemonOutput(pid, tail, logFromUtc);
+            output = created;
+            _output = output;
+        }
+
+        previous?.Tail.Stop();
+
+        if (adopted)
+        {
+            AppendLog($"{DateTime.UtcNow:HH:mm:ss} | adopted {_daemon.Name} pid {pid}: output continues from {Path.GetFileName(path)}");
+            _logger.LogInformation("Adopted {Daemon} pid {Pid}: its output is read from {Path}.", _daemon.Name, pid, path);
+            output.Tail.Poll();
+        }
+
+        output.Tail.Start(StrategyProcessRegistry.OutputPollInterval);
+        return output;
+    }
+
+    /// <summary>An adopted daemon, verified as ours: follow its file unless already doing so.</summary>
+    private void FollowAdopted(int pid)
+    {
+        lock (_outputLock)
+        {
+            if (_output is { } current && current.Pid == pid) return;
+        }
+
+        FollowOutput(pid, adopted: true, logFromUtc: ApiStartedUtc);
+    }
+
+    /// <summary>Stops following <paramref name="pid"/>'s file after one last read. A newer process's file is left alone.</summary>
+    private void StopFollowing(int pid)
+    {
+        DaemonOutput? output;
+        lock (_outputLock)
+        {
+            output = _output;
+            if (output is null || output.Pid != pid) return;
+            _output = null;
+        }
+
+        output.Tail.Stop();
+    }
+
+    private void OnFileLine(DaemonOutput output, RunnerOutputLog.Line line, bool seeded)
+    {
+        AppendLog(RunnerOutputLog.ToConsole(line, DateTime.UtcNow));
+
+        bool news = !seeded || (line.AtUtc is { } at && at >= output.LogFromUtc);
+        if (!news) return;
+
+        if (line.IsStderr)
+        {
+            _logger.LogWarning("[{Daemon}:err] {Line}", _daemon.Name, line.Text);
+        }
+        else
+        {
+            _logger.LogInformation("[{Daemon}] {Line}", _daemon.Name, line.Text);
+        }
+    }
+
+    private static DateTime ReadApiStart()
+    {
+        try
+        {
+            using var self = Process.GetCurrentProcess();
+            return self.StartTime.ToUniversalTime();
+        }
+        catch
+        {
+            return DateTime.UtcNow;
+        }
+    }
+
+    /// <summary>One daemon process's log file and how it is being read.</summary>
+    private sealed class DaemonOutput
+    {
+        private volatile bool _fileSeen;
+
+        public DaemonOutput(int pid, RunnerLogTail tail, DateTime logFromUtc)
+        {
+            Pid = pid;
+            Tail = tail;
+            LogFromUtc = logFromUtc;
+        }
+
+        public int Pid { get; }
+        public RunnerLogTail Tail { get; }
+        public DateTime LogFromUtc { get; }
+
+        /// <summary>
+        /// True once the file exists: every line the pipe carries from then on
+        /// is in it too (the tee writes the file before the pipe), so the pipe
+        /// is only drained and nothing is logged twice. Until then the pipe is
+        /// the only copy — an import error before core/safe_output.py was
+        /// installed, or a file that could not be opened — and it is logged
+        /// as before.
+        /// </summary>
+        public bool FileHasIt()
+        {
+            if (_fileSeen) return true;
+            if (!File.Exists(Tail.Path)) return false;
+            _fileSeen = true;
+            return true;
         }
     }
 

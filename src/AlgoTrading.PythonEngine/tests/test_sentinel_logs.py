@@ -413,6 +413,25 @@ class SignatureTests(LogsAgentTestCase):
         self.advance(30)
         self.assertEqual(Severity.CRITICAL, self.check()["logs:feed-reconnect-loop:dhan"].severity)
 
+    def test_a_feed_the_API_follows_into_api_log_is_read_there_and_counted_once(self):
+        # From 30 Sep a feed keeps its log from the first line and the API
+        # writes each line into api.log too. Two lost connections are two, not
+        # four: three in one check page a reconnect loop.
+        lost = "[dhan] error: Connection to remote host was lost."
+        self.start_watching("api.log")
+        self.start_watching("engine/dhan-feed-2096838.log")
+        self.append("engine/dhan-feed-2096838.log",
+                    f"2026-09-30T04:01:00.000Z ! {lost}\n2026-09-30T04:01:20.000Z ! {lost}\n")
+        self.append("api.log", warn(FEEDS, f"[Dhan feed:err] {lost}") + warn(FEEDS, f"[Dhan feed:err] {lost}"))
+        self.assertNotIn("logs:feed-reconnect-loop:dhan", self.check())
+
+        # Three in one check are the loop, read from api.log alone.
+        self.append("engine/dhan-feed-2096838.log",
+                    "".join(f"2026-09-30T04:0{m}:40.000Z ! {lost}\n" for m in (3, 4, 5)))
+        self.append("api.log", warn(FEEDS, f"[Dhan feed:err] {lost}") * 3)
+        self.advance(30)
+        self.assertIn("logs:feed-reconnect-loop:dhan", self.check())
+
     def test_a_single_tickless_reconnect_that_recovers_is_never_reported(self):
         store, notifier = MemoryIncidentStore(), RecordingNotifier()
         engine = SentinelEngine([self.agent], store, notifier, self.ctx, monotonic=clock_ticks())
@@ -501,6 +520,40 @@ class SignatureTests(LogsAgentTestCase):
         self.advance(30)
         [churn] = self.check().values()  # another run of the same churn: the same incident
         self.assertIn("from run 246, 236.", churn.summary)
+
+    def test_a_risk_guard_refusal_is_the_limit_working_not_an_api_error(self):
+        # 30 Sep: "API error: RiskViolationException: MAX DAILY LOSS EXCEEDED …",
+        # medium, from an API that let the refusal reach its exception handler.
+        self.start_watching("api.log")
+        self.append("api.log", (
+            "fail: Microsoft.AspNetCore.Diagnostics.ExceptionHandlerMiddleware[1]\n"
+            f"{B}An unhandled exception has occurred while executing the request.\n"
+            f"{B}AlgoTrading.Application.Exceptions.RiskViolationException: MAX DAILY LOSS EXCEEDED: Current PnL "
+            "-5210.50 is below the limit of -5000. Exits remain allowed.\n"
+            f"{B}   at AlgoTrading.Infrastructure.Services.RiskManagementService.RejectOrderAsync()\n")
+            + info(REG, '[strategy:Fulcrum:NIFTY] SIGNAL REFUSED by the API: {"error":"MAX DAILY LOSS EXCEEDED: '
+                        'Current PnL -5210.50 is below the limit of -5000. Exits remain allowed."}'))
+        self.assertEqual({}, self.check())
+
+        # The API's own line since then, and the kill switch's refusal.
+        self.append("api.log",
+                    warn("AlgoTrading.Api.Services.RiskRefusalFilter",
+                         "Signal refused by the risk guard (409) on POST /api/Simulator/signals: MAX DAILY LOSS "
+                         "EXCEEDED: Current PnL -5400 is below the limit of -5000. Exits remain allowed.")
+                    + info(REG, '[strategy:Ghost:BANKNIFTY] SIGNAL REFUSED by the API: {"error":"GLOBAL KILL SWITCH '
+                                'IS ACTIVE. NEW POSITIONS REJECTED (exits are always allowed)."}'))
+        self.advance(30)
+        self.assertEqual({}, self.check())
+
+    def test_the_order_rate_limit_is_still_reported_from_the_refusal_warning(self):
+        self.start_watching("api.log")
+        self.append("api.log", warn(
+            "AlgoTrading.Api.Services.RiskRefusalFilter",
+            "Signal refused by the risk guard (409) on POST /api/Simulator/signals: RATE LIMIT EXCEEDED: More than "
+            "50 orders placed in the last minute for run 246 (leg SELL 2)."))
+        found = self.check()
+        self.assertEqual(["logs:order-rate-limit"], list(found))
+        self.assertIn("from run 246.", found["logs:order-rate-limit"].summary)
 
     def test_a_daemon_that_exits_on_its_own_is_reported_but_a_stopped_one_is_not(self):
         self.start_watching("api.log")

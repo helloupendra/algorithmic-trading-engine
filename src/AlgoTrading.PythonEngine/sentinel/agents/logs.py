@@ -186,6 +186,12 @@ BENIGN_LINES: tuple[re.Pattern[str], ...] = (
     # The desk's first failed probe of the API. It restarts the API only after
     # three, and the health agent watches the API directly.
     re.compile(r"API health check failed \(1/\d+\)"),
+    # The risk guard refusing a signal at the daily loss limit, or while the
+    # kill switch is on, is the rule working (RiskManagementService). On 30 Sep
+    # a daily-loss refusal was opened as a medium "API error". The runner's
+    # "SIGNAL REFUSED by the API: {"error": …}" line carries the same reason.
+    # The order rate limit is not here: its own signature reports the churn.
+    re.compile(r"MAX DAILY LOSS EXCEEDED:|GLOBAL KILL SWITCH IS ACTIVE\."),
 )
 
 # A line carrying one of these is dropped whole: never matched, never evidence.
@@ -245,6 +251,10 @@ _RUNNER_FILE = re.compile(r"^runner-(?P<run>\d+)-\d+\.log$")
 _BACKTEST_FILE = re.compile(r"^backtest-(?P<run>\d+)-\d+\.log$")
 _FEED_FILE = re.compile(r"^(?P<vendor>[a-z]+)-feed-\d+\.log$")
 _INGESTOR_FILE = re.compile(r"^ingestor-\d+\.log$")
+_CHAIN_POLLER_FILE = re.compile(r"^chain-poller-\d+\.log$")
+#: A line a process kept of itself from its first one (core/safe_output.py's
+#: tee): "2026-09-30T03:45:01.123Z | text".
+_TEED_LINE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z [|!] ")
 
 # --- signatures -------------------------------------------------------------
 _ERRORISH = re.compile(r"(?i)error|exception|failed")
@@ -259,6 +269,8 @@ _TOO_MANY = re.compile(r"(?i)\b429\b.*too many requests|too many requests.*\b429
 _VENDOR_THROTTLE = re.compile(r"(?i)rate-limiting us")
 _TELEGRAM_REFUSED = re.compile(r"(?i)\btelegram\b.*\b(?:refused|429)\b")
 _URL_PATH = re.compile(r"https?://[^/\s]+(?P<path>/[^\s?\"')]*)")
+#: The exception the API's risk guard refuses an order with (answered 409).
+_RISK_REFUSAL = "RiskViolationException"
 _ORDER_LIMIT = re.compile(r"RATE LIMIT EXCEEDED: More than (?P<n>\d+) orders placed in the last minute for run (?P<run>\d+)")
 _TICKLESS = re.compile(r"(?P<n>\d+) reconnect\(s\) carried no ticks")
 _HOST_LOST = re.compile(r"Connection to remote host was lost")
@@ -359,6 +371,9 @@ class _LogFile:
     run_id: Optional[str] = None
     vendor: Optional[str] = None
     backtest: bool = False
+    #: A daemon the API follows into api.log (a feed, the chain poller): its
+    #: teed lines are read there, not here. See _parse.
+    mirrored: bool = False
 
 
 @dataclass(frozen=True)
@@ -777,9 +792,11 @@ class LogsAgent(Agent):
             return _LogFile(path, label, "engine", f"backtest {m['run']}", run_id=m["run"], backtest=True)
         if m := _FEED_FILE.match(path.name):
             vendor = m["vendor"]
-            return _LogFile(path, label, "feed", f"{vendor.capitalize()} feed", vendor=vendor)
+            return _LogFile(path, label, "feed", f"{vendor.capitalize()} feed", vendor=vendor, mirrored=True)
         if _INGESTOR_FILE.match(path.name):
-            return _LogFile(path, label, "feed", "ingestor")
+            return _LogFile(path, label, "feed", "ingestor", mirrored=True)
+        if _CHAIN_POLLER_FILE.match(path.name):
+            return _LogFile(path, label, "engine", "chain-poller", mirrored=True)
         return _LogFile(path, label, "engine", path.stem.rsplit("-", 1)[0])
 
     def _new_lines(self, ctx: SentinelContext, f: _LogFile, files_state: dict[str, dict[str, Any]],
@@ -856,6 +873,15 @@ class LogsAgent(Agent):
             return
         base = _Origin(f.label, f.kind, f.component, vendor=f.vendor, run_id=f.run_id, backtest=f.backtest)
         for raw in lines:
+            if f.mirrored and _TEED_LINE.match(raw):
+                # Since 30 Sep the API launches a feed or the chain poller with
+                # its log kept from the first line, and writes every line of it
+                # into api.log, launched or adopted, where it is read. Read here
+                # as well, each line would count twice: two lost connections
+                # would be four, and "Connection to remote host was lost" three
+                # times pages a reconnect loop. An unstamped line is from a
+                # daemon started before then, written only once its pipe died.
+                continue
             line_time: Optional[str] = None
             text = raw
             stream = f.label + "|out"
@@ -1044,6 +1070,11 @@ class LogsAgent(Agent):
         if self._match_known(origin, root.removeprefix("---> "), root.removeprefix("---> "), scan, None):
             return  # e.g. the order rate limit, thrown as an exception
         root = root.removeprefix("---> ")
+        if _short_type(root) == _RISK_REFUSAL:
+            # An order the risk guard refused (409), from an API that still let
+            # the refusal reach its exception handler: a limit working, not an
+            # error. Since 30 Sep the API logs it as a warning instead.
+            return
         signature = normalise(root)
         crash = category == "process"
         match = _EXCEPTION_LINE.match(root)
