@@ -396,8 +396,9 @@ start_dhan_primary() {  # makes Dhan the day's feed: today's ids, a fresh feed, 
 }
 
 # The automatic PIN + TOTP sign-in (DhanAutoSignIn.cs). The API's own worker
-# takes the token between 08:00 and 08:40; these are for a morning it could not
-# (the API restarted at 08:45, or a token that was fine at 08:40 and is not now).
+# takes the token from 08:00, two minutes after the last one ends; these are for
+# a morning it could not. While the last token is live the call answers 409 and
+# Dhan is not asked (it refused a sign-in nine seconds after a token ended, 30 Sep).
 dhan_auto_configured() {  # set up AND switched on (Dhan:AutoSignIn:Enabled)
   local status
   status="$(api_get /api/Dhan/auto-sign-in 2>/dev/null)" || return 1

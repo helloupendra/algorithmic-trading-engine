@@ -166,8 +166,10 @@ public class DhanController : ControllerBase
     /// Takes no cancellation token. The morning job's curl gives up after 30
     /// seconds; hanging up after Dhan had issued the token would have cancelled
     /// the save and lost it, and spent the code. The sign-in is bounded without
-    /// it: 30 seconds for Dhan's answer, at most one TOTP step of waiting for a
-    /// fresh code, and one sign-in at a time.
+    /// it: 30 seconds for each of Dhan's answers, at most three codes when Dhan
+    /// refuses the code (one TOTP step of waiting before each), and one sign-in
+    /// at a time. The morning job is also held back while the last token is live
+    /// or has only just ended (30 Sep).
     /// </remarks>
     [HttpPost("auto-sign-in")]
     [Authorize(Policy = AuthorizationPolicies.AdminOnly)]

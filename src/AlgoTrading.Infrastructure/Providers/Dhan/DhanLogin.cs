@@ -17,9 +17,9 @@ public enum DhanSignInFailure
     NotSetUp,
 
     /// <summary>
-    /// Dhan answered, and said no. Never retried by a machine: a PIN or code
-    /// that is wrong now is wrong every time, and repeated wrong PINs can lock
-    /// the account.
+    /// Dhan answered, and said no. What was refused (<see cref="DhanRefusal"/>)
+    /// decides whether the same sign-in tries again with a fresh code: repeated
+    /// wrong PINs can lock the account, so a PIN refusal never is.
     /// </summary>
     Refused,
 
@@ -27,10 +27,38 @@ public enum DhanSignInFailure
     Unreachable,
 }
 
+/// <summary>What Dhan refused, read from the reason it gave (<see cref="DhanLoginFlow.ClassifyRefusal"/>).</summary>
+public enum DhanRefusal
+{
+    /// <summary>
+    /// The TOTP code. Worth a fresh code from a later step: on 28 and 30 Sep
+    /// Dhan answered "Invalid TOTP" to codes from the secret that worked on 29 Sep.
+    /// </summary>
+    Code,
+
+    /// <summary>The PIN, or anything that sounds like the account being locked. Never sent again the same day.</summary>
+    Pin,
+
+    /// <summary>A token for another Dhan account. Nothing a retry changes.</summary>
+    Account,
+
+    /// <summary>Wording not recognised: one more try, then the day stops.</summary>
+    Unrecognised,
+}
+
 /// <summary>A sign-in that did not produce a token, and why (<see cref="Failure"/>).</summary>
 public sealed class DhanSignInException(string message, DhanSignInFailure failure) : InvalidOperationException(message)
 {
     public DhanSignInFailure Failure { get; } = failure;
+
+    /// <summary>What Dhan refused, when <see cref="Failure"/> is <see cref="DhanSignInFailure.Refused"/>.</summary>
+    public DhanRefusal? Refusal { get; init; }
+
+    /// <summary>
+    /// Dhan's own reason fields, with the PIN, the secret and the code taken out
+    /// in case Dhan ever echoes one; empty when it gave none.
+    /// </summary>
+    public string DhanReason { get; init; } = string.Empty;
 }
 
 /// <summary>
@@ -178,8 +206,9 @@ public sealed class DhanLoginFlow : IProviderLoginFlow
         if (wait > TimeSpan.Zero) await Task.Delay(wait, _time, cancellationToken);
         var now = _time.GetUtcNow();
 
+        string code = Totp.Generate(secret, now);
         string url = $"{settings.AuthBaseUrl.TrimEnd('/')}/app/generateAccessToken" +
-                     $"?dhanClientId={Uri.EscapeDataString(clientId)}&pin={Uri.EscapeDataString(pin)}&totp={Totp.Generate(secret, now)}";
+                     $"?dhanClientId={Uri.EscapeDataString(clientId)}&pin={Uri.EscapeDataString(pin)}&totp={code}";
         using var request = new HttpRequestMessage(HttpMethod.Post, url);
         request.Headers.TryAddWithoutValidation("Accept", "application/json");
 
@@ -210,7 +239,7 @@ public sealed class DhanLoginFlow : IProviderLoginFlow
             {
                 token = r.TryGetProperty("accessToken", out var t) ? t.GetString() ?? string.Empty : string.Empty;
                 signedInAs = r.TryGetProperty("dhanClientId", out var c) ? c.ToString() : string.Empty;
-                reason = RefusalReason(r);
+                reason = Scrub(RefusalReason(r), pin, secret, code);
             }
         }
         catch (JsonException)
@@ -230,7 +259,11 @@ public sealed class DhanLoginFlow : IProviderLoginFlow
             throw new DhanSignInException(
                 $"Dhan refused the PIN + TOTP sign-in ({status}{(reason.Length > 0 ? $": {reason}" : string.Empty)}). " +
                 "Check DHAN_PIN and DHAN_TOTP_SECRET, and that TOTP is enabled for the account's API access.",
-                DhanSignInFailure.Refused);
+                DhanSignInFailure.Refused)
+            {
+                Refusal = ClassifyRefusal(reason),
+                DhanReason = reason,
+            };
         }
 
         try
@@ -261,11 +294,12 @@ public sealed class DhanLoginFlow : IProviderLoginFlow
     /// Two reasons to wait for the next step, each to one second into it:
     /// <list type="bullet">
     /// <item>the step is in its last seconds: the code can roll over by the time
-    /// Dhan checks it, and a refused code is not retried;</item>
+    /// Dhan checks it, and a refused code spends one of the three a sign-in may send;</item>
     /// <item>the code sent last came from this step. The worker and the morning
     /// job, a moment apart, could each send the same code. A TOTP code is meant
     /// to be accepted once (RFC 6238, section 5.2), so Dhan may refuse the second
-    /// as a wrong one, and a refusal stops the day.</item>
+    /// as a wrong one. This is also what puts each retry after an "Invalid TOTP"
+    /// one second into the next step, with a code never sent before.</item>
     /// </list>
     /// </remarks>
     public static TimeSpan WaitBeforeCode(DateTimeOffset now, long? lastCodeStep)
@@ -296,7 +330,7 @@ public sealed class DhanLoginFlow : IProviderLoginFlow
             // is what the browser callback catches.
             throw new DhanSignInException(
                 $"Signed in to Dhan as client {Mask(signedInAs)}, but this connector is set up for {Mask(clientId)}. Nothing was saved.",
-                DhanSignInFailure.Refused);
+                DhanSignInFailure.Refused) { Refusal = DhanRefusal.Account };
         }
 
         await _sessions.SaveAsync(new BrokerSession
@@ -310,6 +344,41 @@ public sealed class DhanLoginFlow : IProviderLoginFlow
         var expires = BrokerSession.TokenExpiryUtc(DhanProvider.Key, null, _time.GetUtcNow().UtcDateTime)!.Value;
         _logger.LogInformation("Dhan signed in ({How}) for client {Client}; token valid until {Expires:u}.", how, Mask(clientId), expires);
         return new DhanSignIn(clientId, expires);
+    }
+
+    /// <summary>
+    /// What a refusal was about, from Dhan's reason. Anything about the PIN or a
+    /// lock wins over the code, so "Invalid PIN or TOTP" is never retried.
+    /// </summary>
+    /// <remarks>
+    /// By the words, not an error code: Dhan's documentation lists none for this
+    /// call, and the 30 Sep refusal came as a 200 whose only reason was the text
+    /// "Invalid TOTP". A word that could mean the PIN sits on the safe side (no
+    /// retry, as before), so a wrong guess this way costs a morning of pressing
+    /// Connect, never a locked account.
+    /// </remarks>
+    public static DhanRefusal ClassifyRefusal(string? reason)
+    {
+        string text = (reason ?? string.Empty).ToLowerInvariant();
+        if (PinWords.Any(word => text.Contains(word, StringComparison.Ordinal))) return DhanRefusal.Pin;
+        return text.Contains("otp", StringComparison.Ordinal) ? DhanRefusal.Code : DhanRefusal.Unrecognised;
+    }
+
+    private static readonly string[] PinWords = ["pin", "password", "credential", "lock", "block", "suspend", "attempt", "disabled"];
+
+    /// <summary>
+    /// A reason with the request's own values taken out. Dhan has not been seen
+    /// to echo them, but the reason is logged and sent to Telegram, and neither
+    /// may ever carry the PIN, the secret or the code.
+    /// </summary>
+    private static string Scrub(string reason, params string[] values)
+    {
+        foreach (string value in values)
+        {
+            // Anything shorter would also match inside Dhan's own error codes.
+            if (value.Length >= 4) reason = reason.Replace(value, "…", StringComparison.OrdinalIgnoreCase);
+        }
+        return reason;
     }
 
     /// <summary>The reason in a refusal, from the fields Dhan's error bodies use.</summary>
