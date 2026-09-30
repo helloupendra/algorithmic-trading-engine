@@ -127,6 +127,37 @@ public class OptionChainAnalyticsTests
     }
 
     [Fact]
+    public void Given_a_spot_each_side_reads_only_its_own_side_of_it()
+    {
+        // BANKNIFTY near 55,500 with a 57,500 wall left from an older price:
+        // it carries the most OI on both sides; it is resistance, never support.
+        var strikes = new[]
+        {
+            S(55000, 30_000, 400_000),
+            S(55500, 90_000, 250_000),
+            S(56000, 600_000, 40_000),
+            S(57500, 1_900_000, 1_800_000),
+        };
+
+        Assert.Equal(57500m, OptionChainAnalytics.HeaviestStrike(strikes, "CE", 55480m));
+        Assert.Equal(55000m, OptionChainAnalytics.HeaviestStrike(strikes, "PE", 55480m));
+        // Above every strike: no call at or above the spot, so no resistance rather than one below it.
+        Assert.Null(OptionChainAnalytics.HeaviestStrike(strikes, "CE", 58000m));
+        Assert.Equal(57500m, OptionChainAnalytics.HeaviestStrike(strikes, "PE", 58000m));
+        // No spot yet: the whole chain, as before.
+        Assert.Equal(57500m, OptionChainAnalytics.HeaviestStrike(strikes, "PE"));
+    }
+
+    [Fact]
+    public void A_tie_goes_to_the_strike_nearer_the_spot()
+    {
+        var strikes = new[] { S(55000, 0, 500_000), S(55400, 0, 500_000), S(55600, 500_000, 0), S(56000, 500_000, 0) };
+
+        Assert.Equal(55400m, OptionChainAnalytics.HeaviestStrike(strikes, "PE", 55480m));
+        Assert.Equal(55600m, OptionChainAnalytics.HeaviestStrike(strikes, "CE", 55480m));
+    }
+
+    [Fact]
     public void The_at_the_money_strike_is_the_nearest_one()
     {
         var strikes = new[] { 57200m, 57300m, 57400m, 57500m };
