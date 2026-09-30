@@ -358,6 +358,9 @@ Each question goes to the Assistant in its real configuration (source `check`). 
 
 - Numbers are read the way the desk writes money: ₹1,10,132.75, −110,132.75, 1.1 lakh, 59.8k.
 - Citations, times and dates are removed first. Without that, a count of 10 would match a citation's "20:10".
+- The answer is read from the tools again after the model answers. An MCX run still trading after the NSE close
+  moves the day's money while the model reads it, so a figure anywhere between the two readings passes, and a
+  worst run that changed passes as either id. The report shows both readings as "before → after".
 
 The day's result is one report (agent `assistant-check`, subject `check`), which passes at 80%. A model or prompt
 change that makes the Assistant misread the desk shows up the same evening. It runs while the Assistant is on and
