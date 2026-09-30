@@ -57,8 +57,9 @@ export function dhanAutoSignInView(status: DhanAutoSignInStatus | undefined): Dh
   }
 
   if (status.stoppedForToday) {
-    // Only a refusal, a missing value or three failed tries stop the day, and
-    // retrying a wrong PIN can lock the account: the machine waits for a person.
+    // A refused PIN, three refused codes, a missing value or three unreachable
+    // tries stop the day, and retrying a wrong PIN can lock the account: the
+    // machine waits for a person.
     return {
       tone: 'neg',
       label: 'Stopped for today',
@@ -66,9 +67,9 @@ export function dhanAutoSignInView(status: DhanAutoSignInStatus | undefined): Dh
     }
   }
 
-  // Nothing signs in before the window opens: each day's token is taken at the
-  // same hour and lasts the session, and the night stays quiet.
-  const window = `on weekdays from ${status.morningFromIst} IST: between ${status.morningFromIst} and ${status.morningUntilIst} IST if the token would end before tonight's close, and whenever it has run out`
+  // Nothing signs in before the window opens, nor while the last token is live:
+  // on 30 Sep Dhan refused a sign-in nine seconds after the last token ended.
+  const window = `on weekdays from ${status.morningFromIst} IST, two minutes after the last token has run out (Dhan has refused a new one sooner)`
   if (status.lastOk === false) {
     return { tone: 'warn', label: 'Last try failed', detail: `${status.lastMessage ?? ''} It will try again by itself.`.trim() }
   }
