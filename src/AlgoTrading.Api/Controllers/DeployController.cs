@@ -76,8 +76,16 @@ public class DeployController : ControllerBase
     /// </remarks>
     private string? ResolveHistoryFile()
     {
-        var seen = new List<string>();
-        foreach (var start in new[] { _environment.ContentRootPath, Directory.GetCurrentDirectory() })
+        var path = FindHistoryFile(_environment.ContentRootPath, out var seen);
+        if (path is null) _logger.LogDebug("No deploy history found. Looked in: {Paths}", string.Join("; ", seen));
+        return path;
+    }
+
+    /// <summary>The desk's deploy history (data/deploy-history.json) above the content root or the working directory; null when there is none.</summary>
+    public static string? FindHistoryFile(string contentRoot, out List<string> seen)
+    {
+        seen = new List<string>();
+        foreach (var start in new[] { contentRoot, Directory.GetCurrentDirectory() }.Where(s => !string.IsNullOrEmpty(s)))
         {
             var directory = new DirectoryInfo(start);
             for (int depth = 0; depth < 4 && directory is not null; depth++)
@@ -89,7 +97,6 @@ public class DeployController : ControllerBase
             }
         }
 
-        _logger.LogDebug("No deploy history found. Looked in: {Paths}", string.Join("; ", seen));
         return null;
     }
 }
