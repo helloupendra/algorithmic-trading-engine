@@ -9,7 +9,7 @@
  * And its shadow book, a day's or a replay's: the buys code kept as if
  * placed, each with its entry, stop and target, its mark or exit, how it
  * ended and its net after charges; and its scoreboard, each replay and live
- * shadow day against a fixed rule, with totals over the full days only.
+ * shadow day against a fixed rule, with totals over every full one.
  *
  * Read-only. The words come from lib/aiTrader.ts, so every page says a
  * decision the same way.
@@ -25,6 +25,7 @@ import {
   confidenceText,
   contractText,
   jsonBlock,
+  listedText,
   looksSpanText,
   lotsText,
   modeLabel,
@@ -449,18 +450,20 @@ function Partial() {
 /**
  * The scoreboard: its shadow book against a fixed rule anyone could follow,
  * each replay and live shadow day, newest first, after charges. The totals
- * count only full days whose rule result is scored, and say plainly that a
- * handful of days proves nothing.
+ * count every full replay and shadow day whose rule result is scored, listed
+ * or not (a date replayed twice counts twice), and say plainly that a handful
+ * of them proves nothing.
  */
 export function AiTraderScoreboard() {
   const q = useAiTraderScoreboard()
   const { hash } = useLocation()
   const b = q.data
   const t = b?.totals ?? null
+  const listed = b ? listedText(b.rows.length, b.rowsTotal) : ''
   return (
     <section id="ai-trader-scoreboard" className="atr-book atr-score atr-anchor" aria-label="Scoreboard">
       <h4 className="atr-book__h">
-        Scoreboard <span className="atr-book__sum">its shadow book against a fixed rule, day by day, after charges</span>
+        Scoreboard <span className="atr-book__sum">its shadow book against a fixed rule, each replay and shadow day, after charges</span>
       </h4>
       {q.isPending ? (
         <Loading label="Reading the scoreboard…" />
@@ -499,7 +502,7 @@ export function AiTraderScoreboard() {
                   <dd>{beatText(t)}</dd>
                 </div>
                 <div>
-                  <dt>Days in profit</dt>
+                  <dt title="Full replays and shadow days that made money after charges">In profit</dt>
                   <dd>
                     AI {t.aiPositiveDays} · rule {t.baselinePositiveDays}
                   </dd>
@@ -514,8 +517,9 @@ export function AiTraderScoreboard() {
                 </div>
               </dl>
               <p className="atr-book__how">
-                {sampleNote(t.days)} The totals count only full days (looks from 09:30 or earlier to 14:30 or later) whose rule result is
-                scored; nets are after charges.
+                {sampleNote(t.days)} The totals count every replay and live shadow day whose looks span the session (from 09:30 or
+                earlier to 14:30 or later) and whose rule result is scored, listed or not; a date replayed twice counts twice, against
+                the same rule result. Nets are after charges.
               </p>
             </>
           ) : (
@@ -612,6 +616,7 @@ export function AiTraderScoreboard() {
                   )
                 })}
               </ul>
+              {listed && <p className="atr-book__how">{listed}</p>}
             </>
           )}
         </>

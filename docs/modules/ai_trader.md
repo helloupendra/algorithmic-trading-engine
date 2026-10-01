@@ -132,7 +132,8 @@ after charges, the baseline's net, and the difference. `take` (default 60) limit
 says how many there are. The totals are over every full row, listed or not (looks from 09:30 or earlier to 14:30 or
 later), whose baseline is scored: the AI's net and the rule's, the rows the AI beat the rule on, and the rows each made
 money on. The totals' `days` counts rows, not dates: a day replayed more than once counts each time, against the same
-rule result each time.
+rule result each time. The page words them so ("AI beat the rule on 3 of 8 full replays and shadow days") and says
+"60 of 75 rows listed" when it lists fewer rows than there are.
 
 ## Daily digest
 
