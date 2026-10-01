@@ -53,7 +53,7 @@ import threading
 import redis
 import requests
 from core.api_client import build_session, PlatformApiClient
-from core.feed_watchdog import assess_feed
+from core.feed_watchdog import assess_feed, session_market
 from core.tick_age import tick_age_seconds
 from core.leg_pricing import DEFAULT_WAIT_SECONDS, resolve_leg_prices
 from core.warmup_source import load_warmup_bars
@@ -1046,7 +1046,7 @@ if __name__ == "__main__":
         now_ts = time.time()
         if market_open_cache["value"] is not None and now_ts - market_open_cache["checked_at"] < 60:
             return market_open_cache["value"]
-        answer = api.is_market_open()
+        answer = api.is_market_open(*session_market(getattr(args, "spot_symbol", None)))
         if answer is not None:
             market_open_cache["value"] = answer
             market_open_cache["checked_at"] = now_ts

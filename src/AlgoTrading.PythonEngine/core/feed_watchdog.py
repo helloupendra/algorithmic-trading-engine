@@ -100,3 +100,16 @@ def assess_feed(
         return FeedVerdict("still-stalled", silent_seconds)
 
     return FeedVerdict("quiet", silent_seconds)
+
+
+def session_market(spot_symbol: Optional[str]) -> tuple[str, str]:
+    """
+    The (exchange, segment) whose hours decide whether a run's silence is a stall. A crude run is on MCX
+    until 23:30 or 23:55, so asking about NSE (closed from 15:30) hid every evening stall of its feed.
+    """
+    exchange = (spot_symbol or "").split(":", 1)[0].strip().upper()
+    if exchange == "MCX":
+        return "MCX", "COM"
+    if exchange == "BSE":
+        return "BSE", "FO"
+    return "NSE", "FO"
