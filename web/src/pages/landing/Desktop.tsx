@@ -25,6 +25,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../lib/auth'
 import { useMarketClock } from '../../lib/marketClock'
+import { homeFor } from '../../lib/modules'
 import { liveSceneWanted } from '../../lib/sceneMode'
 import { IconLogo } from '../../components/icons'
 import { MachineScene } from '../../components/MachineScene'
@@ -61,13 +62,13 @@ function Chapter({ c, heading, children }: { c: ChapterCopy; heading: 'h1' | 'h2
 /* --------------------------------------------------------------------- page */
 
 export function LandingDesktop() {
-  const { isAuthenticated, isLoading } = useAuth()
+  const { user, isAuthenticated, isLoading } = useAuth()
   // isLoading is only true while a stored token is verified against /me
   // (anonymous visitors never see it). During that probe the CTA already reads
   // as the signed-in variant and points at /login, which bounces a valid session
   // to its role home — so nothing visibly flips once the probe resolves.
   const sessionLikely = isLoading || isAuthenticated
-  const consoleHref = isAuthenticated ? '/desk' : '/login'
+  const consoleHref = isAuthenticated ? homeFor(user) : '/login'
   const consoleLabel = sessionLikely ? 'Go to console' : 'Open the console'
 
   const clock = useMarketClock()

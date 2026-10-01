@@ -136,7 +136,7 @@ describe('links in the source', () => {
    * value. A placeholder is an example of what to type (a folder on the server), not a link.
    */
   const links = Object.entries(files).flatMap(([file, text]) =>
-    [...text.matchAll(/(?<!placeholder=)(['"`])(\/(?:desk|markets|trade|research|ai|data|system|account|notebook|admin|trader)\b[^'"`\s]*)\1/g)].map(
+    [...text.matchAll(/(?<!placeholder=)(['"`])(\/(?:today|desk|markets|trade|research|ai|data|system|account|notebook|admin|trader)\b[^'"`\s]*)\1/g)].map(
       (m) => ({ file, url: m[2].replace(/\$\{[^}]*\}/g, '7') }),
     ),
   )

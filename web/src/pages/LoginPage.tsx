@@ -28,6 +28,7 @@ import { useAuth } from '../lib/auth'
 import { useForcedTheme } from '../lib/theme'
 import { ApiError } from '../lib/api'
 import { useMarketClock } from '../lib/marketClock'
+import { homeFor } from '../lib/modules'
 import { liveSceneWanted } from '../lib/sceneMode'
 import { IconLogo } from '../components/icons'
 import { MachineScene } from '../components/MachineScene'
@@ -102,12 +103,13 @@ export function LoginPage() {
     setIsSubmitting(true)
     machineRef.current?.fire('open')
     try {
-      await login(name, pass)
+      const me = await login(name, pass)
       // RequireAuth stores the full Location; keep search and hash so deep links
       // such as /markets/chart?symbol=NIFTY survive the sign-in detour.
       const from = (location.state as { from?: { pathname: string; search?: string; hash?: string } } | null)?.from
       const target = from ? `${from.pathname}${from.search ?? ''}${from.hash ?? ''}` : null
-      navigate(target ?? '/desk', { replace: true })
+      // Otherwise their home: Today for an admin, the Desk for a trader.
+      navigate(target ?? homeFor(me), { replace: true })
     } catch (err) {
       // An ApiError carries a message the server chose to show a user ("wrong
       // password"). Anything else is the request never completing - a dropped

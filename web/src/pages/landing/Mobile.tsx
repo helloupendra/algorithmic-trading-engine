@@ -24,6 +24,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../lib/auth'
 import { useMarketClock } from '../../lib/marketClock'
+import { homeFor } from '../../lib/modules'
 import { liveSceneWanted } from '../../lib/sceneMode'
 import { IconLogo } from '../../components/icons'
 import { MachineScene } from '../../components/MachineScene'
@@ -60,10 +61,10 @@ function Panel({ c, n }: { c: ChapterCopy; n: number }) {
 }
 
 export function LandingMobile() {
-  const { isAuthenticated, isLoading } = useAuth()
+  const { user, isAuthenticated, isLoading } = useAuth()
   // See landing/Desktop: during the /me probe the CTA already reads as signed in.
   const sessionLikely = isLoading || isAuthenticated
-  const consoleHref = isAuthenticated ? '/desk' : '/login'
+  const consoleHref = isAuthenticated ? homeFor(user) : '/login'
   const consoleLabel = sessionLikely ? 'Go to console' : 'Open the console'
 
   const clock = useMarketClock()

@@ -2,8 +2,8 @@
  * Workspace registry: the single source of truth for what this console is made
  * of, where each part lives and who may see it.
  *
- * The console is seven workspaces (Desk, Markets, Trade, Research, AI, Data,
- * System), each holding tabs. A tab declares what it requires: the Admin role, or one of
+ * The console is eight workspaces (Today, Desk, Markets, Trade, Research, AI,
+ * Data, System), each holding tabs. A tab declares what it requires: the Admin role, or one of
  * the module grants the API enforces (PlatformModules on the server). The top
  * bar, the tab strip, the phone's bottom bar and the ⌘K palette all read from
  * here, so a part the user may not use is absent everywhere at once rather
@@ -21,7 +21,7 @@
 
 import type { ComponentType, SVGProps } from 'react'
 import type { MeResponse } from './api'
-import { IconCandles, IconChip, IconDashboard, IconDatabase, IconFlask, IconServer, IconSwitch } from '../components/icons'
+import { IconCalendar, IconCandles, IconChip, IconDashboard, IconDatabase, IconFlask, IconServer, IconSwitch } from '../components/icons'
 
 /** The module keys the server grants to traders (PlatformModules.cs). */
 export const GRANT_KEYS = ['strategies', 'backtesting', 'market-data', 'notebook', 'analysis'] as const
@@ -30,7 +30,7 @@ export type GrantKey = (typeof GRANT_KEYS)[number]
 /** What a tab needs beyond being signed in: the Admin role, or one grant. */
 export type Requirement = 'admin' | GrantKey
 
-export type WorkspaceKey = 'desk' | 'markets' | 'trade' | 'research' | 'ai' | 'data' | 'system'
+export type WorkspaceKey = 'today' | 'desk' | 'markets' | 'trade' | 'research' | 'ai' | 'data' | 'system'
 
 /** The two consoles one registry serves. */
 export type Side = 'admin' | 'trader'
@@ -77,6 +77,26 @@ export interface WorkspaceDef {
 }
 
 export const WORKSPACES: readonly WorkspaceDef[] = [
+  {
+    // The owner's one page (1 Oct): everything at a glance, read-first,
+    // nothing on it that needs a click to keep the desk going. First, so it
+    // is where an admin lands (homeFor); admin-only, so a trader's console
+    // still opens on the Desk.
+    key: 'today',
+    label: 'Today',
+    home: '/today',
+    description: 'The day on one read-only page: what needs a look, trading, the agents, learning, the system and decisions.',
+    icon: IconCalendar,
+    tabs: [
+      {
+        key: 'today',
+        label: 'Today',
+        home: '/today',
+        requires: 'admin',
+        pages: [{ label: 'Today', to: '/today', exact: true, keywords: ['owner', 'summary', 'attention', 'at a glance', 'decisions'] }],
+      },
+    ],
+  },
   {
     key: 'desk',
     label: 'Desk',
@@ -541,6 +561,15 @@ function collect(keep: (tab: TabDef, page: PageDef) => boolean): NavWorkspace[] 
  */
 export function navFor(access: Access): NavWorkspace[] {
   return collect((tab, page) => shows(access, tab, page))
+}
+
+/**
+ * Where a signed-in user lands (after signing in, or on /login with a
+ * session): the first workspace they can reach. Today for an admin, the Desk
+ * for a trader, who has no Today.
+ */
+export function homeFor(user: Pick<MeResponse, 'role' | 'moduleGrants'> | null): string {
+  return navFor(accessFor(user))[0]?.to ?? '/desk'
 }
 
 /** Every page of every console, for naming a route this user has no tab for. */
