@@ -40,7 +40,7 @@ import {
   useStrategies,
   useUserAccounts,
 } from '../../lib/queries'
-import { AI_TRADER_POLL_MS, AI_TRADER_REPLAY_POLL_MS, netTone, shadowCountsText } from '../../lib/aiTrader'
+import { netTone, replayRecordPollMs, shadowCountsText } from '../../lib/aiTrader'
 import {
   COVERAGE_KEYS,
   COVERAGE_LABELS,
@@ -239,7 +239,9 @@ function SessionPanel({ session, onAnother }: { session: ReplaySession; onAnothe
   // A replay with the AI Trader alone: no run to list or total.
   const aiOnly = session.aiTrader && session.runIds.length === 0 && session.runs.length === 0
   // Its shadow book (the same read as the block below shows): its result, kept apart from the runs'.
-  const shadow = useAiTraderPositions({ replay: session.aiTrader ? session.id : null }, active ? AI_TRADER_REPLAY_POLL_MS : AI_TRADER_POLL_MS)
+  const shadow = useAiTraderPositions({ replay: session.aiTrader ? session.id : null }, () =>
+    replayRecordPollMs({ active, endedUtc: session.endedUtc }, Date.now()),
+  )
   const book = shadow.data
   const bookWords = book
     ? `${shadowCountsText(book)}, kept by code as if placed`
@@ -358,11 +360,13 @@ function SessionPanel({ session, onAnother }: { session: ReplaySession; onAnothe
 /**
  * The AI Trader in this replay: its shadow book (the replay's own, fresh at
  * the start), then its decisions, newest first. Read every 10 s while it
- * plays (its clock runs up to ten times faster), then every 30 s, since its
- * last look can land a minute after the day ends.
+ * plays (its clock runs up to ten times faster), then every 30 s for a few
+ * minutes, since its last look can land a minute after the day ends; then
+ * no more, as the record of a replay that is over does not change.
  */
 function ReplayAiTrader({ session }: { session: ReplaySession }) {
   const active = isActiveState(session.state)
+  const poll = () => replayRecordPollMs({ active, endedUtc: session.endedUtc }, Date.now())
   return (
     <section className="rp-ai" aria-label="The AI Trader in this replay">
       <h3 className="rp-ai__h">
@@ -374,7 +378,7 @@ function ReplayAiTrader({ session }: { session: ReplaySession }) {
         <>
           <AiTraderShadowBook
             filter={{ replay: session.id }}
-            pollMs={active ? AI_TRADER_REPLAY_POLL_MS : AI_TRADER_POLL_MS}
+            pollMs={poll}
             replay
             empty={active ? 'No shadow position yet in this replay.' : 'No shadow position in this replay.'}
           />
@@ -383,7 +387,7 @@ function ReplayAiTrader({ session }: { session: ReplaySession }) {
           </h4>
           <AiTraderDecisionList
             filter={{ replay: session.id }}
-            pollMs={active ? AI_TRADER_REPLAY_POLL_MS : AI_TRADER_POLL_MS}
+            pollMs={poll}
             markReplays={false}
             label={`AI Trader decisions in the replay of ${shortDay(session.date)}`}
             empty={

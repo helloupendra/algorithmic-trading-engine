@@ -40,6 +40,26 @@ export const AI_TRADER_REPLAY_POLL_MS = 10_000
 /** Decisions a page asks for at a time. */
 export const AI_TRADER_PAGE = 50
 
+/** How often a list is read again: a fixed period, never (false), or a period worked out again after every read. */
+export type AiTraderPoll = number | false | (() => number | false)
+
+/** How long after a replay ends its record still moves: its last look, and the minute check that squares off its shadow book. */
+export const AI_TRADER_REPLAY_SETTLE_MS = 5 * 60_000
+
+/**
+ * How often a replay's AI Trader record (its decisions and shadow book) is
+ * read: every 10 s while it plays, every 30 s for a few minutes after it
+ * ends, then not at all. The last replay stays on Data → Replay until it is
+ * dismissed, and once settled its record never changes. Over with no end
+ * time sent, it may still be settling: read every 30 s.
+ */
+export function replayRecordPollMs(r: { active: boolean; endedUtc: string | null }, nowMs: number): number | false {
+  if (r.active) return AI_TRADER_REPLAY_POLL_MS
+  const ended = r.endedUtc ? Date.parse(r.endedUtc) : NaN
+  if (Number.isNaN(ended)) return AI_TRADER_POLL_MS
+  return nowMs - ended < AI_TRADER_REPLAY_SETTLE_MS ? AI_TRADER_POLL_MS : false
+}
+
 // ---------- shapes -----------------------------------------------------------------
 
 /** shadow (decides, places nothing), live (places paper orders) or replay; kept a string, so a mode the server adds later still shows. */
