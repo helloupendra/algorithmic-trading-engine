@@ -42,6 +42,31 @@ public static class AiJson
         return null;
     }
 
+    /// <summary>
+    /// The objects of the array under <paramref name="key"/> that are whole
+    /// JSON on their own, for an answer that is not one whole object: cut off
+    /// at the token limit, or with one record the model broke. A record that
+    /// does not parse is skipped; one cut off ends the list.
+    /// </summary>
+    public static List<JsonObject> ObjectsUnder(string? text, string key)
+    {
+        var found = new List<JsonObject>();
+        if (string.IsNullOrEmpty(text)) return found;
+        int at = text.IndexOf($"\"{key}\"", StringComparison.Ordinal);
+        int open = at < 0 ? -1 : text.IndexOf('[', at);
+        if (open < 0) return found;
+
+        for (int start = text.IndexOf('{', open); start >= 0; start = text.IndexOf('{', start + 1))
+        {
+            int close = MatchingBrace(text, start);
+            if (close < 0) break;
+            if (TryParse(text[start..(close + 1)]) is JsonObject obj) found.Add(obj);
+            start = close;
+        }
+
+        return found;
+    }
+
     private static JsonNode? TryParse(string text)
     {
         try

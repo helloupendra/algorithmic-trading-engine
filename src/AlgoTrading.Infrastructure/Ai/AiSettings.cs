@@ -85,8 +85,11 @@ public sealed class AiSettings
     /// <summary>Minutes between the News Analyst's batches.</summary>
     public int NewsEveryMinutes { get; set; } = 10;
 
-    /// <summary>Headlines and filings in one News Analyst call.</summary>
-    public int NewsBatchSize { get; set; } = 12;
+    /// <summary>
+    /// Headlines and filings in one News Analyst call. 12 was too many on 1 Oct: Nemotron Super's thinking and
+    /// records ran past the 6,000-token answer limit in 3 of 17 batches, and it spent the whole limit thinking in one more.
+    /// </summary>
+    public int NewsBatchSize { get; set; } = 8;
 
     /// <summary>How far back the News Analyst looks for items it has not read: never the 2020 backfills.</summary>
     public int NewsLookbackHours { get; set; } = 24;

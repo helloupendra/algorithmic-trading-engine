@@ -303,7 +303,7 @@ A good report is never overwritten by a later failure. Each report links to its 
 | Agent | Due | Input | Output |
 | --- | --- | --- | --- |
 | Trade Reviewer (judge) | A stopped run from the last two days, 10 minutes after it stopped and after `Ai:ReviewAfterIst` (15:45) on its day. So NSE runs after 15:45, MCX runs after 23:30. Manual books and alert runs are skipped. | The run's `get_run` summary and its spec, handed over up front. It can read more with `get_run`, `get_strategy_spec`, `get_quotes` and `get_option_chain_summary`. | Verdict (followed / deviated / unclear), what was kept and what was not, stale-quote fills, market context, one thing worth testing, a journal |
-| News Analyst (extract) | Every `Ai:NewsEveryMinutes` (10). A batch of `Ai:NewsBatchSize` (12) items it has not read, filings first, from the last `Ai:NewsLookbackHours` (24) by publication time; never the 2020 backfills. | The items' text | One record per item: event, direction, symbols, numbers with quotes, confidence |
+| News Analyst (extract) | Every `Ai:NewsEveryMinutes` (10). A batch of `Ai:NewsBatchSize` (8) items it has not read, filings first, from the last `Ai:NewsLookbackHours` (24) by publication time; never the 2020 backfills. | The items' text | One record per item: event, direction, symbols, numbers with quotes, confidence |
 | Incident Explainer (analyst) | A live incident of medium or worse, first seen in the last day | The incident, its evidence masked. It can read with `get_incidents`, `get_latest_checkup`, `get_runs`, `get_open_positions` and `get_quotes`. | What happened, likely why, what to do, urgency |
 
 Each output is checked before it is stored as `ok`:
@@ -312,6 +312,10 @@ Each output is checked before it is stored as `ok`:
   appear in the item's own text; case, spacing and typographic quotes are ignored. A number the model made up
   cannot pass. The share of `ok` among `ok` + `invalid` is the "JSON validity" the roadmap asks to keep above 98%;
   `GET reports/stats` gives it per day.
+- **A news answer that is not one whole object** still counts record by record (`AiJson.ObjectsUnder`). One record
+  the model broke is `invalid` on its own, and the rest of the batch is kept. Items after the point where an answer
+  was cut off at the token limit are `failed`, so a later batch reads them again. Before 1 Oct this lost the whole
+  batch: 48 of 203 items that day.
 
 When the review queue empties, the reviewer sends one Telegram message to the system channel (`Ai:ReviewDigestToTelegram`):
 - how many runs were reviewed and how many kept to their spec;
