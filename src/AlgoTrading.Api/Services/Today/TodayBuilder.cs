@@ -19,8 +19,8 @@ namespace AlgoTrading.Api.Services.Today;
 /// </summary>
 /// <remarks>
 /// Built from what the desk already keeps: the live run history (recaps left out), ai_calls and ai_reports, the
-/// memories, Sentinel's incidents, heartbeat and checkups, the desk's deploy history, and the decision log in
-/// <c>system_settings</c> (<see cref="DecisionsKey"/>).
+/// memories, Sentinel's incidents, heartbeat and checkups, the desk's deploy history, and the decision log
+/// (<c>owner_decisions</c>).
 /// </remarks>
 public sealed class TodayBuilder(
     TradingDbContext db,
@@ -30,8 +30,8 @@ public sealed class TodayBuilder(
     IWebHostEnvironment environment,
     TimeProvider? time = null)
 {
-    /// <summary>The decision log: a JSON array of <see cref="TodayDecision"/>, newest first.</summary>
-    public const string DecisionsKey = "owner.decisions";
+    /// <summary>The decisions the page shows, newest first.</summary>
+    public const int DecisionsShown = 100;
 
     /// <summary>Sentinel's round is late past this.</summary>
     public static readonly TimeSpan SentinelLate = TimeSpan.FromMinutes(10);
@@ -276,41 +276,28 @@ public sealed class TodayBuilder(
         }
     }
 
-    public async Task<List<TodayDecision>> DecisionsAsync(CancellationToken cancellationToken)
-    {
-        string? json = await db.SystemSettings.AsNoTracking().Where(s => s.Key == DecisionsKey).Select(s => s.Value).FirstOrDefaultAsync(cancellationToken);
-        if (string.IsNullOrWhiteSpace(json)) return [];
-        try
-        {
-            return JsonSerializer.Deserialize<List<TodayDecision>>(json, Json) ?? [];
-        }
-        catch (JsonException)
-        {
-            return [];
-        }
-    }
+    /// <summary>The decisions on record, newest recorded first.</summary>
+    public async Task<List<TodayDecision>> DecisionsAsync(CancellationToken cancellationToken) =>
+        (await db.OwnerDecisions.AsNoTracking().OrderByDescending(d => d.Id).Take(DecisionsShown).ToListAsync(cancellationToken))
+            .Select(d => new TodayDecision(d.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), d.Title, d.Decided, d.By, d.Status))
+            .ToList();
 
-    /// <summary>Adds a decision at the top of the log, or replaces the one with the same date and title.</summary>
+    /// <summary>Adds a decision at the top of the log, or replaces the one with the same date and title (it moves to the top).</summary>
     public async Task<List<TodayDecision>> RecordAsync(TodayDecision decision, string by, CancellationToken cancellationToken)
     {
-        var list = await DecisionsAsync(cancellationToken);
-        list.RemoveAll(d => d.Date == decision.Date && string.Equals(d.Title, decision.Title, StringComparison.OrdinalIgnoreCase));
-        list.Insert(0, decision);
-        if (list.Count > 200) list.RemoveRange(200, list.Count - 200);
+        var date = DateOnly.ParseExact(decision.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture);
+        string title = decision.Title.ToLowerInvariant();
+        var same = await db.OwnerDecisions.Where(d => d.Date == date && d.Title.ToLower() == title).ToListAsync(cancellationToken);
+        db.OwnerDecisions.RemoveRange(same);
+        if (same.Count > 0) await db.SaveChangesAsync(cancellationToken);
 
-        var now = _time.GetUtcNow().UtcDateTime;
-        var row = await db.SystemSettings.FirstOrDefaultAsync(s => s.Key == DecisionsKey, cancellationToken);
-        if (row is null)
+        db.OwnerDecisions.Add(new OwnerDecision
         {
-            row = new SystemSetting { Key = DecisionsKey, CreatedUtc = now };
-            db.SystemSettings.Add(row);
-        }
-
-        row.Value = JsonSerializer.Serialize(list, Json);
-        row.UpdatedBy = by;
-        row.UpdatedUtc = now;
+            Date = date, Title = decision.Title, Decided = decision.Decided, By = decision.By, Status = decision.Status,
+            RecordedBy = by, RecordedUtc = _time.GetUtcNow().UtcDateTime,
+        });
         await db.SaveChangesAsync(cancellationToken);
-        return list;
+        return await DecisionsAsync(cancellationToken);
     }
 
     private static (int Passed, int Total)? Score(string? json)

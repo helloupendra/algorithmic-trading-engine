@@ -1,5 +1,6 @@
 using AlgoTrading.Api.Security;
 using AlgoTrading.Api.Services.Today;
+using AlgoTrading.Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -27,9 +28,14 @@ public class TodayController(TodayBuilder today) : ControllerBase
 
         if (!DateOnly.TryParseExact(decision.Date, "yyyy-MM-dd", out _)) return BadRequest(new { error = "date is yyyy-MM-dd." });
         if (decision.Status is not ("decided" or "default" or "open")) return BadRequest(new { error = "status is decided, default or open." });
-        if (decision.Title.Length > 200 || decision.Decided.Length > 1000) return BadRequest(new { error = "title is at most 200 characters, decided 1000." });
+        if (decision.Title.Trim().Length > OwnerDecision.TitleMax || decision.Decided.Trim().Length > OwnerDecision.DecidedMax)
+        {
+            return BadRequest(new { error = $"title is at most {OwnerDecision.TitleMax} characters, decided {OwnerDecision.DecidedMax}." });
+        }
+
+        if (string.IsNullOrWhiteSpace(decision.By) || decision.By.Trim().Length > 100) return BadRequest(new { error = "by is 1 to 100 characters." });
 
         string by = User.GetUserName() ?? User.Identity?.Name ?? "admin";
-        return Ok(await today.RecordAsync(decision with { Title = decision.Title.Trim(), Decided = decision.Decided.Trim() }, by, cancellationToken));
+        return Ok(await today.RecordAsync(decision with { Title = decision.Title.Trim(), Decided = decision.Decided.Trim(), By = decision.By.Trim() }, by, cancellationToken));
     }
 }

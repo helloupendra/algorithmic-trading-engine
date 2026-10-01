@@ -124,6 +124,9 @@ public class TradingDbContext : DbContext
 
     public DbSet<AiExamAnswer> AiExamAnswers => Set<AiExamAnswer>();
 
+    /// <summary>The decisions on record for the owner's Today page. See <see cref="OwnerDecision"/>.</summary>
+    public DbSet<OwnerDecision> OwnerDecisions => Set<OwnerDecision>();
+
     /// <summary>The Analysis module's forecasts: written before the open, scored after the close. See <see cref="Forecast"/>.</summary>
     public DbSet<Forecast> Forecasts => Set<Forecast>();
 
