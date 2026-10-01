@@ -48,7 +48,7 @@ Every 10 minutes from 09:20 to 15:00 IST on trading days, while it is switched o
 | Trades | At most 10 a day |
 | Exits | Only its own open positions: the one the plan names by `positionId`, else the only open one on the plan's underlying (and option, when given); two or none are refused with the open positions' ids |
 | Strategies | Only GhostTangentCrossings and ChainFlowBuy, at most 3 running, in its own account |
-| Kill switch | The desk's kill switch stops anything new (a buy, a strategy start); closing its own position or stopping its own run is never refused for it |
+| Kill switch | The desk's kill switch stops anything new (a buy, a strategy start) in shadow and live mode; closing its own position or stopping its own run is never refused for it. A market replay places nothing, so the live desk's switch does not reach its book |
 
 ## Shadow first
 
