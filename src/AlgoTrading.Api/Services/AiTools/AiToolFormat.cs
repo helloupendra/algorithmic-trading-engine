@@ -11,6 +11,14 @@ internal static partial class AiToolFormat
     public static string? Ist(DateTime? utc) =>
         utc is DateTime at ? IstTime.ToIst(DateTime.SpecifyKind(at, DateTimeKind.Utc)).ToString("yyyy-MM-dd HH:mm") : null;
 
+    /// <summary>
+    /// An instant to the second, "2026-09-30 10:05:07": a run's legs, orders
+    /// and signals. To the minute, a roll's close and the next open looked
+    /// simultaneous, and the reviewer read run 317 as holding two groups.
+    /// </summary>
+    public static string? IstSeconds(DateTime? utc) =>
+        utc is DateTime at ? IstTime.ToIst(DateTime.SpecifyKind(at, DateTimeKind.Utc)).ToString("yyyy-MM-dd HH:mm:ss") : null;
+
     /// <summary>Rupees to the paisa.</summary>
     public static decimal Rs(decimal value) => Math.Round(value, 2, MidpointRounding.AwayFromZero);
 
