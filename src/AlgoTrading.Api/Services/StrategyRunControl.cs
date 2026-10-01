@@ -46,6 +46,7 @@ public sealed class StrategyRunControl
 
     private readonly TradingDbContext _dbContext;
     private readonly IPaperTradingService _paperTradingService;
+    private readonly IMarketReplayBook? _replayBook;
     private readonly IProcessSettingsStore _processSettings;
     private readonly StrategyProcessRegistry _registry;
     private readonly PositionCarryForward _carryForward;
@@ -66,7 +67,8 @@ public sealed class StrategyRunControl
         IProcessProbe probe,
         ISystemNotifier notifier,
         ILogger<StrategyRunControl> logger,
-        IDeskEventPublisher? deskEvents = null)
+        IDeskEventPublisher? deskEvents = null,
+        IMarketReplayBook? replayBook = null)
     {
         _dbContext = dbContext;
         _paperTradingService = paperTradingService;
@@ -78,6 +80,7 @@ public sealed class StrategyRunControl
         _notifier = notifier;
         _logger = logger;
         _deskEvents = deskEvents;
+        _replayBook = replayBook;
     }
 
     /// <summary>
@@ -652,7 +655,7 @@ public sealed class StrategyRunControl
         // On the activity timeline a recap's stop belongs to the replayed
         // session, after the trades it ends; CompletedUtc above stays the moment
         // it actually stopped.
-        var marketNow = run is null ? null : await RecapClock.NowAsync(_dbContext, run, cancellationToken);
+        var marketNow = run is null ? null : await RecapClock.NowAsync(_dbContext, run, cancellationToken, _replayBook);
 
         await _dbContext.SimulationSignals.AddAsync(new SimulationSignal
         {

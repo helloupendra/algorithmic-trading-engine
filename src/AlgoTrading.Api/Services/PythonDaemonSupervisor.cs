@@ -190,7 +190,13 @@ public abstract class PythonDaemonSupervisor
         return new Status(true, false, stored.Value, SourceAdopted);
     }
 
-    public async Task<StartOutcome> StartAsync(CancellationToken cancellationToken = default)
+    public Task<StartOutcome> StartAsync(CancellationToken cancellationToken = default) => StartAsync(null, cancellationToken);
+
+    /// <summary>
+    /// Starts the daemon with <paramref name="extraArgs"/> after the descriptor's own: a daemon whose
+    /// run is chosen at start, such as the market replay's day and speed.
+    /// </summary>
+    public async Task<StartOutcome> StartAsync(IReadOnlyList<string>? extraArgs, CancellationToken cancellationToken = default)
     {
         var engineDirectory = _engine.EngineDirectory;
         var scriptPath = _engine.ScriptPath(_daemon.ScriptParts);
@@ -247,7 +253,7 @@ public abstract class PythonDaemonSupervisor
             };
 
             processInfo.ArgumentList.Add(scriptPath);
-            foreach (var argument in _daemon.Args ?? Array.Empty<string>())
+            foreach (var argument in (_daemon.Args ?? Array.Empty<string>()).Concat(extraArgs ?? Array.Empty<string>()))
             {
                 processInfo.ArgumentList.Add(argument);
             }

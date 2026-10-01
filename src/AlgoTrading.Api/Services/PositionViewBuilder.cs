@@ -28,12 +28,16 @@ public sealed class PositionViewBuilder
     private readonly ILotSizeResolver _lotSizeResolver;
     private readonly PositionGreeksBuilder _greeks;
 
-    public PositionViewBuilder(TradingDbContext dbContext, ILotSizeResolver lotSizeResolver, PositionGreeksBuilder greeks)
+    public PositionViewBuilder(TradingDbContext dbContext, ILotSizeResolver lotSizeResolver, PositionGreeksBuilder greeks,
+        IMarketReplayBook? replayBook = null)
     {
         _dbContext = dbContext;
         _lotSizeResolver = lotSizeResolver;
         _greeks = greeks;
+        _replayBook = replayBook;
     }
+
+    private readonly IMarketReplayBook? _replayBook;
 
     public sealed record Result<T>(
         List<T> Positions,
@@ -59,7 +63,8 @@ public sealed class PositionViewBuilder
         bool useLiveQuotes,
         string? spotSymbol,
         CancellationToken cancellationToken,
-        int? lotSizeOverride = null) where T : LivePositionResponse, new()
+        int? lotSizeOverride = null,
+        bool replayPriced = false) where T : LivePositionResponse, new()
     {
         var symbols = positions.Select(x => x.Symbol).Distinct(StringComparer.Ordinal).ToList();
 
@@ -72,7 +77,15 @@ public sealed class PositionViewBuilder
             var quoteSymbols = symbols.ToList();
             if (!string.IsNullOrWhiteSpace(spotSymbol)) quoteSymbols.Add(spotSymbol);
 
-            if (quoteSymbols.Count > 0)
+            // A recap run of the day being replayed is marked at the replay's prices.
+            if (replayPriced && _replayBook is not null)
+            {
+                foreach (var symbol in quoteSymbols)
+                {
+                    if (_replayBook.Quote(symbol) is { } replayed) quoteBySymbol.TryAdd(symbol, (replayed.LastTradedPrice, replayed.UpdatedUtc));
+                }
+            }
+            else if (quoteSymbols.Count > 0)
             {
                 var quotes = await _dbContext.LiveQuotesLatest.AsNoTracking()
                     .Where(x => quoteSymbols.Contains(x.Symbol))

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -37,12 +38,23 @@ public static class RecapClock
     /// has not started, or has not reached this spot): the caller then keeps the
     /// wall clock rather than stamp a row with another day's time.
     /// </summary>
-    public static async Task<DateTime?> NowAsync(TradingDbContext dbContext, SimulationRun run, CancellationToken cancellationToken)
+    /// <remarks>
+    /// While the desk's market replay plays this run's day, the clock is read
+    /// off the replay's own quote (<see cref="IMarketReplayBook"/>): replayed
+    /// prices never enter <c>live_quotes_latest</c>.
+    /// </remarks>
+    public static async Task<DateTime?> NowAsync(TradingDbContext dbContext, SimulationRun run, CancellationToken cancellationToken,
+        IMarketReplayBook? replayBook = null)
     {
         if (PaperTradingService.IsReplay(run.Mode)) return null;
 
         var (isRecap, date) = Read(run.ParametersJson);
         if (!isRecap || string.IsNullOrWhiteSpace(run.Symbol)) return null;
+
+        if (replayBook is not null && replayBook.Prices(run.ParametersJson))
+        {
+            return OnReplayedDay(replayBook.Quote(run.Symbol)?.ExchangeTimestampUtc ?? replayBook.ClockUtc, date);
+        }
 
         var stamp = await dbContext.LiveQuotesLatest.AsNoTracking()
             .Where(x => x.Symbol == run.Symbol)

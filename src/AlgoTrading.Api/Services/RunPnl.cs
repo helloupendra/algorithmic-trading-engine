@@ -33,11 +33,14 @@ public sealed class RunPnl
     private readonly ILotSizeResolver _lotSizeResolver;
     private readonly RunCharges _charges;
 
-    public RunPnl(TradingDbContext dbContext, ILotSizeResolver lotSizeResolver, RunCharges charges)
+    private readonly IMarketReplayBook? _replayBook;
+
+    public RunPnl(TradingDbContext dbContext, ILotSizeResolver lotSizeResolver, RunCharges charges, IMarketReplayBook? replayBook = null)
     {
         _dbContext = dbContext;
         _lotSizeResolver = lotSizeResolver;
         _charges = charges;
+        _replayBook = replayBook;
     }
 
     /// <summary>What a run's open legs are worth now, and the capital they tie up.</summary>
@@ -145,6 +148,18 @@ public sealed class RunPnl
             if (q.LastTradedPrice.HasValue) ltpBySymbol.TryAdd(q.Symbol, q.LastTradedPrice.Value);
         }
 
+        // The recap runs of the day being replayed are marked at the replay's prices, not the live ones.
+        var replayRuns = new HashSet<long>();
+        if (_replayBook?.Day is not null)
+        {
+            var ids = runIds.Distinct().ToList();
+            var parameters = await _dbContext.SimulationRuns.AsNoTracking()
+                .Where(r => ids.Contains(r.Id))
+                .Select(r => new { r.Id, r.ParametersJson })
+                .ToListAsync(cancellationToken);
+            replayRuns = parameters.Where(r => _replayBook.Prices(r.ParametersJson)).Select(r => r.Id).ToHashSet();
+        }
+
         var lotSizes = await _lotSizeResolver.ResolveManyAsync(symbols, cancellationToken);
 
         foreach (var leg in legs)
@@ -153,8 +168,11 @@ public sealed class RunPnl
             // The same function the fills use. Written out by hand in the
             // history builder, this was a second copy of the number that says
             // how much a run made.
-            decimal unrealized = ltpBySymbol.TryGetValue(leg.Symbol, out var ltp)
-                ? PaperPnl.Unrealized(leg.Direction, leg.AveragePrice, ltp, leg.Quantity, lotSize)
+            decimal? price = replayRuns.Contains(leg.RunId)
+                ? _replayBook!.Quote(leg.Symbol)?.LastTradedPrice
+                : ltpBySymbol.TryGetValue(leg.Symbol, out var ltp) ? ltp : null;
+            decimal unrealized = price is decimal mark
+                ? PaperPnl.Unrealized(leg.Direction, leg.AveragePrice, mark, leg.Quantity, lotSize)
                 : leg.StoredUnrealized;
 
             decimal used = PaperTradingService.UsedCapitalOf(leg.Direction, leg.Symbol, leg.AveragePrice, leg.Quantity, lotSize);

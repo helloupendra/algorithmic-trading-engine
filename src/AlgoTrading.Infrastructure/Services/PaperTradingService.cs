@@ -75,6 +75,7 @@ public class PaperTradingService : IPaperTradingService
     private readonly PaperFillOptions _fills;
     private readonly TimeProvider _time;
     private readonly IDeskEventPublisher? _deskEvents;
+    private readonly IMarketReplayBook? _replayBook;
 
     /// <param name="marketSessions">
     /// Says whether a contract's market is open, which is when a quote's age
@@ -92,7 +93,8 @@ public class PaperTradingService : IPaperTradingService
         IMarketSessionService? marketSessions = null,
         IOptions<PaperFillOptions>? fillOptions = null,
         TimeProvider? time = null,
-        IDeskEventPublisher? deskEvents = null)
+        IDeskEventPublisher? deskEvents = null,
+        IMarketReplayBook? replayBook = null)
     {
         _dbContext = dbContext;
         _riskManagementService = riskManagementService;
@@ -101,6 +103,7 @@ public class PaperTradingService : IPaperTradingService
         _fills = fillOptions?.Value ?? new PaperFillOptions();
         _time = time ?? TimeProvider.System;
         _deskEvents = deskEvents;
+        _replayBook = replayBook;
     }
 
     private DateTime UtcNow => _time.GetUtcNow().UtcDateTime;
@@ -188,7 +191,7 @@ public class PaperTradingService : IPaperTradingService
         // ticket's prices are filled as given; a live run's legs are priced
         // from the latest quote.
         var fills = await PriceLegsAsync(legs, signal, reduceOnly,
-            pricesAreFinal: replay || request.LegPricesAreFinal, cancellationToken);
+            pricesAreFinal: replay || request.LegPricesAreFinal, ReplayPriced(run), cancellationToken);
 
         // The signal and all its legs commit together or none of them do.
         //
@@ -271,6 +274,7 @@ public class PaperTradingService : IPaperTradingService
         SimulationSignal signal,
         bool reduceOnly,
         bool pricesAreFinal,
+        bool replayPriced,
         CancellationToken cancellationToken)
     {
         if (legs.Count == 0) return new List<PaperFill>();
@@ -283,7 +287,7 @@ public class PaperTradingService : IPaperTradingService
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
-        var quotes = await LoadLiveQuotesAsync(symbols, cancellationToken);
+        var quotes = await LoadLiveQuotesAsync(symbols, replayPriced, cancellationToken);
 
         // Only a closing leg may look to the position it is closing.
         Dictionary<string, PaperPosition> openBySymbol = reduceOnly && symbols.Count > 0
@@ -519,9 +523,14 @@ public class PaperTradingService : IPaperTradingService
             .Distinct()
             .ToList();
 
-        if (symbols.Count > 0 && !await IsReplayRunAsync(simulationRunId, cancellationToken))
+        var marking = symbols.Count == 0 ? null : await _dbContext.SimulationRuns
+            .AsNoTracking()
+            .Where(x => x.Id == simulationRunId)
+            .Select(x => new { x.Mode, x.ParametersJson })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (marking is not null && !IsReplay(marking.Mode))
         {
-            var latestQuotes = await LoadLiveQuotesAsync(symbols, cancellationToken);
+            var latestQuotes = await LoadLiveQuotesAsync(symbols, ReplayPriced(marking.ParametersJson), cancellationToken);
             var lotSizes = await _lotSizeResolver.ResolveManyAsync(symbols, cancellationToken);
 
             MarkOpenPositions(rows, latestQuotes, lotSizes);
@@ -571,7 +580,7 @@ public class PaperTradingService : IPaperTradingService
                 .Distinct()
                 .ToList();
 
-            var latestQuotes = await LoadLiveQuotesAsync(symbols, cancellationToken);
+            var latestQuotes = await LoadLiveQuotesAsync(symbols, ReplayPriced(run), cancellationToken);
             MarkOpenPositions(positions, latestQuotes, lotSizes);
         }
 
@@ -615,7 +624,7 @@ public class PaperTradingService : IPaperTradingService
                 .Distinct()
                 .ToList();
 
-            var latestQuotes = await LoadLiveQuotesAsync(symbols, cancellationToken);
+            var latestQuotes = await LoadLiveQuotesAsync(symbols, ReplayPriced(run), cancellationToken);
             MarkOpenPositions(positions, latestQuotes, lotSizes);
             await _dbContext.SaveChangesAsync(cancellationToken);
         }
@@ -887,9 +896,9 @@ public class PaperTradingService : IPaperTradingService
         // the same timeline as the entries the runner stamped.
         var latestQuotes = replay
             ? new Dictionary<string, QuoteSnapshot>(StringComparer.Ordinal)
-            : await LoadLiveQuotesAsync(openPositions.Select(x => x.Symbol).Distinct().ToList(), cancellationToken);
+            : await LoadLiveQuotesAsync(openPositions.Select(x => x.Symbol).Distinct().ToList(), ReplayPriced(run), cancellationToken);
 
-        DateTime? recapNow = replay ? null : await RecapClock.NowAsync(_dbContext, run, cancellationToken);
+        DateTime? recapNow = replay ? null : await RecapClock.NowAsync(_dbContext, run, cancellationToken, _replayBook);
 
         var now = UtcNow;
         DateTime atUtc = replay
@@ -1712,12 +1721,10 @@ public class PaperTradingService : IPaperTradingService
     // HELPERS
     // ---------------------------------------------------------------------
 
-    private Task<bool> IsReplayRunAsync(long simulationRunId, CancellationToken cancellationToken)
-        => _dbContext.SimulationRuns
-            .AsNoTracking()
-            .Where(x => x.Id == simulationRunId)
-            .Select(x => x.Mode == OfflineReplayMode)
-            .FirstOrDefaultAsync(cancellationToken);
+    /// <summary>Whether this run's prices come from the market replay: a recap run of the day being replayed.</summary>
+    private bool ReplayPriced(SimulationRun run) => ReplayPriced(run.ParametersJson);
+
+    private bool ReplayPriced(string? parametersJson) => _replayBook?.Prices(parametersJson) == true;
 
     /// <summary>
     /// Lot sizes to book with. An OfflineReplay run carries the ONE lot size it
@@ -1781,10 +1788,28 @@ public class PaperTradingService : IPaperTradingService
     /// time it was written: a fill needs the book, and everything that reads a
     /// quote needs to know how old it is.
     /// </summary>
-    private async Task<Dictionary<string, QuoteSnapshot>> LoadLiveQuotesAsync(List<string> symbols, CancellationToken cancellationToken)
+    /// <remarks>
+    /// A recap run of the day being replayed (<see cref="ReplayPriced(SimulationRun)"/>) reads the replay's
+    /// prices instead: a past day's quotes never enter <c>live_quotes_latest</c>, where live runs and
+    /// carried positions would be marked at them.
+    /// </remarks>
+    private async Task<Dictionary<string, QuoteSnapshot>> LoadLiveQuotesAsync(List<string> symbols, bool replayPriced, CancellationToken cancellationToken)
     {
         var result = new Dictionary<string, QuoteSnapshot>(StringComparer.Ordinal);
         if (symbols.Count == 0) return result;
+
+        if (replayPriced && _replayBook is not null)
+        {
+            foreach (var symbol in symbols)
+            {
+                if (_replayBook.Quote(symbol) is { } quote)
+                {
+                    result[symbol] = new QuoteSnapshot(quote.LastTradedPrice, quote.BidPrice, quote.AskPrice, quote.UpdatedUtc);
+                }
+            }
+
+            return result;
+        }
 
         var rows = await _dbContext.LiveQuotesLatest
             .AsNoTracking()
