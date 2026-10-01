@@ -278,7 +278,7 @@ function FormingPanel() {
       actions={
         timeframes.length > 1 && (
           <div className="seg" role="group" aria-label="Timeframe">
-            <button type="button" className={`seg__btn ${timeframe === null ? 'is-active' : ''}`} onClick={() => setTimeframe(null)}>
+            <button type="button" className={`seg__btn ${timeframe === null ? 'is-active' : ''}`} aria-pressed={timeframe === null} onClick={() => setTimeframe(null)}>
               All
             </button>
             {timeframes.map((t) => (
@@ -286,6 +286,7 @@ function FormingPanel() {
                 key={t}
                 type="button"
                 className={`seg__btn ${timeframe === t ? 'is-active' : ''}`}
+                aria-pressed={timeframe === t}
                 onClick={() => setTimeframe(t)}
               >
                 {t}m

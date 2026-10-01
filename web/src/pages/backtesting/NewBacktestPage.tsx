@@ -95,6 +95,7 @@ export function NewBacktestPage() {
               <button
                 type="button"
                 className={`seg__btn ${category === null ? 'is-active' : ''}`}
+                aria-pressed={category === null}
                 onClick={() => setCategory(null)}
               >
                 All {strategies.data ? `· ${strategies.data.length}` : ''}
@@ -104,6 +105,7 @@ export function NewBacktestPage() {
                   key={name}
                   type="button"
                   className={`seg__btn ${category === name ? 'is-active' : ''}`}
+                  aria-pressed={category === name}
                   onClick={() => setCategory(category === name ? null : name)}
                 >
                   {name} · {count}

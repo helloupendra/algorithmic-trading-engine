@@ -102,7 +102,10 @@
 @media (max-width: 760px) {
   .tr-hide-s, .tr-hide-m { display: none !important; }
   .tr-only-s { display: block; white-space: normal; }
-  .tr-close--s { margin-top: 4px; }
+  /* The two decisions on this page, at a finger's size: the tick is its own
+     target (24px), the button a 36px one. */
+  .tr-carry { width: 24px; height: 24px; }
+  .tr-close--s { margin-top: 4px; min-height: 36px; padding: 0 14px; font-size: var(--fs-s); }
   .tr-legs .tr-c-mark { width: 78px; }
   .tr-legs .tr-c-pnl { width: 70px; }
   .tr-legs .tr-c-carry { width: 40px; }

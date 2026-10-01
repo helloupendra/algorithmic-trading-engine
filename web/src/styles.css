@@ -39,6 +39,9 @@
   --brand-hi: #7096ff;
   --brand-soft: rgba(79, 125, 255, 0.12);
   --brand-line: rgba(79, 125, 255, 0.38);
+  /* Selected text. --brand-soft is a wash for fills and barely shows on a
+     cell; a figure being copied has to look selected. */
+  --selection: rgba(79, 125, 255, 0.35);
   --live: #2bd4bd;
   --live-soft: rgba(43, 212, 189, 0.1);
 
@@ -157,6 +160,7 @@
   --brand-hi: #2f56c9;
   --brand-soft: rgba(57, 98, 215, 0.1);
   --brand-line: rgba(57, 98, 215, 0.4);
+  --selection: rgba(57, 98, 215, 0.24);
   --live: #0a7868;
   --live-soft: rgba(10, 120, 104, 0.1);
 
@@ -213,8 +217,14 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Grey-scale smoothing stops light glyphs bloating on the dark sheet; dark
+   text on paper reads thin under it, so light keeps the system's own. */
+:root[data-theme='light'] body {
+  -webkit-font-smoothing: auto;
+}
+
 ::selection {
-  background: var(--brand-soft);
+  background: var(--selection);
 }
 
 /* Base links, scoped to unclassed anchors — legacy tables render bare <Link>s
@@ -501,7 +511,7 @@ select.field__input { appearance: auto; }
   width: 26px;
   height: 26px;
   border-radius: 8px;
-  background: linear-gradient(135deg, var(--brand), #2bd4bd);
+  background: linear-gradient(135deg, var(--brand), var(--live));
   color: #fff;
   flex: none;
 }
@@ -714,6 +724,8 @@ select.field__input { appearance: auto; }
   font-size: 12.5px;
 }
 @media (max-width: 640px) { .wl__search { width: 100%; flex: 1 1 100%; } }
+/* iOS zooms the page when a focused input's text is under 16px. */
+@media (max-width: 760px) { .wl__search .combo .field__input { font-size: 16px; } }
 
 .table {
   width: 100%;
@@ -782,7 +794,8 @@ select.field__input { appearance: auto; }
 
 .seg__btn:hover { color: var(--text); }
 
-.seg__btn.is-active {
+.seg__btn.is-active,
+.seg__btn[aria-pressed='true'] {
   background: var(--surface2);
   color: var(--text);
   box-shadow: inset 0 0 0 1px var(--line-strong);
@@ -922,6 +935,9 @@ select.field__input { appearance: auto; }
   margin: 0;
   font-size: 13px;
 }
+/* The side padding is for an empty state inside a table well; as a panel's
+   own line it sat 4px right of the title above it. */
+.panel > .empty { padding-left: 0; padding-right: 0; }
 
 /* --- module grid (home / overview) ---------------------------------------- */
 .module-grid {
@@ -1309,6 +1325,10 @@ a.checklist__item:hover { background: var(--brand-soft); }
   .btn { min-height: 40px; }
   .btn--sm { min-height: 32px; }
   .field__input, select, input[type='date'], input[type='time'] { min-height: 40px; font-size: 16px; }
+
+  /* A segmented control is a row of buttons: 34px of button in 3px of well. */
+  .seg { padding: 3px; }
+  .seg__btn { min-height: 34px; padding: 6px 12px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1504,6 +1524,9 @@ a.pill:hover { border-color: var(--line-strong); }
   accent-color: var(--accent);
 }
 .carry-check:disabled { cursor: not-allowed; opacity: 0.5; }
+/* On a phone the tick itself is the target (padding its cell would not make
+   the cell clickable): 24px, the least a finger needs. */
+@media (max-width: 760px) { .carry-check { width: 24px; height: 24px; } }
 
 /* The hint under the positions table: what the ticks do in this run. */
 .carry-note { margin: 6px 2px 0; }
@@ -1691,6 +1714,9 @@ a.pill:hover { border-color: var(--line-strong); }
   font-size: 12.5px;
   width: 100%;
 }
+/* Here, not in the shared phone block above: the selector is as specific as
+   the rule it corrects, so it has to come after it. */
+@media (max-width: 760px) { .risk-form__field .field__input { font-size: 16px; } }
 
 .risk-form__field .field__input[aria-invalid='true'] {
   border-color: var(--neg);
@@ -1875,7 +1901,7 @@ a.pill:hover { border-color: var(--line-strong); }
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: color-mix(in srgb, var(--bg0) 72%, transparent);
+  background: var(--scrim);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   /* The overlay scrolls too. If the card is ever taller than what is visible
@@ -2056,7 +2082,8 @@ a.pill:hover { border-color: var(--line-strong); }
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
-.seg__btn.is-active small { color: var(--text-2); }
+.seg__btn.is-active small,
+.seg__btn[aria-pressed='true'] small { color: var(--text-2); }
 .seg__btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .seg__btn:disabled:hover { color: var(--text-2); }
 
@@ -2724,6 +2751,10 @@ a.oc-tab { text-decoration: none; }
 .oc-toggle[aria-pressed='true'] { color: var(--text); border-color: var(--brand-line); }
 .oc-toggle[aria-pressed='true'] .oc-toggle__box { background: var(--brand); }
 .oc-toggle[aria-pressed='true'] .oc-toggle__box::after { transform: translateX(10px); background: #fff; }
+/* On a phone these are touch targets like the segmented controls. */
+@media (max-width: 760px) {
+  .oc-seg button, .oc-toggle { min-height: 34px; }
+}
 
 @media (max-width: 520px) {
   .oc-page .oc-head-item { padding: 6px 8px; }
@@ -2731,7 +2762,7 @@ a.oc-tab { text-decoration: none; }
   /* "of OI chg 0.27" fits a quarter of a phone. A longer line (a future's
      premium and its bar time, MCX's "nearest future" label) wraps: a touch
      screen has no tooltip to read a cut line from. */
-  .oc-page .oc-head-label { font-size: 9.5px; letter-spacing: 0.05em; white-space: normal; }
+  .oc-page .oc-head-label { font-size: var(--fs-xs); letter-spacing: 0.05em; white-space: normal; }
   .oc-page .oc-head-sub { font-size: 10.5px; white-space: normal; }
 }
 /* A price and its change. When the cell is too narrow for both, the change
@@ -2768,6 +2799,11 @@ a.oc-tab { text-decoration: none; }
 .oc-fresh--stale { color: var(--warn); }
 .oc-fresh--stale .oc-fresh__dot { background: var(--warn); }
 .oc-fresh--replay .oc-fresh__dot { background: var(--brand); }
+/* After the rule it switches off: the lists further up are earlier in the
+   file than this pulse and would lose to it. */
+@media (prefers-reduced-motion: reduce) {
+  .oc-fresh--live .oc-fresh__dot { animation: none; }
+}
 
 /* The chain scrolls inside its own box; the page never scrolls sideways. */
 .oc-wrap {
@@ -2784,7 +2820,7 @@ a.oc-tab { text-decoration: none; }
 .oc-table td { padding: 5px 6px; }
 .oc-table .oc-strike { padding: 4px 9px; border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
 .oc-table th.oc-strike-head { border-left: 1px solid var(--line); border-right: 1px solid var(--line); font-size: 10px; }
-.oc-table .oc-pcr { font-size: 9.5px; }
+.oc-table .oc-pcr { font-size: var(--fs-xs); }
 
 .oc-sub { font-size: 10px; margin-left: 2px; }
 .oc-itm { background: color-mix(in srgb, var(--warn) 10%, transparent); }
@@ -3013,10 +3049,10 @@ tr:hover .calendar-remove,
   white-space: nowrap;
   vertical-align: middle;
 }
-.oc-pos--long { color: var(--pos, #2fbf71); background: color-mix(in srgb, var(--pos, #2fbf71) 18%, transparent); }
-.oc-pos--short { color: var(--neg, #e5484d); background: color-mix(in srgb, var(--neg, #e5484d) 18%, transparent); }
-.oc-pos--mixed { color: var(--warn, #e5b54a); background: color-mix(in srgb, var(--warn, #e5b54a) 18%, transparent); }
-.oc-row--held .oc-strike { box-shadow: inset 3px 0 0 var(--warn, #e5b54a), inset -3px 0 0 var(--warn, #e5b54a); }
+.oc-pos--long { color: var(--pos); background: color-mix(in srgb, var(--pos) 18%, transparent); }
+.oc-pos--short { color: var(--neg); background: color-mix(in srgb, var(--neg) 18%, transparent); }
+.oc-pos--mixed { color: var(--warn); background: color-mix(in srgb, var(--warn) 18%, transparent); }
+.oc-row--held .oc-strike { box-shadow: inset 3px 0 0 var(--warn), inset -3px 0 0 var(--warn); }
 .oc-pos-total { font-weight: 600; font-variant-numeric: tabular-nums; }
 .oc-pos-table td { font-variant-numeric: tabular-nums; white-space: nowrap; }
 

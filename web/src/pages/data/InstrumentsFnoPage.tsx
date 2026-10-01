@@ -136,6 +136,7 @@ function MasterSearchPanel() {
               key={f.label}
               type="button"
               className={`seg__btn ${type === f.key ? 'is-active' : ''}`}
+              aria-pressed={type === f.key}
               onClick={() => setType(f.key)}
             >
               {f.label}
