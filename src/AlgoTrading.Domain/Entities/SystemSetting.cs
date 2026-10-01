@@ -72,6 +72,9 @@ public static class SystemSettingKeys
     /// <summary>The market replay in progress or last played: its day, speed, runs and how it ended (JSON).</summary>
     public const string ReplaySession = "replay.session";
 
+    /// <summary>The market replay's queue of days played one after another with the AI Trader (JSON).</summary>
+    public const string ReplayQueue = "replay.queue";
+
     /// <summary>
     /// The last start or stop of the Dhan chain recorder and the IST day it was
     /// made, e.g. "true on 2026-09-24". It holds for that day only, so an API

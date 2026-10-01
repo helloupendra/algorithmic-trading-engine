@@ -71,6 +71,67 @@ public class AiTraderController(TradingDbContext db, AiSettingsStore store, IOpt
             AiTraderShadowBook.Net(positions), positions.Sum(p => p.Charges), positions.Select(View).ToList()));
     }
 
+    /// <summary>
+    /// The AI Trader against the bar: each replay it decided in and each live shadow day, with its shadow book's net
+    /// after charges next to the baseline rule's on the same day (<see cref="AiTraderBaselineScorer"/>) and doing
+    /// nothing (₹0). Totals count only full days (looks from 09:30 or earlier to 14:30 or later) whose baseline is scored.
+    /// </summary>
+    [HttpGet("scoreboard")]
+    public async Task<IActionResult> Scoreboard([FromQuery] int take = 60, CancellationToken cancellationToken = default)
+    {
+        var looks = await db.AiTraderDecisions.AsNoTracking()
+            .Where(d => d.Mode != AiTraderModes.Live)
+            .GroupBy(d => new { d.ReplaySessionId, d.Day })
+            .Select(g => new
+            {
+                g.Key.ReplaySessionId, g.Key.Day, First = g.Min(d => d.ClockUtc), Last = g.Max(d => d.ClockUtc), Looks = g.Count(),
+                Actions = g.Count(d => d.Action != "" && d.Action != AiTraderPlan.None),
+                NoAnswer = g.Count(d => d.Rule == "no-answer" || d.Rule == "unreadable"),
+            })
+            .ToListAsync(cancellationToken);
+        var positions = await db.AiTraderShadowPositions.AsNoTracking().ToListAsync(cancellationToken);
+        var baselines = await db.AiTraderBaselines.AsNoTracking()
+            .Where(b => b.Rule == AiTraderBaselineScorer.TrendRule).ToDictionaryAsync(b => b.Day, cancellationToken);
+
+        var rows = looks
+            .OrderByDescending(l => l.Day).ThenByDescending(l => l.ReplaySessionId ?? long.MaxValue)
+            .Take(Math.Clamp(take, 1, 365))
+            .Select(l =>
+            {
+                var book = positions.Where(p => p.ReplaySessionId == l.ReplaySessionId && (l.ReplaySessionId != null || p.Day == l.Day)).ToList();
+                var first = TimeOnly.FromDateTime(IstTime.ToIst(l.First));
+                var last = TimeOnly.FromDateTime(IstTime.ToIst(l.Last));
+                decimal net = AiTraderShadowBook.Net(book);
+                var baseline = baselines.GetValueOrDefault(l.Day);
+                return new AiTraderScoreRow(
+                    l.ReplaySessionId is null ? AiTraderModes.Shadow : AiTraderModes.Replay, l.ReplaySessionId, l.Day.ToString("yyyy-MM-dd"),
+                    first.ToString("HH:mm"), last.ToString("HH:mm"), first <= FullFrom && last >= FullUntil, l.Looks, l.Actions, l.NoAnswer,
+                    book.Count, book.Count(p => p.ExitUtc is null), net, book.Sum(p => p.Charges),
+                    baseline is null ? null : Baseline(baseline), baseline is null ? null : net - baseline.NetPnl);
+            })
+            .ToList();
+
+        var scored = rows.Where(r => r.Full && r.Baseline is not null).ToList();
+        var totals = new AiTraderScoreTotals(
+            scored.Count, scored.Sum(r => r.Net), scored.Sum(r => r.Baseline!.Net), scored.Count(r => r.Net > r.Baseline!.Net),
+            scored.Count(r => r.Net > 0), scored.Count(r => r.Baseline!.Net > 0), scored.Sum(r => r.Positions), scored.Sum(r => r.Charges));
+        return Ok(new AiTraderScoreboard(AiTraderBaselineScorer.TrendRule, BaselineRuleText, totals, rows));
+    }
+
+    /// <summary>A day counts in the totals when its looks span the session: from 09:30 or earlier to 14:30 or later.</summary>
+    private static readonly TimeOnly FullFrom = new(9, 30);
+
+    private static readonly TimeOnly FullUntil = new(14, 30);
+
+    public const string BaselineRuleText =
+        "At 11:00 IST, NIFTY's 5-minute trend picks the side: last close above EMA 20 and EMA 50 with EMA 20 above, the at-the-money call; " +
+        "below both with EMA 20 below, the put; otherwise no trade. One lot, stop 30% under the entry, target 50% over it, squared off at " +
+        "15:30, with the shadow book's fills and charges.";
+
+    private static AiTraderBaselineView Baseline(AiTraderBaseline b) => new(
+        b.Rule, b.OptionType, b.Symbol, b.EntryUtc is DateTime e ? IstTime.ToIst(e).ToString("HH:mm") : null, b.EntryPrice,
+        b.ExitUtc is DateTime x ? IstTime.ToIst(x).ToString("HH:mm") : null, b.ExitPrice, b.ExitReason, b.Charges, b.NetPnl, b.Note);
+
     private static AiTraderShadowPositionView View(AiTraderShadowPosition p) => new(
         p.Id, p.DecisionId, p.Mode, p.ReplaySessionId, p.Day.ToString("yyyy-MM-dd"), p.Symbol, p.Underlying, p.OptionType, p.Strike,
         p.Expiry.ToString("yyyy-MM-dd"), p.Lots, p.LotSize, p.EntryUtc, IstTime.ToIst(p.EntryUtc).ToString("HH:mm"), p.EntryPrice, p.StopLoss,
@@ -137,6 +198,20 @@ public sealed record AiTraderStatus(string Status, string Mode, int EveryMinutes
 
 /// <summary>Today's shadow book: positions opened, still open, and the net after charges (open ones as if sold at their marks).</summary>
 public sealed record AiTraderShadowDay(int Positions, int Open, decimal Net);
+
+public sealed record AiTraderScoreboard(string Rule, string RuleText, AiTraderScoreTotals Totals, IReadOnlyList<AiTraderScoreRow> Rows);
+
+/// <summary>Over the full, scored days: the AI's net and the baseline's (both after charges), the days the AI beat it, and the days each made money.</summary>
+public sealed record AiTraderScoreTotals(int Days, decimal AiNet, decimal BaselineNet, int AiBeatBaseline, int AiPositiveDays, int BaselinePositiveDays,
+    int Trades, decimal Charges);
+
+/// <summary>One replay (<c>Kind</c> replay) or live shadow day (<c>Kind</c> shadow). <c>VsBaseline</c> is the AI's net less the baseline's.</summary>
+public sealed record AiTraderScoreRow(string Kind, long? ReplaySessionId, string Day, string FirstIst, string LastIst, bool Full, int Looks, int Actions,
+    int NoAnswer, int Positions, int Open, decimal Net, decimal Charges, AiTraderBaselineView? Baseline, decimal? VsBaseline);
+
+/// <summary>The baseline rule on that day: the side it took (empty: no trade), the contract, in and out, and its net after charges.</summary>
+public sealed record AiTraderBaselineView(string Rule, string OptionType, string Symbol, string? EntryIst, decimal? EntryPrice, string? ExitIst,
+    decimal? ExitPrice, string ExitReason, decimal Charges, decimal Net, string Note);
 
 public sealed record AiTraderShadowBookView(string? Day, long? Replay, int Positions, int Open, decimal Net, decimal Charges,
     IReadOnlyList<AiTraderShadowPositionView> Items);

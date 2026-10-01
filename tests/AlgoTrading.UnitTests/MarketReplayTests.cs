@@ -298,7 +298,7 @@ public class MarketReplayTests
             NullLogger<MarketReplayService>.Instance, Clock);
     }
 
-    private static TradingDbContext NewDb() => new(new DbContextOptionsBuilder<TradingDbContext>()
+    internal static TradingDbContext NewDb() => new(new DbContextOptionsBuilder<TradingDbContext>()
         .UseInMemoryDatabase($"replay-{Guid.NewGuid():N}")
         .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning))
         .Options);
@@ -326,7 +326,7 @@ public class MarketReplayTests
         Legs = [new SimulationSignalLegRequest { Symbol = Option, Side = "BUY", Quantity = 1 }],
     };
 
-    private sealed class FakeClock : TimeProvider
+    internal sealed class FakeClock : TimeProvider
     {
         private DateTime _now;
 
@@ -337,7 +337,7 @@ public class MarketReplayTests
         public override DateTimeOffset GetUtcNow() => new(_now);
     }
 
-    private sealed class FakePlayer : IReplayPlayer
+    internal sealed class FakePlayer : IReplayPlayer
     {
         public bool Running { get; set; } = true;
 
@@ -363,7 +363,7 @@ public class MarketReplayTests
         public IReadOnlyList<string> Logs(int take) => [];
     }
 
-    private sealed class FakeChannel : IReplayChannel
+    internal sealed class FakeChannel : IReplayChannel
     {
         public ReplayPlayerStatus? Status { get; set; }
 
@@ -378,7 +378,7 @@ public class MarketReplayTests
         }
     }
 
-    private sealed class FakeStopper : IReplayRunStopper
+    internal sealed class FakeStopper : IReplayRunStopper
     {
         public List<long> Stopped { get; } = [];
 
@@ -401,7 +401,7 @@ public class MarketReplayTests
         public ProviderDescriptor? Find(string providerKey) => null;
     }
 
-    private sealed class OpenCalendar : IMarketCalendar
+    internal sealed class OpenCalendar : IMarketCalendar
     {
         public MarketHoliday? HolidayOn(string exchange, DateOnly date) => null;
 

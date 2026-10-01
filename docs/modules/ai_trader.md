@@ -78,6 +78,33 @@ the brief is built as of the replayed moment, from the recorded bars, the record
 It starts that replay's own fresh shadow book and places nothing. The model can take up to a minute to answer, so above
 2× a replay moves faster than it can look every ten replayed minutes.
 
+## Scored against a baseline
+
+One day says nothing. To score it over many, a queue replays recorded days one after another with the AI Trader
+alone (`POST /api/Replay/queue {dates, speed}`). Each day plays from the open with a fresh shadow book. Days play
+oldest first, with a 90-second gap between them so the last one's book is squared off. Nothing starts during a
+trading day's session, and a day starts only if it will end before the next trading morning's 08:45. A day with
+nothing recorded is skipped with its reason. The queue holds at most 20 days.
+
+Every day it decided on, replayed or live, is also scored under a fixed rule anyone could follow
+(`ai_trader_baselines`, `AiTraderBaselineScorer`, rule `nifty-trend-1100`):
+
+| Step | Rule |
+|---|---|
+| Side | At 11:00 IST, NIFTY's last 5-minute close above EMA 20 and EMA 50 with EMA 20 above: the at-the-money call; below both with EMA 20 below: the put; otherwise no trade |
+| Data | Only bars that began before 11:00 and the chain as recorded at 11:00 |
+| Trade | One lot at the ask of the first recorded tick at or after 11:00; stop 30% under, target 50% over |
+| Exit | Each recorded minute's last tick at the bid (else the last trade less half a spread), as the shadow book checks; squared off at 15:30 |
+| Charges | The same as the shadow book's |
+
+The agent scores one missing day a minute, never in a trading day's session. A day the rule does not trade is kept
+at ₹0 with why. Doing nothing scores ₹0 too.
+
+`GET /api/AiTrader/scoreboard` lists each replay and live shadow day: its looks, positions, net after charges, the
+baseline's net, and the difference. The totals count only full days (looks from 09:30 or earlier to 14:30 or later)
+whose baseline is scored: the AI's net and the rule's, the days the AI beat the rule, and the days each made money.
+A day replayed more than once counts each time; the rule's result for that day is the same each time.
+
 ## API (admin)
 
 | Endpoint | What |
@@ -86,6 +113,7 @@ It starts that replay's own fresh shadow book and places nothing. The model can 
 | `GET /api/AiTrader/decisions?day=&replay=&take=&beforeId=` | Decisions, newest first |
 | `GET /api/AiTrader/decisions/{id}` | One decision with its brief, plan and result |
 | `GET /api/AiTrader/positions?day=&replay=` | The shadow book: a day's or a replay's positions, net after charges |
+| `GET /api/AiTrader/scoreboard?take=` | Each replay and live shadow day against the baseline rule, with totals over full days |
 | `POST /api/Ai/agents/ai-trader/run` | One look now |
 
 Today shows its day in an "AI Trader" card.

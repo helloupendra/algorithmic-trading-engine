@@ -44,7 +44,8 @@ public sealed class AiTraderAgent(
     IOptionsMonitor<AiSettings> settings,
     ILogger<AiTraderAgent> logger,
     IMarketReplayBook? replayBook = null,
-    TimeProvider? time = null) : IAiScheduledAgent
+    TimeProvider? time = null,
+    AiTraderBaselineScorer? baselines = null) : IAiScheduledAgent
 {
     /// <summary>The owner's limits; <see cref="AiTraderRules"/> holds the defaults.</summary>
     public static readonly AiTraderRules Rules = new();
@@ -66,6 +67,7 @@ public sealed class AiTraderAgent(
         bool replaying = replay is { AiTrader: true } && MarketReplayService.IsActive(replay.State) && replayBook?.ClockUtc is not null
             && replayBook.Day?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) == replay.Date;
         await CheckShadowAsync(nowUtc, replay, replaying, cancellationToken);
+        await ScoreBaselineAsync(nowUtc, cancellationToken);
 
         // A market replay it was asked into: it decides on the replay's clock.
         if (replaying && replayBook?.ClockUtc is DateTime clock)
@@ -104,6 +106,32 @@ public sealed class AiTraderAgent(
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogWarning(ex, "AI Trader: the shadow book's minute check failed");
+        }
+    }
+
+    /// <summary>
+    /// One day a minute: the baseline rule's score for a day it decided on that is over and not scored yet
+    /// (<see cref="AiTraderBaselineScorer"/>), never in a trading day's session. Logged and retried on failure.
+    /// </summary>
+    private async Task ScoreBaselineAsync(DateTime nowUtc, CancellationToken cancellationToken)
+    {
+        if (baselines is null) return;
+        var info = sessions.GetSessionInfo(nowUtc, "NSE", "FO");
+        if (info.IsTradingDay && nowUtc >= info.SessionOpenUtc.AddMinutes(-30) && nowUtc < info.SessionCloseUtc.AddMinutes(15)) return;
+
+        var today = IstTime.DateOf(nowUtc);
+        var day = await db.AiTraderDecisions.AsNoTracking()
+            .Where(d => d.Day < today && !db.AiTraderBaselines.Any(b => b.Day == d.Day && b.Rule == AiTraderBaselineScorer.TrendRule))
+            .OrderByDescending(d => d.Day).Select(d => (DateOnly?)d.Day).FirstOrDefaultAsync(cancellationToken);
+        if (day is not DateOnly d) return;
+        try
+        {
+            var row = await baselines.ForDayAsync(d, nowUtc, cancellationToken);
+            logger.LogInformation("AI Trader baseline {Rule} for {Day}: {Net} ({Note})", AiTraderBaselineScorer.TrendRule, d, row?.NetPnl, row?.Note);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "AI Trader: scoring the baseline for {Day} failed", d);
         }
     }
 
