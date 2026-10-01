@@ -41,10 +41,13 @@ services:
   redis:
     image: redis:7-alpine
     container_name: algotrading_redis
+    # AOF alone keeps the data. Redis's default RDB snapshots also rewrote the whole
+    # ~120 MB tick stream to disk every minute of the session (1 Oct: 4,435 saves,
+    # one of the IO spikes behind the overload), so they are off: --save "".
     command: >
       sh -c 'if [ -n "$$REDIS_PASSWORD" ];
-             then exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD";
-             else exec redis-server --appendonly yes; fi'
+             then exec redis-server --appendonly yes --save "" --requirepass "$$REDIS_PASSWORD";
+             else exec redis-server --appendonly yes --save ""; fi'
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     ports:
