@@ -543,7 +543,12 @@ export function AiTraderScoreboard() {
                     {b.rows.map((r) => {
                       const anchor = scoreRowAnchor(r)
                       return (
-                        <tr key={anchor} id={anchor} className={`${r.full ? '' : 'atr-score__partial'}${hash === `#${anchor}` ? ' row--selected' : ''}`}>
+                        <tr
+                          key={anchor}
+                          id={anchor}
+                          data-anchor={anchor}
+                          className={`${r.full ? '' : 'atr-score__partial'}${hash === `#${anchor}` ? ' row--selected' : ''}`}
+                        >
                           <td className="atr-book__time">{r.day ? shortDay(r.day) : '—'}</td>
                           <td>{scoreKindText(r)}</td>
                           <td>
@@ -571,8 +576,13 @@ export function AiTraderScoreboard() {
               <ul className="atr-bl">
                 {b.rows.map((r) => {
                   const anchor = scoreRowAnchor(r)
+                  // The phone's twin of the table row: a link's #atr-score-… lands here while the table is hidden.
                   return (
-                    <li key={anchor} className={`atr-bl__row${r.full ? '' : ' atr-score__partial'}`}>
+                    <li
+                      key={anchor}
+                      data-anchor={anchor}
+                      className={`atr-bl__row${r.full ? '' : ' atr-score__partial'}${hash === `#${anchor}` ? ' is-selected' : ''}`}
+                    >
                       <div className="atr-bl__head">
                         <span className="atr-book__contract">{r.day ? shortDay(r.day) : '—'}</span>
                         <span className="faint">{scoreKindText(r)}</span>
