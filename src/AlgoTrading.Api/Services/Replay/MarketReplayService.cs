@@ -40,6 +40,7 @@ public sealed class MarketReplayService(
     IMarketReplayBook book,
     IMarketSessionService sessions,
     RunPnl pnl,
+    IRecapFeeds recapFeeds,
     ILogger<MarketReplayService> logger,
     TimeProvider? time = null) : IReplaySessions
 {
@@ -134,11 +135,21 @@ public sealed class MarketReplayService(
         var queue = await LoadQueueAsync(cancellationToken);
         var why = session is not null && IsActive(session.State)
             ? $"A replay of {Day(session.Date)} is {session.State}."
-            : queue is { EndedUtc: null } ? QueuePlaying : WhyNotNow(Now);
+            : queue is { EndedUtc: null } ? QueuePlaying : WhyNotNow(Now) ?? await WhyNotBesideRecapAsync(cancellationToken);
         return new ReplayStatus(why is null, why, session is null ? null : await ViewAsync(session, cancellationToken), queue is null ? null : QueueView(queue));
     }
 
     private const string QueuePlaying = "A queue of days is playing; cancel it first.";
+
+    /// <summary>
+    /// Why a desk replay cannot start beside a vendor's recap feed, or null when none runs. That feed's recap
+    /// runs ask for their quotes with <c>replay=true</c>; with a desk replay on, a runner from before the replay
+    /// day was sent is answered from the desk replay's book, another day's prices.
+    /// </summary>
+    private async Task<string?> WhyNotBesideRecapAsync(CancellationToken cancellationToken) =>
+        await recapFeeds.RunningAsync(cancellationToken) is { } feed
+            ? $"A vendor's recap feed ({feed}) is replaying a session. A desk replay waits until it has stopped."
+            : null;
 
     /// <summary>Why a replay cannot start now, or null: on a trading day, NSE's session and the morning before it are the live desk's.</summary>
     public string? WhyNotNow(DateTime nowUtc)
@@ -207,6 +218,7 @@ public sealed class MarketReplayService(
         }
 
         if (WhyNotNow(Now) is { } closed) return ReplayStartResult<ReplaySessionState>.Refused(409, closed);
+        if (await WhyNotBesideRecapAsync(cancellationToken) is { } recap) return ReplayStartResult<ReplaySessionState>.Refused(409, recap);
 
         if (!DateOnly.TryParseExact(request.Date, "yyyy-MM-dd", out var date)) return ReplayStartResult<ReplaySessionState>.Refused(400, "date is yyyy-MM-dd.");
         if (date >= IstTime.DateOf(Now)) return ReplayStartResult<ReplaySessionState>.Refused(400, "Only a day that is over can be replayed.");
@@ -472,6 +484,9 @@ public sealed class MarketReplayService(
         }
 
         if (WhyNotNow(Now) is not null || !FitsBeforeMorning(queue.Speed, queue.FromIst)) return;
+
+        // A vendor's recap feed is replaying a session: the day waits for it to end, it is not skipped.
+        if (await recapFeeds.RunningAsync(cancellationToken) is not null) return;
 
         // The last day's player has not exited yet, or its pid cannot be verified just now: the supervisor would
         // refuse a second one, and the day would be skipped for a wait of seconds.
@@ -777,6 +792,16 @@ public interface IReplayChannel
 public interface IReplayRunStopper
 {
     Task StopAsync(long runId, string reason, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// A vendor's recap feed running now (TrueData replaying a session from its own host in the evening), by the
+/// name it heartbeats under; null when none is. Its ticks go where a live feed's go, its recap runs read their
+/// quotes with <c>replay=true</c>, and a desk replay on at the same time would answer them from its own book.
+/// </summary>
+public interface IRecapFeeds
+{
+    Task<string?> RunningAsync(CancellationToken cancellationToken);
 }
 
 // ---------- the wire ----------

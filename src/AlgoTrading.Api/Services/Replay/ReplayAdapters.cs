@@ -1,4 +1,8 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using AlgoTrading.Application.Providers;
+using AlgoTrading.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 using StackExchange.Redis;
 
 namespace AlgoTrading.Api.Services.Replay;
@@ -62,6 +66,69 @@ public sealed class ReplayRunStopper(StrategyRunControl runs) : IReplayRunStoppe
     {
         var result = await runs.StopAsync(runId, reason, flatten: true, By, cancellationToken);
         if (!result.WasRunning) await runs.StopOrphanAsync(runId, reason, flatten: true, By);
+    }
+}
+
+/// <summary>
+/// A vendor's recap feed running now, read from the feeds' heartbeats. A feed heartbeats every 15 s as
+/// "python-&lt;key&gt;-feed", or "python-&lt;key&gt;-recap" while it replays a session (core/live/feed_runner.py,
+/// market_data/live/vendors/truedata.py). A vendor whose newest heartbeat is a recap's is running one when that
+/// heartbeat is recent, or, when it has gone quiet, while the feed still holds its Redis lock
+/// (<c>feed:&lt;key&gt;:lock</c>, refreshed with every heartbeat attempt): the API may have been down, and the
+/// feed's heartbeats refused, while it played on.
+/// </summary>
+public sealed class HeartbeatRecapFeeds : IRecapFeeds
+{
+    /// <summary>A recap heartbeat this recent shows the feed running by itself (four of its beats).</summary>
+    public static readonly TimeSpan Fresh = TimeSpan.FromSeconds(60);
+
+    /// <summary>How far back a feed's newest heartbeat is looked for.</summary>
+    public static readonly TimeSpan Remembered = TimeSpan.FromHours(12);
+
+    private static readonly Regex FeedName = new("^python-(.+)-(feed|recap)$", RegexOptions.CultureInvariant);
+
+    private readonly TradingDbContext _db;
+    private readonly Func<string, Task<bool>> _lockHeld;
+    private readonly TimeProvider _time;
+
+    public HeartbeatRecapFeeds(TradingDbContext db, IConnectionMultiplexer redis)
+        : this(db, key => redis.GetDatabase().KeyExistsAsync(key), null)
+    {
+    }
+
+    /// <param name="lockHeld">Whether a Redis key exists; a test plays it.</param>
+    internal HeartbeatRecapFeeds(TradingDbContext db, Func<string, Task<bool>> lockHeld, TimeProvider? time)
+    {
+        _db = db;
+        _lockHeld = lockHeld;
+        _time = time ?? TimeProvider.System;
+    }
+
+    public async Task<string?> RunningAsync(CancellationToken cancellationToken)
+    {
+        var now = _time.GetUtcNow().UtcDateTime;
+        var since = now - Remembered;
+        var beats = await _db.LiveIngestorStatuses.AsNoTracking()
+            .Where(x => x.LastHeartbeatUtc >= since)
+            .Select(x => new { x.SourceName, x.LastHeartbeatUtc })
+            .ToListAsync(cancellationToken);
+
+        // The newest heartbeat of each vendor speaks for it: the afternoon's live rows stay beside the evening's recap.
+        var newest = beats
+            .Select(b => (b.SourceName, b.LastHeartbeatUtc, Match: FeedName.Match(b.SourceName)))
+            .GroupBy(b => b.Match.Success ? b.Match.Groups[1].Value : b.SourceName, StringComparer.OrdinalIgnoreCase)
+            .Select(g => (Feed: g.Key, Beat: g.OrderByDescending(b => b.LastHeartbeatUtc).First()))
+            .Where(x => ProviderUsageRules.IsRecapSourceName(x.Beat.SourceName))
+            .OrderByDescending(x => x.Beat.LastHeartbeatUtc)
+            .ToList();
+
+        foreach (var (feed, beat) in newest)
+        {
+            if (now - beat.LastHeartbeatUtc <= Fresh) return beat.SourceName;
+            if (beat.Match.Success && await _lockHeld($"feed:{feed}:lock")) return beat.SourceName;
+        }
+
+        return null;
     }
 }
 

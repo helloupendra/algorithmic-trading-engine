@@ -237,6 +237,26 @@ public class MarketReplayQueueTests
     }
 
     [Fact]
+    public async Task A_queued_day_waits_while_a_vendors_recap_feed_runs_and_is_never_skipped_for_it()
+    {
+        var shared = new Shared(Ist(2026, 10, 3, 12, 0));
+        shared.RecapFeeds.Running = "python-truedata-recap";
+        var replay = shared.Service(Sep29, Sep30);
+
+        await replay.QueueAsync(new ReplayQueueRequest(["2026-09-29", "2026-09-30"], 2), "admin", default);
+        shared.Clock.Advance(TimeSpan.FromMinutes(30));
+        await replay.TickAsync(default);
+
+        Assert.Empty(shared.Player.Starts);
+        var waiting = (await replay.LoadQueueAsync(default))!;
+        Assert.Equal((0, 0), (waiting.Next, waiting.Skipped.Count));
+
+        shared.RecapFeeds.Running = null;     // the vendor's recap has ended
+        await replay.TickAsync(default);
+        Assert.Equal("2026-09-29", shared.Player.Starts.Single()[1]);
+    }
+
+    [Fact]
     public async Task The_queues_stored_state_fits_its_setting_however_its_days_ended()
     {
         // Twenty days with nothing recorded, queued and cancelled by an account whose name is as long as a name can be
@@ -290,6 +310,7 @@ public class MarketReplayQueueTests
         public FakePlayer Player { get; } = new();
         public FakeChannel Channel { get; } = new();
         public MarketReplayBook Book { get; } = new();
+        public FakeRecapFeeds RecapFeeds { get; } = new();
         public TradingDbContext? LastDb { get; private set; }
 
         /// <summary>A scope: its own DbContext over the shared database, and the shared singletons.</summary>
@@ -309,7 +330,7 @@ public class MarketReplayQueueTests
             LastDb = db;
             var lots = new PositionGreeksTests.FixedLots(65);
             return new MarketReplayService(db, Player, Channel, new FakeStopper(), Book, new MarketSessionService(new OpenCalendar()),
-                new RunPnl(db, lots, new RunCharges(db, lots), Book), NullLogger<MarketReplayService>.Instance, Clock);
+                new RunPnl(db, lots, new RunCharges(db, lots), Book), RecapFeeds, NullLogger<MarketReplayService>.Instance, Clock);
         }
     }
 }
