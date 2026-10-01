@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -109,9 +110,20 @@ public sealed class AiTraderAgent(
         }
     }
 
+    /// <summary>How long a day whose baseline failed to score waits before it is tried again.</summary>
+    public static readonly TimeSpan BaselineRetryAfter = TimeSpan.FromHours(1);
+
+    /// <summary>
+    /// Days whose baseline failed, and when each may be tried again. Kept for the process: the agent is built anew
+    /// every minute. Without it a day that always fails (a query that always times out) was tried, and logged as
+    /// a warning, every minute, and no day before it was ever scored.
+    /// </summary>
+    private static readonly ConcurrentDictionary<DateOnly, DateTime> BaselineFailed = new();
+
     /// <summary>
     /// One day a minute: the baseline rule's score for a day it decided on that is over and not scored yet
-    /// (<see cref="AiTraderBaselineScorer"/>), never in a trading day's session. Logged and retried on failure.
+    /// (<see cref="AiTraderBaselineScorer"/>), never in a trading day's session. A day that fails is logged and
+    /// waits <see cref="BaselineRetryAfter"/>; the days before it go on being scored meanwhile.
     /// </summary>
     private async Task ScoreBaselineAsync(DateTime nowUtc, CancellationToken cancellationToken)
     {
@@ -120,18 +132,22 @@ public sealed class AiTraderAgent(
         if (info.IsTradingDay && nowUtc >= info.SessionOpenUtc.AddMinutes(-30) && nowUtc < info.SessionCloseUtc.AddMinutes(15)) return;
 
         var today = IstTime.DateOf(nowUtc);
+        var waiting = BaselineFailed.Where(f => f.Value > nowUtc).Select(f => f.Key).ToList();
         var day = await db.AiTraderDecisions.AsNoTracking()
-            .Where(d => d.Day < today && !db.AiTraderBaselines.Any(b => b.Day == d.Day && b.Rule == AiTraderBaselineScorer.TrendRule))
+            .Where(d => d.Day < today && !waiting.Contains(d.Day) && !db.AiTraderBaselines.Any(b => b.Day == d.Day && b.Rule == AiTraderBaselineScorer.TrendRule))
             .OrderByDescending(d => d.Day).Select(d => (DateOnly?)d.Day).FirstOrDefaultAsync(cancellationToken);
         if (day is not DateOnly d) return;
         try
         {
             var row = await baselines.ForDayAsync(d, nowUtc, cancellationToken);
+            BaselineFailed.TryRemove(d, out _);
             logger.LogInformation("AI Trader baseline {Rule} for {Day}: {Net} ({Note})", AiTraderBaselineScorer.TrendRule, d, row?.NetPnl, row?.Note);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogWarning(ex, "AI Trader: scoring the baseline for {Day} failed", d);
+            BaselineFailed[d] = nowUtc + BaselineRetryAfter;
+            logger.LogWarning(ex, "AI Trader: scoring the baseline for {Day} failed; tried again after {Retry} IST", d,
+                IstTime.ToIst(nowUtc + BaselineRetryAfter).ToString("HH:mm", CultureInfo.InvariantCulture));
         }
     }
 

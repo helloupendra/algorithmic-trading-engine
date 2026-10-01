@@ -100,8 +100,9 @@ Every day it decided on, replayed or live, is also scored under a fixed rule any
 | Exit | Each recorded minute's last tick at the bid (else the last trade less half a spread), as the shadow book checks; squared off at 15:30 |
 | Charges | The same as the shadow book's |
 
-The agent scores one missing day a minute, never in a trading day's session. A day the rule does not trade is kept
-at ₹0 with why. Doing nothing scores ₹0 too.
+The agent scores one missing day a minute, newest first, never in a trading day's session. A day that fails to score
+is logged and tried again an hour later; the days before it are scored meanwhile. A day the rule does not trade is
+kept at ₹0 with why. Doing nothing scores ₹0 too.
 
 `GET /api/AiTrader/scoreboard` lists each replay and live shadow day: its looks, positions, net after charges, the
 baseline's net, and the difference. The totals count only full days (looks from 09:30 or earlier to 14:30 or later)
