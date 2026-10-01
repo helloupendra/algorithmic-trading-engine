@@ -130,6 +130,8 @@ public class TradingDbContext : DbContext
     /// <summary>Every look the AI Trader took: brief, plan, the rules' verdict, what was done. See <see cref="AiTraderDecision"/>.</summary>
     public DbSet<AiTraderDecision> AiTraderDecisions => Set<AiTraderDecision>();
 
+    public DbSet<AiTraderShadowPosition> AiTraderShadowPositions => Set<AiTraderShadowPosition>();
+
     /// <summary>The Analysis module's forecasts: written before the open, scored after the close. See <see cref="Forecast"/>.</summary>
     public DbSet<Forecast> Forecasts => Set<Forecast>();
 

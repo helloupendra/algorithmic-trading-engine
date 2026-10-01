@@ -58,8 +58,9 @@ public sealed class AiTraderBookReader(
     IMarketSessionService sessions) : IAiTraderBooks
 {
     /// <summary>
-    /// Its live account as of <paramref name="clockUtc"/>. A replay is judged on an empty book: the AI Trader's
-    /// account is today's, and a replayed day never traded in it.
+    /// Its live account as of <paramref name="clockUtc"/>. In a replay only the kill switch and the trading day
+    /// are read: the account is today's, and a replayed day never traded in it (the replay's shadow book is
+    /// <see cref="AiTraderShadowBook"/>).
     /// </summary>
     public async Task<AiTraderBook> ReadAsync(DateTime clockUtc, bool replay, CancellationToken cancellationToken)
     {
@@ -107,31 +108,35 @@ public sealed class AiTraderBookReader(
         return new AiTraderBook(clockUtc, tradingDay, kill, Math.Round(net, 2), openedToday, open, runs);
     }
 
-    /// <summary>The book as the brief tells it to the model.</summary>
-    public static string Describe(AiTraderBook book, AiTraderRules rules, bool replay)
+    /// <summary>
+    /// The book as the brief tells it to the model. In shadow and replay it is the shadow book
+    /// (<see cref="AiTraderShadowBook"/>), and the brief says how it is kept.
+    /// </summary>
+    public static string Describe(AiTraderBook book, AiTraderRules rules, string mode)
     {
         var text = new StringBuilder();
-        if (replay)
+        text.Append(mode switch
         {
-            text.Append("YOUR BOOK: a replay is judged as a fresh day: no positions open, nothing traded yet, the full loss budget.\n");
-        }
-        else
+            AiTraderModes.Replay => "YOUR BOOK (this replay's shadow book, fresh at its start: code keeps your allowed buys as if placed, bought at the ask, checked every minute at the bid against your stop and target, squared off at 15:30; nothing reaches a broker)\n",
+            AiTraderModes.Shadow => "YOUR BOOK (shadow: code keeps your allowed buys as if placed, bought at the ask, checked every minute at the bid against your stop and target, squared off at 15:30; nothing reaches a broker)\n",
+            _ => "YOUR BOOK\n",
+        });
+
+        decimal budget = rules.DailyLossLimit + Math.Min(0m, book.NetToday);
+        text.Append(CultureInfo.InvariantCulture,
+            $"Net today {AiTraderGuard.Rupees(book.NetToday)} after charges; loss budget left {AiTraderGuard.Rupees(Math.Max(0m, budget))}; trades opened {book.OpenedToday} of {rules.MaxTradesPerDay}; positions {book.Open.Count} of {rules.MaxOpenPositions}.\n");
+        foreach (var p in book.Open)
         {
-            decimal budget = rules.DailyLossLimit + Math.Min(0m, book.NetToday);
             text.Append(CultureInfo.InvariantCulture,
-                $"YOUR BOOK: net today {AiTraderGuard.Rupees(book.NetToday)} after charges; loss budget left {AiTraderGuard.Rupees(Math.Max(0m, budget))}; trades opened {book.OpenedToday} of {rules.MaxTradesPerDay}; positions {book.Open.Count} of {rules.MaxOpenPositions}.\n");
-            foreach (var p in book.Open)
-            {
-                text.Append(CultureInfo.InvariantCulture,
-                    $"- position {p.PositionId}: {p.Symbol} × {p.Lots} lot(s), entry {p.Entry:0.##}, mark {(p.Mark is decimal m ? m.ToString("0.##", CultureInfo.InvariantCulture) : "—")}, P&L {AiTraderGuard.Rupees(p.UnrealizedPnl)}, stop {(p.StopLoss?.ToString("0.##", CultureInfo.InvariantCulture) ?? "none")}, target {(p.Target?.ToString("0.##", CultureInfo.InvariantCulture) ?? "none")}\n");
-            }
-
-            text.Append(book.Runs.Count == 0
-                ? "Your strategies running: none."
-                : "Your strategies running: " + string.Join("; ", book.Runs.Select(r => $"run {r.RunId} {r.Strategy} on {r.Underlying}, net {AiTraderGuard.Rupees(r.NetPnl)}")) + ".");
-            text.Append('\n');
+                $"- position {p.PositionId}: {p.Symbol} × {p.Lots} lot(s), entry {p.Entry:0.##}, mark {(p.Mark is decimal m ? m.ToString("0.##", CultureInfo.InvariantCulture) : "—")}, P&L {AiTraderGuard.Rupees(p.UnrealizedPnl)}, stop {(p.StopLoss?.ToString("0.##", CultureInfo.InvariantCulture) ?? "none")}, target {(p.Target?.ToString("0.##", CultureInfo.InvariantCulture) ?? "none")}\n");
         }
 
+        text.Append(mode == AiTraderModes.Live
+            ? book.Runs.Count == 0
+                ? "Your strategies running: none."
+                : "Your strategies running: " + string.Join("; ", book.Runs.Select(r => $"run {r.RunId} {r.Strategy} on {r.Underlying}, net {AiTraderGuard.Rupees(r.NetPnl)}")) + "."
+            : "Strategy runs are not simulated in shadow: a start or stop is recorded only.");
+        text.Append('\n');
         text.Append(CultureInfo.InvariantCulture, $"Strategies you may start: {string.Join(", ", rules.Strategies)} (at most {rules.MaxStrategyRuns} running).\n");
         if (book.KillSwitch) text.Append("The desk's kill switch is ON: nothing new will be placed.\n");
         return text.ToString();

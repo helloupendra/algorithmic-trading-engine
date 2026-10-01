@@ -30,7 +30,7 @@ public class AiTraderAgentTests
     [Fact]
     public async Task A_buy_inside_the_rules_is_kept_as_allowed_with_its_contract_and_nothing_placed_in_shadow()
     {
-        var (agent, ai, _) = Agent();
+        var (agent, ai, _, _) = Agent();
         ai.Provider.On(Judge1, Answer(BuyAtmCall));
 
         var row = await agent.DecideAsync(Eleven, AiTraderModes.Shadow, null, default);
@@ -48,7 +48,7 @@ public class AiTraderAgentTests
     [Fact]
     public async Task A_plan_outside_the_rules_is_kept_as_refused_with_the_rule()
     {
-        var (agent, ai, _) = Agent();
+        var (agent, ai, _, _) = Agent();
         ai.Provider.On(Judge1, Answer(BuyAtmCall.Replace("\"stopLoss\":90", "\"stopLoss\":40")));
 
         var row = await agent.DecideAsync(Eleven, AiTraderModes.Shadow, null, default);
@@ -59,7 +59,7 @@ public class AiTraderAgentTests
     [Fact]
     public async Task The_next_look_reads_what_the_rules_refused_on_the_last_one()
     {
-        var (agent, ai, _) = Agent();
+        var (agent, ai, _, _) = Agent();
         ai.Provider.On(Judge1, Answer(BuyAtmCall.Replace("\"stopLoss\":90", "\"stopLoss\":40")),
             Answer("""{"action":"none","reason":"Waiting.","confidence":0.3}"""));
 
@@ -71,8 +71,8 @@ public class AiTraderAgentTests
     }
 
     [Fact]
-    public void A_last_look_allowed_in_shadow_says_it_was_not_placed() =>
-        Assert.Contains("allowed, not placed (shadow mode)", AiTraderAgent.LastLooks([new AiTraderDecision
+    public void A_last_look_allowed_in_shadow_says_it_went_into_the_shadow_book() =>
+        Assert.Contains("allowed, opened in your shadow book", AiTraderAgent.LastLooks([new AiTraderDecision
         {
             ClockUtc = Eleven, Mode = AiTraderModes.Shadow, Action = AiTraderPlan.Buy, Underlying = "NIFTY", Allowed = true, Rule = "ok",
             PlanJson = """{"action":"buy","underlying":"NIFTY","option":"PE","strike":"ATM","lots":2,"stopLoss":60,"target":140}""",
@@ -81,7 +81,7 @@ public class AiTraderAgentTests
     [Fact]
     public async Task An_answer_that_is_not_a_plan_is_kept_as_unreadable_with_its_text()
     {
-        var (agent, ai, _) = Agent();
+        var (agent, ai, _, _) = Agent();
         ai.Provider.On(Judge1, Answer("I think the market looks bullish."));
 
         var row = await agent.DecideAsync(Eleven, AiTraderModes.Shadow, null, default);
@@ -93,7 +93,7 @@ public class AiTraderAgentTests
     [Fact]
     public async Task It_looks_every_ten_minutes_of_the_session_and_never_outside_it()
     {
-        var (agent, ai, _) = Agent();
+        var (agent, ai, _, _) = Agent();
         ai.Provider.On(Judge1, Answer("""{"action":"none","reason":"Range-bound.","confidence":0.4}"""),
             Answer("""{"action":"none","reason":"Still range-bound.","confidence":0.4}"""));
 
@@ -114,7 +114,7 @@ public class AiTraderAgentTests
         book.Begin(replayed);
         book.Apply([new UpsertLiveTickRequest { Symbol = "NSE:NIFTY50-INDEX", LastTradedPrice = 22600m, ExchangeTimestampUtc = IstTime.FromIst(new DateTime(2026, 9, 30, 11, 0, 5)) }]);
         var session = new ReplaySessionState(4, "2026-09-30", 1, "09:15", MarketReplayService.StatePlaying, [], DateTime.UtcNow, null, null, "admin", AiTrader: true);
-        var (agent, ai, briefs) = Agent(book, session);
+        var (agent, ai, briefs, _) = Agent(book, session);
         ai.Provider.On(Judge1, Answer("""{"action":"none","reason":"Waiting for the range to break.","confidence":0.3}"""));
 
         // The wall clock is a Saturday evening: only the replay's clock counts.
@@ -129,7 +129,7 @@ public class AiTraderAgentTests
     [Fact]
     public void A_buy_resolves_to_the_strike_it_names_on_the_chains_grid_priced_at_the_ask()
     {
-        var (agent, _, briefs) = Agent();
+        var (agent, _, briefs, _) = Agent();
         var brief = briefs.Brief(Eleven);
         var plan = new AiTraderPlan(AiTraderPlan.Buy, "NIFTY", "PE", "ATM-1", 1, 50, 120, null, null, null, "x", 0.5);
 
@@ -141,18 +141,30 @@ public class AiTraderAgentTests
 
     // ---------- helpers ----------
 
-    private static (AiTraderAgent Agent, Services Ai, FakeBriefs Briefs) Agent(IMarketReplayBook? book = null, ReplaySessionState? session = null)
+    internal static (AiTraderAgent Agent, Services Ai, FakeBriefs Briefs, FakeQuotes Quotes) Agent(IMarketReplayBook? book = null, ReplaySessionState? session = null)
     {
         var ai = Build(Settings());
         ai.Store.SetAgentEnabledAsync(AiCatalog.AiTrader, true, "upendra", null).GetAwaiter().GetResult();
         var briefs = new FakeBriefs();
+        var quotes = new FakeQuotes();
         var sessions = new MarketSessionService(new OpenCalendar());
-        var agent = new AiTraderAgent(ai.Db, ai.Gateway, briefs, new FakeBooks(sessions), sessions, new FakeReplays(session), ai.Options,
-            NullLogger<AiTraderAgent>.Instance, book);
-        return (agent, ai, briefs);
+        var agent = new AiTraderAgent(ai.Db, ai.Gateway, briefs, new FakeBooks(sessions), new AiTraderShadowBook(ai.Db, quotes, sessions), sessions,
+            new FakeReplays(session), ai.Options, NullLogger<AiTraderAgent>.Instance, book);
+        return (agent, ai, briefs, quotes);
     }
 
-    private sealed class FakeBriefs : IAiTraderBriefs
+    /// <summary>Quotes by symbol, as the shadow book's minute check would read them.</summary>
+    internal sealed class FakeQuotes : IAiTraderQuotes
+    {
+        public Dictionary<string, QuoteSnapshot> BySymbol { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public void Set(string symbol, decimal bid, decimal last) => BySymbol[symbol] = new QuoteSnapshot(last, bid, bid + 0.5m, DateTime.UtcNow);
+
+        public Task<QuoteSnapshot?> QuoteAsync(AiTraderShadowPosition position, DateTime clockUtc, bool replay, CancellationToken cancellationToken) =>
+            Task.FromResult(BySymbol.TryGetValue(position.Symbol, out var q) ? q with { UpdatedUtc = clockUtc } : (QuoteSnapshot?)null);
+    }
+
+    internal sealed class FakeBriefs : IAiTraderBriefs
     {
         public bool Replay { get; private set; }
 
@@ -249,7 +261,7 @@ public class MarketBriefWordingTests
     public void A_range_forecast_reads_as_its_median_band_and_buckets()
     {
         var text = MarketBriefBuilder.Prediction("""{"median":0.8308,"low80":0.492,"high80":1.4029,"points":{"median":187.93},"buckets":{"quiet":0.3803,"normal":0.3789,"wild":0.2408}}""");
-        Assert.Equal("median move 0.83% (≈188 pts), 80% band 0.49–1.40%; quiet 38%, normal 38%, wild 24%", text);
+        Assert.Equal("the session's high−low range, median 0.83% (≈188 pts), 80% between 0.49% and 1.40%; quiet 38%, normal 38%, wild 24% (a size, not a direction)", text);
     }
 
     [Fact]

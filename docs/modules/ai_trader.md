@@ -14,13 +14,13 @@ Every 10 minutes from 09:20 to 15:00 IST on trading days, while it is switched o
    - India VIX and its change;
    - each nearest-expiry chain: ATM±1 premiums, PCR, max pain, the call and put walls, OI change on the day and
      since the first capture of the session;
-   - today's forecasts as issued before the open, in words (median move, 80% band, the chance of a quiet, normal or
-     wild day), never their scores;
+   - today's forecasts as issued before the open, in words (the session's high−low range: median, 80% band, the
+     chance of a quiet, normal or wild day; a size, not a direction), never their scores;
    - GIFT Nifty before the open, the last FII/DII cash flows, today's events;
    - the last hour's news as the News Analyst read it, policy and macro data first, then results, guidance and
      rating changes, then anything with a direction; routine filings with none are left out;
    - its own book: net today after charges, the loss budget left, trades used, open positions with stops and
-     targets, its running strategies;
+     targets, its running strategies (in shadow and replay, its shadow book: see below);
    - its last three looks of the day (or of the replay): what it proposed and what the rules said, so a refused plan
      is corrected rather than sent again. A plan allowed in shadow mode says it was not placed.
 
@@ -51,20 +51,41 @@ Every 10 minutes from 09:20 to 15:00 IST on trading days, while it is switched o
 `Ai:AiTraderExecute` is off: it decides and places nothing (mode `shadow`). Placing paper orders through its own
 manual book and strategy starts is the next step, switched on only after its shadow decisions have been read.
 
+### The shadow book
+
+Placing nothing must not mean scoring nothing. In shadow mode, and in a replay, an allowed buy is kept by code as if
+placed (`ai_trader_shadow_positions`, `AiTraderShadowBook`), and the model reads that book on its next look:
+
+| Step | Rule |
+|---|---|
+| Entry | The ask its decision saw (in a replay, the replay's own quote when it has one) |
+| Minute check | Every minute, whatever the decision schedule: the price it could sell at, the bid, else the last trade less half a spread, as the desk's paper fills |
+| Stop | That price at or under the stop: closed at that price, which can be under the stop |
+| Target | That price at or over the target: closed at that price |
+| Its own exit | An allowed `exit` naming the position: closed at that price |
+| Close | Squared off at the session's close (15:30 IST); one left from an earlier day closes at its last mark |
+| Replay | Each replay starts a fresh shadow book; positions still open when it ends close at their last marks (`replay-ended`) |
+| Charges | The desk's index option round trip (`OptionCharges`); net is after them, an open position's as if sold at its mark |
+
+A touch between two minute checks is missed. Prices come from the feed's quote when it is under three minutes
+old, else the option chain (the minute capture with fresh quotes over it); a shadow position is never put on the
+feed. Strategy starts and stops are recorded only: runs are not simulated in shadow.
+
 ## In a market replay
 
 Asked into a replay (Data → Replay, "AI Trader decides along"), it decides on the replay's clock (mode `replay`):
 the brief is built as of the replayed moment, from the recorded bars, the recorded chain and the replay's prices.
-It is judged on a fresh day's empty book and places nothing. The model can take up to a minute to answer, so above
+It starts that replay's own fresh shadow book and places nothing. The model can take up to a minute to answer, so above
 2× a replay moves faster than it can look every ten replayed minutes.
 
 ## API (admin)
 
 | Endpoint | What |
 |---|---|
-| `GET /api/AiTrader/status` | On or off, shadow or live, the limits, today's looks, the last three |
+| `GET /api/AiTrader/status` | On or off, shadow or live, the limits, today's looks, the last three, today's shadow book |
 | `GET /api/AiTrader/decisions?day=&replay=&take=&beforeId=` | Decisions, newest first |
 | `GET /api/AiTrader/decisions/{id}` | One decision with its brief, plan and result |
+| `GET /api/AiTrader/positions?day=&replay=` | The shadow book: a day's or a replay's positions, net after charges |
 | `POST /api/Ai/agents/ai-trader/run` | One look now |
 
 Today shows its day in an "AI Trader" card.
