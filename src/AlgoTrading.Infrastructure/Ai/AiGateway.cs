@@ -472,12 +472,28 @@ public sealed class AiGateway
         }
     }
 
+    /// <summary>
+    /// The call was turned away for want of room, not answered badly: the desk's own rate limit refused it (429), or
+    /// every model that failed in it refused for capacity. A caller that counts tries per subject (the Trade
+    /// Reviewer) does not count such a call as one: in a busy hour it would otherwise give up on its work.
+    /// </summary>
+    public static bool IsCapacityRefusal(AiAskResult result)
+    {
+        if (result.Outcome == AiCallOutcome.Refused) return result.RefusalStatus == 429;
+        if (result.Outcome != AiCallOutcome.Failed) return false;
+
+        var failed = result.Attempts.Where(a => a.Outcome != "ok").ToList();
+        return failed.Count > 0 && failed.All(a => IsCapacityRefusal(a.HttpStatus, a.Outcome));
+    }
+
     /// <summary>The provider said it has no room right now, rather than that the request was wrong.</summary>
-    public static bool IsCapacityRefusal(AiAttemptFailedException ex) =>
-        ex.HttpStatus is 429 or 502 or 503
-        || ex.Outcome.Contains("overloaded", StringComparison.OrdinalIgnoreCase)
-        || ex.Outcome.Contains("temporarily", StringComparison.OrdinalIgnoreCase)
-        || ex.Outcome.Contains("capacity", StringComparison.OrdinalIgnoreCase);
+    public static bool IsCapacityRefusal(AiAttemptFailedException ex) => IsCapacityRefusal(ex.HttpStatus, ex.Outcome);
+
+    private static bool IsCapacityRefusal(int? httpStatus, string outcome) =>
+        httpStatus is 429 or 502 or 503
+        || outcome.Contains("overloaded", StringComparison.OrdinalIgnoreCase)
+        || outcome.Contains("temporarily", StringComparison.OrdinalIgnoreCase)
+        || outcome.Contains("capacity", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Runs one tool call and writes what the model is given back. A tool that
