@@ -40,7 +40,7 @@ import {
   shadowResultText,
   verdictOf,
 } from '../../lib/aiTrader'
-import type { AiTraderDecision, AiTraderDecisionFilter, AiTraderShadowPosition } from '../../lib/aiTrader'
+import type { AiTraderDecision, AiTraderDecisionFilter, AiTraderPoll, AiTraderShadowPosition } from '../../lib/aiTrader'
 import { useAiTraderDecision, useAiTraderDecisions, useAiTraderPositions, useAiTraderScoreboard } from '../../lib/queries'
 import { shortDay } from '../../lib/replay'
 import { formatDateTime, formatInrSigned, formatInrWhole, formatPrice } from '../../lib/format'
@@ -216,7 +216,7 @@ export function AiTraderDecisionList({
   markReplays = true,
 }: {
   filter: AiTraderDecisionFilter
-  pollMs: number | false
+  pollMs: AiTraderPoll
   empty: ReactNode
   label: string
   markReplays?: boolean
@@ -316,7 +316,7 @@ export function AiTraderShadowBook({
   empty,
 }: {
   filter: AiTraderDecisionFilter
-  pollMs: number | false
+  pollMs: AiTraderPoll
   replay?: boolean
   empty: ReactNode
 }) {

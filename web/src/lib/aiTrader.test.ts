@@ -28,6 +28,7 @@ import {
   readAiTraderShadowBook,
   readAiTraderShadowPosition,
   readAiTraderStatus,
+  replayRecordPollMs,
   ruleLabel,
   sampleNote,
   scoreKindText,
@@ -283,6 +284,18 @@ describe('reading decisions', () => {
     expect(aiTraderDecisionsQuery({ day: '2026-10-01' }, null)).toBe('day=2026-10-01&take=50')
     expect(aiTraderDecisionsQuery({ replay: 4 }, 41, 20)).toBe('replay=4&take=20&beforeId=41')
     expect(aiTraderDecisionsQuery({ day: null, replay: null }, null)).toBe('take=50')
+  })
+
+  it("reads a replay's record while it plays and as it settles, then stops: an ended replay's record no longer changes", () => {
+    const ended = Date.parse('2026-10-01T14:02:00Z')
+    expect(replayRecordPollMs({ active: true, endedUtc: null }, ended)).toBe(10_000)
+    // Its last look and the minute check that squares off its book land in the minutes after the end.
+    expect(replayRecordPollMs({ active: false, endedUtc: '2026-10-01T14:02:00Z' }, ended + 60_000)).toBe(30_000)
+    // Last night's replay, still on the page this morning: no more reads every 30 s.
+    expect(replayRecordPollMs({ active: false, endedUtc: '2026-10-01T14:02:00Z' }, ended + 10 * 60_000)).toBe(false)
+    expect(replayRecordPollMs({ active: false, endedUtc: '2026-10-01T14:02:00Z' }, ended + 12 * 3_600_000)).toBe(false)
+    // Over, but when is not known: it may still be settling.
+    expect(replayRecordPollMs({ active: false, endedUtc: null }, ended)).toBe(30_000)
   })
 })
 

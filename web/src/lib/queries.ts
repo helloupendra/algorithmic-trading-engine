@@ -60,7 +60,7 @@ import {
   readAiTraderShadowBook,
   readAiTraderStatus,
 } from './aiTrader'
-import type { AiTraderDecisionFilter, AiTraderDecisionsPage } from './aiTrader'
+import type { AiTraderDecisionFilter, AiTraderDecisionsPage, AiTraderPoll } from './aiTrader'
 import type {
   AlertEvent,
   BackfillHistoryResponse,
@@ -2965,9 +2965,11 @@ export function useAiTraderStatus(enabled = true) {
 /**
  * A day's decisions (IST) or a replay's, newest first, a page at a time
  * (nextBeforeId). No placeholder from the last filter: another day's rows
- * under this day's label would read as this day's.
+ * under this day's label would read as this day's. A function `pollMs` is
+ * asked again after every read, so a replay's lists stop once it has settled
+ * (replayRecordPollMs).
  */
-export function useAiTraderDecisions(filter: AiTraderDecisionFilter, pollMs: number | false) {
+export function useAiTraderDecisions(filter: AiTraderDecisionFilter, pollMs: AiTraderPoll) {
   const ready = !!filter.day || filter.replay != null
   return useInfiniteQuery({
     queryKey: ['ai', 'trader', 'decisions', filter.day ?? null, filter.replay ?? null],
@@ -2982,10 +2984,11 @@ export function useAiTraderDecisions(filter: AiTraderDecisionFilter, pollMs: num
 
 /**
  * The shadow book: a day's positions (IST) or a replay's, oldest first, net
- * after charges. Polled while the day is today or the replay is on, since a
- * minute check can close a position between looks.
+ * after charges. Polled while the day is today or the replay is on (and for
+ * a few minutes after it ends), since a minute check can close a position
+ * between looks.
  */
-export function useAiTraderPositions(filter: AiTraderDecisionFilter, pollMs: number | false) {
+export function useAiTraderPositions(filter: AiTraderDecisionFilter, pollMs: AiTraderPoll) {
   const ready = !!filter.day || filter.replay != null
   return useQuery({
     queryKey: ['ai', 'trader', 'positions', filter.replay != null ? null : (filter.day ?? null), filter.replay ?? null],
