@@ -43,7 +43,7 @@ public class AiRegistrationTests
             string name = p.ParameterType.Name;
             if (Framework.Contains(name)) continue;
             Assert.True(
-                registrations.Contains($"<{name}>") || registrations.Contains($".{name}>") || registrations.Contains($"<{name},")
+                registrations.Contains($"<{name}>") || registrations.Contains($".{name}>") || registrations.Contains($"<{name},") || registrations.Contains($".{name},")
                     || registrations.Contains($"{name}(") || registrations.Contains($".{name}("),
                 $"{type.Name} needs {name}, which nothing registers.");
         }

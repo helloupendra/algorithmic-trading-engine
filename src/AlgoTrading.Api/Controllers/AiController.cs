@@ -524,7 +524,7 @@ public class AiController : ControllerBase
         if (_scopes is null) return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "Scheduled agents are not available on this host." });
         var def = key is AiCatalog.AssistantCheck or AiCatalog.AssistantExam ? AiCatalog.Agent(key) : AiCatalog.Agents.FirstOrDefault(a => a.Key == key);
         if (def is null) return NotFound(new { error = $"No agent {key}." });
-        if (key is not (AiCatalog.TradeReviewer or AiCatalog.NewsAnalyst or AiCatalog.IncidentExplainer or AiCatalog.AssistantCheck or AiCatalog.AssistantExam))
+        if (key is not (AiCatalog.TradeReviewer or AiCatalog.NewsAnalyst or AiCatalog.IncidentExplainer or AiCatalog.AssistantCheck or AiCatalog.AssistantExam or AiCatalog.AiTrader))
         {
             return Conflict(new { error = $"{def.Name} is not a scheduled agent." });
         }

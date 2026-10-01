@@ -147,6 +147,7 @@ builder.Services.AddSingleton<AlgoTrading.Api.Services.Replay.IReplayPlayer, Alg
 builder.Services.AddSingleton<AlgoTrading.Api.Services.Replay.IReplayChannel, AlgoTrading.Api.Services.Replay.RedisReplayChannel>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.Replay.IReplayRunStopper, AlgoTrading.Api.Services.Replay.ReplayRunStopper>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.Replay.MarketReplayService>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.Replay.IReplaySessions>(sp => sp.GetRequiredService<AlgoTrading.Api.Services.Replay.MarketReplayService>());
 builder.Services.AddHostedService<AlgoTrading.Api.Services.Replay.ReplayMonitor>();
 // The System page's server report: disk, memory, CPU, database size and growth.
 // A singleton so its short cache and the previous CPU reading outlive a request.
@@ -202,6 +203,10 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, 
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.NewsAnalystAgent>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.AssistantCheckAgent>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.AssistantExamAgent>();
+// The AI Trader: the brief, its account's facts, and the agent (shadow until Ai:AiTraderExecute).
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.IAiTraderBriefs, AlgoTrading.Api.Services.AiTrader.MarketBriefBuilder>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.IAiTraderBooks, AlgoTrading.Api.Services.AiTrader.AiTraderBookReader>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiTrader.AiTraderAgent>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.AiAgents.AiAgentScheduler>();
 // The morning plan against what is live (GET /api/Desk/plan); Desk:PlanFile overrides where it is read from.
 builder.Services.Configure<AlgoTrading.Api.Configuration.DeskOptions>(

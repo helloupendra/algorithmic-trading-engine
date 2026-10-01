@@ -50,6 +50,10 @@ public sealed class RunCharges
     public Task<Dictionary<long, decimal>> ForRunsAsync(IReadOnlyCollection<long> runIds, CancellationToken cancellationToken)
         => LoadAsync(_dbContext.PaperOrders.AsNoTracking().Where(o => runIds.Contains(o.SimulationRunId)), cancellationToken);
 
+    /// <summary>Charges per run for the filled orders a query chooses (a day's, say).</summary>
+    public Task<Dictionary<long, decimal>> ForOrdersAsync(IQueryable<PaperOrder> orders, CancellationToken cancellationToken)
+        => LoadAsync(orders, cancellationToken);
+
     /// <summary>One run's charges so far.</summary>
     public async Task<decimal> ForRunAsync(long runId, CancellationToken cancellationToken)
     {

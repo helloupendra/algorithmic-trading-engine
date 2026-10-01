@@ -127,6 +127,9 @@ public class TradingDbContext : DbContext
     /// <summary>The decisions on record for the owner's Today page. See <see cref="OwnerDecision"/>.</summary>
     public DbSet<OwnerDecision> OwnerDecisions => Set<OwnerDecision>();
 
+    /// <summary>Every look the AI Trader took: brief, plan, the rules' verdict, what was done. See <see cref="AiTraderDecision"/>.</summary>
+    public DbSet<AiTraderDecision> AiTraderDecisions => Set<AiTraderDecision>();
+
     /// <summary>The Analysis module's forecasts: written before the open, scored after the close. See <see cref="Forecast"/>.</summary>
     public DbSet<Forecast> Forecasts => Set<Forecast>();
 

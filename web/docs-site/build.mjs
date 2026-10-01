@@ -51,6 +51,7 @@ const NAV = [
       { slug: 'modules/manual-orders', src: 'docs/modules/manual_orders.md', title: 'Manual orders & carried positions' },
       { slug: 'modules/backtesting', src: 'docs/modules/backtesting_module.md', title: 'Backtesting' },
       { slug: 'modules/market-replay', src: 'docs/modules/market_replay.md', title: 'Market replay' },
+      { slug: 'modules/ai-trader', src: 'docs/modules/ai_trader.md', title: 'AI Trader' },
       { slug: 'modules/option-chain', src: 'docs/modules/option_chain.md', title: 'Option chain' },
       { slug: 'modules/pattern-alerts', src: 'docs/modules/pattern_alerts.md', title: 'Candle pattern alerts' },
       { slug: 'modules/connectors', src: 'docs/modules/connectors_module.md', title: 'Connectors' },

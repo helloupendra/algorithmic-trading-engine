@@ -124,6 +124,20 @@ public sealed class AiSettings
     /// <summary>How far back, in calendar days, the bank takes finished trading days from.</summary>
     public int ExamLookbackDays { get; set; } = 45;
 
+    /// <summary>
+    /// Whether the AI Trader places what its rules allow (paper orders in its own account). Off: it decides and
+    /// places nothing (shadow), which is how it starts (owner, 1 Oct 2026: one shadow session first).
+    /// </summary>
+    public bool AiTraderExecute { get; set; } = false;
+
+    /// <summary>Minutes between the AI Trader's looks at the market.</summary>
+    public int AiTraderEveryMinutes { get; set; } = 10;
+
+    /// <summary>IST times between which it looks (new positions are further limited by its rules).</summary>
+    public string AiTraderFromIst { get; set; } = "09:20";
+
+    public string AiTraderUntilIst { get; set; } = "15:00";
+
     /// <summary>Tries for one report before a scheduled agent gives up on its subject.</summary>
     public int MaxReportAttempts { get; set; } = 3;
 
