@@ -107,6 +107,20 @@ public class AiTraderAgentTests
     }
 
     [Fact]
+    public async Task A_look_that_ran_late_in_its_minute_does_not_push_the_next_one_a_minute_later()
+    {
+        // The scheduler ticks once a minute and runs the agents in turn: a look waits behind the News Analyst's
+        // model call one tick (40 s) and not the next (5 s). Ten minutes on the minute grid is ten minutes.
+        var (agent, ai, _, _) = Agent();
+        ai.Provider.On(Judge1, Answer("""{"action":"none","reason":"Range-bound.","confidence":0.4}"""),
+            Answer("""{"action":"none","reason":"Still range-bound.","confidence":0.4}"""));
+
+        Assert.True(await agent.RunOnceAsync(Eleven.AddSeconds(40), default));
+        Assert.False(await agent.RunOnceAsync(Eleven.AddMinutes(9).AddSeconds(5), default));
+        Assert.True(await agent.RunOnceAsync(Eleven.AddMinutes(10).AddSeconds(5), default));
+    }
+
+    [Fact]
     public async Task In_a_replay_it_was_asked_into_it_decides_on_the_replays_clock()
     {
         var replayed = new DateOnly(2026, 9, 30);
