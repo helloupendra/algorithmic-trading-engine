@@ -235,7 +235,45 @@ public sealed class MarketBriefBuilder(
             .ToListAsync(cancellationToken);
         if (rows.Count == 0) return "None issued for today.";
         // The prediction only: the outcome and its scores are hindsight, written after the close.
-        return string.Join('\n', rows.Select(r => $"- {r.Underlying} {r.Target} ({r.ModelKey}): {Compact(r.PredictionJson, 220)}"));
+        return string.Join('\n', rows.Select(r => $"- {r.Underlying} {r.Target} ({r.ModelKey}): {Prediction(r.PredictionJson)}"));
+    }
+
+    /// <summary>
+    /// A forecast's prediction in words. A range forecast reads as its median move and 80% band, in percent and
+    /// points, with the chances of a quiet, normal or wild day; any other shape as its JSON, cut short.
+    /// </summary>
+    public static string Prediction(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("median", out var median) && median.ValueKind == JsonValueKind.Number
+                && root.TryGetProperty("low80", out var low) && root.TryGetProperty("high80", out var high))
+            {
+                var text = string.Create(CultureInfo.InvariantCulture, $"median move {median.GetDouble():0.00}%");
+                if (root.TryGetProperty("points", out var points) && points.TryGetProperty("median", out var pm))
+                {
+                    text += string.Create(CultureInfo.InvariantCulture, $" (≈{pm.GetDouble():0} pts)");
+                }
+
+                text += string.Create(CultureInfo.InvariantCulture, $", 80% band {low.GetDouble():0.00}–{high.GetDouble():0.00}%");
+                if (root.TryGetProperty("buckets", out var buckets) && buckets.ValueKind == JsonValueKind.Object)
+                {
+                    text += "; " + string.Join(", ", buckets.EnumerateObject()
+                        .Where(b => b.Value.ValueKind == JsonValueKind.Number)
+                        .Select(b => string.Create(CultureInfo.InvariantCulture, $"{b.Name} {b.Value.GetDouble() * 100:0}%")));
+                }
+
+                return text;
+            }
+
+            return Cut(JsonSerializer.Serialize(root), 220);
+        }
+        catch (JsonException)
+        {
+            return Cut(json, 220);
+        }
     }
 
     private async Task<string> ContextAsync(DateOnly day, DateTime asOf, CancellationToken cancellationToken)
@@ -282,19 +320,25 @@ public sealed class MarketBriefBuilder(
             .Take(40)
             .ToListAsync(cancellationToken);
 
-        var lines = new List<string>();
+        // What can move an index first: policy, macro data, results and rating changes, and anything with a
+        // direction. A routine filing ("other", neutral) is left out: the hour is full of them.
+        var items = new List<(int Rank, DateTime At, string Line)>();
         foreach (var r in reports)
         {
             if (AiJson.Object(r.DataJson) is not { } data) continue;
             string ev = AiJson.Str(data, "event") ?? string.Empty;
+            string direction = AiJson.Str(data, "direction") ?? "unclear";
             if (ev is "" or "none") continue;
+            bool directional = direction is "positive" or "negative";
+            if (ev == "other" && !directional) continue;
+            int rank = ev is "policy" or "macro data" ? 0 : ev is "results" or "rating change" or "guidance" ? 1 : directional ? 2 : 3;
             var symbols = AiJson.Strings(data, "symbols");
-            lines.Add($"- {IstTime.ToIst(r.CreatedUtc):HH:mm} {ev}, {AiJson.Str(data, "direction") ?? "unclear"}"
-                      + (symbols.Count > 0 ? $" ({string.Join(", ", symbols.Take(4))})" : string.Empty) + $": {Cut(r.Title, 140)}");
-            if (lines.Count == 10) break;
+            items.Add((rank, r.CreatedUtc, $"- {IstTime.ToIst(r.CreatedUtc):HH:mm} {ev}, {direction}"
+                + (symbols.Count > 0 ? $" ({string.Join(", ", symbols.Take(4))})" : string.Empty) + $": {Cut(r.Title, 140)}"));
         }
 
-        return lines.Count == 0 ? "Nothing with an event in the last hour." : string.Join('\n', lines);
+        var lines = items.OrderBy(i => i.Rank).ThenByDescending(i => i.At).Take(10).Select(i => i.Line).ToList();
+        return lines.Count == 0 ? "Nothing that could move an index in the last hour." : string.Join('\n', lines);
     }
 
     // ---------- arithmetic ----------

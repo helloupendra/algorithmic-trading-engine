@@ -220,3 +220,17 @@ public class MarketBriefArithmeticTests
         Assert.Null(MarketBriefBuilder.Atr(bars, 3));
     }
 }
+
+public class MarketBriefWordingTests
+{
+    [Fact]
+    public void A_range_forecast_reads_as_its_median_band_and_buckets()
+    {
+        var text = MarketBriefBuilder.Prediction("""{"median":0.8308,"low80":0.492,"high80":1.4029,"points":{"median":187.93},"buckets":{"quiet":0.3803,"normal":0.3789,"wild":0.2408}}""");
+        Assert.Equal("median move 0.83% (≈188 pts), 80% band 0.49–1.40%; quiet 38%, normal 38%, wild 24%", text);
+    }
+
+    [Fact]
+    public void Any_other_forecast_reads_as_its_json() =>
+        Assert.Equal("""{"up":0.55,"down":0.45}""", MarketBriefBuilder.Prediction("""{ "up": 0.55, "down": 0.45 }"""));
+}

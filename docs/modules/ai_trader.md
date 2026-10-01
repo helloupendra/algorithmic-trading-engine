@@ -14,9 +14,11 @@ Every 10 minutes from 09:20 to 15:00 IST on trading days, while it is switched o
    - India VIX and its change;
    - each nearest-expiry chain: ATM±1 premiums, PCR, max pain, the call and put walls, OI change on the day and
      since the first capture of the session;
-   - today's forecasts as issued before the open (never their scores);
+   - today's forecasts as issued before the open, in words (median move, 80% band, the chance of a quiet, normal or
+     wild day), never their scores;
    - GIFT Nifty before the open, the last FII/DII cash flows, today's events;
-   - the last hour's news as the News Analyst read it;
+   - the last hour's news as the News Analyst read it, policy and macro data first, then results, guidance and
+     rating changes, then anything with a direction; routine filings with none are left out;
    - its own book: net today after charges, the loss budget left, trades used, open positions with stops and
      targets, its running strategies.
 
