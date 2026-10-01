@@ -48,9 +48,12 @@ public sealed class OpenPositionsBuilder
     {
         var response = new OpenPositionsResponse { AsOfUtc = nowUtc };
 
+        // A recap run is a test of a past day, priced from the replay on its own page: here it would be marked at
+        // today's prices beside live trading (RecapRuns).
         var runs = _dbContext.SimulationRuns.AsNoTracking()
             .Where(r => r.Mode == StrategyRunControl.LivePaperMode
-                        && (r.Status == StrategyRunControl.RunStatusRunning || r.Status == StrategyRunControl.RunStatusStopping));
+                        && (r.Status == StrategyRunControl.RunStatusRunning || r.Status == StrategyRunControl.RunStatusStopping))
+            .WithoutRecaps();
         if (userId.HasValue)
         {
             long scopeUserId = userId.Value;
