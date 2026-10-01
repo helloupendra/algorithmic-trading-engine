@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { actionText } from './aiTrader'
 import {
   SENTINEL_STALE_MINUTES,
   agoText,
@@ -154,12 +155,21 @@ const body = {
         atUtc: '2026-10-01T05:20:00Z',
         action: 'buy',
         underlying: 'NIFTY',
+        option: 'CE',
         allowed: false,
         rule: 'stop',
         reason: 'NIFTY broke the morning high with PCR rising; buy the ATM call.',
       },
-      { atUtc: '2026-10-01T05:10:00Z', action: 'none', underlying: '', allowed: true, rule: 'ok', reason: 'No clear move: VIX flat, range inside the ATR.' },
-      { atUtc: '2026-10-01T05:00:00Z', action: '', underlying: '', allowed: false, rule: 'no-answer', reason: 'Timed out after 90 s.' },
+      {
+        atUtc: '2026-10-01T05:10:00Z',
+        action: 'none',
+        underlying: '',
+        option: null,
+        allowed: true,
+        rule: 'ok',
+        reason: 'No clear move: VIX flat, range inside the ATR.',
+      },
+      { atUtc: '2026-10-01T05:00:00Z', action: '', underlying: '', option: null, allowed: false, rule: 'no-answer', reason: 'Timed out after 90 s.' },
     ],
     shadowPositions: 2,
     shadowOpen: 1,
@@ -233,9 +243,9 @@ describe('reading the day', () => {
       refused: 0,
       noAnswer: 0,
       latest: [
-        { atUtc: null, action: 'buy', underlying: 'NIFTY', allowed: false, rule: 'size', reason: 'too big' },
-        { atUtc: null, action: 'none', underlying: '', allowed: false, rule: '', reason: '' },
-        { atUtc: null, action: 'none', underlying: '', allowed: false, rule: '', reason: '' },
+        { atUtc: null, action: 'buy', underlying: 'NIFTY', option: null, allowed: false, rule: 'size', reason: 'too big' },
+        { atUtc: null, action: 'none', underlying: '', option: null, allowed: false, rule: '', reason: '' },
+        { atUtc: null, action: 'none', underlying: '', option: null, allowed: false, rule: '', reason: '' },
       ],
       // An API from before the shadow book sends none of it: no positions, and a net not known (never ₹0).
       shadowPositions: 0,
@@ -249,6 +259,21 @@ describe('reading the day', () => {
     })
     expect(readTodayAiTrader({})?.status).toBe('not known')
     expect(readTodayAiTrader([])).toBeNull()
+  })
+
+  it("names the CE or PE of the AI Trader's buy on the card, and nothing it cannot read as one", () => {
+    const latest = readTodayAiTrader({
+      latest: [
+        { atUtc: '2026-10-01T05:20:00Z', action: 'buy', underlying: 'NIFTY', option: 'ce', rule: 'ok', allowed: true },
+        { atUtc: '2026-10-01T05:10:00Z', action: 'buy', underlying: 'BANKNIFTY', option: 'PE', rule: 'size' },
+        { atUtc: '2026-10-01T05:00:00Z', action: 'buy', underlying: 'SENSEX', option: 'FUT', rule: 'ok' },
+      ],
+    })!.latest
+    expect(latest.map((d) => d.option)).toEqual(['CE', 'PE', null])
+    // The card's title is the AI Trader page's own wording.
+    expect(latest.map((d) => actionText(d))).toEqual(['Buy NIFTY CE', 'Buy BANKNIFTY PE', 'Buy SENSEX'])
+    // An API from before the option was sent: the buy still reads, without it.
+    expect(actionText(readTodayAiTrader({ latest: [{ action: 'buy', underlying: 'NIFTY' }] })!.latest[0])).toBe('Buy NIFTY')
   })
 
   it('keeps an empty attention list empty: that is "nothing needs you"', () => {
