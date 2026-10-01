@@ -43,17 +43,20 @@ import {
   REPLAY_POLL_IDLE_MS,
   readReplayDays,
   readReplayLogs,
+  readReplayQueue,
   readReplaySession,
   readReplayStatus,
   replayPollMs,
 } from './replay'
-import type { ReplayStartBody, ReplayStatus } from './replay'
+import type { ReplayQueueBody, ReplayStartBody, ReplayStatus } from './replay'
 import {
   AI_TRADER_POLL_MS,
+  AI_TRADER_SCOREBOARD_POLL_MS,
   aiTraderDecisionsQuery,
   aiTraderPositionsQuery,
   readAiTraderDecisionsPage,
   readAiTraderDetail,
+  readAiTraderScoreboard,
   readAiTraderShadowBook,
   readAiTraderStatus,
 } from './aiTrader'
@@ -2897,6 +2900,32 @@ export function useStartReplay() {
   })
 }
 
+/**
+ * POST /api/Replay/queue: recorded days to replay one after another with the
+ * AI Trader alone. Answers the queue; the status (and with it the session of
+ * the first day, when it starts at once) is read again.
+ */
+export function useQueueReplay() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (body: ReplayQueueBody) => readReplayQueue(await api.post<unknown>('/api/Replay/queue', body)),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['replay'] })
+    },
+  })
+}
+
+/** DELETE /api/Replay/queue: no further day starts; the day playing now plays on. */
+export function useCancelReplayQueue() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async () => readReplayQueue(await api.delete<unknown>('/api/Replay/queue')),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['replay'] })
+    },
+  })
+}
+
 /** Pause, resume or stop the session. A stop squares its runs off at the replay's prices, so the run lists are read again. */
 export function useReplayControl() {
   const qc = useQueryClient()
@@ -2960,6 +2989,16 @@ export function useAiTraderPositions(filter: AiTraderDecisionFilter, pollMs: num
     queryFn: async () => readAiTraderShadowBook(await api.get<unknown>(`/api/AiTrader/positions?${aiTraderPositionsQuery(filter)}`)),
     enabled: ready,
     refetchInterval: ready ? pollMs : false,
+  })
+}
+
+/** The scoreboard: each replay and live shadow day against the fixed rule, newest first; read every minute. */
+export function useAiTraderScoreboard(enabled = true) {
+  return useQuery({
+    queryKey: ['ai', 'trader', 'scoreboard'],
+    queryFn: async () => readAiTraderScoreboard(await api.get<unknown>('/api/AiTrader/scoreboard?take=60')),
+    enabled,
+    refetchInterval: enabled ? AI_TRADER_SCOREBOARD_POLL_MS : false,
   })
 }
 

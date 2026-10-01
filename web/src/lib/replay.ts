@@ -13,7 +13,10 @@
  *   - the order a start happens in: the recap runs first, then the replay,
  *     and nothing played when any run did not start (launchReplay);
  *   - the words and tones the page puts on a session: the replay clock in
- *     IST, the progress, the minutes a day recorded, the speed note.
+ *     IST, the progress, the minutes a day recorded, the speed note;
+ *   - the queue: recorded days replayed one after another with the AI
+ *     Trader alone, to score it over many days; which day is playing,
+ *     which were played or skipped and why, and how long a day takes.
  *
  * The query hooks live with the others in lib/queries.ts.
  */
@@ -124,6 +127,30 @@ export interface ReplayStatus {
   canStart: boolean
   whyNot: string | null
   session: ReplaySession | null
+  /** The queue of days, running or the last one; null when none was ever queued (or the API is older). */
+  queue?: ReplayQueue | null
+}
+
+/** A queue of recorded days, replayed one after another from the open with the AI Trader alone. */
+export interface ReplayQueue {
+  id: number | null
+  /** yyyy-MM-dd, oldest first: the order they play in. */
+  dates: string[]
+  speed: number | null
+  fromIst: string
+  /** How many of `dates` were started or skipped: the next to play is dates[next]. */
+  next: number
+  /** The replay session of each day that started, in order. */
+  sessions: number[]
+  /** The days that did not start, with why. */
+  skipped: { date: string; reason: string }[]
+  by: string | null
+  createdUtc: string | null
+  /** Set once it is done or cancelled; null while it runs. */
+  endedUtc: string | null
+  note: string | null
+  /** The next day to play; null once it has ended. */
+  nextDate: string | null
 }
 
 // ---------- reading the API ---------------------------------------------------------
@@ -214,6 +241,34 @@ function readRun(r: Record<string, unknown>): ReplayRun | null {
   }
 }
 
+/** "2026-09-22: Nothing recorded" as a day and its reason; the text as the reason when it names no day. */
+export function readSkipped(text: string): { date: string; reason: string } {
+  const m = /^(\d{4}-\d{2}-\d{2})\s*:\s*(.*)$/.exec(text.trim())
+  return m ? { date: m[1], reason: m[2].trim() } : { date: '', reason: text.trim() }
+}
+
+/** The queue, or null when the body is not one (no days). */
+export function readReplayQueue(v: unknown): ReplayQueue | null {
+  if (!record(v)) return null
+  const dates = (Array.isArray(v.dates) ? v.dates : []).map(isoDay).filter((d): d is string => d != null)
+  if (dates.length === 0) return null
+  const next = count(v.next)
+  return {
+    id: num(v.id),
+    dates,
+    speed: num(v.speed),
+    fromIst: words(v.fromIst) || FROM_EARLIEST,
+    next: next == null ? 0 : Math.min(next, dates.length),
+    sessions: (Array.isArray(v.sessions) ? v.sessions : []).filter((id): id is number => num(id) != null && (id as number) > 0),
+    skipped: (Array.isArray(v.skipped) ? v.skipped : []).filter((x): x is string => typeof x === 'string' && x.trim() !== '').map(readSkipped),
+    by: optional(v.by),
+    createdUtc: instant(v.createdUtc),
+    endedUtc: instant(v.endedUtc),
+    note: optional(v.note),
+    nextDate: isoDay(v.nextDate),
+  }
+}
+
 /** One session, or null when the body is not one (no date). */
 export function readReplaySession(v: unknown): ReplaySession | null {
   if (!record(v)) return null
@@ -253,6 +308,7 @@ export function readReplayStatus(body: unknown): ReplayStatus {
     canStart,
     whyNot: canStart ? null : (optional(body.whyNot) ?? 'The API did not say why a replay cannot start now.'),
     session: readReplaySession(body.session),
+    queue: readReplayQueue(body.queue),
   }
 }
 
@@ -277,7 +333,7 @@ export function isEndedState(state: string | null | undefined): boolean {
   return state != null && ENDED_STATES.has(state)
 }
 
-/** How often to read the status, from the last answer. */
+/** How often to read the status, from the last answer. A queue between days is read as often as one idle. */
 export function replayPollMs(status: ReplayStatus | undefined): number {
   return isActiveState(status?.session?.state) ? REPLAY_POLL_ACTIVE_MS : REPLAY_POLL_IDLE_MS
 }
@@ -629,4 +685,134 @@ export async function launchReplay(
   } catch (e) {
     return { ok: false, stage: 'replay', error: errorLine(e), started }
   }
+}
+
+// ---------- the queue -----------------------------------------------------------------
+
+/** The most days one queue may hold (the API's limit). */
+export const QUEUE_MAX_DAYS = 20
+/** A day counts as full when NIFTY has at least this many of its 375 recorded minutes. */
+export const FULL_DAY_MINUTES = MINUTES_WARN_BELOW
+/** The speed a queue starts at. */
+export const QUEUE_DEFAULT_SPEED: ReplaySpeed = 2
+
+/** The POST /api/Replay/queue body. */
+export interface ReplayQueueBody {
+  dates: string[]
+  speed: number
+}
+
+/** A queue that is still running: no further replay or queue can start until it ends. */
+export function isQueueRunning(q: ReplayQueue | null | undefined): boolean {
+  return q != null && q.endedUtc == null
+}
+
+/** Whether a day holds NIFTY's session in full (at least 360 of 375 minutes). */
+export function isFullDay(day: Pick<ReplayDay, 'minutes'>): boolean {
+  const n = day.minutes.NIFTY
+  return n != null && n >= FULL_DAY_MINUTES
+}
+
+/**
+ * How long one day takes, in minutes: the player plays 09:15 to 15:40 at the
+ * speed, plus ten minutes for its start and last checks (as the API reckons
+ * when it decides whether a day fits before the next trading morning).
+ */
+export function queueDayMinutes(speed: number, fromIst = FROM_EARLIEST): number {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(fromIst)
+  const from = m ? Number(m[1]) * 60 + Number(m[2]) : 9 * 60 + 15
+  return Math.round((15 * 60 + 40 - from) / Math.max(1, speed) + 10)
+}
+
+/** "3 h 23 min", "48 min". */
+export function durationText(minutes: number): string {
+  const h = Math.floor(minutes / 60)
+  const m = Math.round(minutes - h * 60)
+  return h > 0 ? `${h} h${m > 0 ? ` ${m} min` : ''}` : `${m} min`
+}
+
+/**
+ * "Select all full days": the full days a queue may take, newest first, at
+ * most QUEUE_MAX_DAYS (the newest when there are more), and only days that
+ * are over (before `today`, IST).
+ */
+export function fullDayDates(days: readonly ReplayDay[], today: string, max = QUEUE_MAX_DAYS): string[] {
+  return days
+    .filter((d) => d.date < today && isFullDay(d))
+    .map((d) => d.date)
+    .sort((a, b) => b.localeCompare(a))
+    .slice(0, max)
+}
+
+/** Why the queue cannot be asked for, in words, or null when it can. */
+export function queueSetupError(dates: readonly string[]): string | null {
+  if (dates.length === 0) return 'Tick at least one recorded day.'
+  if (dates.length > QUEUE_MAX_DAYS) return `At most ${QUEUE_MAX_DAYS} days a queue; ${dates.length} are ticked.`
+  return null
+}
+
+/** The line beside "Queue": what pressing it does and how long it takes. */
+export function queueSummary(dates: readonly string[], speed: number): string {
+  if (dates.length === 0) return ''
+  const sorted = [...dates].sort()
+  const days = sorted.length === 1 ? shortDay(sorted[0]) : `${sorted.length} days, ${shortDay(sorted[0])} to ${shortDay(sorted[sorted.length - 1])}`
+  const each = queueDayMinutes(speed)
+  return `Plays ${days}, oldest first, each from 09:15 at ${speedLabel(speed)} with only the AI Trader deciding along, in shadow. About ${durationText(each)} a day${sorted.length > 1 ? `, ${durationText(each * sorted.length + 1.5 * (sorted.length - 1))} of play in all` : ''}.`
+}
+
+export type QueueDayState = 'played' | 'playing' | 'skipped' | 'queued' | 'not-played'
+
+export interface QueueDay {
+  date: string
+  state: QueueDayState
+  /** The replay session it played in; null for a day that did not start. */
+  sessionId: number | null
+  /** Why it was skipped. */
+  reason: string | null
+}
+
+/**
+ * Each day of the queue and what became of it. The days before `next` were
+ * started (each took the next session id) or skipped (named in `skipped`);
+ * the one whose session is the replay playing now is "playing"; the rest are
+ * queued, or "not played" once the queue has ended.
+ */
+export function queueDays(q: ReplayQueue, session: Pick<ReplaySession, 'id' | 'state'> | null | undefined): QueueDay[] {
+  const skipped = new Map<string, string>()
+  for (const s of q.skipped) if (s.date && !skipped.has(s.date)) skipped.set(s.date, s.reason)
+  const playingId = session && isActiveState(session.state) ? session.id : null
+  let nextSession = 0
+  return q.dates.map((date, i) => {
+    if (i >= q.next) return { date, state: q.endedUtc == null ? 'queued' : 'not-played', sessionId: null, reason: null }
+    if (skipped.has(date)) return { date, state: 'skipped', sessionId: null, reason: skipped.get(date) || null }
+    const sessionId = q.sessions[nextSession++] ?? null
+    return { date, state: sessionId != null && sessionId === playingId ? 'playing' : 'played', sessionId, reason: null }
+  })
+}
+
+const QUEUE_DAY_WORDS: Record<QueueDayState, { label: string; tone: Tone }> = {
+  played: { label: 'Played', tone: 'pos' },
+  playing: { label: 'Playing', tone: 'live' },
+  skipped: { label: 'Skipped', tone: 'warn' },
+  queued: { label: 'Queued', tone: 'neutral' },
+  'not-played': { label: 'Not played', tone: 'neutral' },
+}
+
+export function queueDayLabel(state: QueueDayState): { label: string; tone: Tone } {
+  return QUEUE_DAY_WORDS[state]
+}
+
+/**
+ * Where the queue stands, in a line: "Day 2 of 5 · playing 29 Sep",
+ * "3 of 5 days handled · next 30 Sep", "Ended: Every day was played.".
+ */
+export function queueProgressText(q: ReplayQueue, days: QueueDay[]): string {
+  const total = q.dates.length
+  const playing = days.findIndex((d) => d.state === 'playing')
+  if (q.endedUtc != null) {
+    const played = days.filter((d) => d.state === 'played').length
+    return `${played} of ${total} ${total === 1 ? 'day' : 'days'} played${q.note ? ` · ${q.note}` : ''}`
+  }
+  if (playing >= 0) return `Day ${playing + 1} of ${total} · playing ${shortDay(days[playing].date)}`
+  return `${q.next} of ${total} ${total === 1 ? 'day' : 'days'} done${q.nextDate ? ` · next ${shortDay(q.nextDate)}` : ''}`
 }

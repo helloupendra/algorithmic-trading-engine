@@ -4,6 +4,8 @@ import {
   actionText,
   aiTraderDecisionsQuery,
   aiTraderPositionsQuery,
+  baselineText,
+  beatText,
   confidenceText,
   contractText,
   dayCountsText,
@@ -11,6 +13,7 @@ import {
   jsonBlock,
   lakhText,
   limitsParts,
+  looksSpanText,
   lotsText,
   modeLabel,
   netTone,
@@ -20,10 +23,15 @@ import {
   readAiTraderDecisionsPage,
   readAiTraderDetail,
   readAiTraderPlan,
+  readAiTraderScoreboard,
+  readAiTraderScoreRow,
   readAiTraderShadowBook,
   readAiTraderShadowPosition,
   readAiTraderStatus,
   ruleLabel,
+  sampleNote,
+  scoreKindText,
+  scoreRowAnchor,
   shadowCountsText,
   shadowEnding,
   shadowLastPrice,
@@ -532,5 +540,102 @@ describe('the shadow book', () => {
     expect(netTone(-0.4)).toBe('')
     expect(netTone(-2731.84)).toBe('neg')
     expect(netTone(null)).toBe('')
+  })
+})
+
+describe('the scoreboard', () => {
+  /** GET /api/AiTrader/scoreboard as AiTraderController.Scoreboard sends it. */
+  const board = {
+    rule: 'nifty-trend-1100',
+    ruleText: "At 11:00 IST, NIFTY's 5-minute trend picks the side: …",
+    totals: { days: 2, aiNet: -1840.5, baselineNet: 2210.0, aiBeatBaseline: 1, aiPositiveDays: 1, baselinePositiveDays: 1, trades: 5, charges: 312.4 },
+    rows: [
+      {
+        kind: 'replay',
+        replaySessionId: 23,
+        day: '2026-09-30',
+        firstIst: '09:20',
+        lastIst: '15:00',
+        full: true,
+        looks: 34,
+        actions: 4,
+        noAnswer: 1,
+        positions: 3,
+        open: 0,
+        net: 1356.2,
+        charges: 186.1,
+        baseline: {
+          rule: 'nifty-trend-1100',
+          optionType: 'CE',
+          symbol: 'NSE:NIFTY25O0725300CE',
+          entryIst: '11:00',
+          entryPrice: 104.2,
+          exitIst: '13:41',
+          exitPrice: 156.4,
+          exitReason: 'target',
+          charges: 61.9,
+          net: 3853.1,
+          note: 'Up trend: bought NSE:NIFTY25O0725300CE at 104.2, target at 156.4.',
+        },
+        vsBaseline: -2496.9,
+      },
+      { kind: 'shadow', replaySessionId: null, day: '2026-10-01', firstIst: '10:40', lastIst: '13:10', full: false, looks: 15, actions: 2, noAnswer: 0, positions: 1, open: 1, net: 240, charges: 40, baseline: null, vsBaseline: null },
+    ],
+  }
+
+  it('reads the scoreboard as the controller sends it', () => {
+    const b = readAiTraderScoreboard(board)
+    expect(b.rule).toBe('nifty-trend-1100')
+    expect(b.totals).toEqual(board.totals)
+    expect(b.rows).toHaveLength(2)
+    expect(b.rows[0]).toEqual({ ...board.rows[0], baseline: { ...board.rows[0].baseline } })
+    expect(b.rows[1]).toMatchObject({ kind: 'shadow', full: false, baseline: null, vsBaseline: null })
+  })
+
+  it('refuses a body that is not a scoreboard, and keeps unknown totals unknown', () => {
+    for (const bad of ['<html>', null, [], { totals: board.totals }]) {
+      expect(() => readAiTraderScoreboard(bad)).toThrow(/shape this page cannot read/)
+    }
+    expect(readAiTraderScoreboard({ rows: [] }).totals).toBeNull()
+    expect(readAiTraderScoreboard({ rows: [], totals: { days: 'two', aiNet: '5' } }).totals).toMatchObject({ days: 0, aiNet: null })
+  })
+
+  it('reads a row defensively: full only in as many words, the rule not traded as no side', () => {
+    expect(readAiTraderScoreRow({ day: 'today' })).toBeNull()
+    const r = readAiTraderScoreRow({
+      day: '2026-09-29',
+      replaySessionId: 7,
+      full: 'true',
+      net: 500,
+      baseline: { optionType: '', net: 0, note: 'Flat: EMA 20 and EMA 50 crossed.' },
+    })!
+    expect(r.kind).toBe('replay')
+    expect(r.full).toBe(false)
+    expect(r.baseline).toMatchObject({ optionType: '', net: 0, entryIst: '', exitReason: '' })
+    // The difference is worked out when both nets are known.
+    expect(r.vsBaseline).toBe(500)
+    expect(readAiTraderScoreRow({ day: '2026-09-29', net: 500, baseline: null })!.vsBaseline).toBeNull()
+  })
+
+  it('says each row in a few words', () => {
+    const [replay, live] = readAiTraderScoreboard(board).rows
+    expect(scoreKindText(replay)).toBe('Replay #23')
+    expect(scoreKindText(live)).toBe('Live shadow')
+    expect(looksSpanText(replay)).toBe('09:20–15:00')
+    expect(looksSpanText({ firstIst: '', lastIst: '' })).toBe('')
+    expect(baselineText(replay.baseline)).toBe('Call · target')
+    expect(baselineText({ ...replay.baseline!, optionType: 'PE', exitReason: 'stop' })).toBe('Put · stop')
+    expect(baselineText({ ...replay.baseline!, optionType: '' })).toBe('No trade')
+    expect(baselineText(null)).toBe('Scoring…')
+    expect(beatText({ aiBeatBaseline: 1, days: 2 })).toBe('1 of 2 days')
+    expect(scoreRowAnchor(replay)).toBe('atr-score-r-23')
+    expect(scoreRowAnchor(live)).toBe('atr-score-d-2026-10-01')
+  })
+
+  it('never lets a handful of days read as an edge', () => {
+    expect(sampleNote(8)).toBe('8 days is a small sample; a difference here is not proof of an edge.')
+    expect(sampleNote(1)).toBe('1 day is a small sample; a difference here is not proof of an edge.')
+    expect(sampleNote(0)).toMatch(/No full, scored day yet/)
+    expect(sampleNote(120)).toMatch(/still not proof of an edge/)
   })
 })

@@ -18,7 +18,10 @@
  *   - the shadow book (GET /api/AiTrader/positions): in shadow mode and in a
  *     replay an allowed buy is kept by code as if placed, checked every
  *     minute against its stop and target, and scored after charges. Nothing
- *     in it reaches a broker.
+ *     in it reaches a broker;
+ *   - the scoreboard (GET /api/AiTrader/scoreboard): each replay and live
+ *     shadow day against a fixed rule anyone could follow, after charges,
+ *     with totals over the full days only.
  *
  * The query hooks live with the others in lib/queries.ts. The switch and
  * "Run now" are the agent's own, on AI → Agents (lib/ai.ts).
@@ -759,4 +762,189 @@ export function netTone(v: number | null | undefined): 'pos' | 'neg' | '' {
   if (v == null || !Number.isFinite(v)) return ''
   const r = Math.round(v)
   return r > 0 ? 'pos' : r < 0 ? 'neg' : ''
+}
+
+// ---------- the scoreboard ---------------------------------------------------------------
+
+/** How often the scoreboard is read: the rule is scored one day a minute. */
+export const AI_TRADER_SCOREBOARD_POLL_MS = 60_000
+
+/** The rule on one day: the side it took ('' for no trade), in and out, and its net after charges. */
+export interface AiTraderBaseline {
+  rule: string
+  /** CE, PE, or '' when the rule did not trade that day. */
+  optionType: 'CE' | 'PE' | ''
+  symbol: string
+  entryIst: string
+  entryPrice: number | null
+  exitIst: string
+  exitPrice: number | null
+  exitReason: string
+  charges: number | null
+  /** After charges; null when not sent. */
+  net: number | null
+  note: string
+}
+
+/** One replay ("replay") or live shadow day ("shadow"). */
+export interface AiTraderScoreRow {
+  kind: 'replay' | 'shadow' | string
+  replaySessionId: number | null
+  day: string | null
+  firstIst: string
+  lastIst: string
+  /** Its looks span 09:30–14:30: only such days count in the totals. */
+  full: boolean
+  looks: number
+  actions: number
+  noAnswer: number
+  positions: number
+  open: number
+  /** The AI's shadow book, after charges; null when not sent. */
+  net: number | null
+  charges: number | null
+  /** Null while the rule is being scored for that day. */
+  baseline: AiTraderBaseline | null
+  /** The AI's net less the rule's; null until both are known. */
+  vsBaseline: number | null
+}
+
+/** Over the full, scored days only. */
+export interface AiTraderScoreTotals {
+  days: number
+  aiNet: number | null
+  baselineNet: number | null
+  aiBeatBaseline: number
+  aiPositiveDays: number
+  baselinePositiveDays: number
+  trades: number
+  charges: number | null
+}
+
+export interface AiTraderScoreboard {
+  rule: string
+  ruleText: string
+  /** Null when the body sent none: not known, never all zeros. */
+  totals: AiTraderScoreTotals | null
+  /** Newest day first. */
+  rows: AiTraderScoreRow[]
+}
+
+function readBaseline(v: unknown): AiTraderBaseline | null {
+  if (!record(v)) return null
+  const side = words(v.optionType).toUpperCase()
+  return {
+    rule: words(v.rule),
+    optionType: side === 'CE' || side === 'PE' ? side : '',
+    symbol: words(v.symbol),
+    entryIst: hm(v.entryIst) ?? '',
+    entryPrice: limit(v.entryPrice),
+    exitIst: hm(v.exitIst) ?? '',
+    exitPrice: limit(v.exitPrice),
+    exitReason: words(v.exitReason).toLowerCase(),
+    charges: limit(v.charges),
+    net: num(v.net),
+    note: words(v.note),
+  }
+}
+
+/** One scoreboard row, or null when it names no day. */
+export function readAiTraderScoreRow(v: unknown): AiTraderScoreRow | null {
+  if (!record(v)) return null
+  const day = isoDay(v.day)
+  if (!day) return null
+  const kind = words(v.kind).toLowerCase()
+  const baseline = readBaseline(v.baseline)
+  const net = num(v.net)
+  const vs = num(v.vsBaseline)
+  return {
+    kind: kind || (id(v.replaySessionId) != null ? 'replay' : 'shadow'),
+    replaySessionId: id(v.replaySessionId),
+    day,
+    firstIst: hm(v.firstIst) ?? '',
+    lastIst: hm(v.lastIst) ?? '',
+    full: v.full === true,
+    looks: count(v.looks),
+    actions: count(v.actions),
+    noAnswer: count(v.noAnswer),
+    positions: count(v.positions),
+    open: count(v.open),
+    net,
+    charges: limit(v.charges),
+    baseline,
+    // Worked out when the API left it out but both nets are known; never without the rule's net.
+    vsBaseline: vs ?? (net != null && baseline?.net != null ? net - baseline.net : null),
+  }
+}
+
+/**
+ * GET /api/AiTrader/scoreboard. Throws for a body that is not a scoreboard,
+ * so the page says it could not be read rather than drawing "0 days".
+ */
+export function readAiTraderScoreboard(raw: unknown): AiTraderScoreboard {
+  if (!record(raw) || !Array.isArray(raw.rows)) {
+    throw new Error("The AI Trader's scoreboard came back in a shape this page cannot read. Is the API build current?")
+  }
+  const t = raw.totals
+  return {
+    rule: words(raw.rule),
+    ruleText: words(raw.ruleText),
+    totals: record(t)
+      ? {
+          days: count(t.days),
+          aiNet: num(t.aiNet),
+          baselineNet: num(t.baselineNet),
+          aiBeatBaseline: count(t.aiBeatBaseline),
+          aiPositiveDays: count(t.aiPositiveDays),
+          baselinePositiveDays: count(t.baselinePositiveDays),
+          trades: count(t.trades),
+          charges: limit(t.charges),
+        }
+      : null,
+    rows: raw.rows.map(readAiTraderScoreRow).filter((r): r is AiTraderScoreRow => r != null),
+  }
+}
+
+/** The page anchor of a scoreboard row: a replay's by its id, a live day's by its date. */
+export function scoreRowAnchor(r: Pick<AiTraderScoreRow, 'replaySessionId' | 'day'>): string {
+  return r.replaySessionId != null ? `atr-score-r-${r.replaySessionId}` : `atr-score-d-${r.day ?? ''}`
+}
+
+/** "Replay #12", "Live shadow". */
+export function scoreKindText(r: Pick<AiTraderScoreRow, 'kind' | 'replaySessionId'>): string {
+  if (r.kind === 'replay') return r.replaySessionId != null ? `Replay #${r.replaySessionId}` : 'Replay'
+  if (r.kind === 'shadow') return 'Live shadow'
+  return r.kind ? r.kind.charAt(0).toUpperCase() + r.kind.slice(1) : '—'
+}
+
+/** "09:20–15:00"; '' when neither end is known. */
+export function looksSpanText(r: Pick<AiTraderScoreRow, 'firstIst' | 'lastIst'>): string {
+  if (!r.firstIst && !r.lastIst) return ''
+  return `${r.firstIst || '?'}–${r.lastIst || '?'}`
+}
+
+const RULE_ENDINGS: Record<string, string> = { stop: 'stop', target: 'target', close: 'close', exit: 'exit' }
+
+/**
+ * What the rule did that day, in a few words: "Call · target", "Put · stop",
+ * "No trade", or "Scoring…" while it has not been scored yet.
+ */
+export function baselineText(b: AiTraderBaseline | null): string {
+  if (!b) return 'Scoring…'
+  if (b.optionType === '') return 'No trade'
+  const side = b.optionType === 'CE' ? 'Call' : 'Put'
+  const end = RULE_ENDINGS[b.exitReason] ?? b.exitReason.replace(/[-_]+/g, ' ')
+  return end ? `${side} · ${end}` : side
+}
+
+/** "3 of 8 days". */
+export function beatText(t: Pick<AiTraderScoreTotals, 'aiBeatBaseline' | 'days'>): string {
+  return `${t.aiBeatBaseline} of ${t.days} ${t.days === 1 ? 'day' : 'days'}`
+}
+
+/** The honest line under the totals: a handful of days proves nothing. */
+export function sampleNote(days: number): string {
+  if (days <= 0) return 'No full, scored day yet: the totals count days whose looks span 09:30–14:30 once the rule is scored for them.'
+  if (days < 60) return `${days} ${days === 1 ? 'day is' : 'days is'} a small sample; a difference here is not proof of an edge.`
+  return `A difference over ${days} days is still not proof of an edge until it is tested against chance.`
 }

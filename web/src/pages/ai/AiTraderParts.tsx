@@ -8,7 +8,8 @@
  *
  * And its shadow book, a day's or a replay's: the buys code kept as if
  * placed, each with its entry, stop and target, its mark or exit, how it
- * ended and its net after charges.
+ * ended and its net after charges; and its scoreboard, each replay and live
+ * shadow day against a fixed rule, with totals over the full days only.
  *
  * Read-only. The words come from lib/aiTrader.ts, so every page says a
  * decision the same way.
@@ -16,16 +17,23 @@
 
 import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
+import { useLocation } from 'react-router-dom'
 import {
   actionText,
+  baselineText,
+  beatText,
   confidenceText,
   contractText,
   jsonBlock,
+  looksSpanText,
   lotsText,
   modeLabel,
   netTone,
   placedText,
   planFacts,
+  sampleNote,
+  scoreKindText,
+  scoreRowAnchor,
   shadowCountsText,
   shadowEnding,
   shadowLastPrice,
@@ -33,7 +41,8 @@ import {
   verdictOf,
 } from '../../lib/aiTrader'
 import type { AiTraderDecision, AiTraderDecisionFilter, AiTraderShadowPosition } from '../../lib/aiTrader'
-import { useAiTraderDecision, useAiTraderDecisions, useAiTraderPositions } from '../../lib/queries'
+import { useAiTraderDecision, useAiTraderDecisions, useAiTraderPositions, useAiTraderScoreboard } from '../../lib/queries'
+import { shortDay } from '../../lib/replay'
 import { formatDateTime, formatInrSigned, formatInrWhole, formatPrice } from '../../lib/format'
 import { EmptyState, InlineError, Loading } from '../../components/ui'
 import { CallLink, ModelLabel } from './parts'
@@ -409,6 +418,184 @@ export function AiTraderShadowBook({
                         </span>
                         <span>
                           {last.kind === 'mark' ? 'mark' : 'exit'} <span className="mono">{formatPrice(last.price)}</span>
+                        </span>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            </>
+          )}
+        </>
+      )}
+    </section>
+  )
+}
+
+// ---------- the scoreboard -----------------------------------------------------------------
+
+function Signed({ value }: { value: number | null }) {
+  return <span className={`atr-book__net ${netTone(value)}`}>{formatInrSigned(value)}</span>
+}
+
+function Partial() {
+  return (
+    <span className="atr-chip" title="Not in the totals: its looks did not span 09:30–14:30.">
+      partial
+    </span>
+  )
+}
+
+/**
+ * The scoreboard: its shadow book against a fixed rule anyone could follow,
+ * each replay and live shadow day, newest first, after charges. The totals
+ * count only full days whose rule result is scored, and say plainly that a
+ * handful of days proves nothing.
+ */
+export function AiTraderScoreboard() {
+  const q = useAiTraderScoreboard()
+  const { hash } = useLocation()
+  const b = q.data
+  const t = b?.totals ?? null
+  return (
+    <section id="ai-trader-scoreboard" className="atr-book atr-score atr-anchor" aria-label="Scoreboard">
+      <h4 className="atr-book__h">
+        Scoreboard <span className="atr-book__sum">its shadow book against a fixed rule, day by day, after charges</span>
+      </h4>
+      {q.isPending ? (
+        <Loading label="Reading the scoreboard…" />
+      ) : !b ? (
+        <InlineError error={q.error} />
+      ) : (
+        <>
+          {q.isError && (
+            <p className="small-note warn ai-flush" role="status">
+              The last read failed: showing what was read before.
+            </p>
+          )}
+          {b.ruleText && (
+            <p className="atr-book__how">
+              <b>The rule</b>
+              {b.rule ? <span className="mono"> ({b.rule})</span> : null}: {b.ruleText} Doing nothing scores ₹0.
+            </p>
+          )}
+          {t ? (
+            <>
+              <dl className="atr-score__totals">
+                <div>
+                  <dt>AI net</dt>
+                  <dd>
+                    <Signed value={t.aiNet} />
+                  </dd>
+                </div>
+                <div>
+                  <dt>Rule net</dt>
+                  <dd>
+                    <Signed value={t.baselineNet} />
+                  </dd>
+                </div>
+                <div>
+                  <dt>AI beat the rule</dt>
+                  <dd>{beatText(t)}</dd>
+                </div>
+                <div>
+                  <dt>Days in profit</dt>
+                  <dd>
+                    AI {t.aiPositiveDays} · rule {t.baselinePositiveDays}
+                  </dd>
+                </div>
+                <div>
+                  <dt>AI trades</dt>
+                  <dd>{t.trades}</dd>
+                </div>
+                <div>
+                  <dt>AI charges</dt>
+                  <dd>{formatInrWhole(t.charges)}</dd>
+                </div>
+              </dl>
+              <p className="atr-book__how">
+                {sampleNote(t.days)} The totals count only full days (looks from 09:30 or earlier to 14:30 or later) whose rule result is
+                scored; nets are after charges.
+              </p>
+            </>
+          ) : (
+            <p className="small-note warn ai-flush">The totals did not come back from the API, so they are not known.</p>
+          )}
+          {b.rows.length === 0 ? (
+            <p className="atr-none">No replay or live shadow day yet. Queue recorded days with the AI Trader on Data → Replay.</p>
+          ) : (
+            <>
+              <div className="tablewrap atr-book__wide">
+                <table className="table atr-score__table">
+                  <thead>
+                    <tr>
+                      <th>Day</th>
+                      <th>Kind</th>
+                      <th>Looks</th>
+                      <th className="r">AI trades</th>
+                      <th className="r">AI net</th>
+                      <th>Rule</th>
+                      <th className="r">Rule net</th>
+                      <th className="r">Difference</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {b.rows.map((r) => {
+                      const anchor = scoreRowAnchor(r)
+                      return (
+                        <tr key={anchor} id={anchor} className={`${r.full ? '' : 'atr-score__partial'}${hash === `#${anchor}` ? ' row--selected' : ''}`}>
+                          <td className="atr-book__time">{r.day ? shortDay(r.day) : '—'}</td>
+                          <td>{scoreKindText(r)}</td>
+                          <td>
+                            <span className="atr-book__time">{looksSpanText(r) || '—'}</span> <span className="faint">· {r.looks}</span>{' '}
+                            {!r.full && <Partial />}
+                          </td>
+                          <td className="r">
+                            {r.positions}
+                            {r.open > 0 && <span className="faint"> ({r.open} open)</span>}
+                          </td>
+                          <td className="r">
+                            <Signed value={r.net} />
+                          </td>
+                          <td title={r.baseline?.note || undefined}>
+                            <span className={r.baseline ? '' : 'faint'}>{baselineText(r.baseline)}</span>
+                          </td>
+                          <td className="r">{r.baseline ? <Signed value={r.baseline.net} /> : <span className="faint">—</span>}</td>
+                          <td className="r">{r.vsBaseline != null ? <Signed value={r.vsBaseline} /> : <span className="faint">—</span>}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <ul className="atr-bl">
+                {b.rows.map((r) => {
+                  const anchor = scoreRowAnchor(r)
+                  return (
+                    <li key={anchor} className={`atr-bl__row${r.full ? '' : ' atr-score__partial'}`}>
+                      <div className="atr-bl__head">
+                        <span className="atr-book__contract">{r.day ? shortDay(r.day) : '—'}</span>
+                        <span className="faint">{scoreKindText(r)}</span>
+                        {!r.full && <Partial />}
+                        <span className="atr-score__diff" title="The AI's net less the rule's, after charges">
+                          {r.vsBaseline != null ? <Signed value={r.vsBaseline} /> : <span className="faint">—</span>}
+                        </span>
+                      </div>
+                      <div className="atr-bl__meta">
+                        <span>
+                          AI <Signed value={r.net} /> · {r.positions} {r.positions === 1 ? 'trade' : 'trades'}
+                        </span>
+                        <span title={r.baseline?.note || undefined}>
+                          rule: {baselineText(r.baseline)}
+                          {r.baseline && (
+                            <>
+                              {' '}
+                              <Signed value={r.baseline.net} />
+                            </>
+                          )}
+                        </span>
+                        <span>
+                          looks {looksSpanText(r) || '—'} · {r.looks}
                         </span>
                       </div>
                     </li>
