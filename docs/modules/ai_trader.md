@@ -104,10 +104,12 @@ The agent scores one missing day a minute, newest first, never in a trading day'
 is logged and tried again an hour later; the days before it are scored meanwhile. A day the rule does not trade is
 kept at ₹0 with why. Doing nothing scores ₹0 too.
 
-`GET /api/AiTrader/scoreboard` lists each replay and live shadow day: its looks, positions, net after charges, the
-baseline's net, and the difference. The totals count only full days (looks from 09:30 or earlier to 14:30 or later)
-whose baseline is scored: the AI's net and the rule's, the days the AI beat the rule, and the days each made money.
-A day replayed more than once counts each time; the rule's result for that day is the same each time.
+`GET /api/AiTrader/scoreboard` lists each replay and live shadow day (a row), newest first: its looks, positions, net
+after charges, the baseline's net, and the difference. `take` (default 60) limits only the rows listed; `rowsTotal`
+says how many there are. The totals are over every full row, listed or not (looks from 09:30 or earlier to 14:30 or
+later), whose baseline is scored: the AI's net and the rule's, the rows the AI beat the rule on, and the rows each made
+money on. The totals' `days` counts rows, not dates: a day replayed more than once counts each time, against the same
+rule result each time.
 
 ## Daily digest
 
