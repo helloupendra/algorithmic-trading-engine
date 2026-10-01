@@ -308,7 +308,7 @@ A good report is never overwritten by a later failure. Each report links to its 
 
 | Agent | Due | Input | Output |
 | --- | --- | --- | --- |
-| Trade Reviewer (judge) | A stopped run from the last two days, 10 minutes after it stopped and after `Ai:ReviewAfterIst` (15:45) on its day. So NSE runs after 15:45, MCX runs after 23:30. Manual books and alert runs are skipped. | The run's `get_run` summary and its spec, handed over up front. It can read more with `get_run`, `get_strategy_spec`, `get_quotes` and `get_option_chain_summary`. | Verdict (followed / deviated / unclear), what was kept and what was not, stale-quote fills, market context, one thing worth testing, a journal |
+| Trade Reviewer (judge) | A stopped run from the last two days, 10 minutes after it stopped and after `Ai:ReviewAfterIst` (15:45) on its day. So NSE runs after 15:45, MCX runs after MCX closes (23:30, or 23:55 from November to March). Manual books and alert runs are skipped. The market it is handed for the run's day is that exchange's session in the calendar, MCX's winter close and special sessions included. | The run's `get_run` summary and its spec, handed over up front. It can read more with `get_run`, `get_strategy_spec`, `get_quotes` and `get_option_chain_summary`. | Verdict (followed / deviated / unclear), what was kept and what was not, stale-quote fills, market context, one thing worth testing, a journal |
 | News Analyst (extract) | Every `Ai:NewsEveryMinutes` (10). A batch of `Ai:NewsBatchSize` (8) items it has not read, filings first, from the last `Ai:NewsLookbackHours` (24) by publication time; never the 2020 backfills. | The items' text | One record per item: event, direction, symbols, numbers with quotes, confidence |
 | Incident Explainer (analyst) | A live incident of medium or worse, first seen in the last day | The incident, its evidence masked. It can read with `get_incidents`, `get_latest_checkup`, `get_runs`, `get_open_positions` and `get_quotes`. | What happened, likely why, what to do, urgency |
 
@@ -338,7 +338,7 @@ When it goes:
   has been squared off.
 - While the Trade Reviewer is on, it also waits for the reviews still owed, a failed one with tries left included, for
   at most two hours; past that it says how many are still owed. A review written after the digest, such as an MCX
-  run's after 23:30, goes in the next day's.
+  run's after the MCX close, goes in the next day's.
 - On a day with no NSE session (the exchange calendar, not the weekday), only if the AI Trader looked that day.
 - A section with nothing to say is left out; with nothing at all, nothing is sent.
 

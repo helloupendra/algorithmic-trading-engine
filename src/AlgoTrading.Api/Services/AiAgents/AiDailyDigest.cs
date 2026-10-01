@@ -21,7 +21,7 @@ namespace AlgoTrading.Api.Services.AiAgents;
 /// Due after the NSE close and <see cref="AiSettings.ReviewAfterIst"/> (15:45), by when the AI Trader's shadow
 /// book has been squared off at 15:30. While the Trade Reviewer is on it also waits for the reviews it still owes,
 /// a failed one with tries left included, for at most <see cref="ReviewWait"/>. A review written after the digest
-/// (an MCX run's, after 23:30) goes in the next one.
+/// (an MCX run's, after the MCX close) goes in the next one.
 /// </para>
 /// <para>
 /// Once a day: the time it went is kept in system settings before it is sent, so neither a restart nor the next
