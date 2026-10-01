@@ -164,7 +164,7 @@ public sealed class AiTraderAgent(
             .Where(d => d.ClockUtc < clockUtc && (replaySessionId == null ? d.Day == day && d.ReplaySessionId == null : d.ReplaySessionId == replaySessionId))
             .OrderByDescending(d => d.ClockUtc).ThenByDescending(d => d.Id).Take(LastLooksShown)
             .ToListAsync(cancellationToken);
-        string text = brief.Text + "\n" + AiTraderBookReader.Describe(book, Rules, mode) + "\n" + LastLooks(earlier)
+        string text = brief.Text + "\n" + StopFloors(brief, replay) + AiTraderBookReader.Describe(book, Rules, mode) + "\n" + LastLooks(earlier)
                       + "\nDecide now: one JSON object.";
 
         var row = new AiTraderDecision
@@ -322,6 +322,41 @@ public sealed class AiTraderAgent(
         return price is > 0 && lot > 0
             ? new AiTraderContract(leg.Symbol, plan.Underlying, plan.Option!, strike, chain.ExpiryDate, price.Value, lot)
             : null;
+    }
+
+    /// <summary>
+    /// The lowest stop each option at ATM±1 may carry, at the ask a buy would be priced at now (<see cref="Resolve"/>:
+    /// in a replay the replay's own quote, not the recorded chain the brief shows), rounded up to the 0.05 tick so
+    /// a stop at the number shown passes. In the 30 Sep replay stops a few paise under floors the brief never
+    /// showed were refused twice. Code never moves the model's stop; it says where the line is.
+    /// </summary>
+    public string StopFloors(MarketBrief brief, bool replay)
+    {
+        decimal keep = 1 - Rules.MaxStopFraction;
+        var lines = new List<string>();
+        foreach (var (underlying, _, _) in MarketBriefBuilder.Indices)
+        {
+            if (!brief.Chains.ContainsKey(underlying)) continue;
+            var strikes = new List<string>();
+            foreach (var at in new[] { "ATM-1", "ATM", "ATM+1" })
+            {
+                var legs = new[] { "CE", "PE" }
+                    .Select(o => Resolve(new AiTraderPlan(AiTraderPlan.Buy, underlying, o, at, 1, null, null, null, null, null, string.Empty, null), brief, replay))
+                    .OfType<AiTraderContract>()
+                    .ToList();
+                if (legs.Count == 0) continue;
+                strikes.Add(string.Create(CultureInfo.InvariantCulture, $"{at} {legs[0].Strike:0} ")
+                            + string.Join(", ", legs.Select(c => string.Create(CultureInfo.InvariantCulture,
+                                $"{c.OptionType} ask {c.Ask:0.##} → stop ≥ {Math.Ceiling(c.Ask * keep * 20m) / 20m:0.##}"))));
+            }
+
+            if (strikes.Count > 0) lines.Add($"{underlying}: {string.Join("; ", strikes)}");
+        }
+
+        return lines.Count == 0
+            ? string.Empty
+            : string.Create(CultureInfo.InvariantCulture, $"STOP FLOORS (a buy's stop must be at least {keep * 100:0}% of the ask it is bought at; at the asks now)\n")
+              + string.Join('\n', lines) + "\n\n";
     }
 
     private async Task<AiTraderDecision> SaveAsync(AiTraderDecision row, CancellationToken cancellationToken)

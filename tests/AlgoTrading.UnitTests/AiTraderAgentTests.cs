@@ -139,6 +139,43 @@ public class AiTraderAgentTests
         Assert.Null(agent.Resolve(plan with { Strike = "ATM+5" }, brief, replay: false));   // not on the recorded chain
     }
 
+    [Fact]
+    public async Task The_brief_states_the_lowest_stop_each_atm_option_may_carry_at_the_ask_it_would_be_bought_at()
+    {
+        var (agent, ai, _, _) = Agent();
+        ai.Provider.On(Judge1, Answer("""{"action":"none","reason":"Waiting.","confidence":0.3}"""));
+
+        var row = await agent.DecideAsync(Eleven, AiTraderModes.Shadow, null, default);
+
+        // 60% of the ask, up to the 0.05 tick: a stop at the number shown passes the 40% rule.
+        Assert.Contains("STOP FLOORS (a buy's stop must be at least 60% of the ask it is bought at", row.Brief);
+        Assert.Contains("NIFTY: ATM-1 22600 CE ask 140 → stop ≥ 84, PE ask 81 → stop ≥ 48.6; ATM 22650 CE ask 120 → stop ≥ 72, PE ask 98 → stop ≥ 58.8; " +
+                        "ATM+1 22700 CE ask 96 → stop ≥ 57.6, PE ask 121 → stop ≥ 72.6", row.Brief);
+    }
+
+    [Fact]
+    public async Task In_a_replay_the_stop_floor_is_taken_from_the_replays_own_quote_as_the_buy_is()
+    {
+        // 30 Sep replay: stops of ₹640 and ₹600 refused against floors of ₹640.29 and ₹603.48 the brief never showed.
+        var replayed = new DateOnly(2026, 9, 30);
+        var clock = IstTime.FromIst(new DateTime(2026, 9, 30, 11, 0, 5));
+        var book = new MarketReplayBook();
+        book.Begin(replayed);
+        // The recorded chain's ask is 120; the replay's quote, which a buy is priced at, is 167.15.
+        book.Apply([new UpsertLiveTickRequest { Symbol = "NSE:NIFTY26O0622650CE", LastTradedPrice = 166m, BidPrice = 165m, AskPrice = 167.15m, ExchangeTimestampUtc = clock }]);
+        var (agent, ai, _, _) = Agent(book);
+        string Buy(string stop) => $$"""{"action":"buy","underlying":"NIFTY","option":"CE","strike":"ATM","lots":1,"stopLoss":{{stop}},"target":300,"reason":"Trend.","confidence":0.5}""";
+        ai.Provider.On(Judge1, Answer(Buy("100")), Answer(Buy("100.3")));
+
+        var under = await agent.DecideAsync(clock, AiTraderModes.Replay, 4, default);
+        var at = await agent.DecideAsync(clock.AddMinutes(10), AiTraderModes.Replay, 4, default);
+
+        Assert.Contains("ATM 22650 CE ask 167.15 → stop ≥ 100.3,", under.Brief);
+        // A stop under the floor shown is refused; the floor shown is one the rules accept.
+        Assert.Equal((false, "stop"), (under.Allowed, under.Rule));
+        Assert.Equal((true, "ok"), (at.Allowed, at.Rule));
+    }
+
     // ---------- helpers ----------
 
     internal static (AiTraderAgent Agent, Services Ai, FakeBriefs Briefs, FakeQuotes Quotes) Agent(IMarketReplayBook? book = null, ReplaySessionState? session = null)
