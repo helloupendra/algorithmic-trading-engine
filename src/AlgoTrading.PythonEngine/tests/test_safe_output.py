@@ -19,6 +19,7 @@ import _bootstrap  # noqa: F401
 
 from core.heartbeat import run_forever
 from core.safe_output import (
+    PIPE_MARKER,
     LineLog,
     SafeStream,
     default_log_path,
@@ -393,11 +394,107 @@ class PinnedLogNameTests(unittest.TestCase):
         env = dict(os.environ, ENGINE_LOG_NAME="ingestor", PYTHONUNBUFFERED="1")
         child = subprocess.Popen([sys.executable, "-c", script], env=env,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        out, _ = child.communicate(timeout=60)
+        out, err = child.communicate(timeout=60)
 
-        self.assertEqual("[fyers] connected\n", out)
+        # Real pipes, as the API reads them: each marked once, ahead of the tee.
+        self.assertEqual(f"{PIPE_MARKER}\n[fyers] connected\n", out)
+        self.assertEqual(f"{PIPE_MARKER}\n", err)
         path = os.path.join(self.tmp.name, f"ingestor-{child.pid}.log")
         self.assertEqual([("|", "[fyers] connected")], stamped(path))
+
+
+class TerminalStream(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+class PipeMarkerTests(unittest.TestCase):
+    """
+    PIPE_MARKER: where a launched daemon's pipe stops being the only copy of
+    its lines. The API used to guess by whether the log file existed when it
+    read a pipe line, and on a slow CI machine it dropped a line printed
+    before the tee because it read it only after the file appeared. The
+    marker puts the boundary in the pipe itself, in order.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.saved = (sys.stdout, sys.stderr)
+
+    def tearDown(self) -> None:
+        for stream in (sys.stdout, sys.stderr):
+            if isinstance(stream, SafeStream):
+                stream.close()
+        sys.stdout, sys.stderr = self.saved
+        self.tmp.cleanup()
+
+    def install_pinned(self, name: str = "dhan-feed") -> str:
+        from pathlib import Path
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"ENGINE_LOG_NAME": name}), \
+                mock.patch("core.safe_output.ENGINE_LOG_DIR", Path(self.tmp.name)):
+            return install_safe_stdio(name="ignored")
+
+    def test_each_pipe_is_marked_once_between_what_came_before_and_what_the_file_holds(self) -> None:
+        out, err = io.StringIO(), io.StringIO()
+        sys.stdout, sys.stderr = out, err
+        print("ModuleNotFoundError before the tee", file=sys.stderr)
+
+        path = self.install_pinned()
+        print("[dhan] STARTING LIVE FEED")
+        print("[dhan] no ticks for 60s", file=sys.stderr)
+        # Installing again (a script renaming its log) marks nothing again.
+        self.install_pinned()
+        print("[dhan] stopping")
+
+        self.assertEqual(f"{PIPE_MARKER}\n[dhan] STARTING LIVE FEED\n[dhan] stopping\n", out.getvalue())
+        self.assertEqual(f"ModuleNotFoundError before the tee\n{PIPE_MARKER}\n[dhan] no ticks for 60s\n",
+                         err.getvalue())
+        # The marker is for the pipe reader only; the file holds what is below it.
+        self.assertEqual([("|", "[dhan] STARTING LIVE FEED"), ("!", "[dhan] no ticks for 60s"),
+                          ("|", "[dhan] stopping")], stamped(path))
+
+    def test_the_marker_is_one_ascii_line_no_script_would_print(self) -> None:
+        # ASCII so a Windows API reading the pipe in any code page decodes it
+        # the same; one line so its reader sees it as one.
+        self.assertTrue(PIPE_MARKER.isascii())
+        self.assertTrue(PIPE_MARKER.startswith("\x1e"))
+        self.assertNotIn("\n", PIPE_MARKER)
+        self.assertNotIn("\r", PIPE_MARKER)
+
+    def test_a_runner_keeping_its_own_log_gets_no_marker(self) -> None:
+        # The API logs every line of a runner's pipes as it stands, and its
+        # stderr becomes the run's last error: a marker there would be noise.
+        out, err = io.StringIO(), io.StringIO()
+        sys.stdout, sys.stderr = out, err
+        env = {k: v for k, v in os.environ.items() if k != "ENGINE_LOG_NAME"}
+        from unittest import mock
+        with mock.patch.dict(os.environ, env, clear=True):
+            install_safe_stdio(os.path.join(self.tmp.name, "runner-215-1.log"), tee=True)
+        print("[CONFIG] run 215")
+        print("WARN: could not read the lot size", file=sys.stderr)
+
+        self.assertEqual("[CONFIG] run 215\n", out.getvalue())
+        self.assertEqual("WARN: could not read the lot size\n", err.getvalue())
+
+    def test_a_terminal_gets_no_marker(self) -> None:
+        out, err = TerminalStream(), TerminalStream()
+        sys.stdout, sys.stderr = out, err
+        self.install_pinned()
+        print("[dhan] STARTING LIVE FEED")
+        self.assertEqual("[dhan] STARTING LIVE FEED\n", out.getvalue())
+        self.assertEqual("", err.getvalue())
+
+    def test_a_pipe_already_broken_does_not_fail_the_install(self) -> None:
+        out, err = BrokenStream(), BrokenStream()
+        out.broken = err.broken = True
+        sys.stdout, sys.stderr = out, err
+
+        path = self.install_pinned()
+        print("[dhan] STARTING LIVE FEED")
+
+        self.assertTrue(is_installed())
+        self.assertIn(("|", "[dhan] STARTING LIVE FEED"), stamped(path))
 
 
 class ExitLineTests(unittest.TestCase):

@@ -93,8 +93,10 @@ public class DaemonOutputTests : IDisposable
         Assert.Single(Lines(), l => l.Contains("heartbeat stale", StringComparison.Ordinal));
     }
 
-    [Fact]
-    public async Task A_launched_daemon_is_logged_once_from_its_file_and_its_pipes_only_before_the_file_exists()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_launched_daemon_is_logged_once_from_its_file_and_its_pipes_only_before_its_log_began(bool readerFallsBehind)
     {
         // On Windows a virtualenv's python.exe is a launcher that starts the
         // interpreter as a child, so the pid in the log's name is not the one
@@ -106,7 +108,9 @@ public class DaemonOutputTests : IDisposable
 
         // A real daemon on the real core/safe_output.py: one line before the
         // log is installed (an import error would look like this), then
-        // output the API reads only from the file.
+        // output the API reads only from the file. Falling behind, the API
+        // reads the early line only once the file holds the later ones: what
+        // CI on macOS did, when the line was dropped as a duplicate.
         Directory.CreateDirectory(EngineDirectory);
         File.WriteAllText(Path.Combine(EngineDirectory, "daemon.py"), $$"""
             import sys, time
@@ -123,6 +127,10 @@ public class DaemonOutputTests : IDisposable
             print("[test] stopping", flush=True)
             """);
         var daemon = Daemon(python);
+        if (readerFallsBehind)
+        {
+            daemon.ReadPipesAfter = pid => Until(() => FileHolds(daemon.LogPathFor(pid)!, "[test] no ticks for 60s"), seconds: 20);
+        }
 
         var started = await daemon.StartAsync();
         Assert.True(started.Started, started.Message);
@@ -140,7 +148,23 @@ public class DaemonOutputTests : IDisposable
         Assert.Single(lines, l => l == "[test feed] [test] STARTING LIVE FEED");
         Assert.Single(lines, l => l == "[test feed:err] [test] no ticks for 60s");
         Assert.Single(lines, l => l == "[test feed] [test] stopping");
+        Assert.DoesNotContain(lines, l => l.Contains('\u001e'));
         Assert.Contains(daemon.GetLogs(50), l => l.EndsWith("| [test] STARTING LIVE FEED", StringComparison.Ordinal));
+        Assert.DoesNotContain(daemon.GetLogs(50), l => l.Contains('\u001e'));
+    }
+
+    [Fact]
+    public void The_pipe_marker_is_the_one_safe_output_writes()
+    {
+        // Two copies of one string, in two languages: a difference would make
+        // every launched daemon look like one from before the marker.
+        var engine = RealEngineDirectory();
+        Assert.NotNull(engine);
+        var source = File.ReadAllText(Path.Combine(engine!, "core", "safe_output.py"));
+        var match = System.Text.RegularExpressions.Regex.Match(source, "^PIPE_MARKER = \"(?<text>[^\"]*)\"\r?$",
+            System.Text.RegularExpressions.RegexOptions.Multiline);
+        Assert.True(match.Success, "PIPE_MARKER not found in core/safe_output.py");
+        Assert.Equal(DaemonPipes.TeeMarker, match.Groups["text"].Value.Replace("\\x1e", "\u001e", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -172,6 +196,20 @@ public class DaemonOutputTests : IDisposable
         }
     }
 
+    private static bool FileHolds(string path, string text)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream);
+            return reader.ReadToEnd().Contains(text, StringComparison.Ordinal);
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>A daemon recognised by "sleep", so a sleeper stands in for an adopted instance.</summary>
     private sealed class TestDaemon : PythonDaemonSupervisor
     {
@@ -185,6 +223,25 @@ public class DaemonOutputTests : IDisposable
                     LogName: LogName),
                 engine, scopes, logger)
         {
+        }
+
+        /// <summary>When set, the pipes are read only once this has finished for the launched pid.</summary>
+        public Func<int, Task>? ReadPipesAfter { get; set; }
+
+        protected override void BeginReadingPipes(Process process)
+        {
+            if (ReadPipesAfter is not { } wait)
+            {
+                base.BeginReadingPipes(process);
+                return;
+            }
+
+            var pid = process.Id;
+            _ = Task.Run(async () =>
+            {
+                await wait(pid);
+                base.BeginReadingPipes(process);
+            });
         }
     }
 
