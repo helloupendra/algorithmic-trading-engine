@@ -106,6 +106,9 @@ public static class AiCatalog
     /// <summary>The Desk Assistant's daily check: known answers, graded by code. A utility, not one of the roadmap's agents.</summary>
     public const string AssistantCheck = "assistant-check";
 
+    /// <summary>The Desk Assistant's weekly exam: a frozen bank about finished days, held-out days apart, scored pass^k.</summary>
+    public const string AssistantExam = "assistant-exam";
+
     /// <summary>The docs search index's embedding runs, named on their calls.</summary>
     public const string DocIndex = "doc-index";
 
@@ -317,6 +320,12 @@ public static class AiCatalog
         "Catches a model or prompt change that makes the Assistant misread the desk.", "Weekdays after 16:40 IST", "2",
         Built: true, "judge", "The desk, through the Assistant's tools.", NoOrders);
 
+    /// <summary>The assistant-exam pseudo-agent: not listed as an agent, but named on its reports.</summary>
+    public static readonly AiAgentDef AssistantExamAgent = new(
+        AssistantExam, 0, "Assistant exam", "Asks the Desk Assistant a fixed bank of questions about finished days, three times each.",
+        "Measures the Assistant with a score that compares week to week, held-out days apart.", "Sundays from 10:30 IST", "2",
+        Built: true, "judge", "The desk, through the Assistant's tools.", NoOrders);
+
     /// <summary>The docs index's pseudo-agent: named on its embedding calls.</summary>
     public static readonly AiAgentDef DocIndexAgent = new(
         DocIndex, 0, "Docs index", "Embeds the desk's docs for the Assistant's search.", "Keeps search_docs current.",
@@ -331,6 +340,7 @@ public static class AiCatalog
     public static AiAgentDef? Agent(string? key) =>
         string.Equals(key, ModelTest, StringComparison.OrdinalIgnoreCase) ? ModelTestAgent
         : string.Equals(key, AssistantCheck, StringComparison.OrdinalIgnoreCase) ? AssistantCheckAgent
+        : string.Equals(key, AssistantExam, StringComparison.OrdinalIgnoreCase) ? AssistantExamAgent
         : string.Equals(key, DocIndex, StringComparison.OrdinalIgnoreCase) ? DocIndexAgent
         : string.Equals(key, Memory, StringComparison.OrdinalIgnoreCase) ? MemoryAgent
         : Agents.FirstOrDefault(a => string.Equals(a.Key, key, StringComparison.OrdinalIgnoreCase));

@@ -211,7 +211,32 @@ public sealed class TodayBuilder(
         string todayKey = today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         var checkToday = days.FirstOrDefault(d => d.Date == todayKey) is { } t ? new TodayCheck(t.Passed, t.Total) : null;
 
-        return new TodayLearning(memories.Count(m => m.Status == AiMemoryStatus.Active), learned, dropped, checkToday, days);
+        // The latest finished exam: the Assistant's score that compares week to week.
+        var exam = await db.AiReports.AsNoTracking()
+            .Where(r => r.AgentKey == AiCatalog.AssistantExam && r.SubjectType == AiReportSubject.Exam && r.Status == AiReportStatus.Ok)
+            .OrderByDescending(r => r.CreatedUtc)
+            .Select(r => new { r.Id, r.SessionDate, r.DataJson })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return new TodayLearning(memories.Count(m => m.Status == AiMemoryStatus.Active), learned, dropped, checkToday, days)
+        {
+            LatestExam = exam is null ? null : Exam(exam.Id, exam.SessionDate, exam.DataJson),
+        };
+    }
+
+    private static TodayExam? Exam(long reportId, DateOnly? day, string json)
+    {
+        try
+        {
+            if (JsonNode.Parse(json) is not JsonObject data || data["all"] is not JsonObject all) return null;
+            static double? Share(JsonNode? part) => part?["passK"] is JsonValue v && v.TryGetValue(out double d) ? d : null;
+            return new TodayExam(reportId, day?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), data["repeats"]?.GetValue<int>() ?? 3,
+                all["questions"]?.GetValue<int>() ?? 0, Share(data["practice"]), Share(data["holdout"]));
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException)
+        {
+            return null;
+        }
     }
 
     private async Task<TodaySystem> SystemAsync(CancellationToken cancellationToken)
@@ -313,7 +338,7 @@ public sealed class TodayBuilder(
         string.IsNullOrWhiteSpace(text) ? null : text.Length <= max ? text : text[..(max - 1)] + "…";
 }
 
-// ---------- wire shapes (camelCase); the contract is private/ai-workspace/TODAY-CONTRACT.md ----------
+// ---------- wire shapes (camelCase); the contract is private/notes/2026-10-01-today-page-contract.md ----------
 
 public sealed record TodayResponse(
     string Date, DateTime NowUtc, IReadOnlyList<TodayMarket> Markets, IReadOnlyList<TodayAttention> Attention, TodayTrading Trading,
@@ -338,7 +363,14 @@ public sealed record TodayReportCounts(int Ok, int Invalid, int Failed);
 public sealed record TodayLink(string Text, string? Link);
 
 public sealed record TodayLearning(int ActiveMemories, IReadOnlyList<TodayLearned> LearnedToday, IReadOnlyList<TodayDropped> DroppedToday,
-    TodayCheck? CheckToday, IReadOnlyList<TodayCheckDay> CheckDays);
+    TodayCheck? CheckToday, IReadOnlyList<TodayCheckDay> CheckDays)
+{
+    /// <summary>The latest finished assistant exam; null until one has finished.</summary>
+    public TodayExam? LatestExam { get; init; }
+}
+
+/// <summary>An exam's score: pass^k on practice and held-out questions (0 to 1; null where none could be scored).</summary>
+public sealed record TodayExam(long ReportId, string? Date, int Repeats, int Questions, double? PracticePassK, double? HoldoutPassK);
 
 public sealed record TodayLearned(long Id, string AgentName, string Text, string How);
 

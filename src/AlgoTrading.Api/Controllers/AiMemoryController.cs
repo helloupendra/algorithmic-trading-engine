@@ -18,7 +18,7 @@ namespace AlgoTrading.Api.Controllers;
 /// Admin-only, like the rest of <c>api/Ai</c>. The rules (what is active at
 /// once, what waits, what is masked) are <see cref="AiMemoryService"/>'s; this
 /// shapes requests and answers. The contract is
-/// <c>private/ai-workspace/MEMORY-CONTRACT.md</c>'s, documented in
+/// <c>private/notes/2026-10-01-agent-memory-contract.md</c>'s, documented in
 /// <c>docs/modules/ai.md</c>.
 /// </remarks>
 [Authorize(Policy = AuthorizationPolicies.AdminOnly)]

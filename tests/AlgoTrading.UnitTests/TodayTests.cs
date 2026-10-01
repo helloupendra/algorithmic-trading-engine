@@ -77,6 +77,26 @@ public sealed class TodayTests
     }
 
     [Fact]
+    public async Task The_latest_finished_exam_shows_both_sets()
+    {
+        using var desk = new RunnerDesk();
+        using (var db = desk.Db())
+        {
+            db.AiReports.Add(new AiReport { Id = 40, AgentKey = AiCatalog.AssistantExam, SubjectType = AiReportSubject.Exam, SubjectId = "1",
+                SessionDate = new DateOnly(2026, 9, 27), Status = AiReportStatus.Ok, CreatedUtc = Now.AddDays(-4), UpdatedUtc = Now.AddDays(-4),
+                DataJson = """{"repeats":3,"all":{"questions":120},"practice":{"passK":0.7},"holdout":{"passK":0.6}}""" });
+            db.AiReports.Add(new AiReport { Id = 41, AgentKey = AiCatalog.AssistantExam, SubjectType = AiReportSubject.Exam, SubjectId = "2",
+                SessionDate = new DateOnly(2026, 10, 4), Status = AiReportStatus.Ok, CreatedUtc = Now, UpdatedUtc = Now,
+                DataJson = """{"repeats":3,"all":{"questions":150},"practice":{"passK":0.86},"holdout":{"passK":null}}""" });
+            db.SaveChanges();
+        }
+
+        var today = await Build(desk).BuildAsync(CancellationToken.None);
+
+        Assert.Equal(new TodayExam(41, "2026-10-04", 3, 150, 0.86, null), today.Learning.LatestExam);
+    }
+
+    [Fact]
     public async Task A_decision_is_logged_newest_first_and_the_same_one_is_replaced()
     {
         using var desk = new RunnerDesk();

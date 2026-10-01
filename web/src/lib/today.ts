@@ -136,6 +136,18 @@ export interface TodayLearning {
   checkToday: CheckScore | null
   /** The last seven days with a check, oldest first. */
   checkDays: CheckDay[]
+  /** The latest finished weekly exam; null until one has finished. */
+  latestExam: ExamResult | null
+}
+
+/** The weekly exam's score: pass^k on practice and held-out questions, 0 to 1, null where none could be scored. */
+export interface ExamResult {
+  reportId: number
+  date: string | null
+  repeats: number
+  questions: number
+  practicePassK: number | null
+  holdoutPassK: number | null
 }
 
 export interface TodaySystem {
@@ -315,7 +327,33 @@ function readLearning(l: Record<string, unknown>): TodayLearning {
       .filter((m): m is DroppedMemory => m.id != null && m.text !== ''),
     checkToday: readScore(l.checkToday),
     checkDays: days.slice(-7),
+    latestExam: readExam(l.latestExam),
   }
+}
+
+function readExam(v: unknown): ExamResult | null {
+  if (!record(v)) return null
+  const reportId = num(v.reportId)
+  if (reportId == null) return null
+  const share = (x: unknown) => {
+    const n = num(x)
+    return n == null || n < 0 || n > 1 ? null : n
+  }
+  const date = words(v.date)
+  return {
+    reportId,
+    date: ISO_DAY.test(date) ? date : null,
+    repeats: num(v.repeats) ?? 3,
+    questions: count(v.questions),
+    practicePassK: share(v.practicePassK),
+    holdoutPassK: share(v.holdoutPassK),
+  }
+}
+
+/** "pass^3: 87% practice, 80% held out · 150 questions". */
+export function examText(e: ExamResult): string {
+  const pct = (v: number | null) => (v == null ? '—' : `${Math.round(v * 100)}%`)
+  return `pass^${e.repeats}: ${pct(e.practicePassK)} practice, ${pct(e.holdoutPassK)} held out · ${e.questions} questions`
 }
 
 function readSystem(s: Record<string, unknown>): TodaySystem {

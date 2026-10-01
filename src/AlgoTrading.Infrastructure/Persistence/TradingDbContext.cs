@@ -117,6 +117,13 @@ public class TradingDbContext : DbContext
     /// <summary>What the agents read before they answer: the owner's notes and corrections, approved lessons. See <see cref="AiMemory"/>.</summary>
     public DbSet<AiMemory> AiMemories => Set<AiMemory>();
 
+    /// <summary>The Desk Assistant's exam: a frozen bank of questions about finished days, its sittings and their answers. See <see cref="AiExamQuestion"/>.</summary>
+    public DbSet<AiExamQuestion> AiExamQuestions => Set<AiExamQuestion>();
+
+    public DbSet<AiExam> AiExams => Set<AiExam>();
+
+    public DbSet<AiExamAnswer> AiExamAnswers => Set<AiExamAnswer>();
+
     /// <summary>The Analysis module's forecasts: written before the open, scored after the close. See <see cref="Forecast"/>.</summary>
     public DbSet<Forecast> Forecasts => Set<Forecast>();
 
