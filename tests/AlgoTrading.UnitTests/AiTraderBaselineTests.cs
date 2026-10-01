@@ -54,6 +54,27 @@ public class AiTraderBaselineTests
     }
 
     [Fact]
+    public async Task The_recorded_minutes_it_reads_end_with_the_one_that_began_at_1059()
+    {
+        var ai = Build(Settings());
+        for (int minute = -10; minute <= 2; minute++)
+        {
+            ai.Db.LiveBars.Add(new LiveBar { Symbol = AiTraderBaselineScorer.Spot, Resolution = "1m", BarStartUtc = Eleven.AddMinutes(minute),
+                Open = 100 + minute, High = 101 + minute, Low = 99 + minute, Close = 100 + minute, TickCount = 5, UpdatedUtc = DateTime.UtcNow, SourceKey = "dhan" });
+        }
+
+        await ai.Db.SaveChangesAsync();
+        var sessions = new MarketSessionService(new MarketReplayTests.OpenCalendar());
+        var market = new BaselineMarket(new LiveDataService(ai.Db, new NoProviders(), sessions), new OptionChainService(ai.Db));
+
+        var minutes = await market.MinutesBeforeAsync(AiTraderBaselineScorer.Spot, Eleven, default);
+
+        // The 10:59 bar closed at 11:00: it is the last close before the decision; the 11:00 bar is not read.
+        Assert.Equal(Eleven.AddMinutes(-1), minutes[^1].BarStartUtc);
+        Assert.Equal(99m, MarketBriefBuilder.FiveMinute(minutes)[^1].Close);
+    }
+
+    [Fact]
     public void The_walk_exits_at_the_first_minute_whose_bid_crosses_the_stop_or_target_else_at_the_close()
     {
         BaselineTick T(int minute, decimal bid) => new(Eleven.AddMinutes(minute), bid + 0.2m, bid, bid + 0.5m);
@@ -151,6 +172,13 @@ public class AiTraderBaselineTests
         CreatedUtc = DateTime.UtcNow, ClockUtc = IstTime.FromIst(Day.ToDateTime(new TimeOnly(hour, minute))), Day = Day, Mode = AiTraderModes.Replay,
         ReplaySessionId = replay, Action = AiTraderPlan.None, Rule = "ok", Allowed = true,
     });
+
+    private sealed class NoProviders : AlgoTrading.Application.Providers.IProviderCatalog
+    {
+        public IReadOnlyList<AlgoTrading.Application.Providers.ProviderDescriptor> Descriptors => [];
+
+        public AlgoTrading.Application.Providers.ProviderDescriptor? Find(string providerKey) => null;
+    }
 
     private sealed class FakeMarket(IReadOnlyList<LiveBarResponse> minutes) : IBaselineMarket
     {
