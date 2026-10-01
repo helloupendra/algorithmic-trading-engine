@@ -31,7 +31,11 @@ Every 10 minutes from 09:20 to 15:00 IST on trading days, while it is switched o
 2. **The model proposes** one action as JSON (Judge tier, temperature 0.2): none, buy, exit, start_strategy or
    stop_strategy, with a reason naming the facts it rests on. The entry is the option's ask: size, stop and
    target are checked against it.
-3. **Code judges it** (`AiTraderGuard`): every limit below. A refusal names the rule.
+3. **Code judges it** (`AiTraderGuard`): every limit below. A refusal names the rule. It judges the book as it is
+   once the answer is in, not as the brief showed it: the book is read again, and in the API one look at a time judges
+   and acts (`AiTraderAgent.BookGate`, which the shadow book's minute check takes too). So "Run now" beside the
+   scheduled look cannot pass a limit the other was about to use, or close a position the other closed. The model is
+   asked outside it, so a slow answer never holds up the minute check.
 4. **Every look is a row** in `ai_trader_decisions`, "none" included: the brief, the plan, the verdict, the call.
 
 ## The limits (code-enforced, never the model's)

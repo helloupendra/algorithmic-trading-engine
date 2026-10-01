@@ -5,6 +5,7 @@ using AlgoTrading.Contracts.LiveData;
 using AlgoTrading.Contracts.OptionChain;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Ai;
+using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -192,15 +193,17 @@ public class AiTraderAgentTests
 
     // ---------- helpers ----------
 
+    /// <param name="db">A context of its own on a shared database, for two agents deciding at once; a new database when null.</param>
+    /// <param name="books">The account's facts; <see cref="FakeBooks"/> (an empty account on a trading day) when null.</param>
     internal static (AiTraderAgent Agent, Services Ai, FakeBriefs Briefs, FakeQuotes Quotes) Agent(IMarketReplayBook? book = null, ReplaySessionState? session = null,
-        IBaselineMarket? baselineMarket = null)
+        IBaselineMarket? baselineMarket = null, TradingDbContext? db = null, IAiTraderBooks? books = null)
     {
-        var ai = Build(Settings());
+        var ai = Build(Settings(), db);
         ai.Store.SetAgentEnabledAsync(AiCatalog.AiTrader, true, "upendra", null).GetAwaiter().GetResult();
         var briefs = new FakeBriefs();
         var quotes = new FakeQuotes();
         var sessions = new MarketSessionService(new OpenCalendar());
-        var agent = new AiTraderAgent(ai.Db, ai.Gateway, briefs, new FakeBooks(sessions), new AiTraderShadowBook(ai.Db, quotes, sessions), sessions,
+        var agent = new AiTraderAgent(ai.Db, ai.Gateway, briefs, books ?? new FakeBooks(sessions), new AiTraderShadowBook(ai.Db, quotes, sessions), sessions,
             new FakeReplays(session), ai.Options, NullLogger<AiTraderAgent>.Instance, book,
             baselines: baselineMarket is null ? null : new AiTraderBaselineScorer(ai.Db, baselineMarket, sessions));
         return (agent, ai, briefs, quotes);
@@ -252,6 +255,24 @@ public class AiTraderAgentTests
     {
         public Task<AiTraderBook> ReadAsync(DateTime clockUtc, bool replay, CancellationToken cancellationToken) =>
             Task.FromResult(new AiTraderBook(clockUtc, sessions.GetSessionInfo(clockUtc, "NSE", "FO").IsTradingDay || replay, false, 0m, 0, [], []));
+    }
+
+    /// <summary>
+    /// An empty account on a trading day, whose first <paramref name="together"/> reads wait for one another: looks
+    /// that read the book at the same moment ("Run now" beside the scheduled look), each before the other has acted.
+    /// </summary>
+    internal sealed class TogetherBooks(int together) : IAiTraderBooks
+    {
+        private readonly TaskCompletionSource _all = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _reads;
+
+        public async Task<AiTraderBook> ReadAsync(DateTime clockUtc, bool replay, CancellationToken cancellationToken)
+        {
+            int n = Interlocked.Increment(ref _reads);
+            if (n == together) _all.SetResult();
+            if (n <= together) await _all.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+            return new AiTraderBook(clockUtc, true, false, 0m, 0, [], []);
+        }
     }
 
     private sealed class FakeReplays(ReplaySessionState? session) : IReplaySessions
