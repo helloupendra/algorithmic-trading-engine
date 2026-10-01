@@ -383,6 +383,50 @@ The day's result is one report (agent `assistant-check`, subject `check`), which
 change that makes the Assistant misread the desk shows up the same evening. It runs while the Assistant is on and
 `Ai:AssistantCheckEnabled` is true. `POST agents/assistant-check/run` runs it now.
 
+## The Assistant exam
+
+The check asks about today, so its answers move and its questions change daily: one day's score cannot be set
+against another's, and a dozen questions cannot tell an improvement from luck. `AssistantExamAgent` is the measure
+that compares week to week.
+
+**The bank** (`ai_exam_questions`) holds questions about finished NSE trading days. The answers come from `get_runs`
+for that day, the tool the Assistant uses, and are frozen once written. Each day gives about 15:
+
+- its run count, net after charges and winners;
+- the lowest and highest run by id (left out on a tie, or when the list is capped);
+- each account's net, when there is more than one account;
+- for the worst, middle and best run: its net, charges and closed trades.
+
+Six fixed arithmetic questions join them, such as option P&L with a stated lot size, and net from gross and
+charges. One day in four is **held out**, chosen by a hash of the date, so the choice never changes. Nothing is
+learnt from the exam, so held-out days stay unseen by lessons, memories and examples.
+
+**A sitting** (`ai_exams`, `ai_exam_answers`):
+- It starts on `Ai:ExamDay` (Sunday) after `Ai:ExamAfterIst` (10:30), at most once a day, and never asks while NSE
+  trades.
+- New finished days in `Ai:ExamLookbackDays` (45) are added to the bank first.
+- It takes up to `Ai:ExamMaxQuestions` (150): the questions with the lowest hash of their text, a stable sample. It
+  asks each `Ai:ExamRepeats` (3) times: every question once, then every question again.
+- It asks `Ai:ExamAsksPerTick` (2) a scheduler minute. At 2, the exam stays at 20 asks in ten minutes, under
+  `Ai:PerUserPer10Min` (30), which counts the exam as one user; at 3 it would sit on the cap. The other agents keep
+  their turn.
+- Every ask is a row, so a restart carries on where it stopped.
+
+Before each ask the day's answer is read again. A question whose answer reads differently now is set aside
+(`moved`) and listed, not failed; recap runs leaving a day's totals did that on 1 Oct. A provider that gives no
+answer (`no-answer`) counts neither way. Grading is the check's, after the day the question names ("1 Oct 2026") is
+taken out of the answer, since a count could match its "1".
+
+**The score** is one report (agent `assistant-exam`, subject `exam`, subject id the exam's id):
+- pass@1 over all answered asks;
+- pass^k over the questions answered right every time;
+- each for practice and held-out separately, and per question type;
+- the questions answered wrong at least once.
+
+Today's learning section shows the latest one. `POST agents/assistant-exam/run` starts an exam, or carries on the
+open one, and the scheduler asks the rest. It runs while the Assistant is on and `Ai:ExamEnabled` is true. About 450
+asks, a few hours on the free tier.
+
 ## The Assistant on Telegram
 
 The desk's bot answers its linked owner in a private chat, as the Assistant tab does (`TelegramAssistant`).

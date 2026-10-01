@@ -7,6 +7,7 @@ import {
   attentionLevel,
   consoleLink,
   decisionStatus,
+  examText,
   istWhen,
   longDate,
   marketText,
@@ -121,6 +122,7 @@ const body = {
       { date: '2026-09-29', passed: 9, total: 12 },
       { date: '2026-09-30', passed: 11, total: 12 },
     ],
+    latestExam: { reportId: 812, date: '2026-10-04', repeats: 3, questions: 150, practicePassK: 0.8654, holdoutPassK: 0.8 },
   },
   system: {
     sentinelLastUtc: '2026-10-01T05:28:00Z',
@@ -300,7 +302,17 @@ describe('reading the day', () => {
       droppedToday: [],
       checkToday: null,
       checkDays: [],
+      latestExam: null,
     })
+  })
+
+  it('says the weekly exam in one line, a dash for a set with nothing scored', () => {
+    const d = readToday({
+      ...body,
+      learning: { ...body.learning, latestExam: { reportId: 9, date: 'soon', repeats: 3, questions: 40, practicePassK: 0.5, holdoutPassK: 7 } },
+    })
+    expect(d.learning!.latestExam).toEqual({ reportId: 9, date: null, repeats: 3, questions: 40, practicePassK: 0.5, holdoutPassK: null })
+    expect(examText(d.learning!.latestExam!)).toBe('pass^3: 50% practice, — held out · 40 questions')
   })
 
   it('reads a system with nothing reported yet', () => {

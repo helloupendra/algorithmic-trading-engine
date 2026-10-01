@@ -52,9 +52,11 @@ import {
   botLink,
   checkScoreText,
   countdownText,
+  examScoreText,
   docsLink,
   healthBadge,
   readAssistantCheck,
+  readAssistantExam,
   readDocsSearch,
   readTelegram,
   shortDate,
@@ -959,6 +961,19 @@ describe('the assistant check', () => {
     expect(checkScoreText({ passed: 8, total: 9, score: 8 / 9 })).toBe('8 of 9, 89%')
     expect(checkScoreText({ passed: 0, total: 0, score: null })).toBe('no questions')
     expect(readAssistantCheck(null)).toBeNull()
+  })
+
+  it('reads an exam report and says both sets', () => {
+    const e = readAssistantExam({
+      repeats: 3,
+      all: { questions: 150, scored: 140, passK: 0.8, pass1: 0.9 },
+      practice: { questions: 110, scored: 104, passK: 0.8654, pass1: 0.93 },
+      holdout: { questions: 40, scored: 36, passK: null, pass1: 0.8 },
+    })!
+    expect(e.holdout).toMatchObject({ questions: 40, passK: null })
+    expect(examScoreText(e)).toBe('pass^3 87% practice, — held out (150 questions)')
+    expect(readAssistantExam({ passed: 1, total: 2 })).toBeNull()
+    expect(reportSubjectLabel({ subjectType: 'exam', subjectId: '4' })).toBe('Assistant exam #4')
   })
 
   it('names a check report by its day', () => {

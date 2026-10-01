@@ -100,6 +100,30 @@ public sealed class AiSettings
     /// <summary>IST time after which the weekday check runs: after the NSE close has settled.</summary>
     public string AssistantCheckAfterIst { get; set; } = "16:40";
 
+    /// <summary>Whether the Desk Assistant's weekly exam runs (it asks only while the Assistant is on).</summary>
+    public bool ExamEnabled { get; set; } = true;
+
+    /// <summary>The IST day of the week the exam starts on: a day with no session, so it competes with nothing.</summary>
+    public DayOfWeek ExamDay { get; set; } = DayOfWeek.Sunday;
+
+    /// <summary>IST time after which the exam starts on <see cref="ExamDay"/>.</summary>
+    public string ExamAfterIst { get; set; } = "10:30";
+
+    /// <summary>Questions in one exam: a stable sample of the bank.</summary>
+    public int ExamMaxQuestions { get; set; } = 150;
+
+    /// <summary>Asks per question; pass^k is measured on this k.</summary>
+    public int ExamRepeats { get; set; } = 3;
+
+    /// <summary>
+    /// Asks per scheduler minute, so the other agents keep their turn during a long exam. 2 keeps it at 20 in ten
+    /// minutes, under <see cref="PerUserPer10Min"/> (30), which counts the exam as one user: 3 would sit on the cap.
+    /// </summary>
+    public int ExamAsksPerTick { get; set; } = 2;
+
+    /// <summary>How far back, in calendar days, the bank takes finished trading days from.</summary>
+    public int ExamLookbackDays { get; set; } = 45;
+
     /// <summary>Tries for one report before a scheduled agent gives up on its subject.</summary>
     public int MaxReportAttempts { get; set; } = 3;
 

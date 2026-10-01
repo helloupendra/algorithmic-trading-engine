@@ -655,11 +655,13 @@ export const SCHEDULED_AGENTS: Readonly<Record<string, { subject: 'run' | 'incid
   'news-analyst': { subject: null, writes: "every 10 minutes, a structured event for each unread news item or filing of the last 24 hours" },
   'incident-explainer': { subject: 'incident', writes: 'for each live incident of medium severity or worse, what happened, why and what to do' },
   'assistant-check': { subject: null, writes: "on weekdays after 16:40 IST, the Desk Assistant's graded answers to questions the code knows" },
+  'assistant-exam': { subject: null, writes: 'on Sundays from 10:30 IST, the Desk Assistant\'s score on a fixed bank of questions about finished days' },
 }
 
 /** The utilities that call models without being agents, by the key their calls and reports carry. */
 export const AI_UTILITIES: Readonly<Record<string, string>> = {
   'assistant-check': 'Assistant check',
+  'assistant-exam': 'Assistant exam',
   'doc-index': 'Docs index',
   'model-test': 'Model test',
 }
@@ -670,6 +672,7 @@ const SOURCES: Record<string, string> = {
   api: 'API',
   schedule: 'Schedule',
   check: 'Assistant check',
+  exam: 'Assistant exam',
   health: 'Health probe',
   index: 'Docs index',
   telegram: 'Telegram',
@@ -925,6 +928,8 @@ export function reportSubjectLabel(r: Pick<AiReportSummary, 'subjectType' | 'sub
   switch (r.subjectType) {
     case 'check':
       return `Assistant check · ${shortDate(r.subjectId)}`
+    case 'exam':
+      return `Assistant exam #${r.subjectId}`
     case 'run':
       return `Run #${r.subjectId}`
     case 'incident':
@@ -1050,6 +1055,37 @@ export function readAssistantCheck(data: Record<string, unknown> | null): Assist
   const passed = num(data.passed) ?? questions.filter((q) => q.pass).length
   const score = num(data.score) ?? (total > 0 ? passed / total : null)
   return { passed, total, score, questions }
+}
+
+/** One set's score in an assistant-exam report: pass^k over the questions answered every time, pass@1 over all answered asks. */
+export interface ExamScore {
+  questions: number
+  scored: number
+  passK: number | null
+  pass1: number | null
+}
+
+export interface AssistantExam {
+  repeats: number
+  all: ExamScore
+  practice: ExamScore
+  holdout: ExamScore
+}
+
+/** An assistant-exam report's data; null when it is not one. */
+export function readAssistantExam(data: Record<string, unknown> | null): AssistantExam | null {
+  if (!data || typeof data.all !== 'object' || data.all === null) return null
+  const part = (v: unknown): ExamScore => {
+    const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>
+    return { questions: num(o.questions) ?? 0, scored: num(o.scored) ?? 0, passK: num(o.passK), pass1: num(o.pass1) }
+  }
+  return { repeats: num(data.repeats) ?? 3, all: part(data.all), practice: part(data.practice), holdout: part(data.holdout) }
+}
+
+/** "pass^3 87% practice, 80% held out (150 questions)"; a dash where nothing could be scored. */
+export function examScoreText(e: AssistantExam): string {
+  const pct = (v: number | null) => (v === null ? '—' : `${Math.round(100 * v)}%`)
+  return `pass^${e.repeats} ${pct(e.practice.passK)} practice, ${pct(e.holdout.passK)} held out (${e.all.questions} questions)`
 }
 
 /** "8 of 9, 89%"; "no questions" for an empty check. */

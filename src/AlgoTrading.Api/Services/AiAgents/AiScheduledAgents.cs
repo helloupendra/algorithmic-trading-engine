@@ -192,10 +192,13 @@ public sealed class AiAgentScheduler(
     }
 
     /// <summary>
-    /// An agent's switch; the assistant check, a utility with no switch of its
-    /// own, runs while it is enabled in settings and the Desk Assistant is on.
+    /// An agent's switch; the assistant check and exam, utilities with no switch
+    /// of their own, run while enabled in settings and the Desk Assistant is on.
     /// </summary>
-    public static bool IsOn(string key, AiState state, AiSettings settings) => key == AiCatalog.AssistantCheck
-        ? settings.AssistantCheckEnabled && state.Agent(AiCatalog.DeskAssistant) is { Status: "on" }
-        : state.Agent(key) is { Status: "on" };
+    public static bool IsOn(string key, AiState state, AiSettings settings) => key switch
+    {
+        AiCatalog.AssistantCheck => settings.AssistantCheckEnabled && state.Agent(AiCatalog.DeskAssistant) is { Status: "on" },
+        AiCatalog.AssistantExam => settings.ExamEnabled && state.Agent(AiCatalog.DeskAssistant) is { Status: "on" },
+        _ => state.Agent(key) is { Status: "on" },
+    };
 }

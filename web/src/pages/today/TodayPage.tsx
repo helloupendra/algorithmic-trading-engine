@@ -32,6 +32,7 @@ import {
   attentionKind,
   attentionLevel,
   decisionStatus,
+  examText,
   istWhen,
   longDate,
   marketText,
@@ -513,6 +514,17 @@ function Learning({ l }: { l: TodayLearning | null }) {
             </div>
           </div>
           <CheckStrip days={l.checkDays} />
+          <p className="tdy-exam">
+            <span className="tdy-kv__k">The weekly exam</span>{' '}
+            {l.latestExam ? (
+              <Link to={`/ai/reports?id=${l.latestExam.reportId}`}>
+                {examText(l.latestExam)}
+                {l.latestExam.date ? ` · ${l.latestExam.date}` : ''}
+              </Link>
+            ) : (
+              <span className="faint">none finished yet; it runs on Sundays from 10:30 IST</span>
+            )}
+          </p>
 
           <h3 className="tdy-sub">Learned today</h3>
           {l.learnedToday.length === 0 ? (

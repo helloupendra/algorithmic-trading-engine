@@ -341,6 +341,172 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.ToTable("ai_doc_chunks", (string)null);
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.AiExam", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime?>("FinishedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("QuestionIdsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("Repeats")
+                        .HasColumnType("integer");
+
+                    b.Property<long?>("ReportId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("StartedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Trigger")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "StartedUtc" }, "IX_ai_exams_StartedUtc");
+
+                    b.ToTable("ai_exams", (string)null);
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.AiExamAnswer", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Answer")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(600)
+                        .HasColumnType("character varying(600)")
+                        .HasDefaultValue("");
+
+                    b.Property<int>("Attempt")
+                        .HasColumnType("integer");
+
+                    b.Property<long?>("CallId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("ExamId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<long>("QuestionId")
+                        .HasColumnType("bigint");
+
+                    b.Property<double>("Seconds")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("Truth")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasDefaultValue("");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("QuestionId");
+
+                    b.HasIndex(new[] { "ExamId", "QuestionId", "Attempt" }, "IX_ai_exam_answers_Exam_Question_Attempt")
+                        .IsUnique();
+
+                    b.ToTable("ai_exam_answers", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ai_exam_answers_Outcome", "\"Outcome\" IN ('right', 'wrong', 'no-answer', 'moved')");
+                        });
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.AiExamQuestion", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateOnly?>("Day")
+                        .HasColumnType("date");
+
+                    b.Property<string>("Expected")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<double?>("Number")
+                        .HasColumnType("double precision");
+
+                    b.Property<DateTime?>("RetiredUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Set")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Subject")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("Template")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<double>("Tolerance")
+                        .HasColumnType("double precision");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "Day", "Template" }, "IX_ai_exam_questions_Day_Template");
+
+                    b.ToTable("ai_exam_questions", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ai_exam_questions_Set", "\"Set\" IN ('practice', 'holdout')");
+                        });
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.AiMemory", b =>
                 {
                     b.Property<long>("Id")
@@ -564,7 +730,7 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("CK_ai_reports_Status", "\"Status\" IN ('ok', 'invalid', 'failed')");
 
-                            t.HasCheckConstraint("CK_ai_reports_SubjectType", "\"SubjectType\" IN ('run', 'news', 'filing', 'incident', 'check')");
+                            t.HasCheckConstraint("CK_ai_reports_SubjectType", "\"SubjectType\" IN ('run', 'news', 'filing', 'incident', 'check', 'exam')");
                         });
                 });
 
@@ -3882,6 +4048,21 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.HasIndex("OwnerUserId");
 
                     b.ToTable("whiteboards", (string)null);
+                });
+
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.AiExamAnswer", b =>
+                {
+                    b.HasOne("AlgoTrading.Domain.Entities.AiExam", null)
+                        .WithMany()
+                        .HasForeignKey("ExamId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("AlgoTrading.Domain.Entities.AiExamQuestion", null)
+                        .WithMany()
+                        .HasForeignKey("QuestionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("AlgoTrading.Domain.Entities.AppUser", b =>

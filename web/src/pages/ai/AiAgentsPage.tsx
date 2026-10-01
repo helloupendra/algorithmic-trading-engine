@@ -22,7 +22,9 @@ import {
   agentStatus,
   callTime,
   checkScoreText,
+  examScoreText,
   readAssistantCheck,
+  readAssistantExam,
   shortDate,
   useLatestAgentReport,
   formatTokens,
@@ -224,14 +226,17 @@ function RunNow({ agentKey }: { agentKey: string }) {
               ? 'Blank explains the incidents that are due.'
               : agentKey === 'assistant-check'
                 ? 'Asks the questions now; it takes a few minutes.'
-                : 'Reads its next batch of unread items.'}
+                : agentKey === 'assistant-exam'
+                  ? 'Starts the exam, or carries on the open one; two questions a minute, a few hours in all.'
+                  : 'Reads its next batch of unread items.'}
         </span>
       </div>
       {bad && <p className="small-note warn ai-flush">An id is a whole number.</p>}
       {run.isSuccess && (
         <p className="small-note ai-flush ai-runnow__said">
           Started{run.data?.subjectId ? ` on ${kind === 'incident' ? 'incident' : 'run'} #${run.data.subjectId}` : ''}. The report appears on
-          the <Link to={`/ai/reports?agent=${encodeURIComponent(agentKey)}`}>Reports tab</Link> when the model answers (usually 1–3 minutes).
+          the <Link to={`/ai/reports?agent=${encodeURIComponent(agentKey)}`}>Reports tab</Link>{' '}
+          {agentKey === 'assistant-exam' ? 'when the last question is answered (a few hours).' : 'when the model answers (usually 1–3 minutes).'}
         </p>
       )}
       {run.isError && (
@@ -287,6 +292,58 @@ function AssistantCheckPanel({ now }: { now: number }) {
           <dt>By hand</dt>
           <dd>
             <RunNow agentKey="assistant-check" />
+          </dd>
+        </div>
+      </dl>
+    </Panel>
+  )
+}
+
+/**
+ * The weekly assistant exam: a fixed bank of questions about finished days,
+ * each asked three times, held-out days scored apart, so the score compares
+ * week to week.
+ */
+function AssistantExamPanel({ now }: { now: number }) {
+  const latest = useLatestAgentReport('assistant-exam')
+  const d = latest.data
+  const e = d ? readAssistantExam(d.data) : null
+  return (
+    <Panel title={<>Assistant exam</>} className="ai-utility">
+      <p className="ai-utility__what">
+        The Desk Assistant's score that compares week to week: up to 150 questions about finished trading days (runs, nets,
+        charges, the worst and best run, each account) and a little arithmetic, answers read by code and frozen. Each is asked
+        three times; pass^3 counts a question only when all three were right. One day in four is held out and never learnt
+        from.
+      </p>
+      <dl className="ai-facts">
+        <div>
+          <dt>Runs</dt>
+          <dd>Sundays from 10:30 IST, two questions a minute, never while NSE trades; its calls are on the Calls tab, from the exam.</dd>
+        </div>
+        <div>
+          <dt>Last result</dt>
+          <dd>
+            {d ? (
+              <>
+                <Link to={`/ai/reports?id=${d.report.id}`}>{shortDate(d.report.sessionDate ?? '') || `report #${d.report.id}`}</Link>{' '}
+                <span className={d.report.status === 'ok' ? 'pos' : 'warn'}>{e ? examScoreText(e) : d.report.title}</span>
+                <span className="faint"> · {callTime(d.report.createdUtc, now)}</span>{' '}
+                <Link to="/ai/reports?agent=assistant-exam">every exam</Link>
+              </>
+            ) : latest.isPending ? (
+              <span className="faint">not read yet</span>
+            ) : latest.isError ? (
+              <span className="faint">could not be read</span>
+            ) : (
+              <span className="faint">no exam has finished yet</span>
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>By hand</dt>
+          <dd>
+            <RunNow agentKey="assistant-exam" />
           </dd>
         </div>
       </dl>
@@ -512,6 +569,7 @@ export function AiAgentsPage() {
       )}
 
       {data && filter === 'all' && <AssistantCheckPanel now={now} />}
+      {data && filter === 'all' && <AssistantExamPanel now={now} />}
 
       {data && (
         <Panel title={<>Also on the desk, not AI</>} className="ai-rules">
