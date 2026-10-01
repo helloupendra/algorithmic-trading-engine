@@ -335,6 +335,28 @@ public class MarketReplayTests
     }
 
     [Fact]
+    public async Task A_replay_stopped_part_way_still_says_how_far_it_played_and_how_many_ticks_it_sent()
+    {
+        // Stopped at 13:00 it read "0% played, 0 ticks": the clock and the count lived only in the player's status.
+        var replay = Replay(out var db, out _, out var channel, out _, out var book);
+        long runId = Run(db, RecapOfDay, status: "Running");
+        SeedBars(db);
+        await replay.StartAsync(new ReplayStartRequest("2026-09-30", 1, "09:15", [runId]), "admin", default);
+        book.Apply([Tick(Spot, 25000m, Ist(13, 0, 5))]);
+        channel.Status = new ReplayPlayerStatus(1, MarketReplayService.StatePlaying, Ist(13, 0), 123_456, 0.6, null, DateTime.UtcNow);
+
+        var stopped = (await replay.StopAsync("admin", default))!;
+        channel.Status = null;     // the next replay's start forgets it
+        var later = (await replay.StatusAsync(default)).Session!;
+
+        foreach (var view in new[] { stopped, later })
+        {
+            Assert.Equal((MarketReplayService.StateStopped, Ist(13, 0, 5), "13:00:05", 123_456L), (view.State, view.ClockUtc, view.ClockIst, view.TicksSent));
+            Assert.Equal(MarketReplayService.ProgressOf(Ist(13, 0, 5), Day, MarketReplayService.StatePlaying), view.Progress, 3);
+        }
+    }
+
+    [Fact]
     public void Progress_runs_from_the_open_to_the_close_and_is_whole_once_finished()
     {
         Assert.Equal(0, MarketReplayService.ProgressOf(null, Day, MarketReplayService.StatePlaying));
