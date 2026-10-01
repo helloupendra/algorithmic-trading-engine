@@ -13,7 +13,8 @@ Every 10 minutes from 09:20 to 15:00 IST on trading days, while it is switched o
      ATR(14) on 5-minute bars, the last half hour;
    - India VIX and its change;
    - each nearest-expiry chain: ATM±1 premiums, PCR, max pain, the call and put walls, OI change on the day and
-     since the first capture of the session;
+     since the first capture of the session. Only a chain captured that day is offered: before the day's first
+     capture (or with the recorder down) the line says when the last one was, and nothing on it can be bought;
    - today's forecasts as issued before the open, in words (the session's high−low range: median, 80% band, the
      chance of a quiet, normal or wild day; a size, not a direction), never their scores;
    - GIFT Nifty before the open, the last FII/DII cash flows, today's events;
@@ -95,7 +96,7 @@ Every day it decided on, replayed or live, is also scored under a fixed rule any
 | Step | Rule |
 |---|---|
 | Side | At 11:00 IST, NIFTY's last 5-minute close above EMA 20 and EMA 50 with EMA 20 above: the at-the-money call; below both with EMA 20 below: the put; otherwise no trade |
-| Data | Only bars that began before 11:00 and the chain as recorded at 11:00 |
+| Data | Only bars that began before 11:00 (10:59's included) and the chain as recorded by 11:00 that day (none that day: no trade) |
 | Trade | One lot at the ask of the first recorded tick at or after 11:00; stop 30% under, target 50% over |
 | Exit | Each recorded minute's last tick at the bid (else the last trade less half a spread), as the shadow book checks; squared off at 15:30 |
 | Charges | The same as the shadow book's |

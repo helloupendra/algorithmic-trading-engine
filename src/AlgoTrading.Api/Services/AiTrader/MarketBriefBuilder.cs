@@ -176,6 +176,14 @@ public sealed class MarketBriefBuilder(
     {
         var view = await chains.GetViewAsync(underlying, null, replay ? asOf : null, cancellationToken);
         if (view.Strikes.Count == 0) return ($"{underlying}: no option chain recorded.", null);
+
+        // The newest capture can be an earlier day's (before the day's first capture, or with the recorder down):
+        // its premiums and OI are that day's, and after an expiry its contracts are gone. It is not offered.
+        if (IstTime.DateOf(view.AsOfUtc) != IstTime.DateOf(asOf))
+        {
+            return ($"{underlying}: no chain recorded yet today (the last capture is from {IstTime.ToIst(view.AsOfUtc).ToString("d MMM HH:mm", CultureInfo.InvariantCulture)}).", null);
+        }
+
         var header = view.Header;
         var line = new StringBuilder();
         line.Append(CultureInfo.InvariantCulture, $"{underlying} expiry {view.ExpiryDate:d MMM}");

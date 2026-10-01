@@ -161,6 +161,8 @@ public sealed class BaselineMarket(ILiveDataService live, OptionChainService cha
     public async Task<BaselineContract?> AtTheMoneyAsync(string underlying, string optionType, DateTime asOfUtc, CancellationToken cancellationToken)
     {
         var view = await chains.GetViewAsync(underlying, null, asOfUtc, cancellationToken);
+        // An earlier day's capture (none yet that day) names that day's money, and after an expiry a gone contract.
+        if (view.Strikes.Count == 0 || IstTime.DateOf(view.AsOfUtc) != IstTime.DateOf(asOfUtc)) return null;
         decimal? atm = view.AtTheMoneyStrike ?? view.Strikes.FirstOrDefault(s => s.IsAtTheMoney)?.StrikePrice;
         var row = view.Strikes.FirstOrDefault(s => s.StrikePrice == atm);
         var leg = optionType == "CE" ? row?.Call : row?.Put;
