@@ -352,5 +352,58 @@ class LogicEngineRecapTests(unittest.TestCase):
         self.assertIsNone(self.engine.recap_day)
 
 
+class LogicEngineLiveCallsTests(unittest.TestCase):
+    """
+    A live input through the whole of on_bar, checked at the API calls
+    themselves rather than at stubbed helpers: each is the call it was before
+    the market replay (no until_utc, no history, depth still read), and the
+    client stays out of replay mode however many bars go through.
+    """
+
+    def setUp(self):
+        patches = [patch('redis.Redis'), patch('threading.Thread')]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        self.engine = LogicEngine({"cooldown_seconds": 0})
+        self.engine.api = api = MagicMock()
+        api.replay = False
+        api.get_recent_bars.return_value = []
+        api.get_expiries.return_value = [{"expiryDate": EXPIRY}]
+        api.get_option_chain.return_value = [chain_row(57500, "CE"), chain_row(57600, "CE")]
+        api.get_all_latest_quotes.return_value = []
+        api.get_recent_ticks.return_value = [{"symbol": CE, "bidSize": 30, "askSize": 40}]
+        api.get_latest_quote.return_value = {"symbol": "NSE:HDFCBANK-EQ", "lastTradedPrice": 1650.0}
+
+    def live_input(self, underlying="BANKNIFTY", spot=57595.0):
+        return StrategyInput(mode="LivePaper", underlying=underlying, spot_price=spot, atm_strike=57500,
+                             timestamp_utc=datetime.now(timezone.utc).isoformat(),
+                             contracts={"atm_ce": MagicMock(symbol=CE), "atm_pe": MagicMock(symbol=PE)})
+
+    def test_an_index_bar_reads_the_newest_bars_the_live_chain_and_the_depth(self):
+        state = self.engine.initialize_state()
+        with patch("builtins.print"):
+            self.assertEqual([], self.engine.on_bar(state, self.live_input()))
+            self.assertEqual([], self.engine.on_bar(state, self.live_input()))
+
+        api = self.engine.api
+        self.assertEqual([((SPOT,), {"resolution": "15m", "take": 2})] * 2,
+                         [(c.args, c.kwargs) for c in api.get_recent_bars.call_args_list])
+        api.get_expiries.assert_called_once_with("BANKNIFTY")
+        api.get_option_chain.assert_called_once_with("BANKNIFTY", EXPIRY)
+        self.assertEqual([((CE,), {"take": 1})] * 2,
+                         [(c.args, c.kwargs) for c in api.get_recent_ticks.call_args_list])
+        self.assertFalse(api.replay)
+        self.assertIsNone(self.engine.recap_day)
+        self.assertIsNone(self.engine._recap_clock)
+
+    def test_an_equity_bar_reads_the_newest_minute_bars_for_its_vwap(self):
+        with patch("builtins.print"):
+            self.engine.on_bar(self.engine.initialize_state(), self.live_input(underlying="HDFCBANK", spot=1660.0))
+
+        self.engine.api.get_recent_bars.assert_called_once_with("NSE:HDFCBANK-EQ", resolution="1m", take=500)
+        self.assertFalse(self.engine.api.replay)
+
+
 if __name__ == '__main__':
     unittest.main()
