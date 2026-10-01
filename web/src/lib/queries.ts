@@ -1045,10 +1045,13 @@ export interface LiveRunHistoryFilters {
   /** Default 100, max 500. */
   take?: number
   skip?: number
+  /** True lists the recap runs alone (replayed days, tests); otherwise only live trading. Never the two mixed. */
+  recap?: boolean
 }
 
 function runHistoryQuery(filters: LiveRunHistoryFilters): string {
   const q = new URLSearchParams()
+  if (filters.recap) q.set('recap', 'true')
   if (filters.userId != null) q.set('userId', String(filters.userId))
   if (filters.strategyId != null) q.set('strategyId', String(filters.strategyId))
   if (filters.underlying) q.set('underlying', filters.underlying)

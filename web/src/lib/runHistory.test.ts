@@ -1,6 +1,25 @@
 import { describe, expect, it } from 'vitest'
 
-import { runSpan } from './runHistory'
+import { recapBadge, runSpan } from './runHistory'
+
+describe('recapBadge', () => {
+  it('marks a recap run as a test of the day it replayed', () => {
+    expect(recapBadge({ isRecap: true, recapDate: '2026-09-11' })).toEqual({
+      label: 'Recap test · 11 Sept',
+      title: 'A replay of 11 Sept, run as a test. Its P&L is in no live total.',
+    })
+  })
+
+  it('still marks a recap whose day is missing or unreadable', () => {
+    expect(recapBadge({ isRecap: true, recapDate: null })?.label).toBe('Recap test')
+    expect(recapBadge({ isRecap: true, recapDate: 'soon' })?.label).toBe('Recap test · soon')
+  })
+
+  it('leaves a live run unmarked, and an older API that sends no flag', () => {
+    expect(recapBadge({ isRecap: false, recapDate: null })).toBeNull()
+    expect(recapBadge({})).toBeNull()
+  })
+})
 
 describe('runSpan', () => {
   it('reads a run inside one IST day as the day, then from and to', () => {

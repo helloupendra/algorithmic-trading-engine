@@ -25,7 +25,7 @@ import type { ListAsOf, RunLegs } from '../../lib/liveMarks'
 import type { LiveRunHistoryFilters } from '../../lib/queries'
 import { formatDateTime, formatDuration, formatInr, formatInrSigned, formatLots, formatNumber } from '../../lib/format'
 import { riskChips } from '../../lib/risk'
-import { runDurationSeconds, runNetPnl, runSpan, runStatusTone, runUserLabel, shortStopReason } from '../../lib/runHistory'
+import { recapBadge, runDurationSeconds, runNetPnl, runSpan, runStatusTone, runUserLabel, shortStopReason } from '../../lib/runHistory'
 import { DateField } from '../../components/DateField'
 import { isoToDmy } from '../../lib/dates'
 import { Badge, InlineError, Loading, Panel, StatTile } from '../../components/ui'
@@ -143,25 +143,29 @@ function UserRollup({
  * pushed prices of their legs. Its own component, so a push re-renders the
  * tile and the rows it moved, not the page and its five hundred rows.
  */
-function NetPnlTile({ rows, asOf, legs, pending, hasOlder, activeCount }: {
+function NetPnlTile({ rows, asOf, legs, pending, hasOlder, activeCount, recaps }: {
   rows: readonly LiveRunSummary[]
   asOf: ListAsOf
   legs: RunLegs | null
   pending: boolean
   hasOlder: boolean
   activeCount: number
+  /** The list is the recap runs: the sum is a test's, never trading. */
+  recaps: boolean
 }) {
   const live = useLiveRuns(rows, asOf, legs) ?? rows
   const netPnl = live.reduce((n, r) => n + runNetPnl(r), 0)
   return (
     <StatTile
-      label="Net P&L"
+      label={recaps ? 'Net P&L (tests)' : 'Net P&L'}
       value={pending ? '—' : <PnlValue value={netPnl} />}
       tone={netPnl > 0 ? 'pos' : netPnl < 0 ? 'neg' : undefined}
       sub={
-        hasOlder
-          ? `realized of the ${formatNumber(rows.length)} loaded runs${activeCount > 0 ? ' + open book of live ones' : ''}`
-          : `realized of every run in range${activeCount > 0 ? ' + open book of live ones' : ''}`
+        recaps
+          ? `of the ${hasOlder ? `${formatNumber(rows.length)} loaded ` : ''}recap runs · in no live total`
+          : hasOlder
+            ? `realized of the ${formatNumber(rows.length)} loaded runs${activeCount > 0 ? ' + open book of live ones' : ''}`
+            : `realized of every run in range${activeCount > 0 ? ' + open book of live ones' : ''}`
       }
     />
   )
@@ -182,6 +186,7 @@ const HistoryRow = memo(function HistoryRow({ run: answered, to, isAdmin, asOf, 
 }) {
   const run = useLiveRun(answered, asOf, legs)
   const pnl = runNetPnl(run)
+  const recap = recapBadge(run)
   return (
     <tr
       className={run.isActive ? 'row--live' : ''}
@@ -202,6 +207,14 @@ const HistoryRow = memo(function HistoryRow({ run: answered, to, isAdmin, asOf, 
       {isAdmin && <td>{run.userName || <span className="faint">user {run.userId}</span>}</td>}
       <td>
         <b>{run.strategyName}</b> <CategoryBadge category={run.category} />
+        {recap && (
+          <>
+            {' '}
+            <span className="badge badge--warn" title={recap.title}>
+              {recap.label}
+            </span>
+          </>
+        )}
       </td>
       <td className="mono" title={run.spotSymbol || undefined}>
         {run.underlying}
@@ -263,6 +276,10 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
   )
   const [toDate, setToDate] = useState<string>(() => todayIst())
   const [search, setSearch] = useState('')
+  // Off: live trading only. On: the recap runs alone (recorded days played
+  // again as tests). The API never mixes the two, so no total on this page
+  // adds a test to trading.
+  const [recaps, setRecaps] = useState(false)
 
   const filters = useMemo<Omit<LiveRunHistoryFilters, 'skip'>>(
     () => ({
@@ -273,8 +290,9 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
       fromDate: fromDate || null,
       toDate: toDate || null,
       take: TAKE,
+      recap: recaps,
     }),
-    [isAdmin, userId, strategyId, underlying, status, fromDate, toDate],
+    [isAdmin, userId, strategyId, underlying, status, fromDate, toDate, recaps],
   )
 
   // Paged: the API carries at most TAKE rows per request, so a busy range is
@@ -284,9 +302,15 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
   const strategies = useStrategies()
   const fno = useFnoUnderlyings()
 
-  const rows = useMemo(() => history.data?.pages.flat() ?? [], [history.data])
+  const answered = useMemo(() => history.data?.pages.flat() ?? [], [history.data])
+  // Only rows of the kind asked for. Switching the toggle keeps the other list
+  // on screen while this one loads (placeholder data), and a live run must not
+  // sit under the recap labels, nor a recap under the live ones.
+  const rows = useMemo(() => answered.filter((r) => (r.isRecap ?? false) === recaps), [answered, recaps])
+  const pending = history.isPending || (history.isPlaceholderData && rows.length < answered.length)
   // The live rows are re-priced from their open legs, each against the page it came in.
-  const legs = useRunLegs(rows)
+  // Never a recap's: the replay prices its legs, and a pushed price is a live one.
+  const legs = useRunLegs(rows, !recaps)
   const asOfByRun = useMemo(() => pagedRowsAsOf(history.data, history.dataUpdatedAt), [history.data, history.dataUpdatedAt])
   const hasOlder = history.hasNextPage
   const loadingOlder = history.isFetchingNextPage
@@ -355,9 +379,11 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
         <div>
           <h1 className="page__title">{isAdmin ? 'Run history' : 'My runs'}</h1>
           <p className="page__subtitle">
-            {isAdmin
-              ? 'Run history — every live run, attached to the user who started it. Nothing here is dismissed.'
-              : 'Every live run you started, with its result. Nothing here is dismissed — hiding a card on the runner does not remove it.'}
+            {recaps
+              ? 'Recap runs — recorded days played again through the strategy runners. They are tests: their P&L is in no live total.'
+              : isAdmin
+                ? 'Run history — every live run, attached to the user who started it. Nothing here is dismissed.'
+                : 'Every live run you started, with its result. Nothing here is dismissed — hiding a card on the runner does not remove it.'}
           </p>
         </div>
         <Link className="btn btn--sm" to={routes.start}>
@@ -368,7 +394,8 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
       {isAdmin && (
         <>
           {summary.isError && summary.data === undefined && <InlineError error={summary.error} />}
-          {summary.data && summary.data.length > 0 && (
+          {/* The rollup counts live trading only, so it stands aside while the recaps are listed. */}
+          {!recaps && summary.data && summary.data.length > 0 && (
             <UserRollup users={summary.data} selected={userId} onSelect={setUserId} />
           )}
         </>
@@ -376,20 +403,32 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
 
       <div className="stat-grid">
         <StatTile
-          label={rows.length === 1 && !hasOlder ? 'Run in range' : 'Runs in range'}
-          value={history.isPending ? '—' : countLabel(rows.length)}
+          label={
+            recaps
+              ? rows.length === 1 && !hasOlder ? 'Recap run in range' : 'Recap runs in range'
+              : rows.length === 1 && !hasOlder ? 'Run in range' : 'Runs in range'
+          }
+          value={pending ? '—' : countLabel(rows.length)}
           sub={hasOlder ? `${rangeLabel} · newest ${formatNumber(rows.length)} loaded` : rangeLabel}
         />
         <StatTile
-          label="Live now"
-          value={history.isPending ? '—' : activeCount}
+          label={recaps ? 'Running now' : 'Live now'}
+          value={pending ? '—' : activeCount}
           tone={activeCount > 0 ? 'pos' : undefined}
           sub={activeCount > 0 ? 'this list refreshes every 10 s' : 'no runner alive in this range'}
         />
-        <NetPnlTile rows={rows} asOf={asOfByRun} legs={legs} pending={history.isPending} hasOlder={hasOlder} activeCount={activeCount} />
+        <NetPnlTile
+          rows={rows}
+          asOf={asOfByRun}
+          legs={legs}
+          pending={pending}
+          hasOlder={hasOlder}
+          activeCount={activeCount}
+          recaps={recaps}
+        />
         <StatTile
           label="Trades"
-          value={history.isPending ? '—' : countLabel(trades)}
+          value={pending ? '—' : countLabel(trades)}
           sub={`closed positions${hasOlder ? ' of the loaded runs' : ''} · ${runsToday} ${runsToday === 1 ? 'run' : 'runs'} started today`}
         />
       </div>
@@ -473,6 +512,20 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
               aria-label="Started on or before (IST day)"
               title="Started on or before (IST day)"
             />
+            <button
+              type="button"
+              className="oc-toggle"
+              aria-pressed={recaps}
+              onClick={() => setRecaps((on) => !on)}
+              title={
+                recaps
+                  ? 'Listing the recap runs alone. Switch off for live trading.'
+                  : 'List the recap runs instead: recorded days played again as tests, in no live total.'
+              }
+            >
+              <span className="oc-toggle__box" aria-hidden="true" />
+              Recap runs
+            </button>
             <input
               className="field__input field__input--sm"
               type="search"
@@ -498,8 +551,8 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
           </div>
         }
       >
-        {history.isPending ? (
-          <Loading label="Loading run history…" />
+        {pending ? (
+          <Loading label={recaps ? 'Loading recap runs…' : 'Loading run history…'} />
         ) : history.isError && history.data === undefined ? (
           <InlineError error={history.error} />
         ) : (
@@ -511,16 +564,32 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
             )}
             {visible.length === 0 ? (
               <div className="empty">
-                <p style={{ margin: 0 }}>
-                  No live runs yet for this filter — start one from{' '}
-                  <Link to={routes.start}>{routes.startLabel}</Link>.
-                </p>
+                {recaps ? (
+                  <p style={{ margin: 0 }}>
+                    No recap runs for this filter
+                    {isAdmin ? (
+                      <>
+                        {' '}
+                        — play a recorded day again from <Link to="/data/replay">Data → Replay</Link>.
+                      </>
+                    ) : (
+                      '.'
+                    )}
+                  </p>
+                ) : (
+                  <p style={{ margin: 0 }}>
+                    No live runs yet for this filter — start one from{' '}
+                    <Link to={routes.start}>{routes.startLabel}</Link>.
+                  </p>
+                )}
                 {filtered && (
                   <p style={{ margin: '8px 0 0' }}>
                     <button type="button" className="btn btn--ghost btn--sm" onClick={resetFilters}>
                       Reset filters
                     </button>{' '}
-                    <span className="faint">back to every run of the last {DEFAULT_RANGE_DAYS} days</span>
+                    <span className="faint">
+                      back to every {recaps ? 'recap ' : ''}run of the last {DEFAULT_RANGE_DAYS} days
+                    </span>
                   </p>
                 )}
               </div>
@@ -578,7 +647,10 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
       <p className="small-note">
         Dates are IST calendar days on the run's start · Net P&L is the realized P&L of every position of
         the run after brokerage and statutory charges (plus the open book while it is live), and before the
-        bid–ask spread — paper fills are at the last price · a run is never removed from this history.
+        bid–ask spread — paper fills are at the last price · a run is never removed from this history ·{' '}
+        {recaps
+          ? 'a recap run plays a recorded day again (Data → Replay). It is a test, and is in no live total: not in the live list, Today or a track record.'
+          : 'recap runs, recorded days played again as tests, are listed apart: switch on “Recap runs”.'}
       </p>
     </div>
   )
