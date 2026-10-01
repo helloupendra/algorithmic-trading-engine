@@ -33,6 +33,12 @@ namespace AlgoTrading.Infrastructure.Services;
 /// the broker's candle is the official one. A "live" row is updated when the
 /// bars behind it changed — an archive run during the session followed by
 /// the one at night simply completes the day.
+///
+/// The context. A day is thousands of symbols (every option strike that
+/// ticked), each with hundreds of candles. The change tracker is cleared after
+/// each symbol is saved, and after the broker's part, so a save never scans
+/// the candles of the symbols before it. So run it in a scope of its own, with
+/// nothing unsaved in its context: the nightly service gives each day a scope.
 /// </remarks>
 public class DailyCandleArchiveService : IDailyCandleArchiveService
 {
@@ -78,7 +84,10 @@ public class DailyCandleArchiveService : IDailyCandleArchiveService
 
         // The broker first, so its rows exist before the live rollup looks for owners.
         if (includeBrokerBackfill)
+        {
             await BackfillFromBrokerAsync(istDay, result, cancellationToken);
+            _db.ChangeTracker.Clear();
+        }
 
         var symbols = await _db.LiveBars.AsNoTracking()
             .Where(b => b.Resolution == "1m" && b.BarStartUtc >= fromUtc && b.BarStartUtc <= toUtc)
@@ -151,6 +160,13 @@ public class DailyCandleArchiveService : IDailyCandleArchiveService
             {
                 _logger.LogError(ex, "Candle archive: {Symbol} on {Day} failed.", symbol, istDay);
                 result.Errors.Add($"{symbol}: {ex.Message}");
+            }
+            finally
+            {
+                // The symbol's candles are saved (or failed): nothing later reads them
+                // from the tracker. Kept, every later save would scan all of them, and a
+                // failed symbol's unsaved rows would fail every later symbol's save too.
+                _db.ChangeTracker.Clear();
             }
         }
 

@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
 using AlgoTrading.Application.Interfaces;
+using AlgoTrading.Contracts.MarketData;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Services;
@@ -41,6 +42,13 @@ namespace AlgoTrading.Api.Services
     /// live bars and simply reports the broker part as failed.
     /// </para>
     /// <para>
+    /// A day whose archive throws (its live_bars query timing out, say) is
+    /// tried again after 5 minutes, then 15, then hourly
+    /// (<see cref="ArchiveSchedule.RetryAfter"/>), not every minute: an error in
+    /// the log the first time, a warning at most once an hour after that. The
+    /// waits are kept in memory; a success clears them.
+    /// </para>
+    /// <para>
     /// The India VIX check (<see cref="VixBackfillService"/>) runs right after
     /// the archive, in the same tick, when at least one day it archived was an
     /// NSE trading day in the exchange calendar: so right after a trading
@@ -58,7 +66,13 @@ namespace AlgoTrading.Api.Services
     {
         public const string LastArchivedDayKey = "archive.candles.lastDay";
 
+        /// <summary>A day that keeps failing is logged as a warning at most this often; its other tries are information.</summary>
+        private static readonly TimeSpan LogFailingEvery = TimeSpan.FromHours(1);
+
         private readonly ILogger<NightlyArchiveService> _logger;
+
+        // In memory, one loop: a restart forgets it, and the day is then tried at once and logged as an error again.
+        private readonly Dictionary<DateOnly, FailingDay> _failing = new();
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly TimeSpan _runAtIst;
         private readonly bool _vixCheck;
@@ -105,12 +119,30 @@ namespace AlgoTrading.Api.Services
             }
         }
 
+        /// <summary>When a day whose archive failed is tried next; null when it is not failing. Internal for tests.</summary>
+        internal DateTime? NextTryUtc(DateOnly day) => _failing.TryGetValue(day, out var failing) ? failing.NextTryUtc : null;
+
         /// <summary>One tick at <paramref name="nowUtc"/>: archives the days that are due, then checks India VIX. Internal for tests.</summary>
+        /// <remarks>
+        /// <para>
+        /// Each day is archived in a scope of its own, so in a database context of
+        /// its own: the archive clears its context's change tracker after each
+        /// symbol, which would otherwise also drop the marker row this tick is
+        /// about to save, and a catch-up of several days no longer drags one
+        /// day's candles through the next day's saves.
+        /// </para>
+        /// <para>
+        /// A day whose archive fails waits <see cref="ArchiveSchedule.RetryAfter"/>
+        /// before its next try, and the days after it wait behind it: the marker
+        /// is the last day done, in order. The first failure is an error in the
+        /// log; the later ones are a warning at most once an hour, so Sentinel
+        /// sees one incident, not one a minute.
+        /// </para>
+        /// </remarks>
         internal async Task<IReadOnlyList<DateOnly>> RunDueDaysAsync(DateTime nowUtc, CancellationToken ct)
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
-            var archive = scope.ServiceProvider.GetRequiredService<IDailyCandleArchiveService>();
             var sessions = scope.ServiceProvider.GetRequiredService<IMarketSessionService>();
 
             var setting = await db.SystemSettings.FirstOrDefaultAsync(s => s.Key == LastArchivedDayKey, ct);
@@ -119,27 +151,92 @@ namespace AlgoTrading.Api.Services
                 : null;
 
             var nowIst = IstTime.ToIst(nowUtc);
-            var archived = new List<DateOnly>();
-            foreach (var day in ArchiveSchedule.DueDays(last, nowIst, d => ArchiveSchedule.DueAtIst(d, _runAtIst, sessions)))
-            {
-                var result = await archive.ArchiveDayAsync(day, includeBrokerBackfill: true, ct);
-                foreach (var line in result.BrokerBackfills)
-                    _logger.LogInformation("Candle archive {Day}: {Line}", day, line);
+            var due = ArchiveSchedule.DueDays(last, nowIst, d => ArchiveSchedule.DueAtIst(d, _runAtIst, sessions));
+            foreach (var gone in _failing.Keys.Where(d => !due.Contains(d)).ToList())
+                _failing.Remove(gone);
 
-                if (setting is null)
+            var archived = new List<DateOnly>();
+            foreach (var day in due)
+            {
+                if (_failing.TryGetValue(day, out var failing) && nowUtc < failing.NextTryUtc)
+                    break;
+
+                try
                 {
-                    setting = new SystemSetting { Key = LastArchivedDayKey, UpdatedBy = "NightlyArchiveService", Reason = "daily candle archive" };
-                    db.SystemSettings.Add(setting);
+                    CandleArchiveResult result;
+                    using (var dayScope = _scopeFactory.CreateScope())
+                    {
+                        var archive = dayScope.ServiceProvider.GetRequiredService<IDailyCandleArchiveService>();
+                        result = await archive.ArchiveDayAsync(day, includeBrokerBackfill: true, ct);
+                    }
+
+                    foreach (var line in result.BrokerBackfills)
+                        _logger.LogInformation("Candle archive {Day}: {Line}", day, line);
+
+                    if (setting is null)
+                    {
+                        setting = new SystemSetting { Key = LastArchivedDayKey, UpdatedBy = "NightlyArchiveService", Reason = "daily candle archive" };
+                        db.SystemSettings.Add(setting);
+                    }
+                    setting.Value = day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                    setting.UpdatedUtc = DateTime.UtcNow;
+                    await db.SaveChangesAsync(ct);
                 }
-                setting.Value = day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-                setting.UpdatedUtc = DateTime.UtcNow;
-                await db.SaveChangesAsync(ct);
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    NoteFailure(day, nowUtc, ex);
+                    break;
+                }
+
+                _failing.Remove(day);
                 archived.Add(day);
             }
 
             if (_vixCheck && archived.Count > 0)
                 await CheckVixAsync(archived, ct);
             return archived;
+        }
+
+        /// <summary>Puts a failed day on its wait, and logs it: an error the first time, then a warning at most once an hour.</summary>
+        private void NoteFailure(DateOnly day, DateTime nowUtc, Exception ex)
+        {
+            string dayText = day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            if (!_failing.TryGetValue(day, out var failing))
+            {
+                failing = new FailingDay { Failures = 1, NextTryUtc = nowUtc + ArchiveSchedule.RetryAfter(1), LoggedUtc = nowUtc };
+                _failing[day] = failing;
+                _logger.LogError(ex, "Candle archive of {Day} failed; it is tried again at {NextTry:HH:mm} IST, then less often while it keeps failing.",
+                    dayText, IstTime.ToIst(failing.NextTryUtc));
+                return;
+            }
+
+            failing.Failures++;
+            failing.NextTryUtc = nowUtc + ArchiveSchedule.RetryAfter(failing.Failures);
+            if (nowUtc - failing.LoggedUtc >= LogFailingEvery)
+            {
+                failing.LoggedUtc = nowUtc;
+                _logger.LogWarning(ex, "Candle archive of {Day} is still failing ({Failures} tries); next try at {NextTry:HH:mm} IST.",
+                    dayText, failing.Failures, IstTime.ToIst(failing.NextTryUtc));
+            }
+            else
+            {
+                _logger.LogInformation("Candle archive of {Day} failed again ({Failures} tries): {Error}; next try at {NextTry:HH:mm} IST.",
+                    dayText, failing.Failures, ex.Message, IstTime.ToIst(failing.NextTryUtc));
+            }
+        }
+
+        /// <summary>A day whose archive is failing: how often, when it is tried next, and when it was last logged as a warning or an error.</summary>
+        private sealed class FailingDay
+        {
+            public int Failures { get; set; }
+
+            public DateTime NextTryUtc { get; set; }
+
+            public DateTime LoggedUtc { get; set; }
         }
 
         /// <summary>
