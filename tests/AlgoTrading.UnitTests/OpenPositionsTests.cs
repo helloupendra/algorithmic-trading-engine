@@ -60,7 +60,7 @@ public class OpenPositionsTests
     }
 
     [Fact]
-    public async Task An_admin_gets_every_account_or_the_one_asked_for_and_never_a_closed_stopped_or_backtest_leg()
+    public async Task An_admin_gets_every_account_or_the_one_asked_for_and_never_a_closed_stopped_backtest_or_recap_leg()
     {
         using var desk = new Book();
         var seeded = desk.SeedDay();
@@ -182,6 +182,8 @@ public class OpenPositionsTests
             var otherRun = Run(db, "Ghost", OtherTrader);
             var stopped = Run(db, "Ghost", Trader, status: "Stopped");
             var backtest = Run(db, "Ghost", Trader, mode: "Backtest");
+            var recap = Run(db, "Ghost", Trader);
+            recap.ParametersJson = """{"session":"recap","recap_date":"2026-09-30","underlying":"NIFTY"}""";
             db.SaveChanges();
 
             var put = Leg(db, run, NiftyPut, "SHORT", 2, 100m, stopLoss: 95m);
@@ -190,6 +192,7 @@ public class OpenPositionsTests
             var otherCall = Leg(db, otherRun, NiftyCall, "LONG", 1, 80m);
             Leg(db, stopped, NiftyCall, "LONG", 1, 80m);
             Leg(db, backtest, NiftyCall, "LONG", 1, 80m);
+            Leg(db, recap, NiftyCall, "LONG", 1, 80m);
             db.SaveChanges();
 
             var crude = Leg(db, book, CrudeFuture, "LONG", 1, 6_500m, mark: 6_540m, markedUtc: YesterdayClose,
