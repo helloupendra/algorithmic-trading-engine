@@ -156,6 +156,27 @@ public class AiTraderShadowBookTests
     }
 
     [Fact]
+    public async Task A_chain_capture_hours_old_is_no_price_now_but_the_sessions_last_one_prices_the_close()
+    {
+        var ai = Build(Settings());
+        var day = new DateOnly(2026, 9, 30);
+        DateTime Ist(int h, int m) => IstTime.FromIst(day.ToDateTime(new TimeOnly(h, m)));
+        // The recorder's last capture of the day was at 11:00 (it stopped), and the feed carries no quote for the contract.
+        MarketBriefBuilderTests.Chain(ai.Db, Ist(11, 0), expiry: new DateOnly(2026, 10, 6));
+        var quotes = new AiTraderQuotes(ai.Db, new OptionChainService(ai.Db), Microsoft.Extensions.Logging.Abstractions.NullLogger<AiTraderQuotes>.Instance);
+        var p = Position(day, mark: 112m);
+
+        Assert.Equal(Ist(11, 0), (await quotes.QuoteAsync(p, Ist(11, 2), replay: false, default))?.UpdatedUtc);
+        // At 13:00 the 11:00 capture is two hours old: not a price that can stop, take or mark it now.
+        Assert.Null(await quotes.QuoteAsync(p, Ist(13, 0), replay: false, default));
+        Assert.Null(await quotes.QuoteAsync(p, Ist(13, 0), replay: true, default));
+
+        // After the close, the session's last capture is its closing price.
+        MarketBriefBuilderTests.Chain(ai.Db, Ist(15, 29), expiry: new DateOnly(2026, 10, 6));
+        Assert.Equal(Ist(15, 29), (await quotes.QuoteAsync(p, Ist(16, 10), replay: false, default))?.UpdatedUtc);
+    }
+
+    [Fact]
     public void An_open_positions_net_is_as_if_sold_at_its_mark_after_charges()
     {
         var p = Position(day: new DateOnly(2026, 10, 5), mark: 130m);

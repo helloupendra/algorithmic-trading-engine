@@ -216,8 +216,16 @@ public sealed class AiTraderQuotes(TradingDbContext db, OptionChainService chain
             var view = await chains.GetViewAsync(position.Underlying, position.Expiry, replay ? clockUtc : null, cancellationToken);
             var leg = view.Strikes.Select(s => position.OptionType == "CE" ? s.Call : s.Put)
                 .FirstOrDefault(l => l is not null && l.Symbol == position.Symbol);
-            return leg is not null && (leg.LastTradedPrice is > 0 || leg.BidPrice is > 0)
-                ? new QuoteSnapshot(leg.LastTradedPrice, leg.BidPrice, leg.AskPrice, clockUtc)
+            if (leg is null || !(leg.LastTradedPrice is > 0 || leg.BidPrice is > 0)) return null;
+
+            // The price is as old as the capture (or the live quote laid over it), never "now": with the recorder
+            // stopped at 11:00, its 11:00 prices would stop, take and mark positions all afternoon as if current.
+            // Older than three minutes it is no price this minute, as on the chain page. After the close the
+            // session's last capture is its closing price.
+            var at = leg.IsLive && leg.QuoteUpdatedUtc is DateTime quoted ? quoted : view.AsOfUtc;
+            var close = IstTime.FromIst(IstTime.DateOf(clockUtc).ToDateTime(TimeOnly.FromTimeSpan(IstTime.SessionClose)));
+            return (clockUtc < close ? clockUtc : close) - at <= FreshFor
+                ? new QuoteSnapshot(leg.LastTradedPrice, leg.BidPrice, leg.AskPrice, at)
                 : null;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
