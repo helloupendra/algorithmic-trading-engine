@@ -125,7 +125,16 @@ public sealed class HeartbeatRecapFeeds : IRecapFeeds
         foreach (var (feed, beat) in newest)
         {
             if (now - beat.LastHeartbeatUtc <= Fresh) return beat.SourceName;
-            if (beat.Match.Success && await _lockHeld($"feed:{feed}:lock")) return beat.SourceName;
+            if (!beat.Match.Success) continue;
+            try
+            {
+                if (await _lockHeld($"feed:{feed}:lock")) return beat.SourceName;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Not known is not "not running": no desk replay starts on a guess.
+                return $"{beat.SourceName} (its Redis lock could not be read)";
+            }
         }
 
         return null;
