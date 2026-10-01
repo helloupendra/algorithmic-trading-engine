@@ -17,6 +17,10 @@
  * The AI Trader can decide along (a box in the set-up): it looks on the
  * replay's clock, in shadow, and places nothing. With it, a replay needs no
  * strategy run at all; its decisions show under the replay as they come.
+ *
+ * Under the set-up, the queue (ReplayQueue.tsx): several recorded days played
+ * one after another with the AI Trader alone, to score it over many days.
+ * While a queue runs, its progress sits under the replay of the day playing.
  */
 
 import { useMemo, useRef, useState } from 'react'
@@ -50,6 +54,7 @@ import {
   errorLine,
   isActiveState,
   isEndedState,
+  isQueueRunning,
   launchReplay,
   minutesText,
   minutesTone,
@@ -85,6 +90,7 @@ import { Badge, InlineError, Loading, Panel } from '../../components/ui'
 import { IconCalendar, IconClock, IconPlay, IconPlus, IconStop, IconX } from '../../components/icons'
 import { ConsoleOutput, Disclosure } from '../strategies/shared'
 import { AiTraderDecisionList, AiTraderShadowBook } from '../ai/AiTraderParts'
+import { QueueProgress, QueueSetup } from './ReplayQueue'
 import './data.css'
 import './replay.css'
 
@@ -1016,6 +1022,7 @@ export function ReplayPage() {
             </p>
           )}
           {showSession && session && <SessionPanel session={session} onAnother={replayAnother} />}
+          {data?.queue && isQueueRunning(data.queue) && <QueueProgress queue={data.queue} session={session} />}
         </>
       )}
 
@@ -1031,6 +1038,8 @@ export function ReplayPage() {
           </div>
         )}
       </div>
+
+      {data && !isQueueRunning(data.queue) && <QueueSetup status={status.isError && data === undefined ? undefined : data} />}
 
       <PlayerLog active={active} />
     </div>

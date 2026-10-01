@@ -26,6 +26,17 @@ import {
   replayProgress,
   replayStateLabel,
   replayUnderlyingsFor,
+  durationText,
+  fullDayDates,
+  isFullDay,
+  isQueueRunning,
+  queueDayMinutes,
+  queueDays,
+  queueProgressText,
+  queueSetupError,
+  queueSummary,
+  readReplayQueue,
+  readSkipped,
   setupError,
   setupSummary,
   speedLabel,
@@ -143,7 +154,7 @@ describe('readReplayStatus', () => {
   })
 
   it('starts only when the API says so in as many words', () => {
-    expect(readReplayStatus({ canStart: true, whyNot: 'ignored', session: null })).toEqual({ canStart: true, whyNot: null, session: null })
+    expect(readReplayStatus({ canStart: true, whyNot: 'ignored', session: null })).toEqual({ canStart: true, whyNot: null, session: null, queue: null })
     expect(readReplayStatus({ canStart: 'true' }).canStart).toBe(false)
     expect(readReplayStatus({ canStart: false }).whyNot).toBe('The API did not say why a replay cannot start now.')
     expect(readReplayStatus(null)).toEqual({
@@ -539,5 +550,120 @@ describe('small readers', () => {
     expect(errorLine('plain')).toBe('plain')
     expect(errorLine(undefined)).toBe('Something went wrong.')
     expect(errorLine(new Error(''))).toBe('Something went wrong.')
+  })
+})
+
+describe('the queue', () => {
+  /** GET /api/Replay/status's queue as the API sends it: five days at 2×, the third playing, one skipped. */
+  const queue = (over: Record<string, unknown> = {}) => ({
+    id: 3,
+    dates: ['2026-09-24', '2026-09-25', '2026-09-26', '2026-09-29', '2026-09-30'],
+    speed: 2,
+    fromIst: '09:15',
+    next: 4,
+    sessions: [21, 22, 23],
+    skipped: ['2026-09-26: The desk recorded nothing for 26 Sep.'],
+    by: 'admin',
+    createdUtc: '2026-10-01T12:40:00Z',
+    endedUtc: null,
+    note: null,
+    nextDate: '2026-09-30',
+    ...over,
+  })
+
+  it('reads the queue as the status sends it', () => {
+    const s = readReplayStatus({ canStart: false, whyNot: 'A queue of days is playing; cancel it first.', session: session({ id: 23 }), queue: queue() })
+    expect(s.queue).toEqual({
+      id: 3,
+      dates: ['2026-09-24', '2026-09-25', '2026-09-26', '2026-09-29', '2026-09-30'],
+      speed: 2,
+      fromIst: '09:15',
+      next: 4,
+      sessions: [21, 22, 23],
+      skipped: [{ date: '2026-09-26', reason: 'The desk recorded nothing for 26 Sep.' }],
+      by: 'admin',
+      createdUtc: '2026-10-01T12:40:00Z',
+      endedUtc: null,
+      note: null,
+      nextDate: '2026-09-30',
+    })
+    expect(isQueueRunning(s.queue)).toBe(true)
+    expect(isQueueRunning(readReplayQueue(queue({ endedUtc: '2026-10-01T20:00:00Z' })))).toBe(false)
+    expect(isQueueRunning(null)).toBe(false)
+  })
+
+  it('reads a queue it cannot use as none, and keeps what it can', () => {
+    expect(readReplayQueue(null)).toBeNull()
+    expect(readReplayQueue({ dates: [] })).toBeNull()
+    expect(readReplayQueue({ dates: ['soon'] })).toBeNull()
+    const q = readReplayQueue({ dates: ['2026-09-30'], next: 9, sessions: [4, 'x', -1], skipped: ['', 7, 'no date given'] })!
+    expect(q.next).toBe(1)
+    expect(q.sessions).toEqual([4])
+    expect(q.skipped).toEqual([{ date: '', reason: 'no date given' }])
+    expect(q.speed).toBeNull()
+    expect(q.fromIst).toBe('09:15')
+    expect(readSkipped('2026-09-26:  Nothing recorded ')).toEqual({ date: '2026-09-26', reason: 'Nothing recorded' })
+  })
+
+  it('says what became of each day: played, playing, skipped, queued', () => {
+    const q = readReplayQueue(queue())!
+    const days = queueDays(q, { id: 23, state: 'playing' })
+    expect(days).toEqual([
+      { date: '2026-09-24', state: 'played', sessionId: 21, reason: null },
+      { date: '2026-09-25', state: 'played', sessionId: 22, reason: null },
+      { date: '2026-09-26', state: 'skipped', sessionId: null, reason: 'The desk recorded nothing for 26 Sep.' },
+      { date: '2026-09-29', state: 'playing', sessionId: 23, reason: null },
+      { date: '2026-09-30', state: 'queued', sessionId: null, reason: null },
+    ])
+    expect(queueProgressText(q, days)).toBe('Day 4 of 5 · playing 29 Sep')
+    // Between two days: nothing plays, the next is named.
+    const between = queueDays(q, { id: 23, state: 'finished' })
+    expect(between[3].state).toBe('played')
+    expect(queueProgressText(q, between)).toBe('4 of 5 days done · next 30 Sep')
+    // Cancelled: the days not started are not played.
+    const ended = readReplayQueue(queue({ endedUtc: '2026-10-01T19:00:00Z', note: 'Cancelled by admin.', nextDate: null }))!
+    const endedDays = queueDays(ended, null)
+    expect(endedDays[4].state).toBe('not-played')
+    expect(queueProgressText(ended, endedDays)).toBe('3 of 5 days played · Cancelled by admin.')
+  })
+
+  it('counts a day as full at 360 of 375 NIFTY minutes, and a missing count as not full', () => {
+    const day = (n: number | null) => ({ minutes: { NIFTY: n, BANKNIFTY: 375, SENSEX: 375, INDIAVIX: 375 } })
+    expect(isFullDay(day(375))).toBe(true)
+    expect(isFullDay(day(360))).toBe(true)
+    expect(isFullDay(day(359))).toBe(false)
+    expect(isFullDay(day(null))).toBe(false)
+  })
+
+  it('selects the full days that are over, newest first, at most 20', () => {
+    const d = (date: string, nifty: number | null) => ({ date, weekday: '', minutes: { NIFTY: nifty, BANKNIFTY: 375, SENSEX: 375, INDIAVIX: 375 }, sizeBytes: null })
+    const days = [d('2026-10-01', 375), d('2026-09-30', 375), d('2026-09-29', 343), d('2026-09-26', 375), d('2026-09-25', null)]
+    expect(fullDayDates(days, '2026-10-01')).toEqual(['2026-09-30', '2026-09-26'])
+    const many = Array.from({ length: 25 }, (_, i) => d(`2026-08-${String(i + 1).padStart(2, '0')}`, 375))
+    const picked = fullDayDates(many, '2026-10-01')
+    expect(picked).toHaveLength(20)
+    expect(picked[0]).toBe('2026-08-25')
+    expect(picked[19]).toBe('2026-08-06')
+  })
+
+  it('says how long a day takes, as the API reckons it', () => {
+    expect(queueDayMinutes(2)).toBe(203)
+    expect(durationText(queueDayMinutes(2))).toBe('3 h 23 min')
+    expect(durationText(queueDayMinutes(1))).toBe('6 h 35 min')
+    expect(durationText(queueDayMinutes(10))).toBe('49 min')
+    expect(durationText(120)).toBe('2 h')
+  })
+
+  it('checks the ticked days and says what Queue does', () => {
+    expect(queueSetupError([])).toBe('Tick at least one recorded day.')
+    expect(queueSetupError(Array.from({ length: 21 }, (_, i) => `2026-09-${String(i + 1).padStart(2, '0')}`))).toBe('At most 20 days a queue; 21 are ticked.')
+    expect(queueSetupError(['2026-09-30'])).toBeNull()
+    expect(queueSummary(['2026-09-30'], 2)).toBe(
+      'Plays 30 Sep, oldest first, each from 09:15 at 2× with only the AI Trader deciding along, in shadow. About 3 h 23 min a day.',
+    )
+    expect(queueSummary(['2026-09-30', '2026-09-24', '2026-09-25'], 2)).toBe(
+      'Plays 3 days, 24 Sep to 30 Sep, oldest first, each from 09:15 at 2× with only the AI Trader deciding along, in shadow. About 3 h 23 min a day, 10 h 12 min of play in all.',
+    )
+    expect(queueSummary([], 2)).toBe('')
   })
 })

@@ -47,7 +47,7 @@ import { shortDay } from '../../lib/replay'
 import { DateField } from '../../components/DateField'
 import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components/ui'
 import { CallLink, ChainChips, ChainEditor, OutcomeBadge, StatusPill } from './parts'
-import { AiTraderDecisionList, AiTraderShadowBook } from './AiTraderParts'
+import { AiTraderDecisionList, AiTraderScoreboard, AiTraderShadowBook } from './AiTraderParts'
 import { errorText, useNow } from './common'
 import '../system/health/health.css'
 import './ai.css'
@@ -454,6 +454,8 @@ function AiTraderPanel({ now }: { now: number }) {
         )}
         {status.isError && s && <p className="small-note warn ai-flush">The last read failed: showing what was read before.</p>}
 
+        <AiTraderScoreboard />
+
         <div className="atr-tools">
           <h3 className="atr-tools__h">Day</h3>
           <DateField
@@ -657,13 +659,24 @@ export function AiAgentsPage() {
 
   // A link names an agent (#agent-key from the Overview, ?agent=key from Today): bring it into view once
   // the list is in. The AI Trader's link means its record, the panel under the cards.
+  // A scoreboard row (#atr-score-…, from Data → Replay's queue) or the scoreboard itself is read after the
+  // list, so the scroll waits for it, a few seconds at most.
   const agentParam = params.get('agent')
+  const toScore = hash === '#ai-trader-scoreboard' || hash.startsWith('#atr-score-')
   const toTrader = hash === '#ai-trader' || agentParam === AI_TRADER_KEY
-  const target = hash.startsWith('#agent-') ? hash.slice('#agent-'.length) : !toTrader && agentParam ? agentParam : null
-  const scrollTo = toTrader ? 'ai-trader' : target ? `agent-${target}` : null
+  const target = hash.startsWith('#agent-') ? hash.slice('#agent-'.length) : !toTrader && !toScore && agentParam ? agentParam : null
+  const scrollTo = toScore ? hash.slice(1) : toTrader ? 'ai-trader' : target ? `agent-${target}` : null
   useEffect(() => {
     if (!scrollTo || !data) return
-    document.getElementById(scrollTo)?.scrollIntoView({ block: 'start' })
+    let tries = 0
+    let timer = 0
+    const go = () => {
+      const el = document.getElementById(scrollTo)
+      if (el) el.scrollIntoView({ block: 'start' })
+      else if (tries++ < 30) timer = window.setTimeout(go, 150)
+    }
+    go()
+    return () => window.clearTimeout(timer)
   }, [scrollTo, data])
 
   const counts: Record<Filter, number> = { all: data?.agents.length ?? 0, on: 0, off: 0, planned: 0 }

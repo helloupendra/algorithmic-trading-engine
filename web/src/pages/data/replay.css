@@ -164,6 +164,65 @@
 .rp-page .rp-failure__started { color: var(--text-2); font-size: var(--fs-s); }
 .rp-page .rp-failure__actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
+/* --- the queue of days (ReplayQueue.tsx) ------------------------------------------------ */
+.rp-page .rp-q-lead { margin-bottom: 12px; max-width: 92ch; line-height: 1.5; }
+.rp-page .rp-q-setup { display: grid; gap: 12px; }
+.rp-page .rp-q-setup .seg { align-self: flex-start; width: fit-content; max-width: 100%; flex-wrap: wrap; }
+/* styles.css sets .field__help's colour after .warn's: a warning under a field keeps its colour here. */
+.rp-page .field__help.warn { color: var(--warn); }
+.rp-page .rp-q-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.rp-page .rp-q-tools__note { font-size: var(--fs-s); }
+/* The days to tick: a compact grid, each day with its NIFTY minutes. */
+.rp-page .rp-q-pick {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.rp-page .rp-q-day {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs);
+  cursor: pointer;
+}
+.rp-page .rp-q-day:hover { border-color: var(--line-hover); }
+.rp-page .rp-q-day.is-on { border-color: var(--brand-line); background: var(--brand-soft); }
+.rp-page .rp-q-day.is-off { cursor: default; opacity: 0.55; }
+.rp-page .rp-q-day input { margin: 0; }
+.rp-page .rp-q-day__date { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rp-page .rp-q-day__date b { font-weight: 600; }
+.rp-page .rp-q-day__min { font-size: var(--fs-s); color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rp-page .rp-q-day__min.warn { color: var(--warn); }
+.rp-page .rp-q-confirm { display: flex; flex-wrap: wrap; gap: 8px; }
+.rp-page .rp-q-n { font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* The queue's days: the date, the state, the replay and its score, why a day was skipped. */
+.rp-page .rp-q-days { list-style: none; margin: 8px 0 10px; padding: 0; border-top: 1px solid var(--line-soft); }
+.rp-page .rp-q-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: var(--fs);
+}
+.rp-page .rp-q-row__date { min-width: 78px; white-space: nowrap; }
+.rp-page .rp-q-row__date b { font-weight: 600; }
+.rp-page .rp-q-row__score { color: var(--text-2); }
+.rp-page .rp-q-row__why { flex-basis: 100%; font-size: var(--fs-s); }
+.rp-page .rp-q-row--queued .rp-q-row__date,
+.rp-page .rp-q-row--not-played .rp-q-row__date { color: var(--text-3); }
+.rp-page .rp-q-last { margin-top: 14px; font-size: var(--fs); }
+
 /* --- the player's log ------------------------------------------------------------------- */
 .rp-page .rp-log { padding-top: 12px; padding-bottom: 12px; }
 .rp-page .rp-log .run-card__section { margin-top: 0; }
@@ -183,6 +242,9 @@
 }
 
 @media (max-width: 640px) {
+  .rp-page .rp-q-pick { grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 320px; }
+  .rp-page .rp-q-day { grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; }
+  .rp-page .rp-q-day__min { grid-column: 2; }
   .rp-page .rp-runs { display: none; }
   .rp-page .rp-rl { display: block; }
   .rp-page .rp-go .btn { width: 100%; }
