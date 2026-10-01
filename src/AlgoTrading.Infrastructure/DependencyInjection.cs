@@ -208,6 +208,8 @@ public static class DependencyInjection
         services.AddScoped<IExpiryResolverService, ExpiryResolverService>();
         services.AddScoped<IHistoricalCandleStore, HistoricalCandleStore>();
         services.AddScoped<IDailyCandleArchiveService, DailyCandleArchiveService>();
+        // India VIX gaps, filled after the nightly archive (NightlyArchiveService).
+        services.AddScoped<VixBackfillService>();
         services.AddScoped<IMarketPulseService, MarketPulseService>();
         services.AddScoped<IOptionHistoryBackfillService, OptionHistoryBackfillService>();
 

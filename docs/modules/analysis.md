@@ -190,6 +190,12 @@ India VIX is the exception: it is recomputed in small steps rather than with
 every trade, so only a VIX day with no movement at all is dropped. Every
 dropped day is listed with its reason in the backtest report.
 
+India VIX's candles are checked every trading night right after the archive:
+the last 20 trading days, each missing bar asked of the history vendors, and
+a day still short of what this table needs reported as "India VIX gap not
+filled" (see [India VIX in the data module](data_module.md#india-vix)). It
+exists because 22-24 Sep 2026 went missing unnoticed (incident #204).
+
 The previous close is the previous complete session's close. A day dropped
 for missing data makes the next day's range a percentage of a close two days
 old; the report's dropped-day count says how often that happens.
