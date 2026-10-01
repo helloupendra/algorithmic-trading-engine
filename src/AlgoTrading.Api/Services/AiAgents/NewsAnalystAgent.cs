@@ -168,14 +168,17 @@ public sealed class NewsAnalystAgent(
     /// <summary>
     /// An item with no record in the answer. Cut off at the token limit, it
     /// is failed and read again in a later batch: the batch was too long, not
-    /// the model wrong. Otherwise the model broke or left out its record.
+    /// the model wrong. An answer with no JSON at all is failed too: the model
+    /// did not answer the task (call 168 on 1 Oct returned its "thinking
+    /// process" and stopped), so no item was judged and each is read again.
+    /// Otherwise the model broke or left out this item's record.
     /// </summary>
     private static (string Status, string Title, string Body, string Data, string Error) Missing(
         Item item, Dictionary<string, JsonObject>? byId, string answer, bool cutOff)
     {
         string title = Clip(FirstLine(item.Text), 200);
         if (cutOff) return (AiReportStatus.Failed, title, string.Empty, "{}", "The answer was cut off at the token limit before this item.");
-        if (byId is null) return (AiReportStatus.Invalid, title, string.Empty, "{}", "The answer was not the JSON object asked for.");
+        if (byId is null) return (AiReportStatus.Failed, title, string.Empty, "{}", "The answer was not the JSON object asked for.");
         return Regex.IsMatch(answer, $"\"id\"\\s*:\\s*\"{Regex.Escape(item.Id)}\"", RegexOptions.IgnoreCase)
             ? (AiReportStatus.Invalid, title, string.Empty, "{}", "Its record in the answer was not valid JSON.")
             : (AiReportStatus.Invalid, title, string.Empty, "{}", "The answer left this item out.");
