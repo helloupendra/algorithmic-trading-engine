@@ -20,8 +20,9 @@
  *     minute against its stop and target, and scored after charges. Nothing
  *     in it reaches a broker;
  *   - the scoreboard (GET /api/AiTrader/scoreboard): each replay and live
- *     shadow day against a fixed rule anyone could follow, after charges,
- *     with totals over the full days only.
+ *     shadow day (a row) against a fixed rule anyone could follow, after
+ *     charges, with totals over every full row, listed or not. The totals
+ *     count rows, not dates: a date replayed twice counts twice.
  *
  * The query hooks live with the others in lib/queries.ts. The switch and
  * "Run now" are the agent's own, on AI → Agents (lib/ai.ts).
@@ -260,6 +261,11 @@ const count = (v: unknown): number => Math.max(0, Math.round(num(v) ?? 0))
 const limit = (v: unknown): number | null => {
   const n = num(v)
   return n == null || n < 0 ? null : n
+}
+/** A whole, non-negative count, or null when not sent (not known, unlike `count`). */
+const wholeOrNull = (v: unknown): number | null => {
+  const n = num(v)
+  return n != null && n >= 0 && Number.isInteger(n) ? n : null
 }
 /** A positive whole id, or null. */
 const id = (v: unknown): number | null => {
@@ -829,7 +835,11 @@ export interface AiTraderScoreRow {
   vsBaseline: number | null
 }
 
-/** Over the full, scored days only. */
+/**
+ * Over every full, scored row, listed or not. `days` and the "days" counts are
+ * rows (each replay and each live shadow day), not dates: a date replayed
+ * twice counts twice, against the same rule result.
+ */
 export interface AiTraderScoreTotals {
   days: number
   aiNet: number | null
@@ -846,8 +856,10 @@ export interface AiTraderScoreboard {
   ruleText: string
   /** Null when the body sent none: not known, never all zeros. */
   totals: AiTraderScoreTotals | null
-  /** Newest day first. */
+  /** Newest first: at most the newest `take` rows. */
   rows: AiTraderScoreRow[]
+  /** How many rows there are in all, listed or not; null when not sent (not known). */
+  rowsTotal: number | null
 }
 
 function readBaseline(v: unknown): AiTraderBaseline | null {
@@ -922,6 +934,7 @@ export function readAiTraderScoreboard(raw: unknown): AiTraderScoreboard {
         }
       : null,
     rows: raw.rows.map(readAiTraderScoreRow).filter((r): r is AiTraderScoreRow => r != null),
+    rowsTotal: wholeOrNull(raw.rowsTotal),
   }
 }
 
@@ -957,14 +970,27 @@ export function baselineText(b: AiTraderBaseline | null): string {
   return end ? `${side} · ${end}` : side
 }
 
-/** "3 of 8 days". */
-export function beatText(t: Pick<AiTraderScoreTotals, 'aiBeatBaseline' | 'days'>): string {
-  return `${t.aiBeatBaseline} of ${t.days} ${t.days === 1 ? 'day' : 'days'}`
+/** What the totals count: rows, each replay and each live shadow day, never dates. */
+function rowsWord(n: number): string {
+  return n === 1 ? 'full replay or shadow day' : 'full replays and shadow days'
 }
 
-/** The honest line under the totals: a handful of days proves nothing. */
+/** "3 of 8 full replays and shadow days". */
+export function beatText(t: Pick<AiTraderScoreTotals, 'aiBeatBaseline' | 'days'>): string {
+  return `${t.aiBeatBaseline} of ${t.days} ${rowsWord(t.days)}`
+}
+
+/** The honest line under the totals: a handful of replays proves nothing. */
 export function sampleNote(days: number): string {
-  if (days <= 0) return 'No full, scored day yet: the totals count days whose looks span 09:30–14:30 once the rule is scored for them.'
-  if (days < 60) return `${days} ${days === 1 ? 'day is' : 'days is'} a small sample; a difference here is not proof of an edge.`
-  return `A difference over ${days} days is still not proof of an edge until it is tested against chance.`
+  if (days <= 0) {
+    return 'No full, scored replay or shadow day yet: the totals count those whose looks span 09:30–14:30 once the rule is scored for their date.'
+  }
+  if (days < 60) return `${days} ${rowsWord(days)} ${days === 1 ? 'is' : 'are'} a small sample; a difference here is not proof of an edge.`
+  return `A difference over ${days} ${rowsWord(days)} is still not proof of an edge until it is tested against chance.`
+}
+
+/** "60 of 75 rows listed, …" when the list holds only the newest rows; '' when it holds them all, or the count is not known. */
+export function listedText(shown: number, total: number | null): string {
+  if (total == null || total <= shown) return ''
+  return `${shown} of ${total} rows listed, newest first; the totals count all of them.`
 }

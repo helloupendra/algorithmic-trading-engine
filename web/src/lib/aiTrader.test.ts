@@ -13,6 +13,7 @@ import {
   jsonBlock,
   lakhText,
   limitsParts,
+  listedText,
   looksSpanText,
   lotsText,
   modeLabel,
@@ -562,6 +563,7 @@ describe('the scoreboard', () => {
     rule: 'nifty-trend-1100',
     ruleText: "At 11:00 IST, NIFTY's 5-minute trend picks the side: …",
     totals: { days: 2, aiNet: -1840.5, baselineNet: 2210.0, aiBeatBaseline: 1, aiPositiveDays: 1, baselinePositiveDays: 1, trades: 5, charges: 312.4 },
+    rowsTotal: 2,
     rows: [
       {
         kind: 'replay',
@@ -601,6 +603,7 @@ describe('the scoreboard', () => {
     expect(b.rule).toBe('nifty-trend-1100')
     expect(b.totals).toEqual(board.totals)
     expect(b.rows).toHaveLength(2)
+    expect(b.rowsTotal).toBe(2)
     expect(b.rows[0]).toEqual({ ...board.rows[0], baseline: { ...board.rows[0].baseline } })
     expect(b.rows[1]).toMatchObject({ kind: 'shadow', full: false, baseline: null, vsBaseline: null })
   })
@@ -610,6 +613,10 @@ describe('the scoreboard', () => {
       expect(() => readAiTraderScoreboard(bad)).toThrow(/shape this page cannot read/)
     }
     expect(readAiTraderScoreboard({ rows: [] }).totals).toBeNull()
+    // How many rows there are is not known when it is not sent: never the rows listed passed off as all of them.
+    expect(readAiTraderScoreboard({ rows: [] }).rowsTotal).toBeNull()
+    expect(readAiTraderScoreboard({ rows: [], rowsTotal: 'many' }).rowsTotal).toBeNull()
+    expect(readAiTraderScoreboard({ rows: [], rowsTotal: -3 }).rowsTotal).toBeNull()
     expect(readAiTraderScoreboard({ rows: [], totals: { days: 'two', aiNet: '5' } }).totals).toMatchObject({ days: 0, aiNet: null })
   })
 
@@ -640,15 +647,23 @@ describe('the scoreboard', () => {
     expect(baselineText({ ...replay.baseline!, optionType: 'PE', exitReason: 'stop' })).toBe('Put · stop')
     expect(baselineText({ ...replay.baseline!, optionType: '' })).toBe('No trade')
     expect(baselineText(null)).toBe('Scoring…')
-    expect(beatText({ aiBeatBaseline: 1, days: 2 })).toBe('1 of 2 days')
+    // The totals' "days" are rows: each replay and each live shadow day, a date replayed twice counted twice.
+    expect(beatText({ aiBeatBaseline: 1, days: 2 })).toBe('1 of 2 full replays and shadow days')
+    expect(beatText({ aiBeatBaseline: 0, days: 1 })).toBe('0 of 1 full replay or shadow day')
     expect(scoreRowAnchor(replay)).toBe('atr-score-r-23')
     expect(scoreRowAnchor(live)).toBe('atr-score-d-2026-10-01')
   })
 
-  it('never lets a handful of days read as an edge', () => {
-    expect(sampleNote(8)).toBe('8 days is a small sample; a difference here is not proof of an edge.')
-    expect(sampleNote(1)).toBe('1 day is a small sample; a difference here is not proof of an edge.')
-    expect(sampleNote(0)).toMatch(/No full, scored day yet/)
-    expect(sampleNote(120)).toMatch(/still not proof of an edge/)
+  it('never lets a handful of replays read as an edge', () => {
+    expect(sampleNote(8)).toBe('8 full replays and shadow days are a small sample; a difference here is not proof of an edge.')
+    expect(sampleNote(1)).toBe('1 full replay or shadow day is a small sample; a difference here is not proof of an edge.')
+    expect(sampleNote(0)).toMatch(/No full, scored replay or shadow day yet/)
+    expect(sampleNote(120)).toBe('A difference over 120 full replays and shadow days is still not proof of an edge until it is tested against chance.')
+  })
+
+  it('says when the list holds only the newest rows, and is silent when it holds them all or the count is not known', () => {
+    expect(listedText(60, 75)).toBe('60 of 75 rows listed, newest first; the totals count all of them.')
+    expect(listedText(2, 2)).toBe('')
+    expect(listedText(2, null)).toBe('')
   })
 })
