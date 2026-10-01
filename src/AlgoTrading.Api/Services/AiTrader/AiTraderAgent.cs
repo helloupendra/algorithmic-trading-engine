@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -25,9 +26,9 @@ namespace AlgoTrading.Api.Services.AiTrader;
 /// <para>
 /// It starts in shadow mode: it decides and places nothing (<see cref="AiSettings.AiTraderExecute"/>). Its
 /// allowed buys go into its shadow book instead (<see cref="AiTraderShadowBook"/>), checked every minute
-/// against their stops and targets, so a shadow day can be scored after charges and the model sees what it
-/// holds. In a market replay that the owner asked it into, it decides on the replay's clock with a fresh
-/// shadow book of that replay's own.
+/// against their stops and targets whether it is on or off (<see cref="AiTraderShadowWatcher"/>), so a shadow
+/// day can be scored after charges and the model sees what it holds. In a market replay that the owner asked it
+/// into, it decides on the replay's clock with a fresh shadow book of that replay's own.
 /// </para>
 /// <para>
 /// No model holds an order tool. The model's answer only proposes; the code checks it and, once execution
@@ -62,16 +63,17 @@ public sealed class AiTraderAgent(
 
     private TimeSpan Every => TimeSpan.FromMinutes(Math.Max(1, settings.CurrentValue.AiTraderEveryMinutes));
 
+    /// <summary>
+    /// A look when one is due, and a baseline day to score. The shadow book's minute check is not here: it runs every
+    /// minute whether the agent is on or off (<see cref="AiTraderShadowWatcher"/>).
+    /// </summary>
     public async Task<bool> RunOnceAsync(DateTime nowUtc, CancellationToken cancellationToken)
     {
         var replay = await replays.LoadAsync(cancellationToken);
-        bool replaying = replay is { AiTrader: true } && MarketReplayService.IsActive(replay.State) && replayBook?.ClockUtc is not null
-            && replayBook.Day?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) == replay.Date;
-        await CheckShadowAsync(nowUtc, replay, replaying, cancellationToken);
         await ScoreBaselineAsync(nowUtc, cancellationToken);
 
         // A market replay it was asked into: it decides on the replay's clock.
-        if (replaying && replayBook?.ClockUtc is DateTime clock)
+        if (Replaying(replay, replayBook) && replayBook?.ClockUtc is DateTime clock)
         {
             if (!InLoopHours(clock)) return false;
             var lastReplayed = await db.AiTraderDecisions.AsNoTracking()
@@ -99,28 +101,12 @@ public sealed class AiTraderAgent(
     private static DateTime Minute(DateTime utc) => new(utc.Ticks - utc.Ticks % TimeSpan.TicksPerMinute, utc.Kind);
 
     /// <summary>
-    /// Every minute, whatever the decision schedule: the shadow book's open positions against their stops,
-    /// targets and the close, live and in the replay that is playing; an ended replay's are closed. A failure
-    /// here is logged and never costs a decision.
+    /// A replay it was asked into is playing, and the replay's prices are of that replay's day: it decides on the
+    /// replay's clock, and the minute check checks that replay's shadow book there.
     /// </summary>
-    private async Task CheckShadowAsync(DateTime nowUtc, ReplaySessionState? replay, bool replaying, CancellationToken cancellationToken)
-    {
-        await BookGate.WaitAsync(cancellationToken);
-        try
-        {
-            await shadow.EndReplaysAsync(replay is not null && MarketReplayService.IsActive(replay.State) ? replay.Id : null, cancellationToken);
-            if (replaying && replayBook?.ClockUtc is DateTime clock) await shadow.CheckAsync(clock, replay!.Id, cancellationToken);
-            await shadow.CheckAsync(nowUtc, null, cancellationToken);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            logger.LogWarning(ex, "AI Trader: the shadow book's minute check failed");
-        }
-        finally
-        {
-            BookGate.Release();
-        }
-    }
+    internal static bool Replaying([NotNullWhen(true)] ReplaySessionState? replay, IMarketReplayBook? replayBook) =>
+        replay is { AiTrader: true } && MarketReplayService.IsActive(replay.State) && replayBook?.ClockUtc is not null
+        && replayBook.Day?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) == replay.Date;
 
     /// <summary>How long a day whose baseline failed to score waits before it is tried again.</summary>
     public static readonly TimeSpan BaselineRetryAfter = TimeSpan.FromHours(1);
@@ -182,11 +168,11 @@ public sealed class AiTraderAgent(
 
     /// <summary>
     /// One judging of its book at a time in this process (the AI runs on one API): a look's verdict with what it
-    /// opens or closes, and the shadow book's minute check. "Run now" and the scheduled look, each on a database
-    /// context of its own, could otherwise both pass a limit the other was about to use (two buys past the three
-    /// open positions) or both close one position; the minute check could stop a position as a look exited it. The
-    /// model is never asked under it: a look reads its book for the brief, asks, and only then waits here and reads
-    /// the book again, so a minute-long answer never holds up the minute check.
+    /// opens or closes, and the shadow book's minute check (<see cref="AiTraderShadowCheck"/>). "Run now" and the
+    /// scheduled look, each on a database context of its own, could otherwise both pass a limit the other was about
+    /// to use (two buys past the three open positions) or both close one position; the minute check could stop a
+    /// position as a look exited it. The model is never asked under it: a look reads its book for the brief, asks,
+    /// and only then waits here and reads the book again, so a minute-long answer never holds up the minute check.
     /// </summary>
     public static readonly SemaphoreSlim BookGate = new(1, 1);
 

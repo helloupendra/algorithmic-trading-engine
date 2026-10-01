@@ -8,6 +8,7 @@ using AlgoTrading.Infrastructure.Ai;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 using static AlgoTrading.UnitTests.AiTestKit;
@@ -207,6 +208,19 @@ public class AiTraderAgentTests
             new FakeReplays(session), ai.Options, NullLogger<AiTraderAgent>.Instance, book,
             baselines: baselineMarket is null ? null : new AiTraderBaselineScorer(ai.Db, baselineMarket, sessions));
         return (agent, ai, briefs, quotes);
+    }
+
+    /// <summary>The shadow book's minute check on the agent's database and quotes, as the watcher runs it each minute.</summary>
+    internal static AiTraderShadowCheck Check(Services ai, FakeQuotes quotes, ReplaySessionState? session = null, IMarketReplayBook? book = null) =>
+        new(new AiTraderShadowBook(ai.Db, quotes, new MarketSessionService(new OpenCalendar())), new FakeReplays(session), book);
+
+    /// <summary>The hosted watcher, each tick in a scope of its own, at <paramref name="nowUtc"/>.</summary>
+    internal static AiTraderShadowWatcher Watcher(Services ai, FakeQuotes quotes, DateTime nowUtc, ReplaySessionState? session = null)
+    {
+        var services = new ServiceCollection();
+        services.AddScoped(_ => Check(ai, quotes, session));
+        return new AiTraderShadowWatcher(services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), ai.Options,
+            NullLogger<AiTraderShadowWatcher>.Instance, new AiAgentsTests.FixedTime(nowUtc));
     }
 
     /// <summary>Quotes by symbol, as the shadow book's minute check would read them.</summary>

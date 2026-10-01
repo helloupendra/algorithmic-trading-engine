@@ -67,7 +67,7 @@ placed (`ai_trader_shadow_positions`, `AiTraderShadowBook`), and the model reads
 | Step | Rule |
 |---|---|
 | Entry | The ask its decision saw (in a replay, the replay's own quote when it has one) |
-| Minute check | Every minute, whatever the decision schedule: the price it could sell at, the bid, else the last trade less half a spread, as the desk's paper fills |
+| Minute check | Every minute, whatever the decision schedule and whether the AI Trader is on or off (`AiTraderShadowWatcher`): the price it could sell at, the bid, else the last trade less half a spread, as the desk's paper fills |
 | Stop | That price at or under the stop: closed at that price, which can be under the stop |
 | Target | That price at or over the target: closed at that price |
 | Its own exit | An allowed `exit` naming the position: closed at that price |
@@ -75,7 +75,10 @@ placed (`ai_trader_shadow_positions`, `AiTraderShadowBook`), and the model reads
 | Replay | Each replay starts a fresh shadow book; positions still open when it ends close at their last marks (`replay-ended`) |
 | Charges | The desk's index option round trip (`OptionCharges`); net is after them, an open position's as if sold at its mark |
 
-A touch between two minute checks is missed. Prices come from the feed's quote when it is under three minutes
+The minute check is a hosted service of its own, not the agent's tick: the scheduler runs only the agents that are on,
+and a position left open when it was switched off went unmarked, missed its stop, target and the 15:30 square-off,
+and closed on a later day at a stale mark. Like the scheduler it starts 90 seconds after the API and runs only where
+`Ai:SchedulerEnabled` is on. A touch between two minute checks is missed. Prices come from the feed's quote when it is under three minutes
 old, else the option chain (the minute capture with fresh quotes over it) when that is under three minutes old
 too, or after the close the session's last capture; with neither, the position keeps its last mark and is neither
 stopped nor taken that minute. A shadow position is never put on the feed. Strategy starts and stops are recorded
