@@ -139,7 +139,22 @@ public sealed class MarketReplayService(
         var why = session is not null && IsActive(session.State)
             ? $"A replay of {Day(session.Date)} is {session.State}."
             : queue is { EndedUtc: null } ? QueuePlaying : WhyNotNow(Now) ?? await WhyNotBesideRecapAsync(cancellationToken);
-        return new ReplayStatus(why is null, why, session is null ? null : await ViewAsync(session, cancellationToken), queue is null ? null : QueueView(queue));
+        return new ReplayStatus(why is null, why, session is null ? null : await ViewAsync(session, cancellationToken), queue is null ? null : QueueView(queue),
+            McxLiveNow(Now));
+    }
+
+    /// <summary>
+    /// Why a replay now shares the desk with live trading, or null: MCX is in session. The live crude runs read the
+    /// same Redis stream (<c>market:ticks</c>) and decode every replayed tick to pass over it, and the player's reads
+    /// of <c>live_ticks</c> load the box the live feed runs on. A queued day waits for MCX to close; a replay started
+    /// by hand may start, and the status warns.
+    /// </summary>
+    public string? McxLiveNow(DateTime nowUtc)
+    {
+        var mcx = sessions.GetSessionInfo(nowUtc, "MCX", "COM");
+        return mcx.IsMarketOpen
+            ? $"MCX trades until {IstTime.ToIst(mcx.SessionCloseUtc):HH:mm}: live MCX runs share the tick stream with a replay."
+            : null;
     }
 
     private const string QueuePlaying = "A queue of days is playing; cancel it first.";
@@ -287,6 +302,7 @@ public sealed class MarketReplayService(
 
         logger.LogInformation("Market replay {Session} of {Date} started by {By} at {Speed}x from {From}, runs {Runs}",
             session.Id, session.Date, by, session.Speed, session.FromIst, string.Join(',', runIds));
+        if (McxLiveNow(Now) is { } mcx) logger.LogWarning("Market replay {Session} started while MCX trades: {Why}", session.Id, mcx);
         return new ReplayStartResult<ReplaySessionState>(session, 202, null);
     }
 
@@ -371,8 +387,8 @@ public sealed class MarketReplayService(
 
         if (WhyNotNow(Now) is not null)
         {
-            await player.StopAsync("the market opens", cancellationToken);
-            await EndAsync(session, StateStopped, MorningStop, "the market opens", cancellationToken);
+            var notStopped = await StopPlayerAsync(session, "the market opens", cancellationToken);
+            await EndAsync(session, StateStopped, notStopped is null ? MorningStop : $"{MorningStop} {notStopped}", "the market opens", cancellationToken);
             return;
         }
 
@@ -393,6 +409,36 @@ public sealed class MarketReplayService(
         if (mine?.State is StateWaiting or StatePlaying or StatePaused && mine.State != session.State)
         {
             await SaveAsync(session with { State = mine.State }, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Stops the player for the 08:45 rule; null when it stopped, or why not. Its replay ends either way: when the
+    /// stop threw (its pid could not be verified, say), the session was never ended, the monitor tried again every
+    /// 5 s, and the replay's runs and book stayed on into the session. The player is told to stop over Redis too,
+    /// and with the replay ended its next post is refused (409): it exits by itself.
+    /// </summary>
+    private async Task<string?> StopPlayerAsync(ReplaySessionState session, string reason, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await player.StopAsync(reason, cancellationToken);
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Market replay {Session}: its player could not be stopped ({Reason}); the replay ends all the same", session.Id, reason);
+            try
+            {
+                // A paused player posts nothing, so it would never be refused.
+                await channel.SendAsync("stop", cancellationToken);
+            }
+            catch (Exception sendEx) when (sendEx is not OperationCanceledException)
+            {
+                logger.LogWarning(sendEx, "Market replay {Session}: the stop could not be sent to its player either", session.Id);
+            }
+
+            return $"Its player could not be stopped ({ex.Message}); it exits at its next post.";
         }
     }
 
@@ -540,8 +586,9 @@ public sealed class MarketReplayService(
 
     /// <summary>
     /// Starts the queue's next day when nothing is playing, the last replay ended at least <see cref="QueueGap"/>
-    /// ago, its player has exited, a retry's wait is over, and the day can be played out before the next trading
-    /// morning (08:45). A day that did not play for a reason that passes (<see cref="NotPlayed"/>, a player that
+    /// ago, its player has exited, a retry's wait is over, no exchange the desk trades is in session (NSE with its
+    /// 08:45 morning, MCX), and the day can be played out before either next opens (<see cref="FitsBeforeLiveTrading"/>).
+    /// A day that did not play for a reason that passes (<see cref="NotPlayed"/>, a player that
     /// did not start) is tried again, at most <see cref="MaxTries"/> times; one that cannot play (nothing
     /// recorded) is skipped with its reason. Under <see cref="Gate"/>.
     /// </summary>
@@ -577,7 +624,9 @@ public sealed class MarketReplayService(
             return;
         }
 
-        if (WhyNotNow(Now) is not null || !FitsBeforeMorning(queue.Speed, queue.FromIst)) return;
+        // No queued day plays beside live trading: not in NSE's session or the morning before it, not while MCX
+        // trades (the live crude runs share the tick stream and the box), and not into either's next open.
+        if (WhyNotNow(Now) is not null || McxLiveNow(Now) is not null || !FitsBeforeLiveTrading(queue.Speed, queue.FromIst)) return;
 
         // A day being tried again waits a while first: what failed it may not have come back yet.
         if (queue.RetryUtc is DateTime retry && Now < retry) return;
@@ -629,7 +678,7 @@ public sealed class MarketReplayService(
             return null;
         }
 
-        if (session.State == StateStopped && session.Error == MorningStop) return MorningStop;
+        if (session.State == StateStopped && session.Error?.StartsWith(MorningStop, StringComparison.Ordinal) == true) return MorningStop;
         bool early = ended - session.StartedUtc <= EarlyFailure || (session.ClockUtc is null && session.TicksSent == 0);
         return session.State == StateFailed && early ? session.Error ?? "The replay failed." : null;
     }
@@ -686,12 +735,18 @@ public sealed class MarketReplayService(
         && session.AiTrader && session.RunIds.Count == 0
         && session.StartedUtc >= queue.CreatedUtc;
 
-    /// <summary>Whether a day played from <paramref name="fromIst"/> at <paramref name="speed"/> would end before the next trading morning.</summary>
-    private bool FitsBeforeMorning(int speed, string fromIst)
+    /// <summary>
+    /// Whether a day played from <paramref name="fromIst"/> at <paramref name="speed"/> would end before live trading
+    /// next begins: MCX's next open (from the session service: its holidays, half days and a close that follows New
+    /// York's clocks), and the next NSE trading morning's 08:45. On a day MCX trades and NSE does not, MCX's comes first.
+    /// </summary>
+    private bool FitsBeforeLiveTrading(int speed, string fromIst)
     {
         var from = TimeOnly.ParseExact(fromIst, "HH:mm", CultureInfo.InvariantCulture);
         // The player plays until 15:40; ten minutes more for its start and the last checks.
         var length = TimeSpan.FromMinutes((new TimeOnly(15, 40) - from).TotalMinutes / Math.Max(1, speed) + 10);
+        if (Now + length >= sessions.GetNextMarketOpenUtc(Now, "MCX", "COM")) return false;
+
         var today = IstTime.DateOf(Now);
         for (int i = 0; i <= 7; i++)
         {
@@ -969,7 +1024,7 @@ public interface IReplayChannel
 {
     Task<ReplayPlayerStatus?> ReadStatusAsync(CancellationToken cancellationToken);
 
-    /// <summary>"pause" or "resume".</summary>
+    /// <summary>"pause" or "resume"; "stop" when the player's process could not be stopped.</summary>
     Task SendAsync(string command, CancellationToken cancellationToken);
 
     /// <summary>Forgets the last replay's status and any command left for it.</summary>
@@ -1013,7 +1068,8 @@ public sealed record ReplaySessionView(
     long TicksSent, DateTime StartedUtc, DateTime? EndedUtc, string? Error, IReadOnlyList<long> RunIds,
     IReadOnlyList<ReplayRunView> Runs, string StartedBy, bool AiTrader = false);
 
-public sealed record ReplayStatus(bool CanStart, string? WhyNot, ReplaySessionView? Session, ReplayQueueView? Queue = null);
+/// <param name="Warning">Why a replay started now would share the desk with live trading, though it may start: MCX in session.</param>
+public sealed record ReplayStatus(bool CanStart, string? WhyNot, ReplaySessionView? Session, ReplayQueueView? Queue = null, string? Warning = null);
 
 /// <summary>Days to replay one after another with the AI Trader (yyyy-MM-dd), and the speed.</summary>
 public sealed record ReplayQueueRequest(IReadOnlyList<string>? Dates, int Speed = 2);

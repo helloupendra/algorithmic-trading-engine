@@ -258,6 +258,47 @@ public class MarketReplayTests
     }
 
     [Fact]
+    public async Task A_replay_whose_player_will_not_stop_at_0845_is_ended_all_the_same()
+    {
+        // The stop threw, so the session was never ended: the monitor tried again every 5 s, and the replay's runs
+        // and book stayed on into the session.
+        var replay = Replay(out var db, out var player, out var channel, out var stopper, out var book, nowUtc: IstTime.FromIst(new DateTime(2026, 10, 1, 23, 40, 0)));
+        long runId = Run(db, RecapOfDay, status: "Running");
+        SeedBars(db);
+        await replay.StartAsync(new ReplayStartRequest("2026-09-30", 1, "09:15", [runId]), "admin", default);
+        player.StopThrows = true;
+        Clock.Set(IstTime.FromIst(new DateTime(2026, 10, 2, 8, 45, 0)));
+
+        await replay.TickAsync(default);
+
+        var ended = (await replay.LoadAsync(default))!;
+        Assert.Equal(MarketReplayService.StateStopped, ended.State);
+        Assert.StartsWith(MarketReplayService.MorningStop, ended.Error);
+        Assert.Contains("could not be verified", ended.Error);
+        Assert.Equal([runId], stopper.Stopped);
+        Assert.Null(book.Day);                       // its next post is refused (409), and it exits
+        Assert.Equal(["stop"], channel.Sent);         // a paused player posts nothing: it is told to stop as well
+        await replay.TickAsync(default);              // and the monitor's next look is a quiet one
+    }
+
+    [Fact]
+    public async Task A_replay_by_hand_may_start_while_MCX_trades_and_the_status_warns_of_it()
+    {
+        // Monday 5 Oct 2026, 16:00: NSE has closed, the live crude runs trade MCX until 23:30.
+        var replay = Replay(out var db, out _, out _, out _, out _, nowUtc: IstTime.FromIst(new DateTime(2026, 10, 5, 16, 0, 0)));
+        long runId = Run(db, RecapOfDay, status: "Running");
+        SeedBars(db);
+
+        var status = await replay.StatusAsync(default);
+        Assert.True(status.CanStart);
+        Assert.Contains("live MCX runs share the tick stream", status.Warning);
+        Assert.Equal(202, (await replay.StartAsync(new ReplayStartRequest("2026-09-30", 1, "09:15", [runId]), "admin", default)).StatusCode);
+
+        Clock.Set(IstTime.FromIst(new DateTime(2026, 10, 5, 23, 31, 0)));
+        Assert.Null((await replay.StatusAsync(default)).Warning);
+    }
+
+    [Fact]
     public async Task An_api_restart_mid_replay_opens_the_book_again_for_the_players_next_ticks()
     {
         var replay = Replay(out var db, out _, out var channel, out _, out var book);
@@ -573,6 +614,9 @@ public class MarketReplayTests
         /// <summary>How many starts were refused.</summary>
         public int Refused { get; private set; }
 
+        /// <summary>Stopping fails, as when the supervisor cannot verify the player's pid.</summary>
+        public bool StopThrows { get; set; }
+
         public Task<bool> IsRunningAsync(CancellationToken cancellationToken) => Task.FromResult(Running);
 
         public Task<(bool Started, string Message)> StartAsync(IReadOnlyList<string> args, CancellationToken cancellationToken)
@@ -593,6 +637,7 @@ public class MarketReplayTests
 
         public Task StopAsync(string reason, CancellationToken cancellationToken)
         {
+            if (StopThrows) throw new InvalidOperationException("The replay player's pid 4242 could not be verified.");
             StoppedFor = reason;
             Running = false;
             return Task.CompletedTask;
@@ -622,7 +667,14 @@ public class MarketReplayTests
             return Task.FromResult(Status);
         }
 
-        public Task SendAsync(string command, CancellationToken cancellationToken) => Task.CompletedTask;
+        /// <summary>Every command sent to the player, in order.</summary>
+        public List<string> Sent { get; } = [];
+
+        public Task SendAsync(string command, CancellationToken cancellationToken)
+        {
+            Sent.Add(command);
+            return Task.CompletedTask;
+        }
 
         public async Task ResetAsync(CancellationToken cancellationToken)
         {

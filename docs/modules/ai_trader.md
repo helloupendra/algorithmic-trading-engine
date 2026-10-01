@@ -109,8 +109,9 @@ It starts that replay's own fresh shadow book and places nothing. The model can 
 One day says nothing. To score it over many, a queue replays recorded days one after another with the AI Trader
 alone (`POST /api/Replay/queue {dates, speed}`). Each day plays from the open with a fresh shadow book. Days play
 oldest first, with a 90-second gap between them so the last one's book is squared off. Nothing starts during a
-trading day's session, and a day starts only if it will end before the next trading morning's 08:45. A day with
-nothing recorded is skipped with its reason. The queue holds at most 20 days.
+trading day's session or while MCX trades, and a day starts only if it will end before the next trading morning's
+08:45 and MCX's next open. A day with nothing recorded is skipped with its reason; one that failed early is tried
+again ([the queue](market_replay.md#the-queue)). The queue holds at most 20 days.
 
 Every day it decided on, replayed or live, is also scored under a fixed rule anyone could follow
 (`ai_trader_baselines`, `AiTraderBaselineScorer`, rule `nifty-trend-1100`):
