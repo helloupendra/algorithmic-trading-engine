@@ -151,7 +151,16 @@ public class AiTraderController(TradingDbContext db, AiSettingsStore store, IOpt
             query = query.Where(d => d.Day == date);
         }
 
-        if (beforeId is long before) query = query.Where(d => d.Id < before);
+        if (beforeId is long before)
+        {
+            // The list is newest by clock, not by id: a day's list holds that day's replays too, decided on the same
+            // clocks on later evenings with higher ids. The page goes on from the cursor's clock, then its id.
+            var at = await db.AiTraderDecisions.AsNoTracking().Where(d => d.Id == before).Select(d => (DateTime?)d.ClockUtc).FirstOrDefaultAsync(cancellationToken);
+            query = at is DateTime clock
+                ? query.Where(d => d.ClockUtc < clock || (d.ClockUtc == clock && d.Id < before))
+                : query.Where(d => d.Id < before);
+        }
+
         var items = await Summaries(query, Math.Clamp(take, 1, 200), cancellationToken);
         return Ok(new { items, nextBeforeId = items.Count == Math.Clamp(take, 1, 200) ? items[^1].Id : (long?)null });
     }
