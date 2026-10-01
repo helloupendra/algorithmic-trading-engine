@@ -101,7 +101,7 @@ public sealed class AiSearchTests : IDisposable
 
         Assert.Equal((3, 0), first);
         Assert.Equal((0, 0), unchanged);
-        Assert.Equal(embedsAfterFirst, 1);
+        Assert.Equal(1, embedsAfterFirst);
         Assert.Equal((1, 2), changed);
         Assert.Equal(new[] { "modules/risk.md" }, await ai.Db.AiDocChunks.Select(c => c.Path).Distinct().ToListAsync());
         Assert.Equal("passage", JsonNode.Parse(ai.Provider.Requests[0].Body)!["input_type"]!.GetValue<string>());
