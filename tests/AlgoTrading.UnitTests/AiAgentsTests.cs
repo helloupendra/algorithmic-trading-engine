@@ -194,6 +194,61 @@ public class AiAgentsTests
         Assert.Equal("The answer left this item out.", reports[2].Error);
     }
 
+    [Fact]
+    public async Task An_answer_cut_off_at_the_token_limit_keeps_its_whole_records_and_reads_the_rest_again()
+    {
+        var ai = BuildOn();
+        var now = DateTime.UtcNow;
+        ai.Db.NewsItems.AddRange(
+            News(1, "Infosys Q2 net profit rises 8% to Rs 6,506 crore", now.AddHours(-1)),
+            News(2, "Sensex ends flat", now.AddHours(-1)),
+            News(3, "Crude falls 2%", now.AddHours(-1)));
+        await ai.Db.SaveChangesAsync();
+        // Call 122 on 1 Oct, in small: finish "length" in the middle of the second record.
+        ai.Provider.On(Extract1, Script.Sse(
+            Chunk(reasoning: "Thinking."),
+            Chunk(content: """
+                {"items":[
+                  {"id":"n1","event":"results","direction":"positive","symbols":["INFY"],"confidence":0.9,"summary":"Infosys profit up 8%",
+                   "numbers":[{"what":"net profit","value":6506,"unit":"crore","quote":"Rs 6,506 crore"}]},
+                  {"id":"n2","event":"none","direction":"neu
+                """, finish: "length"),
+            """{"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":6000,"total_tokens":6020}}""",
+            "[DONE]"));
+
+        Assert.True(await News(ai).RunOnceAsync(now, CancellationToken.None));
+
+        var reports = await ai.Db.AiReports.OrderBy(r => r.SubjectId).ToListAsync();
+        Assert.Equal(new[] { AiReportStatus.Ok, AiReportStatus.Failed, AiReportStatus.Failed }, reports.Select(r => r.Status));
+        Assert.All(reports.Skip(1), r => Assert.Equal("The answer was cut off at the token limit before this item.", r.Error));
+    }
+
+    [Fact]
+    public async Task One_broken_record_is_invalid_on_its_own_and_the_rest_of_the_batch_is_kept()
+    {
+        var ai = BuildOn();
+        var now = DateTime.UtcNow;
+        ai.Db.NewsItems.AddRange(
+            News(1, "Kotak Mahindra Bank names a new MD and CEO", now.AddHours(-1)),
+            News(2, "Sensex ends flat", now.AddHours(-1)),
+            News(3, "Crude falls", now.AddHours(-1)));
+        await ai.Db.SaveChangesAsync();
+        // Call 119 on 1 Oct: one summary without its quotes made the whole answer unreadable.
+        ai.Provider.On(Extract1, Answer("""
+            {"items":[
+              {"id":"n1","event":"management","direction":"positive","symbols":["KOTAKBANK"],"confidence":0.9,"summary": Kotak names a new CEO.},
+              {"id":"n2","event":"none","direction":"neutral","symbols":[],"confidence":0.8,"summary":"Flat close"},
+              {"id":"n3","event":"macro data","direction":"negative","symbols":[],"confidence":0.7,"summary":"Crude down"}
+            ]}
+            """));
+
+        Assert.True(await News(ai).RunOnceAsync(now, CancellationToken.None));
+
+        var reports = await ai.Db.AiReports.OrderBy(r => r.SubjectId).ToListAsync();
+        Assert.Equal(new[] { AiReportStatus.Invalid, AiReportStatus.Ok, AiReportStatus.Ok }, reports.Select(r => r.Status));
+        Assert.Equal("Its record in the answer was not valid JSON.", reports[0].Error);
+    }
+
     [Theory]
     [InlineData("""{"id":"n1","event":"rumour","direction":"positive","confidence":0.5}""", "not one of the listed events")]
     [InlineData("""{"id":"n1","event":"other","direction":"up","confidence":0.5}""", "direction")]

@@ -152,13 +152,12 @@ public sealed class NewsAnalystAgent(
         }
 
         var byId = ReadItems(result.Text);
+        bool cutOff = result.FinishReason == "length";
         foreach (var item in batch)
         {
-            var (status, title, body, data, error) = byId is null
-                ? (AiReportStatus.Invalid, Clip(FirstLine(item.Text), 200), string.Empty, "{}", "The answer was not the JSON object asked for.")
-                : byId.TryGetValue(item.Id, out var extracted)
-                    ? Check(extracted, item.Text)
-                    : (AiReportStatus.Invalid, Clip(FirstLine(item.Text), 200), string.Empty, "{}", "The answer left this item out.");
+            var (status, title, body, data, error) = byId is not null && byId.TryGetValue(item.Id, out var extracted)
+                ? Check(extracted, item.Text)
+                : Missing(item, byId, result.Text, cutOff);
 
             written.Add(await reports.SaveAsync(AgentKey, item.SubjectType, item.SubjectId, item.Day, status, result, title, body, data, error, cancellationToken));
         }
@@ -166,17 +165,38 @@ public sealed class NewsAnalystAgent(
         return written;
     }
 
-    /// <summary>The answer's items by id; null when the answer is not the JSON asked for.</summary>
+    /// <summary>
+    /// An item with no record in the answer. Cut off at the token limit, it
+    /// is failed and read again in a later batch: the batch was too long, not
+    /// the model wrong. Otherwise the model broke or left out its record.
+    /// </summary>
+    private static (string Status, string Title, string Body, string Data, string Error) Missing(
+        Item item, Dictionary<string, JsonObject>? byId, string answer, bool cutOff)
+    {
+        string title = Clip(FirstLine(item.Text), 200);
+        if (cutOff) return (AiReportStatus.Failed, title, string.Empty, "{}", "The answer was cut off at the token limit before this item.");
+        if (byId is null) return (AiReportStatus.Invalid, title, string.Empty, "{}", "The answer was not the JSON object asked for.");
+        return Regex.IsMatch(answer, $"\"id\"\\s*:\\s*\"{Regex.Escape(item.Id)}\"", RegexOptions.IgnoreCase)
+            ? (AiReportStatus.Invalid, title, string.Empty, "{}", "Its record in the answer was not valid JSON.")
+            : (AiReportStatus.Invalid, title, string.Empty, "{}", "The answer left this item out.");
+    }
+
+    /// <summary>
+    /// The answer's items by id; null when none can be read. When the answer
+    /// is not one whole object, each record that is whole on its own still
+    /// counts, so one broken record or a cut-off tail does not lose the batch.
+    /// </summary>
     public static Dictionary<string, JsonObject>? ReadItems(string answer)
     {
-        if (AiJson.Object(answer)?["items"] is not JsonArray items) return null;
+        var whole = AiJson.Object(answer)?["items"] as JsonArray;
+        var records = whole is not null ? whole.OfType<JsonObject>() : AiJson.ObjectsUnder(answer, "items");
         var byId = new Dictionary<string, JsonObject>(StringComparer.OrdinalIgnoreCase);
-        foreach (var node in items)
+        foreach (var obj in records)
         {
-            if (node is JsonObject obj && AiJson.Str(obj, "id") is string id) byId.TryAdd(id, obj);
+            if (AiJson.Str(obj, "id") is string id) byId.TryAdd(id, obj);
         }
 
-        return byId;
+        return whole is null && byId.Count == 0 ? null : byId;
     }
 
     /// <summary>
