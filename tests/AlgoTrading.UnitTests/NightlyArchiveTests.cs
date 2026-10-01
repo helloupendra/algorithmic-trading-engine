@@ -134,10 +134,98 @@ public class NightlyArchiveTests
         Assert.Equal([Tue03Nov], ArchiveSchedule.DueDays(Sun01Nov, IstLocal(new DateOnly(2026, 11, 4), 6, 0), Due, maxDays: 1));
     }
 
+    [Fact]
+    public async Task A_failing_day_is_tried_again_after_5_15_and_60_minutes_then_hourly_with_one_error_and_hourly_warnings()
+    {
+        // The day's live_bars query timing out: before, the same heavy query ran every minute, with an error each time.
+        var flaky = new FlakyArchive();
+        var log = new LogRecorder();
+        var archive = Archive(vixCheck: false, out var db, archiveService: flaky, logger: log);
+        SeedLastArchived(db, Tue29Sep);
+        var due = Ist(Wed30Sep, 23, 50);
+
+        async Task<int> Tick(int minutes)
+        {
+            log.Clock = due.AddMinutes(minutes);
+            Assert.Empty(await archive.RunDueDaysAsync(log.Clock, CancellationToken.None));
+            return flaky.Calls;
+        }
+
+        Assert.Equal(1, await Tick(0));
+        Assert.Equal(1, await Tick(1));
+        Assert.Equal(1, await Tick(4));
+        Assert.Equal(2, await Tick(5));
+        Assert.Equal(2, await Tick(19));
+        Assert.Equal(3, await Tick(20));
+        Assert.Equal(3, await Tick(79));
+        Assert.Equal(4, await Tick(80));
+        Assert.Equal(4, await Tick(139));
+        Assert.Equal(5, await Tick(140));
+
+        // The first failure is an error; the later ones a warning at most once an hour (80 and 140 minutes in).
+        Assert.Single(log.Entries, e => e.Level == LogLevel.Error);
+        Assert.Equal([80, 140], log.Entries.Where(e => e.Level == LogLevel.Warning).Select(e => (int)(e.AtUtc - due).TotalMinutes));
+        Assert.Equal(due.AddMinutes(200), archive.NextTryUtc(Wed30Sep));
+
+        // A success clears it.
+        flaky.Failing = false;
+        Assert.Equal([Wed30Sep], await archive.RunDueDaysAsync(due.AddMinutes(200), CancellationToken.None));
+        Assert.Null(archive.NextTryUtc(Wed30Sep));
+        Assert.Equal("2026-09-30", db.SystemSettings.AsNoTracking().Single(s => s.Key == NightlyArchiveService.LastArchivedDayKey).Value);
+    }
+
+    [Fact]
+    public void The_retry_wait_grows_5_15_60_minutes_and_stays_hourly()
+    {
+        Assert.Equal(
+            [TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(60), TimeSpan.FromMinutes(60), TimeSpan.FromMinutes(60)],
+            Enumerable.Range(1, 5).Select(ArchiveSchedule.RetryAfter));
+    }
+
+    [Fact]
+    public async Task Each_symbol_s_candles_leave_the_change_tracker_once_saved()
+    {
+        var options = new DbContextOptionsBuilder<TradingDbContext>().UseInMemoryDatabase($"archive-{Guid.NewGuid():N}").Options;
+        using (var seed = new TradingDbContext(options))
+        {
+            foreach (var symbol in new[] { Nifty, "NSE:NIFTYBANK-INDEX", "NSE:FINNIFTY-INDEX" })
+                SeedBars(seed, symbol, Ist(Wed30Sep, 9, 15), Ist(Wed30Sep, 15, 30));
+        }
+
+        using var db = new TradingDbContext(options);
+        var trackedAtSave = new List<int>();
+        db.SavingChanges += (_, _) => trackedAtSave.Add(db.ChangeTracker.Entries().Count());
+        var archive = new DailyCandleArchiveService(db, null!, new ConfigurationBuilder().Build(), NullLogger<DailyCandleArchiveService>.Instance);
+
+        var result = await archive.ArchiveDayAsync(Wed30Sep, includeBrokerBackfill: false);
+
+        Assert.Equal(3 * (375 + 75 + 25), result.CandlesInserted.Values.Sum());
+        // At most one symbol's 1, 5 and 15-minute candles: the third symbol's save used to carry all three symbols'.
+        Assert.Equal(375 + 75 + 25, trackedAtSave.Max());
+        Assert.Empty(db.ChangeTracker.Entries());
+    }
+
+    [Fact]
+    public async Task Each_catch_up_day_is_archived_in_a_context_of_its_own_and_the_marker_still_saved()
+    {
+        var contexts = new List<TradingDbContext>();
+        var archive = Archive(vixCheck: false, out var db, contexts: contexts);
+        SeedLastArchived(db, new DateOnly(2026, 9, 28));
+        SeedBars(db, Nifty, Ist(Tue29Sep, 9, 15), Ist(Tue29Sep, 15, 30));
+        SeedBars(db, Nifty, Ist(Wed30Sep, 9, 15), Ist(Wed30Sep, 15, 30));
+
+        Assert.Equal([Tue29Sep, Wed30Sep], await archive.RunDueDaysAsync(Ist(Wed30Sep, 23, 50), CancellationToken.None));
+
+        Assert.Equal(2, contexts.Distinct().Count());
+        Assert.Equal(750, Candles(db, Nifty, "1").Count);
+        Assert.Equal("2026-09-30", db.SystemSettings.AsNoTracking().Single(s => s.Key == NightlyArchiveService.LastArchivedDayKey).Value);
+    }
+
     // ---------------------------------------------------------------------- helpers --
 
     /// <summary>The service over an in-memory database, archiving the live bars only (no broker in a test).</summary>
-    private static NightlyArchiveService Archive(bool vixCheck, out TradingDbContext db, ISystemNotifier? notifier = null)
+    private static NightlyArchiveService Archive(bool vixCheck, out TradingDbContext db, ISystemNotifier? notifier = null,
+        IDailyCandleArchiveService? archiveService = null, ILogger<NightlyArchiveService>? logger = null, List<TradingDbContext>? contexts = null)
     {
         string name = $"archive-{Guid.NewGuid():N}";
         var configuration = new ConfigurationBuilder()
@@ -147,7 +235,20 @@ public class NightlyArchiveTests
         services.AddDbContext<TradingDbContext>(o => o.UseInMemoryDatabase(name));
         services.AddSingleton<IConfiguration>(configuration);
         services.AddSingleton<IMarketSessionService>(new MarketSessionService(new Calendar()));
-        services.AddScoped<IDailyCandleArchiveService, LiveBarsOnly>();
+        if (archiveService is not null)
+        {
+            services.AddSingleton(archiveService);
+        }
+        else
+        {
+            services.AddScoped<IDailyCandleArchiveService>(sp =>
+            {
+                var scoped = sp.GetRequiredService<TradingDbContext>();
+                contexts?.Add(scoped);
+                return new LiveBarsOnly(scoped, configuration);
+            });
+        }
+
         services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
         services.AddScoped<IHistoricalCandleStore, HistoricalCandleStore>();
         services.AddScoped<IProcessSettingsStore, ProcessSettingsStore>();
@@ -157,7 +258,40 @@ public class NightlyArchiveTests
         var provider = services.BuildServiceProvider();
 
         db = new TradingDbContext(new DbContextOptionsBuilder<TradingDbContext>().UseInMemoryDatabase(name).Options);
-        return new NightlyArchiveService(NullLogger<NightlyArchiveService>.Instance, provider.GetRequiredService<IServiceScopeFactory>(), configuration);
+        return new NightlyArchiveService(logger ?? NullLogger<NightlyArchiveService>.Instance, provider.GetRequiredService<IServiceScopeFactory>(), configuration);
+    }
+
+    /// <summary>An archive whose day fails, as when the day's live_bars query times out, until told otherwise.</summary>
+    private sealed class FlakyArchive : IDailyCandleArchiveService
+    {
+        public bool Failing { get; set; } = true;
+
+        public int Calls { get; private set; }
+
+        public Task<CandleArchiveResult> ArchiveDayAsync(DateOnly istDay, bool includeBrokerBackfill, CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            return Failing
+                ? throw new TimeoutException("Timeout during reading attempt")
+                : Task.FromResult(new CandleArchiveResult { Day = istDay });
+        }
+    }
+
+    private sealed record LogEntry(LogLevel Level, DateTime AtUtc, string Message);
+
+    /// <summary>The service's log lines, each stamped with the clock of the tick that wrote it.</summary>
+    private sealed class LogRecorder : ILogger<NightlyArchiveService>
+    {
+        public List<LogEntry> Entries { get; } = [];
+
+        public DateTime Clock { get; set; }
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            => Entries.Add(new LogEntry(logLevel, Clock, formatter(state, exception)));
     }
 
     private static void SeedLastArchived(TradingDbContext db, DateOnly lastArchived)

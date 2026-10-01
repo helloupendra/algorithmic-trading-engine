@@ -32,6 +32,17 @@ public static class ArchiveSchedule
     // never more than two days back; the search stops there.
     private const int LatestDueSearchDays = 3;
 
+    private static readonly TimeSpan[] RetryWaits = [TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(15), TimeSpan.FromHours(1)];
+
+    /// <summary>
+    /// How long a day whose archive failed waits before it is tried again: 5
+    /// minutes after the first failure, 15 after the second, then an hour.
+    /// Before, a failing day was tried every minute, and when its live_bars
+    /// query was what timed out, that heavy query ran every minute on a small
+    /// server.
+    /// </summary>
+    public static TimeSpan RetryAfter(int failures) => RetryWaits[Math.Clamp(failures, 1, RetryWaits.Length) - 1];
+
     public static TimeSpan ParseRunAt(string? value)
         => TimeSpan.TryParseExact(value ?? "", @"hh\:mm", CultureInfo.InvariantCulture, out var t) ? t : DefaultRunAtIst;
 
