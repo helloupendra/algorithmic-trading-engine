@@ -200,7 +200,7 @@ public sealed class RunTool(TradingDbContext db, PositionViewBuilder views, RunP
         int legTotal = legCounts.Sum(c => c.count), orderTotal = orderCounts.Sum(c => c.count), signalTotal = signalCounts.Sum(c => c.count);
 
         string? stopReason = await signals.Where(s => s.SignalType == "RUN_STOPPED").OrderByDescending(s => s.TimestampUtc)
-            .Select(s => s.MetadataJson).FirstOrDefaultAsync(cancellationToken) is { } stopMeta ? Reason(stopMeta) : null;
+            .Select(s => s.MetadataJson).FirstOrDefaultAsync(cancellationToken) is { } stopMeta ? Reason(Meta(stopMeta)) : null;
         stopReason ??= Text(run.LastError, 300);
 
         var head = new
@@ -271,8 +271,8 @@ public sealed class RunTool(TradingDbContext db, PositionViewBuilder views, RunP
                 openLegs = small ? null : openIds.Where(legById.ContainsKey).Select(id => legById[id].Row).ToList(),
                 orders = small ? await OrdersAsync(orders, SmallOrders, cancellationToken) : null,
                 signals = small
-                    ? await SignalsAsync(signals.OrderBy(s => s.TimestampUtc), SmallSignals, cancellationToken)
-                    : await SignalsAsync(signals.OrderByDescending(s => s.TimestampUtc), 10, cancellationToken),
+                    ? await SignalsAsync(signals.OrderBy(s => s.TimestampUtc).ThenBy(s => s.Id), SmallSignals, cancellationToken)
+                    : await SignalsAsync(signals.OrderByDescending(s => s.TimestampUtc).ThenByDescending(s => s.Id), 10, cancellationToken),
                 signalsNote = small ? null : "The last 10 signals, newest first.",
                 more = small ? null : "For the full lists call get_run with section legs, orders or signals, and from/to (HH:mm IST) to narrow the window.",
             };
@@ -287,7 +287,7 @@ public sealed class RunTool(TradingDbContext db, PositionViewBuilder views, RunP
                 case "legs":
                     var window = positions.Where(p => (from == null || (p.ClosedUtc ?? p.OpenedUtc) >= from) && (to == null || p.OpenedUtc <= to));
                     total = await window.CountAsync(cancellationToken);
-                    var legs = await LegsAsync(window.OrderBy(p => p.OpenedUtc).Take(limit), active, cancellationToken);
+                    var legs = await LegsAsync(window.OrderBy(p => p.OpenedUtc).ThenBy(p => p.Id).Take(limit), active, cancellationToken);
                     list = legs.Select(l => l.Row).ToList();
                     break;
                 case "orders":
@@ -298,7 +298,7 @@ public sealed class RunTool(TradingDbContext db, PositionViewBuilder views, RunP
                 default:
                     var picked = signals.Where(s => (from == null || s.TimestampUtc >= from) && (to == null || s.TimestampUtc <= to));
                     total = await picked.CountAsync(cancellationToken);
-                    list = await SignalsAsync(picked.OrderBy(s => s.TimestampUtc), limit, cancellationToken);
+                    list = await SignalsAsync(picked.OrderBy(s => s.TimestampUtc).ThenBy(s => s.Id), limit, cancellationToken);
                     break;
             }
 
@@ -384,8 +384,8 @@ public sealed class RunTool(TradingDbContext db, PositionViewBuilder views, RunP
                 pnl = Rs(legPnl),
                 stopLoss = Rs(p.StopLossPrice),
                 target = Rs(p.TargetPrice),
-                opened = Ist(p.OpenedUtc),
-                closed = Ist(p.ClosedUtc),
+                opened = IstSeconds(p.OpenedUtc),
+                closed = IstSeconds(p.ClosedUtc),
                 carriedForward = v.CarryForward ? true : (bool?)null,
             });
         }).ToList();
@@ -393,7 +393,7 @@ public sealed class RunTool(TradingDbContext db, PositionViewBuilder views, RunP
 
     private static async Task<List<object>> OrdersAsync(IQueryable<Domain.Entities.PaperOrder> query, int limit, CancellationToken cancellationToken)
     {
-        var rows = await query.OrderBy(o => o.CreatedUtc).Take(limit)
+        var rows = await query.OrderBy(o => o.CreatedUtc).ThenBy(o => o.Id).Take(limit)
             .Select(o => new { o.CreatedUtc, o.FilledUtc, o.Side, o.Symbol, o.Quantity, o.Status, o.RequestedPrice, o.FillPrice, o.GroupId, o.MetadataJson })
             .ToListAsync(cancellationToken);
         return rows.Select(o =>
@@ -402,7 +402,7 @@ public sealed class RunTool(TradingDbContext db, PositionViewBuilder views, RunP
             var source = PaperFill.ReadSource(o.MetadataJson);
             return (object)new
             {
-                at = Ist(o.FilledUtc ?? o.CreatedUtc),
+                at = IstSeconds(o.FilledUtc ?? o.CreatedUtc),
                 side = o.Side,
                 symbol = o.Symbol,
                 lots = o.Quantity,
@@ -424,29 +424,55 @@ public sealed class RunTool(TradingDbContext db, PositionViewBuilder views, RunP
             .ToListAsync(cancellationToken);
         return rows.Select(s => (object)new
         {
-            at = Ist(s.TimestampUtc),
+            at = IstSeconds(s.TimestampUtc),
             type = s.SignalType,
             symbol = string.IsNullOrEmpty(s.Symbol) ? null : s.Symbol,
             price = Rs(s.Price),
             group = string.IsNullOrEmpty(s.GroupId) ? null : s.GroupId,
-            reason = Reason(s.MetadataJson),
+            reason = Reason(Meta(s.MetadataJson)),
+            facts = Facts(Meta(s.MetadataJson)),
         }).ToList();
     }
 
-    /// <summary>The "reason" a signal carries in its metadata, masked; null when it has none.</summary>
-    private static string? Reason(string? metadataJson)
+    private static JsonObject? Meta(string? metadataJson)
     {
         if (string.IsNullOrWhiteSpace(metadataJson)) return null;
         try
         {
-            return JsonNode.Parse(metadataJson) is JsonObject meta && meta["reason"] is JsonValue v && v.TryGetValue(out string? reason)
-                ? Text(reason, 200)
-                : null;
+            return JsonNode.Parse(metadataJson) as JsonObject;
         }
         catch (JsonException)
         {
             return null;
         }
+    }
+
+    /// <summary>The "reason" a signal carries in its metadata, masked; null when it has none.</summary>
+    private static string? Reason(JsonObject? meta) =>
+        meta?["reason"] is JsonValue v && v.TryGetValue(out string? reason) ? Text(reason, 200) : null;
+
+    private static readonly HashSet<string> NotFacts = new(StringComparer.OrdinalIgnoreCase) { "reason", "group_id", "system", "by", "strategy_type" };
+
+    /// <summary>
+    /// The numbers and words the strategy decided on (spot, ATM strike, EMAs,
+    /// OI change...), so a review can check them: the top-level values of the
+    /// signal's metadata, at most 16. Without them the reviewer could not see
+    /// run 310's spot and strike and called an ATM put 500 points out of the money.
+    /// </summary>
+    private static Dictionary<string, object>? Facts(JsonObject? meta)
+    {
+        if (meta is null) return null;
+        var facts = new Dictionary<string, object>(StringComparer.Ordinal);
+        foreach (var (key, node) in meta)
+        {
+            if (facts.Count >= 16) break;
+            if (NotFacts.Contains(key) || node is not JsonValue value) continue;
+            if (value.TryGetValue(out string? text)) { if (Text(text, 60) is string t) facts[key] = t; }
+            else if (value.TryGetValue(out double number)) facts[key] = Math.Round(number, 4);
+            else if (value.TryGetValue(out bool flag)) facts[key] = flag;
+        }
+
+        return facts.Count == 0 ? null : facts;
     }
 }
 

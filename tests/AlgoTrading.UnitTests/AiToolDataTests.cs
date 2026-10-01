@@ -85,6 +85,35 @@ public sealed class AiToolDataTests : IDisposable
     }
 
     [Fact]
+    public async Task A_run_s_signals_come_to_the_second_in_the_order_they_happened_with_the_facts_decided_on()
+    {
+        // Run 317 on 1 Oct, in small: a roll's close and the next open in the same second.
+        long runId = _desk.SeedRun(RunnerDesk.TraderId, "BANKNIFTY", "Stopped", "SmcStructureBreak");
+        var at = new DateTime(2026, 9, 29, 6, 55, 33, DateTimeKind.Utc); // 12:25:33 IST
+        using (var seed = _desk.Db())
+        {
+            // Stored open first: only the id says the close came first.
+            seed.SimulationSignals.Add(new SimulationSignal { Id = 902, SimulationRunId = runId, StrategyName = "SmcStructureBreak", SignalType = "OPEN_GROUP", TimestampUtc = at,
+                GroupId = "G2", MetadataJson = """{"group_id":"G2","direction":"SELL","structure":{"trend":"bearish"},"reason":"BOS bearish; buying the put","spot_price":54277.35,"atm_strike":54300}""" });
+            seed.SimulationSignals.Add(new SimulationSignal { Id = 901, SimulationRunId = runId, StrategyName = "SmcStructureBreak", SignalType = "CLOSE_GROUP", TimestampUtc = at,
+                GroupId = "G1", MetadataJson = """{"reason":"structure turned","system":true}""" });
+            seed.SaveChanges();
+        }
+
+        await using var db = _desk.Db();
+        var json = JsonDocument.Parse(JsonSerializer.Serialize((await RunToolFor(db).RunAsync(
+            AiToolArgs.Parse($$"""{"runId":{{runId}},"section":"signals"}"""), CancellationToken.None)).Data, Wire)).RootElement;
+
+        var rows = json.GetProperty("rows").EnumerateArray().ToList();
+        Assert.Equal(new[] { "CLOSE_GROUP", "OPEN_GROUP" }, rows.Select(r => r.GetProperty("type").GetString()));
+        Assert.All(rows, r => Assert.Equal("2026-09-29 12:25:33", r.GetProperty("at").GetString()));
+        var facts = rows[1].GetProperty("facts");
+        Assert.Equal((54277.35, 54300.0, "SELL"), (facts.GetProperty("spot_price").GetDouble(), facts.GetProperty("atm_strike").GetDouble(), facts.GetProperty("direction").GetString()));
+        Assert.False(facts.TryGetProperty("structure", out _));
+        Assert.False(facts.TryGetProperty("reason", out _));
+    }
+
+    [Fact]
     public async Task The_runs_list_uses_the_desk_s_net_and_names_the_account()
     {
         long runId = SeedDesk();

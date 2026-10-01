@@ -168,6 +168,14 @@ public static class AiCatalog
         "answer for the moment you ask, not for the run's day: never judge a fill against them when reviewing an " +
         "earlier day. On an expiry day an option that ends out of the money is worth almost nothing at the close; a " +
         "fill near ₹0.05 then is right, not stale.\n" +
+        "A deviation is something the spec's rules or the strategy's code do not allow, shown by the run's own data. " +
+        "These are not deviations: settings the run was started with (no stop-loss or target set), advice the spec " +
+        "gives the operator, and behaviour the spec describes (a roll on every ATM change); put them in the lesson or " +
+        "the journal. When the data cannot settle a rule (a re-arm between two entries you cannot see), the verdict " +
+        "is \"unclear\" and you say what was missing; never \"deviated\" on a guess.\n" +
+        "Each signal carries the facts the strategy decided on (spot, ATM strike, indicator values): check a strike " +
+        "or an expiry against them. Times are to the second, and events in the same second are listed in the order " +
+        "they happened.\n" +
         "Reply with one JSON object and nothing else:\n" +
         "{\"verdict\": \"followed\" | \"deviated\" | \"unclear\", \"title\": \"one line, under 120 characters\", " +
         "\"followed\": [\"rules the run kept\"], \"deviations\": [\"what did not follow the spec, with times\"], " +

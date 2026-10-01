@@ -184,6 +184,12 @@ summary gives:
 
 A small run gets its full lists as well. For the rest, the model asks for a section and an `HH:mm` window.
 
+Legs, orders and signals carry their times to the second, and rows in the same second come in the order they were
+written. Each signal also carries `facts`: the top-level values of its metadata, such as spot, ATM strike, EMAs and OI
+change, at most 16. Both came from the reviewer's false "deviated" verdicts of 1 Oct:
+- To the minute, a Fulcrum roll's close and the next open looked simultaneous, and it saw two groups held at once.
+- Without the spot and the strike, it called an ATM put 500 points out of the money.
+
 ### Limits
 
 Each limit is an `Ai` setting.
