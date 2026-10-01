@@ -39,15 +39,15 @@ import {
   useUpdateAgent,
 } from '../../lib/ai'
 import type { AgentStatus, AiAgent, AiAgentTool, AiModel } from '../../lib/ai'
-import { AI_TRADER_KEY, AI_TRADER_POLL_MS, dayCountsText, limitsParts, modeLabel } from '../../lib/aiTrader'
+import { AI_TRADER_KEY, AI_TRADER_POLL_MS, dayCountsText, limitsParts, modeLabel, netTone } from '../../lib/aiTrader'
 import { istDay } from '../../lib/desk'
-import { formatDateTime } from '../../lib/format'
+import { formatDateTime, formatInrSigned } from '../../lib/format'
 import { useAiTraderStatus } from '../../lib/queries'
 import { shortDay } from '../../lib/replay'
 import { DateField } from '../../components/DateField'
 import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components/ui'
 import { CallLink, ChainChips, ChainEditor, OutcomeBadge, StatusPill } from './parts'
-import { AiTraderDecisionList } from './AiTraderParts'
+import { AiTraderDecisionList, AiTraderShadowBook } from './AiTraderParts'
 import { errorText, useNow } from './common'
 import '../system/health/health.css'
 import './ai.css'
@@ -431,7 +431,18 @@ function AiTraderPanel({ now }: { now: number }) {
             </div>
             <div>
               <dt>Today</dt>
-              <dd>{s.today ? dayCountsText(s.today) : <span className="faint">not known</span>}</dd>
+              <dd>
+                {s.today ? dayCountsText(s.today) : <span className="faint">not known</span>}
+                {s.shadow && s.shadow.positions > 0 && (
+                  <>
+                    {' · shadow net '}
+                    <b className={netTone(s.shadow.net)} title="Today's shadow book, after charges; open positions as if sold at their marks">
+                      {formatInrSigned(s.shadow.net)}
+                    </b>
+                    {s.shadow.open > 0 ? ` (${s.shadow.open} open)` : ''}
+                  </>
+                )}
+              </dd>
             </div>
             <div>
               <dt>By hand</dt>
@@ -444,7 +455,7 @@ function AiTraderPanel({ now }: { now: number }) {
         {status.isError && s && <p className="small-note warn ai-flush">The last read failed: showing what was read before.</p>}
 
         <div className="atr-tools">
-          <h3 className="atr-tools__h">Decisions</h3>
+          <h3 className="atr-tools__h">Day</h3>
           <DateField
             className="field__input field__input--sm field__input--date"
             aria-label="Day (IST)"
@@ -458,8 +469,17 @@ function AiTraderPanel({ now }: { now: number }) {
               Today
             </button>
           )}
-          <span className="faint atr-tools__note">newest first · open one for the brief it read</span>
+          <span className="faint atr-tools__note">its shadow book and every look it took that day</span>
         </div>
+        <AiTraderShadowBook
+          key={`book-${day}`}
+          filter={{ day }}
+          pollMs={isToday ? AI_TRADER_POLL_MS : false}
+          empty={isToday ? 'No shadow position yet today.' : `No shadow position on ${shortDay(day)}.`}
+        />
+        <h4 className="atr-dec-h">
+          Decisions <span className="faint">newest first · open one for the brief it read</span>
+        </h4>
         <AiTraderDecisionList
           key={day}
           filter={{ day }}

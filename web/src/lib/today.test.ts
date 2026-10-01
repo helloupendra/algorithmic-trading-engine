@@ -161,6 +161,9 @@ const body = {
       { atUtc: '2026-10-01T05:10:00Z', action: 'none', underlying: '', allowed: true, rule: 'ok', reason: 'No clear move: VIX flat, range inside the ATR.' },
       { atUtc: '2026-10-01T05:00:00Z', action: '', underlying: '', allowed: false, rule: 'no-answer', reason: 'Timed out after 90 s.' },
     ],
+    shadowPositions: 2,
+    shadowOpen: 1,
+    shadowNet: -1240.5,
   },
 }
 
@@ -234,6 +237,15 @@ describe('reading the day', () => {
         { atUtc: null, action: 'none', underlying: '', allowed: false, rule: '', reason: '' },
         { atUtc: null, action: 'none', underlying: '', allowed: false, rule: '', reason: '' },
       ],
+      // An API from before the shadow book sends none of it: no positions, and a net not known (never ₹0).
+      shadowPositions: 0,
+      shadowOpen: 0,
+      shadowNet: null,
+    })
+    expect(readTodayAiTrader({ shadowPositions: 3.2, shadowOpen: -1, shadowNet: '500' })).toMatchObject({
+      shadowPositions: 3,
+      shadowOpen: 0,
+      shadowNet: null,
     })
     expect(readTodayAiTrader({})?.status).toBe('not known')
     expect(readTodayAiTrader([])).toBeNull()

@@ -6,6 +6,10 @@
  * decision: the verdict's why, what was placed, the plan and result JSON,
  * and the brief exactly as the model read it.
  *
+ * And its shadow book, a day's or a replay's: the buys code kept as if
+ * placed, each with its entry, stop and target, its mark or exit, how it
+ * ended and its net after charges.
+ *
  * Read-only. The words come from lib/aiTrader.ts, so every page says a
  * decision the same way.
  */
@@ -15,15 +19,22 @@ import type { ReactNode } from 'react'
 import {
   actionText,
   confidenceText,
+  contractText,
   jsonBlock,
+  lotsText,
   modeLabel,
+  netTone,
   placedText,
   planFacts,
+  shadowCountsText,
+  shadowEnding,
+  shadowLastPrice,
+  shadowResultText,
   verdictOf,
 } from '../../lib/aiTrader'
-import type { AiTraderDecision, AiTraderDecisionFilter } from '../../lib/aiTrader'
-import { useAiTraderDecision, useAiTraderDecisions } from '../../lib/queries'
-import { formatDateTime } from '../../lib/format'
+import type { AiTraderDecision, AiTraderDecisionFilter, AiTraderShadowPosition } from '../../lib/aiTrader'
+import { useAiTraderDecision, useAiTraderDecisions, useAiTraderPositions } from '../../lib/queries'
+import { formatDateTime, formatInrSigned, formatInrWhole, formatPrice } from '../../lib/format'
 import { EmptyState, InlineError, Loading } from '../../components/ui'
 import { CallLink, ModelLabel } from './parts'
 import './aiTrader.css'
@@ -48,6 +59,7 @@ function DecisionDetail({ summary, domId }: { summary: AiTraderDecision; domId: 
   const facts = planFacts(detail?.plan)
   const plan = detail ? jsonBlock(detail.planJson) : ''
   const result = detail ? jsonBlock(detail.resultJson) : ''
+  const shadow = detail ? shadowResultText(detail.resultJson) : null
 
   return (
     <div className="atr-detail" id={domId}>
@@ -73,6 +85,12 @@ function DecisionDetail({ summary, domId }: { summary: AiTraderDecision; domId: 
           <div>
             <dt>Placed</dt>
             <dd className={placed.tone === 'pos' ? 'pos' : placed.tone === 'warn' ? 'warn' : ''}>{placed.text}</dd>
+          </div>
+        )}
+        {shadow && (
+          <div>
+            <dt>Shadow</dt>
+            <dd>{shadow.text}</dd>
           </div>
         )}
         {d.error && !placed && (
@@ -245,5 +263,162 @@ export function AiTraderDecisionList({
       </div>
       {q.isFetchNextPageError && <InlineError error={q.error} />}
     </div>
+  )
+}
+
+// ---------- the shadow book --------------------------------------------------------------
+
+function Ended({ p }: { p: AiTraderShadowPosition }) {
+  const e = shadowEnding(p)
+  return (
+    <span className={`badge badge--${e.tone}`} title={e.means || undefined}>
+      {e.label}
+    </span>
+  )
+}
+
+/** "10:00 → 11:42", "10:00 → open". */
+function InOut({ p }: { p: AiTraderShadowPosition }) {
+  const full = [p.entryUtc && `in ${formatDateTime(p.entryUtc)} IST`, p.exitUtc && `out ${formatDateTime(p.exitUtc)} IST`].filter(Boolean).join(' · ')
+  return (
+    <span className="atr-book__time" title={full || undefined}>
+      {p.entryIst || '—'} → {p.open ? <span className="faint">open</span> : p.exitIst || '—'}
+    </span>
+  )
+}
+
+function Net({ value, charges }: { value: number | null; charges: number | null }) {
+  return (
+    <span className={`atr-book__net ${netTone(value)}`} title={charges != null ? `After charges of ${formatInrWhole(charges)}` : 'After charges'}>
+      {formatInrSigned(value)}
+    </span>
+  )
+}
+
+/**
+ * The shadow book: a day's or a replay's positions, oldest first, with the
+ * book's counts and net after charges above them. A table on a wide screen,
+ * a list on a phone (the net stays on each row's first line).
+ */
+export function AiTraderShadowBook({
+  filter,
+  pollMs,
+  replay = false,
+  empty,
+}: {
+  filter: AiTraderDecisionFilter
+  pollMs: number | false
+  replay?: boolean
+  empty: ReactNode
+}) {
+  const q = useAiTraderPositions(filter, pollMs)
+  const b = q.data
+  return (
+    <section className="atr-book" aria-label="Shadow book">
+      <h4 className="atr-book__h">
+        Shadow book
+        {b && b.positions > 0 && (
+          <span className="atr-book__sum">
+            {shadowCountsText(b)} · net after charges <b className={netTone(b.net)}>{formatInrSigned(b.net)}</b> · charges{' '}
+            {formatInrWhole(b.charges)}
+          </span>
+        )}
+      </h4>
+      <p className="atr-book__how">
+        {replay
+          ? 'Kept by code for this replay: bought at the ask, checked every minute at the bid against its stop and target, closed at its last mark when the replay ends. Nothing reaches a broker.'
+          : 'Kept by code, not placed: bought at the ask, checked every minute at the bid against its stop and target, squared off at 15:30 IST. Nothing reaches a broker.'}
+      </p>
+      {q.isPending ? (
+        <Loading label="Reading the shadow book…" />
+      ) : !b ? (
+        <InlineError error={q.error} />
+      ) : (
+        <>
+          {q.isError && (
+            <p className="small-note warn ai-flush" role="status">
+              The last read failed: showing what was read before.
+            </p>
+          )}
+          {b.items.length === 0 ? (
+            <p className="atr-none">{empty}</p>
+          ) : (
+            <>
+              <div className="tablewrap atr-book__wide">
+                <table className="table atr-book__table">
+                  <thead>
+                    <tr>
+                      <th>In → out</th>
+                      <th>Contract</th>
+                      <th className="r">Entry</th>
+                      <th className="r">Stop / target</th>
+                      <th className="r">Mark or exit</th>
+                      <th>Ended</th>
+                      <th className="r">Net</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {b.items.map((p) => {
+                      const last = shadowLastPrice(p)
+                      return (
+                        <tr key={p.id}>
+                          <td>
+                            <InOut p={p} />
+                          </td>
+                          <td title={p.symbol || undefined}>
+                            <span className="atr-book__contract">{contractText(p)}</span>{' '}
+                            <span className="faint">{lotsText(p.lots, p.lotSize)}</span>
+                          </td>
+                          <td className="r mono">{formatPrice(p.entryPrice)}</td>
+                          <td className="r mono">
+                            {formatPrice(p.stopLoss)} <span className="faint">/</span> {formatPrice(p.target)}
+                          </td>
+                          <td className="r mono" title={last.kind === 'mark' ? 'Its last mark: the bid at the last minute check' : 'The price it closed at'}>
+                            {formatPrice(last.price)}
+                          </td>
+                          <td>
+                            <Ended p={p} />
+                          </td>
+                          <td className="r">
+                            <Net value={p.net} charges={p.charges} />
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <ul className="atr-bl">
+                {b.items.map((p) => {
+                  const last = shadowLastPrice(p)
+                  return (
+                    <li key={p.id} className="atr-bl__row">
+                      <div className="atr-bl__head">
+                        <span className="atr-book__contract">{contractText(p)}</span>
+                        <Ended p={p} />
+                        <Net value={p.net} charges={p.charges} />
+                      </div>
+                      <div className="atr-bl__meta">
+                        <InOut p={p} />
+                        <span>{lotsText(p.lots, p.lotSize)}</span>
+                        <span>
+                          entry <span className="mono">{formatPrice(p.entryPrice)}</span>
+                        </span>
+                        <span>
+                          stop <span className="mono">{formatPrice(p.stopLoss)}</span> / target <span className="mono">{formatPrice(p.target)}</span>
+                        </span>
+                        <span>
+                          {last.kind === 'mark' ? 'mark' : 'exit'} <span className="mono">{formatPrice(last.price)}</span>
+                        </span>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            </>
+          )}
+        </>
+      )}
+    </section>
   )
 }

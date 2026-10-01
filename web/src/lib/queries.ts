@@ -51,8 +51,10 @@ import type { ReplayStartBody, ReplayStatus } from './replay'
 import {
   AI_TRADER_POLL_MS,
   aiTraderDecisionsQuery,
+  aiTraderPositionsQuery,
   readAiTraderDecisionsPage,
   readAiTraderDetail,
+  readAiTraderShadowBook,
   readAiTraderStatus,
 } from './aiTrader'
 import type { AiTraderDecisionFilter, AiTraderDecisionsPage } from './aiTrader'
@@ -2941,6 +2943,21 @@ export function useAiTraderDecisions(filter: AiTraderDecisionFilter, pollMs: num
       readAiTraderDecisionsPage(await api.get<unknown>(`/api/AiTrader/decisions?${aiTraderDecisionsQuery(filter, pageParam)}`)),
     initialPageParam: null as number | null,
     getNextPageParam: (last: AiTraderDecisionsPage) => last.nextBeforeId ?? undefined,
+    enabled: ready,
+    refetchInterval: ready ? pollMs : false,
+  })
+}
+
+/**
+ * The shadow book: a day's positions (IST) or a replay's, oldest first, net
+ * after charges. Polled while the day is today or the replay is on, since a
+ * minute check can close a position between looks.
+ */
+export function useAiTraderPositions(filter: AiTraderDecisionFilter, pollMs: number | false) {
+  const ready = !!filter.day || filter.replay != null
+  return useQuery({
+    queryKey: ['ai', 'trader', 'positions', filter.replay != null ? null : (filter.day ?? null), filter.replay ?? null],
+    queryFn: async () => readAiTraderShadowBook(await api.get<unknown>(`/api/AiTrader/positions?${aiTraderPositionsQuery(filter)}`)),
     enabled: ready,
     refetchInterval: ready ? pollMs : false,
   })

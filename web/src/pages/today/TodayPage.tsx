@@ -21,7 +21,7 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { CHECK_PASS_MARK, checkScoreText, memoryHref, memoryLabel, shortDate } from '../../lib/ai'
-import { actionText, modeLabel } from '../../lib/aiTrader'
+import { actionText, modeLabel, netTone } from '../../lib/aiTrader'
 import { ApiError } from '../../lib/api'
 import { verdictBadge } from '../../lib/checkup'
 import { istDay, strategyLabel } from '../../lib/desk'
@@ -406,6 +406,15 @@ function AiTrader({ t, now }: { t: TodayAiTrader; now: number }) {
             <span className={`tdy-kv__v ${tone}`}>{n}</span>
           </div>
         ))}
+        {t.shadowPositions > 0 && (
+          <div
+            title={`Its shadow book today: ${t.shadowPositions} ${t.shadowPositions === 1 ? 'buy' : 'buys'} kept by code as if placed, net after charges; open ones as if sold at their marks. Nothing reaches a broker.`}
+          >
+            <span className="tdy-kv__k">Shadow net</span>
+            <span className={`tdy-kv__v ${netTone(t.shadowNet)}`}>{formatInrSigned(t.shadowNet)}</span>
+            <span className="tdy-kv__s faint">{t.shadowOpen} open</span>
+          </div>
+        )}
       </div>
       {t.latest.length === 0 ? (
         <p className="tdy-none">

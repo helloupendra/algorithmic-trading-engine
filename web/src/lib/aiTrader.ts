@@ -14,7 +14,11 @@
  *     ("not known"), never a made-up zero, an "off" or an "allowed";
  *   - the words the pages put on a decision: its action ("Buy NIFTY CE"),
  *     the verdict (allowed, refused and by which rule, or no answer), the
- *     model's confidence, the mode, and the limits in one line.
+ *     model's confidence, the mode, and the limits in one line;
+ *   - the shadow book (GET /api/AiTrader/positions): in shadow mode and in a
+ *     replay an allowed buy is kept by code as if placed, checked every
+ *     minute against its stop and target, and scored after charges. Nothing
+ *     in it reaches a broker.
  *
  * The query hooks live with the others in lib/queries.ts. The switch and
  * "Run now" are the agent's own, on AI → Agents (lib/ai.ts).
@@ -115,6 +119,66 @@ export interface AiTraderStatus {
   today: AiTraderDay | null
   /** Newest first, at most three. */
   latest: AiTraderDecision[]
+  /** Today's shadow book in figures; null when the API did not send it (an older build). */
+  shadow: AiTraderShadowDay | null
+}
+
+/** A day's shadow book in figures. */
+export interface AiTraderShadowDay {
+  positions: number
+  open: number
+  /** Rupees after charges, open positions as if sold at their marks; null when not sent. */
+  net: number | null
+}
+
+/** stop, target, exit (its own decision), close (the session's close), replay-ended; '' while open. Kept a string. */
+export type ShadowExitReason = 'stop' | 'target' | 'exit' | 'close' | 'replay-ended' | ''
+
+/** One position of the shadow book: kept by code as if placed, never sent to a broker. */
+export interface AiTraderShadowPosition {
+  id: number
+  decisionId: number | null
+  mode: string
+  replaySessionId: number | null
+  day: string | null
+  symbol: string
+  underlying: string
+  /** CE or PE; '' when not sent. */
+  optionType: string
+  strike: number | null
+  expiry: string | null
+  lots: number | null
+  lotSize: number | null
+  entryUtc: string | null
+  /** "10:00", IST. */
+  entryIst: string
+  entryPrice: number | null
+  stopLoss: number | null
+  target: number | null
+  /** The last minute check's price; null before the first. */
+  markPrice: number | null
+  markUtc: string | null
+  /** True only when the API said so in as many words. */
+  open: boolean
+  exitUtc: string | null
+  exitIst: string
+  exitPrice: number | null
+  exitReason: ShadowExitReason | string
+  charges: number | null
+  /** Rupees after charges: as closed, or for an open one as if sold at its mark now. */
+  net: number | null
+}
+
+/** GET /api/AiTrader/positions: a day's shadow book or a replay's, oldest first. */
+export interface AiTraderShadowBook {
+  day: string | null
+  replay: number | null
+  positions: number
+  open: number
+  /** After charges; null when not sent. */
+  net: number | null
+  charges: number | null
+  items: AiTraderShadowPosition[]
 }
 
 export interface AiTraderDecisionsPage {
@@ -286,6 +350,74 @@ export function readAiTraderStatus(raw: unknown): AiTraderStatus {
     rules: readAiTraderRules(raw.rules),
     today: readAiTraderDay(raw.today),
     latest: decisionList(raw.latest).slice(0, 3),
+    shadow: readAiTraderShadowDay(raw.shadow),
+  }
+}
+
+/** The status's shadow figures, or null when the body has none. */
+export function readAiTraderShadowDay(v: unknown): AiTraderShadowDay | null {
+  if (!record(v)) return null
+  return { positions: count(v.positions), open: count(v.open), net: num(v.net) }
+}
+
+/** One shadow position, or null when it has no id. Prices and money the API left out stay null, never 0. */
+export function readAiTraderShadowPosition(v: unknown): AiTraderShadowPosition | null {
+  if (!record(v)) return null
+  const positionId = id(v.id)
+  if (positionId == null) return null
+  const entryUtc = instant(v.entryUtc)
+  const exitUtc = instant(v.exitUtc)
+  const option = words(v.optionType).toUpperCase()
+  return {
+    id: positionId,
+    decisionId: id(v.decisionId),
+    mode: words(v.mode).toLowerCase(),
+    replaySessionId: id(v.replaySessionId),
+    day: isoDay(v.day),
+    symbol: words(v.symbol),
+    underlying: words(v.underlying).toUpperCase(),
+    optionType: option === 'CE' || option === 'PE' ? option : '',
+    strike: limit(v.strike),
+    expiry: isoDay(v.expiry),
+    lots: limit(v.lots),
+    lotSize: limit(v.lotSize),
+    entryUtc,
+    entryIst: hm(v.entryIst) ?? istHm(entryUtc),
+    entryPrice: limit(v.entryPrice),
+    stopLoss: limit(v.stopLoss),
+    target: limit(v.target),
+    markPrice: limit(v.markPrice),
+    markUtc: instant(v.markUtc),
+    open: v.open === true,
+    exitUtc,
+    exitIst: hm(v.exitIst) ?? istHm(exitUtc),
+    exitPrice: limit(v.exitPrice),
+    exitReason: words(v.exitReason).toLowerCase(),
+    charges: limit(v.charges),
+    net: num(v.net),
+  }
+}
+
+/**
+ * GET /api/AiTrader/positions. Throws for a body that is not a book, so the
+ * page says it could not be read instead of drawing an empty book with ₹0.
+ * Rows come oldest first; they are kept in that order.
+ */
+export function readAiTraderShadowBook(raw: unknown): AiTraderShadowBook {
+  if (!record(raw) || !Array.isArray(raw.items)) {
+    throw new Error("The AI Trader's shadow book came back in a shape this page cannot read. Is the API build current?")
+  }
+  const items = raw.items.map(readAiTraderShadowPosition).filter((p): p is AiTraderShadowPosition => p != null)
+  const positions = num(raw.positions)
+  const open = num(raw.open)
+  return {
+    day: isoDay(raw.day),
+    replay: id(raw.replay),
+    positions: positions == null ? items.length : count(positions),
+    open: open == null ? items.filter((p) => p.open).length : count(open),
+    net: num(raw.net),
+    charges: limit(raw.charges),
+    items,
   }
 }
 
@@ -339,6 +471,14 @@ export function readAiTraderDetail(raw: unknown): AiTraderDecisionDetail {
     briefHash: words(raw.briefHash),
     plan: readAiTraderPlan(planJson),
   }
+}
+
+/** The query string of GET /api/AiTrader/positions: a replay's book, else a day's (today when none is named). */
+export function aiTraderPositionsQuery(filter: AiTraderDecisionFilter): string {
+  const p = new URLSearchParams()
+  if (filter.replay != null) p.set('replay', String(filter.replay))
+  else if (filter.day) p.set('day', filter.day)
+  return p.toString()
 }
 
 /** The query string of GET /api/AiTrader/decisions: a day or a replay, a page size, and where the page starts. */
@@ -542,4 +682,81 @@ export function jsonBlock(text: string | null | undefined): string {
   } catch {
     return t
   }
+}
+
+// ---------- the shadow book ------------------------------------------------------------
+
+/** "NIFTY 22650 CE": the underlying, the strike and the option; the symbol when those are not known. */
+export function contractText(p: Pick<AiTraderShadowPosition, 'underlying' | 'strike' | 'optionType' | 'symbol'>): string {
+  if (!p.underlying || p.strike == null) return p.symbol || '—'
+  const strike = Number.isInteger(p.strike) ? String(p.strike) : String(Math.round(p.strike * 100) / 100)
+  return [p.underlying, strike, p.optionType].filter(Boolean).join(' ')
+}
+
+/** "2 lots × 75", "1 lot"; '' when not known. */
+export function lotsText(lots: number | null, lotSize: number | null): string {
+  if (lots == null) return ''
+  const unit = lots === 1 ? 'lot' : 'lots'
+  return lotSize != null && lotSize > 0 ? `${lots} ${unit} × ${lotSize}` : `${lots} ${unit}`
+}
+
+const ENDINGS: Record<string, { label: string; tone: Tone; means: string }> = {
+  stop: { label: 'Stop', tone: 'neg', means: 'Its bid reached the stop at a minute check: closed at that price, which can be under the stop.' },
+  target: { label: 'Target', tone: 'pos', means: 'Its bid reached the target at a minute check: closed at that price.' },
+  exit: { label: 'Its exit', tone: 'neutral', means: 'Closed by its own allowed exit decision, at the bid.' },
+  close: { label: 'Close', tone: 'neutral', means: "Squared off at the session's close, 15:30 IST." },
+  'replay-ended': { label: 'Replay ended', tone: 'neutral', means: 'Still open when the replay ended: closed at its last mark.' },
+}
+
+/** How a position ended, as a word and a tone; an open one is "Open". A reason this page does not know shows by its own name. */
+export function shadowEnding(p: Pick<AiTraderShadowPosition, 'open' | 'exitReason'>): { label: string; tone: Tone; means: string } {
+  if (p.open) return { label: 'Open', tone: 'live', means: 'Still open: its net is as if sold at its last mark.' }
+  const known = ENDINGS[p.exitReason]
+  if (known) return known
+  const r = p.exitReason.replace(/[-_]+/g, ' ').trim()
+  return { label: r ? r.charAt(0).toUpperCase() + r.slice(1) : 'Closed', tone: 'neutral', means: '' }
+}
+
+/** The price a row ends on: the exit's when closed, else the last mark (null before the first check). */
+export function shadowLastPrice(p: Pick<AiTraderShadowPosition, 'open' | 'exitPrice' | 'markPrice'>): { price: number | null; kind: 'exit' | 'mark' } {
+  return p.open ? { price: p.markPrice, kind: 'mark' } : { price: p.exitPrice ?? p.markPrice, kind: 'exit' }
+}
+
+/** "3 positions · 1 open": the book's counts in words. */
+export function shadowCountsText(b: Pick<AiTraderShadowBook, 'positions' | 'open'>): string {
+  return `${b.positions} ${b.positions === 1 ? 'position' : 'positions'} · ${b.open} open`
+}
+
+/**
+ * The shadow position a decision's result names, and what happened to it in
+ * a line: "Shadow position #12" for a buy; with the exit's price and net for
+ * an exit. Null when the result names none (a refusal, a strategy start).
+ */
+export function shadowResultText(resultJson: string | null | undefined): { positionId: number; text: string } | null {
+  let v: unknown
+  try {
+    v = JSON.parse(resultJson ?? '')
+  } catch {
+    return null
+  }
+  if (!record(v)) return null
+  const positionId = id(v.shadowPositionId)
+  if (positionId == null) return null
+  const parts = [`Shadow position #${positionId}`]
+  const exitPrice = limit(v.exitPrice)
+  const net = num(v.netPnl)
+  if (exitPrice != null) parts.push(`closed at ${formatInr(exitPrice)}`)
+  if (net != null) {
+    const r = Math.round(net)
+    parts.push(`net ${r === 0 ? '₹0' : `${r > 0 ? '+' : '−'}${formatInrWhole(Math.abs(r))}`} after charges`)
+  }
+  const note = words(v.note)
+  return { positionId, text: parts.join(', ') + (note ? `: ${note}` : '') }
+}
+
+/** A rupee figure's tone as it is printed (rounded): a ₹0 book is not green. */
+export function netTone(v: number | null | undefined): 'pos' | 'neg' | '' {
+  if (v == null || !Number.isFinite(v)) return ''
+  const r = Math.round(v)
+  return r > 0 ? 'pos' : r < 0 ? 'neg' : ''
 }
