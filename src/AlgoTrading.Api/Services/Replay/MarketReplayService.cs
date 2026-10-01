@@ -341,7 +341,7 @@ public sealed class MarketReplayService(
         var mine = status is not null && status.Session == session.Id ? status : null;
         if (mine?.State is StateFinished or StateStopped or StateFailed)
         {
-            await EndAsync(session, mine.State, mine.Error, $"the replay {mine.State}", cancellationToken);
+            await EndAsync(session, mine.State, mine.Error, $"the replay {mine.State}", cancellationToken, mine);
             return;
         }
 
@@ -357,9 +357,16 @@ public sealed class MarketReplayService(
         }
     }
 
-    /// <summary>Stops the replay's runs at the replay's prices, then clears the book.</summary>
-    private async Task<ReplaySessionState> EndAsync(ReplaySessionState session, string state, string? error, string reason, CancellationToken cancellationToken)
+    /// <summary>
+    /// Stops the replay's runs at the replay's prices, then clears the book. Where its clock stood and how many
+    /// ticks the player sent are kept with the ended session: the player's status, which said so while it
+    /// played, is forgotten at the next start.
+    /// </summary>
+    /// <param name="last">The player's last status for this session, when the caller has just read it.</param>
+    private async Task<ReplaySessionState> EndAsync(ReplaySessionState session, string state, string? error, string reason, CancellationToken cancellationToken,
+        ReplayPlayerStatus? last = null)
     {
+        last ??= await LastStatusAsync(session, cancellationToken);
         foreach (var runId in session.RunIds)
         {
             try
@@ -372,11 +379,33 @@ public sealed class MarketReplayService(
             }
         }
 
+        // The book's clock is the newest tick the API took; the player's, its own once a second. The later wins.
+        var date = DateOnly.ParseExact(session.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var clock = new[] { book.Day == date ? book.ClockUtc : null, last?.ClockUtc, session.ClockUtc }.Max();
         book.End();
-        var ended = session with { State = state, EndedUtc = Now, Error = error is null ? null : Cut(error, MaxErrorLength) };
+        var ended = session with
+        {
+            State = state, EndedUtc = Now, Error = error is null ? null : Cut(error, MaxErrorLength),
+            ClockUtc = clock, TicksSent = last?.TicksSent ?? session.TicksSent,
+        };
         await SaveAsync(ended, cancellationToken);
         logger.LogInformation("Market replay {Session} of {Date} ended: {State} ({Reason})", session.Id, session.Date, state, reason);
         return ended;
+    }
+
+    /// <summary>The player's status for <paramref name="session"/>, or null: Redis failing here must not keep a replay from ending.</summary>
+    private async Task<ReplayPlayerStatus?> LastStatusAsync(ReplaySessionState session, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var status = await channel.ReadStatusAsync(cancellationToken);
+            return status is not null && status.Session == session.Id ? status : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Market replay {Session}: the player's last status could not be read", session.Id);
+            return null;
+        }
     }
 
     // ---------- the queue ----------
@@ -580,7 +609,8 @@ public sealed class MarketReplayService(
         var status = IsActive(session.State) ? await channel.ReadStatusAsync(cancellationToken) : null;
         var mine = status is not null && status.Session == session.Id ? status : null;
         var date = DateOnly.ParseExact(session.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture);
-        DateTime? clock = mine?.ClockUtc ?? (book.Day == date ? book.ClockUtc : null);
+        // Ended, the player's status is gone (or another replay's): the session keeps where its clock stood.
+        DateTime? clock = mine?.ClockUtc ?? (book.Day == date ? book.ClockUtc : null) ?? session.ClockUtc;
 
         var runs = await db.SimulationRuns.AsNoTracking()
             .Where(r => session.RunIds.Contains(r.Id))
@@ -601,7 +631,7 @@ public sealed class MarketReplayService(
         return new ReplaySessionView(
             session.Id, session.Date, session.Speed, session.FromIst, mine?.State is { } live && IsActive(session.State) ? live : session.State,
             clock, clock is DateTime c ? IstTime.ToIst(c).ToString("HH:mm:ss", CultureInfo.InvariantCulture) : null,
-            mine?.Progress ?? ProgressOf(clock, date, session.State), mine?.TicksSent ?? 0, session.StartedUtc, session.EndedUtc,
+            mine?.Progress ?? ProgressOf(clock, date, session.State), mine?.TicksSent ?? session.TicksSent, session.StartedUtc, session.EndedUtc,
             session.Error ?? mine?.Error, session.RunIds, views, session.StartedBy, session.AiTrader);
     }
 
@@ -811,9 +841,12 @@ public sealed record ReplayPlayerStatus(long Session, string State, DateTime? Cl
 /// <param name="AiTrader">The AI Trader decides along, on the replay's clock (it must be switched on; it places nothing in a replay).</param>
 public sealed record ReplayStartRequest(string? Date, int Speed, string? From, IReadOnlyList<long>? RunIds, bool AiTrader = false);
 
+/// <param name="ClockUtc">Where the replay's clock stood when it ended; null while it plays (the player's status says).</param>
+/// <param name="TicksSent">How many ticks the player had sent when it ended.</param>
 public sealed record ReplaySessionState(
     long Id, string Date, int Speed, string FromIst, string State, IReadOnlyList<long> RunIds,
-    DateTime StartedUtc, DateTime? EndedUtc, string? Error, string StartedBy, bool AiTrader = false);
+    DateTime StartedUtc, DateTime? EndedUtc, string? Error, string StartedBy, bool AiTrader = false,
+    DateTime? ClockUtc = null, long TicksSent = 0);
 
 public sealed record ReplayRunView(long RunId, string Strategy, string? Underlying, string? Account, string Status, decimal NetPnl);
 
