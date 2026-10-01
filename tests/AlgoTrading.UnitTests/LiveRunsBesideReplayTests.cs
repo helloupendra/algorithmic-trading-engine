@@ -233,6 +233,23 @@ public class LiveRunsBesideReplayTests
         Assert.Equal(90m, built.Positions.Single().Ltp);
     }
 
+    [Fact]
+    public async Task A_live_runs_card_and_page_take_a_zero_price_as_no_price()
+    {
+        using var desk = new CarryForwardTests.Desk();
+        long run = desk.NewRun("Ghost", CarryForwardTests.Desk.Owner, parameters: LiveParameters);
+        long leg = desk.Fill(run, "Ghost", "G1", Call, "SELL", 2, 100m, Ist(9, 28, 10, 0));
+        desk.Quote(Call, 0m);
+
+        // Not the whole premium made (100 × 2 × 75): the stored mark stands in, as it does with no quote at all.
+        var marks = await desk.InScope(sp => sp.GetRequiredService<RunPnl>().MarkOpenLegsAsync([run], CancellationToken.None));
+        Assert.Equal(desk.Position(leg).UnrealizedPnl, marks[run].Unrealized);
+        Assert.Equal(0m, marks[run].Unrealized);
+
+        var (positions, _) = await desk.View(run);
+        Assert.Equal(100m, positions.Single().Ltp);
+    }
+
     // ============================================================ the close sweep
 
     [Fact]

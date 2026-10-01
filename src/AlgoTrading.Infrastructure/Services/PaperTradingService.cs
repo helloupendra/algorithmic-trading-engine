@@ -1832,7 +1832,11 @@ public class PaperTradingService : IPaperTradingService
     /// untouched. A position's UpdatedUtc becomes the time of the price it is
     /// marked at, not the time it was marked: the risk guard and the position
     /// views read it as the age of the mark, and a frozen quote re-applied every
-    /// few seconds must not look fresh.
+    /// few seconds must not look fresh. A price of zero is no price (a feed's
+    /// "not traded yet"), as it is to a fill (<see cref="PaperFillPricing.FromQuote"/>):
+    /// marked at it, a short leg showed its whole premium made and a long its
+    /// whole premium lost, and the risk guard's group and overall rules read
+    /// those figures.
     /// </summary>
     private static void MarkOpenPositions(
         IEnumerable<PaperPosition> positions,
@@ -1842,7 +1846,7 @@ public class PaperTradingService : IPaperTradingService
         foreach (var pos in positions)
         {
             if (pos.Status != "Open") continue;
-            if (!quotes.TryGetValue(pos.Symbol, out var quote) || quote.LastTradedPrice is not { } price) continue;
+            if (!quotes.TryGetValue(pos.Symbol, out var quote) || quote.LastTradedPrice is not { } price || price <= 0m) continue;
 
             int lotSize = LotSizeOf(lotSizes, pos.Symbol);
             pos.LastMarkPrice = price;

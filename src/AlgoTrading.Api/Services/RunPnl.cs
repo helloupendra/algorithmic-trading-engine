@@ -145,7 +145,8 @@ public sealed class RunPnl
         var ltpBySymbol = new Dictionary<string, decimal>(StringComparer.Ordinal);
         foreach (var q in quotes)
         {
-            if (q.LastTradedPrice.HasValue) ltpBySymbol.TryAdd(q.Symbol, q.LastTradedPrice.Value);
+            // Zero is no price, as it is to the engine's marks and fills.
+            if (q.LastTradedPrice is > 0m) ltpBySymbol.TryAdd(q.Symbol, q.LastTradedPrice.Value);
         }
 
         // The recap runs of the day being replayed are marked at the replay's prices, not the live ones.
