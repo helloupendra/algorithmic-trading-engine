@@ -74,7 +74,7 @@ public static class AiTraderGuard
         decimal floor = contract.Ask * (1 - rules.MaxStopFraction);
         if (stop < floor)
         {
-            return Refuse("stop", $"The stop {Rupees(stop)} is more than {rules.MaxStopFraction:P0} below the entry {Rupees(contract.Ask)}; the lowest is {Rupees(floor)}.");
+            return Refuse("stop", $"The stop {Rupees(stop)} is more than {rules.MaxStopFraction * 100:0}% below the entry {Rupees(contract.Ask)}; the lowest is {Rupees(floor)}.");
         }
 
         if (plan.Target is not decimal target || target <= contract.Ask)

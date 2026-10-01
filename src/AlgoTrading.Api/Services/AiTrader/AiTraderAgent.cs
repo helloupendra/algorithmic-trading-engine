@@ -105,7 +105,13 @@ public sealed class AiTraderAgent(
         bool replay = mode == AiTraderModes.Replay;
         var brief = await briefs.BuildAsync(clockUtc, replay, cancellationToken);
         var book = await books.ReadAsync(clockUtc, replay, cancellationToken);
-        string text = brief.Text + "\n" + AiTraderBookReader.Describe(book, Rules, replay) + "\nDecide now: one JSON object.";
+        var day = IstTime.DateOf(clockUtc);
+        var earlier = await db.AiTraderDecisions.AsNoTracking()
+            .Where(d => d.ClockUtc < clockUtc && (replaySessionId == null ? d.Day == day && d.ReplaySessionId == null : d.ReplaySessionId == replaySessionId))
+            .OrderByDescending(d => d.ClockUtc).ThenByDescending(d => d.Id).Take(LastLooksShown)
+            .ToListAsync(cancellationToken);
+        string text = brief.Text + "\n" + AiTraderBookReader.Describe(book, Rules, replay) + "\n" + LastLooks(earlier)
+                      + "\nDecide now: one JSON object.";
 
         var row = new AiTraderDecision
         {
@@ -162,6 +168,48 @@ public sealed class AiTraderAgent(
         }
 
         return await SaveAsync(row, cancellationToken);
+    }
+
+    private const int LastLooksShown = 3;
+
+    /// <summary>
+    /// Its last looks of the day (or of the replay), newest first: what it proposed and what the rules said, so a
+    /// refusal can be corrected on the next look rather than repeated. A plan allowed in shadow or replay says it
+    /// was not placed, which is why the book does not hold it.
+    /// </summary>
+    public static string LastLooks(IReadOnlyList<AiTraderDecision> newestFirst)
+    {
+        if (newestFirst.Count == 0) return "YOUR LAST LOOKS: none yet today.";
+        var lines = newestFirst.Select(d =>
+        {
+            string at = IstTime.ToIst(d.ClockUtc).ToString("HH:mm", CultureInfo.InvariantCulture);
+            if (d.Rule is "no-answer" or "unreadable") return $"- {at} no usable answer.";
+            string what = d.Action == AiTraderPlan.Buy ? BuyText(d.PlanJson) : $"{d.Action} {d.Underlying}".TrimEnd();
+            string verdict = !d.Allowed ? $"refused ({d.Rule}): {Cut(d.Why, 200)}"
+                : d.Action == AiTraderPlan.None ? "nothing to judge"
+                : d.Executed ? "allowed and placed"
+                : "allowed, not placed (" + (d.Mode == AiTraderModes.Replay ? "replay" : "shadow mode") + ")";
+            return $"- {at} {what} → {verdict}";
+        });
+        return "YOUR LAST LOOKS (newest first)\n" + string.Join('\n', lines);
+    }
+
+    private static string BuyText(string planJson)
+    {
+        try
+        {
+            if (JsonSerializer.Deserialize<AiTraderPlan>(planJson, Json) is { } p)
+            {
+                return string.Create(CultureInfo.InvariantCulture,
+                    $"buy {p.Underlying} {p.Strike} {p.Option}, {p.Lots} lot(s), stop {p.StopLoss}, target {p.Target}");
+            }
+        }
+        catch (JsonException)
+        {
+            // An old or cut plan: the action alone.
+        }
+
+        return "buy";
     }
 
     /// <summary>

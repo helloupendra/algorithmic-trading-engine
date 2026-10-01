@@ -20,11 +20,14 @@ Every 10 minutes from 09:20 to 15:00 IST on trading days, while it is switched o
    - the last hour's news as the News Analyst read it, policy and macro data first, then results, guidance and
      rating changes, then anything with a direction; routine filings with none are left out;
    - its own book: net today after charges, the loss budget left, trades used, open positions with stops and
-     targets, its running strategies.
+     targets, its running strategies;
+   - its last three looks of the day (or of the replay): what it proposed and what the rules said, so a refused plan
+     is corrected rather than sent again. A plan allowed in shadow mode says it was not placed.
 
    A section whose source fails says so in one line; the rest of the brief stands.
 2. **The model proposes** one action as JSON (Judge tier, temperature 0.2): none, buy, exit, start_strategy or
-   stop_strategy, with a reason naming the facts it rests on.
+   stop_strategy, with a reason naming the facts it rests on. The entry is the option's ask: size, stop and
+   target are checked against it.
 3. **Code judges it** (`AiTraderGuard`): every limit below. A refusal names the rule.
 4. **Every look is a row** in `ai_trader_decisions`, "none" included: the brief, the plan, the verdict, the call.
 
