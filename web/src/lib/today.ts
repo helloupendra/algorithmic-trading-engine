@@ -188,6 +188,10 @@ export interface TodayAiTrader {
   noAnswer: number
   /** Newest first, at most three. */
   latest: TodayAiTraderDecision[]
+  /** Today's shadow book: the buys code kept as if placed, those still open, and the net after charges (null when not sent). */
+  shadowPositions: number
+  shadowOpen: number
+  shadowNet: number | null
 }
 
 export type DecisionStatus = 'decided' | 'default' | 'open'
@@ -430,6 +434,9 @@ export function readTodayAiTrader(v: unknown): TodayAiTrader | null {
       .map(readAiTraderDecision)
       .filter((d) => d.atUtc != null || d.action !== '' || d.rule !== '')
       .slice(0, 3),
+    shadowPositions: count(v.shadowPositions),
+    shadowOpen: count(v.shadowOpen),
+    shadowNet: num(v.shadowNet),
   }
 }
 

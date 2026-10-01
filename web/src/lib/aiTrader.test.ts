@@ -3,21 +3,31 @@ import { describe, expect, it } from 'vitest'
 import {
   actionText,
   aiTraderDecisionsQuery,
+  aiTraderPositionsQuery,
   confidenceText,
+  contractText,
   dayCountsText,
   hm,
   jsonBlock,
   lakhText,
   limitsParts,
+  lotsText,
   modeLabel,
+  netTone,
   placedText,
   planFacts,
   readAiTraderDecision,
   readAiTraderDecisionsPage,
   readAiTraderDetail,
   readAiTraderPlan,
+  readAiTraderShadowBook,
+  readAiTraderShadowPosition,
   readAiTraderStatus,
   ruleLabel,
+  shadowCountsText,
+  shadowEnding,
+  shadowLastPrice,
+  shadowResultText,
   verdictOf,
 } from './aiTrader'
 import type { AiTraderDecision } from './aiTrader'
@@ -65,7 +75,39 @@ const status = {
   },
   today: { date: '2026-10-01', decisions: 12, actions: 3, allowed: 2, refused: 1, noAnswer: 1 },
   latest: [summary(), summary({ id: 40, action: 'none', allowed: true, rule: 'ok', why: 'Nothing to do.' })],
+  shadow: { positions: 2, open: 1, net: -1240.5 },
 }
+
+/** One shadow position exactly as AiTraderController.View sends it. */
+const position = (over: Record<string, unknown> = {}) => ({
+  id: 12,
+  decisionId: 104,
+  mode: 'shadow',
+  replaySessionId: null,
+  day: '2026-10-01',
+  symbol: 'NSE:NIFTY25O0725300CE',
+  underlying: 'NIFTY',
+  optionType: 'CE',
+  strike: 25300.0,
+  expiry: '2026-10-07',
+  lots: 1,
+  lotSize: 75,
+  entryUtc: '2026-10-01T04:30:04Z',
+  entryIst: '10:00',
+  entryPrice: 112.5,
+  stopLoss: 78.0,
+  target: 160.0,
+  markPrice: 96.4,
+  markUtc: '2026-10-01T06:12:00Z',
+  open: false,
+  exitUtc: '2026-10-01T06:12:00Z',
+  exitIst: '11:42',
+  exitPrice: 76.9,
+  exitReason: 'stop',
+  charges: 61.84,
+  net: -2731.84,
+  ...over,
+})
 
 const read = (over: Record<string, unknown> = {}) => readAiTraderDecision(summary(over))!
 
@@ -91,6 +133,7 @@ describe('reading the status', () => {
     })
     expect(s.today).toEqual({ date: '2026-10-01', decisions: 12, actions: 3, allowed: 2, refused: 1, noAnswer: 1 })
     expect(s.latest.map((d) => d.id)).toEqual([41, 40])
+    expect(s.shadow).toEqual({ positions: 2, open: 1, net: -1240.5 })
   })
 
   it('refuses a body that is not the status, rather than drawing an AI Trader that is off', () => {
@@ -101,7 +144,9 @@ describe('reading the status', () => {
 
   it('keeps what the body left out as not known, never as off or zero limits', () => {
     const s = readAiTraderStatus({ status: '', rules: 'none', latest: 'x' })
-    expect(s).toEqual({ status: null, mode: null, everyMinutes: null, rules: null, today: null, latest: [] })
+    expect(s).toEqual({ status: null, mode: null, everyMinutes: null, rules: null, today: null, latest: [], shadow: null })
+    // A shadow figure it cannot read is not known, never ₹0.
+    expect(readAiTraderStatus({ status: 'on', shadow: { positions: 'two', net: '-5' } }).shadow).toEqual({ positions: 0, open: 0, net: null })
     const r = readAiTraderStatus({ rules: { maxLotsPerTrade: '2', maxStopFraction: 4, dailyLossLimit: -10000, openFrom: '9:20', openUntil: 'noon' } }).rules!
     expect(r.maxLotsPerTrade).toBeNull()
     expect(r.maxStopFraction).toBeNull()
@@ -362,5 +407,130 @@ describe('the words', () => {
     expect(jsonBlock('{}')).toBe('')
     expect(jsonBlock('  ')).toBe('')
     expect(jsonBlock('not json')).toBe('not json')
+  })
+})
+
+describe('the shadow book', () => {
+  it('reads a book as the controller sends it, oldest first', () => {
+    const b = readAiTraderShadowBook({
+      day: '2026-10-01',
+      replay: null,
+      positions: 2,
+      open: 1,
+      net: -1240.5,
+      charges: 98.2,
+      items: [position(), position({ id: 13, open: true, exitUtc: null, exitIst: null, exitPrice: null, exitReason: '', net: 1491.34 })],
+    })
+    expect(b).toMatchObject({ day: '2026-10-01', replay: null, positions: 2, open: 1, net: -1240.5, charges: 98.2 })
+    expect(b.items.map((p) => p.id)).toEqual([12, 13])
+    expect(b.items[0]).toEqual({
+      id: 12,
+      decisionId: 104,
+      mode: 'shadow',
+      replaySessionId: null,
+      day: '2026-10-01',
+      symbol: 'NSE:NIFTY25O0725300CE',
+      underlying: 'NIFTY',
+      optionType: 'CE',
+      strike: 25300,
+      expiry: '2026-10-07',
+      lots: 1,
+      lotSize: 75,
+      entryUtc: '2026-10-01T04:30:04Z',
+      entryIst: '10:00',
+      entryPrice: 112.5,
+      stopLoss: 78,
+      target: 160,
+      markPrice: 96.4,
+      markUtc: '2026-10-01T06:12:00Z',
+      open: false,
+      exitUtc: '2026-10-01T06:12:00Z',
+      exitIst: '11:42',
+      exitPrice: 76.9,
+      exitReason: 'stop',
+      charges: 61.84,
+      net: -2731.84,
+    })
+    expect(b.items[1]).toMatchObject({ open: true, exitIst: '', exitPrice: null, exitReason: '' })
+  })
+
+  it('refuses a body that is not a book, rather than drawing an empty one at ₹0', () => {
+    for (const bad of ['<html>', null, [position()], { positions: 0, net: 0 }]) {
+      expect(() => readAiTraderShadowBook(bad)).toThrow(/shape this page cannot read/)
+    }
+  })
+
+  it('keeps what a row left out as not known, and drops a row it cannot name', () => {
+    const b = readAiTraderShadowBook({ items: [position({ net: null, charges: 'x', markPrice: null, open: 'true', optionType: 'fut', entryIst: null }), { id: 0 }, 'junk'] })
+    expect(b.items).toHaveLength(1)
+    const p = b.items[0]
+    expect(p.net).toBeNull()
+    expect(p.charges).toBeNull()
+    expect(p.markPrice).toBeNull()
+    expect(p.open).toBe(false)
+    expect(p.optionType).toBe('')
+    // No IST entry sent: worked out from the UTC one.
+    expect(p.entryIst).toBe('10:00')
+    // The counts fall back to the rows; the money stays not known.
+    expect(b).toMatchObject({ positions: 1, open: 0, net: null, charges: null, day: null, replay: null })
+    expect(readAiTraderShadowPosition(position({ replaySessionId: 4, mode: 'REPLAY' }))).toMatchObject({ replaySessionId: 4, mode: 'replay' })
+  })
+
+  it('asks for a replay, else a day', () => {
+    expect(aiTraderPositionsQuery({ day: '2026-10-01' })).toBe('day=2026-10-01')
+    expect(aiTraderPositionsQuery({ day: '2026-10-01', replay: 4 })).toBe('replay=4')
+    expect(aiTraderPositionsQuery({})).toBe('')
+  })
+
+  it('names the contract, the lots and how a position ended', () => {
+    const p = readAiTraderShadowPosition(position())!
+    expect(contractText(p)).toBe('NIFTY 25300 CE')
+    expect(contractText({ ...p, strike: 25312.5 })).toBe('NIFTY 25312.5 CE')
+    expect(contractText({ ...p, strike: null })).toBe('NSE:NIFTY25O0725300CE')
+    expect(contractText({ ...p, strike: null, symbol: '' })).toBe('—')
+    expect(lotsText(1, 75)).toBe('1 lot × 75')
+    expect(lotsText(2, null)).toBe('2 lots')
+    expect(lotsText(null, 75)).toBe('')
+    expect(shadowEnding({ open: true, exitReason: '' })).toMatchObject({ label: 'Open', tone: 'live' })
+    expect(shadowEnding({ open: false, exitReason: 'stop' })).toMatchObject({ label: 'Stop', tone: 'neg' })
+    expect(shadowEnding({ open: false, exitReason: 'target' })).toMatchObject({ label: 'Target', tone: 'pos' })
+    expect(shadowEnding({ open: false, exitReason: 'exit' }).label).toBe('Its exit')
+    expect(shadowEnding({ open: false, exitReason: 'close' }).label).toBe('Close')
+    expect(shadowEnding({ open: false, exitReason: 'replay-ended' }).label).toBe('Replay ended')
+    expect(shadowEnding({ open: false, exitReason: 'margin-call' })).toMatchObject({ label: 'Margin call', tone: 'neutral' })
+    expect(shadowEnding({ open: false, exitReason: '' }).label).toBe('Closed')
+  })
+
+  it('ends a row on its exit price, or on its mark while open', () => {
+    expect(shadowLastPrice({ open: false, exitPrice: 76.9, markPrice: 96.4 })).toEqual({ price: 76.9, kind: 'exit' })
+    expect(shadowLastPrice({ open: true, exitPrice: null, markPrice: 96.4 })).toEqual({ price: 96.4, kind: 'mark' })
+    expect(shadowLastPrice({ open: true, exitPrice: null, markPrice: null })).toEqual({ price: null, kind: 'mark' })
+    expect(shadowCountsText({ positions: 1, open: 0 })).toBe('1 position · 0 open')
+    expect(shadowCountsText({ positions: 3, open: 1 })).toBe('3 positions · 1 open')
+  })
+
+  it("says the shadow position a decision's result names", () => {
+    expect(shadowResultText('{"contract":{"symbol":"NSE:NIFTY25O0725300CE"},"shadowPositionId":12}')).toEqual({
+      positionId: 12,
+      text: 'Shadow position #12',
+    })
+    expect(shadowResultText('{"shadowPositionId":12,"exitPrice":96.4,"charges":61.84,"netPnl":1143.16}')?.text).toBe(
+      'Shadow position #12, closed at ₹96.40, net +₹1,143 after charges',
+    )
+    expect(shadowResultText('{"shadowPositionId":12,"exitPrice":76.9,"netPnl":-2731.84}')?.text).toBe(
+      'Shadow position #12, closed at ₹76.90, net −₹2,732 after charges',
+    )
+    expect(shadowResultText('{"shadowPositionId":12,"note":"It was no longer open."}')?.text).toBe('Shadow position #12: It was no longer open.')
+    expect(shadowResultText('{"note":"Strategy runs are not simulated in shadow: recorded only."}')).toBeNull()
+    expect(shadowResultText('{}')).toBeNull()
+    expect(shadowResultText('not json')).toBeNull()
+    expect(shadowResultText(null)).toBeNull()
+  })
+
+  it('colours a net as it is printed: a ₹0 book is not green', () => {
+    expect(netTone(1491.34)).toBe('pos')
+    expect(netTone(-0.4)).toBe('')
+    expect(netTone(-2731.84)).toBe('neg')
+    expect(netTone(null)).toBe('')
   })
 })

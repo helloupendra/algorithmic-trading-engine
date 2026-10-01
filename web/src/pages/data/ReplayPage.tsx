@@ -24,6 +24,7 @@ import type { Ref } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../lib/auth'
 import {
+  useAiTraderPositions,
   useAiTraderStatus,
   useReplayControl,
   useReplayDays,
@@ -35,7 +36,7 @@ import {
   useStrategies,
   useUserAccounts,
 } from '../../lib/queries'
-import { AI_TRADER_POLL_MS, AI_TRADER_REPLAY_POLL_MS } from '../../lib/aiTrader'
+import { AI_TRADER_POLL_MS, AI_TRADER_REPLAY_POLL_MS, netTone, shadowCountsText } from '../../lib/aiTrader'
 import {
   COVERAGE_KEYS,
   COVERAGE_LABELS,
@@ -83,7 +84,7 @@ import { prefersReducedMotion } from '../../lib/motion'
 import { Badge, InlineError, Loading, Panel } from '../../components/ui'
 import { IconCalendar, IconClock, IconPlay, IconPlus, IconStop, IconX } from '../../components/icons'
 import { ConsoleOutput, Disclosure } from '../strategies/shared'
-import { AiTraderDecisionList } from '../ai/AiTraderParts'
+import { AiTraderDecisionList, AiTraderShadowBook } from '../ai/AiTraderParts'
 import './data.css'
 import './replay.css'
 
@@ -229,6 +230,16 @@ function SessionPanel({ session, onAnother }: { session: ReplaySession; onAnothe
   const total = replayNetTotal(session.runs)
   // A replay with the AI Trader alone: no run to list or total.
   const aiOnly = session.aiTrader && session.runIds.length === 0 && session.runs.length === 0
+  // Its shadow book (the same read as the block below shows): its result, kept apart from the runs'.
+  const shadow = useAiTraderPositions({ replay: session.aiTrader ? session.id : null }, active ? AI_TRADER_REPLAY_POLL_MS : AI_TRADER_POLL_MS)
+  const book = shadow.data
+  const bookWords = book
+    ? `${shadowCountsText(book)}, kept by code as if placed`
+    : shadow.isError
+      ? 'its shadow book could not be read'
+      : session.id == null
+        ? 'its shadow book is not known'
+        : 'reading its shadow book'
 
   return (
     <Panel
@@ -295,19 +306,20 @@ function SessionPanel({ session, onAnother }: { session: ReplaySession; onAnothe
         <div className="rp-result">
           {aiOnly ? (
             <div>
-              <span className="rp-result__label">Result</span>
+              <span className="rp-result__label">Shadow book result, after charges</span>
+              <span className={`rp-result__value ${netTone(book?.net)}`}>{formatInrSigned(book?.net)}</span>
               <span className="faint rp-result__note">
                 {session.state === 'finished'
                   ? 'The day played out'
                   : session.state === 'stopped'
                     ? 'Stopped early'
                     : 'The replay failed'}
-                , with only the AI Trader deciding along. It places nothing in a replay: its decisions above are the result.
+                , with only the AI Trader deciding along: {bookWords}. Nothing reached a broker; a test, not in any live total.
               </span>
             </div>
           ) : (
             <div>
-              <span className="rp-result__label">Result, after charges</span>
+              <span className="rp-result__label">{session.aiTrader ? "Runs' result, after charges" : 'Result, after charges'}</span>
               <span className={`rp-result__value ${pnlClass(total)}`}>{formatInrSigned(total)}</span>
               <span className="faint rp-result__note">
                 {session.state === 'finished'
@@ -317,6 +329,13 @@ function SessionPanel({ session, onAnother }: { session: ReplaySession; onAnothe
                     : 'The replay failed; its runs were stopped.'}{' '}
                 A test: not in any live total.
               </span>
+            </div>
+          )}
+          {session.aiTrader && !aiOnly && (
+            <div className="rp-result__ai">
+              <span className="rp-result__label">AI Trader, shadow book</span>
+              <span className={`rp-result__value rp-result__value--sm ${netTone(book?.net)}`}>{formatInrSigned(book?.net)}</span>
+              <span className="faint rp-result__note">After charges: {bookWords}. Apart from the runs' result, never added to it.</span>
             </div>
           )}
           <button type="button" className="btn btn--sm" onClick={onAnother}>
@@ -329,9 +348,10 @@ function SessionPanel({ session, onAnother }: { session: ReplaySession; onAnothe
 }
 
 /**
- * The AI Trader's decisions in this replay, newest first: read every 10 s
- * while it plays (its clock runs up to ten times faster), then every 30 s,
- * since its last look can land a minute after the day ends.
+ * The AI Trader in this replay: its shadow book (the replay's own, fresh at
+ * the start), then its decisions, newest first. Read every 10 s while it
+ * plays (its clock runs up to ten times faster), then every 30 s, since its
+ * last look can land a minute after the day ends.
  */
 function ReplayAiTrader({ session }: { session: ReplaySession }) {
   const active = isActiveState(session.state)
@@ -343,24 +363,35 @@ function ReplayAiTrader({ session }: { session: ReplaySession }) {
       {session.id == null ? (
         <p className="small-note">The API did not say which replay this is, so its decisions cannot be listed.</p>
       ) : (
-        <AiTraderDecisionList
-          filter={{ replay: session.id }}
-          pollMs={active ? AI_TRADER_REPLAY_POLL_MS : AI_TRADER_POLL_MS}
-          markReplays={false}
-          label={`AI Trader decisions in the replay of ${shortDay(session.date)}`}
-          empty={
-            active ? (
-              <>
-                No look yet. It looks every 10 minutes of replay time from 09:20, and only while it is switched on in{' '}
-                <Link to="/ai/agents?agent=ai-trader">AI → Agents</Link>.
-              </>
-            ) : (
-              <>
-                It made no decision in this replay. Was it switched on in <Link to="/ai/agents?agent=ai-trader">AI → Agents</Link>?
-              </>
-            )
-          }
-        />
+        <>
+          <AiTraderShadowBook
+            filter={{ replay: session.id }}
+            pollMs={active ? AI_TRADER_REPLAY_POLL_MS : AI_TRADER_POLL_MS}
+            replay
+            empty={active ? 'No shadow position yet in this replay.' : 'No shadow position in this replay.'}
+          />
+          <h4 className="atr-dec-h">
+            Decisions <span className="faint">newest first · open one for the brief it read</span>
+          </h4>
+          <AiTraderDecisionList
+            filter={{ replay: session.id }}
+            pollMs={active ? AI_TRADER_REPLAY_POLL_MS : AI_TRADER_POLL_MS}
+            markReplays={false}
+            label={`AI Trader decisions in the replay of ${shortDay(session.date)}`}
+            empty={
+              active ? (
+                <>
+                  No look yet. It looks every 10 minutes of replay time from 09:20, and only while it is switched on in{' '}
+                  <Link to="/ai/agents?agent=ai-trader">AI → Agents</Link>.
+                </>
+              ) : (
+                <>
+                  It made no decision in this replay. Was it switched on in <Link to="/ai/agents?agent=ai-trader">AI → Agents</Link>?
+                </>
+              )
+            }
+          />
+        </>
       )}
     </section>
   )

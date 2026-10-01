@@ -57,6 +57,12 @@
 }
 .rp-page .rp-result__value { font-size: 19px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .rp-page .rp-result__note { font-size: var(--fs-s); }
+.rp-page .rp-result__value--sm { font-size: 16px; }
+/* The AI Trader's shadow result beside the runs': its own figure, never summed into theirs. */
+.rp-page .rp-result__ai { padding-left: 16px; border-left: 1px solid var(--line-soft); }
+@media (max-width: 640px) {
+  .rp-page .rp-result__ai { padding-left: 0; border-left: 0; }
+}
 
 /* The runs as a list, a phone's view of the table (shown under 640px). */
 .rp-page .rp-rl { display: none; list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line-soft); }
