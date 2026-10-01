@@ -238,6 +238,30 @@ public class PaperTradingServiceTests
         Assert.Equal(Ist(11, 27, 36), marked.UpdatedUtc);
     }
 
+    [Fact]
+    public async Task A_zero_price_is_no_price_and_never_a_mark()
+    {
+        // A quote written with LTP 0 (a feed's "no trade yet") must not mark a
+        // short leg as having made its whole premium, or a long as having lost
+        // it: the guard's group and overall rules read these figures. The fill
+        // path already takes zero as no price; the mark does too.
+        using var book = new Book(Ist(11, 0));
+        book.Quote(Call, ltp: 100m, age: TimeSpan.FromSeconds(1));
+        await book.Open(Call, "SELL", price: 100m);
+        book.Quote(Call, ltp: 98m, updatedUtc: Ist(11, 0, 30));
+        var before = (await book.Service.GetPaperPositionsAsync(book.RunId)).Single();
+        Assert.Equal(98m, before.LastMarkPrice);
+
+        book.Clock.Now = Ist(11, 1, 0);
+        book.Quote(Call, ltp: 0m, updatedUtc: Ist(11, 0, 59));
+        var marked = (await book.Service.GetPaperPositionsAsync(book.RunId)).Single();
+
+        Assert.Equal(98m, marked.LastMarkPrice);
+        Assert.Equal(before.UnrealizedPnl, marked.UnrealizedPnl);
+        Assert.Equal(Ist(11, 0, 30), marked.UpdatedUtc);     // as old as the last real price, so the guard sees it age
+        Assert.Equal(before.UnrealizedPnl, (await book.Service.GetPortfolioSummaryAsync(book.RunId)).UnrealizedPnl);
+    }
+
     // ======================================================= idempotency
 
     [Fact]

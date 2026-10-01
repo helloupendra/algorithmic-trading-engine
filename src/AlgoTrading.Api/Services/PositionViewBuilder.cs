@@ -141,7 +141,8 @@ public sealed class PositionViewBuilder
             DateTime? ltpUpdatedUtc = null;
             if (isOpen)
             {
-                if (useLiveQuotes && quoteBySymbol.TryGetValue(pos.Symbol, out var quote) && quote.Ltp.HasValue)
+                // Zero is no price (a feed's "not traded yet"), as it is to the engine's marks.
+                if (useLiveQuotes && quoteBySymbol.TryGetValue(pos.Symbol, out var quote) && quote.Ltp is > 0m)
                 {
                     ltp = quote.Ltp;
                     ltpUpdatedUtc = quote.UpdatedUtc;
