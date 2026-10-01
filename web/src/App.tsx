@@ -9,6 +9,7 @@ import { AcceptInvitePage } from './pages/AcceptInvitePage'
 import { LandingPage } from './pages/LandingPage'
 import { FallbackShell, ForbiddenPage, NotFoundPage } from './pages/Placeholders'
 import { DeskPage } from './pages/desk/DeskPage'
+import { TodayPage } from './pages/today/TodayPage'
 import { WatchlistPage } from './pages/trader/WatchlistPage'
 import { ChartPage } from './pages/markets/chart/ChartPage'
 import { PositionsPage } from './pages/trade/PositionsPage'
@@ -79,7 +80,8 @@ export default function App() {
         <AuthProvider>
           <Routes>
             {/* Public homepage. Signing out lands here; "Open console" goes to
-                /login, which bounces authenticated users to the Desk. */}
+                /login, which bounces authenticated users to their home
+                (lib/modules.ts homeFor: Today for an admin, the Desk for a trader). */}
             <Route path="/" element={<LandingPage />} />
 
             <Route element={<RedirectIfAuthenticated />}>
@@ -154,6 +156,9 @@ export default function App() {
 
                 {/* Admin only. */}
                 <Route element={<RequireRole role="Admin" />}>
+                  {/* The owner's one page, and an admin's home: the day at a glance, read-only. */}
+                  <Route path="/today" element={<TodayPage />} />
+
                   <Route path="/markets/mcx" element={<CommodityPage />} />
                   <Route path="/markets/patterns" element={<PatternAlertsPage />} />
 

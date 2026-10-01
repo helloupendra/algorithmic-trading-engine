@@ -40,7 +40,9 @@ describe('pageItems', () => {
   it('lists every page the user can open, in registry order, on an empty query', () => {
     const items = pageItems(adminNav, '')
     expect(items.length).toBe(adminNav.flatMap((w) => w.pages).length)
-    expect(items[0]).toMatchObject({ label: 'Desk', to: '/desk' })
+    // Today first: an admin's home.
+    expect(items[0]).toMatchObject({ label: 'Today', to: '/today' })
+    expect(items[1]).toMatchObject({ label: 'Desk', to: '/desk' })
   })
 
   it('finds a page by a keyword and says where it lives', () => {

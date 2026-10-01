@@ -1,0 +1,224 @@
+/*
+ * Today (/today): the owner's one page. Built from the console's own
+ * vocabulary (panel, stat, table, badge, pill, the health bar) on the
+ * tokens, so it follows the theme; these rules only lay out what the page
+ * adds. Calm: one 17px headline (the date), data text at 12.5px, colour only
+ * for state, and every coloured thing also says what it is in words or an
+ * icon.
+ */
+
+.tdy-flush { margin: 0; }
+.tdy-n { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tdy-line { display: block; }
+.tdy-cols { align-items: start; }
+
+/* --- 1. the date and the markets ------------------------------------------------- */
+.tdy-head { align-items: flex-start; }
+.tdy-head__main { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.tdy-date { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.015em; }
+.tdy-markets { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; }
+.pill.tdy-pill { padding: 2px 9px; }
+
+/* --- 2. needs a look ----------------------------------------------------------------- */
+.tdy-calm { margin: 0; font-size: 13px; color: var(--text-2); }
+.tdy-att { list-style: none; margin: 0; padding: 0; }
+/* A row: the level (icon and word), what and why, then the kind, the time and the link.
+   The rule on the left repeats the level's colour; the word already says it. */
+.tdy-att__row {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 3px 12px;
+  padding: 8px 0 8px 10px;
+  border-left: 2px solid var(--line-strong);
+  border-bottom: 1px solid var(--line-soft);
+}
+.tdy-att__row:last-child { border-bottom-color: transparent; }
+.tdy-att__row + .tdy-att__row { margin-top: 2px; }
+.tdy-att__row--neg { border-left-color: var(--neg); }
+.tdy-att__row--warn { border-left-color: var(--warn); }
+.tdy-level {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-s);
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.tdy-level svg { width: 13px; height: 13px; flex: none; align-self: center; }
+.tdy-level--neg { color: var(--neg); }
+.tdy-level--warn { color: var(--warn); }
+.tdy-att__title { font-size: 13px; font-weight: 550; overflow-wrap: anywhere; }
+.tdy-att__detail { margin-top: 2px; font-size: 12px; line-height: 1.45; color: var(--text-2); overflow-wrap: anywhere; }
+.tdy-att__meta { display: flex; align-items: baseline; gap: 10px; font-size: var(--fs-s); color: var(--text-3); white-space: nowrap; }
+.tdy-open { color: var(--brand-hi); text-decoration: none; font-size: 12px; white-space: nowrap; }
+.tdy-open:hover { text-decoration: underline; }
+
+/* --- 3. trading today ----------------------------------------------------------------- */
+.stat-grid.tdy-accounts { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+.tdy-accounts .stat__label { text-transform: none; letter-spacing: 0.01em; font-size: 11.5px; }
+.tdy-accounts .stat__sub { line-height: 1.55; }
+.tdy-runs { margin-top: 12px; }
+.tdy-caption {
+  caption-side: top;
+  padding: 7px 12px 6px;
+  text-align: left;
+  font-size: var(--fs-s);
+  color: var(--text-3);
+  border-bottom: 1px solid var(--line-soft);
+}
+a.tdy-run { color: var(--text); font-weight: 550; text-decoration: none; }
+a.tdy-run:hover { color: var(--brand-hi); text-decoration: underline; }
+.table td.tdy-reason { white-space: normal; min-width: 170px; max-width: 340px; color: var(--text-2); line-height: 1.4; }
+
+/* The runs as a list, a phone's view of the table (shown under 640px): the net
+   stays on the first line instead of past the edge of a sideways table. */
+.tdy-rl { display: none; margin-top: 12px; }
+.tdy-rl__cap { margin: 0; padding-bottom: 6px; font-size: var(--fs-s); color: var(--text-3); border-bottom: 1px solid var(--line-soft); }
+.tdy-rl__list { list-style: none; margin: 0; padding: 0; }
+.tdy-rl__row { padding: 8px 0; border-bottom: 1px solid var(--line-soft); }
+.tdy-rl__head { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: var(--fs); }
+.tdy-rl__head .tdy-run { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tdy-rl__head .faint { flex: none; font-size: var(--fs-s); }
+.tdy-rl__net { margin-left: auto; flex: none; font-weight: 600; }
+.tdy-rl__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px; margin-top: 4px; font-size: var(--fs-s); color: var(--text-3); }
+.tdy-rl__reason { color: var(--text-2); }
+
+/* --- 4. the agents ---------------------------------------------------------------------- */
+.tdy-agents { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+.tdy-agent {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg1);
+}
+/* Switched off: dashed, as a stopped run card is; the pill says "Off". */
+.tdy-agent--off { border-style: dashed; border-color: var(--line-strong); }
+.tdy-agent__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
+.tdy-agent__name { min-width: 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.tdy-agent__line { margin: 0; font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.tdy-agent__line.faint { color: var(--text-3); }
+.tdy-agent__hl {
+  display: grid;
+  gap: 4px;
+  list-style: none;
+  margin: 5px 0 0;
+  padding: 7px 0 0;
+  border-top: 1px dashed var(--line-soft);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.tdy-agent__hl li { position: relative; padding-left: 10px; overflow-wrap: anywhere; color: var(--text-2); }
+.tdy-agent__hl li::before { content: '·'; position: absolute; left: 1px; color: var(--text-3); }
+.tdy-agent__hl a { color: var(--brand-hi); text-decoration: none; }
+.tdy-agent__hl a:hover { text-decoration: underline; }
+
+/* --- 5. learning ------------------------------------------------------------------------ */
+.tdy-kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 16px; margin-bottom: 12px; }
+.tdy-kv > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tdy-kv__k, .tdy-sub, .tdy-facts dt {
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.tdy-kv__v { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tdy-kv__s { font-size: var(--fs-s); font-weight: 500; }
+.tdy-sub { margin: 14px 0 6px; }
+.tdy-none { margin: 0; font-size: var(--fs); color: var(--text-3); }
+.tdy-mems { display: grid; gap: 7px; list-style: none; margin: 0; padding: 0; font-size: var(--fs); }
+.tdy-mems li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 1px 8px; align-items: baseline; }
+a.tdy-mems__id { color: var(--brand-hi); text-decoration: none; }
+a.tdy-mems__id:hover { text-decoration: underline; }
+.tdy-mems__text { line-height: 1.4; overflow-wrap: anywhere; }
+.tdy-mems__why { grid-column: 2; font-size: var(--fs-s); color: var(--text-3); overflow-wrap: anywhere; }
+.tdy-mems__why:empty { display: none; }
+
+/* The check's last days: a small bar per day with its numbers above and its date below. */
+.tdy-days { margin: 0; }
+.tdy-days ol {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+  max-width: 400px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.tdy-days li { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; }
+.tdy-days__n { font-size: 11px; color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tdy-days__track {
+  position: relative;
+  width: 100%;
+  max-width: 26px;
+  height: 34px;
+  border: 1px solid var(--line-soft);
+  border-radius: 3px;
+  background: var(--bg1);
+  overflow: hidden;
+}
+.tdy-days__bar { position: absolute; left: 0; right: 0; bottom: 0; background: var(--pos); opacity: 0.75; }
+.tdy-days__bar--low { background: var(--warn); }
+.tdy-days__mark { position: absolute; left: 0; right: 0; border-top: 1px dashed var(--text-3); }
+.tdy-days__d { font-size: 10.5px; color: var(--text-3); white-space: nowrap; }
+.tdy-days figcaption { margin-top: 6px; font-size: var(--fs-s); }
+
+/* --- 6. the system ----------------------------------------------------------------------- */
+.tdy-facts { display: grid; margin: 0; }
+.tdy-facts > div {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 2px 12px;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--line-soft);
+  font-size: var(--fs);
+}
+.tdy-facts > div:first-child { padding-top: 0; }
+.tdy-facts > div:last-child { border-bottom: 0; padding-bottom: 0; }
+.tdy-facts dt { padding-top: 2px; }
+.tdy-facts dd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 8px; min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.tdy-facts dd > svg { width: 13px; height: 13px; flex: none; align-self: center; }
+.tdy-facts__wide { flex-basis: 100%; color: var(--text-2); line-height: 1.45; }
+
+/* --- 7. decisions -------------------------------------------------------------------------- */
+.tdy-dec { list-style: none; margin: 0; padding: 0; }
+.tdy-dec__row {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  gap: 3px 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: var(--fs);
+}
+.tdy-dec__row:last-child { border-bottom: 0; }
+.tdy-dec__date { padding-top: 1px; color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tdy-dec__title { font-weight: 600; overflow-wrap: anywhere; }
+.tdy-dec__text { margin: 2px 0 0; color: var(--text-2); line-height: 1.45; overflow-wrap: anywhere; }
+.tdy-dec__meta { display: flex; align-self: start; align-items: center; gap: 8px; font-size: var(--fs-s); color: var(--text-3); white-space: nowrap; }
+.tdy-more { margin-top: 8px; font-size: var(--fs); }
+.tdy-more > .tdy-dec { border-top: 1px solid var(--line-soft); }
+
+/* --- a phone ---------------------------------------------------------------------------------- */
+@media (max-width: 640px) {
+  /* The level and the kind, time and link on the first line; what and why under them, full width. */
+  .tdy-att__row { grid-template-columns: minmax(0, 1fr) auto; }
+  .tdy-att__body { grid-column: 1 / -1; grid-row: 2; }
+  .tdy-att__meta { grid-column: 2; grid-row: 1; justify-self: end; }
+
+  .tdy-runs { display: none; }
+  .tdy-rl { display: block; }
+
+  .tdy-dec__row { grid-template-columns: minmax(0, 1fr) auto; }
+  .tdy-dec__date { grid-column: 1; grid-row: 1; }
+  .tdy-dec__meta { grid-column: 2; grid-row: 1; }
+  .tdy-dec__body { grid-column: 1 / -1; grid-row: 2; }
+
+  .tdy-facts > div { grid-template-columns: minmax(0, 1fr); }
+  .panel .tdy-agents { grid-template-columns: minmax(0, 1fr); }
+}

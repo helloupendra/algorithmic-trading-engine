@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { GRANT_KEYS, WORKSPACES, accessFor, allows, locate, nameRoute, navFor, routeTitle, tabGroups } from './modules'
+import { GRANT_KEYS, WORKSPACES, accessFor, allows, homeFor, locate, nameRoute, navFor, routeTitle, tabGroups } from './modules'
 import type { Access, NavWorkspace } from './modules'
 
 const admin: Access = accessFor({ role: 'Admin' })
@@ -13,8 +13,16 @@ const pagesOf = (nav: NavWorkspace[], key: string) => nav.find((w) => w.key === 
 const allUrls = (nav: NavWorkspace[]) => nav.flatMap((w) => w.pages.map((p) => p.to))
 
 describe('the registry', () => {
-  it('is the seven workspaces, in order', () => {
-    expect(WORKSPACES.map((w) => w.label)).toEqual(['Desk', 'Markets', 'Trade', 'Research', 'AI', 'Data', 'System'])
+  it('is the eight workspaces, in order, Today first', () => {
+    expect(WORKSPACES.map((w) => w.label)).toEqual(['Today', 'Desk', 'Markets', 'Trade', 'Research', 'AI', 'Data', 'System'])
+  })
+
+  it('keeps Today one admin-only page at /today', () => {
+    const today = WORKSPACES[0]
+    expect(today).toMatchObject({ key: 'today', label: 'Today', home: '/today' })
+    expect(today.tabs).toHaveLength(1)
+    expect(today.tabs[0]).toMatchObject({ key: 'today', home: '/today', requires: 'admin' })
+    expect(today.tabs[0].pages.map((p) => p.to)).toEqual(['/today'])
   })
 
   it('uses only the grant keys the server knows', () => {
@@ -45,8 +53,8 @@ describe('the registry', () => {
     }
   })
 
-  it('keeps every System, Data and AI tab admin-only', () => {
-    for (const key of ['system', 'data', 'ai']) {
+  it('keeps every Today, System, Data and AI tab admin-only', () => {
+    for (const key of ['today', 'system', 'data', 'ai']) {
       const ws = WORKSPACES.find((w) => w.key === key)!
       expect(ws.tabs.every((t) => t.requires === 'admin')).toBe(true)
     }
@@ -82,12 +90,13 @@ describe('accessFor and allows', () => {
 })
 
 describe('navFor', () => {
-  it('gives an admin all seven workspaces, opening Markets on the chain', () => {
+  it('gives an admin all eight workspaces, Today first, opening Markets on the chain', () => {
     const nav = navFor(admin)
-    expect(labels(nav)).toEqual(['Desk', 'Markets', 'Trade', 'Research', 'AI', 'Data', 'System'])
+    expect(labels(nav)).toEqual(['Today', 'Desk', 'Markets', 'Trade', 'Research', 'AI', 'Data', 'System'])
     expect(nav.find((w) => w.key === 'ai')!.to).toBe('/ai')
     expect(nav.find((w) => w.key === 'markets')!.to).toBe('/markets/chain')
-    expect(nav[0].to).toBe('/desk')
+    expect(nav[0].to).toBe('/today')
+    expect(nav[1].to).toBe('/desk')
   })
 
   it('gives an admin one page per tab, the backtests aside', () => {
@@ -99,8 +108,10 @@ describe('navFor', () => {
     expect(pagesOf(nav, 'ai')).toEqual(['Overview', 'Assistant', 'Memory', 'Agents', 'Reports', 'Models', 'Calls'])
   })
 
-  it('never shows a trader System, Data, AI, connectors, feeds or Sentinel pages', () => {
+  it('never shows a trader Today, System, Data, AI, connectors, feeds or Sentinel pages', () => {
     const nav = navFor(traderWith(...GRANT_KEYS))
+    expect(labels(nav)).not.toContain('Today')
+    expect(allUrls(nav)).not.toContain('/today')
     expect(labels(nav)).not.toContain('System')
     expect(labels(nav)).not.toContain('Data')
     expect(labels(nav)).not.toContain('AI')
@@ -189,6 +200,13 @@ describe('locate', () => {
     expect(at(traderNav, '/trade/runs')).toBeNull()
   })
 
+  it("finds Today for an admin only, at its exact path", () => {
+    expect(at(adminNav, '/today')).toBe('Today / Today')
+    expect(at(adminNav, '/today/')).toBe('Today / Today')
+    expect(at(adminNav, '/today/nowhere')).toBeNull()
+    expect(at(traderNav, '/today')).toBeNull()
+  })
+
   it('holds the Desk to its exact path', () => {
     expect(at(adminNav, '/desk')).toBe('Desk / Desk')
     expect(at(traderNav, '/desk/')).toBe('Desk / Desk')
@@ -214,6 +232,8 @@ describe('nameRoute', () => {
     expect(routeTitle(nameRoute('/trade/runs/412', adminNav))).toBe('Runs · Trade')
     expect(nameRoute('/desk', adminNav)).toEqual({ page: 'Desk' })
     expect(routeTitle(nameRoute('/desk', adminNav))).toBe('Desk')
+    expect(nameRoute('/today', adminNav)).toEqual({ page: 'Today' })
+    expect(routeTitle(nameRoute('/today', adminNav))).toBe('Today')
   })
 
   it('still names a page the user has no tab for, rather than calling it missing', () => {
@@ -226,6 +246,20 @@ describe('nameRoute', () => {
     expect(nameRoute('/forbidden/', adminNav)).toEqual({ page: 'Not permitted' })
     expect(nameRoute('/nope', adminNav)).toEqual({ page: 'Page not found' })
     expect(nameRoute('/desk/nowhere', adminNav)).toEqual({ page: 'Page not found' })
+  })
+})
+
+describe('homeFor', () => {
+  it('lands an admin on Today and a trader on the Desk', () => {
+    expect(homeFor({ role: 'Admin' })).toBe('/today')
+    expect(homeFor({ role: 'Admin', moduleGrants: [] })).toBe('/today')
+    expect(homeFor({ role: 'Trader' })).toBe('/desk')
+    expect(homeFor({ role: 'Trader', moduleGrants: [...GRANT_KEYS] })).toBe('/desk')
+    expect(homeFor({ role: 'Trader', moduleGrants: [] })).toBe('/desk')
+  })
+
+  it('sends someone not known yet to the Desk, never to an admin page', () => {
+    expect(homeFor(null)).toBe('/desk')
   })
 })
 

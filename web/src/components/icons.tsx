@@ -263,3 +263,19 @@ export const IconChip = (p: SVGProps<SVGSVGElement>) => (
     <path d="M9.5 3.5v3M14.5 3.5v3M9.5 17.5v3M14.5 17.5v3M3.5 9.5h3M3.5 14.5h3M17.5 9.5h3M17.5 14.5h3" />
   </Icon>
 )
+
+/** A circled "!": worth a look, not yet a warning. */
+export const IconAlert = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M12 7.5v5.5M12 16.2v.3" />
+  </Icon>
+)
+
+/** A circled "i": for information. */
+export const IconInfo = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M12 11v5.5M12 7.8v.3" />
+  </Icon>
+)

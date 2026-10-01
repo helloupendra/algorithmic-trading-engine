@@ -1,8 +1,8 @@
 /**
  * The signed-in shell, v3: one console for admins and traders.
  *
- * A 44px top bar holds the brand, the seven workspaces (Desk, Markets, Trade,
- * Research, AI, Data, System), the ⌘K search, the live status items and the account
+ * A 44px top bar holds the brand, the workspaces (Today for an admin, then
+ * Desk, Markets, Trade, Research, AI, Data, System), the ⌘K search, the live status items and the account
  * menu. Under it, a 38px strip of the current workspace's tabs; on a phone
  * the workspaces move to a bottom bar. Which workspaces and tabs exist comes
  * from lib/modules.ts and the user's role and grants, and the current one from
@@ -149,7 +149,8 @@ export function AppLayout() {
     await logout()
   }
 
-  const desk = nav[0]?.to ?? '/'
+  // The brand goes home: the first workspace (Today for an admin, the Desk for a trader).
+  const home = nav[0]
   const workspaceLinks = (withIcons: boolean) =>
     nav.map((ws) => {
       const Icon = ws.icon
@@ -164,7 +165,7 @@ export function AppLayout() {
   return (
     <div className="shell">
       <header className="shell__top">
-        <Link to={desk} className="shell__brand" aria-label="OpenFNO: the Desk">
+        <Link to={home?.to ?? '/'} className="shell__brand" aria-label={`OpenFNO: ${home?.label ?? 'home'}`}>
           <span className="shell__brand-mark" aria-hidden="true">
             <IconLogo />
           </span>

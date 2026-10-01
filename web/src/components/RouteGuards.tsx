@@ -10,7 +10,7 @@ import type { ReactNode } from 'react'
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import type { UserRole } from '../lib/api'
-import { accessFor, navFor } from '../lib/modules'
+import { accessFor, homeFor, navFor } from '../lib/modules'
 import { movedUrl } from '../lib/routeMap'
 
 /**
@@ -81,14 +81,14 @@ export function RequireRole({ role }: { role: UserRole }) {
   return <Outlet />
 }
 
-/** Keeps a signed-in user off the login page. */
+/** Keeps a signed-in user off the login page: they go to their home (Today for an admin, the Desk for a trader). */
 export function RedirectIfAuthenticated() {
-  const { isAuthenticated, isLoading } = useAuth()
+  const { user, isAuthenticated, isLoading } = useAuth()
 
   if (isLoading) return <Splash label="Loading…" />
 
   if (isAuthenticated) {
-    return <Navigate to="/desk" replace />
+    return <Navigate to={homeFor(user)} replace />
   }
 
   return <Outlet />
