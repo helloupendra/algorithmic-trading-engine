@@ -57,6 +57,28 @@ public class AiTraderAgentTests
     }
 
     [Fact]
+    public async Task The_next_look_reads_what_the_rules_refused_on_the_last_one()
+    {
+        var (agent, ai, _) = Agent();
+        ai.Provider.On(Judge1, Answer(BuyAtmCall.Replace("\"stopLoss\":90", "\"stopLoss\":40")),
+            Answer("""{"action":"none","reason":"Waiting.","confidence":0.3}"""));
+
+        var first = await agent.DecideAsync(Eleven, AiTraderModes.Shadow, null, default);
+        var second = await agent.DecideAsync(Eleven.AddMinutes(10), AiTraderModes.Shadow, null, default);
+
+        Assert.Contains("YOUR LAST LOOKS: none yet today.", first.Brief);
+        Assert.Contains("- 11:00 buy NIFTY ATM CE, 1 lot(s), stop 40, target 160 → refused (stop): The stop ₹40 is more than 40% below", second.Brief);
+    }
+
+    [Fact]
+    public void A_last_look_allowed_in_shadow_says_it_was_not_placed() =>
+        Assert.Contains("allowed, not placed (shadow mode)", AiTraderAgent.LastLooks([new AiTraderDecision
+        {
+            ClockUtc = Eleven, Mode = AiTraderModes.Shadow, Action = AiTraderPlan.Buy, Underlying = "NIFTY", Allowed = true, Rule = "ok",
+            PlanJson = """{"action":"buy","underlying":"NIFTY","option":"PE","strike":"ATM","lots":2,"stopLoss":60,"target":140}""",
+        }]));
+
+    [Fact]
     public async Task An_answer_that_is_not_a_plan_is_kept_as_unreadable_with_its_text()
     {
         var (agent, ai, _) = Agent();
