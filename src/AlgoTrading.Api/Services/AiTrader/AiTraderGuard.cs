@@ -21,9 +21,7 @@ public static class AiTraderGuard
         {
             AiTraderPlan.None => AiTraderVerdict.Ok("Nothing to do."),
             AiTraderPlan.Buy => CheckBuy(plan, book, rules, contract),
-            AiTraderPlan.Exit => book.Open.Any(p => p.PositionId == plan.PositionId)
-                ? AiTraderVerdict.Ok("Closing its own position.")
-                : Refuse("own-book", $"Position {plan.PositionId?.ToString(CultureInfo.InvariantCulture) ?? "(none named)"} is not one of its open positions."),
+            AiTraderPlan.Exit => CheckExit(plan, book),
             AiTraderPlan.StartStrategy => CheckStart(plan, book, rules),
             AiTraderPlan.StopStrategy => book.Runs.Any(r => r.RunId == plan.RunId)
                 ? AiTraderVerdict.Ok("Stopping its own run.")
@@ -85,6 +83,53 @@ public static class AiTraderGuard
         return AiTraderVerdict.Ok($"Buy {lots} lot(s) of {contract.Symbol} at about {Rupees(contract.Ask)} ({Rupees(premium)}), stop {Rupees(stop)}, target {Rupees(target)}.");
     }
 
+    /// <summary>
+    /// An exit closes one of its own open positions: the one it names, else, when it names none, the only open
+    /// position on the plan's underlying (and option, when the plan gives one). A model once named the contract
+    /// and left the id out while it held exactly one NIFTY CE (30 Sep replay). Two matches, or none, are refused
+    /// with the open positions' ids, so the next look can name one.
+    /// </summary>
+    private static AiTraderVerdict CheckExit(AiTraderPlan plan, AiTraderBook book)
+    {
+        if (plan.PositionId is long id)
+        {
+            return book.Open.Any(p => p.PositionId == id)
+                ? AiTraderVerdict.Ok($"Closing its own position {id.ToString(CultureInfo.InvariantCulture)}.", id)
+                : Refuse("own-book", $"Position {id.ToString(CultureInfo.InvariantCulture)} is not one of its open positions. {OpenIds(book)}");
+        }
+
+        if (string.IsNullOrWhiteSpace(plan.Underlying)) return Refuse("own-book", $"The exit names no position and no underlying. {OpenIds(book)}");
+
+        string what = string.IsNullOrWhiteSpace(plan.Option) ? plan.Underlying : $"{plan.Underlying} {plan.Option}";
+        var matches = book.Open.Where(p => Holds(p, plan.Underlying, plan.Option)).ToList();
+        return matches.Count switch
+        {
+            1 => AiTraderVerdict.Ok(
+                $"Closing its own position {matches[0].PositionId.ToString(CultureInfo.InvariantCulture)} ({matches[0].Symbol}), its only open {what}.",
+                matches[0].PositionId),
+            0 => Refuse("own-book", $"The exit names no position, and none of its open positions is a {what}. {OpenIds(book)}"),
+            _ => Refuse("own-book", $"The exit names no position, and {matches.Count} of its open positions are {what}: name one by its positionId. {OpenIds(book)}"),
+        };
+    }
+
+    /// <summary>
+    /// Whether an open position is on <paramref name="underlying"/> (exactly: NIFTY is not BANKNIFTY, FINNIFTY or
+    /// NIFTYNXT50) and, when <paramref name="option"/> is given, on that side. The position's own fields when it
+    /// carries them, else its symbol parsed.
+    /// </summary>
+    private static bool Holds(AiTraderOpenPosition p, string underlying, string? option)
+    {
+        var parsed = p.Underlying is null || p.OptionType is null ? UnderlyingCatalog.ParseOptionSymbol(p.Symbol) : null;
+        string? u = p.Underlying ?? parsed?.Underlying;
+        string? side = p.OptionType ?? parsed?.OptionType;
+        return string.Equals(u, underlying, StringComparison.OrdinalIgnoreCase)
+               && (string.IsNullOrWhiteSpace(option) || string.Equals(side, option, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string OpenIds(AiTraderBook book) => book.Open.Count == 0
+        ? "It has no open positions."
+        : "Its open positions: " + string.Join(", ", book.Open.Select(p => $"{p.PositionId.ToString(CultureInfo.InvariantCulture)} ({p.Symbol})")) + ".";
+
     private static AiTraderVerdict CheckStart(AiTraderPlan plan, AiTraderBook book, AiTraderRules rules)
     {
         if (OpeningClosed(book, rules) is { } hours) return hours;
@@ -142,17 +187,19 @@ public sealed record AiTraderBook(
     DateTime ClockUtc, bool TradingDay, bool KillSwitch, decimal NetToday, int OpenedToday,
     IReadOnlyList<AiTraderOpenPosition> Open, IReadOnlyList<AiTraderRun> Runs);
 
+/// <summary>One of its open positions; <c>Underlying</c> and <c>OptionType</c> when the book knows them, else read from the symbol.</summary>
 public sealed record AiTraderOpenPosition(long PositionId, string Symbol, int Lots, decimal Entry, decimal PremiumInUse, decimal? Mark,
-    decimal? StopLoss, decimal? Target, decimal UnrealizedPnl);
+    decimal? StopLoss, decimal? Target, decimal UnrealizedPnl, string? Underlying = null, string? OptionType = null);
 
 public sealed record AiTraderRun(long RunId, string Strategy, string Underlying, decimal NetPnl);
 
 /// <summary>The contract a buy resolves to, with the price it would be bought at (the ask, else the last trade).</summary>
 public sealed record AiTraderContract(string Symbol, string Underlying, string OptionType, decimal Strike, DateOnly Expiry, decimal Ask, int LotSize);
 
-public sealed record AiTraderVerdict(bool Allowed, string Rule, string Why)
+/// <param name="PositionId">An allowed exit's position: the one the plan named, or the one its underlying and option resolved to.</param>
+public sealed record AiTraderVerdict(bool Allowed, string Rule, string Why, long? PositionId = null)
 {
-    public static AiTraderVerdict Ok(string why) => new(true, "ok", why);
+    public static AiTraderVerdict Ok(string why, long? positionId = null) => new(true, "ok", why, positionId);
 }
 
 /// <summary>The owner's limits (1 Oct 2026). Settings, so a change needs no deploy; these are the defaults.</summary>

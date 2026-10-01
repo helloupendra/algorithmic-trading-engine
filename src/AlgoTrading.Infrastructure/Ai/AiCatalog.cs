@@ -222,7 +222,7 @@ public static class AiCatalog
         "{\"action\": \"none\" | \"buy\" | \"exit\" | \"start_strategy\" | \"stop_strategy\", " +
         "\"underlying\": \"NIFTY\" | \"BANKNIFTY\" | \"SENSEX\", \"option\": \"CE\" | \"PE\", " +
         "\"strike\": \"ATM\" | \"ATM+1\" | \"ATM-1\" | a strike, \"lots\": 1 or 2, \"stopLoss\": premium, " +
-        "\"target\": premium, \"positionId\": for an exit, \"strategy\": for a start, \"runId\": for a stop, " +
+        "\"target\": premium, \"positionId\": for an exit, the position's number from YOUR BOOK, \"strategy\": for a start, \"runId\": for a stop, " +
         "\"reason\": \"one or two sentences naming the facts from the brief\", \"confidence\": 0 to 1}";
 
     private const string IncidentPrompt =

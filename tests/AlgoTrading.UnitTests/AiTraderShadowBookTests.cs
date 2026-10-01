@@ -106,6 +106,22 @@ public class AiTraderShadowBookTests
     }
 
     [Fact]
+    public async Task An_exit_naming_the_contract_but_no_position_closes_its_only_matching_position()
+    {
+        var (agent, ai, _, quotes) = AiTraderAgentTests.Agent();
+        ai.Provider.On(Judge1, Answer(BuyAtmCall),
+            Answer("""{"action":"exit","underlying":"NIFTY","option":"CE","strike":"ATM-1","positionId":null,"reason":"The move stalled.","confidence":0.5}"""));
+        await agent.DecideAsync(Eleven, AiTraderModes.Shadow, null, default);
+
+        quotes.Set(Symbol, bid: 125m, last: 125.5m);
+        var exit = await agent.DecideAsync(Eleven.AddMinutes(10), AiTraderModes.Shadow, null, default);
+
+        var p = await ai.Db.AiTraderShadowPositions.AsNoTracking().SingleAsync();
+        Assert.Equal((true, "ok", AiTraderShadowBook.ExitedByIt, (decimal?)125m), (exit.Allowed, exit.Rule, p.ExitReason, p.ExitPrice));
+        Assert.Contains($"\"shadowPositionId\":{p.Id}", exit.ResultJson);
+    }
+
+    [Fact]
     public async Task A_position_left_from_an_earlier_day_closes_at_its_last_mark()
     {
         var (agent, ai, _, _) = AiTraderAgentTests.Agent();
