@@ -238,6 +238,19 @@ public class AiAgentsTests
     }
 
     [Fact]
+    public async Task A_recap_run_is_never_reviewed_whatever_the_case_of_its_marker()
+    {
+        var ai = BuildOn(tools: [new FakeTool(AiToolNames.Run, _ => new { run = new { strategy = "Ghost" } })]);
+        SeedRun(ai, stoppedAt: Ist(15, 31), parameters: """{"session":"Recap","recap_date":"2026-09-30","underlying":"NIFTY"}""");
+        SeedRun(ai, stoppedAt: Ist(15, 32), parameters: """{"session":"recap","recap_date":"2026-09-30","underlying":"NIFTY"}""");
+        ai.Provider.On(Judge1, Answer("""{"verdict":"followed","title":"Kept its rules","journal":"Fine."}"""));
+
+        await Reviewer(ai, new FixedTime(Ist(15, 46))).RunOnceAsync(Ist(15, 46), CancellationToken.None);
+
+        Assert.Empty(await ai.Db.AiReports.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
     public async Task A_review_that_throws_on_the_desk_s_side_is_a_failed_try_and_the_next_run_is_not_held_up()
     {
         long broken = 0;
