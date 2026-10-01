@@ -258,21 +258,31 @@ class PlatformApiClient:
     reads then add `replay=true` and are answered from the API's in-memory
     ReplayBook, never from `live_quotes_latest`: the live desk and the replay
     must not see each other's prices. Every other call is unchanged.
+
+    `replay_date` is the day the run replays ("yyyy-mm-dd"), sent as
+    `recapDate`: the API answers from its ReplayBook only a run replaying the
+    book's day. A recap of any other day (a vendor's evening recap, whose
+    prices are the live table's) reads the live table, even while the desk
+    replays another day.
     """
 
     def __init__(self, base_url: str, verify_ssl: bool = False,
                  username: Optional[str] = None, password: Optional[str] = None,
-                 replay: bool = False):
+                 replay: bool = False, replay_date: Optional[str] = None):
         self.base_url = base_url.rstrip("/")
         self.verify_ssl = verify_ssl
         self.http = build_session(username, password)
         self.replay = bool(replay)
+        self.replay_date = replay_date
 
     def _quote_params(self, params: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
-        """The quote query, plus replay=true for a recap run. A live run's query is untouched."""
+        """The quote query, plus replay=true and the replayed day for a recap run. A live run's query is untouched."""
         if not self.replay:
             return params
-        return {**(params or {}), "replay": "true"}
+        query = {**(params or {}), "replay": "true"}
+        if self.replay_date:
+            query["recapDate"] = str(self.replay_date)
+        return query
 
     def get_latest_quote(self, symbol: str) -> dict[str, Any]:
         resp = self.http.get(

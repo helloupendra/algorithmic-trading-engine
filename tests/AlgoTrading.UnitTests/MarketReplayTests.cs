@@ -516,7 +516,7 @@ public class MarketReplayTests
         }
     }
 
-    private sealed class NoCatalog : IProviderCatalog
+    internal sealed class NoCatalog : IProviderCatalog
     {
         public IReadOnlyList<ProviderDescriptor> Descriptors => Array.Empty<ProviderDescriptor>();
 

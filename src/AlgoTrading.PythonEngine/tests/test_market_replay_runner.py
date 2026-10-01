@@ -124,6 +124,24 @@ class ClientReplayModeTests(unittest.TestCase):
         self.assertEqual({"replay": "true"}, every)
         self.assertTrue(api.http.get.call_args_list[1].args[0].endswith("/api/LiveData/latest/all"))
 
+    def test_a_recap_run_names_the_day_it_replays_on_every_quote_read(self):
+        # With a desk replay of another day on, the API answers a recap run from that replay's book
+        # unless the run says which day it replays (a vendor recap's runs trade today's session).
+        api = client()
+        runner.use_recap_quotes(api, "2026-09-15")
+        api.get_latest_quote("NSE:NIFTY2691624900CE")
+        api.get_all_latest_quotes()
+        latest, every = [c.kwargs["params"] for c in api.http.get.call_args_list]
+        self.assertEqual({"symbol": "NSE:NIFTY2691624900CE", "replay": "true", "recapDate": "2026-09-15"}, latest)
+        self.assertEqual({"replay": "true", "recapDate": "2026-09-15"}, every)
+
+    def test_a_replay_client_given_its_day_at_construction_sends_it(self):
+        api = PlatformApiClient("http://api.test", replay=True, replay_date="2026-09-15")
+        api.http = mock.MagicMock()
+        api.http.get.return_value = FakeResponse([])
+        api.get_latest_quote("NSE:NIFTY50-INDEX")
+        self.assertEqual("2026-09-15", api.http.get.call_args.kwargs["params"]["recapDate"])
+
     def test_the_replay_flag_can_be_set_after_construction(self):
         # The runner reads the run's parameters with the client before it knows
         # it is a recap run, and switches it then.

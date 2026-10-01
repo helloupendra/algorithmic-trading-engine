@@ -133,18 +133,21 @@ public class LiveDataController : ControllerBase
         => Ok(await pruner.PruneAsync(request?.Ids, cancellationToken));
 
     /// <remarks>
-    /// <c>replay=true</c> is a recap run asking: the market replay's price while one is on (nothing when the
-    /// replay has none for the symbol). With no desk replay on, a recap trades a vendor's evening recap
-    /// (TrueData), whose prices are the live table's, so it is answered from there as before.
+    /// <c>replay=true</c> is a recap run asking, with the day it replays in <c>recapDate</c>: the market
+    /// replay's price when the desk is replaying that day (nothing when the replay has none for the symbol).
+    /// A recap of any other day trades a vendor's evening recap (TrueData), whose prices are the live
+    /// table's, so it is answered from there, with or without a desk replay on. A runner that sends no
+    /// <c>recapDate</c> (started before runners sent it) is answered from the replay while one is on, as
+    /// before (<see cref="IMarketReplayBook.Answers"/>).
     /// </remarks>
     [HttpGet("latest")]
     public async Task<IActionResult> GetLatest([FromQuery] string symbol, CancellationToken cancellationToken,
-        [FromQuery] bool replay = false, [FromServices] IMarketReplayBook? replayBook = null)
+        [FromQuery] bool replay = false, [FromServices] IMarketReplayBook? replayBook = null, [FromQuery] DateOnly? recapDate = null)
     {
         if (string.IsNullOrWhiteSpace(symbol))
             return BadRequest(new { message = "symbol is required." });
 
-        if (replay && replayBook?.Day is not null)
+        if (replay && replayBook is not null && replayBook.Answers(recapDate))
         {
             var replayed = replayBook.Quote(symbol);
             return replayed is null ? NotFound(new { message = "No replayed quote for symbol." }) : Ok(replayed);
@@ -158,11 +161,12 @@ public class LiveDataController : ControllerBase
         return Ok(result);
     }
 
+    /// <remarks><c>replay</c> and <c>recapDate</c> as for <see cref="GetLatest"/>.</remarks>
     [HttpGet("latest/all")]
     public async Task<IActionResult> GetAllLatest(CancellationToken cancellationToken,
-        [FromQuery] bool replay = false, [FromServices] IMarketReplayBook? replayBook = null)
+        [FromQuery] bool replay = false, [FromServices] IMarketReplayBook? replayBook = null, [FromQuery] DateOnly? recapDate = null)
     {
-        if (replay && replayBook?.Day is not null) return Ok(replayBook.AllQuotes());
+        if (replay && replayBook is not null && replayBook.Answers(recapDate)) return Ok(replayBook.AllQuotes());
 
         var result = await _getAllLatestQuotesUseCase.ExecuteAsync(cancellationToken);
         return Ok(result);
