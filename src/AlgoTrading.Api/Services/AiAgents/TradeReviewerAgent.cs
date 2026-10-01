@@ -6,7 +6,6 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using AlgoTrading.Api.Controllers;
 using AlgoTrading.Api.Services.AiTools;
-using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Ai;
 using AlgoTrading.Infrastructure.Persistence;
@@ -18,7 +17,8 @@ namespace AlgoTrading.Api.Services.AiAgents;
 
 /// <summary>
 /// The Trade Reviewer: after the close, one journal per stopped run, judged
-/// against the strategy's written spec; a Telegram digest when a batch is done.
+/// against the strategy's written spec. Its reviews reach Telegram in the AI's
+/// one daily digest (<see cref="AiDailyDigest"/>).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -50,7 +50,6 @@ public sealed class TradeReviewerAgent(
     AiReportWriter reports,
     AiToolbox toolbox,
     AiSchedulerState schedule,
-    ISystemNotifier notifier,
     IOptionsMonitor<AiSettings> settings,
     ILogger<TradeReviewerAgent> logger,
     TimeProvider? time = null) : IAiScheduledAgent
@@ -77,11 +76,7 @@ public sealed class TradeReviewerAgent(
     public async Task<bool> RunOnceAsync(DateTime nowUtc, CancellationToken cancellationToken)
     {
         long? runId = await NextDueAsync(nowUtc, cancellationToken);
-        if (runId is null)
-        {
-            await DigestIfDoneAsync(nowUtc, cancellationToken);
-            return false;
-        }
+        if (runId is null) return false;
 
         await ReviewAsync(runId.Value, cancellationToken);
         schedule.Worked(AgentKey, nowUtc);
@@ -99,6 +94,21 @@ public sealed class TradeReviewerAgent(
     /// <summary>The oldest stopped run that is due a review, or null.</summary>
     public async Task<long?> NextDueAsync(DateTime nowUtc, CancellationToken cancellationToken)
     {
+        var ready = await ReadyAsync(db, ReviewAfter(settings.CurrentValue), nowUtc, cancellationToken);
+        if (ready.Count == 0) return null;
+
+        var due = await reports.DueAsync(AgentKey, AiReportSubject.Run, ready.Select(Id).ToList(), cancellationToken);
+        return ready.FirstOrDefault(id => due.Contains(Id(id))) is long next && next != 0 ? next : null;
+    }
+
+    /// <summary>
+    /// The stopped runs a review is for, oldest first, reviewed or not: stopped
+    /// <see cref="Settle"/> ago and within <see cref="Window"/>, past
+    /// <paramref name="reviewAfter"/> on their day, and neither a manual book,
+    /// an alert run nor a recap. The daily digest waits on these too.
+    /// </summary>
+    public static async Task<List<long>> ReadyAsync(TradingDbContext db, TimeOnly reviewAfter, DateTime nowUtc, CancellationToken cancellationToken)
+    {
         var since = nowUtc - Window;
         var settledBy = nowUtc - Settle;
         var candidates = await db.SimulationRuns.AsNoTracking()
@@ -112,16 +122,11 @@ public sealed class TradeReviewerAgent(
             .Select(r => new { r.Id, r.StartedUtc, r.CreatedUtc, r.ParametersJson })
             .ToListAsync(cancellationToken);
 
-        var afterClose = ReviewAfter();
-        var ready = candidates
+        return candidates
             .Where(r => LiveRunParameters.ReadRole(r.ParametersJson) != "alerts")
-            .Where(r => nowUtc >= IstTime.FromIst(IstTime.DateOf(r.StartedUtc ?? r.CreatedUtc).ToDateTime(afterClose)))
+            .Where(r => nowUtc >= IstTime.FromIst(IstTime.DateOf(r.StartedUtc ?? r.CreatedUtc).ToDateTime(reviewAfter)))
             .Select(r => r.Id)
             .ToList();
-        if (ready.Count == 0) return null;
-
-        var due = await reports.DueAsync(AgentKey, AiReportSubject.Run, ready.Select(Id).ToList(), cancellationToken);
-        return ready.FirstOrDefault(id => due.Contains(Id(id))) is long next && next != 0 ? next : null;
     }
 
     private async Task<AiReport> ReviewAsync(long runId, CancellationToken cancellationToken)
@@ -304,57 +309,6 @@ public sealed class TradeReviewerAgent(
         public string? Verdict => Data["verdict"]?.GetValue<string>();
     }
 
-    /// <summary>
-    /// When the queue is empty, one Telegram message for the reviews written
-    /// since the last digest: how many, how many kept to their spec, and the
-    /// ones that did not. Remembered in system settings, so a restart does not
-    /// send it twice.
-    /// </summary>
-    private async Task DigestIfDoneAsync(DateTime nowUtc, CancellationToken cancellationToken)
-    {
-        if (!settings.CurrentValue.ReviewDigestToTelegram) return;
-
-        const string key = "ai.reviewer.lastDigestUtc";
-        var marker = await db.SystemSettings.FirstOrDefaultAsync(s => s.Key == key, cancellationToken);
-        var since = marker is not null && DateTime.TryParse(marker.Value, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var last)
-            ? last
-            : nowUtc - TimeSpan.FromDays(1);
-
-        var written = await db.AiReports.AsNoTracking()
-            .Where(r => r.AgentKey == AgentKey && r.SubjectType == AiReportSubject.Run && r.UpdatedUtc > since && r.Status != AiReportStatus.Failed)
-            .OrderBy(r => r.Id)
-            .Select(r => new { r.SubjectId, r.Title, r.DataJson, r.Status })
-            .ToListAsync(cancellationToken);
-        if (written.Count == 0) return;
-
-        var verdicts = written.Select(r => (r.SubjectId, r.Title, Verdict: AiJson.Object(r.DataJson) is { } d ? AiJson.Str(d, "verdict") : null)).ToList();
-        int followed = verdicts.Count(v => v.Verdict == "followed");
-        var deviated = verdicts.Where(v => v.Verdict == "deviated").ToList();
-
-        var text = new StringBuilder();
-        text.Append($"{written.Count} run review{(written.Count == 1 ? "" : "s")} written: {followed} followed the spec, {deviated.Count} did not");
-        int unclear = written.Count - followed - deviated.Count;
-        if (unclear > 0) text.Append($", {unclear} unclear");
-        text.Append('.');
-        foreach (var d in deviated.Take(5)) text.Append($"\n• #{d.SubjectId}: {d.Title}");
-        if (deviated.Count > 5) text.Append($"\n• and {deviated.Count - 5} more");
-        text.Append("\nRead them on the AI page, Reports tab.");
-
-        await notifier.NotifyAsync(NotificationCategory.System, NotificationSeverity.Info, "AI trade reviews", text.ToString(),
-            cancellationToken: cancellationToken);
-
-        if (marker is null)
-        {
-            marker = new SystemSetting { Key = key, CreatedUtc = nowUtc };
-            db.SystemSettings.Add(marker);
-        }
-
-        marker.Value = nowUtc.ToString("O", CultureInfo.InvariantCulture);
-        marker.UpdatedBy = AgentKey;
-        marker.UpdatedUtc = nowUtc;
-        await db.SaveChangesAsync(cancellationToken);
-    }
-
     /// <summary>A tool's answer as the model would read it; its error in words when it fails.</summary>
     private async Task<string> ToolText(string name, string args, CancellationToken cancellationToken)
     {
@@ -371,8 +325,9 @@ public sealed class TradeReviewerAgent(
         }
     }
 
-    private TimeOnly ReviewAfter() =>
-        TimeOnly.TryParseExact(settings.CurrentValue.ReviewAfterIst, "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var at)
+    /// <summary><see cref="AiSettings.ReviewAfterIst"/>, or 15:45 when it cannot be read.</summary>
+    public static TimeOnly ReviewAfter(AiSettings settings) =>
+        TimeOnly.TryParseExact(settings.ReviewAfterIst, "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var at)
             ? at
             : new TimeOnly(15, 45);
 

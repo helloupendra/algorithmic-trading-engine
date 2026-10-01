@@ -328,11 +328,23 @@ Each output is checked before it is stored as `ok`:
   was cut off at the token limit are `failed`, so a later batch reads them again. Before 1 Oct this lost the whole
   batch: 48 of 203 items that day.
 
-When the review queue empties, the reviewer sends one Telegram message to the system channel (`Ai:ReviewDigestToTelegram`):
-- how many runs were reviewed and how many kept to their spec;
-- the ones that did not.
+**The daily digest.** The AI sends one Telegram message a day to the system channel (`AiDailyDigest`,
+`Ai:ReviewDigestToTelegram`), never one per review or per decision. It carries:
+- the AI Trader's day, when it was on or looked that day (see [AI Trader](ai_trader.md#daily-digest));
+- the run reviews written since the last digest: how many kept to their spec, and the ones that did not.
 
-The last digest time is kept in `system_settings`, so a restart does not send it twice.
+When it goes:
+- After the NSE close and `Ai:ReviewAfterIst` (15:45), whichever is later, by which time the AI Trader's shadow book
+  has been squared off.
+- While the Trade Reviewer is on, it also waits for the reviews still owed, a failed one with tries left included, for
+  at most two hours; past that it says how many are still owed. A review written after the digest, such as an MCX
+  run's after 23:30, goes in the next day's.
+- On a day with no NSE session (the exchange calendar, not the weekday), only if the AI Trader looked that day.
+- A section with nothing to say is left out; with nothing at all, nothing is sent.
+
+It is a scheduled job, not an agent: it asks no model and runs whichever agents are on. The time it was sent is kept in
+`system_settings` (`ai.reviewer.lastDigestUtc`) before it goes, so neither a restart nor the next minute sends a
+second one that day.
 
 Endpoints, admin only:
 

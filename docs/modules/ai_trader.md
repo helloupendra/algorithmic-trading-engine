@@ -105,6 +105,31 @@ baseline's net, and the difference. The totals count only full days (looks from 
 whose baseline is scored: the AI's net and the rule's, the days the AI beat the rule, and the days each made money.
 A day replayed more than once counts each time; the rule's result for that day is the same each time.
 
+## Daily digest
+
+Its day goes to Telegram in the AI's one daily digest (system channel), with the day's run reviews, after the NSE
+close and 15:45 ([when and how often](ai.md#scheduled-agents-phase-3)). Its section:
+
+- the mode, and "now off" if it was switched off during the day;
+- looks, actions proposed, allowed, refused, and looks with no usable answer, counted as Today counts them;
+- the shadow book: each position's contract and lots, in → out (IST), entry → exit premium, how it ended (stop,
+  target, its exit, close) and its net; then the day's net and charges, with an open position as if sold at its mark;
+- the three rules that refused it most.
+
+Rupees are whole, with Indian grouping, except premiums. A replay's looks and shadow book are never in it. Off all day
+with no looks, the section is left out; on with none, it says so. On a day with no session the digest goes only if it
+looked.
+
+```
+AI Trader (shadow mode)
+Looks 10 · proposed 8 · allowed 4 · refused 4 · no answer 1
+Shadow book: 3 trades, net −₹122 after ₹187 charges
+• NIFTY 22650 CE, 1 lot: 09:30 → 09:52, ₹120 → ₹88, stop, −₹2,139
+• NIFTY 22600 PE, 2 lots: 10:00 → 11:00, ₹81 → ₹95.5, its exit, +₹1,816
+• NIFTY 22700 CE, 1 lot: 12:00 → 15:30, ₹96 → ₹100, close, +₹201
+Top refusals: stop (2), hours (1), size (1)
+```
+
 ## API (admin)
 
 | Endpoint | What |
