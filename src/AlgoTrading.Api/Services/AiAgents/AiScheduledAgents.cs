@@ -186,18 +186,32 @@ public sealed class AiAgentScheduler(
         }
     }
 
-    /// <summary>One tick: each switched-on agent does one piece of due work. Public for tests.</summary>
+    /// <summary>
+    /// One tick: each switched-on agent does one piece of due work, in the order they are registered. Public for
+    /// tests.
+    /// </summary>
+    /// <remarks>
+    /// Each agent runs in a scope of its own, so in a database context of its own: an agent whose save failed
+    /// leaves its rows tracked, and in a shared context every later agent's save in that tick (the daily digest's
+    /// sent mark among them) would fail on them too.
+    /// </remarks>
     public async Task RunTickAsync(CancellationToken cancellationToken)
     {
         var s = settings.CurrentValue;
         if (!s.SchedulerEnabled || !s.KeyConfigured) return;
 
-        await using var scope = scopes.CreateAsyncScope();
-        var store = scope.ServiceProvider.GetRequiredService<AiSettingsStore>();
-        var state = await store.LoadAsync(cancellationToken);
-
-        foreach (var agent in scope.ServiceProvider.GetServices<IAiScheduledAgent>())
+        AiState state;
+        int count;
+        await using (var first = scopes.CreateAsyncScope())
         {
+            state = await first.ServiceProvider.GetRequiredService<AiSettingsStore>().LoadAsync(cancellationToken);
+            count = first.ServiceProvider.GetServices<IAiScheduledAgent>().Count();
+        }
+
+        for (int i = 0; i < count; i++)
+        {
+            await using var scope = scopes.CreateAsyncScope();
+            var agent = scope.ServiceProvider.GetServices<IAiScheduledAgent>().ElementAt(i);
             if (!IsOn(agent.AgentKey, state, s)) continue;
             try
             {

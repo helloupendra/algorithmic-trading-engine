@@ -413,6 +413,41 @@ public class AiAgentsTests
     }
 
     [Fact]
+    public async Task Each_agent_runs_in_a_scope_of_its_own_so_one_failed_save_cannot_spoil_the_next()
+    {
+        var ai = BuildOn();
+        var seen = new List<(string Key, object Scope)>();
+        var services = new ServiceCollection();
+        services.AddScoped(_ => ai.Store);
+        services.AddScoped<ScopeToken>();
+        foreach (var key in new[] { AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst })
+        {
+            services.AddScoped<IAiScheduledAgent>(sp => new ScopeProbe(key, sp.GetRequiredService<ScopeToken>(), seen));
+        }
+
+        await new AiAgentScheduler(services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), ai.Options,
+            NullLogger<AiAgentScheduler>.Instance).RunTickAsync(CancellationToken.None);
+
+        Assert.Equal(new[] { AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst }, seen.Select(x => x.Key));
+        Assert.NotSame(seen[0].Scope, seen[1].Scope);
+    }
+
+    private sealed class ScopeToken;
+
+    private sealed class ScopeProbe(string key, ScopeToken scope, List<(string, object)> seen) : IAiScheduledAgent
+    {
+        public string AgentKey => key;
+
+        public Task<bool> RunOnceAsync(DateTime nowUtc, CancellationToken cancellationToken)
+        {
+            seen.Add((key, scope));
+            return Task.FromResult(true);
+        }
+
+        public Task<AiReport?> RunForAsync(string? subjectId, CancellationToken cancellationToken) => Task.FromResult<AiReport?>(null);
+    }
+
+    [Fact]
     public async Task Without_a_key_or_with_the_scheduler_off_no_agent_runs()
     {
         var noKey = Build(Settings(s => s.ApiKey = ""));
