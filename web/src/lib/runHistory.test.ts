@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { recapBadge, runSpan } from './runHistory'
+import { historyListPending, recapBadge, runSpan } from './runHistory'
 
 describe('recapBadge', () => {
   it('marks a recap run as a test of the day it replayed', () => {
@@ -18,6 +18,29 @@ describe('recapBadge', () => {
   it('leaves a live run unmarked, and an older API that sends no flag', () => {
     expect(recapBadge({ isRecap: false, recapDate: null })).toBeNull()
     expect(recapBadge({})).toBeNull()
+  })
+})
+
+describe('historyListPending', () => {
+  const answer = { isPending: false, isPlaceholderData: false }
+  const kept = { isPending: false, isPlaceholderData: true }
+
+  it('is loading until the first answer, and not once this list has answered, empty or not', () => {
+    expect(historyListPending({ isPending: true, isPlaceholderData: false }, 0, 0)).toBe(true)
+    expect(historyListPending(answer, 0, 0)).toBe(false)
+    expect(historyListPending(answer, 12, 12)).toBe(false)
+  })
+
+  it('keeps the last list on screen while a filter changes, but never the other kind of run', () => {
+    // Same kind, another filter: kept on screen while the new list loads.
+    expect(historyListPending(kept, 12, 12)).toBe(false)
+    // Recap runs switched on over a live list: those rows are dropped, so it loads.
+    expect(historyListPending(kept, 12, 0)).toBe(true)
+  })
+
+  it('reads an empty list kept from the last filter as loading, never as "no runs for this filter"', () => {
+    // A filter (or the Recap runs switch) that answered no runs, then changed: nothing of this list has been read yet.
+    expect(historyListPending(kept, 0, 0)).toBe(true)
   })
 })
 

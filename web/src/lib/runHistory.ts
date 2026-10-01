@@ -101,6 +101,21 @@ export function recapBadge(run: Pick<LiveRunSummary, 'isRecap' | 'recapDate'>): 
   }
 }
 
+/**
+ * Whether the history list still counts as loading, for its tiles and table.
+ * `answered` is the rows the query holds, `shown` those of the kind asked
+ * for (live trading, or the recap runs).
+ *
+ * While a filter or the Recap runs switch changes, the last list stays on
+ * screen (placeholder data). Rows of the other kind are dropped from it, and
+ * a kept list with nothing left to show is not this list's answer: it reads
+ * as loading, not as "no runs for this filter" before this filter is read.
+ */
+export function historyListPending(q: { isPending: boolean; isPlaceholderData: boolean }, answered: number, shown: number): boolean {
+  if (q.isPending) return true
+  return q.isPlaceholderData && (shown === 0 || shown < answered)
+}
+
 /** The P&L a history row shows: realized, plus the open book while the run is live. */
 export function runNetPnl(run: Pick<LiveRunSummary, 'netPnl' | 'unrealizedPnl' | 'isActive'>): number {
   return run.isActive ? run.netPnl + (run.unrealizedPnl ?? 0) : run.netPnl

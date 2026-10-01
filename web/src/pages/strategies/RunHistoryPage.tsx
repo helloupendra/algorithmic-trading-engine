@@ -25,7 +25,7 @@ import type { ListAsOf, RunLegs } from '../../lib/liveMarks'
 import type { LiveRunHistoryFilters } from '../../lib/queries'
 import { formatDateTime, formatDuration, formatInr, formatInrSigned, formatLots, formatNumber } from '../../lib/format'
 import { riskChips } from '../../lib/risk'
-import { recapBadge, runDurationSeconds, runNetPnl, runSpan, runStatusTone, runUserLabel, shortStopReason } from '../../lib/runHistory'
+import { historyListPending, recapBadge, runDurationSeconds, runNetPnl, runSpan, runStatusTone, runUserLabel, shortStopReason } from '../../lib/runHistory'
 import { DateField } from '../../components/DateField'
 import { isoToDmy } from '../../lib/dates'
 import { Badge, InlineError, Loading, Panel, StatTile } from '../../components/ui'
@@ -305,9 +305,10 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
   const answered = useMemo(() => history.data?.pages.flat() ?? [], [history.data])
   // Only rows of the kind asked for. Switching the toggle keeps the other list
   // on screen while this one loads (placeholder data), and a live run must not
-  // sit under the recap labels, nor a recap under the live ones.
+  // sit under the recap labels, nor a recap under the live ones. A kept list
+  // with nothing left to show reads as loading, not as "no runs".
   const rows = useMemo(() => answered.filter((r) => (r.isRecap ?? false) === recaps), [answered, recaps])
-  const pending = history.isPending || (history.isPlaceholderData && rows.length < answered.length)
+  const pending = historyListPending(history, answered.length, rows.length)
   // The live rows are re-priced from their open legs, each against the page it came in.
   // Never a recap's: the replay prices its legs, and a pushed price is a live one.
   const legs = useRunLegs(rows, !recaps)
