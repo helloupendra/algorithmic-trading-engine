@@ -112,6 +112,19 @@ public sealed class TodayTests
         Assert.Contains(today.Attention, a => a.Kind == "decision" && a.Title == "Model provider");
     }
 
+    [Fact]
+    public void The_decision_table_holds_the_longest_decision_the_api_accepts()
+    {
+        // On 1 Oct the log was one varchar(2000) setting and the sixth decision broke it; the in-memory test
+        // database never checks lengths, so this compares the model with the API's limits instead.
+        using var desk = new RunnerDesk();
+        using var db = desk.Db();
+        var entity = db.Model.FindEntityType(typeof(OwnerDecision))!;
+
+        Assert.Equal(OwnerDecision.TitleMax, entity.FindProperty(nameof(OwnerDecision.Title))!.GetMaxLength());
+        Assert.Equal(OwnerDecision.DecidedMax, entity.FindProperty(nameof(OwnerDecision.Decided))!.GetMaxLength());
+    }
+
     [Theory]
     [InlineData(true, -60, 120, "open")]
     [InlineData(true, 30, 400, "pre-open")]

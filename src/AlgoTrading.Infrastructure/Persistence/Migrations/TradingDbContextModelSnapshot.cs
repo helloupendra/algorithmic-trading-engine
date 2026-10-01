@@ -3037,6 +3037,58 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                     b.ToTable("option_history_bars", (string)null);
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.OwnerDecision", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("By")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date");
+
+                    b.Property<string>("Decided")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("RecordedBy")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasDefaultValue("");
+
+                    b.Property<DateTime>("RecordedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "Date", "Title" }, "UX_owner_decisions_Date_Title")
+                        .IsUnique();
+
+                    b.ToTable("owner_decisions", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_owner_decisions_Status", "\"Status\" IN ('decided', 'default', 'open')");
+                        });
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.PaperOrder", b =>
                 {
                     b.Property<long>("Id")

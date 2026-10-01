@@ -11,7 +11,7 @@ here, read-first. No section waits for an answer: the links lead to the pages wh
 | AI agents | Each built agent: on or off, calls and failures, reports (ok, invalid, failed), last activity, up to four highlights | ai_calls, ai_reports |
 | Learning | Active memories; learnt and dropped today, with how or why; the Assistant check today and its last 7 days; the latest weekly exam (pass^3, practice and held out) | ai_memories, check and exam reports |
 | System | Sentinel's last round, the latest checkup, the last deploy and any commit the gate holds, open incidents | sentinel_heartbeats, desk_checkups, data/deploy-history.json |
-| Decisions | Every decision taken for or by the owner: what, by whom (owner, or Claude's default), status (decided, default, open) | `system_settings` `owner.decisions` |
+| Decisions | Every decision taken for or by the owner: what, by whom (owner, or Claude's default), status (decided, default, open) | `owner_decisions` (one row each; a single `system_settings` value until 1 Oct, when the sixth decision did not fit its 2,000 characters) |
 
 `GET /api/Today` returns it all (`TodayBuilder`). The page polls every 30 seconds. `POST /api/Today/decisions` with
 `{ date, title, decided, by, status }` records a decision; one with the same date and title replaces the earlier
