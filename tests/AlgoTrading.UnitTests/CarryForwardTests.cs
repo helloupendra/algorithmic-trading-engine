@@ -728,8 +728,9 @@ public class CarryForwardTests
     /// the paper engine, the registry of runners and the stop pipeline, each
     /// resolved per scope as the API does. Runners are stand-in processes that
     /// sleep, so a stop has something real to terminate. Given a
-    /// <c>replayBook</c>, a market replay's book is on the desk too,
-    /// as the API registers it (LiveRunsBesideReplayTests).
+    /// <c>replayBook</c>, a market replay's book is on the desk too, as the API
+    /// registers it, and <c>more</c> adds what else a test needs there
+    /// (LiveRunsBesideReplayTests).
     /// </summary>
     internal sealed class Desk : IDisposable
     {
@@ -743,10 +744,11 @@ public class CarryForwardTests
         private readonly List<Process> _processes = new();
         private readonly string _emptyEngine = Directory.CreateTempSubdirectory("carry-engine-").FullName;
 
-        public Desk(IMarketReplayBook? replayBook = null)
+        public Desk(IMarketReplayBook? replayBook = null, Action<IServiceCollection>? more = null)
         {
             var services = new ServiceCollection();
             if (replayBook is not null) services.AddSingleton(replayBook);
+            more?.Invoke(services);
             services.AddLogging();
             services.AddDbContext<TradingDbContext>(Configure);
             services.AddSingleton<IRiskManagementService>(RecapClockTests.Inert<IRiskManagementService>.Create());
@@ -781,6 +783,9 @@ public class CarryForwardTests
         }
 
         public StrategyProcessRegistry Registry { get; }
+
+        /// <summary>The desk's scopes, as a background service of the API gets them.</summary>
+        public IServiceScopeFactory Scopes => _provider.GetRequiredService<IServiceScopeFactory>();
 
         private void Configure(DbContextOptionsBuilder options) => options
             .UseInMemoryDatabase(_name, _root)
