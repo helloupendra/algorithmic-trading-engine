@@ -210,6 +210,9 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.IAiTraderBriefs, Al
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.IAiTraderBooks, AlgoTrading.Api.Services.AiTrader.AiTraderBookReader>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.IAiTraderQuotes, AlgoTrading.Api.Services.AiTrader.AiTraderQuotes>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.AiTraderShadowBook>();
+// The shadow book's minute check, every minute whether the AI Trader is on or off.
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.AiTraderShadowCheck>();
+builder.Services.AddHostedService<AlgoTrading.Api.Services.AiTrader.AiTraderShadowWatcher>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.IBaselineMarket, AlgoTrading.Api.Services.AiTrader.BaselineMarket>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.AiTraderBaselineScorer>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiTrader.AiTraderAgent>();

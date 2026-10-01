@@ -1,7 +1,9 @@
+using AlgoTrading.Api.Services.AiAgents;
 using AlgoTrading.Api.Services.AiTrader;
 using AlgoTrading.Api.Services.Replay;
 using AlgoTrading.Application.Risk;
 using AlgoTrading.Domain.Entities;
+using AlgoTrading.Infrastructure.Ai;
 using AlgoTrading.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
@@ -39,9 +41,9 @@ public class AiTraderShadowBookTests
             (p.DecisionId, p.Symbol, p.EntryPrice, p.Lots, p.LotSize, p.StopLoss, p.Target, p.ExitUtc));
         Assert.Contains($"\"shadowPositionId\":{p.Id}", first.ResultJson);
 
-        // A minute check between two looks marks it; it decides nothing.
+        // The minute check between two looks marks it.
         quotes.Set(Symbol, bid: 130m, last: 130.5m);
-        Assert.False(await agent.RunOnceAsync(Eleven.AddMinutes(5), default));
+        await AiTraderAgentTests.Check(ai, quotes).RunAsync(Eleven.AddMinutes(5), default);
         var second = await agent.DecideAsync(Eleven.AddMinutes(10), AiTraderModes.Shadow, null, default);
 
         Assert.Contains("YOUR BOOK (shadow:", second.Brief);
@@ -58,11 +60,11 @@ public class AiTraderShadowBookTests
         await agent.DecideAsync(Eleven, AiTraderModes.Shadow, null, default);
 
         quotes.Set(Symbol, bid: 91m, last: 91.5m);
-        await agent.RunOnceAsync(Eleven.AddMinutes(1), default);
+        await AiTraderAgentTests.Check(ai, quotes).RunAsync(Eleven.AddMinutes(1), default);
         Assert.Null((await ai.Db.AiTraderShadowPositions.AsNoTracking().SingleAsync()).ExitUtc);
 
         quotes.Set(Symbol, bid: 88m, last: 88.5m);
-        await agent.RunOnceAsync(Eleven.AddMinutes(2), default);
+        await AiTraderAgentTests.Check(ai, quotes).RunAsync(Eleven.AddMinutes(2), default);
 
         var p = await ai.Db.AiTraderShadowPositions.AsNoTracking().SingleAsync();
         decimal charges = OptionCharges.For(120m * 65, 88m * 65, 2, ChargeSchedule.IndexOptions).Total;
@@ -80,13 +82,55 @@ public class AiTraderShadowBookTests
 
         quotes.Set(Symbol, bid: 160m, last: 160.4m);
         quotes.Set("NSE:NIFTY26O0622700CE", bid: 100m, last: 100.2m);
-        await agent.RunOnceAsync(Eleven.AddMinutes(11), default);
-        await agent.RunOnceAsync(IstTime.FromIst(new DateTime(2026, 10, 5, 15, 30, 0)), default);
+        await AiTraderAgentTests.Check(ai, quotes).RunAsync(Eleven.AddMinutes(11), default);
+        await AiTraderAgentTests.Check(ai, quotes).RunAsync(IstTime.FromIst(new DateTime(2026, 10, 5, 15, 30, 0)), default);
 
         var rows = await ai.Db.AiTraderShadowPositions.AsNoTracking().OrderBy(p => p.Id).ToListAsync();
         Assert.Equal(new[] { (AiTraderShadowBook.TargetHit, (decimal?)160m), (AiTraderShadowBook.SessionClose, (decimal?)100m) },
             rows.Select(p => (p.ExitReason, p.ExitPrice)));
         Assert.Equal(rows.Sum(p => p.NetPnl ?? 0m), AiTraderShadowBook.Net(rows));
+    }
+
+    [Fact]
+    public async Task The_minute_check_runs_every_minute_with_the_AI_Trader_switched_off()
+    {
+        // Switched off with a position open: the scheduler runs only the agents that are on, and the stop must still be
+        // taken at the bid of the minute that saw it, not days later at a stale mark.
+        var (_, ai, _, quotes) = AiTraderAgentTests.Agent();
+        await ai.Store.SetAgentEnabledAsync(AiCatalog.AiTrader, false, "upendra", null);
+        ai.Db.AiTraderShadowPositions.Add(Position(day: new DateOnly(2026, 10, 5), mark: 120m));
+        await ai.Db.SaveChangesAsync();
+        Assert.False(AiAgentScheduler.IsOn(AiCatalog.AiTrader, await ai.Store.LoadAsync(), ai.Options.CurrentValue));
+
+        quotes.Set(Symbol, bid: 88m, last: 88.5m);
+        await AiTraderAgentTests.Watcher(ai, quotes, Eleven.AddMinutes(30)).RunTickAsync(default);
+
+        var p = await ai.Db.AiTraderShadowPositions.AsNoTracking().SingleAsync();
+        Assert.Equal((AiTraderShadowBook.Stopped, (decimal?)88m, (DateTime?)Eleven.AddMinutes(30)), (p.ExitReason, p.ExitPrice, p.ExitUtc));
+    }
+
+    [Fact]
+    public async Task Only_the_watcher_checks_the_book_each_minute_and_only_where_the_scheduler_runs()
+    {
+        var (agent, ai, _, quotes) = AiTraderAgentTests.Agent();
+        ai.Db.AiTraderShadowPositions.Add(Position(day: new DateOnly(2026, 10, 5), mark: 120m));
+        await ai.Db.SaveChangesAsync();
+        quotes.Set(Symbol, bid: 88m, last: 88.5m);
+        var tenPast3 = IstTime.FromIst(new DateTime(2026, 10, 5, 15, 10, 0));
+        async Task<DateTime?> Exit() => (await ai.Db.AiTraderShadowPositions.AsNoTracking().SingleAsync()).ExitUtc;
+
+        // The agent's own tick (no look is due after 15:00) leaves the check to the watcher: one check a minute.
+        Assert.False(await agent.RunOnceAsync(tenPast3, default));
+        Assert.Null(await Exit());
+
+        // An API whose scheduler is off (another machine's) leaves the book alone, as it does every agent.
+        ai.Options.CurrentValue.SchedulerEnabled = false;
+        await AiTraderAgentTests.Watcher(ai, quotes, tenPast3).RunTickAsync(default);
+        Assert.Null(await Exit());
+
+        ai.Options.CurrentValue.SchedulerEnabled = true;
+        await AiTraderAgentTests.Watcher(ai, quotes, tenPast3).RunTickAsync(default);
+        Assert.Equal(tenPast3, await Exit());
     }
 
     [Fact]
@@ -177,11 +221,11 @@ public class AiTraderShadowBookTests
     [Fact]
     public async Task A_position_left_from_an_earlier_day_closes_at_its_last_mark()
     {
-        var (agent, ai, _, _) = AiTraderAgentTests.Agent();
+        var (_, ai, _, quotes) = AiTraderAgentTests.Agent();
         ai.Db.AiTraderShadowPositions.Add(Position(day: new DateOnly(2026, 10, 5), mark: 111m));
         await ai.Db.SaveChangesAsync();
 
-        await agent.RunOnceAsync(IstTime.FromIst(new DateTime(2026, 10, 6, 9, 0, 0)), default);
+        await AiTraderAgentTests.Check(ai, quotes).RunAsync(IstTime.FromIst(new DateTime(2026, 10, 6, 9, 0, 0)), default);
 
         var p = await ai.Db.AiTraderShadowPositions.AsNoTracking().SingleAsync();
         Assert.Equal((AiTraderShadowBook.SessionClose, (decimal?)111m), (p.ExitReason, p.ExitPrice));
@@ -191,7 +235,7 @@ public class AiTraderShadowBookTests
     public async Task An_ended_replays_positions_close_and_a_playing_replays_stay_open()
     {
         var session = new ReplaySessionState(9, "2026-09-30", 1, "09:15", MarketReplayService.StatePlaying, [], DateTime.UtcNow, null, null, "admin", AiTrader: true);
-        var (agent, ai, _, _) = AiTraderAgentTests.Agent(session: session);
+        var (_, ai, _, quotes) = AiTraderAgentTests.Agent(session: session);
         var ended = Position(day: new DateOnly(2026, 9, 29), mark: 104m);
         ended.Mode = AiTraderModes.Replay;
         ended.ReplaySessionId = 8;
@@ -201,7 +245,7 @@ public class AiTraderShadowBookTests
         ai.Db.AiTraderShadowPositions.AddRange(ended, playing);
         await ai.Db.SaveChangesAsync();
 
-        await agent.RunOnceAsync(IstTime.FromIst(new DateTime(2026, 10, 3, 19, 0, 0)), default);
+        await AiTraderAgentTests.Check(ai, quotes, session).RunAsync(IstTime.FromIst(new DateTime(2026, 10, 3, 19, 0, 0)), default);
 
         var rows = await ai.Db.AiTraderShadowPositions.AsNoTracking().OrderBy(p => p.ReplaySessionId).ToListAsync();
         Assert.Equal(new[] { (AiTraderShadowBook.ReplayEnded, (decimal?)104m), (string.Empty, (decimal?)null) },

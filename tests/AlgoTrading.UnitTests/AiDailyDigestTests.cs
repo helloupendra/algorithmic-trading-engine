@@ -216,7 +216,7 @@ public class AiDailyDigestTests
         Assert.True(await Digest(ai, telegram).RunOnceAsync(Ist(15, 46), default));
         Assert.Equal("AI Trader (shadow mode)\nOn, but no looks today.", Assert.Single(telegram.Sent).Message);
 
-        // Switched off at 14:00 with a position open: the minute check never squared it off.
+        // Switched off with a position open and the API down from 14:00 over the close: the minute check never squared it off.
         var other = Build(Settings());
         other.Db.AiTraderDecisions.Add(Look(Ist(11, 0), "buy", true, "ok"));
         var open = Position(Ist(11, 0), 22650m, "CE", 1, 120m, null, null, string.Empty, 0m);
