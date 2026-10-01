@@ -208,7 +208,9 @@ class LogicEngine(BaseStrategy):
         day = inp.recap_date
         if day is None:
             return
+        # The replay's quotes, for this day only (the API answers a recap of another day from the live table).
         self.api.replay = True
+        self.api.replay_date = day
         self._recap_clock = inp.timestamp_utc
         if day != self.recap_day:
             self.recap_day = day

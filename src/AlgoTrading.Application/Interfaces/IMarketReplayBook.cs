@@ -51,4 +51,13 @@ public interface IMarketReplayBook
     /// included, reads the live prices as before.
     /// </summary>
     bool Prices(string? parametersJson);
+
+    /// <summary>
+    /// Whether a recap runner's own quote call (<c>replay=true</c>) is answered
+    /// from this book: a replay is on, and the runner replays its day. A
+    /// runner replaying another day (a vendor's evening recap, whose prices
+    /// are the live table's) is not. One that does not say its day, started
+    /// before runners sent it, is answered from the book as it always was.
+    /// </summary>
+    bool Answers(DateOnly? recapDate) => Day is { } day && (recapDate is null || recapDate == day);
 }

@@ -442,6 +442,17 @@ def is_replay_tick(tick: Dict[str, Any]) -> bool:
     return flag is True or flag == 1
 
 
+def use_recap_quotes(api: PlatformApiClient, recap_date: str) -> None:
+    """
+    A recap run's quotes: from the API's ReplayBook (replay=true), never
+    live_quotes_latest, and only while the desk replays this run's day
+    (recapDate). A vendor's evening recap (TrueData) replays today, and its
+    runs read the live table its feed writes, whatever day the desk replays.
+    """
+    api.replay = True
+    api.replay_date = recap_date
+
+
 def tick_is_for_this_run(tick: Dict[str, Any], recap_run: bool) -> bool:
     """A recap run takes only replayed ticks; every other run takes only live ones."""
     return is_replay_tick(tick) == bool(recap_run)
@@ -676,7 +687,7 @@ if __name__ == "__main__":
     if recap is not None:
         # Quotes from the API's ReplayBook (replay=true), never live_quotes_latest:
         # the replay's prices and the live desk's must not mix in either direction.
-        api.replay = True
+        use_recap_quotes(api, recap_date)
         print(f"[{args.underlying}] RECAP RUN — replaying {recap_date}; the strategy sees only "
               f"prices up to the replay's clock and stops at its 15:30. Quotes come from the replay, "
               f"contracts and the expiry as of {recap_date}, and the live watchlist is left alone.", flush=True)

@@ -321,6 +321,7 @@ class LogicEngineRecapTests(unittest.TestCase):
         self.engine._fetch_15m_high_low(SPOT)
 
         self.assertTrue(self.engine.api.replay)
+        self.assertEqual(self.DAY, self.engine.api.replay_date, "quotes name the replayed day")
         self.engine.api.get_recent_bars.assert_called_once_with(SPOT, resolution="15m", take=2, until_utc=self.TICK)
 
     def test_on_bar_follows_the_session_of_its_input(self):
