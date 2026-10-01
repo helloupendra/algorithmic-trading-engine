@@ -1,3 +1,4 @@
+using AlgoTrading.Api.Controllers;
 using AlgoTrading.Api.Services;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Application.Providers;
@@ -341,6 +342,28 @@ public class VixBackfillTests
         Assert.DoesNotContain("<", message);
     }
 
+    [Fact]
+    public void Run_by_hand_it_checks_through_the_latest_session_that_has_closed_special_sessions_included()
+    {
+        using var db = Db();
+        // Sunday 8 Nov 2026, Diwali: NSE trades an evening Muhurat session and nothing else.
+        var muhurat = new DateOnly(2026, 11, 8);
+        var friday = new DateOnly(2026, 11, 6);
+        var vix = Service(db, new Calendar(new MarketSpecialSession { Exchange = "NSE", Date = muhurat, Name = "Muhurat trading", OpenIst = new(18, 0), CloseIst = new(19, 0) }));
+
+        // 16:00: past 15:30, but the day's session has not opened, so it has no bars to check yet.
+        Assert.Equal((friday, (string?)null), BackfillController.VixCheckThrough(null, Ist(muhurat, 16, 0), vix));
+        Assert.Equal("That session has not closed yet.", BackfillController.VixCheckThrough("2026-11-08", Ist(muhurat, 16, 0), vix).Error);
+        Assert.Equal((muhurat, (string?)null), BackfillController.VixCheckThrough(null, Ist(muhurat, 19, 0), vix));
+
+        // An ordinary day at its own close; a holiday and a weekend are passed over.
+        Assert.Equal((Wed30, (string?)null), BackfillController.VixCheckThrough(null, Ist(Thu01, 15, 29), Service(db)));
+        Assert.Equal((Thu01, (string?)null), BackfillController.VixCheckThrough(null, Ist(Thu01, 15, 30), Service(db)));
+        Assert.Equal((Thu01, (string?)null), BackfillController.VixCheckThrough(null, Ist(Sat03, 10, 0), Service(db)));
+        Assert.Equal("That session has not closed yet.", BackfillController.VixCheckThrough("2026-10-05", Ist(Sat03, 10, 0), Service(db)).Error);
+        Assert.Equal("through must be yyyy-MM-dd (IST).", BackfillController.VixCheckThrough("5 Oct", Ist(Sat03, 10, 0), Service(db)).Error);
+    }
+
     // ----------------------------------------------------------------------- helpers --
 
     private static TradingDbContext Db()
@@ -349,6 +372,9 @@ public class VixBackfillTests
     private static VixBackfillService Service(TradingDbContext db, params IMarketDataProvider[] chain)
         => new(db, new Router(chain), new HistoricalCandleStore(db), new MarketSessionService(new Calendar()),
                NullLogger<VixBackfillService>.Instance);
+
+    private static VixBackfillService Service(TradingDbContext db, IMarketCalendar calendar)
+        => new(db, new Router([]), new HistoricalCandleStore(db), new MarketSessionService(calendar), NullLogger<VixBackfillService>.Instance);
 
     /// <summary>Every session bar at 1, 5 and 15 minutes for the day, where <paramref name="keep"/> says so; source "live", close 11.</summary>
     private static void Seed(TradingDbContext db, DateOnly day, Func<DateTime, bool> keep)
@@ -386,14 +412,15 @@ public class VixBackfillTests
             .ToList();
     }
 
-    private sealed class Calendar : IMarketCalendar
+    private sealed class Calendar(params MarketSpecialSession[] special) : IMarketCalendar
     {
         public bool IsLoaded => true;
 
         public MarketHoliday? HolidayOn(string exchange, DateOnly date)
             => date == GandhiJayanti ? new MarketHoliday { Exchange = exchange, Date = date, Name = "Gandhi Jayanti" } : null;
 
-        public MarketSpecialSession? SpecialSessionOn(string exchange, DateOnly date) => null;
+        public MarketSpecialSession? SpecialSessionOn(string exchange, DateOnly date)
+            => special.FirstOrDefault(s => s.Exchange == exchange && s.Date == date);
         public bool HasYear(string exchange, int year) => true;
         public Task RefreshAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }

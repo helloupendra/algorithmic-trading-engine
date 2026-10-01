@@ -112,7 +112,7 @@ A day is a **gap** when the forecasts would drop it: fewer than 90% of its bars 
 
 It is light on purpose, because it shares the box with the live desk: three queries of one symbol's timestamps, and on a night with nothing missing no request at all.
 
-Run it by hand with `POST /api/Backfill/vix?through=YYYY-MM-DD&days=20` (admin; both optional, `through` defaults to the latest closed session). The response lists each day and resolution after the fetches, the vendors' answers and any gap days. It sends nothing to the System channel.
+Run it by hand with `POST /api/Backfill/vix?through=YYYY-MM-DD&days=20` (admin; both optional, `through` defaults to the latest NSE session that has closed, by the exchange calendar: on a Muhurat evening, not before that session ends). The response lists each day and resolution after the fetches, the vendors' answers and any gap days. It sends nothing to the System channel.
 
 If no vendor has the bars, fill them from Dhan's index history the way incident #204 was fixed, into a separate folder so the import reads only those days:
 

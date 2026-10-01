@@ -283,6 +283,21 @@ public sealed class VixBackfillService
     /// <summary>NSE trades on this IST date (the exchange calendar's answer, holidays and special sessions included).</summary>
     public bool IsTradingDay(DateOnly day) => _sessions.GetSessionInfo(IstTime.MiddayUtc(day), "NSE", "CM").IsTradingDay;
 
+    /// <summary>
+    /// Whether <paramref name="day"/>'s NSE session is over at <paramref name="nowUtc"/>:
+    /// an earlier day, or today once its own close has passed (a special
+    /// session's, such as Muhurat trading in the evening, included). A day with
+    /// no session has nothing to wait for.
+    /// </summary>
+    public bool SessionClosed(DateOnly day, DateTime nowUtc)
+    {
+        var today = IstTime.DateOf(nowUtc);
+        if (day != today) return day < today;
+
+        var session = _sessions.GetSessionInfo(IstTime.MiddayUtc(day), "NSE", "CM");
+        return !session.IsTradingDay || session.SessionCloseUtc <= nowUtc;
+    }
+
     /// <summary>Checks the last <paramref name="lookbackTradingDays"/> trading days through <paramref name="through"/> and fills what it can.</summary>
     public async Task<VixBackfillResult> RunAsync(DateOnly through, int lookbackTradingDays, CancellationToken cancellationToken = default)
     {
