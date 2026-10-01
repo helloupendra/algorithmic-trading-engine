@@ -362,3 +362,15 @@ class StatsLineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SessionMarketTests(unittest.TestCase):
+    """A run's silence is judged against its own exchange's hours, not NSE's."""
+
+    def test_a_crude_run_asks_about_mcx_so_an_evening_stall_is_reported(self):
+        from core.feed_watchdog import session_market
+
+        self.assertEqual(("MCX", "COM"), session_market("MCX:CRUDEOIL26NOVFUT"))
+        self.assertEqual(("BSE", "FO"), session_market("BSE:SENSEX-INDEX"))
+        self.assertEqual(("NSE", "FO"), session_market("NSE:NIFTY50-INDEX"))
+        self.assertEqual(("NSE", "FO"), session_market(None))
