@@ -306,6 +306,13 @@ Every output is a row of `ai_reports`, one per agent and subject, so an agent th
 
 A good report is never overwritten by a later failure. Each report links to its model call.
 
+A run review turned away for capacity is `failed` and waits the same 15 minutes, but it is **not counted** as one of
+the run's tries: no model read the run. That covers a refusal by the desk's own rate limit (429), and a call in which
+every model that failed refused for capacity (`AiGateway.IsCapacityRefusal`: HTTP 429, 502 or 503, or "overloaded",
+"temporarily" or "capacity" in the reason). A failure of any other kind (a timeout, a 500, an answer not in the asked
+shape) still counts. Until 1 Oct a busy hour could spend all three tries and leave the run unreviewed. The report's
+error starts "Turned away for capacity, not counted as a try".
+
 | Agent | Due | Input | Output |
 | --- | --- | --- | --- |
 | Trade Reviewer (judge) | A stopped run from the last two days, 10 minutes after it stopped and after `Ai:ReviewAfterIst` (15:45) on its day. So NSE runs after 15:45, MCX runs after MCX closes (23:30, or 23:55 from November to March). Manual books and alert runs are skipped. The market it is handed for the run's day is that exchange's session in the calendar, MCX's winter close and special sessions included. | The run's `get_run` summary and its spec, handed over up front. It can read more with `get_run`, `get_strategy_spec`, `get_quotes` and `get_option_chain_summary`. | Verdict (followed / deviated / unclear), what was kept and what was not, stale-quote fills, market context, one thing worth testing, a journal |

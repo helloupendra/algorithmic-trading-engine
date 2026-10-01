@@ -86,7 +86,7 @@ public sealed class AiReportWriter(TradingDbContext db, IOptionsMonitor<AiSettin
     }
 
     /// <summary>Creates or updates the report; a successful one is never overwritten by a failure.</summary>
-    public async Task<AiReport> SaveAsync(
+    public Task<AiReport> SaveAsync(
         string agent,
         string subjectType,
         string subjectId,
@@ -97,6 +97,39 @@ public sealed class AiReportWriter(TradingDbContext db, IOptionsMonitor<AiSettin
         string body,
         string dataJson,
         string error,
+        CancellationToken cancellationToken) =>
+        SaveAsync(agent, subjectType, subjectId, sessionDate, status, call, title, body, dataJson, error, countTry: true, cancellationToken);
+
+    /// <summary>
+    /// A try the desk's rate limit or the provider turned away for capacity
+    /// (<see cref="AiGateway.IsCapacityRefusal(AiAskResult)"/>): kept as failed,
+    /// so it waits <see cref="RetryAfter"/> like any failed try and is still owed,
+    /// but not counted against <see cref="AiSettings.MaxReportAttempts"/>. A busy
+    /// hour used to spend a subject's three tries without a model reading it once.
+    /// </summary>
+    public Task<AiReport> SaveTurnedAwayAsync(
+        string agent,
+        string subjectType,
+        string subjectId,
+        DateOnly? sessionDate,
+        AiAskResult call,
+        string title,
+        string error,
+        CancellationToken cancellationToken) =>
+        SaveAsync(agent, subjectType, subjectId, sessionDate, AiReportStatus.Failed, call, title, string.Empty, "{}", error, countTry: false, cancellationToken);
+
+    private async Task<AiReport> SaveAsync(
+        string agent,
+        string subjectType,
+        string subjectId,
+        DateOnly? sessionDate,
+        string status,
+        AiAskResult? call,
+        string title,
+        string body,
+        string dataJson,
+        string error,
+        bool countTry,
         CancellationToken cancellationToken)
     {
         var now = _time.GetUtcNow().UtcDateTime;
@@ -115,7 +148,7 @@ public sealed class AiReportWriter(TradingDbContext db, IOptionsMonitor<AiSettin
 
         row.SessionDate = sessionDate;
         row.Status = status;
-        row.Attempts++;
+        if (countTry) row.Attempts++;
         row.CallId = call?.CallId ?? row.CallId;
         row.Model = call?.Model ?? string.Empty;
         row.Title = Cut(title, 300);

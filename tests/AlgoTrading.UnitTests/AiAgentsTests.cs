@@ -81,6 +81,86 @@ public class AiAgentsTests
         Assert.Null(await reviewer.NextDueAsync(Ist(16, 0), CancellationToken.None));
     }
 
+    [Fact]
+    public async Task A_refusal_by_the_desk_s_own_rate_limit_is_not_a_try_and_waits_for_the_retry_window()
+    {
+        var ai = BuildOn(Settings(s => s.MaxConcurrent = 1));
+        long runId = SeedRun(ai, stoppedAt: Ist(15, 31));
+        var clock = new Clock(Ist(15, 46));
+        var reviewer = Reviewer(ai, clock);
+        // A busy hour: another call holds the desk's only slot through four retry windows.
+        var (busy, _) = ai.Limiter.TryAcquire("upendra");
+
+        for (int i = 0; i < 4; i++)
+        {
+            Assert.True(await reviewer.RunOnceAsync(clock.Now, CancellationToken.None));
+            var waiting = await ai.Db.AiReports.AsNoTracking().SingleAsync();
+            Assert.Equal((AiReportStatus.Failed, 0), (waiting.Status, waiting.Attempts));
+            Assert.Contains("not counted as a try", waiting.Error);
+
+            // Not tried again the next minute: the 15-minute retry window, as for any failed try.
+            clock.Now += TimeSpan.FromMinutes(1);
+            Assert.Null(await reviewer.NextDueAsync(clock.Now, CancellationToken.None));
+            clock.Now += AiReportWriter.RetryAfter;
+            Assert.Equal(runId, await reviewer.NextDueAsync(clock.Now, CancellationToken.None));
+        }
+
+        Assert.Empty(ai.Provider.Requests);
+        busy!.Dispose();
+        ai.Provider.On(Judge1, Answer("""{"verdict":"followed","title":"Kept its rules","journal":"Fine."}"""));
+        Assert.True(await reviewer.RunOnceAsync(clock.Now, CancellationToken.None));
+        var report = await ai.Db.AiReports.AsNoTracking().SingleAsync();
+        Assert.Equal((AiReportStatus.Ok, 1), (report.Status, report.Attempts));
+    }
+
+    [Fact]
+    public async Task Every_model_refusing_for_capacity_is_not_a_try_but_any_other_failure_is()
+    {
+        var ai = BuildOn();
+        long runId = SeedRun(ai, stoppedAt: Ist(15, 31));
+        var clock = new Clock(Ist(15, 46));
+        var reviewer = Reviewer(ai, clock);
+        foreach (var model in new[] { Judge1, Judge2, Judge3 })
+        {
+            ai.Provider.On(model, Enumerable.Repeat(Script.Status(429, """{"detail":"Too many requests"}"""), 4).ToArray());
+        }
+
+        // The provider's 429 on every model, four times: more than the three tries a run gets, and still due.
+        for (int i = 0; i < 4; i++)
+        {
+            Assert.True(await reviewer.RunOnceAsync(clock.Now, CancellationToken.None));
+            Assert.Equal(0, (await ai.Db.AiReports.AsNoTracking().SingleAsync()).Attempts);
+            clock.Now += AiReportWriter.RetryAfter;
+        }
+
+        Assert.Equal(runId, await reviewer.NextDueAsync(clock.Now, CancellationToken.None));
+
+        // A model that fails for another reason (no script: a 500) is a try, as before.
+        Assert.True(await reviewer.RunOnceAsync(clock.Now, CancellationToken.None));
+        var failed = await ai.Db.AiReports.AsNoTracking().SingleAsync();
+        Assert.Equal((AiReportStatus.Failed, 1), (failed.Status, failed.Attempts));
+    }
+
+    [Fact]
+    public void A_call_is_a_capacity_refusal_only_when_the_limit_or_every_failed_model_turned_it_away()
+    {
+        AiAskResult Result(string outcome, int? refusal, params AiAttempt[] attempts) =>
+            new(1, outcome, string.Empty, string.Empty, string.Empty, 0, string.Empty, null, attempts, "x", refusal);
+
+        Assert.True(AiGateway.IsCapacityRefusal(Result(AiCallOutcome.Refused, 429)));
+        Assert.False(AiGateway.IsCapacityRefusal(Result(AiCallOutcome.Refused, 409)));
+        Assert.False(AiGateway.IsCapacityRefusal(Result(AiCallOutcome.Refused, 503)));
+        Assert.True(AiGateway.IsCapacityRefusal(Result(AiCallOutcome.Failed, null,
+            new AiAttempt(Judge1, "http 429: Too many requests", 0.2, 429), new AiAttempt(Judge2, "http 503", 0.1, 503))));
+        // A tools round that went fine, then a round every model refused for capacity.
+        Assert.True(AiGateway.IsCapacityRefusal(Result(AiCallOutcome.Failed, null,
+            new AiAttempt(Judge1, "ok", 3, 200, 1), new AiAttempt(Judge1, "model overloaded", 0.3, null, 2))));
+        Assert.False(AiGateway.IsCapacityRefusal(Result(AiCallOutcome.Failed, null,
+            new AiAttempt(Judge1, "http 429", 0.2, 429), new AiAttempt(Judge2, "timeout", 90, null))));
+        Assert.False(AiGateway.IsCapacityRefusal(Result(AiCallOutcome.Failed, null)));
+        Assert.False(AiGateway.IsCapacityRefusal(Result(AiCallOutcome.Ok, null, new AiAttempt(Judge1, "ok", 1, 200))));
+    }
+
     // ---------- the trade reviewer: the review ----------
 
     [Fact]
@@ -588,6 +668,14 @@ public class AiAgentsTests
     internal sealed class FixedTime(DateTime utc) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => new(DateTime.SpecifyKind(utc, DateTimeKind.Utc));
+    }
+
+    /// <summary>A clock the test moves.</summary>
+    private sealed class Clock(DateTime utc) : TimeProvider
+    {
+        public DateTime Now { get; set; } = utc;
+
+        public override DateTimeOffset GetUtcNow() => new(DateTime.SpecifyKind(Now, DateTimeKind.Utc));
     }
 
     private static NewsAnalystAgent News(Services ai, AiSchedulerState? state = null) => new(

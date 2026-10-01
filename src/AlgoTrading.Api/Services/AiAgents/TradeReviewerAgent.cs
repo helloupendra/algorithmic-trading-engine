@@ -184,6 +184,8 @@ public sealed class TradeReviewerAgent(
         if (result.Outcome != AiCallOutcome.Ok)
         {
             string why = result.RefusalStatus is null ? result.Error : $"Refused: {result.Error}";
+            if (AiGateway.IsCapacityRefusal(result)) return await TurnedAwayAsync(runId, day, result, why, cancellationToken);
+
             // The provider, not the desk: recorded as a failed report and retried.
             logger.LogInformation("Trade review of run {RunId} failed: {Error}", runId, why);
             return await reports.SaveAsync(AgentKey, AiReportSubject.Run, Id(runId), day, AiReportStatus.Failed, result,
@@ -209,6 +211,8 @@ public sealed class TradeReviewerAgent(
             if (second.Outcome != AiCallOutcome.Ok)
             {
                 string why = "The second review of a deviation got no answer: " + (second.RefusalStatus is null ? second.Error : $"Refused: {second.Error}");
+                if (AiGateway.IsCapacityRefusal(second)) return await TurnedAwayAsync(runId, day, second, why, cancellationToken);
+
                 logger.LogInformation("Trade review of run {RunId}: {Why}", runId, why);
                 return await reports.SaveAsync(AgentKey, AiReportSubject.Run, Id(runId), day, AiReportStatus.Failed, second,
                     $"Run {runId}: no review", string.Empty, "{}", why, cancellationToken);
@@ -219,6 +223,19 @@ public sealed class TradeReviewerAgent(
 
         return await reports.SaveAsync(AgentKey, AiReportSubject.Run, Id(runId), day, AiReportStatus.Ok, result,
             review.Title, review.Body, review.Data.ToJsonString(Json), string.Empty, cancellationToken);
+    }
+
+    /// <summary>
+    /// A review the desk's own rate limit or the provider turned away for capacity: no model read the run, so it is
+    /// not one of the run's <see cref="AiSettings.MaxReportAttempts"/> tries. It waits for the next retry window
+    /// (<see cref="AiReportWriter.RetryAfter"/>), as a failed try does. Before, a busy hour could spend all three tries
+    /// and the run was never reviewed.
+    /// </summary>
+    private async Task<AiReport> TurnedAwayAsync(long runId, DateOnly day, AiAskResult call, string why, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Trade review of run {RunId} was turned away for capacity; tried again in the next window: {Why}", runId, why);
+        return await reports.SaveTurnedAwayAsync(AgentKey, AiReportSubject.Run, Id(runId), day, call, $"Run {runId}: no review",
+            $"Turned away for capacity, not counted as a try: {why}", cancellationToken);
     }
 
     /// <summary>
