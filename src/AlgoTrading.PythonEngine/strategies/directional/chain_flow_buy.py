@@ -183,12 +183,20 @@ def data_check(chain: Optional[Dict[str, Any]], index_close: float, now_utc: dat
     return True, "", facts
 
 
-def volume_surge(bars: List[Any], multiple: float, lookback: int) -> Optional[Tuple[float, float]]:
-    """(signal bar volume, mean of the `lookback` bars before it) when it is at least `multiple` times that mean."""
-    if len(bars) < lookback + 2:
+def volume_surge(bars: List[Any], multiple: float, lookback: int, at: Any) -> Optional[Tuple[float, float]]:
+    """
+    (volume of the option candle that began at `at`, mean of the `lookback` candles before it) when it is at
+    least `multiple` times that mean. The candle is found by its start time, never by its place: the option's
+    newest candle may still be forming, or be missing when it has not traded yet in the new five minutes, and
+    either would make "the second last" another candle than the index's signal candle.
+    """
+    target = indicators.parse_utc(at)
+    index = next((i for i in range(len(bars) - 1, -1, -1)
+                  if indicators.parse_utc(getattr(bars[i], "timestamp_utc", None)) == target), None)
+    if target is None or index is None or index < lookback:
         return None
-    signal = float(getattr(bars[-2], "volume", 0.0) or 0.0)
-    before = [float(getattr(b, "volume", 0.0) or 0.0) for b in bars[-2 - lookback:-2]]
+    signal = float(getattr(bars[index], "volume", 0.0) or 0.0)
+    before = [float(getattr(b, "volume", 0.0) or 0.0) for b in bars[index - lookback:index]]
     mean = sum(before) / len(before) if before else 0.0
     if mean <= 0 or signal < multiple * mean:
         return None
@@ -346,11 +354,15 @@ class ChainFlowBuyStrategy(BaseStrategy):
             return signals
 
         bars = inp.bars.get("5m", {}).get("index", [])
+        # Live and in a recap the newest candle is still forming, so the signal candle is the one before it.
+        # A backtest is handed closed candles only: its newest is the signal candle, and reading the one
+        # before it decided, and bought, a whole candle late.
+        closed = bars if inp.mode == "OfflineReplay" else bars[:-1]
         slow = int(self._p("ema_slow"))
-        if len(bars) < slow + 2:
+        if len(closed) < slow + 1:
             return signals
 
-        signal_bar = bars[-2]
+        signal_bar = closed[-1]
         stamp = getattr(signal_bar, "timestamp_utc", None)
         if stamp is None or state.get("last_evaluated_bar") == stamp:
             return signals
@@ -385,7 +397,7 @@ class ChainFlowBuyStrategy(BaseStrategy):
         else:
             now_utc, chain_as_of = datetime.now(timezone.utc), None
 
-        history = bars[: len(bars) - 1]
+        history = closed
         closes = [float(b.close) for b in history]
         ema_fast = indicators.ema(closes, int(self._p("ema_fast")))
         ema_slow = indicators.ema(closes, slow)
@@ -470,7 +482,7 @@ class ChainFlowBuyStrategy(BaseStrategy):
             return signals
 
         option_bars = inp.bars.get("5m", {}).get("atm_ce" if side == "CE" else "atm_pe", [])
-        surge = volume_surge(option_bars, float(self._p("volume_multiple")), int(self._p("volume_lookback")))
+        surge = volume_surge(option_bars, float(self._p("volume_multiple")), int(self._p("volume_lookback")), stamp)
         if surge is None:
             return signals
 
