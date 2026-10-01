@@ -76,13 +76,17 @@ public class ReplayController(MarketReplayService replay, IMarketReplayBook book
     public IActionResult Logs([FromQuery] int lines = 200) => Ok(new { lines = replay.Logs(lines) });
 
     /// <summary>The player's ticks, for the replay's prices only: nothing is stored.</summary>
+    /// <remarks>
+    /// After an API restart the book is empty until the replay is found again; the player's first batch
+    /// reopens it rather than being refused, which would fail the player (<see cref="MarketReplayService.ReopenBookAsync"/>).
+    /// </remarks>
     [HttpPost("ticks")]
     [Authorize(Roles = LiveDataController.Writers)]
-    public IActionResult Ticks([FromBody] List<UpsertLiveTickRequest>? ticks)
+    public async Task<IActionResult> Ticks([FromBody] List<UpsertLiveTickRequest>? ticks, CancellationToken cancellationToken)
     {
         if (ticks is null || ticks.Count == 0) return BadRequest(new { error = "Send a list of ticks." });
         if (ticks.Count > MaxTicks) return BadRequest(new { error = $"At most {MaxTicks} ticks a batch." });
-        if (book.Day is null) return Conflict(new { error = "No market replay is on." });
+        if (!await replay.ReopenBookAsync(cancellationToken)) return Conflict(new { error = "No market replay is on." });
         return Ok(new { taken = book.Apply(ticks) });
     }
 }
