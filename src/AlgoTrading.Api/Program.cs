@@ -146,6 +146,8 @@ builder.Services.AddSingleton<AlgoTrading.Api.Services.Replay.ReplaySupervisor>(
 builder.Services.AddSingleton<AlgoTrading.Api.Services.Replay.IReplayPlayer, AlgoTrading.Api.Services.Replay.SupervisedReplayPlayer>();
 builder.Services.AddSingleton<AlgoTrading.Api.Services.Replay.IReplayChannel, AlgoTrading.Api.Services.Replay.RedisReplayChannel>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.Replay.IReplayRunStopper, AlgoTrading.Api.Services.Replay.ReplayRunStopper>();
+// A vendor's recap feed (TrueData's evening replay), from the heartbeats: a desk replay never plays beside one.
+builder.Services.AddScoped<AlgoTrading.Api.Services.Replay.IRecapFeeds, AlgoTrading.Api.Services.Replay.HeartbeatRecapFeeds>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.Replay.MarketReplayService>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.Replay.IReplaySessions>(sp => sp.GetRequiredService<AlgoTrading.Api.Services.Replay.MarketReplayService>());
 builder.Services.AddHostedService<AlgoTrading.Api.Services.Replay.ReplayMonitor>();

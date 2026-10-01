@@ -315,6 +315,26 @@ public class MarketReplayTests
     }
 
     [Fact]
+    public async Task No_desk_replay_starts_while_a_vendors_recap_feed_is_running()
+    {
+        // TrueData's evening recap writes its ticks where a feed's go, and its recap runs read their quotes with
+        // replay=true: a desk replay on at the same time answered them from its own book, another day's prices.
+        var replay = Replay(out var db, out var player, out _, out _, out var book, recapFeed: "python-truedata-recap");
+        long runId = Run(db, RecapOfDay, status: "Running");
+        SeedBars(db);
+
+        var refused = await replay.StartAsync(new ReplayStartRequest("2026-09-30", 1, "09:15", [runId]), "admin", default);
+        var status = await replay.StatusAsync(default);
+
+        Assert.Equal(409, refused.StatusCode);
+        Assert.Contains("python-truedata-recap", refused.Error);
+        Assert.Null(player.Args);
+        Assert.Null(book.Day);
+        Assert.False(status.CanStart);
+        Assert.Contains("recap", status.WhyNot);
+    }
+
+    [Fact]
     public void Progress_runs_from_the_open_to_the_close_and_is_whole_once_finished()
     {
         Assert.Equal(0, MarketReplayService.ProgressOf(null, Day, MarketReplayService.StatePlaying));
@@ -327,7 +347,7 @@ public class MarketReplayTests
     private static readonly FakeClock Clock = new();
 
     private static MarketReplayService Replay(out TradingDbContext db, out FakePlayer player, out FakeChannel channel,
-        out FakeStopper stopper, out MarketReplayBook book, DateTime? nowUtc = null)
+        out FakeStopper stopper, out MarketReplayBook book, DateTime? nowUtc = null, string? recapFeed = null)
     {
         // Saturday 3 Oct 2026, noon IST: no session.
         Clock.Set(nowUtc ?? IstTime.FromIst(new DateTime(2026, 10, 3, 12, 0, 0)));
@@ -340,7 +360,15 @@ public class MarketReplayTests
         var charges = new RunCharges(db, lots);
         return new MarketReplayService(db, player, channel, stopper, book,
             new MarketSessionService(new OpenCalendar()), new RunPnl(db, lots, charges, book),
-            NullLogger<MarketReplayService>.Instance, Clock);
+            new FakeRecapFeeds { Running = recapFeed }, NullLogger<MarketReplayService>.Instance, Clock);
+    }
+
+    /// <summary>A vendor's recap feed, running (its heartbeat name) or not (null).</summary>
+    internal sealed class FakeRecapFeeds : IRecapFeeds
+    {
+        public string? Running { get; set; }
+
+        public Task<string?> RunningAsync(CancellationToken cancellationToken) => Task.FromResult(Running);
     }
 
     internal static TradingDbContext NewDb() => new(new DbContextOptionsBuilder<TradingDbContext>()
