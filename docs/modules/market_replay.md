@@ -29,7 +29,8 @@ the day it replayed, and the page's totals are then the tests' own.
 
 | Rule | Why |
 |---|---|
-| The replay's prices live in the API's memory (`IMarketReplayBook`), never in `live_quotes_latest`. Only a recap run of the replayed day reads them: its fills, marks, risk guard, P&L, clock (`RecapClock`), position views and greeks, and its runner's quote calls (`replay=true`). | `live_quotes_latest` prices every live fill, mark, risk check, option chain and pulse. A past day's prices there would mark carried positions at that day's prices and could fire their stops. |
+| The replay's prices live in the API's memory (`IMarketReplayBook`), never in `live_quotes_latest`. Only a recap run of the replayed day reads them: its fills, marks, risk guard, P&L, clock (`RecapClock`), position views and greeks, and its runner's quote calls (`replay=true&recapDate=` that day). | `live_quotes_latest` prices every live fill, mark, risk check, option chain and pulse. A past day's prices there would mark carried positions at that day's prices and could fire their stops. |
+| No desk replay starts while a vendor's recap feed runs (below). | The two would price each other's runs. |
 | Nothing a replay plays is stored: no `live_ticks` rows, no `live_bars` merges. | The day is already recorded. Played again through the feed path, its bars' volumes would double. |
 | The player is not a feed. It is outside `/api/Feeds`, the 15:30 feed stop, failover, Sentinel's feed rules and the close job's feed loop. | A feed is judged as live market data. A replay is not. |
 | Live runners pass over `isReplay` ticks; recap runners take only those. | The two share the Redis stream. |
@@ -63,15 +64,36 @@ on while the runner worked. A whole session at 1× takes 6 h 15 min, and at 10×
 | Endpoint | What |
 |---|---|
 | `GET /api/Replay/days` | The recorded days with each index's minutes and the day's size |
-| `GET /api/Replay/status` | `canStart`, `whyNot`, and the session: state, replay clock, progress, ticks sent, runs with their net |
-| `POST /api/Replay/start` | `{ date, speed, from, runIds }`; the runs must be running recap runs of that day |
+| `GET /api/Replay/status` | `canStart`, `whyNot`, and the session: state, replay clock, progress, ticks sent, runs with their net. An ended replay keeps where its clock stood and the ticks it sent |
+| `POST /api/Replay/start` | `{ date, speed, from, runIds }`; the runs must be running recap runs of that day. Refused while a queue plays or a vendor's recap feed runs |
 | `POST /api/Replay/stop`, `pause`, `resume` | The session |
-| `POST /api/Replay/queue`, `DELETE /api/Replay/queue` | Several days one after another with the AI Trader alone (see [AI Trader](ai_trader.md#scored-against-a-baseline)) |
+| `POST /api/Replay/queue`, `DELETE /api/Replay/queue` | Several days one after another with the AI Trader alone (see [The queue](#the-queue)) |
 | `GET /api/Replay/logs?lines=` | The player's log |
-| `POST /api/Replay/ticks` | The player's ticks for the book (Service or Admin, at most 2,000 a batch) |
+| `POST /api/Replay/ticks` | The player's ticks for the book (Service or Admin, at most 2,000 a batch). 409 when no replay is on, which stops the player |
 
-The session is kept in `system_settings` (`replay.session`). An API restart in the middle of a replay carries on:
-the player keeps running, and its next ticks refill the book. `ReplayMonitor` looks every 5 s.
+The session is kept in `system_settings` (`replay.session`), the queue in `replay.queue`; each fits the setting's
+2,000 characters (names and reasons are kept short and plain, an error to 400 characters). An API restart in the
+middle of a replay carries on: the player keeps running, and its next ticks reopen the book and refill it (the
+ticks endpoint reopens it itself while the stored replay plays, so the player's first post is never refused for
+want of a book). `ReplayMonitor` looks every 5 s. Every change of the replay's state (the monitor's look, start,
+stop, queue, cancel, the book reopened) goes through one gate, so two of them never both start a day.
+
+## The queue
+
+`POST /api/Replay/queue {dates, speed}` plays up to 20 recorded days one after another, oldest first, each from the
+open, with the AI Trader alone; how it is scored is in [AI Trader](ai_trader.md#scored-against-a-baseline). The
+monitor starts each next day when all of these hold:
+
+- no replay is playing, and the last one ended at least 90 s ago;
+- not a trading day's 08:45 to NSE's close, and the day will be played out before the next trading morning's 08:45
+  (holidays from the calendar);
+- no vendor's recap feed is running;
+- the last day's player has exited.
+
+Otherwise the day waits; it is never skipped for any of these. A day with nothing recorded, or whose player does
+not start, is skipped with its reason. A day the queue started but had not written down when the API stopped is
+counted as played, not played again. While a queue plays, a manual start is refused, between its days too. `DELETE`
+ends the queue: no further day starts, and the day playing plays on unless it is stopped.
 
 ## The desk replay and a vendor's recap (TrueData)
 
@@ -81,30 +103,31 @@ on its own host (`replay.truedata.in`), and the TrueData feed run against it is 
 player's, but they go where a feed's go: into `live_quotes_latest`, and onto `market:ticks`. A recap run started for
 it (`session: recap`, `recap_date` that day) is priced from the live table.
 
-The two work one at a time without any switch:
+How the two are kept apart:
 
-- With no desk replay on, a recap run's quote calls (`/api/LiveData/latest?replay=true`, `latest/all?replay=true`)
-  fall back to the live table, so a vendor recap's runs read the vendor's prices as before.
-- With a desk replay on, only the recap runs of the replayed day are priced from the replay book. A recap run of any
-  other day is filled, marked and timed from the live table, as before.
+- **No desk replay starts while a recap feed runs.** The API reads it from the feeds' heartbeats: a vendor whose
+  newest heartbeat is `python-<key>-recap` is running one when that heartbeat is under a minute old, or, when it has
+  gone quiet (the API was down and refused it), while the feed still holds its Redis lock `feed:<key>:lock`
+  (`HeartbeatRecapFeeds`). A manual start is refused with why, `status` says so, and a queued day waits.
+- **A recap run's quote calls name the day they replay** (`/api/LiveData/latest?replay=true&recapDate=yyyy-mm-dd`,
+  `latest/all` the same). Only a run of the day the desk is replaying is answered from the replay book; a recap of
+  any other day (the vendor's, replaying today) reads the live table, with or without a desk replay on. A runner
+  started before runners sent the day asks with `replay=true` alone and is answered as before: from the book while
+  one is on.
+- With a desk replay on, only the recap runs of the replayed day are filled, marked and timed from the replay book. A
+  recap run of any other day is filled, marked and timed from the live table, as before.
 - Every recap runner drops a tick stamped outside its own replayed session, so the runs of one replay never trade the
   other's ticks when the two replay different days.
 
-**Do not run both at once.** Nothing stops it: the API does not refuse a desk replay while a vendor recap feed is
-running, and nothing stops a recap feed from starting during a desk replay. What goes wrong then:
-
-| Overlap | What happens |
-|---|---|
-| Different days (the usual case: the vendor replays today, the desk an earlier day) | The vendor recap's runners ask for quotes with `replay=true`, and while a desk replay is on that is answered from the desk replay's book, which holds another day's prices or none (404) for their contracts. Their fills and marks still come from the live table. Their decisions are then made on the wrong day's premiums: the test is spoilt. The desk replay's own runs are not affected. |
-| The same day (possible only after midnight: a vendor recap still playing past 00:00 while a desk replay of that day starts) | Both replays' ticks reach every recap run of that day, at two different clocks, and the vendor recap's runs are filled and marked from the desk replay's book. Both sets of results are spoilt. |
-
-Neither overlap reaches a live run: live runners pass over every `isReplay` tick, and a live run is never priced from
+What is still not prevented: nothing stops a vendor's recap feed from being started **during** a desk replay (the
+feed is switched to its recap host by hand). With the two replaying different days, the runs of each are still
+priced from their own day's prices, as above. With the same day (possible only after midnight: a vendor recap still
+playing past 00:00 while a desk replay of that day is on), both replays' ticks reach every recap run of that day at
+two different clocks, and the vendor recap's runs are priced from the desk replay's book: both sets of results are
+spoilt. Neither reaches a live run: live runners pass over every `isReplay` tick, and a live run is never priced from
 the replay book.
 
-What an operator should do: before starting a desk replay, look at the top bar and Data → Live feeds; if a recap feed
-is running ("NSE recap", "TrueData recap"), wait for it to end or stop that feed first. Before switching TrueData to
-its recap host, make sure Data → Replay shows no replay playing, and stop it if one is. If both did run, treat the
-recap runs of that evening as void and run them again.
+Before switching TrueData to its recap host, make sure Data → Replay shows no replay playing, and stop it if one is.
 
 ## Not in v1
 
@@ -112,4 +135,4 @@ recap runs of that evening as void and run them again.
 - Several days in a row with strategy runs: the queue plays the AI Trader alone.
 - Greeks on the replayed ticks themselves: the runners get none (the run page computes its own, see above).
 - The option chain page during a replay.
-- A guard against a desk replay and a vendor recap feed running at once (see above).
+- A guard on the feed's side: a vendor's recap feed can still be started during a desk replay (see above).
