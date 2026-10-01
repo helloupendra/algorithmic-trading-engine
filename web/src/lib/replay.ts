@@ -22,6 +22,7 @@
  */
 
 import { dayMonth, weekdayOf } from './desk'
+import { formatNumber } from './format'
 import type { StartStrategyRequest } from './types'
 
 // ---------- the rules the page shows ------------------------------------------------
@@ -409,15 +410,32 @@ export function clockText(s: Pick<ReplaySession, 'state' | 'date' | 'clockUtc' |
 
 /**
  * How far through 09:15–15:30 the replay is, 0..1: the API's progress, else
- * worked out from the clock; null when neither is known.
+ * worked out from the clock; null when neither is known. A replay that is
+ * over keeps no clock, and the API then answers 1 for a day played out and 0
+ * for any other: a replay stopped (or failed) at 13:00 is not 0% played, so
+ * with no clock its progress is not known.
  */
-export function replayProgress(s: Pick<ReplaySession, 'progress' | 'clockUtc' | 'clockIst'>): number | null {
-  if (s.progress != null) return s.progress
+export function replayProgress(s: Pick<ReplaySession, 'progress' | 'clockUtc' | 'clockIst'> & { state?: string }): number | null {
   const hms = replayClock(s)
+  if (!hms && s.state !== 'finished' && isEndedState(s.state)) return null
+  if (s.progress != null) return s.progress
   if (!hms) return null
   const [h, m, sec] = hms.split(':').map(Number)
   const t = h * 3600 + m * 60 + sec
   return Math.min(1, Math.max(0, (t - SESSION_OPEN_SEC) / (SESSION_CLOSE_SEC - SESSION_OPEN_SEC)))
+}
+
+/**
+ * "1,23,456 ticks sent"; null when there is nothing true to say. The API
+ * counts the ticks only while the player runs and keeps no count once the
+ * replay is over: it then answers 0, which is not a count, so an ended
+ * replay's 0 is left out rather than shown as "0 ticks sent".
+ */
+export function ticksSentText(s: Pick<ReplaySession, 'state' | 'ticksSent'>): string | null {
+  const ended = isEndedState(s.state)
+  if (s.ticksSent == null) return ended ? null : 'ticks sent not known'
+  if (s.ticksSent === 0 && ended) return null
+  return `${formatNumber(s.ticksSent)} ${s.ticksSent === 1 ? 'tick' : 'ticks'} sent`
 }
 
 /** "42%": whole percent, rounded down, so 100% means the day is played out; '—' when not known. */

@@ -70,6 +70,7 @@ import {
   shortDay,
   speedLabel,
   speedNote,
+  ticksSentText,
 } from '../../lib/replay'
 import type {
   LaunchOutcome,
@@ -83,7 +84,7 @@ import type {
 } from '../../lib/replay'
 import { blockedUnderlyings } from '../../lib/strategyList'
 import { runStatusTone } from '../../lib/runHistory'
-import { formatDateTime, formatInrSigned, formatNumber, formatTime, pnlClass } from '../../lib/format'
+import { formatDateTime, formatInrSigned, formatTime, pnlClass } from '../../lib/format'
 import { formatBytes } from '../../lib/system'
 import { prefersReducedMotion } from '../../lib/motion'
 import { Badge, InlineError, Loading, Panel } from '../../components/ui'
@@ -231,6 +232,7 @@ function SessionPanel({ session, onAnother }: { session: ReplaySession; onAnothe
   const ended = isEndedState(session.state)
   const state = replayStateLabel(session.state)
   const progress = replayProgress(session)
+  const ticks = ticksSentText(session)
   const barTone =
     session.state === 'failed' ? 'progress__bar--neg' : session.state === 'paused' ? 'progress__bar--warn' : session.state === 'finished' ? 'progress__bar--pos' : ''
   const total = replayNetTotal(session.runs)
@@ -281,7 +283,7 @@ function SessionPanel({ session, onAnother }: { session: ReplaySession; onAnothe
         </span>
         <span>from {session.fromIst}</span>
         <span>speed {speedLabel(session.speed)}</span>
-        <span>{session.ticksSent == null ? 'ticks sent not known' : `${formatNumber(session.ticksSent)} ticks sent`}</span>
+        {ticks && <span>{ticks}</span>}
         {session.startedUtc && (
           <span title={fullIst(session.startedUtc)}>
             started {formatTime(session.startedUtc)} IST{session.startedBy ? ` by ${session.startedBy}` : ''}

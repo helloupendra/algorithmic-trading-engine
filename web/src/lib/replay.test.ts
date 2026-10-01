@@ -42,6 +42,7 @@ import {
   speedLabel,
   speedNote,
   startedRunId,
+  ticksSentText,
 } from './replay'
 import type { ReplayDay, ReplayRunDraft, ReplayRunPlan, ReplayStrategyInfo } from './replay'
 
@@ -281,6 +282,28 @@ describe('progress', () => {
     expect(replayProgress({ progress: null, clockUtc: null, clockIst: '09:00:00' })).toBe(0)
     expect(replayProgress({ progress: null, clockUtc: null, clockIst: '15:40:00' })).toBe(1)
     expect(replayProgress({ progress: null, clockUtc: null, clockIst: null })).toBeNull()
+  })
+
+  // MarketReplayService.ViewAsync for a replay that is over: the player's status is no longer read and the
+  // book is cleared, so there is no clock, the progress is 1 when played out and 0 otherwise, and 0 ticks.
+  const over = (state: string) => readReplaySession(session({ state, clockUtc: null, clockIst: null, progress: state === 'finished' ? 1 : 0, ticksSent: 0, endedUtc: '2026-10-01T14:02:00Z' }))!
+
+  it('does not read a stopped or failed replay with no clock as 0% played', () => {
+    expect(replayProgress(over('stopped'))).toBeNull()
+    expect(replayProgress(over('failed'))).toBeNull()
+    expect(progressText(replayProgress(over('stopped')))).toBe('—')
+    expect(replayProgress(over('finished'))).toBe(1)
+    // While it runs, a 0 with no clock yet is true: nothing has played.
+    expect(replayProgress({ state: 'starting', progress: 0, clockUtc: null, clockIst: null })).toBe(0)
+  })
+
+  it('counts the ticks only while the player runs: an ended replay\'s 0 is not a count', () => {
+    expect(ticksSentText(readReplaySession(session())!)).toBe('1,23,456 ticks sent')
+    expect(ticksSentText({ state: 'waiting', ticksSent: 0 })).toBe('0 ticks sent')
+    expect(ticksSentText({ state: 'playing', ticksSent: null })).toBe('ticks sent not known')
+    expect(ticksSentText(over('finished'))).toBeNull()
+    expect(ticksSentText(over('stopped'))).toBeNull()
+    expect(ticksSentText({ state: 'finished', ticksSent: 98_000 })).toBe('98,000 ticks sent')
   })
 
   it('writes whole percent, rounded down, so 100% means played out', () => {
