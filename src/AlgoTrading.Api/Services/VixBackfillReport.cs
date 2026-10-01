@@ -26,6 +26,15 @@ namespace AlgoTrading.Api.Services;
 /// is logged, not sent: the forecasts read it, and the vendors are asked for the
 /// rest again the next night.
 /// </para>
+/// <para>
+/// Telegram reads the message as HTML and refuses the whole of it for a bare
+/// <c>&lt;</c> or <c>&amp;</c>, or past 4,096 characters, and the sender has no
+/// plain-text retry; the day is still marked as sent. A vendor's error can be
+/// its proxy's HTML error page (FYERS puts the body of a failed answer in its
+/// error), so the message is escaped, each vendor's answer is cut short, and
+/// past ten days the gap days are listed by date alone. The log keeps the same
+/// text unescaped, and the vendors' full answers are in the check's info line.
+/// </para>
 /// </remarks>
 public static class VixBackfillReport
 {
@@ -34,6 +43,15 @@ public static class VixBackfillReport
 
     // The vendors' answers in a message: enough to see who refused and why.
     private const int MaxFetchLines = 6;
+
+    // One vendor's answer in a message, cut to this: an error can carry a whole HTML page.
+    private const int MaxFetchChars = 200;
+
+    // Gap days listed with their bar counts; past these, by date alone.
+    private const int DaysInDetail = 10;
+
+    // An exception's text in the "check failed" message.
+    private const int MaxErrorChars = 300;
 
     public static async Task ReportAsync(
         VixBackfillResult result,
@@ -76,7 +94,7 @@ public static class VixBackfillReport
                 NotificationCategory.System,
                 NotificationSeverity.Error,
                 GapTitle,
-                message,
+                Html(message),
                 symbol: VixBackfillPlan.Symbol,
                 cancellationToken: cancellationToken);
         }
@@ -102,18 +120,26 @@ public static class VixBackfillReport
         }
     }
 
-    /// <summary>The System message for gap days: which, how short, who was asked, and what to do.</summary>
+    /// <summary>
+    /// The System message for gap days, as plain text: which, how short, who was
+    /// asked, and what to do. Bounded whatever the window and the vendors said;
+    /// <see cref="Html"/> it before it goes to Telegram.
+    /// </summary>
     public static string GapMessage(VixBackfillResult result, IReadOnlyList<DateOnly> days)
     {
-        var detail = days.Select(day =>
+        var detail = days.Take(DaysInDetail).Select(day =>
         {
             var rows = result.After.Where(c => c.Day == day).OrderBy(c => c.Minutes).Select(c => $"{c.Minutes}m {c.Present}/{c.Expected}");
             return $"{Iso(day)} ({string.Join(", ", rows)})";
-        });
+        }).ToList();
+        if (days.Count > DaysInDetail)
+        {
+            detail.Add($"and {days.Count - DaysInDetail} more: {string.Join(", ", days.Skip(DaysInDetail).Select(Iso))}");
+        }
 
         string asked = result.Fetches.Count == 0
             ? "No vendor could be asked."
-            : "Asked: " + string.Join("; ", result.Fetches.Take(MaxFetchLines))
+            : "Asked: " + string.Join("; ", result.Fetches.Take(MaxFetchLines).Select(f => Clip(f, MaxFetchChars)))
               + (result.Fetches.Count > MaxFetchLines ? $"; and {result.Fetches.Count - MaxFetchLines} more" : string.Empty) + ".";
 
         return $"India VIX has a gap the nightly backfill could not fill: {string.Join("; ", detail)}. "
@@ -122,6 +148,17 @@ public static class VixBackfillReport
                + "If a day was an exchange holiday, the holiday calendar is missing it. "
                + "The check asks again after every trading day's archive; to fill by hand, see \"India VIX\" in docs/modules/data_module.md.";
     }
+
+    /// <summary>The System message when the check itself threw, escaped for Telegram.</summary>
+    public static string FailedMessage(DateOnly through, Exception error)
+        => Html($"The nightly India VIX check through {Iso(through)} stopped: {Clip(IncidentRedaction.Mask(error.Message), MaxErrorChars)}. "
+                + "A VIX gap may be going unfilled; the check runs again after the next trading day's archive (23:50 IST, or 00:15 while MCX closes at 23:55). "
+                + "See NightlyArchiveService in logs/api.log.");
+
+    /// <summary>Plain text for a message Telegram reads as HTML.</summary>
+    public static string Html(string text) => text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
+
+    private static string Clip(string text, int max) => text.Length <= max ? text : string.Concat(text.AsSpan(0, max - 1), "…");
 
     private static string Iso(DateOnly day) => day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 }
