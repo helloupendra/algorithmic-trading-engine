@@ -222,18 +222,22 @@ public sealed class AiTraderAgent(
         }
 
         await SaveAsync(row, cancellationToken);
-        if (verdict.Allowed && mode != AiTraderModes.Live) await ApplyToShadowAsync(row, plan, contract, cancellationToken);
+        if (verdict.Allowed && mode != AiTraderModes.Live) await ApplyToShadowAsync(row, plan, contract, verdict, cancellationToken);
         return row;
     }
 
-    /// <summary>An allowed plan in shadow or replay: a buy opens in the shadow book, an exit closes there; strategy starts and stops are recorded only.</summary>
-    private async Task ApplyToShadowAsync(AiTraderDecision row, AiTraderPlan plan, AiTraderContract? contract, CancellationToken cancellationToken)
+    /// <summary>
+    /// An allowed plan in shadow or replay: a buy opens in the shadow book, an exit closes the position the rules
+    /// resolved (named, or the only one on its underlying and option); strategy starts and stops are recorded only.
+    /// </summary>
+    private async Task ApplyToShadowAsync(AiTraderDecision row, AiTraderPlan plan, AiTraderContract? contract, AiTraderVerdict verdict,
+        CancellationToken cancellationToken)
     {
         object? result = plan.Action switch
         {
             AiTraderPlan.Buy when contract is not null =>
                 new { contract, shadowPositionId = (await shadow.OpenAsync(row, plan, contract, cancellationToken)).Id },
-            AiTraderPlan.Exit when plan.PositionId is long id =>
+            AiTraderPlan.Exit when (verdict.PositionId ?? plan.PositionId) is long id =>
                 await shadow.ExitAsync(id, row.ReplaySessionId, row.ClockUtc, cancellationToken) is { } closed
                     ? new { shadowPositionId = closed.Id, closed.ExitPrice, closed.Charges, closed.NetPnl }
                     : new { shadowPositionId = id, note = "It was no longer open: closed by its stop, target or the close before this look." },

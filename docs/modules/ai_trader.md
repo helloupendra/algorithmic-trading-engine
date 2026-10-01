@@ -43,6 +43,7 @@ Every 10 minutes from 09:20 to 15:00 IST on trading days, while it is switched o
 | Daily loss | At −₹10,000 net of charges, nothing new opens that day |
 | Hours | New positions 09:20–14:45 IST on trading days |
 | Trades | At most 10 a day |
+| Exits | Only its own open positions: the one the plan names by `positionId`, else the only open one on the plan's underlying (and option, when given); two or none are refused with the open positions' ids |
 | Strategies | Only GhostTangentCrossings and ChainFlowBuy, at most 3 running, in its own account |
 | Kill switch | The desk's kill switch stops anything new |
 

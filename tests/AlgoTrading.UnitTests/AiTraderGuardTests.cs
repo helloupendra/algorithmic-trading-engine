@@ -127,6 +127,44 @@ public class AiTraderGuardTests
     }
 
     [Fact]
+    public void An_exit_naming_no_position_closes_the_only_open_one_on_its_underlying_and_option()
+    {
+        // Replay #4 of 30 Sep, 13:56: the model named the contract, not the position, while it held one NIFTY CE.
+        var book = Book(open: [Open(2, "NSE:NIFTY26O0622700CE"), Open(3, "NSE:BANKNIFTY26O2851500CE"), Open(4, "NSE:NIFTY26O0622500PE")]);
+        var exit = new AiTraderPlan(AiTraderPlan.Exit, "NIFTY", "CE", "ATM-1", null, null, null, null, null, null, "The move stalled.", 0.5);
+
+        var verdict = AiTraderGuard.Check(exit, book, Rules);
+
+        Assert.True(verdict.Allowed, verdict.Why);
+        Assert.Equal(2L, verdict.PositionId);
+        Assert.Equal(3L, AiTraderGuard.Check(exit with { Underlying = "BANKNIFTY" }, book, Rules).PositionId);
+        Assert.Equal(4L, AiTraderGuard.Check(exit with { Option = "PE" }, book, Rules).PositionId);
+        // Named, the position it names.
+        Assert.Equal(4L, AiTraderGuard.Check(exit with { PositionId = 4 }, book, Rules).PositionId);
+    }
+
+    [Fact]
+    public void An_exit_naming_no_position_is_refused_when_none_or_several_match_and_says_which_are_open()
+    {
+        var book = Book(open: [Open(2, "NSE:NIFTY26O0622700CE"), Open(5, "NSE:NIFTY26O0622750CE"), Open(6, "NSE:NIFTYNXT5026O0668000CE")]);
+        var exit = new AiTraderPlan(AiTraderPlan.Exit, "NIFTY", "CE", null, null, null, null, null, null, null, "Out.", 0.5);
+
+        var several = AiTraderGuard.Check(exit, book, Rules);
+        Refused("own-book", several);
+        Assert.Contains("2 (NSE:NIFTY26O0622700CE)", several.Why);
+        Assert.Contains("5 (NSE:NIFTY26O0622750CE)", several.Why);
+
+        // NIFTY's prefix is not NIFTYNXT50's, nor FINNIFTY's: none of these is a NIFTY PE.
+        Refused("own-book", AiTraderGuard.Check(exit with { Option = "PE" }, book, Rules));
+        Refused("own-book", AiTraderGuard.Check(exit with { Underlying = "FINNIFTY" }, book, Rules));
+        Refused("own-book", AiTraderGuard.Check(exit with { Underlying = null, Option = null }, book, Rules));
+        // An underlying alone, with one match, is enough.
+        Assert.Equal(6L, AiTraderGuard.Check(exit with { Underlying = "NIFTYNXT50", Option = null }, book, Rules).PositionId);
+    }
+
+    private static AiTraderOpenPosition Open(long id, string symbol) => new(id, symbol, 1, 100m, 6_500m, null, 70m, 150m, 0m);
+
+    [Fact]
     public void It_may_start_only_listed_strategies_up_to_three_runs_and_stop_only_its_own()
     {
         var start = new AiTraderPlan(AiTraderPlan.StartStrategy, "NIFTY", null, null, null, null, null, "ChainFlowBuy", null, null, "Trend day.", 0.5);

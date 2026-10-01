@@ -138,7 +138,7 @@ public sealed class AiTraderShadowBook(TradingDbContext db, IAiTraderQuotes quot
         var positions = await Positions(day, replaySessionId).AsNoTracking().ToListAsync(cancellationToken);
         var open = positions.Where(p => p.ExitUtc is null)
             .Select(p => new AiTraderOpenPosition(p.Id, p.Symbol, p.Lots, p.EntryPrice, p.EntryPrice * p.Units, p.MarkPrice,
-                p.StopLoss, p.Target, Unrealized(p)))
+                p.StopLoss, p.Target, Unrealized(p), p.Underlying, p.OptionType))
             .ToList();
         return live with { NetToday = Net(positions), OpenedToday = positions.Count, Open = open, Runs = [] };
     }
