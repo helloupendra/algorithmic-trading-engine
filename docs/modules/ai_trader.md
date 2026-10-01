@@ -141,4 +141,5 @@ Top refusals: stop (2), hours (1), size (1)
 | `GET /api/AiTrader/scoreboard?take=` | Each replay and live shadow day against the baseline rule, with totals over full days |
 | `POST /api/Ai/agents/ai-trader/run` | One look now |
 
-Today shows its day in an "AI Trader" card.
+Today shows its day in an "AI Trader" card. Its last three decisions are worded as on the AI Trader page, with the
+option the plan named ("Buy NIFTY CE").

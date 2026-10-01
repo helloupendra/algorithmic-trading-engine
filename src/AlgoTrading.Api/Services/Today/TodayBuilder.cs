@@ -124,7 +124,7 @@ public sealed class TodayBuilder(
         var rows = await db.AiTraderDecisions.AsNoTracking()
             .Where(d => d.Day == today && d.ReplaySessionId == null)
             .OrderByDescending(d => d.ClockUtc)
-            .Select(d => new { d.ClockUtc, d.Mode, d.Action, d.Underlying, d.Allowed, d.Rule, d.Why, d.Reason })
+            .Select(d => new { d.ClockUtc, d.Mode, d.Action, d.Underlying, d.Allowed, d.Rule, d.Why, d.Reason, d.PlanJson })
             .ToListAsync(cancellationToken);
         if (status != "on" && rows.Count == 0) return null;
         var shadow = await db.AiTraderShadowPositions.AsNoTracking()
@@ -140,7 +140,7 @@ public sealed class TodayBuilder(
             rows.Count(r => !r.Allowed && r.Rule is not ("no-answer" or "unreadable")),
             rows.Count(r => r.Rule is "no-answer" or "unreadable"),
             rows.Take(3).Select(r => new TodayAiTraderDecision(Utc(r.ClockUtc)!.Value, r.Action, r.Underlying, r.Allowed, r.Rule,
-                Cut(string.IsNullOrWhiteSpace(r.Reason) ? r.Why : r.Reason, 200)!)).ToList(),
+                Cut(string.IsNullOrWhiteSpace(r.Reason) ? r.Why : r.Reason, 200)!, AiTraderController.OptionOf(r.PlanJson))).ToList(),
             shadow.Count, shadow.Count(p => p.ExitUtc is null), AiTraderShadowBook.Net(shadow));
     }
 
@@ -383,7 +383,9 @@ public sealed record TodayMarket(string Exchange, string State, DateTime? OpensU
 public sealed record TodayAiTrader(string Status, string Mode, int Decisions, int Actions, int Allowed, int Refused, int NoAnswer,
     IReadOnlyList<TodayAiTraderDecision> Latest, int ShadowPositions = 0, int ShadowOpen = 0, decimal ShadowNet = 0m);
 
-public sealed record TodayAiTraderDecision(DateTime AtUtc, string Action, string Underlying, bool Allowed, string Rule, string Reason);
+/// <summary>One of the AI Trader's latest decisions. <c>Option</c> is the CE or PE its plan named ("Buy NIFTY CE"), else null.</summary>
+public sealed record TodayAiTraderDecision(DateTime AtUtc, string Action, string Underlying, bool Allowed, string Rule, string Reason,
+    string? Option);
 
 public sealed record TodayAttention(string Level, string Kind, string Title, string? Detail, string? Link, DateTime? AtUtc);
 

@@ -103,15 +103,16 @@ public sealed class TodayTests
         using (var db = desk.Db())
         {
             new AiSettingsStore(db).SetAgentEnabledAsync(AiCatalog.AiTrader, true, "admin", null).GetAwaiter().GetResult();
-            void Add(int minutes, string action, bool allowed, string rule) => db.AiTraderDecisions.Add(new AiTraderDecision
+            void Add(int minutes, string action, bool allowed, string rule, string plan = "{}") => db.AiTraderDecisions.Add(new AiTraderDecision
             {
                 CreatedUtc = Now, ClockUtc = Now.AddMinutes(-minutes), Day = Day, Mode = AiTraderModes.Shadow, BriefHash = "h", Brief = "b",
                 Action = action, Underlying = action == "none" ? "" : "NIFTY", Allowed = allowed, Rule = rule, Reason = $"r{minutes}",
+                PlanJson = plan,
             });
             Add(40, "none", true, "ok");
-            Add(30, "buy", true, "ok");
-            Add(20, "buy", false, "stop");
-            Add(10, "", false, "no-answer");
+            Add(30, "buy", true, "ok", """{"action":"buy","underlying":"NIFTY","option":"CE","strike":"ATM","lots":1}""");
+            Add(20, "buy", false, "stop", """{"action":"buy","underlying":"NIFTY","option":"PE","strike":"ATM+1","lots":2}""");
+            Add(10, "", false, "no-answer", "not json");
             db.SaveChanges();
         }
 
@@ -120,6 +121,8 @@ public sealed class TodayTests
         var trader = today.AiTrader!;
         Assert.Equal(("on", "shadow", 4, 2, 1, 1, 1), (trader.Status, trader.Mode, trader.Decisions, trader.Actions, trader.Allowed, trader.Refused, trader.NoAnswer));
         Assert.Equal(new[] { "r10", "r20", "r30" }, trader.Latest.Select(d => d.Reason));
+        // The card says "Buy NIFTY PE", not "Buy NIFTY": the option comes from the plan; an unreadable one names none.
+        Assert.Equal(new string?[] { null, "PE", "CE" }, trader.Latest.Select(d => d.Option));
     }
 
     [Fact]

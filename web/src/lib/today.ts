@@ -167,6 +167,8 @@ export interface TodayAiTraderDecision {
   /** none, buy, exit, start_strategy, stop_strategy; '' when the answer could not be read. */
   action: string
   underlying: string
+  /** CE or PE when the plan named one ("Buy NIFTY CE"); null otherwise, or from an older API. */
+  option: string | null
   /** True only when the API said so. */
   allowed: boolean
   /** "ok", the rule a plan broke, "no-answer" or "unreadable". */
@@ -408,10 +410,12 @@ function readSystem(s: Record<string, unknown>): TodaySystem {
 }
 
 function readAiTraderDecision(d: Record<string, unknown>): TodayAiTraderDecision {
+  const option = words(d.option).toUpperCase()
   return {
     atUtc: instant(d.atUtc),
     action: words(d.action).toLowerCase(),
     underlying: words(d.underlying).toUpperCase(),
+    option: option === 'CE' || option === 'PE' ? option : null,
     allowed: d.allowed === true,
     rule: words(d.rule).toLowerCase(),
     reason: words(d.reason),
