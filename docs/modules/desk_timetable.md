@@ -31,7 +31,7 @@ Two words need care:
 | 08:50 | Forecasts issued | trading days | `ForecastScheduler.cs` |
 | 08:55 | Sentinel's before-the-open checkup | trading days | `slots.py` |
 | 15:45 | AI Trade Reviewer may start on stopped runs (off until switched on) | when runs stopped | `Ai:ReviewAfterIst`, `TradeReviewerAgent.cs` |
-| from 15:45 | The AI's one Telegram digest: the AI Trader's day and the run reviews. After the NSE close and 15:45; while reviews are still owed it waits, at most until 17:45. Once a day. | trading days; other days only if the AI Trader looked | `Ai:ReviewDigestToTelegram`, `AiDailyDigest.cs` |
+| from 15:45 | The AI's one Telegram digest: the AI Trader's day and the run reviews. After the NSE close and 15:45; while reviews are still owed it waits, at most until 17:45. Once a day. A day it missed (the API down from the close to midnight) is sent on the API's next minute, titled "(sent late)"; only the latest missed day, older ones as one line. | trading days; other days only if the AI Trader looked | `Ai:ReviewDigestToTelegram`, `AiDailyDigest.cs` |
 | 15:50 | Forecasts scored | trading days | `ForecastScheduler.cs` |
 | 16:00 | Sentinel's after-the-close checkup | trading days | `slots.py` |
 | 16:40 | AI Assistant check (the daily golden test) | trading days | `Ai:AssistantCheckAfterIst`, `AssistantCheckAgent.cs` |

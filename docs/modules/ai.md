@@ -349,9 +349,26 @@ When it goes:
 - On a day with no NSE session (the exchange calendar, not the weekday), only if the AI Trader looked that day.
 - A section with nothing to say is left out; with nothing at all, nothing is sent.
 
-It is a scheduled job, not an agent: it asks no model and runs whichever agents are on. The time it was sent is kept in
-`system_settings` (`ai.reviewer.lastDigestUtc`) before it goes, so neither a restart nor the next minute sends a
-second one that day.
+It is a scheduled job, not an agent: it asks no model and runs whichever agents are on. Before it goes, the time it
+was sent (`ai.reviewer.lastDigestUtc`) and the day it was for (`ai.digest.lastDay`) are kept in `system_settings`, so
+neither a restart nor the next minute sends a second one for that day. A day found with nothing to say once due is
+kept too (`ai.digest.lastEmptyDay`); a look later that evening still goes that day.
+
+**A missed day is sent late.** Until 1 Oct, if the API was down from the close until midnight, that day's digest was
+never sent, and the next one covered only its own day. Now, on the next minute the scheduler runs (90 seconds after a
+start):
+- It looks back up to seven days for days that should have had a digest (an NSE trading day, or a day the AI Trader
+  looked), after the last one sent or found empty.
+- The latest of them is sent then, titled with its day and **"(sent late)"**, for example "AI day, Wed 30 Sep (sent
+  late)". It carries that day's AI Trader section and the reviews written since the last digest. It does not wait for
+  reviews still owed; it says how many.
+- Older missed days are not sent: they are one line in it, "The digests for Mon 28 Sep–Tue 29 Sep were missed."
+- It is kept like any digest, so it never goes twice. The day it is sent on still gets its own digest after its close.
+  If the API comes back after that close, the late one goes first and that day's own the next minute.
+- With nothing to say (no AI Trader look or position that day, no review written, no older day missed) nothing is
+  sent, and the day is kept as empty. Reviews still owed are not on their own a reason to send one late: an MCX run
+  stopped at the close is still owed after midnight.
+- With no digest ever sent or found empty, there is nothing to catch up from, and nothing goes.
 
 Endpoints, admin only:
 
