@@ -178,7 +178,8 @@ public class AiTraderAgentTests
 
     // ---------- helpers ----------
 
-    internal static (AiTraderAgent Agent, Services Ai, FakeBriefs Briefs, FakeQuotes Quotes) Agent(IMarketReplayBook? book = null, ReplaySessionState? session = null)
+    internal static (AiTraderAgent Agent, Services Ai, FakeBriefs Briefs, FakeQuotes Quotes) Agent(IMarketReplayBook? book = null, ReplaySessionState? session = null,
+        IBaselineMarket? baselineMarket = null)
     {
         var ai = Build(Settings());
         ai.Store.SetAgentEnabledAsync(AiCatalog.AiTrader, true, "upendra", null).GetAwaiter().GetResult();
@@ -186,7 +187,8 @@ public class AiTraderAgentTests
         var quotes = new FakeQuotes();
         var sessions = new MarketSessionService(new OpenCalendar());
         var agent = new AiTraderAgent(ai.Db, ai.Gateway, briefs, new FakeBooks(sessions), new AiTraderShadowBook(ai.Db, quotes, sessions), sessions,
-            new FakeReplays(session), ai.Options, NullLogger<AiTraderAgent>.Instance, book);
+            new FakeReplays(session), ai.Options, NullLogger<AiTraderAgent>.Instance, book,
+            baselines: baselineMarket is null ? null : new AiTraderBaselineScorer(ai.Db, baselineMarket, sessions));
         return (agent, ai, briefs, quotes);
     }
 

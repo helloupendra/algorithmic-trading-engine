@@ -124,6 +124,37 @@ public class AiTraderBaselineTests
         Assert.Equal(1, await ai.Db.AiTraderBaselines.CountAsync());
     }
 
+    [Fact]
+    public async Task A_day_that_fails_to_score_waits_an_hour_and_never_holds_up_the_days_before_it()
+    {
+        // Days of their own: what failed is remembered for the process.
+        var failing = new DateOnly(2026, 9, 25);
+        var older = new DateOnly(2026, 9, 24);
+        var market = new FailingMarket(failing);
+        var (agent, ai, _, _) = AiTraderAgentTests.Agent(baselineMarket: market);
+        foreach (var day in new[] { failing, older })
+        {
+            ai.Db.AiTraderDecisions.Add(new AiTraderDecision
+            {
+                CreatedUtc = DateTime.UtcNow, ClockUtc = IstTime.FromIst(day.ToDateTime(new TimeOnly(11, 0))), Day = day, Mode = AiTraderModes.Shadow,
+                Action = AiTraderPlan.None, Rule = "ok", Allowed = true,
+            });
+        }
+
+        await ai.Db.SaveChangesAsync();
+        var saturday = IstTime.FromIst(new DateTime(2026, 10, 3, 19, 0, 0));
+
+        await agent.RunOnceAsync(saturday, default);                  // the newest day fails
+        await agent.RunOnceAsync(saturday.AddMinutes(1), default);    // the one before it is scored, not the failing one again
+        await agent.RunOnceAsync(saturday.AddMinutes(2), default);    // nothing left that may be tried
+
+        Assert.Equal(new[] { older }, await ai.Db.AiTraderBaselines.Select(b => b.Day).ToListAsync());
+        Assert.Equal(1, market.Calls[failing]);
+
+        await agent.RunOnceAsync(saturday.AddMinutes(62), default);   // an hour on, it is tried again
+        Assert.Equal(2, market.Calls[failing]);
+    }
+
     // ---------- the scoreboard ----------
 
     [Fact]
@@ -178,6 +209,23 @@ public class AiTraderBaselineTests
         public IReadOnlyList<AlgoTrading.Application.Providers.ProviderDescriptor> Descriptors => [];
 
         public AlgoTrading.Application.Providers.ProviderDescriptor? Find(string providerKey) => null;
+    }
+
+    /// <summary>Throws for one day's minutes (a query that always times out, say); any other day has no trend.</summary>
+    private sealed class FailingMarket(DateOnly failing) : IBaselineMarket
+    {
+        public Dictionary<DateOnly, int> Calls { get; } = [];
+
+        public Task<IReadOnlyList<LiveBarResponse>> MinutesBeforeAsync(string symbol, DateTime beforeUtc, CancellationToken cancellationToken)
+        {
+            var day = IstTime.DateOf(beforeUtc);
+            Calls[day] = Calls.GetValueOrDefault(day) + 1;
+            if (day == failing) throw new TimeoutException("The minutes query timed out.");
+            return Task.FromResult<IReadOnlyList<LiveBarResponse>>([]);
+        }
+
+        public Task<BaselineContract?> AtTheMoneyAsync(string underlying, string optionType, DateTime asOfUtc, CancellationToken cancellationToken) =>
+            Task.FromResult<BaselineContract?>(null);
     }
 
     private sealed class FakeMarket(IReadOnlyList<LiveBarResponse> minutes) : IBaselineMarket
