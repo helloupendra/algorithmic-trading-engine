@@ -180,6 +180,8 @@ builder.Services.AddSingleton<AlgoTrading.Api.Services.AiTelegram.TelegramAssist
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AlgoTrading.Api.Services.AiTelegram.TelegramAssistant>());
 // The agents' memory: the owner's notes, verdicts and corrections, and the check's lessons (AI → Memory).
 builder.Services.AddScoped<AlgoTrading.Api.Services.AgentMemory.AiMemoryService>();
+// The owner's one page (Today): trading, agents, learning, system and decisions at a glance.
+builder.Services.AddScoped<AlgoTrading.Api.Services.Today.TodayBuilder>();
 // New lessons reach the owner on Telegram with Approve and Reject.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AgentMemory.IAiLessonNotifier>(sp => sp.GetRequiredService<AlgoTrading.Api.Services.AiTelegram.TelegramAssistant>());
 
