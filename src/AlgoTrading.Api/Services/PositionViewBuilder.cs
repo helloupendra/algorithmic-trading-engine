@@ -237,7 +237,8 @@ public sealed class PositionViewBuilder
 
         // Greeks for the open legs, live views only. A finished replay has no
         // "now" for its open legs to be priced at, and today's quote would be
-        // a figure the backtest never saw.
+        // a figure the backtest never saw. A recap run of the day the market
+        // replay is playing is priced from the replay, on its clock.
         RunGreeksTotals? greeksTotals = null;
         if (useLiveQuotes)
         {
@@ -254,7 +255,7 @@ public sealed class PositionViewBuilder
 
             if (openLegs.Count > 0)
             {
-                var built = await _greeks.BuildAsync(openLegs, DateTime.UtcNow, cancellationToken);
+                var built = await _greeks.BuildAsync(openLegs, DateTime.UtcNow, cancellationToken, replayPriced);
                 foreach (var row in rows)
                 {
                     if (built.ByPosition.TryGetValue(row.Id, out var g)) row.Greeks = g;

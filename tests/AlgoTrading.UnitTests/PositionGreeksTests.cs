@@ -1,5 +1,6 @@
 using AlgoTrading.Api.Services;
 using AlgoTrading.Application.Interfaces;
+using AlgoTrading.Contracts.LiveData;
 using AlgoTrading.Contracts.Simulator;
 using AlgoTrading.Contracts.Strategies;
 using AlgoTrading.Domain.Entities;
@@ -243,6 +244,144 @@ public class PositionGreeksTests
         Assert.Null(built.Totals);
     }
 
+    // ------------------------------------------------------ market replay --
+
+    // A recap run of Fri 11 Sep, played back on 28 Sep. Its call expired on Tue 15 Sep.
+    private static readonly DateOnly ReplayedDay = new(2026, 9, 11);
+    private static readonly DateTime ReplayClock = new(2026, 9, 11, 5, 0, 0, DateTimeKind.Utc);  // 10:30 IST that day
+    private static readonly DateOnly ReplayedExpiry = new(2026, 9, 15);
+    private const string ReplayedCall = "NSE:NIFTY2691525000CE";
+
+    private static UpsertLiveTickRequest ReplayTick(string symbol, decimal ltp, DateTime stamp) => new()
+    {
+        Symbol = symbol, LastTradedPrice = ltp, ExchangeTimestampUtc = stamp, SourceKey = "desk-replay", IsReplay = true
+    };
+
+    /// <summary>A book replaying 11 Sep at 10:30, with NIFTY at 25,000 and the 25000 CE at 95.</summary>
+    private static MarketReplayBook ReplayAtTenThirty(bool withCall = true)
+    {
+        var book = new MarketReplayBook();
+        book.Begin(ReplayedDay);
+        var ticks = new List<UpsertLiveTickRequest> { ReplayTick(UnderlyingCatalog.SpotSymbolFor("NIFTY"), 25000m, ReplayClock) };
+        if (withCall) ticks.Add(ReplayTick(ReplayedCall, 95m, ReplayClock.AddSeconds(-20)));
+        book.Apply(ticks);
+        return book;
+    }
+
+    /// <summary>Today's live desk: a fresh quote of the same contract with greeks of its own, and NIFTY at 26,000.</summary>
+    private static async Task AddLiveQuotesAsync(TradingDbContext db)
+    {
+        db.LiveQuotesLatest.Add(Quote(ReplayedCall, 140m, Now.AddSeconds(-2), iv: 0.2m, delta: 0.9m, gamma: 0.0001m, theta: -1m, vega: 0.5m));
+        db.LiveQuotesLatest.Add(Quote(UnderlyingCatalog.SpotSymbolFor("NIFTY"), 26000m, Now.AddSeconds(-1)));
+        await db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task A_recap_run_of_the_replayed_day_is_priced_from_the_replay_on_its_clock()
+    {
+        using var db = NewDb();
+        await AddLiveQuotesAsync(db);
+        var book = ReplayAtTenThirty();
+        var leg = Leg(1, ReplayedCall, "NIFTY", 25000m, "CE", ReplayedExpiry, "NSE", "CE", isLong: true, qty: 75, 95m, Now);
+
+        var built = await new PositionGreeksBuilder(db, Sessions(), book).BuildAsync(new[] { leg }, Now, CancellationToken.None, replayPriced: true);
+
+        // Computed from the replay's own prices (no greeks come with a replayed tick), with the time to
+        // expiry counted from the replayed moment: 11 Sep 10:30, four days before the expiry.
+        var expected = PositionGreeks.Compute(
+            isCall: true, optionPrice: 95m, optionAsOfUtc: ReplayClock.AddSeconds(-20),
+            underlyingPrice: 25000m, underlyingAsOfUtc: ReplayClock,
+            strike: 25000m, expiryUtc: ExpirySettler.ExpiryCloseUtc(Sessions(), "NSE", "FO", ReplayedExpiry),
+            onFuture: false)!;
+        var call = built.ByPosition[1];
+        Assert.Equal(PositionGreeks.SourceComputed, call.Source);
+        Assert.Equal(25000m, call.UnderlyingPrice);            // the replay's NIFTY, not today's 26,000
+        Assert.Equal(expected.IvPercent, call.IvPercent);
+        Assert.Equal(expected.Theta, call.Theta);
+        Assert.Equal(expected.Delta, call.Delta);
+        Assert.Equal(ReplayClock.AddSeconds(-20), call.AsOfUtc);
+        // Fresh on the replay's clock, though the wall clock is seventeen days on.
+        Assert.False(call.Stale);
+        Assert.True(call.ThetaRupeesPerDay < 0m);
+        Assert.Equal(0, built.Totals!.Unpriced);
+    }
+
+    [Fact]
+    public async Task A_live_run_reads_the_live_greeks_while_a_replay_plays()
+    {
+        using var db = NewDb();
+        await AddLiveQuotesAsync(db);
+        var book = ReplayAtTenThirty();
+        var leg = Leg(1, ReplayedCall, "NIFTY", 25000m, "CE", ReplayedExpiry, "NSE", "CE", isLong: true, qty: 75, 140m, Now.AddSeconds(-2));
+
+        var built = await new PositionGreeksBuilder(db, Sessions(), book).BuildAsync(new[] { leg }, Now, CancellationToken.None);
+
+        var call = built.ByPosition[1];
+        Assert.Equal(PositionGreeks.SourceFeed, call.Source);
+        Assert.Equal(0.9m, call.Delta);
+    }
+
+    [Fact]
+    public async Task A_replayed_quote_that_carries_greeks_is_read_as_it_is()
+    {
+        using var db = NewDb();
+        await AddLiveQuotesAsync(db);
+        var book = new FakeReplayBook(ReplayedDay, ReplayClock);
+        book.Quotes[ReplayedCall] = new LiveQuoteResponse
+        {
+            Symbol = ReplayedCall, LastTradedPrice = 95m, ExchangeTimestampUtc = ReplayClock.AddSeconds(-5),
+            ImpliedVolatility = 0.131m, Delta = 0.51m, Gamma = 0.0007m, Theta = -11.5m, Vega = 7.9m
+        };
+        var leg = Leg(1, ReplayedCall, "NIFTY", 25000m, "CE", ReplayedExpiry, "NSE", "CE", isLong: true, qty: 75, 95m, Now);
+
+        var built = await new PositionGreeksBuilder(db, Sessions(), book).BuildAsync(new[] { leg }, Now, CancellationToken.None, replayPriced: true);
+
+        var call = built.ByPosition[1];
+        Assert.Equal(PositionGreeks.SourceFeed, call.Source);
+        Assert.Equal((0.51m, -11.5m, (decimal?)13.1m), (call.Delta, call.Theta, call.IvPercent));
+        Assert.Equal(ReplayClock.AddSeconds(-5), call.AsOfUtc);
+        Assert.False(call.Stale);
+    }
+
+    [Fact]
+    public async Task A_replayed_leg_the_replay_has_no_price_for_is_counted_not_priced_off_its_stored_mark()
+    {
+        using var db = NewDb();
+        await AddLiveQuotesAsync(db);
+        var book = ReplayAtTenThirty(withCall: false);
+        var leg = Leg(1, ReplayedCall, "NIFTY", 25000m, "CE", ReplayedExpiry, "NSE", "CE", isLong: true, qty: 75, 95m, Now);
+
+        var built = await new PositionGreeksBuilder(db, Sessions(), book).BuildAsync(new[] { leg }, Now, CancellationToken.None, replayPriced: true);
+
+        Assert.Empty(built.ByPosition);
+    }
+
+    [Fact]
+    public async Task The_run_page_of_a_recap_run_shows_the_replays_greeks()
+    {
+        using var db = NewDb();
+        db.Instruments.Add(Instrument(ReplayedCall, "NSE", "FO", "CE", "NIFTY", 25000m, ReplayedExpiry));
+        await AddLiveQuotesAsync(db);
+        var book = ReplayAtTenThirty();
+
+        var view = new PositionViewBuilder(db, new FixedLots(75), new PositionGreeksBuilder(db, Sessions(), book), book);
+        var built = await view.BuildAsync<LivePositionResponse>(new[]
+        {
+            new PaperPositionResponse
+            {
+                Id = 1, SimulationRunId = 7, GroupId = "G1", Symbol = ReplayedCall, Direction = "LONG",
+                Quantity = 1, AveragePrice = 90m, LastMarkPrice = 95m, Status = "Open",
+                OpenedUtc = DateTime.UtcNow.AddMinutes(-5), UpdatedUtc = DateTime.UtcNow
+            }
+        }, useLiveQuotes: true, spotSymbol: UnderlyingCatalog.SpotSymbolFor("NIFTY"), CancellationToken.None, replayPriced: true);
+
+        var row = built.Positions.Single();
+        Assert.Equal(95m, row.Ltp);
+        Assert.Equal(PositionGreeks.SourceComputed, row.Greeks!.Source);
+        Assert.Equal(25000m, row.Greeks.UnderlyingPrice);
+        Assert.Equal(row.Greeks.ThetaRupeesPerDay, built.Greeks!.ThetaRupeesPerDay);
+    }
+
     // ------------------------------------------------- carried positions --
 
     [Fact]
@@ -332,6 +471,21 @@ public class PositionGreeksTests
         public bool HasYear(string exchange, int year) => true;
         public bool IsLoaded => true;
         public Task RefreshAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    /// <summary>A replay book whose quotes are set by hand: the real one keeps no greeks, as no replayed tick carries any.</summary>
+    private sealed class FakeReplayBook(DateOnly day, DateTime clockUtc) : IMarketReplayBook
+    {
+        public Dictionary<string, LiveQuoteResponse> Quotes { get; } = new(StringComparer.Ordinal);
+        public DateOnly? Day => day;
+        public DateTime? ClockUtc => clockUtc;
+        public void Begin(DateOnly replayed) { }
+        public void End() { }
+        public int Apply(IReadOnlyList<UpsertLiveTickRequest> ticks) => 0;
+        public LiveQuoteResponse? Quote(string symbol) => Quotes.GetValueOrDefault(symbol);
+        public IReadOnlyList<LiveQuoteResponse> AllQuotes() => Quotes.Values.ToList();
+        public LiveBarResponse? CurrentMinute(string symbol) => null;
+        public bool Prices(string? parametersJson) => true;
     }
 
     internal sealed class FixedLots(int lotSize) : ILotSizeResolver
