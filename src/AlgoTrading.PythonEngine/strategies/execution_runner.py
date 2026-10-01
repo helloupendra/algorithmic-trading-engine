@@ -58,7 +58,7 @@ from core.tick_age import tick_age_seconds
 from core.leg_pricing import DEFAULT_WAIT_SECONDS, resolve_leg_prices
 from core.warmup_source import load_warmup_bars
 import urllib3
-from typing import Callable, List, Dict, Any, Optional
+from typing import Callable, List, Dict, Any, Optional, Tuple
 
 from messaging.redis_subscriber import build_subscriber_from_env
 from strategies.base_strategy import (
@@ -80,6 +80,7 @@ from strategies.contract_selector import (  # noqa: F401
     contracts_for_requirements,
     describe_requirement,
     fallback_strike_step,
+    first_expiry_on_or_after,
     format_strike,
     map_contract,
     round_to_step,
@@ -166,20 +167,92 @@ def round_to_100(price: float) -> int:
     return int(round(price / 100.0) * 100)
 
 
-def resolve_strike_step(api: PlatformApiClient, underlying: str, expiry_date: str) -> float:
-    """Strike step derived from the option chain, else the per-underlying fallback."""
+def resolve_strike_step(api: PlatformApiClient, underlying: str, expiry_date: str,
+                        listed_fallback: bool = False) -> float:
+    """
+    Strike step derived from the option chain, else the per-underlying fallback.
+
+    `listed_fallback` is for a recap run. The chain endpoint lists enabled
+    contracts only, so a replay of a day whose expiry has since gone reads an
+    empty chain for it. The step is then taken from the contracts listed now
+    (the F&O inventory derives it from the next listed expiry by the same
+    rule), and only after that from the table of known steps.
+    """
     try:
         chain = api.get_option_chain(underlying, expiry_date)
         step = strike_step_from_chain(chain)
         if step:
             print(f"[{underlying}] Strike step {format_strike(step)} derived from {len(chain)} contracts of expiry {expiry_date}")
             return step
-        print(f"[{underlying}] WARN: option chain for {expiry_date} has too few strikes; using fallback step")
+        if not listed_fallback:
+            print(f"[{underlying}] WARN: option chain for {expiry_date} has too few strikes; using fallback step")
     except Exception as ex:
         print(f"[{underlying}] WARN: could not read option chain for strike step: {ex}")
+    if listed_fallback:
+        step = listed_strike_step(api, underlying)
+        if step:
+            print(f"[{underlying}] Strike step {format_strike(step)} from the contracts listed now: expiry "
+                  f"{expiry_date} is not in the chain (it has expired since the replayed day)")
+            return step
     step = fallback_strike_step(underlying)
     print(f"[{underlying}] Using fallback strike step {format_strike(step)}")
     return step
+
+
+def listed_strike_step(api: PlatformApiClient, underlying: str) -> Optional[float]:
+    """The underlying's strike step as the F&O inventory reports it, or None."""
+    key = (underlying or "").strip().upper()
+    try:
+        for row in api.get_fno_underlyings():
+            if (row.get("underlying") or "").strip().upper() == key:
+                step = float(row.get("strikeStep") or 0)
+                return round(step, 6) if step > 0 else None
+    except Exception as ex:
+        print(f"[{underlying}] WARN: could not read the strike step from the F&O inventory: {ex}")
+    return None
+
+
+def choose_expiry(api: PlatformApiClient, underlying: str, recap: Optional[RecapSession],
+                  today: Optional[str] = None) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """
+    The underlying's option expiries, and the one this run trades.
+
+    Live: the listed expiries, and the first on or after today's (UTC) date —
+    exactly what the runner always did.
+
+    Recap: the expiry that was nearest on the replayed day D, which has often
+    expired since. Expired contracts stay in the master only as disabled rows,
+    so the list includes history (those rows and the exchange calendar), and
+    the choice is the first expiry on or after D, never today's: a replay of
+    the 15th that traded today's weekly would be pricing contracts the 15th
+    never saw. None when no expiry on or after D is known; the caller stops
+    the run rather than guess one.
+    """
+    if recap is None:
+        expiries = api.get_expiries(underlying)
+        day = today or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    else:
+        expiries = api.get_expiries(underlying, include_history=True)
+        day = recap.day.isoformat()
+    return expiries, first_expiry_on_or_after(expiries, day)
+
+
+def recent_bars(api: PlatformApiClient, symbol: str, resolution: str, recap: Optional[RecapSession],
+                stamp: Any, take: int = 500) -> List[Dict[str, Any]]:
+    """
+    A tick's recent bars, newest first.
+
+    A recap run asks for the bars up to its tick's exchange stamp (`untilUtc`):
+    the API's newest bars are from after the replayed day, and a strategy shown
+    them would be trading with the close already known. The API bounds them
+    now, including the minute the replay is still building; `drop_future_bars`
+    stays as the safety net it always was, so an API that ignored the bound
+    would show the strategy nothing rather than the future.
+    """
+    if recap is None:
+        return api.get_recent_bars(symbol, resolution=resolution, take=take)
+    rows = api.get_recent_bars(symbol, resolution=resolution, take=take, until_utc=stamp)
+    return recap.drop_future_bars(rows, stamp)
 
 
 def resolve_lot_size(api: PlatformApiClient, underlying: str) -> Optional[int]:
@@ -355,7 +428,58 @@ def ensure_contracts_tracked(api: PlatformApiClient, contracts: Dict[str, Option
             print(f"WARN: failed to ensure watchlist for {contract.symbol}: {ex}")
 
 
-def resolve_leg_symbol(api: PlatformApiClient, symbol: str, expiry_date: str) -> str:
+# --- Market Replay ----------------------------------------------------------
+# A replayed day goes out on the same Redis stream as the live feed, marked
+# "isReplay": true. Each runner keeps its own kind: a live run never trades a
+# price from another day, and a recap run never trades tonight's (MCX, or a
+# feed someone left running).
+
+def is_replay_tick(tick: Dict[str, Any]) -> bool:
+    """True for a tick the Market Replay player published."""
+    flag = tick.get("isReplay") if isinstance(tick, dict) else None
+    if isinstance(flag, str):
+        return flag.strip().lower() in ("true", "1")
+    return flag is True or flag == 1
+
+
+def tick_is_for_this_run(tick: Dict[str, Any], recap_run: bool) -> bool:
+    """A recap run takes only replayed ticks; every other run takes only live ones."""
+    return is_replay_tick(tick) == bool(recap_run)
+
+
+#: Set by a recap runner when its tick loop starts; the replay player waits for
+#: every run of its session to set one (at most five minutes) before it plays.
+RECAP_LISTENING_KEY = "recap:listening:{run_id}"
+#: Longer than any replay of one day at 1x; it only has to outlive the session.
+RECAP_LISTENING_TTL_SECONDS = 6 * 60 * 60
+
+
+def announce_recap_listening(redis_client: Any, run_id: int, now: Optional[datetime] = None) -> bool:
+    """
+    Tell the replay player this run is reading the stream. Never fatal: a
+    runner that cannot say so still trades whatever arrives, and the player
+    gives up waiting after five minutes and plays anyway.
+    """
+    key = RECAP_LISTENING_KEY.format(run_id=run_id)
+    stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    try:
+        redis_client.set(key, stamp, ex=RECAP_LISTENING_TTL_SECONDS)
+        return True
+    except Exception as ex:
+        print(f"[RECAP] WARN: could not set {key} for the replay player: {ex}", flush=True)
+        return False
+
+
+def forget_recap_listening(redis_client: Any, run_id: int) -> None:
+    """A runner that has stopped is no longer listening; the key must not say otherwise."""
+    try:
+        redis_client.delete(RECAP_LISTENING_KEY.format(run_id=run_id))
+    except Exception:
+        pass
+
+
+def resolve_leg_symbol(api: PlatformApiClient, symbol: str, expiry_date: str,
+                       include_history: bool = False) -> str:
     """
     A strategy's logical symbol ("BANKNIFTY_PE_50300") as the broker's real one.
 
@@ -363,6 +487,9 @@ def resolve_leg_symbol(api: PlatformApiClient, symbol: str, expiry_date: str) ->
     that fails returns the input rather than raising: the leg then goes on with
     a symbol nothing can price, and the API refuses the group — which is the
     honest outcome, and a louder one than a runner that dies mid-signal.
+
+    `include_history` (a recap run) also finds a contract that has expired
+    since the replayed day.
     """
     if not symbol or "_" not in symbol or "NSE:" in symbol:
         return symbol
@@ -376,7 +503,10 @@ def resolve_leg_symbol(api: PlatformApiClient, symbol: str, expiry_date: str) ->
         # Fractional strikes (102.5) are legitimate on stock grids.
         strike_value = float(parts[2])
         strike = int(strike_value) if strike_value.is_integer() else strike_value
-        exact = api.get_exact_contract(underlying, expiry_date, strike, option_type)
+        if include_history:
+            exact = api.get_exact_contract(underlying, expiry_date, strike, option_type, include_history=True)
+        else:
+            exact = api.get_exact_contract(underlying, expiry_date, strike, option_type)
         if exact and "symbol" in exact:
             return exact["symbol"]
     except Exception as ex:
@@ -390,6 +520,7 @@ def enrich_signal_leg_prices(
     sig: StrategySignal,
     expiry_date: str,
     on_poll: Optional[Callable[[], None]] = None,
+    recap_run: bool = False,
 ) -> StrategySignal:
     """
     Give every leg a live price, subscribing them all before waiting for any.
@@ -409,24 +540,31 @@ def enrich_signal_leg_prices(
     A leg that stays unpriced is sent unpriced. Inventing a number here would
     defeat the API's refusal of unpriced opening groups, which is the thing
     standing between a missed trade and a fabricated one.
+
+    A recap run (`recap_run`) subscribes nothing: its prices come from the
+    replay, which plays every symbol the desk recorded that day, and the live
+    watchlist is not the replay's to change. Its quotes come from the replay
+    too (the client is in replay mode), and its logical symbols resolve to
+    contracts that may have expired since.
     """
     legs = []
     for leg in sig.legs:
         legs.append({
-            "symbol": resolve_leg_symbol(api, leg.get("symbol", ""), expiry_date),
+            "symbol": resolve_leg_symbol(api, leg.get("symbol", ""), expiry_date, include_history=recap_run),
             "side": leg.get("side", ""),
             "quantity": int(leg.get("quantity", 0)),
             "price": leg.get("price"),
         })
 
     # Subscribe everything before waiting for anything.
-    for symbol in {x["symbol"] for x in legs if x["symbol"]}:
-        try:
-            api.upsert_watchlist(symbol)
-        except Exception:
-            # Already tracked, or the API refused it — either way the wait below
-            # is what decides whether a price actually turns up.
-            pass
+    if not recap_run:
+        for symbol in {x["symbol"] for x in legs if x["symbol"]}:
+            try:
+                api.upsert_watchlist(symbol)
+            except Exception:
+                # Already tracked, or the API refused it — either way the wait below
+                # is what decides whether a price actually turns up.
+                pass
 
     closing = (sig.signal_type or "").upper() == "CLOSE_GROUP"
     budget = 0.0 if closing else SIGNAL_PRICE_WAIT_SECONDS
@@ -523,15 +661,25 @@ if __name__ == "__main__":
     if run_underlying:
         args.underlying = run_underlying
 
-    # A recap run trades a replay of a day the platform already holds. Only
-    # three things change, all inside RecapSession: warm-up stops the day
-    # before, bars later than the replay's clock are never shown, and the run
-    # ends at the replayed 15:30. An ordinary live run has recap = None and
-    # takes none of those branches.
+    # A recap run trades a replay of a day the platform already holds (the
+    # Market Replay player's ticks, marked isReplay). The clock is
+    # RecapSession's: warm-up stops the day before, bars later than the
+    # replay's clock are never shown, and the run ends at the replayed 15:30.
+    # Everything dated is read as of the replayed day too: the expiry, the
+    # contracts (expired ones included) and the quotes, which come from the
+    # replay. It takes only replayed ticks and leaves the live watchlist alone.
+    # An ordinary live run has recap = None and takes none of those branches;
+    # the one thing it does differently is pass over replayed ticks.
     recap = RecapSession.from_params(run_params)
+    # The replayed day, handed to the strategy on every input; None on a live run.
+    recap_date = recap.day.isoformat() if recap is not None else None
     if recap is not None:
-        print(f"[{args.underlying}] RECAP RUN — replaying {recap.day.isoformat()}; the strategy sees only "
-              f"prices up to the replay's clock and stops at its 15:30.", flush=True)
+        # Quotes from the API's ReplayBook (replay=true), never live_quotes_latest:
+        # the replay's prices and the live desk's must not mix in either direction.
+        api.replay = True
+        print(f"[{args.underlying}] RECAP RUN — replaying {recap_date}; the strategy sees only "
+              f"prices up to the replay's clock and stops at its 15:30. Quotes come from the replay, "
+              f"contracts and the expiry as of {recap_date}, and the live watchlist is left alone.", flush=True)
 
     strategy = strategies_map[args.strategy](run_params)
     state = strategy.initialize_state()
@@ -556,7 +704,9 @@ if __name__ == "__main__":
         flush=True,
     )
 
-    expiries = api.get_expiries(args.underlying)
+    # Live: the first listed expiry on or after today. Recap: the first on or
+    # after the replayed day, expired ones included (see choose_expiry).
+    expiries, expiry_date = choose_expiry(api, args.underlying, recap)
     if not expiries:
         # Non-zero exit with the cause on stderr: the API records the last stderr
         # line in the run's stop reason, so the card says why instead of
@@ -569,16 +719,25 @@ if __name__ == "__main__":
         print(message, file=sys.stderr, flush=True)
         sys.exit(2)
 
-    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    valid_expiries = [x for x in expiries if str(x["expiryDate"]) >= today_str]
+    if expiry_date is None:
+        if recap is None:
+            raise RuntimeError(f"No future expiries found for {args.underlying}")
+        # Nothing the platform knows expired on or after the replayed day: no
+        # listed contract, no expired row in the master, nothing in the exchange
+        # calendar. The run cannot know which contracts that day traded, and a
+        # later expiry would be a guess priced from another week, so it stops
+        # here with the reason, as a live run with no contracts does.
+        message = (
+            f"No {args.underlying} option expiry on or after the replayed day {recap_date} is known "
+            f"(listed, expired or in the exchange calendar); the recap run cannot choose its contracts."
+        )
+        print(f"[{args.underlying}] ERROR: {message}", flush=True)
+        print(message, file=sys.stderr, flush=True)
+        sys.exit(2)
 
-    if not valid_expiries:
-        raise RuntimeError(f"No future expiries found for {args.underlying}")
+    print(f"Using expiry: {expiry_date}" + (f" (as of the replayed day {recap_date})" if recap is not None else ""))
 
-    expiry_date = str(valid_expiries[0]["expiryDate"])
-    print(f"Using expiry: {expiry_date}")
-
-    strike_step = resolve_strike_step(api, args.underlying, expiry_date)
+    strike_step = resolve_strike_step(api, args.underlying, expiry_date, listed_fallback=recap is not None)
     lot_size = resolve_lot_size(api, args.underlying)
     print(f"[{args.underlying}] Lot size {lot_size if lot_size else 'unknown'} "
           f"(leg quantities are lots; the platform multiplies by this).")
@@ -594,7 +753,8 @@ if __name__ == "__main__":
         print(f"[CONFIG] signal filters active: {filter_config}", flush=True)
 
     contract_requirements = resolve_contract_requirements(strategy, run_params)
-    contract_cache = ExactContractCache(api, args.underlying, log=lambda line: print(line, flush=True))
+    contract_cache = ExactContractCache(api, args.underlying, log=lambda line: print(line, flush=True),
+                                        include_history=recap is not None)
     missing_contracts_logged: set = set()
     print(
         f"[CONFIG] contracts (strike step {format_strike(strike_step)}, expiry {expiry_date}): "
@@ -724,16 +884,21 @@ if __name__ == "__main__":
     keepalive_thread = threading.Thread(target=keepalive_loop, daemon=True)
     keepalive_thread.start()
 
-    print(f"[{args.underlying}] Ensuring {args.spot_symbol} is active in the live ingestor watchlist...")
-    try:
-        api.upsert_watchlist(args.spot_symbol, priority=100)
-    except requests.exceptions.HTTPError as ex:
-        if ex.response is not None and ex.response.status_code == 500:
-            pass # Suppress harmless 500 error
-        else:
+    if recap is not None:
+        # The replay plays the spot whatever the watchlist says, and re-activating
+        # a symbol on the live watchlist is not a replay's decision to make.
+        print(f"[{args.underlying}] Recap run: the live watchlist is left as it is.")
+    else:
+        print(f"[{args.underlying}] Ensuring {args.spot_symbol} is active in the live ingestor watchlist...")
+        try:
+            api.upsert_watchlist(args.spot_symbol, priority=100)
+        except requests.exceptions.HTTPError as ex:
+            if ex.response is not None and ex.response.status_code == 500:
+                pass # Suppress harmless 500 error
+            else:
+                print(f"[{args.underlying}] WARN: Could not upsert spot symbol {args.spot_symbol}: {ex}")
+        except Exception as ex:
             print(f"[{args.underlying}] WARN: Could not upsert spot symbol {args.spot_symbol}: {ex}")
-    except Exception as ex:
-        print(f"[{args.underlying}] WARN: Could not upsert spot symbol {args.spot_symbol}: {ex}")
 
     # Warmup replays historical bars through on_bar to rebuild whatever the
     # strategy derives from them. On a FRESH run that is exactly right.
@@ -816,7 +981,8 @@ if __name__ == "__main__":
                             lot_size=lot_size,
                             contracts={},
                             bars={req.resolution: {"index": list(cumulative_frames)}},
-                            metadata={"source": "warmup"}
+                            metadata={"source": "warmup"},
+                            recap_date=recap_date,
                         )
                         strategy.on_bar(state, inp)
                         
@@ -1041,7 +1207,7 @@ if __name__ == "__main__":
             SIGNALS_FILTERED.inc()
             return None
 
-        sig = enrich_signal_leg_prices(api, sig, expiry_date, on_poll=housekeeping)
+        sig = enrich_signal_leg_prices(api, sig, expiry_date, on_poll=housekeeping, recap_run=recap is not None)
         stamp_signal_metadata(sig, inp)
 
         print("ENRICHED SIGNAL LEGS:")
@@ -1073,6 +1239,20 @@ if __name__ == "__main__":
     recap_refused = [0]
     # Set once the replay has played to 15:30; the strategy is fed nothing after.
     recap_closed = [False]
+    # Ticks of the other kind passed over: replayed ones on a live run, live
+    # ones on a recap run (tick_is_for_this_run).
+    other_session_ticks = [0]
+
+    if recap is not None:
+        # Read from the stream's newest entry as of now, then say so: the
+        # player starts the replay as soon as every run of its session is
+        # listening, and its first ticks must not land before the first read.
+        if not subscriber.start_from_now():
+            print(f"[{args.underlying}] RECAP WARN: could not pin the stream position; reading from "
+                  f"the first read on.", flush=True)
+        if announce_recap_listening(redis_client, run_id):
+            print(f"[{args.underlying}] RECAP listening: set {RECAP_LISTENING_KEY.format(run_id=run_id)} "
+                  f"for the replay player.", flush=True)
 
     try:
         for tick in subscriber.listen_for_ticks(block_ms=1000, yield_idle=True):
@@ -1082,6 +1262,18 @@ if __name__ == "__main__":
                 continue
 
             try:
+                # The replay shares the live stream. A live run must never trade
+                # a replayed price, nor a recap run a live one.
+                if not tick_is_for_this_run(tick, recap is not None):
+                    other_session_ticks[0] += 1
+                    if other_session_ticks[0] in (1, 1000, 100000):
+                        kind = "live" if recap is not None else "replayed"
+                        print(f"[{args.underlying}] Passing over {kind} ticks: this is a "
+                              f"{'recap' if recap is not None else 'live'} run "
+                              f"({other_session_ticks[0]} so far).", flush=True)
+                    housekeeping()
+                    continue
+
                 if tick.get("symbol") != args.spot_symbol:
                     housekeeping()
                     continue
@@ -1107,7 +1299,8 @@ if __name__ == "__main__":
                         recap_closed[0] = True
                         print(f"[{args.underlying}] RECAP reached the replayed 15:30 — the strategy takes no "
                               f"further entries or exits. Stop run {args.run_id} from the console to square "
-                              f"off at the replay's closing prices.", flush=True)
+                              f"off at the replay's closing prices (a Market Replay stops its runs itself "
+                              f"when it ends).", flush=True)
                         housekeeping()
                         continue
                     if not recap.in_session(recap_stamp):
@@ -1163,8 +1356,11 @@ if __name__ == "__main__":
                 atm_ce_contract = contracts.get("atm_ce")
                 atm_pe_contract = contracts.get("atm_pe")
 
-                # Make sure the live ingestor will start tracking every one of them
-                ensure_contracts_tracked(api, contracts)
+                # Make sure the live ingestor will start tracking every one of them.
+                # Not on a recap run: the replay plays what the desk recorded that
+                # day, and the live watchlist is not the replay's to change.
+                if recap is None:
+                    ensure_contracts_tracked(api, contracts)
 
                 try:
                     bars_dict: Dict[str, Dict[str, List[BarFrame]]] = {}
@@ -1177,9 +1373,7 @@ if __name__ == "__main__":
                         symbol = bars_symbol_for(sym_type, contracts, args.spot_symbol)
                         if not symbol:
                             continue
-                        rows = api.get_recent_bars(symbol, resolution=res, take=500)
-                        if recap is not None:
-                            rows = recap.drop_future_bars(rows, timestamp_utc)
+                        rows = recent_bars(api, symbol, res, recap, timestamp_utc)
                         if rows:
                             bars_dict[res][sym_type] = bar_frames_from_rows(rows, symbol, res)
 
@@ -1200,6 +1394,7 @@ if __name__ == "__main__":
                     # The expiry the run trades, so the expiry-day filters judge the
                     # same way here as they do in a replay.
                     metadata={"source": "live-api", "tick": tick, "expiry_date": expiry_date},
+                    recap_date=recap_date,
                 )
 
                 # Every signal of the tick is booked, or the strategy's state
@@ -1227,6 +1422,8 @@ if __name__ == "__main__":
 
     finally:
         keepalive_running = False
+        if recap is not None:
+            forget_recap_listening(redis_client, run_id)
         try:
             # The runner exits only when its run stops (the API stops the run
             # when the runner exits), so nothing will read these keys again.

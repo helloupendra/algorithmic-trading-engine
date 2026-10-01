@@ -128,6 +128,14 @@ class StrategyInput:
     # Any extra context the runner wants to pass to the strategy.
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    # The replayed session ("yyyy-mm-dd") when this is a recap run: a live paper
+    # run (mode "LivePaper") trading a replay of a past day, whose clock is
+    # `timestamp_utc`, not the wall clock. None for a live run and for a
+    # backtest, which behave exactly as they did before the field existed. A
+    # strategy that reads anything dated itself (an expiry, the option chain)
+    # reads it as of this day and of `timestamp_utc`.
+    recap_date: Optional[str] = None
+
 
 @dataclass
 class StrategySignal:
