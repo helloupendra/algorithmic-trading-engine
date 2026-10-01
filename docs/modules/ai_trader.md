@@ -138,7 +138,7 @@ Top refusals: stop (2), hours (1), size (1)
 | Endpoint | What |
 |---|---|
 | `GET /api/AiTrader/status` | On or off, shadow or live, the limits, today's looks, the last three, today's shadow book |
-| `GET /api/AiTrader/decisions?day=&replay=&take=&beforeId=` | Decisions, newest first |
+| `GET /api/AiTrader/decisions?day=&replay=&take=&beforeId=` | Decisions, newest first by their clock (a day's list holds that day's replays too); `beforeId` goes on after that decision's clock and id |
 | `GET /api/AiTrader/decisions/{id}` | One decision with its brief, plan and result |
 | `GET /api/AiTrader/positions?day=&replay=` | The shadow book: a day's or a replay's positions, net after charges |
 | `GET /api/AiTrader/scoreboard?take=` | Each replay and live shadow day against the baseline rule, with totals over full days |
