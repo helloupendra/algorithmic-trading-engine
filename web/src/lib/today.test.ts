@@ -14,6 +14,7 @@ import {
   mostSeriousFirst,
   plural,
   readToday,
+  readTodayAiTrader,
   recapText,
   runStatus,
   sentinelState,
@@ -140,6 +141,27 @@ const body = {
     },
     { date: '2026-09-30', title: 'Gross daily-loss limit', decided: 'Not set yet', by: 'Claude (default)', status: 'open' },
   ],
+  aiTrader: {
+    status: 'on',
+    mode: 'shadow',
+    decisions: 12,
+    actions: 3,
+    allowed: 2,
+    refused: 1,
+    noAnswer: 1,
+    latest: [
+      {
+        atUtc: '2026-10-01T05:20:00Z',
+        action: 'buy',
+        underlying: 'NIFTY',
+        allowed: false,
+        rule: 'stop',
+        reason: 'NIFTY broke the morning high with PCR rising; buy the ATM call.',
+      },
+      { atUtc: '2026-10-01T05:10:00Z', action: 'none', underlying: '', allowed: true, rule: 'ok', reason: 'No clear move: VIX flat, range inside the ATR.' },
+      { atUtc: '2026-10-01T05:00:00Z', action: '', underlying: '', allowed: false, rule: 'no-answer', reason: 'Timed out after 90 s.' },
+    ],
+  },
 }
 
 describe('reading the day', () => {
@@ -154,6 +176,7 @@ describe('reading the day', () => {
     expect(d.learning).toEqual(body.learning)
     expect(d.system).toEqual(body.system)
     expect(d.decisions).toEqual(body.decisions)
+    expect(d.aiTrader).toEqual(body.aiTrader)
   })
 
   it('refuses a body that is not the day, rather than drawing seven empty sections', () => {
@@ -173,6 +196,47 @@ describe('reading the day', () => {
     // The rest still reads.
     expect(d.trading?.accounts).toHaveLength(2)
     expect(d.decisions).toHaveLength(2)
+  })
+
+  it("reads the AI Trader's day only when the body sends one: null until it has been on or has looked", () => {
+    const { aiTrader: _t, ...rest } = body
+    expect(readToday(rest).aiTrader).toBeNull()
+    expect(readToday({ ...body, aiTrader: null }).aiTrader).toBeNull()
+    expect(readToday({ ...body, aiTrader: 'on' }).aiTrader).toBeNull()
+    // The rest of the day reads the same without it.
+    expect(readToday(rest).attention).toHaveLength(3)
+  })
+
+  it("reads the AI Trader's day defensively: counts are counts, a verdict is allowed only in as many words", () => {
+    const t = readTodayAiTrader({
+      status: 'ON',
+      decisions: '12',
+      actions: -2,
+      allowed: 2.6,
+      latest: [
+        { atUtc: 'soon', action: 'BUY', underlying: 'nifty', allowed: 'true', rule: 'Size', reason: '  too big  ' },
+        'junk',
+        {},
+        { action: 'none' },
+        { action: 'none' },
+      ],
+    })
+    expect(t).toEqual({
+      status: 'on',
+      mode: null,
+      decisions: 0,
+      actions: 0,
+      allowed: 3,
+      refused: 0,
+      noAnswer: 0,
+      latest: [
+        { atUtc: null, action: 'buy', underlying: 'NIFTY', allowed: false, rule: 'size', reason: 'too big' },
+        { atUtc: null, action: 'none', underlying: '', allowed: false, rule: '', reason: '' },
+        { atUtc: null, action: 'none', underlying: '', allowed: false, rule: '', reason: '' },
+      ],
+    })
+    expect(readTodayAiTrader({})?.status).toBe('not known')
+    expect(readTodayAiTrader([])).toBeNull()
   })
 
   it('keeps an empty attention list empty: that is "nothing needs you"', () => {
@@ -339,6 +403,7 @@ describe('the words', () => {
     expect(attentionLevel('info')).toMatchObject({ label: 'Info', tone: 'neutral' })
     expect(attentionLevel('urgent')).toEqual({ key: null, label: 'Urgent', tone: 'neutral', rank: 4 })
     expect(attentionKind('check')).toBe('Check')
+    expect(attentionKind('ai-trader')).toBe('AI Trader')
     expect(attentionKind('weather')).toBe('Weather')
     expect(attentionKind('')).toBe('')
   })

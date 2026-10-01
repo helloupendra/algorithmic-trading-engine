@@ -67,6 +67,19 @@
 .rp-page .rp-rl__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 10px; margin-top: 3px; font-size: var(--fs-s); color: var(--text-3); }
 .rp-page .rp-rl__total .rp-rl__name { color: var(--text-2); }
 
+/* The AI Trader's decisions in this replay (the list itself is in ai/aiTrader.css). */
+.rp-page .rp-ai { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+.rp-page .rp-ai__h {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 650;
+}
+.rp-page .rp-ai__h .faint { font-size: var(--fs-s); font-weight: 500; }
+
 /* --- the recorded days ---------------------------------------------------------------- */
 .rp-page .rp-days .row-pick { white-space: nowrap; }
 .rp-page .rp-days .row-pick b { font-weight: 600; }
@@ -96,6 +109,22 @@
 }
 .rp-page .rp-run__notes { display: grid; gap: 2px; margin-top: 6px; }
 .rp-page .rp-add { justify-self: start; }
+.rp-page .rp-flush { margin: 0; }
+
+/* "AI Trader decides along": the box, its label, and the lines under it. */
+.rp-page .rp-ai-opt {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.rp-page .rp-ai-opt input { margin: 2px 0 0; }
+.rp-page .rp-ai-opt__text { display: grid; gap: 2px; min-width: 0; }
+.rp-page .rp-ai-opt__label { font-size: var(--fs); font-weight: 550; }
 
 /* A narrow column (a laptop's half, a phone): the strategy takes a line of its own. */
 @container (max-width: 520px) {

@@ -280,7 +280,10 @@ export function AiReportsPage() {
   const rows = useMemo(() => reports.data?.pages.flatMap((p) => p.reports) ?? [], [reports.data])
   const agentOptions = useMemo(() => {
     const m = new Map<string, string>()
-    for (const key of Object.keys(SCHEDULED_AGENTS)) m.set(key, agents.data?.agents.find((a) => a.key === key)?.name ?? AI_UTILITIES[key] ?? key)
+    // The AI Trader writes decisions, not reports: it is not one of this page's filters.
+    for (const [key, a] of Object.entries(SCHEDULED_AGENTS)) {
+      if (!a.decisions) m.set(key, agents.data?.agents.find((x) => x.key === key)?.name ?? AI_UTILITIES[key] ?? key)
+    }
     for (const r of rows) if (!m.has(r.agentKey)) m.set(r.agentKey, r.agentName || r.agentKey)
     if (filters.agent && !m.has(filters.agent)) m.set(filters.agent, filters.agent)
     return [...m.entries()]
@@ -393,12 +396,14 @@ export function AiReportsPage() {
           <div className="ai-chat__empty ai-reports-empty">
             <p className="ai-chat__lead">Nothing has been written yet. Each agent writes on its own schedule:</p>
             <dl className="ai-chat__facts">
-              {Object.entries(SCHEDULED_AGENTS).map(([key, a]) => (
-                <div key={key}>
-                  <dt>{nameOf(key)}</dt>
-                  <dd>{a.writes}</dd>
-                </div>
-              ))}
+              {Object.entries(SCHEDULED_AGENTS)
+                .filter(([, a]) => !a.decisions)
+                .map(([key, a]) => (
+                  <div key={key}>
+                    <dt>{nameOf(key)}</dt>
+                    <dd>{a.writes}</dd>
+                  </div>
+                ))}
             </dl>
             <p className="small-note ai-flush">
               An agent that is switched off writes nothing; one can be started by hand from the <Link to="/ai/agents">Agents</Link> tab.

@@ -649,13 +649,22 @@ export interface IncidentExplanation {
   confidence: number | null
 }
 
-/** The agents that run on a schedule and write reports, with what "Run now" may name. */
-export const SCHEDULED_AGENTS: Readonly<Record<string, { subject: 'run' | 'incident' | null; writes: string }>> = {
+/**
+ * The agents that run on a schedule, with what "Run now" may name and what
+ * they write: reports (the Reports tab), or for the AI Trader its own
+ * decisions (`decisions: true`), listed on its panel on AI → Agents.
+ */
+export const SCHEDULED_AGENTS: Readonly<Record<string, { subject: 'run' | 'incident' | null; writes: string; decisions?: true }>> = {
   'trade-reviewer': { subject: 'run', writes: 'after 15:45 IST, a review of each run stopped that day' },
   'news-analyst': { subject: null, writes: "every 10 minutes, a structured event for each unread news item or filing of the last 24 hours" },
   'incident-explainer': { subject: 'incident', writes: 'for each live incident of medium severity or worse, what happened, why and what to do' },
   'assistant-check': { subject: null, writes: "on weekdays after 16:40 IST, the Desk Assistant's graded answers to questions the code knows" },
   'assistant-exam': { subject: null, writes: 'on Sundays from 10:30 IST, the Desk Assistant\'s score on a fixed bank of questions about finished days' },
+  'ai-trader': {
+    subject: null,
+    writes: 'every 10 minutes 09:20–15:00 IST on trading days, a decision with the brief it read (shadow: nothing is placed)',
+    decisions: true,
+  },
 }
 
 /** The utilities that call models without being agents, by the key their calls and reports carry. */

@@ -27,6 +27,7 @@ import {
   replayStateLabel,
   replayUnderlyingsFor,
   setupError,
+  setupSummary,
   speedLabel,
   speedNote,
   startedRunId,
@@ -178,6 +179,12 @@ describe('readReplaySession', () => {
     expect(readReplaySession(session({ progress: 1.7 }))!.progress).toBe(1)
     expect(readReplaySession(session({ progress: -0.2 }))!.progress).toBe(0)
     expect(readReplaySession(session({ clockUtc: 'soon' }))!.clockUtc).toBeNull()
+  })
+
+  it('says the AI Trader is along only when the API says so in as many words', () => {
+    expect(readReplaySession(session())!.aiTrader).toBe(false)
+    expect(readReplaySession(session({ aiTrader: true }))!.aiTrader).toBe(true)
+    expect(readReplaySession(session({ aiTrader: 'true' }))!.aiTrader).toBe(false)
   })
 
   it('needs a date', () => {
@@ -372,7 +379,7 @@ describe('the set-up', () => {
   it('says what is missing, in the order the form reads', () => {
     expect(setupError(null, '09:15', [draft()], strategies)).toBe('Pick a recorded day first.')
     expect(setupError('2026-09-30', '16:00', [draft()], strategies)).toBe('Start time must be between 09:15 and 15:00 IST.')
-    expect(setupError('2026-09-30', '09:15', [], strategies)).toBe('Add at least one strategy run.')
+    expect(setupError('2026-09-30', '09:15', [], strategies)).toBe('Add at least one strategy run, or ask the AI Trader along.')
     expect(setupError('2026-09-30', '09:15', [draft({ strategyId: null })], strategies)).toBe('Run: pick a strategy.')
     expect(setupError('2026-09-30', '09:15', [draft({ underlying: 'CRUDEOIL' })], strategies)).toBe('Run: pick NIFTY, BANKNIFTY or SENSEX.')
     expect(setupError('2026-09-30', '09:15', [draft({ underlying: 'SENSEX' })], strategies)).toBe('Run: GhostNifty does not trade SENSEX.')
@@ -396,6 +403,29 @@ describe('the set-up', () => {
   it('refuses a run the API would refuse: the strategy already running there in that account', () => {
     expect(setupError('2026-09-30', '09:15', [draft({ ownerUserId: 9 })], strategies)).toBe(
       'Run: GhostNifty is already running on NIFTY in that account. Stop it first, or pick another account.',
+    )
+  })
+
+  it('needs no run with the AI Trader along, and says how to drop a blank one', () => {
+    expect(setupError('2026-09-30', '09:15', [], strategies, true)).toBeNull()
+    expect(setupError('2026-09-30', '09:15', [draft()], strategies, true)).toBeNull()
+    expect(setupError('2026-09-30', '09:15', [draft({ strategyId: null })], strategies, true)).toBe(
+      'Run: pick a strategy, or remove the run to replay with the AI Trader alone.',
+    )
+    // The day and the time still come first, and a run is still checked in full.
+    expect(setupError(null, '09:15', [], strategies, true)).toBe('Pick a recorded day first.')
+    expect(setupError('2026-09-30', '09:15', [draft({ lots: '0' })], strategies, true)).toBe('Run: lots must be a whole number of at least 1.')
+  })
+
+  it('says what Start does, with runs, with the AI Trader along, and with it alone', () => {
+    expect(setupSummary({ runs: 1, date: '2026-09-30', from: '09:15', speed: 1, aiTrader: false })).toBe(
+      'Starts the run as a recap of 30 Sep, then plays the day from 09:15 at 1×. Replay runs are tests: they stay out of every live total and are squared off when the replay ends.',
+    )
+    expect(setupSummary({ runs: 2, date: '2026-09-30', from: '10:00', speed: 5, aiTrader: true })).toBe(
+      'Starts the 2 runs as recaps of 30 Sep, then plays the day from 10:00 at 5×, with the AI Trader deciding along in shadow. Replay runs are tests: they stay out of every live total and are squared off when the replay ends.',
+    )
+    expect(setupSummary({ runs: 0, date: '2026-09-30', from: '09:15', speed: 2, aiTrader: true })).toBe(
+      'Plays 30 Sep from 09:15 at 2× with only the AI Trader deciding along, in shadow: it places nothing, and nothing enters a live total.',
     )
   })
 
@@ -468,6 +498,16 @@ describe('launchReplay', () => {
   it('counts an answer without a run id as a run that did not start', async () => {
     const out = await launchReplay([plan('A', 1)], replay, { startRun: async () => ({ message: 'ok' }), startReplay: vi.fn() })
     expect(out).toMatchObject({ ok: false, stage: 'run', failed: { label: 'A', error: 'The API did not answer with a run id.' }, started: [] })
+  })
+
+  it('asks for the replay at once, with no runs, when the AI Trader decides alone', async () => {
+    const startRun = vi.fn()
+    const startReplay = vi.fn(async () => session({ state: 'starting', runIds: [], runs: [], aiTrader: true }))
+    const out = await launchReplay([], { ...replay, aiTrader: true }, { startRun, startReplay })
+    expect(startRun).not.toHaveBeenCalled()
+    expect(startReplay).toHaveBeenCalledWith({ date: '2026-09-30', speed: 5, from: '10:00', aiTrader: true, runIds: [] })
+    expect(out.ok).toBe(true)
+    if (out.ok) expect(out.session?.aiTrader).toBe(true)
   })
 
   it('reports a refused replay with the runs that are waiting', async () => {

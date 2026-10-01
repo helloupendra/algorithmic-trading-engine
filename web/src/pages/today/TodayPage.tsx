@@ -8,8 +8,9 @@
  *
  * Top to bottom, as the owner reads it in half a minute: the date and the
  * markets; what needs a look (or one calm line when nothing does); today's
- * live trading by account and by run; the AI agents; what they learned; the
- * system; and every decision taken for or by the owner.
+ * live trading by account and by run; the AI Trader (once it has been on);
+ * the AI agents; what they learned; the system; and every decision taken for
+ * or by the owner.
  *
  * One request (GET /api/Today, lib/today.ts), read again every 30 s. A part
  * the API left out says so in words; it is never drawn as an empty part.
@@ -20,6 +21,7 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { CHECK_PASS_MARK, checkScoreText, memoryHref, memoryLabel, shortDate } from '../../lib/ai'
+import { actionText, modeLabel } from '../../lib/aiTrader'
 import { ApiError } from '../../lib/api'
 import { verdictBadge } from '../../lib/checkup'
 import { istDay, strategyLabel } from '../../lib/desk'
@@ -49,6 +51,7 @@ import type {
   Today,
   TodayAccount,
   TodayAgent,
+  TodayAiTrader,
   TodayDecision,
   TodayLearning,
   TodayRun,
@@ -58,6 +61,7 @@ import type {
 import { Badge, EmptyState, InlineError, Loading, Panel, StatTile } from '../../components/ui'
 import { IconAlert, IconChip, IconInfo, IconLayers, IconPen, IconServer, IconSwitch, IconWarning } from '../../components/icons'
 import { StatusPill } from '../ai/parts'
+import { AiTraderVerdict } from '../ai/AiTraderParts'
 import { errorText, useNow } from '../ai/common'
 import '../system/health/health.css'
 import '../ai/ai.css'
@@ -353,6 +357,77 @@ function Trading({ t, now }: { t: TodayTrading | null; now: number }) {
           )}
           {recaps && <p className="small-note">{recaps}</p>}
         </>
+      )}
+    </Panel>
+  )
+}
+
+// ---------- 3b. the AI Trader ------------------------------------------------------------------
+
+/**
+ * The AI Trader today: on or off, shadow or placing, its looks and their
+ * verdicts, and the last three decisions with the model's reason. Shown once
+ * it has been switched on or has looked; its record is on AI → Agents.
+ */
+function AiTrader({ t, now }: { t: TodayAiTrader; now: number }) {
+  const mode = modeLabel(t.mode)
+  const figures: [string, number, string][] = [
+    ['Looks', t.decisions, ''],
+    ['Actions', t.actions, ''],
+    ['Allowed', t.allowed, t.allowed > 0 ? 'pos' : ''],
+    ['Refused', t.refused, t.refused > 0 ? 'warn' : ''],
+    ['No answer', t.noAnswer, ''],
+  ]
+  return (
+    <Panel
+      className="atr-today"
+      title={
+        <>
+          <IconChip /> AI Trader
+          <StatusPill status={t.status} />
+          {t.mode && (
+            <span className="faint ai-title-note atr-today-mode">
+              {mode.label}
+              {mode.means ? `: ${mode.means}` : ''}
+            </span>
+          )}
+        </>
+      }
+      actions={
+        <Link className="btn btn--sm btn--ghost" to="/ai/agents?agent=ai-trader">
+          Its decisions →
+        </Link>
+      }
+    >
+      <div className="tdy-kv atr-kv">
+        {figures.map(([label, n, tone]) => (
+          <div key={label}>
+            <span className="tdy-kv__k">{label}</span>
+            <span className={`tdy-kv__v ${tone}`}>{n}</span>
+          </div>
+        ))}
+      </div>
+      {t.latest.length === 0 ? (
+        <p className="tdy-none">
+          No look yet today{t.status === 'on' ? '; it looks every 10 minutes from 09:20 IST on trading days' : ''}.
+        </p>
+      ) : (
+        <ol className="tdy-dec" aria-label="The AI Trader's latest decisions">
+          {t.latest.map((d, i) => (
+            <li key={`${d.atUtc ?? ''}-${i}`} className="tdy-dec__row">
+              <span className="tdy-dec__date" title={fullIst(d.atUtc)}>
+                {istWhen(d.atUtc, now) || '—'}
+              </span>
+              <div className="tdy-dec__body">
+                <div className="tdy-dec__title">{actionText(d)}</div>
+                {d.reason && <p className="tdy-dec__text">{d.reason}</p>}
+              </div>
+              <div className="tdy-dec__meta">
+                <AiTraderVerdict d={d} />
+              </div>
+            </li>
+          ))}
+        </ol>
       )}
     </Panel>
   )
@@ -762,6 +837,7 @@ export function TodayPage() {
         <>
           <Attention items={d.attention} now={now} />
           <Trading t={d.trading} now={now} />
+          {d.aiTrader && <AiTrader t={d.aiTrader} now={now} />}
           <Agents agents={d.agents} now={now} />
           <div className="two-col tdy-cols">
             <Learning l={d.learning} />

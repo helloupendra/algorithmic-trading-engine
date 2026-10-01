@@ -13,6 +13,10 @@
  *
  * Replay runs are tests: the API keeps them out of every live total and
  * squares them off at the replay's prices when it ends or is stopped.
+ *
+ * The AI Trader can decide along (a box in the set-up): it looks on the
+ * replay's clock, in shadow, and places nothing. With it, a replay needs no
+ * strategy run at all; its decisions show under the replay as they come.
  */
 
 import { useMemo, useRef, useState } from 'react'
@@ -20,6 +24,7 @@ import type { Ref } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../lib/auth'
 import {
+  useAiTraderStatus,
   useReplayControl,
   useReplayDays,
   useReplayLogs,
@@ -30,6 +35,7 @@ import {
   useStrategies,
   useUserAccounts,
 } from '../../lib/queries'
+import { AI_TRADER_POLL_MS, AI_TRADER_REPLAY_POLL_MS } from '../../lib/aiTrader'
 import {
   COVERAGE_KEYS,
   COVERAGE_LABELS,
@@ -54,6 +60,7 @@ import {
   replayStateLabel,
   replayUnderlyingsFor,
   setupError,
+  setupSummary,
   shortDay,
   speedLabel,
   speedNote,
@@ -76,6 +83,7 @@ import { prefersReducedMotion } from '../../lib/motion'
 import { Badge, InlineError, Loading, Panel } from '../../components/ui'
 import { IconCalendar, IconClock, IconPlay, IconPlus, IconStop, IconX } from '../../components/icons'
 import { ConsoleOutput, Disclosure } from '../strategies/shared'
+import { AiTraderDecisionList } from '../ai/AiTraderParts'
 import './data.css'
 import './replay.css'
 
@@ -219,6 +227,8 @@ function SessionPanel({ session, onAnother }: { session: ReplaySession; onAnothe
   const barTone =
     session.state === 'failed' ? 'progress__bar--neg' : session.state === 'paused' ? 'progress__bar--warn' : session.state === 'finished' ? 'progress__bar--pos' : ''
   const total = replayNetTotal(session.runs)
+  // A replay with the AI Trader alone: no run to list or total.
+  const aiOnly = session.aiTrader && session.runIds.length === 0 && session.runs.length === 0
 
   return (
     <Panel
@@ -261,6 +271,7 @@ function SessionPanel({ session, onAnother }: { session: ReplaySession; onAnothe
           </span>
         )}
         {session.endedUtc && <span title={fullIst(session.endedUtc)}>ended {formatTime(session.endedUtc)} IST</span>}
+        {session.aiTrader && <span>AI Trader along</span>}
       </div>
 
       {session.state === 'waiting' && (
@@ -272,28 +283,86 @@ function SessionPanel({ session, onAnother }: { session: ReplaySession; onAnothe
         </div>
       )}
 
-      <RunsTable session={session} />
+      {aiOnly ? (
+        <p className="small-note">No strategy runs: the AI Trader decides alone.</p>
+      ) : (
+        <RunsTable session={session} />
+      )}
+
+      {session.aiTrader && <ReplayAiTrader session={session} />}
 
       {ended && (
         <div className="rp-result">
-          <div>
-            <span className="rp-result__label">Result, after charges</span>
-            <span className={`rp-result__value ${pnlClass(total)}`}>{formatInrSigned(total)}</span>
-            <span className="faint rp-result__note">
-              {session.state === 'finished'
-                ? 'The day played out; the runs were squared off at its closing prices.'
-                : session.state === 'stopped'
-                  ? 'Stopped early; the runs were squared off at the replay’s prices.'
-                  : 'The replay failed; its runs were stopped.'}{' '}
-              A test: not in any live total.
-            </span>
-          </div>
+          {aiOnly ? (
+            <div>
+              <span className="rp-result__label">Result</span>
+              <span className="faint rp-result__note">
+                {session.state === 'finished'
+                  ? 'The day played out'
+                  : session.state === 'stopped'
+                    ? 'Stopped early'
+                    : 'The replay failed'}
+                , with only the AI Trader deciding along. It places nothing in a replay: its decisions above are the result.
+              </span>
+            </div>
+          ) : (
+            <div>
+              <span className="rp-result__label">Result, after charges</span>
+              <span className={`rp-result__value ${pnlClass(total)}`}>{formatInrSigned(total)}</span>
+              <span className="faint rp-result__note">
+                {session.state === 'finished'
+                  ? 'The day played out; the runs were squared off at its closing prices.'
+                  : session.state === 'stopped'
+                    ? 'Stopped early; the runs were squared off at the replay’s prices.'
+                    : 'The replay failed; its runs were stopped.'}{' '}
+                A test: not in any live total.
+              </span>
+            </div>
+          )}
           <button type="button" className="btn btn--sm" onClick={onAnother}>
             <IconCalendar style={{ width: 13, height: 13 }} /> Replay another day
           </button>
         </div>
       )}
     </Panel>
+  )
+}
+
+/**
+ * The AI Trader's decisions in this replay, newest first: read every 10 s
+ * while it plays (its clock runs up to ten times faster), then every 30 s,
+ * since its last look can land a minute after the day ends.
+ */
+function ReplayAiTrader({ session }: { session: ReplaySession }) {
+  const active = isActiveState(session.state)
+  return (
+    <section className="rp-ai" aria-label="The AI Trader in this replay">
+      <h3 className="rp-ai__h">
+        AI Trader <span className="faint">decides along in shadow, on the replay's clock: it places nothing</span>
+      </h3>
+      {session.id == null ? (
+        <p className="small-note">The API did not say which replay this is, so its decisions cannot be listed.</p>
+      ) : (
+        <AiTraderDecisionList
+          filter={{ replay: session.id }}
+          pollMs={active ? AI_TRADER_REPLAY_POLL_MS : AI_TRADER_POLL_MS}
+          markReplays={false}
+          label={`AI Trader decisions in the replay of ${shortDay(session.date)}`}
+          empty={
+            active ? (
+              <>
+                No look yet. It looks every 10 minutes of replay time from 09:20, and only while it is switched on in{' '}
+                <Link to="/ai/agents?agent=ai-trader">AI → Agents</Link>.
+              </>
+            ) : (
+              <>
+                It made no decision in this replay. Was it switched on in <Link to="/ai/agents?agent=ai-trader">AI → Agents</Link>?
+              </>
+            )
+          }
+        />
+      )}
+    </section>
   )
 }
 
@@ -447,10 +516,10 @@ function LaunchFailure({
             <b>{outcome.failed.label}</b> did not start: {outcome.failed.error} The replay was not started.
             {outcome.notTried.length > 0 && <> Not tried: {outcome.notTried.join(', ')}.</>}
           </>
+        ) : started.length === 0 ? (
+          <>The replay did not start: {outcome.error}</>
         ) : (
-          <>
-            Every run started, but the replay did not: {outcome.error}
-          </>
+          <>Every run started, but the replay did not: {outcome.error}</>
         )}
       </div>
       {started.length > 0 && (
@@ -493,7 +562,10 @@ function SetupPanel({ day, status }: { day: ReplayDay | null; status: ReplayStat
   const [drafts, setDrafts] = useState<ReplayRunDraft[]>(() => [newDraft()])
   const [speed, setSpeed] = useState<ReplaySpeed>(1)
   const [fromText, setFromText] = useState(FROM_EARLIEST)
+  const [aiTrader, setAiTrader] = useState(false)
   const [launch, setLaunch] = useState<LaunchState>({ phase: 'idle' })
+  // Read only once it is asked along: whether it is switched on, so an "off" is said before Start.
+  const aiStatus = useAiTraderStatus(aiTrader)
 
   const me = user?.id ?? null
 
@@ -525,7 +597,7 @@ function SetupPanel({ day, status }: { day: ReplayDay | null; status: ReplayStat
     owner == null || owner === me ? null : (accountChoices.find((a) => a.id === owner)?.userName ?? `user ${owner}`)
 
   const from = parseFromTime(fromText)
-  const problem = setupError(day?.date ?? null, fromText, drafts, catalog.info)
+  const problem = setupError(day?.date ?? null, fromText, drafts, catalog.info, aiTrader)
   const statusKnown = status !== undefined
   const busy = launch.phase === 'starting'
   const canPress = statusKnown && status.canStart && problem == null && !busy && launch.phase !== 'failed'
@@ -564,7 +636,7 @@ function SetupPanel({ day, status }: { day: ReplayDay | null; status: ReplayStat
     setLaunch({ phase: 'starting', step: 'Starting…' })
     const outcome = await launchReplay(
       plans,
-      { date: day.date, speed, from: from.value },
+      { date: day.date, speed, from: from.value, aiTrader },
       {
         startRun: (plan) => startRun.mutateAsync({ id: plan.strategyId, body: plan.body }),
         startReplay: (body) => startReplay.mutateAsync(body),
@@ -626,7 +698,7 @@ function SetupPanel({ day, status }: { day: ReplayDay | null; status: ReplayStat
                     <div key={d.key} className="rp-run">
                       <div className="rp-run__head">
                         <span className="rp-run__n">Run {i + 1}</span>
-                        {drafts.length > 1 && (
+                        {(drafts.length > 1 || aiTrader) && (
                           <button
                             type="button"
                             className="btn btn--ghost btn--sm"
@@ -729,6 +801,11 @@ function SetupPanel({ day, status }: { day: ReplayDay | null; status: ReplayStat
                     </div>
                   )
                 })}
+                {drafts.length === 0 && (
+                  <p className="small-note rp-flush">
+                    {aiTrader ? 'No strategy runs: only the AI Trader decides along.' : 'No strategy runs yet.'}
+                  </p>
+                )}
                 <button
                   type="button"
                   className="btn btn--ghost btn--sm rp-add"
@@ -743,6 +820,26 @@ function SetupPanel({ day, status }: { day: ReplayDay | null; status: ReplayStat
               <span className="field__help warn">The account list did not load: runs go into your own account.</span>
             )}
           </div>
+
+          <label className="rp-ai-opt" htmlFor="rp-ai-trader">
+            <input id="rp-ai-trader" type="checkbox" checked={aiTrader} disabled={busy} onChange={(e) => setAiTrader(e.target.checked)} />
+            <span className="rp-ai-opt__text">
+              <span className="rp-ai-opt__label">AI Trader decides along (shadow, on the replay's clock)</span>
+              <span className="field__help">
+                It must be switched on in <Link to="/ai/agents?agent=ai-trader">AI → Agents</Link>. Above 2× it may skip looks: the
+                model takes up to a minute to answer.
+              </span>
+              {aiTrader && aiStatus.data?.status === 'off' && (
+                <span className="field__help warn">
+                  It is switched off now, so it would not decide: switch it on in <Link to="/ai/agents?agent=ai-trader">AI → Agents</Link>{' '}
+                  first.
+                </span>
+              )}
+              {aiTrader && aiStatus.isError && !aiStatus.data && (
+                <span className="field__help warn">Whether it is switched on could not be read: {errorLine(aiStatus.error)}</span>
+              )}
+            </span>
+          </label>
 
           <div className="rp-setup__row">
             <div className="field">
@@ -796,8 +893,7 @@ function SetupPanel({ day, status }: { day: ReplayDay | null; status: ReplayStat
           ) : (
             <div className="rp-go">
               <p className="small-note rp-go__what">
-                {problem ??
-                  `Starts ${drafts.length === 1 ? 'the run as a recap' : `the ${drafts.length} runs as recaps`} of ${shortDay(day.date)}, then plays the day from ${from.value} at ${speedLabel(speed)}. Replay runs are tests: they stay out of every live total and are squared off when the replay ends.`}
+                {problem ?? setupSummary({ runs: drafts.length, date: day.date, from: from.value ?? FROM_EARLIEST, speed, aiTrader })}
               </p>
               <button type="button" className="btn btn--pos" disabled={!canPress} onClick={start}>
                 <IconPlay style={{ width: 14, height: 14 }} />

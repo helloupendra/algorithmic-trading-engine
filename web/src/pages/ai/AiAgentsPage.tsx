@@ -9,7 +9,9 @@
  * agent is code still to write: it is shown dimmer with its phase, and has
  * no switch, because there is nothing to switch on.
  *
- * Under them, the parts of the desk that look like agents but are rules in
+ * Under them, the AI Trader's record (its mode, its limits, today's looks
+ * and every decision with the brief it read), the assistant's check and
+ * exam, and the parts of the desk that look like agents but are rules in
  * code (Sentinel, the pager, the supervisor), so the list is the whole story.
  */
 
@@ -37,9 +39,15 @@ import {
   useUpdateAgent,
 } from '../../lib/ai'
 import type { AgentStatus, AiAgent, AiAgentTool, AiModel } from '../../lib/ai'
+import { AI_TRADER_KEY, AI_TRADER_POLL_MS, dayCountsText, limitsParts, modeLabel } from '../../lib/aiTrader'
+import { istDay } from '../../lib/desk'
 import { formatDateTime } from '../../lib/format'
+import { useAiTraderStatus } from '../../lib/queries'
+import { shortDay } from '../../lib/replay'
+import { DateField } from '../../components/DateField'
 import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components/ui'
 import { CallLink, ChainChips, ChainEditor, OutcomeBadge, StatusPill } from './parts'
+import { AiTraderDecisionList } from './AiTraderParts'
 import { errorText, useNow } from './common'
 import '../system/health/health.css'
 import './ai.css'
@@ -228,11 +236,18 @@ function RunNow({ agentKey }: { agentKey: string }) {
                 ? 'Asks the questions now; it takes a few minutes.'
                 : agentKey === 'assistant-exam'
                   ? 'Starts the exam, or carries on the open one; two questions a minute, a few hours in all.'
-                  : 'Reads its next batch of unread items.'}
+                  : agentKey === AI_TRADER_KEY
+                    ? 'One look now, outside its schedule; the rules judge it as at this hour.'
+                    : 'Reads its next batch of unread items.'}
         </span>
       </div>
       {bad && <p className="small-note warn ai-flush">An id is a whole number.</p>}
-      {run.isSuccess && (
+      {run.isSuccess && agentKey === AI_TRADER_KEY && (
+        <p className="small-note ai-flush ai-runnow__said">
+          Started. The decision appears in the list below when the model answers (usually within a minute or two).
+        </p>
+      )}
+      {run.isSuccess && agentKey !== AI_TRADER_KEY && (
         <p className="small-note ai-flush ai-runnow__said">
           Started{run.data?.subjectId ? ` on ${kind === 'incident' ? 'incident' : 'run'} #${run.data.subjectId}` : ''}. The report appears on
           the <Link to={`/ai/reports?agent=${encodeURIComponent(agentKey)}`}>Reports tab</Link>{' '}
@@ -351,6 +366,118 @@ function AssistantExamPanel({ now }: { now: number }) {
   )
 }
 
+/**
+ * The AI Trader (owner, 1 Oct): every ten minutes of the session it reads a
+ * market brief built by code, the model proposes one action, and code judges
+ * it against the owner's limits. Its switch and "Run now" are its card's,
+ * like every scheduled agent's; this is its record: the mode, the limits,
+ * today's looks, and every decision with the brief it read.
+ */
+function AiTraderPanel({ now }: { now: number }) {
+  const status = useAiTraderStatus()
+  const today = istDay(now)
+  const [picked, setPicked] = useState<string | null>(null)
+  const day = picked ?? today
+  const isToday = day === today
+  const s = status.data
+  const mode = modeLabel(s?.mode, s?.rules?.capital)
+  const limits = s?.rules ? limitsParts(s.rules) : []
+  const every = s?.everyMinutes ?? 10
+
+  return (
+    <div id="ai-trader" className="atr-anchor">
+      <Panel
+        className="ai-utility atr-panel"
+        title={<>AI Trader</>}
+        actions={
+          s ? (
+            <>
+              <StatusPill status={s.status ?? 'not known'} />
+              <Badge tone={mode.tone}>{mode.label}</Badge>
+            </>
+          ) : undefined
+        }
+      >
+        <p className="ai-utility__what">
+          Trades its own paper account in index options. Every {every} minutes of the session, code builds a market brief, the
+          model proposes one action as JSON, and code judges it against the limits below; the model holds no order tool. Every
+          look is kept, "do nothing" included, with the brief it read and the rule that judged it.
+        </p>
+        {status.isPending ? (
+          <Loading label="Reading the AI Trader…" />
+        ) : !s ? (
+          <InlineError error={status.error} />
+        ) : (
+          <dl className="ai-facts">
+            <div>
+              <dt>Switch</dt>
+              <dd>
+                {s.status === 'on' ? 'On: it looks on its schedule.' : s.status === 'off' ? 'Off: it does not look.' : 'Not known.'} Its switch
+                is on <a href={`#agent-${AI_TRADER_KEY}`}>its card</a>.
+              </dd>
+            </div>
+            <div>
+              <dt>Mode</dt>
+              <dd>
+                <b>{mode.label}</b>
+                {mode.means ? `: ${mode.means}.` : ''}
+              </dd>
+            </div>
+            <div>
+              <dt>Limits</dt>
+              <dd className="atr-limits">
+                {limits.length > 0 ? `${limits.join(' · ')}.` : <span className="faint">not sent by the API</span>}
+              </dd>
+            </div>
+            <div>
+              <dt>Today</dt>
+              <dd>{s.today ? dayCountsText(s.today) : <span className="faint">not known</span>}</dd>
+            </div>
+            <div>
+              <dt>By hand</dt>
+              <dd>
+                <RunNow agentKey={AI_TRADER_KEY} />
+              </dd>
+            </div>
+          </dl>
+        )}
+        {status.isError && s && <p className="small-note warn ai-flush">The last read failed: showing what was read before.</p>}
+
+        <div className="atr-tools">
+          <h3 className="atr-tools__h">Decisions</h3>
+          <DateField
+            className="field__input field__input--sm field__input--date"
+            aria-label="Day (IST)"
+            title="The IST day of the decisions"
+            max={today}
+            value={day}
+            onChange={(iso) => setPicked(iso && iso !== today ? iso : null)}
+          />
+          {!isToday && (
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => setPicked(null)}>
+              Today
+            </button>
+          )}
+          <span className="faint atr-tools__note">newest first · open one for the brief it read</span>
+        </div>
+        <AiTraderDecisionList
+          key={day}
+          filter={{ day }}
+          pollMs={isToday ? AI_TRADER_POLL_MS : false}
+          label={`AI Trader decisions on ${shortDay(day)}`}
+          empty={
+            !isToday
+              ? `No decision on ${shortDay(day)}.`
+              : s?.status === 'on'
+                ? `No look yet today. It looks every ${every} minutes, 09:20–15:00 IST, on trading days.`
+                : 'No look today. It is switched off: switch it on on its card, or press Run now for one look.'
+          }
+        />
+      </Panel>
+    </div>
+  )
+}
+
 function LastCall({ agent, now }: { agent: AiAgent; now: number }) {
   const c = agent.lastCall
   if (!c) return <span className="faint">{agent.built ? 'never called' : 'never: not built yet'}</span>
@@ -421,8 +548,16 @@ function AgentCard({
             <div>
               <dt>Writes</dt>
               <dd>
-                Reports: {SCHEDULED_AGENTS[agent.key].writes}.{' '}
-                <Link to={`/ai/reports?agent=${encodeURIComponent(agent.key)}`}>Its reports</Link>
+                {SCHEDULED_AGENTS[agent.key].decisions ? (
+                  <>
+                    Decisions: {SCHEDULED_AGENTS[agent.key].writes}. <a href="#ai-trader">Its decisions</a>
+                  </>
+                ) : (
+                  <>
+                    Reports: {SCHEDULED_AGENTS[agent.key].writes}.{' '}
+                    <Link to={`/ai/reports?agent=${encodeURIComponent(agent.key)}`}>Its reports</Link>
+                  </>
+                )}
               </dd>
             </div>
             <div>
@@ -500,12 +635,16 @@ export function AiAgentsPage() {
   const now = useNow(30_000)
   const data = agents.data
 
-  // A link from the Overview names an agent (#agent-key): bring it into view once the list is in.
-  const target = hash.startsWith('#agent-') ? hash.slice('#agent-'.length) : null
+  // A link names an agent (#agent-key from the Overview, ?agent=key from Today): bring it into view once
+  // the list is in. The AI Trader's link means its record, the panel under the cards.
+  const agentParam = params.get('agent')
+  const toTrader = hash === '#ai-trader' || agentParam === AI_TRADER_KEY
+  const target = hash.startsWith('#agent-') ? hash.slice('#agent-'.length) : !toTrader && agentParam ? agentParam : null
+  const scrollTo = toTrader ? 'ai-trader' : target ? `agent-${target}` : null
   useEffect(() => {
-    if (!target || !data) return
-    document.getElementById(`agent-${target}`)?.scrollIntoView({ block: 'start' })
-  }, [target, data])
+    if (!scrollTo || !data) return
+    document.getElementById(scrollTo)?.scrollIntoView({ block: 'start' })
+  }, [scrollTo, data])
 
   const counts: Record<Filter, number> = { all: data?.agents.length ?? 0, on: 0, off: 0, planned: 0 }
   for (const a of data?.agents ?? []) if (a.status in counts) counts[a.status]++
@@ -568,6 +707,7 @@ export function AiAgentsPage() {
         </div>
       )}
 
+      {data && filter === 'all' && <AiTraderPanel now={now} />}
       {data && filter === 'all' && <AssistantCheckPanel now={now} />}
       {data && filter === 'all' && <AssistantExamPanel now={now} />}
 

@@ -12,6 +12,8 @@
  *     out is null, and the page says that part did not come back rather than
  *     drawing an empty panel that reads as "nothing happened" (an absent
  *     attention list must never read as "nothing needs you");
+ *   - the AI Trader's day (null until it has been switched on or has
+ *     looked): its looks, actions, verdicts and the last three decisions;
  *   - the query hook, polling every 30 s;
  *   - the words the page puts on states: market pills, attention levels,
  *     run and decision statuses, "4 min ago", Sentinel's freshness.
@@ -37,7 +39,7 @@ export interface TodayMarket {
 }
 
 export type AttentionLevel = 'critical' | 'high' | 'medium' | 'info'
-export type AttentionKind = 'incident' | 'check' | 'agent' | 'learning' | 'decision' | 'trading' | 'system'
+export type AttentionKind = 'incident' | 'check' | 'agent' | 'learning' | 'decision' | 'trading' | 'system' | 'ai-trader'
 
 /** One thing that deserves a look. Never a yes/no prompt: a title, why, and where to read more. */
 export interface AttentionItem {
@@ -159,6 +161,35 @@ export interface TodaySystem {
   openIncidents: number | null
 }
 
+/** One of the AI Trader's latest decisions, as Today shows it. */
+export interface TodayAiTraderDecision {
+  atUtc: string | null
+  /** none, buy, exit, start_strategy, stop_strategy; '' when the answer could not be read. */
+  action: string
+  underlying: string
+  /** True only when the API said so. */
+  allowed: boolean
+  /** "ok", the rule a plan broke, "no-answer" or "unreadable". */
+  rule: string
+  /** The model's reason, else the verdict's why. */
+  reason: string
+}
+
+/** The AI Trader today (live and shadow looks; a replay's are not in these). */
+export interface TodayAiTrader {
+  /** on or off; 'not known' when the API did not say. */
+  status: string
+  /** shadow or live; null when not said. */
+  mode: string | null
+  decisions: number
+  actions: number
+  allowed: number
+  refused: number
+  noAnswer: number
+  /** Newest first, at most three. */
+  latest: TodayAiTraderDecision[]
+}
+
 export type DecisionStatus = 'decided' | 'default' | 'open'
 
 export interface TodayDecision {
@@ -184,6 +215,8 @@ export interface Today {
   system: TodaySystem | null
   /** Newest first. */
   decisions: TodayDecision[] | null
+  /** Null until the AI Trader has been switched on or has looked (or when the body left it out). */
+  aiTrader: TodayAiTrader | null
 }
 
 // ---------- reading the API -------------------------------------------------------
@@ -370,6 +403,36 @@ function readSystem(s: Record<string, unknown>): TodaySystem {
   }
 }
 
+function readAiTraderDecision(d: Record<string, unknown>): TodayAiTraderDecision {
+  return {
+    atUtc: instant(d.atUtc),
+    action: words(d.action).toLowerCase(),
+    underlying: words(d.underlying).toUpperCase(),
+    allowed: d.allowed === true,
+    rule: words(d.rule).toLowerCase(),
+    reason: words(d.reason),
+  }
+}
+
+/** The AI Trader's day, or null when the body sent none (it has never been on, or the API is older). */
+export function readTodayAiTrader(v: unknown): TodayAiTrader | null {
+  if (!record(v)) return null
+  return {
+    status: words(v.status).toLowerCase() || 'not known',
+    mode: optional(v.mode)?.toLowerCase() ?? null,
+    decisions: count(v.decisions),
+    actions: count(v.actions),
+    allowed: count(v.allowed),
+    refused: count(v.refused),
+    noAnswer: count(v.noAnswer),
+    // A row with no time, action or rule says nothing: dropped, never drawn as a "no answer".
+    latest: rows(v.latest)
+      .map(readAiTraderDecision)
+      .filter((d) => d.atUtc != null || d.action !== '' || d.rule !== '')
+      .slice(0, 3),
+  }
+}
+
 function readDecision(d: Record<string, unknown>): TodayDecision | null {
   const title = words(d.title)
   if (!title) return null
@@ -406,6 +469,7 @@ export function readToday(raw: unknown): Today {
     learning: record(raw.learning) ? readLearning(raw.learning) : null,
     system: record(raw.system) ? readSystem(raw.system) : null,
     decisions: listSection(raw.decisions, readDecision),
+    aiTrader: readTodayAiTrader(raw.aiTrader),
   }
 }
 
@@ -469,6 +533,7 @@ const KINDS: Record<AttentionKind, string> = {
   decision: 'Decision',
   trading: 'Trading',
   system: 'System',
+  'ai-trader': 'AI Trader',
 }
 
 export function attentionKind(kind: string): string {

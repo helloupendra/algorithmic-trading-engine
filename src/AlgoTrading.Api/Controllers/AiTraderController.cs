@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AlgoTrading.Api.Security;
 using AlgoTrading.Api.Services.AiTrader;
 using AlgoTrading.Domain.Entities;
@@ -79,7 +80,25 @@ public class AiTraderController(TradingDbContext db, AiSettingsStore store, IOpt
 
     private static AiTraderDecisionSummary Summary(AiTraderDecision d) => new(
         d.Id, d.ClockUtc, IstTime.ToIst(d.ClockUtc).ToString("HH:mm"), d.Day.ToString("yyyy-MM-dd"), d.Mode, d.ReplaySessionId, d.Action, d.Underlying,
-        d.Reason, d.Confidence, d.Allowed, d.Rule, d.Why, d.Executed, d.Error, d.Model, d.CallId);
+        d.Reason, d.Confidence, d.Allowed, d.Rule, d.Why, d.Executed, d.Error, d.Model, d.CallId, OptionOf(d.PlanJson));
+
+    /// <summary>The CE or PE a plan names, so a list can say "Buy NIFTY CE" without the plan; null when it names none.</summary>
+    public static string? OptionOf(string planJson)
+    {
+        if (string.IsNullOrWhiteSpace(planJson)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(planJson);
+            return doc.RootElement.ValueKind == JsonValueKind.Object && doc.RootElement.TryGetProperty("option", out var o)
+                   && o.ValueKind == JsonValueKind.String && o.GetString() is "CE" or "PE"
+                ? o.GetString()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 }
 
 public sealed record AiTraderStatus(string Status, string Mode, int EveryMinutes, AiTraderRules Rules, AiTraderDay Today, IReadOnlyList<AiTraderDecisionSummary> Latest);
@@ -89,6 +108,7 @@ public sealed record AiTraderDay(string Date, int Decisions, int Actions, int Al
 
 public sealed record AiTraderDecisionSummary(
     long Id, DateTime ClockUtc, string ClockIst, string Day, string Mode, long? ReplaySessionId, string Action, string Underlying,
-    string Reason, double? Confidence, bool Allowed, string Rule, string Why, bool Executed, string Error, string Model, long? CallId);
+    string Reason, double? Confidence, bool Allowed, string Rule, string Why, bool Executed, string Error, string Model, long? CallId,
+    string? Option = null);
 
 public sealed record AiTraderDecisionDetail(AiTraderDecisionSummary Decision, string Brief, string PlanJson, string ResultJson, string BriefHash);
