@@ -1,5 +1,6 @@
 using AlgoTrading.Api.Services;
 using AlgoTrading.Application.Interfaces;
+using AlgoTrading.Application.Providers;
 using AlgoTrading.Contracts.MarketData;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Domain.Enums;
@@ -8,6 +9,7 @@ using AlgoTrading.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -75,6 +77,27 @@ public class NightlyArchiveTests
     }
 
     [Fact]
+    public async Task The_India_VIX_check_still_follows_the_archive_and_a_failure_is_told_safely()
+    {
+        // The history router fails with a proxy's HTML page: the check stops, and says so on the System channel.
+        var notifier = new Recorder();
+        var archive = Archive(vixCheck: true, out var db, notifier);
+        SeedLastArchived(db, Sun01Nov);
+        SeedBars(db, VixBackfillPlan.Symbol, Ist(Mon02Nov, 9, 15), Ist(Mon02Nov, 15, 30));
+
+        Assert.Empty(await archive.RunDueDaysAsync(Ist(Mon02Nov, 23, 50), CancellationToken.None));
+        Assert.Empty(notifier.Sent);
+
+        Assert.Equal([Mon02Nov], await archive.RunDueDaysAsync(Ist(Tue03Nov, 0, 15), CancellationToken.None));
+        var sent = Assert.Single(notifier.Sent);
+        Assert.Equal(VixBackfillReport.FailedTitle, sent.Title);
+        Assert.StartsWith("The nightly India VIX check through 2026-11-02 stopped: HTTP 502: &lt;html&gt;&lt;title&gt;502 Bad Gateway", sent.Message);
+        Assert.DoesNotContain("<", sent.Message);
+        // The day itself was archived, VIX's bars included.
+        Assert.Equal(375, Candles(db, VixBackfillPlan.Symbol, "1").Count);
+    }
+
+    [Fact]
     public void A_day_is_due_twenty_minutes_after_its_last_exchange_closes_and_never_before_the_run_time()
     {
         var sessions = new MarketSessionService(new Calendar());
@@ -114,7 +137,7 @@ public class NightlyArchiveTests
     // ---------------------------------------------------------------------- helpers --
 
     /// <summary>The service over an in-memory database, archiving the live bars only (no broker in a test).</summary>
-    private static NightlyArchiveService Archive(bool vixCheck, out TradingDbContext db)
+    private static NightlyArchiveService Archive(bool vixCheck, out TradingDbContext db, ISystemNotifier? notifier = null)
     {
         string name = $"archive-{Guid.NewGuid():N}";
         var configuration = new ConfigurationBuilder()
@@ -125,6 +148,12 @@ public class NightlyArchiveTests
         services.AddSingleton<IConfiguration>(configuration);
         services.AddSingleton<IMarketSessionService>(new MarketSessionService(new Calendar()));
         services.AddScoped<IDailyCandleArchiveService, LiveBarsOnly>();
+        services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
+        services.AddScoped<IHistoricalCandleStore, HistoricalCandleStore>();
+        services.AddScoped<IProcessSettingsStore, ProcessSettingsStore>();
+        services.AddSingleton<IProviderRouter, FailingRouter>();
+        services.AddScoped<VixBackfillService>();
+        services.AddSingleton<ISystemNotifier>(notifier ?? new Recorder());
         var provider = services.BuildServiceProvider();
 
         db = new TradingDbContext(new DbContextOptionsBuilder<TradingDbContext>().UseInMemoryDatabase(name).Options);
@@ -156,6 +185,34 @@ public class NightlyArchiveTests
 
         public Task<CandleArchiveResult> ArchiveDayAsync(DateOnly istDay, bool includeBrokerBackfill, CancellationToken cancellationToken = default)
             => _archive.ArchiveDayAsync(istDay, includeBrokerBackfill: false, cancellationToken);
+    }
+
+    /// <summary>A history router that cannot answer: the proxy in front of it returned its own error page.</summary>
+    private sealed class FailingRouter : IProviderRouter
+    {
+        public Task<IReadOnlyList<IMarketDataProvider>> ResolveDataChainAsync(ProviderCapability capability, string? segment = null, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("HTTP 502: <html><title>502 Bad Gateway</title></html>");
+
+        public Task<IMarketDataProvider> ResolveDataAsync(ProviderCapability capability, string? segment = null, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<IBrokerProvider> ResolveBrokerAsync(long? brokerAccountId = null, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+    }
+
+    private sealed record Notice(string Title, string Message);
+
+    /// <summary>What would have gone to the System channel.</summary>
+    private sealed class Recorder : ISystemNotifier
+    {
+        public List<Notice> Sent { get; } = [];
+
+        public Task NotifyAsync(NotificationCategory category, NotificationSeverity severity, string title, string message,
+            string? underlying = null, string? symbol = null, long? simulationRunId = null, CancellationToken cancellationToken = default)
+        {
+            Sent.Add(new Notice(title, message));
+            return Task.CompletedTask;
+        }
     }
 
     /// <summary>Weekends and these holidays closed; every year loaded.</summary>

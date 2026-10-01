@@ -301,6 +301,46 @@ public class VixBackfillTests
         Assert.Null(await new ProcessSettingsStore(db).GetAsync(SystemSettingKeys.VixGapsReported));
     }
 
+    [Fact]
+    public async Task A_vendor_s_error_page_cannot_stop_the_gap_message_reaching_Telegram()
+    {
+        using var db = Db();
+        // Sixty sessions with no VIX at all, and every vendor failing: FYERS behind a proxy that answered 502 with its
+        // own page (the provider puts the body in its error), Dhan with an error that reads like a tag.
+        string page = "<html><head><title>502 Bad Gateway</title></head><body>" + new string('x', 3000) + "</body></html>";
+        var fyers = Vendor.Failing("fyers", new InvalidOperationException($"FYERS history API failed for NSE:INDIAVIX-INDEX. HTTP 502: {page}"));
+        var dhan = Vendor.Failing("dhan", new InvalidOperationException("DH-905: <securityId> & <exchangeSegment> are required"));
+        var notifier = new Notifier();
+        var log = new ListLogger();
+
+        var result = await Service(db, fyers, dhan).RunAsync(Mon05, VixBackfillPlan.MaxLookbackTradingDays);
+        await VixBackfillReport.ReportAsync(result, new ProcessSettingsStore(db), notifier, log, CancellationToken.None);
+
+        Assert.Equal(60, result.GapDays.Count);
+        var sent = Assert.Single(notifier.Sent);
+        // Telegram reads it as HTML: a bare "<" or "&" makes it refuse the whole message, and so does one over 4,096
+        // characters (with the subscriber's "ALERT" line in front of it).
+        Assert.DoesNotContain("<", sent.Message);
+        Assert.DoesNotMatch("&(?!amp;|lt;|gt;)", sent.Message);
+        Assert.InRange(sent.Message.Length, 1, 3800);
+        Assert.Contains("HTTP 502: &lt;html&gt;&lt;head&gt;&lt;title&gt;502 Bad Gateway", sent.Message);
+        Assert.Contains("DH-905: &lt;securityId&gt; &amp; &lt;exchangeSegment&gt; are required", sent.Message);
+        // Every gap day is still named, and the log keeps the vendors' words as they came.
+        Assert.All(result.GapDays, day => Assert.Contains(day.ToString("yyyy-MM-dd"), sent.Message));
+        Assert.Contains(log.Lines, l => l.Level == LogLevel.Error && l.Text.Contains("DH-905: <securityId> & <exchangeSegment>", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_failed_check_s_message_is_safe_for_Telegram()
+    {
+        var error = new InvalidOperationException("'<' is an invalid start of a value. Path: $ | LineNumber: 0 & more");
+
+        string message = VixBackfillReport.FailedMessage(Thu01, error);
+
+        Assert.StartsWith("The nightly India VIX check through 2026-10-01 stopped: '&lt;' is an invalid start of a value. Path: $ | LineNumber: 0 &amp; more.", message);
+        Assert.DoesNotContain("<", message);
+    }
+
     // ----------------------------------------------------------------------- helpers --
 
     private static TradingDbContext Db()

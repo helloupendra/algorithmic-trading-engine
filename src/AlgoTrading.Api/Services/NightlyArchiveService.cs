@@ -183,8 +183,7 @@ namespace AlgoTrading.Api.Services
                     NotificationCategory.System,
                     NotificationSeverity.Error,
                     VixBackfillReport.FailedTitle,
-                    $"The nightly India VIX check through {day} stopped: {IncidentRedaction.Mask(ex.Message)}. "
-                    + "A VIX gap may be going unfilled; the check runs again after the next trading day's archive (23:50 IST, or 00:15 while MCX closes at 23:55). See NightlyArchiveService in logs/api.log.",
+                    VixBackfillReport.FailedMessage(through ?? archived.Max(), ex),
                     symbol: VixBackfillPlan.Symbol,
                     cancellationToken: ct);
             }
