@@ -1,3 +1,4 @@
+using AlgoTrading.Api.Controllers;
 using AlgoTrading.Api.Services;
 using AlgoTrading.Api.Services.Replay;
 using AlgoTrading.Application.Interfaces;
@@ -7,6 +8,7 @@ using AlgoTrading.Contracts.Simulator;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Services;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -270,6 +272,49 @@ public class MarketReplayTests
     }
 
     [Fact]
+    public async Task The_players_first_ticks_after_an_api_restart_reopen_the_book_before_the_monitor_has_looked()
+    {
+        // A refused batch fails the player ("the API has no market replay on"), so the replay must not depend on
+        // the monitor's first look winning the race with the player's next post.
+        var replay = Replay(out var db, out _, out _, out _, out var book);
+        long runId = Run(db, RecapOfDay, status: "Running");
+        SeedBars(db);
+        await replay.StartAsync(new ReplayStartRequest("2026-09-30", 1, "09:15", [runId]), "admin", default);
+        book.End();   // what a restart leaves
+        var controller = new ReplayController(replay, book);
+
+        var taken = await controller.Ticks([Tick(Spot, 25000m, Ist(10, 0))], default);
+
+        Assert.IsType<OkObjectResult>(taken);
+        Assert.Equal((Day, 25000m), (book.Day, book.Quote(Spot)!.LastTradedPrice));
+
+        // A replay that has ended still turns the player away.
+        await replay.StopAsync("admin", default);
+        Assert.IsType<ConflictObjectResult>(await controller.Ticks([Tick(Spot, 25001m, Ist(10, 1))], default));
+        Assert.Null(book.Day);
+    }
+
+    [Fact]
+    public async Task A_replay_that_fails_with_a_long_error_is_still_written_down_as_failed()
+    {
+        var replay = Replay(out var db, out _, out var channel, out var stopper, out _);
+        long runId = Run(db, RecapOfDay, status: "Running");
+        SeedBars(db);
+        await replay.StartAsync(new ReplayStartRequest("2026-09-30", 1, "09:15", [runId]), "admin", default);
+        string traceback = "OperationalError: " + string.Concat(Enumerable.Repeat("server closed the connection unexpectedly\n\t", 80));
+        channel.Status = new ReplayPlayerStatus(1, MarketReplayService.StateFailed, Ist(11, 0), 10, 0.3, traceback, DateTime.UtcNow);
+
+        await replay.TickAsync(default);
+
+        var stored = db.SystemSettings.AsNoTracking().Single(s => s.Key == SystemSettingKeys.ReplaySession).Value;
+        Assert.InRange(stored.Length, 1, MarketReplayQueueTests.SettingLength(db));
+        var ended = (await replay.LoadAsync(default))!;
+        Assert.Equal(MarketReplayService.StateFailed, ended.State);
+        Assert.StartsWith("OperationalError: server closed", ended.Error);
+        Assert.Equal([runId], stopper.Stopped);
+    }
+
+    [Fact]
     public void Progress_runs_from_the_open_to_the_close_and_is_whole_once_finished()
     {
         Assert.Equal(0, MarketReplayService.ProgressOf(null, Day, MarketReplayService.StatePlaying));
@@ -339,9 +384,16 @@ public class MarketReplayTests
 
     internal sealed class FakePlayer : IReplayPlayer
     {
-        public bool Running { get; set; } = true;
+        /// <summary>Whether the player's process is alive: from its start until it is stopped or a test ends it.</summary>
+        public bool Running { get; set; }
 
         public IReadOnlyList<string>? Args { get; private set; }
+
+        /// <summary>Every start, in order.</summary>
+        public List<IReadOnlyList<string>> Starts { get; } = [];
+
+        /// <summary>As the supervisor does: a second process is refused while the last one is alive.</summary>
+        public bool RefusesWhileRunning { get; set; }
 
         public string? StoppedFor { get; private set; }
 
@@ -349,7 +401,10 @@ public class MarketReplayTests
 
         public Task<(bool Started, string Message)> StartAsync(IReadOnlyList<string> args, CancellationToken cancellationToken)
         {
+            if (RefusesWhileRunning && Running) return Task.FromResult((false, "Market replay is already running (pid 4242)."));
             Args = args;
+            Starts.Add(args);
+            Running = true;
             return Task.FromResult((true, "started"));
         }
 
@@ -367,14 +422,31 @@ public class MarketReplayTests
     {
         public ReplayPlayerStatus? Status { get; set; }
 
-        public Task<ReplayPlayerStatus?> ReadStatusAsync(CancellationToken cancellationToken) => Task.FromResult(Status);
+        /// <summary>The next reset waits for this (once): a start paused at its first Redis call.</summary>
+        public Task? NextResetWaitsFor { get; set; }
+
+        /// <summary>How many reads from now fail, as Redis does when it blinks.</summary>
+        public int FailingReads { get; set; }
+
+        public Task<ReplayPlayerStatus?> ReadStatusAsync(CancellationToken cancellationToken)
+        {
+            if (FailingReads > 0)
+            {
+                FailingReads--;
+                throw new InvalidOperationException("Redis did not answer.");
+            }
+
+            return Task.FromResult(Status);
+        }
 
         public Task SendAsync(string command, CancellationToken cancellationToken) => Task.CompletedTask;
 
-        public Task ResetAsync(CancellationToken cancellationToken)
+        public async Task ResetAsync(CancellationToken cancellationToken)
         {
+            var wait = NextResetWaitsFor;
+            NextResetWaitsFor = null;
+            if (wait is not null) await wait;
             Status = null;
-            return Task.CompletedTask;
         }
     }
 

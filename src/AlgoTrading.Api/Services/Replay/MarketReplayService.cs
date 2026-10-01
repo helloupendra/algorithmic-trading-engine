@@ -72,13 +72,59 @@ public sealed class MarketReplayService(
     /// <summary>How long a player may be missing at the start before the replay counts as failed.</summary>
     private static readonly TimeSpan StartGrace = TimeSpan.FromSeconds(20);
 
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    /// <summary>
+    /// The longest value a system setting holds (<c>system_settings."Value"</c>, varchar(2000)). The in-memory
+    /// store takes any length; PostgreSQL refuses the write, and a session or queue that cannot be written
+    /// down cannot end or move on.
+    /// </summary>
+    public const int MaxStateLength = 2000;
+
+    /// <summary>The most of a replay's error that is kept with it.</summary>
+    public const int MaxErrorLength = 400;
+
+    /// <summary>
+    /// The stored state is read back only by this service. Escaped the default way, every quote, plus sign or
+    /// non-ASCII character took six characters of the 2,000.
+    /// </summary>
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
+    /// <summary>
+    /// One change of the replay's state at a time, across every scope of this API: the monitor's look (and a
+    /// queue's next day), the admin's start, stop and queue, and the book reopened for the player after a
+    /// restart. Each reads the stored session and queue, decides, then writes them. Two at once both saw
+    /// nothing playing and both started a day: a queue's first day was started by its POST and by the
+    /// monitor's look in the same moment, and the second start failed the first's replay.
+    /// </summary>
+    private static readonly SemaphoreSlim Gate = new(1, 1);
 
     private readonly TimeProvider _time = time ?? TimeProvider.System;
 
     private DateTime Now => _time.GetUtcNow().UtcDateTime;
 
     public static bool IsActive(string? state) => state is StateStarting or StateWaiting or StatePlaying or StatePaused;
+
+    private static async Task<T> GatedAsync<T>(Func<Task<T>> change, CancellationToken cancellationToken)
+    {
+        await Gate.WaitAsync(cancellationToken);
+        try
+        {
+            return await change();
+        }
+        finally
+        {
+            Gate.Release();
+        }
+    }
+
+    private static Task GatedAsync(Func<Task> change, CancellationToken cancellationToken) =>
+        GatedAsync(async () =>
+        {
+            await change();
+            return true;
+        }, cancellationToken);
 
     // ---------- reading ----------
 
@@ -88,9 +134,11 @@ public sealed class MarketReplayService(
         var queue = await LoadQueueAsync(cancellationToken);
         var why = session is not null && IsActive(session.State)
             ? $"A replay of {Day(session.Date)} is {session.State}."
-            : queue is { EndedUtc: null } ? "A queue of days is playing; cancel it first." : WhyNotNow(Now);
+            : queue is { EndedUtc: null } ? QueuePlaying : WhyNotNow(Now);
         return new ReplayStatus(why is null, why, session is null ? null : await ViewAsync(session, cancellationToken), queue is null ? null : QueueView(queue));
     }
+
+    private const string QueuePlaying = "A queue of days is playing; cancel it first.";
 
     /// <summary>Why a replay cannot start now, or null: on a trading day, NSE's session and the morning before it are the live desk's.</summary>
     public string? WhyNotNow(DateTime nowUtc)
@@ -137,34 +185,47 @@ public sealed class MarketReplayService(
     // ---------- control ----------
 
     /// <summary>Starts a replay of the request's day for its runs; answers the session, or why not.</summary>
+    /// <remarks>Refused while a queue of days plays, between its days too: the queue starts each of them.</remarks>
     public async Task<ReplayStartResult> StartAsync(ReplayStartRequest request, string by, CancellationToken cancellationToken)
+    {
+        var result = await GatedAsync(async () =>
+            await LoadQueueAsync(cancellationToken) is { EndedUtc: null }
+                ? ReplayStartResult<ReplaySessionState>.Refused(409, QueuePlaying)
+                : await StartCoreAsync(request, by, cancellationToken), cancellationToken);
+        return result.Session is { } started
+            ? new ReplayStartResult(await ViewAsync(started, cancellationToken), result.StatusCode, null)
+            : ReplayStartResult.Refused(result.StatusCode, result.Error!);
+    }
+
+    /// <summary>Starts a replay, under <see cref="Gate"/>: answers the session as stored, or why not.</summary>
+    private async Task<ReplayStartResult<ReplaySessionState>> StartCoreAsync(ReplayStartRequest request, string by, CancellationToken cancellationToken)
     {
         var current = await LoadAsync(cancellationToken);
         if (current is not null && IsActive(current.State))
         {
-            return ReplayStartResult.Refused(409, $"A replay of {Day(current.Date)} is {current.State}; stop it first.");
+            return ReplayStartResult<ReplaySessionState>.Refused(409, $"A replay of {Day(current.Date)} is {current.State}; stop it first.");
         }
 
-        if (WhyNotNow(Now) is { } closed) return ReplayStartResult.Refused(409, closed);
+        if (WhyNotNow(Now) is { } closed) return ReplayStartResult<ReplaySessionState>.Refused(409, closed);
 
-        if (!DateOnly.TryParseExact(request.Date, "yyyy-MM-dd", out var date)) return ReplayStartResult.Refused(400, "date is yyyy-MM-dd.");
-        if (date >= IstTime.DateOf(Now)) return ReplayStartResult.Refused(400, "Only a day that is over can be replayed.");
-        if (!Speeds.Contains(request.Speed)) return ReplayStartResult.Refused(400, $"speed is one of {string.Join(", ", Speeds)}.");
+        if (!DateOnly.TryParseExact(request.Date, "yyyy-MM-dd", out var date)) return ReplayStartResult<ReplaySessionState>.Refused(400, "date is yyyy-MM-dd.");
+        if (date >= IstTime.DateOf(Now)) return ReplayStartResult<ReplaySessionState>.Refused(400, "Only a day that is over can be replayed.");
+        if (!Speeds.Contains(request.Speed)) return ReplayStartResult<ReplaySessionState>.Refused(400, $"speed is one of {string.Join(", ", Speeds)}.");
         var from = SessionOpen;
         if (!string.IsNullOrWhiteSpace(request.From)
             && (!TimeOnly.TryParseExact(request.From, "HH:mm", out from) || from < SessionOpen || from > LatestStart))
         {
-            return ReplayStartResult.Refused(400, "from is HH:mm between 09:15 and 15:00.");
+            return ReplayStartResult<ReplaySessionState>.Refused(400, "from is HH:mm between 09:15 and 15:00.");
         }
 
         var runIds = (request.RunIds ?? []).Distinct().ToList();
-        if (runIds.Count == 0 && !request.AiTrader) return ReplayStartResult.Refused(400, "Start at least one recap run of the day first, or ask the AI Trader along.");
-        if (runIds.Count > 0 && await WhyNotRunsAsync(runIds, date, cancellationToken) is { } badRuns) return ReplayStartResult.Refused(409, badRuns);
-        if (!await RecordedAsync(date, cancellationToken)) return ReplayStartResult.Refused(409, $"The desk recorded nothing for {Day(date)}.");
+        if (runIds.Count == 0 && !request.AiTrader) return ReplayStartResult<ReplaySessionState>.Refused(400, "Start at least one recap run of the day first, or ask the AI Trader along.");
+        if (runIds.Count > 0 && await WhyNotRunsAsync(runIds, date, cancellationToken) is { } badRuns) return ReplayStartResult<ReplaySessionState>.Refused(409, badRuns);
+        if (!await RecordedAsync(date, cancellationToken)) return ReplayStartResult<ReplaySessionState>.Refused(409, $"The desk recorded nothing for {Day(date)}.");
 
         var session = new ReplaySessionState(
             (current?.Id ?? 0) + 1, date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), request.Speed,
-            from.ToString("HH:mm", CultureInfo.InvariantCulture), StateStarting, runIds, Now, null, null, by, request.AiTrader);
+            from.ToString("HH:mm", CultureInfo.InvariantCulture), StateStarting, runIds, Now, null, null, Plain(by, MaxByLength), request.AiTrader);
 
         await channel.ResetAsync(cancellationToken);
         book.Begin(date);
@@ -182,23 +243,50 @@ public sealed class MarketReplayService(
         if (!started)
         {
             book.End();
-            session = session with { State = StateFailed, EndedUtc = Now, Error = $"The player did not start: {message}" };
+            session = session with { State = StateFailed, EndedUtc = Now, Error = Cut($"The player did not start: {message}", MaxErrorLength) };
             await SaveAsync(session, cancellationToken);
-            return ReplayStartResult.Refused(500, session.Error!);
+            return ReplayStartResult<ReplaySessionState>.Refused(500, session.Error!);
         }
 
         logger.LogInformation("Market replay {Session} of {Date} started by {By} at {Speed}x from {From}, runs {Runs}",
             session.Id, session.Date, by, session.Speed, session.FromIst, string.Join(',', runIds));
-        return new ReplayStartResult(await ViewAsync(session, cancellationToken), 202, null);
+        return new ReplayStartResult<ReplaySessionState>(session, 202, null);
     }
 
     public async Task<ReplaySessionView?> StopAsync(string by, CancellationToken cancellationToken)
     {
-        var session = await LoadAsync(cancellationToken);
-        if (session is null || !IsActive(session.State)) return session is null ? null : await ViewAsync(session, cancellationToken);
+        var session = await GatedAsync(async () =>
+        {
+            var current = await LoadAsync(cancellationToken);
+            if (current is null || !IsActive(current.State)) return current;
 
-        await player.StopAsync($"stopped by {by}", cancellationToken);
-        return await ViewAsync(await EndAsync(session, StateStopped, null, $"stopped by {by}", cancellationToken), cancellationToken);
+            await player.StopAsync($"stopped by {by}", cancellationToken);
+            return await EndAsync(current, StateStopped, null, $"stopped by {by}", cancellationToken);
+        }, cancellationToken);
+        return session is null ? null : await ViewAsync(session, cancellationToken);
+    }
+
+    /// <summary>
+    /// Opens the book again for the player's ticks when the API has lost it (a restart) and the stored replay
+    /// is still playing; false when no replay is on, which tells the player to stop.
+    /// </summary>
+    /// <remarks>
+    /// The monitor reopens it too, at its first look. The player posts several times a second, and a batch
+    /// refused for want of a book fails it (<c>run_replay.py</c>): the replay must not hang on which of the
+    /// two the restarted API serves first.
+    /// </remarks>
+    public async Task<bool> ReopenBookAsync(CancellationToken cancellationToken)
+    {
+        if (book.Day is not null) return true;
+        return await GatedAsync(async () =>
+        {
+            if (book.Day is not null) return true;
+            var session = await LoadAsync(cancellationToken);
+            if (session is null || !IsActive(session.State)) return false;
+            book.Begin(DateOnly.ParseExact(session.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture));
+            logger.LogInformation("Market replay {Session} of {Date}: the book was opened again for the player's ticks", session.Id, session.Date);
+            return true;
+        }, cancellationToken);
     }
 
     public async Task<ReplaySessionView?> SendAsync(string command, CancellationToken cancellationToken)
@@ -215,7 +303,9 @@ public sealed class MarketReplayService(
     /// The monitor's look, every few seconds: mirror the player's state, and end the replay when it is
     /// played out, stopped, gone, or the market is about to open. Public for tests.
     /// </summary>
-    public async Task TickAsync(CancellationToken cancellationToken)
+    public Task TickAsync(CancellationToken cancellationToken) => GatedAsync(() => TickCoreAsync(cancellationToken), cancellationToken);
+
+    private async Task TickCoreAsync(CancellationToken cancellationToken)
     {
         var session = await LoadAsync(cancellationToken);
         if (session is null || !IsActive(session.State))
@@ -271,7 +361,7 @@ public sealed class MarketReplayService(
         }
 
         book.End();
-        var ended = session with { State = state, EndedUtc = Now, Error = error };
+        var ended = session with { State = state, EndedUtc = Now, Error = error is null ? null : Cut(error, MaxErrorLength) };
         await SaveAsync(ended, cancellationToken);
         logger.LogInformation("Market replay {Session} of {Date} ended: {State} ({Reason})", session.Id, session.Date, state, reason);
         return ended;
@@ -279,8 +369,17 @@ public sealed class MarketReplayService(
 
     // ---------- the queue ----------
 
-    /// <summary>The most days one queue may hold: with each skipped day's reason cut to 40 characters, its state always fits the 2,000-character setting.</summary>
+    /// <summary>
+    /// The most days one queue may hold. With each skipped day's reason and the account's name kept short and
+    /// plain (<see cref="Plain"/>), its state always fits <see cref="MaxStateLength"/>.
+    /// </summary>
     public const int MaxQueuedDays = 20;
+
+    /// <summary>How much of a skipped day's reason is kept.</summary>
+    private const int MaxReasonLength = 40;
+
+    /// <summary>How much of an account's name is kept with a session or a queue.</summary>
+    private const int MaxByLength = 60;
 
     /// <summary>
     /// How long after a replay ends the next queued day waits: the AI Trader's minute check squares off and
@@ -295,56 +394,73 @@ public sealed class MarketReplayService(
     /// </summary>
     public async Task<ReplayStartResult<ReplayQueueView>> QueueAsync(ReplayQueueRequest request, string by, CancellationToken cancellationToken)
     {
-        var current = await LoadQueueAsync(cancellationToken);
-        if (current is { EndedUtc: null }) return ReplayStartResult<ReplayQueueView>.Refused(409, "A queue of days is already playing; cancel it first.");
-        var session = await LoadAsync(cancellationToken);
-        if (session is not null && IsActive(session.State)) return ReplayStartResult<ReplayQueueView>.Refused(409, $"A replay of {Day(session.Date)} is {session.State}; stop it first.");
-        if (!Speeds.Contains(request.Speed)) return ReplayStartResult<ReplayQueueView>.Refused(400, $"speed is one of {string.Join(", ", Speeds)}.");
-
-        var dates = new SortedSet<DateOnly>();
-        foreach (var text in request.Dates ?? [])
+        var result = await GatedAsync(async () =>
         {
-            if (!DateOnly.TryParseExact(text, "yyyy-MM-dd", out var d)) return ReplayStartResult<ReplayQueueView>.Refused(400, $"\"{text}\" is not a yyyy-MM-dd date.");
-            if (d >= IstTime.DateOf(Now)) return ReplayStartResult<ReplayQueueView>.Refused(400, $"{Day(d)} is not over yet.");
-            dates.Add(d);
-        }
+            var current = await LoadQueueAsync(cancellationToken);
+            if (current is { EndedUtc: null }) return ReplayStartResult<ReplayQueueState>.Refused(409, "A queue of days is already playing; cancel it first.");
+            var session = await LoadAsync(cancellationToken);
+            if (session is not null && IsActive(session.State)) return ReplayStartResult<ReplayQueueState>.Refused(409, $"A replay of {Day(session.Date)} is {session.State}; stop it first.");
+            if (!Speeds.Contains(request.Speed)) return ReplayStartResult<ReplayQueueState>.Refused(400, $"speed is one of {string.Join(", ", Speeds)}.");
 
-        if (dates.Count == 0) return ReplayStartResult<ReplayQueueView>.Refused(400, "Send at least one recorded day.");
-        if (dates.Count > MaxQueuedDays) return ReplayStartResult<ReplayQueueView>.Refused(400, $"At most {MaxQueuedDays} days a queue.");
+            var dates = new SortedSet<DateOnly>();
+            foreach (var text in request.Dates ?? [])
+            {
+                if (!DateOnly.TryParseExact(text, "yyyy-MM-dd", out var d)) return ReplayStartResult<ReplayQueueState>.Refused(400, $"\"{text}\" is not a yyyy-MM-dd date.");
+                if (d >= IstTime.DateOf(Now)) return ReplayStartResult<ReplayQueueState>.Refused(400, $"{Day(d)} is not over yet.");
+                dates.Add(d);
+            }
 
-        var queue = new ReplayQueueState((current?.Id ?? 0) + 1,
-            dates.Select(d => d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)).ToList(), request.Speed,
-            SessionOpen.ToString("HH:mm", CultureInfo.InvariantCulture), 0, [], [], by, Now, null, null);
-        await SaveQueueAsync(queue, cancellationToken);
-        logger.LogInformation("Replay queue {Queue}: {Count} days at {Speed}x queued by {By}", queue.Id, queue.Dates.Count, queue.Speed, by);
-        await AdvanceQueueAsync(session, cancellationToken);
-        return new ReplayStartResult<ReplayQueueView>(QueueView((await LoadQueueAsync(cancellationToken))!), 202, null);
+            if (dates.Count == 0) return ReplayStartResult<ReplayQueueState>.Refused(400, "Send at least one recorded day.");
+            if (dates.Count > MaxQueuedDays) return ReplayStartResult<ReplayQueueState>.Refused(400, $"At most {MaxQueuedDays} days a queue.");
+
+            var queue = new ReplayQueueState((current?.Id ?? 0) + 1,
+                dates.Select(d => d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)).ToList(), request.Speed,
+                SessionOpen.ToString("HH:mm", CultureInfo.InvariantCulture), 0, [], [], Plain(by, MaxByLength), Now, null, null);
+            await SaveQueueAsync(queue, cancellationToken);
+            logger.LogInformation("Replay queue {Queue}: {Count} days at {Speed}x queued by {By}", queue.Id, queue.Dates.Count, queue.Speed, by);
+            await AdvanceQueueAsync(session, cancellationToken);
+            return new ReplayStartResult<ReplayQueueState>(await LoadQueueAsync(cancellationToken), 202, null);
+        }, cancellationToken);
+        return result.Session is { } queued
+            ? new ReplayStartResult<ReplayQueueView>(QueueView(queued), result.StatusCode, null)
+            : ReplayStartResult<ReplayQueueView>.Refused(result.StatusCode, result.Error!);
     }
 
     /// <summary>Ends the queue: no further day starts. The day playing now plays on unless it is stopped.</summary>
     public async Task<ReplayQueueView?> CancelQueueAsync(string by, CancellationToken cancellationToken)
     {
-        var queue = await LoadQueueAsync(cancellationToken);
-        if (queue is null) return null;
-        if (queue.EndedUtc is null)
+        var queue = await GatedAsync(async () =>
         {
-            queue = queue with { EndedUtc = Now, Note = $"Cancelled by {by}." };
-            await SaveQueueAsync(queue, cancellationToken);
-            logger.LogInformation("Replay queue {Queue} cancelled by {By}", queue.Id, by);
-        }
-
-        return QueueView(queue);
+            var stored = await LoadQueueAsync(cancellationToken);
+            if (stored is null || stored.EndedUtc is not null) return stored;
+            var cancelled = stored with { EndedUtc = Now, Note = $"Cancelled by {Plain(by, MaxByLength)}." };
+            await SaveQueueAsync(cancelled, cancellationToken);
+            logger.LogInformation("Replay queue {Queue} cancelled by {By}", cancelled.Id, by);
+            return cancelled;
+        }, cancellationToken);
+        return queue is null ? null : QueueView(queue);
     }
 
     /// <summary>
     /// Starts the queue's next day when nothing is playing, the last replay ended at least <see cref="QueueGap"/>
-    /// ago, and the day can be played out before the next trading morning (08:45). A day that will not start
-    /// (nothing recorded, the player failing) is skipped with its reason.
+    /// ago, its player has exited, and the day can be played out before the next trading morning (08:45). A
+    /// day that will not start (nothing recorded, the player failing) is skipped with its reason. Under
+    /// <see cref="Gate"/>.
     /// </summary>
     private async Task AdvanceQueueAsync(ReplaySessionState? session, CancellationToken cancellationToken)
     {
         var queue = await LoadQueueAsync(cancellationToken);
         if (queue is null || queue.EndedUtc is not null) return;
+
+        // A day this queue started but never wrote down: the API stopped, or a write failed, between the
+        // player's start and the queue's. It is that day's session, not a day still to play.
+        if (session is not null && StartedForNext(queue, session))
+        {
+            queue = queue with { Next = queue.Next + 1, Sessions = [.. queue.Sessions, session.Id] };
+            await SaveQueueAsync(queue, cancellationToken);
+            logger.LogWarning("Replay queue {Queue}: session {Session} of {Date} was started but not recorded; recorded now", queue.Id, session.Id, session.Date);
+        }
+
         if (session is not null && IsActive(session.State)) return;
         if (session?.EndedUtc is DateTime ended && Now - ended < QueueGap) return;
 
@@ -357,13 +473,25 @@ public sealed class MarketReplayService(
 
         if (WhyNotNow(Now) is not null || !FitsBeforeMorning(queue.Speed, queue.FromIst)) return;
 
+        // The last day's player has not exited yet, or its pid cannot be verified just now: the supervisor would
+        // refuse a second one, and the day would be skipped for a wait of seconds.
+        if (await player.IsRunningAsync(cancellationToken)) return;
+
         string date = queue.Dates[queue.Next];
-        var result = await StartAsync(new ReplayStartRequest(date, queue.Speed, queue.FromIst, [], AiTrader: true), queue.By, cancellationToken);
+        var result = await StartCoreAsync(new ReplayStartRequest(date, queue.Speed, queue.FromIst, [], AiTrader: true), queue.By, cancellationToken);
         queue = result.Session is { } started
             ? queue with { Next = queue.Next + 1, Sessions = [.. queue.Sessions, started.Id] }
-            : queue with { Next = queue.Next + 1, Skipped = [.. queue.Skipped, $"{date}: {Cut(result.Error, 40)}"] };
+            : queue with { Next = queue.Next + 1, Skipped = [.. queue.Skipped, $"{date}: {Plain(result.Error, MaxReasonLength)}"] };
         await SaveQueueAsync(queue, cancellationToken);
     }
+
+    /// <summary>Whether <paramref name="session"/> is the queue's next day, started by the queue and not counted yet.</summary>
+    private static bool StartedForNext(ReplayQueueState queue, ReplaySessionState session) =>
+        queue.Next < queue.Dates.Count
+        && session.Date == queue.Dates[queue.Next]
+        && !queue.Sessions.Contains(session.Id)
+        && session.AiTrader && session.RunIds.Count == 0
+        && session.StartedUtc >= queue.CreatedUtc;
 
     /// <summary>Whether a day played from <paramref name="fromIst"/> at <paramref name="speed"/> would end before the next trading morning.</summary>
     private bool FitsBeforeMorning(int speed, string fromIst)
@@ -388,6 +516,13 @@ public sealed class MarketReplayService(
         var t = (text ?? string.Empty).Trim();
         return t.Length <= max ? t : t[..(max - 1)] + "…";
     }
+
+    /// <summary>
+    /// <paramref name="text"/> on one line and without the characters JSON writes as two (quotes, backslashes),
+    /// cut to <paramref name="max"/>: so that as many as a queue holds always fit its stored state.
+    /// </summary>
+    private static string Plain(string? text, int max) =>
+        Cut(new string((text ?? string.Empty).Select(c => char.IsControl(c) ? ' ' : c).Where(c => c is not ('"' or '\\')).ToArray()), max);
 
     private static ReplayQueueView QueueView(ReplayQueueState q) => new(
         q.Id, q.Dates, q.Speed, q.FromIst, q.Next, q.Sessions, q.Skipped, q.By, q.CreatedUtc, q.EndedUtc, q.Note,
@@ -418,7 +553,7 @@ public sealed class MarketReplayService(
         }
 
         row.Value = JsonSerializer.Serialize(queue, Json);
-        row.UpdatedBy = queue.By;
+        row.UpdatedBy = Cut(queue.By, 100);
         row.UpdatedUtc = Now;
         await db.SaveChangesAsync(cancellationToken);
     }
@@ -518,7 +653,7 @@ public sealed class MarketReplayService(
         }
 
         row.Value = JsonSerializer.Serialize(session, Json);
-        row.UpdatedBy = session.StartedBy;
+        row.UpdatedBy = Cut(session.StartedBy, 100);
         row.UpdatedUtc = Now;
         await db.SaveChangesAsync(cancellationToken);
     }
