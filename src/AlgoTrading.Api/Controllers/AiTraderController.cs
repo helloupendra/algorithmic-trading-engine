@@ -74,7 +74,9 @@ public class AiTraderController(TradingDbContext db, AiSettingsStore store, IOpt
     /// <summary>
     /// The AI Trader against the bar: each replay it decided in and each live shadow day, with its shadow book's net
     /// after charges next to the baseline rule's on the same day (<see cref="AiTraderBaselineScorer"/>) and doing
-    /// nothing (₹0). Totals count only full days (looks from 09:30 or earlier to 14:30 or later) whose baseline is scored.
+    /// nothing (₹0). The totals count every full row (looks from 09:30 or earlier to 14:30 or later) whose baseline is
+    /// scored, listed or not: each replay counts, so a day replayed twice counts twice against the same rule result.
+    /// <paramref name="take"/> limits only the rows listed, newest first; <c>RowsTotal</c> says how many there are.
     /// </summary>
     [HttpGet("scoreboard")]
     public async Task<IActionResult> Scoreboard([FromQuery] int take = 60, CancellationToken cancellationToken = default)
@@ -93,9 +95,9 @@ public class AiTraderController(TradingDbContext db, AiSettingsStore store, IOpt
         var baselines = await db.AiTraderBaselines.AsNoTracking()
             .Where(b => b.Rule == AiTraderBaselineScorer.TrendRule).ToDictionaryAsync(b => b.Day, cancellationToken);
 
+        // Every row is built: the totals are over all of them, and take only limits the rows listed.
         var rows = looks
             .OrderByDescending(l => l.Day).ThenByDescending(l => l.ReplaySessionId ?? long.MaxValue)
-            .Take(Math.Clamp(take, 1, 365))
             .Select(l =>
             {
                 var book = positions.Where(p => p.ReplaySessionId == l.ReplaySessionId && (l.ReplaySessionId != null || p.Day == l.Day)).ToList();
@@ -115,7 +117,7 @@ public class AiTraderController(TradingDbContext db, AiSettingsStore store, IOpt
         var totals = new AiTraderScoreTotals(
             scored.Count, scored.Sum(r => r.Net), scored.Sum(r => r.Baseline!.Net), scored.Count(r => r.Net > r.Baseline!.Net),
             scored.Count(r => r.Net > 0), scored.Count(r => r.Baseline!.Net > 0), scored.Sum(r => r.Positions), scored.Sum(r => r.Charges));
-        return Ok(new AiTraderScoreboard(AiTraderBaselineScorer.TrendRule, BaselineRuleText, totals, rows));
+        return Ok(new AiTraderScoreboard(AiTraderBaselineScorer.TrendRule, BaselineRuleText, totals, rows.Take(Math.Clamp(take, 1, 365)).ToList(), rows.Count));
     }
 
     /// <summary>A day counts in the totals when its looks span the session: from 09:30 or earlier to 14:30 or later.</summary>
@@ -208,9 +210,14 @@ public sealed record AiTraderStatus(string Status, string Mode, int EveryMinutes
 /// <summary>Today's shadow book: positions opened, still open, and the net after charges (open ones as if sold at their marks).</summary>
 public sealed record AiTraderShadowDay(int Positions, int Open, decimal Net);
 
-public sealed record AiTraderScoreboard(string Rule, string RuleText, AiTraderScoreTotals Totals, IReadOnlyList<AiTraderScoreRow> Rows);
+/// <summary>The rule, the totals over every full scored row, the newest rows (at most <c>take</c>) and how many rows there are in all.</summary>
+public sealed record AiTraderScoreboard(string Rule, string RuleText, AiTraderScoreTotals Totals, IReadOnlyList<AiTraderScoreRow> Rows, int RowsTotal);
 
-/// <summary>Over the full, scored days: the AI's net and the baseline's (both after charges), the days the AI beat it, and the days each made money.</summary>
+/// <summary>
+/// Over every full, scored row, listed or not: the AI's net and the baseline's (both after charges), the rows the AI beat
+/// it on, and the rows each made money on. <c>Days</c> (and the "days" counts) are rows: each replay and each live shadow
+/// day counts once, so a day replayed twice counts twice, against the same rule result. The name is kept for the console.
+/// </summary>
 public sealed record AiTraderScoreTotals(int Days, decimal AiNet, decimal BaselineNet, int AiBeatBaseline, int AiPositiveDays, int BaselinePositiveDays,
     int Trades, decimal Charges);
 

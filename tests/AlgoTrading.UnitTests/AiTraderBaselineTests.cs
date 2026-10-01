@@ -183,6 +183,33 @@ public class AiTraderBaselineTests
             board.Totals.AiPositiveDays, board.Totals.BaselinePositiveDays));
     }
 
+    [Fact]
+    public async Task The_totals_count_every_full_scored_replay_not_only_the_rows_listed()
+    {
+        var ai = Build(Settings());
+        foreach (long replay in new long[] { 7, 8, 9 })
+        {
+            Look(ai, replay, 9, 20); Look(ai, replay, 15, 0);
+            ai.Db.AiTraderShadowPositions.Add(new AiTraderShadowPosition
+            {
+                CreatedUtc = DateTime.UtcNow, Mode = AiTraderModes.Replay, ReplaySessionId = replay, Day = Day, Symbol = Call, Underlying = "NIFTY", OptionType = "CE",
+                Lots = 1, LotSize = 65, EntryUtc = Eleven, EntryPrice = 100m, StopLoss = 70m, Target = 150m, ExitUtc = Eleven.AddHours(1), ExitPrice = 110m,
+                ExitReason = "close", Charges = 50m, NetPnl = 100m * replay,
+            });
+        }
+
+        ai.Db.AiTraderBaselines.Add(new AiTraderBaseline { Day = Day, Rule = AiTraderBaselineScorer.TrendRule, Underlying = "NIFTY", OptionType = "PE", NetPnl = -200m });
+        await ai.Db.SaveChangesAsync();
+        var controller = new AiTraderController(ai.Db, ai.Store, ai.Options);
+
+        var board = Assert.IsType<AiTraderScoreboard>(Assert.IsType<OkObjectResult>(await controller.Scoreboard(take: 1)).Value);
+
+        // One row listed (the newest replay); the totals are over all three replays of the day, each against the same rule.
+        Assert.Equal(new long?[] { 9 }, board.Rows.Select(r => r.ReplaySessionId));
+        Assert.Equal(3, board.RowsTotal);
+        Assert.Equal((3, 2_400m, -600m, 3), (board.Totals.Days, board.Totals.AiNet, board.Totals.BaselineNet, board.Totals.AiBeatBaseline));
+    }
+
     // ---------- helpers ----------
 
     /// <summary>300 minutes before 11:00 that rise (1), fall (-1) or stay flat (0).</summary>
