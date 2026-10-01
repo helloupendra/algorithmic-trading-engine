@@ -9,6 +9,7 @@ using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Ai;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Services;
+using Microsoft.Extensions.Options;
 using Microsoft.EntityFrameworkCore;
 
 namespace AlgoTrading.Api.Services.Today;
@@ -29,7 +30,8 @@ public sealed class TodayBuilder(
     IMarketSessionService sessions,
     AiSettingsStore aiStore,
     IWebHostEnvironment environment,
-    TimeProvider? time = null)
+    TimeProvider? time = null,
+    IOptionsMonitor<AiSettings>? aiSettings = null)
 {
     /// <summary>The decisions the page shows, newest first.</summary>
     public const int DecisionsShown = 100;
@@ -133,7 +135,9 @@ public sealed class TodayBuilder(
         bool Acted(string action) => action is not ("" or "none");
         return new TodayAiTrader(
             status,
-            rows.FirstOrDefault()?.Mode ?? "shadow",
+            // The switch, not the last look: just after shadow is switched to live, the last look is still a shadow one.
+            aiSettings is null ? rows.FirstOrDefault()?.Mode ?? AiTraderModes.Shadow
+                : aiSettings.CurrentValue.AiTraderExecute ? AiTraderModes.Live : AiTraderModes.Shadow,
             rows.Count,
             rows.Count(r => Acted(r.Action)),
             rows.Count(r => Acted(r.Action) && r.Allowed),

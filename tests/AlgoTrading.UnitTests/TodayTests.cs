@@ -123,6 +123,10 @@ public sealed class TodayTests
         Assert.Equal(new[] { "r10", "r20", "r30" }, trader.Latest.Select(d => d.Reason));
         // The card says "Buy NIFTY PE", not "Buy NIFTY": the option comes from the plan; an unreadable one names none.
         Assert.Equal(new string?[] { null, "PE", "CE" }, trader.Latest.Select(d => d.Option));
+
+        // Just switched to live: the card says so before the first live look, whatever the last look's mode.
+        var live = await Build(desk, aiSettings: new AiSettings { AiTraderExecute = true }).BuildAsync(CancellationToken.None);
+        Assert.Equal("live", live.AiTrader!.Mode);
     }
 
     [Fact]
@@ -193,7 +197,7 @@ public sealed class TodayTests
         return id;
     }
 
-    private static TodayBuilder Build(RunnerDesk desk, IMarketSessionService? sessions = null)
+    private static TodayBuilder Build(RunnerDesk desk, IMarketSessionService? sessions = null, AiSettings? aiSettings = null)
     {
         var db = desk.Db();
         var lots = new PositionGreeksTests.FixedLots(65);
@@ -204,7 +208,8 @@ public sealed class TodayTests
             NullLogger<StrategyCatalogService>.Instance);
         var history = new LiveRunHistoryBuilder(db, desk.Registry, catalog, lots, charges, new RunPnl(db, lots, charges));
         return new TodayBuilder(db, history, sessions ?? new Session(true, Now.AddHours(-4), Now.AddHours(2.5)), new AiSettingsStore(db),
-            RecapClockTests.Inert<Microsoft.AspNetCore.Hosting.IWebHostEnvironment>.Create(), new Fixed(Now));
+            RecapClockTests.Inert<Microsoft.AspNetCore.Hosting.IWebHostEnvironment>.Create(), new Fixed(Now),
+            aiSettings is null ? null : new AiTestKit.Monitor(aiSettings));
     }
 
     private sealed class Fixed(DateTime utc) : TimeProvider
