@@ -75,6 +75,21 @@ public class AiTraderBaselineTests
     }
 
     [Fact]
+    public async Task The_contract_at_the_money_comes_only_from_a_chain_captured_that_day()
+    {
+        var ai = Build(Settings());
+        // Nothing captured on the 30th by 11:00: the newest capture is the 29th's, of the series that expired then.
+        MarketBriefBuilderTests.Chain(ai.Db, IstTime.FromIst(new DateTime(2026, 9, 29, 15, 29, 0)), expiry: new DateOnly(2026, 9, 29));
+        var sessions = new MarketSessionService(new MarketReplayTests.OpenCalendar());
+        var market = new BaselineMarket(new LiveDataService(ai.Db, new NoProviders(), sessions), new OptionChainService(ai.Db, sessions, new MarketBriefBuilderTests.Lots(65)));
+
+        Assert.Null(await market.AtTheMoneyAsync("NIFTY", "CE", Eleven, default));
+
+        MarketBriefBuilderTests.Chain(ai.Db, IstTime.FromIst(new DateTime(2026, 9, 30, 10, 59, 0)), expiry: new DateOnly(2026, 10, 6));
+        Assert.Equal(("NSE:NIFTY26O0622650CE", 65), (await market.AtTheMoneyAsync("NIFTY", "CE", Eleven, default) is { } c ? (c.Symbol, c.LotSize) : default));
+    }
+
+    [Fact]
     public void The_walk_exits_at_the_first_minute_whose_bid_crosses_the_stop_or_target_else_at_the_close()
     {
         BaselineTick T(int minute, decimal bid) => new(Eleven.AddMinutes(minute), bid + 0.2m, bid, bid + 0.5m);
