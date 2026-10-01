@@ -132,6 +132,8 @@ public class TradingDbContext : DbContext
 
     public DbSet<AiTraderShadowPosition> AiTraderShadowPositions => Set<AiTraderShadowPosition>();
 
+    public DbSet<AiTraderBaseline> AiTraderBaselines => Set<AiTraderBaseline>();
+
     /// <summary>The Analysis module's forecasts: written before the open, scored after the close. See <see cref="Forecast"/>.</summary>
     public DbSet<Forecast> Forecasts => Set<Forecast>();
 

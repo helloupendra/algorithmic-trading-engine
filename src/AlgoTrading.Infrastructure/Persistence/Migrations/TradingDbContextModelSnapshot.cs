@@ -734,6 +734,96 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.AiTraderBaseline", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<decimal>("Charges")
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<DateTime>("ComputedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateOnly>("Day")
+                        .HasColumnType("date");
+
+                    b.Property<decimal?>("EntryPrice")
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<DateTime?>("EntryUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal?>("ExitPrice")
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<string>("ExitReason")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("");
+
+                    b.Property<DateTime?>("ExitUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("LotSize")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Lots")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("NetPnl")
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<string>("Note")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("OptionType")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("Rule")
+                        .IsRequired()
+                        .HasMaxLength(48)
+                        .HasColumnType("character varying(48)");
+
+                    b.Property<decimal?>("StopLoss")
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<string>("Symbol")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasDefaultValue("");
+
+                    b.Property<decimal?>("Target")
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<string>("Underlying")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "Day", "Rule" }, "IX_ai_trader_baselines_Day_Rule")
+                        .IsUnique();
+
+                    b.ToTable("ai_trader_baselines", (string)null);
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.AiTraderDecision", b =>
                 {
                     b.Property<long>("Id")

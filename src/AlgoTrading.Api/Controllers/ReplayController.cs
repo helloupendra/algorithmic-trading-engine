@@ -38,6 +38,26 @@ public class ReplayController(MarketReplayService replay, IMarketReplayBook book
             : StatusCode(StatusCodes.Status202Accepted, result.Session);
     }
 
+    /// <summary>Queues recorded days to replay one after another with the AI Trader (<see cref="MarketReplayService.QueueAsync"/>).</summary>
+    [HttpPost("queue")]
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    public async Task<IActionResult> Queue([FromBody] ReplayQueueRequest? request, CancellationToken cancellationToken)
+    {
+        if (request is null) return BadRequest(new { error = "Send dates and speed." });
+        var result = await replay.QueueAsync(request, User.GetUserName() ?? User.Identity?.Name ?? "admin", cancellationToken);
+        return result.Session is null
+            ? StatusCode(result.StatusCode, new { error = result.Error })
+            : StatusCode(StatusCodes.Status202Accepted, result.Session);
+    }
+
+    /// <summary>Ends the queue; the day playing now plays on unless it is stopped too.</summary>
+    [HttpDelete("queue")]
+    [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
+    public async Task<IActionResult> CancelQueue(CancellationToken cancellationToken) =>
+        await replay.CancelQueueAsync(User.GetUserName() ?? User.Identity?.Name ?? "admin", cancellationToken) is { } view
+            ? Ok(view)
+            : NotFound(new { error = "No queue." });
+
     [HttpPost("stop")]
     [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
     public async Task<IActionResult> Stop(CancellationToken cancellationToken) =>

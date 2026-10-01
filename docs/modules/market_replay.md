@@ -60,6 +60,7 @@ on while the runner worked. A whole session at 1× takes 6 h 15 min, and at 10×
 | `GET /api/Replay/status` | `canStart`, `whyNot`, and the session: state, replay clock, progress, ticks sent, runs with their net |
 | `POST /api/Replay/start` | `{ date, speed, from, runIds }`; the runs must be running recap runs of that day |
 | `POST /api/Replay/stop`, `pause`, `resume` | The session |
+| `POST /api/Replay/queue`, `DELETE /api/Replay/queue` | Several days one after another with the AI Trader alone (see [AI Trader](ai_trader.md#scored-against-a-baseline)) |
 | `GET /api/Replay/logs?lines=` | The player's log |
 | `POST /api/Replay/ticks` | The player's ticks for the book (Service or Admin, at most 2,000 a batch) |
 
@@ -69,6 +70,6 @@ the player keeps running, and its next ticks refill the book. `ReplayMonitor` lo
 ## Not in v1
 
 - MCX replays.
-- Several days in a row.
+- Several days in a row with strategy runs: the queue plays the AI Trader alone.
 - Greeks on replayed option ticks.
 - The option chain page during a replay.
