@@ -39,7 +39,8 @@ a run started with `"Recap"` traded as a test but was counted as live.
 | The player is not a feed. It is outside `/api/Feeds`, the 15:30 feed stop, failover, Sentinel's feed rules and the close job's feed loop. | A feed is judged as live market data. A replay is not. |
 | Live runners pass over `isReplay` ticks; recap runners take only those. | The two share the Redis stream. |
 | Only NSE and BSE symbols are played. | The evening crude run is live on MCX while a replay plays. |
-| A replay cannot start on a trading day from 08:45 until NSE's close. One still playing at 08:45 is stopped, and its runs with it. | The morning job and the session belong to the live desk. |
+| A replay cannot start on a trading day from 08:45 until NSE's close. One still playing at 08:45 is stopped, and its runs with it. If its player's process cannot be stopped (its pid not verified), the replay ends all the same, the error kept with it: the player is told `stop` over Redis, and its next post is refused (409). | The morning job and the session belong to the live desk. Before, a stop that threw left the replay, its runs and its book on, tried again every 5 s. |
+| A queued day starts only while MCX is shut too, and only if it will end before MCX next opens. A replay started by hand may start while MCX trades; `status` then carries a `warning`. | The live crude runs read the same tick stream, and decode every replayed tick to pass over it; the player's reads load the box the live feed runs on. |
 | A replay owns its runs. When it finishes, is stopped, its player dies, or the morning comes, the runs are stopped first and the book cleared after. | A recap run left running would trade the next live session's prices. |
 | A replay's runs are left out of the 15:30 market-close sweep. The close job's stray-runner check counts them as open. | A weekday holiday still has a 15:30 close, and a replay played that afternoon must not be cut there. |
 
@@ -68,7 +69,7 @@ on while the runner worked. A whole session at 1× takes 6 h 15 min, and at 10×
 | Endpoint | What |
 |---|---|
 | `GET /api/Replay/days` | The recorded days with each index's minutes and the day's size |
-| `GET /api/Replay/status` | `canStart`, `whyNot`, and the session: state, replay clock, progress, ticks sent, runs with their net. An ended replay keeps where its clock stood and the ticks it sent |
+| `GET /api/Replay/status` | `canStart`, `whyNot`, `warning` (MCX in session: a replay may start, beside live MCX runs), and the session: state, replay clock, progress, ticks sent, runs with their net. An ended replay keeps where its clock stood and the ticks it sent |
 | `POST /api/Replay/start` | `{ date, speed, from, runIds }`; the runs must be running recap runs of that day. Refused while a queue plays or a vendor's recap feed runs |
 | `POST /api/Replay/stop`, `pause`, `resume` | The session |
 | `POST /api/Replay/queue`, `DELETE /api/Replay/queue` | Several days one after another with the AI Trader alone (see [The queue](#the-queue)) |
@@ -99,6 +100,10 @@ monitor starts each next day when all of these hold:
 - no replay is playing, and the last one ended at least 90 s ago;
 - not a trading day's 08:45 to NSE's close, and the day will be played out before the next trading morning's 08:45
   (holidays from the calendar);
+- MCX is not in session (until 23:30 while New York is on daylight time, 23:55 otherwise, with its holidays and half
+  days from the calendar), and the day will be played out before MCX next opens (first on a day MCX trades and NSE
+  does not). On a weekday the queue so plays from MCX's close to the next morning: a Monday's next day starts at
+  23:31 (23:56 in winter), not at 15:31;
 - a day being tried again has waited its time (below);
 - no vendor's recap feed is running;
 - the last day's player has exited.

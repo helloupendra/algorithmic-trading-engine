@@ -14,8 +14,8 @@ Nothing is stored: the day is already recorded. Live prices are never touched: t
 
 The player waits until every run of the replay is listening (Redis `recap:listening:<run id>`): the
 runners read the stream from the moment they start, and a tick played before that is lost to them. It
-reports to Redis `replay:status` once a second, takes `pause` and `resume` from `replay:control`, and
-stops on SIGTERM. When the day is played out, past the close so the runners see it, it says `finished`
+reports to Redis `replay:status` once a second, takes `pause`, `resume` and `stop` from `replay:control`,
+and stops on SIGTERM. When the day is played out, past the close so the runners see it, it says `finished`
 and exits; the API then stops the runs at the replay's prices.
 
 Only NSE and BSE symbols are played: the evening crude run is live on MCX while a replay plays.
@@ -355,7 +355,11 @@ class Player:
             self._say()
 
     def _obey(self) -> None:
-        """Reads the last command at most twice a second: a pause holds the replay's clock still."""
+        """
+        Reads the last command at most twice a second: a pause holds the replay's clock still; a stop ends the
+        replay (the API sends it when it could not stop this process at 08:45: paused, the player posts nothing,
+        and no refused post would end it).
+        """
         now = self._clock()
         if now - self._last_control < 0.5:
             return
@@ -364,6 +368,8 @@ class Player:
             command = (self._control() or "").strip().lower()
         except Exception:
             command = ""
+        if command == "stop":
+            raise Stopped()
         if command == "pause" and not self._paused:
             self._paused, self._pause_started = True, now
             self.state = "paused"

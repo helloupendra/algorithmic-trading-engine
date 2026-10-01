@@ -139,6 +139,20 @@ class DeskReplayTests(unittest.TestCase):
         self.assertAlmostEqual(120, posts[1], delta=1.0)
         self.assertTrue(any(r["state"] == "paused" for r in desk.reports))
 
+    def test_a_stop_sent_over_the_control_key_ends_even_a_paused_replay(self):
+        # At 08:45 the API could not stop the player's process. Paused, it posts nothing, so no 409 would end it.
+        desk = Desk([row(1, "NSE:NIFTY50-INDEX", at(9, 14, 10)), row(2, "NSE:NIFTY50-INDEX", at(9, 14, 20))])
+        commands = {"value": ""}
+        desk.control = lambda: commands["value"]
+
+        def sleep(seconds):
+            desk.clock.sleep(seconds)
+            commands["value"] = "pause" if desk.clock.t < 30 else "stop"
+
+        self.assertEqual("stopped", desk.player(plan(), sleep=sleep).run())
+        self.assertEqual([], desk.kinds("publish"))
+        self.assertEqual("stopped", desk.reports[-1]["state"])
+
     def test_a_stop_ends_the_replay_as_stopped(self):
         desk = Desk([row(i, "NSE:NIFTY50-INDEX", at(9, 15, i)) for i in range(1, 6)], stop_after=2)
         self.assertEqual("stopped", desk.player(plan()).run())

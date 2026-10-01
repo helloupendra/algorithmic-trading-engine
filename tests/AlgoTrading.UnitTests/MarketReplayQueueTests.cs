@@ -1,5 +1,6 @@
 using AlgoTrading.Api.Services;
 using AlgoTrading.Api.Services.Replay;
+using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Services;
@@ -84,10 +85,72 @@ public class MarketReplayQueueTests
         await replay.TickAsync(default);
         Assert.Null(player.Args);
 
-        // Monday 16:00 would have been fine.
-        clock.Set(Ist(2026, 10, 5, 16, 0));
+        // Monday 23:31, MCX closed too, was fine.
+        clock.Set(Ist(2026, 10, 5, 23, 31));
         await replay.TickAsync(default);
         Assert.Equal("2026-09-30", (await replay.LoadAsync(default))!.Date);
+    }
+
+    [Fact]
+    public async Task A_queued_day_waits_while_MCX_trades_and_starts_once_it_has_closed()
+    {
+        // Monday 5 Oct 2026, 16:00: NSE has closed, but the live crude runs trade MCX until 23:30 (New York on
+        // daylight time), reading the tick stream a replay plays into.
+        var (replay, _, player, _, clock) = Kit(Ist(2026, 10, 5, 16, 0), Sep30);
+
+        await replay.QueueAsync(new ReplayQueueRequest(["2026-09-30"], 2), "admin", default);
+        Assert.Empty(player.Starts);
+        clock.Set(Ist(2026, 10, 5, 23, 29));
+        await replay.TickAsync(default);
+        Assert.Empty(player.Starts);
+
+        clock.Set(Ist(2026, 10, 5, 23, 31));
+        await replay.TickAsync(default);
+        Assert.Single(player.Starts);
+    }
+
+    [Fact]
+    public async Task In_November_MCX_closes_at_2355_and_a_day_started_then_ends_before_the_morning()
+    {
+        // Monday 2 Nov 2026: New York is on standard time again, so MCX trades until 23:55.
+        var (replay, _, player, _, clock) = Kit(Ist(2026, 11, 2, 23, 50), Sep30);
+
+        await replay.QueueAsync(new ReplayQueueRequest(["2026-09-30"], 1), "admin", default);
+        Assert.Empty(player.Starts);
+
+        clock.Set(Ist(2026, 11, 2, 23, 56));
+        await replay.TickAsync(default);
+        Assert.Single(player.Starts);          // at 1x it ends about 06:31, before Tuesday's 08:45
+    }
+
+    [Fact]
+    public async Task A_day_that_would_run_into_MCXs_open_on_an_NSE_holiday_waits_for_the_evening()
+    {
+        // Wednesday 21 Oct 2026 as an NSE holiday on which MCX trades from 09:00. At 06:00 there is no 08:45 guard,
+        // but a day at 2x (about 3 h 20 min) would still be playing when MCX opens.
+        var holiday = new TestCalendar();
+        holiday.Holidays[new DateOnly(2026, 10, 21)] = "Holiday";
+        var (replay, _, player, _, clock) = Kit(Ist(2026, 10, 21, 6, 0), holiday, Sep30);
+
+        await replay.QueueAsync(new ReplayQueueRequest(["2026-09-30"], 2), "admin", default);
+        Assert.Empty(player.Starts);
+        clock.Set(Ist(2026, 10, 21, 12, 0));      // MCX in session
+        await replay.TickAsync(default);
+        Assert.Empty(player.Starts);
+
+        clock.Set(Ist(2026, 10, 21, 23, 31));
+        await replay.TickAsync(default);
+        Assert.Single(player.Starts);
+    }
+
+    [Fact]
+    public async Task On_a_saturday_with_every_exchange_shut_a_queued_day_starts_at_once()
+    {
+        var (replay, _, player, _, _) = Kit(Ist(2026, 10, 3, 16, 0), Sep30);
+
+        await replay.QueueAsync(new ReplayQueueRequest(["2026-09-30"], 2), "admin", default);
+
+        Assert.Single(player.Starts);
     }
 
     [Fact]
@@ -362,18 +425,23 @@ public class MarketReplayQueueTests
         Assert.Equal(2, (await replay.LoadQueueAsync(default))!.Sessions.Count);
     }
 
-    [Fact]
-    public async Task A_day_stopped_at_0845_is_played_again_after_the_close_not_counted()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_day_stopped_at_0845_is_played_again_after_the_close_not_counted(bool playerWillNotStop)
     {
-        // Thursday 1 Oct, 20:00: a day at 1x fits before Friday's 08:45, but it was paused overnight.
-        var (replay, _, player, channel, clock) = Kit(Ist(2026, 10, 1, 20, 0), Sep29);
+        // Thursday 1 Oct, 23:31, MCX closed: a day at 1x fits before Friday's 08:45, but it was paused overnight.
+        var (replay, _, player, channel, clock) = Kit(Ist(2026, 10, 1, 23, 31), Sep29);
         await replay.QueueAsync(new ReplayQueueRequest(["2026-09-29"], 1), "admin", default);
         var first = (await replay.LoadAsync(default))!;
         channel.Status = new ReplayPlayerStatus(first.Id, MarketReplayService.StatePaused, Ist(2026, 9, 29, 11, 0), 1000, 0.3, null, DateTime.UtcNow);
+        player.StopThrows = playerWillNotStop;
 
         clock.Set(Ist(2026, 10, 2, 8, 45));
         await replay.TickAsync(default);
         Assert.Equal(MarketReplayService.StateStopped, (await replay.LoadAsync(default))!.State);
+        player.StopThrows = false;
+        player.Running = false;                               // it has exited, told to stop or refused its next post
         clock.Set(Ist(2026, 10, 2, 10, 0));
         await replay.TickAsync(default);
 
@@ -382,7 +450,11 @@ public class MarketReplayQueueTests
         Assert.Null(queue.EndedUtc);
         Assert.Single(player.Starts);                         // not during Friday's session
 
-        clock.Set(Ist(2026, 10, 2, 16, 0));
+        clock.Set(Ist(2026, 10, 2, 16, 0));                   // nor while MCX trades
+        await replay.TickAsync(default);
+        Assert.Single(player.Starts);
+
+        clock.Set(Ist(2026, 10, 3, 10, 0));
         await replay.TickAsync(default);
         Assert.Equal(new[] { "2026-09-29", "2026-09-29" }, player.Starts.Select(a => a[1]));
     }
@@ -488,9 +560,13 @@ public class MarketReplayQueueTests
         db.SaveChanges();
     }
 
-    private static (MarketReplayService Replay, TradingDbContext Db, FakePlayer Player, FakeChannel Channel, FakeClock Clock) Kit(DateTime nowUtc, params DateOnly[] recorded)
+    private static (MarketReplayService Replay, TradingDbContext Db, FakePlayer Player, FakeChannel Channel, FakeClock Clock) Kit(DateTime nowUtc, params DateOnly[] recorded) =>
+        Kit(nowUtc, new OpenCalendar(), recorded);
+
+    private static (MarketReplayService Replay, TradingDbContext Db, FakePlayer Player, FakeChannel Channel, FakeClock Clock) Kit(DateTime nowUtc, IMarketCalendar calendar,
+        params DateOnly[] recorded)
     {
-        var shared = new Shared(nowUtc);
+        var shared = new Shared(nowUtc, calendar);
         var replay = shared.Service(recorded);
         return (replay, shared.LastDb!, shared.Player, shared.Channel, shared.Clock);
     }
@@ -499,8 +575,13 @@ public class MarketReplayQueueTests
     private sealed class Shared
     {
         private readonly string _database = $"replay-queue-{Guid.NewGuid():N}";
+        private readonly IMarketCalendar _calendar;
 
-        public Shared(DateTime nowUtc) => Clock.Set(nowUtc);
+        public Shared(DateTime nowUtc, IMarketCalendar? calendar = null)
+        {
+            Clock.Set(nowUtc);
+            _calendar = calendar ?? new OpenCalendar();
+        }
 
         public FakeClock Clock { get; } = new();
         public FakePlayer Player { get; } = new();
@@ -525,7 +606,7 @@ public class MarketReplayQueueTests
             db.SaveChanges();
             LastDb = db;
             var lots = new PositionGreeksTests.FixedLots(65);
-            return new MarketReplayService(db, Player, Channel, new FakeStopper(), Book, new MarketSessionService(new OpenCalendar()),
+            return new MarketReplayService(db, Player, Channel, new FakeStopper(), Book, new MarketSessionService(_calendar),
                 new RunPnl(db, lots, new RunCharges(db, lots), Book), RecapFeeds, NullLogger<MarketReplayService>.Instance, Clock);
         }
     }
