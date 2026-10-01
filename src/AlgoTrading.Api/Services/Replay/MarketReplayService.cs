@@ -196,13 +196,18 @@ public sealed class MarketReplayService(
     // ---------- control ----------
 
     /// <summary>Starts a replay of the request's day for its runs; answers the session, or why not.</summary>
-    /// <remarks>Refused while a queue of days plays, between its days too: the queue starts each of them.</remarks>
+    /// <remarks>
+    /// Refused while a queue of days plays, between its days too (the queue starts each of them), and while a
+    /// vendor's recap feed runs. The queue checks the recap feed itself, and waits rather than skip a day.
+    /// </remarks>
     public async Task<ReplayStartResult> StartAsync(ReplayStartRequest request, string by, CancellationToken cancellationToken)
     {
         var result = await GatedAsync(async () =>
             await LoadQueueAsync(cancellationToken) is { EndedUtc: null }
                 ? ReplayStartResult<ReplaySessionState>.Refused(409, QueuePlaying)
-                : await StartCoreAsync(request, by, cancellationToken), cancellationToken);
+                : await WhyNotBesideRecapAsync(cancellationToken) is { } recap
+                    ? ReplayStartResult<ReplaySessionState>.Refused(409, recap)
+                    : await StartCoreAsync(request, by, cancellationToken), cancellationToken);
         return result.Session is { } started
             ? new ReplayStartResult(await ViewAsync(started, cancellationToken), result.StatusCode, null)
             : ReplayStartResult.Refused(result.StatusCode, result.Error!);
@@ -218,7 +223,6 @@ public sealed class MarketReplayService(
         }
 
         if (WhyNotNow(Now) is { } closed) return ReplayStartResult<ReplaySessionState>.Refused(409, closed);
-        if (await WhyNotBesideRecapAsync(cancellationToken) is { } recap) return ReplayStartResult<ReplaySessionState>.Refused(409, recap);
 
         if (!DateOnly.TryParseExact(request.Date, "yyyy-MM-dd", out var date)) return ReplayStartResult<ReplaySessionState>.Refused(400, "date is yyyy-MM-dd.");
         if (date >= IstTime.DateOf(Now)) return ReplayStartResult<ReplaySessionState>.Refused(400, "Only a day that is over can be replayed.");
