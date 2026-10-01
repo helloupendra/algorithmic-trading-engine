@@ -22,9 +22,11 @@ namespace AlgoTrading.Api.Services.AiTrader;
 /// </summary>
 /// <remarks>
 /// <para>
-/// It starts in shadow mode: it decides and places nothing (<see cref="AiSettings.AiTraderExecute"/>). In a
-/// market replay that the owner asked it into, it decides on the replay's clock and is judged as on a fresh
-/// day, also placing nothing: its account is today's, and a replayed day never traded in it.
+/// It starts in shadow mode: it decides and places nothing (<see cref="AiSettings.AiTraderExecute"/>). Its
+/// allowed buys go into its shadow book instead (<see cref="AiTraderShadowBook"/>), checked every minute
+/// against their stops and targets, so a shadow day can be scored after charges and the model sees what it
+/// holds. In a market replay that the owner asked it into, it decides on the replay's clock with a fresh
+/// shadow book of that replay's own.
 /// </para>
 /// <para>
 /// No model holds an order tool. The model's answer only proposes; the code checks it and, once execution
@@ -36,6 +38,7 @@ public sealed class AiTraderAgent(
     AiGateway gateway,
     IAiTraderBriefs briefs,
     IAiTraderBooks books,
+    AiTraderShadowBook shadow,
     IMarketSessionService sessions,
     IReplaySessions replays,
     IOptionsMonitor<AiSettings> settings,
@@ -59,10 +62,13 @@ public sealed class AiTraderAgent(
 
     public async Task<bool> RunOnceAsync(DateTime nowUtc, CancellationToken cancellationToken)
     {
-        // A market replay it was asked into: it decides on the replay's clock.
         var replay = await replays.LoadAsync(cancellationToken);
-        if (replay is { AiTrader: true } && MarketReplayService.IsActive(replay.State) && replayBook?.ClockUtc is DateTime clock
-            && replayBook.Day?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) == replay.Date)
+        bool replaying = replay is { AiTrader: true } && MarketReplayService.IsActive(replay.State) && replayBook?.ClockUtc is not null
+            && replayBook.Day?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) == replay.Date;
+        await CheckShadowAsync(nowUtc, replay, replaying, cancellationToken);
+
+        // A market replay it was asked into: it decides on the replay's clock.
+        if (replaying && replayBook?.ClockUtc is DateTime clock)
         {
             if (!InLoopHours(clock)) return false;
             var lastReplayed = await db.AiTraderDecisions.AsNoTracking()
@@ -80,6 +86,25 @@ public sealed class AiTraderAgent(
 
         await DecideAsync(nowUtc, settings.CurrentValue.AiTraderExecute ? AiTraderModes.Live : AiTraderModes.Shadow, null, cancellationToken);
         return true;
+    }
+
+    /// <summary>
+    /// Every minute, whatever the decision schedule: the shadow book's open positions against their stops,
+    /// targets and the close, live and in the replay that is playing; an ended replay's are closed. A failure
+    /// here is logged and never costs a decision.
+    /// </summary>
+    private async Task CheckShadowAsync(DateTime nowUtc, ReplaySessionState? replay, bool replaying, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await shadow.EndReplaysAsync(replay is not null && MarketReplayService.IsActive(replay.State) ? replay.Id : null, cancellationToken);
+            if (replaying && replayBook?.ClockUtc is DateTime clock) await shadow.CheckAsync(clock, replay!.Id, cancellationToken);
+            await shadow.CheckAsync(nowUtc, null, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "AI Trader: the shadow book's minute check failed");
+        }
     }
 
     /// <summary>One decision now, outside the schedule ("Run now" on AI → Agents). The rules judge it as they would at this hour.</summary>
@@ -104,13 +129,14 @@ public sealed class AiTraderAgent(
     {
         bool replay = mode == AiTraderModes.Replay;
         var brief = await briefs.BuildAsync(clockUtc, replay, cancellationToken);
-        var book = await books.ReadAsync(clockUtc, replay, cancellationToken);
+        var account = await books.ReadAsync(clockUtc, replay, cancellationToken);
+        var book = mode == AiTraderModes.Live ? account : await shadow.ReadAsync(account, replaySessionId, cancellationToken);
         var day = IstTime.DateOf(clockUtc);
         var earlier = await db.AiTraderDecisions.AsNoTracking()
             .Where(d => d.ClockUtc < clockUtc && (replaySessionId == null ? d.Day == day && d.ReplaySessionId == null : d.ReplaySessionId == replaySessionId))
             .OrderByDescending(d => d.ClockUtc).ThenByDescending(d => d.Id).Take(LastLooksShown)
             .ToListAsync(cancellationToken);
-        string text = brief.Text + "\n" + AiTraderBookReader.Describe(book, Rules, replay) + "\n" + LastLooks(earlier)
+        string text = brief.Text + "\n" + AiTraderBookReader.Describe(book, Rules, mode) + "\n" + LastLooks(earlier)
                       + "\nDecide now: one JSON object.";
 
         var row = new AiTraderDecision
@@ -167,15 +193,36 @@ public sealed class AiTraderAgent(
             row.Error = "Execution is not switched on in this build: nothing was placed.";
         }
 
-        return await SaveAsync(row, cancellationToken);
+        await SaveAsync(row, cancellationToken);
+        if (verdict.Allowed && mode != AiTraderModes.Live) await ApplyToShadowAsync(row, plan, contract, cancellationToken);
+        return row;
+    }
+
+    /// <summary>An allowed plan in shadow or replay: a buy opens in the shadow book, an exit closes there; strategy starts and stops are recorded only.</summary>
+    private async Task ApplyToShadowAsync(AiTraderDecision row, AiTraderPlan plan, AiTraderContract? contract, CancellationToken cancellationToken)
+    {
+        object? result = plan.Action switch
+        {
+            AiTraderPlan.Buy when contract is not null =>
+                new { contract, shadowPositionId = (await shadow.OpenAsync(row, plan, contract, cancellationToken)).Id },
+            AiTraderPlan.Exit when plan.PositionId is long id =>
+                await shadow.ExitAsync(id, row.ReplaySessionId, row.ClockUtc, cancellationToken) is { } closed
+                    ? new { shadowPositionId = closed.Id, closed.ExitPrice, closed.Charges, closed.NetPnl }
+                    : new { shadowPositionId = id, note = "It was no longer open: closed by its stop, target or the close before this look." },
+            AiTraderPlan.StartStrategy or AiTraderPlan.StopStrategy =>
+                new { note = "Strategy runs are not simulated in shadow: recorded only." },
+            _ => null,
+        };
+        if (result is null) return;
+        row.ResultJson = JsonSerializer.Serialize(result, Json);
+        await db.SaveChangesAsync(cancellationToken);
     }
 
     private const int LastLooksShown = 3;
 
     /// <summary>
     /// Its last looks of the day (or of the replay), newest first: what it proposed and what the rules said, so a
-    /// refusal can be corrected on the next look rather than repeated. A plan allowed in shadow or replay says it
-    /// was not placed, which is why the book does not hold it.
+    /// refusal can be corrected on the next look rather than repeated.
     /// </summary>
     public static string LastLooks(IReadOnlyList<AiTraderDecision> newestFirst)
     {
@@ -188,7 +235,10 @@ public sealed class AiTraderAgent(
             string verdict = !d.Allowed ? $"refused ({d.Rule}): {Cut(d.Why, 200)}"
                 : d.Action == AiTraderPlan.None ? "nothing to judge"
                 : d.Executed ? "allowed and placed"
-                : "allowed, not placed (" + (d.Mode == AiTraderModes.Replay ? "replay" : "shadow mode") + ")";
+                : d.Mode == AiTraderModes.Live ? "allowed, not placed"
+                : d.Action == AiTraderPlan.Buy ? "allowed, opened in your shadow book"
+                : d.Action == AiTraderPlan.Exit ? "allowed, closed in your shadow book"
+                : "allowed, recorded only (strategy runs are not simulated in shadow)";
             return $"- {at} {what} → {verdict}";
         });
         return "YOUR LAST LOOKS (newest first)\n" + string.Join('\n', lines);

@@ -206,6 +206,8 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, 
 // The AI Trader: the brief, its account's facts, and the agent (shadow until Ai:AiTraderExecute).
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.IAiTraderBriefs, AlgoTrading.Api.Services.AiTrader.MarketBriefBuilder>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.IAiTraderBooks, AlgoTrading.Api.Services.AiTrader.AiTraderBookReader>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.IAiTraderQuotes, AlgoTrading.Api.Services.AiTrader.AiTraderQuotes>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.AiTraderShadowBook>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiTrader.AiTraderAgent>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.AiAgents.AiAgentScheduler>();
 // The morning plan against what is live (GET /api/Desk/plan); Desk:PlanFile overrides where it is read from.

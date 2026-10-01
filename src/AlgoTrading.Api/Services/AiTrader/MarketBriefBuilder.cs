@@ -239,8 +239,10 @@ public sealed class MarketBriefBuilder(
     }
 
     /// <summary>
-    /// A forecast's prediction in words. A range forecast reads as its median move and 80% band, in percent and
-    /// points, with the chances of a quiet, normal or wild day; any other shape as its JSON, cut short.
+    /// A forecast's prediction in words. A range forecast (the session's high − low, as % of the previous close)
+    /// reads as its median and 80% band, in percent and points, with the chances of a quiet, normal or wild day,
+    /// and says it has no direction: the model once read it as room to rise. Any other shape reads as its JSON,
+    /// cut short.
     /// </summary>
     public static string Prediction(string json)
     {
@@ -251,13 +253,13 @@ public sealed class MarketBriefBuilder(
             if (root.TryGetProperty("median", out var median) && median.ValueKind == JsonValueKind.Number
                 && root.TryGetProperty("low80", out var low) && root.TryGetProperty("high80", out var high))
             {
-                var text = string.Create(CultureInfo.InvariantCulture, $"median move {median.GetDouble():0.00}%");
+                var text = string.Create(CultureInfo.InvariantCulture, $"the session's high−low range, median {median.GetDouble():0.00}%");
                 if (root.TryGetProperty("points", out var points) && points.TryGetProperty("median", out var pm))
                 {
                     text += string.Create(CultureInfo.InvariantCulture, $" (≈{pm.GetDouble():0} pts)");
                 }
 
-                text += string.Create(CultureInfo.InvariantCulture, $", 80% band {low.GetDouble():0.00}–{high.GetDouble():0.00}%");
+                text += string.Create(CultureInfo.InvariantCulture, $", 80% between {low.GetDouble():0.00}% and {high.GetDouble():0.00}%");
                 if (root.TryGetProperty("buckets", out var buckets) && buckets.ValueKind == JsonValueKind.Object)
                 {
                     text += "; " + string.Join(", ", buckets.EnumerateObject()
@@ -265,7 +267,7 @@ public sealed class MarketBriefBuilder(
                         .Select(b => string.Create(CultureInfo.InvariantCulture, $"{b.Name} {b.Value.GetDouble() * 100:0}%")));
                 }
 
-                return text;
+                return text + " (a size, not a direction)";
             }
 
             return Cut(JsonSerializer.Serialize(root), 220);

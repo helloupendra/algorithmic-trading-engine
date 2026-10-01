@@ -34,6 +34,8 @@ public class AiTraderController(TradingDbContext db, AiSettingsStore store, IOpt
             .Select(d => new { d.Action, d.Allowed, d.Rule })
             .ToListAsync(cancellationToken);
         var latest = await Summaries(db.AiTraderDecisions.AsNoTracking().Where(d => d.ReplaySessionId == null), 3, cancellationToken);
+        var shadow = await db.AiTraderShadowPositions.AsNoTracking()
+            .Where(p => p.ReplaySessionId == null && p.Day == today).ToListAsync(cancellationToken);
 
         return Ok(new AiTraderStatus(
             state.Agent(AiCatalog.AiTrader)?.Status ?? "off",
@@ -43,8 +45,37 @@ public class AiTraderController(TradingDbContext db, AiSettingsStore store, IOpt
             new AiTraderDay(today.ToString("yyyy-MM-dd"), rows.Count, rows.Count(r => r.Action is not ("" or AiTraderPlan.None)),
                 rows.Count(r => r.Action is not ("" or AiTraderPlan.None) && r.Allowed), rows.Count(r => !r.Allowed && r.Rule is not ("no-answer" or "unreadable")),
                 rows.Count(r => r.Rule is "no-answer" or "unreadable")),
-            latest));
+            latest,
+            new AiTraderShadowDay(shadow.Count, shadow.Count(p => p.ExitUtc is null), AiTraderShadowBook.Net(shadow))));
     }
+
+    /// <summary>
+    /// The shadow book: a day's positions (IST) or a replay's, oldest first, with the net after charges (open
+    /// ones as if sold at their marks).
+    /// </summary>
+    [HttpGet("positions")]
+    public async Task<IActionResult> Positions([FromQuery] string? day, [FromQuery] long? replay, CancellationToken cancellationToken)
+    {
+        var date = IstTime.DateOf(_time.GetUtcNow().UtcDateTime);
+        if (!string.IsNullOrWhiteSpace(day) && !DateOnly.TryParseExact(day, "yyyy-MM-dd", out date))
+        {
+            return BadRequest(new { error = "day is yyyy-MM-dd." });
+        }
+
+        var query = replay is long id
+            ? db.AiTraderShadowPositions.Where(p => p.ReplaySessionId == id)
+            : db.AiTraderShadowPositions.Where(p => p.ReplaySessionId == null && p.Day == date);
+        var positions = await query.AsNoTracking().OrderBy(p => p.EntryUtc).ThenBy(p => p.Id).ToListAsync(cancellationToken);
+        return Ok(new AiTraderShadowBookView(
+            replay is null ? date.ToString("yyyy-MM-dd") : null, replay, positions.Count, positions.Count(p => p.ExitUtc is null),
+            AiTraderShadowBook.Net(positions), positions.Sum(p => p.Charges), positions.Select(View).ToList()));
+    }
+
+    private static AiTraderShadowPositionView View(AiTraderShadowPosition p) => new(
+        p.Id, p.DecisionId, p.Mode, p.ReplaySessionId, p.Day.ToString("yyyy-MM-dd"), p.Symbol, p.Underlying, p.OptionType, p.Strike,
+        p.Expiry.ToString("yyyy-MM-dd"), p.Lots, p.LotSize, p.EntryUtc, IstTime.ToIst(p.EntryUtc).ToString("HH:mm"), p.EntryPrice, p.StopLoss,
+        p.Target, p.MarkPrice, p.MarkUtc, p.ExitUtc is null, p.ExitUtc, p.ExitUtc is DateTime x ? IstTime.ToIst(x).ToString("HH:mm") : null,
+        p.ExitPrice, p.ExitReason, p.Charges, p.ExitUtc is null ? AiTraderShadowBook.Net([p]) : p.NetPnl ?? 0m);
 
     /// <summary>Decisions newest first: a day's (IST), a replay's (<paramref name="replay"/>), or the latest.</summary>
     [HttpGet("decisions")]
@@ -101,7 +132,24 @@ public class AiTraderController(TradingDbContext db, AiSettingsStore store, IOpt
     }
 }
 
-public sealed record AiTraderStatus(string Status, string Mode, int EveryMinutes, AiTraderRules Rules, AiTraderDay Today, IReadOnlyList<AiTraderDecisionSummary> Latest);
+public sealed record AiTraderStatus(string Status, string Mode, int EveryMinutes, AiTraderRules Rules, AiTraderDay Today,
+    IReadOnlyList<AiTraderDecisionSummary> Latest, AiTraderShadowDay Shadow);
+
+/// <summary>Today's shadow book: positions opened, still open, and the net after charges (open ones as if sold at their marks).</summary>
+public sealed record AiTraderShadowDay(int Positions, int Open, decimal Net);
+
+public sealed record AiTraderShadowBookView(string? Day, long? Replay, int Positions, int Open, decimal Net, decimal Charges,
+    IReadOnlyList<AiTraderShadowPositionView> Items);
+
+/// <summary>
+/// One shadow position. <c>Net</c> is after charges: as closed, or for an open one as if sold at its mark now.
+/// <c>ExitReason</c> is stop, target, exit (its own decision), close (the session's close) or replay-ended.
+/// </summary>
+public sealed record AiTraderShadowPositionView(
+    long Id, long DecisionId, string Mode, long? ReplaySessionId, string Day, string Symbol, string Underlying, string OptionType, decimal Strike,
+    string Expiry, int Lots, int LotSize, DateTime EntryUtc, string EntryIst, decimal EntryPrice, decimal StopLoss, decimal Target,
+    decimal? MarkPrice, DateTime? MarkUtc, bool Open, DateTime? ExitUtc, string? ExitIst, decimal? ExitPrice, string ExitReason,
+    decimal Charges, decimal Net);
 
 /// <summary>Today's looks: all of them, those that proposed an action, those allowed, those refused by a rule, and those with no usable answer.</summary>
 public sealed record AiTraderDay(string Date, int Decisions, int Actions, int Allowed, int Refused, int NoAnswer);

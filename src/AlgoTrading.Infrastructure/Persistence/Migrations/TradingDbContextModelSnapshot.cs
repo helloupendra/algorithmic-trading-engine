@@ -849,6 +849,112 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.AiTraderShadowPosition", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<decimal>("Charges")
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateOnly>("Day")
+                        .HasColumnType("date");
+
+                    b.Property<long>("DecisionId")
+                        .HasColumnType("bigint");
+
+                    b.Property<decimal>("EntryPrice")
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<DateTime>("EntryUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal?>("ExitPrice")
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<string>("ExitReason")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("");
+
+                    b.Property<DateTime?>("ExitUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateOnly>("Expiry")
+                        .HasColumnType("date");
+
+                    b.Property<int>("LotSize")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Lots")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal?>("MarkPrice")
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<DateTime?>("MarkUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Mode")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<decimal?>("NetPnl")
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<string>("OptionType")
+                        .IsRequired()
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)");
+
+                    b.Property<long?>("ReplaySessionId")
+                        .HasColumnType("bigint");
+
+                    b.Property<decimal>("StopLoss")
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<decimal>("Strike")
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<string>("Symbol")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<decimal>("Target")
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<string>("Underlying")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "Day", "ReplaySessionId" }, "IX_ai_trader_shadow_positions_Day_Replay");
+
+                    b.HasIndex(new[] { "DecisionId" }, "IX_ai_trader_shadow_positions_Decision");
+
+                    b.HasIndex(new[] { "ExitUtc" }, "IX_ai_trader_shadow_positions_Open")
+                        .HasFilter("\"ExitUtc\" IS NULL");
+
+                    b.ToTable("ai_trader_shadow_positions", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ai_trader_shadow_positions_Mode", "\"Mode\" IN ('shadow', 'replay')");
+
+                            t.HasCheckConstraint("CK_ai_trader_shadow_positions_OptionType", "\"OptionType\" IN ('CE', 'PE')");
+                        });
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.AlertEvent", b =>
                 {
                     b.Property<long>("Id")

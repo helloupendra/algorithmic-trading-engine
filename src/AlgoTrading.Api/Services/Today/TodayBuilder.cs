@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AlgoTrading.Api.Controllers;
+using AlgoTrading.Api.Services.AiTrader;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.Strategies;
 using AlgoTrading.Domain.Entities;
@@ -126,6 +127,8 @@ public sealed class TodayBuilder(
             .Select(d => new { d.ClockUtc, d.Mode, d.Action, d.Underlying, d.Allowed, d.Rule, d.Why, d.Reason })
             .ToListAsync(cancellationToken);
         if (status != "on" && rows.Count == 0) return null;
+        var shadow = await db.AiTraderShadowPositions.AsNoTracking()
+            .Where(p => p.Day == today && p.ReplaySessionId == null).ToListAsync(cancellationToken);
 
         bool Acted(string action) => action is not ("" or "none");
         return new TodayAiTrader(
@@ -137,7 +140,8 @@ public sealed class TodayBuilder(
             rows.Count(r => !r.Allowed && r.Rule is not ("no-answer" or "unreadable")),
             rows.Count(r => r.Rule is "no-answer" or "unreadable"),
             rows.Take(3).Select(r => new TodayAiTraderDecision(Utc(r.ClockUtc)!.Value, r.Action, r.Underlying, r.Allowed, r.Rule,
-                Cut(string.IsNullOrWhiteSpace(r.Reason) ? r.Why : r.Reason, 200)!)).ToList());
+                Cut(string.IsNullOrWhiteSpace(r.Reason) ? r.Why : r.Reason, 200)!)).ToList(),
+            shadow.Count, shadow.Count(p => p.ExitUtc is null), AiTraderShadowBook.Net(shadow));
     }
 
     private TodayMarket Market(DateTime now, string exchange, string segment)
@@ -372,9 +376,12 @@ public sealed record TodayResponse(
 
 public sealed record TodayMarket(string Exchange, string State, DateTime? OpensUtc, DateTime? ClosesUtc);
 
-/// <summary>The AI Trader today: its looks, the actions it proposed, how many the rules allowed and refused, the looks with no usable answer.</summary>
+/// <summary>
+/// The AI Trader today: its looks, the actions it proposed, how many the rules allowed and refused, the looks with
+/// no usable answer, and its shadow book (positions opened, still open, net after charges).
+/// </summary>
 public sealed record TodayAiTrader(string Status, string Mode, int Decisions, int Actions, int Allowed, int Refused, int NoAnswer,
-    IReadOnlyList<TodayAiTraderDecision> Latest);
+    IReadOnlyList<TodayAiTraderDecision> Latest, int ShadowPositions = 0, int ShadowOpen = 0, decimal ShadowNet = 0m);
 
 public sealed record TodayAiTraderDecision(DateTime AtUtc, string Action, string Underlying, bool Allowed, string Rule, string Reason);
 
