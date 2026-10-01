@@ -727,9 +727,11 @@ public class CarryForwardTests
     /// The pieces of the desk these rules run in: a shared in-memory database,
     /// the paper engine, the registry of runners and the stop pipeline, each
     /// resolved per scope as the API does. Runners are stand-in processes that
-    /// sleep, so a stop has something real to terminate.
+    /// sleep, so a stop has something real to terminate. Given a
+    /// <c>replayBook</c>, a market replay's book is on the desk too,
+    /// as the API registers it (LiveRunsBesideReplayTests).
     /// </summary>
-    private sealed class Desk : IDisposable
+    internal sealed class Desk : IDisposable
     {
         public const long Owner = 7;
         public const long OtherTrader = 8;
@@ -741,9 +743,10 @@ public class CarryForwardTests
         private readonly List<Process> _processes = new();
         private readonly string _emptyEngine = Directory.CreateTempSubdirectory("carry-engine-").FullName;
 
-        public Desk()
+        public Desk(IMarketReplayBook? replayBook = null)
         {
             var services = new ServiceCollection();
+            if (replayBook is not null) services.AddSingleton(replayBook);
             services.AddLogging();
             services.AddDbContext<TradingDbContext>(Configure);
             services.AddSingleton<IRiskManagementService>(RecapClockTests.Inert<IRiskManagementService>.Create());

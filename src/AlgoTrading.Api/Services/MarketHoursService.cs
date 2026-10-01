@@ -224,6 +224,57 @@ namespace AlgoTrading.Api.Services
                 .AnyAsync(x => x.IsActive && x.Symbol.StartsWith("MCX:"), cancellationToken);
         }
 
+        /// <summary>The runs of the market replay in progress, if one is.</summary>
+        /// <remarks>
+        /// Never a reason to skip the sweep. When the replay cannot be read (its
+        /// service will not build, the read fails), none is held back and every
+        /// run is judged by its own close, as before the replay existed: a recap
+        /// cut at a close is a test to run again, a live run left open past its
+        /// close is not. Thrown, this took the whole sweep down with it every
+        /// minute, and no live run was stopped while it lasted.
+        /// </remarks>
+        internal static async Task<IReadOnlySet<long>> ReplayRunIdsAsync(IServiceScopeFactory scopeFactory, ILogger logger,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                using var scope = scopeFactory.CreateScope();
+                var replay = scope.ServiceProvider.GetService<Replay.MarketReplayService>();
+                var session = replay is null ? null : await replay.LoadAsync(cancellationToken);
+                return session is not null && Replay.MarketReplayService.IsActive(session.State)
+                    ? session.RunIds.ToHashSet()
+                    : new HashSet<long>();
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Market close: the market replay could not be read; no run is left to it, every run is judged by its own close.");
+                return new HashSet<long>();
+            }
+        }
+
+        /// <summary>
+        /// The runs the sweep stops now: every run on the desk whose market has
+        /// closed since it started (<see cref="MarketCloseRules.RunsToStop"/>),
+        /// except one whose stop is already claimed and a market replay's own.
+        /// </summary>
+        /// <remarks>
+        /// A market replay's runs end with the replay, at its prices
+        /// (MarketReplayService). A weekday holiday still has a 15:30 close, and
+        /// a replay played that afternoon must not be cut there.
+        /// </remarks>
+        internal static IReadOnlyList<MarketCloseRules.RunToStop> RunsDueAtClose(
+            IMarketSessionService sessions, DateTime nowUtc, IEnumerable<RunningStrategy> runs, IReadOnlySet<long> replayRuns)
+            => MarketCloseRules.RunsToStop(
+                sessions,
+                nowUtc,
+                runs
+                    .Where(r => !r.StopRequested && !replayRuns.Contains(r.RunId))
+                    .Select(r => new MarketCloseRules.DeskRun(r.RunId, r.Underlying, r.SpotSymbol, r.StartedUtc)));
+
         /// <summary>
         /// Stops, squaring off, every run whose market has closed since it
         /// started — adopted runs included, since the registry holds them like
@@ -232,30 +283,12 @@ namespace AlgoTrading.Api.Services
         /// later; it never keeps the other runs, or the feed shutdown after this,
         /// from going ahead.
         /// </summary>
-        /// <summary>The runs of the market replay in progress, if one is.</summary>
-        private async Task<IReadOnlySet<long>> ReplayRunIdsAsync(CancellationToken cancellationToken)
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var replay = scope.ServiceProvider.GetService<Replay.MarketReplayService>();
-            var session = replay is null ? null : await replay.LoadAsync(cancellationToken);
-            return session is not null && Replay.MarketReplayService.IsActive(session.State)
-                ? session.RunIds.ToHashSet()
-                : new HashSet<long>();
-        }
-
         private async Task StopRunsPastTheirCloseAsync(DateTime nowUtc, CancellationToken cancellationToken)
         {
             try
             {
-                // A market replay's runs end with the replay, at its prices (MarketReplayService). A weekday
-                // holiday still has a 15:30 close, and a replay played that afternoon must not be cut there.
-                var replayRuns = await ReplayRunIdsAsync(cancellationToken);
-                var due = MarketCloseRules.RunsToStop(
-                    _marketSession,
-                    nowUtc,
-                    _runs.List()
-                        .Where(r => !r.StopRequested && !replayRuns.Contains(r.RunId))
-                        .Select(r => new MarketCloseRules.DeskRun(r.RunId, r.Underlying, r.SpotSymbol, r.StartedUtc)));
+                var replayRuns = await ReplayRunIdsAsync(_scopeFactory, _logger, cancellationToken);
+                var due = RunsDueAtClose(_marketSession, nowUtc, _runs.List(), replayRuns);
                 if (due.Count == 0) return;
 
                 using var scope = _scopeFactory.CreateScope();
