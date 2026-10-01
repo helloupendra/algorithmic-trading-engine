@@ -170,6 +170,20 @@ public class AiTraderBaselineTests
         Assert.Equal(2, market.Calls[failing]);
     }
 
+    [Fact]
+    public async Task A_day_with_no_session_is_kept_as_no_trade_without_reading_the_market()
+    {
+        // A "Run now" look on a Saturday is a day it decided on; the bars before Saturday 11:00 are Friday's.
+        var ai = Build(Settings());
+        var market = new FakeMarket(Minutes(1));
+        var scorer = new AiTraderBaselineScorer(ai.Db, market, new MarketSessionService(new MarketReplayTests.OpenCalendar()));
+
+        var row = (await scorer.ForDayAsync(new DateOnly(2026, 10, 3), IstTime.FromIst(new DateTime(2026, 10, 5, 8, 0, 0)), default))!;
+
+        Assert.Equal((string.Empty, 0m, 0), (row.OptionType, row.NetPnl, market.ChainCalls));
+        Assert.Equal("No NSE session on 3 Oct: nothing to trade.", row.Note);
+    }
+
     // ---------- the scoreboard ----------
 
     [Fact]

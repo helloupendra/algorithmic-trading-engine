@@ -1,3 +1,4 @@
+using System.Globalization;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.LiveData;
 using AlgoTrading.Domain.Entities;
@@ -47,7 +48,11 @@ public sealed class AiTraderBaselineScorer(TradingDbContext db, IBaselineMarket 
     {
         var row = new AiTraderBaseline { Day = day, Rule = TrendRule, Underlying = Underlying };
         var decideUtc = IstTime.FromIst(day.ToDateTime(DecideAt));
-        var closeUtc = sessions.GetSessionInfo(decideUtc, "NSE", "FO").SessionCloseUtc;
+        var info = sessions.GetSessionInfo(decideUtc, "NSE", "FO");
+        // A look on a weekend or holiday ("Run now") makes it a day it decided on; the bars before its 11:00 are
+        // an earlier session's, and there is nothing to trade.
+        if (!info.IsTradingDay) return Note(row, $"No NSE session on {day.ToString("d MMM", CultureInfo.InvariantCulture)}: nothing to trade.");
+        var closeUtc = info.SessionCloseUtc;
 
         var minutes = await market.MinutesBeforeAsync(Spot, decideUtc, cancellationToken);
         var (option, why) = Direction(minutes, decideUtc);
