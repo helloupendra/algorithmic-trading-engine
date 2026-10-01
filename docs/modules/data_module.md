@@ -96,6 +96,34 @@ Everything the platform sees during a session is written down; the only thing wi
 
 Run it by hand for any day with `POST /api/Backfill/archive?day=YYYY-MM-DD` (admin; add `&broker=false` to skip the broker calls). The response lists what was inserted, updated, or left to the broker.
 
+#### India VIX
+
+**The nightly India VIX check** runs right after the archive, in the same tick, when at least one day the archive has just done was an NSE trading day in the exchange calendar (`market_holidays`; a weekday holiday such as Gandhi Jayanti does not count). So it runs at 23:50 IST on a trading day, and after the catch-up of a missed one. The forecasts need it: `range.har-vix` and the logits read India VIX's previous close, and on 1 Oct 2026 VIX was found missing for 22, 23 and 24 Sep (incident #204). VIX came only from the live feed, it was off the watchlist, and unlike the index symbols no broker backfill covered it. It is on the watchlist now; this check is the net under it.
+
+What it does (`VixBackfillService`, `VixBackfillPlan` in `Infrastructure/Services/VixBackfill.cs`):
+
+1. Takes the last 20 trading days through the day just archived (`Archive:VixLookbackTradingDays`, at most 60).
+2. For `NSE:INDIAVIX-INDEX` at 1, 5 and 15 minutes, reads the stored bar times and compares them with each day's session from the exchange calendar: 375, 75 and 25 bars on a normal day, a special session's own hours, nothing on a holiday.
+3. Asks the history vendors for every missing bar: the history router's chain (FYERS first, then by rank, or the bindings on the Data Sources page), skipping the `replay` connector, which reads this table. Consecutive trading days with missing bars are one request per resolution; a vendor that fails is noted and the next one asked, only while bars are still missing.
+4. Writes only bars that are missing, under the vendor's source key. A stored bar (the archive's `live` one, or an earlier backfill's) is never replaced, so a rerun writes nothing.
+5. Logs one line with what it found and fetched (`India VIX check through …` in `logs/api.log`).
+
+A day is a **gap** when the forecasts would drop it: fewer than 90% of its bars (the coverage rule every backfill uses), or no bar in its first five minutes or its last fifteen (the analysis module's rule, because the session's open and close are what it reads). A gap left after the vendors were asked is an error in `logs/api.log` (Sentinel opens an incident from it) and one **"India VIX gap not filled"** message on the System channel, naming each day, how many bars each resolution has, what each vendor answered, and a reminder that a day the calendar wrongly calls a trading day looks the same. Each gap day is sent once (`system_settings` key `archive.vix.reportedGaps`); on later nights it is asked for again and logged as a warning, until it is filled or leaves the 20-day window. A day short of only a few bars is logged, not sent, and asked for again the next night. If the check itself throws, that is an error in the log and an **"India VIX check failed"** message; the archive is never affected. `Archive:VixCheckEnabled=false` switches it off.
+
+It is light on purpose, because it shares the box with the live desk: three queries of one symbol's timestamps, and on a night with nothing missing no request at all.
+
+Run it by hand with `POST /api/Backfill/vix?through=YYYY-MM-DD&days=20` (admin; both optional, `through` defaults to the latest closed session). The response lists each day and resolution after the fetches, the vendors' answers and any gap days. It sends nothing to the System channel.
+
+If no vendor has the bars, fill them from Dhan's index history the way incident #204 was fixed, into a separate folder so the import reads only those days:
+
+```sh
+cd src/AlgoTrading.PythonEngine
+python tools/index_history_download.py --what candles --from 2026-09-22 --to 2026-09-24 --root /tmp/vix-fill
+python tools/index_history_import.py candles --names INDIAVIX --root /tmp/vix-fill
+```
+
+The download fetches every index in its list for those days (twelve small requests for three days); the import takes only VIX. It needs a live Dhan token in `DHAN_CLIENT_ID` and `DHAN_ACCESS_TOKEN`; on 1 Oct the saved ones were stale and the token came from the API's Dhan session. The import adds only rows that are not there (source `dhan`).
+
 **Not kept yet:** a live run's equity curve (the `equity-snapshots` endpoint is backtest-only; live P&L is reconstructed from positions and ticks), and OI for underlyings the chain poller is not configured for (FINNIFTY, MCX).
 
 ### 7. When a Tick Does Not Arrive

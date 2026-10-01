@@ -36,6 +36,8 @@ Two words need care:
 | 16:00 | Sentinel's after-the-close checkup | trading days | `slots.py` |
 | 16:40 | AI Assistant check (the daily golden test) | trading days | `Ai:AssistantCheckAfterIst`, `AssistantCheckAgent.cs` |
 | 23:30 / 23:55 | MCX closes; crude runs end with it | trading days | the strategy's own session |
+| 23:50 | Nightly candle archive: the day's live 1-minute bars into 1/5/15-minute candles, and the broker's own index candles. A day missed (API down) is caught up on the API's next minute, up to 7 days back. | every day | `ArchiveSchedule.cs`, `NightlyArchiveService.cs` (`Archive:RunAtIst`) |
+| 23:50, right after the archive | India VIX check: the last 20 trading days' 1/5/15-minute VIX bars, every missing one asked of the history vendors; a day still unusable is an error and one System message ([data module](data_module.md#india-vix)). Runs when a day just archived was an NSE trading day, so also after a catch-up. | trading days | `NightlyArchiveService.cs`, `VixBackfill.cs` |
 | 23:58 | `market-close.sh`: every run flat and stopped, feeds and recorders off. The deploy gate opens right after it. | weekdays | `scripts/desk.sh`, `desk-common.sh` |
 
 Always running: the desk checks the API's health every 30 seconds and GitHub every 2 minutes. The AI docs index

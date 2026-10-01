@@ -121,6 +121,15 @@ public static class SystemSettingKeys
     public const string NewsScoringLastFailureNotice = "marketintel.newsscore.lastFailureNotice";
 
     /// <summary>
+    /// The India VIX gap days the nightly check has already reported, as
+    /// comma-separated yyyy-MM-dd. A gap no vendor can fill is asked for again
+    /// every night while it is inside the check's window, but sent to the
+    /// System channel once, not every night for a month. A day leaves the list
+    /// once it is filled or falls out of the window.
+    /// </summary>
+    public const string VixGapsReported = "archive.vix.reportedGaps";
+
+    /// <summary>
     /// "marketintel.nofile.&lt;dataset&gt;": the days a market-intelligence
     /// backfill found no file for, once they were old enough that none will
     /// come (holidays the exchange calendar does not hold), as comma-separated

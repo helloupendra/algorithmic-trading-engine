@@ -50,6 +50,56 @@ public class BackfillController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>
+    /// Run the India VIX check now, instead of waiting for the one after the
+    /// nightly archive: the last <paramref name="days"/> trading days through
+    /// <paramref name="through"/>, every missing 1/5/15-minute bar asked of the
+    /// history vendors. Only missing bars are written, so it is safe to repeat.
+    /// It answers with what it found; it sends nothing to the System channel.
+    /// </summary>
+    /// <param name="through">The last IST trading day to check, yyyy-MM-dd. Defaults to the latest session that has closed.</param>
+    /// <param name="days">Trading days to look back over, 1 to 60 (default 20).</param>
+    [HttpPost("vix")]
+    public async Task<IActionResult> CheckVix(
+        [FromServices] VixBackfillService vix,
+        [FromQuery] string? through,
+        [FromQuery] int days = VixBackfillPlan.DefaultLookbackTradingDays,
+        CancellationToken cancellationToken = default)
+    {
+        var nowUtc = DateTime.UtcNow;
+        var today = IstTime.DateOf(nowUtc);
+        var latestClosed = IstTime.ToIst(nowUtc).TimeOfDay >= IstTime.SessionClose ? today : today.AddDays(-1);
+
+        DateOnly last;
+        if (string.IsNullOrWhiteSpace(through))
+        {
+            last = latestClosed;
+            for (int back = 0; back < 30 && !vix.IsTradingDay(last); back++) last = last.AddDays(-1);
+        }
+        else if (!DateOnly.TryParseExact(through, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out last))
+        {
+            return BadRequest(new { message = "through must be yyyy-MM-dd (IST)." });
+        }
+
+        if (last > latestClosed)
+            return BadRequest(new { message = "That session has not closed yet." });
+        if (days is < 1 or > VixBackfillPlan.MaxLookbackTradingDays)
+            return BadRequest(new { message = $"days must be 1 to {VixBackfillPlan.MaxLookbackTradingDays}." });
+
+        var result = await vix.RunAsync(last, days, cancellationToken);
+        return Ok(new
+        {
+            symbol = VixBackfillPlan.Symbol,
+            through = result.Through,
+            days = result.Days,
+            barsFilled = result.BarsFilled,
+            fetches = result.Fetches.Select(IncidentRedaction.Mask),
+            gapDays = result.GapDays,
+            holes = result.Holes.Select(h => h.ToString()),
+            after = result.After.Select(c => new { day = c.Day, minutes = c.Minutes, expected = c.Expected, present = c.Present, state = c.State.ToString() }),
+        });
+    }
+
     [HttpPost("history")]
     public async Task<IActionResult> BackfillHistory(
         [FromBody] BackfillHistoryRequest request,
