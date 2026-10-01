@@ -152,8 +152,9 @@ public sealed class BaselineMarket(ILiveDataService live, OptionChainService cha
 {
     public async Task<IReadOnlyList<LiveBarResponse>> MinutesBeforeAsync(string symbol, DateTime beforeUtc, CancellationToken cancellationToken)
     {
-        // Bars that had begun by a tick before the decision: the 11:00 minute, still open then, is left out.
-        var newestFirst = await live.GetBarsUntilAsync(symbol, "1m", 1000, beforeUtc.AddTicks(-1), null, cancellationToken);
+        // The minutes that had ended by the decision: the read leaves out the minute its moment falls in (11:00,
+        // still open then) and keeps 10:59, which closed at 11:00. A tick earlier would lose 10:59 as well.
+        var newestFirst = await live.GetBarsUntilAsync(symbol, "1m", 1000, beforeUtc, null, cancellationToken);
         return newestFirst.OrderBy(b => b.BarStartUtc).ToList();
     }
 
