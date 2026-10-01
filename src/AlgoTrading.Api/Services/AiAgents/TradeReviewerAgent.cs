@@ -6,7 +6,9 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using AlgoTrading.Api.Controllers;
 using AlgoTrading.Api.Services.AiTools;
+using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Domain.Entities;
+using AlgoTrading.Domain.ValueObjects;
 using AlgoTrading.Infrastructure.Ai;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Services;
@@ -25,7 +27,8 @@ namespace AlgoTrading.Api.Services.AiAgents;
 /// A run is due once it has been stopped ten minutes (its last fills and
 /// charges are in) and its day's <see cref="AiSettings.ReviewAfterIst"/> has
 /// passed, so the NSE runs are reviewed after 15:45 and the MCX runs after
-/// they stop at 23:30. Runs from the last two days only: the reviewer is not a
+/// they stop at MCX's close (23:30, or 23:55 while New York is on standard
+/// time). Runs from the last two days only: the reviewer is not a
 /// backfill. Manual books and alert-only runs are not strategies and are left
 /// out.
 /// </para>
@@ -50,6 +53,7 @@ public sealed class TradeReviewerAgent(
     AiReportWriter reports,
     AiToolbox toolbox,
     AiSchedulerState schedule,
+    IMarketSessionService sessions,
     IOptionsMonitor<AiSettings> settings,
     ILogger<TradeReviewerAgent> logger,
     TimeProvider? time = null) : IAiScheduledAgent
@@ -256,12 +260,15 @@ public sealed class TradeReviewerAgent(
     /// before the run stopped. In words the model reads as data; says so when
     /// nothing was recorded.
     /// </summary>
+    /// <remarks>
+    /// The session is the exchange calendar's for that day. It was 09:00–23:30
+    /// for MCX all year: from November to March MCX trades to 23:55, and a run
+    /// stopped at the close was handed the 23:29 bar as its price at the stop.
+    /// </remarks>
     public async Task<string> MarketOnDayAsync(SimulationRun run, DateOnly day, CancellationToken cancellationToken)
     {
         string symbol = run.Symbol;
-        bool mcx = symbol.StartsWith("MCX:", StringComparison.OrdinalIgnoreCase);
-        var from = IstTime.FromIst(day.ToDateTime(mcx ? new TimeOnly(9, 0) : new TimeOnly(9, 15)));
-        var to = IstTime.FromIst(day.ToDateTime(mcx ? new TimeOnly(23, 30) : new TimeOnly(15, 30)));
+        var (from, to) = SessionOn(symbol, day);
         var bars = await db.LiveBars.AsNoTracking()
             .Where(b => b.Symbol == symbol && b.Resolution == "1m" && b.BarStartUtc >= from && b.BarStartUtc < to)
             .OrderBy(b => b.BarStartUtc)
@@ -352,6 +359,24 @@ public sealed class TradeReviewerAgent(
         {
             return $"(Not available: {ex.Message})";
         }
+    }
+
+    /// <summary>The symbol's exchange session on the day (MCX's own hours and close, a special session's hours), in UTC.</summary>
+    private (DateTime OpenUtc, DateTime CloseUtc) SessionOn(string symbol, DateOnly day)
+    {
+        int colon = symbol.IndexOf(':');
+        string exchange = colon > 0 ? symbol[..colon].Trim().ToUpperInvariant() : "NSE";
+        MarketSessionInfo session;
+        try
+        {
+            session = sessions.GetSessionInfo(IstTime.MiddayUtc(day), exchange, exchange == "MCX" ? "COM" : "CM");
+        }
+        catch (NotSupportedException)
+        {
+            session = sessions.GetSessionInfo(IstTime.MiddayUtc(day), "NSE", "CM");
+        }
+
+        return (DateTime.SpecifyKind(session.SessionOpenUtc, DateTimeKind.Utc), DateTime.SpecifyKind(session.SessionCloseUtc, DateTimeKind.Utc));
     }
 
     /// <summary><see cref="AiSettings.ReviewAfterIst"/>, or 15:45 when it cannot be read.</summary>

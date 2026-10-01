@@ -458,6 +458,30 @@ public class AiAgentsTests
     }
 
     [Fact]
+    public async Task An_MCX_run_in_the_US_winter_is_given_its_session_to_the_23_55_close()
+    {
+        // Monday 2 Nov 2026: New York is back on standard time and MCX trades to 23:55 IST.
+        static DateTime At(int hour, int minute) => IstTime.FromIst(new DateTime(2026, 11, 2, hour, minute, 0));
+        const string crude = "MCX:CRUDEOIL26NOVFUT";
+        var ai = BuildOn();
+        long runId = SeedRun(ai, stoppedAt: At(23, 55), strategy: "CrudeBreakout", started: At(9, 0), symbol: crude);
+        void Bar(DateTime at, decimal o, decimal h, decimal l, decimal c) => ai.Db.LiveBars.Add(new LiveBar
+        {
+            Symbol = crude, Resolution = "1m", BarStartUtc = at, Open = o, High = h, Low = l, Close = c,
+        });
+        Bar(At(9, 0), 5600m, 5610m, 5590m, 5605m);
+        Bar(At(23, 29), 5640m, 5655m, 5635m, 5650m);
+        Bar(At(23, 54), 5660m, 5700m, 5655m, 5698m);
+        await ai.Db.SaveChangesAsync();
+        var run = await ai.Db.SimulationRuns.SingleAsync(r => r.Id == runId);
+
+        string market = await Reviewer(ai).MarketOnDayAsync(run, new DateOnly(2026, 11, 2), CancellationToken.None);
+
+        Assert.Contains("high 5700 (23:54), low 5590 (09:00), last 5698 (23:54 bar), 3 minute bars", market);
+        Assert.Contains("At the run's stop (23:55): 5698.", market);
+    }
+
+    [Fact]
     public async Task Without_recorded_bars_the_reviewer_is_told_the_days_prices_are_not_known()
     {
         var ai = BuildOn();
@@ -484,11 +508,11 @@ public class AiAgentsTests
     private const string AnalystFirst = "moonshotai/kimi-k3";
 
     internal static long SeedRun(Services ai, DateTime? stoppedAt, string strategy = "Ghost", string parameters = """{"underlying":"NIFTY"}""",
-        string status = "Stopped", DateTime? started = null)
+        string status = "Stopped", DateTime? started = null, string symbol = "NSE:NIFTY50-INDEX")
     {
         var run = new SimulationRun
         {
-            UserId = 1, Mode = "LivePaper", Status = status, StrategyName = strategy, Symbol = "NSE:NIFTY50-INDEX",
+            UserId = 1, Mode = "LivePaper", Status = status, StrategyName = strategy, Symbol = symbol,
             ParametersJson = parameters, CreatedUtc = started ?? Ist(9, 15), StartedUtc = started ?? Ist(9, 15), CompletedUtc = stoppedAt,
         };
         ai.Db.SimulationRuns.Add(run);
@@ -509,8 +533,22 @@ public class AiAgentsTests
     };
 
     internal static TradeReviewerAgent Reviewer(Services ai, TimeProvider? reportClock = null) => new(
-        ai.Db, ai.Gateway, new AiReportWriter(ai.Db, ai.Options, reportClock), ai.Toolbox, new AiSchedulerState(), ai.Options,
-        NullLogger<TradeReviewerAgent>.Instance);
+        ai.Db, ai.Gateway, new AiReportWriter(ai.Db, ai.Options, reportClock), ai.Toolbox, new AiSchedulerState(),
+        new MarketSessionService(new WeekendsOnly()), ai.Options, NullLogger<TradeReviewerAgent>.Instance);
+
+    /// <summary>An exchange calendar with weekends closed and no holidays.</summary>
+    private sealed class WeekendsOnly : IMarketCalendar
+    {
+        public bool IsLoaded => true;
+
+        public MarketHoliday? HolidayOn(string exchange, DateOnly date) => null;
+
+        public MarketSpecialSession? SpecialSessionOn(string exchange, DateOnly date) => null;
+
+        public bool HasYear(string exchange, int year) => true;
+
+        public Task RefreshAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
 
     internal sealed class FixedTime(DateTime utc) : TimeProvider
     {
