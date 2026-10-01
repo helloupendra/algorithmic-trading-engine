@@ -734,6 +734,121 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.AiTraderDecision", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("");
+
+                    b.Property<bool>("Allowed")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Brief")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("BriefHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<long?>("CallId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("ClockUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double?>("Confidence")
+                        .HasColumnType("double precision");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateOnly>("Day")
+                        .HasColumnType("date");
+
+                    b.Property<string>("Error")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasDefaultValue("");
+
+                    b.Property<bool>("Executed")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Mode")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("PlanJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasDefaultValue("");
+
+                    b.Property<long?>("ReplaySessionId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ResultJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Rule")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("Underlying")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("Why")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasDefaultValue("");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "Day", "ClockUtc" }, "IX_ai_trader_decisions_Day_Clock");
+
+                    b.HasIndex(new[] { "ReplaySessionId" }, "IX_ai_trader_decisions_ReplaySession");
+
+                    b.ToTable("ai_trader_decisions", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ai_trader_decisions_Mode", "\"Mode\" IN ('shadow', 'live', 'replay')");
+                        });
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.AlertEvent", b =>
                 {
                     b.Property<long>("Id")

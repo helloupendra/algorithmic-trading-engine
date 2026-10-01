@@ -97,6 +97,32 @@ public sealed class TodayTests
     }
 
     [Fact]
+    public async Task The_ai_traders_day_counts_its_looks_and_shows_the_last_three()
+    {
+        using var desk = new RunnerDesk();
+        using (var db = desk.Db())
+        {
+            new AiSettingsStore(db).SetAgentEnabledAsync(AiCatalog.AiTrader, true, "admin", null).GetAwaiter().GetResult();
+            void Add(int minutes, string action, bool allowed, string rule) => db.AiTraderDecisions.Add(new AiTraderDecision
+            {
+                CreatedUtc = Now, ClockUtc = Now.AddMinutes(-minutes), Day = Day, Mode = AiTraderModes.Shadow, BriefHash = "h", Brief = "b",
+                Action = action, Underlying = action == "none" ? "" : "NIFTY", Allowed = allowed, Rule = rule, Reason = $"r{minutes}",
+            });
+            Add(40, "none", true, "ok");
+            Add(30, "buy", true, "ok");
+            Add(20, "buy", false, "stop");
+            Add(10, "", false, "no-answer");
+            db.SaveChanges();
+        }
+
+        var today = await Build(desk).BuildAsync(CancellationToken.None);
+
+        var trader = today.AiTrader!;
+        Assert.Equal(("on", "shadow", 4, 2, 1, 1, 1), (trader.Status, trader.Mode, trader.Decisions, trader.Actions, trader.Allowed, trader.Refused, trader.NoAnswer));
+        Assert.Equal(new[] { "r10", "r20", "r30" }, trader.Latest.Select(d => d.Reason));
+    }
+
+    [Fact]
     public async Task A_decision_is_logged_newest_first_and_the_same_one_is_replaced()
     {
         using var desk = new RunnerDesk();

@@ -98,11 +98,46 @@ public sealed class TodayBuilder(
             attention.Add(new TodayAttention("info", "decision", d.Title, d.Decided, null, null));
         }
 
+        var aiTrader = await AiTraderAsync(today, cancellationToken);
+        if (aiTrader is { Status: "on", NoAnswer: >= 3 })
+        {
+            attention.Add(new TodayAttention("medium", "ai-trader", $"The AI Trader had no usable answer {aiTrader.NoAnswer} times today",
+                "The model did not answer, or not in the shape asked; those looks decided nothing.", "/ai/agents?agent=ai-trader", null));
+        }
+
         var order = new Dictionary<string, int> { ["critical"] = 0, ["high"] = 1, ["medium"] = 2, ["info"] = 3 };
         attention = attention.OrderBy(a => order.GetValueOrDefault(a.Level, 4)).ThenByDescending(a => a.AtUtc).ToList();
 
         return new TodayResponse(today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), now, markets, attention, trading, agents, learning,
-            system with { OpenIncidents = incidents.Count }, decisions);
+            system with { OpenIncidents = incidents.Count }, decisions)
+        {
+            AiTrader = aiTrader,
+        };
+    }
+
+    /// <summary>The AI Trader today: on or off, shadow or placing, its looks and the last three decisions. Null until it has ever looked or been switched on.</summary>
+    private async Task<TodayAiTrader?> AiTraderAsync(DateOnly today, CancellationToken cancellationToken)
+    {
+        var state = await aiStore.LoadAsync(cancellationToken);
+        string status = state.Agent(AiCatalog.AiTrader)?.Status ?? "off";
+        var rows = await db.AiTraderDecisions.AsNoTracking()
+            .Where(d => d.Day == today && d.ReplaySessionId == null)
+            .OrderByDescending(d => d.ClockUtc)
+            .Select(d => new { d.ClockUtc, d.Mode, d.Action, d.Underlying, d.Allowed, d.Rule, d.Why, d.Reason })
+            .ToListAsync(cancellationToken);
+        if (status != "on" && rows.Count == 0) return null;
+
+        bool Acted(string action) => action is not ("" or "none");
+        return new TodayAiTrader(
+            status,
+            rows.FirstOrDefault()?.Mode ?? "shadow",
+            rows.Count,
+            rows.Count(r => Acted(r.Action)),
+            rows.Count(r => Acted(r.Action) && r.Allowed),
+            rows.Count(r => !r.Allowed && r.Rule is not ("no-answer" or "unreadable")),
+            rows.Count(r => r.Rule is "no-answer" or "unreadable"),
+            rows.Take(3).Select(r => new TodayAiTraderDecision(Utc(r.ClockUtc)!.Value, r.Action, r.Underlying, r.Allowed, r.Rule,
+                Cut(string.IsNullOrWhiteSpace(r.Reason) ? r.Why : r.Reason, 200)!)).ToList());
     }
 
     private TodayMarket Market(DateTime now, string exchange, string segment)
@@ -329,9 +364,19 @@ public sealed class TodayBuilder(
 
 public sealed record TodayResponse(
     string Date, DateTime NowUtc, IReadOnlyList<TodayMarket> Markets, IReadOnlyList<TodayAttention> Attention, TodayTrading Trading,
-    IReadOnlyList<TodayAgent> Agents, TodayLearning Learning, TodaySystem System, IReadOnlyList<TodayDecision> Decisions);
+    IReadOnlyList<TodayAgent> Agents, TodayLearning Learning, TodaySystem System, IReadOnlyList<TodayDecision> Decisions)
+{
+    /// <summary>The AI Trader's day; null until it has been switched on or has looked.</summary>
+    public TodayAiTrader? AiTrader { get; init; }
+}
 
 public sealed record TodayMarket(string Exchange, string State, DateTime? OpensUtc, DateTime? ClosesUtc);
+
+/// <summary>The AI Trader today: its looks, the actions it proposed, how many the rules allowed and refused, the looks with no usable answer.</summary>
+public sealed record TodayAiTrader(string Status, string Mode, int Decisions, int Actions, int Allowed, int Refused, int NoAnswer,
+    IReadOnlyList<TodayAiTraderDecision> Latest);
+
+public sealed record TodayAiTraderDecision(DateTime AtUtc, string Action, string Underlying, bool Allowed, string Rule, string Reason);
 
 public sealed record TodayAttention(string Level, string Kind, string Title, string? Detail, string? Link, DateTime? AtUtc);
 

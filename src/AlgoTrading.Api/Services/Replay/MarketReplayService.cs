@@ -41,7 +41,7 @@ public sealed class MarketReplayService(
     IMarketSessionService sessions,
     RunPnl pnl,
     ILogger<MarketReplayService> logger,
-    TimeProvider? time = null)
+    TimeProvider? time = null) : IReplaySessions
 {
     public static readonly IReadOnlyList<int> Speeds = [1, 2, 5, 10];
 
@@ -157,13 +157,13 @@ public sealed class MarketReplayService(
         }
 
         var runIds = (request.RunIds ?? []).Distinct().ToList();
-        if (runIds.Count == 0) return ReplayStartResult.Refused(400, "Start at least one recap run of the day first.");
-        if (await WhyNotRunsAsync(runIds, date, cancellationToken) is { } badRuns) return ReplayStartResult.Refused(409, badRuns);
+        if (runIds.Count == 0 && !request.AiTrader) return ReplayStartResult.Refused(400, "Start at least one recap run of the day first, or ask the AI Trader along.");
+        if (runIds.Count > 0 && await WhyNotRunsAsync(runIds, date, cancellationToken) is { } badRuns) return ReplayStartResult.Refused(409, badRuns);
         if (!await RecordedAsync(date, cancellationToken)) return ReplayStartResult.Refused(409, $"The desk recorded nothing for {Day(date)}.");
 
         var session = new ReplaySessionState(
             (current?.Id ?? 0) + 1, date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), request.Speed,
-            from.ToString("HH:mm", CultureInfo.InvariantCulture), StateStarting, runIds, Now, null, null, by);
+            from.ToString("HH:mm", CultureInfo.InvariantCulture), StateStarting, runIds, Now, null, null, by, request.AiTrader);
 
         await channel.ResetAsync(cancellationToken);
         book.Begin(date);
@@ -301,7 +301,7 @@ public sealed class MarketReplayService(
             session.Id, session.Date, session.Speed, session.FromIst, mine?.State is { } live && IsActive(session.State) ? live : session.State,
             clock, clock is DateTime c ? IstTime.ToIst(c).ToString("HH:mm:ss", CultureInfo.InvariantCulture) : null,
             mine?.Progress ?? ProgressOf(clock, date, session.State), mine?.TicksSent ?? 0, session.StartedUtc, session.EndedUtc,
-            session.Error ?? mine?.Error, session.RunIds, views, session.StartedBy);
+            session.Error ?? mine?.Error, session.RunIds, views, session.StartedBy, session.AiTrader);
     }
 
     /// <summary>How far through the replayed session (09:15–15:30) a clock is, 0 to 1.</summary>
@@ -455,6 +455,12 @@ public sealed class MarketReplayService(
     }
 }
 
+/// <summary>The replay in progress or last played, as other parts of the desk read it.</summary>
+public interface IReplaySessions
+{
+    Task<ReplaySessionState?> LoadAsync(CancellationToken cancellationToken);
+}
+
 // ---------- what the service talks to (interfaces, so tests need no process, Redis or runner) ----------
 
 /// <summary>The replay's player process.</summary>
@@ -491,18 +497,19 @@ public interface IReplayRunStopper
 
 public sealed record ReplayPlayerStatus(long Session, string State, DateTime? ClockUtc, long TicksSent, double? Progress, string? Error, DateTime? UpdatedUtc);
 
-public sealed record ReplayStartRequest(string? Date, int Speed, string? From, IReadOnlyList<long>? RunIds);
+/// <param name="AiTrader">The AI Trader decides along, on the replay's clock (it must be switched on; it places nothing in a replay).</param>
+public sealed record ReplayStartRequest(string? Date, int Speed, string? From, IReadOnlyList<long>? RunIds, bool AiTrader = false);
 
 public sealed record ReplaySessionState(
     long Id, string Date, int Speed, string FromIst, string State, IReadOnlyList<long> RunIds,
-    DateTime StartedUtc, DateTime? EndedUtc, string? Error, string StartedBy);
+    DateTime StartedUtc, DateTime? EndedUtc, string? Error, string StartedBy, bool AiTrader = false);
 
 public sealed record ReplayRunView(long RunId, string Strategy, string? Underlying, string? Account, string Status, decimal NetPnl);
 
 public sealed record ReplaySessionView(
     long Id, string Date, int Speed, string FromIst, string State, DateTime? ClockUtc, string? ClockIst, double Progress,
     long TicksSent, DateTime StartedUtc, DateTime? EndedUtc, string? Error, IReadOnlyList<long> RunIds,
-    IReadOnlyList<ReplayRunView> Runs, string StartedBy);
+    IReadOnlyList<ReplayRunView> Runs, string StartedBy, bool AiTrader = false);
 
 public sealed record ReplayStatus(bool CanStart, string? WhyNot, ReplaySessionView? Session);
 

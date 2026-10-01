@@ -98,7 +98,7 @@ public class AiControllerTests
         Assert.Equal("provider", models.Source);
         Assert.Equal(Judge1, models.Models[0].Id);
         Assert.Equal(new[] { "judge" }, models.Models[0].Tiers);
-        Assert.Equal(new[] { AiCatalog.DeskAssistant, AiCatalog.TradeReviewer }, models.Models[0].Agents);
+        Assert.Equal(new[] { AiCatalog.DeskAssistant, AiCatalog.TradeReviewer, AiCatalog.AiTrader }, models.Models[0].Agents);
         Assert.Equal("First model of the Judge tier.", models.Models[0].Note);
         var super = models.Models.Single(m => m.Id == Judge2);
         Assert.Equal("Fallback 1 of the Judge tier; fallback 1 of the Analyst tier; fallback 1 of the Extract tier.", super.Note);
@@ -237,7 +237,7 @@ public class AiControllerTests
         Assert.Equal(6, overview.Today.AvgSeconds);
         Assert.Equal(10, overview.Today.P95Seconds);
         Assert.True(overview.Provider.KeyConfigured);
-        Assert.Equal(new AiAgentCounts(14, 4, 1, 3, 10), overview.Agents);
+        Assert.Equal(new AiAgentCounts(15, 5, 1, 4, 10), overview.Agents);
         Assert.Equal(4, overview.Tiers.Count);
     }
 
