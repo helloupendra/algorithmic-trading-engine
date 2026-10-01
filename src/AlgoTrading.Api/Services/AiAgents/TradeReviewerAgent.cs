@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using AlgoTrading.Api.Controllers;
+using AlgoTrading.Api.Services;
 using AlgoTrading.Api.Services.AiTools;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Domain.Entities;
@@ -148,9 +149,9 @@ public sealed class TradeReviewerAgent(
             .Where(r => r.Mode == StrategyRunControl.LivePaperMode
                         && Stopped.Contains(r.Status)
                         && r.CompletedUtc != null && r.CompletedUtc >= since && r.CompletedUtc <= settledBy
-                        && r.StrategyName != ManualOrdersController.BookStrategyName
-                        // A recap replays another day's session: a test, not a run to journal.
-                        && !r.ParametersJson.Contains(RecapRuns.Marker) && !r.ParametersJson.Contains(RecapRuns.SpacedMarker))
+                        && r.StrategyName != ManualOrdersController.BookStrategyName)
+            // A recap replays another day's session: a test, not a run to journal (in any case, as every report reads it).
+            .WithoutRecaps()
             .OrderBy(r => r.CompletedUtc)
             .Select(r => new { r.Id, r.StartedUtc, r.CreatedUtc, r.ParametersJson })
             .ToListAsync(cancellationToken);
