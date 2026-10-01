@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
-using AlgoTrading.Api.Controllers;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
