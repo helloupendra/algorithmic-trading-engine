@@ -76,7 +76,7 @@ public sealed class AiTraderAgent(
             if (!InLoopHours(clock)) return false;
             var lastReplayed = await db.AiTraderDecisions.AsNoTracking()
                 .Where(d => d.ReplaySessionId == replay.Id).MaxAsync(d => (DateTime?)d.ClockUtc, cancellationToken);
-            if (lastReplayed is DateTime lr && clock - lr < Every) return false;
+            if (lastReplayed is DateTime lr && Minute(clock) - Minute(lr) < Every) return false;
             await DecideAsync(clock, AiTraderModes.Replay, replay.Id, cancellationToken);
             return true;
         }
@@ -85,11 +85,18 @@ public sealed class AiTraderAgent(
         var day = IstTime.DateOf(nowUtc);
         var last = await db.AiTraderDecisions.AsNoTracking()
             .Where(d => d.Day == day && d.ReplaySessionId == null).MaxAsync(d => (DateTime?)d.ClockUtc, cancellationToken);
-        if (last is DateTime l && nowUtc - l < Every) return false;
+        if (last is DateTime l && Minute(nowUtc) - Minute(l) < Every) return false;
 
         await DecideAsync(nowUtc, settings.CurrentValue.AiTraderExecute ? AiTraderModes.Live : AiTraderModes.Shadow, null, cancellationToken);
         return true;
     }
+
+    /// <summary>
+    /// The minute a moment falls in. Looks are spaced on the minute grid: the scheduler ticks once a minute and runs
+    /// the agents in turn, so a look's seconds depend on who went before it, and raw times pushed the next look a
+    /// minute later whenever the last one had waited longer in its tick.
+    /// </summary>
+    private static DateTime Minute(DateTime utc) => new(utc.Ticks - utc.Ticks % TimeSpan.TicksPerMinute, utc.Kind);
 
     /// <summary>
     /// Every minute, whatever the decision schedule: the shadow book's open positions against their stops,
