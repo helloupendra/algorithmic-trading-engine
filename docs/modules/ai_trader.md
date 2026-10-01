@@ -19,6 +19,8 @@ Every 10 minutes from 09:20 to 15:00 IST on trading days, while it is switched o
    - GIFT Nifty before the open, the last FII/DII cash flows, today's events;
    - the last hour's news as the News Analyst read it, policy and macro data first, then results, guidance and
      rating changes, then anything with a direction; routine filings with none are left out;
+   - stop floors: for each CE and PE at ATM±1, the ask a buy would be priced at now (in a replay, the replay's own
+     quote) and the lowest stop the 40% rule allows on it, rounded up to the 0.05 tick. Code never moves a stop;
    - its own book: net today after charges, the loss budget left, trades used, open positions with stops and
      targets, its running strategies (in shadow and replay, its shadow book: see below);
    - its last three looks of the day (or of the replay): what it proposed and what the rules said, so a refused plan
