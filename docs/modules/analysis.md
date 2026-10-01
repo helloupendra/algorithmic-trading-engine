@@ -181,7 +181,8 @@ highest high, the lowest low, the last bar's close. Postgres folds the bars
 | `live_bars`, `1m` | the last 14 days, only where candles have no complete day | ≥ 300 of 375 bars, first bar by 09:16, last bar from 15:25, ≤ 10% flat bars |
 
 `live_bars` matter because the nightly archive writes a day's candles at
-23:50 IST: at 15:50 today exists only there. Weekends are dropped (Budget
+23:50 IST, or 00:15 the next morning while MCX closes at 23:55: at 15:50
+today exists only there. Weekends are dropped (Budget
 Saturdays and Sundays, the 2024 disaster-recovery drills), and so is a
 Muhurat hour, by the bar count. "Flat" bars (high = low) are how a vendor
 fills a gap with the last price — Dhan's history runs flat through the 2021
