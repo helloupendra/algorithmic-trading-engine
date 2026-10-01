@@ -88,6 +88,27 @@ class RedisTickSubscriber:
         except Exception:
             return False
 
+    def start_from_now(self) -> bool:
+        """
+        Pin the reading position to the stream's newest entry as of this call.
+
+        "$" means "whatever is newest when the first XREAD runs", so an entry
+        added between now and that read is never seen. A recap runner says it is
+        listening before its first read, and the replay player starts playing the
+        moment every runner has said so: pinned here first, the replay's opening
+        ticks cannot fall into that gap. Returns False, and stays at "$", when
+        the stream cannot be asked (or does not exist yet).
+        """
+        try:
+            info = self.client.xinfo_stream(self.stream_name)
+        except Exception:
+            return False
+        last = info.get("last-generated-id") if isinstance(info, dict) else None
+        if not last:
+            return False
+        self.last_id = last
+        return True
+
     def listen_for_ticks(
         self,
         block_ms: int = 1000,

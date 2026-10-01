@@ -373,7 +373,17 @@ class ChainFlowBuyStrategy(BaseStrategy):
 
         decided_at = bar_start + timedelta(minutes=5)
         replay = inp.mode != "LivePaper"
-        now_utc = decided_at if replay else datetime.now(timezone.utc)
+        if replay:
+            now_utc, chain_as_of = decided_at, decided_at
+        elif inp.recap_date is not None:
+            # A recap run is live paper trading on a past day. Its "now" is the
+            # tick's exchange stamp, and the chain is the one recorded at that
+            # moment: what a live run would have read then. Today's chain
+            # against a candle from another day is what this must never be.
+            now_utc = indicators.parse_utc(inp.timestamp_utc) or decided_at
+            chain_as_of = now_utc
+        else:
+            now_utc, chain_as_of = datetime.now(timezone.utc), None
 
         history = bars[: len(bars) - 1]
         closes = [float(b.close) for b in history]
@@ -394,7 +404,7 @@ class ChainFlowBuyStrategy(BaseStrategy):
            (disarmed == "PE" and not (close < ema_fast < ema_slow)):
             state["disarmed_side"] = None
 
-        chain = self._fetch_chain(inp.underlying, as_of=decided_at if replay else None)
+        chain = self._fetch_chain(inp.underlying, as_of=chain_as_of)
         ok, why, facts = data_check(chain, close, now_utc, float(self._p("max_chain_age_seconds")),
                                     float(self._p("max_spot_gap_pct")))
 

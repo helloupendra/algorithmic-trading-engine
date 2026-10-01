@@ -58,6 +58,11 @@ class LogicEngine(BaseStrategy):
         self._chain_cache: Dict[str, tuple] = {}
         self._warned: set = set()
 
+        # A recap run's replayed day ("yyyy-mm-dd") and the clock of its latest
+        # tick, taken from the inputs (see _follow_session); None on a live run.
+        self.recap_day: Optional[str] = None
+        self._recap_clock: Optional[str] = None
+
         self.api = PlatformApiClient(API_BASE_URL, verify_ssl=False)
         
         import redis
@@ -139,15 +144,20 @@ class LogicEngine(BaseStrategy):
             if ":" in underlying:
                 underlying = underlying.split(":")[1].split("-")[0].replace("50", "")
 
-            expiries = self.api.get_expiries(underlying)
+            expiries = self._expiries(underlying)
             if not expiries: raise ValueError(f"No expiries for {underlying}")
                 
-            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            # The replayed day in a recap run (once its first bar has arrived), else today.
+            today_str = self.recap_day or datetime.now(timezone.utc).strftime("%Y-%m-%d")
             valid_expiries = [x for x in expiries if str(x["expiryDate"]) >= today_str]
             if not valid_expiries: raise ValueError("No valid expiries")
             
             nearest_expiry = str(valid_expiries[0]["expiryDate"])
-            atm_ce = self.api.get_exact_contract(underlying, nearest_expiry, atm_strike, "CE")
+            if self.recap_day is not None:
+                atm_ce = self.api.get_exact_contract(underlying, nearest_expiry, atm_strike, "CE",
+                                                     include_history=True)
+            else:
+                atm_ce = self.api.get_exact_contract(underlying, nearest_expiry, atm_strike, "CE")
             if not atm_ce or "symbol" not in atm_ce:
                 option_symbol = f"NSE:{underlying}{nearest_expiry.replace('-', '')[2:]}{atm_strike}CE"
             else:
@@ -184,9 +194,41 @@ class LogicEngine(BaseStrategy):
             "last_highest_put_oi_strike": None,
         }
 
+    def _follow_session(self, inp: StrategyInput) -> None:
+        """
+        Read everything as of the session the inputs come from.
+
+        A recap run replays a past day (`inp.recap_date`). Its quotes are then the
+        replay's (the client's replay mode), its bars end at the tick's clock, and
+        its expiry is the one that was nearest on that day. Without this the
+        engine would judge a replayed 10:00 against today's chain, today's quotes
+        and today's bars. A live run's inputs carry no recap_date, and nothing
+        here changes for it.
+        """
+        day = inp.recap_date
+        if day is None:
+            return
+        self.api.replay = True
+        self._recap_clock = inp.timestamp_utc
+        if day != self.recap_day:
+            self.recap_day = day
+            self._chain_cache.clear()
+
+    def _expiries(self, underlying: str) -> List[Dict[str, Any]]:
+        """Option expiries; in a recap run including the expired ones, which the replayed day may have traded."""
+        if self.recap_day is not None:
+            return self.api.get_expiries(underlying, include_history=True)
+        return self.api.get_expiries(underlying)
+
+    def _recent_bars(self, symbol: str, resolution: str, take: int) -> List[Dict[str, Any]]:
+        """Recent bars, newest first; in a recap run only those up to the replay's clock."""
+        if self._recap_clock is None:
+            return self.api.get_recent_bars(symbol, resolution=resolution, take=take)
+        return self.api.get_recent_bars(symbol, resolution=resolution, take=take, until_utc=self._recap_clock)
+
     def _fetch_15m_high_low(self, symbol: str) -> tuple[float, float]:
         try:
-            bars = self.api.get_recent_bars(symbol, resolution="15m", take=2)
+            bars = self._recent_bars(symbol, resolution="15m", take=2)
             if not bars:
                 return 0.0, 0.0
             latest_bar = bars[0]
@@ -214,7 +256,7 @@ class LogicEngine(BaseStrategy):
         its own LTP" is never a breakout.
         """
         try:
-            bars = self.api.get_recent_bars(symbol, resolution="1m", take=500) or []
+            bars = self._recent_bars(symbol, resolution="1m", take=500) or []
         except Exception as ex:
             print(f"Error fetching 1m bars for {symbol}: {ex}")
             bars = []
@@ -271,8 +313,18 @@ class LogicEngine(BaseStrategy):
         does not carry depth for this symbol. The broker sends bid/ask sizes for
         option contracts but leaves them null on index symbols, so a caller must
         skip its rule rather than read the nulls as zeros.
+
+        None in a recap run too: the newest stored tick is from after the
+        replay's clock (the ticks endpoint has no time bound), and a depth read
+        from later in the day is not one the replayed moment could have seen.
         """
         if not symbol:
+            return None
+        if self.recap_day is not None:
+            self._warn_once(
+                "depth:recap",
+                "a recap run has no top-of-book depth as of the replay's clock; the order-book rule is skipped.",
+            )
             return None
         try:
             ticks = self.api.get_recent_ticks(symbol, take=1) or []
@@ -309,8 +361,9 @@ class LogicEngine(BaseStrategy):
         step = fallback_strike_step(underlying)
         chain: List[Dict[str, Any]] = []
         try:
-            today = datetime.now(timezone.utc).date().isoformat()
-            expiries = [str(x.get("expiryDate", "")) for x in (self.api.get_expiries(underlying) or [])]
+            # The nearest expiry on the replayed day in a recap run, else today's.
+            today = self.recap_day or datetime.now(timezone.utc).date().isoformat()
+            expiries = [str(x.get("expiryDate", "")) for x in (self._expiries(underlying) or [])]
             future = sorted(x for x in expiries if x and x >= today)
             if future:
                 expiry = future[0]
@@ -414,6 +467,7 @@ class LogicEngine(BaseStrategy):
 
     def on_bar(self, state: Dict[str, Any], inp: StrategyInput) -> List[StrategySignal]:
         signals = []
+        self._follow_session(inp)
         if not inp.atm_strike:
             return signals
             

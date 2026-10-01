@@ -10,6 +10,7 @@ the one-entry-per-setup rule.
 import io
 import unittest
 from contextlib import redirect_stdout
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from strategies.base_strategy import BarFrame, StrategyInput
@@ -105,10 +106,10 @@ class Harness:
         if iv_low is not None:
             self.state["iv_low"] = iv_low
 
-    def run(self, mode="LivePaper", surge=True, metadata=None):
+    def run(self, mode="LivePaper", surge=True, metadata=None, recap_date=None, timestamp_utc=None):
         inp = StrategyInput(
             mode=mode,
-            timestamp_utc=datetime.now(timezone.utc).isoformat(),
+            timestamp_utc=timestamp_utc or datetime.now(timezone.utc).isoformat(),
             underlying="NIFTY",
             spot_price=self.close,
             atm_strike=round(self.close / 50) * 50,
@@ -120,6 +121,7 @@ class Harness:
                 "atm_pe": option_bars(40, surge=surge and self.direction == -1),
             }},
             metadata=metadata or {"source": "live-api"},
+            recap_date=recap_date,
         )
         out = io.StringIO()
         with redirect_stdout(out):
@@ -231,6 +233,57 @@ class EntryTests(unittest.TestCase):
         self.assertEqual([], h.run())
 
         self.assertEqual([], h.run(metadata={"source": "warmup"}))
+
+
+class RecapTests(unittest.TestCase):
+    """
+    A recap run is live paper trading on a past day (Market Replay). It reads
+    the chain as it was recorded at its tick's time, and judges the chain's age
+    on that clock: what a live run would have read at that moment.
+    """
+
+    DAYS_AGO = timedelta(days=14)
+
+    def harness(self):
+        """The usual set-up, moved to a session two weeks ago, and the first tick after the signal candle."""
+        h = Harness(direction=1)
+        h.bars = [replace(b, timestamp_utc=(datetime.fromisoformat(b.timestamp_utc) - self.DAYS_AGO).isoformat())
+                  for b in h.bars]
+        h.decided_at -= self.DAYS_AGO
+        h.seed(call_oi=100_000, put_oi=100_000, iv_low=13.5)
+        self.day = (SESSION - self.DAYS_AGO).strftime("%Y-%m-%d")
+        h.state["session_date"] = self.day
+        self.asked = []
+        h.strategy._fetch_chain = lambda underlying, as_of=None: (self.asked.append(as_of), h.chain)[1]
+        self.tick = h.decided_at + timedelta(seconds=4)
+        return h
+
+    def test_a_recap_trades_on_the_chain_recorded_at_its_tick(self):
+        h = self.harness()
+        h.chain = chain(h.close, call_oi=101_000, put_oi=106_000, captured=self.tick - timedelta(seconds=40))
+
+        signals = h.run(recap_date=self.day, timestamp_utc=self.tick.isoformat())
+
+        self.assertEqual(1, len(signals), h.log)
+        self.assertEqual([self.tick], self.asked, "the chain as of the tick, never today's")
+        self.assertEqual(40, signals[0].metadata["chain_age_s"], "aged on the replay's clock")
+
+    def test_a_recap_will_not_trade_on_a_chain_from_later_in_the_day(self):
+        h = self.harness()
+        h.chain = chain(h.close, call_oi=101_000, put_oi=106_000, captured=self.tick + timedelta(hours=1))
+
+        self.assertEqual([], h.run(recap_date=self.day, timestamp_utc=self.tick.isoformat()))
+        self.assertIn("ahead of the candle", h.log)
+
+    def test_a_live_run_still_reads_the_newest_chain(self):
+        h = Harness(direction=1)
+        h.seed(call_oi=100_000, put_oi=100_000, iv_low=13.5)
+        h.chain = chain(h.close, call_oi=101_000, put_oi=106_000)
+        asked = []
+        h.strategy._fetch_chain = lambda underlying, as_of=None: (asked.append(as_of), h.chain)[1]
+
+        self.assertEqual(1, len(h.run()))
+        self.assertEqual([None], asked)
 
 
 class RuleTests(unittest.TestCase):

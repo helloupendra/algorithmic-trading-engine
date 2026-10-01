@@ -35,6 +35,16 @@ def fallback_strike_step(underlying: str) -> float:
     return FALLBACK_STRIKE_STEPS.get((underlying or "").upper(), DEFAULT_STRIKE_STEP)
 
 
+def first_expiry_on_or_after(expiries: List[Dict[str, Any]], day: str) -> Optional[str]:
+    """
+    The expiry a run trades on `day` ("yyyy-mm-dd"): the first one on or after
+    it, in the order the API lists them (ascending). None when there is none.
+    On an expiry day that is the expiry itself, as it is live.
+    """
+    valid = [x for x in expiries or [] if str(x["expiryDate"]) >= day]
+    return str(valid[0]["expiryDate"]) if valid else None
+
+
 def strike_step_from_chain(chain: List[Dict[str, Any]]) -> Optional[float]:
     """
     Smallest positive gap between consecutive distinct strikes of one expiry,
@@ -246,12 +256,18 @@ class ExactContractCache:
     Definite answers (a contract, or a definite "the master does not have it")
     are cached; a lookup that raised is NOT, so the next tick retries instead of
     turning a transient API error into a permanent hole in the strategy's view.
+
+    `include_history` is for a recap run: the day it replays may have traded an
+    expiry that has since gone, and the master keeps expired contracts only as
+    disabled rows, which a plain lookup does not return.
     """
 
-    def __init__(self, api_client: Any, underlying: str, log: Any = print) -> None:
+    def __init__(self, api_client: Any, underlying: str, log: Any = print,
+                 include_history: bool = False) -> None:
         self.api = api_client
         self.underlying = (underlying or "").strip().upper()
         self.log = log
+        self.include_history = bool(include_history)
         self._answers: Dict[Tuple[str, Strike, str], Optional[Dict[str, Any]]] = {}
         self.lookups = 0
         self.failed_lookups = 0
@@ -261,9 +277,11 @@ class ExactContractCache:
         if key in self._answers:
             return self._answers[key]
         self.lookups += 1
+        # A live run's lookup is the call it always was; only a recap asks for history.
+        extra: Dict[str, Any] = {"include_history": True} if self.include_history else {}
         try:
             raw = self.api.get_exact_contract(
-                underlying=self.underlying, expiry=key[0], strike=key[1], option_type=key[2]
+                underlying=self.underlying, expiry=key[0], strike=key[1], option_type=key[2], **extra
             )
         except Exception as ex:
             self.failed_lookups += 1

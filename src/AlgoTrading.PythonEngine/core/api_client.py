@@ -26,6 +26,7 @@ import logging
 import os
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import requests
@@ -225,24 +226,58 @@ def api_delete(url: str, **kwargs: Any) -> requests.Response:
 def api_put(url: str, **kwargs: Any) -> requests.Response:
     return _shared.put(url, **kwargs)
 
+
+def utc_query_stamp(value: Any) -> str:
+    """
+    A moment as ISO 8601 UTC with a "Z" ("2026-09-15T04:01:02.5Z"), for a query
+    parameter. Ticks spell the offset out as "+00:00"; requests would encode the
+    plus correctly, but one spelling on the wire is one less thing to doubt when
+    reading the API's log. Text that does not parse is sent as it came.
+    """
+    if isinstance(value, datetime):
+        moment = value
+    else:
+        text = str(value or "").strip()
+        try:
+            moment = datetime.fromisoformat(text[:-1] + "+00:00" if text.endswith(("Z", "z")) else text)
+        except ValueError:
+            return text
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 class PlatformApiClient:
     """
     Typed access to the endpoints the engine uses. Signs in as the engine
     service account unless `username`/`password` are given — the backtest
     terminal wrapper passes an admin's credentials because POST
     /api/Backtest/runs is admin-only and the service account is a Trader.
+
+    `replay` is set by a recap run (a Market Replay of a past day). Its quote
+    reads then add `replay=true` and are answered from the API's in-memory
+    ReplayBook, never from `live_quotes_latest`: the live desk and the replay
+    must not see each other's prices. Every other call is unchanged.
     """
 
     def __init__(self, base_url: str, verify_ssl: bool = False,
-                 username: Optional[str] = None, password: Optional[str] = None):
+                 username: Optional[str] = None, password: Optional[str] = None,
+                 replay: bool = False):
         self.base_url = base_url.rstrip("/")
         self.verify_ssl = verify_ssl
         self.http = build_session(username, password)
+        self.replay = bool(replay)
+
+    def _quote_params(self, params: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
+        """The quote query, plus replay=true for a recap run. A live run's query is untouched."""
+        if not self.replay:
+            return params
+        return {**(params or {}), "replay": "true"}
 
     def get_latest_quote(self, symbol: str) -> dict[str, Any]:
         resp = self.http.get(
             f"{self.base_url}/api/LiveData/latest",
-            params={"symbol": symbol},
+            params=self._quote_params({"symbol": symbol}),
             verify=self.verify_ssl,
             timeout=30,
         )
@@ -254,9 +289,11 @@ class PlatformApiClient:
         Every symbol the ingestor has a quote for. Carries `openInterest` when
         the feed provides it (it is null for symbols the broker sends without
         OI), so callers must treat a missing value as "unknown", not zero.
+        In replay mode: every symbol the replay has played so far.
         """
         resp = self.http.get(
             f"{self.base_url}/api/LiveData/latest/all",
+            params=self._quote_params(),      # None for a live run: no query at all, as before
             verify=self.verify_ssl,
             timeout=30,
         )
@@ -274,10 +311,20 @@ class PlatformApiClient:
         resp.raise_for_status()
         return resp.json() if resp.content else {}
 
-    def get_recent_bars(self, symbol: str, resolution: str = "1m", take: int = 1) -> list[dict[str, Any]]:
+    def get_recent_bars(self, symbol: str, resolution: str = "1m", take: int = 1,
+                        until_utc: Any = None) -> list[dict[str, Any]]:
+        """
+        The newest `take` bars, newest first. With `until_utc` (a recap run passes
+        its tick's exchange stamp) the newest bars up to that moment instead: the
+        stored minutes before it, and the minute still forming as the replay has
+        built it so far. Without it nothing changes.
+        """
+        params: dict[str, Any] = {"symbol": symbol, "resolution": resolution, "take": take}
+        if until_utc is not None and until_utc != "":
+            params["untilUtc"] = utc_query_stamp(until_utc)
         resp = self.http.get(
             f"{self.base_url}/api/LiveData/bars",
-            params={"symbol": symbol, "resolution": resolution, "take": take},
+            params=params,
             verify=self.verify_ssl,
             timeout=30,
         )

@@ -277,5 +277,79 @@ class LogicEngineTests(unittest.TestCase):
         self.assertEqual(second, [], "a second alert inside the cooldown window must be suppressed")
 
 
+class LogicEngineRecapTests(unittest.TestCase):
+    """
+    A recap run (Market Replay of a past day) hands the engine inputs with
+    recap_date set. Every dated read is then as of that day: the expiry that
+    was nearest then (expired ones included), the replay's quotes, and bars
+    up to the tick's clock. A live run's inputs carry no recap_date.
+    """
+
+    DAY = "2026-09-15"
+    TICK = "2026-09-15T04:31:07+00:00"
+    EXPIRIES = [{"expiryDate": d} for d in ("2026-09-09", "2026-09-16", "2026-09-23")]
+
+    def setUp(self):
+        patches = [patch('redis.Redis'), patch('threading.Thread')]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        self.engine = LogicEngine({"cooldown_seconds": 0})
+        self.engine.api = MagicMock()
+        self.engine.api.replay = False
+        self.engine.api.get_expiries.return_value = self.EXPIRIES
+        self.engine.api.get_option_chain.return_value = [chain_row(57500, "CE"), chain_row(57600, "CE")]
+
+    def recap_input(self):
+        return StrategyInput(mode="LivePaper", underlying="BANKNIFTY", spot_price=57550.0, atm_strike=57500,
+                             timestamp_utc=self.TICK, recap_date=self.DAY)
+
+    def test_the_expiry_is_the_one_nearest_the_replayed_day(self):
+        self.engine._follow_session(self.recap_input())
+
+        expiry, step, _chain = self.engine._chain_facts("BANKNIFTY")
+
+        self.assertEqual("2026-09-16", expiry)
+        self.engine.api.get_expiries.assert_called_once_with("BANKNIFTY", include_history=True)
+        self.engine.api.get_option_chain.assert_called_once_with("BANKNIFTY", "2026-09-16")
+        self.assertEqual(100.0, step)
+
+    def test_quotes_come_from_the_replay_and_bars_end_at_the_tick(self):
+        self.engine._follow_session(self.recap_input())
+        self.engine.api.get_recent_bars.return_value = []
+
+        self.engine._fetch_15m_high_low(SPOT)
+
+        self.assertTrue(self.engine.api.replay)
+        self.engine.api.get_recent_bars.assert_called_once_with(SPOT, resolution="15m", take=2, until_utc=self.TICK)
+
+    def test_on_bar_follows_the_session_of_its_input(self):
+        self.engine._fetch_15m_high_low = MagicMock(return_value=(99999.0, 0.0))
+        self.engine._highest_oi_strikes = MagicMock(return_value=(None, None, 100.0))
+        self.engine.on_bar(self.engine.initialize_state(), self.recap_input())
+
+        self.assertEqual(self.DAY, self.engine.recap_day)
+        self.assertTrue(self.engine.api.replay)
+
+    def test_no_depth_from_after_the_replays_clock(self):
+        self.engine._follow_session(self.recap_input())
+        with patch("builtins.print"):
+            self.assertIsNone(self.engine._top_of_book(CE))
+        self.engine.api.get_recent_ticks.assert_not_called()
+
+    def test_a_live_input_changes_nothing(self):
+        live = StrategyInput(mode="LivePaper", underlying="BANKNIFTY", spot_price=57550.0, atm_strike=57500,
+                             timestamp_utc=datetime.now(timezone.utc))
+        self.engine.api.get_expiries.return_value = [{"expiryDate": EXPIRY}]
+        self.engine._follow_session(live)
+
+        expiry, _step, _chain = self.engine._chain_facts("BANKNIFTY")
+
+        self.assertEqual(EXPIRY, expiry)
+        self.engine.api.get_expiries.assert_called_once_with("BANKNIFTY")
+        self.assertFalse(self.engine.api.replay)
+        self.assertIsNone(self.engine.recap_day)
+
+
 if __name__ == '__main__':
     unittest.main()
