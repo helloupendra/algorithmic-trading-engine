@@ -44,6 +44,11 @@ pins the file to `logs/engine/<name>-<pid>.log`, whatever name the script
 itself asks for. The API tails that file into its own log, so a feed it adopts
 after a restart keeps being logged; on 28 Sep, twice, an adopted feed's pipes
 had no reader and everything it said until the next restart was lost.
+
+Such a daemon's pipes are still read while the API that launched it lives,
+and they carry the same lines as the file once the tee is on. So the tee
+begins by writing `PIPE_MARKER` on each original pipe: the API logs a pipe's
+lines down to the marker (nothing else has them) and only drains it after.
 """
 
 from __future__ import annotations
@@ -67,6 +72,17 @@ _BROKEN = (OSError, ValueError)   # BrokenPipeError is an OSError; ValueError = 
 #: launches. The API computes the file's path from this name and the pid it
 #: launched, so the name the script passes cannot be allowed to differ from it.
 LOG_NAME_ENV = "ENGINE_LOG_NAME"
+
+#: The line written on each of the original pipes, flushed, as the tee of a
+#: daemon launched with `ENGINE_LOG_NAME` begins: what a pipe carried before it
+#: is in no file, what it carries after is in the log file too. The API logs a
+#: pipe down to it and only drains the pipe after (`DaemonPipes.TeeMarker` in
+#: src/AlgoTrading.Api/Services/DaemonPipes.cs; the two must stay identical).
+#: Without it the API guessed by whether the file existed yet when it read a
+#: line, and a line printed before the tee but read after the file appeared
+#: was dropped. The record separator in front keeps it from being taken for
+#: anything a script prints.
+PIPE_MARKER = "\x1e[safe_output] this pipe continues in the log file"
 
 
 def pinned_log_name() -> Optional[str]:
@@ -449,6 +465,23 @@ def _ignore_sigpipe() -> None:
         pass
 
 
+def _mark_pipe(stream: Optional[TextIO]) -> None:
+    """
+    `PIPE_MARKER` on its own line on `stream`, flushed. Never raises: a pipe
+    already broken is the SafeStream's business, not a reason to fail the
+    install. A terminal is left alone; only the API reading a pipe uses it.
+    """
+    if stream is None:
+        return
+    try:
+        if stream.isatty():
+            return
+        stream.write(PIPE_MARKER + "\n")
+        stream.flush()
+    except Exception:
+        pass
+
+
 def install_safe_stdio(log_path: Optional[str] = None, *, name: Optional[str] = None, tee: bool = False) -> str:
     """
     Wrap sys.stdout / sys.stderr (idempotent). `log_path` names the fallback
@@ -464,7 +497,14 @@ def install_safe_stdio(log_path: Optional[str] = None, *, name: Optional[str] = 
     launched the process: the tee is on and the file is
     `logs/engine/<that name>-<pid>.log`, whatever the arguments say. The API
     reads that exact path; a script choosing its own name would be tailed at
-    a file that never appears.
+    a file that never appears. The first install then writes `PIPE_MARKER`
+    on each original pipe before wrapping it.
+
+    Only then: a strategy runner keeps its file with `tee=True` too, but the
+    API logs every line of a runner's pipes as it stands (its stderr also
+    becomes the run's "last error"), so a marker there would be noise. The
+    marker is for the one reader that knows it, the daemon supervisor, and
+    `ENGINE_LOG_NAME` is how that reader announces itself.
     """
     _ignore_sigpipe()
     pinned = pinned_log_name()
@@ -474,11 +514,20 @@ def install_safe_stdio(log_path: Optional[str] = None, *, name: Optional[str] = 
     shared = next((s.tee for s in (sys.stdout, sys.stderr) if isinstance(s, SafeStream) and s.tee), None)
     if tee and shared is None:
         shared = LineLog(path)
+    unwrapped = []
     for attr, marker in (("stdout", "|"), ("stderr", "!")):
         current = getattr(sys, attr, None)
         if isinstance(current, SafeStream):
             current.log_path = path
             continue
+        unwrapped.append((attr, marker, current))
+    if pinned:
+        # Both pipes are marked before either is wrapped. The file is created
+        # by the first line through the tee, so it cannot exist before both
+        # markers are in their pipes, ahead of every line it will hold.
+        for _, _, current in unwrapped:
+            _mark_pipe(current)
+    for attr, marker, current in unwrapped:
         setattr(sys, attr, SafeStream(current, path, label=f"sys.{attr}", tee=shared, marker=marker))
     return path
 

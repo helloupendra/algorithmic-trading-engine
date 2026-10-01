@@ -119,7 +119,8 @@ public abstract class PythonDaemonSupervisor
     /// <c>logs/engine/&lt;LogName&gt;-&lt;pid&gt;.log</c>, or null for a script
     /// that keeps none (it does not install core/safe_output.py). With a name
     /// the API reads the daemon's output from that file into api.log, launched
-    /// or adopted, and the pipes are only drained. Use the name the script has
+    /// or adopted, and logs from the pipes only what came before the file was
+    /// begun (<see cref="DaemonPipes"/>). Use the name the script has
     /// always given its fallback log, so a daemon started before this was
     /// deployed is still found once adopted.
     /// </param>
@@ -274,18 +275,8 @@ public abstract class PythonDaemonSupervisor
 
             // Set once the pid is known, before the pipes are read.
             DaemonOutput? output = null;
-            process.OutputDataReceived += (_, e) =>
-            {
-                if (e.Data is null || (output is not null && output.FileHasIt())) return;
-                AppendLog($"{DateTime.UtcNow:HH:mm:ss} | {e.Data}");
-                _logger.LogInformation("[{Daemon}] {Line}", _daemon.Name, e.Data);
-            };
-            process.ErrorDataReceived += (_, e) =>
-            {
-                if (e.Data is null || (output is not null && output.FileHasIt())) return;
-                AppendLog($"{DateTime.UtcNow:HH:mm:ss} ! {e.Data}");
-                _logger.LogWarning("[{Daemon}:err] {Line}", _daemon.Name, e.Data);
-            };
+            process.OutputDataReceived += (_, e) => OnPipeLine(output?.Pipes.Stdout, e.Data, stderr: false);
+            process.ErrorDataReceived += (_, e) => OnPipeLine(output?.Pipes.Stderr, e.Data, stderr: true);
 
             try
             {
@@ -300,8 +291,7 @@ public abstract class PythonDaemonSupervisor
                 // A second of slack: the child stamps its lines on its own
                 // clock, read a moment after this one.
                 output = FollowOutput(pid, adopted: false, logFromUtc: launchedUtc.AddSeconds(-1));
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
+                BeginReadingPipes(process);
             }
             catch (Exception ex)
             {
@@ -417,6 +407,52 @@ public abstract class PythonDaemonSupervisor
     /// </remarks>
     protected virtual Task<bool> TerminateAsync(Process process, int pid, string label)
         => ProcessTerminator.StopAsync(process, pid, AppendLog, _logger, label);
+
+    /// <summary>Starts reading a launched daemon's stdout and stderr.</summary>
+    /// <remarks>
+    /// Virtual for one reason: a test has to play a reader that falls behind
+    /// the daemon — its first line read only after its log file exists, which
+    /// a loaded machine does on its own and no test can make happen on demand.
+    /// </remarks>
+    protected virtual void BeginReadingPipes(Process process)
+    {
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+    }
+
+    /// <summary>
+    /// One read from a launched daemon's pipe (null at its end), into api.log
+    /// and the recent-lines buffer. Without a <paramref name="pipe"/> (the
+    /// daemon keeps no file) every line is logged; with one, only what
+    /// <see cref="DaemonPipes"/> says no file holds.
+    /// </summary>
+    private void OnPipeLine(DaemonPipes.Pipe? pipe, string? data, bool stderr)
+    {
+        if (pipe is null)
+        {
+            if (data is not null) LogPipeLine(data, stderr);
+            return;
+        }
+
+        foreach (var line in pipe.Read(data))
+        {
+            LogPipeLine(line, stderr);
+        }
+    }
+
+    private void LogPipeLine(string line, bool stderr)
+    {
+        if (stderr)
+        {
+            AppendLog($"{DateTime.UtcNow:HH:mm:ss} ! {line}");
+            _logger.LogWarning("[{Daemon}:err] {Line}", _daemon.Name, line);
+        }
+        else
+        {
+            AppendLog($"{DateTime.UtcNow:HH:mm:ss} | {line}");
+            _logger.LogInformation("[{Daemon}] {Line}", _daemon.Name, line);
+        }
+    }
 
     /// <summary>Recent stdout/stderr — the place to look when a start flips straight back to stopped.</summary>
     public IReadOnlyList<string> GetLogs(int take)
@@ -613,6 +649,7 @@ public abstract class PythonDaemonSupervisor
             Pid = pid;
             Tail = tail;
             LogFromUtc = logFromUtc;
+            Pipes = new DaemonPipes(FileExists);
         }
 
         public int Pid { get; }
@@ -620,14 +657,19 @@ public abstract class PythonDaemonSupervisor
         public DateTime LogFromUtc { get; }
 
         /// <summary>
-        /// True once the file exists: every line the pipe carries from then on
-        /// is in it too (the tee writes the file before the pipe), so the pipe
-        /// is only drained and nothing is logged twice. Until then the pipe is
-        /// the only copy — an import error before core/safe_output.py was
-        /// installed, or a file that could not be opened — and it is logged
-        /// as before.
+        /// What of a launched daemon's pipes is logged: what came before the
+        /// tee (an import error, a line printed before core/safe_output.py was
+        /// installed), and anything when the file was never written. Unused
+        /// for an adopted daemon, whose pipes belonged to the API before.
         /// </summary>
-        public bool FileHasIt()
+        public DaemonPipes Pipes { get; }
+
+        /// <summary>
+        /// True once the file exists (the tee writes it before the pipe, so a
+        /// pipe line the file can hold is in it by the time it is read).
+        /// Remembered: the file is not looked for again on every line.
+        /// </summary>
+        private bool FileExists()
         {
             if (_fileSeen) return true;
             if (!File.Exists(Tail.Path)) return false;
