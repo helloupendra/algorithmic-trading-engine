@@ -153,6 +153,32 @@ public class StrategyController : ControllerBase
     // ------------------------------------------------------------------
 
     /// <summary>
+    /// Why a live run on <paramref name="underlying"/> cannot start at
+    /// <paramref name="nowUtc"/>: its exchange is closed today, or today's
+    /// session has ended. Null while today's session is still to come or open.
+    /// </summary>
+    public static string? WhyMarketClosed(AlgoTrading.Application.Interfaces.IMarketSessionService sessions, DateTime nowUtc,
+        string underlying, string? spotSymbol)
+    {
+        string exchange = MarketCloseRules.ExchangeOf(underlying, spotSymbol);
+        var info = sessions.GetSessionInfo(nowUtc, exchange, exchange == MarketCloseRules.Mcx ? "COM" : "FO");
+        var ist = IstTime.ToIst(nowUtc);
+        if (!info.IsTradingDay)
+        {
+            return $"{exchange} is closed today ({ist:ddd d MMM}): a live run can start only on a trading day. " +
+                   "To test the strategy on a past session, start it as a recap.";
+        }
+
+        if (nowUtc >= info.SessionCloseUtc)
+        {
+            return $"{exchange} closed at {IstTime.ToIst(info.SessionCloseUtc):HH:mm} IST today: a live run started now would trade " +
+                   "on stale prices. Start it on the next trading day, or as a recap to test it on today's session.";
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Launches the Python execution runner on the chosen underlying.
     /// </summary>
     /// <remarks>
@@ -179,7 +205,8 @@ public class StrategyController : ControllerBase
         [FromServices] AlgoTrading.Application.Interfaces.IRiskLimitsStore limitsStore,
         [FromServices] AlgoTrading.Application.Interfaces.IDerivativesInstrumentService derivatives,
         [FromServices] IHostMemory memory,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        [FromServices] AlgoTrading.Application.Interfaces.IMarketSessionService? sessions = null)
     {
         var strategy = await _catalog.FindAsync(id, cancellationToken);
         if (strategy is null) return NotFound(new { message = $"Strategy {id} not found." });
@@ -265,6 +292,18 @@ public class StrategyController : ControllerBase
             }
         }
 
+        // A live run trades a session that has not ended yet today; before the open
+        // it waits for it. Started after the close, at a weekend or on a holiday it
+        // had only stale quotes and old bars to trade, and on 11-12 Sep such runs
+        // booked trades timed before they began. A recap replays a past session on
+        // purpose and may start any time (RecapRuns).
+        string parametersJson = LiveRunParameters.Merge(strategy.DefaultParametersJson, request.Parameters, lots, risk, underlying);
+        if (sessions is not null && !RecapClock.IsRecap(parametersJson)
+            && WhyMarketClosed(sessions, DateTime.UtcNow, underlying, spotSymbol) is string closed)
+        {
+            return Conflict(new { message = closed });
+        }
+
         var command = PrepareRunner(strategy, out var commandError);
         if (command is null) return commandError!;
 
@@ -295,7 +334,7 @@ public class StrategyController : ControllerBase
                 ReplaySpeed = string.Empty,
                 Status = "Running",
                 StrategyName = strategy.Name,
-                ParametersJson = LiveRunParameters.Merge(strategy.DefaultParametersJson, request.Parameters, lots, risk, underlying),
+                ParametersJson = parametersJson,
                 InitialCapital = initialCapital,
                 CreatedUtc = now,
                 StartedUtc = now
@@ -1009,6 +1048,7 @@ public class StrategyController : ControllerBase
         [FromQuery] string? toDate,
         [FromQuery] int take = LiveRunHistoryFilter.DefaultTake,
         [FromQuery] int skip = 0,
+        [FromQuery] bool recap = false,
         CancellationToken cancellationToken = default)
     {
         if (!TryParseIstDate(fromDate, out var from))
@@ -1030,7 +1070,8 @@ public class StrategyController : ControllerBase
         // sees only their own runs whatever userId they pass.
         long? scopeUserId = User.ScopeUserId(userId);
 
-        var filter = new LiveRunHistoryFilter(scopeUserId, strategyId, underlying, status, from, to, take, skip);
+        // recap=true lists the recaps (replayed sessions) alone; otherwise only live trading.
+        var filter = new LiveRunHistoryFilter(scopeUserId, strategyId, underlying, status, from, to, take, skip, recap);
         var rows = await _history.ListAsync(filter, cancellationToken);
         return Ok(rows);
     }

@@ -11,6 +11,12 @@ public class LiveRunSummaryResponse
 {
     public long RunId { get; set; }
 
+    /// <summary>A recap: a past session replayed to test the strategy, not live trading. Its P&amp;L is in no live total.</summary>
+    public bool IsRecap { get; set; }
+
+    /// <summary>The replayed day of a recap (yyyy-MM-dd); null for a live run.</summary>
+    public string? RecapDate { get; set; }
+
     /// <summary>The user who started the run (SimulationRun.UserId).</summary>
     public long UserId { get; set; }
 

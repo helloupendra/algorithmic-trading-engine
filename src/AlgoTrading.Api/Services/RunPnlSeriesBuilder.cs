@@ -32,8 +32,10 @@ public sealed class RunPnlSeriesBuilder
         var dayStartUtc = IstTime.StartOfDayUtc(date);
         var dayEndUtc = IstTime.StartOfDayUtc(date.AddDays(1));
 
+        // The day's trading: a recap replays another session and is not in it.
         var runsInScope = _dbContext.SimulationRuns.AsNoTracking()
-            .Where(r => r.Mode == StrategyRunControl.LivePaperMode);
+            .Where(r => r.Mode == StrategyRunControl.LivePaperMode)
+            .WithoutRecaps();
         if (userId.HasValue)
         {
             long scopeUserId = userId.Value;
