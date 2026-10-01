@@ -464,7 +464,11 @@ function AiTraderPanel({ now }: { now: number }) {
             title="The IST day of the decisions"
             max={today}
             value={day}
-            onChange={(iso) => setPicked(iso && iso !== today ? iso : null)}
+            // A cleared field is someone typing another day: keep the day shown until a whole date is typed.
+            // Read as "today", the clear moved the value and the field refilled itself with today's date mid-edit.
+            onChange={(iso) => {
+              if (iso) setPicked(iso !== today ? iso : null)
+            }}
           />
           {!isToday && (
             <button type="button" className="btn btn--ghost btn--sm" onClick={() => setPicked(null)}>
