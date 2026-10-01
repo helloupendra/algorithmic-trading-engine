@@ -256,3 +256,15 @@ public class MarketBriefWordingTests
     public void Any_other_forecast_reads_as_its_json() =>
         Assert.Equal("""{"up":0.55,"down":0.45}""", MarketBriefBuilder.Prediction("""{ "up": 0.55, "down": 0.45 }"""));
 }
+
+public class AiTraderSummaryTests
+{
+    [Theory]
+    [InlineData("""{"action":"buy","underlying":"NIFTY","option":"PE"}""", "PE")]
+    [InlineData("""{"action":"none","option":null}""", null)]
+    [InlineData("""{"answer":"not a plan"}""", null)]
+    [InlineData("", null)]
+    [InlineData("{cut", null)]
+    public void A_list_row_names_the_option_its_plan_names(string planJson, string? option) =>
+        Assert.Equal(option, AlgoTrading.Api.Controllers.AiTraderController.OptionOf(planJson));
+}

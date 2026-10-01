@@ -1,0 +1,366 @@
+import { describe, expect, it } from 'vitest'
+
+import {
+  actionText,
+  aiTraderDecisionsQuery,
+  confidenceText,
+  dayCountsText,
+  hm,
+  jsonBlock,
+  lakhText,
+  limitsParts,
+  modeLabel,
+  placedText,
+  planFacts,
+  readAiTraderDecision,
+  readAiTraderDecisionsPage,
+  readAiTraderDetail,
+  readAiTraderPlan,
+  readAiTraderStatus,
+  ruleLabel,
+  verdictOf,
+} from './aiTrader'
+import type { AiTraderDecision } from './aiTrader'
+
+/** One decision summary exactly as AiTraderController sends it (System.Text.Json, web defaults). */
+const summary = (over: Record<string, unknown> = {}) => ({
+  id: 41,
+  clockUtc: '2026-10-01T05:50:00Z',
+  clockIst: '11:20',
+  day: '2026-10-01',
+  mode: 'shadow',
+  replaySessionId: null,
+  action: 'buy',
+  underlying: 'NIFTY',
+  reason: 'NIFTY broke the morning high with PCR rising from 0.92 to 1.08.',
+  confidence: 0.64,
+  allowed: false,
+  rule: 'stop',
+  why: 'The stop ₹40 is more than 40% below the entry ₹112.5; the lowest is ₹67.5.',
+  executed: false,
+  error: '',
+  model: 'nvidia/llama-3.3-nemotron-super-49b-v1.5',
+  callId: 812,
+  ...over,
+})
+
+/** GET /api/AiTrader/status with the default rules (TimeOnly serialises as "HH:mm:ss"). */
+const status = {
+  status: 'on',
+  mode: 'shadow',
+  everyMinutes: 10,
+  rules: {
+    underlyings: ['NIFTY', 'BANKNIFTY', 'SENSEX'],
+    maxLotsPerTrade: 2,
+    maxPremiumPerTrade: 50000.0,
+    maxOpenPositions: 3,
+    capital: 500000.0,
+    maxStopFraction: 0.4,
+    dailyLossLimit: 10000.0,
+    openFrom: '09:20:00',
+    openUntil: '14:45:00',
+    maxTradesPerDay: 10,
+    strategies: ['GhostTangentCrossings', 'ChainFlowBuy'],
+    maxStrategyRuns: 3,
+  },
+  today: { date: '2026-10-01', decisions: 12, actions: 3, allowed: 2, refused: 1, noAnswer: 1 },
+  latest: [summary(), summary({ id: 40, action: 'none', allowed: true, rule: 'ok', why: 'Nothing to do.' })],
+}
+
+const read = (over: Record<string, unknown> = {}) => readAiTraderDecision(summary(over))!
+
+describe('reading the status', () => {
+  it('reads the body as the controller sends it', () => {
+    const s = readAiTraderStatus(status)
+    expect(s.status).toBe('on')
+    expect(s.mode).toBe('shadow')
+    expect(s.everyMinutes).toBe(10)
+    expect(s.rules).toEqual({
+      underlyings: ['NIFTY', 'BANKNIFTY', 'SENSEX'],
+      maxLotsPerTrade: 2,
+      maxPremiumPerTrade: 50000,
+      maxOpenPositions: 3,
+      capital: 500000,
+      maxStopFraction: 0.4,
+      dailyLossLimit: 10000,
+      openFrom: '09:20',
+      openUntil: '14:45',
+      maxTradesPerDay: 10,
+      strategies: ['GhostTangentCrossings', 'ChainFlowBuy'],
+      maxStrategyRuns: 3,
+    })
+    expect(s.today).toEqual({ date: '2026-10-01', decisions: 12, actions: 3, allowed: 2, refused: 1, noAnswer: 1 })
+    expect(s.latest.map((d) => d.id)).toEqual([41, 40])
+  })
+
+  it('refuses a body that is not the status, rather than drawing an AI Trader that is off', () => {
+    for (const bad of ['<!doctype html>', null, [status], { hello: 1 }]) {
+      expect(() => readAiTraderStatus(bad)).toThrow(/shape this page cannot read/)
+    }
+  })
+
+  it('keeps what the body left out as not known, never as off or zero limits', () => {
+    const s = readAiTraderStatus({ status: '', rules: 'none', latest: 'x' })
+    expect(s).toEqual({ status: null, mode: null, everyMinutes: null, rules: null, today: null, latest: [] })
+    const r = readAiTraderStatus({ rules: { maxLotsPerTrade: '2', maxStopFraction: 4, dailyLossLimit: -10000, openFrom: '9:20', openUntil: 'noon' } }).rules!
+    expect(r.maxLotsPerTrade).toBeNull()
+    expect(r.maxStopFraction).toBeNull()
+    expect(r.dailyLossLimit).toBe(10000)
+    expect(r.openFrom).toBe('09:20')
+    expect(r.openUntil).toBeNull()
+    expect(r.underlyings).toEqual([])
+  })
+
+  it('reads a TimeOnly however it is written', () => {
+    expect(hm('09:20:00')).toBe('09:20')
+    expect(hm('14:45:00.0000000')).toBe('14:45')
+    expect(hm('9:20')).toBe('09:20')
+    expect(hm('24:00')).toBeNull()
+    expect(hm('09:20 IST')).toBeNull()
+    expect(hm(920)).toBeNull()
+  })
+})
+
+describe('reading decisions', () => {
+  it('reads a summary as the controller sends it', () => {
+    expect(read()).toEqual({
+      id: 41,
+      clockUtc: '2026-10-01T05:50:00Z',
+      clockIst: '11:20',
+      day: '2026-10-01',
+      mode: 'shadow',
+      replaySessionId: null,
+      action: 'buy',
+      underlying: 'NIFTY',
+      option: null,
+      reason: 'NIFTY broke the morning high with PCR rising from 0.92 to 1.08.',
+      confidence: 0.64,
+      allowed: false,
+      rule: 'stop',
+      why: 'The stop ₹40 is more than 40% below the entry ₹112.5; the lowest is ₹67.5.',
+      executed: false,
+      error: '',
+      model: 'nvidia/llama-3.3-nemotron-super-49b-v1.5',
+      callId: 812,
+    })
+  })
+
+  it('never trusts a field: allowed and executed only in as many words, a confidence only in 0..1', () => {
+    const d = read({
+      allowed: 'true',
+      executed: 1,
+      confidence: 64,
+      action: ' BUY ',
+      underlying: 'nifty',
+      option: 'ce',
+      rule: 'STOP',
+      clockIst: null,
+      replaySessionId: 4,
+      callId: -1,
+    })
+    expect(d.allowed).toBe(false)
+    expect(d.executed).toBe(false)
+    expect(d.confidence).toBeNull()
+    expect(d.action).toBe('buy')
+    expect(d.underlying).toBe('NIFTY')
+    expect(d.option).toBe('CE')
+    expect(d.rule).toBe('stop')
+    // No IST clock sent: worked out from the UTC one.
+    expect(d.clockIst).toBe('11:20')
+    expect(d.replaySessionId).toBe(4)
+    expect(d.callId).toBeNull()
+    expect(read({ option: 'FUT' }).option).toBeNull()
+  })
+
+  it('reads a page, dropping rows it could not open', () => {
+    const page = readAiTraderDecisionsPage({ items: [summary(), { id: 'x' }, 'junk', summary({ id: 39 })], nextBeforeId: 39 })
+    expect(page.items.map((d) => d.id)).toEqual([41, 39])
+    expect(page.nextBeforeId).toBe(39)
+    expect(readAiTraderDecisionsPage({ items: [], nextBeforeId: null })).toEqual({ items: [], nextBeforeId: null })
+    expect(readAiTraderDecisionsPage([summary()]).items).toHaveLength(1)
+    expect(() => readAiTraderDecisionsPage({ decisions: [] })).toThrow(/shape this page cannot read/)
+    expect(() => readAiTraderDecisionsPage('<html>')).toThrow(/shape this page cannot read/)
+  })
+
+  it('reads a decision in full, with its plan', () => {
+    const planJson = JSON.stringify({
+      action: 'buy',
+      underlying: 'NIFTY',
+      option: 'CE',
+      strike: 'ATM',
+      lots: 1,
+      stopLoss: 40,
+      target: 160,
+      strategy: null,
+      positionId: null,
+      runId: null,
+      reason: 'x',
+      confidence: 0.64,
+    })
+    const d = readAiTraderDetail({ decision: summary(), brief: 'NIFTY 25,312 (+0.4%)\n', planJson, resultJson: '{"contract":{"symbol":"NSE:NIFTY25O0725300CE"}}', briefHash: 'ABC123' })
+    expect(d.decision.id).toBe(41)
+    expect(d.brief).toBe('NIFTY 25,312 (+0.4%)\n')
+    expect(d.briefHash).toBe('ABC123')
+    expect(d.plan).toEqual({
+      action: 'buy',
+      underlying: 'NIFTY',
+      option: 'CE',
+      strike: 'ATM',
+      lots: 1,
+      stopLoss: 40,
+      target: 160,
+      strategy: null,
+      positionId: null,
+      runId: null,
+    })
+    expect(() => readAiTraderDetail({ brief: 'x' })).toThrow(/cannot read/)
+    expect(() => readAiTraderDetail(null)).toThrow(/cannot read/)
+  })
+
+  it('reads an unreadable answer as no plan', () => {
+    expect(readAiTraderPlan('{"answer":"I think NIFTY goes up"}')).toBeNull()
+    expect(readAiTraderPlan('not json')).toBeNull()
+    expect(readAiTraderPlan('[1,2]')).toBeNull()
+    expect(readAiTraderPlan('')).toBeNull()
+    expect(readAiTraderPlan('{"action":"exit","positionId":12}')).toMatchObject({ action: 'exit', positionId: 12 })
+    expect(readAiTraderPlan('{"action":"buy","strike":25300}')!.strike).toBe('25300')
+  })
+
+  it('asks for a day or a replay, a page at a time', () => {
+    expect(aiTraderDecisionsQuery({ day: '2026-10-01' }, null)).toBe('day=2026-10-01&take=50')
+    expect(aiTraderDecisionsQuery({ replay: 4 }, 41, 20)).toBe('replay=4&take=20&beforeId=41')
+    expect(aiTraderDecisionsQuery({ day: null, replay: null }, null)).toBe('take=50')
+  })
+})
+
+describe('the verdict', () => {
+  it('says allowed, refused and by which rule, or no answer', () => {
+    expect(verdictOf({ action: 'buy', allowed: true, rule: 'ok' })).toMatchObject({ key: 'allowed', label: 'Allowed', tone: 'pos' })
+    // Doing nothing is allowed, and quiet.
+    expect(verdictOf({ action: 'none', allowed: true, rule: 'ok' })).toMatchObject({ key: 'allowed', label: 'Allowed', tone: 'neutral' })
+    expect(verdictOf({ action: 'buy', allowed: false, rule: 'stop' })).toMatchObject({ key: 'refused', label: 'Refused · stop-loss', tone: 'warn' })
+    expect(verdictOf({ action: 'buy', allowed: false, rule: 'daily-loss' })).toMatchObject({ label: 'Refused · daily loss', tone: 'warn' })
+    expect(verdictOf({ action: 'start_strategy', allowed: false, rule: 'strategy-list' }).label).toBe('Refused · strategy list')
+    expect(verdictOf({ action: 'exit', allowed: false, rule: 'own-book' }).label).toBe('Refused · not its position')
+    expect(verdictOf({ action: '', allowed: false, rule: 'no-answer' })).toMatchObject({ key: 'no-answer', label: 'No answer', tone: 'neutral' })
+    expect(verdictOf({ action: '', allowed: false, rule: 'unreadable' })).toMatchObject({ key: 'no-answer', label: 'Unreadable' })
+  })
+
+  it('names every rule the guard can break, and an unknown one by its own name', () => {
+    for (const rule of [
+      'hours',
+      'daily-loss',
+      'size',
+      'stop',
+      'target',
+      'instrument',
+      'contract',
+      'open-positions',
+      'capital',
+      'trades-a-day',
+      'strategy-list',
+      'strategy-runs',
+      'own-book',
+      'own-runs',
+      'kill-switch',
+      'action',
+    ]) {
+      const r = ruleLabel(rule)
+      expect(r.short).not.toBe('')
+      expect(r.means).not.toBe('')
+    }
+    expect(ruleLabel('margin-call')).toEqual({ short: 'margin call', means: '' })
+    // Refused without a rule: refused all the same, never "allowed".
+    expect(verdictOf({ action: 'buy', allowed: false, rule: '' })).toMatchObject({ key: 'refused', label: 'Refused' })
+  })
+
+  it('says whether an allowed action was placed', () => {
+    const d = (over: Partial<AiTraderDecision>) => ({ action: 'buy', allowed: true, executed: false, mode: 'shadow', error: '', ...over })
+    expect(placedText(d({}))).toEqual({ text: 'Not placed: shadow mode', tone: 'neutral' })
+    expect(placedText(d({ mode: 'replay' }))?.text).toBe('Not placed: a replay places nothing')
+    expect(placedText(d({ mode: 'live', executed: true }))).toEqual({ text: 'Placed in its own account', tone: 'pos' })
+    expect(placedText(d({ mode: 'live', error: 'Execution is not switched on in this build: nothing was placed.' }))).toEqual({
+      text: 'Not placed: Execution is not switched on in this build: nothing was placed.',
+      tone: 'warn',
+    })
+    expect(placedText(d({ action: 'none' }))).toBeNull()
+    expect(placedText(d({ allowed: false }))).toBeNull()
+  })
+})
+
+describe('the words', () => {
+  it('says the action in a few words, with the option when it is known', () => {
+    expect(actionText(read())).toBe('Buy NIFTY')
+    expect(actionText(read({ option: 'CE' }))).toBe('Buy NIFTY CE')
+    const plan = readAiTraderPlan('{"action":"buy","underlying":"NIFTY","option":"PE","strike":"ATM"}')
+    expect(actionText({ ...read(), plan })).toBe('Buy NIFTY PE')
+    expect(actionText(read({ action: 'none', underlying: '' }))).toBe('Do nothing')
+    expect(actionText(read({ action: 'exit', underlying: 'BANKNIFTY' }))).toBe('Exit BANKNIFTY')
+    expect(actionText({ ...read({ action: 'exit' }), plan: readAiTraderPlan('{"action":"exit","positionId":12}') })).toBe('Exit position #12')
+    expect(actionText(read({ action: 'start_strategy', underlying: 'BANKNIFTY' }))).toBe('Start a strategy on BANKNIFTY')
+    expect(actionText({ ...read({ action: 'start_strategy' }), plan: readAiTraderPlan('{"action":"start_strategy","strategy":"ChainFlowBuy"}') })).toBe(
+      'Start Chain Flow Buy on NIFTY',
+    )
+    expect(actionText({ ...read({ action: 'stop_strategy', underlying: '' }), plan: readAiTraderPlan('{"action":"stop_strategy","runId":77}') })).toBe(
+      'Stop run #77',
+    )
+    expect(actionText(read({ action: '', underlying: '', rule: 'no-answer' }))).toBe('No decision')
+    expect(actionText(read({ action: '', underlying: '', rule: 'unreadable' }))).toBe('No decision')
+    expect(actionText(read({ action: 'sell' }))).toBe('“sell” NIFTY')
+  })
+
+  it("writes the model's confidence as a whole percent, and nothing when it gave none", () => {
+    expect(confidenceText(0.64)).toBe('64%')
+    expect(confidenceText(0.725)).toBe('73%')
+    expect(confidenceText(1)).toBe('100%')
+    expect(confidenceText(0)).toBe('0%')
+    expect(confidenceText(null)).toBe('')
+    expect(confidenceText(1.4)).toBe('')
+  })
+
+  it('names the mode and what it does', () => {
+    expect(modeLabel('shadow')).toEqual({ label: 'Shadow', tone: 'neutral', means: 'decides, places nothing' })
+    expect(modeLabel('live', 500000)).toEqual({ label: 'Live', tone: 'live', means: 'places paper orders in its own ₹5 lakh account' })
+    expect(modeLabel('live').means).toBe('places paper orders in its own account')
+    expect(modeLabel('replay').label).toBe('Replay')
+    expect(modeLabel('paper')).toMatchObject({ label: 'Paper', tone: 'neutral' })
+    expect(modeLabel(null).label).toBe('Not known')
+  })
+
+  it('writes rupees the Indian way', () => {
+    expect(lakhText(500000)).toBe('₹5 lakh')
+    expect(lakhText(250000)).toBe('₹2.5 lakh')
+    expect(lakhText(10000000)).toBe('₹1 crore')
+    expect(lakhText(50000)).toBe('₹50,000')
+    expect(lakhText(null)).toBe('')
+  })
+
+  it('puts the limits in one line, each only when it was sent', () => {
+    const rules = readAiTraderStatus(status).rules!
+    expect(limitsParts(rules).join(' · ')).toBe(
+      'NIFTY, BANKNIFTY, SENSEX options, buying only · 2 lots a trade · ₹50,000 of premium a trade · 3 positions at once · ' +
+        'stop at most 40% below entry · daily loss limit ₹10,000 · new positions 09:20–14:45 IST · 10 trades a day · ' +
+        'strategies: Ghost Tangent Crossings, Chain Flow Buy (3 runs at most)',
+    )
+    expect(limitsParts(readAiTraderStatus({ rules: { maxLotsPerTrade: 1, openFrom: '09:20:00' } }).rules!)).toEqual(['1 lot a trade'])
+  })
+
+  it("counts the day's looks in words", () => {
+    expect(dayCountsText({ decisions: 12, actions: 3, allowed: 2, refused: 1, noAnswer: 0 })).toBe(
+      '12 looks · 3 actions · 2 allowed · 1 refused · 0 no answer',
+    )
+    expect(dayCountsText({ decisions: 1, actions: 1, allowed: 1, refused: 0, noAnswer: 0 })).toBe('1 look · 1 action · 1 allowed · 0 refused · 0 no answer')
+  })
+
+  it("puts the plan's numbers in a line, and shows JSON pretty, or as written", () => {
+    expect(planFacts(readAiTraderPlan('{"action":"buy","strike":"ATM+1","lots":2,"stopLoss":82.5,"target":140}'))).toBe(
+      'strike ATM+1 · 2 lots · stop ₹82.50 · target ₹140.00',
+    )
+    expect(planFacts(readAiTraderPlan('{"action":"none"}'))).toBe('')
+    expect(planFacts(null)).toBe('')
+    expect(jsonBlock('{"a":1}')).toBe('{\n  "a": 1\n}')
+    expect(jsonBlock('{}')).toBe('')
+    expect(jsonBlock('  ')).toBe('')
+    expect(jsonBlock('not json')).toBe('not json')
+  })
+})

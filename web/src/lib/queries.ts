@@ -48,6 +48,14 @@ import {
   replayPollMs,
 } from './replay'
 import type { ReplayStartBody, ReplayStatus } from './replay'
+import {
+  AI_TRADER_POLL_MS,
+  aiTraderDecisionsQuery,
+  readAiTraderDecisionsPage,
+  readAiTraderDetail,
+  readAiTraderStatus,
+} from './aiTrader'
+import type { AiTraderDecisionFilter, AiTraderDecisionsPage } from './aiTrader'
 import type {
   AlertEvent,
   BackfillHistoryResponse,
@@ -2899,5 +2907,51 @@ export function useReplayControl() {
         qc.invalidateQueries({ queryKey: ['strategy', 'live'] })
       }
     },
+  })
+}
+
+// ---------- AI Trader (AI → Agents, Today, Data → Replay; admin) ----------
+
+/**
+ * The AI Trader's record (lib/aiTrader.ts has the shapes, the readers and the
+ * words). Keyed under ['ai', ...] so switching an agent on AI → Agents, which
+ * invalidates ['ai'], reads its on/off here again at once.
+ */
+
+/** On or off, shadow or live, its limits, today's counts and the last three decisions. */
+export function useAiTraderStatus(enabled = true) {
+  return useQuery({
+    queryKey: ['ai', 'trader', 'status'],
+    queryFn: async () => readAiTraderStatus(await api.get<unknown>('/api/AiTrader/status')),
+    enabled,
+    refetchInterval: enabled ? AI_TRADER_POLL_MS : false,
+  })
+}
+
+/**
+ * A day's decisions (IST) or a replay's, newest first, a page at a time
+ * (nextBeforeId). No placeholder from the last filter: another day's rows
+ * under this day's label would read as this day's.
+ */
+export function useAiTraderDecisions(filter: AiTraderDecisionFilter, pollMs: number | false) {
+  const ready = !!filter.day || filter.replay != null
+  return useInfiniteQuery({
+    queryKey: ['ai', 'trader', 'decisions', filter.day ?? null, filter.replay ?? null],
+    queryFn: async ({ pageParam }: { pageParam: number | null }) =>
+      readAiTraderDecisionsPage(await api.get<unknown>(`/api/AiTrader/decisions?${aiTraderDecisionsQuery(filter, pageParam)}`)),
+    initialPageParam: null as number | null,
+    getNextPageParam: (last: AiTraderDecisionsPage) => last.nextBeforeId ?? undefined,
+    enabled: ready,
+    refetchInterval: ready ? pollMs : false,
+  })
+}
+
+/** One decision in full: the brief, the plan and the result. A decision never changes once it is kept. */
+export function useAiTraderDecision(id: number | null) {
+  return useQuery({
+    queryKey: ['ai', 'trader', 'decision', id],
+    queryFn: async () => readAiTraderDetail(await api.get<unknown>(`/api/AiTrader/decisions/${id}`)),
+    enabled: id != null,
+    staleTime: Infinity,
   })
 }

@@ -116,6 +116,8 @@ export interface ReplaySession {
   runs: ReplayRun[]
   /** Who pressed Start; null when not sent. */
   startedBy: string | null
+  /** The AI Trader decides along, on the replay's clock (shadow: it places nothing). False unless the API said so. */
+  aiTrader: boolean
 }
 
 export interface ReplayStatus {
@@ -236,6 +238,7 @@ export function readReplaySession(v: unknown): ReplaySession | null {
       .map(readRun)
       .filter((r): r is ReplayRun => r != null),
     startedBy: optional(v.startedBy),
+    aiTrader: v.aiTrader === true,
   }
 }
 
@@ -469,23 +472,25 @@ export interface ReplayStrategyInfo {
 
 /**
  * Why the set-up cannot start, in words, or null when it can. Checked in
- * the order the form reads: the day, the start time, then each run.
+ * the order the form reads: the day, the start time, then each run. With
+ * the AI Trader along (`aiTrader`), a replay needs no run: it may decide alone.
  */
 export function setupError(
   date: string | null,
   fromText: string,
   drafts: ReplayRunDraft[],
   strategies: ReadonlyMap<number, ReplayStrategyInfo>,
+  aiTrader = false,
 ): string | null {
   if (!date) return 'Pick a recorded day first.'
   const from = parseFromTime(fromText)
   if (from.error) return from.error
-  if (drafts.length === 0) return 'Add at least one strategy run.'
+  if (drafts.length === 0 && !aiTrader) return 'Add at least one strategy run, or ask the AI Trader along.'
   const seen = new Set<string>()
   for (const [i, d] of drafts.entries()) {
     const n = drafts.length > 1 ? ` ${i + 1}` : ''
     const s = d.strategyId == null ? undefined : strategies.get(d.strategyId)
-    if (!s) return `Run${n}: pick a strategy.`
+    if (!s) return aiTrader ? `Run${n}: pick a strategy, or remove the run to replay with the AI Trader alone.` : `Run${n}: pick a strategy.`
     if (!(REPLAY_UNDERLYINGS as readonly string[]).includes(d.underlying)) return `Run${n}: pick NIFTY, BANKNIFTY or SENSEX.`
     if (!s.underlyings.includes(d.underlying)) return `Run${n}: ${s.name} does not trade ${d.underlying}.`
     const lots = Number(d.lots)
@@ -498,6 +503,21 @@ export function setupError(
     seen.add(key)
   }
   return null
+}
+
+/**
+ * The line beside Start: what pressing it does. With no runs, only the AI
+ * Trader decides along; it places nothing in a replay.
+ */
+export function setupSummary(o: { runs: number; date: string; from: string; speed: number; aiTrader: boolean }): string {
+  const day = shortDay(o.date)
+  const play = `plays the day from ${o.from} at ${speedLabel(o.speed)}`
+  if (o.runs === 0) {
+    return `Plays ${day} from ${o.from} at ${speedLabel(o.speed)} with only the AI Trader deciding along, in shadow: it places nothing, and nothing enters a live total.`
+  }
+  const runs = o.runs === 1 ? 'the run as a recap' : `the ${o.runs} runs as recaps`
+  const ai = o.aiTrader ? ', with the AI Trader deciding along in shadow' : ''
+  return `Starts ${runs} of ${day}, then ${play}${ai}. Replay runs are tests: they stay out of every live total and are squared off when the replay ends.`
 }
 
 /** The recap parameters a replay run starts with. */
@@ -531,6 +551,8 @@ export interface ReplayStartBody {
   speed: number
   from: string
   runIds: number[]
+  /** The AI Trader decides along; with it, runIds may be empty. The API reads a missing one as false. */
+  aiTrader?: boolean
 }
 
 // ---------- starting ------------------------------------------------------------------
@@ -565,7 +587,8 @@ export function startedRunId(response: unknown): number | null {
  * day, one at a time (the API starts one runner at a time anyway), and only
  * when every run is up, the replay with their ids. The first run that does
  * not start ends it there: the replay is not started and the runs after it
- * are not tried, so as few runs as possible are left to stop.
+ * are not tried, so as few runs as possible are left to stop. With no runs
+ * (the AI Trader alone), the replay is asked for at once.
  */
 export async function launchReplay(
   plans: ReplayRunPlan[],
