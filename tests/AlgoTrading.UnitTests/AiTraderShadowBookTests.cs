@@ -122,6 +122,59 @@ public class AiTraderShadowBookTests
     }
 
     [Fact]
+    public async Task Two_looks_at_once_are_judged_one_after_the_other_so_their_buys_cannot_pass_a_limit_together()
+    {
+        // "Run now" beside the scheduled look, each on its own database context: both read the book with two positions
+        // open, each buy alone is inside the limit of three, and the two together would make four.
+        string name = Guid.NewGuid().ToString("N");
+        var books = new AiTraderAgentTests.TogetherBooks(2);
+        var (first, a, _, _) = AiTraderAgentTests.Agent(db: NewDb(name), books: books);
+        var (second, b, _, _) = AiTraderAgentTests.Agent(db: NewDb(name), books: books);
+        a.Db.AiTraderShadowPositions.AddRange(Position(day: new DateOnly(2026, 10, 5), mark: 120m), Position(day: new DateOnly(2026, 10, 5), mark: 120m));
+        await a.Db.SaveChangesAsync();
+        a.Provider.On(Judge1, Answer(BuyAtmCall));
+        b.Provider.On(Judge1, Answer(BuyAtmCall));
+
+        var rows = await Task.WhenAll(
+            Task.Run(() => first.DecideAsync(Eleven, AiTraderModes.Shadow, null, default)),
+            Task.Run(() => second.DecideAsync(Eleven, AiTraderModes.Shadow, null, default)));
+
+        Assert.Single(rows, r => r.Allowed);
+        var refused = Assert.Single(rows, r => !r.Allowed);
+        Assert.Equal("open-positions", refused.Rule);
+        Assert.Contains("3 positions are open", refused.Why);
+        await using var check = NewDb(name);
+        Assert.Equal(3, await check.AiTraderShadowPositions.CountAsync(p => p.ExitUtc == null));
+    }
+
+    [Fact]
+    public async Task Two_looks_at_once_cannot_close_the_same_position_twice()
+    {
+        string name = Guid.NewGuid().ToString("N");
+        var books = new AiTraderAgentTests.TogetherBooks(2);
+        var (first, a, _, aQuotes) = AiTraderAgentTests.Agent(db: NewDb(name), books: books);
+        var (second, b, _, bQuotes) = AiTraderAgentTests.Agent(db: NewDb(name), books: books);
+        a.Db.AiTraderShadowPositions.Add(Position(day: new DateOnly(2026, 10, 5), mark: 120m));
+        await a.Db.SaveChangesAsync();
+        const string Exit = """{"action":"exit","positionId":1,"reason":"The move stalled.","confidence":0.5}""";
+        a.Provider.On(Judge1, Answer(Exit));
+        b.Provider.On(Judge1, Answer(Exit));
+        aQuotes.Set(Symbol, bid: 125m, last: 125.5m);
+        bQuotes.Set(Symbol, bid: 124m, last: 124.5m);
+
+        var rows = await Task.WhenAll(
+            Task.Run(() => first.DecideAsync(Eleven.AddMinutes(10), AiTraderModes.Shadow, null, default)),
+            Task.Run(() => second.DecideAsync(Eleven.AddMinutes(10), AiTraderModes.Shadow, null, default)));
+
+        var allowed = Assert.Single(rows, r => r.Allowed);
+        Assert.Equal("own-book", Assert.Single(rows, r => !r.Allowed).Rule);
+        await using var check = NewDb(name);
+        var p = await check.AiTraderShadowPositions.SingleAsync();
+        // Closed once, by the look that was allowed, at the bid that look saw.
+        Assert.Equal((AiTraderShadowBook.ExitedByIt, ReferenceEquals(allowed, rows[0]) ? 125m : 124m), (p.ExitReason, p.ExitPrice!.Value));
+    }
+
+    [Fact]
     public async Task A_position_left_from_an_earlier_day_closes_at_its_last_mark()
     {
         var (agent, ai, _, _) = AiTraderAgentTests.Agent();

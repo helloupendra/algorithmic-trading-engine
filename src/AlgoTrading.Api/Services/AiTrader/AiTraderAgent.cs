@@ -105,6 +105,7 @@ public sealed class AiTraderAgent(
     /// </summary>
     private async Task CheckShadowAsync(DateTime nowUtc, ReplaySessionState? replay, bool replaying, CancellationToken cancellationToken)
     {
+        await BookGate.WaitAsync(cancellationToken);
         try
         {
             await shadow.EndReplaysAsync(replay is not null && MarketReplayService.IsActive(replay.State) ? replay.Id : null, cancellationToken);
@@ -114,6 +115,10 @@ public sealed class AiTraderAgent(
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogWarning(ex, "AI Trader: the shadow book's minute check failed");
+        }
+        finally
+        {
+            BookGate.Release();
         }
     }
 
@@ -175,19 +180,31 @@ public sealed class AiTraderAgent(
         return ist >= from && ist <= until;
     }
 
-    /// <summary>Builds the brief, asks the model, judges the plan, and keeps the decision. Public for tests.</summary>
+    /// <summary>
+    /// One judging of its book at a time in this process (the AI runs on one API): a look's verdict with what it
+    /// opens or closes, and the shadow book's minute check. "Run now" and the scheduled look, each on a database
+    /// context of its own, could otherwise both pass a limit the other was about to use (two buys past the three
+    /// open positions) or both close one position; the minute check could stop a position as a look exited it. The
+    /// model is never asked under it: a look reads its book for the brief, asks, and only then waits here and reads
+    /// the book again, so a minute-long answer never holds up the minute check.
+    /// </summary>
+    public static readonly SemaphoreSlim BookGate = new(1, 1);
+
+    /// <summary>
+    /// Builds the brief, asks the model, judges the plan, and keeps the decision. The plan is judged under
+    /// <see cref="BookGate"/>, on the book as it is then, not as the brief showed it. Public for tests.
+    /// </summary>
     public async Task<AiTraderDecision> DecideAsync(DateTime clockUtc, string mode, long? replaySessionId, CancellationToken cancellationToken)
     {
         bool replay = mode == AiTraderModes.Replay;
         var brief = await briefs.BuildAsync(clockUtc, replay, cancellationToken);
-        var account = await books.ReadAsync(clockUtc, replay, cancellationToken);
-        var book = mode == AiTraderModes.Live ? account : await shadow.ReadAsync(account, replaySessionId, cancellationToken);
+        var seen = await ReadBookAsync(clockUtc, mode, replaySessionId, cancellationToken);
         var day = IstTime.DateOf(clockUtc);
         var earlier = await db.AiTraderDecisions.AsNoTracking()
             .Where(d => d.ClockUtc < clockUtc && (replaySessionId == null ? d.Day == day && d.ReplaySessionId == null : d.ReplaySessionId == replaySessionId))
             .OrderByDescending(d => d.ClockUtc).ThenByDescending(d => d.Id).Take(LastLooksShown)
             .ToListAsync(cancellationToken);
-        string text = brief.Text + "\n" + StopFloors(brief, replay) + AiTraderBookReader.Describe(book, Rules, mode) + "\n" + LastLooks(earlier)
+        string text = brief.Text + "\n" + StopFloors(brief, replay) + AiTraderBookReader.Describe(seen, Rules, mode) + "\n" + LastLooks(earlier)
                       + "\nDecide now: one JSON object.";
 
         var row = new AiTraderDecision
@@ -232,21 +249,41 @@ public sealed class AiTraderAgent(
         row.PlanJson = JsonSerializer.Serialize(plan, Json);
 
         var contract = plan.Action == AiTraderPlan.Buy ? Resolve(plan, brief, replay) : null;
-        var verdict = AiTraderGuard.Check(plan, book, Rules, contract);
-        row.Allowed = verdict.Allowed;
-        row.Rule = verdict.Rule;
-        row.Why = Cut(verdict.Why, 1000);
         if (contract is not null) row.ResultJson = JsonSerializer.Serialize(new { contract }, Json);
 
-        if (verdict.Allowed && plan.Action != AiTraderPlan.None && mode == AiTraderModes.Live)
+        await BookGate.WaitAsync(cancellationToken);
+        try
         {
-            // Execution comes with its own step: until then a live decision is kept like a shadow one.
-            row.Error = "Execution is not switched on in this build: nothing was placed.";
+            // Read again: while the model answered, another look may have opened or closed a position, or the minute
+            // check stopped one.
+            var book = await ReadBookAsync(clockUtc, mode, replaySessionId, cancellationToken);
+            var verdict = AiTraderGuard.Check(plan, book, Rules, contract);
+            row.Allowed = verdict.Allowed;
+            row.Rule = verdict.Rule;
+            row.Why = Cut(verdict.Why, 1000);
+
+            if (verdict.Allowed && plan.Action != AiTraderPlan.None && mode == AiTraderModes.Live)
+            {
+                // Execution comes with its own step: until then a live decision is kept like a shadow one.
+                row.Error = "Execution is not switched on in this build: nothing was placed.";
+            }
+
+            await SaveAsync(row, cancellationToken);
+            if (verdict.Allowed && mode != AiTraderModes.Live) await ApplyToShadowAsync(row, plan, contract, verdict, cancellationToken);
+        }
+        finally
+        {
+            BookGate.Release();
         }
 
-        await SaveAsync(row, cancellationToken);
-        if (verdict.Allowed && mode != AiTraderModes.Live) await ApplyToShadowAsync(row, plan, contract, verdict, cancellationToken);
         return row;
+    }
+
+    /// <summary>The book the rules judge: its live account in live mode, else the shadow book (a replay's own in a replay).</summary>
+    private async Task<AiTraderBook> ReadBookAsync(DateTime clockUtc, string mode, long? replaySessionId, CancellationToken cancellationToken)
+    {
+        var account = await books.ReadAsync(clockUtc, mode == AiTraderModes.Replay, cancellationToken);
+        return mode == AiTraderModes.Live ? account : await shadow.ReadAsync(account, replaySessionId, cancellationToken);
     }
 
     /// <summary>
