@@ -17,15 +17,25 @@ using Microsoft.Extensions.Logging;
 namespace AlgoTrading.Api.Services
 {
     /// <summary>
-    /// Runs the daily candle archive once per IST day, after the last session
-    /// (MCX closes at 23:30), and catches up any day it missed. After an NSE
+    /// Runs the daily candle archive once per IST day, after the day's last
+    /// session has closed, and catches up any day it missed. After an NSE
     /// trading day it then checks India VIX and fills its gaps.
     /// </summary>
     /// <remarks>
     /// <para>
+    /// A day is due at <c>Archive:RunAtIst</c> (23:50), or twenty minutes after
+    /// the last exchange that traded that day closed, whichever is later
+    /// (<see cref="ArchiveSchedule.DueAtIst"/>, the closes from the session
+    /// service). MCX closes at 23:30 while New York is on daylight saving and at
+    /// 23:55 while it is on standard time, so from November to March a day is
+    /// archived at 00:15 the next morning. Until 1 Oct 2026 the archive ran at
+    /// 23:50 all year, and in the winter MCX's last five minutes never reached
+    /// the candles.
+    /// </para>
+    /// <para>
     /// The last archived day is kept in system_settings, so an API that was
-    /// down at 23:50 — a deploy, a reboot — archives that day on its next
-    /// tick rather than losing it. Days with no live bars (weekends, holidays)
+    /// down when a day fell due — a deploy, a reboot — archives that day on its
+    /// next tick rather than losing it. Days with no live bars (weekends, holidays)
     /// finish in a query and are recorded as done all the same. The broker
     /// backfill part needs the day's token, which FYERS keeps alive until
     /// 06:00 the next morning; a catch-up run after that still archives the
@@ -34,9 +44,9 @@ namespace AlgoTrading.Api.Services
     /// <para>
     /// The India VIX check (<see cref="VixBackfillService"/>) runs right after
     /// the archive, in the same tick, when at least one day it archived was an
-    /// NSE trading day in the exchange calendar: so at 23:50 IST on a trading
-    /// day, or, when the API missed that, right after the catch-up archives
-    /// the day. It looks at
+    /// NSE trading day in the exchange calendar: so right after a trading
+    /// day's archive (23:50 IST, or 00:15 in the US winter), or, when the API
+    /// missed that, right after the catch-up archives the day. It looks at
     /// the last <c>Archive:VixLookbackTradingDays</c> (20) trading days through
     /// that day, fills missing bars from the history vendors, and reports a day
     /// the forecasts still cannot use (<see cref="VixBackfillReport"/>). It runs
@@ -69,8 +79,8 @@ namespace AlgoTrading.Api.Services
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             _logger.LogInformation(
-                "NightlyArchiveService is starting (runs at {RunAt} IST; India VIX check after each NSE trading day: {VixCheck}, last {VixDays} trading days).",
-                _runAtIst, _vixCheck ? "on" : "off", _vixLookbackTradingDays);
+                "NightlyArchiveService is starting (a day is archived at {RunAt} IST, or {AfterClose} min after its last exchange close when that is later; India VIX check after each NSE trading day: {VixCheck}, last {VixDays} trading days).",
+                _runAtIst, ArchiveSchedule.AfterLastClose.TotalMinutes, _vixCheck ? "on" : "off", _vixLookbackTradingDays);
 
             // Let the API finish booting (migrations, reconcilers) before the first look.
             try { await Task.Delay(TimeSpan.FromSeconds(90), stoppingToken); }
@@ -80,7 +90,7 @@ namespace AlgoTrading.Api.Services
             {
                 try
                 {
-                    await RunDueDaysAsync(stoppingToken);
+                    await RunDueDaysAsync(DateTime.UtcNow, stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -96,20 +106,22 @@ namespace AlgoTrading.Api.Services
             }
         }
 
-        private async Task RunDueDaysAsync(CancellationToken ct)
+        /// <summary>One tick at <paramref name="nowUtc"/>: archives the days that are due, then checks India VIX. Internal for tests.</summary>
+        internal async Task<IReadOnlyList<DateOnly>> RunDueDaysAsync(DateTime nowUtc, CancellationToken ct)
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
             var archive = scope.ServiceProvider.GetRequiredService<IDailyCandleArchiveService>();
+            var sessions = scope.ServiceProvider.GetRequiredService<IMarketSessionService>();
 
             var setting = await db.SystemSettings.FirstOrDefaultAsync(s => s.Key == LastArchivedDayKey, ct);
             DateOnly? last = setting is not null && DateOnly.TryParseExact(setting.Value, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)
                 ? parsed
                 : null;
 
-            var nowIst = IstTime.ToIst(DateTime.UtcNow);
+            var nowIst = IstTime.ToIst(nowUtc);
             var archived = new List<DateOnly>();
-            foreach (var day in ArchiveSchedule.DueDays(last, nowIst, _runAtIst))
+            foreach (var day in ArchiveSchedule.DueDays(last, nowIst, d => ArchiveSchedule.DueAtIst(d, _runAtIst, sessions)))
             {
                 var result = await archive.ArchiveDayAsync(day, includeBrokerBackfill: true, ct);
                 foreach (var line in result.BrokerBackfills)
@@ -128,6 +140,7 @@ namespace AlgoTrading.Api.Services
 
             if (_vixCheck && archived.Count > 0)
                 await CheckVixAsync(archived, ct);
+            return archived;
         }
 
         /// <summary>
@@ -171,7 +184,7 @@ namespace AlgoTrading.Api.Services
                     NotificationSeverity.Error,
                     VixBackfillReport.FailedTitle,
                     $"The nightly India VIX check through {day} stopped: {IncidentRedaction.Mask(ex.Message)}. "
-                    + "A VIX gap may be going unfilled; the check runs again after the next trading day's archive (23:50 IST). See NightlyArchiveService in logs/api.log.",
+                    + "A VIX gap may be going unfilled; the check runs again after the next trading day's archive (23:50 IST, or 00:15 while MCX closes at 23:55). See NightlyArchiveService in logs/api.log.",
                     symbol: VixBackfillPlan.Symbol,
                     cancellationToken: ct);
             }
