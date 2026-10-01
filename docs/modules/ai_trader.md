@@ -72,8 +72,10 @@ placed (`ai_trader_shadow_positions`, `AiTraderShadowBook`), and the model reads
 | Charges | The desk's index option round trip (`OptionCharges`); net is after them, an open position's as if sold at its mark |
 
 A touch between two minute checks is missed. Prices come from the feed's quote when it is under three minutes
-old, else the option chain (the minute capture with fresh quotes over it); a shadow position is never put on the
-feed. Strategy starts and stops are recorded only: runs are not simulated in shadow.
+old, else the option chain (the minute capture with fresh quotes over it) when that is under three minutes old
+too, or after the close the session's last capture; with neither, the position keeps its last mark and is neither
+stopped nor taken that minute. A shadow position is never put on the feed. Strategy starts and stops are recorded
+only: runs are not simulated in shadow.
 
 ## In a market replay
 
