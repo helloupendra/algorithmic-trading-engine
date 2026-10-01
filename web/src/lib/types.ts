@@ -616,6 +616,10 @@ export type LiveRunStatus = 'Pending' | 'Running' | 'Stopping' | 'Stopped' | 'Fa
  */
 export interface LiveRunSummary {
   runId: number
+  /** A recap: a recorded day replayed to test a strategy, not live trading; in no live total. */
+  isRecap?: boolean
+  /** The replayed day of a recap (yyyy-MM-dd); null for a live run. */
+  recapDate?: string | null
   userId: number
   /** Null when the user row no longer exists (deleted user; the run stays). */
   userName: string | null

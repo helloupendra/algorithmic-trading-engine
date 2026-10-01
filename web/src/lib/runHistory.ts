@@ -86,6 +86,21 @@ export function runSpan(run: Pick<LiveRunSummary, 'startedUtc' | 'stoppedUtc' | 
   return `${from} → ${sameDay ? '' : `${IST_DAY.format(stop)} `}${IST_HM.format(stop)}`
 }
 
+/**
+ * The badge on a recap run's row: "Recap test · 11 Sept", and a title saying
+ * what that means. Null for a live run. A recap replays a recorded day
+ * through the strategy runners; its P&L is a test and is in no live total.
+ */
+export function recapBadge(run: Pick<LiveRunSummary, 'isRecap' | 'recapDate'>): { label: string; title: string } | null {
+  if (!run.isRecap) return null
+  const at = run.recapDate ? new Date(`${run.recapDate}T12:00:00+05:30`) : null
+  const day = at && !Number.isNaN(at.getTime()) ? IST_DAY.format(at) : run.recapDate || null
+  return {
+    label: day ? `Recap test · ${day}` : 'Recap test',
+    title: `A replay of ${day ?? 'an earlier session'}, run as a test. Its P&L is in no live total.`,
+  }
+}
+
 /** The P&L a history row shows: realized, plus the open book while the run is live. */
 export function runNetPnl(run: Pick<LiveRunSummary, 'netPnl' | 'unrealizedPnl' | 'isActive'>): number {
   return run.isActive ? run.netPnl + (run.unrealizedPnl ?? 0) : run.netPnl
