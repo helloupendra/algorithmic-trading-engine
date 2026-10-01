@@ -43,7 +43,8 @@ public sealed class AiDailyDigest(
     AiReportWriter reports,
     IMarketSessionService sessions,
     ISystemNotifier notifier,
-    IOptionsMonitor<AiSettings> settings) : IAiScheduledAgent
+    IOptionsMonitor<AiSettings> settings,
+    IAiTraderBooks? traderBooks = null) : IAiScheduledAgent
 {
     /// <summary>
     /// When the last digest went (UTC). The key the reviewer's own digest used before the digest carried the AI
@@ -108,7 +109,7 @@ public sealed class AiDailyDigest(
         if (nowUtc < due) return false;
 
         var state = await store.LoadAsync(cancellationToken);
-        var trader = await TraderDayAsync(day, state, s, cancellationToken);
+        var trader = await TraderDayAsync(day, nowUtc, state, s, cancellationToken);
         if (!session.IsTradingDay && trader is not { Looks.Count: > 0 }) return false;
 
         int owed = await ReviewsOwedAsync(state, s, nowUtc, cancellationToken);
@@ -175,7 +176,7 @@ public sealed class AiDailyDigest(
         var day = missed[^1];
         var earlier = missed.Take(missed.Count - 1).ToList();
         var state = await store.LoadAsync(cancellationToken);
-        var trader = await TraderDayAsync(day, state, s, cancellationToken);
+        var trader = await TraderDayAsync(day, nowUtc, state, s, cancellationToken);
         // On, but no look and no position that day: the API was down, most likely, and there is nothing to tell late.
         if (trader is { Looks.Count: 0, Book.Count: 0 }) trader = null;
         var reviews = await ReviewsSinceAsync(lastSentUtc ?? nowUtc - TimeSpan.FromDays(1), cancellationToken);
@@ -240,8 +241,11 @@ public sealed class AiDailyDigest(
 
     private static string DayName(DateOnly day) => day.ToString("ddd d MMM", CultureInfo.InvariantCulture);
 
-    /// <summary>The AI Trader's live day: its looks and its shadow book. Null when it is off and did not look.</summary>
-    private async Task<TraderDay?> TraderDayAsync(DateOnly day, AiState state, AiSettings s, CancellationToken cancellationToken)
+    /// <summary>
+    /// The AI Trader's live day: its looks, its shadow book, and in live mode its live book (its manual book). Null
+    /// when it is off and did not look.
+    /// </summary>
+    private async Task<TraderDay?> TraderDayAsync(DateOnly day, DateTime nowUtc, AiState state, AiSettings s, CancellationToken cancellationToken)
     {
         bool on = state.Agent(AiCatalog.AiTrader) is { Status: "on" };
         var looks = await db.AiTraderDecisions.AsNoTracking()
@@ -256,7 +260,11 @@ public sealed class AiDailyDigest(
             .OrderBy(p => p.EntryUtc).ThenBy(p => p.Id)
             .ToListAsync(cancellationToken);
         string mode = looks.Count > 0 ? looks[^1].Mode : s.AiTraderExecute ? AiTraderModes.Live : AiTraderModes.Shadow;
-        return new TraderDay(on, mode, looks, book);
+        // Its live book is read only on a day it was live: in shadow mode it places nothing there.
+        var live = traderBooks is not null && (mode == AiTraderModes.Live || looks.Any(l => l.Mode == AiTraderModes.Live))
+            ? await traderBooks.DayAsync(nowUtc, cancellationToken)
+            : null;
+        return new TraderDay(day, on, mode, looks, book, live);
     }
 
     /// <summary>The runs the reviewer is on for and has not settled (none written, or failed with tries left).</summary>
@@ -313,6 +321,19 @@ public sealed class AiDailyDigest(
             text.Append("\nShadow book: no trades");
         }
 
+        if (t.Live is { Positions.Count: 0 })
+        {
+            text.Append("\nLive book: no trades");
+        }
+        else if (t.Live is { } live)
+        {
+            int open = live.Positions.Count(p => p.Open);
+            text.Append($"\nLive book: {live.Positions.Count} trade{(live.Positions.Count == 1 ? "" : "s")}{(open > 0 ? $" ({open} still open)" : "")}, ")
+                .Append($"net {Net(live.Net)} after {AiTraderGuard.Rupees(Whole(live.Charges))} charges");
+            foreach (var p in live.Positions.Take(PositionsShown)) text.Append("\n• ").Append(LiveLine(p, t.Day));
+            if (live.Positions.Count > PositionsShown) text.Append($"\n• and {live.Positions.Count - PositionsShown} more");
+        }
+
         if (refused.Count > 0)
         {
             var top = refused.GroupBy(l => l.Rule).OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal).Take(3);
@@ -340,6 +361,24 @@ public sealed class AiDailyDigest(
         };
         return $"{contract}: {Clock(p.EntryUtc)} → {Clock(exit)}, {AiTraderGuard.Rupees(p.EntryPrice)} → {AiTraderGuard.Rupees(p.ExitPrice ?? p.EntryPrice)}, " +
                $"{how}, {Net(p.NetPnl ?? 0m)}";
+    }
+
+    /// <summary>
+    /// A live position as a shadow one reads, without how it ended (its manual book does not keep that):
+    /// "NIFTY 22650 CE, 1 lot: 09:30 → 09:52, ₹120 → ₹88, −₹2,139", net after its own round trip's charges. One carried
+    /// in from an earlier day names that day.
+    /// </summary>
+    private static string LiveLine(AiTraderLivePosition p, DateOnly day)
+    {
+        var o = UnderlyingCatalog.ParseOptionSymbol(p.Symbol);
+        string name = o is null ? p.Symbol : $"{o.Underlying} {o.Strike.ToString("0.##", CultureInfo.InvariantCulture)} {o.OptionType}";
+        string contract = $"{name}, {p.Lots} lot{(p.Lots == 1 ? "" : "s")}";
+        string opened = IstTime.DateOf(p.OpenedUtc) == day ? Clock(p.OpenedUtc) : IstTime.ToIst(p.OpenedUtc).ToString("ddd HH:mm", CultureInfo.InvariantCulture);
+        string prices = $"{AiTraderGuard.Rupees(p.Entry)} → {AiTraderGuard.Rupees(p.Mark ?? p.Entry)}";
+        decimal net = p.Pnl - AiTraderShadowBook.Charges(p.Symbol, p.Entry, p.Mark ?? p.Entry, p.Lots * p.LotSize);
+        return p.ClosedUtc is DateTime exit
+            ? $"{contract}: {opened} → {Clock(exit)}, {prices}, {Net(net)}"
+            : $"{contract}: {opened} → open, {prices}, not closed (mark at {Clock(p.MarkUtc ?? p.OpenedUtc)}), {Net(net)}";
     }
 
     /// <summary>How many reviews, how many kept to their spec, and the ones that did not. Null when there is nothing to say.</summary>
@@ -387,7 +426,9 @@ public sealed class AiDailyDigest(
 
     private sealed record Look(string Mode, string Action, bool Allowed, string Rule);
 
-    private sealed record TraderDay(bool On, string Mode, IReadOnlyList<Look> Looks, IReadOnlyList<AiTraderShadowPosition> Book);
+    /// <param name="Live">Its live book, on a day it was live (and the digest can read it); else null.</param>
+    private sealed record TraderDay(DateOnly Day, bool On, string Mode, IReadOnlyList<Look> Looks, IReadOnlyList<AiTraderShadowPosition> Book,
+        AiTraderLiveDay? Live);
 
     private sealed record Review(string RunId, string Title, string? Verdict);
 }

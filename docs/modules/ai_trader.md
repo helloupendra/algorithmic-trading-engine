@@ -59,6 +59,19 @@ Every 10 minutes from 09:20 to 15:00 IST on trading days, while it is switched o
 `Ai:AiTraderExecute` is off: it decides and places nothing (mode `shadow`). Placing paper orders through its own
 manual book and strategy starts is the next step, switched on only after its shadow decisions have been read.
 
+In live mode the rules judge its own account (`AiTraderBookReader`), and its net today is today's part only:
+
+| Part | Counted |
+|---|---|
+| Positions closed today | Their realized P&L (one carried in from an earlier day and closed today: all of it) |
+| Open positions bought today | Their P&L at the mark |
+| Open positions carried from an earlier day | The mark less the previous session's close, as the feed sends it with today's quotes. With no quote of today, so no close: the P&L since entry if it is a loss, nothing if it is a gain, so the daily-loss rule is never loosened by a gain it cannot date |
+| Charges | Those of today's fills |
+| Its strategy runs | Only runs started today, whole (a run's figures cover its whole life, and live runs stop at the close); a run still running from an earlier day is listed with its net and left out of the day's |
+
+Until 1 Oct a carried position's whole P&L since entry, and every running run's whole net, counted against today's
+charges only, so a winner carried in hid the day's losses from the daily-loss rule.
+
 ### The shadow book
 
 Placing nothing must not mean scoring nothing. In shadow mode, and in a replay, an allowed buy is kept by code as if
@@ -130,6 +143,10 @@ close and 15:45 ([when and how often](ai.md#scheduled-agents-phase-3)). Its sect
 - looks, actions proposed, allowed, refused, and looks with no usable answer, counted as Today counts them;
 - the shadow book: each position's contract and lots, in → out (IST), entry → exit premium, how it ended (stop,
   target, its exit, close) and its net; then the day's net and charges, with an open position as if sold at its mark;
+- on a day it was live, its live book (its manual book) the same way, with no "how it ended" (the book does not keep
+  it): each line's net is after its own round trip's charges, and the head line's is its net today (above) after the
+  charges of the day's fills. A position carried in from an earlier day names that day. Its strategy runs are
+  reviewed on their own;
 - the three rules that refused it most.
 
 Rupees are whole, with Indian grouping, except premiums. A replay's looks and shadow book are never in it. Off all day
@@ -144,6 +161,16 @@ Shadow book: 3 trades, net −₹122 after ₹187 charges
 • NIFTY 22600 PE, 2 lots: 10:00 → 11:00, ₹81 → ₹95.5, its exit, +₹1,816
 • NIFTY 22700 CE, 1 lot: 12:00 → 15:30, ₹96 → ₹100, close, +₹201
 Top refusals: stop (2), hours (1), size (1)
+```
+
+In live mode:
+
+```
+AI Trader (live mode)
+Looks 3 · proposed 3 · allowed 3 · refused 0 · no answer 0
+Live book: 2 trades, net −₹332 after ₹137 charges
+• NIFTY 22650 CE, 1 lot: 09:30 → 09:52, ₹120 → ₹88, −₹2,142
+• NIFTY 22600 PE, 2 lots: 10:00 → 11:00, ₹81 → ₹95.5, +₹1,809
 ```
 
 ## API (admin)
