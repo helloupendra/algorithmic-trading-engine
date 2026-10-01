@@ -130,7 +130,9 @@ public class AiAgentsTests
     {
         var ai = BuildOn();
         long runId = SeedRun(ai, stoppedAt: Ist(15, 31));
-        ai.Provider.On(Judge1, Answer("""{"verdict":"deviated","title":"Entered at 09:47, not 09:20","journal":"Late entry."}"""));
+        // A deviation is asked twice; both reviews find it.
+        ai.Provider.On(Judge1, Answer("""{"verdict":"deviated","title":"Entered at 09:47, not 09:20","journal":"Late entry."}"""),
+            Answer("""{"verdict":"deviated","title":"Late entry at 09:47","journal":"Entered late."}"""));
         var notifier = new Notifier();
         // Reports are stamped at 15:50 IST; the reviewer's ticks come at 16:00, 16:01 and 16:02.
         var reviewer = Reviewer(ai, notifier, new FixedTime(Ist(15, 50)));
@@ -142,6 +144,38 @@ public class AiAgentsTests
         var message = Assert.Single(notifier.Messages);
         Assert.Contains("1 run review written: 0 followed the spec, 1 did not", message);
         Assert.Contains($"#{runId}: Entered at 09:47, not 09:20", message);
+    }
+
+    [Theory]
+    [InlineData("deviated", "deviated", "Entered at 09:47, not 09:20")]
+    [InlineData("followed", "unclear", "Reviews disagree: Entered at 09:47, not 09:20")]
+    [InlineData("unclear", "unclear", "Reviews disagree: Entered at 09:47, not 09:20")]
+    public async Task A_deviation_is_kept_only_when_a_second_review_finds_it_too(string second, string verdict, string title)
+    {
+        var ai = BuildOn();
+        long runId = SeedRun(ai, stoppedAt: Ist(15, 31));
+        ai.Provider.On(Judge1,
+            Answer("""{"verdict":"deviated","title":"Entered at 09:47, not 09:20","deviations":["09:47 entry"],"journal":"Late entry."}"""),
+            Answer($$"""{"verdict":"{{second}}","title":"Second look","journal":"Read again."}"""));
+
+        var report = await Reviewer(ai).RunForAsync(runId.ToString(), CancellationToken.None);
+
+        var data = JsonNode.Parse(report!.DataJson)!;
+        Assert.Equal((verdict, title, second), (data["verdict"]!.GetValue<string>(), report.Title, data["secondReview"]!["verdict"]!.GetValue<string>()));
+        Assert.Equal(2, ai.Provider.Requests.Count(r => r.Model == Judge1));
+        if (verdict == "unclear") Assert.StartsWith("**Verdict:** unclear: two reviews disagreed.", report.Body);
+    }
+
+    [Fact]
+    public async Task A_followed_verdict_is_not_asked_twice()
+    {
+        var ai = BuildOn();
+        long runId = SeedRun(ai, stoppedAt: Ist(15, 31));
+        ai.Provider.On(Judge1, Answer("""{"verdict":"followed","title":"Kept its rules","journal":"Fine."}"""));
+
+        await Reviewer(ai).RunForAsync(runId.ToString(), CancellationToken.None);
+
+        Assert.Single(ai.Provider.Requests, r => r.Model == Judge1);
     }
 
     // ---------- the news analyst ----------

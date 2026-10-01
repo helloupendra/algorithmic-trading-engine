@@ -312,6 +312,11 @@ A good report is never overwritten by a later failure. Each report links to its 
 | News Analyst (extract) | Every `Ai:NewsEveryMinutes` (10). A batch of `Ai:NewsBatchSize` (8) items it has not read, filings first, from the last `Ai:NewsLookbackHours` (24) by publication time; never the 2020 backfills. | The items' text | One record per item: event, direction, symbols, numbers with quotes, confidence |
 | Incident Explainer (analyst) | A live incident of medium or worse, first seen in the last day | The incident, its evidence masked. It can read with `get_incidents`, `get_latest_checkup`, `get_runs`, `get_open_positions` and `get_quotes`. | What happened, likely why, what to do, urgency |
 
+A **deviated** verdict is asked a second time, separately, before it is stored. It stands only when the second
+review also finds a deviation. Otherwise the report is **unclear**, says that the two reviews disagreed, and keeps the
+first review's text. On 1 Oct the same model, given the same data, called run 308 followed and its twin, run 309,
+deviated; a false deviation is the review that teaches the wrong lesson. Followed and unclear verdicts are asked once.
+
 Each output is checked before it is stored as `ok`:
 - **Reviews and explanations** must be the JSON asked for. `AiJson` accepts a fenced block or a sentence around it.
 - **News records** must use the listed events and directions and a confidence from 0 to 1. Every number's quote must
