@@ -354,6 +354,23 @@ public class AiAgentsTests
     }
 
     [Fact]
+    public async Task An_answer_with_no_json_at_all_fails_the_batch_to_be_read_again_not_judged_invalid()
+    {
+        var ai = BuildOn();
+        var now = DateTime.UtcNow;
+        ai.Db.NewsItems.AddRange(News(1, "Sensex ends flat", now.AddHours(-1)), News(2, "Crude falls 2%", now.AddHours(-1)));
+        await ai.Db.SaveChangesAsync();
+        // Call 168 on 1 Oct: the model's thinking came back as its answer, and it stopped there.
+        ai.Provider.On(Extract1, Answer("Here's a thinking process:\n\n1. Analyze user input: a list of 2 items. I'll set event to \"none\"."));
+
+        Assert.True(await News(ai).RunOnceAsync(now, CancellationToken.None));
+
+        var reports = await ai.Db.AiReports.ToListAsync();
+        Assert.All(reports, r => Assert.Equal((AiReportStatus.Failed, "The answer was not the JSON object asked for."), (r.Status, r.Error)));
+        Assert.Equal(2, reports.Count);
+    }
+
+    [Fact]
     public async Task One_broken_record_is_invalid_on_its_own_and_the_rest_of_the_batch_is_kept()
     {
         var ai = BuildOn();
