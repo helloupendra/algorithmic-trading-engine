@@ -337,6 +337,47 @@ public class AiAgentsTests
     // ---------- helpers ----------
 
     /// <summary>The kit with the three scheduled agents switched on, as the owner would.</summary>
+    [Fact]
+    public async Task A_review_is_given_the_market_on_the_runs_own_day_not_the_day_it_is_written()
+    {
+        // 1 Oct: catching up on 29 Sep, the reviewer took 1 Oct's BANKNIFTY for 29 Sep's close.
+        var ai = BuildOn(tools: [new FakeTool(AiToolNames.Run, _ => new { runId = 1 }), new FakeTool(AiToolNames.StrategySpec, _ => new { name = "Ghost" })]);
+        long runId = SeedRun(ai, stoppedAt: Ist(15, 31));
+        void Bar(DateTime at, decimal o, decimal h, decimal l, decimal c) => ai.Db.LiveBars.Add(new LiveBar
+        {
+            Symbol = "NSE:NIFTY50-INDEX", Resolution = "1m", BarStartUtc = at, Open = o, High = h, Low = l, Close = c,
+        });
+        Bar(Ist(9, 15), 54600m, 54650m, 54580m, 54620m);
+        Bar(Ist(12, 0), 54400m, 54700m, 54350m, 54500m);
+        Bar(Ist(15, 29), 54300m, 54320m, 54250m, 54259.95m);
+        Bar(Ist(10, 0).AddDays(1), 1m, 99999m, 1m, 1m);   // the next day: not the run's
+        await ai.Db.SaveChangesAsync();
+        ai.Provider.On(Judge1, Answer("""{"verdict":"followed","title":"t","followed":[],"deviations":[],"staleFills":0,"marketContext":"","lesson":"","journal":"j"}"""));
+
+        await Reviewer(ai).RunForAsync(runId.ToString(), CancellationToken.None);
+
+        var messages = JsonNode.Parse(ai.Provider.Requests.Single().Body)!["messages"]!.AsArray();
+        string system = messages[0]!["content"]!.GetValue<string>();
+        string question = messages[1]!["content"]!.GetValue<string>();
+        Assert.Contains("open 54600 (09:15), high 54700 (12:00), low 54250 (15:29), last 54259.95 (15:29 bar), 3 minute bars", question);
+        Assert.Contains("At the run's stop (15:31): 54259.95", question);
+        Assert.Contains("answer for now, not for this day", question);
+        Assert.Contains("never judge a fill against them", system);
+    }
+
+    [Fact]
+    public async Task Without_recorded_bars_the_reviewer_is_told_the_days_prices_are_not_known()
+    {
+        var ai = BuildOn();
+        long runId = SeedRun(ai, stoppedAt: Ist(15, 31));
+        var run = await ai.Db.SimulationRuns.SingleAsync(r => r.Id == runId);
+
+        string market = await Reviewer(ai).MarketOnDayAsync(run, IstTime.DateOf(Ist(9, 15)), CancellationToken.None);
+
+        Assert.Contains("no minute bars were recorded for 2026-09-30", market);
+        Assert.Contains("Do not take them from get_quotes", market);
+    }
+
     private static Services BuildOn(AiSettings? settings = null, params IAiTool[] tools)
     {
         var ai = Build(settings, null, tools);

@@ -35,6 +35,14 @@ namespace AlgoTrading.Api.Services.AiAgents;
 /// give), and may read more with its tools. The verdict is its own; nothing
 /// acts on it.
 /// </para>
+/// <para>
+/// It is also handed the market on the run's own day: the underlying's
+/// session from its recorded minute bars, and its price when the run stopped.
+/// The quote and chain tools answer for now, not for that day. On 1 Oct,
+/// catching up on a 29 Sep run, the reviewer took the BANKNIFTY of 1 Oct for
+/// 29 Sep's close and called a correct expiry fill (a worthless 54300 CE at
+/// ₹0.05) a stale-quote loss.
+/// </para>
 /// </remarks>
 public sealed class TradeReviewerAgent(
     TradingDbContext db,
@@ -123,8 +131,10 @@ public sealed class TradeReviewerAgent(
         string summary = await ToolText(AiToolNames.Run, $$"""{"runId":{{runId}}}""", cancellationToken);
         string spec = await ToolText(AiToolNames.StrategySpec, JsonSerializer.Serialize(new { strategy = run.StrategyName }), cancellationToken);
 
+        string market = await MarketOnDayAsync(run, day, cancellationToken);
         string question =
             $"Review run {runId} ({run.StrategyName}) of {day:yyyy-MM-dd} against its spec.\n\n" +
+            $"The market on the run's day ({day:yyyy-MM-dd}, from the desk's recorded minute bars):\n{market}\n\n" +
             $"The run (get_run summary):\n{summary}\n\nThe strategy's spec (get_strategy_spec):\n{spec}";
 
         var result = await gateway.AskAsync(new AiAskInput(
@@ -150,6 +160,47 @@ public sealed class TradeReviewerAgent(
 
         return await reports.SaveAsync(AgentKey, AiReportSubject.Run, Id(runId), day, AiReportStatus.Ok, result,
             review.Title, review.Body, review.Data.ToJsonString(Json), string.Empty, cancellationToken);
+    }
+
+    /// <summary>
+    /// The run's underlying on the run's day, from the recorded minute bars:
+    /// the session's open, high, low and close, and the last price at or
+    /// before the run stopped. In words the model reads as data; says so when
+    /// nothing was recorded.
+    /// </summary>
+    public async Task<string> MarketOnDayAsync(SimulationRun run, DateOnly day, CancellationToken cancellationToken)
+    {
+        string symbol = run.Symbol;
+        bool mcx = symbol.StartsWith("MCX:", StringComparison.OrdinalIgnoreCase);
+        var from = IstTime.FromIst(day.ToDateTime(mcx ? new TimeOnly(9, 0) : new TimeOnly(9, 15)));
+        var to = IstTime.FromIst(day.ToDateTime(mcx ? new TimeOnly(23, 30) : new TimeOnly(15, 30)));
+        var bars = await db.LiveBars.AsNoTracking()
+            .Where(b => b.Symbol == symbol && b.Resolution == "1m" && b.BarStartUtc >= from && b.BarStartUtc < to)
+            .OrderBy(b => b.BarStartUtc)
+            .Select(b => new { b.BarStartUtc, b.Open, b.High, b.Low, b.Close })
+            .ToListAsync(cancellationToken);
+        if (bars.Count == 0)
+        {
+            return $"{symbol}: no minute bars were recorded for {day:yyyy-MM-dd}, so the day's prices are not known here. " +
+                   "Do not take them from get_quotes or get_option_chain_summary: those answer for now, not for that day.";
+        }
+
+        static string Ist(DateTime utc) => IstTime.ToIst(DateTime.SpecifyKind(utc, DateTimeKind.Utc)).ToString("HH:mm", CultureInfo.InvariantCulture);
+        static string Px(decimal v) => v.ToString("0.##", CultureInfo.InvariantCulture);
+        var first = bars[0];
+        var last = bars[^1];
+        var high = bars.MaxBy(b => b.High)!;
+        var low = bars.MinBy(b => b.Low)!;
+        string text =
+            $"{symbol}: open {Px(first.Open)} ({Ist(first.BarStartUtc)}), high {Px(high.High)} ({Ist(high.BarStartUtc)}), " +
+            $"low {Px(low.Low)} ({Ist(low.BarStartUtc)}), last {Px(last.Close)} ({Ist(last.BarStartUtc)} bar), {bars.Count} minute bars.";
+        if (run.CompletedUtc is DateTime stopped)
+        {
+            var atStop = bars.LastOrDefault(b => b.BarStartUtc <= stopped);
+            if (atStop is not null) text += $" At the run's stop ({Ist(stopped)}): {Px(atStop.Close)}.";
+        }
+
+        return text + " get_quotes and get_option_chain_summary answer for now, not for this day: use these prices for the run's day.";
     }
 
     /// <summary>A review the model wrote, read and turned into the report's title, body and data; null when it is not the asked shape.</summary>
