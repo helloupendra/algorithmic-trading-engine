@@ -15,7 +15,12 @@ public static class AiTraderGuard
 {
     public static AiTraderVerdict Check(AiTraderPlan plan, AiTraderBook book, AiTraderRules rules, AiTraderContract? contract = null)
     {
-        if (book.KillSwitch) return Refuse("kill-switch", "The desk's kill switch is on: nothing new is placed.");
+        // Halting means "open nothing more", as for the desk's own orders: an exit or a stop of its own run gets it
+        // flatter and is never refused for it.
+        if (book.KillSwitch && plan.Action is AiTraderPlan.Buy or AiTraderPlan.StartStrategy)
+        {
+            return Refuse("kill-switch", "The desk's kill switch is on: nothing new is placed.");
+        }
 
         return plan.Action switch
         {

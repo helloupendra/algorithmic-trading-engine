@@ -48,6 +48,20 @@ public class AiTraderGuardTests
     public void Nothing_is_placed_while_the_kill_switch_is_on() =>
         Refused("kill-switch", AiTraderGuard.Check(Buy(), Book(kill: true), Rules, Nifty22650Ce));
 
+    [Fact]
+    public void The_kill_switch_never_stops_it_closing_its_own_position_or_stopping_its_own_run()
+    {
+        // The desk's rule (RiskManagementService): halting means "open nothing more"; getting flat is never refused.
+        var book = Book(kill: true, open: [Position(41, 5_000m)], runs: [new(7, "Ghost", "NIFTY", 0)]);
+        var exit = new AiTraderPlan(AiTraderPlan.Exit, null, null, null, null, null, null, null, 41, null, "Kill switch is on: get flat.", 0.9);
+        var stop = new AiTraderPlan(AiTraderPlan.StopStrategy, null, null, null, null, null, null, null, null, 7, "Kill switch is on.", 0.9);
+        var start = new AiTraderPlan(AiTraderPlan.StartStrategy, "NIFTY", null, null, null, null, null, "ChainFlowBuy", null, null, "Trend day.", 0.5);
+
+        Assert.True(AiTraderGuard.Check(exit, book, Rules).Allowed);
+        Assert.True(AiTraderGuard.Check(stop, book, Rules).Allowed);
+        Refused("kill-switch", AiTraderGuard.Check(start, book, Rules));
+    }
+
     [Theory]
     [InlineData(9, 19)]
     [InlineData(14, 46)]
