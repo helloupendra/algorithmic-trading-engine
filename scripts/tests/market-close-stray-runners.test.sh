@@ -28,6 +28,15 @@ echo "The runs list comes back wrapped ({\"items\": [...]}) and every run is ope
 out="$(stray_runners "$RUNNERS" '{"items":[{"runId":41},{"runId":42},{"runId":43}]}')"
 check "names nothing" "$(test -z "$out"; echo $?)"
 
+echo "Run 43 is a market replay's recap run, listed only with recap=true:"
+out="$(stray_runners "$RUNNERS" '[{"runId":42}]' '[{"runId":43}]')"
+check "leaves the replay's runner alone" "$(! grep -q '^4303 ' <<<"$out"; echo $?)"
+check "still names the runner of run 41" "$(grep -q '^4101 ' <<<"$out"; echo $?)"
+
+echo "The recap list does not parse:"
+out="$(stray_runners "$RUNNERS" '[{"runId":42}]' '<html>502</html>')"
+check "judges by the open runs alone" "$(grep -q '^4303 ' <<<"$out"; echo $?)"
+
 echo "A runner started by hand, with no --run-id:"
 out="$(stray_runners '5000 python strategies/execution_runner.py --strategy Fulcrum' '[]')"
 check "is named" "$(grep -q '^5000 ' <<<"$out"; echo $?)"

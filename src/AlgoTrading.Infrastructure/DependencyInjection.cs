@@ -192,6 +192,9 @@ public static class DependencyInjection
         services.Configure<PaperFillOptions>(configuration.GetSection(PaperFillOptions.SectionName));
         services.AddScoped<IPaperTradingService, PaperTradingService>();
 
+        // The market replay's prices: in memory, read only by the recap runs of the replayed day.
+        services.AddSingleton<IMarketReplayBook, MarketReplayBook>();
+
         services.AddScoped<CreateSimulationSignalUseCase>();
         services.AddScoped<GetSimulationSignalsUseCase>();
         services.AddScoped<GetPaperOrdersUseCase>();

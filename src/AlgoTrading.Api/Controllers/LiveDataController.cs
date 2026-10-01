@@ -132,11 +132,23 @@ public class LiveDataController : ControllerBase
         CancellationToken cancellationToken)
         => Ok(await pruner.PruneAsync(request?.Ids, cancellationToken));
 
+    /// <remarks>
+    /// <c>replay=true</c> is a recap run asking: the market replay's price while one is on (nothing when the
+    /// replay has none for the symbol). With no desk replay on, a recap trades a vendor's evening recap
+    /// (TrueData), whose prices are the live table's, so it is answered from there as before.
+    /// </remarks>
     [HttpGet("latest")]
-    public async Task<IActionResult> GetLatest([FromQuery] string symbol, CancellationToken cancellationToken)
+    public async Task<IActionResult> GetLatest([FromQuery] string symbol, CancellationToken cancellationToken,
+        [FromQuery] bool replay = false, [FromServices] IMarketReplayBook? replayBook = null)
     {
         if (string.IsNullOrWhiteSpace(symbol))
             return BadRequest(new { message = "symbol is required." });
+
+        if (replay && replayBook?.Day is not null)
+        {
+            var replayed = replayBook.Quote(symbol);
+            return replayed is null ? NotFound(new { message = "No replayed quote for symbol." }) : Ok(replayed);
+        }
 
         var result = await _getLatestQuoteUseCase.ExecuteAsync(symbol, cancellationToken);
 
@@ -147,8 +159,11 @@ public class LiveDataController : ControllerBase
     }
 
     [HttpGet("latest/all")]
-    public async Task<IActionResult> GetAllLatest(CancellationToken cancellationToken)
+    public async Task<IActionResult> GetAllLatest(CancellationToken cancellationToken,
+        [FromQuery] bool replay = false, [FromServices] IMarketReplayBook? replayBook = null)
     {
+        if (replay && replayBook?.Day is not null) return Ok(replayBook.AllQuotes());
+
         var result = await _getAllLatestQuotesUseCase.ExecuteAsync(cancellationToken);
         return Ok(result);
     }
@@ -311,18 +326,31 @@ public class LiveDataController : ControllerBase
         return Ok(result);
     }
 
+    /// <remarks>
+    /// <c>untilUtc</c> bounds the bars to a moment: a recap run reads a past day as it stood at the
+    /// replay's clock, the minute in progress built from the replayed ticks (<see cref="IMarketReplayBook"/>).
+    /// </remarks>
     [HttpGet("bars")]
     public async Task<IActionResult> GetRecentBars(
         [FromQuery] string symbol,
         [FromQuery] string resolution = "1m",
         [FromQuery] int take = 100,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        [FromQuery] DateTime? untilUtc = null,
+        [FromServices] IMarketReplayBook? replayBook = null,
+        [FromServices] ILiveDataService? liveData = null)
     {
         if (string.IsNullOrWhiteSpace(symbol))
             return BadRequest(new { message = "symbol is required." });
 
         if (take <= 0)
             return BadRequest(new { message = "take must be greater than 0." });
+
+        if (untilUtc is DateTime until && liveData is not null)
+        {
+            var current = replayBook?.Day is null ? null : replayBook.CurrentMinute(symbol);
+            return Ok(await liveData.GetBarsUntilAsync(symbol, resolution, take, until, current, cancellationToken));
+        }
 
         var result = await _getRecentBarsUseCase.ExecuteAsync(symbol, resolution, take, cancellationToken);
         return Ok(result);

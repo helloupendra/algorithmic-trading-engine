@@ -198,16 +198,25 @@ fi
 # Prints the "pid command" lines (pgrep -fa) of execution_runner processes
 # whose --run-id is not an open run in the API's list, or "unreadable" when the
 # list does not parse — then none can be told apart from a stray.
-stray_runners() {  # $1 = pgrep -fa lines, $2 = GET /api/Strategy/runs?status=Running body
-  PROCS="$1" BODY="$2" python3 -c '
+# $3, optional, is the same list with &recap=true: a market replay's recap runs are open runs too,
+# though the runs list leaves recaps out, and a replay may play past the close.
+stray_runners() {  # $1 = pgrep -fa lines, $2 = GET /api/Strategy/runs?status=Running body, $3 = …&recap=true body
+  PROCS="$1" BODY="$2" RECAPS="${3:-[]}" python3 -c '
 import json, os, re
+def rows_of(text):
+    rows = json.loads(text)
+    if isinstance(rows, dict):
+        rows = rows.get("items") or rows.get("runs") or []
+    return rows if isinstance(rows, list) else []
 try:
-    rows = json.loads(os.environ["BODY"])
+    rows = rows_of(os.environ["BODY"])
 except Exception:
     print("unreadable")
     raise SystemExit
-if isinstance(rows, dict):
-    rows = rows.get("items") or rows.get("runs") or []
+try:
+    rows = rows + rows_of(os.environ["RECAPS"])
+except Exception:
+    pass
 open_ids = {str(r["runId"]) for r in rows if isinstance(r, dict) and r.get("runId") is not None}
 for line in os.environ["PROCS"].splitlines():
     run = re.search(r"--run-id[= ](\d+)", line)
@@ -218,8 +227,10 @@ for line in os.environ["PROCS"].splitlines():
 runners="$(pgrep -fa "execution_runner.py" 2>/dev/null || true)"
 if [ -n "$runners" ]; then
   open_runs=""
+  recap_runs=""
   [ "$API_UP" = 1 ] && open_runs="$(api_get "/api/Strategy/runs?status=Running&take=500" 2>/dev/null || true)"
-  stray="$(stray_runners "$runners" "$open_runs")"
+  [ "$API_UP" = 1 ] && recap_runs="$(api_get "/api/Strategy/runs?status=Running&take=500&recap=true" 2>/dev/null || true)"
+  stray="$(stray_runners "$runners" "$open_runs" "$recap_runs")"
   if [ "$stray" = "unreadable" ]; then
     warn "strategy runners are alive and the open-run list could not be read to check them"
     stray="$runners"

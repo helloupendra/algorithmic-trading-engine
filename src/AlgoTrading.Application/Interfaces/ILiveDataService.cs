@@ -113,4 +113,18 @@ public interface ILiveDataService
         string resolution,
         int take,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The newest bars that had begun by <paramref name="untilUtc"/>: a recap run's view of a past
+    /// day, as it stood at the replay's clock. The minute in progress is <paramref name="currentMinute"/>
+    /// (built from the replayed ticks) when it is that minute, never the recorded one, whose close
+    /// the replay has not reached yet.
+    /// </summary>
+    Task<IReadOnlyList<LiveBarResponse>> GetBarsUntilAsync(
+        string symbol,
+        string resolution,
+        int take,
+        DateTime untilUtc,
+        LiveBarResponse? currentMinute,
+        CancellationToken cancellationToken = default);
 }

@@ -66,6 +66,12 @@ public static class SystemSettingKeys
     /// <summary>The Telegram notifier — the sidecar that turns run activity into alerts.</summary>
     public const string NotifierPid = "notifier.pid";
 
+    /// <summary>The market replay player's pid (market_data/replay/run_replay.py).</summary>
+    public const string ReplayPlayerPid = "replay.pid";
+
+    /// <summary>The market replay in progress or last played: its day, speed, runs and how it ended (JSON).</summary>
+    public const string ReplaySession = "replay.session";
+
     /// <summary>
     /// The last start or stop of the Dhan chain recorder and the IST day it was
     /// made, e.g. "true on 2026-09-24". It holds for that day only, so an API

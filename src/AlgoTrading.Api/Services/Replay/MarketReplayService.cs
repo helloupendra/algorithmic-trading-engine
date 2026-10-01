@@ -1,0 +1,516 @@
+using System.Data.Common;
+using System.Globalization;
+using System.Text.Json;
+using AlgoTrading.Application.Interfaces;
+using AlgoTrading.Domain.Entities;
+using AlgoTrading.Infrastructure.Persistence;
+using AlgoTrading.Infrastructure.Services;
+using Microsoft.EntityFrameworkCore;
+
+namespace AlgoTrading.Api.Services.Replay;
+
+/// <summary>
+/// The desk's market replay: a past trading day's recorded ticks played again, in the order they
+/// arrived, through the same strategy runners the live desk uses (owner, 1 Oct 2026: "jesa system abhi
+/// chal raha hai same, mai isko jab marji ho tb replay kar sku").
+/// </summary>
+/// <remarks>
+/// <para>
+/// The runs are recap runs of the replayed day, started first (<c>POST /api/Strategy/start</c> with
+/// <c>session: recap</c>). The player waits until each is listening, then plays. Their prices come from
+/// <see cref="IMarketReplayBook"/>, never <c>live_quotes_latest</c>. Nothing is stored: the day is
+/// already recorded.
+/// </para>
+/// <para>
+/// The replay owns its runs. Whenever it ends (played out, stopped, its player gone, or the market
+/// about to open), the runs are stopped at the replay's prices first, and only then is the book
+/// cleared.
+/// </para>
+/// <para>
+/// One replay at a time. Its state is kept in <c>system_settings</c> (<see cref="SystemSettingKeys.ReplaySession"/>),
+/// so an API restart in the middle of one picks it up again: the player keeps running, and its next
+/// ticks refill the book.
+/// </para>
+/// </remarks>
+public sealed class MarketReplayService(
+    TradingDbContext db,
+    IReplayPlayer player,
+    IReplayChannel channel,
+    IReplayRunStopper stopper,
+    IMarketReplayBook book,
+    IMarketSessionService sessions,
+    RunPnl pnl,
+    ILogger<MarketReplayService> logger,
+    TimeProvider? time = null)
+{
+    public static readonly IReadOnlyList<int> Speeds = [1, 2, 5, 10];
+
+    /// <summary>The index symbols whose recorded minutes tell how complete a day is.</summary>
+    public static readonly IReadOnlyDictionary<string, string> CoverageSymbols = new Dictionary<string, string>
+    {
+        ["NIFTY"] = "NSE:NIFTY50-INDEX",
+        ["BANKNIFTY"] = "NSE:NIFTYBANK-INDEX",
+        ["SENSEX"] = "BSE:SENSEX-INDEX",
+        ["INDIAVIX"] = "NSE:INDIAVIX-INDEX",
+    };
+
+    public const string StateStarting = "starting";
+    public const string StateWaiting = "waiting";
+    public const string StatePlaying = "playing";
+    public const string StatePaused = "paused";
+    public const string StateFinished = "finished";
+    public const string StateStopped = "stopped";
+    public const string StateFailed = "failed";
+
+    private static readonly TimeOnly SessionOpen = new(9, 15);
+    private static readonly TimeOnly SessionClose = new(15, 30);
+    private static readonly TimeOnly LatestStart = new(15, 0);
+
+    /// <summary>On a trading day a replay must be over by then: the market-open job runs at 08:45.</summary>
+    public static readonly TimeOnly MarketMorning = new(8, 45);
+
+    /// <summary>How long a player may be missing at the start before the replay counts as failed.</summary>
+    private static readonly TimeSpan StartGrace = TimeSpan.FromSeconds(20);
+
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
+    private readonly TimeProvider _time = time ?? TimeProvider.System;
+
+    private DateTime Now => _time.GetUtcNow().UtcDateTime;
+
+    public static bool IsActive(string? state) => state is StateStarting or StateWaiting or StatePlaying or StatePaused;
+
+    // ---------- reading ----------
+
+    public async Task<ReplayStatus> StatusAsync(CancellationToken cancellationToken)
+    {
+        var session = await LoadAsync(cancellationToken);
+        var why = session is not null && IsActive(session.State)
+            ? $"A replay of {Day(session.Date)} is {session.State}."
+            : WhyNotNow(Now);
+        return new ReplayStatus(why is null, why, session is null ? null : await ViewAsync(session, cancellationToken));
+    }
+
+    /// <summary>Why a replay cannot start now, or null: on a trading day, NSE's session and the morning before it are the live desk's.</summary>
+    public string? WhyNotNow(DateTime nowUtc)
+    {
+        var info = sessions.GetSessionInfo(nowUtc, "NSE", "FO");
+        if (!info.IsTradingDay) return null;
+        var ist = TimeOnly.FromDateTime(IstTime.ToIst(nowUtc));
+        return ist >= MarketMorning && nowUtc < info.SessionCloseUtc
+            ? "NSE trades today until 15:30. A replay plays after the close, or on a holiday or weekend."
+            : null;
+    }
+
+    /// <summary>The recorded days, newest first, with how many of each index's 375 session minutes were recorded.</summary>
+    public async Task<ReplayDays> DaysAsync(CancellationToken cancellationToken)
+    {
+        var today = IstTime.DateOf(Now);
+        var connection = db.Database.GetDbConnection();
+        bool opened = connection.State != System.Data.ConnectionState.Open;
+        if (opened) await connection.OpenAsync(cancellationToken);
+        try
+        {
+            var sizes = await ChunkBytesByDayAsync(connection, cancellationToken);
+            var recorded = sizes.Keys.Where(d => d < today && d.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday)).ToList();
+            if (recorded.Count == 0) return new ReplayDays([], null, null);
+
+            var minutes = await MinutesByDayAsync(connection, recorded.Min(), today, cancellationToken);
+            var days = recorded
+                .OrderByDescending(d => d)
+                .Select(d => new ReplayDay(
+                    d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                    d.DayOfWeek.ToString()[..3],
+                    CoverageSymbols.Keys.ToDictionary(k => k, k => minutes.GetValueOrDefault((d, CoverageSymbols[k]))),
+                    sizes[d]))
+                .Where(d => d.Minutes.Values.Any(m => m > 0))
+                .ToList();
+            return new ReplayDays(days, days.LastOrDefault()?.Date, days.FirstOrDefault()?.Date);
+        }
+        finally
+        {
+            if (opened) await connection.CloseAsync();
+        }
+    }
+
+    // ---------- control ----------
+
+    /// <summary>Starts a replay of the request's day for its runs; answers the session, or why not.</summary>
+    public async Task<ReplayStartResult> StartAsync(ReplayStartRequest request, string by, CancellationToken cancellationToken)
+    {
+        var current = await LoadAsync(cancellationToken);
+        if (current is not null && IsActive(current.State))
+        {
+            return ReplayStartResult.Refused(409, $"A replay of {Day(current.Date)} is {current.State}; stop it first.");
+        }
+
+        if (WhyNotNow(Now) is { } closed) return ReplayStartResult.Refused(409, closed);
+
+        if (!DateOnly.TryParseExact(request.Date, "yyyy-MM-dd", out var date)) return ReplayStartResult.Refused(400, "date is yyyy-MM-dd.");
+        if (date >= IstTime.DateOf(Now)) return ReplayStartResult.Refused(400, "Only a day that is over can be replayed.");
+        if (!Speeds.Contains(request.Speed)) return ReplayStartResult.Refused(400, $"speed is one of {string.Join(", ", Speeds)}.");
+        var from = SessionOpen;
+        if (!string.IsNullOrWhiteSpace(request.From)
+            && (!TimeOnly.TryParseExact(request.From, "HH:mm", out from) || from < SessionOpen || from > LatestStart))
+        {
+            return ReplayStartResult.Refused(400, "from is HH:mm between 09:15 and 15:00.");
+        }
+
+        var runIds = (request.RunIds ?? []).Distinct().ToList();
+        if (runIds.Count == 0) return ReplayStartResult.Refused(400, "Start at least one recap run of the day first.");
+        if (await WhyNotRunsAsync(runIds, date, cancellationToken) is { } badRuns) return ReplayStartResult.Refused(409, badRuns);
+        if (!await RecordedAsync(date, cancellationToken)) return ReplayStartResult.Refused(409, $"The desk recorded nothing for {Day(date)}.");
+
+        var session = new ReplaySessionState(
+            (current?.Id ?? 0) + 1, date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), request.Speed,
+            from.ToString("HH:mm", CultureInfo.InvariantCulture), StateStarting, runIds, Now, null, null, by);
+
+        await channel.ResetAsync(cancellationToken);
+        book.Begin(date);
+        await SaveAsync(session, cancellationToken);
+
+        var (started, message) = await player.StartAsync(
+            [
+                "--date", session.Date,
+                "--speed", session.Speed.ToString(CultureInfo.InvariantCulture),
+                "--from", session.FromIst,
+                "--session", session.Id.ToString(CultureInfo.InvariantCulture),
+                "--runs", string.Join(',', runIds),
+            ],
+            cancellationToken);
+        if (!started)
+        {
+            book.End();
+            session = session with { State = StateFailed, EndedUtc = Now, Error = $"The player did not start: {message}" };
+            await SaveAsync(session, cancellationToken);
+            return ReplayStartResult.Refused(500, session.Error!);
+        }
+
+        logger.LogInformation("Market replay {Session} of {Date} started by {By} at {Speed}x from {From}, runs {Runs}",
+            session.Id, session.Date, by, session.Speed, session.FromIst, string.Join(',', runIds));
+        return new ReplayStartResult(await ViewAsync(session, cancellationToken), 202, null);
+    }
+
+    public async Task<ReplaySessionView?> StopAsync(string by, CancellationToken cancellationToken)
+    {
+        var session = await LoadAsync(cancellationToken);
+        if (session is null || !IsActive(session.State)) return session is null ? null : await ViewAsync(session, cancellationToken);
+
+        await player.StopAsync($"stopped by {by}", cancellationToken);
+        return await ViewAsync(await EndAsync(session, StateStopped, null, $"stopped by {by}", cancellationToken), cancellationToken);
+    }
+
+    public async Task<ReplaySessionView?> SendAsync(string command, CancellationToken cancellationToken)
+    {
+        var session = await LoadAsync(cancellationToken);
+        if (session is null || !IsActive(session.State)) return session is null ? null : await ViewAsync(session, cancellationToken);
+        await channel.SendAsync(command, cancellationToken);
+        return await ViewAsync(session, cancellationToken);
+    }
+
+    public IReadOnlyList<string> Logs(int take) => player.Logs(Math.Clamp(take, 1, 500));
+
+    /// <summary>
+    /// The monitor's look, every few seconds: mirror the player's state, and end the replay when it is
+    /// played out, stopped, gone, or the market is about to open. Public for tests.
+    /// </summary>
+    public async Task TickAsync(CancellationToken cancellationToken)
+    {
+        var session = await LoadAsync(cancellationToken);
+        if (session is null || !IsActive(session.State)) return;
+
+        var date = DateOnly.ParseExact(session.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture);
+        // An API restart empties the book; the player's next ticks fill it again.
+        if (book.Day != date) book.Begin(date);
+
+        if (WhyNotNow(Now) is not null)
+        {
+            await player.StopAsync("the market opens", cancellationToken);
+            await EndAsync(session, StateStopped, "Stopped at 08:45: NSE opens at 09:15.", "the market opens", cancellationToken);
+            return;
+        }
+
+        var status = await channel.ReadStatusAsync(cancellationToken);
+        var mine = status is not null && status.Session == session.Id ? status : null;
+        if (mine?.State is StateFinished or StateStopped or StateFailed)
+        {
+            await EndAsync(session, mine.State, mine.Error, $"the replay {mine.State}", cancellationToken);
+            return;
+        }
+
+        if (!await player.IsRunningAsync(cancellationToken) && Now - session.StartedUtc > StartGrace)
+        {
+            await EndAsync(session, StateFailed, "The replay player stopped before the day was played out.", "the player stopped", cancellationToken);
+            return;
+        }
+
+        if (mine?.State is StateWaiting or StatePlaying or StatePaused && mine.State != session.State)
+        {
+            await SaveAsync(session with { State = mine.State }, cancellationToken);
+        }
+    }
+
+    /// <summary>Stops the replay's runs at the replay's prices, then clears the book.</summary>
+    private async Task<ReplaySessionState> EndAsync(ReplaySessionState session, string state, string? error, string reason, CancellationToken cancellationToken)
+    {
+        foreach (var runId in session.RunIds)
+        {
+            try
+            {
+                await stopper.StopAsync(runId, $"Market replay of {Day(session.Date)}: {reason}", cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "Market replay {Session}: stopping run {RunId} failed", session.Id, runId);
+            }
+        }
+
+        book.End();
+        var ended = session with { State = state, EndedUtc = Now, Error = error };
+        await SaveAsync(ended, cancellationToken);
+        logger.LogInformation("Market replay {Session} of {Date} ended: {State} ({Reason})", session.Id, session.Date, state, reason);
+        return ended;
+    }
+
+    // ---------- the session ----------
+
+    private async Task<ReplaySessionView> ViewAsync(ReplaySessionState session, CancellationToken cancellationToken)
+    {
+        var status = IsActive(session.State) ? await channel.ReadStatusAsync(cancellationToken) : null;
+        var mine = status is not null && status.Session == session.Id ? status : null;
+        var date = DateOnly.ParseExact(session.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture);
+        DateTime? clock = mine?.ClockUtc ?? (book.Day == date ? book.ClockUtc : null);
+
+        var runs = await db.SimulationRuns.AsNoTracking()
+            .Where(r => session.RunIds.Contains(r.Id))
+            .Select(r => new { r.Id, r.StrategyName, r.Symbol, r.ParametersJson, r.Status, r.UserId })
+            .ToListAsync(cancellationToken);
+        var userIds = runs.Select(r => r.UserId).Distinct().ToList();
+        var users = await db.AppUsers.AsNoTracking().Where(u => userIds.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.UserName, cancellationToken);
+        var running = runs.Where(r => r.Status == StrategyRunControl.RunStatusRunning).Select(r => r.Id).ToHashSet();
+        var figures = await pnl.FiguresAsync(session.RunIds, running, cancellationToken);
+
+        var views = session.RunIds
+            .Select(id => runs.FirstOrDefault(r => r.Id == id) is { } r
+                ? new ReplayRunView(r.Id, r.StrategyName, UnderlyingOf(r.ParametersJson, r.Symbol), users.GetValueOrDefault(r.UserId), r.Status,
+                    figures.TryGetValue(r.Id, out var f) ? f.Realized + f.Unrealized - f.Charges : 0m)
+                : new ReplayRunView(id, "?", null, null, "Missing", 0m))
+            .ToList();
+
+        return new ReplaySessionView(
+            session.Id, session.Date, session.Speed, session.FromIst, mine?.State is { } live && IsActive(session.State) ? live : session.State,
+            clock, clock is DateTime c ? IstTime.ToIst(c).ToString("HH:mm:ss", CultureInfo.InvariantCulture) : null,
+            mine?.Progress ?? ProgressOf(clock, date, session.State), mine?.TicksSent ?? 0, session.StartedUtc, session.EndedUtc,
+            session.Error ?? mine?.Error, session.RunIds, views, session.StartedBy);
+    }
+
+    /// <summary>How far through the replayed session (09:15–15:30) a clock is, 0 to 1.</summary>
+    public static double ProgressOf(DateTime? clockUtc, DateOnly day, string state)
+    {
+        if (state == StateFinished) return 1;
+        if (clockUtc is not DateTime clock) return 0;
+        var open = IstTime.FromIst(day.ToDateTime(SessionOpen));
+        var close = IstTime.FromIst(day.ToDateTime(SessionClose));
+        return Math.Clamp((clock - open).TotalSeconds / (close - open).TotalSeconds, 0, 1);
+    }
+
+    private async Task<string?> WhyNotRunsAsync(IReadOnlyList<long> runIds, DateOnly date, CancellationToken cancellationToken)
+    {
+        var runs = await db.SimulationRuns.AsNoTracking()
+            .Where(r => runIds.Contains(r.Id))
+            .Select(r => new { r.Id, r.Status, r.Mode, r.ParametersJson })
+            .ToListAsync(cancellationToken);
+        var problems = new List<string>();
+        foreach (var id in runIds)
+        {
+            var run = runs.FirstOrDefault(r => r.Id == id);
+            if (run is null) problems.Add($"run {id} does not exist");
+            else if (run.Status != StrategyRunControl.RunStatusRunning) problems.Add($"run {id} is {run.Status.ToLowerInvariant()}");
+            else if (!RecapClock.IsRecap(run.ParametersJson)) problems.Add($"run {id} is not a recap run");
+            else if (RecapClock.RecapDate(run.ParametersJson) != date) problems.Add($"run {id} is a recap of another day");
+        }
+
+        return problems.Count == 0 ? null : "Every run must be a running recap run of the day: " + string.Join("; ", problems) + ".";
+    }
+
+    private async Task<bool> RecordedAsync(DateOnly date, CancellationToken cancellationToken)
+    {
+        var from = IstTime.FromIst(date.ToDateTime(SessionOpen));
+        var to = IstTime.FromIst(date.ToDateTime(SessionClose));
+        var symbols = CoverageSymbols.Values.ToList();
+        return await db.LiveBars.AsNoTracking()
+            .AnyAsync(b => symbols.Contains(b.Symbol) && b.Resolution == "1m" && b.BarStartUtc >= from && b.BarStartUtc < to, cancellationToken);
+    }
+
+    public async Task<ReplaySessionState?> LoadAsync(CancellationToken cancellationToken)
+    {
+        string? json = await db.SystemSettings.AsNoTracking()
+            .Where(s => s.Key == SystemSettingKeys.ReplaySession).Select(s => s.Value).FirstOrDefaultAsync(cancellationToken);
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            return JsonSerializer.Deserialize<ReplaySessionState>(json, Json);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private async Task SaveAsync(ReplaySessionState session, CancellationToken cancellationToken)
+    {
+        var row = await db.SystemSettings.FirstOrDefaultAsync(s => s.Key == SystemSettingKeys.ReplaySession, cancellationToken);
+        if (row is null)
+        {
+            row = new SystemSetting { Key = SystemSettingKeys.ReplaySession, CreatedUtc = Now };
+            db.SystemSettings.Add(row);
+        }
+
+        row.Value = JsonSerializer.Serialize(session, Json);
+        row.UpdatedBy = session.StartedBy;
+        row.UpdatedUtc = Now;
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private static string? UnderlyingOf(string? parametersJson, string? symbol)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(parametersJson)
+                && JsonDocument.Parse(parametersJson).RootElement is { ValueKind: JsonValueKind.Object } root
+                && root.TryGetProperty("underlying", out var u) && u.ValueKind == JsonValueKind.String)
+            {
+                return u.GetString();
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        return symbol;
+    }
+
+    private static string Day(string date) =>
+        DateOnly.TryParseExact(date, "yyyy-MM-dd", out var d) ? Day(d) : date;
+
+    private static string Day(DateOnly date) => date.ToString("d MMM", CultureInfo.InvariantCulture);
+
+    // ---------- coverage ----------
+
+    private static async Task<Dictionary<DateOnly, long>> ChunkBytesByDayAsync(DbConnection connection, CancellationToken cancellationToken)
+    {
+        // The catalog only: each daily chunk of live_ticks and its size on disk.
+        var result = new Dictionary<DateOnly, long>();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            select c.range_start, s.total_bytes
+            from timescaledb_information.chunks c
+            join chunks_detailed_size('public.live_ticks'::regclass) s
+              on s.chunk_schema = c.chunk_schema and s.chunk_name = c.chunk_name
+            where c.hypertable_schema = 'public' and c.hypertable_name = 'live_ticks'
+            """;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var start = reader.GetFieldValue<DateTime>(0);
+            var day = IstTime.DateOf(DateTime.SpecifyKind(start.ToUniversalTime().AddHours(6), DateTimeKind.Utc));
+            result[day] = result.GetValueOrDefault(day) + (reader.IsDBNull(1) ? 0 : reader.GetInt64(1));
+        }
+
+        return result;
+    }
+
+    private static async Task<Dictionary<(DateOnly, string), int>> MinutesByDayAsync(DbConnection connection, DateOnly from, DateOnly to, CancellationToken cancellationToken)
+    {
+        var result = new Dictionary<(DateOnly, string), int>();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            select (b."BarStartUtc" + interval '5 hours 30 minutes')::date as day, b."Symbol", count(distinct b."BarStartUtc")
+            from live_bars b
+            where b."Resolution" = '1m' and b."Symbol" = any(@symbols)
+              and b."BarStartUtc" >= @from and b."BarStartUtc" < @to
+              and (b."BarStartUtc" + interval '5 hours 30 minutes')::time >= '09:15'
+              and (b."BarStartUtc" + interval '5 hours 30 minutes')::time < '15:30'
+            group by 1, 2
+            """;
+        Add(command, "symbols", CoverageSymbols.Values.ToArray());
+        Add(command, "from", IstTime.FromIst(from.ToDateTime(TimeOnly.MinValue)));
+        Add(command, "to", IstTime.FromIst(to.ToDateTime(TimeOnly.MinValue)));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var day = DateOnly.FromDateTime(reader.GetFieldValue<DateTime>(0));
+            result[(day, reader.GetString(1))] = (int)reader.GetInt64(2);
+        }
+
+        return result;
+
+        static void Add(DbCommand command, string name, object value)
+        {
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = name;
+            parameter.Value = value;
+            command.Parameters.Add(parameter);
+        }
+    }
+}
+
+// ---------- what the service talks to (interfaces, so tests need no process, Redis or runner) ----------
+
+/// <summary>The replay's player process.</summary>
+public interface IReplayPlayer
+{
+    Task<bool> IsRunningAsync(CancellationToken cancellationToken);
+
+    Task<(bool Started, string Message)> StartAsync(IReadOnlyList<string> args, CancellationToken cancellationToken);
+
+    Task StopAsync(string reason, CancellationToken cancellationToken);
+
+    IReadOnlyList<string> Logs(int take);
+}
+
+/// <summary>What the player says (Redis <c>replay:status</c>) and what it is told (<c>replay:control</c>).</summary>
+public interface IReplayChannel
+{
+    Task<ReplayPlayerStatus?> ReadStatusAsync(CancellationToken cancellationToken);
+
+    /// <summary>"pause" or "resume".</summary>
+    Task SendAsync(string command, CancellationToken cancellationToken);
+
+    /// <summary>Forgets the last replay's status and any command left for it.</summary>
+    Task ResetAsync(CancellationToken cancellationToken);
+}
+
+/// <summary>Stops one of the replay's runs, squaring it off.</summary>
+public interface IReplayRunStopper
+{
+    Task StopAsync(long runId, string reason, CancellationToken cancellationToken);
+}
+
+// ---------- the wire ----------
+
+public sealed record ReplayPlayerStatus(long Session, string State, DateTime? ClockUtc, long TicksSent, double? Progress, string? Error, DateTime? UpdatedUtc);
+
+public sealed record ReplayStartRequest(string? Date, int Speed, string? From, IReadOnlyList<long>? RunIds);
+
+public sealed record ReplaySessionState(
+    long Id, string Date, int Speed, string FromIst, string State, IReadOnlyList<long> RunIds,
+    DateTime StartedUtc, DateTime? EndedUtc, string? Error, string StartedBy);
+
+public sealed record ReplayRunView(long RunId, string Strategy, string? Underlying, string? Account, string Status, decimal NetPnl);
+
+public sealed record ReplaySessionView(
+    long Id, string Date, int Speed, string FromIst, string State, DateTime? ClockUtc, string? ClockIst, double Progress,
+    long TicksSent, DateTime StartedUtc, DateTime? EndedUtc, string? Error, IReadOnlyList<long> RunIds,
+    IReadOnlyList<ReplayRunView> Runs, string StartedBy);
+
+public sealed record ReplayStatus(bool CanStart, string? WhyNot, ReplaySessionView? Session);
+
+public sealed record ReplayDay(string Date, string Weekday, IReadOnlyDictionary<string, int> Minutes, long SizeBytes);
+
+public sealed record ReplayDays(IReadOnlyList<ReplayDay> Days, string? Earliest, string? Latest);
+
+public sealed record ReplayStartResult(ReplaySessionView? Session, int StatusCode, string? Error)
+{
+    public static ReplayStartResult Refused(int statusCode, string error) => new(null, statusCode, error);
+}

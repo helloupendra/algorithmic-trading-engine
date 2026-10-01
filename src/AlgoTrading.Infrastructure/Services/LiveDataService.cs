@@ -992,6 +992,56 @@ public class LiveDataService : ILiveDataService
             .ToList();
     }
 
+    public async Task<IReadOnlyList<LiveBarResponse>> GetBarsUntilAsync(
+        string symbol,
+        string resolution,
+        int take,
+        DateTime untilUtc,
+        LiveBarResponse? currentMinute,
+        CancellationToken cancellationToken = default)
+    {
+        var until = untilUtc.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(untilUtc, DateTimeKind.Utc) : untilUtc.ToUniversalTime();
+        var minute = new DateTime(until.Ticks - until.Ticks % TimeSpan.TicksPerMinute, DateTimeKind.Utc);
+        var minutes = ParseResolutionMinutes(resolution);
+        int needed = minutes <= 1 ? take : take * minutes;
+
+        // Recorded minutes that had ended by then; the one in progress comes from the replay.
+        var rows = await _dbContext.LiveBars
+            .AsNoTracking()
+            .Where(x => x.Symbol == symbol && x.Resolution == "1m" && x.BarStartUtc < minute)
+            .OrderByDescending(x => x.BarStartUtc)
+            .Take(needed)
+            .ToListAsync(cancellationToken);
+
+        var oneMinute = rows.Select(Map1mBar).ToList();
+        if (currentMinute is not null && currentMinute.BarStartUtc == minute) oneMinute.Insert(0, currentMinute);
+
+        if (minutes <= 1) return oneMinute.Take(take).ToList();
+
+        return oneMinute
+            .GroupBy(x => FloorToBucket(x.BarStartUtc, minutes))
+            .OrderByDescending(g => g.Key)
+            .Take(take)
+            .Select(g =>
+            {
+                var ordered = g.OrderBy(x => x.BarStartUtc).ToList();
+                return new LiveBarResponse
+                {
+                    Symbol = symbol,
+                    Resolution = $"{minutes}m",
+                    BarStartUtc = g.Key,
+                    Open = ordered[0].Open,
+                    High = ordered.Max(x => x.High),
+                    Low = ordered.Min(x => x.Low),
+                    Close = ordered[^1].Close,
+                    VolumeDelta = ordered.Sum(x => x.VolumeDelta),
+                    TickCount = ordered.Sum(x => x.TickCount),
+                    UpdatedUtc = ordered.Max(x => x.UpdatedUtc)
+                };
+            })
+            .ToList();
+    }
+
     private static LiveBarResponse Map1mBar(LiveBar x) => new()
     {
         Symbol = x.Symbol,

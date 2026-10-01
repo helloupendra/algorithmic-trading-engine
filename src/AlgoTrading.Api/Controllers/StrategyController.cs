@@ -847,7 +847,8 @@ public class StrategyController : ControllerBase
 
         var now = DateTime.UtcNow;
         // A recap run's activity is on the replayed session's clock (RecapClock).
-        var marketNow = run is null ? null : await RecapClock.NowAsync(_dbContext, run, cancellationToken);
+        var marketNow = run is null ? null : await RecapClock.NowAsync(_dbContext, run, cancellationToken,
+            HttpContext?.RequestServices?.GetService(typeof(IMarketReplayBook)) as IMarketReplayBook);
         await _dbContext.SimulationSignals.AddAsync(new SimulationSignal
         {
             SimulationRunId = runId,
@@ -1407,7 +1408,9 @@ public class StrategyController : ControllerBase
         // Positions (marks open ones to market against the latest live quote),
         // decorated by the same builder the backtest results page uses.
         var positions = await _paperTrading.GetPaperPositionsAsync(run.Id, cancellationToken);
-        var built = await _positionViews.BuildAsync<LivePositionResponse>(positions, useLiveQuotes: true, view.SpotSymbol, cancellationToken);
+        var replayBook = HttpContext?.RequestServices?.GetService(typeof(IMarketReplayBook)) as IMarketReplayBook;
+        var built = await _positionViews.BuildAsync<LivePositionResponse>(positions, useLiveQuotes: true, view.SpotSymbol, cancellationToken,
+            replayPriced: replayBook?.Prices(run.ParametersJson) == true);
 
         view.SpotLtp = built.SpotLtp;
         view.SpotUpdatedUtc = built.SpotUpdatedUtc;

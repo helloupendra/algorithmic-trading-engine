@@ -232,15 +232,29 @@ namespace AlgoTrading.Api.Services
         /// later; it never keeps the other runs, or the feed shutdown after this,
         /// from going ahead.
         /// </summary>
+        /// <summary>The runs of the market replay in progress, if one is.</summary>
+        private async Task<IReadOnlySet<long>> ReplayRunIdsAsync(CancellationToken cancellationToken)
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var replay = scope.ServiceProvider.GetService<Replay.MarketReplayService>();
+            var session = replay is null ? null : await replay.LoadAsync(cancellationToken);
+            return session is not null && Replay.MarketReplayService.IsActive(session.State)
+                ? session.RunIds.ToHashSet()
+                : new HashSet<long>();
+        }
+
         private async Task StopRunsPastTheirCloseAsync(DateTime nowUtc, CancellationToken cancellationToken)
         {
             try
             {
+                // A market replay's runs end with the replay, at its prices (MarketReplayService). A weekday
+                // holiday still has a 15:30 close, and a replay played that afternoon must not be cut there.
+                var replayRuns = await ReplayRunIdsAsync(cancellationToken);
                 var due = MarketCloseRules.RunsToStop(
                     _marketSession,
                     nowUtc,
                     _runs.List()
-                        .Where(r => !r.StopRequested)
+                        .Where(r => !r.StopRequested && !replayRuns.Contains(r.RunId))
                         .Select(r => new MarketCloseRules.DeskRun(r.RunId, r.Underlying, r.SpotSymbol, r.StartedUtc)));
                 if (due.Count == 0) return;
 

@@ -139,6 +139,15 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.WatchlistPruneService>();
 // it used to be a sidecar, and the day nobody remembered to start it the
 // platform ran all day without a single alert and looked perfectly healthy.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.NotifierSupervisor>();
+
+// The market replay: its player (not a feed), the player's Redis status, and the monitor that ends a
+// replay and squares its runs off (MarketReplayService).
+builder.Services.AddSingleton<AlgoTrading.Api.Services.Replay.ReplaySupervisor>();
+builder.Services.AddSingleton<AlgoTrading.Api.Services.Replay.IReplayPlayer, AlgoTrading.Api.Services.Replay.SupervisedReplayPlayer>();
+builder.Services.AddSingleton<AlgoTrading.Api.Services.Replay.IReplayChannel, AlgoTrading.Api.Services.Replay.RedisReplayChannel>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.Replay.IReplayRunStopper, AlgoTrading.Api.Services.Replay.ReplayRunStopper>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.Replay.MarketReplayService>();
+builder.Services.AddHostedService<AlgoTrading.Api.Services.Replay.ReplayMonitor>();
 // The System page's server report: disk, memory, CPU, database size and growth.
 // A singleton so its short cache and the previous CPU reading outlive a request.
 builder.Services.AddSingleton<AlgoTrading.Api.Services.SystemHostService>();
