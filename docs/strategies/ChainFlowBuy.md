@@ -37,7 +37,7 @@ IV and greeks for every strike, once a minute) for NIFTY, BANKNIFTY and SENSEX.
 | What | Symbol(s) | Resolution | History before the first signal | Where the platform gets it |
 |------|-----------|------------|---------------------------------|----------------------------|
 | index candles | the run's spot symbol (e.g. `NSE:NIFTY50-INDEX`) | 5m | `ema_slow` + 2 = 23 bars in the runner's list. Live the newest is still forming, so 22 closed bars: 21 for the slow EMA's seed and the signal bar | ingestor (`live_bars`); `candles` in a backtest |
-| option candles | the ATM CE and ATM PE of the run's expiry (`atm_ce`, `atm_pe`), resolved at each tick's ATM strike | 5m | `volume_lookback` + 2 = 8 bars: the signal bar, the 6 before it, and the newest | ingestor (`live_bars`); stored option candles in a backtest |
+| option candles | the ATM CE and ATM PE of the run's expiry (`atm_ce`, `atm_pe`), resolved at each tick's ATM strike | 5m | `volume_lookback` + 1 = 7 bars: the candle that began when the signal bar did, and the 6 before it | ingestor (`live_bars`); stored option candles in a backtest |
 | option chain OI | the underlying's chain: every listed strike's OI, IV, delta, build-up, LTP and symbol, and the header's capture time, spot, ATM strike, ATM IV and expiry | per-minute capture; live, with live quotes laid over the near strikes | a sample taken at least `flow_lookback_minutes` (15) earlier in the same session | chain poller (`option_chain_snapshots`, Dhan chain recorder), read through `GET /api/OptionChain/view`. A backtest or a recap asks for it with `asOfUtc` (see Timeframe) |
 
 The strategy fetches the chain itself; the runner is not changed, so no
@@ -57,12 +57,13 @@ other strategy is affected.
 
 ## Timeframe
 
-- **Evaluates on:** the 5-minute bar, once per bar. The signal bar is always
-  the second-newest bar in the list (`bars[-2]`), because live the newest is
-  still forming: the decision comes on the first tick after the signal bar
-  closes. In a recap the runner's bars stop at the replayed tick, so the same
-  holds. In a backtest the newest bar has already closed, so the strategy
-  decides one bar later than a live run would (see Limitations).
+- **Evaluates on:** the 5-minute bar, once per bar, on closed bars only. Live
+  the newest bar in the list is still forming, so the signal bar is the one
+  before it (`bars[-2]`): the decision comes on the first tick after the
+  signal bar closes. In a recap the runner's bars stop at the replayed tick,
+  so the same holds. A backtest (`OfflineReplay`) is handed closed bars only,
+  so its newest bar is the signal bar. Until 1 Oct 2026 a backtest also took
+  `bars[-2]` and decided, and bought, one bar later than a live run.
 - Warm-up bars (`source: warmup`) are never evaluated. An input whose
   metadata says `chain: none` makes it sit out; no runner sets that today.
 - **Entries:** between `entry_start` (09:30) and `entry_end` (14:45) IST,
@@ -120,7 +121,8 @@ Until a sample is old enough the DATA line reads "building history" and
 nothing is bought.
 
 **Volume surge.** $V_t$ is the 5-minute volume of the ATM option of that side
-(`atm_ce` for a call, `atm_pe` for a put) on its second-newest bar; $\bar V$
+(`atm_ce` for a call, `atm_pe` for a put) on the candle that began when the
+signal bar did, found by its start time; no such candle means no surge. $\bar V$
 is the mean of the `volume_lookback` (6) bars before that, and must be above
 zero. This is the at-the-money contract at the tick's strike, not
 necessarily the contract bought, which is chosen by delta.
@@ -309,17 +311,12 @@ computes it:
 Where the code and its own docstring or comments disagree (found 1 Oct 2026;
 the strategy trades live, so none of these has been changed):
 
-- **A backtest decides one bar late.** `on_bar` always takes `bars[-2]` as
-  the signal bar, and `volume_surge` the option's `bars[-2]`, because "the
-  newest bar is still forming". That is true live and in a recap, but a
-  backtest hands the strategy bars complete by the end of the bar being
-  replayed (`backtest/feed.py`, `bars_upto`; `backtest/engine.py` says so
-  where it calls the run filters with `newest_bar_is_forming=False`). So in
-  a backtest every decision is about the candle before the newest closed
-  one, its chain is read as of that earlier close, and the fill comes a
-  whole bar after the moment a live run would have bought. Not look-ahead,
-  but backtest results are not those of the live rule. SignalBuilder and
-  SmcStructureBreak drop the newest bar only when the mode is `LivePaper`.
+Fixed on 1 Oct 2026, so backtests of ChainFlowBuy from before that date are
+not results of the live rule: a backtest decided one bar late (it took
+`bars[-2]` though a backtest hands closed bars only), and the option volume
+was read from the series' second-newest candle by position rather than the
+signal bar's candle by time.
+
 - **Re-arming reads only the EMAs.** The state comment and the class
   description say a side re-arms when "the trend candle condition" stops
   holding; the code clears it only when the close leaves the EMA stack
@@ -330,11 +327,6 @@ the strategy trades live, so none of these has been changed):
   than usual; the code reads the runner's `atm_ce` / `atm_pe` bars, and the
   contract bought may be up to `delta_search_strikes` strikes away. The
   signal's reason and metadata do call it the ATM volume.
-- **The volume bar is found by position, not by time.** `volume_surge` takes
-  the option series' `bars[-2]` as the signal bar without checking its time.
-  If the option has not yet printed in the new 5 minutes when the index has
-  (live, on the first ticks of a bar), or its series has a hole, the volume
-  read is that of a different candle.
 - **The OI flow can span much more than 15 minutes.** The description says
   "over the last `flow_lookback_minutes`" and a comment says two lookbacks of
   history is all a decision reads, but samples are kept by count, not by
@@ -359,5 +351,5 @@ instruments: NIFTY, BANKNIFTY, SENSEX, FINNIFTY, MIDCPNIFTY
 default_lots: 1
 built_in_exit: false
 added: 2026-09-15
-spec_version: 2
+spec_version: 3
 ```

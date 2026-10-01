@@ -42,14 +42,18 @@ def index_bars(count, start=24000.0, step=6.0, direction=1):
     return bars
 
 
-def option_bars(count, surge=True):
-    """Option candles with a flat 1,000 volume, and 3,000 on the signal bar (the second last) when `surge`."""
+def option_bars(count, surge=True, signal=None, shift=timedelta(0)):
+    """
+    Option candles with a flat 1,000 volume, and 3,000 on the signal candle (by default the second last) when
+    `surge`; on the index candles' times, moved by `shift` as theirs are.
+    """
     bars = []
+    signal = count - 2 if signal is None else signal
     for i in range(count):
-        volume = 3000.0 if (surge and i == count - 2) else 1000.0
+        volume = 3000.0 if (surge and i == signal) else 1000.0
         bars.append(BarFrame(
             symbol="OPT", resolution="5m",
-            timestamp_utc=(SESSION + timedelta(minutes=5 * i)).astimezone(timezone.utc).isoformat(),
+            timestamp_utc=(SESSION + shift + timedelta(minutes=5 * i)).astimezone(timezone.utc).isoformat(),
             open=100, high=110, low=95, close=105, volume=volume,
         ))
     return bars
@@ -97,6 +101,7 @@ class Harness:
         self.chain = None
         self.strategy._fetch_chain = lambda underlying, as_of=None: self.chain
         self.decided_at = datetime.fromisoformat(self.bars[-2].timestamp_utc) + timedelta(minutes=5)
+        self.shift = timedelta(0)
 
     def seed(self, call_oi, put_oi, iv_low=None):
         """An OI sample 20 minutes before the decision, and the session's IV low so far."""
@@ -107,6 +112,8 @@ class Harness:
             self.state["iv_low"] = iv_low
 
     def run(self, mode="LivePaper", surge=True, metadata=None, recap_date=None, timestamp_utc=None):
+        # A backtest is handed closed candles only: the forming 40th is not there yet.
+        count = 39 if mode == "OfflineReplay" else 40
         inp = StrategyInput(
             mode=mode,
             timestamp_utc=timestamp_utc or datetime.now(timezone.utc).isoformat(),
@@ -116,9 +123,9 @@ class Harness:
             strike_step=50,
             lot_size=65,
             bars={"5m": {
-                "index": self.bars,
-                "atm_ce": option_bars(40, surge=surge and self.direction == 1),
-                "atm_pe": option_bars(40, surge=surge and self.direction == -1),
+                "index": self.bars[:count],
+                "atm_ce": option_bars(count, surge=surge and self.direction == 1, signal=38, shift=self.shift),
+                "atm_pe": option_bars(count, surge=surge and self.direction == -1, signal=38, shift=self.shift),
             }},
             metadata=metadata or {"source": "live-api"},
             recap_date=recap_date,
@@ -211,6 +218,21 @@ class EntryTests(unittest.TestCase):
         self.assertEqual(1, len(signals))
         self.assertEqual([h.decided_at], asked)
 
+    def test_a_backtest_decides_on_its_newest_closed_candle(self):
+        # A backtest hands closed candles only: the signal candle is the newest one, decided when it closed.
+        # Reading the one before it decided, and bought, a whole candle late.
+        asked = []
+        h = Harness(direction=1)
+        h.seed(call_oi=100_000, put_oi=100_000, iv_low=13.5)
+        h.chain = chain(h.close, call_oi=101_000, put_oi=106_000, captured=h.decided_at)
+        h.strategy._fetch_chain = lambda underlying, as_of=None: (asked.append(as_of), h.chain)[1]
+
+        signals = h.run(mode="OfflineReplay")
+
+        self.assertEqual([h.decided_at], asked)
+        self.assertEqual(1, len(signals))
+        self.assertEqual(h.bars[38].timestamp_utc, signals[0].metadata["signal_bar_utc"])
+
     def test_a_replay_will_not_trade_on_a_chain_from_another_time(self):
         h = Harness(direction=1)
         h.seed(call_oi=100_000, put_oi=100_000, iv_low=13.5)
@@ -250,6 +272,7 @@ class RecapTests(unittest.TestCase):
         h.bars = [replace(b, timestamp_utc=(datetime.fromisoformat(b.timestamp_utc) - self.DAYS_AGO).isoformat())
                   for b in h.bars]
         h.decided_at -= self.DAYS_AGO
+        h.shift = -self.DAYS_AGO
         h.seed(call_oi=100_000, put_oi=100_000, iv_low=13.5)
         self.day = (SESSION - self.DAYS_AGO).strftime("%Y-%m-%d")
         h.state["session_date"] = self.day
@@ -313,9 +336,19 @@ class RuleTests(unittest.TestCase):
         self.assertFalse(data_check(None, 24300.0, datetime.now(timezone.utc), 180, 0.35)[0])
 
     def test_volume_surge(self):
-        self.assertEqual((3000.0, 1000.0), volume_surge(option_bars(10), 1.5, 6))
-        self.assertIsNone(volume_surge(option_bars(10, surge=False), 1.5, 6))
-        self.assertIsNone(volume_surge(option_bars(5), 1.5, 6))
+        bars = option_bars(10)
+        at = bars[8].timestamp_utc
+        self.assertEqual((3000.0, 1000.0), volume_surge(bars, 1.5, 6, at))
+        self.assertIsNone(volume_surge(option_bars(10, surge=False), 1.5, 6, at))
+        self.assertIsNone(volume_surge(option_bars(5), 1.5, 6, option_bars(5)[3].timestamp_utc))
+
+    def test_volume_is_read_from_the_signal_candle_by_its_time_not_its_place(self):
+        # The option has not traded yet in the newest five minutes: its last candle is the signal candle
+        # itself, and "the second last" would be the one before it.
+        bars = option_bars(9, signal=8)
+        self.assertEqual((3000.0, 1000.0), volume_surge(bars, 1.5, 6, bars[8].timestamp_utc))
+        # No option candle at the signal's time: no surge to read.
+        self.assertIsNone(volume_surge(bars, 1.5, 6, "2001-01-01T00:00:00+00:00"))
 
 
 if __name__ == "__main__":
