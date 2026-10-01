@@ -53,6 +53,20 @@ public class MarketReplayRecapFeedTests
     }
 
     [Fact]
+    public async Task A_quiet_recap_whose_lock_cannot_be_read_counts_as_running()
+    {
+        // Redis not answering: the replay page must still load, and no desk replay may start on a guess.
+        var db = NewDb();
+        db.LiveIngestorStatuses.Add(Beat("python-truedata-recap", 300));
+        db.SaveChanges();
+        var clock = new FakeClock();
+        clock.Set(Now);
+        var feeds = new HeartbeatRecapFeeds(db, _ => throw new InvalidOperationException("Redis did not answer."), clock);
+
+        Assert.Equal("python-truedata-recap (its Redis lock could not be read)", await feeds.RunningAsync(default));
+    }
+
+    [Fact]
     public async Task A_vendor_back_on_its_live_host_is_not_a_recap_and_live_feeds_never_are()
     {
         var (back, _) = Feeds(new[] { "feed:truedata:lock" }, Beat("python-truedata-recap", 40), Beat("python-truedata-feed", 5));
