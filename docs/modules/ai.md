@@ -302,7 +302,7 @@ Every output is a row of `ai_reports`, one per agent and subject, so an agent th
 | --- | --- |
 | `ok` | Written, and its check passed |
 | `invalid` | The model answered, but the answer failed its check. The text is kept. |
-| `failed` | No model answered. Tried again after 15 minutes, at most `Ai:MaxReportAttempts` times (3). |
+| `failed` | No model answered, or (a run review) it stopped on the desk's side: a tool or the database threw. Tried again after 15 minutes, at most `Ai:MaxReportAttempts` times (3). |
 
 A good report is never overwritten by a later failure. Each report links to its model call.
 

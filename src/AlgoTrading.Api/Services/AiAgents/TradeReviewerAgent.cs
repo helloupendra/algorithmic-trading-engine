@@ -78,9 +78,38 @@ public sealed class TradeReviewerAgent(
         long? runId = await NextDueAsync(nowUtc, cancellationToken);
         if (runId is null) return false;
 
-        await ReviewAsync(runId.Value, cancellationToken);
+        try
+        {
+            await ReviewAsync(runId.Value, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            await RecordFailureAsync(runId.Value, ex, cancellationToken);
+        }
+
         schedule.Worked(AgentKey, nowUtc);
         return true;
+    }
+
+    /// <summary>
+    /// A review that stopped on the desk's side (a tool, the database) is kept
+    /// as a failed try, as a model that did not answer is: tried again after
+    /// <see cref="AiReportWriter.RetryAfter"/>, given up after
+    /// <see cref="AiSettings.MaxReportAttempts"/>. With no row written, the same
+    /// run was due again the next minute for the two days of
+    /// <see cref="Window"/>, with a warning each time, and as the oldest it
+    /// held up every run stopped after it; the daily digest waited on it too.
+    /// </summary>
+    private async Task RecordFailureAsync(long runId, Exception ex, CancellationToken cancellationToken)
+    {
+        logger.LogWarning(ex, "Trade review of run {RunId} stopped on the desk's side; kept as a failed try", runId);
+        var started = await db.SimulationRuns.AsNoTracking()
+            .Where(r => r.Id == runId)
+            .Select(r => r.StartedUtc ?? r.CreatedUtc)
+            .FirstOrDefaultAsync(cancellationToken);
+        await reports.SaveAsync(AgentKey, AiReportSubject.Run, Id(runId), started == default ? null : IstTime.DateOf(started),
+            AiReportStatus.Failed, null, $"Run {runId}: no review", string.Empty, "{}",
+            $"The review stopped on the desk's side: {ex.GetType().Name}: {IncidentRedaction.Mask(ex.Message)}", cancellationToken);
     }
 
     public async Task<AiReport?> RunForAsync(string? subjectId, CancellationToken cancellationToken)

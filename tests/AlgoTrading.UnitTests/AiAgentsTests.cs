@@ -157,6 +157,30 @@ public class AiAgentsTests
         Assert.Single(ai.Provider.Requests, r => r.Model == Judge1);
     }
 
+    [Fact]
+    public async Task A_review_that_throws_on_the_desk_s_side_is_a_failed_try_and_the_next_run_is_not_held_up()
+    {
+        long broken = 0;
+        var ai = BuildOn(tools: [new FakeTool(AiToolNames.Run, args => args.Long("runId") == broken
+            ? throw new InvalidOperationException("Sequence contains more than one element")
+            : new { run = new { strategy = "Ghost" } })]);
+        broken = SeedRun(ai, stoppedAt: Ist(15, 31));
+        long next = SeedRun(ai, stoppedAt: Ist(15, 32));
+        ai.Provider.On(Judge1, Answer("""{"verdict":"followed","title":"Kept its rules","journal":"Fine."}"""));
+        var reviewer = Reviewer(ai, new FixedTime(Ist(15, 46)));
+
+        // Its get_run fails: recorded as a failed try, so the 15-minute retry and the three-try limit apply to it.
+        Assert.True(await reviewer.RunOnceAsync(Ist(15, 46), CancellationToken.None));
+        var failed = await ai.Db.AiReports.AsNoTracking().SingleAsync();
+        Assert.Equal((broken.ToString(), AiReportStatus.Failed, 1), (failed.SubjectId, failed.Status, failed.Attempts));
+        Assert.Contains("Sequence contains more than one element", failed.Error);
+        Assert.Equal(IstTime.DateOf(Ist(9, 15)), failed.SessionDate);
+
+        // A minute later the next run is reviewed, not the same one thrown on again.
+        Assert.True(await reviewer.RunOnceAsync(Ist(15, 47), CancellationToken.None));
+        Assert.Equal(AiReportStatus.Ok, (await ai.Db.AiReports.AsNoTracking().SingleAsync(r => r.SubjectId == next.ToString())).Status);
+    }
+
     // ---------- the news analyst ----------
 
     [Fact]
