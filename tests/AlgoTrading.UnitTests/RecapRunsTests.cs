@@ -3,11 +3,13 @@ using AlgoTrading.Api.Controllers;
 using AlgoTrading.Api.Services;
 using AlgoTrading.Application.Interfaces;
 using AlgoTrading.Contracts.Risk;
+using AlgoTrading.Contracts.Strategies;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Domain.ValueObjects;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -104,6 +106,49 @@ public sealed class RecapRunsTests
         Assert.Equal((recap, true, "2026-09-11"), (only.RunId, only.IsRecap, only.RecapDate));
         Assert.False(liveRows.Single().IsRecap);
         Assert.Equal(1, Assert.Single(accounts).Runs);
+    }
+
+    [Theory]
+    [InlineData("Recap")]
+    [InlineData(" RECAP ")]
+    public void A_recap_asked_for_in_any_case_is_stored_with_the_marker_every_report_filters_on(string asked)
+    {
+        var overrides = new Dictionary<string, JsonElement>
+        {
+            ["session"] = JsonSerializer.SerializeToElement(asked),
+            ["recap_date"] = JsonSerializer.SerializeToElement("2026-09-30"),
+        };
+
+        string stored = LiveRunParameters.Merge("""{"lookback":20}""", overrides, 1, RiskRulesDto.Empty(), "NIFTY");
+
+        Assert.Contains(RecapRuns.Marker, stored);
+        Assert.True(RecapClock.IsRecap(stored));
+    }
+
+    [Fact]
+    public void A_run_stored_with_the_marker_in_another_case_is_a_recap_to_the_reports_as_it_was_to_its_clock()
+    {
+        // RecapClock (and the runner) read "Recap" as a recap; the reports' SQL match did not, so such a run traded
+        // as a test and was counted as live.
+        using var db = new TradingDbContext(new DbContextOptionsBuilder<TradingDbContext>()
+            .UseInMemoryDatabase($"recaps-{Guid.NewGuid():N}").Options);
+        foreach (var parameters in new[] { """{"lots":1}""", """{"session":"recap"}""", """{"session":"Recap"}""", """{"session": "RECAP"}""", """{"session":"live"}""" })
+        {
+            db.SimulationRuns.Add(new SimulationRun { Mode = PaperTradingService.LivePaperMode, Symbol = "NSE:NIFTY50-INDEX", Status = "Stopped",
+                StrategyName = "GhostTangentCrossings", ParametersJson = parameters, UserId = 1, CreatedUtc = Now });
+        }
+
+        db.SaveChanges();
+
+        Assert.All(db.SimulationRuns.OnlyRecaps().ToList(), r => Assert.True(RecapClock.IsRecap(r.ParametersJson)));
+        Assert.Equal(3, db.SimulationRuns.OnlyRecaps().Count());
+        Assert.All(db.SimulationRuns.WithoutRecaps().ToList(), r => Assert.False(RecapClock.IsRecap(r.ParametersJson)));
+        Assert.Equal(2, db.SimulationRuns.WithoutRecaps().Count());
+
+        // And PostgreSQL is sent a match it can run.
+        using var pg = new TradingDbContext(new DbContextOptionsBuilder<TradingDbContext>().UseNpgsql("Host=unused").Options);
+        Assert.Contains("lower(", pg.SimulationRuns.WithoutRecaps().ToQueryString());
+        Assert.Contains("lower(", pg.SimulationRuns.OnlyRecaps().ToQueryString());
     }
 
     private static LiveRunHistoryFilter Filter(bool recaps = false) =>

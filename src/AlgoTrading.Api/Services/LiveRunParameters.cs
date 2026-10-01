@@ -71,7 +71,8 @@ public sealed record LiveRunParameters(int? Lots, string? Underlying, RiskRulesD
     }
 
     /// <summary>
-    /// defaults ⊕ overrides ⊕ { lots, underlying, risk, stop_loss, target } as one JSON object.
+    /// defaults ⊕ overrides ⊕ { lots, underlying, risk, stop_loss, target } as one JSON object, with
+    /// <c>session</c> trimmed and lower-cased.
     /// </summary>
     public static string Merge(
         string? defaultsJson,
@@ -101,6 +102,14 @@ public sealed record LiveRunParameters(int? Lots, string? Underlying, RiskRulesD
                     ? null
                     : JsonNode.Parse(value.GetRawText());
             }
+        }
+
+        // The reports find recap runs by matching "session":"recap" in SQL (RecapRuns), while the run's clock and
+        // its runner read the value in any case: written as asked ("Recap"), a recap traded as a test and was
+        // counted as live trading.
+        if (merged["session"] is JsonValue session && session.TryGetValue<string>(out var sessionName))
+        {
+            merged["session"] = sessionName.Trim().ToLowerInvariant();
         }
 
         merged["lots"] = lots;
