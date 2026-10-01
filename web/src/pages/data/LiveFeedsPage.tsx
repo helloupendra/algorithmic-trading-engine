@@ -327,6 +327,7 @@ function AddSymbolForm() {
               key={t}
               type="button"
               className={`seg__btn ${dataType === t ? 'is-active' : ''}`}
+              aria-pressed={dataType === t}
               onClick={() => setDataType(t)}
               title={t === 'symbolUpdate' ? 'Full tick detail (bid/ask/depth)' : 'LTP-only, lighter'}
             >

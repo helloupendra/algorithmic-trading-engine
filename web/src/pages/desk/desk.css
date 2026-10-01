@@ -427,6 +427,9 @@ a.dk-news__t:hover { text-decoration: underline; }
   .dk-seg .dk-long, .dk-updated, .dk-now { display: none; }
   .dk-seg .dk-short { display: inline; }
   .dk-bar { flex-wrap: wrap; gap: 8px; }
+  /* The switches are a phone's main controls on these pages: a finger's height. */
+  .dk-seg button, .dk-pin { height: 34px; }
+  .dk-pin { min-width: 34px; }
 
   .dk-sheet { grid-template-columns: minmax(0, 1fr); }
   .dk-sheet > .dk-cell { grid-column: 1 / -1 !important; }

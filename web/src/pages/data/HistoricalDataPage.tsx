@@ -102,6 +102,7 @@ function CoverageBrowser({
               key={s}
               type="button"
               className={`seg__btn ${source === s ? 'is-active' : ''}`}
+              aria-pressed={source === s}
               onClick={() => setSource(s)}
             >
               {s === 'all' ? 'All' : s === 'backfill' ? 'Backfill' : 'Live 1m'}
