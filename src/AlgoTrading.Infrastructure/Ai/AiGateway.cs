@@ -53,6 +53,7 @@ public sealed class NullAiStreamSink : IAiStreamSink
 /// <param name="Tier">Walk this tier's chain rather than the agent's own; null for the agent's.</param>
 /// <param name="SystemPrompt">Null for the agent's own system prompt.</param>
 /// <param name="Chain">Walk exactly these models, with no tools (a model's health test); null otherwise.</param>
+/// <param name="TrialMemoryIds">Memories read on this call alone, whatever their status: a lesson being tested before it is used.</param>
 public sealed record AiAskInput(
     string AgentKey,
     string? Tier,
@@ -64,7 +65,8 @@ public sealed record AiAskInput(
     string Source,
     string RequestedBy,
     long? UserId,
-    IReadOnlyList<string>? Chain = null);
+    IReadOnlyList<string>? Chain = null,
+    IReadOnlyList<long>? TrialMemoryIds = null);
 
 /// <summary>One model tried, as the attempts table shows it.</summary>
 public sealed record AiAttempt(string Model, string Outcome, double Seconds, int? HttpStatus, int Round = 1);
@@ -284,7 +286,7 @@ public sealed class AiGateway
 
         string systemPrompt = input.SystemPrompt ?? agent.SystemPrompt;
         var recalled = input.SystemPrompt is null && input.Chain is null
-            ? await RecallAsync(agent.Key, input.Messages, cancellationToken)
+            ? await RecallAsync(agent.Key, input.Messages, input.TrialMemoryIds, cancellationToken)
             : [];
         if (recalled.Count > 0) systemPrompt += "\n\n" + AiMemoryBook.Block(recalled);
 
@@ -661,12 +663,13 @@ public sealed class AiGateway
     /// The agent's memories for this question. Memory is help, not a
     /// dependency: a failure to read it is logged and the call goes on without.
     /// </summary>
-    private async Task<IReadOnlyList<AiRecalled>> RecallAsync(string agentKey, IReadOnlyList<AiMessage> messages, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<AiRecalled>> RecallAsync(
+        string agentKey, IReadOnlyList<AiMessage> messages, IReadOnlyList<long>? trial, CancellationToken cancellationToken)
     {
         try
         {
             string question = messages.LastOrDefault(m => m.Role == "user")?.Content ?? string.Empty;
-            return await _memory.RecallAsync(agentKey, question, cancellationToken);
+            return await _memory.RecallAsync(agentKey, question, cancellationToken, trial);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
