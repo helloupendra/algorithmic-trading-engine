@@ -22,7 +22,8 @@ public sealed record LiveRunHistoryFilter(
     DateOnly? FromDate,
     DateOnly? ToDate,
     int Take,
-    int Skip)
+    int Skip,
+    bool Recaps = false)
 {
     public const int DefaultTake = 100;
     public const int MaxTake = 500;
@@ -105,8 +106,10 @@ public sealed class LiveRunHistoryBuilder
             .GroupBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
+        // Live trading, or (asked for) the recaps alone: never the two mixed (RecapRuns).
         var query = _dbContext.SimulationRuns.AsNoTracking()
             .Where(x => x.Mode == LivePaperMode);
+        query = filter.Recaps ? query.OnlyRecaps() : query.WithoutRecaps();
 
         if (filter.UserId.HasValue)
         {
@@ -307,6 +310,8 @@ public sealed class LiveRunHistoryBuilder
             rows.Add(new LiveRunSummaryResponse
             {
                 RunId = run.Id,
+                IsRecap = RecapClock.IsRecap(run.ParametersJson),
+                RecapDate = RecapClock.RecapDate(run.ParametersJson)?.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
                 UserId = run.UserId,
                 UserName = userNames.TryGetValue(run.UserId, out var userName) ? userName : null,
                 StrategyId = running?.StrategyId ?? exit?.StrategyId ?? entry?.Id ?? StrategyCatalogService.StableId(run.StrategyName),
@@ -353,7 +358,7 @@ public sealed class LiveRunHistoryBuilder
     /// </summary>
     public async Task<List<LiveRunUserSummaryResponse>> SummarizeAsync(long? userId, CancellationToken cancellationToken)
     {
-        var runs = _dbContext.SimulationRuns.AsNoTracking().Where(x => x.Mode == LivePaperMode);
+        var runs = _dbContext.SimulationRuns.AsNoTracking().Where(x => x.Mode == LivePaperMode).WithoutRecaps();
         if (userId.HasValue)
         {
             long id = userId.Value;
@@ -475,7 +480,8 @@ public sealed class LiveRunHistoryBuilder
         if (names.Count == 0) return record;
 
         var runQuery = _dbContext.SimulationRuns.AsNoTracking()
-            .Where(x => x.Mode == LivePaperMode && names.Contains(x.StrategyName));
+            .Where(x => x.Mode == LivePaperMode && names.Contains(x.StrategyName))
+            .WithoutRecaps();
 
         if (userId.HasValue)
         {

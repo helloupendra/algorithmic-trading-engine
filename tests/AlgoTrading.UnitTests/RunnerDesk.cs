@@ -101,17 +101,19 @@ internal sealed class RunnerDesk : IDisposable
     }
 
     /// <summary>POST /api/Strategy/{Ghost}/start as <paramref name="callerId"/>, on its own request scope.</summary>
-    public async Task<IActionResult> Start(string underlying, long callerId = AdminId, long? ownerUserId = null)
+    public async Task<IActionResult> Start(string underlying, long callerId = AdminId, long? ownerUserId = null,
+        IMarketSessionService? sessions = null, Dictionary<string, System.Text.Json.JsonElement>? parameters = null)
     {
         await using var db = Db();
         var controller = Controller(db, callerId);
         return await controller.StartStrategy(
             GhostId,
-            new StartStrategyRequest { Underlying = underlying, OwnerUserId = ownerUserId },
+            new StartStrategyRequest { Underlying = underlying, OwnerUserId = ownerUserId, Parameters = parameters },
             new FixedLimits(MaxRunsPerAccount),
             RecapClockTests.Inert<IDerivativesInstrumentService>.Create(),
             new FixedMemory(() => AvailableMemoryBytes),
-            CancellationToken.None);
+            CancellationToken.None,
+            sessions);
     }
 
     /// <summary>The durable runner pids (system_settings), as the reconcile reads them.</summary>

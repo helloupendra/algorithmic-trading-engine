@@ -105,7 +105,9 @@ public sealed class TradeReviewerAgent(
             .Where(r => r.Mode == StrategyRunControl.LivePaperMode
                         && Stopped.Contains(r.Status)
                         && r.CompletedUtc != null && r.CompletedUtc >= since && r.CompletedUtc <= settledBy
-                        && r.StrategyName != ManualOrdersController.BookStrategyName)
+                        && r.StrategyName != ManualOrdersController.BookStrategyName
+                        // A recap replays another day's session: a test, not a run to journal.
+                        && !r.ParametersJson.Contains(RecapRuns.Marker) && !r.ParametersJson.Contains(RecapRuns.SpacedMarker))
             .OrderBy(r => r.CompletedUtc)
             .Select(r => new { r.Id, r.StartedUtc, r.CreatedUtc, r.ParametersJson })
             .ToListAsync(cancellationToken);
