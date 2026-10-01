@@ -647,6 +647,20 @@ function AgentCard({
   )
 }
 
+/**
+ * The element a link's anchor names, as it is laid out: the one with that id,
+ * or its twin (data-anchor) when that one is hidden. On a phone the
+ * scoreboard's table is hidden and its rows are a list, so a #atr-score-… link
+ * from Data → Replay lands on the list's row. Null until one is laid out.
+ */
+function shownAnchor(name: string): HTMLElement | null {
+  const laidOut = (el: Element | null): el is HTMLElement => el instanceof HTMLElement && el.getClientRects().length > 0
+  const byId = document.getElementById(name)
+  if (laidOut(byId)) return byId
+  for (const el of document.querySelectorAll(`[data-anchor="${CSS.escape(name)}"]`)) if (laidOut(el)) return el
+  return null
+}
+
 export function AiAgentsPage() {
   const agents = useAiAgents()
   const models = useAiModels()
@@ -671,7 +685,7 @@ export function AiAgentsPage() {
     let tries = 0
     let timer = 0
     const go = () => {
-      const el = document.getElementById(scrollTo)
+      const el = shownAnchor(scrollTo)
       if (el) el.scrollIntoView({ block: 'start' })
       else if (tries++ < 30) timer = window.setTimeout(go, 150)
     }

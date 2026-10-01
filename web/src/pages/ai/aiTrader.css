@@ -136,7 +136,9 @@
 
 /* --- the scoreboard ----------------------------------------------------------------------- */
 .atr-score { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
-.atr-score__table tr[id] { scroll-margin-top: calc(var(--topbar-h) + var(--tabbar-h) + 12px); }
+.atr-score__table tr[id],
+.atr-bl__row[data-anchor] { scroll-margin-top: calc(var(--topbar-h) + var(--tabbar-h) + 12px); }
+.atr-bl__row.is-selected { background: var(--brand-soft); }
 .atr-score__totals {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
