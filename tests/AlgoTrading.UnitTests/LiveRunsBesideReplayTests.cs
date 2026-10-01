@@ -300,6 +300,56 @@ public class LiveRunsBesideReplayTests
         Assert.Equal(101, due.Single().RunId);
     }
 
+    [Fact]
+    public async Task The_close_sweep_still_stops_and_squares_off_the_live_runs_when_the_replay_lookup_throws()
+    {
+        // Every minute from 15:30 the sweep asks the replay which runs are its own first. That read failing
+        // (the database blinking, the replay's service not building) must not keep the live runs open.
+        using var desk = new CarryForwardTests.Desk(more: services =>
+            services.AddScoped<MarketReplayService>(_ => throw new InvalidOperationException("The replay's state could not be read.")));
+        long run = desk.NewRun("Ghost", CarryForwardTests.Desk.Owner, parameters: LiveParameters);
+        long leg = desk.Fill(run, "Ghost", "G1", Call, "SELL", 2, 100m, Ist(9, 28, 10, 0));
+        desk.Quote(Call, 90m);
+        desk.Register(run, "Ghost", CarryForwardTests.Desk.Owner);
+
+        int stopped = await MarketHoursService.StopRunsPastTheirCloseAsync(desk.Scopes, PositionGreeksTests.Sessions(), desk.Registry,
+            NullLogger.Instance, Ist(9, 28, 15, 31), CancellationToken.None);
+
+        Assert.Equal(1, stopped);
+        Assert.Equal("Stopped", desk.Run(run).Status);
+        Assert.Equal(("Closed", 90m), (desk.Position(leg).Status, desk.Position(leg).LastMarkPrice));
+        Assert.Null(desk.Registry.Get(run));
+    }
+
+    [Fact]
+    public async Task The_close_sweep_stops_the_live_runs_and_leaves_a_playing_replays_run_to_the_replay()
+    {
+        var replay = ReplayPlaying();
+        using var desk = new CarryForwardTests.Desk(replay, services => services.AddScoped(sp =>
+        {
+            var db = sp.GetRequiredService<TradingDbContext>();
+            var lots = new PositionGreeksTests.FixedLots(75);
+            return new MarketReplayService(db, new FakePlayer(), new FakeChannel(), new FakeStopper(), replay, PositionGreeksTests.Sessions(),
+                new RunPnl(db, lots, new RunCharges(db, lots), replay), new FakeRecapFeeds(), NullLogger<MarketReplayService>.Instance);
+        }));
+        long live = desk.NewRun("Ghost", CarryForwardTests.Desk.Owner, parameters: LiveParameters);
+        long recap = desk.NewRun("Ghost", CarryForwardTests.Desk.Owner, parameters: """{"session":"recap","recap_date":"2026-09-25","underlying":"NIFTY"}""");
+        desk.Fill(live, "Ghost", "G1", Call, "SELL", 2, 100m, Ist(9, 28, 10, 0));
+        desk.Fill(recap, "Ghost", "G1", Call, "SELL", 2, 100m, Ist(9, 28, 10, 0));
+        desk.Quote(Call, 90m);
+        desk.Register(live, "Ghost", CarryForwardTests.Desk.Owner);
+        desk.Register(recap, "Ghost", CarryForwardTests.Desk.Owner);
+        desk.Seed(db => Store(db, MarketReplayService.StatePlaying, [recap]));
+
+        int stopped = await MarketHoursService.StopRunsPastTheirCloseAsync(desk.Scopes, PositionGreeksTests.Sessions(), desk.Registry,
+            NullLogger.Instance, Ist(9, 28, 15, 31), CancellationToken.None);
+
+        Assert.Equal(1, stopped);
+        Assert.Equal("Stopped", desk.Run(live).Status);
+        Assert.Equal("Running", desk.Run(recap).Status);
+        Assert.NotNull(desk.Registry.Get(recap));
+    }
+
     // ========================================================= the runner's reads
 
     [Fact]

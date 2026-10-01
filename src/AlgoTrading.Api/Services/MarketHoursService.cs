@@ -283,15 +283,25 @@ namespace AlgoTrading.Api.Services
         /// later; it never keeps the other runs, or the feed shutdown after this,
         /// from going ahead.
         /// </summary>
-        private async Task StopRunsPastTheirCloseAsync(DateTime nowUtc, CancellationToken cancellationToken)
+        private Task StopRunsPastTheirCloseAsync(DateTime nowUtc, CancellationToken cancellationToken)
+            => StopRunsPastTheirCloseAsync(_scopeFactory, _marketSession, _runs, _logger, nowUtc, cancellationToken);
+
+        /// <summary>One sweep of <see cref="StopRunsPastTheirCloseAsync(DateTime, CancellationToken)"/>; answers how many runs it stopped. Internal for tests.</summary>
+        internal static async Task<int> StopRunsPastTheirCloseAsync(
+            IServiceScopeFactory scopeFactory,
+            IMarketSessionService sessions,
+            StrategyProcessRegistry runs,
+            ILogger logger,
+            DateTime nowUtc,
+            CancellationToken cancellationToken)
         {
             try
             {
-                var replayRuns = await ReplayRunIdsAsync(_scopeFactory, _logger, cancellationToken);
-                var due = RunsDueAtClose(_marketSession, nowUtc, _runs.List(), replayRuns);
-                if (due.Count == 0) return;
+                var replayRuns = await ReplayRunIdsAsync(scopeFactory, logger, cancellationToken);
+                var due = RunsDueAtClose(sessions, nowUtc, runs.List(), replayRuns);
+                if (due.Count == 0) return 0;
 
-                using var scope = _scopeFactory.CreateScope();
+                using var scope = scopeFactory.CreateScope();
                 var control = scope.ServiceProvider.GetRequiredService<StrategyRunControl>();
                 int stopped = 0;
                 foreach (var run in due)
@@ -309,12 +319,13 @@ namespace AlgoTrading.Api.Services
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Market close: could not stop run {RunId} ({Reason}); asking again in a minute.", run.RunId, run.Reason);
+                        logger.LogError(ex, "Market close: could not stop run {RunId} ({Reason}); asking again in a minute.", run.RunId, run.Reason);
                     }
                 }
 
-                _logger.LogInformation("Market close: stopped {Count} strategy run(s) — {Reasons}.",
+                logger.LogInformation("Market close: stopped {Count} strategy run(s) — {Reasons}.",
                     stopped, string.Join(", ", due.Select(r => r.Reason).Distinct()));
+                return stopped;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -322,7 +333,8 @@ namespace AlgoTrading.Api.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Market close: the strategy-run sweep failed; asking again in a minute.");
+                logger.LogError(ex, "Market close: the strategy-run sweep failed; asking again in a minute.");
+                return 0;
             }
         }
 
