@@ -211,6 +211,8 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.AiTraderShadowBook>
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.IBaselineMarket, AlgoTrading.Api.Services.AiTrader.BaselineMarket>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.AiTraderBaselineScorer>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiTrader.AiTraderAgent>();
+// The AI's one Telegram digest a day (the AI Trader's day and the run reviews); last, so a tick's other work is in it.
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.AiDailyDigest>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.AiAgents.AiAgentScheduler>();
 // The morning plan against what is live (GET /api/Desk/plan); Desk:PlanFile overrides where it is read from.
 builder.Services.Configure<AlgoTrading.Api.Configuration.DeskOptions>(

@@ -79,7 +79,10 @@ public sealed class AiSettings
     /// <summary>IST time after which a trading day's stopped runs are reviewed ("15:45": after the NSE close settles).</summary>
     public string ReviewAfterIst { get; set; } = "15:45";
 
-    /// <summary>Send one Telegram digest to the desk's system channel when a batch of reviews is done.</summary>
+    /// <summary>
+    /// Send the AI's one Telegram digest a day to the desk's system channel: the run reviews and the AI Trader's
+    /// day (<c>AiDailyDigest</c>). Named when it carried the reviews alone.
+    /// </summary>
     public bool ReviewDigestToTelegram { get; set; } = true;
 
     /// <summary>Minutes between the News Analyst's batches.</summary>

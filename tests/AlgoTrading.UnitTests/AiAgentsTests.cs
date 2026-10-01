@@ -21,7 +21,7 @@ namespace AlgoTrading.UnitTests;
 public class AiAgentsTests
 {
     // Wednesday 30 Sep 2026, in IST.
-    private static DateTime Ist(int hour, int minute) => IstTime.FromIst(new DateTime(2026, 9, 30, hour, minute, 0));
+    internal static DateTime Ist(int hour, int minute) => IstTime.FromIst(new DateTime(2026, 9, 30, hour, minute, 0));
 
     // ---------- the trade reviewer: when a run is due ----------
 
@@ -123,27 +123,6 @@ public class AiAgentsTests
 
         Assert.Equal(AiReportStatus.Invalid, report!.Status);
         Assert.Equal("The run lost money because the market went up.", report.Body);
-    }
-
-    [Fact]
-    public async Task When_the_reviews_are_done_one_digest_goes_to_Telegram_and_not_twice()
-    {
-        var ai = BuildOn();
-        long runId = SeedRun(ai, stoppedAt: Ist(15, 31));
-        // A deviation is asked twice; both reviews find it.
-        ai.Provider.On(Judge1, Answer("""{"verdict":"deviated","title":"Entered at 09:47, not 09:20","journal":"Late entry."}"""),
-            Answer("""{"verdict":"deviated","title":"Late entry at 09:47","journal":"Entered late."}"""));
-        var notifier = new Notifier();
-        // Reports are stamped at 15:50 IST; the reviewer's ticks come at 16:00, 16:01 and 16:02.
-        var reviewer = Reviewer(ai, notifier, new FixedTime(Ist(15, 50)));
-
-        Assert.True(await reviewer.RunOnceAsync(Ist(16, 0), CancellationToken.None));   // reviews the run
-        Assert.False(await reviewer.RunOnceAsync(Ist(16, 1), CancellationToken.None));  // nothing due: digest
-        Assert.False(await reviewer.RunOnceAsync(Ist(16, 2), CancellationToken.None));  // nothing new: no digest
-
-        var message = Assert.Single(notifier.Messages);
-        Assert.Contains("1 run review written: 0 followed the spec, 1 did not", message);
-        Assert.Contains($"#{runId}: Entered at 09:47, not 09:20", message);
     }
 
     [Theory]
@@ -467,7 +446,7 @@ public class AiAgentsTests
         Assert.Contains("Do not take them from get_quotes", market);
     }
 
-    private static Services BuildOn(AiSettings? settings = null, params IAiTool[] tools)
+    internal static Services BuildOn(AiSettings? settings = null, params IAiTool[] tools)
     {
         var ai = Build(settings, null, tools);
         foreach (var key in new[] { AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer })
@@ -480,7 +459,7 @@ public class AiAgentsTests
 
     private const string AnalystFirst = "moonshotai/kimi-k3";
 
-    private static long SeedRun(Services ai, DateTime? stoppedAt, string strategy = "Ghost", string parameters = """{"underlying":"NIFTY"}""",
+    internal static long SeedRun(Services ai, DateTime? stoppedAt, string strategy = "Ghost", string parameters = """{"underlying":"NIFTY"}""",
         string status = "Stopped", DateTime? started = null)
     {
         var run = new SimulationRun
@@ -505,11 +484,11 @@ public class AiAgentsTests
         Title = $"Incident {id}", Summary = "Feed quiet", EvidenceJson = evidence, FirstSeenUtc = firstSeen, LastSeenUtc = firstSeen,
     };
 
-    private static TradeReviewerAgent Reviewer(Services ai, ISystemNotifier? notifier = null, TimeProvider? reportClock = null) => new(
-        ai.Db, ai.Gateway, new AiReportWriter(ai.Db, ai.Options, reportClock), ai.Toolbox, new AiSchedulerState(), notifier ?? new Notifier(), ai.Options,
+    internal static TradeReviewerAgent Reviewer(Services ai, TimeProvider? reportClock = null) => new(
+        ai.Db, ai.Gateway, new AiReportWriter(ai.Db, ai.Options, reportClock), ai.Toolbox, new AiSchedulerState(), ai.Options,
         NullLogger<TradeReviewerAgent>.Instance);
 
-    private sealed class FixedTime(DateTime utc) : TimeProvider
+    internal sealed class FixedTime(DateTime utc) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => new(DateTime.SpecifyKind(utc, DateTimeKind.Utc));
     }
@@ -542,21 +521,5 @@ public class AiAgentsTests
         }
 
         public Task<AiReport?> RunForAsync(string? subjectId, CancellationToken cancellationToken) => Task.FromResult<AiReport?>(null);
-    }
-
-    private sealed class Notifier : ISystemNotifier
-    {
-        public List<string> Messages { get; } = [];
-
-        public Task NotifyAsync(NotificationCategory category, NotificationSeverity severity, string title, string message,
-            string? underlying = null, string? symbol = null, long? simulationRunId = null, CancellationToken cancellationToken = default)
-        {
-            Messages.Add(message);
-            return Task.CompletedTask;
-        }
-
-        public Task RecordAsync(NotificationCategory category, NotificationSeverity severity, string title, string message,
-            string? underlying = null, string? symbol = null, long? simulationRunId = null, CancellationToken cancellationToken = default)
-            => Task.CompletedTask;
     }
 }

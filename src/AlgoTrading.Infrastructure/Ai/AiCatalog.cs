@@ -126,6 +126,9 @@ public static class AiCatalog
     /// <summary>The AI Trader: reads a code-built market brief every ten minutes and proposes; code enforces the rules and places the orders.</summary>
     public const string AiTrader = "ai-trader";
 
+    /// <summary>The AI's one Telegram message a day (run reviews and the AI Trader's day). A scheduled job, not an agent: it asks no model.</summary>
+    public const string DailyDigest = "ai-digest";
+
     public static readonly IReadOnlyList<AiTierDef> Tiers =
     [
         // Nemotron 3 Super is every tier's first fallback (owner, 30 Sep): on the
