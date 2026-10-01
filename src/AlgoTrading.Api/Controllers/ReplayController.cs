@@ -79,6 +79,10 @@ public class ReplayController(MarketReplayService replay, IMarketReplayBook book
     /// <remarks>
     /// After an API restart the book is empty until the replay is found again; the player's first batch
     /// reopens it rather than being refused, which would fail the player (<see cref="MarketReplayService.ReopenBookAsync"/>).
+    /// The answer's <c>reopened</c> is true when the book held none of the day's prices before this batch: it was
+    /// opened again (by this batch or by the monitor's look), or this is the replay's first batch. The player then
+    /// sends the latest price of every other symbol it has played (<c>desk_replay.Player</c>): a contract that does
+    /// not trade again had no price until it did.
     /// </remarks>
     [HttpPost("ticks")]
     [Authorize(Roles = LiveDataController.Writers)]
@@ -87,6 +91,7 @@ public class ReplayController(MarketReplayService replay, IMarketReplayBook book
         if (ticks is null || ticks.Count == 0) return BadRequest(new { error = "Send a list of ticks." });
         if (ticks.Count > MaxTicks) return BadRequest(new { error = $"At most {MaxTicks} ticks a batch." });
         if (!await replay.ReopenBookAsync(cancellationToken)) return Conflict(new { error = "No market replay is on." });
-        return Ok(new { taken = book.Apply(ticks) });
+        bool reopened = book.ClockUtc is null;
+        return Ok(new { taken = book.Apply(ticks), reopened });
     }
 }

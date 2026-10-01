@@ -6,6 +6,7 @@ using AlgoTrading.Application.Providers;
 using AlgoTrading.Contracts.LiveData;
 using AlgoTrading.Contracts.Simulator;
 using AlgoTrading.Domain.Entities;
+using AlgoTrading.Domain.Enums;
 using AlgoTrading.Infrastructure.Persistence;
 using AlgoTrading.Infrastructure.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -357,6 +358,101 @@ public class MarketReplayTests
     }
 
     [Fact]
+    public async Task A_new_replay_takes_an_id_no_ai_trader_row_or_queue_used_though_the_stored_session_was_lost()
+    {
+        // The next id was the stored session's + 1: with that setting lost or unreadable it began at 1 again, and
+        // the new replay shared an old one's AI Trader decisions and shadow positions.
+        var replay = Replay(out var db, out var player, out _, out _, out _);
+        long runId = Run(db, RecapOfDay, status: "Running");
+        SeedBars(db);
+        db.AiTraderDecisions.Add(new AiTraderDecision { Day = Day, ClockUtc = Ist(10, 0), CreatedUtc = DateTime.UtcNow, Mode = AiTraderModes.Replay, ReplaySessionId = 41 });
+        db.AiTraderShadowPositions.Add(new AiTraderShadowPosition { Day = Day, Mode = AiTraderModes.Replay, ReplaySessionId = 44, CreatedUtc = DateTime.UtcNow,
+            EntryUtc = Ist(10, 1), Symbol = Option, Underlying = "NIFTY", OptionType = "CE", Lots = 1, LotSize = 65 });
+        db.SystemSettings.Add(new SystemSetting { Key = SystemSettingKeys.ReplaySession, Value = """{"id":3,"date":"2026-09-""", CreatedUtc = DateTime.UtcNow, UpdatedUtc = DateTime.UtcNow });
+        db.SaveChanges();
+
+        var started = await replay.StartAsync(new ReplayStartRequest("2026-09-30", 1, "09:15", [runId]), "admin", default);
+
+        Assert.Equal(45, started.Session!.Id);
+        Assert.Equal("45", player.Args![player.Args.ToList().IndexOf("--session") + 1]);
+
+        // A queue's sessions count too, whatever the stored session says.
+        await replay.StopAsync("admin", default);
+        db.SystemSettings.Add(new SystemSetting { Key = SystemSettingKeys.ReplayQueue, CreatedUtc = DateTime.UtcNow, UpdatedUtc = DateTime.UtcNow,
+            Value = """{"id":2,"dates":["2026-09-29"],"speed":2,"fromIst":"09:15","next":1,"sessions":[50],"skipped":[],"by":"admin","createdUtc":"2026-10-01T10:00:00Z","endedUtc":"2026-10-01T13:00:00Z","note":null}""" });
+        db.SystemSettings.Single(s => s.Key == SystemSettingKeys.ReplaySession).Value = "";
+        db.SaveChanges();
+        long again = Run(db, RecapOfDay, status: "Running");
+
+        Assert.Equal(51, (await replay.StartAsync(new ReplayStartRequest("2026-09-30", 1, "09:15", [again]), "admin", default)).Session!.Id);
+    }
+
+    // ---------- the recorded days ----------
+
+    [Fact]
+    public void The_days_listed_are_the_exchanges_session_days_weekend_special_sessions_included()
+    {
+        // The budget day (Sunday 1 Feb 2026) and a Sunday Muhurat traded; a plain Saturday and a weekday holiday did not.
+        var calendar = new TestCalendar();
+        calendar.Special[new DateOnly(2026, 2, 1)] = ("Union Budget", new TimeOnly(9, 15), new TimeOnly(15, 30));
+        calendar.Special[new DateOnly(2026, 11, 8)] = ("Diwali Muhurat", new TimeOnly(18, 0), new TimeOnly(19, 0));
+        calendar.Holidays[new DateOnly(2026, 10, 2)] = "Gandhi Jayanti";
+        var replay = Replay(out _, out _, out _, out _, out _, nowUtc: IstTime.FromIst(new DateTime(2026, 11, 10, 12, 0, 0)), calendar: calendar);
+        var recorded = new[]
+        {
+            new DateOnly(2026, 2, 1),     // Sunday, the budget's special session
+            new DateOnly(2026, 9, 30),    // Wednesday
+            new DateOnly(2026, 10, 2),    // Friday, a holiday
+            new DateOnly(2026, 10, 3),    // Saturday
+            new DateOnly(2026, 11, 8),    // Sunday, Muhurat
+            new DateOnly(2026, 11, 10),   // today, not over
+        };
+
+        Assert.Equal(new[] { new DateOnly(2026, 2, 1), new DateOnly(2026, 9, 30), new DateOnly(2026, 11, 8) }, replay.ReplayableDays(recorded));
+    }
+
+    [Fact]
+    public void The_days_coverage_is_counted_in_ist_whatever_the_databases_time_zone()
+    {
+        // (timestamptz + interval)::date is cast in the connection's TimeZone: on a server not set to UTC the
+        // minutes moved days. AT TIME ZONE 'UTC' gives a plain timestamp first, which casts the same anywhere.
+        string sql = MarketReplayService.MinutesByDaySql;
+
+        Assert.DoesNotContain("\"BarStartUtc\" + interval", sql);
+        Assert.Equal(3, System.Text.RegularExpressions.Regex.Matches(sql,
+            @"\(\(b\.""BarStartUtc"" at time zone 'UTC'\) \+ interval '5 hours 30 minutes'\)::(date|time)", System.Text.RegularExpressions.RegexOptions.IgnoreCase).Count);
+    }
+
+    // ---------- the book after an API restart ----------
+
+    [Fact]
+    public async Task After_an_api_restart_the_players_next_post_is_told_the_book_was_opened_again()
+    {
+        // The player re-sends then the latest price of every symbol it has played, so a contract that does not
+        // tick again is still priced. It is told whichever of the monitor's look and its own post opened the book.
+        var replay = Replay(out var db, out _, out var channel, out _, out var book);
+        long runId = Run(db, RecapOfDay, status: "Running");
+        SeedBars(db);
+        await replay.StartAsync(new ReplayStartRequest("2026-09-30", 1, "09:15", [runId]), "admin", default);
+        var controller = new ReplayController(replay, book);
+        Assert.True(Reopened(await controller.Ticks([Tick(Spot, 25000m, Ist(10, 0))], default)));    // the first batch: nothing to re-send
+        Assert.False(Reopened(await controller.Ticks([Tick(Spot, 25001m, Ist(10, 1))], default)));
+
+        book.End();    // a restart; the player's post comes first
+        Assert.True(Reopened(await controller.Ticks([Tick(Spot, 25002m, Ist(10, 2))], default)));
+        Assert.False(Reopened(await controller.Ticks([Tick(Option, 120m, Ist(10, 1, 30))], default)));
+
+        book.End();    // a restart; the monitor's look comes first
+        channel.Status = new ReplayPlayerStatus(1, MarketReplayService.StatePlaying, Ist(10, 3), 10, 0.2, null, DateTime.UtcNow);
+        await replay.TickAsync(default);
+        Assert.Equal(Day, book.Day);
+        Assert.True(Reopened(await controller.Ticks([Tick(Spot, 25003m, Ist(10, 3))], default)));
+
+        static bool Reopened(IActionResult result) =>
+            System.Text.Json.JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(result).Value).GetProperty("reopened").GetBoolean();
+    }
+
+    [Fact]
     public void Progress_runs_from_the_open_to_the_close_and_is_whole_once_finished()
     {
         Assert.Equal(0, MarketReplayService.ProgressOf(null, Day, MarketReplayService.StatePlaying));
@@ -369,7 +465,7 @@ public class MarketReplayTests
     private static readonly FakeClock Clock = new();
 
     private static MarketReplayService Replay(out TradingDbContext db, out FakePlayer player, out FakeChannel channel,
-        out FakeStopper stopper, out MarketReplayBook book, DateTime? nowUtc = null, string? recapFeed = null)
+        out FakeStopper stopper, out MarketReplayBook book, DateTime? nowUtc = null, string? recapFeed = null, IMarketCalendar? calendar = null)
     {
         // Saturday 3 Oct 2026, noon IST: no session.
         Clock.Set(nowUtc ?? IstTime.FromIst(new DateTime(2026, 10, 3, 12, 0, 0)));
@@ -381,8 +477,32 @@ public class MarketReplayTests
         var lots = new PositionGreeksTests.FixedLots(65);
         var charges = new RunCharges(db, lots);
         return new MarketReplayService(db, player, channel, stopper, book,
-            new MarketSessionService(new OpenCalendar()), new RunPnl(db, lots, charges, book),
+            new MarketSessionService(calendar ?? new OpenCalendar()), new RunPnl(db, lots, charges, book),
             new FakeRecapFeeds { Running = recapFeed }, NullLogger<MarketReplayService>.Instance, Clock);
+    }
+
+    /// <summary>NSE's and BSE's holidays and special sessions, as a test sets them.</summary>
+    internal sealed class TestCalendar : IMarketCalendar
+    {
+        public Dictionary<DateOnly, string> Holidays { get; } = [];
+
+        public Dictionary<DateOnly, (string Name, TimeOnly Open, TimeOnly Close)> Special { get; } = [];
+
+        public MarketHoliday? HolidayOn(string exchange, DateOnly date) =>
+            exchange is "NSE" or "BSE" && Holidays.TryGetValue(date, out var name)
+                ? new MarketHoliday { Exchange = exchange, Date = date, Name = name, Closure = MarketClosure.FullDay }
+                : null;
+
+        public MarketSpecialSession? SpecialSessionOn(string exchange, DateOnly date) =>
+            exchange is "NSE" or "BSE" && Special.TryGetValue(date, out var s)
+                ? new MarketSpecialSession { Exchange = exchange, Date = date, Name = s.Name, OpenIst = s.Open, CloseIst = s.Close }
+                : null;
+
+        public bool HasYear(string exchange, int year) => true;
+
+        public bool IsLoaded => true;
+
+        public Task RefreshAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
     /// <summary>A vendor's recap feed, running (its heartbeat name) or not (null).</summary>
@@ -447,10 +567,23 @@ public class MarketReplayTests
 
         public string? StoppedFor { get; private set; }
 
+        /// <summary>How many starts from now fail, as when the engine cannot be launched.</summary>
+        public int RefuseStarts { get; set; }
+
+        /// <summary>How many starts were refused.</summary>
+        public int Refused { get; private set; }
+
         public Task<bool> IsRunningAsync(CancellationToken cancellationToken) => Task.FromResult(Running);
 
         public Task<(bool Started, string Message)> StartAsync(IReadOnlyList<string> args, CancellationToken cancellationToken)
         {
+            if (RefuseStarts > 0)
+            {
+                RefuseStarts--;
+                Refused++;
+                return Task.FromResult((false, "Python exited at once: could not connect to the database."));
+            }
+
             if (RefusesWhileRunning && Running) return Task.FromResult((false, "Market replay is already running (pid 4242)."));
             Args = args;
             Starts.Add(args);
