@@ -254,7 +254,137 @@ public class AiDailyDigestTests
         Assert.True(AiAgentScheduler.IsOn(AiCatalog.DailyDigest, state, Settings()));
     }
 
+    [Fact]
+    public async Task A_day_missed_while_the_API_was_down_is_sent_late_once_and_the_next_day_still_gets_its_own()
+    {
+        var ai = Build(Settings());
+        await On(ai, AiCatalog.AiTrader);
+        SeedSent(ai, At(Tue29Sep, 15, 46));
+        // Wednesday's looks and shadow book; the API went down at 15:40, before Wednesday's digest.
+        SeedTradersDay(ai);
+        var telegram = new Recorder();
+
+        // Thursday 09:00, the API back: Wednesday's digest goes, titled with its day and as late.
+        Assert.True(await Digest(ai, telegram).RunOnceAsync(At(Thu01Oct, 9, 0), default));
+        var late = Assert.Single(telegram.Sent);
+        Assert.Equal("AI day, Wed 30 Sep (sent late)", late.Title);
+        Assert.StartsWith("AI Trader (shadow mode)\nLooks 10 · proposed 8 · allowed 4 · refused 4 · no answer 1\nShadow book: 3 trades", late.Message);
+
+        // Never twice: not the next minute, not after a restart.
+        Assert.False(await Digest(ai, telegram).RunOnceAsync(At(Thu01Oct, 9, 1), default));
+        Assert.False(await Digest(ai, telegram).RunOnceAsync(At(Thu01Oct, 12, 0), default));
+
+        // Thursday's own digest still goes, after its close.
+        ai.Db.AiTraderDecisions.Add(Look(At(Thu01Oct, 9, 20), "none", true, "ok"));
+        await ai.Db.SaveChangesAsync();
+        Assert.False(await Digest(ai, telegram).RunOnceAsync(At(Thu01Oct, 15, 44), default));
+        Assert.True(await Digest(ai, telegram).RunOnceAsync(At(Thu01Oct, 15, 46), default));
+        Assert.False(await Digest(ai, telegram).RunOnceAsync(At(Thu01Oct, 15, 47), default));
+        Assert.Equal(["AI day, Wed 30 Sep (sent late)", "AI day, Thu 1 Oct"], telegram.Sent.Select(n => n.Title));
+        Assert.StartsWith("AI Trader (shadow mode)\nLooks 1 · proposed 0", telegram.Sent[1].Message);
+    }
+
+    [Fact]
+    public async Task Only_the_latest_missed_day_is_sent_late_and_the_older_ones_are_one_line()
+    {
+        var ai = Build(Settings());
+        await On(ai, AiCatalog.AiTrader, AiCatalog.TradeReviewer);
+        SeedSent(ai, At(Fri25Sep, 15, 46));
+        SeedTradersDay(ai);
+        SeedReview(ai, 900, "followed", "Kept to its spec", At(Mon28Sep, 15, 50));
+        var telegram = new Recorder();
+
+        // Down from Monday's close to Thursday morning: Monday, Tuesday and Wednesday had no digest.
+        Assert.True(await Digest(ai, telegram).RunOnceAsync(At(Thu01Oct, 10, 0), default));
+        var late = Assert.Single(telegram.Sent);
+        Assert.Equal("AI day, Wed 30 Sep (sent late)", late.Title);
+        Assert.Contains("\n\n1 run review written: 1 followed the spec, 0 did not.\nRead them on the AI page, Reports tab.", late.Message);
+        Assert.EndsWith("\n\nThe digests for Mon 28 Sep–Tue 29 Sep were missed.", late.Message);
+
+        Assert.False(await Digest(ai, telegram).RunOnceAsync(At(Thu01Oct, 10, 1), default));
+        Assert.Single(telegram.Sent);
+    }
+
+    [Fact]
+    public async Task A_day_with_nothing_to_say_is_neither_sent_late_nor_called_missed()
+    {
+        var ai = Build(Settings());
+        SeedSent(ai, At(Mon28Sep, 15, 46));
+        var telegram = new Recorder();
+
+        // Tuesday: nothing to say at the close.
+        Assert.False(await Digest(ai, telegram).RunOnceAsync(At(Tue29Sep, 15, 46), default));
+        Assert.Empty(telegram.Sent);
+
+        // No digest tick again until Thursday 09:00 (the API down on Tuesday night, and from 15:40 on Wednesday, after
+        // the AI Trader's day). Wednesday's goes late; Tuesday, dealt with at its time, is not called missed.
+        SeedTradersDay(ai);
+        Assert.True(await Digest(ai, telegram).RunOnceAsync(At(Thu01Oct, 9, 0), default));
+        var late = Assert.Single(telegram.Sent);
+        Assert.Equal("AI day, Wed 30 Sep (sent late)", late.Title);
+        Assert.DoesNotContain("missed", late.Message);
+    }
+
+    [Fact]
+    public async Task Reviews_still_owed_are_not_on_their_own_a_reason_to_send_a_day_late()
+    {
+        var ai = Build(Settings());
+        await On(ai, AiCatalog.TradeReviewer);
+        SeedSent(ai, At(Tue29Sep, 15, 46));
+        // Wednesday's run, its review not written when the API went down at 15:40: still owed on Thursday morning.
+        AiAgentsTests.SeedRun(ai, stoppedAt: Ist(15, 31));
+        var telegram = new Recorder();
+
+        Assert.False(await Digest(ai, telegram).RunOnceAsync(At(Thu01Oct, 9, 0), default));
+        Assert.False(await Digest(ai, telegram).RunOnceAsync(At(Thu01Oct, 9, 1), default));
+        Assert.Empty(telegram.Sent);
+    }
+
+    [Fact]
+    public async Task Back_after_today_s_close_the_late_digest_goes_first_and_today_s_the_next_minute()
+    {
+        var ai = Build(Settings());
+        await On(ai, AiCatalog.AiTrader);
+        SeedSent(ai, At(Tue29Sep, 15, 46));
+        SeedTradersDay(ai);
+        ai.Db.AiTraderDecisions.Add(Look(At(Thu01Oct, 9, 20), "none", true, "ok"));
+        await ai.Db.SaveChangesAsync();
+        var telegram = new Recorder();
+
+        Assert.True(await Digest(ai, telegram).RunOnceAsync(At(Thu01Oct, 16, 0), default));
+        Assert.True(await Digest(ai, telegram).RunOnceAsync(At(Thu01Oct, 16, 1), default));
+        Assert.False(await Digest(ai, telegram).RunOnceAsync(At(Thu01Oct, 16, 2), default));
+        Assert.Equal(["AI day, Wed 30 Sep (sent late)", "AI day, Thu 1 Oct"], telegram.Sent.Select(n => n.Title));
+    }
+
+    [Fact]
+    public async Task With_no_digest_ever_sent_there_is_nothing_to_catch_up()
+    {
+        var ai = Build(Settings());
+        await On(ai, AiCatalog.AiTrader);
+        SeedTradersDay(ai);
+        var telegram = new Recorder();
+
+        Assert.False(await Digest(ai, telegram).RunOnceAsync(At(Thu01Oct, 9, 0), default));
+        Assert.Empty(telegram.Sent);
+    }
+
     // ---------- helpers ----------
+
+    private static readonly DateOnly Fri25Sep = new(2026, 9, 25);
+    private static readonly DateOnly Mon28Sep = new(2026, 9, 28);
+    private static readonly DateOnly Tue29Sep = new(2026, 9, 29);
+    private static readonly DateOnly Wed30Sep = Day;
+    private static readonly DateOnly Thu01Oct = new(2026, 10, 1);
+
+    private static DateTime At(DateOnly day, int hour, int minute) => IstTime.FromIst(day.ToDateTime(new TimeOnly(hour, minute)));
+
+    /// <summary>The last digest went at <paramref name="atUtc"/>, as the digest keeps it.</summary>
+    private static void SeedSent(Services ai, DateTime atUtc)
+    {
+        ai.Db.SystemSettings.Add(new SystemSetting { Key = AiDailyDigest.SentKey, Value = atUtc.ToString("O", CultureInfo.InvariantCulture), CreatedUtc = atUtc, UpdatedUtc = atUtc });
+        ai.Db.SaveChanges();
+    }
 
     private static AiDailyDigest Digest(Services ai, Recorder telegram, params DateOnly[] holidays) =>
         new(ai.Db, ai.Store, new AiReportWriter(ai.Db, ai.Options), new MarketSessionService(new Calendar(holidays)), telegram, ai.Options);

@@ -24,10 +24,17 @@ namespace AlgoTrading.Api.Services.AiAgents;
 /// (an MCX run's, after the MCX close) goes in the next one.
 /// </para>
 /// <para>
-/// Once a day: the time it went is kept in system settings before it is sent, so neither a restart nor the next
-/// tick sends it again. On a day with no NSE session it goes only if the AI Trader looked that day. Replay
-/// decisions and replay shadow positions are never in it. A section with nothing to say is left out, and nothing
-/// is sent when neither has anything.
+/// Once a day: the time it went and the day it was for are kept in system settings before it is sent, so neither a
+/// restart nor the next tick sends it again. On a day with no NSE session it goes only if the AI Trader looked that
+/// day. Replay decisions and replay shadow positions are never in it. A section with nothing to say is left out, and
+/// nothing is sent when neither has anything; such a day is kept as empty.
+/// </para>
+/// <para>
+/// A day missed (the API down from its close to midnight): on the next tick, the latest day of the last
+/// <see cref="CatchUpDays"/> that should have had one (an NSE trading day, or a day the AI Trader looked) and did
+/// not, and was not found empty, is sent then, titled with its day and "sent late". Older missed days are one line
+/// in it. It does not wait for reviews owed, and these alone are no reason to send it. The digest of the day it is
+/// sent on still goes after that day's close. Before 1 Oct a missed day's AI Trader section was never sent.
 /// </para>
 /// </remarks>
 public sealed class AiDailyDigest(
@@ -43,6 +50,22 @@ public sealed class AiDailyDigest(
     /// Trader too: kept, so the first digest after the change neither repeats reviews nor goes twice that day.
     /// </summary>
     public const string SentKey = "ai.reviewer.lastDigestUtc";
+
+    /// <summary>
+    /// The IST day (yyyy-MM-dd) the last digest sent was for, on time or late. A late digest goes after its own day,
+    /// so the time it went no longer tells which day it was for. When it is absent, the day <see cref="SentKey"/> was
+    /// sent on: every digest before 1 Oct went on its own day.
+    /// </summary>
+    public const string DayKey = "ai.digest.lastDay";
+
+    /// <summary>
+    /// The last IST day (yyyy-MM-dd) found with nothing to say once its digest was due, at its own time or by the
+    /// catch-up. Such a day is neither sent late nor called missed; a look later that evening still goes that day.
+    /// </summary>
+    public const string EmptyKey = "ai.digest.lastEmptyDay";
+
+    /// <summary>How far back a missed digest is looked for.</summary>
+    public const int CatchUpDays = 7;
 
     /// <summary>The longest it waits for the reviews still owed; those come in the next day's digest.</summary>
     public static readonly TimeSpan ReviewWait = TimeSpan.FromHours(2);
@@ -61,12 +84,23 @@ public sealed class AiDailyDigest(
         if (!s.ReviewDigestToTelegram) return false;
 
         var day = IstTime.DateOf(nowUtc);
-        var marker = await db.SystemSettings.FirstOrDefaultAsync(x => x.Key == SentKey, cancellationToken);
-        DateTime? last = marker is not null && DateTime.TryParse(marker.Value, CultureInfo.InvariantCulture,
+        var marks = await db.SystemSettings.AsNoTracking()
+            .Where(x => x.Key == SentKey || x.Key == DayKey || x.Key == EmptyKey)
+            .ToDictionaryAsync(x => x.Key, x => x.Value, cancellationToken);
+        DateTime? last = marks.TryGetValue(SentKey, out var sentText) && DateTime.TryParse(sentText, CultureInfo.InvariantCulture,
             DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var sent)
             ? sent
             : null;
-        if (last is DateTime l && IstTime.DateOf(l) >= day) return false;
+        // Before the day was kept, every digest went on its own day.
+        DateOnly? lastDay = DayOf(marks, DayKey) ?? (last is DateTime l ? IstTime.DateOf(l) : null);
+        if (lastDay >= day) return false;
+
+        DateOnly? emptyDay = DayOf(marks, EmptyKey);
+        if (new[] { lastDay, emptyDay }.Max() is DateOnly dealtWith)
+        {
+            var missed = await MissedDaysAsync(dealtWith, day, cancellationToken);
+            if (missed.Count > 0 && await SendLateAsync(missed, last, s, nowUtc, cancellationToken)) return true;
+        }
 
         var session = sessions.GetSessionInfo(nowUtc, "NSE", "FO");
         var due = IstTime.FromIst(day.ToDateTime(TradeReviewerAgent.ReviewAfter(s)));
@@ -84,28 +118,127 @@ public sealed class AiDailyDigest(
         var sections = new[] { trader is null ? null : TraderSection(trader), ReviewSection(reviews, owed) }
             .Where(x => x is not null)
             .ToList();
-        if (sections.Count == 0) return false;
-
-        // Kept before it is sent: a crash between the two loses one digest, and nothing can send it twice.
-        if (marker is null)
+        if (sections.Count == 0)
         {
-            marker = new SystemSetting { Key = SentKey, CreatedUtc = nowUtc };
-            db.SystemSettings.Add(marker);
+            // Kept, so the next day's catch-up neither sends this day late nor calls it missed.
+            if (emptyDay != day) await MarkAsync(EmptyKey, day, null, nowUtc, cancellationToken);
+            return false;
         }
 
-        marker.Value = nowUtc.ToString("O", CultureInfo.InvariantCulture);
-        marker.UpdatedBy = AgentKey;
-        marker.UpdatedUtc = nowUtc;
-        await db.SaveChangesAsync(cancellationToken);
+        // Kept before it is sent: a crash between the two loses one digest, and nothing can send it twice.
+        await MarkAsync(DayKey, day, nowUtc, nowUtc, cancellationToken);
 
         await notifier.NotifyAsync(NotificationCategory.System, NotificationSeverity.Info,
-            "AI day, " + day.ToString("ddd d MMM", CultureInfo.InvariantCulture), string.Join("\n\n", sections),
+            "AI day, " + DayName(day), string.Join("\n\n", sections),
             cancellationToken: cancellationToken);
         return true;
     }
 
     /// <summary>Not run by hand: it writes no report, and only its own rule keeps it to one a day.</summary>
     public Task<AiReport?> RunForAsync(string? subjectId, CancellationToken cancellationToken) => Task.FromResult<AiReport?>(null);
+
+    /// <summary>
+    /// The days before <paramref name="today"/> and after <paramref name="dealtWith"/> that should have had a digest
+    /// and did not: NSE trading days, and days the AI Trader looked. Oldest first, at most <see cref="CatchUpDays"/>
+    /// back.
+    /// </summary>
+    private async Task<List<DateOnly>> MissedDaysAsync(DateOnly dealtWith, DateOnly today, CancellationToken cancellationToken)
+    {
+        var from = dealtWith.AddDays(1);
+        var floor = today.AddDays(-CatchUpDays);
+        if (from < floor) from = floor;
+        if (from >= today) return [];
+
+        var looked = await db.AiTraderDecisions.AsNoTracking()
+            .Where(d => d.Day >= from && d.Day < today && d.ReplaySessionId == null)
+            .Select(d => d.Day)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+        var days = new List<DateOnly>();
+        for (var d = from; d < today; d = d.AddDays(1))
+        {
+            if (looked.Contains(d) || sessions.GetSessionInfo(IstTime.MiddayUtc(d), "NSE", "FO").IsTradingDay) days.Add(d);
+        }
+
+        return days;
+    }
+
+    /// <summary>
+    /// The latest missed day's digest, sent now and titled as late, with one line for any missed before it. False
+    /// when it has nothing to say: the day is then kept as empty, so it is neither sent later nor called missed.
+    /// It does not wait for reviews still owed: it says how many, and they come in the next digest. Reviews owed are
+    /// not on their own a reason to send one late (an MCX run stopped at the close is still owed after midnight).
+    /// </summary>
+    private async Task<bool> SendLateAsync(IReadOnlyList<DateOnly> missed, DateTime? lastSentUtc, AiSettings s, DateTime nowUtc,
+        CancellationToken cancellationToken)
+    {
+        var day = missed[^1];
+        var earlier = missed.Take(missed.Count - 1).ToList();
+        var state = await store.LoadAsync(cancellationToken);
+        var trader = await TraderDayAsync(day, state, s, cancellationToken);
+        // On, but no look and no position that day: the API was down, most likely, and there is nothing to tell late.
+        if (trader is { Looks.Count: 0, Book.Count: 0 }) trader = null;
+        var reviews = await ReviewsSinceAsync(lastSentUtc ?? nowUtc - TimeSpan.FromDays(1), cancellationToken);
+
+        if (trader is null && reviews.Count == 0 && earlier.Count == 0)
+        {
+            await MarkAsync(EmptyKey, day, null, nowUtc, cancellationToken);
+            return false;
+        }
+
+        int owed = await ReviewsOwedAsync(state, s, nowUtc, cancellationToken);
+        var sections = new[] { trader is null ? null : TraderSection(trader), ReviewSection(reviews, owed), MissedLine(earlier) }
+            .Where(x => x is not null)
+            .ToList();
+
+        // Kept before it is sent, as the day's own: never sent twice, and the next day's own digest still goes.
+        await MarkAsync(DayKey, day, nowUtc, nowUtc, cancellationToken);
+        await notifier.NotifyAsync(NotificationCategory.System, NotificationSeverity.Info,
+            $"AI day, {DayName(day)} (sent late)", string.Join("\n\n", sections),
+            cancellationToken: cancellationToken);
+        return true;
+    }
+
+    /// <summary>"The digests for Mon 28 Sep–Tue 29 Sep were missed." Null when none were.</summary>
+    private static string? MissedLine(IReadOnlyList<DateOnly> days) => days.Count switch
+    {
+        0 => null,
+        1 => $"The digest for {DayName(days[0])} was missed.",
+        _ => $"The digests for {DayName(days[0])}–{DayName(days[^1])} were missed.",
+    };
+
+    /// <summary>
+    /// Keeps <paramref name="day"/> under <paramref name="key"/> (<see cref="DayKey"/> or <see cref="EmptyKey"/>) and,
+    /// when a digest goes, the time it went (<see cref="SentKey"/>, which the next digest's reviews are counted from).
+    /// </summary>
+    private async Task MarkAsync(string key, DateOnly day, DateTime? sentUtc, DateTime nowUtc, CancellationToken cancellationToken)
+    {
+        await SetAsync(key, day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), nowUtc, cancellationToken);
+        if (sentUtc is DateTime sent) await SetAsync(SentKey, sent.ToString("O", CultureInfo.InvariantCulture), nowUtc, cancellationToken);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private static DateOnly? DayOf(Dictionary<string, string> marks, string key) =>
+        marks.TryGetValue(key, out var text)
+        && DateOnly.TryParseExact(text, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var day)
+            ? day
+            : null;
+
+    private async Task SetAsync(string key, string value, DateTime nowUtc, CancellationToken cancellationToken)
+    {
+        var row = await db.SystemSettings.FirstOrDefaultAsync(x => x.Key == key, cancellationToken);
+        if (row is null)
+        {
+            row = new SystemSetting { Key = key, CreatedUtc = nowUtc };
+            db.SystemSettings.Add(row);
+        }
+
+        row.Value = value;
+        row.UpdatedBy = AgentKey;
+        row.UpdatedUtc = nowUtc;
+    }
+
+    private static string DayName(DateOnly day) => day.ToString("ddd d MMM", CultureInfo.InvariantCulture);
 
     /// <summary>The AI Trader's live day: its looks and its shadow book. Null when it is off and did not look.</summary>
     private async Task<TraderDay?> TraderDayAsync(DateOnly day, AiState state, AiSettings s, CancellationToken cancellationToken)
