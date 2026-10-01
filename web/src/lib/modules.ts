@@ -415,6 +415,17 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
         requires: 'admin',
         pages: [{ label: 'Instruments', to: '/data/instruments', keywords: ['masters', 'symbols', 'lot size'] }],
       },
+      {
+        // Play a recorded day back through the strategy runners (1 Oct): the
+        // desk's own recordings, so it lives with the data they come from.
+        key: 'replay',
+        label: 'Replay',
+        home: '/data/replay',
+        requires: 'admin',
+        pages: [
+          { label: 'Replay', to: '/data/replay', keywords: ['market replay', 'recap', 'replay a day', 'play back', 'past day'] },
+        ],
+      },
     ],
   },
   {

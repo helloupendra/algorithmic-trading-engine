@@ -46,6 +46,7 @@ import { LiveFeedsPage } from './pages/data/LiveFeedsPage'
 import { CommodityPage } from './pages/data/CommodityPage'
 import { HistoricalDataPage } from './pages/data/HistoricalDataPage'
 import { InstrumentsFnoPage } from './pages/data/InstrumentsFnoPage'
+import { ReplayPage } from './pages/data/ReplayPage'
 import { NotebookPage } from './pages/notebook/NotebookPage'
 import { WhiteboardPage } from './pages/notebook/WhiteboardPage'
 import { AiOverviewPage } from './pages/ai/AiOverviewPage'
@@ -189,6 +190,8 @@ export default function App() {
                   <Route path="/data/feeds" element={<LiveFeedsPage />} />
                   <Route path="/data/historical" element={<HistoricalDataPage />} />
                   <Route path="/data/instruments" element={<InstrumentsFnoPage />} />
+                  {/* A recorded day played back through the runners, as recap runs. */}
+                  <Route path="/data/replay" element={<ReplayPage />} />
 
                   <Route path="/system" element={<HealthPage view="overview" />} />
                   <Route path="/system/checkups" element={<HealthPage view="checkups" />} />

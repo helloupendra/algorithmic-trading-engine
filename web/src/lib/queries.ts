@@ -37,6 +37,17 @@ import {
 import type { ListAsOf, RunLegs } from './liveMarks'
 import { ordersQuery } from './orders'
 import type { OrdersFilter } from './orders'
+import {
+  REPLAY_LOG_LINES,
+  REPLAY_POLL_ACTIVE_MS,
+  REPLAY_POLL_IDLE_MS,
+  readReplayDays,
+  readReplayLogs,
+  readReplaySession,
+  readReplayStatus,
+  replayPollMs,
+} from './replay'
+import type { ReplayStartBody, ReplayStatus } from './replay'
 import type {
   AlertEvent,
   BackfillHistoryResponse,
@@ -2818,4 +2829,75 @@ function combineLedgers(results: ReadonlyArray<{ data?: PaperOrderRow[]; isError
     failed: results.map((r) => r.isError),
     loaded: results.filter((r) => r.data !== undefined).length,
   }
+}
+
+// ---------- Market replay (Data → Replay, admin) ----------
+
+/**
+ * Replay a recorded trading day through the strategy runners
+ * (lib/replay.ts has the shapes, the readers and the start order). Every
+ * answer goes through a reader, so a body of the wrong shape shows as "not
+ * known" rather than as an empty list or an idle desk.
+ */
+
+/** The recorded days and what each holds, newest first. A day is recorded once; a minute's staleness is plenty. */
+export function useReplayDays() {
+  return useQuery({
+    queryKey: ['replay', 'days'],
+    queryFn: async () => readReplayDays(await api.get<unknown>('/api/Replay/days')),
+    staleTime: 60_000,
+  })
+}
+
+/** Whether a replay can start, and the session: every 2 s while one runs, every 15 s otherwise. */
+export function useReplayStatus() {
+  return useQuery({
+    queryKey: ['replay', 'status'],
+    queryFn: async () => readReplayStatus(await api.get<unknown>('/api/Replay/status')),
+    refetchInterval: (q: { state: { data?: ReplayStatus } }) => replayPollMs(q.state.data),
+  })
+}
+
+/** The player's log, asked for only while it is shown; as often as the status while a replay runs. */
+export function useReplayLogs(enabled: boolean, active: boolean, lines = REPLAY_LOG_LINES) {
+  return useQuery({
+    queryKey: ['replay', 'logs', lines],
+    queryFn: async () => readReplayLogs(await api.get<unknown>(`/api/Replay/logs?lines=${lines}`)),
+    enabled,
+    refetchInterval: enabled ? (active ? REPLAY_POLL_ACTIVE_MS : REPLAY_POLL_IDLE_MS) : false,
+  })
+}
+
+/** POST /api/Replay/start with runs already started as recaps of the day (launchReplay). Answers the session. */
+export function useStartReplay() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (body: ReplayStartBody) => readReplaySession(await api.post<unknown>('/api/Replay/start', body)),
+    // The answer is the session: shown at once, so the set-up closes before a
+    // second press can start the same runs again. The read that follows corrects it.
+    onSuccess: (session) => {
+      if (session) {
+        qc.setQueryData<ReplayStatus>(['replay', 'status'], { canStart: false, whyNot: 'A replay is already running.', session })
+      }
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['replay'] })
+      qc.invalidateQueries({ queryKey: ['strategies'] })
+    },
+  })
+}
+
+/** Pause, resume or stop the session. A stop squares its runs off at the replay's prices, so the run lists are read again. */
+export function useReplayControl() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (action: 'pause' | 'resume' | 'stop') => readReplaySession(await api.post<unknown>(`/api/Replay/${action}`)),
+    onSettled: (_data, _error, action) => {
+      qc.invalidateQueries({ queryKey: ['replay'] })
+      if (action === 'stop') {
+        qc.invalidateQueries({ queryKey: ['strategies'] })
+        qc.invalidateQueries({ queryKey: ['strategy', 'live'] })
+      }
+    },
+  })
 }

@@ -1,0 +1,155 @@
+/*
+ * Data → Replay (/data/replay). Built from the console's own vocabulary
+ * (panel, table, seg, field, progress, alert, console) on the theme tokens,
+ * so it follows light and dark; these rules only lay out what the page adds.
+ * Every selector is scoped to .rp-page: the page sits in the eager bundle.
+ */
+
+.rp-page .rp-gap { margin-bottom: 12px; }
+.rp-page .rp-cols { align-items: start; }
+.rp-page .rp-head-note { font-size: var(--fs-s); }
+/* The days panel is where "Replay another day" scrolls to: clear of the sticky top bar and tab strip. */
+.rp-page .rp-anchor { scroll-margin-top: calc(var(--topbar-h) + var(--tabbar-h) + 12px); min-width: 0; }
+
+/* --- the replay now ------------------------------------------------------------------ */
+.rp-page .rp-clock {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 8px;
+}
+.rp-page .rp-bar { margin-top: 0; }
+.rp-page .rp-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 8px 0 12px;
+  font-size: var(--fs-s);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.rp-page .rp-facts b { color: var(--text); font-weight: 650; }
+.rp-page .rp-session .small-note { margin: 0 0 12px; }
+.rp-page .rp-inline-error { font-size: var(--fs-s); flex-basis: 100%; text-align: right; }
+.rp-page .rp-runs tfoot td {
+  border-top: 1px solid var(--line);
+  font-weight: 650;
+}
+
+.rp-page .rp-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+.rp-page .rp-result > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rp-page .rp-result__label {
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.rp-page .rp-result__value { font-size: 19px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.rp-page .rp-result__note { font-size: var(--fs-s); }
+
+/* The runs as a list, a phone's view of the table (shown under 640px). */
+.rp-page .rp-rl { display: none; list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line-soft); }
+.rp-page .rp-rl__row { padding: 8px 0; border-bottom: 1px solid var(--line-soft); }
+.rp-page .rp-rl__head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.rp-page .rp-rl__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 550; }
+.rp-page .rp-rl__net { margin-left: auto; flex: none; font-weight: 650; font-variant-numeric: tabular-nums; }
+.rp-page .rp-rl__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 10px; margin-top: 3px; font-size: var(--fs-s); color: var(--text-3); }
+.rp-page .rp-rl__total .rp-rl__name { color: var(--text-2); }
+
+/* --- the recorded days ---------------------------------------------------------------- */
+.rp-page .rp-days .row-pick { white-space: nowrap; }
+.rp-page .rp-days .row-pick b { font-weight: 600; }
+
+/* --- the set-up ------------------------------------------------------------------------- */
+.rp-page .rp-setup { display: grid; gap: 14px; container-type: inline-size; }
+.rp-page .rp-runs-edit { display: grid; gap: 8px; }
+.rp-page .rp-run {
+  background: var(--bg1);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px 10px;
+  min-width: 0;
+}
+.rp-page .rp-run__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 24px;
+  margin-bottom: 4px;
+}
+.rp-page .rp-run__n { font-size: var(--fs-s); font-weight: 600; color: var(--text-2); }
+.rp-page .rp-run__fields {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 0.8fr) minmax(0, 1.4fr);
+  gap: 8px 10px;
+}
+.rp-page .rp-run__notes { display: grid; gap: 2px; margin-top: 6px; }
+.rp-page .rp-add { justify-self: start; }
+
+/* A narrow column (a laptop's half, a phone): the strategy takes a line of its own. */
+@container (max-width: 520px) {
+  .rp-page .rp-run__fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .rp-page .rp-run__strategy { grid-column: 1 / -1; }
+}
+
+.rp-page .rp-setup__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px 24px;
+}
+.rp-page .rp-setup__row .seg { flex-wrap: wrap; align-self: flex-start; }
+.rp-page .rp-setup__row > .field:first-child { flex: 1 1 240px; }
+.rp-page .rp-from { flex: 0 0 140px; }
+.rp-page .rp-from .field__input[aria-invalid='true'] { border-color: var(--warn); }
+
+.rp-page .rp-go {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  flex-wrap: wrap;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+.rp-page .rp-go__what { margin: 0; flex: 1 1 260px; line-height: 1.5; }
+
+.rp-page .rp-failure { line-height: 1.5; }
+.rp-page .rp-failure__started { color: var(--text-2); font-size: var(--fs-s); }
+.rp-page .rp-failure__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* --- the player's log ------------------------------------------------------------------- */
+.rp-page .rp-log { padding-top: 12px; padding-bottom: 12px; }
+.rp-page .rp-log .run-card__section { margin-top: 0; }
+.rp-page .rp-log .disclosure__btn { border-top: 0; padding-top: 0; }
+
+/* Stacked, the placeholder would sit under the whole days table, saying nothing the replay above does not. */
+@media (max-width: 980px) {
+  .rp-page .rp-setup-wait { display: none; }
+}
+
+@media (max-width: 760px) {
+  /* Six columns in 358px: a little less air per cell, so the size column stays on screen. */
+  .rp-page .rp-days th,
+  .rp-page .rp-days td { padding-left: 5px; padding-right: 5px; }
+  .rp-page .rp-days th:first-child,
+  .rp-page .rp-days td:first-child { padding-left: 10px; }
+}
+
+@media (max-width: 640px) {
+  .rp-page .rp-runs { display: none; }
+  .rp-page .rp-rl { display: block; }
+  .rp-page .rp-go .btn { width: 100%; }
+  .rp-page .rp-from { flex: 1 1 140px; }
+}
