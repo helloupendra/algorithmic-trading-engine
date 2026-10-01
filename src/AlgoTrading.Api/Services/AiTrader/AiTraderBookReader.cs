@@ -58,15 +58,17 @@ public sealed class AiTraderBookReader(
     IMarketSessionService sessions) : IAiTraderBooks
 {
     /// <summary>
-    /// Its live account as of <paramref name="clockUtc"/>. In a replay only the kill switch and the trading day
-    /// are read: the account is today's, and a replayed day never traded in it (the replay's shadow book is
-    /// <see cref="AiTraderShadowBook"/>).
+    /// Its live account as of <paramref name="clockUtc"/>. In a replay only the trading day is read: the account
+    /// is today's, and a replayed day never traded in it (the replay's shadow book is
+    /// <see cref="AiTraderShadowBook"/>). Nor does the live desk's kill switch reach a replay: it halts what the
+    /// desk places, and a replay places nothing. Carried in, it refused every buy of a replay played while the
+    /// desk was halted.
     /// </summary>
     public async Task<AiTraderBook> ReadAsync(DateTime clockUtc, bool replay, CancellationToken cancellationToken)
     {
-        bool kill = await risk.IsKillSwitchActiveAsync(cancellationToken);
         bool tradingDay = sessions.GetSessionInfo(clockUtc, "NSE", "FO").IsTradingDay;
-        if (replay) return new AiTraderBook(clockUtc, tradingDay, kill, 0m, 0, [], []);
+        if (replay) return new AiTraderBook(clockUtc, tradingDay, false, 0m, 0, [], []);
+        bool kill = await risk.IsKillSwitchActiveAsync(cancellationToken);
 
         var user = await AiTraderAccount.EnsureAsync(db, cancellationToken);
         var book = await ManualBook.FindAsync(db, user.Id, cancellationToken);
