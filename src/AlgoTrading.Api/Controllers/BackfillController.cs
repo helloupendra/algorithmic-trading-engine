@@ -66,23 +66,9 @@ public class BackfillController : ControllerBase
         [FromQuery] int days = VixBackfillPlan.DefaultLookbackTradingDays,
         CancellationToken cancellationToken = default)
     {
-        var nowUtc = DateTime.UtcNow;
-        var today = IstTime.DateOf(nowUtc);
-        var latestClosed = IstTime.ToIst(nowUtc).TimeOfDay >= IstTime.SessionClose ? today : today.AddDays(-1);
-
-        DateOnly last;
-        if (string.IsNullOrWhiteSpace(through))
-        {
-            last = latestClosed;
-            for (int back = 0; back < 30 && !vix.IsTradingDay(last); back++) last = last.AddDays(-1);
-        }
-        else if (!DateOnly.TryParseExact(through, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out last))
-        {
-            return BadRequest(new { message = "through must be yyyy-MM-dd (IST)." });
-        }
-
-        if (last > latestClosed)
-            return BadRequest(new { message = "That session has not closed yet." });
+        var (last, error) = VixCheckThrough(through, DateTime.UtcNow, vix);
+        if (error is not null)
+            return BadRequest(new { message = error });
         if (days is < 1 or > VixBackfillPlan.MaxLookbackTradingDays)
             return BadRequest(new { message = $"days must be 1 to {VixBackfillPlan.MaxLookbackTradingDays}." });
 
@@ -98,6 +84,32 @@ public class BackfillController : ControllerBase
             holes = result.Holes.Select(h => h.ToString()),
             after = result.After.Select(c => new { day = c.Day, minutes = c.Minutes, expected = c.Expected, present = c.Present, state = c.State.ToString() }),
         });
+    }
+
+    /// <summary>
+    /// The day the India VIX check runs through: <paramref name="through"/>, or
+    /// the latest session that has closed; an error when it is not a date or its
+    /// session has not closed yet. The close is the exchange calendar's, so a
+    /// special session counts by its own hours: at 16:00 on a Muhurat Sunday the
+    /// evening session has not happened, and checking it would report a gap and
+    /// ask the vendors for a session still to come. Internal for tests.
+    /// </summary>
+    internal static (DateOnly Through, string? Error) VixCheckThrough(string? through, DateTime nowUtc, VixBackfillService vix)
+    {
+        DateOnly last;
+        if (string.IsNullOrWhiteSpace(through))
+        {
+            last = IstTime.DateOf(nowUtc);
+            for (int back = 0; back < 30 && !(vix.IsTradingDay(last) && vix.SessionClosed(last, nowUtc)); back++) last = last.AddDays(-1);
+        }
+        else if (!DateOnly.TryParseExact(through, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out last))
+        {
+            return (default, "through must be yyyy-MM-dd (IST).");
+        }
+
+        if (!vix.SessionClosed(last, nowUtc))
+            return (default, "That session has not closed yet.");
+        return (last, null);
     }
 
     [HttpPost("history")]
