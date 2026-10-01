@@ -8,7 +8,9 @@ abhi chal raha hai, same", whenever he wants.
 
 1. The page lists the recorded days, newest first. For each it shows how many of the 375 session minutes were
    recorded for NIFTY, BANKNIFTY, SENSEX and India VIX, and the size of the day's ticks. Ticks are kept for 90 days,
-   from 9 Sep 2026.
+   from 9 Sep 2026. A day is listed when the exchange calendar has an NSE or BSE session on it, so a weekend special
+   session (a Sunday budget day) is listed and a weekday holiday is not, and when some of its minutes from 09:15 to
+   15:30 IST were recorded. The minutes are counted in IST whatever the database connection's time zone.
 2. Pick a day, then the strategy runs (strategy, underlying, lots), a speed (1×, 2×, 5×, 10×) and a start time
    (09:15–15:00).
 3. Start. The page starts each run as a **recap run of that day** (`session: recap`, `recap_date`). It then starts
@@ -23,7 +25,9 @@ abhi chal raha hai, same", whenever he wants.
 
 Recap runs are tests: they are left out of every live total (the run history, Today, track records, the AI tools).
 Trade → History lists them apart: its **Recap runs** toggle shows the recap runs alone, each marked "Recap test" with
-the day it replayed, and the page's totals are then the tests' own.
+the day it replayed, and the page's totals are then the tests' own. A run's `session` is stored lower-case
+(`LiveRunParameters.Merge`), and the reports match it in any case (`RecapRuns`), as its clock and its runner read it:
+a run started with `"Recap"` traded as a test but was counted as live.
 
 ## What keeps the live desk safe
 
@@ -69,14 +73,22 @@ on while the runner worked. A whole session at 1× takes 6 h 15 min, and at 10×
 | `POST /api/Replay/stop`, `pause`, `resume` | The session |
 | `POST /api/Replay/queue`, `DELETE /api/Replay/queue` | Several days one after another with the AI Trader alone (see [The queue](#the-queue)) |
 | `GET /api/Replay/logs?lines=` | The player's log |
-| `POST /api/Replay/ticks` | The player's ticks for the book (Service or Admin, at most 2,000 a batch). 409 when no replay is on, which stops the player |
+| `POST /api/Replay/ticks` | The player's ticks for the book (Service or Admin, at most 2,000 a batch). Answers `{taken, reopened}`. 409 when no replay is on, which stops the player |
 
 The session is kept in `system_settings` (`replay.session`), the queue in `replay.queue`; each fits the setting's
-2,000 characters (names and reasons are kept short and plain, an error to 400 characters). An API restart in the
-middle of a replay carries on: the player keeps running, and its next ticks reopen the book and refill it (the
-ticks endpoint reopens it itself while the stored replay plays, so the player's first post is never refused for
-want of a book). `ReplayMonitor` looks every 5 s. Every change of the replay's state (the monitor's look, start,
-stop, queue, cancel, the book reopened) goes through one gate, so two of them never both start a day.
+2,000 characters (names and reasons are kept short and plain, an error to 400 characters; a full queue of 20 days,
+each skipped after three tries, takes about 1,720). A replay's id is above every id used before: the stored
+session's, a queue's, and those the AI Trader's decisions and shadow positions keep. Taken from the stored session
+alone, a lost or unreadable setting began the ids at 1 again, and a new replay shared an old one's AI Trader rows.
+
+An API restart in the middle of a replay carries on: the player keeps running, and its next ticks reopen the book
+(the ticks endpoint reopens it itself while the stored replay plays, so the player's first post is never refused
+for want of a book). The restart emptied the book, so the endpoint answers `reopened: true` while the book holds
+none of the day's prices, whichever of the monitor's look and the player's post opened it. The player then sends
+the book (not the stream) the latest price of every other symbol it has played so far: a contract that did not trade
+again had no price until it did. The replay's first batch is answered the same way, with nothing to send again.
+`ReplayMonitor` looks every 5 s. Every change of the replay's state (the monitor's look, start, stop, queue, cancel,
+the book reopened) goes through one gate, so two of them never both start a day.
 
 ## The queue
 
@@ -87,13 +99,37 @@ monitor starts each next day when all of these hold:
 - no replay is playing, and the last one ended at least 90 s ago;
 - not a trading day's 08:45 to NSE's close, and the day will be played out before the next trading morning's 08:45
   (holidays from the calendar);
+- a day being tried again has waited its time (below);
 - no vendor's recap feed is running;
 - the last day's player has exited.
 
-Otherwise the day waits; it is never skipped for any of these. A day with nothing recorded, or whose player does
-not start, is skipped with its reason. A day the queue started but had not written down when the API stopped is
-counted as played, not played again. While a queue plays, a manual start is refused, between its days too. `DELETE`
-ends the queue: no further day starts, and the day playing plays on unless it is stopped.
+Otherwise the day waits; it is never skipped for any of these. A day with nothing recorded is skipped with its
+reason. A day the queue started but had not written down when the API stopped is counted as played, not played
+again. While a queue plays, a manual start is refused, between its days too. `DELETE` ends the queue: no further day
+starts, and the day playing plays on unless it is stopped.
+
+**Days that did not play are tried again.** Until 1 Oct a day whose replay failed was written down at once, so with
+the database, Redis or the API down for ten minutes every day the queue reached in that window was lost. Now a day
+gets three tries in all when:
+
+| It ended | Tried again |
+|---|---|
+| Its player did not start (the start answered 500) | after 5 minutes, then after 15 |
+| Its replay failed within 10 minutes of its start, or failed having played nothing (no clock, no ticks: Redis was down, and the failure may be seen late) | after 5 minutes, then after 15 |
+| Stopped by the 08:45 rule (still playing, or paused, when a trading morning came) | at the next allowed time, after the close |
+
+A start that cannot be tried at all (the API's own database or Redis not answering) writes nothing down: the monitor's
+next look, 5 s later, tries again. After its third try the day is skipped with `3 tries;` and the last reason.
+
+A day counts as **played** when it played out, when its replay failed later than 10 minutes in (its AI Trader day is
+kept as far as it played; the scoreboard's totals count only full days), and when it was **stopped by hand**: the
+owner stopped it, and the queue moves on to the next day. To play a day stopped by hand again, queue it again. A
+player stopped from outside the desk (its process killed) reports "stopped" too, and counts as played the same way.
+
+The queue's state keeps each day's tries as one digit a day beside its dates (`tries`, e.g. `"0010"`), when the day
+being tried again may start (`retryUtc`), and the latest replay session it has seen (`lastSession`: a later one of
+its next day was started by it and not written down). A queue stored before these were added reads as having none,
+and carries on. `GET /api/Replay/status` shows `tries` (one number a day) and `retryUtc` with the queue.
 
 ## The desk replay and a vendor's recap (TrueData)
 
@@ -132,6 +168,8 @@ Before switching TrueData to its recap host, make sure Data → Replay shows no 
 ## Not in v1
 
 - MCX replays.
+- A session outside 09:15 to 15:30 (Diwali's evening Muhurat hour): the player plays those hours only, so such a day
+  is not listed even when the calendar has its session.
 - Several days in a row with strategy runs: the queue plays the AI Trader alone.
 - Greeks on the replayed ticks themselves: the runners get none (the run page computes its own, see above).
 - The option chain page during a replay.

@@ -23,6 +23,47 @@ if ENGINE_DIR not in sys.path:
 POST_LIMIT = 2000
 
 
+def book_poster(http, url: str, verify, *, log=print, sleep=time.sleep):
+    """
+    Sends ticks to the API's replay book (POST /api/Replay/ticks), in parts of at most POST_LIMIT. The poster
+    answers whether the API said its book was opened again (`reopened`: it restarted and lost every price),
+    so that the player sends it the latest price of every symbol. A 409, no replay on, fails the replay; a
+    part the API cannot take for a moment is tried three times, then dropped.
+    """
+    def post(ticks: list[dict]) -> bool:
+        reopened = False
+        for start in range(0, len(ticks), POST_LIMIT):
+            batch = ticks[start:start + POST_LIMIT]
+            for attempt in range(3):
+                try:
+                    response = http.post(url, json=batch, verify=verify, timeout=15)
+                except Exception as ex:
+                    if attempt == 2:
+                        log(f"[replay] the API did not take {len(batch)} ticks: {type(ex).__name__}")
+                    sleep(0.5)
+                    continue
+                if response.status_code == 409:
+                    raise RuntimeError("the API has no market replay on (it was stopped, or the API lost it)")
+                if response.status_code < 500:
+                    if response.status_code >= 400:
+                        log(f"[replay] the API refused a batch: {response.status_code} {response.text[:200]}")
+                    elif _said_reopened(response):
+                        reopened = True
+                    break
+                sleep(0.5)
+        return reopened
+
+    return post
+
+
+def _said_reopened(response) -> bool:
+    try:
+        body = response.json()
+    except Exception:  # an answer with no JSON body: an older API
+        return False
+    return isinstance(body, dict) and body.get("reopened") is True
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--date", required=True, help="the recorded day, yyyy-mm-dd")
@@ -61,26 +102,7 @@ def main(argv=None) -> int:
     publisher.ensure_connection()
     redis = publisher.client
     http = build_session()
-    url = f"{API_BASE_URL.rstrip('/')}/api/Replay/ticks"
-
-    def post(ticks: list[dict]) -> None:
-        for start in range(0, len(ticks), POST_LIMIT):
-            batch = ticks[start:start + POST_LIMIT]
-            for attempt in range(3):
-                try:
-                    response = http.post(url, json=batch, verify=VERIFY_SSL, timeout=15)
-                except Exception as ex:
-                    if attempt == 2:
-                        print(f"[replay] the API did not take {len(batch)} ticks: {type(ex).__name__}", flush=True)
-                    time.sleep(0.5)
-                    continue
-                if response.status_code == 409:
-                    raise RuntimeError("the API has no market replay on (it was stopped, or the API lost it)")
-                if response.status_code < 500:
-                    if response.status_code >= 400:
-                        print(f"[replay] the API refused a batch: {response.status_code} {response.text[:200]}", flush=True)
-                    break
-                time.sleep(0.5)
+    post = book_poster(http, f"{API_BASE_URL.rstrip('/')}/api/Replay/ticks", VERIFY_SSL, log=lambda line: print(line, flush=True))
 
     def publish(ticks: list[dict]) -> None:
         messages = []

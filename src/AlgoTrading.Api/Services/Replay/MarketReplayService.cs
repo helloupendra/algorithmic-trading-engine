@@ -70,6 +70,9 @@ public sealed class MarketReplayService(
     /// <summary>On a trading day a replay must be over by then: the market-open job runs at 08:45.</summary>
     public static readonly TimeOnly MarketMorning = new(8, 45);
 
+    /// <summary>Why a replay still playing at <see cref="MarketMorning"/> on a trading day was stopped. A queue plays that day again.</summary>
+    public const string MorningStop = "Stopped at 08:45: NSE opens at 09:15.";
+
     /// <summary>How long a player may be missing at the start before the replay counts as failed.</summary>
     private static readonly TimeSpan StartGrace = TimeSpan.FromSeconds(20);
 
@@ -162,7 +165,11 @@ public sealed class MarketReplayService(
             : null;
     }
 
-    /// <summary>The recorded days, newest first, with how many of each index's 375 session minutes were recorded.</summary>
+    /// <summary>
+    /// The recorded days, newest first, with how many of each index's 375 session minutes were recorded. A day is
+    /// listed when the exchange calendar has a session on it (<see cref="ReplayableDays"/>) and some of its
+    /// minutes from 09:15 to 15:30 were recorded: the player plays no other hours.
+    /// </summary>
     public async Task<ReplayDays> DaysAsync(CancellationToken cancellationToken)
     {
         var today = IstTime.DateOf(Now);
@@ -172,7 +179,7 @@ public sealed class MarketReplayService(
         try
         {
             var sizes = await ChunkBytesByDayAsync(connection, cancellationToken);
-            var recorded = sizes.Keys.Where(d => d < today && d.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday)).ToList();
+            var recorded = ReplayableDays(sizes.Keys).ToList();
             if (recorded.Count == 0) return new ReplayDays([], null, null);
 
             var minutes = await MinutesByDayAsync(connection, recorded.Min(), today, cancellationToken);
@@ -191,6 +198,20 @@ public sealed class MarketReplayService(
         {
             if (opened) await connection.CloseAsync();
         }
+    }
+
+    /// <summary>
+    /// The recorded days that are over and that NSE or BSE held a session on, by the exchange calendar: a weekend
+    /// special session (a Sunday budget day, Diwali's Muhurat) is one, a weekday holiday is not. Until 1 Oct the
+    /// weekday decided, and a recorded weekend session was never listed. With no calendar loaded, the weekdays
+    /// are the session days, as before.
+    /// </summary>
+    internal IReadOnlyList<DateOnly> ReplayableDays(IEnumerable<DateOnly> recorded)
+    {
+        var today = IstTime.DateOf(Now);
+        return recorded.Where(d => d < today && (SessionOn(d, "NSE") || SessionOn(d, "BSE"))).OrderBy(d => d).ToList();
+
+        bool SessionOn(DateOnly day, string exchange) => sessions.GetSessionInfo(IstTime.MiddayUtc(day), exchange, "FO").IsTradingDay;
     }
 
     // ---------- control ----------
@@ -240,7 +261,7 @@ public sealed class MarketReplayService(
         if (!await RecordedAsync(date, cancellationToken)) return ReplayStartResult<ReplaySessionState>.Refused(409, $"The desk recorded nothing for {Day(date)}.");
 
         var session = new ReplaySessionState(
-            (current?.Id ?? 0) + 1, date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), request.Speed,
+            await NextSessionIdAsync(current, cancellationToken), date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), request.Speed,
             from.ToString("HH:mm", CultureInfo.InvariantCulture), StateStarting, runIds, Now, null, null, Plain(by, MaxByLength), request.AiTrader);
 
         await channel.ResetAsync(cancellationToken);
@@ -267,6 +288,20 @@ public sealed class MarketReplayService(
         logger.LogInformation("Market replay {Session} of {Date} started by {By} at {Speed}x from {From}, runs {Runs}",
             session.Id, session.Date, by, session.Speed, session.FromIst, string.Join(',', runIds));
         return new ReplayStartResult<ReplaySessionState>(session, 202, null);
+    }
+
+    /// <summary>
+    /// The next replay's id: above every id used before, by the stored session, a queue, or the AI Trader's
+    /// decisions and shadow positions, which are kept by it. Taken from the stored session alone, a lost or
+    /// unreadable setting began the ids at 1 again, and the new replay shared an old one's AI Trader rows.
+    /// </summary>
+    private async Task<long> NextSessionIdAsync(ReplaySessionState? current, CancellationToken cancellationToken)
+    {
+        var queue = await LoadQueueAsync(cancellationToken);
+        long queued = queue is null ? 0 : Math.Max(queue.LastSession ?? 0, queue.Sessions.Count == 0 ? 0 : queue.Sessions.Max());
+        long decided = await db.AiTraderDecisions.AsNoTracking().MaxAsync(d => d.ReplaySessionId, cancellationToken) ?? 0;
+        long held = await db.AiTraderShadowPositions.AsNoTracking().MaxAsync(p => p.ReplaySessionId, cancellationToken) ?? 0;
+        return new[] { current?.Id ?? 0, queued, decided, held }.Max() + 1;
     }
 
     public async Task<ReplaySessionView?> StopAsync(string by, CancellationToken cancellationToken)
@@ -337,7 +372,7 @@ public sealed class MarketReplayService(
         if (WhyNotNow(Now) is not null)
         {
             await player.StopAsync("the market opens", cancellationToken);
-            await EndAsync(session, StateStopped, "Stopped at 08:45: NSE opens at 09:15.", "the market opens", cancellationToken);
+            await EndAsync(session, StateStopped, MorningStop, "the market opens", cancellationToken);
             return;
         }
 
@@ -433,6 +468,23 @@ public sealed class MarketReplayService(
     public static readonly TimeSpan QueueGap = TimeSpan.FromSeconds(90);
 
     /// <summary>
+    /// The tries a queued day gets in all when it does not play for a reason that passes: its player did not start,
+    /// or its replay failed soon after it started (<see cref="EarlyFailure"/>), as when the database, Redis or the API
+    /// was down a while; or the 08:45 rule stopped it. Until 1 Oct each such day was written down as played or
+    /// skipped at once, and every day the queue reached during an outage was lost.
+    /// </summary>
+    public const int MaxTries = 3;
+
+    /// <summary>How long a queued day waits before its second try, and before its third.</summary>
+    public static readonly IReadOnlyList<TimeSpan> RetryWaits = [TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(15)];
+
+    /// <summary>
+    /// A queued day whose replay failed this soon after it started, or failed having played nothing, did not play,
+    /// and is tried again. One that failed later on counts as played: its AI Trader day is there, short.
+    /// </summary>
+    public static readonly TimeSpan EarlyFailure = TimeSpan.FromMinutes(10);
+
+    /// <summary>
     /// Queues recorded days to be replayed one after another, each from its open, with the AI Trader deciding
     /// along and no strategy runs: its shadow book over many days, to be scored against a simple rule. The first
     /// starts now if it can; the monitor starts each next one.
@@ -488,9 +540,10 @@ public sealed class MarketReplayService(
 
     /// <summary>
     /// Starts the queue's next day when nothing is playing, the last replay ended at least <see cref="QueueGap"/>
-    /// ago, its player has exited, and the day can be played out before the next trading morning (08:45). A
-    /// day that will not start (nothing recorded, the player failing) is skipped with its reason. Under
-    /// <see cref="Gate"/>.
+    /// ago, its player has exited, a retry's wait is over, and the day can be played out before the next trading
+    /// morning (08:45). A day that did not play for a reason that passes (<see cref="NotPlayed"/>, a player that
+    /// did not start) is tried again, at most <see cref="MaxTries"/> times; one that cannot play (nothing
+    /// recorded) is skipped with its reason. Under <see cref="Gate"/>.
     /// </summary>
     private async Task AdvanceQueueAsync(ReplaySessionState? session, CancellationToken cancellationToken)
     {
@@ -501,12 +554,20 @@ public sealed class MarketReplayService(
         // player's start and the queue's. It is that day's session, not a day still to play.
         if (session is not null && StartedForNext(queue, session))
         {
-            queue = queue with { Next = queue.Next + 1, Sessions = [.. queue.Sessions, session.Id] };
+            queue = Counted(queue, session.Id);
             await SaveQueueAsync(queue, cancellationToken);
             logger.LogWarning("Replay queue {Queue}: session {Session} of {Date} was started but not recorded; recorded now", queue.Id, session.Id, session.Date);
         }
 
         if (session is not null && IsActive(session.State)) return;
+
+        // The day just played ended without playing: it is the next day again, or after its last try skipped.
+        if (session is not null && NotPlayed(queue, session) is { } why)
+        {
+            queue = TryAgain(queue, queue.Next - 1, session.Id, why, wait: why != MorningStop);
+            await SaveQueueAsync(queue, cancellationToken);
+        }
+
         if (session?.EndedUtc is DateTime ended && Now - ended < QueueGap) return;
 
         if (queue.Next >= queue.Dates.Count)
@@ -518,6 +579,9 @@ public sealed class MarketReplayService(
 
         if (WhyNotNow(Now) is not null || !FitsBeforeMorning(queue.Speed, queue.FromIst)) return;
 
+        // A day being tried again waits a while first: what failed it may not have come back yet.
+        if (queue.RetryUtc is DateTime retry && Now < retry) return;
+
         // A vendor's recap feed is replaying a session: the day waits for it to end, it is not skipped.
         if (await recapFeeds.RunningAsync(cancellationToken) is not null) return;
 
@@ -527,16 +591,97 @@ public sealed class MarketReplayService(
 
         string date = queue.Dates[queue.Next];
         var result = await StartCoreAsync(new ReplayStartRequest(date, queue.Speed, queue.FromIst, [], AiTrader: true), queue.By, cancellationToken);
-        queue = result.Session is { } started
-            ? queue with { Next = queue.Next + 1, Sessions = [.. queue.Sessions, started.Id] }
-            : queue with { Next = queue.Next + 1, Skipped = [.. queue.Skipped, $"{date}: {Plain(result.Error, MaxReasonLength)}"] };
+        if (result.Session is { } started)
+        {
+            queue = Counted(queue, started.Id);
+        }
+        else if (result.StatusCode >= 500)
+        {
+            // The player did not start: the engine, the database or Redis may be down a while. The failed
+            // session the start wrote down is the try's.
+            queue = TryAgain(queue, queue.Next, (await LoadAsync(cancellationToken))?.Id, result.Error ?? "The player did not start.", wait: true);
+        }
+        else
+        {
+            queue = queue with { Next = queue.Next + 1, Skipped = [.. queue.Skipped, $"{date}: {Plain(result.Error, MaxReasonLength)}"] };
+        }
+
         await SaveQueueAsync(queue, cancellationToken);
     }
 
-    /// <summary>Whether <paramref name="session"/> is the queue's next day, started by the queue and not counted yet.</summary>
+    /// <summary>The queue with the day at <c>Next</c> started as <paramref name="sessionId"/>.</summary>
+    private static ReplayQueueState Counted(ReplayQueueState queue, long sessionId) => queue with
+    {
+        Next = queue.Next + 1, Sessions = [.. queue.Sessions, sessionId], RetryUtc = null, LastSession = Later(queue.LastSession, sessionId),
+    };
+
+    /// <summary>
+    /// Why the day the queue played last, as <paramref name="session"/>, did not play after all; null when it
+    /// counts as played. It did not play when its replay failed within <see cref="EarlyFailure"/> of its start or
+    /// with nothing played (Redis down: the failure may be seen late), or when the 08:45 rule stopped it. It counts
+    /// as played when it played out, failed later on, or was stopped by hand: the owner stopped it.
+    /// </summary>
+    private static string? NotPlayed(ReplayQueueState queue, ReplaySessionState session)
+    {
+        if (session.EndedUtc is not DateTime ended || queue.Sessions.Count == 0 || queue.Sessions[^1] != session.Id
+            || queue.Next == 0 || queue.Dates[queue.Next - 1] != session.Date)
+        {
+            return null;
+        }
+
+        if (session.State == StateStopped && session.Error == MorningStop) return MorningStop;
+        bool early = ended - session.StartedUtc <= EarlyFailure || (session.ClockUtc is null && session.TicksSent == 0);
+        return session.State == StateFailed && early ? session.Error ?? "The replay failed." : null;
+    }
+
+    /// <summary>
+    /// One more try of the day at <paramref name="index"/>, which did not play (<paramref name="why"/>): it is
+    /// the next day again, after <see cref="RetryWaits"/> (with no wait after the 08:45 rule: the next allowed
+    /// time is wait enough), or, after its last try, skipped with why. The try's session, <paramref name="sessionId"/>,
+    /// is not one of the days played.
+    /// </summary>
+    private ReplayQueueState TryAgain(ReplayQueueState queue, int index, long? sessionId, string why, bool wait)
+    {
+        var tries = TriesOf(queue);
+        tries[index]++;
+        var sessions = queue.Sessions.Where(s => s != sessionId).ToList();
+        var last = Later(queue.LastSession, sessionId);
+        string date = queue.Dates[index];
+        string written = string.Concat(tries);
+
+        if (tries[index] >= MaxTries)
+        {
+            logger.LogWarning("Replay queue {Queue}: {Date} did not play in {Tries} tries ({Why}); skipped", queue.Id, date, tries[index], why);
+            return queue with
+            {
+                Next = index + 1, Sessions = sessions, Skipped = [.. queue.Skipped, $"{date}: {Plain($"{tries[index]} tries; {why}", MaxReasonLength)}"],
+                Tries = written, RetryUtc = null, LastSession = last,
+            };
+        }
+
+        DateTime? retry = wait ? Now + RetryWaits[Math.Min(tries[index], RetryWaits.Count) - 1] : null;
+        logger.LogWarning("Replay queue {Queue}: {Date} did not play ({Why}); try {Try} of {Max} {When}", queue.Id, date, why, tries[index] + 1, MaxTries,
+            retry is DateTime at ? $"from {IstTime.ShortStamp(at)} IST" : "at the next allowed time");
+        return queue with { Next = index, Sessions = sessions, Tries = written, RetryUtc = retry, LastSession = last };
+    }
+
+    /// <summary>
+    /// Each day's tries that did not play, beside <c>Dates</c>; none for a queue stored without them. Kept as one
+    /// digit a day ("0010"): twenty days take 22 characters of the setting's 2,000.
+    /// </summary>
+    private static int[] TriesOf(ReplayQueueState queue) =>
+        queue.Dates.Select((_, i) => queue.Tries is { } t && i < t.Length && char.IsAsciiDigit(t[i]) ? t[i] - '0' : 0).ToArray();
+
+    private static long? Later(long? a, long? b) => a is null ? b : b is null ? a : Math.Max(a.Value, b.Value);
+
+    /// <summary>
+    /// Whether <paramref name="session"/> is the queue's next day, started by the queue and not counted yet. A
+    /// session the queue has already seen (counted, or a failed try) is not: <c>LastSession</c> is the latest.
+    /// </summary>
     private static bool StartedForNext(ReplayQueueState queue, ReplaySessionState session) =>
         queue.Next < queue.Dates.Count
         && session.Date == queue.Dates[queue.Next]
+        && session.Id > (queue.LastSession ?? 0)
         && !queue.Sessions.Contains(session.Id)
         && session.AiTrader && session.RunIds.Count == 0
         && session.StartedUtc >= queue.CreatedUtc;
@@ -574,7 +719,7 @@ public sealed class MarketReplayService(
 
     private static ReplayQueueView QueueView(ReplayQueueState q) => new(
         q.Id, q.Dates, q.Speed, q.FromIst, q.Next, q.Sessions, q.Skipped, q.By, q.CreatedUtc, q.EndedUtc, q.Note,
-        q.EndedUtc is null ? (q.Next < q.Dates.Count ? q.Dates[q.Next] : null) : null);
+        q.EndedUtc is null ? (q.Next < q.Dates.Count ? q.Dates[q.Next] : null) : null, TriesOf(q), q.EndedUtc is null ? q.RetryUtc : null);
 
     public async Task<ReplayQueueState?> LoadQueueAsync(CancellationToken cancellationToken)
     {
@@ -755,19 +900,28 @@ public sealed class MarketReplayService(
         return result;
     }
 
+    /// <summary>
+    /// Each coverage symbol's recorded 1m bars from 09:15 to 15:30 IST, by IST day. <c>"BarStartUtc"</c> is a
+    /// timestamptz: <c>at time zone 'UTC'</c> makes it a plain timestamp of the UTC wall clock, which moves to IST
+    /// and casts to a date and a time the same whatever the connection's TimeZone. Cast straight from the
+    /// timestamptz (<c>("BarStartUtc" + interval)::date</c>) it was read in that TimeZone: right only on a UTC
+    /// server.
+    /// </summary>
+    internal const string MinutesByDaySql = """
+        select ((b."BarStartUtc" at time zone 'UTC') + interval '5 hours 30 minutes')::date as day, b."Symbol", count(distinct b."BarStartUtc")
+        from live_bars b
+        where b."Resolution" = '1m' and b."Symbol" = any(@symbols)
+          and b."BarStartUtc" >= @from and b."BarStartUtc" < @to
+          and ((b."BarStartUtc" at time zone 'UTC') + interval '5 hours 30 minutes')::time >= '09:15'
+          and ((b."BarStartUtc" at time zone 'UTC') + interval '5 hours 30 minutes')::time < '15:30'
+        group by 1, 2
+        """;
+
     private static async Task<Dictionary<(DateOnly, string), int>> MinutesByDayAsync(DbConnection connection, DateOnly from, DateOnly to, CancellationToken cancellationToken)
     {
         var result = new Dictionary<(DateOnly, string), int>();
         await using var command = connection.CreateCommand();
-        command.CommandText = """
-            select (b."BarStartUtc" + interval '5 hours 30 minutes')::date as day, b."Symbol", count(distinct b."BarStartUtc")
-            from live_bars b
-            where b."Resolution" = '1m' and b."Symbol" = any(@symbols)
-              and b."BarStartUtc" >= @from and b."BarStartUtc" < @to
-              and (b."BarStartUtc" + interval '5 hours 30 minutes')::time >= '09:15'
-              and (b."BarStartUtc" + interval '5 hours 30 minutes')::time < '15:30'
-            group by 1, 2
-            """;
+        command.CommandText = MinutesByDaySql;
         Add(command, "symbols", CoverageSymbols.Values.ToArray());
         Add(command, "from", IstTime.FromIst(from.ToDateTime(TimeOnly.MinValue)));
         Add(command, "to", IstTime.FromIst(to.ToDateTime(TimeOnly.MinValue)));
@@ -864,14 +1018,22 @@ public sealed record ReplayStatus(bool CanStart, string? WhyNot, ReplaySessionVi
 /// <summary>Days to replay one after another with the AI Trader (yyyy-MM-dd), and the speed.</summary>
 public sealed record ReplayQueueRequest(IReadOnlyList<string>? Dates, int Speed = 2);
 
-/// <summary>A queue of days: the next to play is <c>Dates[Next]</c>; each started day's replay session is in <c>Sessions</c>.</summary>
+/// <summary>
+/// A queue of days: the next to play is <c>Dates[Next]</c>; each played day's replay session is in <c>Sessions</c>
+/// and each skipped day is in <c>Skipped</c>, with why. Kept in one setting of at most 2,000 characters.
+/// </summary>
+/// <param name="Tries">Beside <c>Dates</c>, one digit a day: its tries that did not play (failed early, the player did
+/// not start, stopped at 08:45), as "0010". Null in a queue stored before 1 Oct, or with none yet.</param>
+/// <param name="RetryUtc">When the day being tried again may start; null when it need not wait.</param>
+/// <param name="LastSession">The latest replay session the queue has seen (a day played, or a failed try): any later
+/// one of its next day was started by it and not written down.</param>
 public sealed record ReplayQueueState(
     long Id, IReadOnlyList<string> Dates, int Speed, string FromIst, int Next, IReadOnlyList<long> Sessions, IReadOnlyList<string> Skipped,
-    string By, DateTime CreatedUtc, DateTime? EndedUtc, string? Note);
+    string By, DateTime CreatedUtc, DateTime? EndedUtc, string? Note, string? Tries = null, DateTime? RetryUtc = null, long? LastSession = null);
 
 public sealed record ReplayQueueView(
     long Id, IReadOnlyList<string> Dates, int Speed, string FromIst, int Next, IReadOnlyList<long> Sessions, IReadOnlyList<string> Skipped,
-    string By, DateTime CreatedUtc, DateTime? EndedUtc, string? Note, string? NextDate);
+    string By, DateTime CreatedUtc, DateTime? EndedUtc, string? Note, string? NextDate, IReadOnlyList<int>? Tries = null, DateTime? RetryUtc = null);
 
 public sealed record ReplayDay(string Date, string Weekday, IReadOnlyDictionary<string, int> Minutes, long SizeBytes);
 

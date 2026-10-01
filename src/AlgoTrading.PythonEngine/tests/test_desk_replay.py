@@ -8,6 +8,7 @@ from datetime import date, datetime, time, timedelta, timezone
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from market_data.replay import desk_replay as dr  # noqa: E402
+from market_data.replay import run_replay  # noqa: E402
 
 DAY = date(2026, 9, 30)
 
@@ -164,6 +165,41 @@ class DeskReplayTests(unittest.TestCase):
         self.assertEqual(["NSE:NIFTY26OCT25000CE"], desk.events[0][2])
         self.assertEqual(["post", "post", "publish"], [e[0] for e in desk.events])
 
+    def test_a_book_the_api_opened_again_is_sent_the_latest_price_of_every_other_symbol_played(self):
+        # After an API restart its book is empty: a contract that does not tick again had no price until it did.
+        rows = [row(1, "NSE:NIFTY50-INDEX", at(9, 15, 0), ltp=25000.0),
+                row(2, "NSE:NIFTY26OCT25000CE", at(9, 15, 1), ltp=120.0),
+                row(3, "NSE:NIFTY26OCT25000CE", at(9, 15, 2), ltp=121.0),
+                row(4, "NSE:NIFTY26OCT25100PE", at(9, 15, 3), ltp=80.0),
+                row(5, "NSE:NIFTY50-INDEX", at(9, 16, 0), ltp=25010.0)]
+        desk = Desk(rows)
+        sent = []
+
+        def post(ticks):
+            sent.append(sorted((t["symbol"], t["lastTradedPrice"]) for t in ticks))
+            return len(sent) == 5    # the API restarted before the 09:16 tick: its answer says the book was opened again
+
+        desk.post = post
+        self.assertEqual("finished", desk.player(plan()).run())
+
+        self.assertEqual(6, len(sent))
+        self.assertEqual([("NSE:NIFTY50-INDEX", 25010.0)], sent[4])
+        self.assertEqual([("NSE:NIFTY26OCT25000CE", 121.0), ("NSE:NIFTY26OCT25100PE", 80.0)], sent[5])
+        self.assertEqual(5, len(desk.kinds("publish")))     # the runners are not sent them again
+
+    def test_the_prices_a_later_start_primed_the_book_with_are_sent_again_too(self):
+        first = [{"symbol": "NSE:NIFTY26OCT25000CE", "lastTradedPrice": 120.0, "exchangeTimestampUtc": "x"}]
+        desk = Desk([row(1, "NSE:NIFTY50-INDEX", at(11, 0))], prime=first)
+        sent = []
+
+        def post(ticks):
+            sent.append([t["symbol"] for t in ticks])
+            return len(sent) == 2
+
+        desk.post = post
+        desk.player(plan(start=time(11, 0))).run()
+        self.assertEqual([["NSE:NIFTY26OCT25000CE"], ["NSE:NIFTY50-INDEX"], ["NSE:NIFTY26OCT25000CE"]], sent)
+
     def test_progress_runs_from_the_open_to_the_close(self):
         p = plan()
         self.assertEqual(0.0, p.progress(None))
@@ -181,6 +217,65 @@ class DeskReplayTests(unittest.TestCase):
         rows = [row(i, "NSE:NIFTY50-INDEX", at(9, 15, i * 0.5)) for i in range(8)]   # every half second, 3.5 s
         groups = list(dr.batches(rows, speed=5.0))                                  # 1 s of the day per batch
         self.assertEqual([2, 2, 2, 2], [len(g) for _, g in groups])
+
+
+class Answer:
+    def __init__(self, status_code, body=None, text=""):
+        self.status_code = status_code
+        self._body = body
+        self.text = text
+
+    def json(self):
+        if self._body is None:
+            raise ValueError("no JSON body")
+        return self._body
+
+
+class Http:
+    """The API as the player's poster sees it: one answer per POST, in order."""
+
+    def __init__(self, *answers):
+        self.answers = list(answers)
+        self.batches = []
+
+    def post(self, url, json=None, verify=None, timeout=None):
+        self.batches.append(json)
+        answer = self.answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+
+class BookPosterTests(unittest.TestCase):
+
+    def poster(self, http):
+        return run_replay.book_poster(http, "http://api/api/Replay/ticks", True, log=lambda line: None, sleep=lambda s: None)
+
+    def test_the_apis_answer_that_it_opened_its_book_again_is_passed_on(self):
+        http = Http(Answer(200, {"taken": 1, "reopened": True}), Answer(200, {"taken": 1, "reopened": False}))
+        post = self.poster(http)
+        self.assertTrue(post([{"symbol": "A"}]))
+        self.assertFalse(post([{"symbol": "B"}]))
+
+    def test_an_answer_without_the_flag_or_without_a_body_is_not_a_reopened_book(self):
+        http = Http(Answer(200, {"taken": 1}), Answer(200, None), Answer(400, None, text="bad"))
+        post = self.poster(http)
+        self.assertFalse(post([{"symbol": "A"}]))
+        self.assertFalse(post([{"symbol": "A"}]))
+        self.assertFalse(post([{"symbol": "A"}]))
+
+    def test_a_large_batch_goes_in_parts_and_any_part_can_say_the_book_was_opened_again(self):
+        http = Http(Answer(200, {"reopened": False}), Answer(200, {"reopened": True}))
+        ticks = [{"symbol": f"S{i}"} for i in range(run_replay.POST_LIMIT + 1)]
+        self.assertTrue(self.poster(http)(ticks))
+        self.assertEqual([run_replay.POST_LIMIT, 1], [len(b) for b in http.batches])
+
+    def test_an_api_down_for_a_moment_is_tried_again_and_a_409_still_fails_the_replay(self):
+        http = Http(ConnectionError("refused"), Answer(503), Answer(200, {"reopened": True}), Answer(409, {"error": "No market replay is on."}))
+        post = self.poster(http)
+        self.assertTrue(post([{"symbol": "A"}]))
+        with self.assertRaises(RuntimeError):
+            post([{"symbol": "A"}])
 
 
 if __name__ == "__main__":

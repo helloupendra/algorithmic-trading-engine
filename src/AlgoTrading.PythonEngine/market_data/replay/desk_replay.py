@@ -210,8 +210,9 @@ class Player:
     """
     Plays one day. Every outside thing is handed in, so a test plays a day with no database, Redis, API
     or wall clock: `read` gives the rows of a window, `prime` the first prices, `post` sends ticks to the
-    book, `publish` to the stream, `report` writes the status, `control` reads the last command,
-    `listening` says whether a run is listening, `stop_requested` whether to stop.
+    book (and answers whether the API said its book was opened again), `publish` to the stream, `report`
+    writes the status, `control` reads the last command, `listening` says whether a run is listening,
+    `stop_requested` whether to stop.
     """
 
     def __init__(self, plan: ReplayPlan, *, read: Callable, prime: Callable, post: Callable, publish: Callable,
@@ -232,6 +233,8 @@ class Player:
         self._paused = False
         self._pause_started = 0.0
         self._paused_total = 0.0
+        #: The latest tick of every symbol sent to the book so far, to send it again should the API lose its book.
+        self._latest: dict[str, dict] = {}
 
     # ---------------------------------------------------------------- status
 
@@ -265,7 +268,7 @@ class Player:
             self._wait_for_runners()
             first = self._prime(self.plan)
             if first:
-                self._post(first)
+                self._book(first)
                 self._log(f"[replay] primed the book with {len(first)} prices from before {self.plan.start:%H:%M}")
             self.state = "playing"
             self._say(force=True)
@@ -310,7 +313,7 @@ class Player:
             for first, group in batches(self._read(since, until), plan.speed):
                 self._wait_until(wall_origin + (first - origin).total_seconds() / plan.speed)
                 ticks = [tick_from_row(row) for row in group]
-                self._post(ticks)       # the book first: the fill a runner asks for must find this price
+                self._book(ticks)       # the book first: the fill a runner asks for must find this price
                 self._publish(ticks)
                 self.ticks_sent += len(ticks)
                 stamp = max(_utc(row[4]) for row in group)
@@ -319,6 +322,22 @@ class Player:
                     self.clock_utc = stamp
                 self._say()
             since = until
+
+    def _book(self, ticks: list[dict]) -> None:
+        """
+        Sends ticks to the API's book. An API restarted in the middle of a replay has lost every price, and a
+        contract that does not trade again had none until it did; when its answer says the book was opened again,
+        it is sent the latest price of every other symbol played so far. Only the book: the runners have had them.
+        """
+        reopened = self._post(ticks)
+        if reopened:
+            sent = {tick["symbol"] for tick in ticks}
+            again = [tick for symbol, tick in self._latest.items() if symbol not in sent]
+            if again:
+                self._post(again)
+                self._log(f"[replay] the API's book was opened again; sent it the latest price of {len(again):,} more symbols")
+        for tick in ticks:
+            self._latest[tick["symbol"]] = tick
 
     def _wait_until(self, due: float) -> None:
         """Sleeps until `due` on the wall clock, moved later by every pause; obeys pause and stop meanwhile."""

@@ -274,6 +274,202 @@ public class MarketReplayQueueTests
         Assert.InRange(db.SystemSettings.AsNoTracking().Single(s => s.Key == SystemSettingKeys.ReplayQueue).Value.Length, 1, SettingLength(db));
     }
 
+    // ---------- days that did not play are tried again ----------
+
+    [Fact]
+    public async Task A_day_whose_player_does_not_start_is_tried_twice_more_after_a_wait_then_skipped()
+    {
+        // The database was down: every start in that window failed at once. Each used to be skipped on the spot.
+        var (replay, _, player, _, clock) = Kit(Ist(2026, 10, 3, 12, 0), Sep29, Sep30);
+        player.RefuseStarts = 3;
+
+        await replay.QueueAsync(new ReplayQueueRequest(["2026-09-29", "2026-09-30"], 2), "admin", default);
+        var waiting = (await replay.LoadQueueAsync(default))!;
+        Assert.Equal((1, 0, 0), (player.Refused, waiting.Next, waiting.Skipped.Count));
+
+        // Five minutes before the second try, fifteen before the third.
+        clock.Advance(TimeSpan.FromMinutes(4));
+        await replay.TickAsync(default);
+        Assert.Equal(1, player.Refused);
+        clock.Advance(TimeSpan.FromMinutes(1) + TimeSpan.FromSeconds(1));
+        await replay.TickAsync(default);
+        Assert.Equal(2, player.Refused);
+        clock.Advance(TimeSpan.FromMinutes(14));
+        await replay.TickAsync(default);
+        Assert.Equal(2, player.Refused);
+        clock.Advance(TimeSpan.FromMinutes(1) + TimeSpan.FromSeconds(1));
+        await replay.TickAsync(default);
+        Assert.Equal(3, player.Refused);
+
+        // Three tries: skipped with why, and the queue moves on.
+        var gaveUp = (await replay.LoadQueueAsync(default))!;
+        Assert.Equal(1, gaveUp.Next);
+        Assert.StartsWith("2026-09-29: 3 tries; The player did not start", gaveUp.Skipped.Single());
+        clock.Advance(MarketReplayService.QueueGap + TimeSpan.FromSeconds(1));
+        await replay.TickAsync(default);
+        Assert.Equal("2026-09-30", player.Starts.Single()[1]);
+        Assert.Single((await replay.LoadQueueAsync(default))!.Sessions);
+    }
+
+    [Fact]
+    public async Task A_day_whose_replay_fails_soon_after_it_started_is_played_again_not_counted()
+    {
+        var (replay, _, player, channel, clock) = Kit(Ist(2026, 10, 3, 12, 0), Sep29, Sep30);
+        await replay.QueueAsync(new ReplayQueueRequest(["2026-09-29", "2026-09-30"], 2), "admin", default);
+        var first = (await replay.LoadAsync(default))!;
+
+        // Redis went away: the player died 30 s in, having played nothing.
+        clock.Advance(TimeSpan.FromSeconds(30));
+        player.Running = false;
+        await replay.TickAsync(default);
+        Assert.Equal(MarketReplayService.StateFailed, (await replay.LoadAsync(default))!.State);
+        await replay.TickAsync(default);
+
+        var queue = (await replay.LoadQueueAsync(default))!;
+        Assert.Equal((0, 0, 0), (queue.Next, queue.Sessions.Count, queue.Skipped.Count));    // the day is next again
+
+        clock.Advance(TimeSpan.FromMinutes(5) + TimeSpan.FromSeconds(1));
+        await replay.TickAsync(default);
+        var second = (await replay.LoadAsync(default))!;
+        Assert.Equal(("2026-09-29", MarketReplayService.StateStarting), (second.Date, second.State));
+        Assert.True(second.Id > first.Id);
+
+        PlayedOut(channel, player, second.Id);
+        await replay.TickAsync(default);
+        clock.Advance(MarketReplayService.QueueGap + TimeSpan.FromSeconds(1));
+        await replay.TickAsync(default);
+        var third = (await replay.LoadAsync(default))!;
+        Assert.Equal("2026-09-30", third.Date);
+        Assert.Equal(new[] { second.Id, third.Id }, (await replay.LoadQueueAsync(default))!.Sessions);
+    }
+
+    [Fact]
+    public async Task A_day_whose_replay_fails_late_counts_as_played()
+    {
+        var (replay, _, player, channel, clock) = Kit(Ist(2026, 10, 3, 12, 0), Sep29, Sep30);
+        await replay.QueueAsync(new ReplayQueueRequest(["2026-09-29", "2026-09-30"], 2), "admin", default);
+        var first = (await replay.LoadAsync(default))!;
+
+        clock.Advance(TimeSpan.FromHours(2));
+        channel.Status = new ReplayPlayerStatus(first.Id, MarketReplayService.StateFailed, Ist(2026, 9, 29, 13, 0), 400_000, 0.6,
+            "OperationalError: server closed the connection unexpectedly", DateTime.UtcNow);
+        player.Running = false;
+        await replay.TickAsync(default);
+        clock.Advance(MarketReplayService.QueueGap + TimeSpan.FromSeconds(1));
+        await replay.TickAsync(default);
+
+        Assert.Equal(new[] { "2026-09-29", "2026-09-30" }, player.Starts.Select(a => a[1]));
+        Assert.Equal(2, (await replay.LoadQueueAsync(default))!.Sessions.Count);
+    }
+
+    [Fact]
+    public async Task A_day_stopped_at_0845_is_played_again_after_the_close_not_counted()
+    {
+        // Thursday 1 Oct, 20:00: a day at 1x fits before Friday's 08:45, but it was paused overnight.
+        var (replay, _, player, channel, clock) = Kit(Ist(2026, 10, 1, 20, 0), Sep29);
+        await replay.QueueAsync(new ReplayQueueRequest(["2026-09-29"], 1), "admin", default);
+        var first = (await replay.LoadAsync(default))!;
+        channel.Status = new ReplayPlayerStatus(first.Id, MarketReplayService.StatePaused, Ist(2026, 9, 29, 11, 0), 1000, 0.3, null, DateTime.UtcNow);
+
+        clock.Set(Ist(2026, 10, 2, 8, 45));
+        await replay.TickAsync(default);
+        Assert.Equal(MarketReplayService.StateStopped, (await replay.LoadAsync(default))!.State);
+        clock.Set(Ist(2026, 10, 2, 10, 0));
+        await replay.TickAsync(default);
+
+        var queue = (await replay.LoadQueueAsync(default))!;
+        Assert.Equal((0, 0, 0), (queue.Next, queue.Sessions.Count, queue.Skipped.Count));
+        Assert.Null(queue.EndedUtc);
+        Assert.Single(player.Starts);                         // not during Friday's session
+
+        clock.Set(Ist(2026, 10, 2, 16, 0));
+        await replay.TickAsync(default);
+        Assert.Equal(new[] { "2026-09-29", "2026-09-29" }, player.Starts.Select(a => a[1]));
+    }
+
+    [Fact]
+    public async Task A_day_the_owner_stopped_counts_as_played()
+    {
+        var (replay, _, player, _, clock) = Kit(Ist(2026, 10, 3, 12, 0), Sep29, Sep30);
+        await replay.QueueAsync(new ReplayQueueRequest(["2026-09-29", "2026-09-30"], 2), "admin", default);
+
+        clock.Advance(TimeSpan.FromSeconds(30));
+        await replay.StopAsync("upendra", default);
+        clock.Advance(MarketReplayService.QueueGap + TimeSpan.FromSeconds(1));
+        await replay.TickAsync(default);
+
+        Assert.Equal(new[] { "2026-09-29", "2026-09-30" }, player.Starts.Select(a => a[1]));
+        var queue = (await replay.LoadQueueAsync(default))!;
+        Assert.Equal((2, 2, 0), (queue.Next, queue.Sessions.Count, queue.Skipped.Count));
+    }
+
+    [Fact]
+    public async Task A_queue_stored_by_the_version_before_retries_carries_on_and_retries_its_day()
+    {
+        // As the deployed API wrote them: the queue has no record of tries, and its second day is playing.
+        var (replay, db, player, channel, clock) = Kit(Ist(2026, 10, 3, 12, 0), Sep29, Sep30);
+        var created = clock.GetUtcNow().UtcDateTime.AddHours(-4);
+        StoreRaw(db, SystemSettingKeys.ReplayQueue,
+            $$"""{"id":3,"dates":["2026-09-28","2026-09-29","2026-09-30"],"speed":2,"fromIst":"09:15","next":2,"sessions":[6,7],"skipped":[],"by":"admin","createdUtc":"{{created:O}}","endedUtc":null,"note":null}""");
+        StoreRaw(db, SystemSettingKeys.ReplaySession,
+            $$"""{"id":7,"date":"2026-09-29","speed":2,"fromIst":"09:15","state":"playing","runIds":[],"startedUtc":"{{clock.GetUtcNow().UtcDateTime.AddMinutes(-2):O}}","endedUtc":null,"error":null,"startedBy":"admin","aiTrader":true,"clockUtc":null,"ticksSent":0}""");
+
+        player.Running = false;      // its player has died, two minutes in
+        await replay.TickAsync(default);
+        await replay.TickAsync(default);
+        var queue = (await replay.LoadQueueAsync(default))!;
+        Assert.Equal(1, queue.Next);
+        Assert.Equal(new long[] { 6 }, queue.Sessions);
+
+        clock.Advance(TimeSpan.FromMinutes(5) + TimeSpan.FromSeconds(1));
+        await replay.TickAsync(default);
+        var again = (await replay.LoadAsync(default))!;
+        Assert.Equal(("2026-09-29", 8L), (again.Date, again.Id));
+    }
+
+    [Fact]
+    public async Task The_queues_stored_state_fits_its_setting_with_every_day_tried_three_times()
+    {
+        // Twenty recorded days, and a player that never starts: each day is tried three times and skipped with why.
+        // The clock has a fraction of a second, as a real one does, and the session ids are long.
+        var recorded = Enumerable.Range(0, MarketReplayService.MaxQueuedDays).Select(i => new DateOnly(2026, 9, 1).AddDays(i)).ToArray();
+        var (replay, db, player, _, clock) = Kit(Ist(2026, 10, 3, 12, 0).AddTicks(1_234_567), recorded);
+        db.AiTraderDecisions.Add(new AiTraderDecision { Day = recorded[0], ClockUtc = DateTime.UtcNow, CreatedUtc = DateTime.UtcNow, ReplaySessionId = 999_900 });
+        db.SaveChanges();
+        string by = string.Concat(Enumerable.Repeat("उपेन्द्र ", 12))[..100];
+        var days = recorded.Select(d => d.ToString("yyyy-MM-dd")).ToList();
+        player.RefuseStarts = int.MaxValue;
+
+        await replay.QueueAsync(new ReplayQueueRequest(days, 10), by, default);
+        for (int i = 0; i < 200 && (await replay.LoadQueueAsync(default))!.Skipped.Count < days.Count - 1; i++)
+        {
+            clock.Advance(TimeSpan.FromMinutes(16));
+            await replay.TickAsync(default);
+        }
+
+        // The last day is between its second and third tries when the queue is cancelled.
+        for (int i = 0; i < 2; i++)
+        {
+            clock.Advance(TimeSpan.FromMinutes(16));
+            await replay.TickAsync(default);
+        }
+
+        await replay.CancelQueueAsync(by, default);
+
+        var queue = (await replay.LoadQueueAsync(default))!;
+        Assert.Equal(days.Count - 1, queue.Skipped.Count);
+        Assert.All(queue.Skipped, s => Assert.Contains(": 3 tries; The player did not start", s));
+        Assert.Equal(new string('3', days.Count - 1) + "2", queue.Tries);
+        Assert.NotNull(queue.RetryUtc);
+        Assert.InRange(db.SystemSettings.AsNoTracking().Single(s => s.Key == SystemSettingKeys.ReplayQueue).Value.Length, 1, SettingLength(db));
+    }
+
+    private static void StoreRaw(TradingDbContext db, string key, string json)
+    {
+        db.SystemSettings.Add(new SystemSetting { Key = key, Value = json, CreatedUtc = DateTime.UtcNow, UpdatedUtc = DateTime.UtcNow });
+        db.SaveChanges();
+    }
+
     /// <summary>The longest value system_settings takes (varchar on PostgreSQL; the in-memory store takes any).</summary>
     internal static int SettingLength(TradingDbContext db) =>
         db.Model.FindEntityType(typeof(SystemSetting))!.FindProperty(nameof(SystemSetting.Value))!.GetMaxLength()!.Value;
