@@ -127,7 +127,7 @@ public sealed class AiMemoryTests
         Assert.NotEmpty(note.Embedding);
         await Assert.ThrowsAsync<AiMemoryException>(() => memory.RememberAsync(null, "   ", "upendra", "console", CancellationToken.None));
         await Assert.ThrowsAsync<AiMemoryException>(() => memory.RememberAsync(null, new string('x', 601), "upendra", "console", CancellationToken.None));
-        await Assert.ThrowsAsync<AiMemoryException>(() => memory.RememberAsync(AiCatalog.NewsAnalyst, "A note.", "upendra", "console", CancellationToken.None));
+        await Assert.ThrowsAsync<AiMemoryException>(() => memory.RememberAsync("technical-analyst", "A note.", "upendra", "console", CancellationToken.None));
     }
 
     [Fact]
@@ -268,32 +268,75 @@ public sealed class AiMemoryTests
     }
 
     [Fact]
-    public async Task A_wrong_answer_in_the_check_proposes_one_lesson_that_waits_and_the_owner_is_told()
+    public async Task A_lesson_that_fixes_its_question_and_breaks_nothing_is_used_without_asking_the_owner()
     {
         var ai = Build(tools: DeskTools());
-        ai.Provider.On(Judge1, CheckAnswers().Append(Answer("Lesson: For the day's total, read totals.netPnl from get_runs; it is already net of charges.")).ToArray());
+        ai.Provider.On(Judge1, CheckAnswers()
+            .Append(Answer("Lesson: For the day's total, read totals.netPnl from get_runs; it is already net of charges."))
+            .Append(Answer("Together: −₹1,05,000.25 after charges."))   // the failed question, with the lesson on trial
+            .Append(Answer("There are 2 runs today."))                    // two it got right, still right
+            .Append(Answer("Run #339 has the lowest net P&L."))
+            .ToArray());
 
         var report = await Check(ai, out var told).RunForAsync(null, CancellationToken.None);
 
         var lesson = await ai.Db.AiMemories.SingleAsync();
         var total = JsonNode.Parse(report!.DataJson)!["questions"]!.AsArray()[1]!;
-        Assert.Equal((AiMemoryStatus.Proposed, AiMemoryKind.Lesson), (lesson.Status, lesson.Kind));
+        Assert.Equal((AiMemoryStatus.Active, AssistantCheckAgent.Verified), (lesson.Status, lesson.DecidedBy));
         Assert.Equal("For the day's total, read totals.netPnl from get_runs; it is already net of charges.", lesson.Text);
         Assert.Equal("What is the net P&L of all of today's runs together, after charges?", lesson.Context);
         Assert.Equal((total["callId"]!.GetValue<long>(), report.Id), (lesson.SourceCallId!.Value, lesson.SourceReportId!.Value));
         Assert.Equal(new[] { lesson.Id }, told.Lessons.Select(l => l.Id));
-        Assert.Contains("waiting for approval", report.Body);
+        Assert.Contains($"M{lesson.Id} used (fixed its question)", report.Body);
 
+        // The re-asked question carried the lesson; the day's own answers did not.
+        var retry = await ai.Db.AiCalls.SingleAsync(c => c.ConversationId.EndsWith("-verify-1-0"));
+        Assert.Contains($"[M{lesson.Id}] lesson", retry.SystemPrompt);
+        var dayAnswers = await ai.Db.AiCalls.Where(c => c.AgentKey == AiCatalog.DeskAssistant && !c.ConversationId.Contains("verify")).ToListAsync();
+        Assert.Equal(6, dayAnswers.Count);
+        Assert.DoesNotContain(dayAnswers, c => c.SystemPrompt.Contains("[M"));
         var judge = await ai.Db.AiCalls.SingleAsync(c => c.SystemPrompt == AssistantCheckAgent.LessonPrompt);
-        Assert.Equal(AiCatalog.AssistantCheck, judge.AgentKey);
         Assert.Contains("Right answer: -105,000.25", judge.MessagesJson);
+    }
+
+    [Theory]
+    [InlineData(false, AssistantCheckAgent.DidNotFix)]
+    [InlineData(true, AssistantCheckAgent.BrokeAnother)]
+    public async Task A_lesson_that_does_not_fix_its_question_or_breaks_another_is_dropped(bool fixes, string verdict)
+    {
+        var ai = Build(tools: DeskTools());
+        var after = fixes
+            ? new[] { Answer("Together: −₹1,05,000.25."), Answer("There are 3 runs today.") }   // fixed, but a right answer went wrong
+            : new[] { Answer("Together: −₹1,00,000.") };                                       // still wrong
+        ai.Provider.On(Judge1, CheckAnswers().Append(Answer("Lesson: Read totals.netPnl for the day's total.")).Concat(after).ToArray());
+
+        await Check(ai, out var told).RunForAsync(null, CancellationToken.None);
+
+        var lesson = await ai.Db.AiMemories.SingleAsync();
+        Assert.Equal((AiMemoryStatus.Rejected, verdict), (lesson.Status, lesson.DecidedBy));
+        Assert.Equal(new[] { lesson.Id }, told.Lessons.Select(l => l.Id));
+    }
+
+    [Fact]
+    public async Task A_lesson_on_trial_is_read_on_that_call_alone()
+    {
+        var ai = Build();
+        var lesson = Seed(ai.Db, "A lesson being tested.", AiMemoryStatus.Proposed, kind: AiMemoryKind.Lesson);
+        ai.Provider.On(Judge1, Answer("ok"), Answer("ok"));
+
+        var trial = await ai.Gateway.AskAsync(Question() with { TrialMemoryIds = [lesson.Id] }, new RecordingSink(), CancellationToken.None);
+        var normal = await ai.Gateway.AskAsync(Question(), new RecordingSink(), CancellationToken.None);
+
+        Assert.Equal(new[] { lesson.Id }, trial.MemoryIds);
+        Assert.Empty(normal.MemoryIds);
     }
 
     [Fact]
     public async Task No_lesson_for_NONE_and_the_same_kind_of_question_is_not_sent_to_the_judge_twice()
     {
         var ai = Build(tools: DeskTools());
-        ai.Provider.On(Judge1, CheckAnswers().Append(Answer("NONE")).Concat(CheckAnswers()).Append(Answer("Lesson: read the totals.")).ToArray());
+        ai.Provider.On(Judge1, CheckAnswers().Append(Answer("NONE"))
+            .Concat(CheckAnswers()).Append(Answer("Lesson: read the totals.")).Append(Answer("Together: −₹1,00,000.")).ToArray());
         var check = Check(ai, out _);
         await check.RunForAsync(null, CancellationToken.None);
         Assert.Empty(await ai.Db.AiMemories.ToListAsync());
@@ -302,7 +345,7 @@ public sealed class AiMemoryTests
         await check.RunForAsync(null, CancellationToken.None);
         var lesson = await ai.Db.AiMemories.SingleAsync();
 
-        // Third day: that lesson is waiting, so the Judge is not asked.
+        // Third day: that lesson was tried and dropped lately, so the Judge is not asked.
         ai.Provider.On(Judge1, CheckAnswers());
         await check.RunForAsync(null, CancellationToken.None);
         Assert.Equal(2, await ai.Db.AiCalls.CountAsync(c => c.SystemPrompt == AssistantCheckAgent.LessonPrompt));
@@ -363,7 +406,8 @@ public sealed class AiMemoryTests
         Assert.Equal(400, bad.StatusCode);
         Assert.Equal(("active", "upendra"), (approved.Status, approved.DecidedBy));
         Assert.Equal((2, 0), (all.Counts.Active, all.Counts.Proposed));
-        Assert.Equal(new AiMemoryAgent(AiCatalog.DeskAssistant, "Desk Assistant", true), Assert.Single(all.Agents));
+        Assert.Equal(new AiMemoryAgent(AiCatalog.DeskAssistant, "Desk Assistant", true), all.Agents[0]);
+        Assert.Equal(new[] { AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer }, all.Agents.Skip(1).Select(a => a.Key));
         Assert.Equal("Weekly options expire on Tuesday.".Length + "A lesson to approve.".Length + "How many open legs are there?".Length, all.ActiveChars);
     }
 

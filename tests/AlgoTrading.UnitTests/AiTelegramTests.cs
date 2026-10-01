@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json.Nodes;
 using AlgoTrading.Api.Services.AgentMemory;
+using AlgoTrading.Api.Services.AiAgents;
 using AlgoTrading.Api.Services.AiTelegram;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Ai;
@@ -258,25 +259,24 @@ public sealed class AiTelegramTests
     }
 
     [Fact]
-    public async Task A_new_lesson_reaches_each_owner_with_approve_and_reject_and_approve_makes_it_active()
+    public async Task The_days_tested_lessons_reach_each_owner_in_one_message_with_nothing_to_answer()
     {
         var (ai, bot, assistant) = Setup();
         await Link(assistant, Owner);
         bot.Sent.Clear();
-        await using var seed = NewDb(_dbName);
-        var memory = new AiMemoryService(seed, new AiMemoryBook(seed, ai.Client, ai.Options), ai.Options);
-        var lesson = await memory.ProposeAsync(AiCatalog.DeskAssistant, "Read totals.netPnl for the day's total.", "What is the net P&L of all of today's runs?", 12, null, CancellationToken.None);
+        var used = new AiMemory { Id = 15, AgentKey = AiCatalog.DeskAssistant, Status = AiMemoryStatus.Active, Text = "Read totals.netPnl for the day's total.",
+            DecidedBy = AssistantCheckAgent.Verified };
+        var dropped = new AiMemory { Id = 16, AgentKey = AiCatalog.DeskAssistant, Status = AiMemoryStatus.Rejected, Text = "x",
+            DecidedBy = AssistantCheckAgent.DidNotFix };
 
-        await assistant.LessonsProposedAsync([lesson!], CancellationToken.None);
+        await assistant.LessonsProposedAsync([used, dropped], CancellationToken.None);
+
         var sent = bot.Sent.Single(s => s["method"] == "sendMessage");
-        await assistant.HandleButtonAsync(Press(Owner, $"mem:a:{lesson!.Id}", messageId: 9), CancellationToken.None);
-
         Assert.Equal(Owner.ToString(System.Globalization.CultureInfo.InvariantCulture), sent["chat_id"]);
-        Assert.Contains($"mem:a:{lesson.Id}", sent["reply_markup"]);
-        Assert.Contains($"mem:r:{lesson.Id}", sent["reply_markup"]);
-        await using var db = NewDb(_dbName);
-        var approved = await db.AiMemories.SingleAsync();
-        Assert.Equal((AiMemoryStatus.Active, "upendra"), (approved.Status, approved.DecidedBy));
+        Assert.Contains("M15: Read totals.netPnl for the day's total.", sent["text"]);
+        Assert.Contains("M16: did not fix its question", sent["text"]);
+        Assert.Contains("Nothing to answer", sent["text"]);
+        Assert.False(sent.ContainsKey("reply_markup"));
     }
 
     // ---------- helpers ----------

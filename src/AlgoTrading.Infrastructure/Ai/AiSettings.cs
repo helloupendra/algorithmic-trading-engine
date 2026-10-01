@@ -103,8 +103,12 @@ public sealed class AiSettings
     /// <summary>Whether agents read their memories (<see cref="AiMemoryBook"/>) before answering.</summary>
     public bool MemoryEnabled { get; set; } = true;
 
-    /// <summary>The agents that have memory, comma-separated. The Desk Assistant first (owner, 1 Oct).</summary>
-    public string MemoryAgents { get; set; } = AiCatalog.DeskAssistant;
+    /// <summary>
+    /// The agents that have memory, comma-separated. The Desk Assistant first (owner, 1 Oct morning), then every
+    /// built agent the same day, once they were all on: a correction on any agent's report is its memory.
+    /// </summary>
+    public string MemoryAgents { get; set; } =
+        $"{AiCatalog.DeskAssistant},{AiCatalog.TradeReviewer},{AiCatalog.NewsAnalyst},{AiCatalog.IncidentExplainer}";
 
     /// <summary>Characters of memories one call may carry in its system prompt; past it the closest to the question win.</summary>
     public int MemoryBudgetChars { get; set; } = 2400;

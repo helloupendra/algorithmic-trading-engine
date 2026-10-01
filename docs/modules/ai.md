@@ -392,25 +392,33 @@ The desk's bot answers its linked owner in a private chat, as the Assistant tab 
   the linked accounts; `DELETE telegram/owners/{id}` unlinks one.
 - **Teaching.** 👍 and 👎 sit under every answer. After a 👎 the bot asks "What should it have said?", and a reply to
   that message becomes a correction. `/remember …` saves a note, `/memory` lists what the Assistant reads, and
-  `/forget N` retires memory MN. Each lesson the daily check proposes arrives as its own message with Approve and
-  Reject. A button pressed by anyone but a linked owner does nothing.
+  `/forget N` retires memory MN. After the daily check, one message lists the lessons it tested, those learned and
+  those dropped, with nothing to answer. A button pressed by anyone but a linked owner does nothing.
 
 ## Memory
 
 The models do not learn: their weights are the provider's. What an agent learns is kept as **memories**, short
 notes put into its system prompt on every call (`AiMemoryBook`). Each one can be read, edited, traced to where it
-came from, and taken out. The Desk Assistant has memory first (`Ai:MemoryAgents`, owner decision 1 Oct).
+came from, and taken out. Every built agent has memory (`Ai:MemoryAgents`): the Desk Assistant from the morning of
+1 Oct, the Trade Reviewer, News Analyst and Incident Explainer from that afternoon, once they were all switched on.
 
 | Kind | Written by | Used |
 |---|---|---|
 | `note` | The owner: `/remember` on Telegram, or Add a note on AI → Memory | At once |
 | `correction` | The owner: 👎 on an answer with what it should have said; its question is kept as context | At once |
-| `lesson` | The daily check: the Judge's one-line lesson from a question the Assistant got wrong | **Only after the owner approves it** |
+| `lesson` | The daily check: the Judge's one-line lesson from a question the Assistant got wrong | **Only after it passes its own test** |
 
-A lesson waits because a wrong lesson in the prompt would repeat its mistake on every answer. The check asks the
-Judge about at most `Ai:MaxLessonsPerCheck` (3) failed questions a day. It does not ask about a kind of question
-(the question with its numbers taken out) that already has a lesson waiting or active, or one the owner rejected in
-the last 14 days.
+A wrong lesson in the prompt would repeat its mistake on every answer, so each lesson is tested before it is used.
+The Assistant is asked the question the lesson came from again, with the lesson on trial in its memory
+(`AiAskInput.TrialMemoryIds`: read on that call alone). Two questions it got right are asked too.
+- The lesson is used only if the first now passes and the other two still do.
+- Otherwise it is dropped, with the reason: `check: did not fix its question` or `check: broke a right answer`.
+
+Lessons once waited for the owner's approval. On 1 Oct the owner said he cannot keep answering yes or no, so the
+evidence decides. He can still take any lesson out, and every lesson sits on Today and AI → Memory.
+
+The check asks the Judge about at most `Ai:MaxLessonsPerCheck` (3) failed questions a day. It skips a kind of question
+(the question with its numbers taken out) that already has a lesson, or had one dropped in the last 14 days.
 
 **What reaches the prompt:**
 - Only `active` memories of the agent that asks. Corrections come first, then notes, then lessons.

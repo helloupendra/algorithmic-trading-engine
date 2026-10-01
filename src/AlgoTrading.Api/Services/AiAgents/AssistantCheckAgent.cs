@@ -174,7 +174,8 @@ public sealed class AssistantCheckAgent(
         {
             body.Append($"\nMemory: {withMemory} of {graded.Count} answers read memories");
             body.Append(lessons.Count > 0
-                ? $"; {lessons.Count} new lesson{(lessons.Count == 1 ? "" : "s")} waiting for approval on AI → Memory ({string.Join(", ", lessons.Select(l => $"M{l.Id}"))}).\n"
+                ? "; lessons tested today: " + string.Join("; ", lessons.Select(l =>
+                    $"M{l.Id} {(l.Status == AiMemoryStatus.Active ? "used" : "dropped")} ({l.DecidedBy.Replace("check: ", string.Empty)})")) + ".\n"
                 : ".\n");
         }
 
@@ -196,7 +197,10 @@ public sealed class AssistantCheckAgent(
                 ["error"] = g.Error,
                 ["memoryIds"] = new JsonArray(g.MemoryIds.Select(id => (JsonNode)id).ToArray()),
             }).ToArray()),
-            ["lessons"] = new JsonArray(lessons.Select(l => (JsonNode)l.Id).ToArray()),
+            ["lessons"] = new JsonArray(lessons.Select(l => (JsonNode)new JsonObject
+            {
+                ["id"] = l.Id, ["used"] = l.Status == AiMemoryStatus.Active, ["verdict"] = l.DecidedBy,
+            }).ToArray()),
         };
 
         var report = await reports.SaveAsync(AgentKey, AiReportSubject.Check, day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), day, status, null,
@@ -225,8 +229,12 @@ public sealed class AssistantCheckAgent(
 
     /// <summary>
     /// For each question it got wrong (at most <see cref="AiSettings.MaxLessonsPerCheck"/>), the Judge
-    /// writes one lesson, kept as proposed until the owner approves it. A question of a kind that already
-    /// has a lesson waiting or active, or had one turned down lately, is not asked about again.
+    /// writes one lesson, and the lesson is tested before it is used: the Assistant is asked that
+    /// question again with the lesson in its memory, and two questions it got right. It is used only if
+    /// it fixes the one and keeps the others; otherwise it is dropped. The owner does not have to
+    /// approve each one (1 Oct: "I can't keep saying yes or no"): the evidence decides, and the owner
+    /// can still take any lesson out. A kind of question that already has a lesson, or had one dropped
+    /// lately, is not asked about again.
     /// </summary>
     private async Task<List<AiMemory>> ProposeLessonsAsync(List<Graded> graded, DateOnly day, CancellationToken cancellationToken)
     {
@@ -244,10 +252,54 @@ public sealed class AssistantCheckAgent(
             string? lesson = await LessonAsync(g, day, asked, cancellationToken);
             if (lesson is null) continue;
             var saved = await memory.ProposeAsync(AiCatalog.DeskAssistant, lesson, g.Question.Text, g.CallId, null, cancellationToken);
-            if (saved is not null) proposed.Add(saved);
+            if (saved is null) continue;
+
+            string verdict = await VerifyAsync(saved, g, graded, day, asked, cancellationToken);
+            await memory.UpdateAsync(saved.Id, null, verdict == Verified ? AiMemoryStatus.Active : AiMemoryStatus.Rejected,
+                verdict, cancellationToken);
+            proposed.Add(saved);
         }
 
         return proposed;
+    }
+
+    /// <summary>The decider written on a lesson that fixed its question and broke nothing.</summary>
+    public const string Verified = "check: fixed its question";
+
+    /// <summary>The decider written on a lesson that did not fix the question it came from.</summary>
+    public const string DidNotFix = "check: did not fix its question";
+
+    /// <summary>The decider written on a lesson that fixed its question but turned a right answer wrong.</summary>
+    public const string BrokeAnother = "check: broke a right answer";
+
+    /// <summary>The questions a lesson must keep right besides the one it is for.</summary>
+    public const int KeepChecks = 2;
+
+    private async Task<string> VerifyAsync(AiMemory lesson, Graded failed, List<Graded> graded, DateOnly day, int n,
+        CancellationToken cancellationToken)
+    {
+        IReadOnlyList<long> trial = [lesson.Id];
+        if (!await AskAgainAsync(failed.Question, trial, $"check-{day:yyyyMMdd}-verify-{n}-0", cancellationToken)) return DidNotFix;
+
+        int k = 0;
+        foreach (var right in graded.Where(x => x.Pass).Take(KeepChecks))
+        {
+            k++;
+            if (!await AskAgainAsync(right.Question, trial, $"check-{day:yyyyMMdd}-verify-{n}-{k}", cancellationToken)) return BrokeAnother;
+        }
+
+        return Verified;
+    }
+
+    /// <summary>One question asked again with a lesson on trial, graded against the tools' answer as it stands now.</summary>
+    private async Task<bool> AskAgainAsync(Question q, IReadOnlyList<long> trial, string conversation, CancellationToken cancellationToken)
+    {
+        var result = await gateway.AskAsync(new AiAskInput(
+            AiCatalog.DeskAssistant, null, [new AiMessage("user", q.Text + " Answer briefly.")], null, 4096, 0.2,
+            conversation, "check", AgentKey, null, TrialMemoryIds: trial), NullAiStreamSink.Instance, cancellationToken);
+        if (result.Outcome != AiCallOutcome.Ok) return false;
+        var now = (await QuestionsAsync(cancellationToken)).FirstOrDefault(a => a.Text == q.Text);
+        return Grade(Moved(q with { Also = null }, now), result.Text);
     }
 
     private async Task<string?> LessonAsync(Graded g, DateOnly day, int n, CancellationToken cancellationToken)

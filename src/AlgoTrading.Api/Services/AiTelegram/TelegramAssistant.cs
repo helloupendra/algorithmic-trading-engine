@@ -416,19 +416,33 @@ public sealed class TelegramAssistant(
         }
     }
 
-    /// <summary>Lessons from the daily check, one message each with Approve and Reject, to every linked owner.</summary>
+    /// <summary>
+    /// The day's lessons in one message to every linked owner: each was tested by the check before it was
+    /// used, so nothing waits for an answer (owner, 1 Oct). /forget takes one out.
+    /// </summary>
     public async Task LessonsProposedAsync(IReadOnlyList<AiMemory> lessons, CancellationToken cancellationToken)
     {
         if (!Enabled || lessons.Count == 0) return;
+        var used = lessons.Where(l => l.Status == AiMemoryStatus.Active).ToList();
+        var dropped = lessons.Where(l => l.Status != AiMemoryStatus.Active).ToList();
+        var text = new System.Text.StringBuilder();
+        text.Append($"Today's check tested {lessons.Count} lesson{(lessons.Count == 1 ? "" : "s")} for the {AiCatalog.AgentName(lessons[0].AgentKey)}.");
+        if (used.Count > 0)
+        {
+            text.Append("\n\nLearned (fixed the question it came from, broke nothing):");
+            foreach (var l in used) text.Append($"\nM{l.Id}: {l.Text}");
+        }
+
+        if (dropped.Count > 0)
+        {
+            text.Append("\n\nDropped:");
+            foreach (var l in dropped) text.Append($"\nM{l.Id}: {l.DecidedBy.Replace("check: ", string.Empty)}");
+        }
+
+        text.Append("\n\nNothing to answer. /forget N takes a lesson out; all of it is on Today and AI → Memory.");
         foreach (var owner in await OwnersAsync(cancellationToken))
         {
-            foreach (var lesson in lessons)
-            {
-                string text = $"New lesson M{lesson.Id} for the {AiCatalog.AgentName(lesson.AgentKey)}, from today's check. It is not used until you approve it.\n\n" +
-                    $"\"{lesson.Text}\"\n\nFrom the question: {lesson.Context}" +
-                    (lesson.SourceCallId is long call ? $" (call #{call})" : string.Empty);
-                await SendAsync(owner.TelegramUserId, text, cancellationToken, markup: Keyboard(("Approve", $"mem:a:{lesson.Id}"), ("Reject", $"mem:r:{lesson.Id}")));
-            }
+            await SendAsync(owner.TelegramUserId, text.ToString(), cancellationToken);
         }
     }
 

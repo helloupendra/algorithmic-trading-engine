@@ -63,13 +63,16 @@ public sealed class AiMemoryBook(
     /// each counted as used. The counts, and any embedding call's audit row,
     /// are saved with the caller's next <c>SaveChanges</c>.
     /// </summary>
-    public async Task<IReadOnlyList<AiRecalled>> RecallAsync(string agentKey, string question, CancellationToken cancellationToken)
+    /// <param name="trial">Memories read on this call whatever their status: a lesson tested before it is used.</param>
+    public async Task<IReadOnlyList<AiRecalled>> RecallAsync(
+        string agentKey, string question, CancellationToken cancellationToken, IReadOnlyList<long>? trial = null)
     {
         var s = settings.CurrentValue;
         if (!s.HasMemory(agentKey)) return [];
 
+        var tried = trial ?? [];
         var active = await db.AiMemories
-            .Where(m => m.AgentKey == agentKey && m.Status == AiMemoryStatus.Active)
+            .Where(m => m.AgentKey == agentKey && (m.Status == AiMemoryStatus.Active || tried.Contains(m.Id)))
             .ToListAsync(cancellationToken);
         if (active.Count == 0) return [];
 
