@@ -246,15 +246,23 @@ public static class PositionGreeks
 /// underlyings' prices and each contract's expiry time — and returns each
 /// leg's greeks.
 /// </summary>
+/// <remarks>
+/// A recap run of the day being replayed (<see cref="IMarketReplayBook.Prices"/>)
+/// is priced from the replay instead: the book's quotes and spot, on the
+/// replay's clock. Its legs are that day's contracts, often expired since, and
+/// today's live quotes and chain have nothing to say about them.
+/// </remarks>
 public sealed class PositionGreeksBuilder
 {
     private readonly TradingDbContext _dbContext;
     private readonly IMarketSessionService _sessions;
+    private readonly IMarketReplayBook? _replayBook;
 
-    public PositionGreeksBuilder(TradingDbContext dbContext, IMarketSessionService sessions)
+    public PositionGreeksBuilder(TradingDbContext dbContext, IMarketSessionService sessions, IMarketReplayBook? replayBook = null)
     {
         _dbContext = dbContext;
         _sessions = sessions;
+        _replayBook = replayBook;
     }
 
     /// <summary>One open leg, as the position view already decoded it.</summary>
@@ -273,27 +281,50 @@ public sealed class PositionGreeksBuilder
 
     public sealed record Built(Dictionary<long, PositionGreeksResponse> ByPosition, RunGreeksTotals? Totals);
 
-    public async Task<Built> BuildAsync(IReadOnlyList<OpenLeg> legs, DateTime nowUtc, CancellationToken cancellationToken)
+    /// <param name="replayPriced">
+    /// The legs are a recap run's, of the day the market replay is playing:
+    /// priced from the replay book on the replay's clock, never from the live
+    /// quotes or today's chain.
+    /// </param>
+    public async Task<Built> BuildAsync(IReadOnlyList<OpenLeg> legs, DateTime nowUtc, CancellationToken cancellationToken,
+        bool replayPriced = false)
     {
         var result = new Dictionary<long, PositionGreeksResponse>();
         if (legs.Count == 0) return new Built(result, null);
 
+        var replay = replayPriced && _replayBook?.Day is not null ? _replayBook : null;
+        if (replay is not null)
+        {
+            // "Now" is the replayed moment: the time to expiry is counted from
+            // it, and a figure is fresh or stale by it, as live figures are by
+            // the wall clock.
+            nowUtc = replay.ClockUtc ?? nowUtc;
+            legs = legs.Select(leg => AtReplayPrice(leg, replay)).ToList();
+        }
+
         var options = legs.Where(IsOption).ToList();
         var optionSymbols = options.Select(x => x.Symbol).Distinct(StringComparer.Ordinal).ToList();
 
-        // (a) greeks the feed wrote onto each option's quote.
+        // (a) greeks the feed wrote onto each option's quote. In a replay, the
+        // replayed quote's. The player sends prices only (live_ticks keeps no
+        // greeks), so a replayed option normally has none, and its greeks are
+        // computed from its replayed price and spot below: PositionGreeks.Compute,
+        // the same Black-Scholes a live leg falls back to.
         var quotes = optionSymbols.Count == 0
             ? new Dictionary<string, QuoteGreeks>(StringComparer.Ordinal)
-            : (await _dbContext.LiveQuotesLatest.AsNoTracking()
-                .Where(x => optionSymbols.Contains(x.Symbol))
-                .Select(x => new QuoteGreeks(x.Symbol, x.UpdatedUtc, x.ImpliedVolatility, x.Delta, x.Gamma, x.Theta, x.Vega))
-                .ToListAsync(cancellationToken))
-              .GroupBy(x => x.Symbol, StringComparer.Ordinal)
-              .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+            : replay is not null
+                ? ReplayQuoteGreeks(replay, optionSymbols)
+                : (await _dbContext.LiveQuotesLatest.AsNoTracking()
+                    .Where(x => optionSymbols.Contains(x.Symbol))
+                    .Select(x => new QuoteGreeks(x.Symbol, x.UpdatedUtc, x.ImpliedVolatility, x.Delta, x.Gamma, x.Theta, x.Vega))
+                    .ToListAsync(cancellationToken))
+                  .GroupBy(x => x.Symbol, StringComparer.Ordinal)
+                  .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
 
-        // (b) the chain recorder's newest snapshot of each, only if fresh.
+        // (b) the chain recorder's newest snapshot of each, only if fresh. None
+        // in a replay: a snapshot fresh now is today's, not the replayed day's.
         var since = nowUtc - PositionGreeks.FreshFor;
-        var snapshots = optionSymbols.Count == 0
+        var snapshots = optionSymbols.Count == 0 || replay is not null
             ? new Dictionary<string, SnapshotGreeks>(StringComparer.Ordinal)
             : (await _dbContext.OptionChainSnapshots.AsNoTracking()
                 .Where(x => optionSymbols.Contains(x.Symbol) && x.CapturedUtc >= since)
@@ -312,12 +343,14 @@ public sealed class PositionGreeksBuilder
         var referenceSymbols = references.Values.Select(x => x.Symbol).Distinct(StringComparer.Ordinal).ToList();
         var underlyingQuotes = referenceSymbols.Count == 0
             ? new Dictionary<string, (decimal? Ltp, DateTime At)>(StringComparer.Ordinal)
-            : (await _dbContext.LiveQuotesLatest.AsNoTracking()
-                .Where(x => referenceSymbols.Contains(x.Symbol))
-                .Select(x => new { x.Symbol, x.LastTradedPrice, x.UpdatedUtc })
-                .ToListAsync(cancellationToken))
-              .GroupBy(x => x.Symbol, StringComparer.Ordinal)
-              .ToDictionary(g => g.Key, g => (g.First().LastTradedPrice, g.First().UpdatedUtc), StringComparer.Ordinal);
+            : replay is not null
+                ? ReplayPrices(replay, referenceSymbols)
+                : (await _dbContext.LiveQuotesLatest.AsNoTracking()
+                    .Where(x => referenceSymbols.Contains(x.Symbol))
+                    .Select(x => new { x.Symbol, x.LastTradedPrice, x.UpdatedUtc })
+                    .ToListAsync(cancellationToken))
+                  .GroupBy(x => x.Symbol, StringComparer.Ordinal)
+                  .ToDictionary(g => g.Key, g => (g.First().LastTradedPrice, g.First().UpdatedUtc), StringComparer.Ordinal);
 
         var totals = new List<(string Underlying, PositionGreeksResponse Greeks)>();
         int unpriced = 0;
@@ -399,6 +432,46 @@ public sealed class PositionGreeksBuilder
                 expiryUtc: expiryUtc,
                 onFuture: reference.OnFuture);
         }, nowUtc);
+    }
+
+    /// <summary>
+    /// The leg at the replay's price, as of that price's market time (Dhan
+    /// stamps a quote with its last trade). With no replayed quote there is no
+    /// price of that day to compute from, so the leg counts as unpriced rather
+    /// than being computed off a stored mark whose market time is not known.
+    /// </summary>
+    private static OpenLeg AtReplayPrice(OpenLeg leg, IMarketReplayBook replay)
+    {
+        var quote = replay.Quote(leg.Symbol);
+        return quote?.LastTradedPrice is > 0m
+            ? leg with { Ltp = quote.LastTradedPrice, LtpAsOfUtc = quote.ExchangeTimestampUtc ?? replay.ClockUtc }
+            : leg with { Ltp = null, LtpAsOfUtc = null };
+    }
+
+    /// <summary>The replayed quotes' greeks, when a quote carries any, as of the quote's market time.</summary>
+    private static Dictionary<string, QuoteGreeks> ReplayQuoteGreeks(IMarketReplayBook replay, IEnumerable<string> symbols)
+    {
+        var result = new Dictionary<string, QuoteGreeks>(StringComparer.Ordinal);
+        foreach (var symbol in symbols)
+        {
+            if (replay.Quote(symbol) is not { } q || (q.ExchangeTimestampUtc ?? replay.ClockUtc) is not DateTime at) continue;
+            result[symbol] = new QuoteGreeks(symbol, at, q.ImpliedVolatility, q.Delta, q.Gamma, q.Theta, q.Vega);
+        }
+
+        return result;
+    }
+
+    /// <summary>The replayed prices of the underlyings, as of each quote's market time.</summary>
+    private static Dictionary<string, (decimal? Ltp, DateTime At)> ReplayPrices(IMarketReplayBook replay, IEnumerable<string> symbols)
+    {
+        var result = new Dictionary<string, (decimal? Ltp, DateTime At)>(StringComparer.Ordinal);
+        foreach (var symbol in symbols)
+        {
+            if (replay.Quote(symbol) is not { } q || (q.ExchangeTimestampUtc ?? replay.ClockUtc) is not DateTime at) continue;
+            result[symbol] = (q.LastTradedPrice, at);
+        }
+
+        return result;
     }
 
     /// <summary>The spot an index or stock option is priced off, or the future an MCX option is written on.</summary>
