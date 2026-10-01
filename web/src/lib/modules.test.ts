@@ -106,6 +106,7 @@ describe('navFor', () => {
     expect(pagesOf(nav, 'research')).toEqual(['Backtests', 'New backtest', 'Runs', 'Forecasts', 'Filter lab', 'Notebook'])
     expect(pagesOf(nav, 'system')).toEqual(['Health', 'Incidents', 'Log', 'Calendar', 'Connectors', 'People'])
     expect(pagesOf(nav, 'ai')).toEqual(['Overview', 'Assistant', 'Memory', 'Agents', 'Reports', 'Models', 'Calls'])
+    expect(pagesOf(nav, 'data')).toEqual(['Overview', 'Feeds', 'Historical', 'Instruments', 'Replay'])
   })
 
   it('never shows a trader Today, System, Data, AI, connectors, feeds or Sentinel pages', () => {
@@ -172,6 +173,7 @@ describe('locate', () => {
     expect(at(adminNav, '/research/backtests/new')).toBe('Research / New backtest')
     expect(at(adminNav, '/data')).toBe('Data / Overview')
     expect(at(adminNav, '/data/feeds')).toBe('Data / Feeds')
+    expect(at(adminNav, '/data/replay')).toBe('Data / Replay')
     expect(at(adminNav, '/ai')).toBe('AI / Overview')
     expect(at(adminNav, '/ai/calls')).toBe('AI / Calls')
     expect(at(adminNav, '/ai/memory')).toBe('AI / Memory')
