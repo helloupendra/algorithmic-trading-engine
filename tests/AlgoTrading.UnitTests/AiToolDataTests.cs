@@ -24,7 +24,8 @@ public sealed class AiToolDataTests : IDisposable
 {
     private const string Password = "hunter2-db-pass";
     private const string Token = "tok_SECRET_9f8e7d";
-    private const string Bearer = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI3In0.c2lnbmF0dXJl";
+    // Made up: {"alg":"HS256"}.{"sub":"7"}.signature, to prove a token in a tool's output is masked.
+    private const string Bearer = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI3In0.c2lnbmF0dXJl"; // pragma: allowlist secret
     private const string Host = "ip-172-31-20-148";
     private const string Email = "coder@example.com";
     private const string LogPath = "/home/ubuntu/algorithmic-trading-engine/logs/api.log";
