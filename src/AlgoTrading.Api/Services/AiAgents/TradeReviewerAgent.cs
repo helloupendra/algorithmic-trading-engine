@@ -160,8 +160,60 @@ public sealed class TradeReviewerAgent(
                 "The answer was not the JSON object asked for; its text is kept as the body.", cancellationToken);
         }
 
+        // "Deviated" is the verdict that teaches the wrong lesson when it is false, and on 1 Oct the same model,
+        // given the same data, called run 308 followed and its twin 309 deviated. So a deviation is asked again,
+        // separately, and kept only when the second review finds it too.
+        if (review.Verdict == "deviated")
+        {
+            var second = await gateway.AskAsync(new AiAskInput(
+                AgentKey, null, [new AiMessage("user", question)], null, 6000, 0.2,
+                $"review-run-{runId}-second", "schedule", AgentKey, null), NullAiStreamSink.Instance, cancellationToken);
+            if (second.Outcome != AiCallOutcome.Ok)
+            {
+                string why = "The second review of a deviation got no answer: " + (second.RefusalStatus is null ? second.Error : $"Refused: {second.Error}");
+                logger.LogInformation("Trade review of run {RunId}: {Why}", runId, why);
+                return await reports.SaveAsync(AgentKey, AiReportSubject.Run, Id(runId), day, AiReportStatus.Failed, second,
+                    $"Run {runId}: no review", string.Empty, "{}", why, cancellationToken);
+            }
+
+            review = SecondOpinion(review, ParseReview(second.Text), second.CallId);
+        }
+
         return await reports.SaveAsync(AgentKey, AiReportSubject.Run, Id(runId), day, AiReportStatus.Ok, result,
             review.Title, review.Body, review.Data.ToJsonString(Json), string.Empty, cancellationToken);
+    }
+
+    /// <summary>
+    /// A deviation checked by a second review: kept when the second also finds one, otherwise
+    /// "unclear", with both said. Public for tests.
+    /// </summary>
+    public static ParsedReview SecondOpinion(ParsedReview first, ParsedReview? second, long secondCallId)
+    {
+        string secondVerdict = second?.Verdict ?? "not in the asked shape";
+        var data = (JsonObject)first.Data.DeepClone();
+        data["secondReview"] = new JsonObject { ["callId"] = secondCallId, ["verdict"] = secondVerdict };
+
+        if (secondVerdict == "deviated")
+        {
+            return first with { Body = first.Body + "\n\n**Checked:** a second review, asked the same question separately, also found that it did not follow the spec.", Data = data };
+        }
+
+        data["verdict"] = "unclear";
+        string said = secondVerdict switch
+        {
+            "followed" => "found that it followed the spec",
+            "unclear" => "could not tell from the records",
+            _ => "did not answer in the asked shape",
+        };
+        string firstBody = first.Body.StartsWith("**Verdict:**", StringComparison.Ordinal) && first.Body.IndexOf("\n\n", StringComparison.Ordinal) is int cut and > 0
+            ? first.Body[(cut + 2)..]
+            : first.Body;
+        string body =
+            "**Verdict:** unclear: two reviews disagreed. The first found that the run did not follow the spec; a second, asked the " +
+            $"same question separately, {said}. A deviation is kept only when two reviews agree.\n\n**The first review**\n\n{firstBody}" +
+            (second is null ? string.Empty : $"\n\n**The second review:** {second.Title}");
+        string title = "Reviews disagree: " + first.Title;
+        return new ParsedReview(title.Length <= 300 ? title : title[..299] + "…", body, data);
     }
 
     /// <summary>
@@ -247,7 +299,10 @@ public sealed class TradeReviewerAgent(
         return new ParsedReview(title, body.ToString().TrimEnd(), data);
     }
 
-    public sealed record ParsedReview(string Title, string Body, JsonObject Data);
+    public sealed record ParsedReview(string Title, string Body, JsonObject Data)
+    {
+        public string? Verdict => Data["verdict"]?.GetValue<string>();
+    }
 
     /// <summary>
     /// When the queue is empty, one Telegram message for the reviews written
