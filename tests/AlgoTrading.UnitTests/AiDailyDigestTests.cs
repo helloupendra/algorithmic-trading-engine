@@ -2,6 +2,7 @@ using System.Globalization;
 using AlgoTrading.Api.Services.AiAgents;
 using AlgoTrading.Api.Services.AiTrader;
 using AlgoTrading.Application.Interfaces;
+using AlgoTrading.Application.Risk;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Domain.Enums;
 using AlgoTrading.Infrastructure.Ai;
@@ -238,6 +239,53 @@ public class AiDailyDigestTests
     }
 
     [Fact]
+    public async Task In_live_mode_it_carries_the_live_books_trades_and_its_net_today()
+    {
+        var ai = Build(Settings(s => s.AiTraderExecute = true));
+        await On(ai, AiCatalog.AiTrader);
+        ai.Db.AiTraderDecisions.AddRange(
+            Look(Ist(9, 30), "buy", true, "ok", mode: AiTraderModes.Live), Look(Ist(10, 0), "buy", true, "ok", mode: AiTraderModes.Live),
+            Look(Ist(11, 0), "exit", true, "ok", mode: AiTraderModes.Live));
+        long book = await AiTraderBookReaderTests.Book(ai.Db);
+        const string Call = "NSE:NIFTY26O0622650CE", Put = "NSE:NIFTY26O0622600PE";
+        ai.Db.PaperPositions.AddRange(
+            AiTraderBookReaderTests.Held(book, Call, Ist(9, 30), 120m, 1, mark: 88m, closedUtc: Ist(9, 52)),
+            AiTraderBookReaderTests.Held(book, Put, Ist(10, 0), 81m, 2, mark: 95.5m, closedUtc: Ist(11, 0)));
+        ai.Db.PaperOrders.AddRange(
+            AiTraderBookReaderTests.Fill(book, Call, "BUY", 120m, Ist(9, 30)), AiTraderBookReaderTests.Fill(book, Call, "SELL", 88m, Ist(9, 52)),
+            AiTraderBookReaderTests.Fill(book, Put, "BUY", 81m, Ist(10, 0), lots: 2), AiTraderBookReaderTests.Fill(book, Put, "SELL", 95.5m, Ist(11, 0), lots: 2));
+        await ai.Db.SaveChangesAsync();
+        var telegram = new Recorder();
+
+        Assert.True(await Digest(ai, telegram, AiTraderBookReaderTests.Reader(ai.Db)).RunOnceAsync(Ist(15, 46), default));
+
+        // The day's net is after the charges of the day's four fills; each line after its own round trip's, as the shadow lines.
+        decimal charges = OptionCharges.For(120m * 65 + 81m * 130, 88m * 65 + 95.5m * 130, 4, ChargeSchedule.IndexOptions).Total;
+        string Trade(decimal entry, decimal exit, int units) => Signed((exit - entry) * units - AiTraderShadowBook.Charges(Call, entry, exit, units));
+        Assert.Equal(
+            "AI Trader (live mode)\nLooks 3 · proposed 3 · allowed 3 · refused 0 · no answer 0\n" +
+            $"Live book: 2 trades, net {Signed(-32m * 65 + 14.5m * 130 - charges)} after {AiTraderGuard.Rupees(Math.Round(charges, 0, MidpointRounding.AwayFromZero))} charges\n" +
+            $"• NIFTY 22650 CE, 1 lot: 09:30 → 09:52, ₹120 → ₹88, {Trade(120m, 88m, 65)}\n" +
+            $"• NIFTY 22600 PE, 2 lots: 10:00 → 11:00, ₹81 → ₹95.5, {Trade(81m, 95.5m, 130)}",
+            Assert.Single(telegram.Sent).Message);
+    }
+
+    [Fact]
+    public async Task In_live_mode_with_nothing_traded_it_says_so()
+    {
+        var ai = Build(Settings(s => s.AiTraderExecute = true));
+        await On(ai, AiCatalog.AiTrader);
+        ai.Db.AiTraderDecisions.Add(Look(Ist(9, 30), "none", true, "ok", mode: AiTraderModes.Live));
+        await ai.Db.SaveChangesAsync();
+        var telegram = new Recorder();
+
+        Assert.True(await Digest(ai, telegram, AiTraderBookReaderTests.Reader(ai.Db)).RunOnceAsync(Ist(15, 46), default));
+
+        Assert.Equal("AI Trader (live mode)\nLooks 1 · proposed 0 · allowed 0 · refused 0 · no answer 0\nLive book: no trades",
+            Assert.Single(telegram.Sent).Message);
+    }
+
+    [Fact]
     public async Task ReviewDigestToTelegram_switches_it_off()
     {
         var ai = Build(Settings(s => s.ReviewDigestToTelegram = false));
@@ -389,6 +437,10 @@ public class AiDailyDigestTests
     private static AiDailyDigest Digest(Services ai, Recorder telegram, params DateOnly[] holidays) =>
         new(ai.Db, ai.Store, new AiReportWriter(ai.Db, ai.Options), new MarketSessionService(new Calendar(holidays)), telegram, ai.Options);
 
+    /// <summary>A digest that can read the AI Trader's live book.</summary>
+    private static AiDailyDigest Digest(Services ai, Recorder telegram, IAiTraderBooks books) =>
+        new(ai.Db, ai.Store, new AiReportWriter(ai.Db, ai.Options), new MarketSessionService(new Calendar()), telegram, ai.Options, books);
+
     private static async Task On(Services ai, params string[] agents)
     {
         foreach (var agent in agents) await ai.Store.SetAgentEnabledAsync(agent, true, "upendra", null);
@@ -418,9 +470,9 @@ public class AiDailyDigestTests
         ai.Db.SaveChanges();
     }
 
-    private static AiTraderDecision Look(DateTime clockUtc, string action, bool allowed, string rule, long? replay = null) => new()
+    private static AiTraderDecision Look(DateTime clockUtc, string action, bool allowed, string rule, long? replay = null, string? mode = null) => new()
     {
-        CreatedUtc = clockUtc, ClockUtc = clockUtc, Day = IstTime.DateOf(clockUtc), Mode = replay is null ? AiTraderModes.Shadow : AiTraderModes.Replay,
+        CreatedUtc = clockUtc, ClockUtc = clockUtc, Day = IstTime.DateOf(clockUtc), Mode = mode ?? (replay is null ? AiTraderModes.Shadow : AiTraderModes.Replay),
         ReplaySessionId = replay, Action = action, Underlying = action is "buy" or "exit" ? "NIFTY" : string.Empty, Allowed = allowed, Rule = rule,
     };
 

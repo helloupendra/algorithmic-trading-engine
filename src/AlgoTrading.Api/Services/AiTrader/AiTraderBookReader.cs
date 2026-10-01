@@ -20,9 +20,13 @@ public static class AiTraderAccount
     /// <summary>The owner's capital for it (1 Oct 2026); <see cref="AiTraderRules.Capital"/> is what enforces it.</summary>
     public const decimal Capital = 500_000m;
 
+    /// <summary>Its account, or null before its first use.</summary>
+    public static Task<AppUser?> FindAsync(TradingDbContext db, CancellationToken cancellationToken) =>
+        db.AppUsers.FirstOrDefaultAsync(u => u.UserName.ToLower() == UserName, cancellationToken);
+
     public static async Task<AppUser> EnsureAsync(TradingDbContext db, CancellationToken cancellationToken)
     {
-        var user = await db.AppUsers.FirstOrDefaultAsync(u => u.UserName.ToLower() == UserName, cancellationToken);
+        var user = await FindAsync(db, cancellationToken);
         if (user is not null) return user;
 
         user = new AppUser
@@ -71,31 +75,10 @@ public sealed class AiTraderBookReader(
         bool kill = await risk.IsKillSwitchActiveAsync(cancellationToken);
 
         var user = await AiTraderAccount.EnsureAsync(db, cancellationToken);
-        var book = await ManualBook.FindAsync(db, user.Id, cancellationToken);
-        var dayStart = IstTime.StartOfDayUtc(IstTime.DateOf(clockUtc));
-
-        var open = new List<AiTraderOpenPosition>();
-        decimal realizedToday = 0m, unrealized = 0m, chargesToday = 0m;
-        int openedToday = 0;
-        if (book is not null)
-        {
-            var positions = await db.PaperPositions.AsNoTracking()
-                .Where(p => p.SimulationRunId == book.Id && (p.Status == "Open" || p.ClosedUtc >= dayStart))
-                .ToListAsync(cancellationToken);
-            var sizes = await lotSizes.ResolveManyAsync(positions.Select(p => p.Symbol).Distinct(), cancellationToken);
-            foreach (var p in positions.Where(p => p.Status == "Open"))
-            {
-                int lot = RunCharges.LotSizeOf(sizes, p.Symbol);
-                open.Add(new AiTraderOpenPosition(p.Id, p.Symbol, p.Quantity, p.AveragePrice, p.AveragePrice * p.Quantity * lot,
-                    p.LastMarkPrice, p.StopLossPrice, p.TargetPrice, p.UnrealizedPnl));
-                unrealized += p.UnrealizedPnl;
-            }
-
-            realizedToday = positions.Where(p => p.Status != "Open" && p.ClosedUtc >= dayStart).Sum(p => p.RealizedPnl);
-            var todaysOrders = db.PaperOrders.AsNoTracking().Where(o => o.SimulationRunId == book.Id && o.FilledUtc >= dayStart);
-            chargesToday = (await charges.ForOrdersAsync(todaysOrders, cancellationToken)).GetValueOrDefault(book.Id);
-            openedToday = await todaysOrders.CountAsync(o => o.Side == "BUY", cancellationToken);
-        }
+        var day = await DayAsync(user.Id, clockUtc, cancellationToken);
+        var open = day.Positions.Where(p => p.Open)
+            .Select(p => new AiTraderOpenPosition(p.Id, p.Symbol, p.Lots, p.Entry, p.Entry * p.Lots * p.LotSize, p.Mark, p.StopLoss, p.Target, p.Pnl))
+            .ToList();
 
         var running = registry.List().Where(r => r.UserId == user.Id).ToList();
         var runFigures = await pnl.FiguresAsync(running.Select(r => r.RunId).ToList(), running.Select(r => r.RunId).ToHashSet(), cancellationToken);
@@ -104,10 +87,86 @@ public sealed class AiTraderBookReader(
                 runFigures.TryGetValue(r.RunId, out var f) ? f.Realized + f.Unrealized - f.Charges : 0m))
             .ToList();
 
-        // Strategy runs started today count towards the day's net too.
-        decimal runsToday = runs.Sum(r => r.NetPnl);
-        decimal net = realizedToday + unrealized - chargesToday + runsToday;
-        return new AiTraderBook(clockUtc, tradingDay, kill, Math.Round(net, 2), openedToday, open, runs);
+        // A run's figures are its whole life (RunPnl has no "today"): only a run started today counts in today's net,
+        // all of it being today's. Live runs stop at the close, so one started earlier and still running is rare; its
+        // net is still shown with it, and left out of the day's.
+        var dayStart = IstTime.StartOfDayUtc(IstTime.DateOf(clockUtc));
+        var startedToday = running.Where(r => r.StartedUtc >= dayStart).Select(r => r.RunId).ToHashSet();
+        decimal runsToday = runs.Where(r => startedToday.Contains(r.RunId)).Sum(r => r.NetPnl);
+        return new AiTraderBook(clockUtc, tradingDay, kill, Math.Round(day.Net + runsToday, 2), day.OpenedToday, open, runs);
+    }
+
+    /// <summary>
+    /// Its manual book on the day of <paramref name="clockUtc"/> (IST), for the daily digest: empty when it has no
+    /// account yet (none is created for it here).
+    /// </summary>
+    public async Task<AiTraderLiveDay> DayAsync(DateTime clockUtc, CancellationToken cancellationToken) =>
+        await AiTraderAccount.FindAsync(db, cancellationToken) is { } user
+            ? await DayAsync(user.Id, clockUtc, cancellationToken)
+            : AiTraderLiveDay.Empty;
+
+    /// <summary>
+    /// Its manual book on the day of <paramref name="clockUtc"/>: the positions open now or closed that day, and the
+    /// day's net after charges, today's part only.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Net today = the realized P&amp;L of the positions closed today + today's change in the open ones − the charges
+    /// of today's fills. An open position bought today counts its P&amp;L at its mark. One carried from an earlier day
+    /// counts its mark less the previous session's close, which the feed sends with today's quotes
+    /// (<see cref="LiveQuoteLatest.Close"/>). Until 1 Oct its whole P&amp;L since entry counted, and every running run's
+    /// whole net, against today's charges only: a winner carried in hid today's losses from the daily-loss rule.
+    /// </para>
+    /// <para>
+    /// Approximations, both rare in an intraday book: with no quote of today for a carried position (so no previous
+    /// close), its P&amp;L since entry counts if it is a loss and nothing if it is a gain, so the daily-loss rule is
+    /// never loosened by a gain it cannot date; and a carried position closed today counts its whole realized P&amp;L.
+    /// </para>
+    /// </remarks>
+    private async Task<AiTraderLiveDay> DayAsync(long userId, DateTime clockUtc, CancellationToken cancellationToken)
+    {
+        var book = await ManualBook.FindAsync(db, userId, cancellationToken);
+        if (book is null) return AiTraderLiveDay.Empty;
+        var dayStart = IstTime.StartOfDayUtc(IstTime.DateOf(clockUtc));
+
+        var positions = await db.PaperPositions.AsNoTracking()
+            .Where(p => p.SimulationRunId == book.Id && (p.Status == "Open" || p.ClosedUtc >= dayStart))
+            .OrderBy(p => p.OpenedUtc).ThenBy(p => p.Id)
+            .ToListAsync(cancellationToken);
+        var symbols = positions.Select(p => p.Symbol).Distinct().ToList();
+        var sizes = await lotSizes.ResolveManyAsync(symbols, cancellationToken);
+        var carried = positions.Where(p => p.Status == "Open" && p.OpenedUtc < dayStart).Select(p => p.Symbol).Distinct().ToList();
+        var closes = (await db.LiveQuotesLatest.AsNoTracking()
+                .Where(q => carried.Contains(q.Symbol) && q.UpdatedUtc >= dayStart && q.Close > 0)
+                .Select(q => new { q.Symbol, q.Close })
+                .ToListAsync(cancellationToken))
+            .GroupBy(q => q.Symbol)
+            .ToDictionary(g => g.Key, g => g.First().Close!.Value);
+
+        // A closed position's lots have left it (its quantity is 0): the lots bought into it, from its fills.
+        var since = positions.Count == 0 ? dayStart : positions.Min(p => p.OpenedUtc);
+        var buys = await db.PaperOrders.AsNoTracking()
+            .Where(o => o.SimulationRunId == book.Id && o.Side == "BUY" && o.FillPrice != null && o.FilledUtc >= since && symbols.Contains(o.Symbol))
+            .Select(o => new { o.Symbol, o.Quantity, o.FilledUtc })
+            .ToListAsync(cancellationToken);
+
+        var rows = positions.Select(p =>
+        {
+            int lot = RunCharges.LotSizeOf(sizes, p.Symbol);
+            bool open = p.Status == "Open";
+            int lots = open ? p.Quantity : buys.Where(o => o.Symbol == p.Symbol && o.FilledUtc >= p.OpenedUtc && o.FilledUtc <= p.ClosedUtc).Sum(o => o.Quantity);
+            decimal pnl = open ? p.UnrealizedPnl : p.RealizedPnl;
+            decimal today = !open || p.OpenedUtc >= dayStart ? pnl
+                : closes.TryGetValue(p.Symbol, out var close) && p.LastMarkPrice is decimal mark ? PaperPnl.Unrealized(p.Direction, close, mark, p.Quantity, lot)
+                : Math.Min(0m, pnl);
+            return new AiTraderLivePosition(p.Id, p.Symbol, lots, lot, p.OpenedUtc, p.AveragePrice, p.LastMarkPrice, open ? p.UpdatedUtc : p.ClosedUtc,
+                open ? null : p.ClosedUtc, p.StopLossPrice, p.TargetPrice, pnl, today);
+        }).ToList();
+
+        var todaysOrders = db.PaperOrders.AsNoTracking().Where(o => o.SimulationRunId == book.Id && o.FilledUtc >= dayStart);
+        decimal chargesToday = (await charges.ForOrdersAsync(todaysOrders, cancellationToken)).GetValueOrDefault(book.Id);
+        int openedToday = await todaysOrders.CountAsync(o => o.Side == "BUY", cancellationToken);
+        return new AiTraderLiveDay(rows, Math.Round(rows.Sum(r => r.PnlToday) - chargesToday, 2), chargesToday, openedToday);
     }
 
     /// <summary>
@@ -149,4 +208,26 @@ public sealed class AiTraderBookReader(
 public interface IAiTraderBooks
 {
     Task<AiTraderBook> ReadAsync(DateTime clockUtc, bool replay, CancellationToken cancellationToken);
+
+    /// <summary>Its manual book (the live book) on the day of <paramref name="clockUtc"/>, position by position.</summary>
+    Task<AiTraderLiveDay> DayAsync(DateTime clockUtc, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Its manual book on one day: the positions open then or closed that day, oldest first. <c>Net</c> is the day's part
+/// after <c>Charges</c> (today's fills'; <see cref="AiTraderBookReader"/>), and <c>OpenedToday</c> counts today's buys.
+/// </summary>
+public sealed record AiTraderLiveDay(IReadOnlyList<AiTraderLivePosition> Positions, decimal Net, decimal Charges, int OpenedToday)
+{
+    public static readonly AiTraderLiveDay Empty = new([], 0m, 0m, 0);
+}
+
+/// <summary>
+/// One position of its manual book. <c>Pnl</c> is the whole trade's before charges, as closed or at its mark;
+/// <c>PnlToday</c> the part of it that counts today. A closed one's <c>Mark</c> is its exit fill.
+/// </summary>
+public sealed record AiTraderLivePosition(long Id, string Symbol, int Lots, int LotSize, DateTime OpenedUtc, decimal Entry, decimal? Mark,
+    DateTime? MarkUtc, DateTime? ClosedUtc, decimal? StopLoss, decimal? Target, decimal Pnl, decimal PnlToday)
+{
+    public bool Open => ClosedUtc is null;
 }

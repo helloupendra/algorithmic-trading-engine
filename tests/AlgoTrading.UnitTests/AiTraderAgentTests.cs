@@ -269,6 +269,8 @@ public class AiTraderAgentTests
     {
         public Task<AiTraderBook> ReadAsync(DateTime clockUtc, bool replay, CancellationToken cancellationToken) =>
             Task.FromResult(new AiTraderBook(clockUtc, sessions.GetSessionInfo(clockUtc, "NSE", "FO").IsTradingDay || replay, false, 0m, 0, [], []));
+
+        public Task<AiTraderLiveDay> DayAsync(DateTime clockUtc, CancellationToken cancellationToken) => Task.FromResult(AiTraderLiveDay.Empty);
     }
 
     /// <summary>
@@ -287,6 +289,8 @@ public class AiTraderAgentTests
             if (n <= together) await _all.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
             return new AiTraderBook(clockUtc, true, false, 0m, 0, [], []);
         }
+
+        public Task<AiTraderLiveDay> DayAsync(DateTime clockUtc, CancellationToken cancellationToken) => Task.FromResult(AiTraderLiveDay.Empty);
     }
 
     private sealed class FakeReplays(ReplaySessionState? session) : IReplaySessions
