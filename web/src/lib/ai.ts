@@ -17,6 +17,8 @@
  *   - the assistant's stream: a server-sent-events parser fed raw chunks, the
  *     runner that POSTs the question (EventSource can neither POST nor send a
  *     bearer token), and the chat reducer the page keeps its conversation in;
+ *   - the agents the owner can talk with (the Desk Assistant and the four
+ *     others, each as itself), one conversation per agent;
  *   - the agents' memory: notes, corrections and approved lessons, the 👍/👎
  *     on answers, and whether the check's score moves with them;
  *   - a small, safe reader of the answers' markdown. The page renders the
@@ -163,6 +165,10 @@ export interface AiAgent {
   limits: string
   /** The desk reads it may make itself (Phase 2); empty for a planned agent. */
   tools: AiAgentTool[]
+  /** Whether the owner can talk with it on AI → Assistant: the Desk Assistant, or a built agent with a chat persona. */
+  chat: boolean
+  /** What it reads when the owner talks with it: its own work first. Empty when it cannot be talked with. */
+  chatTools: AiAgentTool[]
   lastCall: AiCallRef | null
   nextRunUtc: string | null
   today: { calls: number; ok: number; failed: number; totalTokens: number } | null
@@ -375,7 +381,15 @@ function readHealth(h: AiModelHealth): AiModelHealth {
 
 export function readAgents(raw: unknown): AiAgentsResponse {
   const o = need<AiAgentsResponse>(raw, ['agents'], 'agent list')
-  return { agents: list<AiAgent>(o.agents).map((a) => ({ ...a, tools: list(a.tools) })), ruleBased: list(o.ruleBased) }
+  return {
+    agents: list<AiAgent>(o.agents).map((a) => {
+      // An API from before the other agents could be talked with: only the Desk Assistant, with its own tools.
+      const desk = a.key === DESK_ASSISTANT
+      const chatTools = a.chatTools === undefined ? (desk ? a.tools : []) : a.chatTools
+      return { ...a, tools: list(a.tools), chat: a.chat ?? desk, chatTools: list(chatTools) }
+    }),
+    ruleBased: list(o.ruleBased),
+  }
 }
 
 export function readModels(raw: unknown): AiModelsResponse {
@@ -685,6 +699,7 @@ const SOURCES: Record<string, string> = {
   health: 'Health probe',
   index: 'Docs index',
   telegram: 'Telegram',
+  preview: 'AI Trader look now',
 }
 
 export const CALL_SOURCES = Object.keys(SOURCES)
@@ -2386,6 +2401,119 @@ export function historyFor(turns: readonly ChatTurn[], question: string): ChatMe
   return [...kept.flat(), last]
 }
 
+// ---------- talking with the agents ----------------------------------------------
+
+export const DESK_ASSISTANT = 'desk-assistant'
+
+/**
+ * An agent the owner can talk with on AI → Assistant: what the picker calls it,
+ * one line on what to ask it, and questions to start with (a click puts one in
+ * the box; it is not sent). What it does and can read comes from the API.
+ */
+export interface ChatAgentMeta {
+  key: string
+  label: string
+  lead: string
+  starters: readonly string[]
+  placeholder: string
+}
+
+/** The Desk Assistant first: it is the default, and the one the page was built for. */
+export const CHAT_AGENTS: readonly ChatAgentMeta[] = [
+  {
+    key: DESK_ASSISTANT,
+    label: 'Desk Assistant',
+    lead: "Ask the desk's AI. It reads the desk through read-only tools, answers stream from the NVIDIA-hosted models of the tier you pick, and every question is logged in the Calls tab.",
+    starters: [
+      'How did the runs do today?',
+      'Why did the worst run today lose money?',
+      'What is open right now, and what is it worth?',
+      'Anything wrong on the desk: open incidents or checkup items?',
+    ],
+    placeholder: 'Ask about a backtest, a market move, a concept or the code…',
+  },
+  {
+    key: 'ai-trader',
+    label: 'AI Trader',
+    lead: 'Question the AI Trader about its own decisions, its shadow book, its scoreboard and its lessons, or ask what it would do now: a look built and judged as now that saves nothing.',
+    starters: ['Why did you buy on 16 Sep?', 'What would you do now?', 'Which lessons are you using?', 'How do you stand against the baseline rule?'],
+    placeholder: 'Ask the AI Trader about a decision, its book or its lessons…',
+  },
+  {
+    key: 'trade-reviewer',
+    label: 'Trade Reviewer',
+    lead: 'Question the Trade Reviewer about its run reviews: the verdicts, the deviations it found, and whether a review still stands against the run and its spec.',
+    starters: ['Which runs broke their spec this week?', "Show me yesterday's reviews.", 'Does your last "deviated" verdict still stand?'],
+    placeholder: 'Ask the Trade Reviewer about a review or a run…',
+  },
+  {
+    key: 'news-analyst',
+    label: 'News Analyst',
+    lead: 'Question the News Analyst about the events it extracted from headlines and exchange filings, each with the text it read.',
+    starters: ['What moved in the last hour?', 'Which filings today did you read as negative?', 'Which of your records were invalid today, and why?'],
+    placeholder: 'Ask the News Analyst about the news it read…',
+  },
+  {
+    key: 'incident-explainer',
+    label: 'Incident Explainer',
+    lead: "Question the Incident Explainer about Sentinel's incidents and its explanations of them.",
+    starters: ['Explain the latest incident', 'Which incidents are open, and how urgent are they?', 'What did you explain this week?'],
+    placeholder: 'Ask the Incident Explainer about an incident…',
+  },
+]
+
+/** A stored or linked agent key the picker knows; anything else is the Desk Assistant. */
+export function parseChatAgent(raw: string | null | undefined): string {
+  return CHAT_AGENTS.find((a) => a.key === raw)?.key ?? DESK_ASSISTANT
+}
+
+export function chatAgentMeta(key: string): ChatAgentMeta {
+  return CHAT_AGENTS.find((a) => a.key === key) ?? CHAT_AGENTS[0]
+}
+
+/** One conversation per agent, and the one the page shows. Switching keeps every conversation. */
+export interface AgentChats {
+  agent: string
+  chats: Readonly<Record<string, ChatState>>
+}
+
+export type AgentChatsAction =
+  | { type: 'pick'; agent: string }
+  /** A change to one agent's conversation, wherever the page is: an answer streams on after the owner switches away. */
+  | { type: 'chat'; agent: string; action: ChatAction }
+
+export function initialAgentChats(agent: string | null | undefined = DESK_ASSISTANT, newId: () => string = newConversationId): AgentChats {
+  const chats: Record<string, ChatState> = {}
+  for (const a of CHAT_AGENTS) chats[a.key] = initialChat(newId())
+  return { agent: parseChatAgent(agent), chats }
+}
+
+export function agentChatsReducer(state: AgentChats, action: AgentChatsAction): AgentChats {
+  if (action.type === 'pick') {
+    const agent = parseChatAgent(action.agent)
+    return agent === state.agent ? state : { ...state, agent }
+  }
+  const key = parseChatAgent(action.agent)
+  const before = state.chats[key] ?? initialChat()
+  const after = chatReducer(before, action.action)
+  return after === before ? state : { ...state, chats: { ...state.chats, [key]: after } }
+}
+
+/** The agent whose answer is streaming, if any: one question at a time across the conversations. */
+export function streamingAgent(state: AgentChats): string | null {
+  for (const a of CHAT_AGENTS) {
+    if (state.chats[a.key]?.turns.some((t) => t.status === 'streaming')) return a.key
+  }
+  return null
+}
+
+/** "3 questions", "answering…", or "" for a conversation not started: under each agent in the picker. */
+export function conversationNote(chat: ChatState | undefined): string {
+  if (!chat || chat.turns.length === 0) return ''
+  if (chat.turns.some((t) => t.status === 'streaming')) return 'answering…'
+  return `${chat.turns.length} question${chat.turns.length === 1 ? '' : 's'}`
+}
+
 // ---------- words and formats ----------------------------------------------------
 
 const MODEL_NAMES: Record<string, string> = {
@@ -2514,7 +2642,7 @@ export function clockTime(iso: string | null | undefined, nowMs: number): string
 
 // ---------- tools ---------------------------------------------------------------
 
-/** The Desk Assistant's tools as the console names them. */
+/** The agents' tools as the console names them; the other agents' read their own work. */
 const TOOL_NAMES: Record<string, string> = {
   get_runs: 'Runs',
   get_open_positions: 'Open positions',
@@ -2522,6 +2650,14 @@ const TOOL_NAMES: Record<string, string> = {
   get_incidents: 'Incidents',
   get_latest_checkup: 'Latest checkup',
   get_forecasts: 'Forecasts',
+  get_ai_trader_decisions: 'Its decisions',
+  get_ai_trader_book: 'Its shadow book',
+  get_ai_trader_scoreboard: 'Its scoreboard',
+  get_ai_trader_lessons: 'Its lessons',
+  ai_trader_look_now: 'A look now (saves nothing)',
+  get_trade_reviews: 'Its reviews',
+  get_news_events: 'Its news records',
+  get_incident_explanations: 'Its explanations',
 }
 
 /** Tools whose main argument names the thing read, so it joins the label: "Run #412", "Option chain NIFTY". */
@@ -2531,6 +2667,10 @@ const TOOL_SUBJECTS: Record<string, { keys: string[]; label: (value: string) => 
   get_news: { keys: ['query', 'q', 'symbol'], label: (v) => `News ${v}`, bare: 'News' },
   get_strategy_spec: { keys: ['strategy', 'name'], label: (v) => `Strategy spec ${v}`, bare: 'Strategy spec' },
   search_docs: { keys: ['query', 'q'], label: (v) => `Docs search “${v}”`, bare: 'Docs search' },
+  get_ai_trader_decision: { keys: ['decisionId', 'id'], label: (v) => `Decision #${v}`, bare: 'One decision' },
+  get_trade_review: { keys: ['runId'], label: (v) => `Review of run #${v}`, bare: 'One review' },
+  get_news_event: { keys: ['item', 'reportId'], label: (v) => `News record ${v}`, bare: 'One news record' },
+  get_incident: { keys: ['incidentId', 'id'], label: (v) => `Incident #${v}`, bare: 'One incident' },
 }
 
 /** The arguments the model wrote, when they are a JSON object; null otherwise. */
