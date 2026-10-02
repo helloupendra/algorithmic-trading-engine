@@ -32,7 +32,8 @@ public sealed class MarketBriefBuilder(
     MarketFactorsQueries factors,
     IMarketSessionService sessions,
     ILogger<MarketBriefBuilder> logger,
-    IMarketReplayBook? replayBook = null) : IAiTraderBriefs
+    IMarketReplayBook? replayBook = null,
+    SimilarMomentsSection? similar = null) : IAiTraderBriefs
 {
     /// <summary>The indices it trades, with their spot symbols and exchanges.</summary>
     public static readonly IReadOnlyList<(string Name, string Spot, string Exchange)> Indices =
@@ -81,6 +82,12 @@ public sealed class MarketBriefBuilder(
         }
 
         text.Append(await Section("India VIX", () => VixLineAsync(asOf, replay, cancellationToken))).Append('\n');
+
+        if (similar is not null)
+        {
+            text.Append('\n').Append(SimilarMomentsSection.Header).Append('\n')
+                .Append(await Section("similar moments", () => similar.BuildAsync(asOf, cancellationToken))).Append('\n');
+        }
 
         text.Append("\nOPTION CHAINS (nearest expiry)\n");
         foreach (var (name, _, _) in Indices)

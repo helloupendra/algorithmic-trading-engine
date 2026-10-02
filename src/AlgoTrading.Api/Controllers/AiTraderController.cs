@@ -140,6 +140,50 @@ public class AiTraderController(TradingDbContext db, AiSettingsStore store, IOpt
         p.Target, p.MarkPrice, p.MarkUtc, p.ExitUtc is null, p.ExitUtc, p.ExitUtc is DateTime x ? IstTime.ToIst(x).ToString("HH:mm") : null,
         p.ExitPrice, p.ExitReason, p.Charges, p.ExitUtc is null ? AiTraderShadowBook.Net([p]) : p.NetPnl ?? 0m);
 
+    /// <summary>
+    /// The base rates' history (<c>ai_trader_situations</c>, <see cref="AiTraderSituationBuilder"/>): the last day built, the
+    /// backfill's state, and each index's rows and days.
+    /// </summary>
+    [HttpGet("situations")]
+    public async Task<IActionResult> Situations([FromServices] AiTraderSituationsStatus status, CancellationToken cancellationToken)
+    {
+        var lastDay = await db.SystemSettings.AsNoTracking()
+            .Where(s => s.Key == AiTraderSituationBuilder.LastDayKey).Select(s => s.Value).FirstOrDefaultAsync(cancellationToken);
+        var indices = await db.AiTraderSituations.AsNoTracking()
+            .GroupBy(s => s.Underlying)
+            .Select(g => new AiTraderSituationsIndex(g.Key, g.Count(), g.Count(s => s.Return30MinPct != null && s.Return60MinPct != null && s.ReturnToClosePct != null), g.Select(s => s.Day).Distinct().Count(),
+                g.Min(s => s.Day), g.Max(s => s.Day)))
+            .ToListAsync(cancellationToken);
+        return Ok(new AiTraderSituationsView(lastDay, status.Snapshot(), indices.OrderBy(i => i.Underlying).ToList(), SituationsRuleText));
+    }
+
+    /// <summary>
+    /// Starts the base rates' backfill over all the stored 1-minute index history, or rebuilds it from <paramref name="from"/>
+    /// on. It runs outside 08:45–15:45 IST on trading days and carries on from where it stopped.
+    /// </summary>
+    [HttpPost("situations/backfill")]
+    public IActionResult StartSituations([FromQuery] string? from, [FromServices] AiTraderSituationsStatus status)
+    {
+        DateOnly? start = null;
+        if (!string.IsNullOrWhiteSpace(from))
+        {
+            if (!DateOnly.TryParseExact(from, "yyyy-MM-dd", out var day)) return BadRequest(new { error = "from is yyyy-MM-dd." });
+            start = day;
+        }
+
+        status.Request(start);
+        return Accepted(new
+        {
+            started = start?.ToString("yyyy-MM-dd") ?? "the first stored 1-minute index candle",
+            note = "Taken on the builder's next pass: at once, or 3 minutes after an API start. It builds outside 08:45–15:45 IST on trading days; GET api/AiTrader/situations shows its progress.",
+        });
+    }
+
+    public const string SituationsRuleText =
+        "Each index's moments every 10 minutes from 09:25 to 15:05 IST, built from the stored 1-minute candles: features from the bars up to " +
+        "the moment only, outcomes to +30 min, +60 min and 15:25. Built outside 08:45–15:45 IST on trading days, a day at a time; each night " +
+        "the day the candle archive has just finished.";
+
     /// <summary>Decisions newest first: a day's (IST), a replay's (<paramref name="replay"/>), or the latest.</summary>
     [HttpGet("decisions")]
     public async Task<IActionResult> Decisions([FromQuery] string? day, [FromQuery] long? replay, [FromQuery] int take = 50,
@@ -251,3 +295,9 @@ public sealed record AiTraderDecisionSummary(
     string? Option = null);
 
 public sealed record AiTraderDecisionDetail(AiTraderDecisionSummary Decision, string Brief, string PlanJson, string ResultJson, string BriefHash);
+
+/// <summary>The base rates' history: the last day built, the backfill's state, each index's rows, and what it holds.</summary>
+public sealed record AiTraderSituationsView(string? LastDay, AiTraderSituationsProgress Backfill, IReadOnlyList<AiTraderSituationsIndex> Indices, string Rule);
+
+/// <summary>One index's stored moments: all, those with every outcome known (the ones the base rates read), its days, the first and last.</summary>
+public sealed record AiTraderSituationsIndex(string Underlying, int Rows, int WithOutcomes, int Days, DateOnly First, DateOnly Last);

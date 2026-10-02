@@ -134,6 +134,9 @@ public class TradingDbContext : DbContext
 
     public DbSet<AiTraderBaseline> AiTraderBaselines => Set<AiTraderBaseline>();
 
+    /// <summary>Past moments of each index with what followed: the AI Trader's base rates. See <see cref="AiTraderSituation"/>.</summary>
+    public DbSet<AiTraderSituation> AiTraderSituations => Set<AiTraderSituation>();
+
     /// <summary>The Analysis module's forecasts: written before the open, scored after the close. See <see cref="Forecast"/>.</summary>
     public DbSet<Forecast> Forecasts => Set<Forecast>();
 

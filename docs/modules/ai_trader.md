@@ -12,6 +12,8 @@ Every 10 minutes from 09:20 to 15:00 IST on trading days, while it is switched o
    - each index: price, change from the previous close, the day's open, high, low and range, EMA 20 and 50 and
      ATR(14) on 5-minute bars, the last half hour;
    - India VIX and its change;
+   - similar past moments: for each index, what followed the 50 most similar moments of earlier days, as base
+     rates, not a forecast ([below](#similar-past-moments));
    - each nearest-expiry chain: ATM±1 premiums, PCR, max pain, the call and put walls, OI change on the day and
      since the first capture of the session. Only a chain captured that day is offered: before the day's first
      capture (or with the recorder down) the line says when the last one was, and nothing on it can be bought;
@@ -136,6 +138,100 @@ money on. The totals' `days` counts rows, not dates: a day replayed more than on
 rule result each time. The page words them so ("AI beat the rule on 3 of 8 full replays and shadow days") and says
 "60 of 75 rows listed" when it lists fewer rows than there are.
 
+## Similar past moments
+
+Over 8 replayed days it lost ₹9,829, mostly buying calls in "uptrends", with no idea how often such a setup went on
+rising. The brief now says what happened after moments like the present one, computed by code from the stored
+history of each index (`ai_trader_situations`, `SituationMath`, `SimilarMoments`). It is a base rate, not a forecast.
+
+### What is stored
+
+A moment is an index (NIFTY, BANKNIFTY, SENSEX) on a day at a slot: every 10 minutes from 09:25 to 15:05 IST, 35 a
+day. Its looks run at 09:20, 09:30, … (`Ai:AiTraderFromIst`), so a look is matched with slots on either side (see the
+time window below). Everything is read from the regular session's 1-minute bars (09:15–15:30 IST), and a moment knows
+only the bars that began before its minute: at 10:25 the last is 10:24's, which closed at 10:25.
+
+| Feature | Definition |
+|---|---|
+| Move since the previous close | The last close against the previous session's last close, % |
+| Move since the open | Against the day's first open, % |
+| Last 30 minutes | Against the close of the last bar that began 30 minutes before the moment; since the open when the day is younger |
+| Range so far | The day's high − low, % of the previous close |
+| EMA side | The last close against EMA 20 and EMA 50 of 5-minute closes (over the last 1,000 session minutes): above both, below both, or between |
+| EMA gap | EMA 20 − EMA 50, % of EMA 50 |
+| India VIX, and its change | Its last minute and its move since its previous close; empty when not recorded (no VIX before Aug 2021) |
+| Minutes since the open | From 09:15 |
+| Trading days to expiry | To the index's nearest option expiry, 0 on the expiry day: the exchanges' calendar from Aug 2020 together with the instrument master's expiries, counted on the session service's trading days. Before 2026 only weekends are known to be closed, so a holiday counts as a day. SENSEX before May 2023 has none |
+| Weekday | Stored, not matched on: the expiry cycle is in days to expiry, and the expiry weekday has changed over the years |
+
+| Outcome | Definition |
+|---|---|
+| +30 min, +60 min | The return to the close of the last bar before the horizon, or before 15:25 when that comes sooner |
+| To 15:25 | The return to 15:25 |
+| Biggest move up, down | The highest high and lowest low from the moment to 15:25 against the price; 0 when it never went that way |
+
+A moment is not stored when the index has no bar of the day yet, its last bar is over 10 minutes old (a feed gap), the
+previous close is not within a week (the previous session's last bar must be from 15:00 on, or its bars stopped
+early), or there are fewer than 50 five-minute bars. An outcome is empty when the bar at
+its horizon is over 10 minutes old; the extremes are empty with the return to 15:25. The base rates read only rows with
+every outcome. The same function computes the features for the table and for the brief, so the two cannot drift.
+
+### Matching, and the leakage rule
+
+At a look, the moment is described from the recorded 1-minute bars up to the brief's clock (live, or the replay's).
+Then, for each index:
+
+1. **Only days before the brief's day.** A replay of 16 Sep sees nothing of 16 Sep or later, and the features are
+   scaled over those earlier rows alone.
+2. **Same EMA side**, and a slot within 30 minutes of the same time of day.
+3. **Standardised distance** over the numeric features known now (each divided by its standard deviation over the
+   earlier rows). A feature not known now (VIX unrecorded) is left out, and the line says so; a row missing a feature
+   known now is not a candidate.
+4. **One moment per day**, its nearest, then the 50 nearest days. A day's moments share most of their future;
+   counting a day several times would only look like more evidence.
+
+Fewer than 50 such days: the line says there is too little history and gives no rate. The moment cannot be described
+(no bar of the day yet, a feed gap): the line says why. A failure says "not available just now" and the rest of the
+brief stands. The stored moments are kept in memory, reloaded after each night's build, so a look reads no table.
+
+The shape of the section (illustrative numbers, not results):
+
+```
+SIMILAR PAST MOMENTS (base rates from the 50 most similar past moments of each index, one a day, only days before today; not a forecast)
+NIFTY (50 days since Aug 2021, price above both EMAs as now): next hour up 52% of the time, median +0.03% (middle half −0.18% to +0.21%); to 15:25 up 49%, median −0.01% (middle half −0.45% to +0.40%); biggest move to the close: up median +0.38%, down median −0.41%
+BANKNIFTY: too little history for a base rate: 31 similar past days before today, 50 needed.
+SENSEX: cannot be compared now: its last minute recorded is 10:09, over 10 minutes old.
+```
+
+"Next hour" reads "next hour (cut at 15:25)" when the hour runs past 15:25.
+
+### What the numbers are not
+
+- **Not a forecast and not an edge.** Fifty similar days that rose 52% of the time is a coin with a story. A median
+  move of a few hundredths of a per cent is inside the noise.
+- **The index, not the option.** A call needs the index to move far enough and soon enough to beat time decay, the
+  spread and the charges; a median +0.03% hour does none of that.
+- **Similar is only as good as its features.** Nothing about news, the option chain, global markets or the regime
+  is matched; days from 2021 and 2026 count alike.
+- **Two stores.** The table is built from the stored candles (Dhan's history, then the nightly archive's, rolled up
+  from the live bars); now is read from the live bars themselves. Where a vendor's candle and the live bar differ, so
+  can a feature, a little.
+
+### Building it
+
+`AiTraderSituationBuilder` fills the table day by day, oldest first, from the 1-minute candles (NIFTY from Aug 2020,
+BANKNIFTY, SENSEX and India VIX from Aug 2021): about 143,000 rows for the history there is. Each day reads at most
+2,500 minutes per symbol, replaces that day's rows, and saves itself as the last day done
+(`aitrader.situations.lastDay` in system_settings) in the same transaction, then waits half a second. So a stopped
+run carries on from the next day, and a day is never half written.
+
+It never runs from 08:45 to 15:45 IST on a trading day (the session service's open less 30 minutes to its close plus
+15; a holiday is not a session). It builds only up to the nightly candle archive's last day, so each night it adds
+the day the archive has just finished, within 10 minutes of it. It does nothing until an admin starts it:
+`POST /api/AiTrader/situations/backfill` (all the history) or `?from=yyyy-MM-dd` (rebuild from that day). Progress
+goes to the log every 100 days with bars and to `GET /api/AiTrader/situations`; a failure is a warning (at most hourly)
+and the day is tried again within 10 minutes.
+
 ## Daily digest
 
 Its day goes to Telegram in the AI's one daily digest (system channel), with the day's run reviews, after the NSE
@@ -186,6 +282,8 @@ Live book: 2 trades, net −₹332 after ₹137 charges
 | `GET /api/AiTrader/decisions/{id}` | One decision with its brief, plan and result |
 | `GET /api/AiTrader/positions?day=&replay=` | The shadow book: a day's or a replay's positions, net after charges |
 | `GET /api/AiTrader/scoreboard?take=` | Each replay and live shadow day against the baseline rule, with totals over full days |
+| `GET /api/AiTrader/situations` | The similar-moments history: the last day built, the backfill's state and this run's days and rows, each index's rows and days |
+| `POST /api/AiTrader/situations/backfill?from=` | Starts the history over everything stored, or rebuilds it from `from` (yyyy-MM-dd); 202, taken on the builder's next pass |
 | `POST /api/Ai/agents/ai-trader/run` | One look now |
 
 Today shows its day in an "AI Trader" card. Its last three decisions are worded as on the AI Trader page, with the
