@@ -21,9 +21,11 @@ import {
   ColorType,
   createChart,
   LineStyle,
+  TickMarkType,
   type IChartApi,
   type IPriceLine,
   type ISeriesApi,
+  type Time,
   type UTCTimestamp,
 } from 'lightweight-charts'
 import { formatDateTime, formatInrSigned, formatInrWhole, formatNumber } from '../../lib/format'
@@ -42,6 +44,17 @@ function withAlpha(color: string, alphaHex: string): string {
 }
 
 /* ------------------------------------------------------------ equity curve */
+
+/**
+ * A day tick names its month ("3 Sept"). Fitted to a long run the axis has
+ * room for every second month only, and the day tick the library puts in the
+ * gap after the last of them read as a bare "3". Every other tick keeps the
+ * library's label (null). The stamps are already shifted to IST, hence UTC.
+ */
+function dayTickWithMonth(time: Time, type: TickMarkType, locale: string): string | null {
+  if (type !== TickMarkType.DayOfMonth || typeof time !== 'number') return null
+  return new Date(time * 1000).toLocaleDateString(locale, { day: 'numeric', month: 'short', timeZone: 'UTC' })
+}
 
 export function EquityCurveChart({
   points,
@@ -95,7 +108,24 @@ export function EquityCurveChart({
         horzLines: { color: cssVar('--line-soft') },
       },
       rightPriceScale: { borderColor: cssVar('--line') },
-      timeScale: { borderColor: cssVar('--line'), timeVisible: true, secondsVisible: false },
+      // The whole run, edge to edge. With both edges fixed the library lets a
+      // bar be as thin as the plot needs to hold every point. Left alone it
+      // refuses anything under half a pixel, so a curve with more points than
+      // twice the plot's width opened part-way through the run with nothing
+      // saying so. Nothing scrolls or zooms out past the data, and the lock
+      // keeps the range in view when the plot changes width.
+      timeScale: {
+        borderColor: cssVar('--line'),
+        timeVisible: true,
+        secondsVisible: false,
+        fixLeftEdge: true,
+        fixRightEdge: true,
+        lockVisibleTimeRangeOnResize: true,
+        tickMarkFormatter: dayTickWithMonth,
+      },
+      // A double-click on the time axis is the library's reset to six pixels a
+      // bar, which on a long run is its last hundred points.
+      handleScale: { axisDoubleClickReset: { time: false } },
       crosshair: { mode: 0 },
       localization: { priceFormatter: (p: number) => formatInrWhole(p) },
     })
@@ -123,7 +153,17 @@ export function EquityCurveChart({
     seriesRef.current = series
 
     const observer = new ResizeObserver(() => {
-      if (el.clientWidth > 0) chart.applyOptions({ width: el.clientWidth, height: el.clientHeight })
+      if (el.clientWidth <= 0) return
+      // The lock keeps the range for every view but one: zoomed in and resting
+      // on the first point, the library also moves the view by the width the
+      // plot gained, and it slid off the start. Only that view is asked for
+      // again; any other request here could replace a fit that is still
+      // waiting for its frame.
+      const scale = chart.timeScale()
+      const range = scale.getVisibleLogicalRange()
+      chart.applyOptions({ width: el.clientWidth, height: el.clientHeight })
+      const last = byTime.current.size - 1
+      if (range && range.from <= 1e-6 && range.to < last - 1e-6) scale.setVisibleLogicalRange(range)
     })
     observer.observe(el)
 

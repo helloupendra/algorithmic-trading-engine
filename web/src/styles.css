@@ -2148,8 +2148,13 @@ a.pill:hover { border-color: var(--line-strong); }
 }
 .coverage-chip b { color: var(--text); font-family: var(--mono); font-weight: 650; }
 
-/* Charts with a crosshair readout above the plot. */
-.chart-wrap { display: grid; gap: 6px; }
+/* Charts with a crosshair readout above the plot.
+   The column is minmax(0, 1fr), not the implicit auto one: the library draws
+   the chart at a fixed pixel width, and an auto column cannot be narrower
+   than its content, so once the panel got narrower (a smaller window, the
+   two-column layout coming back) the chart kept its old width and ran out of
+   the panel, the latest months and the price axis with it. */
+.chart-wrap { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
 .chart-readout {
   display: flex;
   align-items: center;
