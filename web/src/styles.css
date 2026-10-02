@@ -664,6 +664,15 @@ select.field__input { appearance: auto; }
   margin-top: 3px;
 }
 
+/* A value kept from the last good read while refreshing fails: faint, and said. */
+.stat--stale .stat__value {
+  opacity: 0.55;
+}
+
+.stat__stale {
+  color: var(--warn);
+}
+
 /* --- tables --------------------------------------------------------------- */
 .tablewrap {
   overflow-x: auto;

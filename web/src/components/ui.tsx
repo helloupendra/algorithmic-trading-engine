@@ -40,6 +40,7 @@ export function StatTile({
   sub,
   tone,
   to,
+  stale,
 }: {
   label: string
   value: ReactNode
@@ -47,22 +48,29 @@ export function StatTile({
   tone?: 'pos' | 'neg' | 'warn' | 'accent'
   /** When set, the whole tile is a link to this route. */
   to?: string
+  /**
+   * The value is the last one read and the latest refresh failed: it is shown
+   * faint and says so, never as if it were current.
+   */
+  stale?: boolean
 }) {
   const body = (
     <>
       <div className={`stat__value ${tone ?? ''}`}>{value}</div>
       <div className="stat__label">{label}</div>
       {sub && <div className="stat__sub">{sub}</div>}
+      {stale && <div className="stat__sub stat__stale">as last read · refresh failed</div>}
     </>
   )
+  const cls = `stat${to ? ' stat--link' : ''}${stale ? ' stat--stale' : ''}`
   if (to) {
     return (
-      <Link className="stat stat--link" to={to}>
+      <Link className={cls} to={to}>
         {body}
       </Link>
     )
   }
-  return <div className="stat">{body}</div>
+  return <div className={cls}>{body}</div>
 }
 
 export function Badge({
