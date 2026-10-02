@@ -169,6 +169,13 @@ public sealed record AiAskResult(
 /// (<see cref="AiAskInput.GivenMemoryIds"/>): the AI Trader reads only lessons
 /// from days before the one it decides on, which this recall cannot tell.
 /// </para>
+/// <para>
+/// The owner can talk with every agent. A console or Telegram question
+/// (<see cref="AiCatalog.ChatSources"/>) to an agent with a chat persona gets
+/// that persona's prompt and the tools that read its own work
+/// (<see cref="AiAgentDef.ChatTools"/>), with its memories as any call; the
+/// same agent's scheduled work keeps its task prompt and tools.
+/// </para>
 /// </remarks>
 public sealed class AiGateway
 {
@@ -288,11 +295,15 @@ public sealed class AiGateway
     {
         var s = _settings.CurrentValue;
 
-        // A health test asks one model one thing, with nothing to read.
-        var tools = input.Chain is null ? _toolbox.For(agent) : [];
+        // The owner talking with an agent that has a chat persona (the console, Telegram) gets that persona and the
+        // tools that read its own work; its scheduled work keeps its task prompt and tools. A health test asks one
+        // model one thing, with nothing to read.
+        bool chat = input.SystemPrompt is null && input.Chain is null && AiCatalog.ChatsAs(agent, input.Source);
+        var tools = input.Chain is null ? _toolbox.For(agent, chat) : [];
         var specs = tools.Select(t => new AiToolSpec(t.Name, t.Description, t.Parameters)).ToList();
+        var caller = new AiToolCaller(agent.Key, input.Source, input.RequestedBy, input.UserId, input.ConversationId);
 
-        string systemPrompt = input.SystemPrompt ?? agent.SystemPrompt;
+        string systemPrompt = input.SystemPrompt ?? (chat ? agent.ChatPrompt : agent.SystemPrompt);
         var recalled = input.SystemPrompt is null && input.Chain is null
             ? await RecallAsync(agent.Key, input.Messages, input.TrialMemoryIds, cancellationToken)
             : [];
@@ -435,7 +446,7 @@ public sealed class AiGateway
 
                     foreach (var call in end.ToolCalls)
                     {
-                        var step = await RunToolAsync(call, round, steps.Count, seen, cancellationToken);
+                        var step = await RunToolAsync(call, round, steps.Count, seen, tools, caller, cancellationToken);
                         steps.Add(step);
                         conversation.Add(new AiMessage("tool", step.Result, null, call.Id));
                         await sink.ToolAsync(step);
@@ -508,13 +519,18 @@ public sealed class AiGateway
     /// <summary>
     /// Runs one tool call and writes what the model is given back. A tool that
     /// is unknown, badly called, slow or failing answers the model in words,
-    /// so it can correct itself; only the asker's cancellation escapes.
+    /// so it can correct itself; only the asker's cancellation escapes. Only
+    /// the tools this call offered can run: a model that names another agent's
+    /// tool (the AI Trader's look, which asks a model itself) is told the ones
+    /// it has.
     /// </summary>
     private async Task<AiToolStep> RunToolAsync(
         AiToolCall call,
         int round,
         int callsSoFar,
         Dictionary<string, AiToolStep> seen,
+        IReadOnlyList<IAiTool> offered,
+        AiToolCaller caller,
         CancellationToken cancellationToken)
     {
         var s = _settings.CurrentValue;
@@ -537,18 +553,19 @@ public sealed class AiGateway
             return earlier with { Round = round, Id = call.Id, Seconds = 0, Summary = "Same call as before: " + earlier.Summary };
         }
 
-        var tool = _toolbox.Find(call.Name);
+        var tool = offered.FirstOrDefault(t => t.Name == call.Name);
         if (tool is null)
         {
-            return Refused($"No tool named {call.Name}. The tools are: {string.Join(", ", _toolbox.All.Select(t => t.Name))}.");
+            return Refused($"No tool named {call.Name}. The tools are: {string.Join(", ", offered.Select(t => t.Name))}.");
         }
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(s.ToolTimeoutSeconds));
+        var limit = tool.Timeout ?? TimeSpan.FromSeconds(s.ToolTimeoutSeconds);
+        timeout.CancelAfter(limit);
         AiToolStep step;
         try
         {
-            var output = await tool.RunAsync(AiToolArgs.Parse(args), timeout.Token);
+            var output = await tool.RunAsync(AiToolArgs.Parse(args).For(caller), timeout.Token);
             string? asOf = output.AsOfUtc is DateTime at ? $"{IstTime.ToIst(DateTime.SpecifyKind(at, DateTimeKind.Utc)):yyyy-MM-dd HH:mm:ss} IST" : null;
             string json = JsonSerializer.Serialize(new { tool = call.Name, asOf, fetchedAt, rows = output.Rows, data = output.Data }, ToolJson);
 
@@ -570,7 +587,7 @@ public sealed class AiGateway
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            step = Refused($"The tool took longer than {s.ToolTimeoutSeconds:0} s and was stopped.");
+            step = Refused($"The tool took longer than {limit.TotalSeconds:0} s and was stopped.");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -585,7 +602,7 @@ public sealed class AiGateway
     private async Task<AiAskResult> RefuseAsync(AiAskInput input, IReadOnlyList<string> chain, string error, int status, int retryAfter)
     {
         var agent = AiCatalog.Agent(input.AgentKey);
-        var row = NewRow(input, chain, input.SystemPrompt ?? agent?.SystemPrompt ?? string.Empty);
+        var row = NewRow(input, chain, input.SystemPrompt ?? (agent is null ? string.Empty : AiCatalog.SystemPromptFor(agent, input.Source)));
         row.Outcome = AiCallOutcome.Refused;
         row.Error = error;
         row.CompletedUtc = row.CreatedUtc;

@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using AlgoTrading.Domain.Entities;
 using AlgoTrading.Infrastructure.Persistence;
+using AlgoTrading.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -74,6 +75,11 @@ public sealed class AiMemoryBook(
         var active = await db.AiMemories
             .Where(m => m.AgentKey == agentKey && (m.Status == AiMemoryStatus.Active || tried.Contains(m.Id)))
             .ToListAsync(cancellationToken);
+        if (string.Equals(agentKey, AiCatalog.AiTrader, StringComparison.OrdinalIgnoreCase))
+        {
+            active = await LearnedBeforeTodayAsync(active, tried, cancellationToken);
+        }
+
         if (active.Count == 0) return [];
 
         var ordered = active
@@ -108,6 +114,27 @@ public sealed class AiMemoryBook(
 
         return picked.Select(p => new AiRecalled(p.Memory.Id, p.Memory.Kind, p.Memory.Text, p.Memory.Context,
             p.Score is double sc ? Math.Round(sc, 4) : null)).ToList();
+    }
+
+    /// <summary>
+    /// The AI Trader's memories as its next look reads them (<c>AiTraderMemory</c>): a lesson only once the day it was
+    /// learned from (its reflection's day) is over, so the owner's chat with it is given what its decisions are, never
+    /// a lesson reflected from today's own session. Notes and corrections, and a lesson on trial, as they are. Its
+    /// decisions never come here: they send their own prompt, bounded by the moment each decides at.
+    /// </summary>
+    private async Task<List<AiMemory>> LearnedBeforeTodayAsync(List<AiMemory> memories, IReadOnlyList<long> tried, CancellationToken cancellationToken)
+    {
+        var reportIds = memories.Where(m => m.Kind == AiMemoryKind.Lesson && m.SourceReportId != null).Select(m => m.SourceReportId!.Value).Distinct().ToList();
+        var days = reportIds.Count == 0
+            ? []
+            : await db.AiReports.AsNoTracking()
+                .Where(r => reportIds.Contains(r.Id) && r.SessionDate != null)
+                .ToDictionaryAsync(r => r.Id, r => r.SessionDate!.Value, cancellationToken);
+        var today = IstTime.DateOf(_time.GetUtcNow().UtcDateTime);
+        return memories
+            .Where(m => m.Kind != AiMemoryKind.Lesson || tried.Contains(m.Id)
+                        || (m.SourceReportId is long r && days.TryGetValue(r, out var learned) && learned < today))
+            .ToList();
     }
 
     /// <summary>The system prompt's memory section for <paramref name="recalled"/>.</summary>

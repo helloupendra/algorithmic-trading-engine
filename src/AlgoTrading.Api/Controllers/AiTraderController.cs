@@ -82,7 +82,11 @@ public class AiTraderController(
     /// <paramref name="take"/> limits only the rows listed, newest first; <c>RowsTotal</c> says how many there are.
     /// </summary>
     [HttpGet("scoreboard")]
-    public async Task<IActionResult> Scoreboard([FromQuery] int take = 60, CancellationToken cancellationToken = default)
+    public async Task<IActionResult> Scoreboard([FromQuery] int take = 60, CancellationToken cancellationToken = default) =>
+        Ok(await ScoreboardAsync(db, take, cancellationToken));
+
+    /// <summary>The scoreboard as <see cref="Scoreboard"/> answers it; the AI Trader's chat reads the same (<c>get_ai_trader_scoreboard</c>).</summary>
+    public static async Task<AiTraderScoreboard> ScoreboardAsync(TradingDbContext db, int take, CancellationToken cancellationToken)
     {
         var looks = await db.AiTraderDecisions.AsNoTracking()
             .Where(d => d.Mode != AiTraderModes.Live)
@@ -120,7 +124,7 @@ public class AiTraderController(
         var totals = new AiTraderScoreTotals(
             scored.Count, scored.Sum(r => r.Net), scored.Sum(r => r.Baseline!.Net), scored.Count(r => r.Net > r.Baseline!.Net),
             scored.Count(r => r.Net > 0), scored.Count(r => r.Baseline!.Net > 0), scored.Sum(r => r.Positions), scored.Sum(r => r.Charges));
-        return Ok(new AiTraderScoreboard(AiTraderBaselineScorer.TrendRule, BaselineRuleText, totals, rows.Take(Math.Clamp(take, 1, 365)).ToList(), rows.Count));
+        return new AiTraderScoreboard(AiTraderBaselineScorer.TrendRule, BaselineRuleText, totals, rows.Take(Math.Clamp(take, 1, 365)).ToList(), rows.Count);
     }
 
     /// <summary>A day counts in the totals when its looks span the session: from 09:30 or earlier to 14:30 or later.</summary>
@@ -137,7 +141,7 @@ public class AiTraderController(
         b.Rule, b.OptionType, b.Symbol, b.EntryUtc is DateTime e ? IstTime.ToIst(e).ToString("HH:mm") : null, b.EntryPrice,
         b.ExitUtc is DateTime x ? IstTime.ToIst(x).ToString("HH:mm") : null, b.ExitPrice, b.ExitReason, b.Charges, b.NetPnl, b.Note);
 
-    private static AiTraderShadowPositionView View(AiTraderShadowPosition p) => new(
+    public static AiTraderShadowPositionView View(AiTraderShadowPosition p) => new(
         p.Id, p.DecisionId, p.Mode, p.ReplaySessionId, p.Day.ToString("yyyy-MM-dd"), p.Symbol, p.Underlying, p.OptionType, p.Strike,
         p.Expiry.ToString("yyyy-MM-dd"), p.Lots, p.LotSize, p.EntryUtc, IstTime.ToIst(p.EntryUtc).ToString("HH:mm"), p.EntryPrice, p.StopLoss,
         p.Target, p.MarkPrice, p.MarkUtc, p.ExitUtc is null, p.ExitUtc, p.ExitUtc is DateTime x ? IstTime.ToIst(x).ToString("HH:mm") : null,
@@ -232,7 +236,11 @@ public class AiTraderController(
     /// lesson under test and how far its test is; the limits.
     /// </summary>
     [HttpGet("lessons")]
-    public async Task<IActionResult> Lessons(CancellationToken cancellationToken)
+    public async Task<IActionResult> Lessons(CancellationToken cancellationToken) =>
+        Ok(await LessonsAsync(db, settings.CurrentValue, lessonState, cancellationToken));
+
+    /// <summary>The lessons as <see cref="Lessons"/> answers them; the AI Trader's chat reads the same (<c>get_ai_trader_lessons</c>).</summary>
+    public static async Task<AiTraderLessonsView> LessonsAsync(TradingDbContext db, AiSettings s, AiTraderLessonState? lessonState, CancellationToken cancellationToken)
     {
         var lessons = await db.AiMemories.AsNoTracking()
             .Where(m => m.AgentKey == AiCatalog.AiTrader && m.Kind == AiMemoryKind.Lesson)
@@ -261,15 +269,14 @@ public class AiTraderController(
                 check is null ? null : Evidence(check.DataJson));
         }).ToList();
 
-        var s = settings.CurrentValue;
         var testing = lessonState?.Current;
-        return Ok(new AiTraderLessonsView(
+        return new AiTraderLessonsView(
             s.AiTraderLessons && s.HasMemory(AiCatalog.AiTrader), s.AiTraderMaxLessons, s.AiTraderLessonPoints, s.AiTraderLessonMinGain,
             testing is null ? null : new AiTraderLessonTesting(testing.LessonId, testing.Done.Count, testing.Points.Count),
             new AiMemoryCounts(
                 items.Count(i => i.Status == AiMemoryStatus.Active), items.Count(i => i.Status == AiMemoryStatus.Proposed),
                 items.Count(i => i.Status == AiMemoryStatus.Rejected), items.Count(i => i.Status == AiMemoryStatus.Retired)),
-            items));
+            items);
     }
 
     /// <summary>The decisions a reflection's data says a lesson rests on.</summary>
@@ -316,7 +323,7 @@ public class AiTraderController(
         .Select(Summary)
         .ToList();
 
-    private static AiTraderDecisionSummary Summary(AiTraderDecision d) => new(
+    public static AiTraderDecisionSummary Summary(AiTraderDecision d) => new(
         d.Id, d.ClockUtc, IstTime.ToIst(d.ClockUtc).ToString("HH:mm"), d.Day.ToString("yyyy-MM-dd"), d.Mode, d.ReplaySessionId, d.Action, d.Underlying,
         d.Reason, d.Confidence, d.Allowed, d.Rule, d.Why, d.Executed, d.Error, d.Model, d.CallId, OptionOf(d.PlanJson));
 

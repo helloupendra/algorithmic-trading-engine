@@ -182,6 +182,19 @@ builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Ap
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.StrategySpecTool>();
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.SearchDocsTool>();
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.StrategyHistoryTool>();
+// The other agents' chat tools: what each reads of its own work when the owner talks with it (AiAgentDef.ChatTools).
+builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.AiTraderDecisionsTool>();
+builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.AiTraderDecisionTool>();
+builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.AiTraderBookTool>();
+builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.AiTraderScoreboardTool>();
+builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.AiTraderLessonsTool>();
+builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.AiTraderLookNowTool>();
+builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.TradeReviewsTool>();
+builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.TradeReviewTool>();
+builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.NewsEventsTool>();
+builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.NewsEventTool>();
+builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.IncidentTool>();
+builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.IncidentExplanationsTool>();
 // Keeps the docs' search index in step with docs/ (only passages that changed are embedded again).
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiSearch.AiDocIndexer>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AlgoTrading.Api.Services.AiSearch.AiDocIndexer>());

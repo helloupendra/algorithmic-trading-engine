@@ -796,7 +796,11 @@ public class AiController : ControllerBase
             Utc(a.UpdatedUtc),
             a.UpdatedBy,
             a.Reason,
-            _toolbox.For(a.Def).Select(t => new AiToolDto(t.Name, t.Description)).ToList());
+            _toolbox.For(a.Def).Select(t => new AiToolDto(t.Name, t.Description)).ToList())
+        {
+            Chat = AiCatalog.CanChat(a.Def),
+            ChatTools = AiCatalog.CanChat(a.Def) ? _toolbox.For(a.Def, chat: true).Select(t => new AiToolDto(t.Name, t.Description)).ToList() : [],
+        };
     }
 
     private static AiCallSummary ToSummary(CallRow r, DateTime now)
@@ -1124,7 +1128,14 @@ public sealed record AiAgentDto(
     string Key, int Number, string Name, string Job, string UseCase, string Schedule, string Phase, string Status,
     bool Built, bool Enabled, string Tier, string TierLabel, IReadOnlyList<string> Chain, bool ChainOverridden,
     string Reads, string Limits, AiLastCallDto? LastCall, DateTime? NextRunUtc, AiAgentToday Today,
-    DateTime? UpdatedUtc, string? UpdatedBy, string? Reason, IReadOnlyList<AiToolDto> Tools);
+    DateTime? UpdatedUtc, string? UpdatedBy, string? Reason, IReadOnlyList<AiToolDto> Tools)
+{
+    /// <summary>Whether the owner can talk with it on AI → Assistant (and on Telegram): the Desk Assistant, or a built agent with a chat persona.</summary>
+    public bool Chat { get; init; }
+
+    /// <summary>What it reads when the owner talks with it; empty when it cannot be talked with.</summary>
+    public IReadOnlyList<AiToolDto> ChatTools { get; init; } = [];
+}
 
 /// <summary>A desk tool an agent may ask for.</summary>
 public sealed record AiToolDto(string Name, string Description);
