@@ -1,8 +1,9 @@
 /**
  * Backtesting module — helpers shared by the overview, the runs list, the
  * dialog and the run page: IST calendar-day arithmetic (a backtest is
- * bounded by IST dates, not UTC instants), session estimates from bar counts,
- * the status badge and the one-line run description.
+ * bounded by IST dates, not UTC instants), the status badge and the one-line
+ * run description. The readings that are plain arithmetic (session estimates
+ * from bar counts) live in readings.ts, where they are tested.
  */
 
 import { Badge } from '../../components/ui'
@@ -48,21 +49,6 @@ export function countWeekdays(from: string, to: string): number {
 /** "19 Aug → 3 Sep" for yyyy-MM-dd or ISO bounds. */
 export function formatDayRange(from: string | null | undefined, to: string | null | undefined): string {
   return `${formatDay(from)} → ${formatDay(to)}`
-}
-
-/* ------------------------------------------------------- session estimate */
-
-/** Full NSE session bar counts per resolution (09:15–15:30 IST). */
-const BARS_PER_SESSION: Record<string, number> = { '1': 375, '5': 75, '15': 25, D: 1 }
-
-/**
- * Sessions implied by a bar count at a resolution. The generic coverage
- * endpoint only reports bars; the per-underlying backtest coverage reports
- * exact sessions, so this is only used where that endpoint does not apply.
- */
-export function estimateSessions(resolution: string, barCount: number): number {
-  const per = BARS_PER_SESSION[resolution.toUpperCase().replace(/M$/, '')] ?? 75
-  return Math.max(barCount > 0 ? 1 : 0, Math.ceil(barCount / per))
 }
 
 /* ------------------------------------------------------------- run status */
