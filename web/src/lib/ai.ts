@@ -933,7 +933,14 @@ export function shortDate(isoDay: string): string {
   return month ? `${Number(m[3])} ${month}` : isoDay
 }
 
-export function reportSubjectLabel(r: Pick<AiReportSummary, 'subjectType' | 'subjectId'>): string {
+export function reportSubjectLabel(r: Pick<AiReportSummary, 'subjectType' | 'subjectId'> & { agentKey?: string }): string {
+  // The AI Trader's lessons write "check" reports too: a reflection on a day, and a lesson's test.
+  if (r.agentKey === 'ai-trader-reflect') {
+    const replay = /^replay:(\d+)$/.exec(r.subjectId)
+    const day = /^day:(\d{4}-\d{2}-\d{2})$/.exec(r.subjectId)
+    return `AI Trader reflection · ${replay ? `replay #${replay[1]}` : day ? shortDate(day[1]) : r.subjectId}`
+  }
+  if (r.agentKey === 'ai-trader-lesson-check') return `AI Trader lesson test · ${r.subjectId}`
   switch (r.subjectType) {
     case 'check':
       return `Assistant check · ${shortDate(r.subjectId)}`

@@ -17,14 +17,20 @@
 
 import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { useLocation } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import {
+  AI_TRADER_KEY,
   actionText,
   baselineText,
   beatText,
   confidenceText,
   contractText,
   jsonBlock,
+  lessonEvidenceText,
+  lessonGainText,
+  lessonOrder,
+  lessonOriginText,
+  lessonStatus,
   listedText,
   looksSpanText,
   lotsText,
@@ -41,8 +47,15 @@ import {
   shadowResultText,
   verdictOf,
 } from '../../lib/aiTrader'
-import type { AiTraderDecision, AiTraderDecisionFilter, AiTraderPoll, AiTraderShadowPosition } from '../../lib/aiTrader'
-import { useAiTraderDecision, useAiTraderDecisions, useAiTraderPositions, useAiTraderScoreboard } from '../../lib/queries'
+import type {
+  AiTraderDecision,
+  AiTraderDecisionFilter,
+  AiTraderLesson,
+  AiTraderLessons as AiTraderLessonList,
+  AiTraderPoll,
+  AiTraderShadowPosition,
+} from '../../lib/aiTrader'
+import { useAiTraderDecision, useAiTraderDecisions, useAiTraderLessons, useAiTraderPositions, useAiTraderScoreboard } from '../../lib/queries'
 import { shortDay } from '../../lib/replay'
 import { formatDateTime, formatInrSigned, formatInrWhole, formatPrice } from '../../lib/format'
 import { EmptyState, InlineError, Loading } from '../../components/ui'
@@ -134,6 +147,20 @@ function DecisionDetail({ summary, domId }: { summary: AiTraderDecision; domId: 
             {confidenceText(d.confidence) && <span className="muted"> · confidence {confidenceText(d.confidence)}</span>}
           </dd>
         </div>
+        {detail && detail.memoryIds.length > 0 && (
+          <div>
+            <dt>Read</dt>
+            <dd>
+              {detail.memoryIds.map((m, i) => (
+                <span key={m}>
+                  {i > 0 && ', '}
+                  <Link to={`/ai/memory?agent=${AI_TRADER_KEY}#memory-${m}`}>M{m}</Link>
+                </span>
+              ))}
+              <span className="muted"> · its lessons and notes, as known before this look</span>
+            </dd>
+          </div>
+        )}
       </dl>
 
       {q.isPending ? (
@@ -619,6 +646,118 @@ export function AiTraderScoreboard() {
               {listed && <p className="atr-book__how">{listed}</p>}
             </>
           )}
+        </>
+      )}
+    </section>
+  )
+}
+
+// ---------- the lessons --------------------------------------------------------------------
+
+function LessonRow({ l, testing }: { l: AiTraderLesson; testing: AiTraderLessonList['testing'] }) {
+  const st = lessonStatus(l, testing)
+  const gain = lessonGainText(l.evidence)
+  const closed = l.status === 'rejected' || l.status === 'retired'
+  return (
+    <li className={`atr-lesson${closed ? ' atr-lesson--closed' : ''}`}>
+      <div className="atr-lesson__head">
+        <Link className="atr-lesson__id mono" to={`/ai/memory?agent=${AI_TRADER_KEY}#memory-${l.id}`} title="Open it on AI → Memory: edit or retire it there">
+          M{l.id}
+        </Link>
+        <span className={`badge badge--${st.tone}`} title={st.means || undefined}>
+          {st.label}
+        </span>
+        {gain && (
+          <span className={`atr-book__net atr-lesson__gain ${netTone(l.evidence?.gain)}`} title="Its test: the net with it less the net without it, after charges">
+            {gain}
+          </span>
+        )}
+      </div>
+      <p className="atr-lesson__text">{l.text}</p>
+      <p className="atr-lesson__meta">
+        <span>
+          {l.reflectionReportId != null ? <Link to={`/ai/reports?id=${l.reflectionReportId}`}>{lessonOriginText(l)}</Link> : lessonOriginText(l)}
+          {l.decisionIds.length > 0 && <span className="faint"> · decisions {l.decisionIds.map((d) => `#${d}`).join(', ')}</span>}
+        </span>
+        {l.evidence ? (
+          <span>
+            {lessonEvidenceText(l.evidence)}
+            {l.checkReportId != null && (
+              <>
+                {' · '}
+                <Link to={`/ai/reports?id=${l.checkReportId}`}>its test</Link>
+              </>
+            )}
+          </span>
+        ) : (
+          l.status === 'proposed' && <span className="faint">Not tested yet: no decision reads it.</span>
+        )}
+        {l.status === 'active' && <span className="faint">read {l.uses === 1 ? 'once' : `${l.uses} times`}</span>}
+        {closed && l.decidedBy && <span className="faint">{l.decidedBy.replace(/^check: /, '')}</span>}
+      </p>
+    </li>
+  )
+}
+
+/**
+ * Its lessons: after each finished replay or live day a reflection proposes
+ * at most three, each is tested on past looks without and with it, and only
+ * those that pass are read, by decisions on later days only. Used ones first,
+ * then those under test or waiting, then dropped and retired. They are edited
+ * and retired on AI → Memory, like every memory.
+ */
+export function AiTraderLessons({ runNow }: { runNow?: ReactNode }) {
+  const q = useAiTraderLessons()
+  const b = q.data
+  const lessons = useMemo(() => (b ? lessonOrder(b.lessons) : []), [b])
+  const c = b?.counts
+  return (
+    <section id="ai-trader-lessons" className="atr-book atr-score atr-anchor" aria-label="Lessons">
+      <h4 className="atr-book__h">
+        Lessons
+        {c && (
+          <span className="atr-book__sum">
+            {c.active} used{b?.maxActive != null ? ` of at most ${b.maxActive}` : ''} · {c.proposed} waiting or under test · {c.rejected} dropped
+            {c.retired > 0 ? ` · ${c.retired} retired` : ''}
+          </span>
+        )}
+      </h4>
+      <p className="atr-book__how">
+        After each finished replay or live day, the Judge reads its looks, its positions and the baseline rule's trade, and proposes at most three
+        general rules. Each is tested on {b?.testPoints ?? 16} past looks from other days, asked without it and with it; an allowed buy is played on
+        the recorded prices, after charges. It is used only if it adds {b?.minGain != null ? formatInrWhole(b.minGain) : '₹500'} or more, helps on as
+        many looks as it hurts, and answers no worse. A decision reads only lessons learned from days before its own, so a replay never learns from
+        its future.
+      </p>
+      {q.isPending ? (
+        <Loading label="Reading its lessons…" />
+      ) : !b ? (
+        <InlineError error={q.error} />
+      ) : (
+        <>
+          {q.isError && (
+            <p className="small-note warn ai-flush" role="status">
+              The last read failed: showing what was read before.
+            </p>
+          )}
+          {b.enabled === false && (
+            <p className="small-note warn ai-flush">It is not learning: Ai:AiTraderLessons is off, or its memory is (Ai:MemoryEnabled, Ai:MemoryAgents).</p>
+          )}
+          {lessons.length === 0 ? (
+            <p className="atr-none">No lesson yet. One is proposed after each finished replay or live day, outside 09:00–15:45 IST, while it is switched on.</p>
+          ) : (
+            <ul className="atr-lessons">
+              {lessons.map((l) => (
+                <LessonRow key={l.id} l={l} testing={b.testing} />
+              ))}
+            </ul>
+          )}
+          <div className="atr-more">
+            <span className="faint">
+              Edit or retire a lesson on <Link to={`/ai/memory?agent=${AI_TRADER_KEY}`}>AI → Memory</Link>.
+            </span>
+            {runNow}
+          </div>
         </>
       )}
     </section>

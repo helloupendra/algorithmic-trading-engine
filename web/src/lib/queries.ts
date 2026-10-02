@@ -50,12 +50,14 @@ import {
 } from './replay'
 import type { ReplayQueueBody, ReplayStartBody, ReplayStatus } from './replay'
 import {
+  AI_TRADER_LESSONS_POLL_MS,
   AI_TRADER_POLL_MS,
   AI_TRADER_SCOREBOARD_POLL_MS,
   aiTraderDecisionsQuery,
   aiTraderPositionsQuery,
   readAiTraderDecisionsPage,
   readAiTraderDetail,
+  readAiTraderLessons,
   readAiTraderScoreboard,
   readAiTraderShadowBook,
   readAiTraderStatus,
@@ -3005,6 +3007,16 @@ export function useAiTraderScoreboard(enabled = true) {
     queryFn: async () => readAiTraderScoreboard(await api.get<unknown>('/api/AiTrader/scoreboard?take=60')),
     enabled,
     refetchInterval: enabled ? AI_TRADER_SCOREBOARD_POLL_MS : false,
+  })
+}
+
+/** Its lessons: each with the day it came from, its test's evidence once tested, and the one under test; read every minute. */
+export function useAiTraderLessons(enabled = true) {
+  return useQuery({
+    queryKey: ['ai', 'trader', 'lessons'],
+    queryFn: async () => readAiTraderLessons(await api.get<unknown>('/api/AiTrader/lessons')),
+    enabled,
+    refetchInterval: enabled ? AI_TRADER_LESSONS_POLL_MS : false,
   })
 }
 

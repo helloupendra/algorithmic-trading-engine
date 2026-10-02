@@ -39,6 +39,12 @@ import {
   shadowLastPrice,
   shadowResultText,
   verdictOf,
+  lessonEvidenceText,
+  lessonGainText,
+  lessonOrder,
+  lessonOriginText,
+  lessonStatus,
+  readAiTraderLessons,
 } from './aiTrader'
 import type { AiTraderDecision } from './aiTrader'
 
@@ -665,5 +671,89 @@ describe('the scoreboard', () => {
     expect(listedText(60, 75)).toBe('60 of 75 rows listed, newest first; the totals count all of them.')
     expect(listedText(2, 2)).toBe('')
     expect(listedText(2, null)).toBe('')
+  })
+})
+
+describe('its lessons', () => {
+  /** GET /api/AiTrader/lessons exactly as AiTraderController sends it. */
+  const body = () => ({
+    enabled: true,
+    maxActive: 8,
+    testPoints: 16,
+    minGain: 500,
+    testing: { lessonId: 46, done: 5, of: 16 },
+    counts: { active: 1, proposed: 1, rejected: 1, retired: 0 },
+    lessons: [
+      {
+        id: 47, text: 'Buy calls on any green open.', status: 'rejected', sourceDay: '2026-10-01', subject: 'replay:13', replaySessionId: 13,
+        decisionIds: [], createdUtc: '2026-10-02T13:00:00Z', decidedBy: 'check: −₹1,200 with it over 16 looks, under the +₹500 needed',
+        decidedUtc: '2026-10-02T14:00:00Z', activatedUtc: null, retiredUtc: null, uses: 0, reflectionReportId: 900, checkReportId: 902,
+        evidence: { points: 16, controlNet: 300, treatmentNet: -900, gain: -1200, helped: 1, hurt: 4, controlBad: 0, treatmentBad: 0, passed: false, used: false, verdict: 'check: …' },
+      },
+      {
+        id: 46, text: 'Exit a position whose premium stalls for half an hour.', status: 'proposed', sourceDay: '2026-09-30', subject: 'replay:12',
+        replaySessionId: 12, decisionIds: [4512], createdUtc: '2026-10-02T12:00:00Z', decidedBy: '', decidedUtc: null, activatedUtc: null,
+        retiredUtc: null, uses: 0, reflectionReportId: 899, checkReportId: null, evidence: null,
+      },
+      {
+        id: 45, text: 'Wait for the first half hour’s range to break before buying.', status: 'active', sourceDay: '2026-10-05',
+        subject: 'day:2026-10-05', replaySessionId: null, decisionIds: [4512, 4518, 'x'], createdUtc: '2026-10-05T12:00:00Z',
+        decidedBy: 'check: +₹3,268 over 16 looks; helped 3, hurt 1', decidedUtc: '2026-10-05T13:00:00Z', activatedUtc: '2026-10-05T13:00:00Z',
+        retiredUtc: null, uses: 12, reflectionReportId: 898, checkReportId: 901,
+        evidence: { points: 16, controlNet: 0, treatmentNet: 3268.4, gain: 3268.4, helped: 3, hurt: 1, controlBad: 0, treatmentBad: 1, passed: true, used: true, verdict: 'check: +₹3,268' },
+      },
+      { id: 0, text: 'no id' },
+      { id: 48, text: '' },
+    ],
+  })
+
+  it('reads the list as the controller sends it, dropping a row it cannot name', () => {
+    const l = readAiTraderLessons(body())
+    expect(l).toMatchObject({ enabled: true, maxActive: 8, testPoints: 16, minGain: 500, testing: { lessonId: 46, done: 5, of: 16 } })
+    expect(l.lessons.map((x) => x.id)).toEqual([47, 46, 45])
+    expect(l.lessons[2]).toMatchObject({ sourceDay: '2026-10-05', subject: 'day:2026-10-05', replaySessionId: null, decisionIds: [4512, 4518], uses: 12 })
+    expect(l.lessons[1].evidence).toBeNull()
+    expect(l.lessons[0].evidence).toMatchObject({ gain: -1200, helped: 1, hurt: 4, passed: false })
+  })
+
+  it('refuses a body that is not a lesson list, and keeps what was left out as not known', () => {
+    expect(() => readAiTraderLessons({ counts: {} })).toThrow(/cannot read/)
+    expect(() => readAiTraderLessons(null)).toThrow(/cannot read/)
+    expect(readAiTraderLessons({ lessons: [] })).toEqual({
+      enabled: null,
+      maxActive: null,
+      testPoints: null,
+      minGain: null,
+      testing: null,
+      counts: { active: 0, proposed: 0, rejected: 0, retired: 0 },
+      lessons: [],
+    })
+  })
+
+  it('says where a lesson came from and what its test found', () => {
+    const [rejected, waiting, used] = readAiTraderLessons(body()).lessons
+    expect(lessonOriginText(waiting)).toBe('Replay #12 of 30 Sep')
+    expect(lessonOriginText(used)).toBe('Live day 5 Oct')
+    expect(lessonOriginText({ replaySessionId: null, sourceDay: null })).toBe('Its day was not recorded')
+    expect(lessonEvidenceText(used.evidence!)).toBe('With it +₹3,268 against ₹0 without, over 16 looks: helped 3, hurt 1; unreadable or unanswered 0 without, 1 with')
+    expect(lessonEvidenceText(rejected.evidence!)).toBe('With it −₹900 against +₹300 without, over 16 looks: helped 1, hurt 4')
+    expect(lessonGainText(used.evidence)).toBe('+₹3,268')
+    expect(lessonGainText(null)).toBe('')
+  })
+
+  it('names its state, with how far the one under test is, and lists the used ones first', () => {
+    const l = readAiTraderLessons(body())
+    const [rejected, waiting, used] = l.lessons
+    expect(lessonStatus(used, l.testing).label).toBe('Used')
+    expect(lessonStatus(waiting, l.testing).label).toBe('Testing 5/16')
+    expect(lessonStatus(waiting, null).label).toBe('Waiting')
+    expect(lessonStatus(rejected, l.testing)).toMatchObject({ label: 'Dropped', means: 'Its test did not pass.' })
+    expect(lessonOrder(l.lessons).map((x) => x.id)).toEqual([45, 46, 47])
+  })
+
+  it('reads the memories a decision was given', () => {
+    const d = readAiTraderDetail({ decision: summary(), brief: 'x', planJson: '{}', resultJson: '{}', briefHash: 'A', memoryIds: [45, 'x', 0, 46] })
+    expect(d.memoryIds).toEqual([45, 46])
+    expect(readAiTraderDetail({ decision: summary(), brief: 'x' }).memoryIds).toEqual([])
   })
 })
