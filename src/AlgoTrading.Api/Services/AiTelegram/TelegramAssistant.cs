@@ -76,6 +76,15 @@ public sealed record TelegramOwner(long TelegramUserId, string ConsoleUser, stri
 /// the daily check proposes. Buttons pressed by anyone but a linked owner do
 /// nothing.
 /// </para>
+/// <para>
+/// The owner can talk with the other agents too (<see cref="AgentCommands"/>):
+/// <c>/trader …</c>, <c>/reviewer …</c>, <c>/news …</c> or <c>/incident …</c>
+/// asks that agent as itself, its chat persona with the tools that read its own
+/// work. The chat stays with it, so a follow-up needs no prefix, until
+/// <c>/assistant</c>, <c>/new</c> or half an hour of quiet brings back the Desk
+/// Assistant. <c>/remember</c> and <c>/memory</c> are the chat's agent's, and a
+/// correction is the answered call's agent's.
+/// </para>
 /// </remarks>
 public sealed class TelegramAssistant(
     IServiceScopeFactory scopes,
@@ -92,8 +101,22 @@ public sealed class TelegramAssistant(
     public const int HistoryMessages = 8;
     public static readonly TimeSpan HistoryIdle = TimeSpan.FromMinutes(30);
 
+    /// <summary>The short commands that pick who answers, and what the bot calls each; the Desk Assistant by default.</summary>
+    public static readonly IReadOnlyList<(string Command, string Agent, string Name)> AgentCommands =
+    [
+        ("/assistant", AiCatalog.DeskAssistant, "Assistant"),
+        ("/trader", AiCatalog.AiTrader, "AI Trader"),
+        ("/reviewer", AiCatalog.TradeReviewer, "Trade Reviewer"),
+        ("/news", AiCatalog.NewsAnalyst, "News Analyst"),
+        ("/incident", AiCatalog.IncidentExplainer, "Incident Explainer"),
+    ];
+
+    private const string AgentHelp = "/trader, /reviewer, /news or /incident before a question asks that agent; /assistant comes back.";
+
     private readonly TimeProvider _time = time ?? TimeProvider.System;
-    private readonly ConcurrentDictionary<long, (List<AiMessage> Turns, DateTime LastUtc)> _history = new();
+
+    /// <summary>Each chat's agent and its last turns with it: a new agent starts a new conversation.</summary>
+    private readonly ConcurrentDictionary<long, (string Agent, List<AiMessage> Turns, DateTime LastUtc)> _history = new();
 
     /// <summary>The bot's "what should it have said?" prompts by message id: a reply to one is a correction of that call.</summary>
     private readonly ConcurrentDictionary<long, (long CallId, DateTime AskedUtc)> _corrections = new();
@@ -213,7 +236,7 @@ public sealed class TelegramAssistant(
             }
 
             await LinkAsync(userId, consoleUser, name, cancellationToken);
-            await SendAsync(chatId, $"Linked to {consoleUser}. Ask anything about the desk: runs, P&L, positions, the option chain, incidents, the docs. /new starts a new conversation.", cancellationToken);
+            await SendAsync(chatId, $"Linked to {consoleUser}. Ask anything about the desk: runs, P&L, positions, the option chain, incidents, the docs. /new starts a new conversation. {AgentHelp}", cancellationToken);
             return;
         }
 
@@ -224,10 +247,28 @@ public sealed class TelegramAssistant(
             return;
         }
 
-        if (text.StartsWith("/new", StringComparison.OrdinalIgnoreCase) || text.StartsWith("/start", StringComparison.OrdinalIgnoreCase))
+        // "/trader why did you buy?" asks the AI Trader, and the chat stays with it; "/trader" alone switches to it.
+        foreach (var (command, agentKey, agentName) in AgentCommands)
+        {
+            if (!IsCommand(text, command)) continue;
+            string rest = AfterCommand(text, command);
+            if (rest.Length == 0)
+            {
+                _history[chatId] = (agentKey, [], _time.GetUtcNow().UtcDateTime);
+                await SendAsync(chatId, agentKey == AiCatalog.DeskAssistant
+                    ? "Talking with the Desk Assistant. Ask about the desk."
+                    : $"Talking with the {agentName}: questions go to it until /assistant, /new or half an hour of quiet. Ask it about its own work.", cancellationToken);
+                return;
+            }
+
+            await AskAsync(chatId, owner, agentKey, rest.Length <= 4000 ? rest : rest[..4000], cancellationToken);
+            return;
+        }
+
+        if (IsCommand(text, "/new") || IsCommand(text, "/start"))
         {
             _history.TryRemove(chatId, out _);
-            await SendAsync(chatId, "New conversation. Ask about the desk.", cancellationToken);
+            await SendAsync(chatId, $"New conversation. Ask about the desk. {AgentHelp}", cancellationToken);
             return;
         }
 
@@ -249,24 +290,26 @@ public sealed class TelegramAssistant(
             await MemoryAsync(chatId, async memory =>
             {
                 var (_, saved) = await memory.FeedbackAsync(pending.CallId, -1, text, owner.ConsoleUser, "telegram", cancellationToken);
-                return $"Saved as correction M{saved!.Id}. The Assistant reads it from the next question. /forget {saved.Id} takes it out.";
+                return $"Saved as correction M{saved!.Id}. The {NameOf(saved.AgentKey)} reads it from the next question. /forget {saved.Id} takes it out.";
             }, cancellationToken);
             return;
         }
 
         if (IsCommand(text, "/remember"))
         {
-            string note = text["/remember".Length..].Trim();
+            string note = AfterCommand(text, "/remember");
             if (note.Length == 0)
             {
                 await SendAsync(chatId, "Write it after the command, for example: /remember weekly NIFTY options expire on Tuesday.", cancellationToken);
                 return;
             }
 
+            // The note is for the agent this chat is talking with.
+            string agent = AgentOf(chatId);
             await MemoryAsync(chatId, async memory =>
             {
-                var saved = await memory.RememberAsync(AiCatalog.DeskAssistant, note, owner.ConsoleUser, "telegram", cancellationToken);
-                return $"Saved as note M{saved.Id}. The Assistant reads it from the next question. /forget {saved.Id} takes it out.";
+                var saved = await memory.RememberAsync(agent, note, owner.ConsoleUser, "telegram", cancellationToken);
+                return $"Saved as note M{saved.Id}. The {NameOf(agent)} reads it from the next question. /forget {saved.Id} takes it out.";
             }, cancellationToken);
             return;
         }
@@ -282,26 +325,49 @@ public sealed class TelegramAssistant(
 
             await MemoryAsync(chatId, async memory =>
             {
-                await memory.UpdateAsync(id, null, AiMemoryStatus.Retired, owner.ConsoleUser, cancellationToken);
-                return $"M{id} is retired: the Assistant no longer reads it. It can be restored on AI → Memory.";
+                var retired = await memory.UpdateAsync(id, null, AiMemoryStatus.Retired, owner.ConsoleUser, cancellationToken);
+                return $"M{id} is retired: the {NameOf(retired.AgentKey)} no longer reads it. It can be restored on AI → Memory.";
             }, cancellationToken);
             return;
         }
 
         if (IsCommand(text, "/memory"))
         {
-            await SendAsync(chatId, await MemoryListAsync(cancellationToken), cancellationToken);
+            await SendAsync(chatId, await MemoryListAsync(AgentOf(chatId), cancellationToken), cancellationToken);
             return;
         }
 
-        await AskAsync(chatId, owner, text.Length <= 4000 ? text : text[..4000], cancellationToken);
+        await AskAsync(chatId, owner, AgentOf(chatId), text.Length <= 4000 ? text : text[..4000], cancellationToken);
     }
 
-    private async Task AskAsync(long chatId, TelegramOwner owner, string question, CancellationToken cancellationToken)
+    /// <summary>The agent a chat is talking with: the one its last question went to, while the conversation lasts; else the Desk Assistant.</summary>
+    private string AgentOf(long chatId) =>
+        _history.TryGetValue(chatId, out var h) && _time.GetUtcNow().UtcDateTime - h.LastUtc < HistoryIdle ? h.Agent : AiCatalog.DeskAssistant;
+
+    /// <summary>What the bot calls an agent: "Assistant", "AI Trader".</summary>
+    public static string NameOf(string agentKey) =>
+        AgentCommands.FirstOrDefault(c => c.Agent == agentKey).Name ?? AiCatalog.AgentName(agentKey);
+
+    /// <summary>What follows a command: "/trader why?" and "/trader@bot why?" both give "why?".</summary>
+    private static string AfterCommand(string text, string command)
+    {
+        string rest = text[command.Length..];
+        if (rest.StartsWith('@'))
+        {
+            int space = rest.IndexOf(' ');
+            rest = space < 0 ? string.Empty : rest[space..];
+        }
+
+        return rest.Trim();
+    }
+
+    private async Task AskAsync(long chatId, TelegramOwner owner, string agentKey, string question, CancellationToken cancellationToken)
     {
         var now = _time.GetUtcNow().UtcDateTime;
-        var turns = _history.TryGetValue(chatId, out var h) && now - h.LastUtc < HistoryIdle ? h.Turns : [];
+        // A conversation is with one agent: another agent starts its own.
+        var turns = _history.TryGetValue(chatId, out var h) && now - h.LastUtc < HistoryIdle && h.Agent == agentKey ? h.Turns : [];
         var messages = turns.TakeLast(HistoryMessages).Append(new AiMessage("user", question)).ToList();
+        _history[chatId] = (agentKey, turns, now);
 
         using var typing = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var typingLoop = TypingAsync(chatId, typing.Token);
@@ -313,7 +379,7 @@ public sealed class TelegramAssistant(
             long? consoleUserId = await db.AppUsers.AsNoTracking().Where(u => u.UserName == owner.ConsoleUser).Select(u => (long?)u.Id).FirstOrDefaultAsync(cancellationToken);
             var gateway = scope.ServiceProvider.GetRequiredService<AiGateway>();
             result = await gateway.AskAsync(new AiAskInput(
-                AiCatalog.DeskAssistant, null, messages, null, 4096, 0.2, $"tg-{chatId}", "telegram", owner.ConsoleUser, consoleUserId),
+                agentKey, null, messages, null, 4096, 0.2, $"tg-{chatId}", "telegram", owner.ConsoleUser, consoleUserId),
                 NullAiStreamSink.Instance, cancellationToken);
         }
         finally
@@ -329,8 +395,10 @@ public sealed class TelegramAssistant(
             return;
         }
 
-        _history[chatId] = (messages.Append(new AiMessage("assistant", result.Text)).TakeLast(HistoryMessages).ToList(), _time.GetUtcNow().UtcDateTime);
-        string footer = $"— {ShortModel(result.Model)} · {result.Seconds:0} s" +
+        _history[chatId] = (agentKey, messages.Append(new AiMessage("assistant", result.Text)).TakeLast(HistoryMessages).ToList(), _time.GetUtcNow().UtcDateTime);
+        // Another agent than the Assistant is named, so the owner knows who answered.
+        string who = agentKey == AiCatalog.DeskAssistant ? string.Empty : $"{NameOf(agentKey)} · ";
+        string footer = $"— {who}{ShortModel(result.Model)} · {result.Seconds:0} s" +
             (result.Tools.Count > 0 ? $" · {result.Tools.Count} tool call{(result.Tools.Count == 1 ? "" : "s")}" : string.Empty) +
             (result.MemoryIds.Count > 0 ? $" · read {result.MemoryIds.Count} memor{(result.MemoryIds.Count == 1 ? "y" : "ies")}" : string.Empty) +
             $" · call #{result.CallId}";
@@ -381,13 +449,13 @@ public sealed class TelegramAssistant(
             {
                 case ["fb", var sc, var idText] when int.TryParse(sc, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out int score)
                     && long.TryParse(idText, NumberStyles.Integer, CultureInfo.InvariantCulture, out long callId):
-                    await memory.FeedbackAsync(callId, score, null, owner.ConsoleUser, "telegram", cancellationToken);
+                    var (answered, _) = await memory.FeedbackAsync(callId, score, null, owner.ConsoleUser, "telegram", cancellationToken);
                     toast = score == 1 ? "Noted: a good answer." : "Noted: a bad answer.";
                     markup = Keyboard((score == 1 ? "👍 noted" : "👎 noted", "noop"));
                     if (score == -1)
                     {
                         long? prompt = await SendAsync(chatId,
-                            $"What should it have said? Reply to this message with the right answer or rule (call #{callId}). It becomes a correction the Assistant reads from the next question.",
+                            $"What should it have said? Reply to this message with the right answer or rule (call #{callId}). It becomes a correction the {NameOf(answered.AgentKey)} reads from the next question.",
                             cancellationToken, markup: new JsonObject { ["force_reply"] = true, ["input_field_placeholder"] = "The right answer or rule" });
                         if (prompt is long promptId) _corrections[promptId] = (callId, _time.GetUtcNow().UtcDateTime);
                     }
@@ -396,7 +464,7 @@ public sealed class TelegramAssistant(
                 case ["mem", var verb, var idText] when verb is "a" or "r"
                     && long.TryParse(idText, NumberStyles.Integer, CultureInfo.InvariantCulture, out long memoryId):
                     var saved = await memory.UpdateAsync(memoryId, null, verb == "a" ? AiMemoryStatus.Active : AiMemoryStatus.Rejected, owner.ConsoleUser, cancellationToken);
-                    toast = verb == "a" ? $"M{saved.Id} approved: the Assistant reads it from now on." : $"M{saved.Id} rejected.";
+                    toast = verb == "a" ? $"M{saved.Id} approved: the {NameOf(saved.AgentKey)} reads it from now on." : $"M{saved.Id} rejected.";
                     markup = Keyboard((verb == "a" ? $"Approved by {owner.ConsoleUser}" : $"Rejected by {owner.ConsoleUser}", "noop"));
                     break;
                 default:
@@ -462,22 +530,23 @@ public sealed class TelegramAssistant(
         await SendAsync(chatId, reply, cancellationToken);
     }
 
-    private async Task<string> MemoryListAsync(CancellationToken cancellationToken)
+    private async Task<string> MemoryListAsync(string agentKey, CancellationToken cancellationToken)
     {
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<TradingDbContext>();
         var rows = await db.AiMemories.AsNoTracking()
-            .Where(m => m.AgentKey == AiCatalog.DeskAssistant && (m.Status == AiMemoryStatus.Active || m.Status == AiMemoryStatus.Proposed))
+            .Where(m => m.AgentKey == agentKey && (m.Status == AiMemoryStatus.Active || m.Status == AiMemoryStatus.Proposed))
             .OrderByDescending(m => m.Id)
             .ToListAsync(cancellationToken);
         var active = rows.Where(m => m.Status == AiMemoryStatus.Active).ToList();
         int waiting = rows.Count - active.Count;
-        if (active.Count == 0 && waiting == 0) return "The Assistant has no memories yet. Teach it with /remember, or 👎 an answer and reply with what it should have said.";
+        string name = NameOf(agentKey);
+        if (active.Count == 0 && waiting == 0) return $"The {name} has no memories yet. Teach it with /remember, or 👎 an answer and reply with what it should have said.";
 
         var lines = active.Take(15).Select(m => $"M{m.Id} ({m.Kind}): {(m.Text.Length <= 160 ? m.Text : m.Text[..159] + "…")}").ToList();
         if (active.Count > 15) lines.Add($"…and {active.Count - 15} more on AI → Memory.");
         if (waiting > 0) lines.Add($"{waiting} lesson{(waiting == 1 ? "" : "s")} waiting for your approval on AI → Memory.");
-        return $"The Assistant reads {active.Count} memor{(active.Count == 1 ? "y" : "ies")}:\n" + string.Join("\n", lines) + "\n/forget N takes one out.";
+        return $"The {name} reads {active.Count} memor{(active.Count == 1 ? "y" : "ies")}:\n" + string.Join("\n", lines) + "\n/forget N takes one out.";
     }
 
     private async Task CallApiAsync(string method, JsonObject body, CancellationToken cancellationToken)

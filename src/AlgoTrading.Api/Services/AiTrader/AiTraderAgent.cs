@@ -188,15 +188,7 @@ public sealed class AiTraderAgent(
     public async Task<AiTraderDecision> DecideAsync(DateTime clockUtc, string mode, long? replaySessionId, CancellationToken cancellationToken)
     {
         bool replay = mode == AiTraderModes.Replay;
-        var brief = await briefs.BuildAsync(clockUtc, replay, cancellationToken);
-        var seen = await ReadBookAsync(clockUtc, mode, replaySessionId, cancellationToken);
-        var day = IstTime.DateOf(clockUtc);
-        var earlier = await db.AiTraderDecisions.AsNoTracking()
-            .Where(d => d.ClockUtc < clockUtc && (replaySessionId == null ? d.Day == day && d.ReplaySessionId == null : d.ReplaySessionId == replaySessionId))
-            .OrderByDescending(d => d.ClockUtc).ThenByDescending(d => d.Id).Take(LastLooksShown)
-            .ToListAsync(cancellationToken);
-        string text = brief.Text + "\n" + StopFloors(brief, replay) + AiTraderBookReader.Describe(seen, Rules, mode) + "\n" + LastLooks(earlier)
-                      + "\nDecide now: one JSON object.";
+        var (brief, text) = await LookAsync(clockUtc, mode, replaySessionId, cancellationToken);
 
         var row = new AiTraderDecision
         {
@@ -273,6 +265,89 @@ public sealed class AiTraderAgent(
         }
 
         return row;
+    }
+
+    /// <summary>
+    /// What a look at <paramref name="clockUtc"/> reads besides its memories, as the model's message: the brief, the stop
+    /// floors, its book as the brief shows it, and its last looks of the day (or of the replay).
+    /// </summary>
+    private async Task<(MarketBrief Brief, string Text)> LookAsync(DateTime clockUtc, string mode, long? replaySessionId, CancellationToken cancellationToken)
+    {
+        bool replay = mode == AiTraderModes.Replay;
+        var brief = await briefs.BuildAsync(clockUtc, replay, cancellationToken);
+        var seen = await ReadBookAsync(clockUtc, mode, replaySessionId, cancellationToken);
+        var day = IstTime.DateOf(clockUtc);
+        var earlier = await db.AiTraderDecisions.AsNoTracking()
+            .Where(d => d.ClockUtc < clockUtc && (replaySessionId == null ? d.Day == day && d.ReplaySessionId == null : d.ReplaySessionId == replaySessionId))
+            .OrderByDescending(d => d.ClockUtc).ThenByDescending(d => d.Id).Take(LastLooksShown)
+            .ToListAsync(cancellationToken);
+        string text = brief.Text + "\n" + StopFloors(brief, replay) + AiTraderBookReader.Describe(seen, Rules, mode) + "\n" + LastLooks(earlier)
+                      + "\nDecide now: one JSON object.";
+        return (brief, text);
+    }
+
+    /// <summary>The source a preview's model call is named by, on the Calls tab.</summary>
+    public const string PreviewSource = "preview";
+
+    /// <summary>
+    /// "What would you do now", asked in the owner's chat (<c>ai_trader_look_now</c>): a look at
+    /// <paramref name="clockUtc"/> that saves nothing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Built as a live look is: the brief as of that moment, its book (its account in live mode, else today's shadow
+    /// book), its last looks of the day, and the memories a look then reads (<see cref="AiTraderMemory"/>: lessons from
+    /// earlier days, notes written before), not counted as used. The model is asked its own decision prompt once, as
+    /// <paramref name="requestedBy"/>, so the owner's rate limits pay for it, not the AI Trader's (source
+    /// <see cref="PreviewSource"/>). The plan is judged by the rules on the book as it is once the answer is in.
+    /// </para>
+    /// <para>
+    /// No decision row is written, no shadow position opened, nothing placed: its scoreboard, its lessons' tests and
+    /// its next look never see a preview. Never while a market replay it decides in is playing: there it looks on the
+    /// replay's clock and prices, and a look of today beside them answers a different market.
+    /// </para>
+    /// </remarks>
+    public async Task<AiTraderPreview> PreviewAsync(DateTime clockUtc, string requestedBy, long? userId, CancellationToken cancellationToken)
+    {
+        string mode = settings.CurrentValue.AiTraderExecute ? AiTraderModes.Live : AiTraderModes.Shadow;
+        var replay = await replays.LoadAsync(cancellationToken);
+        if (replay is { AiTrader: true } && MarketReplayService.IsActive(replay.State))
+        {
+            return AiTraderPreview.NotTaken(clockUtc, mode,
+                $"A market replay of {replay.Date} that the AI Trader decides in is playing (replay {replay.Id}, {replay.State}): its looks there are on " +
+                "the replay's clock and prices, so no look of today is taken beside them. Ask again when the replay has ended.");
+        }
+
+        var (brief, text) = await LookAsync(clockUtc, mode, null, cancellationToken);
+        IReadOnlyList<AiMemory> memories;
+        try
+        {
+            memories = await new AiTraderMemory(db, settings).ForAsync(clockUtc, count: false, _time.GetUtcNow().UtcDateTime, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "AI Trader preview: its lessons could not be read; it looks without them");
+            memories = [];
+        }
+
+        var result = await gateway.AskAsync(new AiAskInput(
+            AgentKey, null, [new AiMessage("user", text)], AiTraderMemory.SystemPrompt(memories), 4000, 0.2,
+            $"ai-trader-preview-{IstTime.ToIst(clockUtc):yyyyMMdd-HHmm}", PreviewSource, requestedBy, userId,
+            GivenMemoryIds: memories.Select(m => m.Id).ToList()),
+            NullAiStreamSink.Instance, cancellationToken);
+        var preview = new AiTraderPreview(clockUtc, mode, null, text, result.CallId, result.Model, memories, null, null, null, null, null);
+        if (result.Outcome != AiCallOutcome.Ok)
+        {
+            return preview with { Error = Cut(result.RefusalStatus is null ? $"No model answered: {result.Error}" : $"Refused: {result.Error}", 1000) };
+        }
+
+        var (plan, error) = AiTraderPlanReader.Read(result.Text);
+        if (plan is null) return preview with { Answer = Cut(result.Text, 2000), Error = Cut(error ?? "The answer was not a plan.", 1000) };
+
+        var contract = plan.Action == AiTraderPlan.Buy ? Resolve(plan, brief, replay: false) : null;
+        // Judged on the book as it is now, as a look's plan is once its answer is in; read only, so no gate is taken.
+        var book = await ReadBookAsync(clockUtc, mode, null, cancellationToken);
+        return preview with { Plan = plan, Contract = contract, Verdict = AiTraderGuard.Check(plan, book, Rules, contract) };
     }
 
     /// <summary>
@@ -446,4 +521,18 @@ public sealed class AiTraderAgent(
         var t = (text ?? string.Empty).Trim();
         return t.Length <= max ? t : t[..(max - 1)] + "…";
     }
+}
+
+/// <summary>A look that saved nothing (<see cref="AiTraderAgent.PreviewAsync"/>): what it read, what it proposed, and the rules' verdict.</summary>
+/// <param name="NotTakenBecause">Why no look was taken (a replay it decides in is playing); null when it looked.</param>
+/// <param name="Brief">The message the model read: the brief, the stop floors, its book and its last looks.</param>
+/// <param name="Memories">The lessons and notes its prompt carried, as a look at that moment reads them.</param>
+/// <param name="Answer">The model's answer when it was not a plan.</param>
+/// <param name="Error">Why there is no plan: no model answered, the call was refused, or the answer was not a plan.</param>
+public sealed record AiTraderPreview(
+    DateTime ClockUtc, string Mode, string? NotTakenBecause, string Brief, long? CallId, string Model, IReadOnlyList<AiMemory> Memories,
+    AiTraderPlan? Plan, string? Answer, string? Error, AiTraderContract? Contract, AiTraderVerdict? Verdict)
+{
+    public static AiTraderPreview NotTaken(DateTime clockUtc, string mode, string why) =>
+        new(clockUtc, mode, why, string.Empty, null, string.Empty, [], null, null, null, null, null);
 }

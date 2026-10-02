@@ -110,24 +110,36 @@ public sealed class NewsAnalystAgent(
         var items = new List<Item>();
         foreach (var f in filings.Where(f => dueFilings.Contains(Id(f.Id))))
         {
-            string details = Clip(f.Details, 800);
+            string details = FilingDetails(f.Details);
             items.Add(new Item($"f{f.Id}", AiReportSubject.Filing, Id(f.Id), IstTime.DateOf(f.AnnouncedUtc ?? f.FirstSeenUtc),
-                $"{f.Subject}\n{details}",
+                FilingText(f.Subject, f.Details),
                 new { id = $"f{f.Id}", kind = "exchange filing", symbol = f.Symbol, company = f.Company, subject = f.Subject, details }));
             if (items.Count >= size) return items;
         }
 
         foreach (var n in news.Where(n => dueNews.Contains(Id(n.Id))))
         {
-            string summary = Clip(n.Summary, 500);
+            string summary = HeadlineSummary(n.Summary);
             items.Add(new Item($"n{n.Id}", AiReportSubject.News, Id(n.Id), IstTime.DateOf(n.PublishedUtc ?? n.FirstSeenUtc),
-                $"{n.Title}\n{summary}",
+                HeadlineText(n.Title, n.Summary),
                 new { id = $"n{n.Id}", kind = "headline", source = n.Source, title = n.Title, summary }));
             if (items.Count >= size) break;
         }
 
         return items;
     }
+
+    /// <summary>A filing's details as the model is handed them: the first 800 characters.</summary>
+    public static string FilingDetails(string? details) => Clip(details, 800);
+
+    /// <summary>A headline's summary as the model is handed it: the first 500 characters.</summary>
+    public static string HeadlineSummary(string? summary) => Clip(summary, 500);
+
+    /// <summary>The text a filing's numbers are checked against: its subject and its details as handed over. The chat reads the same.</summary>
+    public static string FilingText(string subject, string? details) => $"{subject}\n{FilingDetails(details)}";
+
+    /// <summary>The text a headline's numbers are checked against: its title and its summary as handed over.</summary>
+    public static string HeadlineText(string title, string? summary) => $"{title}\n{HeadlineSummary(summary)}";
 
     private async Task<List<AiReport>> AnalyseAsync(List<Item> batch, CancellationToken cancellationToken)
     {

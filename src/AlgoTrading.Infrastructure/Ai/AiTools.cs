@@ -30,8 +30,17 @@ public interface IAiTool
     /// <summary>Its arguments as a JSON schema (an object with properties), empty when it takes none.</summary>
     JsonObject Parameters { get; }
 
+    /// <summary>
+    /// How long it may run before it is stopped; null for <see cref="AiSettings.ToolTimeoutSeconds"/>. Longer only
+    /// for a tool that itself waits on a model (the AI Trader's look now).
+    /// </summary>
+    TimeSpan? Timeout => null;
+
     Task<AiToolOutput> RunAsync(AiToolArgs args, CancellationToken cancellationToken);
 }
+
+/// <summary>Who a tool runs for: the call that asked for it, so a tool that asks a model itself asks as the same person.</summary>
+public sealed record AiToolCaller(string AgentKey, string Source, string RequestedBy, long? UserId, string ConversationId);
 
 /// <summary>What a tool found.</summary>
 /// <param name="Data">Serialised as JSON (camelCase) for the model.</param>
@@ -51,6 +60,12 @@ public sealed class AiToolArgs
     public AiToolArgs(JsonObject values) => _values = values;
 
     public static AiToolArgs Empty { get; } = new(new JsonObject());
+
+    /// <summary>The call the tool runs for; null outside a model call (a test, a scheduled agent reading a tool's answer).</summary>
+    public AiToolCaller? Caller { get; private init; }
+
+    /// <summary>The same arguments, run for <paramref name="caller"/>.</summary>
+    public AiToolArgs For(AiToolCaller caller) => new(_values) { Caller = caller };
 
     /// <summary>The arguments' JSON as the model wrote it, or an empty object.</summary>
     public static AiToolArgs Parse(string json)
@@ -156,6 +171,12 @@ public sealed class AiToolbox
     public IAiTool? Find(string name) => _tools.GetValueOrDefault(name);
 
     /// <summary>The agent's tools that exist on this build, in its catalog order.</summary>
-    public IReadOnlyList<IAiTool> For(AiAgentDef agent) =>
-        (agent.Tools ?? []).Select(Find).Where(t => t is not null).Select(t => t!).ToList();
+    public IReadOnlyList<IAiTool> For(AiAgentDef agent) => For(agent, chat: false);
+
+    /// <summary>
+    /// The agent's tools that exist on this build, in its catalog order: in a chat (<see cref="AiCatalog.ChatsAs"/>)
+    /// its chat tools, which read its own work, else the tools its scheduled work uses.
+    /// </summary>
+    public IReadOnlyList<IAiTool> For(AiAgentDef agent, bool chat) =>
+        ((chat ? agent.ChatTools ?? agent.Tools : agent.Tools) ?? []).Select(Find).Where(t => t is not null).Select(t => t!).ToList();
 }

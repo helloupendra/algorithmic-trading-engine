@@ -149,6 +149,74 @@ public sealed class AiTelegramTests
         Assert.DoesNotContain("Which run lost the most?", third);
     }
 
+    // ---------- the other agents ----------
+
+    [Fact]
+    public async Task A_prefix_asks_that_agent_as_itself_and_the_chat_stays_with_it_until_assistant()
+    {
+        var (ai, bot, assistant) = Setup();
+        await Link(assistant, Owner);
+        await ai.Store.SetAgentEnabledAsync(AiCatalog.AiTrader, true, "upendra", null);
+        ai.Provider.On(Judge1, Answer("I bought the 22650 CE at 10:20."), Answer("The stop was ₹72."), Answer("The desk made ₹2,22,414."));
+        bot.Sent.Clear();
+
+        await assistant.HandleAsync(Private(Owner, "/trader Why did you buy on 16 Sep?"), CancellationToken.None);
+        await assistant.HandleAsync(Private(Owner, "And the stop?"), CancellationToken.None);
+        await assistant.HandleAsync(Private(Owner, "/assistant How much did the desk make?"), CancellationToken.None);
+
+        var calls = await ai.Db.AiCalls.OrderBy(c => c.Id).ToListAsync();
+        Assert.Equal(new[] { AiCatalog.AiTrader, AiCatalog.AiTrader, AiCatalog.DeskAssistant }, calls.Select(c => c.AgentKey));
+        Assert.All(calls, c => Assert.Equal("telegram", c.Source));
+        Assert.StartsWith(AiCatalog.Agent(AiCatalog.AiTrader)!.ChatPrompt, calls[0].SystemPrompt);
+        Assert.Equal("Why did you buy on 16 Sep?", calls[0].Summary);
+        // The follow-up carried the trader's conversation; the Assistant started its own.
+        var second = JsonNode.Parse(ai.Provider.Requests[1].Body)!["messages"]!.AsArray().Select(m => m!["content"]?.GetValue<string>()).ToList();
+        var third = JsonNode.Parse(ai.Provider.Requests[2].Body)!["messages"]!.AsArray().Select(m => m!["content"]?.GetValue<string>()).ToList();
+        Assert.Contains("I bought the 22650 CE at 10:20.", second);
+        Assert.DoesNotContain("I bought the 22650 CE at 10:20.", third);
+        // Another agent than the Assistant is named under its answer.
+        Assert.Contains("— AI Trader · nemotron-3-ultra-550b-a55b", bot.Texts[0]);
+        Assert.DoesNotContain("Assistant ·", bot.Texts[^1]);
+    }
+
+    [Fact]
+    public async Task News_is_the_news_analyst_not_a_new_conversation_and_new_brings_back_the_assistant()
+    {
+        var (ai, bot, assistant) = Setup();
+        await Link(assistant, Owner);
+        await ai.Store.SetAgentEnabledAsync(AiCatalog.NewsAnalyst, true, "upendra", null);
+        ai.Provider.On(Extract1, Answer("RBI cut the repo rate (positive)."));
+        ai.Provider.On(Judge1, Answer("Hello."));
+
+        await assistant.HandleAsync(Private(Owner, "/news What moved in the last hour?"), CancellationToken.None);
+        await assistant.HandleAsync(Private(Owner, "/new"), CancellationToken.None);
+        await assistant.HandleAsync(Private(Owner, "Hello"), CancellationToken.None);
+
+        var calls = await ai.Db.AiCalls.OrderBy(c => c.Id).ToListAsync();
+        Assert.Equal(new[] { AiCatalog.NewsAnalyst, AiCatalog.DeskAssistant }, calls.Select(c => c.AgentKey));
+        Assert.Equal("What moved in the last hour?", calls[0].Summary);
+    }
+
+    [Fact]
+    public async Task A_bare_prefix_switches_the_chat_and_remember_and_memory_are_that_agent_s()
+    {
+        var (ai, bot, assistant) = Setup();
+        await Link(assistant, Owner);
+        bot.Sent.Clear();
+
+        await assistant.HandleAsync(Private(Owner, "/trader"), CancellationToken.None);
+        await assistant.HandleAsync(Private(Owner, "/remember Explain a decision from the brief you had."), CancellationToken.None);
+        await assistant.HandleAsync(Private(Owner, "/memory"), CancellationToken.None);
+
+        await using var db = NewDb(_dbName);
+        var note = await db.AiMemories.SingleAsync();
+        Assert.Equal((AiCatalog.AiTrader, AiMemoryKind.Note), (note.AgentKey, note.Kind));
+        Assert.StartsWith("Talking with the AI Trader", bot.Texts[0]);
+        Assert.Equal($"Saved as note M{note.Id}. The AI Trader reads it from the next question. /forget {note.Id} takes it out.", bot.Texts[1]);
+        Assert.StartsWith("The AI Trader reads 1 memory:", bot.Texts[2]);
+        Assert.Empty(ai.Provider.Requests.Where(r => r.Path.EndsWith("/chat/completions", StringComparison.Ordinal)));
+    }
+
     [Fact]
     public async Task A_refused_question_says_why()
     {
