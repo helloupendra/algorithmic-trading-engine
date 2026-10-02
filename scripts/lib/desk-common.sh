@@ -409,6 +409,13 @@ deploy_block_reason() {
   fi
 }
 
+# How many changed paths (one a line on stdin) feed the console's build. The docs
+# site (openfno.com/docs) is built in it too, from docs/*.md and
+# scripts/aws/README.md (web/docs-site), so a docs-only commit rebuilds it;
+# until 2 Oct such a commit deployed as "nothing to rebuild" and the site kept
+# the old pages.
+console_build_inputs() { grep -cE '^(web/|docs/|scripts/aws/README\.md$)' || true; }
+
 live_runs() {
   # Strategy runs with a runner behind them. Not every Running row: the manual
   # order book is Running by design with no runner, and holds positions across

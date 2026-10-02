@@ -51,4 +51,12 @@ r="$(deploy_block_reason 4 1128 0 -1)"; case "$r" in *unknown*) check "says when
 r="$(deploy_block_reason 3 2253 0 0)"; case "$r" in *"at 23:58"*) check "names the time the close job opens the gate" 0 0 ;; *) check "names the time the close job opens the gate: $r" 0 1 ;; esac
 r="$(CLOSE_AT=2340 deploy_block_reason 3 2253 0 0)"; case "$r" in *"at 23:40"*) check "follows a moved close time" 0 0 ;; *) check "follows a moved close time: $r" 0 1 ;; esac
 
+echo "console_build_inputs"
+inputs() { printf '%s\n' "$@" | console_build_inputs; }
+check "a web file rebuilds the console"                      1 "$(inputs web/src/styles.css)"
+check "a docs page rebuilds it too (the docs site is in it)" 1 "$(inputs docs/modules/ai_trader.md)"
+check "the AWS readme is a docs page"                        1 "$(inputs scripts/aws/README.md)"
+check "API and engine code do not"                           0 "$(inputs src/AlgoTrading.Api/Program.cs src/AlgoTrading.PythonEngine/x.py)"
+check "other scripts do not"                                 0 "$(inputs scripts/desk.sh scripts/aws/setup.sh)"
+
 [ "$FAILS" -eq 0 ] && echo "all passed" || { echo "$FAILS failed"; exit 1; }

@@ -155,6 +155,8 @@ Rupees are whole, with Indian grouping, except premiums. A replay's looks and sh
 with no looks, the section is left out; on with none, it says so. On a day with no session the digest goes only if it
 looked.
 
+An example, with made-up numbers from the tests:
+
 ```
 AI Trader (shadow mode)
 Looks 10 · proposed 8 · allowed 4 · refused 4 · no answer 1
