@@ -522,9 +522,12 @@ public class AiController : ControllerBase
     public async Task<IActionResult> RunAgent(string key, [FromBody] AiAgentRunRequest? body, CancellationToken cancellationToken)
     {
         if (_scopes is null) return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "Scheduled agents are not available on this host." });
-        var def = key is AiCatalog.AssistantCheck or AiCatalog.AssistantExam ? AiCatalog.Agent(key) : AiCatalog.Agents.FirstOrDefault(a => a.Key == key);
+        var def = key is AiCatalog.AssistantCheck or AiCatalog.AssistantExam or AiCatalog.AiTraderReflect
+            ? AiCatalog.Agent(key)
+            : AiCatalog.Agents.FirstOrDefault(a => a.Key == key);
         if (def is null) return NotFound(new { error = $"No agent {key}." });
-        if (key is not (AiCatalog.TradeReviewer or AiCatalog.NewsAnalyst or AiCatalog.IncidentExplainer or AiCatalog.AssistantCheck or AiCatalog.AssistantExam or AiCatalog.AiTrader))
+        if (key is not (AiCatalog.TradeReviewer or AiCatalog.NewsAnalyst or AiCatalog.IncidentExplainer or AiCatalog.AssistantCheck or AiCatalog.AssistantExam
+            or AiCatalog.AiTrader or AiCatalog.AiTraderReflect))
         {
             return Conflict(new { error = $"{def.Name} is not a scheduled agent." });
         }
@@ -536,12 +539,17 @@ public class AiController : ControllerBase
                 ? "The assistant check runs only while the Desk Assistant is on and Ai:AssistantCheckEnabled is true."
                 : key == AiCatalog.AssistantExam
                 ? "The assistant exam runs only while the Desk Assistant is on and Ai:ExamEnabled is true."
+                : key == AiCatalog.AiTraderReflect
+                ? "The AI Trader's lessons run only while the AI Trader is on and Ai:AiTraderLessons is true."
                 : $"{def.Name} is switched off." });
         }
         if (!_settings.CurrentValue.KeyConfigured) return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "No NVIDIA_API_KEY on the server." });
 
         string? subject = string.IsNullOrWhiteSpace(body?.SubjectId) ? null : body.SubjectId.Trim();
-        if (subject is not null && !long.TryParse(subject, out _)) return BadRequest(new { error = "subjectId is a run or incident id." });
+        if (subject is not null && !long.TryParse(subject, out _))
+        {
+            return BadRequest(new { error = key == AiCatalog.AiTraderReflect ? "subjectId is a replay's id." : "subjectId is a run or incident id." });
+        }
 
         var scopes = _scopes;
         var logger = _logger;

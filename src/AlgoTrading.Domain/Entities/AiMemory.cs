@@ -2,8 +2,8 @@ namespace AlgoTrading.Domain.Entities;
 
 /// <summary>
 /// One thing an agent reads before it answers: a note the owner wrote, a
-/// correction to one of its answers, or a lesson it proposed and the owner
-/// approved.
+/// correction to one of its answers, or a lesson it proposed that passed its
+/// test.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -14,10 +14,12 @@ namespace AlgoTrading.Domain.Entities;
 /// </para>
 /// <para>
 /// Only <see cref="AiMemoryStatus.Active"/> rows are read. The owner's own
-/// notes and corrections are active from the start. A lesson an agent
-/// proposes (from a question it got wrong in the daily check) waits as
-/// <see cref="AiMemoryStatus.Proposed"/> until the owner approves it, so a
-/// wrong lesson cannot teach itself in.
+/// notes and corrections are active from the start. A lesson waits as
+/// <see cref="AiMemoryStatus.Proposed"/> until its test decides (owner, 1 Oct:
+/// lessons are tested, not approved), so a wrong lesson cannot teach itself in:
+/// the Desk Assistant's from a question it got wrong in the daily check, asked
+/// again with it; the AI Trader's from a reflection on one of its finished days,
+/// tested on its past looks with and without it (<c>AiTraderLessonCheck</c>).
 /// </para>
 /// <para>
 /// Every answer records the memories it was given (<c>ai_calls.MemoryIdsJson</c>),
@@ -54,7 +56,10 @@ public class AiMemory
     /// <summary>The answer it corrects, or the failed check answer a lesson came from.</summary>
     public long? SourceCallId { get; set; }
 
-    /// <summary>The check report a lesson came from.</summary>
+    /// <summary>
+    /// The report a lesson came from: the daily check's, or for an AI Trader lesson its reflection's, whose
+    /// <c>SessionDate</c> is the day it was learned from.
+    /// </summary>
     public long? SourceReportId { get; set; }
 
     public string CreatedBy { get; set; } = string.Empty;
@@ -106,7 +111,7 @@ public static class AiMemoryKind
     /// <summary>What the owner said one of its answers should have been (👎 with a correction).</summary>
     public const string Correction = "correction";
 
-    /// <summary>A lesson it proposed from a question it got wrong, used once the owner approves it.</summary>
+    /// <summary>A lesson it proposed (from a question it got wrong, or from one of its trading days), used once its test passes.</summary>
     public const string Lesson = "lesson";
 
     public static readonly IReadOnlyList<string> All = [Note, Correction, Lesson];
@@ -118,13 +123,13 @@ public static class AiMemoryStatus
     /// <summary>Read by the agent on every call.</summary>
     public const string Active = "active";
 
-    /// <summary>Proposed by an agent, waiting for the owner.</summary>
+    /// <summary>Proposed by an agent, waiting for its test (the owner may decide first).</summary>
     public const string Proposed = "proposed";
 
-    /// <summary>A proposal the owner turned down.</summary>
+    /// <summary>A proposal its test or the owner turned down.</summary>
     public const string Rejected = "rejected";
 
-    /// <summary>Was active; the owner took it out.</summary>
+    /// <summary>Was active; the owner took it out, or a lesson with stronger evidence took its place.</summary>
     public const string Retired = "retired";
 
     public static readonly IReadOnlyList<string> All = [Active, Proposed, Rejected, Retired];
@@ -137,6 +142,10 @@ public static class AiMemorySource
 
     public const string Feedback = "feedback";
 
+    /// <summary>
+    /// A lesson written and tested by code: the Desk Assistant's daily check, or the AI Trader's reflection (told
+    /// apart by the agent). A value of its own would need the column's check constraint changed, so a migration.
+    /// </summary>
     public const string Check = "check";
 
     public static readonly IReadOnlyList<string> All = [Owner, Feedback, Check];

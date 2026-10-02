@@ -407,7 +407,8 @@ public sealed class AiMemoryTests
         Assert.Equal(("active", "upendra"), (approved.Status, approved.DecidedBy));
         Assert.Equal((2, 0), (all.Counts.Active, all.Counts.Proposed));
         Assert.Equal(new AiMemoryAgent(AiCatalog.DeskAssistant, "Desk Assistant", true), all.Agents[0]);
-        Assert.Equal(new[] { AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer }, all.Agents.Skip(1).Select(a => a.Key));
+        // The AI Trader too, for its lessons (2 Oct): they are listed, edited and retired here like any memory.
+        Assert.Equal(new[] { AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer, AiCatalog.AiTrader }, all.Agents.Skip(1).Select(a => a.Key));
         Assert.Equal("Weekly options expire on Tuesday.".Length + "A lesson to approve.".Length + "How many open legs are there?".Length, all.ActiveChars);
     }
 

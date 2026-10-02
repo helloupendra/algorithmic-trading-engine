@@ -32,7 +32,7 @@ Every 10 minutes from 09:20 to 15:00 IST on trading days, while it is switched o
    A section whose source fails says so in one line; the rest of the brief stands.
 2. **The model proposes** one action as JSON (Judge tier, temperature 0.2): none, buy, exit, start_strategy or
    stop_strategy, with a reason naming the facts it rests on. The entry is the option's ask: size, stop and
-   target are checked against it.
+   target are checked against it. Its prompt carries its tested lessons from earlier days ([Lessons](#lessons)).
 3. **Code judges it** (`AiTraderGuard`): every limit below. A refusal names the rule. It judges the book as it is
    once the answer is in, not as the brief showed it: the book is read again, and in the API one look at a time judges
    and acts (`AiTraderAgent.BookGate`, which the shadow book's minute check takes too). So "Run now" beside the
@@ -128,7 +128,8 @@ Every day it decided on, replayed or live, is also scored under a fixed rule any
 
 The agent scores one missing day a minute, newest first, never in a trading day's session. A day that fails to score
 is logged and tried again an hour later; the days before it are scored meanwhile. A day the rule does not trade is
-kept at ₹0 with why. Doing nothing scores ₹0 too.
+kept at ₹0 with why. Doing nothing scores ₹0 too. A day counts as over the next day, or on a trading day from 15:45
+IST: a [reflection](#lessons) on a live day scores the rule for it then.
 
 `GET /api/AiTrader/scoreboard` lists each replay and live shadow day (a row), newest first: its looks, positions, net
 after charges, the baseline's net, and the difference. `take` (default 60) limits only the rows listed; `rowsTotal`
@@ -140,7 +141,7 @@ rule result each time. The page words them so ("AI beat the rule on 3 of 8 full 
 
 ## Similar past moments
 
-Over 8 replayed days it lost ₹9,829, mostly buying calls in "uptrends", with no idea how often such a setup went on
+In its first replayed days it mostly bought calls in "uptrends", with no idea how often such a setup went on
 rising. The brief now says what happened after moments like the present one, computed by code from the stored
 history of each index (`ai_trader_situations`, `SituationMath`, `SimilarMoments`). It is a base rate, not a forecast.
 
@@ -232,6 +233,82 @@ the day the archive has just finished, within 10 minutes of it. It does nothing 
 goes to the log every 100 days with bars and to `GET /api/AiTrader/situations`; a failure is a warning (at most hourly)
 and the day is tried again within 10 minutes.
 
+## Lessons
+
+It learns from its own days, with the same model (owner, 2 Oct). The model's weights do not change: a lesson is a
+short rule put into its prompt. A Judge writes it from one of its finished days, and it is tested on its past looks
+before it is used. Every lesson can be read, traced to its day and taken out on AI → Memory (agent `ai-trader`).
+
+### Made: a reflection on each finished day
+
+`AiTraderReflection`, named `ai-trader-reflect` on its calls and reports.
+
+| Step | Rule |
+|---|---|
+| When | A replay once it has ended and its shadow book is closed. A live day from 15:45 IST: its 15:30 square-off has settled, and the baseline rule can score it |
+| Reads | Every look of the day (its number, time, what it proposed, the verdict, its reason); the shadow positions (entry, stop, target, exit, how each ended, net after charges); the baseline rule's trade that day |
+| Asks | One Judge-tier call, no tools: at most 3 lessons, each a general rule resting on that day's decisions by number |
+| Keeps | A lesson of at most 300 characters, with no date, no price or index level and no contract, resting on at least one of the day's decisions, and not one already kept in any status. Each is an `ai_memories` row: agent `ai-trader`, kind `lesson`, status `proposed`, source and via `check`, its source report the reflection |
+| Report | One per replay or live day (`ai_reports`, subject `replay:12` or `day:2026-10-05`, the day as its session date), so a day is never reflected on twice. A day with no readable look is skipped. A failed or unreadable answer is tried again after 15 minutes, three tries in all; one turned away for capacity is not counted |
+
+### Tested: on past looks, without it and with it
+
+`AiTraderLessonCheck`, named `ai-trader-lesson-check` on its reports. The owner does not approve each lesson
+(1 Oct: lessons are tested, not approved).
+
+| Step | Rule |
+|---|---|
+| Looks | Up to 16 past decisions (`Ai:AiTraderLessonPoints`) with a brief and a readable answer, from days other than the lesson's and made before it was proposed. Only looks in the hours a buy may open (09:20–14:45): outside them every buy is refused either way. The most recent days first, spread across days, alternating looks that acted with looks that did nothing |
+| Asked | Each look's stored brief twice, with the AI Trader's own prompt. CONTROL: the lessons it would read at that look (active, learned before that look's day). TREATMENT: those and the lesson on trial |
+| Judged | Each answer read as a plan and judged by the rules against an empty book at the look's time. Refused, or anything but a buy, is ₹0 |
+| Played | An allowed buy: the contract on the chain as recorded at that time (only a chain captured that day), in at the ask of the first recorded tick at or after it, each recorded minute's last tick checked at the bid against its stop and target, squared off at 15:30, after the shadow book's charges. An exit a later look would have made is not played, in either arm |
+| Used | Only if TREATMENT's net beats CONTROL's by ₹500 or more (`Ai:AiTraderLessonMinGain`), it helps on at least as many looks as it hurts, and it has no more unreadable or unanswered answers. Otherwise it is dropped (`rejected`), with the reason |
+| Cap | At most 8 active (`Ai:AiTraderMaxLessons`). A lesson that passes when 8 are active replaces the one with the weakest evidence (its test's gain; ₹0 for one never tested), or is dropped when it is no stronger |
+| Kept | Every look in the report: the decision, each side's answer and net, the totals. The verdict is the lesson's decider, for example "check: +₹3,268 over 16 looks; helped 3, hurt 1" |
+
+The owner can still approve, reject, edit or retire any lesson on AI → Memory. One he decides during its test is left
+as he decided.
+
+**Paced.** One step a scheduler minute: a reflection, or one look of a test (two asks). So a test never holds the
+other agents' turn, and stays at 20 asks in ten minutes, under the desk's 30 for one asker. It runs:
+- only outside 09:00–15:45 IST on an NSE trading day (the exchange calendar): the free tier is slow and the live desk
+  comes first;
+- never while a replay the AI Trader decides in is playing, so the replay's looks never wait behind it;
+- only while the AI Trader is on and `Ai:AiTraderLessons` is true.
+
+A call turned away (the rate limit, the provider's capacity, the switch) pauses the test, and the same look is asked
+again. A call no model answered is asked once more, then counts as no answer. A failure never makes a lesson active.
+A test under way is kept in memory: a restart begins it again from its first look.
+
+**Cost.** A reflection is one Judge call. A test is two calls a look, so up to 32, plus one embedding call when the
+lesson becomes active. A day costs at most 1 + 3 × 32 = 97 calls, about 50 minutes of evening at one look a minute.
+
+### Read: only what was known before the day
+
+`AiTraderMemory`. A replay decides on an earlier day's clock. A lesson from a later day knows how that day went:
+read in a replay of an earlier one, it would score the AI on knowledge it could not have had. So a decision reads:
+- active lessons learned from a day before its own (the reflection's session date). A replay of 16 Sep never reads a
+  lesson from 24 Sep; a live look on 5 Oct reads those up to 4 Oct;
+- the owner's notes and corrections for `ai-trader` written before its clock;
+- corrections first, then notes, then lessons (the newest first), within `Ai:MemoryBudgetChars` and
+  `Ai:MemoryMaxItems`.
+
+The gateway's recall knows no day, so it never runs for the AI Trader. The agent sends its own prompt with the
+memories in it and names them (`AiAskInput.GivenMemoryIds`), so its call keeps them (`ai_calls.MemoryIdsJson`) like
+any recalled ones. A decision's detail lists them ("Read: M45, M46").
+
+### On the console
+
+AI → Agents, the AI Trader's panel, under the scoreboard: each lesson used, waiting or under test (with how far),
+dropped or retired. Each shows the day it came from and its decisions, and once tested its evidence ("With it +₹3,268
+against ₹0 without, over 16 looks: helped 3, hurt 1"), with links to the reflection and the test. "Run now" takes one
+step at once.
+
+**A first round.** With the AI Trader on, finished replays are reflected on one a minute, oldest first, outside the
+session; their lessons are then tested one look a minute. Eight replay days make 8 reflections and up to 24 tests:
+at most about 780 calls, some six and a half hours of evenings. To start at once,
+`POST /api/Ai/agents/ai-trader-reflect/run` (blank: one step; `{ "subjectId": "12" }`: reflect on replay 12).
+
 ## Daily digest
 
 Its day goes to Telegram in the AI's one daily digest (system channel), with the day's run reviews, after the NSE
@@ -279,12 +356,14 @@ Live book: 2 trades, net −₹332 after ₹137 charges
 |---|---|
 | `GET /api/AiTrader/status` | On or off, shadow or live, the limits, today's looks, the last three, today's shadow book |
 | `GET /api/AiTrader/decisions?day=&replay=&take=&beforeId=` | Decisions, newest first by their clock (a day's list holds that day's replays too); `beforeId` goes on after that decision's clock and id |
-| `GET /api/AiTrader/decisions/{id}` | One decision with its brief, plan and result |
+| `GET /api/AiTrader/decisions/{id}` | One decision with its brief, plan and result, and the memories its call was given |
 | `GET /api/AiTrader/positions?day=&replay=` | The shadow book: a day's or a replay's positions, net after charges |
 | `GET /api/AiTrader/scoreboard?take=` | Each replay and live shadow day against the baseline rule, with totals over full days |
 | `GET /api/AiTrader/situations` | The similar-moments history: the last day built, the backfill's state and this run's days and rows, each index's rows and days |
 | `POST /api/AiTrader/situations/backfill?from=` | Starts the history over everything stored, or rebuilds it from `from` (yyyy-MM-dd); 202, taken on the builder's next pass |
+| `GET /api/AiTrader/lessons` | Its lessons with their day, their decisions and their test's evidence; the one under test; the limits |
 | `POST /api/Ai/agents/ai-trader/run` | One look now |
+| `POST /api/Ai/agents/ai-trader-reflect/run` | One lesson step now (`{ subjectId }`: a replay's id, to reflect on it); never 09:00–15:45 IST on a trading day |
 
 Today shows its day in an "AI Trader" card. Its last three decisions are worded as on the AI Trader page, with the
 option the plan named ("Buy NIFTY CE").

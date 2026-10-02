@@ -127,6 +127,20 @@ public class AiTraderBaselineTests
     }
 
     [Fact]
+    public void A_day_is_over_the_next_day_or_on_a_trading_day_from_1545()
+    {
+        var scorer = new AiTraderBaselineScorer(Build(Settings()).Db, new FakeMarket(Minutes(1)), new MarketSessionService(new MarketReplayTests.OpenCalendar()));
+        DateTime Ist(int day, int hour, int minute) => IstTime.FromIst(new DateTime(2026, 9, day, hour, minute, 0));
+
+        Assert.False(scorer.IsOver(Day, Ist(30, 15, 44)));
+        Assert.True(scorer.IsOver(Day, Ist(30, 15, 45)));
+        Assert.True(scorer.IsOver(Day, IstTime.FromIst(new DateTime(2026, 10, 1, 9, 0, 0))));
+        Assert.False(scorer.IsOver(Day.AddDays(1), Ist(30, 20, 0)));
+        // A day with no session (a Saturday) is not over until it has passed: a look by hand on it trades nothing anyway.
+        Assert.False(scorer.IsOver(new DateOnly(2026, 10, 3), IstTime.FromIst(new DateTime(2026, 10, 3, 18, 0, 0))));
+    }
+
+    [Fact]
     public async Task A_day_without_a_trend_is_kept_as_no_trade_at_zero()
     {
         var ai = Build(Settings());

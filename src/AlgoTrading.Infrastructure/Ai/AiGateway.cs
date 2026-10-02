@@ -54,6 +54,11 @@ public sealed class NullAiStreamSink : IAiStreamSink
 /// <param name="SystemPrompt">Null for the agent's own system prompt.</param>
 /// <param name="Chain">Walk exactly these models, with no tools (a model's health test); null otherwise.</param>
 /// <param name="TrialMemoryIds">Memories read on this call alone, whatever their status: a lesson being tested before it is used.</param>
+/// <param name="GivenMemoryIds">
+/// With its own <paramref name="SystemPrompt"/>, the memories the caller put in it, kept on the row as recalled ones
+/// are: the AI Trader picks its lessons by the day it decides on, which the gateway's recall does not know. Ignored
+/// without a system prompt of its own.
+/// </param>
 public sealed record AiAskInput(
     string AgentKey,
     string? Tier,
@@ -66,7 +71,8 @@ public sealed record AiAskInput(
     string RequestedBy,
     long? UserId,
     IReadOnlyList<string>? Chain = null,
-    IReadOnlyList<long>? TrialMemoryIds = null);
+    IReadOnlyList<long>? TrialMemoryIds = null,
+    IReadOnlyList<long>? GivenMemoryIds = null);
 
 /// <summary>One model tried, as the attempts table shows it.</summary>
 public sealed record AiAttempt(string Model, string Outcome, double Seconds, int? HttpStatus, int Round = 1);
@@ -159,7 +165,9 @@ public sealed record AiAskResult(
 /// (<see cref="AiMemoryBook"/>), and the row keeps which ones, so the owner's
 /// verdict on the answer and the daily check's grade can be counted on them.
 /// A caller that brings its own system prompt, and a model's health test, get
-/// none.
+/// none. Such a caller may put memories in its prompt itself and name them
+/// (<see cref="AiAskInput.GivenMemoryIds"/>): the AI Trader reads only lessons
+/// from days before the one it decides on, which this recall cannot tell.
 /// </para>
 /// </remarks>
 public sealed class AiGateway
@@ -299,7 +307,9 @@ public sealed class AiGateway
 
         var row = NewRow(input, chain, systemPrompt);
         row.Outcome = AiCallOutcome.Running;
-        row.MemoryIdsJson = JsonSerializer.Serialize(recalled.Select(r => r.Id));
+        row.MemoryIdsJson = JsonSerializer.Serialize(input.SystemPrompt is not null && input.GivenMemoryIds is { } given
+            ? given.Distinct().ToList()
+            : recalled.Select(r => r.Id).ToList());
         _db.AiCalls.Add(row);
         await _db.SaveChangesAsync(cancellationToken);
 

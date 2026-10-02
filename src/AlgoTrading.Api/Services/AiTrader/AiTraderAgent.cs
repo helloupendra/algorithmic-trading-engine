@@ -34,6 +34,11 @@ namespace AlgoTrading.Api.Services.AiTrader;
 /// No model holds an order tool. The model's answer only proposes; the code checks it and, once execution
 /// is on, places it in its own account.
 /// </para>
+/// <para>
+/// It reads its tested lessons with its own prompt, only those learned from days before the one it decides on
+/// (<see cref="AiTraderMemory"/>); the lessons come from its finished days and are tested on its past looks before
+/// it reads them (<see cref="AiTraderLessonAgent"/>).
+/// </para>
 /// </remarks>
 public sealed class AiTraderAgent(
     TradingDbContext db,
@@ -204,9 +209,14 @@ public sealed class AiTraderAgent(
             Brief = text,
         };
 
+        // Its lessons and the owner's notes, as known before this moment: a replay of an earlier day never reads a
+        // lesson from a later one. Its own system prompt skips the gateway's recall, which knows no day; the call row
+        // keeps which memories it was given.
+        var memories = await MemoriesAsync(clockUtc, cancellationToken);
         string conversation = $"ai-trader-{IstTime.ToIst(clockUtc):yyyyMMdd-HHmm}" + (replaySessionId is long r ? $"-replay{r}" : string.Empty);
         var result = await gateway.AskAsync(new AiAskInput(
-            AgentKey, null, [new AiMessage("user", text)], null, 4000, 0.2, conversation, "schedule", AgentKey, null),
+            AgentKey, null, [new AiMessage("user", text)], AiTraderMemory.SystemPrompt(memories), 4000, 0.2, conversation, "schedule", AgentKey, null,
+            GivenMemoryIds: memories.Select(m => m.Id).ToList()),
             NullAiStreamSink.Instance, cancellationToken);
         row.CallId = result.CallId;
         row.Model = result.Model;
@@ -263,6 +273,23 @@ public sealed class AiTraderAgent(
         }
 
         return row;
+    }
+
+    /// <summary>
+    /// The memories a look at <paramref name="clockUtc"/> reads (<see cref="AiTraderMemory"/>), each counted as used.
+    /// Memory is help, not a dependency: a failure to read it is logged and the look goes on without.
+    /// </summary>
+    private async Task<IReadOnlyList<AiMemory>> MemoriesAsync(DateTime clockUtc, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await new AiTraderMemory(db, settings).ForAsync(clockUtc, count: true, _time.GetUtcNow().UtcDateTime, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "AI Trader: its lessons could not be read; it decides without them");
+            return [];
+        }
     }
 
     /// <summary>The book the rules judge: its live account in live mode, else the shadow book (a replay's own in a replay).</summary>
@@ -322,7 +349,7 @@ public sealed class AiTraderAgent(
         return "YOUR LAST LOOKS (newest first)\n" + string.Join('\n', lines);
     }
 
-    private static string BuyText(string planJson)
+    internal static string BuyText(string planJson)
     {
         try
         {

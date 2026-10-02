@@ -149,10 +149,12 @@ public sealed class AiSettings
 
     /// <summary>
     /// The agents that have memory, comma-separated. The Desk Assistant first (owner, 1 Oct morning), then every
-    /// built agent the same day, once they were all on: a correction on any agent's report is its memory.
+    /// built agent the same day, once they were all on: a correction on any agent's report is its memory. The AI
+    /// Trader from 2 Oct, for its lessons; it reads them bounded by the day it decides on, never through the
+    /// gateway's recall (<c>AiTraderMemory</c>).
     /// </summary>
     public string MemoryAgents { get; set; } =
-        $"{AiCatalog.DeskAssistant},{AiCatalog.TradeReviewer},{AiCatalog.NewsAnalyst},{AiCatalog.IncidentExplainer}";
+        $"{AiCatalog.DeskAssistant},{AiCatalog.TradeReviewer},{AiCatalog.NewsAnalyst},{AiCatalog.IncidentExplainer},{AiCatalog.AiTrader}";
 
     /// <summary>Characters of memories one call may carry in its system prompt; past it the closest to the question win.</summary>
     public int MemoryBudgetChars { get; set; } = 2400;
@@ -172,6 +174,21 @@ public sealed class AiSettings
 
     /// <summary>Lessons the daily check may propose in one day: each is one Judge call on the free tier.</summary>
     public int MaxLessonsPerCheck { get; set; } = 3;
+
+    /// <summary>
+    /// Whether the AI Trader learns from its own days (owner, 2 Oct): a reflection on each finished replay or live
+    /// day proposes lessons, and each is tested on past looks before it is used. Runs while the AI Trader is on.
+    /// </summary>
+    public bool AiTraderLessons { get; set; } = true;
+
+    /// <summary>Active AI Trader lessons at most: past it, the one with the weakest evidence makes way.</summary>
+    public int AiTraderMaxLessons { get; set; } = 8;
+
+    /// <summary>Past looks a lesson is tested on, each asked twice (without it and with it).</summary>
+    public int AiTraderLessonPoints { get; set; } = 16;
+
+    /// <summary>Rupees, after charges, by which a lesson must beat the looks without it over its test to be used.</summary>
+    public decimal AiTraderLessonMinGain { get; set; } = 500m;
 
     public bool KeyConfigured => !string.IsNullOrWhiteSpace(ApiKey);
 

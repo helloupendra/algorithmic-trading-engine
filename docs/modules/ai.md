@@ -377,7 +377,7 @@ Endpoints, admin only:
 | `GET reports?agent=&subjectType=&status=&date=&take=&beforeId=` | Reports, newest first |
 | `GET reports/{id}` | One report: body and data |
 | `GET reports/stats?days=` | Per agent and day: ok, invalid, failed, and the valid share |
-| `POST agents/{key}/run` | `{ subjectId }` (a run or incident id, or none for the next due work). Runs in the background and answers 202; the report appears when the model has answered. |
+| `POST agents/{key}/run` | `{ subjectId }` (a run or incident id, a replay's id for `ai-trader-reflect`, or none for the next due work). Runs in the background and answers 202; the report appears when the model has answered. |
 
 ## Docs search
 
@@ -495,19 +495,24 @@ The desk's bot answers its linked owner in a private chat, as the Assistant tab 
 The models do not learn: their weights are the provider's. What an agent learns is kept as **memories**, short
 notes put into its system prompt on every call (`AiMemoryBook`). Each one can be read, edited, traced to where it
 came from, and taken out. Every built agent has memory (`Ai:MemoryAgents`): the Desk Assistant from the morning of
-1 Oct, the Trade Reviewer, News Analyst and Incident Explainer from that afternoon, once they were all switched on.
+1 Oct, the Trade Reviewer, News Analyst and Incident Explainer from that afternoon, once they were all switched on, and
+the AI Trader from 2 Oct, for the lessons it learns from its own days ([AI Trader](ai_trader.md#lessons)).
 
 | Kind | Written by | Used |
 |---|---|---|
 | `note` | The owner: `/remember` on Telegram, or Add a note on AI → Memory | At once |
 | `correction` | The owner: 👎 on an answer with what it should have said; its question is kept as context | At once |
-| `lesson` | The daily check: the Judge's one-line lesson from a question the Assistant got wrong | **Only after it passes its own test** |
+| `lesson` | The daily check: the Judge's one-line lesson from a question the Assistant got wrong. For the AI Trader, a reflection on one of its finished days | **Only after it passes its own test** |
 
 A wrong lesson in the prompt would repeat its mistake on every answer, so each lesson is tested before it is used.
 The Assistant is asked the question the lesson came from again, with the lesson on trial in its memory
 (`AiAskInput.TrialMemoryIds`: read on that call alone). Two questions it got right are asked too.
 - The lesson is used only if the first now passes and the other two still do.
 - Otherwise it is dropped, with the reason: `check: did not fix its question` or `check: broke a right answer`.
+
+An AI Trader lesson is tested on up to 16 of its past looks instead, each asked without it and with it, the answers
+played on the recorded prices; it is used only if it adds ₹500 or more after charges, helps on as many looks as it
+hurts and answers no worse ([AI Trader](ai_trader.md#lessons)).
 
 Lessons once waited for the owner's approval. On 1 Oct the owner said he cannot keep answering yes or no, so the
 evidence decides. He can still take any lesson out, and every lesson sits on Today and AI → Memory.
@@ -523,6 +528,9 @@ The check asks the Judge about at most `Ai:MaxLessonsPerCheck` (3) failed questi
 - They are introduced as guidance, not data: numbers still come from the tools, and a note that disagrees with a
   tool is out of date.
 - A caller with its own system prompt, and a model's health test, get no memories.
+- The AI Trader is that caller. The recall knows no day, and a replay of 16 Sep must not read a lesson learned on
+  24 Sep. So it sends its own prompt with only what was known before the moment it decides (lessons from earlier days,
+  notes written before), and names them (`AiAskInput.GivenMemoryIds`): its call keeps them like recalled ones.
 
 **Outcomes.** Every call keeps the ids of the memories it was given (`ai_calls.MemoryIdsJson`). The owner's verdict
 on an answer adds to `Ups` or `Downs` of each of those memories, and the check's grade adds to `CheckPasses` or
