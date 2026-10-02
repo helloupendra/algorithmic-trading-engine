@@ -522,7 +522,7 @@ function AccountPanel({ view }: { view: BacktestRunView }) {
       actions={<span className="muted" style={{ fontSize: 12 }}>started with {formatInrWhole(view.initialCapital)}</span>}
     >
       {account && (
-        <div className="stat-row">
+        <div className="stat-grid">
           <StatTile label="Lowest balance" value={formatInrWhole(account.lowest)}
             sub={account.lowestAtUtc ? `on ${formatDay(account.lowestAtUtc.slice(0, 10))}` : undefined}
             tone={account.lowest < view.initialCapital ? 'neg' : undefined} />
