@@ -191,7 +191,7 @@ export function LandingDesktop() {
         </a>
         <nav className="top__links" aria-label="Sections">
           <button type="button" onClick={() => goTo('data')}>The engine</button>
-          <a href="#console">Console</a>
+          <a href="#console">Screens</a>
           <a href="#proof">Proof</a>
           <a href="/docs/">Docs</a>
         </nav>
