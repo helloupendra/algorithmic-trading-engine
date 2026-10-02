@@ -135,6 +135,7 @@ export function BacktestOverviewPage() {
           value={runs.data ? formatNumber(runList.length) : '—'}
           sub={runs.data ? `${formatNumber(runList.filter((r) => r.status === 'Completed').length)} completed` : 'loading runs…'}
           to="/research/backtests/runs"
+          stale={runs.isRefetchError}
         />
         <StatTile
           label="Running now"
@@ -146,6 +147,7 @@ export function BacktestOverviewPage() {
               : 'nothing replaying'
           }
           to="/research/backtests/runs"
+          stale={runs.isRefetchError}
         />
         <StatTile
           label="Best net P&L"
@@ -153,6 +155,7 @@ export function BacktestOverviewPage() {
           tone={best ? (best.netPnl > 0 ? 'pos' : best.netPnl < 0 ? 'neg' : undefined) : undefined}
           sub={best ? `${best.strategyName} · ${best.underlying} · ${formatDayRange(best.fromDate, best.toDate)}` : 'no finished run with trades yet'}
           to={best ? `/research/backtests/runs/${best.runId}` : undefined}
+          stale={runs.isRefetchError}
         />
         <StatTile
           label="Data sessions available"
@@ -169,6 +172,7 @@ export function BacktestOverviewPage() {
                   : `index-days across ${formatNumber(onHand.indices)} indices · longest ≈ ${formatNumber(onHand.longest)}`
           }
           to="/data/historical"
+          stale={coverage.isRefetchError || fno.isRefetchError}
         />
       </div>
 
