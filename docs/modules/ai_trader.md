@@ -309,6 +309,13 @@ session; their lessons are then tested one look a minute. Eight replay days make
 at most about 780 calls, some six and a half hours of evenings. To start at once,
 `POST /api/Ai/agents/ai-trader-reflect/run` (blank: one step; `{ "subjectId": "12" }`: reflect on replay 12).
 
+## Talking with it
+
+The owner can question it on AI → Assistant (pick AI Trader) or on Telegram (`/trader …`): it answers as itself, from
+its decisions and the briefs it read, its shadow book, the scoreboard and its lessons, and `ai_trader_look_now` shows
+what it would do now, judged by the rules, without saving a decision or opening a position. A correction there becomes
+its memory, read by its later looks ([Talking to the agents](ai.md#talking-to-the-agents)).
+
 ## Daily digest
 
 Its day goes to Telegram in the AI's one daily digest (system channel), with the day's run reviews, after the NSE

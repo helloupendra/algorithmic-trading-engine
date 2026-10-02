@@ -14,7 +14,8 @@ Four agents are built:
   **Incident Explainer**.
 
 The other ten are listed as planned, with the phase that builds them, so the page shows the whole plan and not just
-what runs.
+what runs. The owner can talk with each built agent, the [AI Trader](ai_trader.md) included, not only the Desk
+Assistant ([Talking to the agents](#talking-to-the-agents)).
 
 - Console: **AI**, admin only:
   - `/ai`: overview;
@@ -268,7 +269,7 @@ All under `api/Ai`, admin only.
 | Endpoint | What |
 | --- | --- |
 | `GET overview` | Provider and key status, tiers, today's numbers (IST day), per-model use, last success and error, agent counts |
-| `GET agents` | Every agent (built or planned) with its chain, switch, last call and today's use; the desk's rule-based parts |
+| `GET agents` | Every agent (built or planned) with its chain, switch, last call and today's use; whether the owner can talk with it (`chat`) and what it reads then (`chatTools`); the desk's rule-based parts |
 | `PUT agents/{key}` | `{ enabled, chain, resetChain, reason }`: 409 for a planned agent |
 | `PUT tiers/{tier}` | `{ chain, reason }`: an empty chain goes back to the default |
 | `GET models?refresh=` | The provider's catalog (cached 10 min), in-use models first, each one's last test and today's attempts; local models (FinBERT) |
@@ -477,7 +478,8 @@ The desk's bot answers its linked owner in a private chat, as the Assistant tab 
 - **Everyone else.** Strangers get "This bot is private." to `/start` and nothing else. Group chats are ignored: the
   bot posts the desk's notices there.
 - **Questions.** Each goes through the gateway as the Desk Assistant (source `telegram`), with the chat's last turns
-  for half an hour. `/new` starts over and `/unlink` leaves.
+  for half an hour. `/new` starts over and `/unlink` leaves. `/trader`, `/reviewer`, `/news` or `/incident` before a
+  question asks that agent instead ([Talking to the agents](#talking-to-the-agents)).
 - **Answers.** The bot shows "typing…" while the model works. It answers in Telegram HTML, with tables and code in
   monospace and only `& < >` escaped. If Telegram refuses the HTML it sends plain text. The model, the seconds and
   the call number go under each answer.
@@ -486,9 +488,74 @@ The desk's bot answers its linked owner in a private chat, as the Assistant tab 
 - **Settings.** `Ai:TelegramAssistantEnabled` turns it off. `GET telegram` shows whether it runs, the bot's name and
   the linked accounts; `DELETE telegram/owners/{id}` unlinks one.
 - **Teaching.** 👍 and 👎 sit under every answer. After a 👎 the bot asks "What should it have said?", and a reply to
-  that message becomes a correction. `/remember …` saves a note, `/memory` lists what the Assistant reads, and
-  `/forget N` retires memory MN. After the daily check, one message lists the lessons it tested, those learned and
+  that message becomes a correction of the agent that answered. `/remember …` saves a note for the agent the chat is
+  talking with, `/memory` lists what it reads, and `/forget N` retires memory MN. After the daily check, one message lists the lessons it tested, those learned and
   those dropped, with nothing to answer. A button pressed by anyone but a linked owner does nothing.
+
+## Talking to the agents
+
+The owner can question every built agent, not only the Desk Assistant (owner, 3 Oct): to test it, and to correct it.
+Asked with their task prompts, the scheduled agents answered in JSON or not at all: each prompt demands one JSON
+object, and most give no tools.
+
+**As itself.** A question from the console or Telegram (source `console` or `telegram`, `AiCatalog.ChatSources`) to an
+agent with a chat persona (`AiAgentDef.ChatPrompt`) gets that persona and its chat tools (`ChatTools`) instead. The
+persona says:
+- who it is and what its scheduled job is;
+- what it can read in a chat, tool by tool;
+- to explain its own past work from those records, never invent a decision, a number or a reason, and say plainly when
+  the records do not show something;
+- that it cannot save anything: a correction is kept as its memory with 👎 and the right answer under its reply, or
+  as a note with `/remember`.
+
+Its scheduled work (sources `schedule`, `check`, `preview`) keeps its task prompt and tools, and so does a script's
+`POST ask` (source `api`). The Desk Assistant has no separate persona: its prompt already is one. A switched-off agent
+cannot be asked (409), as the Desk Assistant cannot.
+
+| Agent | Reads in a chat |
+|---|---|
+| AI Trader | `get_ai_trader_decisions`: a day's looks (that day's replays too, each marked), a replay's, or the latest; what it proposed, its reason, the verdict and the rule; the day's totals. `get_ai_trader_decision`: one look with the brief it read, its plan and result, the memories its call was given (with their status now) and the shadow position it opened. `get_ai_trader_book`, `get_ai_trader_scoreboard` and `get_ai_trader_lessons`, through the same builders as its panel; the lessons with what its next look reads (`readNow`). `ai_trader_look_now` (below). |
+| Trade Reviewer | `get_trade_reviews`: a day's, a run's or the last days' reviews, by verdict, with the run's strategy and account, and the totals by verdict. `get_trade_review`: one in full (journal, deviations, stale fills, the lesson, a second review's verdict). And the tools its reviews use: `get_runs`, `get_run`, `get_strategy_spec`, `get_quotes`, `get_option_chain_summary`. |
+| News Analyst | `get_news_events`: its records by the items' publication time (default the last 24 hours), by direction, event or symbol, with the items in the window it has not read yet counted. `get_news_event`: one record with the item and the exact text it read (`NewsAnalystAgent.HeadlineText`, `FilingText`). `get_news`: the items themselves. |
+| Incident Explainer | `get_incidents`; `get_incident`: one incident with every evidence line, masked, and its explanation; `get_incident_explanations`: its explanations of the last days beside their incidents. And `get_latest_checkup`, `get_runs`, `get_open_positions`, `get_quotes`. |
+
+Every chat tool only reads and is projected field by field, its free text masked like the desk tools'
+(`AiAgentChatToolTests`). A call runs only the tools it offered: a model that names another agent's tool is told the
+ones it has.
+
+**What the AI Trader would do now** (`ai_trader_look_now`, `AiTraderAgent.PreviewAsync`):
+
+| Step | Rule |
+|---|---|
+| Built | As a live look: the brief as of now (`MarketBriefBuilder`), the stop floors, its book (its account in live mode, else today's shadow book) and its last looks of the day |
+| Asked | Its own decision prompt once, with the memories a look now reads (`AiTraderMemory`: lessons from earlier days, notes and corrections written before), not counted as used |
+| Judged | `AiTraderGuard`, on the book as it is once the answer is in |
+| Saves | Nothing: no `ai_trader_decisions` row, no shadow position, nothing placed. Its scoreboard, its lessons' tests and its next look never see it. The model call is a row on the Calls tab (agent `ai-trader`, source `preview`) |
+| Who pays | The asker: the call is made in his name, so his rate limits count it (two in flight, 30 in ten minutes), never the AI Trader's own looks |
+| Never | While a market replay it decides in is playing: it says so, and no model is asked |
+| Time | Up to 3 minutes, the tool's own limit (`IAiTool.Timeout`); the other tools keep 30 s |
+| Answers | Each section of the brief shortened to its first lines, the plan and its reason, the contract, the verdict and the rule, the memories it read |
+
+**Memory in a chat.** Each agent reads its own memories, as any call does, and a correction or a `/remember` note in
+its chat becomes its memory (owner, 1 Oct: "a correction on any agent's work becomes its memory"), read in its
+scheduled work too. The AI Trader's chat is given what its next look reads: a lesson only once the day it was learned
+from is over (`AiMemoryBook`), never one reflected from today's own session. A past decision it explains read only the
+memories its record lists.
+
+**On the console** (AI → Assistant):
+- A picker above the conversation: Desk Assistant (the default), AI Trader, Trade Reviewer, News Analyst, Incident
+  Explainer. The choice survives a reload; `/ai/assistant?agent=ai-trader` opens one, and each agent's panel on AI →
+  Agents links to it ("Talk with it").
+- One conversation per agent while the page is open: switching back finds it as it was, and an answer streams on in
+  its own conversation. One question at a time across them.
+- The header says what the agent does, when it runs, and what it reads; each agent has its own starter questions (AI
+  Trader: "Why did you buy on 16 Sep?", "What would you do now?", "Which lessons are you using?").
+- 👍, 👎 with a correction, and `/remember` save for the agent being talked with; the line under an answer names the
+  memories it was given.
+
+**On Telegram:** `/trader …`, `/reviewer …`, `/news …` or `/incident …` asks that agent; the chat stays with it, so a
+follow-up needs no prefix, until `/assistant`, `/new` or half an hour of quiet brings back the Desk Assistant. A prefix
+alone switches without asking. An answer from another agent than the Assistant names it under the text.
 
 ## Memory
 
@@ -531,6 +598,8 @@ The check asks the Judge about at most `Ai:MaxLessonsPerCheck` (3) failed questi
 - The AI Trader is that caller. The recall knows no day, and a replay of 16 Sep must not read a lesson learned on
   24 Sep. So it sends its own prompt with only what was known before the moment it decides (lessons from earlier days,
   notes written before), and names them (`AiAskInput.GivenMemoryIds`): its call keeps them like recalled ones.
+- The owner's chat with the AI Trader goes through the recall, which then gives it what its next look reads: a
+  lesson only once the day it was learned from is over.
 
 **Outcomes.** Every call keeps the ids of the memories it was given (`ai_calls.MemoryIdsJson`). The owner's verdict
 on an answer adds to `Ups` or `Downs` of each of those memories, and the check's grade adds to `CheckPasses` or
@@ -561,14 +630,16 @@ on the Calls tab under the pseudo-agent `memory`.
    - pass free text through `AiToolFormat.Text`;
    - bound the rows.
 2. Register it in `Program.cs`.
-3. Add its name to `AiToolNames` and to the agent's `Tools` in `AiCatalog`.
-4. Add it to `AiToolDataTests`.
+3. Add its name to `AiToolNames` and to the agent's `Tools` in `AiCatalog`, or its `ChatTools` for what it reads in a
+   chat (name it in the agent's chat prompt too). `AiAgentChatTests` fails for a name with no tool or no registration.
+4. Add it to `AiToolDataTests`, or `AiAgentChatToolTests` for a chat tool.
 
 ## Adding an agent
 
 1. Build it: code that assembles its input from the desk's own data. The model reads that input; it never fetches
    anything itself.
-2. In `AiCatalog.Agents`, set its entry to `Built: true`, with its system prompt.
+2. In `AiCatalog.Agents`, set its entry to `Built: true`, with its system prompt, and a chat persona and chat tools
+   so the owner can talk with it.
 3. Call `AiGateway.AskAsync` with its key and `Source = "schedule"`, or `POST /api/Ai/ask` with the engine's service
    account (that path is not open to the Service role yet).
 

@@ -20,6 +20,7 @@ import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import {
   AGENT_STATUSES,
   CHECK_PASS_MARK,
+  DESK_ASSISTANT,
   SCHEDULED_AGENTS,
   agentStatus,
   callTime,
@@ -603,6 +604,15 @@ function AgentCard({
             <dt>Tools</dt>
             <dd>
               <AgentTools tools={agent.tools} />
+            </dd>
+          </div>
+        )}
+        {agent.chat && agent.key !== DESK_ASSISTANT && (
+          <div>
+            <dt>In a chat</dt>
+            <dd>
+              <AgentTools tools={agent.chatTools} />
+              <Link to={`/ai/assistant?agent=${encodeURIComponent(agent.key)}`}>Talk with it →</Link>
             </dd>
           </div>
         )}

@@ -180,7 +180,10 @@ export function TelegramCard() {
               <button type="button" className="btn btn--sm" disabled={pair.isPending} onClick={start}>
                 {pair.isPending ? 'Asking for a code…' : 'Link Telegram'}
               </button>
-              <span className="faint small">/new starts a new conversation; /unlink removes the link.</span>
+              <span className="faint small">
+                /new starts a new conversation; /unlink removes the link. /trader, /reviewer, /news or /incident before a question asks
+                that agent, and /assistant comes back.
+              </span>
             </div>
           )}
           {pair.isError && (

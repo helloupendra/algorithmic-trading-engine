@@ -81,8 +81,17 @@ import {
   readMemory,
   readMemoryProgress,
   splitMemories,
+  CHAT_AGENTS,
+  DESK_ASSISTANT,
+  agentChatsReducer,
+  chatAgentMeta,
+  conversationNote,
+  initialAgentChats,
+  parseChatAgent,
+  readAgents,
+  streamingAgent,
 } from './ai'
-import type { AiMemory, AiModel, AiStreamEvent, AiToolStep, ChatAction, ChatState, SseMessage } from './ai'
+import type { AgentChats, AiMemory, AiModel, AiStreamEvent, AiToolStep, ChatAction, ChatState, SseMessage } from './ai'
 import { ApiError } from './api'
 
 /** Feeds chunks one after another, as a stream would, and collects every message. */
@@ -1340,5 +1349,127 @@ describe('memory words', () => {
     expect(memoryErrorText(new TypeError('Failed to fetch'))).toBe(
       'The request did not reach the API: Failed to fetch. Check the connection, and that the API is running.',
     )
+  })
+})
+
+// ---------- talking with the agents ----------
+
+describe('the agent picker', () => {
+  const ids = () => {
+    let n = 0
+    return () => `c-${++n}`
+  }
+  const chat = (agent: string, action: ChatAction) => ({ type: 'chat' as const, agent, action })
+
+  it('offers the Desk Assistant first and the four other agents, each with its own starters', () => {
+    expect(CHAT_AGENTS.map((a) => a.key)).toEqual([DESK_ASSISTANT, 'ai-trader', 'trade-reviewer', 'news-analyst', 'incident-explainer'])
+    expect(chatAgentMeta('ai-trader').starters).toContain('What would you do now?')
+    expect(chatAgentMeta('trade-reviewer').starters).toContain('Which runs broke their spec this week?')
+    expect(chatAgentMeta('news-analyst').starters).toContain('What moved in the last hour?')
+    expect(chatAgentMeta('incident-explainer').starters).toContain('Explain the latest incident')
+    expect(new Set(CHAT_AGENTS.flatMap((a) => a.starters)).size).toBe(CHAT_AGENTS.flatMap((a) => a.starters).length)
+  })
+
+  it('reads a stored or linked choice, and anything else as the Desk Assistant', () => {
+    expect(parseChatAgent('ai-trader')).toBe('ai-trader')
+    expect(parseChatAgent('technical-analyst')).toBe(DESK_ASSISTANT)
+    expect(parseChatAgent('')).toBe(DESK_ASSISTANT)
+    expect(parseChatAgent(null)).toBe(DESK_ASSISTANT)
+    expect(chatAgentMeta('nobody').key).toBe(DESK_ASSISTANT)
+    expect(initialAgentChats('news-analyst', ids()).agent).toBe('news-analyst')
+  })
+
+  it('keeps one conversation per agent, each with its own id, across switches', () => {
+    let s: AgentChats = initialAgentChats(undefined, ids())
+    expect(new Set(Object.values(s.chats).map((c) => c.conversationId)).size).toBe(CHAT_AGENTS.length)
+    s = agentChatsReducer(s, chat(DESK_ASSISTANT, ask('t1', 'How did the runs do?')))
+    s = agentChatsReducer(s, { type: 'pick', agent: 'ai-trader' })
+    s = agentChatsReducer(s, chat('ai-trader', ask('t2', 'Why did you buy on 16 Sep?')))
+    s = agentChatsReducer(s, { type: 'pick', agent: DESK_ASSISTANT })
+
+    expect(s.agent).toBe(DESK_ASSISTANT)
+    expect(s.chats[DESK_ASSISTANT].turns.map((t) => t.question)).toEqual(['How did the runs do?'])
+    expect(s.chats['ai-trader'].turns.map((t) => t.question)).toEqual(['Why did you buy on 16 Sep?'])
+    expect(s.chats['news-analyst'].turns).toEqual([])
+  })
+
+  it('lets an answer stream on in its own conversation after the owner switches away', () => {
+    let s = agentChatsReducer(initialAgentChats('ai-trader', ids()), chat('ai-trader', ask('t1', 'What would you do now?')))
+    s = agentChatsReducer(s, { type: 'pick', agent: 'trade-reviewer' })
+    expect(streamingAgent(s)).toBe('ai-trader')
+    s = agentChatsReducer(s, chat('ai-trader', ev('t1', { type: 'delta', text: 'I would wait.' })))
+    s = agentChatsReducer(
+      s,
+      chat('ai-trader', ev('t1', { type: 'done', callId: 9, model: 'm', seconds: 4, finishReason: 'stop', usage: null, fallbacks: 0, toolCalls: 1, rounds: 2, memoryIds: [45] })),
+    )
+
+    expect(s.agent).toBe('trade-reviewer')
+    expect(s.chats['ai-trader'].turns[0]).toMatchObject({ status: 'done', answer: 'I would wait.', memoryIds: [45] })
+    expect(s.chats['trade-reviewer'].turns).toEqual([])
+    expect(streamingAgent(s)).toBeNull()
+  })
+
+  it('starts one agent over without touching the others, and changes nothing for a no-op', () => {
+    let s = initialAgentChats(DESK_ASSISTANT, ids())
+    s = agentChatsReducer(s, chat(DESK_ASSISTANT, ask('t1')))
+    s = agentChatsReducer(s, chat('news-analyst', ask('t2', 'What moved in the last hour?')))
+    const before = s
+    expect(agentChatsReducer(s, { type: 'pick', agent: DESK_ASSISTANT })).toBe(before)
+    expect(agentChatsReducer(s, chat('ai-trader', { type: 'stopped', id: 'nope' }))).toBe(before)
+
+    s = agentChatsReducer(s, chat('news-analyst', { type: 'reset', conversationId: 'c-fresh' }))
+    expect(s.chats['news-analyst']).toEqual({ conversationId: 'c-fresh', turns: [] })
+    expect(s.chats[DESK_ASSISTANT].turns).toHaveLength(1)
+  })
+
+  it('says under each agent whether its conversation is started or answering', () => {
+    let c = initialChat('c-1')
+    expect(conversationNote(c)).toBe('')
+    expect(conversationNote(undefined)).toBe('')
+    c = chatReducer(c, ask('t1'))
+    expect(conversationNote(c)).toBe('answering…')
+    c = chatReducer(c, { type: 'stopped', id: 't1' })
+    expect(conversationNote(c)).toBe('1 question')
+    c = chatReducer(c, ask('t2'))
+    c = chatReducer(c, { type: 'refused', id: 't2', message: 'no', status: 409 })
+    expect(conversationNote(c)).toBe('2 questions')
+  })
+})
+
+describe('reading the agents for a chat', () => {
+  const agent = (key: string, extra: Record<string, unknown> = {}) => ({ key, name: key, tools: [{ name: 'get_runs', description: 'Runs.' }], ...extra })
+
+  it('takes what each agent reads in a chat from the API', () => {
+    const r = readAgents({
+      agents: [
+        agent('ai-trader', { tools: [], chat: true, chatTools: [{ name: 'get_ai_trader_decisions', description: 'Its decisions.' }] }),
+        agent('macro-analyst', { tools: [], chat: false, chatTools: [] }),
+      ],
+    })
+    expect(r.agents.map((a) => [a.key, a.chat, a.chatTools.map((t) => t.name)])).toEqual([
+      ['ai-trader', true, ['get_ai_trader_decisions']],
+      ['macro-analyst', false, []],
+    ])
+  })
+
+  it('reads an API from before the agents could be talked with: only the Desk Assistant, with its own tools', () => {
+    const r = readAgents({ agents: [agent(DESK_ASSISTANT), agent('ai-trader', { tools: [] })] })
+    expect(r.agents.map((a) => [a.key, a.chat, a.chatTools.map((t) => t.name)])).toEqual([
+      [DESK_ASSISTANT, true, ['get_runs']],
+      ['ai-trader', false, []],
+    ])
+  })
+})
+
+describe('the agents tool words', () => {
+  it("names the tools that read an agent's own work, with what each read", () => {
+    expect(toolLabel('get_ai_trader_decisions', '{"day":"2026-09-16","action":"buy"}')).toEqual({ label: 'Its decisions', detail: 'day: 2026-09-16, action: buy' })
+    expect(toolLabel('get_ai_trader_decision', '{"decisionId":118}')).toEqual({ label: 'Decision #118', detail: '' })
+    expect(toolLabel('ai_trader_look_now', '{}')).toEqual({ label: 'A look now (saves nothing)', detail: '' })
+    expect(toolLabel('get_trade_review', '{"runId":412}').label).toBe('Review of run #412')
+    expect(toolLabel('get_trade_review', '{"reviewId":7}')).toEqual({ label: 'One review', detail: 'reviewId: 7' })
+    expect(toolLabel('get_news_event', '{"item":"n123"}').label).toBe('News record n123')
+    expect(toolLabel('get_incident', '{"incidentId":31}').label).toBe('Incident #31')
+    expect(sourceLabel('preview')).toBe('AI Trader look now')
   })
 })

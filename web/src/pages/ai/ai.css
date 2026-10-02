@@ -289,6 +289,9 @@ a.ai-call-link:hover { text-decoration: underline; }
 .ai-check .table tr.ai-check__miss td { background: color-mix(in srgb, var(--neg) 5%, transparent); }
 .ai-utility__what { margin: 0 0 8px; max-width: 92ch; font-size: 12.5px; color: var(--text-2); }
 .ai-assistant__conv { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12px; }
+/* Who to talk with: the Desk Assistant and the four other agents, wrapping on a phone rather than running off it. */
+.ai-agentpick { max-width: 100%; margin: 0 0 10px; }
+.ai-agentpick .seg__btn { min-width: 0; }
 
 .ai-chat { display: flex; flex-direction: column; gap: 16px; }
 .ai-chat__empty {

@@ -23,28 +23,44 @@
  * No tool places, changes or cancels an order; the page says so from the
  * agent's own record.
  *
+ * Every agent can be talked with, not only the Desk Assistant: a picker above
+ * the conversation chooses the AI Trader, the Trade Reviewer, the News Analyst
+ * or the Incident Explainer, each answering as itself (its chat persona, on
+ * the server) and reading its own work: its decisions, reviews, records or
+ * explanations. One conversation per agent, kept while the page is open, so
+ * switching back finds it where it was; one question at a time across them.
+ * The header says what the agent does and what it can read; each has its own
+ * starter questions. The choice survives a reload (?agent= links to one).
+ *
  * Memory: under each finished answer, 👍 and 👎. A 👎 asks what the answer
- * should have said; saved, that becomes a correction the Assistant reads
- * from the next question on. A quiet line names the memories the answer was
+ * should have said; saved, that becomes a correction the agent that answered
+ * reads from the next question on (and, for a scheduled agent, in its
+ * scheduled work). A quiet line names the memories the answer was
  * given ("Read 3 memories: M3 · M7 · M9"), each linked to the Memory tab.
- * Text sent as "/remember …" is not asked: it is saved as a note, read from
- * the next question, and a line in the conversation says under which id.
+ * Text sent as "/remember …" is not asked: it is saved as a note for the
+ * agent being talked with, read from the next question, and a line in the
+ * conversation says under which id.
  */
 
 import { Fragment, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   ASK_TIERS,
   AskRefusal,
+  CHAT_AGENTS,
+  DESK_ASSISTANT,
   MEMORY_MAX_CHARS,
+  agentChatsReducer,
   askFailureText,
-  chatReducer,
+  chatAgentMeta,
+  conversationNote,
   formatSeconds,
   formatTokens,
   historyFor,
-  initialChat,
+  initialAgentChats,
+  streamingAgent,
   toolLabel,
   toolsLine,
   isAbort,
@@ -62,7 +78,7 @@ import {
   useAiOverview,
   useCallFeedback,
 } from '../../lib/ai'
-import type { AskTier, ChatTurn, FeedbackScore, TurnRound } from '../../lib/ai'
+import type { AskTier, ChatAction, ChatTurn, FeedbackScore, TurnRound } from '../../lib/ai'
 import { IconStop } from '../../components/icons'
 import { AnswerText } from './AnswerText'
 import { CallLink, ChainChips, MemoriesRead, ToolStepRow } from './parts'
@@ -71,17 +87,9 @@ import { useNow } from './common'
 import '../system/health/health.css'
 import './ai.css'
 
-const AGENT = 'desk-assistant'
-
-/** Questions that show what reading the desk is for; a click puts one in the box, it does not send it. */
-const STARTERS = [
-  'How did the runs do today?',
-  'Why did the worst run today lose money?',
-  'What is open right now, and what is it worth?',
-  'Anything wrong on the desk: open incidents or checkup items?',
-]
 const DRAFT_KEY = 'openfno.ai.draft'
 const TIER_KEY = 'openfno.ai.tier'
+const AGENT_KEY = 'openfno.ai.agent'
 
 /** localStorage, where the browser allows it; a private window or blocked storage just forgets. */
 function readStored(key: string): string | null {
@@ -236,9 +244,10 @@ function RoundSteps({ round, numbered, live, now }: { round: TurnRound; numbered
  * 👍 and 👎 under a finished answer. A vote is sent at once, and shows as
  * chosen once the API has it; a second click on the chosen one clears it.
  * 👎 then asks what the answer should have said: saved, that becomes a
- * correction the Assistant reads from the next question on.
+ * correction the agent that answered reads from the next question on (the
+ * API keeps it for the call's agent).
  */
-function AnswerVotes({ callId }: { callId: number }) {
+function AnswerVotes({ callId, agentName }: { callId: number; agentName: string }) {
   const feedback = useCallFeedback()
   const [score, setScore] = useState<FeedbackScore | null>(null)
   const [asking, setAsking] = useState(false)
@@ -313,7 +322,7 @@ function AnswerVotes({ callId }: { callId: number }) {
       {asking && (
         <div className="ai-votes__ask">
           <label className="ai-votes__q" htmlFor={`fix-${callId}`}>
-            What should it have said? It becomes a correction the Assistant reads from the next question.
+            What should it have said? It becomes a correction the {agentName} reads from the next question.
           </label>
           <textarea
             id={`fix-${callId}`}
@@ -348,6 +357,8 @@ function AnswerVotes({ callId }: { callId: number }) {
 /** A note sent as /remember: saving, saved under its id, or not saved and why. */
 interface RememberLine {
   key: string
+  /** The agent it was saved for: it shows in that agent's conversation. */
+  agent: string
   /** How many turns the conversation had when it was sent: it shows after them. */
   at: number
   text: string
@@ -356,7 +367,7 @@ interface RememberLine {
   error: string | null
 }
 
-function RememberNote({ line }: { line: RememberLine }) {
+function RememberNote({ line, agentName }: { line: RememberLine; agentName: string }) {
   return (
     <div className={`ai-remember ai-remember--${line.state}`} role="status">
       {line.state === 'saving' ? (
@@ -364,7 +375,7 @@ function RememberNote({ line }: { line: RememberLine }) {
       ) : line.state === 'saved' ? (
         <span>
           Saved as note {line.id != null && <Link to={memoryHref(line.id)}>{memoryLabel(line.id)}</Link>}.{' '}
-          <span className="faint">The Assistant reads it from the next question.</span>
+          <span className="faint">The {agentName} reads it from the next question.</span>
         </span>
       ) : (
         <span>The note was not saved: {line.error}</span>
@@ -374,7 +385,7 @@ function RememberNote({ line }: { line: RememberLine }) {
   )
 }
 
-function Turn({ turn, now }: { turn: ChatTurn; now: number }) {
+function Turn({ turn, now, agentKey, agentName }: { turn: ChatTurn; now: number; agentKey: string; agentName: string }) {
   const streaming = turn.status === 'streaming'
   // Rounds are worth numbering once there is more than one.
   const many = turn.rounds.length > 1 || (turn.roundCount ?? 1) > 1
@@ -391,7 +402,7 @@ function Turn({ turn, now }: { turn: ChatTurn; now: number }) {
       </div>
       <div className={`ai-a ai-a--${turn.status}`}>
         <div className="ai-turn__head">
-          <span className="ai-who">AI</span>
+          <span className="ai-who">{agentKey === DESK_ASSISTANT ? 'AI' : agentName}</span>
           <AnswerMeta turn={turn} now={now} />
           {turn.answer && !streaming && <CopyButton text={turn.answer} />}
         </div>
@@ -421,7 +432,7 @@ function Turn({ turn, now }: { turn: ChatTurn; now: number }) {
         )}
         {turn.status === 'done' && (turn.callId != null || turn.memoryIds != null) && (
           <div className="ai-a__foot">
-            {turn.callId != null && <AnswerVotes callId={turn.callId} />}
+            {turn.callId != null && <AnswerVotes callId={turn.callId} agentName={agentName} />}
             <MemoriesRead ids={turn.memoryIds} />
           </div>
         )}
@@ -432,7 +443,7 @@ function Turn({ turn, now }: { turn: ChatTurn; now: number }) {
           <div className="alert alert--error ai-a__error" role="alert">
             <span>{turn.error}</span>
             {turn.errorStatus === 409 && (
-              <Link className="btn btn--sm" to="/ai/agents#agent-desk-assistant">
+              <Link className="btn btn--sm" to={`/ai/agents#agent-${agentKey}`}>
                 Agents →
               </Link>
             )}
@@ -448,7 +459,8 @@ export function AiAssistantPage() {
   const agents = useAiAgents()
   const addMemory = useAddMemory()
   const qc = useQueryClient()
-  const [chat, dispatch] = useReducer(chatReducer, undefined, () => initialChat())
+  const [params] = useSearchParams()
+  const [state, dispatch] = useReducer(agentChatsReducer, undefined, () => initialAgentChats(params.get('agent') ?? readStored(AGENT_KEY)))
   const [draft, setDraft] = useState(() => readStored(DRAFT_KEY) ?? '')
   const [tier, setTier] = useState<AskTier>(() => parseAskTier(readStored(TIER_KEY)))
   const [remembered, setRemembered] = useState<RememberLine[]>([])
@@ -458,11 +470,23 @@ export function AiAssistantPage() {
   const endRef = useRef<HTMLDivElement>(null)
   const follow = useRef(true)
 
-  const streaming = chat.turns.some((t) => t.status === 'streaming')
-  const now = useNow(1_000, streaming)
+  const agentKey = state.agent
+  const chat = state.chats[agentKey]
+  const meta = chatAgentMeta(agentKey)
+  // One question at a time across the conversations: an answer streams on in its own conversation when the owner switches away.
+  const busy = streamingAgent(state)
+  const streaming = busy === agentKey
+  const busyElsewhere = busy != null && !streaming
+  const now = useNow(1_000, busy != null)
 
   useEffect(() => writeStored(DRAFT_KEY, draft), [draft])
   useEffect(() => writeStored(TIER_KEY, tier), [tier])
+  useEffect(() => writeStored(AGENT_KEY, agentKey === DESK_ASSISTANT ? '' : agentKey), [agentKey])
+  // A link to /ai/assistant?agent=… picks that agent, here or arriving.
+  const linked = params.get('agent')
+  useEffect(() => {
+    if (linked) dispatch({ type: 'pick', agent: linked })
+  }, [linked])
   // Leaving the page stops the answer, which cancels the call on the server.
   useEffect(() => () => abortRef.current?.abort(), [])
 
@@ -479,16 +503,18 @@ export function AiAssistantPage() {
   }, [chat.turns, remembered])
 
   const tiers = overview.data?.tiers
-  const assistant = agents.data?.agents.find((a) => a.key === AGENT)
+  const agent = agents.data?.agents.find((a) => a.key === agentKey)
+  const agentName = meta.label
   const keyMissing = overview.data?.provider.keyConfigured === false
-  const switchedOff = assistant?.status === 'off'
-  const blocked = keyMissing || switchedOff
-  // The assistant's own tier asks with no tier at all, so the API walks the agent's own chain: a chain
-  // the owner gave the Desk Assistant on the Agents tab is the one its tier choice uses. The other two
-  // choices ask that tier's chain.
-  const ownTier = assistant?.tier ?? null
+  const switchedOff = agent?.status === 'off'
+  // An API from before the other agents could be talked with answers them with their scheduled task's JSON.
+  const notOnThisApi = agent != null && !agent.chat
+  const blocked = keyMissing || switchedOff || notOnThisApi
+  // The agent's own tier asks with no tier at all, so the API walks the agent's own chain: a chain the owner
+  // gave the agent on the Agents tab is the one its tier choice uses. The other choices ask that tier's chain.
+  const ownTier = agent?.tier ?? null
   const chainFor = (key: AskTier) =>
-    key === ownTier && assistant ? assistant.chain : (tiers?.find((t) => t.key === key)?.chain ?? [])
+    key === ownTier && agent ? agent.chain : (tiers?.find((t) => t.key === key)?.chain ?? [])
 
   // Enter sends where there is a keyboard; on a phone Enter is a new line and the button sends.
   const finePointer = useMemo(() => {
@@ -501,25 +527,28 @@ export function AiAssistantPage() {
 
   const ask = async () => {
     const question = draft.trim()
-    if (!question || streaming || blocked) return
+    if (!question || busy != null || blocked) return
+    // The answer belongs to the agent asked, wherever the page is when it arrives.
+    const asking = agentKey
+    const send = (action: ChatAction) => dispatch({ type: 'chat', agent: asking, action })
     const id = `t-${Date.now().toString(36)}-${chat.turns.length}`
     const messages = historyFor(chat.turns, question)
     follow.current = true
-    dispatch({ type: 'ask', id, question, tier, now: Date.now() })
+    send({ type: 'ask', id, question, tier, now: Date.now() })
     setDraft('')
     const controller = new AbortController()
     abortRef.current = controller
     try {
       await streamAsk(
-        { messages, tier: tier === ownTier ? null : tier, conversationId: chat.conversationId, agent: AGENT },
-        (event) => dispatch({ type: 'event', id, event }),
+        { messages, tier: tier === ownTier ? null : tier, conversationId: chat.conversationId, agent: asking },
+        (event) => send({ type: 'event', id, event }),
         controller.signal,
       )
-      dispatch({ type: 'closed', id })
+      send({ type: 'closed', id })
     } catch (error) {
-      if (isAbort(error)) dispatch({ type: 'stopped', id })
-      else if (error instanceof AskRefusal) dispatch({ type: 'refused', id, message: error.message, status: error.status, callId: error.callId })
-      else dispatch({ type: 'refused', id, message: askFailureText(error), status: null })
+      if (isAbort(error)) send({ type: 'stopped', id })
+      else if (error instanceof AskRefusal) send({ type: 'refused', id, message: error.message, status: error.status, callId: error.callId })
+      else send({ type: 'refused', id, message: askFailureText(error), status: null })
     } finally {
       if (abortRef.current === controller) abortRef.current = null
       // The call is in the log and the day's numbers now.
@@ -528,10 +557,10 @@ export function AiAssistantPage() {
   }
 
   /**
-   * "/remember …" is saved as a note, not asked. A note with nothing in it, or
-   * too long, stays in the box with the reason under it; one the API refuses
-   * comes back to the box (unless something new was typed) with the reason
-   * in the conversation.
+   * "/remember …" is saved as a note for the agent being talked with, not
+   * asked. A note with nothing in it, or too long, stays in the box with the
+   * reason under it; one the API refuses comes back to the box (unless
+   * something new was typed) with the reason in the conversation.
    */
   const remember = (text: string) => {
     const problem = text === '' ? 'Write the note after /remember, for example: /remember quote P&L net of charges.' : memoryTextProblem(text)
@@ -541,11 +570,12 @@ export function AiAssistantPage() {
     }
     const key = `n-${Date.now().toString(36)}-${remembered.length}`
     const typed = draft
+    const forAgent = agentKey
     follow.current = true
-    setRemembered((lines) => [...lines, { key, at: chat.turns.length, text, state: 'saving', id: null, error: null }])
+    setRemembered((lines) => [...lines, { key, agent: forAgent, at: chat.turns.length, text, state: 'saving', id: null, error: null }])
     setDraft('')
     // mutateAsync, not mutate: each note needs its own answer, even when two are in flight.
-    addMemory.mutateAsync({ agent: AGENT, text }).then(
+    addMemory.mutateAsync({ agent: forAgent, text }).then(
       (m) => setRemembered((lines) => lines.map((l) => (l.key === key ? { ...l, state: 'saved', id: m.id, text: m.text || l.text } : l))),
       (error: unknown) => {
         setRemembered((lines) => lines.map((l) => (l.key === key ? { ...l, state: 'failed', error: `${memoryErrorText(error)} It is back in the box.` } : l)))
@@ -563,11 +593,17 @@ export function AiAssistantPage() {
   const stop = () => abortRef.current?.abort()
 
   const startOver = () => {
-    abortRef.current?.abort()
-    dispatch({ type: 'reset', conversationId: newConversationId() })
-    setRemembered([])
+    if (streaming) abortRef.current?.abort()
+    dispatch({ type: 'chat', agent: agentKey, action: { type: 'reset', conversationId: newConversationId() } })
+    setRemembered((lines) => lines.filter((l) => l.agent !== agentKey))
     setComposerNote(null)
     inputRef.current?.focus()
+  }
+
+  const pick = (key: string) => {
+    dispatch({ type: 'pick', agent: key })
+    setComposerNote(null)
+    follow.current = true
   }
 
   const onSubmit = (e: FormEvent) => {
@@ -584,18 +620,38 @@ export function AiAssistantPage() {
 
   const questions = chat.turns.length
   const isNote = parseRemember(draft) != null
-  // The notes sent after the first `k` turns, in the order they were sent.
-  const notesAt = (k: number) => remembered.filter((l) => l.at === k).map((l) => <RememberNote key={l.key} line={l} />)
+  // This agent's notes sent after the first `k` turns, in the order they were sent.
+  const notesAt = (k: number) =>
+    remembered.filter((l) => l.agent === agentKey && l.at === k).map((l) => <RememberNote key={l.key} line={l} agentName={agentName} />)
+  const reads = agent?.chatTools ?? []
 
   return (
     <div className="page ai ai-assistant">
       <div className="ai-assistant__grid">
       <div className="ai-assistant__main hp">
+      <div className="seg seg--wrap ai-agentpick" role="radiogroup" aria-label="Who to talk with">
+        {CHAT_AGENTS.map((a) => {
+          const info = agents.data?.agents.find((x) => x.key === a.key)
+          const note = conversationNote(state.chats[a.key]) || (info?.status === 'off' ? 'switched off' : '')
+          return (
+            <button
+              key={a.key}
+              type="button"
+              role="radio"
+              aria-checked={agentKey === a.key}
+              className={`seg__btn seg__btn--meta ${agentKey === a.key ? 'is-active' : ''}`}
+              title={info?.job}
+              onClick={() => pick(a.key)}
+            >
+              {a.label}
+              <small>{note || ' '}</small>
+            </button>
+          )
+        })}
+      </div>
+
       <div className="hp-bar">
-        <p className="hp-bar__lead muted">
-          Ask the desk's AI. It reads the desk through read-only tools, answers stream from the NVIDIA-hosted models of the
-          tier you pick, and every question is logged in the Calls tab.
-        </p>
+        <p className="hp-bar__lead muted">{meta.lead}</p>
         {questions > 0 && (
           <span className="ai-assistant__conv">
             <span className="faint">
@@ -617,24 +673,38 @@ export function AiAssistantPage() {
       {switchedOff && (
         <div className="alert alert--warn" role="status">
           <span>
-            The Desk Assistant is switched off{assistant?.updatedBy ? ` (by ${assistant.updatedBy}${assistant.reason ? `: ${assistant.reason}` : ''})` : ''}.
+            The {agentName} is switched off{agent?.updatedBy ? ` (by ${agent.updatedBy}${agent.reason ? `: ${agent.reason}` : ''})` : ''}
+            {agentKey === DESK_ASSISTANT ? '.' : ': it can neither run on its schedule nor be asked.'}
           </span>
-          <Link className="btn btn--sm" to="/ai/agents#agent-desk-assistant">
+          <Link className="btn btn--sm" to={`/ai/agents#agent-${agentKey}`}>
             Agents →
           </Link>
         </div>
       )}
+      {notOnThisApi && !switchedOff && (
+        <div className="alert alert--warn" role="status">
+          This API build cannot talk with the {agentName} yet: it would answer with its scheduled task's JSON. It can once the API is deployed.
+        </div>
+      )}
 
-      <section className="ai-chat" aria-label="Conversation" aria-live="polite">
+      <section className="ai-chat" aria-label={`Conversation with the ${agentName}`} aria-live="polite">
         {questions === 0 ? (
           <div className="ai-chat__empty">
-            <p className="ai-chat__lead">
-              It can read the desk's runs, orders, positions, quotes, option chains, incidents, checkups, forecasts, news
-              and strategy specs, read-only: it never places or changes an order. Numbers it takes from the desk are cited
-              like <span className="mono">(get_runs, 15:30 IST)</span>.
-            </p>
+            {agentKey === DESK_ASSISTANT ? (
+              <p className="ai-chat__lead">
+                It can read the desk's runs, orders, positions, quotes, option chains, incidents, checkups, forecasts, news
+                and strategy specs, read-only: it never places or changes an order. Numbers it takes from the desk are cited
+                like <span className="mono">(get_runs, 15:30 IST)</span>.
+              </p>
+            ) : (
+              <p className="ai-chat__lead">
+                {agent ? `${agent.job} ` : ''}It answers as itself, from its own records, read-only: it never places or changes an
+                order, and says so when the records do not show something. A correction saved under an answer becomes its
+                memory, read from the next question on and in its scheduled work.
+              </p>
+            )}
             <div className="ai-starters" aria-label="Questions to start with">
-              {STARTERS.map((q) => (
+              {meta.starters.map((q) => (
                 <button
                   key={q}
                   type="button"
@@ -650,6 +720,14 @@ export function AiAssistantPage() {
               ))}
             </div>
             <dl className="ai-chat__facts">
+              {agent && agentKey !== DESK_ASSISTANT && (
+                <div>
+                  <dt>Its job</dt>
+                  <dd>
+                    <span>{agent.schedule}</span>
+                  </dd>
+                </div>
+              )}
               {ASK_TIERS.map((t) => (
                 <div key={t.key}>
                   <dt>{t.label}</dt>
@@ -659,16 +737,16 @@ export function AiAssistantPage() {
                   </dd>
                 </div>
               ))}
-              {assistant && (
+              {agent && (
                 <>
                   <div>
-                    <dt>Tools</dt>
+                    <dt>Reads</dt>
                     <dd>
-                      {assistant.tools.length === 0 ? (
-                        <span className="faint">none: it reads only what you type</span>
+                      {reads.length === 0 ? (
+                        <span className="faint">nothing: it reads only what you type</span>
                       ) : (
                         <span className="ai-toolchips">
-                          {assistant.tools.map((t) => (
+                          {reads.map((t) => (
                             <span key={t.name} className="ai-toolchip" title={`${t.name}: ${t.description}`}>
                               {toolLabel(t.name, '').label}
                             </span>
@@ -679,7 +757,7 @@ export function AiAssistantPage() {
                   </div>
                   <div>
                     <dt>Never</dt>
-                    <dd>{assistant.limits}</dd>
+                    <dd>{agent.limits}</dd>
                   </div>
                 </>
               )}
@@ -689,7 +767,7 @@ export function AiAssistantPage() {
           chat.turns.map((turn, i) => (
             <Fragment key={turn.id}>
               {notesAt(i)}
-              <Turn turn={turn} now={now} />
+              <Turn turn={turn} now={now} agentKey={agentKey} agentName={agentName} />
             </Fragment>
           ))
         )}
@@ -701,8 +779,8 @@ export function AiAssistantPage() {
           ref={inputRef}
           className="field__input ai-composer__input"
           rows={2}
-          placeholder={blocked ? 'The assistant cannot be asked right now (see above).' : 'Ask about a backtest, a market move, a concept or the code…'}
-          aria-label="Your question"
+          placeholder={blocked ? `The ${agentName} cannot be asked right now (see above).` : meta.placeholder}
+          aria-label={`Your question to the ${agentName}`}
           value={draft}
           maxLength={20_000}
           onChange={(e) => {
@@ -714,6 +792,14 @@ export function AiAssistantPage() {
         {composerNote && (
           <p className="small-note warn ai-flush" role="alert">
             {composerNote}
+          </p>
+        )}
+        {busyElsewhere && !isNote && (
+          <p className="small-note ai-flush" role="status">
+            The {chatAgentMeta(busy).label} is still answering: one question at a time.{' '}
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => pick(busy)}>
+              Back to it
+            </button>
           </p>
         )}
         <div className="ai-composer__foot">
@@ -745,7 +831,11 @@ export function AiAssistantPage() {
             </button>
           )}
           {(!streaming || isNote) && (
-            <button type="submit" className="btn btn--primary btn--sm ai-composer__go" disabled={!draft.trim() || (blocked && !isNote)}>
+            <button
+              type="submit"
+              className="btn btn--primary btn--sm ai-composer__go"
+              disabled={!draft.trim() || (!isNote && (blocked || busyElsewhere))}
+            >
               {isNote ? 'Save note' : 'Ask'}
             </button>
           )}
