@@ -51,7 +51,10 @@ const NAV = [
       { slug: 'modules/manual-orders', src: 'docs/modules/manual_orders.md', title: 'Manual orders & carried positions' },
       { slug: 'modules/backtesting', src: 'docs/modules/backtesting_module.md', title: 'Backtesting' },
       { slug: 'modules/market-replay', src: 'docs/modules/market_replay.md', title: 'Market replay' },
+      { slug: 'modules/ai', src: 'docs/modules/ai.md', title: 'AI workspace & agents' },
       { slug: 'modules/ai-trader', src: 'docs/modules/ai_trader.md', title: 'AI Trader' },
+      { slug: 'modules/analysis', src: 'docs/modules/analysis.md', title: 'Forecasts & analysis' },
+      { slug: 'modules/market-intelligence', src: 'docs/modules/market_intelligence.md', title: 'Market intelligence' },
       { slug: 'modules/option-chain', src: 'docs/modules/option_chain.md', title: 'Option chain' },
       { slug: 'modules/pattern-alerts', src: 'docs/modules/pattern_alerts.md', title: 'Candle pattern alerts' },
       { slug: 'modules/connectors', src: 'docs/modules/connectors_module.md', title: 'Connectors' },
@@ -65,8 +68,21 @@ const NAV = [
     section: 'Strategies',
     // Filled at build time from docs/strategies/*.md — every spec the test
     // guard knows about, without a hand-kept list that would go stale.
-    items: [{ slug: 'strategies', src: 'docs/strategies/README.md', title: 'Strategy specifications' }],
+    items: [
+      { slug: 'strategies', src: 'docs/strategies/README.md', title: 'Strategy specifications' },
+      { slug: 'strategies/smart-money-concepts', src: 'docs/smart-money-concepts.md', title: 'Smart money concepts' },
+    ],
     glob: 'docs/strategies',
+  },
+  {
+    section: 'Operations',
+    items: [
+      { slug: 'ops/today', src: 'docs/modules/today.md', title: 'Today: the owner\'s page' },
+      { slug: 'ops/timetable', src: 'docs/modules/desk_timetable.md', title: 'Daily timetable' },
+      { slug: 'ops/sentinel', src: 'docs/modules/sentinel.md', title: 'Sentinel: the watchman' },
+      { slug: 'ops/checkup', src: 'docs/modules/checkup.md', title: 'Desk checkup' },
+      { slug: 'ops/pager', src: 'docs/modules/pager.md', title: 'Wake-up pager' },
+    ],
   },
   {
     section: 'Run it',

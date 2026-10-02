@@ -1,32 +1,49 @@
 # AlgoTrading Platform — Progress Summary
 
-> **Current status — September 2026**
+> **Current status — 2 October 2026**
 >
-> The sections below this note are a historical progress log (mid-2026). The
-> latest state of the platform:
+> The sections after this note are the historical progress log from mid-2026. This is what runs today. Every figure
+> the desk shows is a paper result after charges, and nothing in these pages claims a profit.
 >
-> - **Web console** (`web/`): one design system across the admin modules and the
->   trader screens. The **Data module** covers data overview (coverage matrix +
->   needs-attention), live feeds (ingestor control, index tickers, merged live
->   watchlist, diagnostics with process logs, tick/bar inspector), the option
->   chain and its intraday open-interest curves, historical (coverage-first
->   browser + chart + FYERS backfill incl. ATM±N option chains) and instruments
->   & F&O (master search, expiries, CE/PE ladder). Per-trader module access is
->   enforced by the API through the module registry
->   (`web/src/lib/modules.ts`).
-> - **Live-pipeline hardening**: the ingestor
->   (`market_data/live/fyers_streamer.py`) now reports an honest heartbeat
->   (`Running`/`Stalled`/`Disconnected` from real socket + tick state) and a
->   watchdog forces a full reconnect with a fresh broker token when the socket
->   stays down — the daily FYERS token expiry can no longer freeze the feed
->   silently. The API drains and exposes the ingestor's process output
->   (`GET /api/Ingestor/logs`) and start/stop is race-safe.
-> - **5m/15m live bars**: `GET /api/LiveData/bars` aggregates minute buckets
->   on read from the stored 1m bars, so strategies that declare 5m/15m
->   requirements (GhostTangentCrossings, LogicEngine) receive real data.
-> - Known open reliability work (Redis PEL loss, watchlist-change socket
->   restarts, unbounded live_ticks growth, Greeks pipeline) is tracked and
->   ordered — ask the maintainers before relying on those paths.
+> - **Live paper desk.** Strategy runs trade index options and futures on NSE, BSE and MCX. Fills are at the bid or
+>   ask, with the desk's charges. Risk rules apply per run, per group and per leg, and can be changed while a run is
+>   live. Manual orders and carried positions sit beside the runs. Every position is squared off at its own exchange's
+>   close, and a holiday calendar covers NSE, BSE and MCX, including MCX half days. See
+>   [Strategies & live runner](modules/strategies_module.md), [Manual orders](modules/manual_orders.md) and
+>   [Risk management](03_ARCHITECTURE_AND_RISK_MANAGEMENT.md).
+> - **Data.** Dhan is the backbone feed and records the option chain every minute. FYERS is the fallback and the
+>   history source. Backfills are coverage-first. A nightly archive writes candles after the last exchange closes,
+>   and a nightly India VIX check fills any gap. See [Data](modules/data_module.md), [Dhan](modules/dhan_connector.md)
+>   and [Option chain](modules/option_chain.md).
+> - **Market replay.** Any recorded day can be played again through the live strategy runners at 1×, 2×, 5× or 10×,
+>   with its prices kept apart from the live ones. A queue plays many days in a row, only when no market the desk
+>   trades is open. See [Market replay](modules/market_replay.md).
+> - **AI workspace.** The agents are:
+>   - a Desk Assistant with read-only tools and memory;
+>   - a Trade Reviewer that checks each run against its written specification;
+>   - a News Analyst that turns headlines and filings into structured events;
+>   - an Incident Explainer.
+>
+>   A daily check and a weekly exam with held-out questions grade the Assistant, and one Telegram digest a day
+>   summarises the agents' work. A lesson is kept only when a test shows it helps. See
+>   [AI workspace & agents](modules/ai.md).
+> - **AI Trader, in shadow.** Every ten minutes it reads a market brief built by code and proposes one action. Code
+>   enforces every limit, and nothing is placed yet. A shadow book scores its buys after charges against a fixed rule
+>   and against doing nothing, day by day, live and in replays. See [AI Trader](modules/ai_trader.md).
+> - **Forecasts and market intelligence.** Daily range and trend forecasts are judged on live results only, never on
+>   their backtests. News, exchange filings, global markets, breadth and FII/DII flows are recorded. See
+>   [Forecasts & analysis](modules/analysis.md) and [Market intelligence](modules/market_intelligence.md).
+> - **Operations.**
+>   - Sentinel watches the desk and opens one incident per problem.
+>   - Checkups run before the open, after the close and at the end of the day.
+>   - A pager sends texts for what cannot wait.
+>   - The Today page gives the owner everything on one page.
+>   - The auto-deploy never builds or restarts while live runs are trading.
+>
+>   See [Today](modules/today.md), the [daily timetable](modules/desk_timetable.md), [Sentinel](modules/sentinel.md)
+>   and [Checkup](modules/checkup.md).
+> - **Backtesting.** Backtests check coverage first, can price expired contracts from the exchange expiry calendar,
+>   replay the historical option chain, and take per-run rules. See [Backtesting](modules/backtesting_module.md).
 
 ## Overview
 This project has evolved from a basic broker integration into a working market data and simulator platform foundation. 

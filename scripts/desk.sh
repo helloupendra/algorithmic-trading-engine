@@ -267,7 +267,7 @@ _deploy_if_behind() {
   say "building $from_short -> $to_short ($how): $(printf '%s\n' "$changed" | wc -l | tr -d ' ') file(s)"
 
   local web_changed api_changed engine_changed
-  web_changed="$(printf '%s\n' "$changed" | grep -c '^web/' || true)"
+  web_changed="$(printf '%s\n' "$changed" | console_build_inputs)"
   api_changed="$(printf '%s\n' "$changed" | grep -cE '^src/AlgoTrading\.(Api|Application|Domain|Infrastructure|Contracts)/' || true)"
   engine_changed="$(printf '%s\n' "$changed" | grep -c '^src/AlgoTrading.PythonEngine/' || true)"
   local notes=() steps=()
