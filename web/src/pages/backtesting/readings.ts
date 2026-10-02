@@ -5,10 +5,25 @@
  * really holds once each index is counted a single time.
  */
 
+import { toCandleResolution } from '../../lib/symbols'
+
 /* ------------------------------------------------------- session estimate */
 
-/** Full NSE session bar counts per resolution (09:15–15:30 IST). */
-const BARS_PER_SESSION: Record<string, number> = { '1': 375, '5': 75, '15': 25, D: 1 }
+/** Minutes in a full NSE session (09:15–15:30 IST). */
+const SESSION_MINUTES = 375
+
+/**
+ * Bars in a full session at a resolution, in any spelling ("1", "1m", "60",
+ * "D", "1D"): one a day for daily bars, else the session's minutes over the
+ * bar's, the last bar short (60 minutes: 7). A spelling that is neither
+ * reads as five minutes.
+ */
+function barsPerSession(resolution: string): number {
+  const r = toCandleResolution(resolution)
+  if (r === 'D') return 1
+  const minutes = Number(r)
+  return Number.isInteger(minutes) && minutes > 0 ? Math.ceil(SESSION_MINUTES / minutes) : 75
+}
 
 /**
  * Sessions implied by a bar count at a resolution. The generic coverage
@@ -16,8 +31,7 @@ const BARS_PER_SESSION: Record<string, number> = { '1': 375, '5': 75, '15': 25, 
  * exact sessions, so this is only used where that endpoint does not apply.
  */
 export function estimateSessions(resolution: string, barCount: number): number {
-  const per = BARS_PER_SESSION[resolution.toUpperCase().replace(/M$/, '')] ?? 75
-  return Math.max(barCount > 0 ? 1 : 0, Math.ceil(barCount / per))
+  return Math.max(barCount > 0 ? 1 : 0, Math.ceil(barCount / barsPerSession(resolution)))
 }
 
 /* ------------------------------------------------------- sessions on hand */

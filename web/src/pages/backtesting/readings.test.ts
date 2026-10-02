@@ -18,8 +18,16 @@ describe('estimateSessions', () => {
     expect(estimateSessions('1', 376)).toBe(2)
     expect(estimateSessions('5', 0)).toBe(0)
   })
-  it('treats an unknown resolution as five minutes', () => {
-    expect(estimateSessions('30', 150)).toBe(2)
+  it('derives a full session for any number of minutes, the last bar short', () => {
+    expect(estimateSessions('30', 13 * 2)).toBe(2)
+    expect(estimateSessions('60', 7 * 10)).toBe(10)
+    expect(estimateSessions('60m', 7 * 10)).toBe(10)
+  })
+  it('reads "1D" as daily: 1,274 days are 1,274 sessions, not 17', () => {
+    expect(estimateSessions('1D', 1_274)).toBe(1_274)
+  })
+  it('treats a spelling that is no resolution as five minutes', () => {
+    expect(estimateSessions('W', 150)).toBe(2)
   })
 })
 
