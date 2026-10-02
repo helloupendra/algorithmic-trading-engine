@@ -103,4 +103,9 @@
   .tk-price { height: 60px; }
   .tk-grp .tk-lab .dk-xs { display: none; }
   .tk-hover { display: none; }
+  /* However many underlyings or accounts ran: past the bar's width a switch
+     scrolls sideways inside it, as on Positions, instead of running off the
+     screen. No scrollbar: the cut edge fades (the pickers are .scroll-x). */
+  .tk-bar .dk-seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .tk-bar .dk-seg::-webkit-scrollbar { display: none; }
 }

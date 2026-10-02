@@ -358,7 +358,7 @@ export function RunTracks({
     <div className="tk">
       <div className="tk-bar">
         {multi && (
-          <span className="dk-seg" role="group" aria-label="Accounts">
+          <span className="dk-seg scroll-x" role="group" aria-label="Accounts">
             <button type="button" aria-pressed={shownScope === 'all'} onClick={() => onScope('all')}>
               All accounts
             </button>
@@ -370,7 +370,7 @@ export function RunTracks({
           </span>
         )}
         {underlyings.length > 1 && (
-          <span className="dk-seg" role="group" aria-label="Underlying">
+          <span className="dk-seg scroll-x" role="group" aria-label="Underlying">
             <button type="button" aria-pressed={shownUnderlying == null} onClick={() => onUnderlying(null)}>
               All
             </button>
