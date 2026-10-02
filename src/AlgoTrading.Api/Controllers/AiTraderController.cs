@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using AlgoTrading.Api.Security;
 using AlgoTrading.Api.Services.AiTrader;
 using AlgoTrading.Domain.Entities;
@@ -19,7 +20,9 @@ namespace AlgoTrading.Api.Controllers;
 [Authorize(Policy = AuthorizationPolicies.AdminOnly)]
 [ApiController]
 [Route("api/[controller]")]
-public class AiTraderController(TradingDbContext db, AiSettingsStore store, IOptionsMonitor<AiSettings> settings, TimeProvider? time = null) : ControllerBase
+public class AiTraderController(
+    TradingDbContext db, AiSettingsStore store, IOptionsMonitor<AiSettings> settings, TimeProvider? time = null, AiTraderLessonState? lessonState = null)
+    : ControllerBase
 {
     private readonly TimeProvider _time = time ?? TimeProvider.System;
 
@@ -211,14 +214,102 @@ public class AiTraderController(TradingDbContext db, AiSettingsStore store, IOpt
         return Ok(new { items, nextBeforeId = items.Count == Math.Clamp(take, 1, 200) ? items[^1].Id : (long?)null });
     }
 
+    /// <summary>One decision with its brief, plan and result, and the memories (lessons, notes) its call was given.</summary>
     [HttpGet("decisions/{id:long}")]
     public async Task<IActionResult> Decision(long id, CancellationToken cancellationToken)
     {
         var d = await db.AiTraderDecisions.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
-        return d is null
-            ? NotFound(new { error = $"No decision {id}." })
-            : Ok(new AiTraderDecisionDetail(Summary(d), d.Brief, d.PlanJson, d.ResultJson, d.BriefHash));
+        if (d is null) return NotFound(new { error = $"No decision {id}." });
+        string? memoryIds = d.CallId is long callId
+            ? await db.AiCalls.AsNoTracking().Where(c => c.Id == callId).Select(c => c.MemoryIdsJson).FirstOrDefaultAsync(cancellationToken)
+            : null;
+        return Ok(new AiTraderDecisionDetail(Summary(d), d.Brief, d.PlanJson, d.ResultJson, d.BriefHash) { MemoryIds = AiGateway.MemoryIds(memoryIds) });
     }
+
+    /// <summary>
+    /// The AI Trader's lessons, newest first, whatever their status: each with the day it was learned from, the
+    /// decisions it rests on and, once tested, its test's evidence (without it against with it, over its looks); the
+    /// lesson under test and how far its test is; the limits.
+    /// </summary>
+    [HttpGet("lessons")]
+    public async Task<IActionResult> Lessons(CancellationToken cancellationToken)
+    {
+        var lessons = await db.AiMemories.AsNoTracking()
+            .Where(m => m.AgentKey == AiCatalog.AiTrader && m.Kind == AiMemoryKind.Lesson)
+            .OrderByDescending(m => m.Id)
+            .ToListAsync(cancellationToken);
+        var reflectionIds = lessons.Where(m => m.SourceReportId != null).Select(m => m.SourceReportId!.Value).Distinct().ToList();
+        var reflections = await db.AiReports.AsNoTracking()
+            .Where(r => reflectionIds.Contains(r.Id))
+            .Select(r => new { r.Id, r.SubjectId, r.SessionDate, r.DataJson })
+            .ToDictionaryAsync(r => r.Id, cancellationToken);
+        var subjects = lessons.Select(m => AiTraderLessonCheck.SubjectOf(m.Id)).ToList();
+        var checks = (await db.AiReports.AsNoTracking()
+                .Where(r => r.AgentKey == AiCatalog.AiTraderLessonCheck && r.SubjectType == AiReportSubject.Check && subjects.Contains(r.SubjectId))
+                .Select(r => new { r.Id, r.SubjectId, r.DataJson })
+                .ToListAsync(cancellationToken))
+            .ToDictionary(r => r.SubjectId, StringComparer.Ordinal);
+
+        var items = lessons.Select(m =>
+        {
+            var from = m.SourceReportId is long rid ? reflections.GetValueOrDefault(rid) : null;
+            var check = checks.GetValueOrDefault(AiTraderLessonCheck.SubjectOf(m.Id));
+            long? replay = from?.SubjectId.StartsWith("replay:", StringComparison.Ordinal) == true && long.TryParse(from.SubjectId.AsSpan(7), out long r) ? r : null;
+            return new AiTraderLessonView(
+                m.Id, m.Text, m.Status, from?.SessionDate?.ToString("yyyy-MM-dd"), from?.SubjectId, replay, from is null ? [] : DecisionIdsOf(from.DataJson, m.Id),
+                Utc(m.CreatedUtc)!.Value, m.DecidedBy, Utc(m.DecidedUtc), Utc(m.ActivatedUtc), Utc(m.RetiredUtc), m.Uses, from?.Id, check?.Id,
+                check is null ? null : Evidence(check.DataJson));
+        }).ToList();
+
+        var s = settings.CurrentValue;
+        var testing = lessonState?.Current;
+        return Ok(new AiTraderLessonsView(
+            s.AiTraderLessons && s.HasMemory(AiCatalog.AiTrader), s.AiTraderMaxLessons, s.AiTraderLessonPoints, s.AiTraderLessonMinGain,
+            testing is null ? null : new AiTraderLessonTesting(testing.LessonId, testing.Done.Count, testing.Points.Count),
+            new AiMemoryCounts(
+                items.Count(i => i.Status == AiMemoryStatus.Active), items.Count(i => i.Status == AiMemoryStatus.Proposed),
+                items.Count(i => i.Status == AiMemoryStatus.Rejected), items.Count(i => i.Status == AiMemoryStatus.Retired)),
+            items));
+    }
+
+    /// <summary>The decisions a reflection's data says a lesson rests on.</summary>
+    private static IReadOnlyList<long> DecisionIdsOf(string dataJson, long memoryId)
+    {
+        try
+        {
+            if (JsonNode.Parse(string.IsNullOrWhiteSpace(dataJson) ? "{}" : dataJson)?["lessons"] is not JsonArray list) return [];
+            var lesson = list.OfType<JsonObject>().FirstOrDefault(l => l["memoryId"] is JsonValue v && v.TryGetValue(out long id) && id == memoryId);
+            return lesson?["decisionIds"] is JsonArray ids
+                ? ids.OfType<JsonValue>().Select(v => v.TryGetValue(out long n) ? n : 0).Where(n => n > 0).ToList()
+                : [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    /// <summary>A lesson test's evidence from its report's data; null when the data cannot be read.</summary>
+    public static AiTraderLessonEvidence? Evidence(string dataJson)
+    {
+        try
+        {
+            if (JsonNode.Parse(string.IsNullOrWhiteSpace(dataJson) ? "{}" : dataJson) is not JsonObject o) return null;
+            static decimal Dec(JsonNode? n) => n is JsonValue v && v.TryGetValue(out decimal d) ? d : 0m;
+            static int Int(JsonNode? n) => n is JsonValue v && v.TryGetValue(out int i) ? i : 0;
+            static bool Bool(JsonNode? n) => n is JsonValue v && v.TryGetValue(out bool b) && b;
+            return new AiTraderLessonEvidence(
+                o["points"] is JsonArray points ? points.Count : 0, Dec(o["control"]?["net"]), Dec(o["treatment"]?["net"]), Dec(o["gain"]),
+                Int(o["helped"]), Int(o["hurt"]), Int(o["control"]?["bad"]), Int(o["treatment"]?["bad"]), Bool(o["passed"]), Bool(o["used"]),
+                o["verdict"] is JsonValue w && w.TryGetValue(out string? verdict) ? verdict : string.Empty);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static DateTime? Utc(DateTime? value) => value is null ? null : DateTime.SpecifyKind(value.Value, DateTimeKind.Utc);
 
     private static async Task<List<AiTraderDecisionSummary>> Summaries(IQueryable<AiTraderDecision> query, int take, CancellationToken cancellationToken) =>
         (await query.OrderByDescending(d => d.ClockUtc).ThenByDescending(d => d.Id).Take(take).ToListAsync(cancellationToken))
@@ -294,10 +385,39 @@ public sealed record AiTraderDecisionSummary(
     string Reason, double? Confidence, bool Allowed, string Rule, string Why, bool Executed, string Error, string Model, long? CallId,
     string? Option = null);
 
-public sealed record AiTraderDecisionDetail(AiTraderDecisionSummary Decision, string Brief, string PlanJson, string ResultJson, string BriefHash);
+public sealed record AiTraderDecisionDetail(AiTraderDecisionSummary Decision, string Brief, string PlanJson, string ResultJson, string BriefHash)
+{
+    /// <summary>The memories its call was given (its lessons and the owner's notes, as known before its moment), in the prompt's order.</summary>
+    public IReadOnlyList<long> MemoryIds { get; init; } = [];
+}
 
 /// <summary>The base rates' history: the last day built, the backfill's state, each index's rows, and what it holds.</summary>
 public sealed record AiTraderSituationsView(string? LastDay, AiTraderSituationsProgress Backfill, IReadOnlyList<AiTraderSituationsIndex> Indices, string Rule);
 
 /// <summary>One index's stored moments: all, those with every outcome known (the ones the base rates read), its days, the first and last.</summary>
 public sealed record AiTraderSituationsIndex(string Underlying, int Rows, int WithOutcomes, int Days, DateOnly First, DateOnly Last);
+
+/// <summary>
+/// The AI Trader's lessons: whether it learns (<c>Ai:AiTraderLessons</c> with its memory on), the most active at once,
+/// the looks a test asks, the gain a lesson must show, the lesson under test, the counts by status, and every lesson.
+/// </summary>
+public sealed record AiTraderLessonsView(bool Enabled, int MaxActive, int TestPoints, decimal MinGain, AiTraderLessonTesting? Testing,
+    AiMemoryCounts Counts, IReadOnlyList<AiTraderLessonView> Lessons);
+
+/// <summary>The lesson under test: looks asked so far of those chosen.</summary>
+public sealed record AiTraderLessonTesting(long LessonId, int Done, int Of);
+
+/// <summary>
+/// One lesson. <c>Subject</c> is the day it came from (<c>replay:12</c>, <c>day:2026-10-05</c>) and <c>SourceDay</c> that
+/// day; a decision reads it only on a later day. <c>Evidence</c> is its test's, null until tested.
+/// </summary>
+public sealed record AiTraderLessonView(long Id, string Text, string Status, string? SourceDay, string? Subject, long? ReplaySessionId,
+    IReadOnlyList<long> DecisionIds, DateTime CreatedUtc, string DecidedBy, DateTime? DecidedUtc, DateTime? ActivatedUtc, DateTime? RetiredUtc,
+    int Uses, long? ReflectionReportId, long? CheckReportId, AiTraderLessonEvidence? Evidence);
+
+/// <summary>
+/// A test's result: over <c>Points</c> looks, the net without the lesson and with it, the difference, the looks it
+/// helped and hurt, and the unreadable or unanswered answers on each side.
+/// </summary>
+public sealed record AiTraderLessonEvidence(int Points, decimal ControlNet, decimal TreatmentNet, decimal Gain, int Helped, int Hurt, int ControlBad,
+    int TreatmentBad, bool Passed, bool Used, string Verdict);

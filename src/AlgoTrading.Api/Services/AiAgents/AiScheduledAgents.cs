@@ -261,12 +261,14 @@ public sealed class AiAgentScheduler(
     /// An agent's switch; the assistant check and exam, utilities with no switch
     /// of their own, run while enabled in settings and the Desk Assistant is on.
     /// The daily digest runs while it is enabled in settings, whichever agents
-    /// are on: it reports on them and asks no model.
+    /// are on: it reports on them and asks no model. The AI Trader's lessons run
+    /// while enabled in settings and the AI Trader is on.
     /// </summary>
     public static bool IsOn(string key, AiState state, AiSettings settings) => key switch
     {
         AiCatalog.AssistantCheck => settings.AssistantCheckEnabled && state.Agent(AiCatalog.DeskAssistant) is { Status: "on" },
         AiCatalog.AssistantExam => settings.ExamEnabled && state.Agent(AiCatalog.DeskAssistant) is { Status: "on" },
+        AiCatalog.AiTraderReflect => settings.AiTraderLessons && state.Agent(AiCatalog.AiTrader) is { Status: "on" },
         AiCatalog.DailyDigest => settings.ReviewDigestToTelegram,
         _ => state.Agent(key) is { Status: "on" },
     };

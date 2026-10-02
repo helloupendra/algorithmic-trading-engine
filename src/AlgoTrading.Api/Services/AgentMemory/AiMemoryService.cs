@@ -226,22 +226,30 @@ public sealed class AiMemoryService(
         string agentKey, string lesson, string question, long? sourceCallId, long? sourceReportId, CancellationToken cancellationToken)
     {
         string agent = AgentWithMemory(agentKey);
-        string text = CleanText(lesson);
-        string context = ContextOf(question);
-        if (await LessonBlockedAsync(agent, context, cancellationToken)) return null;
+        if (await LessonBlockedAsync(agent, ContextOf(question), cancellationToken)) return null;
+        return await ProposeLessonAsync(agent, lesson, question, AiCatalog.AssistantCheck, sourceCallId, sourceReportId, cancellationToken);
+    }
 
+    /// <summary>
+    /// A lesson written by code, waiting for its test: masked and cut like any memory, with where it came from
+    /// (<paramref name="context"/>, the call and the report). No check for a like one: the caller decides that.
+    /// </summary>
+    public async Task<AiMemory> ProposeLessonAsync(
+        string agentKey, string lesson, string context, string createdBy, long? sourceCallId, long? sourceReportId,
+        CancellationToken cancellationToken)
+    {
         var memory = new AiMemory
         {
-            AgentKey = agent,
+            AgentKey = AgentWithMemory(agentKey),
             Kind = AiMemoryKind.Lesson,
             Status = AiMemoryStatus.Proposed,
-            Text = text,
-            Context = context,
+            Text = CleanText(lesson),
+            Context = ContextOf(context),
             Source = AiMemorySource.Check,
             Via = "check",
             SourceCallId = sourceCallId,
             SourceReportId = sourceReportId,
-            CreatedBy = AiCatalog.AssistantCheck,
+            CreatedBy = Cut(createdBy, 100),
             CreatedUtc = Now,
             UpdatedUtc = Now,
         };

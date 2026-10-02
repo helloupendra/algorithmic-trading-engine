@@ -30,18 +30,33 @@ public sealed class AiTraderBaselineScorer(TradingDbContext db, IBaselineMarket 
     public const decimal StopFraction = 0.30m;
     public const decimal TargetFraction = 0.50m;
 
+    /// <summary>How long after the NSE close a day counts as over: the shadow book's 15:30 square-off has settled.</summary>
+    public static readonly TimeSpan SettleAfterClose = TimeSpan.FromMinutes(15);
+
     /// <summary>The day's score under <see cref="TrendRule"/>: read when kept, else computed and kept. Null for a day that is not over.</summary>
     public async Task<AiTraderBaseline?> ForDayAsync(DateOnly day, DateTime nowUtc, CancellationToken cancellationToken)
     {
         var kept = await db.AiTraderBaselines.AsNoTracking().FirstOrDefaultAsync(b => b.Day == day && b.Rule == TrendRule, cancellationToken);
         if (kept is not null) return kept;
-        if (day >= IstTime.DateOf(nowUtc)) return null;
+        if (!IsOver(day, nowUtc)) return null;
 
         var row = await ScoreAsync(day, cancellationToken);
         row.ComputedUtc = nowUtc;
         db.AiTraderBaselines.Add(row);
         await db.SaveChangesAsync(cancellationToken);
         return row;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="day"/> is over: before today, or today on a trading day once its NSE session closed
+    /// <see cref="SettleAfterClose"/> ago. Every tick the rule reads (11:00 to the close) is recorded by then.
+    /// </summary>
+    public bool IsOver(DateOnly day, DateTime nowUtc)
+    {
+        var today = IstTime.DateOf(nowUtc);
+        if (day != today) return day < today;
+        var info = sessions.GetSessionInfo(nowUtc, "NSE", "FO");
+        return info.IsTradingDay && nowUtc >= info.SessionCloseUtc + SettleAfterClose;
     }
 
     private async Task<AiTraderBaseline> ScoreAsync(DateOnly day, CancellationToken cancellationToken)
