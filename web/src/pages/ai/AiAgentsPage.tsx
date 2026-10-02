@@ -39,7 +39,7 @@ import {
   useUpdateAgent,
 } from '../../lib/ai'
 import type { AgentStatus, AiAgent, AiAgentTool, AiModel } from '../../lib/ai'
-import { AI_TRADER_KEY, AI_TRADER_POLL_MS, dayCountsText, limitsParts, modeLabel, netTone } from '../../lib/aiTrader'
+import { AI_TRADER_KEY, AI_TRADER_POLL_MS, AI_TRADER_REFLECT_KEY, dayCountsText, limitsParts, modeLabel, netTone } from '../../lib/aiTrader'
 import { istDay } from '../../lib/desk'
 import { formatDateTime, formatInrSigned } from '../../lib/format'
 import { useAiTraderStatus } from '../../lib/queries'
@@ -47,7 +47,7 @@ import { shortDay } from '../../lib/replay'
 import { DateField } from '../../components/DateField'
 import { Badge, EmptyState, InlineError, Loading, Panel } from '../../components/ui'
 import { CallLink, ChainChips, ChainEditor, OutcomeBadge, StatusPill } from './parts'
-import { AiTraderDecisionList, AiTraderScoreboard, AiTraderShadowBook } from './AiTraderParts'
+import { AiTraderDecisionList, AiTraderLessons, AiTraderScoreboard, AiTraderShadowBook } from './AiTraderParts'
 import { errorText, useNow } from './common'
 import '../system/health/health.css'
 import './ai.css'
@@ -238,7 +238,9 @@ function RunNow({ agentKey }: { agentKey: string }) {
                   ? 'Starts the exam, or carries on the open one; two questions a minute, a few hours in all.'
                   : agentKey === AI_TRADER_KEY
                     ? 'One look now, outside its schedule; the rules judge it as at this hour.'
-                    : 'Reads its next batch of unread items.'}
+                    : agentKey === AI_TRADER_REFLECT_KEY
+                      ? 'One step now: the next finished day reflected on, or the next past look of a lesson under test. Not 09:00–15:45 IST on a trading day.'
+                      : 'Reads its next batch of unread items.'}
         </span>
       </div>
       {bad && <p className="small-note warn ai-flush">An id is a whole number.</p>}
@@ -455,6 +457,8 @@ function AiTraderPanel({ now }: { now: number }) {
         {status.isError && s && <p className="small-note warn ai-flush">The last read failed: showing what was read before.</p>}
 
         <AiTraderScoreboard />
+
+        <AiTraderLessons runNow={<RunNow agentKey={AI_TRADER_REFLECT_KEY} />} />
 
         <div className="atr-tools">
           <h3 className="atr-tools__h">Day</h3>

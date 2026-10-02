@@ -22,7 +22,10 @@
  *   - the scoreboard (GET /api/AiTrader/scoreboard): each replay and live
  *     shadow day (a row) against a fixed rule anyone could follow, after
  *     charges, with totals over every full row, listed or not. The totals
- *     count rows, not dates: a date replayed twice counts twice.
+ *     count rows, not dates: a date replayed twice counts twice;
+ *   - its lessons (GET /api/AiTrader/lessons): proposed by a reflection on
+ *     each finished day, tested on past looks with and without them, and read
+ *     only by decisions on later days.
  *
  * The query hooks live with the others in lib/queries.ts. The switch and
  * "Run now" are the agent's own, on AI → Agents (lib/ai.ts).
@@ -235,6 +238,8 @@ export interface AiTraderDecisionDetail {
   briefHash: string
   /** The plan, read from planJson; null when it is not a plan (an unreadable answer). */
   plan: AiTraderPlan | null
+  /** The memories its call was given (its lessons, the owner's notes), in the prompt's order; [] when none or not sent. */
+  memoryIds: number[]
 }
 
 /** Which decisions to list: a day's (IST), or a replay's. */
@@ -499,6 +504,7 @@ export function readAiTraderDetail(raw: unknown): AiTraderDecisionDetail {
     resultJson: str(raw.resultJson) ?? '',
     briefHash: words(raw.briefHash),
     plan: readAiTraderPlan(planJson),
+    memoryIds: (Array.isArray(raw.memoryIds) ? raw.memoryIds : []).map(id).filter((n): n is number => n != null),
   }
 }
 
@@ -993,4 +999,193 @@ export function sampleNote(days: number): string {
 export function listedText(shown: number, total: number | null): string {
   if (total == null || total <= shown) return ''
   return `${shown} of ${total} rows listed, newest first; the totals count all of them.`
+}
+
+// ---------- lessons ----------------------------------------------------------------------
+
+/** The scheduled job that reflects on finished days and tests each lesson: its "Run now". */
+export const AI_TRADER_REFLECT_KEY = 'ai-trader-reflect'
+
+/** How often the lessons are read: a test asks one past look a minute. */
+export const AI_TRADER_LESSONS_POLL_MS = 60_000
+
+/** A lesson's test: over `points` past looks, the net without it and with it (after charges), and the looks it helped and hurt. */
+export interface AiTraderLessonEvidence {
+  points: number
+  controlNet: number | null
+  treatmentNet: number | null
+  /** With it less without it; null when not sent. */
+  gain: number | null
+  helped: number
+  hurt: number
+  /** Unreadable or unanswered answers without it and with it. */
+  controlBad: number
+  treatmentBad: number
+  passed: boolean
+  used: boolean
+  verdict: string
+}
+
+export type AiTraderLessonStatus = 'active' | 'proposed' | 'rejected' | 'retired'
+
+export interface AiTraderLesson {
+  id: number
+  text: string
+  status: AiTraderLessonStatus | string
+  /** The day it was learned from, yyyy-MM-dd: a decision reads it only on a later day. Null when not recorded. */
+  sourceDay: string | null
+  /** replay:12 or day:2026-10-05. */
+  subject: string | null
+  replaySessionId: number | null
+  /** The decisions of that day it rests on. */
+  decisionIds: number[]
+  createdUtc: string | null
+  decidedBy: string
+  decidedUtc: string | null
+  activatedUtc: string | null
+  retiredUtc: string | null
+  uses: number
+  reflectionReportId: number | null
+  checkReportId: number | null
+  /** Null until it is tested. */
+  evidence: AiTraderLessonEvidence | null
+}
+
+export interface AiTraderLessons {
+  /** Whether it learns: Ai:AiTraderLessons with its memory on. Null when not sent. */
+  enabled: boolean | null
+  maxActive: number | null
+  testPoints: number | null
+  minGain: number | null
+  /** The lesson under test now and how far its test is; null when none is. */
+  testing: { lessonId: number; done: number; of: number } | null
+  counts: { active: number; proposed: number; rejected: number; retired: number }
+  /** Newest first. */
+  lessons: AiTraderLesson[]
+}
+
+function readEvidence(v: unknown): AiTraderLessonEvidence | null {
+  if (!record(v)) return null
+  return {
+    points: count(v.points),
+    controlNet: num(v.controlNet),
+    treatmentNet: num(v.treatmentNet),
+    gain: num(v.gain),
+    helped: count(v.helped),
+    hurt: count(v.hurt),
+    controlBad: count(v.controlBad),
+    treatmentBad: count(v.treatmentBad),
+    passed: v.passed === true,
+    used: v.used === true,
+    verdict: words(v.verdict),
+  }
+}
+
+/** One lesson, or null when it has no id or no text. */
+export function readAiTraderLesson(v: unknown): AiTraderLesson | null {
+  if (!record(v)) return null
+  const lessonId = id(v.id)
+  const text = words(v.text)
+  if (lessonId == null || !text) return null
+  return {
+    id: lessonId,
+    text,
+    status: words(v.status).toLowerCase(),
+    sourceDay: isoDay(v.sourceDay),
+    subject: optional(v.subject),
+    replaySessionId: id(v.replaySessionId),
+    decisionIds: (Array.isArray(v.decisionIds) ? v.decisionIds : []).map(id).filter((n): n is number => n != null),
+    createdUtc: instant(v.createdUtc),
+    decidedBy: words(v.decidedBy),
+    decidedUtc: instant(v.decidedUtc),
+    activatedUtc: instant(v.activatedUtc),
+    retiredUtc: instant(v.retiredUtc),
+    uses: count(v.uses),
+    reflectionReportId: id(v.reflectionReportId),
+    checkReportId: id(v.checkReportId),
+    evidence: readEvidence(v.evidence),
+  }
+}
+
+/**
+ * GET /api/AiTrader/lessons. Throws for a body that is not a lesson list,
+ * so the page says it could not be read rather than "no lessons yet".
+ */
+export function readAiTraderLessons(raw: unknown): AiTraderLessons {
+  if (!record(raw) || !Array.isArray(raw.lessons)) {
+    throw new Error("The AI Trader's lessons came back in a shape this page cannot read. Is the API build current?")
+  }
+  const t = raw.testing
+  const testingId = record(t) ? id(t.lessonId) : null
+  const c = record(raw.counts) ? raw.counts : {}
+  return {
+    enabled: typeof raw.enabled === 'boolean' ? raw.enabled : null,
+    maxActive: wholeOrNull(raw.maxActive),
+    testPoints: wholeOrNull(raw.testPoints),
+    minGain: limit(raw.minGain),
+    testing: record(t) && testingId != null ? { lessonId: testingId, done: count(t.done), of: count(t.of) } : null,
+    counts: { active: count(c.active), proposed: count(c.proposed), rejected: count(c.rejected), retired: count(c.retired) },
+    lessons: raw.lessons.map(readAiTraderLesson).filter((l): l is AiTraderLesson => l != null),
+  }
+}
+
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+/** "30 Sep" from yyyy-MM-dd. */
+function dayMonth(isoDate: string): string {
+  const [, m, d] = isoDate.split('-').map(Number)
+  return `${d} ${SHORT_MONTHS[m - 1] ?? ''}`.trim()
+}
+
+/** Where a lesson came from: "Replay #12 of 30 Sep", "Live day 5 Oct", or "Its day was not recorded". */
+export function lessonOriginText(l: Pick<AiTraderLesson, 'replaySessionId' | 'sourceDay'>): string {
+  const day = l.sourceDay ? dayMonth(l.sourceDay) : null
+  if (l.replaySessionId != null) return day ? `Replay #${l.replaySessionId} of ${day}` : `Replay #${l.replaySessionId}`
+  return day ? `Live day ${day}` : 'Its day was not recorded'
+}
+
+/** "₹0", "+₹3,268", "−₹1,200": whole rupees, signed as the reports write them; "—" when not known. */
+function signedRupees(v: number | null): string {
+  if (v == null || !Number.isFinite(v)) return '—'
+  const r = Math.round(v)
+  return r === 0 ? '₹0' : `${r > 0 ? '+' : '−'}${formatInrWhole(Math.abs(r))}`
+}
+
+/** "With it +₹3,268 against ₹0 without, over 16 looks: helped 3, hurt 1". */
+export function lessonEvidenceText(e: AiTraderLessonEvidence): string {
+  const looks = `${e.points} ${e.points === 1 ? 'look' : 'looks'}`
+  const bad = e.treatmentBad > 0 || e.controlBad > 0 ? `; unreadable or unanswered ${e.controlBad} without, ${e.treatmentBad} with` : ''
+  return `With it ${signedRupees(e.treatmentNet)} against ${signedRupees(e.controlNet)} without, over ${looks}: helped ${e.helped}, hurt ${e.hurt}${bad}`
+}
+
+/** The difference a test found, as a figure: "+₹3,268"; '' before it is tested. */
+export function lessonGainText(e: AiTraderLessonEvidence | null): string {
+  return e ? signedRupees(e.gain) : ''
+}
+
+/** A lesson's state in words, and what it means for the next decision. */
+export function lessonStatus(
+  l: Pick<AiTraderLesson, 'id' | 'status' | 'evidence'>,
+  testing: AiTraderLessons['testing'],
+): { label: string; tone: Tone; means: string } {
+  switch (l.status) {
+    case 'active':
+      return { label: 'Used', tone: 'pos', means: 'It passed its test: decisions on later days read it.' }
+    case 'proposed':
+      return testing?.lessonId === l.id
+        ? { label: `Testing ${testing.done}/${testing.of}`, tone: 'accent', means: 'Its past looks are being asked with and without it, one a minute.' }
+        : { label: 'Waiting', tone: 'neutral', means: 'Proposed by a reflection; read by no decision until its test passes.' }
+    case 'rejected':
+      return { label: 'Dropped', tone: 'warn', means: l.evidence ? 'Its test did not pass.' : 'Turned down before it was tested.' }
+    case 'retired':
+      return { label: 'Retired', tone: 'neutral', means: 'Was used; taken out by the owner, or for a lesson with stronger evidence.' }
+    default:
+      return { label: l.status || 'unknown', tone: 'neutral', means: '' }
+  }
+}
+
+/** The order the page lists them in: used, then under test or waiting, then dropped, then retired; newest first in each. */
+export function lessonOrder(lessons: AiTraderLesson[]): AiTraderLesson[] {
+  const rank = (s: string) => (s === 'active' ? 0 : s === 'proposed' ? 1 : s === 'rejected' ? 2 : 3)
+  return [...lessons].sort((a, b) => rank(a.status) - rank(b.status) || b.id - a.id)
 }

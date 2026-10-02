@@ -981,6 +981,13 @@ describe('the assistant check', () => {
     expect(shortDate('2026-01-05')).toBe('5 Jan')
     expect(shortDate('not a day')).toBe('not a day')
   })
+
+  it("names the AI Trader's reflection and lesson test reports, which are check reports too", () => {
+    expect(reportSubjectLabel({ agentKey: 'ai-trader-reflect', subjectType: 'check', subjectId: 'replay:12' })).toBe('AI Trader reflection · replay #12')
+    expect(reportSubjectLabel({ agentKey: 'ai-trader-reflect', subjectType: 'check', subjectId: 'day:2026-10-05' })).toBe('AI Trader reflection · 5 Oct')
+    expect(reportSubjectLabel({ agentKey: 'ai-trader-lesson-check', subjectType: 'check', subjectId: 'M45' })).toBe('AI Trader lesson test · M45')
+    expect(reportSubjectLabel({ agentKey: 'assistant-check', subjectType: 'check', subjectId: '2026-09-30' })).toBe('Assistant check · 30 Sep')
+  })
 })
 
 describe('docs search', () => {
