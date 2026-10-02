@@ -54,6 +54,20 @@ export function positionValues(p: PositionLike): PositionValues {
   return { entryValue, currentValue, pnlPoints, pnlPercent }
 }
 
+/**
+ * The class of a position's row. A leg that is no longer open stays in the
+ * table dimmed, so the open ones stand out: while another row is open, and
+ * for as long as the run is going and can open one (by the open rows alone, a
+ * run that is flat between two trades would flip its whole table to full
+ * strength and back). Once the run is over with nothing open (a finished
+ * backtest, a run stopped and squared off) there is nothing to stand out
+ * from, and every row at 55% only made the whole table hard to read, so none
+ * is dimmed.
+ */
+export function positionRowClass(open: boolean, anyOpen: boolean, runActive: boolean): string {
+  return !open && (anyOpen || runActive) ? 'pos-row--closed' : ''
+}
+
 /** "+6.2 pts · +0.7%" — the muted line under a position's P&L; null when unknown. */
 export function formatPnlMove(v: PositionValues): string | null {
   if (v.pnlPoints == null) return null
