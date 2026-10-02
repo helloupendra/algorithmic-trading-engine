@@ -198,7 +198,7 @@ export function AccountPage() {
               <Badge tone={user?.role === 'Admin' ? 'accent' : 'neutral'}>{user?.role ?? '—'}</Badge>
             </Row>
             <Row k="Allocated capital">{formatInrWhole(user?.totalCapital ?? 0)}</Row>
-            <Row k="Strategies in my package">
+            <Row k="Package strategies">
               {strategies.data ? String(strategies.data.length) : strategies.isError ? 'none granted yet' : '…'}
             </Row>
             <Row k="Member since">{user?.createdUtc ? formatDateTime(user.createdUtc) : '—'}</Row>

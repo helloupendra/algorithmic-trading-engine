@@ -1247,7 +1247,7 @@ function ScoreboardSection({
         </table>
       </div>
       <p className="small-note muted">
-        One row per model version across all three indices; open a row for each index, the verdict, the backtest and
+        One row per model version across every index it covers; open a row for each index, the verdict, the backtest and
         the calibration. Skill is how much lower the model's average loss is than the baseline's. History columns are
         design / validation / holdout. Refreshes every 60 s.
       </p>
