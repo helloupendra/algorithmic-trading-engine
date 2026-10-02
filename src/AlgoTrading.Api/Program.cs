@@ -215,6 +215,14 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.AiTraderShadowCheck
 builder.Services.AddHostedService<AlgoTrading.Api.Services.AiTrader.AiTraderShadowWatcher>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.IBaselineMarket, AlgoTrading.Api.Services.AiTrader.BaselineMarket>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.AiTraderBaselineScorer>();
+// Its base rates: past moments of each index and what followed (ai_trader_situations), built outside the session and
+// read from memory by the brief's "similar past moments" section.
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.SituationCalendar>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.AiTraderSituationBuilder>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.SimilarMomentsSection>();
+builder.Services.AddSingleton<AlgoTrading.Api.Services.AiTrader.AiTraderSituationLibrary>();
+builder.Services.AddSingleton<AlgoTrading.Api.Services.AiTrader.AiTraderSituationsStatus>();
+builder.Services.AddHostedService<AlgoTrading.Api.Services.AiTrader.AiTraderSituationsService>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiTrader.AiTraderAgent>();
 // The AI's one Telegram digest a day (the AI Trader's day and the run reviews); last, so a tick's other work is in it.
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.AiDailyDigest>();

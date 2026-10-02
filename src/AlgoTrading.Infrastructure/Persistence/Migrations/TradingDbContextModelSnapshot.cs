@@ -1045,6 +1045,89 @@ namespace AlgoTrading.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("AlgoTrading.Domain.Entities.AiTraderSituation", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("BuiltUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateOnly>("Day")
+                        .HasColumnType("date");
+
+                    b.Property<int?>("DaysToExpiry")
+                        .HasColumnType("integer");
+
+                    b.Property<double>("EmaGapPct")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("EmaSide")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
+                    b.Property<double>("Last30MinPct")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("MaxDownPct")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("MaxUpPct")
+                        .HasColumnType("double precision");
+
+                    b.Property<int>("MinutesSinceOpen")
+                        .HasColumnType("integer");
+
+                    b.Property<double>("MoveOpenPct")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("MovePrevClosePct")
+                        .HasColumnType("double precision");
+
+                    b.Property<decimal>("Price")
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<double>("RangePct")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("Return30MinPct")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("Return60MinPct")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("ReturnToClosePct")
+                        .HasColumnType("double precision");
+
+                    b.Property<TimeOnly>("Slot")
+                        .HasColumnType("time without time zone");
+
+                    b.Property<string>("Underlying")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<double?>("Vix")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("VixChangePct")
+                        .HasColumnType("double precision");
+
+                    b.Property<int>("Weekday")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "Underlying", "Day", "Slot" }, "IX_ai_trader_situations_Underlying_Day_Slot")
+                        .IsUnique();
+
+                    b.ToTable("ai_trader_situations", (string)null);
+                });
+
             modelBuilder.Entity("AlgoTrading.Domain.Entities.AlertEvent", b =>
                 {
                     b.Property<long>("Id")
