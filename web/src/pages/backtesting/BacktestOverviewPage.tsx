@@ -20,9 +20,9 @@ import { IconArrowRight, IconDatabase, IconFlask, IconPlus } from '../../compone
 import type { BacktestRunSummary, FnoUnderlying } from '../../lib/types'
 import { PnlValue } from '../strategies/shared'
 import { BackfillDialog } from './BackfillDialog'
+import { estimateSessions, sessionsOnHand } from './readings'
 import {
   BacktestStatusBadge,
-  estimateSessions,
   formatDayRange,
   isActiveStatus,
   runSpecLabel,
@@ -106,10 +106,11 @@ export function BacktestOverviewPage() {
     .reduce<BacktestRunSummary | null>((acc, r) => (acc == null || r.netPnl > acc.netPnl ? r : acc), null)
 
   const lines = useMemo(() => buildLines(coverage.data ?? [], fno.data ?? []), [coverage.data, fno.data])
-  const sessionsAvailable = lines.reduce(
-    (n, l) => n + (l.row ? estimateSessions(l.row.resolution, l.row.barCount) : 0),
-    0,
-  )
+  // Each index once, at its best-covered resolution: the same days are stored
+  // at 1m, 5m, 15m and 1D, and adding every range up counted them four times.
+  // The total adds the indices, so it is index-days; the sub line says so and
+  // names the longest single history, which is what one replay can reach.
+  const onHand = useMemo(() => sessionsOnHand(lines.flatMap((l) => (l.row ? [l.row] : []))), [lines])
   const brokerLinked = broker.data?.isAuthenticated ?? false
   const recent = runList.slice(0, 8)
 
@@ -155,8 +156,18 @@ export function BacktestOverviewPage() {
         />
         <StatTile
           label="Data sessions available"
-          value={coverage.data ? `≈ ${formatNumber(sessionsAvailable)}` : '—'}
-          sub={`index candles at any resolution · estimated from ${formatNumber(lines.filter((l) => l.row).length)} stored ranges`}
+          value={!coverage.data ? '—' : onHand.indices === 0 ? '0' : `≈ ${formatNumber(onHand.total)}`}
+          sub={
+            !coverage.data
+              ? coverage.isError
+                ? 'could not read the stored ranges'
+                : 'reading the stored ranges…'
+              : onHand.indices === 0
+                ? 'no index candles stored yet'
+                : onHand.indices === 1
+                  ? 'sessions of one index'
+                  : `index-days across ${formatNumber(onHand.indices)} indices · longest ≈ ${formatNumber(onHand.longest)}`
+          }
           to="/data/historical"
         />
       </div>
