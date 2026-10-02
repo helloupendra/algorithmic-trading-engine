@@ -1519,7 +1519,8 @@ a.pill:hover { border-color: var(--line-strong); }
 .progress__bar--neg { background: var(--neg); }
 .progress__bar--pos { background: var(--pos); }
 
-/* Position rows: closed legs stay in the table, dimmed, with qty 0. */
+/* Position rows: closed legs stay in the table with qty 0, dimmed while another
+   leg is open or the run is still going (positionRowClass in lib/positions.ts). */
 .pos-row--closed { opacity: 0.55; }
 
 /* The carry-forward tick (27 Sep): a plain checkbox, big enough for a thumb

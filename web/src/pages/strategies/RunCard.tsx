@@ -28,7 +28,7 @@ import {
 } from '../../lib/queries'
 import { formatAge, formatInrSigned, formatInrWhole, formatLots, formatNumber, formatPrice, formatTime } from '../../lib/format'
 import { formatContract } from '../../lib/symbols'
-import { positionValues } from '../../lib/positions'
+import { positionRowClass, positionValues } from '../../lib/positions'
 import {
   formatDelta,
   formatThetaPerDay,
@@ -370,11 +370,14 @@ function GreeksCells({ p }: { p: LivePosition }) {
 function PositionsTable({
   positions,
   runId,
+  runActive,
   canClose,
   carry: carryContext,
 }: {
   positions: LivePosition[]
   runId: number
+  /** Whether the run is still going: its closed rows stay dimmed while it can open another leg. */
+  runActive: boolean
   /**
    * Whether the viewer may square off. NOT tied to the run being live: a run
    * stopped with flatten=false still holds open positions somebody has to be
@@ -391,6 +394,7 @@ function PositionsTable({
   // The greeks columns appear once any open leg has figures (an API older
   // than 27 Sep sends none, and a finished run has no open leg to price).
   const showGreeks = positions.some((p) => p.status === 'Open' && p.greeks != null)
+  const anyOpen = positions.some((p) => p.status === 'Open')
 
   const close = useClosePositions()
   // Which row was asked for, so only that row shows "Closing…" while several
@@ -483,7 +487,7 @@ function PositionsTable({
             const moved = carriedNote(p)
             const tick = carryContext ? carryControl(p, carryContext) : null
             return (
-              <tr key={p.id} className={open ? '' : 'pos-row--closed'}>
+              <tr key={p.id} className={positionRowClass(open, anyOpen, runActive)}>
                 <td className="mono" title={`${p.symbol} · group ${p.groupId}`}>
                   {contractLabel(p)}
                   {moved && <span className="cell-sub">{moved}</span>}
@@ -881,6 +885,7 @@ export function RunCard({
               <PositionsTable
                 positions={positions}
                 runId={runId}
+                runActive={isActive}
                 canClose={mayControl}
                 carry={
                   // An API older than 28 Sep sends neither flag: no Carry column.

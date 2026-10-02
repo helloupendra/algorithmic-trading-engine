@@ -25,7 +25,7 @@ import {
   formatPrice,
 } from '../../lib/format'
 import { formatContract, resolutionLabel } from '../../lib/symbols'
-import { positionValues } from '../../lib/positions'
+import { positionRowClass, positionValues } from '../../lib/positions'
 import { describeRiskRules, effectiveRisk, isRiskEmpty } from '../../lib/risk'
 import { Badge, InlineError, Loading, Panel, StatTile } from '../../components/ui'
 import { IconActivity, IconFlask, IconLayers, IconPlay, IconStop, IconTrash } from '../../components/icons'
@@ -51,7 +51,8 @@ function contractLabel(p: BacktestPosition): string {
   return p.contract?.label || formatContract(p.symbol)
 }
 
-function PositionsTable({ positions }: { positions: BacktestPosition[] }) {
+function PositionsTable({ positions, runActive }: { positions: BacktestPosition[]; runActive: boolean }) {
+  const anyOpen = positions.some((p) => p.status === 'Open')
   return (
     <div className="tablewrap tablewrap--tall">
       <table className="table">
@@ -79,7 +80,7 @@ function PositionsTable({ positions }: { positions: BacktestPosition[] }) {
             const open = p.status === 'Open'
             const values = positionValues({ ...p, mark: p.exitPrice })
             return (
-              <tr key={p.id} className={open ? '' : 'pos-row--closed'}>
+              <tr key={p.id} className={positionRowClass(open, anyOpen, runActive)}>
                 <td className="mono" title={`${p.symbol} · group ${p.groupId}`}>
                   {contractLabel(p)}
                 </td>
@@ -411,7 +412,7 @@ export function BacktestRunPage() {
             }
           >
             {view.positions.length > 0 ? (
-              <PositionsTable positions={view.positions} />
+              <PositionsTable positions={view.positions} runActive={active} />
             ) : active ? (
               <div className="waiting" role="status">
                 <span className="pulse-dot" aria-hidden="true" />

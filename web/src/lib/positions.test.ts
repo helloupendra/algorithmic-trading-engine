@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { positionValues } from './positions'
+import { positionRowClass, positionValues } from './positions'
 
 /**
  * A strategy leg carried forward at the close leaves its run without being
@@ -24,5 +24,26 @@ describe('positionValues', () => {
     expect(v.currentValue).toBeNull()
     // What left the run is still sized, so the row says what was carried.
     expect(v.entryValue).toBe(15000)
+  })
+})
+
+describe('positionRowClass', () => {
+  it('dims a row that is no longer open while another still is', () => {
+    expect(positionRowClass(false, true, true)).toBe('pos-row--closed')
+    // A run stopped without squaring off still holds its open legs.
+    expect(positionRowClass(false, true, false)).toBe('pos-row--closed')
+  })
+
+  it('leaves an open row at full strength', () => {
+    expect(positionRowClass(true, true, true)).toBe('')
+    expect(positionRowClass(true, true, false)).toBe('')
+  })
+
+  it('keeps the closed rows dimmed while the run is flat between two trades', () => {
+    expect(positionRowClass(false, false, true)).toBe('pos-row--closed')
+  })
+
+  it('dims nothing once the run is over with no row open: a finished backtest, a run stopped and squared off', () => {
+    expect(positionRowClass(false, false, false)).toBe('')
   })
 })
