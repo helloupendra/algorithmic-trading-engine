@@ -11,17 +11,19 @@
  * the width its figures need, and past what the panel can hold the table
  * scrolls sideways under a fixed Strategy column and a fixed Net column, so
  * the row is never read without its name or its answer. The panel's own width
- * (a container query in desk.css), not the window's, picks the short names
- * and drops the trades and charges columns; under about 520px the same grid
- * is a list, a block per strategy with a line per underlying, because eight
- * columns of figures do not fit a phone whatever their width.
+ * (a container query in desk.css), not the window's, picks the short names;
+ * the trades and charges columns and the "runs · lots" lines go by what the
+ * panel can hold beside the underlyings, so four of them keep the columns in
+ * a panel where eight would not. Under about 520px the same grid is a list, a
+ * block per strategy with a line per underlying, because eight columns of
+ * figures do not fit a phone whatever their width.
  *
  * Before the open the panel beside it is the morning plan: for the operator,
  * the plan file read against what is live (GET /api/Desk/plan); for a
  * trader, a tick per run of theirs deployed and waiting for its session.
  */
 
-import { Fragment, useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useLayoutEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { CellMark, DeskAccount, GridCell, GridRow } from '../../lib/desk'
 import { compactInr, istHm, underlyingShort } from '../../lib/desk'
@@ -85,34 +87,52 @@ function rowDetail(row: GridRow, view: DeskView): string {
     .join(' · ')
 }
 
-function StrategyName({ row, view }: { row: GridRow; view: DeskView }) {
+function StrategyName({ row, view, tight }: { row: GridRow; view: DeskView; tight: boolean }) {
   return (
     <>
       <span className="dk-long">{row.label}</span>
       <span className="dk-short">{shortName(row.label)}</span>
-      <div className="dk-xs dk-t3 dk-sub">{rowDetail(row, view)}</div>
+      {!tight && <div className="dk-xs dk-t3">{rowDetail(row, view)}</div>}
     </>
   )
 }
 
 /**
- * Whether a scroll container's content is wider than it is, kept current as
- * either resizes: the table grows a column per underlying that ran, and the
- * panel shrinks with the window.
+ * What the table needs to keep its trades and charges columns and the
+ * "runs · lots" lines beside the underlyings: the Strategy column's floor,
+ * an underlying column's floor each and about 190px for the three figure
+ * columns. The floors are the wide panel's (desk.css; a panel under 720px
+ * sets smaller ones), kept on purpose as the margin for what runs wider than
+ * a floor: a cell with marks, the "runs · lots" line under a short name.
+ * What is still over then scrolls under the fixed columns.
  */
-function useOverflowX<T extends HTMLElement>(): [(el: T | null) => void, boolean] {
+function fullWidth(underlyings: number): number {
+  return 128 + 62 * underlyings + 190
+}
+
+/**
+ * A scroll container's width, and whether its content is wider than it is,
+ * kept current as either resizes: the table grows a column per underlying
+ * that ran, and the panel shrinks with the window. Measured before the first
+ * paint, so a narrow panel never shows the columns for a frame; 0 until then.
+ */
+function useOverflowX<T extends HTMLElement>(): [(el: T | null) => void, boolean, number] {
   const [el, setEl] = useState<T | null>(null)
   const [over, setOver] = useState(false)
-  useEffect(() => {
+  const [width, setWidth] = useState(0)
+  useLayoutEffect(() => {
     if (!el) return
-    const check = () => setOver(el.scrollWidth > el.clientWidth + 1)
+    const check = () => {
+      setOver(el.scrollWidth > el.clientWidth + 1)
+      setWidth(el.clientWidth)
+    }
     const observer = new ResizeObserver(check)
     observer.observe(el)
     if (el.firstElementChild) observer.observe(el.firstElementChild)
     check()
     return () => observer.disconnect()
   }, [el])
-  return [useCallback((next: T | null) => setEl(next), []), over]
+  return [useCallback((next: T | null) => setEl(next), []), over, width]
 }
 
 /**
@@ -191,7 +211,7 @@ export function RunsGrid({ view, links }: { view: DeskView; links: DeskLinks }) 
   const meta = view.phase === 'post' ? 'final · net after charges' : 'net after charges · live'
   const head = <PanelHead title="Runs · net P&L" meta={meta} more={links.runs ? { to: links.runs, label: view.isAdmin ? 'Live runner' : 'My runs' } : null} />
   // Before any early return: a hook's place in the render must not move when the runs arrive.
-  const [wrapRef, overflows] = useOverflowX<HTMLDivElement>()
+  const [wrapRef, overflows, width] = useOverflowX<HTMLDivElement>()
   if (view.runsError && !view.grid) return <>{head}<Failed what="The runs" error={view.runsError} /></>
   if (!view.grid) return <>{head}<Waiting>Reading today’s runs…</Waiting></>
   const { grid } = view
@@ -205,6 +225,10 @@ export function RunsGrid({ view, links }: { view: DeskView; links: DeskLinks }) 
   }
   const multi = grid.accounts.length > 1
   const anyMark = grid.rows.some((r) => Object.values(r.cells).some((cs) => cs.some((c) => c && c.marks.length)))
+  // By the data, not the panel's width alone: a panel that holds four
+  // underlyings with room to spare keeps the figure columns, one that cannot
+  // hold eight gives them up and keeps the underlyings. Until measured, keep them.
+  const tight = width > 0 && width < fullWidth(grid.underlyings.length)
   return (
     <>
       {head}
@@ -219,26 +243,28 @@ export function RunsGrid({ view, links }: { view: DeskView; links: DeskLinks }) 
                   <span className="dk-short">{underlyingShort(u)}</span>
                 </th>
               ))}
-              <th className="r dk-hide-s">Trades</th>
-              <th className="r dk-hide-s">Charges</th>
+              {!tight && <th className="r">Trades</th>}
+              {!tight && <th className="r">Charges</th>}
               <th className="r dk-fix dk-fix--r">Net</th>
             </tr>
           </thead>
           <tbody>
             {grid.rows.map((row) => (
               <tr key={row.strategy}>
-                <td className="dk-sn dk-fix dk-fix--l">
-                  <StrategyName row={row} view={view} />
+                <td className="dk-sn dk-fix dk-fix--l" title={`${row.label} · ${rowDetail(row, view)}`}>
+                  <StrategyName row={row} view={view} tight={tight} />
                 </td>
                 {grid.underlyings.map((u) => (
                   <td key={u} className="dk-u">
                     {row.cells[u].every((c) => c == null) ? null : row.cells[u].map((c, i) => <CellLine key={grid.accounts[i].id} cell={c} account={grid.accounts[i]} multi={multi} links={links} />)}
                   </td>
                 ))}
-                <td className="r dk-n dk-t2 dk-hide-s">{row.figures.trades.toLocaleString('en-IN')}</td>
-                <td className="r dk-n dk-t3 dk-hide-s" title={formatInrWhole(row.figures.charges)}>
-                  {compactInr(row.figures.charges, false)}
-                </td>
+                {!tight && <td className="r dk-n dk-t2">{row.figures.trades.toLocaleString('en-IN')}</td>}
+                {!tight && (
+                  <td className="r dk-n dk-t3" title={formatInrWhole(row.figures.charges)}>
+                    {compactInr(row.figures.charges, false)}
+                  </td>
+                )}
                 <td className="r dk-n dk-fix dk-fix--r">
                   <b className={toneClass(row.figures.net)} style={{ fontWeight: 500 }} title={formatInrSigned(row.figures.net)}>
                     {compactInr(row.figures.net)}
@@ -248,12 +274,10 @@ export function RunsGrid({ view, links }: { view: DeskView; links: DeskLinks }) 
             ))}
             {grid.totals.map((t, i) => (
               <tr key={t.account.id} className={`dk-tot${i === 0 ? ' dk-tot--first' : ''}`}>
-                <td className="dk-fix dk-fix--l">
+                <td className="dk-fix dk-fix--l" title={`${t.account.name} · ${t.runs} runs`}>
                   {multi && <Swatch tone={t.account.tone} />}
-                  <span className="dk-t2 dk-accname" title={t.account.name}>
-                    {multi ? t.account.name : 'Total'}
-                  </span>{' '}
-                  <span className="dk-xs dk-t3 dk-sub">{t.runs} runs</span>
+                  <span className="dk-t2 dk-accname">{multi ? t.account.name : 'Total'}</span>
+                  {!tight && <span className="dk-xs dk-t3"> {t.runs} runs</span>}
                 </td>
                 {grid.underlyings.map((u) => {
                   const f = t.byUnderlying[u]
@@ -263,10 +287,12 @@ export function RunsGrid({ view, links }: { view: DeskView; links: DeskLinks }) 
                     </td>
                   )
                 })}
-                <td className="r dk-n dk-t2 dk-hide-s">{t.figures.trades.toLocaleString('en-IN')}</td>
-                <td className="r dk-n dk-t3 dk-hide-s" title={formatInrWhole(t.figures.charges)}>
-                  {compactInr(t.figures.charges, false)}
-                </td>
+                {!tight && <td className="r dk-n dk-t2">{t.figures.trades.toLocaleString('en-IN')}</td>}
+                {!tight && (
+                  <td className="r dk-n dk-t3" title={formatInrWhole(t.figures.charges)}>
+                    {compactInr(t.figures.charges, false)}
+                  </td>
+                )}
                 <td className={`r dk-n dk-net dk-fix dk-fix--r ${toneClass(t.figures.net)}`} title={formatInrSigned(t.figures.net)}>
                   {compactInr(t.figures.net)}
                 </td>
