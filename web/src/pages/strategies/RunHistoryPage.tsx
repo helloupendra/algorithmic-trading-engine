@@ -8,7 +8,8 @@
  * the `mode` only decides what the page offers).
  */
 
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
+import type { CSSProperties } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   RUN_HISTORY_PAGE,
@@ -70,10 +71,10 @@ export function RunStatusCell({ run }: { run: LiveRunSummary }) {
   )
 }
 
-/** The run's risk rules as compact chips ("Overall SL ₹5,000 · target —", …); "—" when none. */
-function RiskChips({ run }: { run: LiveRunSummary }) {
+/** The run's risk rules as compact chips ("Overall SL ₹5,000 · target —", …); "—" when none, or nothing in a sub-line. */
+function RiskChips({ run, blank = false }: { run: LiveRunSummary; blank?: boolean }) {
   const chips = riskChips(run.risk)
-  if (chips.length === 0) return <span className="muted">—</span>
+  if (chips.length === 0) return blank ? null : <span className="muted">—</span>
   return (
     <span className="chip-row chip-row--compact" title={chips.map((c) => c.label).join(' · ')}>
       {chips.map((c) => (
@@ -172,14 +173,39 @@ function NetPnlTile({ rows, asOf, legs, pending, hasOlder, activeCount, recaps }
 }
 
 /**
+ * The width of an element that may mount later, kept current by a
+ * ResizeObserver and read before the first paint: the Status column's, which
+ * the Net P&L column's sticky offset is set from. 0 until measured.
+ */
+function useBoxWidth<T extends HTMLElement>(): [(el: T | null) => void, number] {
+  const [el, setEl] = useState<T | null>(null)
+  const [width, setWidth] = useState(0)
+  useLayoutEffect(() => {
+    if (!el) return
+    // Floored: a fraction over the real width would open a seam between the two fixed cells.
+    const read = () => setWidth(Math.floor(el.getBoundingClientRect().width))
+    read()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(read)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [el])
+  return [useCallback((next: T | null) => setEl(next), []), width]
+}
+
+/**
  * One run's row. Memoised, and holding only its own legs' prices: a push
  * re-renders the live rows it moves, never the stopped ones, whose figures
- * are final.
+ * are final. The risk rules are in their own column on a wide window and
+ * under the strategy's name on a narrow one (styles.css shows one or the
+ * other); from 761px up, the Net P&L and Status cells stay in view while the
+ * rest scrolls.
  */
-const HistoryRow = memo(function HistoryRow({ run: answered, to, isAdmin, asOf, legs, onOpen }: {
+const HistoryRow = memo(function HistoryRow({ run: answered, to, showUser, asOf, legs, onOpen }: {
   run: LiveRunSummary
   to: string
-  isAdmin: boolean
+  /** The User column: an admin's list of everyone's runs; dropped once one user is picked. */
+  showUser: boolean
   asOf: number
   legs: RunLegs | null
   onOpen: (to: string) => void
@@ -204,7 +230,7 @@ const HistoryRow = memo(function HistoryRow({ run: answered, to, isAdmin, asOf, 
           #{run.runId}
         </Link>
       </td>
-      {isAdmin && <td>{run.userName || <span className="faint">user {run.userId}</span>}</td>}
+      {showUser && <td>{run.userName || <span className="faint">user {run.userId}</span>}</td>}
       <td>
         <b>{run.strategyName}</b> <CategoryBadge category={run.category} />
         {recap && (
@@ -215,12 +241,15 @@ const HistoryRow = memo(function HistoryRow({ run: answered, to, isAdmin, asOf, 
             </span>
           </>
         )}
+        <span className="cell-sub risk-sub">
+          <RiskChips run={run} blank />
+        </span>
       </td>
       <td className="mono" title={run.spotSymbol || undefined}>
         {run.underlying}
       </td>
       <td className="r">{run.role === 'alerts' ? <span className="muted">alerts only</span> : formatLots(run.lots, run.lotSize)}</td>
-      <td>
+      <td className="col-risk">
         <RiskChips run={run} />
       </td>
       <td className="muted run-when" title={`${formatDateTime(run.startedUtc)} → ${run.isActive ? 'running' : formatDateTime(run.stoppedUtc)}`}>
@@ -231,7 +260,7 @@ const HistoryRow = memo(function HistoryRow({ run: answered, to, isAdmin, asOf, 
         {formatNumber(run.trades)}
         {run.openPositions > 0 && <span className="cell-sub">{run.openPositions} open</span>}
       </td>
-      <td className="r">
+      <td className="r col-fix col-net">
         <PnlValue value={pnl} />
         {run.charges != null && run.charges > 0 && (
           <span className="cell-sub" title={`gross ${formatInrSigned(run.grossPnl ?? run.realizedPnl)}`}>
@@ -242,7 +271,7 @@ const HistoryRow = memo(function HistoryRow({ run: answered, to, isAdmin, asOf, 
           <span className="cell-sub">unrealized {formatInrSigned(run.unrealizedPnl)}</span>
         )}
       </td>
-      <td>
+      <td className="col-fix col-status">
         <RunStatusCell run={run} />
       </td>
     </tr>
@@ -265,6 +294,8 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
   const [params] = useSearchParams()
 
   const [userId, setUserId] = useState<number | null>(null)
+  // Everyone's runs carry the user's name; a list narrowed to one user says it once, above.
+  const showUser = isAdmin && userId == null
   const [strategyId, setStrategyId] = useState<number | null>(() => {
     const id = Number(params.get('strategy'))
     return Number.isInteger(id) && id > 0 ? id : null
@@ -280,6 +311,8 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
   // again as tests). The API never mixes the two, so no total on this page
   // adds a test to trading.
   const [recaps, setRecaps] = useState(false)
+  // The Status column's width sets how far from the right edge the Net P&L column sticks.
+  const [statusRef, statusWidth] = useBoxWidth<HTMLTableCellElement>()
 
   const filters = useMemo<Omit<LiveRunHistoryFilters, 'skip'>>(
     () => ({
@@ -595,20 +628,25 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
                 )}
               </div>
             ) : (
-              <div className="tablewrap tablewrap--tall">
-                <table className="table table--hover">
+              <div className="tablewrap tablewrap--tall tablewrap--runs">
+                <table
+                  className="table table--hover table--runs"
+                  style={statusWidth > 0 ? ({ '--status-w': `${statusWidth}px` } as CSSProperties) : undefined}
+                >
                   <thead>
                     <tr>
                       <th>Run #</th>
-                      {isAdmin && <th>User</th>}
+                      {showUser && <th>User</th>}
                       <th>Strategy</th>
                       <th>Underlying</th>
                       <th className="r">Lots × lot size</th>
-                      <th>Risk</th>
+                      <th className="col-risk">Risk</th>
                       <th>When (IST)</th>
                       <th className="r">Trades</th>
-                      <th className="r">Net P&L</th>
-                      <th>Status</th>
+                      <th className="r col-fix col-net">Net P&L</th>
+                      <th className="col-fix col-status" ref={statusRef}>
+                        Status
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -617,7 +655,7 @@ export function RunHistoryPage({ mode }: { mode: RunHistoryMode }) {
                         key={run.runId}
                         run={run}
                         to={routes.detail(run.runId)}
-                        isAdmin={isAdmin}
+                        showUser={showUser}
                         asOf={asOfByRun.get(run.runId) ?? history.dataUpdatedAt}
                         legs={legs}
                         onOpen={navigate}
