@@ -13,7 +13,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useAuth } from '../../lib/auth'
 import { accessFor, allows } from '../../lib/modules'
@@ -27,6 +27,7 @@ import {
   dayOf,
   deskAccounts,
   deskLayout,
+  midSpans,
   isTradingRun,
   pinHolds,
   pinUntil,
@@ -258,6 +259,9 @@ export function DeskPage() {
   )
 
   const rows = deskLayout(shown.phase, access)
+  const slots = rows.flat()
+  // The same panels in six columns for a window under about 1100px (desk.css).
+  const mid = midSpans(slots.map((s) => s.span))
   return (
     <div className="dk">
       {slot ? createPortal(bar, slot) : bar}
@@ -269,11 +273,11 @@ export function DeskPage() {
       <StatusStrip view={view} />
       {rows.length > 0 && (
         <div className="dk-sheet">
-          {rows.flat().map((s) => {
+          {slots.map((s, i) => {
             const Panel = PANELS[s.key]
             const Under = s.under ? PANELS[s.under] : null
             return (
-              <section key={s.key} className="dk-cell" style={{ gridColumn: `span ${s.span}` }}>
+              <section key={s.key} className="dk-cell" style={{ '--cell-span': s.span, '--cell-span-m': mid[i] } as CSSProperties}>
                 {Under ? (
                   <>
                     <div className="dk-stack">

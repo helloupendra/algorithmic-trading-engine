@@ -73,6 +73,10 @@
 .dk-updated { color: var(--text-3); white-space: nowrap; }
 
 /* --- the sheet ------------------------------------------------------------------ */
+/* Twelve columns; each cell's span comes from the layout (lib/desk.ts deskLayout)
+   as --cell-span, and its span in the six-column packing of a narrower window
+   as --cell-span-m; the laptop breakpoint below reads the second, the phone
+   one neither (every panel takes the row). */
 .dk-sheet {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
@@ -83,6 +87,7 @@
   overflow: hidden;
 }
 .dk-cell {
+  grid-column: span var(--cell-span, 12);
   background: var(--surface);
   padding: 10px 12px 12px;
   min-width: 0;
@@ -424,6 +429,17 @@ a.dk-news__t:hover { text-decoration: underline; }
   .dk-gl { display: block; }
 }
 
+/* --- a window under 1100px --------------------------------------------------------------- */
+/* Six columns: a panel of eight or more of the twelve takes the width, any
+   other half of it, and a half left alone widens (lib/desk.ts midSpans). At
+   1024 the P&L grid and the indices get the whole 990px, where a twelve-column
+   sheet gave them 660 and cut the indices, and the third-width panels pair
+   up at 495. No lower bound: the phone block below wins under 761 by order. */
+@media (max-width: 1100px) {
+  .dk-sheet { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .dk-sheet > .dk-cell { grid-column: span var(--cell-span-m, 6); }
+}
+
 /* --- a phone ----------------------------------------------------------------------------- */
 @media (max-width: 760px) {
   .dk-seg .dk-long, .dk-updated, .dk-now { display: none; }
@@ -434,7 +450,7 @@ a.dk-news__t:hover { text-decoration: underline; }
   .dk-pin { min-width: 34px; }
 
   .dk-sheet { grid-template-columns: minmax(0, 1fr); }
-  .dk-sheet > .dk-cell { grid-column: 1 / -1 !important; }
+  .dk-sheet > .dk-cell { grid-column: 1 / -1; }
   .dk-hd .dk-meta { order: 3; flex-basis: 100%; }
 
   .dk-strip { grid-template-columns: repeat(6, minmax(0, 1fr)) !important; }
