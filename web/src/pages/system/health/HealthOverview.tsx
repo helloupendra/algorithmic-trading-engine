@@ -342,10 +342,42 @@ function ServiceRow({ name, state, detail }: { name: string; state: ReactNode; d
   )
 }
 
-/** Running / Stopped, and "…" until the answer is in — a pending read is not a stopped process. */
-function RunState({ running, known }: { running: boolean | undefined; known: boolean }) {
+/**
+ * Running / Stopped, "…" until the answer is in (a pending read is not a
+ * stopped process), and Unknown once the read has failed with nothing known:
+ * the "…" stayed after a failed read and read as still loading, for ever.
+ */
+function RunState({ running, known, error = false }: { running: boolean | undefined; known: boolean; error?: boolean }) {
+  if (error && !known) return <Badge tone="warn">Unknown</Badge>
   if (!known || running === undefined) return <Badge tone="neutral">…</Badge>
   return running ? <Badge tone="pos">Running</Badge> : <Badge tone="warn">Stopped</Badge>
+}
+
+/** The shape of a status poll the rows read: what it holds, and whether it has failed. */
+interface StatusRead {
+  data: unknown
+  isError: boolean
+  errorUpdateCount: number
+}
+
+/**
+ * A poll that has failed and has nothing to show. Not `isError` alone: a
+ * query with no data goes back to pending on every poll, so by that the
+ * pill would say Unknown until the next poll and "…" while that poll fails,
+ * for as long as the read keeps failing.
+ */
+function unread(query: StatusRead): boolean {
+  return !query.data && (query.isError || query.errorUpdateCount > 0)
+}
+
+/** What a process row says under its pill before its status is in, so the pill never stands bare. */
+function readState(query: StatusRead): string {
+  return query.data ? '' : unread(query) ? 'status could not be read' : 'reading…'
+}
+
+/** A row's detail, marked when the reads have started failing after a good one: the state shown is the last read, not now's. */
+function withRefresh(detail: string, query: StatusRead): string {
+  return query.data && query.isError ? [detail, 'not refreshed'].filter(Boolean).join(' · ') : detail
 }
 
 function ServicesPanel({ host }: { host: SystemHostReport | undefined }) {
@@ -386,25 +418,29 @@ function ServicesPanel({ host }: { host: SystemHostReport | undefined }) {
               key={f.key}
               name={`${f.displayName} feed`}
               state={<RunState running={f.isRunning} known />}
-              detail={f.isRunning ? `pid ${f.processId ?? '?'} · ${f.source}` : 'not running'}
+              detail={withRefresh(f.isRunning ? `pid ${f.processId ?? '?'} · ${f.source}` : 'not running', feeds)}
             />
           ))
         : (
           <ServiceRow
             name="Live feeds"
-            state={feeds.isError ? <Badge tone="warn">Unknown</Badge> : <RunState running={undefined} known={false} />}
-            detail={feeds.isError ? 'status could not be read' : ''}
+            state={<RunState running={undefined} known={false} error={unread(feeds)} />}
+            detail={readState(feeds)}
           />
         )}
       <ServiceRow
         name="Option chain poller"
-        state={<RunState running={poller.data?.isRunning} known={!!poller.data} />}
-        detail={poller.data ? `last chain written ${formatAge(poller.data.lastCapturedUtc)}` : ''}
+        state={<RunState running={poller.data?.isRunning} known={!!poller.data} error={unread(poller)} />}
+        detail={poller.data ? withRefresh(`last chain written ${formatAge(poller.data.lastCapturedUtc)}`, poller) : readState(poller)}
       />
       <ServiceRow
         name="Signal alerter"
-        state={<RunState running={alerter.data?.isRunning} known={!!alerter.data} />}
-        detail={alerter.data?.isRunning && alerter.data.startedUtc ? `started ${formatAge(alerter.data.startedUtc)}` : ''}
+        state={<RunState running={alerter.data?.isRunning} known={!!alerter.data} error={unread(alerter)} />}
+        detail={
+          alerter.data
+            ? withRefresh(alerter.data.isRunning && alerter.data.startedUtc ? `started ${formatAge(alerter.data.startedUtc)}` : '', alerter)
+            : readState(alerter)
+        }
       />
     </div>
   )
