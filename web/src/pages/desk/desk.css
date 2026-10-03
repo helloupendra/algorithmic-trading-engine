@@ -340,16 +340,24 @@
 .dk-bar-track i { position: absolute; top: 0; bottom: 0; border-radius: 1px; opacity: 0.85; }
 
 /* --- indices & levels ---------------------------------------------------------------- */
+/* Ten columns, each with the floor its figures need (a four-digit range in
+   the forecast, a two-digit percentage in the change) and a share of the
+   slack, so the table fills a panel of any width from 806px and clips
+   nowhere. It was 826px of fixed columns, cut in any panel narrower than
+   that. Under 806px the panel's own width lays each index out as a block
+   (the container query below), also on a day without the forecast column,
+   whose nine columns would fit from 664: one switch for both. */
 .dk-ix {
   display: grid;
-  grid-template-columns: 92px 76px 116px 66px 132px 104px 36px 52px 34px 46px;
-  justify-content: space-between;
+  grid-template-columns: minmax(84px, 1.1fr) minmax(70px, 0.9fr) minmax(120px, 1.2fr) 66px minmax(134px, 1.3fr) minmax(92px, 1.1fr) 36px 52px 34px 46px;
   align-items: center;
   gap: 0 8px;
   height: 27px;
   border-bottom: 1px solid var(--line-soft);
   font-size: var(--fs-s);
 }
+/* No forecast for the day: the levels move left instead of leaving a blank band. */
+.dk-ix--nofc { grid-template-columns: minmax(84px, 1.1fr) minmax(70px, 0.9fr) minmax(120px, 1.2fr) 66px minmax(92px, 1.1fr) 36px 52px 34px 46px; }
 .dk-ix > * { min-width: 0; }
 .dk-ix--head { height: 20px; font-size: var(--fs-xs); color: var(--text-3); border-bottom-color: var(--line); }
 .dk-ix__nm { color: var(--text); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -412,6 +420,32 @@ a.dk-news__t:hover { text-decoration: underline; }
   .dk-hide-n { display: none !important; }
 }
 
+/* --- indices by their panel's width ------------------------------------------------------ */
+/* Under the columns' floors (806px of panel) the levels wrap under the price,
+   as on a phone, whatever the window: a block per index, its trace and
+   forecast on the second line and its five levels on the third. */
+@container (max-width: 805px) {
+  .dk-ix {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas: 'nm ltp chg' 'tr fc fc' 'lv lv lv';
+    height: auto;
+    gap: 5px 10px;
+    padding: 7px 0;
+  }
+  .dk-ix--nofc { grid-template-areas: 'nm ltp chg' 'tr tr tr' 'lv lv lv'; }
+  .dk-ix--head { display: none; }
+  .dk-ix__nm { grid-area: nm; }
+  .dk-ix__ltp { grid-area: ltp; }
+  .dk-ix__chg { grid-area: chg; }
+  .dk-ix__tr { grid-area: tr; }
+  .dk-ix__fc { grid-area: fc; justify-self: end; }
+  .dk-ix__levels { grid-area: lv; display: flex; flex-wrap: wrap; gap: 2px 12px; }
+  .dk-ix__lv { font-size: var(--fs-xs); text-align: left; }
+  .dk-ix .dk-lab { display: inline; color: var(--text-3); }
+  .dk-ix--minor { grid-template-areas: 'nm ltp chg'; }
+  .dk-ix--minor .dk-ix__tr, .dk-ix--minor .dk-ix__fc, .dk-ix--minor .dk-ix__levels { display: none; }
+}
+
 /* --- the grid by its panel's width ------------------------------------------------------- */
 /* .dk-cell is an inline-size container: a narrow panel on a wide window
    reads the same as a phone's. Only the names, the padding and the column
@@ -466,24 +500,7 @@ a.dk-news__t:hover { text-decoration: underline; }
   .dk-pc { gap: 3px; }
   .dk-pc b, .dk-pc a { min-width: 32px; font-size: 11.5px; }
 
-  .dk-ix {
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    grid-template-areas: 'nm ltp chg' 'tr fc fc' 'lv lv lv';
-    height: auto;
-    gap: 5px 10px;
-    padding: 7px 0;
-  }
-  .dk-ix--head { display: none; }
-  .dk-ix__nm { grid-area: nm; }
-  .dk-ix__ltp { grid-area: ltp; }
-  .dk-ix__chg { grid-area: chg; }
-  .dk-ix__tr { grid-area: tr; }
-  .dk-ix__fc { grid-area: fc; justify-self: end; }
-  .dk-ix__levels { grid-area: lv; display: flex; flex-wrap: wrap; gap: 2px 12px; }
-  .dk-ix__lv { font-size: var(--fs-xs); text-align: left; }
-  .dk-ix .dk-lab { display: inline; color: var(--text-3); }
-  .dk-ix--minor { grid-template-areas: 'nm ltp chg'; }
-  .dk-ix--minor .dk-ix__tr, .dk-ix--minor .dk-ix__fc, .dk-ix--minor .dk-ix__levels { display: none; }
+  /* The index table goes by its panel's width (the container query above), which a phone's is under. */
 
   .dk-two { grid-template-columns: 1fr; gap: 6px; }
   .dk-hide-s { display: none !important; }
