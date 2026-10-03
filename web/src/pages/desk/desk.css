@@ -295,6 +295,10 @@
 .dk-gl__u { display: flex; align-items: center; gap: 8px; min-height: 19px; }
 .dk-gl__ul { flex: 0 0 52px; font-size: var(--fs-xs); }
 .dk-gl__u > .dk-pc { flex: 1 1 0; min-width: 0; }
+/* The account names once, over their columns of figures. */
+.dk-gl__cols { min-height: 0; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+.dk-gl__cols .dk-pc { line-height: 14px; overflow: hidden; }
+.dk-gl__cols .dk-pc span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dk-gl__meta { margin-top: 4px; }
 .dk-gl__tot { border-top: 1px solid var(--line); }
 .dk-gl__tot + .dk-gl__tot { border-top-color: var(--line-soft); }
@@ -459,7 +463,7 @@ a.dk-news__t:hover { text-decoration: underline; }
   .dk-grid--pnl td, .dk-grid--pnl th { padding-left: 4px; padding-right: 4px; }
 }
 @container (max-width: 519px) {
-  .dk-gridwrap--pnl, .dk-gridhint { display: none; }
+  .dk-gridwrap--pnl, .dk-gridhint, .dk-tbl-only { display: none; }
   .dk-gl { display: block; }
 }
 
