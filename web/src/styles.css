@@ -2320,6 +2320,41 @@ a.pill:hover { border-color: var(--line-strong); }
 .status-cell .cell-sub { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* One cell for when a run ran and for how long, in place of three columns. */
 .run-when { white-space: nowrap; }
+/* The money and the outcome stay in view while the middle of a wide row
+   scrolls: Status sticks to the right edge and Net P&L to its left, by the
+   Status column's measured width (RunHistoryPage sets --status-w). Separate
+   borders, because a collapsed border does not travel with a sticky cell.
+   Not on a phone: the two cells are as wide as its screen and would cover
+   every other column. */
+.table--runs { border-collapse: separate; border-spacing: 0; }
+@media (min-width: 761px) {
+  .table--runs .col-fix { position: sticky; z-index: 1; background: var(--bg1); }
+  .table--runs th.col-fix { z-index: 2; }
+  .table--runs .col-status { right: 0; }
+  .table--runs .col-net { right: var(--status-w, 0px); }
+  /* The hover tint is translucent; over a fixed cell it is laid on the cell's own ground. */
+  .table--runs tbody tr:hover td.col-fix { background: linear-gradient(var(--brand-soft), var(--brand-soft)) var(--bg1); }
+  /* The hidden part of a row is under the fixed cells, so the cue is a hairline
+     on their edge, not the fade at the box's edge; the left edge keeps its fade. */
+  .tablewrap--runs[data-overflow='right'] .col-net, .tablewrap--runs[data-overflow='both'] .col-net { box-shadow: -1px 0 0 var(--line); }
+  .tablewrap--runs[data-overflow='right'] { -webkit-mask-image: none; mask-image: none; }
+  .tablewrap--runs[data-overflow='both'] {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 28px);
+    mask-image: linear-gradient(to right, transparent, #000 28px);
+  }
+}
+/* The risk rules have their own column only on a screen wide enough for the
+   whole row (about 1,480px of table with it): narrower, they are a line under
+   the strategy's name, and the table fits a 1440px window without scrolling.
+   The chips wrap there as they did in the column: a run with three rules gets
+   a taller row, not a Strategy column as wide as its chips for every row. */
+.table--runs .risk-sub { display: none; }
+@media (max-width: 1559px) {
+  .table--runs .col-risk { display: none; }
+  .table--runs .risk-sub { display: block; }
+  .table--runs .risk-sub:empty { display: none; }
+  .table--runs .risk-sub .chip-row { margin-top: 2px; }
+}
 .run-link { text-decoration: none; }
 
 .live-dot {
