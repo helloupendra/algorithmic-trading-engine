@@ -409,9 +409,11 @@ a.dk-news__t:hover { text-decoration: underline; }
 
 /* --- the grid by its panel's width ------------------------------------------------------- */
 /* .dk-cell is an inline-size container: a narrow panel on a wide window
-   reads the same as a phone's. */
+   reads the same as a phone's. Only the names, the padding and the column
+   floors go by the width alone; the trades and charges columns go by what the
+   panel can hold beside the underlyings that ran (RunsGrid.tsx). */
 @container (max-width: 719px) {
-  .dk-grid--pnl .dk-long, .dk-grid--pnl .dk-hide-s, .dk-grid--pnl .dk-sub { display: none; }
+  .dk-grid--pnl .dk-long { display: none; }
   .dk-grid--pnl .dk-short { display: inline; }
   .dk-grid--pnl .dk-sn { min-width: 76px; }
   .dk-grid--pnl th.dk-u, .dk-grid--pnl td.dk-u { min-width: 56px; }
@@ -440,7 +442,7 @@ a.dk-news__t:hover { text-decoration: underline; }
   .dk-v__val { font-size: 13px; }
   .dk-v__val--lead { font-size: 16px; }
 
-  .dk-grid .dk-long, .dk-grid .dk-hide-s, .dk-grid .dk-sw--cell, .dk-grid .dk-sub { display: none; }
+  .dk-grid .dk-long, .dk-grid .dk-sw--cell { display: none; }
   .dk-grid .dk-short { display: inline; }
   /* The account's colour is beside it and its full name is in the legend and the title. */
   .dk-grid .dk-accname { max-width: 64px; }
