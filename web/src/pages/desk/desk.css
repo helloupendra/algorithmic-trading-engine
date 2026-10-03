@@ -519,9 +519,6 @@ a.dk-news__t:hover { text-decoration: underline; }
 
   .dk-two { grid-template-columns: 1fr; gap: 6px; }
   .dk-hide-s { display: none !important; }
-  .dk-okrow { display: none; }
 }
-.dk-okmore { display: none; }
-@media (max-width: 760px) {
-  .dk-okmore { display: block; margin-top: 6px; }
-}
+/* The checkup's folded passed checks: one line under the ones that need a hand. */
+.dk-okmore { display: block; margin-top: 6px; }

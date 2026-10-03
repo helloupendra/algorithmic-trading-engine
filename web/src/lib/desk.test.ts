@@ -328,7 +328,7 @@ describe('deskLayout', () => {
   it("leads with each phase's job for an admin", () => {
     expect(keys(deskLayout('pre', admin))[0]).toEqual(['checkup', 'overnight', 'forecast'])
     expect(keys(deskLayout('live', admin))[0]).toEqual(['grid', 'pnl'])
-    expect(keys(deskLayout('post', admin))[1]).toEqual(['scores', 'checkup', 'legs'])
+    expect(keys(deskLayout('post', admin))[1]).toEqual(['checkup', 'scores', 'timeline'])
   })
 
   it('keeps every row a full 12 columns', () => {
@@ -374,13 +374,34 @@ describe('deskLayout', () => {
     expect(pre[2][1]).toEqual({ key: 'legs', span: 4, under: 'timeline' })
     const trader = deskLayout('pre', accessFor({ role: 'Trader', moduleGrants: ['strategies', 'analysis'] }))
     expect(trader.flat().some((s) => s.under)).toBe(false)
+    // After the close the week sits under the scoreboard for the admin, and the scoreboard under a
+    // trader's open legs only with the analysis grant.
+    expect(deskLayout('post', admin)[1][1]).toEqual({ key: 'scores', span: 4, under: 'week' })
+    expect(deskLayout('post', accessFor({ role: 'Trader', moduleGrants: ['strategies'] }))[1][0]).toEqual({ key: 'legs', span: 12 })
+    expect(deskLayout('post', accessFor({ role: 'Trader', moduleGrants: ['strategies', 'analysis'] }))[1][0]).toEqual({ key: 'legs', span: 12, under: 'scores' })
+  })
+
+  it('gives a panel stacked under a dropped one the place of the one above', () => {
+    // A trader with the analysis grant and no runs still gets the scoreboard after the close.
+    expect(keys(deskLayout('post', accessFor({ role: 'Trader', moduleGrants: ['analysis'] })))).toEqual([['scores'], ['indices']])
+    expect(keys(deskLayout('post', accessFor({ role: 'Trader', moduleGrants: ['market-data', 'analysis'] })))).toEqual([['scores', 'week', 'flows'], ['indices', 'movers']])
+  })
+
+  it('keeps the open legs under the grid, beside the day P&L, in the session and after the close', () => {
+    for (const phase of ['live', 'post'] as const) {
+      expect(deskLayout(phase, admin)[0]).toEqual([{ key: 'grid', span: 8, under: 'legs' }, { key: 'pnl', span: 4 }])
+    }
+    expect(keys(deskLayout('live', admin))).toEqual([['grid', 'pnl'], ['indices', 'timeline'], ['news', 'movers']])
+    expect(keys(deskLayout('post', admin))).toEqual([['grid', 'pnl'], ['checkup', 'scores', 'timeline'], ['indices', 'movers']])
   })
 })
 
 describe('midSpans', () => {
   it('gives a wide panel the whole width and the rest half of it, in order', () => {
-    // live, admin: grid 8 + pnl 4, indices 8 + legs 4, timeline 4 + news 4 + movers 4
+    // live, trader: grid 8 + pnl 4, indices 8 + legs 4, news 4 + week 4 + movers 4
     expect(midSpans([8, 4, 8, 4, 4, 4, 4])).toEqual([6, 6, 6, 3, 3, 3, 3])
+    // live, admin: grid 8 + pnl 4, indices 8 + timeline 4, news 6 + movers 6
+    expect(midSpans([8, 4, 8, 4, 6, 6])).toEqual([6, 6, 6, 3, 3, 6])
   })
 
   it('widens a half left alone before a wide panel, and one left at the end', () => {
@@ -388,8 +409,8 @@ describe('midSpans', () => {
     expect(midSpans([5, 3, 4, 4, 4, 4, 8, 4])).toEqual([3, 3, 3, 3, 3, 3, 6, 6])
     // pre, trader: the third of three thirds is alone when the indices follow
     expect(midSpans([4, 4, 4, 8, 4, 4, 4, 4])).toEqual([3, 3, 6, 6, 3, 3, 3, 3])
-    // post, admin: the eight halves pair off and the last is alone
-    expect(midSpans([8, 4, 4, 4, 4, 4, 4, 4, 8, 4])).toEqual([6, 3, 3, 3, 3, 3, 3, 6, 6, 6])
+    // post, admin: the P&L pairs with the checkup and the scoreboard with the timeline; the movers are alone at the end
+    expect(midSpans([8, 4, 4, 4, 4, 8, 4])).toEqual([6, 3, 3, 3, 3, 6, 6])
   })
 
   it('keeps a sheet of one panel, and a panel widened by deskLayout to the whole row', () => {
@@ -402,6 +423,8 @@ describe('midSpans', () => {
       accessFor({ role: 'Admin' }),
       accessFor({ role: 'Trader', moduleGrants: ['strategies', 'market-data', 'analysis', 'notebook', 'backtesting'] }),
       accessFor({ role: 'Trader', moduleGrants: ['strategies', 'market-data'] }),
+      accessFor({ role: 'Trader', moduleGrants: ['market-data', 'analysis'] }),
+      accessFor({ role: 'Trader', moduleGrants: ['analysis'] }),
       accessFor({ role: 'Trader', moduleGrants: ['market-data'] }),
       accessFor({ role: 'Trader', moduleGrants: ['strategies'] }),
       accessFor({ role: 'Trader', moduleGrants: [] }),

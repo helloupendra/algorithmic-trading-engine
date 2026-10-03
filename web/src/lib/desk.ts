@@ -342,10 +342,13 @@ const LAYOUTS: Record<Phase, { admin: Row[]; trader: Row[] }> = {
     ],
   },
   live: {
+    // The open legs sit under the grid: the grid's five or six rows end well
+    // above the P&L panel beside it, and the legs are what a reader of the
+    // grid looks at next.
     admin: [
-      [['grid', 8], ['pnl', 4]],
-      [['indices', 8], ['legs', 4]],
-      [['timeline', 4], ['news', 4], ['movers', 4]],
+      [['grid', 8, 'legs'], ['pnl', 4]],
+      [['indices', 8], ['timeline', 4]],
+      [['news', 6], ['movers', 6]],
     ],
     trader: [
       [['grid', 8], ['pnl', 4]],
@@ -354,15 +357,19 @@ const LAYOUTS: Record<Phase, { admin: Row[]; trader: Row[] }> = {
     ],
   },
   post: {
+    // Measured on a day of five strategies: the open legs fit under the grid
+    // (as in the session) inside the height the P&L panel takes anyway; the
+    // checkup, folded, is about as tall as the scoreboard over the week and
+    // the timeline over the flows, so the three share a row with little to
+    // spare; the indices and the movers are the same height.
     admin: [
-      [['grid', 8], ['pnl', 4]],
-      [['scores', 4], ['checkup', 4], ['legs', 4]],
-      [['timeline', 4], ['week', 4], ['flows', 4]],
+      [['grid', 8, 'legs'], ['pnl', 4]],
+      [['checkup', 4], ['scores', 4, 'week'], ['timeline', 4, 'flows']],
       [['indices', 8], ['movers', 4]],
     ],
     trader: [
       [['grid', 8], ['pnl', 4]],
-      [['legs', 4], ['week', 4], ['flows', 4]],
+      [['legs', 4, 'scores'], ['week', 4], ['flows', 4]],
       [['indices', 8], ['movers', 4]],
     ],
   },
@@ -372,13 +379,19 @@ const LAYOUTS: Record<Phase, { admin: Row[]; trader: Row[] }> = {
  * The sheet this viewer sees: the phase's rows with every panel they may not
  * use taken out, and each row's remaining panels widened to fill its 12
  * columns in proportion, so the sheet stays one closed rectangle. A panel
- * stacked under another drops out alone; the one above keeps its place.
+ * stacked under another drops out alone; the one above keeps its place, and
+ * one whose top is dropped takes the top's place (the scoreboard under a
+ * trader's open legs is theirs with the analysis grant, runs or not).
  */
 export function deskLayout(phase: Phase, access: Access): Slot[][] {
   const rows = LAYOUTS[phase][access.isAdmin ? 'admin' : 'trader']
   const can = (key: PanelKey) => allows(access, PANEL_REQUIRES[key])
   return rows.flatMap((row) => {
-    const kept = row.filter(([key]) => can(key))
+    const kept = row.flatMap((cell): Row => {
+      const [key, span, under] = cell
+      if (can(key)) return [cell]
+      return under && can(under) ? [[under, span]] : []
+    })
     if (kept.length === 0) return []
     const weight = kept.reduce((sum, [, span]) => sum + span, 0)
     let used = 0
