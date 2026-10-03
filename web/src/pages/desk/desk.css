@@ -254,7 +254,7 @@
 /* Any number of underlyings: a column takes the width its figures need (no
    share of the table set here), and past the panel's width the table scrolls
    sideways under the fixed Strategy and Net columns. The plan grids share
-   the vocabulary and the scrolling; only the P&L table has fixed columns. */
+   the vocabulary and the scrolling, and fix only the Strategy column. */
 .dk-gridwrap { overflow-x: auto; overscroll-behavior-x: contain; }
 .dk-grid { table-layout: auto; border-collapse: separate; border-spacing: 0; }
 .dk-grid th, .dk-grid td { white-space: nowrap; }
@@ -280,11 +280,16 @@
 .dk-grid tr.dk-tot td.dk-net { font-weight: 500; }
 .dk-grid .dk-short { display: none; }
 .dk-accname { display: inline-block; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+/* The plan's per-account count, a line under the account's name. */
+.dk-plan-count { display: block; line-height: 1.3; }
 
-/* The same grid as a list (a phone, or any panel under ~520px): a block per
+/* The same grid as a list (a phone, or any panel under ~520px for the P&L
+   grid, ~380px for the plan): a block per
    strategy, its net on the right, a line per underlying with an account's
    figure per column; the accounts' totals in the same shape under a rule. */
 .dk-gl { display: none; }
+/* The plan's chip shows its short word in the list; the P&L list keeps a mark's time. */
+.dk-gl--plan .dk-long { display: none; }
 .dk-gl__row { padding: 7px 0 8px; border-bottom: 1px solid var(--line-soft); }
 .dk-gl__row:last-child { border-bottom: 0; padding-bottom: 2px; }
 .dk-gl__head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; min-width: 0; }
@@ -456,15 +461,21 @@ a.dk-news__t:hover { text-decoration: underline; }
    floors go by the width alone; the trades and charges columns go by what the
    panel can hold beside the underlyings that ran (RunsGrid.tsx). */
 @container (max-width: 719px) {
-  .dk-grid--pnl .dk-long { display: none; }
-  .dk-grid--pnl .dk-short { display: inline; }
-  .dk-grid--pnl .dk-sn { min-width: 76px; }
-  .dk-grid--pnl th.dk-u, .dk-grid--pnl td.dk-u { min-width: 56px; }
-  .dk-grid--pnl td, .dk-grid--pnl th { padding-left: 4px; padding-right: 4px; }
+  .dk-grid--pnl .dk-long, .dk-grid--plan .dk-long { display: none; }
+  .dk-grid--pnl .dk-short, .dk-grid--plan .dk-short { display: inline; }
+  .dk-grid--pnl .dk-sn, .dk-grid--plan .dk-sn { min-width: 76px; }
+  .dk-grid--pnl th.dk-u, .dk-grid--pnl td.dk-u, .dk-grid--plan th.dk-u, .dk-grid--plan td.dk-u { min-width: 56px; }
+  .dk-grid--pnl td, .dk-grid--pnl th, .dk-grid--plan td, .dk-grid--plan th { padding-left: 4px; padding-right: 4px; }
 }
 @container (max-width: 519px) {
-  .dk-gridwrap--pnl, .dk-gridhint, .dk-tbl-only { display: none; }
-  .dk-gl { display: block; }
+  .dk-gridwrap--pnl, .dk-gridwrap--pnl + .dk-gridhint, .dk-tbl-only { display: none; }
+  .dk-gl--pnl { display: block; }
+}
+/* The plan's few narrow columns hold out longer: four underlyings fit a
+   phone's 340px, so only under that is it a list. */
+@container (max-width: 379px) {
+  .dk-gridwrap--plan, .dk-gridwrap--plan + .dk-gridhint { display: none; }
+  .dk-gl--plan { display: block; }
 }
 
 /* --- a window under 1100px --------------------------------------------------------------- */
