@@ -8,7 +8,11 @@
  * Prices come from the market pulse, VIX from the NIFTY chain's header (the
  * pulse does not carry it), both moved by their pushed prices between
  * answers; the levels from three chain views polled every 30 s in the
- * session, the traces from one-minute bars once a minute.
+ * session, the traces from one-minute bars once a minute. The table is
+ * columns in a panel wide enough for them and, under that, a block per index
+ * with its levels wrapped beneath (desk.css, by the panel's own width); the
+ * forecast column is there only on a day that has a range forecast, and
+ * while that is still being read.
  */
 
 import { useMemo } from 'react'
@@ -21,6 +25,8 @@ import { applyTickToQuote } from '../../lib/optionChain'
 import { allows } from '../../lib/modules'
 import { formatCrore } from '../../lib/factors'
 import { useDeskChainViews, useIntradayTrace, useMarketEvents, useMarketFlows, useMarketPulse } from '../../lib/queries'
+import { polledState } from '../../lib/queryState'
+import type { PolledState } from '../../lib/queryState'
 import type { DeskLinks, DeskView } from './data'
 import { toneClass, useDayForecasts } from './data'
 import { Failed, PanelHead, RangeMeter, Spark, Waiting } from './parts'
@@ -82,10 +88,10 @@ function Forecast({ row, forecast, view }: { row: IndexRow; forecast: ForecastRo
   )
 }
 
-function Row({ row, levels, forecast, view }: { row: IndexRow; levels: ChainLevels | null; forecast: ForecastRow | undefined; view: DeskView }) {
+function Row({ row, levels, forecast, fc, view }: { row: IndexRow; levels: ChainLevels | null; forecast: ForecastRow | undefined; fc: boolean; view: DeskView }) {
   const name = row.contract ? `${row.name} ${row.contract}` : row.name
   return (
-    <div className={`dk-ix${row.chained ? '' : ' dk-ix--minor'}`}>
+    <div className={`dk-ix${row.chained ? '' : ' dk-ix--minor'}${fc ? '' : ' dk-ix--nofc'}`}>
       <span className="dk-ix__nm" title={row.symbol}>
         {name}
       </span>
@@ -94,7 +100,7 @@ function Row({ row, levels, forecast, view }: { row: IndexRow; levels: ChainLeve
         {row.change != null && row.changePct != null ? `${signedNumber(row.change, row.digits)} · ${signedNumber(row.changePct)}%` : '—'}
       </span>
       <span className="dk-ix__tr">{view.phase !== 'pre' && <Trace row={row} view={view} />}</span>
-      {row.chained ? <Forecast row={row} forecast={forecast} view={view} /> : <span className="dk-ix__fc" />}
+      {fc && (row.chained ? <Forecast row={row} forecast={forecast} view={view} /> : <span className="dk-ix__fc" />)}
       {row.chained ? <Levels levels={levels} /> : <span className="dk-ix__levels" />}
     </div>
   )
@@ -143,15 +149,27 @@ function ContextLine({ view }: { view: DeskView }) {
 
 /** The forecast column needs the analysis grant; without it the table is asked for nothing it would be refused. */
 export function Indices({ view, links }: { view: DeskView; links: DeskLinks }) {
-  return allows(view.access, 'analysis') ? <WithForecasts view={view} links={links} /> : <IndexTable view={view} links={links} forecasts={null} />
+  return allows(view.access, 'analysis') ? <WithForecasts view={view} links={links} /> : <IndexTable view={view} links={links} forecasts={null} forecastRead="ok" />
 }
 
 function WithForecasts({ view, links }: { view: DeskView; links: DeskLinks }) {
   const forecasts = useDayForecasts(view)
-  return <IndexTable view={view} links={links} forecasts={forecastRows(forecasts.data, view.day)} />
+  return <IndexTable view={view} links={links} forecasts={forecastRows(forecasts.data, view.day)} forecastRead={polledState(forecasts)} />
 }
 
-function IndexTable({ view, links, forecasts }: { view: DeskView; links: DeskLinks; forecasts: ForecastRow[] | null }) {
+function IndexTable({
+  view,
+  links,
+  forecasts,
+  forecastRead,
+}: {
+  view: DeskView
+  links: DeskLinks
+  /** The day's forecasts, or null without the analysis grant. */
+  forecasts: ForecastRow[] | null
+  /** How the forecasts' read stands: the column waits for it, and a failed read is said, not shown as no forecast. */
+  forecastRead: PolledState
+}) {
   const pulse = useMarketPulse()
   const chains = useDeskChainViews(CHAINED, view.clock === 'live')
   const byUnd = new Map((forecasts ?? []).map((f) => [f.underlying, f]))
@@ -166,6 +184,10 @@ function IndexTable({ view, links, forecasts }: { view: DeskView; links: DeskLin
     [vixAnswer, vixTick, vixAnsweredAt],
   )
   const rows = indexRows(pulse.data, vix)
+  // A forecast column only on a day with a range forecast (an empty one was a
+  // blank band across every row), kept while the read is on its way so the
+  // levels do not jump when it lands.
+  const fc = forecasts != null && (forecastRead === 'waiting' || forecasts.some((f) => f.range != null))
   const closeDay = view.phase === 'pre' ? dayOf(rows[0]?.updatedUtc) : null
   const lastLabel = closeDay && closeDay < view.today ? `${weekdayOf(closeDay)} close` : 'LTP'
   const fcHead = view.phase === 'pre' ? 'Range forecast' : view.phase === 'post' ? 'Range vs forecast' : 'Range so far / fc'
@@ -179,12 +201,12 @@ function IndexTable({ view, links, forecasts }: { view: DeskView; links: DeskLin
         <Waiting>Reading the market…</Waiting>
       ) : (
         <>
-          <div className="dk-ix dk-ix--head">
+          <div className={`dk-ix dk-ix--head${fc ? '' : ' dk-ix--nofc'}`}>
             <span>Index</span>
             <span className="dk-ix__ltp">{lastLabel}</span>
             <span className="dk-ix__chg">{closeDay && closeDay < view.today ? `Change (${weekdayOf(closeDay)})` : 'Change'}</span>
             <span>{view.phase === 'pre' ? '' : 'Today'}</span>
-            <span>{forecasts ? fcHead : ''}</span>
+            {fc && <span>{fcHead}</span>}
             <span className="dk-ix__lv">Put · call wall</span>
             <span className="dk-ix__lv">PCR</span>
             <span className="dk-ix__lv">Pain</span>
@@ -193,9 +215,10 @@ function IndexTable({ view, links, forecasts }: { view: DeskView; links: DeskLin
           </div>
           {rows.map((row) => {
             const i = CHAINED.indexOf(row.key as (typeof CHAINED)[number])
-            return <Row key={row.key} row={row} view={view} levels={i >= 0 ? chainLevels(chains[i].data) : null} forecast={byUnd.get(row.key)} />
+            return <Row key={row.key} row={row} view={view} levels={i >= 0 ? chainLevels(chains[i].data) : null} forecast={byUnd.get(row.key)} fc={fc} />
           })}
           {chains.some((c) => c.isError && !c.data) && <p className="dk-note">Some chain levels could not be read; they fill in on the next try.</p>}
+          {forecasts != null && forecastRead === 'failed' && <p className="dk-note">The day’s range forecast could not be read.</p>}
         </>
       )}
       {allows(view.access, 'market-data') && <ContextLine view={view} />}
