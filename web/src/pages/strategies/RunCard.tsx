@@ -694,6 +694,10 @@ export function RunCard({
   // The page totals above the cards re-price the same way
   // (useStrategyLivesRepriced), so a total is always the sum of its cards.
   const view = useRepricedRunView(live.data, answerAsOf(live))
+  // What the card knows: the run's view, or the list row or exit it came
+  // from. With none of them (a first load) it says so, rather than reading
+  // as a stopped run that started at "—".
+  const known = view != null || run != null || exit != null
   const isActive = view ? view.isActive : run != null
   const positions = view?.positions ?? []
   const openCount = positions.filter((p) => p.status === 'Open').length
@@ -708,6 +712,13 @@ export function RunCard({
   const mayControl = view?.canControl ?? canControl
   const startedUtc = view?.startedUtc ?? run?.startedUtc ?? null
   const stoppedUtc = view?.stoppedUtc ?? exit?.atUtc ?? null
+  // The meta line's times, each once it is known: a first load has neither,
+  // and a card made from a recent exit has the stop before the view brings
+  // the start. "started · —" read as a fact about the run.
+  const when = [
+    startedUtc != null ? `${startedBy ? `started by ${startedBy}` : 'started'} · ${formatTime(startedUtc)}` : null,
+    !isActive && stoppedUtc ? `stopped ${formatTime(stoppedUtc)}` : null,
+  ].filter((part): part is string => part != null)
 
   // "Capital used" sub-line: premium paid for open BUY legs and received for
   // open SELL legs; a zero side is left out rather than shown as ₹0.
@@ -735,7 +746,7 @@ export function RunCard({
   return (
     <section
       id={`run-${runId}`}
-      className={`run-card ${isActive ? 'run-card--live' : 'run-card--stopped'}`}
+      className={`run-card ${!known ? '' : isActive ? 'run-card--live' : 'run-card--stopped'}`}
       aria-label={`${strategy.name}${underlying ? ` on ${underlying}` : ''} run ${runId}`}
     >
       <header className="run-card__head">
@@ -748,7 +759,9 @@ export function RunCard({
             {underlying} <FlashPrice value={view?.spotLtp} bold />
           </span>
         )}
-        {isActive ? (
+        {!known ? (
+          <Badge tone="neutral">{live.isError ? 'not loaded' : 'loading…'}</Badge>
+        ) : isActive ? (
           <Badge tone="live">running</Badge>
         ) : (
           <Badge tone="warn">Stopped{stopReason ? ` · ${stopReason}` : ''}</Badge>
@@ -767,12 +780,11 @@ export function RunCard({
         )}
         <span className="run-card__meta">
           {ownerNote && <b>{ownerNote}</b>}
-          {startedBy ? `started by ${startedBy}` : 'started'} · {formatTime(startedUtc)}
-          {!isActive && stoppedUtc && <> · stopped {formatTime(stoppedUtc)}</>}
-          <span className="faint">· run #{runId}</span>
+          {when.join(' · ')}
+          <span className="faint">{when.length > 0 ? '· ' : ''}run #{runId}</span>
         </span>
         <div className="run-card__actions">
-          {isActive ? (
+          {!known ? null : isActive ? (
             mayControl && allowStop && (
               <button
                 type="button"
