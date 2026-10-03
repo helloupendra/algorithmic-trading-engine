@@ -17,6 +17,7 @@ import {
   deskAccounts,
   deskDay,
   deskLayout,
+  midSpans,
   deskLegs,
   deskTimeline,
   figureTone,
@@ -373,6 +374,51 @@ describe('deskLayout', () => {
     expect(pre[2][1]).toEqual({ key: 'legs', span: 4, under: 'timeline' })
     const trader = deskLayout('pre', accessFor({ role: 'Trader', moduleGrants: ['strategies', 'analysis'] }))
     expect(trader.flat().some((s) => s.under)).toBe(false)
+  })
+})
+
+describe('midSpans', () => {
+  it('gives a wide panel the whole width and the rest half of it, in order', () => {
+    // live, admin: grid 8 + pnl 4, indices 8 + legs 4, timeline 4 + news 4 + movers 4
+    expect(midSpans([8, 4, 8, 4, 4, 4, 4])).toEqual([6, 6, 6, 3, 3, 3, 3])
+  })
+
+  it('widens a half left alone before a wide panel, and one left at the end', () => {
+    // pre, admin: checkup 5 + overnight 3 + forecast 4, then news/week/plan, then indices 8 + legs 4
+    expect(midSpans([5, 3, 4, 4, 4, 4, 8, 4])).toEqual([3, 3, 3, 3, 3, 3, 6, 6])
+    // pre, trader: the third of three thirds is alone when the indices follow
+    expect(midSpans([4, 4, 4, 8, 4, 4, 4, 4])).toEqual([3, 3, 6, 6, 3, 3, 3, 3])
+    // post, admin: the eight halves pair off and the last is alone
+    expect(midSpans([8, 4, 4, 4, 4, 4, 4, 4, 8, 4])).toEqual([6, 3, 3, 3, 3, 3, 3, 6, 6, 6])
+  })
+
+  it('keeps a sheet of one panel, and a panel widened by deskLayout to the whole row', () => {
+    expect(midSpans([12])).toEqual([6])
+    expect(midSpans([4, 12, 4, 4])).toEqual([6, 6, 3, 3])
+  })
+
+  it('closes every row of every sheet a viewer can get, with no panel wrapping past a gap', () => {
+    const viewers = [
+      accessFor({ role: 'Admin' }),
+      accessFor({ role: 'Trader', moduleGrants: ['strategies', 'market-data', 'analysis', 'notebook', 'backtesting'] }),
+      accessFor({ role: 'Trader', moduleGrants: ['strategies', 'market-data'] }),
+      accessFor({ role: 'Trader', moduleGrants: ['market-data'] }),
+      accessFor({ role: 'Trader', moduleGrants: ['strategies'] }),
+      accessFor({ role: 'Trader', moduleGrants: [] }),
+    ]
+    for (const phase of ['pre', 'live', 'post'] as const) {
+      for (const access of viewers) {
+        const out = midSpans(deskLayout(phase, access).flat().map((s) => s.span))
+        let col = 0
+        for (const w of out) {
+          expect(w === 3 || w === 6).toBe(true)
+          // A correct packing never asks the grid to wrap a panel past a gap.
+          expect(col + w).toBeLessThanOrEqual(6)
+          col = (col + w) % 6
+        }
+        expect(col).toBe(0)
+      }
+    }
   })
 })
 

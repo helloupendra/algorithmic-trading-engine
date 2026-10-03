@@ -392,6 +392,30 @@ export function deskLayout(phase: Phase, access: Access): Slot[][] {
   })
 }
 
+/**
+ * The sheet's spans for a window narrower than its twelve columns can carry
+ * (about 1100px down to a phone): six columns, where a panel of eight or
+ * more of the twelve takes the whole width and any other half of it, in the
+ * sheet's own order. A half left alone before a full panel, or at the end,
+ * widens to close its row, so the sheet stays one rectangle. A twelve-column
+ * row of three thirds becomes a pair and a half that pairs with the next
+ * half, or widens when a full panel follows.
+ */
+export function midSpans(spans: readonly number[]): number[] {
+  const out = spans.map((s) => (s >= 8 ? 6 : 3))
+  let open = -1 // the index of a half waiting for its pair on the current row
+  for (let i = 0; i < out.length; i++) {
+    if (out[i] === 6) {
+      if (open >= 0) out[open] = 6
+      open = -1
+    } else {
+      open = open >= 0 ? -1 : i
+    }
+  }
+  if (open >= 0) out[open] = 6
+  return out
+}
+
 // ---------------------------------------------------------------- accounts
 
 /** A trading account on the Desk, and the series colour it wears (1, 2, or none past the second). */
