@@ -21,11 +21,13 @@
  * Before the open the panel beside it is the morning plan: for the operator,
  * the plan file read against what is live (GET /api/Desk/plan); for a
  * trader, a tick per run of theirs deployed and waiting for its session.
+ * Both are laid out by the same rules as the P&L grid (PlanSheet).
  */
 
 import { Fragment, useCallback, useLayoutEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import type { CellMark, DeskAccount, GridCell, GridRow } from '../../lib/desk'
+import type { CellMark, DeskAccount, GridCell, GridRow, PlanCell } from '../../lib/desk'
 import { compactInr, istHm, underlyingShort } from '../../lib/desk'
 import { formatInrSigned, formatInrWhole } from '../../lib/format'
 import type { DeskLinks, DeskView } from './data'
@@ -160,7 +162,7 @@ function ListColumns({ accounts }: { accounts: readonly DeskAccount[] }) {
 function GridList({ view, links, multi }: { view: DeskView; links: DeskLinks; multi: boolean }) {
   const grid = view.grid!
   return (
-    <div className="dk-gl" aria-label="Runs by strategy">
+    <div className="dk-gl dk-gl--pnl" aria-label="Runs by strategy">
       {multi && <ListColumns accounts={grid.accounts} />}
       {grid.rows.map((row) => (
         <section className="dk-gl__row" key={row.strategy}>
@@ -368,6 +370,157 @@ function planFileName(path: string | null): string {
 }
 
 /**
+ * What both plan grids draw: a strategy per row with a mark per account under
+ * each underlying it is asked on, and for the operator a line per account
+ * with its count. The same markup as the P&L grid: the Strategy column stays
+ * put while the underlyings scroll, the panel's width picks the chip's word
+ * ("not live" or "off"), and under about 380px (a phone: the plan's few narrow columns hold out
+ * longer than the P&L grid's) it is a list, a block per strategy with a line
+ * per underlying and the account names over their columns.
+ */
+interface PlanLine {
+  key: string
+  label: string
+  title: string
+  /** "2L", under the name. */
+  sub: string | null
+  /** Underlying → one mark per account, in the accounts' order, each a `.dk-pc`. */
+  marks: Record<string, ReactNode[]>
+}
+interface PlanTotal {
+  key: string
+  tone: 1 | 2 | null
+  name: string
+  note: ReactNode
+  /** Underlying → "live/planned" for this account, or null where it is asked for nothing. */
+  perUnderlying: Record<string, ReactNode | null>
+}
+
+function PlanSheet({
+  underlyings,
+  accounts,
+  lines,
+  totals,
+  label,
+}: {
+  underlyings: readonly string[]
+  accounts: readonly DeskAccount[]
+  lines: readonly PlanLine[]
+  totals: readonly PlanTotal[]
+  label: string
+}) {
+  const [wrapRef, overflows] = useOverflowX<HTMLDivElement>()
+  const multi = accounts.length > 1
+  return (
+    <>
+      <div className={`dk-gridwrap dk-gridwrap--plan${overflows ? ' dk-gridwrap--scroll' : ''}`} ref={wrapRef}>
+        <table className="dk-t dk-grid dk-grid--plan">
+          <thead>
+            <tr>
+              <th className="dk-fix dk-fix--l">Strategy</th>
+              {underlyings.map((u) => (
+                <th key={u} className="r dk-u" title={u}>
+                  {underlyingShort(u)} <span className="dk-t3">{opensAt(u)}</span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {lines.map((row) => (
+              <tr key={row.key}>
+                <td className="dk-sn dk-fix dk-fix--l" title={row.title}>
+                  {shortName(row.label)}
+                  {row.sub && <span className="dk-xs dk-t3"> {row.sub}</span>}
+                </td>
+                {underlyings.map((u) => (
+                  <td key={u} className="dk-u">
+                    {row.marks[u]}
+                  </td>
+                ))}
+              </tr>
+            ))}
+            {totals.map((t, i) => (
+              <tr key={t.key} className={`dk-tot${i === 0 ? ' dk-tot--first' : ''}`}>
+                <td className="dk-fix dk-fix--l">
+                  <Swatch tone={t.tone} />
+                  <span className="dk-t2 dk-accname" title={t.name}>
+                    {t.name}
+                  </span>
+                  {/* Under the name, not beside it: beside, the count would widen the fixed column past the underlyings' room. */}
+                  <span className="dk-xs dk-plan-count">{t.note}</span>
+                </td>
+                {underlyings.map((u) => (
+                  <td key={u} className="r dk-u dk-xs">
+                    {t.perUnderlying[u]}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {overflows && <p className="dk-note dk-gridhint">Scroll sideways for the other underlyings; the strategy stays put.</p>}
+      <div className="dk-gl dk-gl--plan" aria-label={label}>
+        {multi && <ListColumns accounts={accounts} />}
+        {lines.map((row) => (
+          <section className="dk-gl__row" key={row.key}>
+            <div className="dk-gl__head">
+              <span className="dk-gl__name" title={row.title}>
+                {row.label}
+                {row.sub && <span className="dk-xs dk-t3"> {row.sub}</span>}
+              </span>
+            </div>
+            <div className="dk-gl__cells">
+              {underlyings
+                .filter((u) => row.marks[u].length > 0)
+                .map((u) => (
+                  <div className="dk-gl__u" key={u}>
+                    <span className="dk-gl__ul dk-t3" title={`${u} · opens ${opensAt(u)}`}>
+                      {underlyingShort(u)}
+                    </span>
+                    {row.marks[u]}
+                  </div>
+                ))}
+            </div>
+          </section>
+        ))}
+        {totals.map((t) => (
+          <section className="dk-gl__row dk-gl__tot" key={t.key}>
+            <div className="dk-gl__head">
+              <span className="dk-gl__name dk-t2">
+                <Swatch tone={t.tone} />
+                {t.name}
+              </span>
+              <span className="dk-xs">{t.note}</span>
+            </div>
+            <div className="dk-gl__cells dk-gl__cells--tot dk-xs">
+              {underlyings.map((u) =>
+                t.perUnderlying[u] == null ? null : (
+                  <span key={u} className="dk-n">
+                    <span className="dk-t3">{underlyingShort(u)}</span> {t.perUnderlying[u]}
+                  </span>
+                ),
+              )}
+            </div>
+          </section>
+        ))}
+      </div>
+    </>
+  )
+}
+
+/** The mark of an account with nothing here, and why in its title. */
+function NotAsked({ why }: { why: string }) {
+  return (
+    <div className="dk-pc">
+      <span className="dk-t3 dk-xs" title={why}>
+        —
+      </span>
+    </div>
+  )
+}
+
+/**
  * The morning plan as the file asks for it (admin: GET /api/Desk/plan), each
  * run live or not by the API's own test (Running, runner alive), so a row
  * left Running by a dead runner reads as not live. A row per strategy line of
@@ -399,80 +552,75 @@ function FilePlan({ view, links }: { view: DeskView; links: DeskLinks }) {
   const multi = plan.accounts.length > 1
   const toneOf = new Map(view.allAccounts.map((a) => [a.id, a.tone]))
   const toneFor = (userId: number | null) => (userId != null ? (toneOf.get(userId) ?? null) : null)
+  // The plan's accounts in the desk's colours; one without a user id has none.
+  const accounts: DeskAccount[] = plan.accounts.map((a, i) => ({ id: a.userId ?? -(i + 1), name: a.name, tone: toneFor(a.userId) }))
   const inPlan = new Set(plan.rows.flatMap((r) => Object.values(r.cells).flat()).map((c) => c?.runId))
   const outside = (view.runs ?? []).filter((r) => r.isActive && !inPlan.has(r.runId)).length
+  const lines: PlanLine[] = plan.rows.map((row) => ({
+    key: `${row.line ?? ''}:${row.strategy}`,
+    label: row.label,
+    sub: row.lots != null ? `${row.lots}L` : null,
+    title: [row.label, row.line != null ? `line ${row.line}` : '', row.target ?? '', row.onlyAccounts.length ? `only ${row.onlyAccounts.join(', ')}` : '']
+      .filter(Boolean)
+      .join(' · '),
+    marks: Object.fromEntries(
+      plan.underlyings.map((u) => [
+        u,
+        row.cells[u].every((c) => c == null)
+          ? []
+          : row.cells[u].map((c, i) =>
+              c ? (
+                <div className="dk-pc" key={plan.accounts[i].name}>
+                  {multi && <Swatch tone={toneFor(c.userId)} cell />}
+                  {c.live && c.runId != null ? (
+                    <Link to={`${links.runBase}/${c.runId}`} className="pos" title={`${c.account}: live as run #${c.runId}`}>
+                      ✓
+                    </Link>
+                  ) : (
+                    <Chip tone="warn" title={`${c.account}: asked for, and not running with a live runner`}>
+                      <span className="dk-long">not live</span>
+                      <span className="dk-short">off</span>
+                    </Chip>
+                  )}
+                </div>
+              ) : (
+                <NotAsked key={plan.accounts[i].name} why={`Not asked of ${plan.accounts[i].name}`} />
+              ),
+            ),
+      ]),
+    ),
+  }))
+  // Each account's count under each underlying: how many of its runs there are live.
+  const totals: PlanTotal[] = plan.accounts.map((a, i) => ({
+    key: a.name,
+    tone: toneFor(a.userId),
+    name: a.name,
+    note: (
+      <>
+        <span className={a.live < a.planned ? 'warn' : 'dk-t2'}>
+          {a.live} of {a.planned} live
+        </span>
+        {a.userId == null && <span className="warn"> · no such account</span>}
+      </>
+    ),
+    perUnderlying: Object.fromEntries(
+      plan.underlyings.map((u) => {
+        const asked = plan.rows.map((r) => r.cells[u][i]).filter((c): c is PlanCell => c != null)
+        if (asked.length === 0) return [u, null]
+        const live = asked.filter((c) => c.live).length
+        return [
+          u,
+          <span key={u} className={live < asked.length ? 'warn' : 'dk-t2'}>
+            {live}/{asked.length}
+          </span>,
+        ]
+      }),
+    ),
+  }))
   return (
     <>
       {head}
-      <div className="dk-gridwrap">
-        <table className="dk-t dk-grid">
-          <thead>
-            <tr>
-              <th>Strategy</th>
-              {plan.underlyings.map((u) => (
-                <th key={u} className="r">
-                  {underlyingShort(u)} <span className="dk-t3">{opensAt(u)}</span>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {plan.rows.map((row) => (
-              <tr key={row.line ?? row.strategy}>
-                <td
-                  className="dk-sn"
-                  title={[row.label, row.line != null ? `line ${row.line}` : '', row.target ?? '', row.onlyAccounts.length ? `only ${row.onlyAccounts.join(', ')}` : '']
-                    .filter(Boolean)
-                    .join(' · ')}
-                >
-                  {shortName(row.label)}
-                  {row.lots != null && <span className="dk-xs dk-t3"> {row.lots}L</span>}
-                </td>
-                {plan.underlyings.map((u) => (
-                  <td key={u}>
-                    {row.cells[u].every((c) => c == null)
-                      ? null
-                      : row.cells[u].map((c, i) => (
-                          <div className="dk-pc" key={plan.accounts[i].name}>
-                            {c ? (
-                              <>
-                                {multi && <Swatch tone={toneFor(c.userId)} cell />}
-                                {c.live && c.runId != null ? (
-                                  <Link to={`${links.runBase}/${c.runId}`} className="pos" title={`${c.account}: live as run #${c.runId}`}>
-                                    ✓
-                                  </Link>
-                                ) : (
-                                  <Chip tone="warn" title={`${c.account}: asked for, and not running with a live runner`}>
-                                    not live
-                                  </Chip>
-                                )}
-                              </>
-                            ) : (
-                              <span className="dk-t3 dk-xs" title={`Not asked of ${plan.accounts[i].name}`}>
-                                —
-                              </span>
-                            )}
-                          </div>
-                        ))}
-                  </td>
-                ))}
-              </tr>
-            ))}
-            {plan.accounts.map((a, i) => (
-              <tr key={a.name} className={`dk-tot${i === 0 ? ' dk-tot--first' : ''}`}>
-                <td>
-                  <Swatch tone={toneFor(a.userId)} />
-                  <span className="dk-t2">{a.name}</span>
-                  {a.userId == null && <span className="dk-xs warn"> no such account</span>}
-                </td>
-                <td colSpan={plan.underlyings.length} className={`r dk-xs ${a.live < a.planned ? 'warn' : 'dk-t2'}`}>
-                  {a.live} of {a.planned} live
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <PlanSheet underlyings={plan.underlyings} accounts={accounts} lines={lines} totals={totals} label="The morning plan by strategy" />
       {plan.warnings.length > 0 && (
         <ul className="dk-list dk-warnings" aria-label="What the morning job would read differently">
           {plan.warnings.map((w) => (
@@ -502,58 +650,41 @@ function DeployedGrid({ view, links }: { view: DeskView; links: DeskLinks }) {
   const { grid } = view
   if (grid.rows.length === 0) return <>{head}<Waiting>Nothing deployed yet today.</Waiting></>
   const multi = grid.accounts.length > 1
+  const lines: PlanLine[] = grid.rows.map((row) => ({
+    key: row.strategy,
+    label: row.label,
+    sub: null,
+    title: row.label,
+    marks: Object.fromEntries(
+      grid.underlyings.map((u) => [
+        u,
+        row.cells[u].every((c) => c == null)
+          ? []
+          : row.cells[u].map((c, i) =>
+              c ? (
+                <div className="dk-pc" key={grid.accounts[i].id}>
+                  {multi && <Swatch tone={grid.accounts[i].tone} cell />}
+                  {c.live ? (
+                    <span className="pos" title={`${grid.accounts[i].name}: deployed ${istHm(c.runs[0].startedUtc)}${c.waiting ? ', waiting for its session' : ', trading'}`}>
+                      ✓
+                    </span>
+                  ) : (
+                    <Chip tone="warn" title={c.runs[c.runs.length - 1].stopReason ?? 'Stopped'}>
+                      off
+                    </Chip>
+                  )}
+                </div>
+              ) : (
+                <NotAsked key={grid.accounts[i].id} why={`${grid.accounts[i].name} has not deployed this here`} />
+              ),
+            ),
+      ]),
+    ),
+  }))
   return (
     <>
       {head}
-      <div className="dk-gridwrap">
-        <table className="dk-t dk-grid">
-          <thead>
-            <tr>
-              <th>Strategy</th>
-              {grid.underlyings.map((u) => (
-                <th key={u} className="r">
-                  {underlyingShort(u)} <span className="dk-t3">{opensAt(u)}</span>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {grid.rows.map((row) => (
-              <tr key={row.strategy}>
-                <td className="dk-sn" title={row.label}>
-                  {shortName(row.label)}
-                </td>
-                {grid.underlyings.map((u) => (
-                  <td key={u}>
-                    {row.cells[u].every((c) => c == null)
-                      ? null
-                      : row.cells[u].map((c, i) => (
-                          <div className="dk-pc" key={grid.accounts[i].id}>
-                            {c ? (
-                              <>
-                                {multi && <Swatch tone={grid.accounts[i].tone} cell />}
-                                {c.live ? (
-                                  <span className="pos" title={`${grid.accounts[i].name}: deployed ${istHm(c.runs[0].startedUtc)}${c.waiting ? ', waiting for its session' : ', trading'}`}>
-                                    ✓
-                                  </span>
-                                ) : (
-                                  <Chip tone="warn" title={c.runs[c.runs.length - 1].stopReason ?? 'Stopped'}>
-                                    off
-                                  </Chip>
-                                )}
-                              </>
-                            ) : (
-                              <span className="dk-t3 dk-xs">—</span>
-                            )}
-                          </div>
-                        ))}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <PlanSheet underlyings={grid.underlyings} accounts={grid.accounts} lines={lines} totals={[]} label="Deployed runs by strategy" />
     </>
   )
 }
