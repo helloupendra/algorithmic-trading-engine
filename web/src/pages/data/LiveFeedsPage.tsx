@@ -16,6 +16,7 @@
 import { useMemo, useState } from 'react'
 import { FeedsPanel } from './FeedsPanel'
 import { useLiveAll } from '../../lib/live'
+import { polledState } from '../../lib/queryState'
 import {
   useAddEquityGroupToWatchlist,
   useAddWatchlistSymbol,
@@ -79,6 +80,9 @@ function changePct(quote: LiveQuote | undefined): number | null {
  */
 function ChainPollerPanel() {
   const status = useChainPollerStatus()
+  // Read once for the card: a failing status endpoint must not flip it between "Checking…" and failed every poll.
+  const read = polledState(status)
+  const known = status.data !== undefined
   const logs = useChainPollerLogs(40)
   const start = useStartChainPoller()
   const stop = useStopChainPoller()
@@ -112,9 +116,9 @@ function ChainPollerPanel() {
           ) : (
             <button
               className="btn"
-              disabled={start.isPending || status.isPending}
+              disabled={start.isPending || !known}
               onClick={() => start.mutate()}
-              title={status.isPending ? 'Checking whether the poller is running…' : undefined}
+              title={!known ? (read === 'failed' ? "The poller's status could not be read" : 'Checking whether the poller is running…') : undefined}
             >
               <IconPlay style={{ width: 14, height: 14 }} />
               {start.isPending ? 'Starting…' : 'Start poller'}
@@ -133,27 +137,29 @@ function ChainPollerPanel() {
           {/* "Stopped" is a claim; it is made only once the API has answered.
               Before that the panel said Stopped and never for a poller that was
               storing a chain every few seconds (seen 2026-09-09, mid-session). */}
-          <span className={status.isPending ? 'muted' : status.isError ? 'warn' : running ? 'pos' : 'muted'}>
-            {status.isPending
+          <span className={read === 'waiting' ? 'muted' : read === 'failed' || read === 'stale' ? 'warn' : running ? 'pos' : 'muted'}>
+            {read === 'waiting'
               ? 'Checking…'
-              : status.isError
+              : read === 'failed'
                 ? 'Unknown — the status request failed'
-                : running
-                  ? status.data?.source === 'adopted'
-                    ? `Running (adopted, pid ${status.data?.processId})`
-                    : `Running (pid ${status.data?.processId})`
-                  : 'Stopped'}
+                : `${
+                    running
+                      ? status.data?.source === 'adopted'
+                        ? `Running (adopted, pid ${status.data?.processId})`
+                        : `Running (pid ${status.data?.processId})`
+                      : 'Stopped'
+                  }${read === 'stale' ? ' · not refreshed: the status request failed' : ''}`}
           </span>
         </div>
         <div>
           <span className="muted">Last chain stored</span>
           <span className={stalled ? 'warn' : undefined}>
-            {status.isPending ? '…' : captured ? formatAge(captured) : 'never'}
+            {!known ? (read === 'failed' ? 'unknown' : '…') : captured ? formatAge(captured) : 'never'}
           </span>
         </div>
       </div>
 
-      {!running && (
+      {known && !running && (
         <p className="small-note warn">
           No open interest is being recorded. The broker's tick feed does not carry it, so nothing
           else fills this in — and a session missed here stays missing, in the chain, the OI curves

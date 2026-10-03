@@ -35,6 +35,7 @@ import {
   watchlistWithTicks,
 } from './liveMarks'
 import type { ListAsOf, RunLegs } from './liveMarks'
+import { polledDown } from './queryState'
 import { ordersQuery } from './orders'
 import type { OrdersFilter } from './orders'
 import {
@@ -439,7 +440,9 @@ export function useBackendStatus() {
     /** Set the moment a NEW process was first seen; null until one is. */
     restartedAt,
     acknowledgeRestart: () => setRestartedAt(null),
-    isDown: query.isError,
+    // Not isError alone: a query that has never answered goes back to pending at each 5 s poll, and the
+    // "Backend down" item vanished for the length of every failed fetch while the API was down.
+    isDown: polledDown(query),
   }
 }
 
