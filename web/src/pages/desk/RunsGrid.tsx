@@ -135,16 +135,33 @@ function useOverflowX<T extends HTMLElement>(): [(el: T | null) => void, boolean
   return [useCallback((next: T | null) => setEl(next), []), over, width]
 }
 
+/** The account names once, over their columns of figures, in the same flex as the lines beneath. */
+function ListColumns({ accounts }: { accounts: readonly DeskAccount[] }) {
+  return (
+    <div className="dk-gl__u dk-gl__cols">
+      <span className="dk-gl__ul" />
+      {accounts.map((a) => (
+        <span key={a.id} className="dk-pc dk-xs dk-t3" title={a.name}>
+          <Swatch tone={a.tone} cell />
+          <span>{a.name}</span>
+        </span>
+      ))}
+    </div>
+  )
+}
+
 /**
- * The grid as a phone reads it: a block per strategy with its net on the
- * right, then a line per underlying it ran with an account's figure per
- * column, and the accounts' totals in the same shape. Rendered beside the
- * table; desk.css shows one or the other by the panel's width.
+ * The grid as a phone reads it: the account names once over their columns
+ * (when more than one ran), then a block per strategy with its net on the right and a line per
+ * underlying it ran with an account's figure per column, and the accounts'
+ * totals in the same shape. Rendered beside the table; desk.css shows one
+ * or the other by the panel's width.
  */
 function GridList({ view, links, multi }: { view: DeskView; links: DeskLinks; multi: boolean }) {
   const grid = view.grid!
   return (
     <div className="dk-gl" aria-label="Runs by strategy">
+      {multi && <ListColumns accounts={grid.accounts} />}
       {grid.rows.map((row) => (
         <section className="dk-gl__row" key={row.strategy}>
           <div className="dk-gl__head">
@@ -312,7 +329,9 @@ export function RunsGrid({ view, links }: { view: DeskView; links: DeskLinks }) 
                 <Fragment key={a.id}>
                   {i > 0 && ', '}
                   <Swatch tone={a.tone} />
-                  {a.name} {i === 0 ? 'above' : i === grid.accounts.length - 1 ? 'below' : 'next'}
+                  {a.name}
+                  {/* Where the account's line sits in a cell of the table; the list names the columns itself. */}
+                  <span className="dk-tbl-only"> {i === 0 ? 'above' : i === grid.accounts.length - 1 ? 'below' : 'next'}</span>
                 </Fragment>
               ))}
             </span>
