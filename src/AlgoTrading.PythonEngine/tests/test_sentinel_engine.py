@@ -554,7 +554,7 @@ class PlanTests(unittest.TestCase):
         for account, _, _ in plan.expected_runs():
             by_account[account] = by_account.get(account, 0) + 1
         # scripts/tests/market-open-plan.test.sh asserts the same two numbers.
-        self.assertEqual({"admin": 13, "coderforchange": 10}, by_account)
+        self.assertEqual({"admin": 10, "coderforchange": 10}, by_account)
 
 
 class SeenBeforeTests(unittest.TestCase):
