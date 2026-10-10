@@ -102,9 +102,9 @@ public sealed class AiHealthProbe(
         var s = settings.CurrentValue;
         if (!s.HealthProbeEnabled || !s.KeyConfigured) return;
 
-        // Bedrock is billed per call: no probe ever asks a Claude model (owner's rule, 10 Oct 2026). A cooled one
-        // waits out its cooling and is back in its place with its next real answer.
-        foreach (string model in health.DueForProbe(_time.GetUtcNow().UtcDateTime).Where(m => !AiCatalog.IsBedrock(m)))
+        // Bedrock is billed per call: no probe ever asks a model there, Claude or open (owner's rule, 10 Oct 2026). A
+        // cooled one waits out its cooling and is back in its place with its next real answer.
+        foreach (string model in health.DueForProbe(_time.GetUtcNow().UtcDateTime).Where(m => !AiCatalog.OnBedrock(m)))
         {
             health.Probed(model, _time.GetUtcNow().UtcDateTime);
             await using var scope = scopes.CreateAsyncScope();

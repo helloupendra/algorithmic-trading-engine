@@ -163,11 +163,12 @@ public sealed record AiAskResult(
 /// it read.
 /// </para>
 /// <para>
-/// A chain may name models of two providers (<see cref="AiChatRouter"/>):
-/// NVIDIA's, and Claude on Amazon Bedrock (<c>bedrock:</c> ids), and falls
-/// back across them. A model whose provider cannot be asked now (Bedrock off,
-/// no NVIDIA key) is skipped with its reason, as an attempt that took no time;
-/// a call with nothing left to ask is refused (503).
+/// A chain may name models of three providers (<see cref="AiChatRouter"/>):
+/// NVIDIA's, Claude on Amazon Bedrock (<c>bedrock:</c> ids) and the open
+/// models there (<c>bedrock-oss:</c> ids), and falls back across them. A model
+/// whose provider cannot be asked now (Bedrock off, no NVIDIA key) is skipped
+/// with its reason, as an attempt that took no time; a call with nothing left
+/// to ask is refused (503).
 /// </para>
 /// <para>
 /// The key is scrubbed from every stored text as a second layer: the client
@@ -240,6 +241,7 @@ public sealed class AiGateway
         _logger = logger;
         _time = time ?? TimeProvider.System;
         _memory = memory ?? new AiMemoryBook(db, client, settings, logger, _time);
+        // Without the container's router a bedrock-oss: model has no provider and is skipped: nothing signs for AWS here.
         _router = router ?? new AiChatRouter(client, new BedrockClaudeClient(settings));
     }
 
@@ -292,7 +294,7 @@ public sealed class AiGateway
         var blocked = chain.Select(m => (Model: m, Why: _router.Unavailable(m, s))).Where(x => x.Why is not null).ToList();
         if (blocked.Count == chain.Count)
         {
-            string error = chain.Count > 0 && blocked.All(b => !AiCatalog.IsBedrock(b.Model))
+            string error = chain.Count > 0 && blocked.All(b => !AiCatalog.OnBedrock(b.Model))
                 ? "No NVIDIA_API_KEY on the server: add it to the server's .env; the desk writes it into the API's settings on the next deploy."
                 : "No model in the chain can be asked now: " + string.Join("; ", blocked.Select(b => $"{b.Model}: {b.Why}")) + ".";
             return await RefuseAsync(input, chain, error, 503, 0);
@@ -739,9 +741,15 @@ public sealed class AiGateway
             CostUsd = cost is decimal c ? Math.Round(c, 6) : null,
         };
 
-    /// <summary>A model's list price (<see cref="AiBedrockSettings.Prices"/>); null for one with none (NVIDIA's free tier).</summary>
-    public static AiModelPrice? Price(string model, AiSettings settings) =>
-        AiCatalog.IsBedrock(model) && settings.Bedrock.Prices.TryGetValue(AiCatalog.BedrockModelId(model), out var price) ? price : null;
+    /// <summary>
+    /// A model's list price (<see cref="AiBedrockSettings.Prices"/>, <see cref="AiBedrockOpenSettings.Prices"/>); null for
+    /// one with none (NVIDIA's free tier, or a Bedrock model whose price was not verified).
+    /// </summary>
+    public static AiModelPrice? Price(string model, AiSettings settings)
+    {
+        if (AiCatalog.IsBedrock(model)) return settings.Bedrock.Prices.GetValueOrDefault(AiCatalog.BedrockModelId(model));
+        return AiCatalog.IsBedrockOpen(model) ? settings.BedrockOpen.Prices.GetValueOrDefault(AiCatalog.BedrockOpenModelId(model)) : null;
+    }
 
     /// <summary>The memory ids a call row carries; none when the column cannot be read.</summary>
     public static IReadOnlyList<long> MemoryIds(string? json)

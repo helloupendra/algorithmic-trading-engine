@@ -83,4 +83,19 @@ check "the switch and the region reach the API"     '{"Enabled": true, "Region":
 check "anything else for the switch is ignored"     "null"                                        "$(bedrock AI_BEDROCK_ENABLED=yes)"
 check "no AWS credential is ever carried"           "null"                                        "$(bedrock AWS_ACCESS_KEY_ID=not-a-key AWS_SECRET_ACCESS_KEY=not-a-secret)"
 
+bedrock_open() {  # key=value ... -> the Ai section's BedrockOpen part as sorted JSON
+  python3 - "$@" <<'PY'
+import json, sys
+sys.path.insert(0, "scripts")
+from _gen_local_settings import build_api_settings
+env = dict(arg.split("=", 1) for arg in sys.argv[1:])
+print(json.dumps(build_api_settings(env)["Ai"].get("BedrockOpen"), sort_keys=True))
+PY
+}
+check "the open models are left out unless set (on in code)" "null"               "$(bedrock_open)"
+check "they can be switched off"                    '{"Enabled": false}'                          "$(bedrock_open AI_BEDROCK_OPEN_ENABLED=false)"
+check "and on, whatever the case"                   '{"Enabled": true}'                           "$(bedrock_open AI_BEDROCK_OPEN_ENABLED=True)"
+check "anything else for their switch is ignored"   "null"                                        "$(bedrock_open AI_BEDROCK_OPEN_ENABLED=no)"
+check "no AWS credential or token is carried"       "null"                                        "$(bedrock_open AWS_BEARER_TOKEN_BEDROCK=not-a-token AWS_SECRET_ACCESS_KEY=not-a-secret)"
+
 [ "$FAILS" -eq 0 ] && echo "all passed" || { echo "$FAILS failed"; exit 1; }

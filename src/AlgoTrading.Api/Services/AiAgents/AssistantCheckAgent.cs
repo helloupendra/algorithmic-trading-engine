@@ -318,7 +318,8 @@ public sealed class AssistantCheckAgent(
             $"Assistant's answer: {OneLine(g.Answer, 1500)}\n" +
             $"Tools it called: {tools}";
 
-        var judge = (await new AiSettingsStore(db).LoadAsync(cancellationToken)).Tier("judge").Chain;
+        // With the settings, so the chain is the one the providers' switches make (Claude's, or NVIDIA's and Bedrock's open models).
+        var judge = (await new AiSettingsStore(db, null, settings).LoadAsync(cancellationToken)).Tier("judge").Chain;
         var result = await gateway.AskAsync(new AiAskInput(
             AgentKey, null, [new AiMessage("user", question)], LessonPrompt, 600, 0.2,
             $"check-{day:yyyyMMdd}-lesson-{n}", "check", AgentKey, null, judge), NullAiStreamSink.Instance, cancellationToken);
