@@ -22,6 +22,10 @@ Every 10 minutes from 09:20 to 15:00 IST on trading days, while it is switched o
    - GIFT Nifty before the open, the last FII/DII cash flows, today's events;
    - the last hour's news as the News Analyst read it, policy and macro data first, then results, guidance and
      rating changes, then anything with a direction; routine filings with none are left out;
+   - DESK ANALYSTS: the day's latest checked report of the Macro, Technical and Options/OI Analysts (the bias band
+     and size modifier; each index's bias, grade and key levels; each index's stance and first lines), written at or
+     before the brief's moment. In a replay that is the replay's clock, so a report written after the replayed moment
+     never reaches it, and a day with none says so ([the desk analysts](ai.md#the-desk-analysts-phase-4));
    - stop floors: for each CE and PE at ATM±1, the ask a buy would be priced at now (in a replay, the replay's own
      quote) and the lowest stop the 40% rule allows on it, rounded up to the 0.05 tick. Code never moves a stop;
    - its own book: net today after charges, the loss budget left, trades used, open positions with stops and

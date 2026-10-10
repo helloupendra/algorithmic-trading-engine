@@ -8,13 +8,15 @@ The desk's hosted language models live on one console page. The page shows:
 - every call it made, in full;
 - the owner's own questions, streamed.
 
-Four agents are built:
+Eight agents are built:
 - the **Desk Assistant**, which the owner asks and which reads the desk through read-only tools (Phase 2);
 - three scheduled, advisory agents from Phase 3: the **Trade Reviewer**, the **News Analyst** and the
-  **Incident Explainer**.
+  **Incident Explainer**;
+- four desk analysts from Phase 4 (10 Oct): the **Technical**, **Options/OI**, **Macro** and **Fundamental Analysts**
+  ([The desk analysts](#the-desk-analysts-phase-4)).
 
-The other ten are listed as planned, with the phase that builds them, so the page shows the whole plan and not just
-what runs. The owner can talk with each built agent, the [AI Trader](ai_trader.md) included, not only the Desk
+The [AI Trader](ai_trader.md) has its own page. The other six are listed as planned, with the phase that builds them,
+so the page shows the whole plan and not just what runs. The owner can talk with each built agent, the [AI Trader](ai_trader.md) included, not only the Desk
 Assistant ([Talking to the agents](#talking-to-the-agents)).
 
 - Console: **AI**, admin only:
@@ -288,7 +290,8 @@ The memory endpoints are under [Memory](#memory).
 ## Scheduled agents (Phase 3)
 
 The three scheduled agents **start switched off**: they call the provider by themselves, so the owner turns each one
-on from AI → Agents. The Desk Assistant starts on.
+on from AI → Agents. The Desk Assistant starts on, and so do the four desk analysts (owner, 10 Oct: every AI agent
+built and on).
 
 `AiAgentScheduler`, a hosted service, runs once a minute:
 - It waits 90 s after a start before its first round.
@@ -339,7 +342,9 @@ Each output is checked before it is stored as `ok`:
 **The daily digest.** The AI sends one Telegram message a day to the system channel (`AiDailyDigest`,
 `Ai:ReviewDigestToTelegram`), never one per review or per decision. It carries:
 - the AI Trader's day, when it was on or looked that day (see [AI Trader](ai_trader.md#daily-digest));
-- the run reviews written since the last digest: how many kept to their spec, and the ones that did not.
+- the run reviews written since the last digest: how many kept to their spec, and the ones that did not;
+- one short section for each desk analyst that ran
+  ([below](#where-their-reports-go)).
 
 When it goes:
 - After the NSE close and `Ai:ReviewAfterIst` (15:45), whichever is later, by which time the AI Trader's shadow book
@@ -378,7 +383,147 @@ Endpoints, admin only:
 | `GET reports?agent=&subjectType=&status=&date=&take=&beforeId=` | Reports, newest first |
 | `GET reports/{id}` | One report: body and data |
 | `GET reports/stats?days=` | Per agent and day: ok, invalid, failed, and the valid share |
-| `POST agents/{key}/run` | `{ subjectId }` (a run or incident id, a replay's id for `ai-trader-reflect`, or none for the next due work). Runs in the background and answers 202; the report appears when the model has answered. |
+| `POST agents/{key}/run` | `{ subjectId }` (a run or incident id, a replay's id for `ai-trader-reflect`, a filing's id for `fundamental-analyst`, or none for the next due work; the technical, options and macro analysts take none and write about the minute they run). Runs in the background and answers 202; the report appears when the model has answered. |
+
+## The desk analysts (Phase 4)
+
+Four advisory agents built on 10 Oct (owner: every AI agent built and on). Each reads facts the **code** computed from
+the desk's own records, answers one JSON object, and code checks the answer before it counts. None places, changes or
+cancels anything, and nothing trades on them; the AI Trader's brief reads three of them.
+
+- **On by default.** Unlike the Phase 3 agents, they start switched on. The switch on AI → Agents still turns each off.
+- **Model.** The Analyst tier (Kimi K3 → Nemotron 3 Super → GLM-5.3). Temperature 0.2, at most 4,000 answer tokens; the
+  Fundamental Analyst 0 and 6,000.
+- **Trading days** are the NSE calendar's (`IMarketSessionService`), not the weekday: a holiday or a weekend has no
+  slot.
+- **Memory.** All four are in `Ai:MemoryAgents`, so a 👎 with a correction, or a `/remember` note, in their chat
+  becomes their memory and is read in their scheduled work too.
+
+### Slots
+
+The Technical, Options/OI and Macro Analysts write at fixed IST times (`AnalystSchedule`, `SlotAnalystAgent`). Each
+time is a **slot**: one report (subject type `check`, subject id the day and time, `2026-10-12 08:20`), written once.
+
+- A slot is written while its **window** lasts (the table below). One missed through its whole window, the API down
+  say, is not written late: its facts would be of another moment.
+- A failed try (no model answered, or the facts could not be built) is tried again after 15 minutes while the window
+  lasts, at most `Ai:MaxReportAttempts` (3) times. A refusal for capacity waits the same 15 minutes and is not counted.
+- With nothing to read at all (no bars, no chain, no factor recorded), no model is asked: the slot is a failed try.
+- An answer that is not the JSON asked for, or fails its check, is `invalid`, with the reason and the model's text.
+- **Run now** on AI → Agents writes a report for the current minute, whatever the schedule says.
+- The facts handed over are stored with the report (`facts` in its data), so a report shows what every number was
+  checked against.
+
+**The numbers check** (`FactNumbers`). Every number the answer states (in a reason, a line, a summary) must be one
+the code handed over:
+- the same value, or that value rounded to one place fewer (PCR 0.92 may be written 0.9, not 1);
+- a price of 100 or more may be rounded or cut to fewer places, down to a whole number (25,310.5 as 25,310 or 25,311,
+  never 25,312);
+- never with more places than were given, and the sign is not read ("fell 0.13%");
+- what is not a stated number is taken out first: times (09:30), dates (7 Oct), indicator periods (EMA 20, ATR(14),
+  5-minute), index names with digits (NIFTY 50, S&P 500), ATM+1, ordinals, and a number written straight after
+  letters (EMA20, Q2, FY27, m3).
+
+| Analyst | Slots (IST) | Each written within |
+|---|---|---|
+| Technical | 08:20; and 09:30, 10:00 … 15:00 while an index option is open | 08:20 until the 09:15 open; each half hour within its half hour, inside the session |
+| Options/OI | 08:30, 10:30, 13:00, 14:30 | 08:30 until 09:15; 10:30 until 13:00; 13:00 until 14:30; 14:30 until 15:30 |
+| Macro | 08:45 | until the 09:15 open |
+
+### Technical Analyst
+
+- **Reads** (`TechnicalAnalystAgent`): for NIFTY, BANKNIFTY and SENSEX, the recorded 1-minute bars up to the moment
+  (`ILiveDataService.GetBarsUntilAsync`, 2,500 minutes), the regular session only (`SituationMath.Session`). From
+  them, in code: the last price and its bar, the previous close and the change, the session's open, high, low and
+  range, the previous session's high, low and close, EMA 20 and EMA 50 and ATR(14) on 5-minute bars (the brief's own
+  arithmetic), the last half hour in the session. VWAP is not available: an index trades no volume. **Levels**: the
+  session's and the previous session's highs and lows, the previous close (before the open: the last close), the two
+  EMAs, and up to three swing highs above the price and three swing lows below it, found on 15-minute bars
+  (`MarketStructure`, fractal, two bars each side). One level per price, highest first, each with its distance from
+  the price. Before the open the facts are the last session's and say so. An index with no bars is marked not
+  available and is not graded.
+- **When**: 08:20 IST on trading days; and on the half hour from 09:30 to 15:00, inside the session's hours (the
+  calendar's, a half day included), only while an open NIFTY, BANKNIFTY or SENSEX option is held: in the AI Trader's
+  shadow book that day, or as an open leg of a live strategy run (running or stopping; recaps left out), its own
+  account's included.
+- **Writes**: for each index, a bias (bullish, bearish, neutral), a grade A to D (A a clean trend with room, D
+  conflicting or broken: how readable the setup is, not a forecast), 1 to 4 key levels and a one-line reason; a
+  summary. Title: `Technical 08:20: NIFTY bullish B · BANKNIFTY neutral C · SENSEX bullish B`.
+- **Checked**: every index with facts graded once, none without; a listed bias and grade; each key level one of that
+  index's levels (by the numbers rule); no number in a reason or the summary that the facts do not hold.
+
+### Options/OI Analyst
+
+- **Reads** (`OptionsAnalystAgent`): each index's nearest-expiry chain as recorded, as of the slot
+  (`OptionChainService.GetViewAsync` on the captures only, and `GetTrendAsync` for the session): the capture's time
+  (at 08:30 the last session's, and the facts say so), expiry and days to it, the spot and ATM strike, PCR and the
+  PCR of the day's OI change, max pain and the spot's distance from it, the two heaviest call strikes and the two
+  heaviest put strikes with their OI in lakh and their distance from the spot, total OI each side and its change on
+  the day, ATM IV; and against the session's first capture, the PCR then and its change, the call and put OI change,
+  ATM IV then and its change. All computed in code, so the model never has to.
+- **When**: 08:30, 10:30, 13:00 and 14:30 IST on trading days.
+- **Writes**: for each index with a chain, a stance (bullish, bearish, neutral, range-bound) and 1 to 4 short lines:
+  where the walls sit against the spot, what OI and PCR show, what IV says about option prices; a summary.
+- **Checked**: each index with a chain read once, none without; a listed stance; every number in an index's lines one
+  of **that index's** facts; the summary's numbers any index's.
+
+### Macro Analyst
+
+- **Reads** (`MacroAnalystAgent`): the Market factors page's data as of the slot, each fact a line written by code
+  with an id (`m1`, `m2` …): NIFTY's last close and its move; GIFT Nifty's latest morning snapshot (NSE IX), its move
+  and its distance from NIFTY's last close (a future: part of that is its premium); this morning's snapshots of the
+  S&P 500 futures, the Nikkei, the Hang Seng and the KOSPI; the last closes of the S&P 500, Nasdaq 100, Dow, CBOE VIX,
+  Nikkei, Hang Seng, KOSPI, Euro Stoxx 50, FTSE 100, Brent, gold, the dollar index, the US 10-year yield and USD/INR
+  (only bars dated before today, which have all closed by 08:45); the latest FII/FPI and DII cash flows and FII's last
+  five recorded sessions; India VIX's last close and its move; today's events, holidays and expiries
+  (`MarketFactorsQueries.EventsAsync`). A snapshot taken after the slot is not known at it.
+- **When**: 08:45 IST on trading days.
+- **Writes**: a bias band (bearish, lean bearish, neutral, lean bullish, bullish), a position-size modifier, the facts
+  it rests on by id, a reason and what would change the view. Title: `Macro 08:45: lean bullish, size ×0.80`.
+- **Checked**: a listed band; a size modifier, which code **clamps to 0.5–1.0** whatever the model asked (the report
+  keeps both and says it was clamped); one or more facts cited, each an id that was handed over; no number in the
+  reason or the risks that the facts do not state (its own size modifier may be said in words).
+
+### Fundamental Analyst
+
+- **Reads** (`FundamentalAnalystAgent`): the corporate filings recorder's rows (`corporate_announcements`) of the last
+  `Ai:NewsLookbackHours` (24), never the backfills. A filing is read only when code finds both:
+  - it is a **results filing**: its subject says "financial result", or the scorer tagged it `results`, or a board
+  meeting's outcome (or an integrated filing) says it approved financial results; never a trading-window notice, a
+  board meeting intimation or other paperwork that only mentions results;
+  - its stock is in the desk's **F&O universe**: a stock future still listed in the instrument master, or in the F&O
+  bhavcopy of the last ten days; indices are not stocks.
+
+  Every other filing is skipped and gets no report. The model reads the subject and the first 3,000 characters of the
+  details.
+- **When**: every `Ai:FundamentalEveryMinutes` (10), at most `Ai:FundamentalBatchSize` (3) filings a call, newest
+  first. One report per filing (subject type `filing`, subject id the filing's id), like the News Analyst's.
+- **Writes**: whether it is the results themselves; the period; each metric (revenue, net profit, EBITDA, EBITDA
+  margin, net margin, EPS, net interest income, gross NPA, other) with its value, unit and the exact words it came
+  from, the year-earlier figure with its own words, and the year-on-year change; the surprise (positive, negative,
+  inline, unclear), judged from the stated changes alone, since no estimates are known; a summary.
+- **Checked**: each quote is in the filing's text (case, spacing and typographic quotes ignored, as the News Analyst's)
+  and the metric's value is a number written in it; a year-earlier figure the same; a year-on-year change written in
+  the filing, or within 0.15 points of the change code computes from the two figures (the report keeps both); a
+  surprise other than unclear needs at least one change behind it; no number in the summary that the filing and those
+  changes do not hold. "Not the results themselves" is a valid answer. A cut-off or non-JSON answer leaves its
+  filings to be read again.
+
+### Where their reports go
+
+- **AI → Reports**: every report, with the agent filter listing each analyst, its data laid out (the grades and
+  levels, the lines, the bias and size with the facts cited, the metrics with their quotes) and the body.
+- **The AI Trader's brief**: a `DESK ANALYSTS` section, after the news, with the latest `ok` report of the day of the
+  Macro, Technical and Options/OI Analysts written at or before the brief's moment (`DeskAnalysts.BriefSectionAsync`).
+  In a replay that moment is the replay's clock: a report written after the replayed moment never reaches it, and a
+  day with none says "No analyst report was written for 7 Oct by 10:15 IST, the replay's clock." Live, with none yet:
+  "None written yet today."
+- **The daily digest**: one short section for each slot analyst that wrote anything about the digest's day (its
+  reports, how many were ok, invalid or failed, and its latest view), and for the Fundamental Analyst the results
+  filings read since the last digest (results come out after the close), with the positive and negative surprises.
+- **Today**: each analyst in the AI section, on or off, with the day's report counts and its latest titles.
+- **Their chats** (AI → Assistant, or `/technical`, `/options`, `/macro`, `/fundamental` on Telegram): see
+  [Talking to the agents](#talking-to-the-agents).
 
 ## Docs search
 
@@ -478,8 +623,9 @@ The desk's bot answers its linked owner in a private chat, as the Assistant tab 
 - **Everyone else.** Strangers get "This bot is private." to `/start` and nothing else. Group chats are ignored: the
   bot posts the desk's notices there.
 - **Questions.** Each goes through the gateway as the Desk Assistant (source `telegram`), with the chat's last turns
-  for half an hour. `/new` starts over and `/unlink` leaves. `/trader`, `/reviewer`, `/news` or `/incident` before a
-  question asks that agent instead ([Talking to the agents](#talking-to-the-agents)).
+  for half an hour. `/new` starts over and `/unlink` leaves. `/trader`, `/reviewer`, `/news`, `/incident`,
+  `/technical`, `/options`, `/macro` or `/fundamental` before a question asks that agent instead
+  ([Talking to the agents](#talking-to-the-agents)).
 - **Answers.** The bot shows "typing…" while the model works. It answers in Telegram HTML, with tables and code in
   monospace and only `& < >` escaped. If Telegram refuses the HTML it sends plain text. The model, the seconds and
   the call number go under each answer.
@@ -518,6 +664,10 @@ cannot be asked (409), as the Desk Assistant cannot.
 | Trade Reviewer | `get_trade_reviews`: a day's, a run's or the last days' reviews, by verdict, with the run's strategy and account, and the totals by verdict. `get_trade_review`: one in full (journal, deviations, stale fills, the lesson, a second review's verdict). And the tools its reviews use: `get_runs`, `get_run`, `get_strategy_spec`, `get_quotes`, `get_option_chain_summary`. |
 | News Analyst | `get_news_events`: its records by the items' publication time (default the last 24 hours), by direction, event or symbol, with the items in the window it has not read yet counted. `get_news_event`: one record with the item and the exact text it read (`NewsAnalystAgent.HeadlineText`, `FilingText`). `get_news`: the items themselves. |
 | Incident Explainer | `get_incidents`; `get_incident`: one incident with every evidence line, masked, and its explanation; `get_incident_explanations`: its explanations of the last days beside their incidents. And `get_latest_checkup`, `get_runs`, `get_open_positions`, `get_quotes`. |
+| Technical Analyst | `get_analyst_reports`: its reports of a day (default today) or the last days, by status, each with what it concluded (bias, grade, key levels per index) and the day's totals; `analyst` defaults to the analyst asking. `get_analyst_report`: one report in full, with the facts the code handed it. And `get_quotes`, `get_open_positions`. |
+| Options/OI Analyst | `get_analyst_reports`, `get_analyst_report` (each index's stance and lines; the chain facts it was handed). And `get_option_chain_summary`, `get_quotes`: these answer for now, not for a past report. |
+| Macro Analyst | `get_analyst_reports`, `get_analyst_report` (the band, the clamped size, the facts it rested on and every fact it was handed). And `get_quotes`, `get_forecasts`, `get_news`. |
+| Fundamental Analyst | `get_analyst_reports` (a stock's with `symbol`), `get_analyst_report` (the metrics with their quotes, and the filing's text exactly as handed over). And `get_news`. |
 
 Every chat tool only reads and is projected field by field, its free text masked like the desk tools'
 (`AiAgentChatToolTests`). A call runs only the tools it offered: a model that names another agent's tool is told the
@@ -544,7 +694,7 @@ memories its record lists.
 
 **On the console** (AI → Assistant):
 - A picker above the conversation: Desk Assistant (the default), AI Trader, Trade Reviewer, News Analyst, Incident
-  Explainer. The choice survives a reload; `/ai/assistant?agent=ai-trader` opens one, and each agent's panel on AI →
+  Explainer, Technical Analyst, Options Analyst, Macro Analyst, Fundamental Analyst. The choice survives a reload; `/ai/assistant?agent=ai-trader` opens one, and each agent's panel on AI →
   Agents links to it ("Talk with it").
 - One conversation per agent while the page is open: switching back finds it as it was, and an answer streams on in
   its own conversation. One question at a time across them.
@@ -553,7 +703,8 @@ memories its record lists.
 - 👍, 👎 with a correction, and `/remember` save for the agent being talked with; the line under an answer names the
   memories it was given.
 
-**On Telegram:** `/trader …`, `/reviewer …`, `/news …` or `/incident …` asks that agent; the chat stays with it, so a
+**On Telegram:** `/trader …`, `/reviewer …`, `/news …`, `/incident …`, `/technical …`, `/options …`, `/macro …` or
+`/fundamental …` asks that agent; the chat stays with it, so a
 follow-up needs no prefix, until `/assistant`, `/new` or half an hour of quiet brings back the Desk Assistant. A prefix
 alone switches without asking. An answer from another agent than the Assistant names it under the text.
 
@@ -562,8 +713,9 @@ alone switches without asking. An answer from another agent than the Assistant n
 The models do not learn: their weights are the provider's. What an agent learns is kept as **memories**, short
 notes put into its system prompt on every call (`AiMemoryBook`). Each one can be read, edited, traced to where it
 came from, and taken out. Every built agent has memory (`Ai:MemoryAgents`): the Desk Assistant from the morning of
-1 Oct, the Trade Reviewer, News Analyst and Incident Explainer from that afternoon, once they were all switched on, and
-the AI Trader from 2 Oct, for the lessons it learns from its own days ([AI Trader](ai_trader.md#lessons)).
+1 Oct, the Trade Reviewer, News Analyst and Incident Explainer from that afternoon, once they were all switched on,
+the AI Trader from 2 Oct, for the lessons it learns from its own days ([AI Trader](ai_trader.md#lessons)), and the four
+desk analysts from 10 Oct, when they were built.
 
 | Kind | Written by | Used |
 |---|---|---|
