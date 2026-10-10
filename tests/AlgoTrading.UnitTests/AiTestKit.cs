@@ -20,6 +20,22 @@ namespace AlgoTrading.UnitTests;
 /// </summary>
 internal static class AiTestKit
 {
+    /// <summary>
+    /// A word's bucket in the fake embeddings: FNV-1a, the same in every run. string.GetHashCode is randomised per
+    /// process, so two words could share a bucket in one run and not the next, and a search test passed or failed by
+    /// chance (10 Oct 2026: the Windows CI run ranked the wrong passage first).
+    /// </summary>
+    public static uint StableHash(string word)
+    {
+        uint h = 2166136261;
+        foreach (char c in word)
+        {
+            h = (h ^ c) * 16777619;
+        }
+
+        return h;
+    }
+
     public const string Key = "nvapi-TEST-SECRET-0123456789";
 
     public const string Judge1 = "nvidia/nemotron-3-ultra-550b-a55b";
@@ -371,7 +387,7 @@ internal static class AiTestKit
             var v = new float[32];
             foreach (var word in text.ToLowerInvariant().Split((char[])[' ', '\n', '.', ',', '?', '›'], StringSplitOptions.RemoveEmptyEntries))
             {
-                v[(int)((uint)word.GetHashCode(StringComparison.Ordinal) % 32)] += 1;
+                v[(int)(StableHash(word) % 32)] += 1;
             }
 
             var answer = new JsonObject
@@ -518,7 +534,7 @@ internal static class AiTestKit
             var v = new float[64];
             foreach (var word in text.ToLowerInvariant().Split((char[])[' ', '\n', '.', ',', '?', '›'], StringSplitOptions.RemoveEmptyEntries))
             {
-                v[(int)((uint)word.GetHashCode(StringComparison.Ordinal) % 64)] += 1;
+                v[(int)(StableHash(word) % 64)] += 1;
             }
 
             return v;
