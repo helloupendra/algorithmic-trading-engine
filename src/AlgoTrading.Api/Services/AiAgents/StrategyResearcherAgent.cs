@@ -165,13 +165,17 @@ public sealed class StrategyResearcherAgent(
             title, Body(tables, note), dataJson.ToJsonString(Json), string.Empty, cancellationToken);
     }
 
+    /// <summary>Backtest rows handed to the model at most, newest first; the checks count every one.</summary>
+    public const int MaxBacktestsListed = 80;
+
     /// <summary>What the model is handed: the rules, the backtests, the paper results, the code's checks and the specs.</summary>
     public static string Question(ResearchWeek t)
     {
         var payload = new
         {
             week = t.Week.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-            backtests = t.Backtests.Select(b => new
+            backtestsNotListed = t.Backtests.Count > MaxBacktestsListed ? t.Backtests.Count - MaxBacktestsListed : (int?)null,
+            backtests = t.Backtests.Take(MaxBacktestsListed).Select(b => new
             {
                 run = b.RunId, strategy = b.Strategy, underlying = b.Underlying, resolution = b.Resolution, from = b.From, to = b.To,
                 periods = b.Periods, trades = b.Trades, net = b.Net, perTrade = b.PerTrade, winRate = b.WinRate, tunables = b.Tunables,
