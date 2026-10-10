@@ -46,6 +46,7 @@
     },
     "@excalidraw/mermaid-to-excalidraw": {
       "nanoid": "^5.1.16"
-    }
+    },
+    "sass": "^1.79.0"
   }
 }
