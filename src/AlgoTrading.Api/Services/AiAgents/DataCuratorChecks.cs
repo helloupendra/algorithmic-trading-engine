@@ -310,6 +310,9 @@ public sealed class DataCuratorChecks(TradingDbContext db, IMarketSessionService
                 best = expiry;
                 bestMinutes = minutes;
             }
+
+            // The nearest expiry captured for most of the session is the one the poller followed: no second read.
+            if (bestMinutes.Count * 2 >= (close - open).TotalMinutes) break;
         }
 
         return (best, bestMinutes);

@@ -12,9 +12,9 @@ using Microsoft.Extensions.Options;
 namespace AlgoTrading.Api.Services.AiAgents;
 
 /// <summary>
-/// The AI's one Telegram message a day, to the desk's system channel: the AI Trader's day and the run reviews
-/// written since the last digest. The owner reads the desk on Today and wants one message a day from the AI,
-/// never one per item.
+/// The AI's one Telegram message a day, to the desk's system channel: the AI Trader's day, the run reviews written
+/// since the last digest, and a line each for the Data Curator, the Compliance Triage and the Strategy Researcher when
+/// they wrote since then. The owner reads the desk on Today and wants one message a day from the AI, never one per item.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -26,8 +26,9 @@ namespace AlgoTrading.Api.Services.AiAgents;
 /// <para>
 /// Once a day: the time it went and the day it was for are kept in system settings before it is sent, so neither a
 /// restart nor the next tick sends it again. On a day with no NSE session it goes only if the AI Trader looked that
-/// day. Replay decisions and replay shadow positions are never in it. A section with nothing to say is left out, and
-/// nothing is sent when neither has anything; such a day is kept as empty.
+/// day or one of the offline agents wrote since the last digest (the Saturday circulars, the Sunday research note).
+/// Replay decisions and replay shadow positions are never in it. A section with nothing to say is left out, and
+/// nothing is sent when no section has anything; such a day is kept as empty.
 /// </para>
 /// <para>
 /// A day missed (the API down from its close to midnight): on the next tick, the latest day of the last

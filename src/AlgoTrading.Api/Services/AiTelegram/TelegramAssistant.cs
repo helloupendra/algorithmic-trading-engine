@@ -78,8 +78,8 @@ public sealed record TelegramOwner(long TelegramUserId, string ConsoleUser, stri
 /// </para>
 /// <para>
 /// The owner can talk with the other agents too (<see cref="AgentCommands"/>):
-/// <c>/trader …</c>, <c>/reviewer …</c>, <c>/news …</c> or <c>/incident …</c>
-/// asks that agent as itself, its chat persona with the tools that read its own
+/// <c>/trader …</c>, <c>/reviewer …</c>, <c>/news …</c>, <c>/incident …</c>, <c>/data …</c>,
+/// <c>/compliance …</c> or <c>/research …</c> asks that agent as itself, its chat persona with the tools that read its own
 /// work. The chat stays with it, so a follow-up needs no prefix, until
 /// <c>/assistant</c>, <c>/new</c> or half an hour of quiet brings back the Desk
 /// Assistant. <c>/remember</c> and <c>/memory</c> are the chat's agent's, and a
@@ -109,9 +109,13 @@ public sealed class TelegramAssistant(
         ("/reviewer", AiCatalog.TradeReviewer, "Trade Reviewer"),
         ("/news", AiCatalog.NewsAnalyst, "News Analyst"),
         ("/incident", AiCatalog.IncidentExplainer, "Incident Explainer"),
+        ("/data", AiCatalog.DataCurator, "Data Curator"),
+        ("/compliance", AiCatalog.ComplianceTriage, "Compliance Triage"),
+        ("/research", AiCatalog.StrategyResearcher, "Strategy Researcher"),
     ];
 
-    private const string AgentHelp = "/trader, /reviewer, /news or /incident before a question asks that agent; /assistant comes back.";
+    private const string AgentHelp =
+        "/trader, /reviewer, /news, /incident, /data, /compliance or /research before a question asks that agent; /assistant comes back.";
 
     private readonly TimeProvider _time = time ?? TimeProvider.System;
 

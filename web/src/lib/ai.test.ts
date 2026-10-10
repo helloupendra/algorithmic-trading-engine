@@ -90,6 +90,12 @@ import {
   parseChatAgent,
   readAgents,
   streamingAgent,
+  appliesBadge,
+  readCircularTriage,
+  readDataCheck,
+  readResearchNote,
+  readingBadge,
+  severityBadge,
 } from './ai'
 import type { AgentChats, AiMemory, AiModel, AiStreamEvent, AiToolStep, ChatAction, ChatState, SseMessage } from './ai'
 import { ApiError } from './api'
@@ -1361,8 +1367,18 @@ describe('the agent picker', () => {
   }
   const chat = (agent: string, action: ChatAction) => ({ type: 'chat' as const, agent, action })
 
-  it('offers the Desk Assistant first and the four other agents, each with its own starters', () => {
-    expect(CHAT_AGENTS.map((a) => a.key)).toEqual([DESK_ASSISTANT, 'ai-trader', 'trade-reviewer', 'news-analyst', 'incident-explainer'])
+  it('offers the Desk Assistant first and the other agents, each with its own starters', () => {
+    expect(CHAT_AGENTS.map((a) => a.key)).toEqual([
+      DESK_ASSISTANT,
+      'ai-trader',
+      'trade-reviewer',
+      'news-analyst',
+      'incident-explainer',
+      'data-curator',
+      'compliance-triage',
+      'strategy-researcher',
+    ])
+    expect(chatAgentMeta('compliance-triage').starters).toContain('Which circulars this week apply to the desk?')
     expect(chatAgentMeta('ai-trader').starters).toContain('What would you do now?')
     expect(chatAgentMeta('trade-reviewer').starters).toContain('Which runs broke their spec this week?')
     expect(chatAgentMeta('news-analyst').starters).toContain('What moved in the last hour?')
@@ -1471,5 +1487,65 @@ describe('the agents tool words', () => {
     expect(toolLabel('get_news_event', '{"item":"n123"}').label).toBe('News record n123')
     expect(toolLabel('get_incident', '{"incidentId":31}').label).toBe('Incident #31')
     expect(sourceLabel('preview')).toBe('AI Trader look now')
+  })
+})
+
+describe('the Phase 4 agents on the Reports tab', () => {
+  it('names what each report is about', () => {
+    expect(reportSubjectLabel({ agentKey: 'data-curator', subjectType: 'check', subjectId: 'night:2026-09-30' })).toBe('Data checks · night 30 Sep')
+    expect(reportSubjectLabel({ agentKey: 'data-curator', subjectType: 'check', subjectId: 'morning:2026-10-01' })).toBe('Data checks · morning 1 Oct')
+    expect(reportSubjectLabel({ agentKey: 'compliance-triage', subjectType: 'check', subjectId: 'circular:42' })).toBe('Circular #42')
+    expect(reportSubjectLabel({ agentKey: 'strategy-researcher', subjectType: 'check', subjectId: 'week:2026-10-11' })).toBe('Research · week to 11 Oct')
+  })
+
+  it('reads a data check, its findings with or without their triage', () => {
+    const c = readDataCheck({
+      pass: 'night',
+      checkedDay: '2026-09-30',
+      high: 1,
+      checked: ['NIFTY 50 1-minute candles: 300 of 375.', ''],
+      findings: [
+        { id: 'candles:NIFTY:1m:2026-09-30', subject: 'NIFTY 50', facts: '300 of 375', readBy: ['backtests'], severity: 'high', actionMeans: 'Archive the day again' },
+        { id: 'vix:2026-09-24', subject: 'India VIX', facts: 'gap', readBy: [] },
+        'junk',
+      ],
+    })!
+    expect(c.findings.map((f) => f.severity)).toEqual(['high', null])
+    expect(c.checked).toEqual(['NIFTY 50 1-minute candles: 300 of 375.'])
+    expect([c.high, c.medium]).toEqual([1, 0])
+    expect(severityBadge('high')).toEqual({ label: 'High', tone: 'neg' })
+    expect(severityBadge(null).label).toBe('Not triaged')
+    expect(readDataCheck(null)).toBeNull()
+  })
+
+  it('reads a circular triage and a research note with what it made of each check', () => {
+    const t = readCircularTriage({ applies: 'yes', area: 'retail algo', change: 'Tag orders.', quote: 'must carry an Algo ID' })!
+    expect([t.applies, t.change, t.why]).toEqual(['yes', 'Tag orders.', null])
+    expect(appliesBadge('yes').tone).toBe('warn')
+
+    const n = readResearchNote({
+      week: '2026-10-11',
+      summary: 'Ghost is untested on the holdout.',
+      ideas: [{ strategy: 'Ghost', idea: 'Run it on 2020-23.', test: 'NIFTY 5m', why: '20 trades' }],
+      checks: [
+        { strategy: 'Ghost', check: 'holdout', reading: 'concern', facts: 'None ran on the holdout.' },
+        { strategy: 'Ghost', check: 'sample', reading: 'concern', facts: '20 trades.' },
+      ],
+      strategyNotes: [{ strategy: 'Ghost', checks: [{ check: 'holdout', verdict: 'concern', note: 'Never run there.' }] }],
+      backtests: [{ runId: 1 }],
+    })!
+    expect(n.ideas[0].test).toBe('NIFTY 5m')
+    expect(n.checks.map((c) => [c.check, c.verdict])).toEqual([
+      ['holdout', 'concern'],
+      ['sample', null],
+    ])
+    expect(n.backtests).toBe(1)
+    expect(readingBadge('fine').tone).toBe('pos')
+  })
+
+  it('names their chat tools', () => {
+    expect(toolLabel('get_data_checks', '{"reportId":5}').label).toBe('Data check #5')
+    expect(toolLabel('get_circulars', '{"applies":"yes"}')).toEqual({ label: 'Circulars', detail: 'applies: yes' })
+    expect(toolLabel('get_research_notes', '{"week":"2026-10-11"}').label).toBe('Research note 2026-10-11')
   })
 })

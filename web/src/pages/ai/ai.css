@@ -896,6 +896,8 @@ a.ai-rstat__name:hover { color: var(--brand-hi); }
 .ai-report-data--inline > div { display: flex; align-items: baseline; gap: 8px; }
 .ai-report-list { margin: 0; padding-left: 18px; }
 .ai-report-list li { margin: 1px 0; }
+/* The Strategy Researcher's latest note, above the reports list. */
+.ai-research { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .table td.ai-report-quote { min-width: 220px; white-space: normal; font-style: italic; color: var(--text-2); overflow-wrap: anywhere; }
 a.ai-subject { color: var(--brand-hi); text-decoration: none; }
 a.ai-subject:hover { text-decoration: underline; }

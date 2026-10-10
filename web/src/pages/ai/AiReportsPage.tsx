@@ -1,10 +1,13 @@
 /**
  * AI → Reports (/ai/reports): what the scheduled agents wrote.
  *
- * Three agents run on their own and write reports: the Trade Reviewer (a
- * review of each run stopped that day, against its written spec), the News
- * Analyst (a structured event for each news item or filing) and the Incident
- * Explainer (what happened, why and what to do, for each serious incident).
+ * The scheduled agents write reports: the Trade Reviewer (a review of each run
+ * stopped that day, against its written spec), the News Analyst (a structured
+ * event for each news item or filing), the Incident Explainer (what happened,
+ * why and what to do, for each serious incident), the Data Curator (a triage of
+ * what the data checks found, night and morning), the Compliance Triage (each
+ * of the week's circulars) and the Strategy Researcher (a weekly note, whose
+ * ideas to test sit above the list).
  * Each report is checked before it counts. One whose answer fails the check
  * (not the JSON asked for, or a number whose quote is not in the item) is
  * kept as "invalid" with the model's raw text and the reason; one no model
@@ -23,6 +26,7 @@ import {
   NEWS_VALID_TARGET,
   checkScoreText,
   readAssistantCheck,
+  readResearchNote,
   useLatestAgentReport,
   REPORT_STATUS_KEYS,
   SCHEDULED_AGENTS,
@@ -111,6 +115,50 @@ function CheckCard({ a }: { a: AiReportAgentStats }) {
       </div>
       {a.days.length > 0 && <DayBars days={a.days} />}
     </div>
+  )
+}
+
+/**
+ * The Strategy Researcher's latest weekly note, above the list: its ideas worth testing (a backtest each, never a
+ * live change) and a link to the note in full with the checks it read. Nothing until a note has been written.
+ */
+function ResearchSection() {
+  const latest = useLatestAgentReport('strategy-researcher')
+  const d = latest.data
+  if (!d) return null
+  const note = readResearchNote(d.data)
+  const concerns = note?.checks.filter((c) => c.reading === 'concern').length ?? 0
+  return (
+    <Panel className="ai-research">
+      <div className="ai-rstat__head">
+        <Link className="ai-rstat__name" to={`${PAGE}?id=${d.report.id}`}>
+          {reportSubjectLabel(d.report)}
+        </Link>
+        <ReportStatusBadge status={d.report.status} />
+      </div>
+      {d.report.status !== 'ok' ? (
+        <p className="small-note ai-flush">{d.report.error || d.report.title}</p>
+      ) : (
+        <>
+          <p className="ai-flush">{note?.summary || d.report.title}</p>
+          {note && note.ideas.length > 0 ? (
+            <ol className="ai-report-list">
+              {note.ideas.map((i, k) => (
+                <li key={k}>
+                  <b>{i.strategy}</b>: {i.idea} <span className="faint">Test: {i.test}</span>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="small-note ai-flush">No idea worth testing this week.</p>
+          )}
+          <p className="small-note ai-flush">
+            {note?.backtests ?? 0} backtests read · {concerns} overfitting concern{concerns === 1 ? '' : 's'} ·{' '}
+            <Link to={`${PAGE}?agent=strategy-researcher`}>every note</Link>
+          </p>
+        </>
+      )}
+    </Panel>
   )
 }
 
@@ -331,6 +379,8 @@ export function AiReportsPage() {
           stats.data.agents.map((a) => <StatsCard key={a.agentKey} a={a} />)
         )}
       </section>
+
+      {selectedId == null && !filters.agent && <ResearchSection />}
 
       {selectedId != null && (
         <Panel className="ai-call-panel">
