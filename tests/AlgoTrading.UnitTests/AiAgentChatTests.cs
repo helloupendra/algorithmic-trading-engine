@@ -174,7 +174,8 @@ public sealed class AiAgentChatTests
             }
         }
 
-        Assert.False(AiCatalog.CanChat(AiCatalog.Agent("data-curator")!));
+        // Every agent is built since 10 Oct; one planned again later has nothing to talk with.
+        Assert.False(AiCatalog.CanChat(AiCatalog.Agent(AiCatalog.DataCurator)! with { Built = false }));
     }
 
     // ---------- the AI Trader's memory in a chat ----------
@@ -232,9 +233,8 @@ public sealed class AiAgentChatTests
         Assert.Equal(AiToolNames.AiTraderChat, trader.ChatTools.Select(t => t.Name));
         var desk = list.Agents.Single(a => a.Key == AiCatalog.DeskAssistant);
         Assert.Equal(desk.Tools.Select(t => t.Name), desk.ChatTools.Select(t => t.Name));
-        var planned = list.Agents.Single(a => a.Key == "data-curator");
-        Assert.False(planned.Chat);
-        Assert.Empty(planned.ChatTools);
+        // Every agent is built since 10 Oct, and each can be talked with.
+        Assert.All(list.Agents, a => Assert.True(a.Chat, $"{a.Key} cannot be talked with"));
     }
 
     // ---------- helpers ----------

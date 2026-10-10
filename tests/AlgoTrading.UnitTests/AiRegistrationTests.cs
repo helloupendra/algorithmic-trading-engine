@@ -19,7 +19,7 @@ public class AiRegistrationTests
 {
     /// <summary>What ASP.NET and the generic host provide without a line of ours.</summary>
     private static readonly string[] Framework =
-        ["IServiceScopeFactory", "ILogger`1", "IOptionsMonitor`1", "IWebHostEnvironment", "IHttpClientFactory"];
+        ["IServiceScopeFactory", "ILogger`1", "IOptionsMonitor`1", "IWebHostEnvironment", "IHttpClientFactory", "IConfiguration"];
 
     public static IEnumerable<object[]> Implementations() =>
         typeof(AiAgentScheduler).Assembly.GetTypes()

@@ -217,6 +217,9 @@ builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Ap
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.AnalystReportTool>();
 // The Validator's, the Risk Memo's and the Execution Reporter's records, for their chats.
 builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.AiTraderChecksTool>();
+builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.DataChecksTool>();
+builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.CircularsTool>();
+builder.Services.AddScoped<AlgoTrading.Infrastructure.Ai.IAiTool, AlgoTrading.Api.Services.AiTools.ResearchNotesTool>();
 // Keeps the docs' search index in step with docs/ (only passages that changed are embedded again).
 builder.Services.AddSingleton<AlgoTrading.Api.Services.AiSearch.AiDocIndexer>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AlgoTrading.Api.Services.AiSearch.AiDocIndexer>());
@@ -240,6 +243,14 @@ builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, 
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.NewsAnalystAgent>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.AssistantCheckAgent>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.AssistantExamAgent>();
+// The Phase 4 agents that word what code measured: the data checks (night and 08:00), the week's circulars
+// (Saturdays), the week's backtests and paper results (Sundays). None runs from 09:00 to 15:45 on a trading day.
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.DataCuratorChecks>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.DataCuratorAgent>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.ComplianceTriageAgent>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IPaperResults, AlgoTrading.Api.Services.AiAgents.LivePaperResults>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.StrategyResearchData>();
+builder.Services.AddScoped<AlgoTrading.Api.Services.AiAgents.IAiScheduledAgent, AlgoTrading.Api.Services.AiAgents.StrategyResearcherAgent>();
 // The AI Trader: the brief, its account's facts, and the agent (shadow until Ai:AiTraderExecute).
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.IAiTraderBriefs, AlgoTrading.Api.Services.AiTrader.MarketBriefBuilder>();
 builder.Services.AddScoped<AlgoTrading.Api.Services.AiTrader.IAiTraderBooks, AlgoTrading.Api.Services.AiTrader.AiTraderBookReader>();
@@ -329,6 +340,7 @@ builder.Services.AddHostedService<AlgoTrading.Api.Services.QuoteSnapshotRecorder
 builder.Services.AddHostedService<AlgoTrading.Api.Services.GlobalDailyRecorderService>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketIntelligenceBackfillService>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.NewsScoringScheduler>();
+builder.Services.AddHostedService<AlgoTrading.Api.Services.RegulatoryCircularsRecorderService>();
 builder.Services.AddHostedService<AlgoTrading.Api.Services.MarketPulseSubscriptionService>();
 // Alert Subscriber Service for logic engine pub/sub
 builder.Services.AddHostedService<AlgoTrading.Api.Services.AlertSubscriberService>();

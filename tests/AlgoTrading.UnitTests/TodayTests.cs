@@ -122,6 +122,41 @@ public sealed class TodayTests
     }
 
     [Fact]
+    public async Task The_data_curator_s_high_findings_of_its_latest_pass_and_the_circulars_that_apply_need_a_look()
+    {
+        using var desk = new RunnerDesk();
+        using (var db = desk.Db())
+        {
+            // The night pass found a high one; the morning pass, newer, supersedes it with its own.
+            db.AiReports.Add(new AiReport { Id = 50, AgentKey = AiCatalog.DataCurator, SubjectType = AiReportSubject.Check, SubjectId = "night:2026-09-30",
+                Status = AiReportStatus.Ok, CreatedUtc = Now.AddHours(-12), UpdatedUtc = Now.AddHours(-12),
+                DataJson = """{"findings":[{"subject":"India VIX","facts":"A gap on 2026-09-24.","severity":"high","impact":"x"}]}""" });
+            db.AiReports.Add(new AiReport { Id = 51, AgentKey = AiCatalog.DataCurator, SubjectType = AiReportSubject.Check, SubjectId = "morning:2026-10-01",
+                Status = AiReportStatus.Ok, CreatedUtc = Now.AddHours(-5), UpdatedUtc = Now.AddHours(-5),
+                DataJson = """
+                    {"findings":[{"subject":"NIFTY option chain","facts":"Captured in 300 of 375 session minutes.","severity":"high",
+                      "impact":"ChainFlowBuy backtests read holes.","actionMeans":"Check the option chain poller ran all session and on the right expiry"},
+                     {"subject":"Recorded quotes","facts":"1 of 2 did not tick.","severity":"low","impact":"y"}]}
+                    """ });
+            db.AiReports.Add(new AiReport { Id = 52, AgentKey = AiCatalog.ComplianceTriage, SubjectType = AiReportSubject.Check, SubjectId = "circular:7",
+                Status = AiReportStatus.Ok, Title = "Applies: Algo ID on every API order", CreatedUtc = Now.AddDays(-2), UpdatedUtc = Now.AddDays(-2),
+                DataJson = """{"applies":"yes","change":"Tag simulated orders with an algo id."}""" });
+            db.AiReports.Add(new AiReport { Id = 53, AgentKey = AiCatalog.ComplianceTriage, SubjectType = AiReportSubject.Check, SubjectId = "circular:8",
+                Status = AiReportStatus.Ok, Title = "Does not apply: Listing of ABC", CreatedUtc = Now.AddDays(-2), UpdatedUtc = Now.AddDays(-2),
+                DataJson = """{"applies":"no"}""" });
+            db.SaveChanges();
+        }
+
+        var today = await Build(desk).BuildAsync(CancellationToken.None);
+
+        var data = Assert.Single(today.Attention, a => a.Kind == "data");
+        Assert.Equal(("high", "NIFTY option chain: Captured in 300 of 375 session minutes.", "/ai/reports?id=51"), (data.Level, data.Title, data.Link));
+        Assert.Equal("AI: ChainFlowBuy backtests read holes. Do: Check the option chain poller ran all session and on the right expiry.", data.Detail);
+        var circular = Assert.Single(today.Attention, a => a.Kind == "compliance");
+        Assert.Equal(("info", "Applies: Algo ID on every API order", "Tag simulated orders with an algo id."), (circular.Level, circular.Title, circular.Detail));
+    }
+
+    [Fact]
     public async Task The_ai_traders_day_counts_its_looks_and_shows_the_last_three()
     {
         using var desk = new RunnerDesk();

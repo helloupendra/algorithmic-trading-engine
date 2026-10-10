@@ -442,6 +442,86 @@ public class AiDailyDigestTests
         Assert.Empty(telegram.Sent);
     }
 
+    // ---------- the offline agents: a line each, only after they wrote ----------
+
+    [Fact]
+    public async Task The_data_checks_since_the_last_digest_are_one_line_with_the_high_findings()
+    {
+        var ai = Build(Settings());
+        SeedSent(ai, At(Tue29Sep, 15, 46));
+        SeedOffline(ai, AiCatalog.DataCurator, "night:2026-09-29", At(Wed30Sep, 0, 15), AiReportStatus.Ok, "Data checks for Tue 29 Sep (night): 1 high, 0 medium, 1 low",
+            """{"findings":[{"subject":"NIFTY 50, 1-minute candles","facts":"300 of 375 1-minute candles stored for 2026-09-29 (80%).","severity":"high"},{"subject":"India VIX","facts":"A gap on 2026-09-24.","severity":"low"}]}""");
+        SeedOffline(ai, AiCatalog.DataCurator, "morning:2026-09-30", At(Wed30Sep, 8, 2), AiReportStatus.Ok, "Data checks for Tue 29 Sep (morning): nothing wrong", """{"findings":[]}""");
+        var telegram = new Recorder();
+
+        Assert.True(await Digest(ai, telegram).RunOnceAsync(At(Wed30Sep, 15, 46), default));
+
+        Assert.Equal(
+            """
+            Data checks (night 29 Sep, morning 30 Sep): 1 high, 0 medium, 1 low.
+            • NIFTY 50, 1-minute candles: 300 of 375 1-minute candles stored for 2026-09-29 (80%).
+            """.ReplaceLineEndings("\n").TrimEnd(),
+            Assert.Single(telegram.Sent).Message);
+    }
+
+    [Fact]
+    public async Task On_a_Saturday_the_week_s_circulars_send_a_digest_and_with_nothing_written_none_goes()
+    {
+        var saturday = new DateOnly(2026, 10, 3);
+        var ai = Build(Settings());
+        SeedSent(ai, At(new DateOnly(2026, 10, 2), 15, 46));
+        var telegram = new Recorder();
+
+        Assert.False(await Digest(ai, telegram).RunOnceAsync(At(saturday, 16, 0), default));
+
+        SeedOffline(ai, AiCatalog.ComplianceTriage, "circular:1", At(saturday, 10, 2), AiReportStatus.Ok, "Applies: Pre-Trade risk controls for algo orders & APIs",
+            """{"applies":"yes"}""");
+        SeedOffline(ai, AiCatalog.ComplianceTriage, "circular:2", At(saturday, 10, 2), AiReportStatus.Ok, "Does not apply: Listing of ABC", """{"applies":"no"}""");
+        SeedOffline(ai, AiCatalog.ComplianceTriage, "circular:3", At(saturday, 10, 3), AiReportStatus.Invalid, "Unclear: Mock trading", """{"applies":"unclear"}""");
+
+        Assert.True(await Digest(ai, telegram).RunOnceAsync(At(saturday, 16, 1), default));
+
+        var sent = Assert.Single(telegram.Sent);
+        Assert.Equal("AI day, Sat 3 Oct", sent.Title);
+        Assert.Equal(
+            """
+            Compliance triage: 3 circulars read: 1 applies, 0 unclear, 1 does not, 1 failed the quote check.
+            • Applies: Pre-Trade risk controls for algo orders &amp; APIs
+            """.ReplaceLineEndings("\n").TrimEnd(),
+            sent.Message);
+    }
+
+    [Fact]
+    public async Task On_a_Sunday_the_research_note_is_its_title_and_its_ideas()
+    {
+        var sunday = new DateOnly(2026, 10, 4);
+        var ai = Build(Settings());
+        SeedSent(ai, At(new DateOnly(2026, 10, 2), 15, 46));
+        SeedOffline(ai, AiCatalog.StrategyResearcher, "week:2026-10-04", At(sunday, 11, 5), AiReportStatus.Ok,
+            "Research note, week to Sun 4 Oct: 1 strategy, 3 concerns, 1 idea to test",
+            """{"ideas":[{"strategy":"Ghost","idea":"Run the same rule on the 2020-23 holdout."}]}""");
+        var telegram = new Recorder();
+
+        Assert.True(await Digest(ai, telegram).RunOnceAsync(At(sunday, 15, 50), default));
+
+        Assert.Equal(
+            """
+            Research note, week to Sun 4 Oct: 1 strategy, 3 concerns, 1 idea to test
+            • Ghost: Run the same rule on the 2020-23 holdout.
+            """.ReplaceLineEndings("\n").TrimEnd(),
+            Assert.Single(telegram.Sent).Message);
+    }
+
+    private static void SeedOffline(Services ai, string agent, string subject, DateTime atUtc, string status, string title, string data)
+    {
+        ai.Db.AiReports.Add(new AiReport
+        {
+            AgentKey = agent, SubjectType = AiReportSubject.Check, SubjectId = subject, Status = status, Title = title, DataJson = data,
+            CreatedUtc = atUtc, UpdatedUtc = atUtc, Attempts = 1,
+        });
+        ai.Db.SaveChanges();
+    }
+
     // ---------- helpers ----------
 
     private static readonly DateOnly Fri25Sep = new(2026, 9, 25);

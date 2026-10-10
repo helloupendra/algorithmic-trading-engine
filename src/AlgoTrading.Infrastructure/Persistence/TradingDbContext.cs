@@ -93,6 +93,9 @@ public class TradingDbContext : DbContext
     public DbSet<MarketQuoteSnapshot> MarketQuoteSnapshots => Set<MarketQuoteSnapshot>();
     public DbSet<MarketBreadthDaily> MarketBreadthDaily => Set<MarketBreadthDaily>();
 
+    /// <summary>SEBI, NSE and BSE circulars that might bind the desk, for the Compliance Triage. See <see cref="RegulatoryCircular"/>.</summary>
+    public DbSet<RegulatoryCircular> RegulatoryCirculars => Set<RegulatoryCircular>();
+
     public DbSet<RiskEvent> RiskEvents => Set<RiskEvent>();
     public DbSet<AlertEvent> AlertEvents => Set<AlertEvent>();
 

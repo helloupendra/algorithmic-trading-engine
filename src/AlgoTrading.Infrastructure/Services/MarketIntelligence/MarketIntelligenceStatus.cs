@@ -14,6 +14,7 @@ public static class MarketIntelligenceNames
     public const string Breadth = "breadth";
     public const string ParticipantOi = "participant-oi";
     public const string NewsScoring = "news-scoring";
+    public const string Circulars = "circulars";
 
     /// <summary>The datasets an admin can backfill by name.</summary>
     public static readonly IReadOnlyList<string> Backfills = [Breadth, ParticipantOi, GlobalDaily];

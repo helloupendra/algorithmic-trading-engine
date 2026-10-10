@@ -73,8 +73,11 @@ public static class AiReportSubject
     public const string Incident = "incident";
 
     /// <summary>
-    /// A report about a moment rather than a row: the Desk Assistant's daily check (the subject id is the IST day), the
-    /// AI Trader's reflections, and the desk analysts' slots (the subject id is the IST day and time, "2026-10-12 08:20").
+    /// A report about no one row of the desk: the Desk Assistant's daily check (the subject id is the IST day), the AI
+    /// Trader's reflections and lesson tests, the desk analysts' slots (the IST day and time, "2026-10-12 08:20"), the
+    /// Data Curator's passes (<c>night:</c>/<c>morning:</c> and the day), the Compliance Triage's circulars
+    /// (<c>circular:</c> and its id) and the Strategy Researcher's weeks (<c>week:</c> and the Sunday). The agent tells
+    /// them apart.
     /// </summary>
     public const string Check = "check";
 
