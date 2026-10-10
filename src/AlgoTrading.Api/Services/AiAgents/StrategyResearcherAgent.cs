@@ -255,7 +255,9 @@ public sealed class StrategyResearcherAgent(
                 problems.Add($"an idea is a live change (\"{live}\"), not a test");
             }
 
-            Numbers($"{idea}\n{test}\n{why}", given, "an idea", problems);
+            // The test is a proposal, not a claim: its period and settings (a 25-point band, a 10:30 cut-off) are new by
+            // nature. What the idea and its reason say about the strategy must still be in the tables.
+            Numbers($"{idea}\n{why}", given, "an idea", problems);
             ideas.Add(new JsonObject { ["strategy"] = name, ["idea"] = idea, ["test"] = test, ["why"] = why });
         }
 
