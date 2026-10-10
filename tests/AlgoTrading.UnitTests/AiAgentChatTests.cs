@@ -21,7 +21,11 @@ namespace AlgoTrading.UnitTests;
 /// </summary>
 public sealed class AiAgentChatTests
 {
-    private static readonly string[] Chatty = [AiCatalog.AiTrader, AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer];
+    private static readonly string[] Chatty =
+    [
+        AiCatalog.AiTrader, AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer,
+        AiCatalog.TechnicalAnalyst, AiCatalog.OptionsAnalyst, AiCatalog.MacroAnalyst, AiCatalog.FundamentalAnalyst,
+    ];
 
     // ---------- the persona, by where the question came from ----------
 
@@ -170,7 +174,7 @@ public sealed class AiAgentChatTests
             }
         }
 
-        Assert.False(AiCatalog.CanChat(AiCatalog.Agent("technical-analyst")!));
+        Assert.False(AiCatalog.CanChat(AiCatalog.Agent("data-curator")!));
     }
 
     // ---------- the AI Trader's memory in a chat ----------
@@ -228,7 +232,7 @@ public sealed class AiAgentChatTests
         Assert.Equal(AiToolNames.AiTraderChat, trader.ChatTools.Select(t => t.Name));
         var desk = list.Agents.Single(a => a.Key == AiCatalog.DeskAssistant);
         Assert.Equal(desk.Tools.Select(t => t.Name), desk.ChatTools.Select(t => t.Name));
-        var planned = list.Agents.Single(a => a.Key == "macro-analyst");
+        var planned = list.Agents.Single(a => a.Key == "data-curator");
         Assert.False(planned.Chat);
         Assert.Empty(planned.ChatTools);
     }
