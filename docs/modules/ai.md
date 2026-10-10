@@ -8,16 +8,18 @@ The desk's hosted language models live on one console page. The page shows:
 - every call it made, in full;
 - the owner's own questions, streamed.
 
-These agents are built:
+All fifteen agents are built (owner, 10 Oct 2026: every AI agent built and on):
 - the **Desk Assistant**, which the owner asks and which reads the desk through read-only tools (Phase 2);
 - three scheduled, advisory agents from Phase 3: the **Trade Reviewer**, the **News Analyst** and the
   **Incident Explainer**;
 - four desk analysts from Phase 4 (10 Oct): the **Technical**, **Options/OI**, **Macro** and **Fundamental Analysts**
   ([The desk analysts](#the-desk-analysts-phase-4));
+- three from Phase 4 that word what code measured, on from the start: the **[Data Curator](#data-curator)**, the
+  **[Compliance Triage](#compliance-triage)** and the **[Strategy Researcher](#strategy-researcher)**;
 - the [AI Trader](ai_trader.md), and from 10 Oct the three checks around its live paper orders: the **Validator**, the
   **Risk Memo** and the **Execution Reporter** ([below](#the-checks-around-the-ai-trader)).
 
-The rest are listed as planned, with the phase that builds them, so the page shows the whole plan and not just
+None is left planned. The page still shows each agent's phase, so it reads as the whole plan and not just
 what runs. The owner can talk with each built agent, the [AI Trader](ai_trader.md) included, not only the Desk
 Assistant ([Talking to the agents](#talking-to-the-agents)).
 
@@ -27,8 +29,9 @@ Assistant ([Talking to the agents](#talking-to-the-agents)).
   - `/ai/agents`;
   - `/ai/models`;
   - `/ai/calls`.
-- Code: `src/AlgoTrading.Infrastructure/Ai/`, `src/AlgoTrading.Api/Controllers/AiController.cs`.
-- Table: `ai_calls`.
+- Code: `src/AlgoTrading.Infrastructure/Ai/`, `src/AlgoTrading.Api/Controllers/AiController.cs`,
+  `src/AlgoTrading.Api/Services/AiAgents/`.
+- Tables: `ai_calls`, `ai_reports`; `regulatory_circulars` for the Compliance Triage.
 
 ## Ground rules
 
@@ -421,9 +424,10 @@ The memory endpoints are under [Memory](#memory).
 
 ## Scheduled agents (Phase 3)
 
-The three scheduled agents **start switched off**: they call the provider by themselves, so the owner turns each one
-on from AI → Agents. The Desk Assistant starts on, and so do the four desk analysts (owner, 10 Oct: every AI agent
-built and on).
+The three Phase 3 agents **start switched off**: they call the provider by themselves, so the owner turns each one
+on from AI → Agents. The Desk Assistant starts on, and so do the Phase 4 agents (owner, 10 Oct: every AI agent built
+and on): the four desk analysts, the three checks around the AI Trader, and the three below, each of which reads only
+what code measured, works outside the session, and makes a handful of calls a day or a week.
 
 `AiAgentScheduler`, a hosted service, runs once a minute:
 - It waits 90 s after a start before its first round.
@@ -477,6 +481,10 @@ Each output is checked before it is stored as `ok`:
 - the run reviews written since the last digest: how many kept to their spec, and the ones that did not;
 - one short section for each desk analyst that ran
   ([below](#where-their-reports-go)).
+- a line each for the Phase 4 agents that wrote since the last digest, and only for those: the Data Curator's
+  passes with their high findings, the circulars read with the ones that apply, the week's research note with its
+  ideas. On a day with no NSE session such a line is reason enough to send one, so the Saturday triage and the
+  Sunday note reach Telegram the same afternoon.
 
 When it goes:
 - After the NSE close and `Ai:ReviewAfterIst` (15:45), whichever is later, by which time the AI Trader's shadow book
@@ -484,7 +492,8 @@ When it goes:
 - While the Trade Reviewer is on, it also waits for the reviews still owed, a failed one with tries left included, for
   at most two hours; past that it says how many are still owed. A review written after the digest, such as an MCX
   run's after the MCX close, goes in the next day's.
-- On a day with no NSE session (the exchange calendar, not the weekday), only if the AI Trader looked that day.
+- On a day with no NSE session (the exchange calendar, not the weekday), only if the AI Trader looked that day or a
+  Phase 4 agent wrote since the last digest; then after 15:45.
 - A section with nothing to say is left out; with nothing at all, nothing is sent.
 
 It is a scheduled job, not an agent: it asks no model and runs whichever agents are on. Before it goes, the time it
@@ -675,6 +684,120 @@ they have no "Run now"; the Execution Reporter has one (`POST agents/execution-r
 Trader order's id, or none for the next fill due). Other users' fills are never reported. On Reports a decision's
 records link to the AI Trader's panel and a fill's to its manual book.
 
+## The Phase 4 agents: words over what code measured
+
+Three agents whose input is a table code computed and whose answer is held to it. The model never reads the
+database; it triages, judges or words what it is handed, and plain code checks every id, quote and number it writes
+(`AiFactCheck`) before the report counts as `ok`:
+- **Quotes** must be in the source's text, case, spacing and typographic quotes and dashes aside, as for the News
+  Analyst.
+- **Numbers, times and dates** the model writes must be in what it was handed (the system prompt and the question):
+  the same value, its sign, rupee mark, Indian or Western grouping and a per cent sign aside, or a value that rounds
+  to it at the decimals written ("75%" for 75.2%, "₹1,18,028" for −118028). A year cited from a date in the tables
+  counts ("2020-23" from "2020-09-01"). The integers 0 to 10 always pass: they count the answer's own parts. A number
+  the model computed or made up fails the report, which is kept as `invalid` with the model's text.
+
+All three are on from the start, work outside the session (`AiAgentHours.InSession`: never 09:00–15:45 IST on an NSE
+trading day by the exchange calendar, so a weekday holiday is free and a weekend special session is not), keep
+`ai_reports` with subject type `check` and a subject of their own, have memory (`Ai:MemoryAgents`), a chat persona
+with chat tools, and a Telegram command. A turn-away for capacity is not counted as a try, as for the Trade Reviewer.
+`POST agents/{key}/run` runs each now (a day or a week for the curator and the researcher, a circular's id for the
+triage).
+
+### Data Curator
+
+Finds broken inputs before anything relies on them (`DataCuratorAgent`, `DataCuratorChecks`, extract tier).
+
+**When.**
+
+| Pass | Subject | Due |
+| --- | --- | --- |
+| Night | `night:yyyy-MM-dd`, the trading day checked | 20 minutes after that day's archive is due (`ArchiveSchedule.DueAtIst`: 23:50 IST, or 20 minutes after MCX's close when later, so 00:10 or 00:35), once the archive's marker (`archive.candles.lastDay`) has reached the day; the India VIX check runs in the archive's tick, so its gaps are in. If the archive has not finished two hours later, the pass runs anyway and the lag is a finding. A night pass missed (the API down) is made at the next chance outside the session. |
+| Morning | `morning:yyyy-MM-dd`, today | From `Ai:DataCuratorMorningIst` (08:00) to 09:00 on NSE trading days only; it checks the trading day before and today's expiries. Missed, it is skipped: it exists for before the open. |
+
+**What code checks** (each query names its symbol, or underlying and expiry, and one day, on the indexes those tables
+have for exactly these reads):
+
+| Kind | Check | Finding when |
+| --- | --- | --- |
+| `archive` | The archive's marker | The day checked is not archived |
+| `vix` | `archive.vix.reportedGaps`, kept by the nightly VIX check | Any day the vendors could not fill |
+| `candles` | NIFTY 50, NIFTY BANK, SENSEX and India VIX candles at 1 and 5 minutes against the day's session, by the backfills' coverage rule (`VixBackfillPlan.Classify`: 90%, a bar in the first five minutes and the last fifteen) | A gap, or holes of 5 bars or more at 1 minute (2 at 5); a VIX day already reported is one finding |
+| `replay` | The 1-minute `live_bars` of the indices a replay plays (`MarketReplayService.CoverageSymbols`, as the Replay days list counts them) | 5 or more session minutes missing, with the longest gaps |
+| `chain` | The option chain's captures minute by minute (`Ai:DataCuratorChainUnderlyings`: NIFTY, BANKNIFTY, SENSEX), for the master's nearest expiry the poller captured most | 5 or more minutes missing or a gap of 5 minutes, listed; none at all while the day before had some. An underlying captured on neither day is not followed by the poller and is left out |
+| `feed` | Feed heartbeats (`ingestor_statuses`) of the last 7 days | No heartbeat in the session; a feed that went silent mid-session and never came back; a feed in error in the last day |
+| `quotes` | Recorded indices, stocks and futures (options left out: a far strike may not trade all day) | No quote in the session |
+| `watchlist` | Recorded contracts against the instrument master | Expired and still recorded |
+| `expiry` | NIFTY, BANKNIFTY and SENSEX's next option expiry in the master, for today | None in 60 days; one on a day the exchange calendar closes; one the expiry rule (`expiry_rules`, weekly or last weekday of the month, moved back over a holiday) does not expect |
+
+Each finding has a stable id (`candles:NIFTY:1m:2026-09-30`), its facts in words with their numbers, what reads that
+data (backtests on NIFTY, the 08:50 forecasts, ChainFlowBuy's historical chain, the AI Trader's brief…), and the fixes
+allowed for it, from a fixed list (`DataCuratorChecks.Actions`: archive again, run the VIX check, backfill from the
+broker, import Dhan's index history, restart the feed, check the chain poller, refresh the instrument masters, fix the
+expiry rule, check the holiday calendar, prune the recording list, nothing).
+
+**What the model does.** For each finding: a severity (high, medium, low), what breaks if it is ignored, naming the
+finding's own readers, and one fix from the finding's own list. The answer fails its check when it names an id the
+checks did not record, leaves one out, picks a fix not on the finding's list, or writes a number not in the findings.
+A pass that finds nothing asks no model and is written as it is ("nothing wrong").
+
+**Where it shows.** The Reports tab (findings, severity, what breaks, what to do, and the list of what was checked);
+Today's **Needs a look**: the high findings of the latest good pass of the last 36 hours (the morning pass supersedes
+the night's); a line in the next daily digest.
+
+### Compliance Triage
+
+Reads the week's circulars (`ComplianceTriageAgent`, extract tier), recorded once a day by the circulars recorder
+([Market intelligence](market_intelligence.md#sebi-nse-and-bse-circulars)).
+
+- **When.** From `Ai:ComplianceDay` (Saturday) at `Ai:ComplianceAfterIst` (10:00 IST), every circular recorded before
+  then and within `Ai:ComplianceLookbackDays` (21) that has no settled report, `Ai:ComplianceBatchSize` (4) a
+  scheduler minute. A circular recorded during the week waits for the next Saturday; a Saturday the API missed is
+  caught up at the next chance outside the session.
+- **What it reads.** Each circular's source, number, date, department, title and up to 2,500 characters of the text
+  read from its document; a circular whose document gave no text is handed over with a note to judge on its title.
+- **What it answers**, per circular (subject `circular:<id>`): applies to this desk (yes, no, unclear), the area
+  (retail algo, F&O contracts, risk and margins, market hours, data and APIs, other), why, what would have to change,
+  and the exact words it rests on. The prompt says what the desk is: paper orders that never reach an exchange, its
+  own algorithms on its own server, broker data APIs, no clients, not a broker or an algo provider.
+- **The check.** The verdict and area from the lists, a change named when it applies, and the quote found in the text
+  as handed over (the title, the number and the excerpt). A record left out of the answer is invalid; a batch cut off
+  at the token limit is failed and read again.
+- **Where it shows.** The Reports tab, linked to the circular's page or document; Today's Needs a look lists those
+  that apply, from the last 7 days; the digest's line counts them and names the ones that apply.
+
+### Strategy Researcher
+
+Reasons over backtest output, never a live change (`StrategyResearcherAgent`, `StrategyResearchData`, judge tier).
+
+- **When.** On `Ai:ResearchDay` (Sunday) from `Ai:ResearchAfterIst` (11:00 IST), one note a week (subject
+  `week:yyyy-MM-dd`, the Sunday). A Sunday the API missed is written at the next chance that week, never inside a
+  session, so a Sunday special session waits too.
+- **What code computes.** The week's finished backtests (`OfflineReplay` runs created in the 7 days before the cutoff,
+  completed or stopped, at most 300): strategy, underlying, window, which periods it covers (holdout 2020-09-01 to
+  2023-12-31, design 2024–2025, recent 2026 on), closed trades, net as the Backtests list shows it, per trade, win
+  rate, tunable settings (the strategy's own parameters and each rule set in its risk, filters, limits, exits and
+  contract blocks; lots, underlying and the cost model are not tunables) and a hash of them per configuration. Each
+  strategy's paper runs of the last 30 and 7 days from the Trade → History builder, recaps and alert runs left out,
+  net after charges. Each strategy's spec, its Idea and Limitations sections. And per strategy the overfitting checks:
+
+  | Check | Concern when |
+  | --- | --- |
+  | `sample` | Fewer than 30 closed trades in the week's backtests |
+  | `tunables` | Fewer than 10 trades per tunable setting |
+  | `holdout` | None of its backtests touched 2020-09 to 2023-12 (the rule from [SmcStructureBreak](../strategies/SmcStructureBreak.md): a 2024–26 result is not believed until it is run, unchanged, there); or the holdout lost |
+  | `in-vs-out` | Per trade on a later or held-out window under half the design years', or below zero |
+  | `paper-vs-backtest` | Paper per trade after charges under half the backtests', or below zero (unknown under 20 paper trades) |
+  | `configs` | 5 or more configurations tried in the week |
+
+- **What the model writes.** Per strategy, a verdict (concern, fine, unknown) and a sentence on each of its checks, and
+  at most 3 ideas, each a backtest to run (period, underlying, settings) with the numbers that suggest it.
+- **The check.** Strategies and check ids from the tables, at most three ideas, none a live change ("go live",
+  "deploy" and their like fail it), and every number in the tables. A week with no backtest and no paper run asks no
+  model.
+- **Where it shows.** The Reports tab, and the latest note's ideas above the list there; the digest's line on the day
+  it is written.
+
 ## Docs search
 
 `AiDocIndexer` keeps `ai_doc_chunks` in step with the repo's `docs/`: the public module docs and strategy specs.
@@ -774,8 +897,8 @@ The desk's bot answers its linked owner in a private chat, as the Assistant tab 
   bot posts the desk's notices there.
 - **Questions.** Each goes through the gateway as the Desk Assistant (source `telegram`), with the chat's last turns
   for half an hour. `/new` starts over and `/unlink` leaves. `/trader`, `/reviewer`, `/news`, `/incident`,
-  `/technical`, `/options`, `/macro` or `/fundamental` before a question asks that agent instead
-  ([Talking to the agents](#talking-to-the-agents)).
+  `/technical`, `/options`, `/macro`, `/fundamental`, `/data`, `/compliance` or `/research` before a question asks
+  that agent instead ([Talking to the agents](#talking-to-the-agents)).
 - **Answers.** The bot shows "typing…" while the model works. It answers in Telegram HTML, with tables and code in
   monospace and only `& < >` escaped. If Telegram refuses the HTML it sends plain text. The model, the seconds and
   the call number go under each answer.
@@ -819,6 +942,9 @@ cannot be asked (409), as the Desk Assistant cannot.
 | Macro Analyst | `get_analyst_reports`, `get_analyst_report` (the band, the clamped size, the facts it rested on and every fact it was handed). And `get_quotes`, `get_forecasts`, `get_news`. |
 | Fundamental Analyst | `get_analyst_reports` (a stock's with `symbol`), `get_analyst_report` (the metrics with their quotes, and the filing's text exactly as handed over). And `get_news`. |
 | Validator, Risk Memo, Execution Reporter | `get_ai_trader_checks`: the three's records for an IST day, or on one decision (its verdict, its memo and the notes on the fills it made), by agent, with each record's structured part. And `get_ai_trader_decisions`, `get_ai_trader_decision`: the decisions they were about, with what was placed. |
+| Data Curator | `get_data_checks`: its passes of the last days with their high findings, or one in full (every finding's facts, readers, severity, impact and fix, and what was checked). And `get_incidents`, `get_latest_checkup`, `search_docs`. |
+| Compliance Triage | `get_circulars`: the recorded circulars by source and by its verdict (yes, no, unclear, untriaged), or one with the text read from its document, its quote and what would change. And `search_docs`. |
+| Strategy Researcher | `get_research_notes`: its weekly notes with their ideas, or one week with the backtests, paper results and checks it read. And `get_strategy_history`, `get_strategy_spec`, `search_docs`. |
 
 Every chat tool only reads and is projected field by field, its free text masked like the desk tools'
 (`AiAgentChatToolTests`). A call runs only the tools it offered: a model that names another agent's tool is told the
@@ -845,7 +971,7 @@ memories its record lists.
 
 **On the console** (AI → Assistant):
 - A picker above the conversation: Desk Assistant (the default), AI Trader, Trade Reviewer, News Analyst, Incident
-  Explainer, Technical Analyst, Options Analyst, Macro Analyst, Fundamental Analyst, and from 10 Oct the Validator, the Risk Memo and the Execution Reporter (those three console only, no Telegram prefix). The choice survives a reload; `/ai/assistant?agent=ai-trader` opens one, and each agent's panel on AI →
+  Explainer, Technical Analyst, Options Analyst, Macro Analyst, Fundamental Analyst, Data Curator, Compliance Triage, Strategy Researcher, and from 10 Oct the Validator, the Risk Memo and the Execution Reporter (those three console only, no Telegram prefix). The choice survives a reload; `/ai/assistant?agent=ai-trader` opens one, and each agent's panel on AI →
   Agents links to it ("Talk with it").
 - One conversation per agent while the page is open: switching back finds it as it was, and an answer streams on in
   its own conversation. One question at a time across them.
@@ -854,8 +980,8 @@ memories its record lists.
 - 👍, 👎 with a correction, and `/remember` save for the agent being talked with; the line under an answer names the
   memories it was given.
 
-**On Telegram:** `/trader …`, `/reviewer …`, `/news …`, `/incident …`, `/technical …`, `/options …`, `/macro …` or
-`/fundamental …` asks that agent; the chat stays with it, so a
+**On Telegram:** `/trader …`, `/reviewer …`, `/news …`, `/incident …`, `/technical …`, `/options …`, `/macro …`,
+`/fundamental …`, `/data …`, `/compliance …` or `/research …` asks that agent; the chat stays with it, so a
 follow-up needs no prefix, until `/assistant`, `/new` or half an hour of quiet brings back the Desk Assistant. A prefix
 alone switches without asking. An answer from another agent than the Assistant names it under the text.
 
@@ -866,7 +992,8 @@ notes put into its system prompt on every call (`AiMemoryBook`). Each one can be
 came from, and taken out. Every built agent has memory (`Ai:MemoryAgents`): the Desk Assistant from the morning of
 1 Oct, the Trade Reviewer, News Analyst and Incident Explainer from that afternoon, once they were all switched on,
 the AI Trader from 2 Oct, for the lessons it learns from its own days ([AI Trader](ai_trader.md#lessons)), and the four
-desk analysts, the Validator, the Risk Memo and the Execution Reporter from 10 Oct, when they were built.
+desk analysts, the Validator, the Risk Memo, the Execution Reporter, the Data Curator, the Compliance Triage and the
+Strategy Researcher from 10 Oct, when they were built.
 
 | Kind | Written by | Used |
 |---|---|---|

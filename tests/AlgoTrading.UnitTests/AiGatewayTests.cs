@@ -175,14 +175,12 @@ public class AiGatewayTests
     }
 
     [Fact]
-    public async Task A_planned_agent_cannot_call_a_model()
+    public async Task An_unknown_agent_cannot_call_a_model()
     {
         var ai = Build();
 
-        var result = await ai.Gateway.AskAsync(Question(agent: "data-curator"), new RecordingSink(), CancellationToken.None);
-
-        Assert.Equal(409, result.RefusalStatus);
-        Assert.Contains("not built yet", result.Error);
+        // Every agent in the catalog is built since 10 Oct 2026; a key outside it never reaches a model.
+        await Assert.ThrowsAsync<ArgumentException>(() => ai.Gateway.AskAsync(Question(agent: "nobody"), new RecordingSink(), CancellationToken.None));
         Assert.Empty(ai.Provider.Requests);
     }
 

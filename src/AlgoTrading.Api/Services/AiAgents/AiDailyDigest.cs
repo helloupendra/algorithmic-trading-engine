@@ -12,9 +12,10 @@ using Microsoft.Extensions.Options;
 namespace AlgoTrading.Api.Services.AiAgents;
 
 /// <summary>
-/// The AI's one Telegram message a day, to the desk's system channel: the AI Trader's day, the run reviews
-/// written since the last digest, and one short section for each desk analyst that ran that day
-/// (<see cref="DeskAnalysts.DigestSectionsAsync"/>). The owner reads the desk on Today and wants one message a day
+/// The AI's one Telegram message a day, to the desk's system channel: the AI Trader's day, the run reviews written
+/// since the last digest, one short section for each desk analyst that ran that day
+/// (<see cref="DeskAnalysts.DigestSectionsAsync"/>), and a line each for the Data Curator, the Compliance Triage and
+/// the Strategy Researcher when they wrote since then. The owner reads the desk on Today and wants one message a day
 /// from the AI, never one per item.
 /// </summary>
 /// <remarks>
@@ -27,8 +28,9 @@ namespace AlgoTrading.Api.Services.AiAgents;
 /// <para>
 /// Once a day: the time it went and the day it was for are kept in system settings before it is sent, so neither a
 /// restart nor the next tick sends it again. On a day with no NSE session it goes only if the AI Trader looked that
-/// day. Replay decisions and replay shadow positions are never in it. A section with nothing to say is left out, and
-/// nothing is sent when neither has anything; such a day is kept as empty.
+/// day or one of the offline agents wrote since the last digest (the Saturday circulars, the Sunday research note).
+/// Replay decisions and replay shadow positions are never in it. A section with nothing to say is left out, and
+/// nothing is sent when no section has anything; such a day is kept as empty.
 /// </para>
 /// <para>
 /// A day missed (the API down from its close to midnight): on the next tick, the latest day of the last
@@ -111,7 +113,10 @@ public sealed class AiDailyDigest(
 
         var state = await store.LoadAsync(cancellationToken);
         var trader = await TraderDayAsync(day, nowUtc, state, s, cancellationToken);
-        if (!session.IsTradingDay && trader is not { Looks.Count: > 0 }) return false;
+        // The offline agents' work since the last digest: the data checks, the week's circulars on a Saturday and the
+        // research note on a Sunday, which are reason enough on a day with no session.
+        var offline = await OfflineSectionsAsync(last ?? nowUtc - TimeSpan.FromDays(1), cancellationToken);
+        if (!session.IsTradingDay && trader is not { Looks.Count: > 0 } && offline.Count == 0) return false;
 
         int owed = await ReviewsOwedAsync(state, s, nowUtc, cancellationToken);
         if (owed > 0 && nowUtc < due + ReviewWait) return false;
@@ -120,6 +125,7 @@ public sealed class AiDailyDigest(
         var analysts = await DeskAnalysts.DigestSectionsAsync(db, day, last ?? nowUtc - TimeSpan.FromDays(1), cancellationToken);
         var sections = new[] { trader is null ? null : TraderSection(trader), ReviewSection(reviews, owed) }
             .Concat(analysts)
+            .Concat(offline)
             .Where(x => x is not null)
             .ToList();
         if (sections.Count == 0)
@@ -184,8 +190,9 @@ public sealed class AiDailyDigest(
         if (trader is { Looks.Count: 0, Book.Count: 0 }) trader = null;
         var reviews = await ReviewsSinceAsync(lastSentUtc ?? nowUtc - TimeSpan.FromDays(1), cancellationToken);
         var analysts = await DeskAnalysts.DigestSectionsAsync(db, day, lastSentUtc ?? nowUtc - TimeSpan.FromDays(1), cancellationToken);
+        var offline = await OfflineSectionsAsync(lastSentUtc ?? nowUtc - TimeSpan.FromDays(1), cancellationToken);
 
-        if (trader is null && reviews.Count == 0 && analysts.Count == 0 && earlier.Count == 0)
+        if (trader is null && reviews.Count == 0 && analysts.Count == 0 && earlier.Count == 0 && offline.Count == 0)
         {
             await MarkAsync(EmptyKey, day, null, nowUtc, cancellationToken);
             return false;
@@ -194,6 +201,7 @@ public sealed class AiDailyDigest(
         int owed = await ReviewsOwedAsync(state, s, nowUtc, cancellationToken);
         var sections = new[] { trader is null ? null : TraderSection(trader), ReviewSection(reviews, owed) }
             .Concat(analysts)
+            .Concat(offline)
             .Append(MissedLine(earlier))
             .Where(x => x is not null)
             .ToList();
@@ -421,6 +429,96 @@ public sealed class AiDailyDigest(
         if (text.Length == 0) return null;
         return text.Append("\nRead them on the AI page, Reports tab.").ToString();
     }
+
+    /// <summary>
+    /// A line each for the Data Curator, the Compliance Triage and the Strategy Researcher, for the reports they wrote
+    /// since <paramref name="sinceUtc"/> (the last digest): only an agent that wrote something has a section. A report
+    /// that failed (no model answered) waits for its retry and is not counted.
+    /// </summary>
+    private async Task<List<string>> OfflineSectionsAsync(DateTime sinceUtc, CancellationToken cancellationToken)
+    {
+        string[] agents = [AiCatalog.DataCurator, AiCatalog.ComplianceTriage, AiCatalog.StrategyResearcher];
+        var rows = await db.AiReports.AsNoTracking()
+            .Where(r => agents.Contains(r.AgentKey) && r.SubjectType == AiReportSubject.Check && r.UpdatedUtc > sinceUtc && r.Status != AiReportStatus.Failed)
+            .OrderBy(r => r.Id)
+            .Select(r => new OfflineReport(r.AgentKey, r.SubjectId, r.Status, r.Title, r.DataJson))
+            .ToListAsync(cancellationToken);
+        var sections = new List<string>();
+        if (DataSection(rows.Where(r => r.Agent == AiCatalog.DataCurator).ToList()) is string data) sections.Add(data);
+        if (ComplianceSection(rows.Where(r => r.Agent == AiCatalog.ComplianceTriage).ToList()) is string compliance) sections.Add(compliance);
+        if (ResearchSection(rows.Where(r => r.Agent == AiCatalog.StrategyResearcher).ToList()) is string research) sections.Add(research);
+        return sections;
+    }
+
+    /// <summary>"Data checks (night 9 Oct, morning 10 Oct): 1 high, 2 medium, 0 low." and the high ones.</summary>
+    private static string? DataSection(IReadOnlyList<OfflineReport> reports)
+    {
+        if (reports.Count == 0) return null;
+        var ok = reports.Where(r => r.Status == AiReportStatus.Ok).ToList();
+        var findings = ok.SelectMany(r => AiJson.Object(r.DataJson)?["findings"] is System.Text.Json.Nodes.JsonArray a
+            ? a.OfType<System.Text.Json.Nodes.JsonObject>()
+            : []).ToList();
+        int Count(string severity) => findings.Count(f => AiJson.Str(f, "severity") == severity);
+        string passes = string.Join(", ", reports.Select(r => PassName(r.SubjectId)));
+        var text = new StringBuilder($"Data checks ({passes}): ");
+        text.Append(findings.Count == 0 && ok.Count > 0 ? "nothing wrong." : $"{Count("high")} high, {Count("medium")} medium, {Count("low")} low.");
+        foreach (var f in findings.Where(f => AiJson.Str(f, "severity") == "high").Take(DeviationsShown))
+        {
+            text.Append($"\n• {Escape(Cut(AiJson.Str(f, "subject") ?? "?", 60))}: {Escape(Cut(AiJson.Str(f, "facts") ?? string.Empty, 140))}");
+        }
+
+        int invalid = reports.Count(r => r.Status == AiReportStatus.Invalid);
+        if (invalid > 0) text.Append($"\n{invalid} triage{(invalid == 1 ? "" : "s")} failed its check: the code's findings are on the Reports tab.");
+        return text.ToString();
+    }
+
+    /// <summary>"Compliance triage: 6 circulars read: 1 applies, 1 unclear, 4 do not." and the ones that apply.</summary>
+    private static string? ComplianceSection(IReadOnlyList<OfflineReport> reports)
+    {
+        if (reports.Count == 0) return null;
+        var ok = reports.Where(r => r.Status == AiReportStatus.Ok)
+            .Select(r => (Report: r, Applies: AiJson.Object(r.DataJson) is { } d ? AiJson.Str(d, "applies") : null))
+            .ToList();
+        int yes = ok.Count(x => x.Applies == "yes"), unclear = ok.Count(x => x.Applies == "unclear"), no = ok.Count(x => x.Applies == "no");
+        var text = new StringBuilder($"Compliance triage: {reports.Count} circular{(reports.Count == 1 ? "" : "s")} read: {yes} appl{(yes == 1 ? "ies" : "y")}, {unclear} unclear, {no} do{(no == 1 ? "es" : "")} not");
+        int invalid = reports.Count - ok.Count;
+        text.Append(invalid > 0 ? $", {invalid} failed the quote check." : ".");
+        foreach (var x in ok.Where(x => x.Applies == "yes").Take(DeviationsShown))
+        {
+            text.Append($"\n• {Escape(Cut(x.Report.Title, 160))}");
+        }
+
+        return text.ToString();
+    }
+
+    /// <summary>The week's research note: its title and the ideas to test.</summary>
+    private static string? ResearchSection(IReadOnlyList<OfflineReport> reports)
+    {
+        if (reports.Count == 0) return null;
+        var latest = reports[^1];
+        if (latest.Status != AiReportStatus.Ok) return $"{Escape(Cut(latest.Title, 160))}. Read it on the Reports tab.";
+        var text = new StringBuilder(Escape(Cut(latest.Title, 200)));
+        var ideas = AiJson.Object(latest.DataJson)?["ideas"] as System.Text.Json.Nodes.JsonArray;
+        foreach (var idea in (ideas ?? []).OfType<System.Text.Json.Nodes.JsonObject>().Take(3))
+        {
+            text.Append($"\n• {Escape(AiJson.Str(idea, "strategy") ?? "?")}: {Escape(Cut(AiJson.Str(idea, "idea") ?? string.Empty, 160))}");
+        }
+
+        return text.ToString();
+    }
+
+    /// <summary>"night 9 Oct" from "night:2026-10-09".</summary>
+    private static string PassName(string subjectId)
+    {
+        string[] parts = subjectId.Split(':', 2);
+        return parts.Length == 2 && DateOnly.TryParseExact(parts[1], "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d)
+            ? $"{parts[0]} {d.ToString("d MMM", CultureInfo.InvariantCulture)}"
+            : subjectId;
+    }
+
+    private static string Cut(string text, int max) => text.Length <= max ? text : text[..(max - 1)] + "…";
+
+    private sealed record OfflineReport(string Agent, string SubjectId, string Status, string Title, string DataJson);
 
     /// <summary>"+₹2,170" / "−₹2,150" / "₹0": whole rupees with the sign in front.</summary>
     private static string Net(decimal value)

@@ -489,6 +489,8 @@ describe('the words', () => {
     expect(attentionLevel('urgent')).toEqual({ key: null, label: 'Urgent', tone: 'neutral', rank: 4 })
     expect(attentionKind('check')).toBe('Check')
     expect(attentionKind('ai-trader')).toBe('AI Trader')
+    expect(attentionKind('data')).toBe('Data')
+    expect(attentionKind('compliance')).toBe('Circular')
     expect(attentionKind('weather')).toBe('Weather')
     expect(attentionKind('')).toBe('')
   })

@@ -33,4 +33,7 @@ public sealed class MarketIntelligenceOptions
 
     /// <summary><c>python -m analysis news-score</c> every 10 minutes, 06:00–23:30 IST.</summary>
     public bool NewsScoringEnabled { get; set; } = true;
+
+    /// <summary>SEBI's, NSE's and BSE's circulars once a day from 20:30 IST, for the Compliance Triage.</summary>
+    public bool CircularsEnabled { get; set; } = true;
 }

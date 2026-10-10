@@ -109,6 +109,8 @@ public sealed class TodayBuilder(
                 "The model did not answer, or not in the shape asked; those looks decided nothing.", "/ai/agents?agent=ai-trader", null));
         }
 
+        attention.AddRange(await OfflineAgentsAttentionAsync(now, cancellationToken));
+
         var order = new Dictionary<string, int> { ["critical"] = 0, ["high"] = 1, ["medium"] = 2, ["info"] = 3 };
         attention = attention.OrderBy(a => order.GetValueOrDefault(a.Level, 4)).ThenByDescending(a => a.AtUtc).ToList();
 
@@ -117,6 +119,52 @@ public sealed class TodayBuilder(
         {
             AiTrader = aiTrader,
         };
+    }
+
+    /// <summary>How far back the Data Curator's latest pass still speaks for the data: the morning pass, or the night before it.</summary>
+    public static readonly TimeSpan DataCheckFresh = TimeSpan.FromHours(36);
+
+    /// <summary>
+    /// The Data Curator's high findings from its latest good pass of the last <see cref="DataCheckFresh"/> (the morning
+    /// pass supersedes the night's), and the circulars the Compliance Triage found apply, from the last week.
+    /// </summary>
+    private async Task<List<TodayAttention>> OfflineAgentsAttentionAsync(DateTime now, CancellationToken cancellationToken)
+    {
+        var list = new List<TodayAttention>();
+        var fresh = now - DataCheckFresh;
+        var curator = await db.AiReports.AsNoTracking()
+            .Where(r => r.AgentKey == AiCatalog.DataCurator && r.SubjectType == AiReportSubject.Check && r.Status == AiReportStatus.Ok && r.UpdatedUtc >= fresh)
+            .OrderByDescending(r => r.UpdatedUtc)
+            .Select(r => new { r.Id, r.DataJson, r.UpdatedUtc })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (curator is not null && AiJson.Object(curator.DataJson)?["findings"] is JsonArray findings)
+        {
+            foreach (var f in findings.OfType<JsonObject>().Where(f => AiJson.Str(f, "severity") == "high"))
+            {
+                string facts = AiJson.Str(f, "facts") ?? string.Empty;
+                string? impact = AiJson.Str(f, "impact");
+                string? doWhat = AiJson.Str(f, "actionMeans");
+                list.Add(new TodayAttention("high", "data", $"{AiJson.Str(f, "subject")}: {Cut(facts, 160)}",
+                    Cut($"AI: {impact}{(doWhat is null ? string.Empty : $" Do: {doWhat}.")}", 300), $"/ai/reports?id={curator.Id}", Utc(curator.UpdatedUtc)));
+            }
+        }
+
+        var week = now.AddDays(-7);
+        var circulars = await db.AiReports.AsNoTracking()
+            .Where(r => r.AgentKey == AiCatalog.ComplianceTriage && r.SubjectType == AiReportSubject.Check && r.Status == AiReportStatus.Ok && r.UpdatedUtc >= week)
+            .OrderByDescending(r => r.UpdatedUtc)
+            .Select(r => new { r.Id, r.Title, r.DataJson, r.UpdatedUtc })
+            .Take(200)
+            .ToListAsync(cancellationToken);
+        foreach (var c in circulars)
+        {
+            var data = AiJson.Object(c.DataJson);
+            if (data is null || AiJson.Str(data, "applies") != "yes") continue;
+            list.Add(new TodayAttention("info", "compliance", Cut(c.Title, 200)!, Cut(AiJson.Str(data, "change") ?? AiJson.Str(data, "why"), 300),
+                $"/ai/reports?id={c.Id}", Utc(c.UpdatedUtc)));
+        }
+
+        return list;
     }
 
     /// <summary>

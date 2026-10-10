@@ -30,12 +30,13 @@ public class AiSettingsTests
         // The scheduled agents call the provider by themselves: off until the owner turns them on.
         string[] scheduled = [AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer, AiCatalog.AiTrader];
         Assert.All(scheduled, key => Assert.Equal("off", state.Agent(key)!.Status));
-        // The desk analysts start on (owner, 10 Oct 2026: every AI agent built and on), and so do the checks around the AI
-        // Trader's placements: they call a model only when it places.
-        string[] analysts = [AiCatalog.TechnicalAnalyst, AiCatalog.OptionsAnalyst, AiCatalog.MacroAnalyst, AiCatalog.FundamentalAnalyst];
-        string[] checks = [AiCatalog.Validator, AiCatalog.RiskMemo, AiCatalog.ExecutionReporter];
-        Assert.All(analysts.Concat(checks), key => Assert.Equal("on", state.Agent(key)!.Status));
-        Assert.All(state.Agents.Where(a => a.Def.Key != AiCatalog.DeskAssistant && !scheduled.Contains(a.Def.Key) && !analysts.Contains(a.Def.Key) && !checks.Contains(a.Def.Key)),
+        // The agents built on 10 Oct start on (owner: every AI agent built and on): the desk analysts, the checks around the
+        // AI Trader's placements (they call a model only when it places), and the three that read only what code measured.
+        string[] onByDefault = [AiCatalog.TechnicalAnalyst, AiCatalog.OptionsAnalyst, AiCatalog.MacroAnalyst, AiCatalog.FundamentalAnalyst,
+            AiCatalog.Validator, AiCatalog.RiskMemo, AiCatalog.ExecutionReporter,
+            AiCatalog.DataCurator, AiCatalog.StrategyResearcher, AiCatalog.ComplianceTriage];
+        Assert.All(onByDefault, key => Assert.Equal("on", state.Agent(key)!.Status));
+        Assert.All(state.Agents.Where(a => a.Def.Key != AiCatalog.DeskAssistant && !scheduled.Contains(a.Def.Key) && !onByDefault.Contains(a.Def.Key)),
             a => Assert.Equal("planned", a.Status));
         Assert.Equal(new[] { Judge1, Judge2, Judge3 }, state.Agent(AiCatalog.DeskAssistant)!.Chain);
     }
@@ -77,13 +78,14 @@ public class AiSettingsTests
     }
 
     [Fact]
-    public async Task A_planned_agent_stays_off_whatever_a_row_says()
+    public async Task Every_agent_is_built_and_one_planned_again_reads_as_planned_even_when_on()
     {
         var ai = Build();
-        ai.Db.SystemSettings.Add(new SystemSetting { Key = AiSettingsStore.AgentEnabledKey("data-curator"), Value = "true" });
-        await ai.Db.SaveChangesAsync();
 
-        Assert.Equal("planned", (await ai.Store.LoadAsync()).Agent("data-curator")!.Status);
+        // Every agent in the catalog is built since 10 Oct 2026 (owner: every AI agent built and on).
+        Assert.All((await ai.Store.LoadAsync()).Agents, a => Assert.NotEqual("planned", a.Status));
+        var planned = new AiAgentState(AiCatalog.Agent(AiCatalog.DataCurator)! with { Built = false }, true, [], false, null, null, null);
+        Assert.Equal("planned", planned.Status);
     }
 
     [Fact]
@@ -141,7 +143,8 @@ public class AiSettingsTests
             {
                 AiCatalog.DeskAssistant, AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer,
                 AiCatalog.TechnicalAnalyst, AiCatalog.OptionsAnalyst, AiCatalog.MacroAnalyst, AiCatalog.FundamentalAnalyst,
-                AiCatalog.Validator, AiCatalog.RiskMemo, AiCatalog.ExecutionReporter, AiCatalog.AiTrader,
+                AiCatalog.DataCurator, AiCatalog.Validator, AiCatalog.RiskMemo, AiCatalog.StrategyResearcher,
+                AiCatalog.ComplianceTriage, AiCatalog.ExecutionReporter, AiCatalog.AiTrader,
             },
             AiCatalog.Agents.Where(a => a.Built).Select(a => a.Key));
         Assert.All(AiCatalog.Agents.Where(a => a.Built), a => Assert.False(string.IsNullOrWhiteSpace(a.SystemPrompt)));

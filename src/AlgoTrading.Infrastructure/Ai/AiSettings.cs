@@ -151,6 +151,33 @@ public sealed class AiSettings
     /// <summary>Tries for one report before a scheduled agent gives up on its subject.</summary>
     public int MaxReportAttempts { get; set; } = 3;
 
+    /// <summary>
+    /// IST time of the Data Curator's pre-open pass on trading days. It runs from then until 09:00, never later: the
+    /// session is the live desk's.
+    /// </summary>
+    public string DataCuratorMorningIst { get; set; } = "08:00";
+
+    /// <summary>The option chains the Data Curator checks minute by minute (the chain poller's underlyings).</summary>
+    public string DataCuratorChainUnderlyings { get; set; } = "NIFTY,BANKNIFTY,SENSEX";
+
+    /// <summary>The IST day of the week the Compliance Triage reads the week's circulars.</summary>
+    public DayOfWeek ComplianceDay { get; set; } = DayOfWeek.Saturday;
+
+    /// <summary>IST time on <see cref="ComplianceDay"/> after which it reads them.</summary>
+    public string ComplianceAfterIst { get; set; } = "10:00";
+
+    /// <summary>Circulars in one Compliance Triage call; each carries up to 2,500 characters of its text.</summary>
+    public int ComplianceBatchSize { get; set; } = 4;
+
+    /// <summary>How far back, by when they were recorded, circulars are still triaged.</summary>
+    public int ComplianceLookbackDays { get; set; } = 21;
+
+    /// <summary>The IST day of the week the Strategy Researcher writes its note: a day with no session.</summary>
+    public DayOfWeek ResearchDay { get; set; } = DayOfWeek.Sunday;
+
+    /// <summary>IST time on <see cref="ResearchDay"/> after which it writes it.</summary>
+    public string ResearchAfterIst { get; set; } = "11:00";
+
     /// <summary>Whether agents read their memories (<see cref="AiMemoryBook"/>) before answering.</summary>
     public bool MemoryEnabled { get; set; } = true;
 
@@ -159,13 +186,15 @@ public sealed class AiSettings
     /// built agent the same day, once they were all on: a correction on any agent's report is its memory. The AI
     /// Trader from 2 Oct, for its lessons; it reads them bounded by the day it decides on, never through the
     /// gateway's recall (<c>AiTraderMemory</c>). The Validator, the Risk Memo and the Execution Reporter from 10 Oct,
-    /// when they were built: a correction on one of their records is read by their next call.
+    /// when they were built: a correction on one of their records is read by their next call. The Data Curator,
+    /// Strategy Researcher and Compliance Triage from 10 Oct too.
     /// </summary>
     /// <remarks>The four desk analysts from 10 Oct, when they were built: a correction on their reports is their memory too.</remarks>
     public string MemoryAgents { get; set; } =
         $"{AiCatalog.DeskAssistant},{AiCatalog.TradeReviewer},{AiCatalog.NewsAnalyst},{AiCatalog.IncidentExplainer},{AiCatalog.AiTrader}," +
         $"{AiCatalog.TechnicalAnalyst},{AiCatalog.OptionsAnalyst},{AiCatalog.MacroAnalyst},{AiCatalog.FundamentalAnalyst}," +
-        $"{AiCatalog.Validator},{AiCatalog.RiskMemo},{AiCatalog.ExecutionReporter}";
+        $"{AiCatalog.Validator},{AiCatalog.RiskMemo},{AiCatalog.ExecutionReporter}," +
+        $"{AiCatalog.DataCurator},{AiCatalog.StrategyResearcher},{AiCatalog.ComplianceTriage}";
 
     /// <summary>Characters of memories one call may carry in its system prompt; past it the closest to the question win.</summary>
     public int MemoryBudgetChars { get; set; } = 2400;

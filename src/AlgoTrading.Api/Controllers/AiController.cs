@@ -597,7 +597,8 @@ public class AiController : ControllerBase
         if (def is null) return NotFound(new { error = $"No agent {key}." });
         if (key is not (AiCatalog.TradeReviewer or AiCatalog.NewsAnalyst or AiCatalog.IncidentExplainer or AiCatalog.AssistantCheck or AiCatalog.AssistantExam
             or AiCatalog.AiTrader or AiCatalog.AiTraderReflect or AiCatalog.ExecutionReporter
-            or AiCatalog.TechnicalAnalyst or AiCatalog.OptionsAnalyst or AiCatalog.MacroAnalyst or AiCatalog.FundamentalAnalyst))
+            or AiCatalog.TechnicalAnalyst or AiCatalog.OptionsAnalyst or AiCatalog.MacroAnalyst or AiCatalog.FundamentalAnalyst
+            or AiCatalog.DataCurator or AiCatalog.ComplianceTriage or AiCatalog.StrategyResearcher))
         {
             return Conflict(new { error = $"{def.Name} is not a scheduled agent." });
         }
@@ -622,13 +623,24 @@ public class AiController : ControllerBase
             return BadRequest(new { error = $"{def.Name} writes about the moment it runs: give no subjectId." });
         }
 
-        if (subject is not null && !long.TryParse(subject, out _))
+        if (key is AiCatalog.DataCurator or AiCatalog.StrategyResearcher)
+        {
+            // A day or a week: "night:2026-10-09", "morning:2026-10-10", "week:2026-10-11", or the date alone.
+            if (subject is not null && !System.Text.RegularExpressions.Regex.IsMatch(subject, @"^((night|morning|week):)?\d{4}-\d{2}-\d{2}$"))
+            {
+                return BadRequest(new { error = key == AiCatalog.DataCurator
+                    ? "subjectId is a day (yyyy-MM-dd), night:yyyy-MM-dd or morning:yyyy-MM-dd."
+                    : "subjectId is a week's Sunday (yyyy-MM-dd) or week:yyyy-MM-dd." });
+            }
+        }
+        else if (subject is not null && !long.TryParse(subject, out _))
         {
             return BadRequest(new { error = key switch
             {
                 AiCatalog.AiTraderReflect => "subjectId is a replay's id.",
                 AiCatalog.FundamentalAnalyst => "subjectId is a filing's id.",
                 AiCatalog.ExecutionReporter => "subjectId is one of the AI Trader's paper orders' id.",
+                AiCatalog.ComplianceTriage => "subjectId is a circular's id.",
                 _ => "subjectId is a run or incident id.",
             } });
         }
@@ -662,9 +674,22 @@ public class AiController : ControllerBase
         var orders = orderIds.Count == 0 ? [] : await _db.PaperOrders.AsNoTracking().Where(o => orderIds.Contains(o.Id)).Select(o => new { o.Id, o.SimulationRunId }).ToListAsync(cancellationToken);
         var news = newsIds.Count == 0 ? [] : await _db.NewsItems.AsNoTracking().Where(n => newsIds.Contains(n.Id)).Select(n => new { n.Id, n.Link }).ToListAsync(cancellationToken);
         var filings = filingIds.Count == 0 ? [] : await _db.CorporateAnnouncements.AsNoTracking().Where(a => filingIds.Contains(a.Id)).Select(a => new { a.Id, a.AttachmentUrl }).ToListAsync(cancellationToken);
+        // The Compliance Triage's reports are about a circular: its page (SEBI) or its document (NSE, BSE).
+        var circularIds = reports
+            .Where(r => r.AgentKey == AiCatalog.ComplianceTriage && r.SubjectId.StartsWith(AlgoTrading.Api.Services.AiAgents.ComplianceTriageAgent.SubjectPrefix, StringComparison.Ordinal))
+            .Select(r => long.TryParse(r.SubjectId[AlgoTrading.Api.Services.AiAgents.ComplianceTriageAgent.SubjectPrefix.Length..], out long v) ? v : 0)
+            .Where(v => v > 0)
+            .ToList();
+        var circulars = circularIds.Count == 0 ? [] : await _db.RegulatoryCirculars.AsNoTracking().Where(c => circularIds.Contains(c.Id)).Select(c => new { c.Id, c.Url }).ToListAsync(cancellationToken);
 
         foreach (var r in reports)
         {
+            if (r.AgentKey == AiCatalog.ComplianceTriage)
+            {
+                links[(r.SubjectType, r.SubjectId)] = circulars.FirstOrDefault(c => AlgoTrading.Api.Services.AiAgents.ComplianceTriageAgent.Subject(c.Id) == r.SubjectId)?.Url;
+                continue;
+            }
+
             links[(r.SubjectType, r.SubjectId)] = r.SubjectType switch
             {
                 AiReportSubject.Run => $"/trade/runs/{r.SubjectId}",

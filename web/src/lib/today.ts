@@ -41,7 +41,7 @@ export interface TodayMarket {
 }
 
 export type AttentionLevel = 'critical' | 'high' | 'medium' | 'info'
-export type AttentionKind = 'incident' | 'check' | 'agent' | 'learning' | 'decision' | 'trading' | 'system' | 'ai-trader'
+export type AttentionKind = 'incident' | 'check' | 'agent' | 'learning' | 'decision' | 'trading' | 'system' | 'ai-trader' | 'data' | 'compliance'
 
 /** One thing that deserves a look. Never a yes/no prompt: a title, why, and where to read more. */
 export interface AttentionItem {
@@ -579,6 +579,9 @@ const KINDS: Record<AttentionKind, string> = {
   trading: 'Trading',
   system: 'System',
   'ai-trader': 'AI Trader',
+  // The Data Curator's high findings and the circulars the Compliance Triage found apply.
+  data: 'Data',
+  compliance: 'Circular',
 }
 
 export function attentionKind(kind: string): string {

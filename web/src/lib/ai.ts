@@ -702,6 +702,15 @@ export const SCHEDULED_AGENTS: Readonly<Record<string, ScheduledAgentMeta>> = {
     writes: 'for each results filing of a stock in the F&O universe (polled every 10 minutes), the numbers with their quotes and the surprise',
     hint: 'Blank reads the results filings that are due.',
   },
+  'data-curator': {
+    subject: null,
+    writes: "after each trading day's archive (from about 00:10 IST) and at 08:00 IST, a triage of what the data checks found",
+  },
+  'compliance-triage': { subject: null, writes: "on Saturdays from 10:00 IST, whether each of the week's SEBI, NSE and BSE circulars applies to the desk" },
+  'strategy-researcher': {
+    subject: null,
+    writes: "on Sundays from 11:00 IST, the week's overfitting checks and at most three ideas to test, never a live change",
+  },
   'assistant-check': { subject: null, writes: "on weekdays after 16:40 IST, the Desk Assistant's graded answers to questions the code knows" },
   'assistant-exam': { subject: null, writes: 'on Sundays from 10:30 IST, the Desk Assistant\'s score on a fixed bank of questions about finished days' },
   'ai-trader': {
@@ -980,6 +989,132 @@ export function yoyText(m: Pick<ResultsMetric, 'yoyPct' | 'yoyComputed'>): strin
   return `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(1)}%`
 }
 
+/** One problem the Data Curator's checks found, with the model's triage when it passed its check. */
+export interface DataFinding {
+  id: string
+  kind: string
+  subject: string
+  /** What the check measured: the only numbers the triage may cite. */
+  facts: string
+  readBy: string[]
+  /** high, medium or low; null when the triage failed its check or did not run. */
+  severity: string | null
+  impact: string | null
+  action: string | null
+  actionMeans: string | null
+}
+
+/** A Data Curator pass: night (after the archive of the day checked) or morning (before the open). */
+export interface DataCheck {
+  pass: string
+  checkedDay: string | null
+  summary: string | null
+  checked: string[]
+  findings: DataFinding[]
+  high: number
+  medium: number
+  low: number
+}
+
+export function readDataCheck(data: Record<string, unknown> | null): DataCheck | null {
+  if (!data) return null
+  return {
+    pass: str(data.pass) ?? '',
+    checkedDay: str(data.checkedDay),
+    summary: str(data.summary),
+    checked: strings(data.checked),
+    findings: list<Record<string, unknown>>(data.findings)
+      .filter((f) => f && typeof f === 'object')
+      .map((f) => ({
+        id: str(f.id) ?? '',
+        kind: str(f.kind) ?? '',
+        subject: str(f.subject) ?? '',
+        facts: str(f.facts) ?? '',
+        readBy: strings(f.readBy),
+        severity: str(f.severity),
+        impact: str(f.impact),
+        action: str(f.action),
+        actionMeans: str(f.actionMeans),
+      })),
+    high: num(data.high) ?? 0,
+    medium: num(data.medium) ?? 0,
+    low: num(data.low) ?? 0,
+  }
+}
+
+/** The Compliance Triage's verdict on one circular, with the words it rests on. */
+export interface CircularTriage {
+  applies: string
+  area: string | null
+  why: string | null
+  change: string | null
+  quote: string | null
+}
+
+export function readCircularTriage(data: Record<string, unknown> | null): CircularTriage | null {
+  if (!data) return null
+  return { applies: str(data.applies) ?? 'unclear', area: str(data.area), why: str(data.why), change: str(data.change), quote: str(data.quote) }
+}
+
+/** A test the Strategy Researcher thinks worth running: a backtest, never a live change. */
+export interface ResearchIdea {
+  strategy: string
+  idea: string
+  test: string
+  why: string
+}
+
+/** One of the code's overfitting checks on a strategy, with what the researcher made of it. */
+export interface ResearchCheck {
+  strategy: string
+  check: string
+  /** The code's own reading: concern, fine or unknown. */
+  reading: string
+  facts: string
+  verdict: string | null
+  note: string | null
+}
+
+export interface ResearchNote {
+  week: string | null
+  summary: string | null
+  ideas: ResearchIdea[]
+  checks: ResearchCheck[]
+  backtests: number
+}
+
+export function readResearchNote(data: Record<string, unknown> | null): ResearchNote | null {
+  if (!data) return null
+  const notes = list<Record<string, unknown>>(data.strategyNotes).filter((s) => s && typeof s === 'object')
+  const words = new Map<string, { verdict: string | null; note: string | null }>()
+  for (const s of notes) {
+    for (const c of list<Record<string, unknown>>(s.checks)) {
+      if (c && typeof c === 'object') words.set(`${str(s.strategy)}|${str(c.check)}`, { verdict: str(c.verdict), note: str(c.note) })
+    }
+  }
+  return {
+    week: str(data.week),
+    summary: str(data.summary),
+    ideas: list<Record<string, unknown>>(data.ideas)
+      .filter((i) => i && typeof i === 'object')
+      .map((i) => ({ strategy: str(i.strategy) ?? '', idea: str(i.idea) ?? '', test: str(i.test) ?? '', why: str(i.why) ?? '' })),
+    checks: list<Record<string, unknown>>(data.checks)
+      .filter((c) => c && typeof c === 'object')
+      .map((c) => {
+        const said = words.get(`${str(c.strategy)}|${str(c.check)}`)
+        return {
+          strategy: str(c.strategy) ?? '',
+          check: str(c.check) ?? '',
+          reading: str(c.reading) ?? 'unknown',
+          facts: str(c.facts) ?? '',
+          verdict: said?.verdict ?? null,
+          note: said?.note ?? null,
+        }
+      }),
+    backtests: list(data.backtests).length,
+  }
+}
+
 export interface AiReportFilters {
   agent?: string
   subjectType?: string
@@ -1126,6 +1261,35 @@ export function urgencyBadge(v: string | null | undefined): { label: string; ton
   return URGENCIES[v ?? ''] ?? unknownWord(v)
 }
 
+const SEVERITIES: Record<string, { label: string; tone: Tone }> = {
+  high: { label: 'High', tone: 'neg' },
+  medium: { label: 'Medium', tone: 'warn' },
+  low: { label: 'Low', tone: 'neutral' },
+}
+const APPLIES: Record<string, { label: string; tone: Tone }> = {
+  yes: { label: 'Applies', tone: 'warn' },
+  no: { label: 'Does not apply', tone: 'neutral' },
+  unclear: { label: 'Unclear', tone: 'neutral' },
+}
+const READINGS: Record<string, { label: string; tone: Tone }> = {
+  concern: { label: 'Concern', tone: 'warn' },
+  fine: { label: 'Fine', tone: 'pos' },
+  unknown: { label: 'Not known', tone: 'neutral' },
+}
+
+/** A data finding's severity, as the Data Curator triaged it; "not triaged" when the triage failed. */
+export function severityBadge(v: string | null | undefined): { label: string; tone: Tone } {
+  return v ? (SEVERITIES[v] ?? unknownWord(v)) : { label: 'Not triaged', tone: 'neutral' }
+}
+/** Whether a circular applies to the desk, as the Compliance Triage judged it. */
+export function appliesBadge(v: string | null | undefined): { label: string; tone: Tone } {
+  return APPLIES[v ?? ''] ?? unknownWord(v)
+}
+/** An overfitting check's reading: the code's, or the researcher's verdict on it. */
+export function readingBadge(v: string | null | undefined): { label: string; tone: Tone } {
+  return READINGS[v ?? ''] ?? unknownWord(v)
+}
+
 /** The News Analyst's target share of reports that pass their check. */
 export const NEWS_VALID_TARGET = 98
 
@@ -1165,6 +1329,19 @@ export function reportSubjectLabel(r: Pick<AiReportSummary, 'subjectType' | 'sub
     if (r.subjectType === 'filing') return 'Results filing'
     const slot = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})$/.exec(r.subjectId)
     return `${analyst} · ${slot ? `${shortDate(slot[1])} ${slot[2]}` : r.subjectId}`
+  }
+  // The Phase 4 agents write "check" reports too: a pass over the data, a circular, a week.
+  if (r.agentKey === 'data-curator') {
+    const pass = /^(night|morning):(\d{4}-\d{2}-\d{2})$/.exec(r.subjectId)
+    return pass ? `Data checks · ${pass[1]} ${shortDate(pass[2])}` : `Data checks · ${r.subjectId}`
+  }
+  if (r.agentKey === 'compliance-triage') {
+    const circular = /^circular:(\d+)$/.exec(r.subjectId)
+    return circular ? `Circular #${circular[1]}` : r.subjectId
+  }
+  if (r.agentKey === 'strategy-researcher') {
+    const week = /^week:(\d{4}-\d{2}-\d{2})$/.exec(r.subjectId)
+    return week ? `Research · week to ${shortDate(week[1])}` : r.subjectId
   }
   switch (r.subjectType) {
     case 'decision':
@@ -2723,6 +2900,27 @@ export const CHAT_AGENTS: readonly ChatAgentMeta[] = [
     starters: ['How much did slippage cost today?', 'Which fill was furthest from its plan?', 'Did any stop fill well past its level?'],
     placeholder: 'Ask the Execution Reporter about a fill…',
   },
+  {
+    key: 'data-curator',
+    label: 'Data Curator',
+    lead: "Question the Data Curator about its checks of the recorded data: what the code found after each night's archive and before the open, and how it triaged each problem.",
+    starters: ["What did last night's data checks find?", 'Is anything high severity open?', 'Which days this week had gaps in the option chain?'],
+    placeholder: 'Ask the Data Curator about a data check…',
+  },
+  {
+    key: 'compliance-triage',
+    label: 'Compliance Triage',
+    lead: "Question the Compliance Triage about the week's SEBI, NSE and BSE circulars: which apply to the desk, what would have to change, and the words each verdict rests on.",
+    starters: ['Which circulars this week apply to the desk?', 'Show me the circulars you could not decide on.', 'What does the latest algo circular ask for?'],
+    placeholder: 'Ask the Compliance Triage about a circular…',
+  },
+  {
+    key: 'strategy-researcher',
+    label: 'Strategy Researcher',
+    lead: "Question the Strategy Researcher about its weekly notes: the week's backtests, the overfitting checks and the ideas it thinks worth testing, never a live change.",
+    starters: ["What did this week's note find?", 'Which strategy has not been run on the holdout?', 'Why is that idea worth testing?'],
+    placeholder: 'Ask the Strategy Researcher about a backtest or an idea…',
+  },
 ]
 
 /** A stored or linked agent key the picker knows; anything else is the Desk Assistant. */
@@ -2934,6 +3132,9 @@ const TOOL_SUBJECTS: Record<string, { keys: string[]; label: (value: string) => 
   get_trade_review: { keys: ['runId'], label: (v) => `Review of run #${v}`, bare: 'One review' },
   get_news_event: { keys: ['item', 'reportId'], label: (v) => `News record ${v}`, bare: 'One news record' },
   get_incident: { keys: ['incidentId', 'id'], label: (v) => `Incident #${v}`, bare: 'One incident' },
+  get_data_checks: { keys: ['reportId'], label: (v) => `Data check #${v}`, bare: 'Its data checks' },
+  get_circulars: { keys: ['id'], label: (v) => `Circular #${v}`, bare: 'Circulars' },
+  get_research_notes: { keys: ['reportId', 'week'], label: (v) => `Research note ${v}`, bare: 'Its research notes' },
 }
 
 /** The arguments the model wrote, when they are a JSON object; null otherwise. */
