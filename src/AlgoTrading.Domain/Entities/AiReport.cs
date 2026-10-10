@@ -72,7 +72,10 @@ public static class AiReportSubject
     public const string Filing = "filing";
     public const string Incident = "incident";
 
-    /// <summary>The Desk Assistant's daily check; the subject id is the IST day.</summary>
+    /// <summary>
+    /// A report about a moment rather than a row: the Desk Assistant's daily check (the subject id is the IST day), the
+    /// AI Trader's reflections, and the desk analysts' slots (the subject id is the IST day and time, "2026-10-12 08:20").
+    /// </summary>
     public const string Check = "check";
 
     /// <summary>The Desk Assistant's exam; the subject id is the exam's id.</summary>

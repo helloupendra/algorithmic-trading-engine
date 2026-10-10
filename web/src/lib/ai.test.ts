@@ -90,6 +90,14 @@ import {
   parseChatAgent,
   readAgents,
   streamingAgent,
+  DESK_ANALYSTS,
+  SCHEDULED_AGENTS,
+  analystBadge,
+  readMacroReport,
+  readOptionsReport,
+  readResultsReport,
+  readTechnicalReport,
+  yoyText,
 } from './ai'
 import type { AgentChats, AiMemory, AiModel, AiStreamEvent, AiToolStep, ChatAction, ChatState, SseMessage } from './ai'
 import { ApiError } from './api'
@@ -999,6 +1007,73 @@ describe('the assistant check', () => {
   })
 })
 
+describe("the desk analysts' reports", () => {
+  it('names a slot by its day and time, and a results filing as one', () => {
+    expect(reportSubjectLabel({ agentKey: 'technical-analyst', subjectType: 'check', subjectId: '2026-10-07 08:20' })).toBe('Technical · 7 Oct 08:20')
+    expect(reportSubjectLabel({ agentKey: 'options-analyst', subjectType: 'check', subjectId: '2026-10-07 13:00' })).toBe('Options · 7 Oct 13:00')
+    expect(reportSubjectLabel({ agentKey: 'macro-analyst', subjectType: 'check', subjectId: 'odd' })).toBe('Macro · odd')
+    expect(reportSubjectLabel({ agentKey: 'fundamental-analyst', subjectType: 'filing', subjectId: '91' })).toBe('Results filing')
+  })
+
+  it('are scheduled agents the Reports filter lists, the fundamental one run on a filing', () => {
+    for (const key of Object.keys(DESK_ANALYSTS)) {
+      expect(SCHEDULED_AGENTS[key]?.writes).toBeTruthy()
+      expect(SCHEDULED_AGENTS[key]?.decisions).toBeUndefined()
+    }
+    expect(SCHEDULED_AGENTS['fundamental-analyst'].subject).toBe('filing')
+    expect(SCHEDULED_AGENTS['macro-analyst'].subject).toBeNull()
+    expect(SCHEDULED_AGENTS['technical-analyst'].hint).toContain('outside its schedule')
+  })
+
+  it('reads a technical grade with its checked levels, and a report without them as empty lists', () => {
+    const t = readTechnicalReport({
+      slot: '08:20',
+      indices: [
+        { underlying: 'NIFTY', bias: 'bullish', grade: 'B', keyLevels: [{ id: 'L1', price: 25120, what: "today's high" }, 'junk'], reason: 'Above both EMAs.' },
+      ],
+      summary: 'One index.',
+    })!
+    expect(t.slot).toBe('08:20')
+    expect(t.indices[0]).toEqual({
+      underlying: 'NIFTY',
+      bias: 'bullish',
+      grade: 'B',
+      keyLevels: [{ id: 'L1', price: 25120, what: "today's high" }],
+      reason: 'Above both EMAs.',
+    })
+    expect(readTechnicalReport({})).toEqual({ slot: null, indices: [], summary: '' })
+    expect(readTechnicalReport(null)).toBeNull()
+  })
+
+  it('reads an options reading, a macro bias with its clamp, and a results read', () => {
+    const o = readOptionsReport({ indices: [{ underlying: 'NIFTY', stance: 'range-bound', lines: ['Walls at 25000 and 25300.', 7] }] })!
+    expect(o.indices[0]).toEqual({ underlying: 'NIFTY', stance: 'range-bound', lines: ['Walls at 25000 and 25300.'] })
+
+    const m = readMacroReport({ bias: 'lean bullish', sizeModifier: 1, sizeModifierAsked: 1.4, restsOn: [{ id: 'm2', fact: 'GIFT Nifty +0.42%' }], reason: 'Up.' })!
+    expect([m.bias, m.sizeModifier, m.sizeModifierAsked, m.restsOn[0].id, m.risks]).toEqual(['lean bullish', 1, 1.4, 'm2', ''])
+
+    const r = readResultsReport({
+      symbol: 'TCS',
+      results: true,
+      metrics: [{ metric: 'revenue', value: 65250.4, unit: 'crore', quote: 'Revenue of ₹65,250.4 crore', previous: 60000, yoyPct: null, yoyComputed: 8.8 }],
+      surprise: 'positive',
+    })!
+    expect([r.symbol, r.results, r.surprise, r.metrics[0].previous]).toEqual(['TCS', true, 'positive', 60000])
+    expect(yoyText(r.metrics[0])).toBe('+8.8%')
+    expect(yoyText({ yoyPct: -3.14, yoyComputed: 9 })).toBe('−3.1%')
+    expect(yoyText({ yoyPct: null, yoyComputed: null })).toBe('—')
+    expect(readResultsReport({ results: false })!.results).toBe(false)
+  })
+
+  it('shows a bias, a stance or a surprise as a badge: up green, down red, the rest plain', () => {
+    expect(analystBadge('lean bullish')).toEqual({ label: 'Lean bullish', tone: 'pos' })
+    expect(analystBadge('bearish').tone).toBe('neg')
+    expect(analystBadge('negative')).toEqual({ label: 'Negative surprise', tone: 'neg' })
+    expect(analystBadge('range-bound').tone).toBe('neutral')
+    expect(analystBadge('sideways')).toEqual({ label: 'sideways', tone: 'neutral' })
+  })
+})
+
 describe('docs search', () => {
   it('links a passage to its page on openfno.com/docs, with its heading as the anchor', () => {
     expect(docsLink('docs/modules/option_chain.md', 'Option chain › Max pain and walls')).toBe(
@@ -1361,8 +1436,18 @@ describe('the agent picker', () => {
   }
   const chat = (agent: string, action: ChatAction) => ({ type: 'chat' as const, agent, action })
 
-  it('offers the Desk Assistant first and the four other agents, each with its own starters', () => {
-    expect(CHAT_AGENTS.map((a) => a.key)).toEqual([DESK_ASSISTANT, 'ai-trader', 'trade-reviewer', 'news-analyst', 'incident-explainer'])
+  it('offers the Desk Assistant first and the eight other agents, each with its own starters', () => {
+    expect(CHAT_AGENTS.map((a) => a.key)).toEqual([
+      DESK_ASSISTANT,
+      'ai-trader',
+      'trade-reviewer',
+      'news-analyst',
+      'incident-explainer',
+      'technical-analyst',
+      'options-analyst',
+      'macro-analyst',
+      'fundamental-analyst',
+    ])
     expect(chatAgentMeta('ai-trader').starters).toContain('What would you do now?')
     expect(chatAgentMeta('trade-reviewer').starters).toContain('Which runs broke their spec this week?')
     expect(chatAgentMeta('news-analyst').starters).toContain('What moved in the last hour?')
@@ -1372,7 +1457,8 @@ describe('the agent picker', () => {
 
   it('reads a stored or linked choice, and anything else as the Desk Assistant', () => {
     expect(parseChatAgent('ai-trader')).toBe('ai-trader')
-    expect(parseChatAgent('technical-analyst')).toBe(DESK_ASSISTANT)
+    expect(parseChatAgent('technical-analyst')).toBe('technical-analyst')
+    expect(parseChatAgent('data-curator')).toBe(DESK_ASSISTANT)
     expect(parseChatAgent('')).toBe(DESK_ASSISTANT)
     expect(parseChatAgent(null)).toBe(DESK_ASSISTANT)
     expect(chatAgentMeta('nobody').key).toBe(DESK_ASSISTANT)

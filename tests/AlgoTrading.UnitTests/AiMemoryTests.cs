@@ -127,7 +127,7 @@ public sealed class AiMemoryTests
         Assert.NotEmpty(note.Embedding);
         await Assert.ThrowsAsync<AiMemoryException>(() => memory.RememberAsync(null, "   ", "upendra", "console", CancellationToken.None));
         await Assert.ThrowsAsync<AiMemoryException>(() => memory.RememberAsync(null, new string('x', 601), "upendra", "console", CancellationToken.None));
-        await Assert.ThrowsAsync<AiMemoryException>(() => memory.RememberAsync("technical-analyst", "A note.", "upendra", "console", CancellationToken.None));
+        await Assert.ThrowsAsync<AiMemoryException>(() => memory.RememberAsync("data-curator", "A note.", "upendra", "console", CancellationToken.None));
     }
 
     [Fact]
@@ -408,7 +408,9 @@ public sealed class AiMemoryTests
         Assert.Equal((2, 0), (all.Counts.Active, all.Counts.Proposed));
         Assert.Equal(new AiMemoryAgent(AiCatalog.DeskAssistant, "Desk Assistant", true), all.Agents[0]);
         // The AI Trader too, for its lessons (2 Oct): they are listed, edited and retired here like any memory.
-        Assert.Equal(new[] { AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer, AiCatalog.AiTrader }, all.Agents.Skip(1).Select(a => a.Key));
+        // And the desk analysts (10 Oct): a correction on their reports is their memory.
+        Assert.Equal(new[] { AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer, AiCatalog.TechnicalAnalyst,
+            AiCatalog.OptionsAnalyst, AiCatalog.MacroAnalyst, AiCatalog.FundamentalAnalyst, AiCatalog.AiTrader }, all.Agents.Skip(1).Select(a => a.Key));
         Assert.Equal("Weekly options expire on Tuesday.".Length + "A lesson to approve.".Length + "How many open legs are there?".Length, all.ActiveChars);
     }
 

@@ -30,7 +30,10 @@ public class AiSettingsTests
         // The scheduled agents call the provider by themselves: off until the owner turns them on.
         string[] scheduled = [AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer, AiCatalog.AiTrader];
         Assert.All(scheduled, key => Assert.Equal("off", state.Agent(key)!.Status));
-        Assert.All(state.Agents.Where(a => a.Def.Key != AiCatalog.DeskAssistant && !scheduled.Contains(a.Def.Key)),
+        // The desk analysts start on (owner, 10 Oct 2026: every AI agent built and on).
+        string[] analysts = [AiCatalog.TechnicalAnalyst, AiCatalog.OptionsAnalyst, AiCatalog.MacroAnalyst, AiCatalog.FundamentalAnalyst];
+        Assert.All(analysts, key => Assert.Equal("on", state.Agent(key)!.Status));
+        Assert.All(state.Agents.Where(a => a.Def.Key != AiCatalog.DeskAssistant && !scheduled.Contains(a.Def.Key) && !analysts.Contains(a.Def.Key)),
             a => Assert.Equal("planned", a.Status));
         Assert.Equal(new[] { Judge1, Judge2, Judge3 }, state.Agent(AiCatalog.DeskAssistant)!.Chain);
     }
@@ -75,10 +78,10 @@ public class AiSettingsTests
     public async Task A_planned_agent_stays_off_whatever_a_row_says()
     {
         var ai = Build();
-        ai.Db.SystemSettings.Add(new SystemSetting { Key = AiSettingsStore.AgentEnabledKey("technical-analyst"), Value = "true" });
+        ai.Db.SystemSettings.Add(new SystemSetting { Key = AiSettingsStore.AgentEnabledKey("data-curator"), Value = "true" });
         await ai.Db.SaveChangesAsync();
 
-        Assert.Equal("planned", (await ai.Store.LoadAsync()).Agent("technical-analyst")!.Status);
+        Assert.Equal("planned", (await ai.Store.LoadAsync()).Agent("data-curator")!.Status);
     }
 
     [Fact]
@@ -127,12 +130,16 @@ public class AiSettingsTests
     }
 
     [Fact]
-    public void The_catalog_numbers_fifteen_agents_once_each_and_builds_the_phase_three_four_and_the_ai_trader()
+    public void The_catalog_numbers_fifteen_agents_once_each_and_builds_the_phase_three_four_the_desk_analysts_and_the_ai_trader()
     {
         Assert.Equal(Enumerable.Range(1, 15), AiCatalog.Agents.Select(a => a.Number));
         Assert.Equal(AiCatalog.Agents.Count, AiCatalog.Agents.Select(a => a.Key).Distinct().Count());
         Assert.Equal(
-            new[] { AiCatalog.DeskAssistant, AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer, AiCatalog.AiTrader },
+            new[]
+            {
+                AiCatalog.DeskAssistant, AiCatalog.TradeReviewer, AiCatalog.NewsAnalyst, AiCatalog.IncidentExplainer,
+                AiCatalog.TechnicalAnalyst, AiCatalog.OptionsAnalyst, AiCatalog.MacroAnalyst, AiCatalog.FundamentalAnalyst, AiCatalog.AiTrader,
+            },
             AiCatalog.Agents.Where(a => a.Built).Select(a => a.Key));
         Assert.All(AiCatalog.Agents.Where(a => a.Built), a => Assert.False(string.IsNullOrWhiteSpace(a.SystemPrompt)));
         Assert.All(AiCatalog.Agents, a => Assert.NotNull(AiCatalog.Tier(a.Tier)));
