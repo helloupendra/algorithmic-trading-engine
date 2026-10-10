@@ -10,11 +10,23 @@ namespace AlgoTrading.Infrastructure.Ai;
 /// The chain when the owner has not changed it and Amazon Bedrock is on (<see cref="AiBedrockSettings.Enabled"/>):
 /// Claude only. Empty for the embedding tier, whose model the re-embedding switches (<see cref="AiEmbedder"/>).
 /// </param>
+/// <param name="OpenFallbacks">
+/// Open models on Bedrock that follow <paramref name="DefaultChain"/> while Claude is off and they are on
+/// (<see cref="AiBedrockOpenSettings.Enabled"/>): they catch the NVIDIA models' failures.
+/// </param>
 public sealed record AiTierDef(
-    string Key, string Label, string Purpose, IReadOnlyList<string> DefaultChain, bool Chat = true, IReadOnlyList<string>? BedrockChain = null)
+    string Key, string Label, string Purpose, IReadOnlyList<string> DefaultChain, bool Chat = true, IReadOnlyList<string>? BedrockChain = null,
+    IReadOnlyList<string>? OpenFallbacks = null)
 {
-    /// <summary>The chain an untouched tier walks: Bedrock's while Bedrock is on, else NVIDIA's.</summary>
-    public IReadOnlyList<string> DefaultFor(bool bedrock) => bedrock && BedrockChain is { Count: > 0 } b ? b : DefaultChain;
+    /// <summary>
+    /// The chain an untouched tier walks: Claude's while Claude on Bedrock is on; else NVIDIA's, followed by the open
+    /// models on Bedrock while those are on.
+    /// </summary>
+    public IReadOnlyList<string> DefaultFor(bool bedrock, bool bedrockOpen = false)
+    {
+        if (bedrock && BedrockChain is { Count: > 0 } claude) return claude;
+        return bedrockOpen && OpenFallbacks is { Count: > 0 } open ? [.. DefaultChain, .. open] : DefaultChain;
+    }
 }
 
 /// <summary>A Claude model the desk can ask on Amazon Bedrock.</summary>
@@ -25,6 +37,11 @@ public sealed record AiTierDef(
 /// budget only, which the desk does not send).
 /// </param>
 public sealed record BedrockModelDef(string Id, string Name, bool AdaptiveThinking = true);
+
+/// <summary>An open model the desk can ask on Amazon Bedrock's OpenAI-compatible endpoint.</summary>
+/// <param name="Id">As a chain names it: <c>bedrock-oss:</c> and Bedrock's model id.</param>
+/// <param name="Name">What the console calls it.</param>
+public sealed record BedrockOpenModelDef(string Id, string Name);
 
 /// <summary>One agent the desk has or plans, as the AI workspace lists it.</summary>
 /// <param name="Key">Stable id, stored on every call it makes.</param>
@@ -183,13 +200,24 @@ public static partial class AiCatalog
     public const string ProviderLimitNote =
         "NVIDIA does not publish the free tier's limit; about 40 requests a minute.";
 
-    /// <summary>A chain's model id that starts with this is Claude (or Titan) on Amazon Bedrock; any other is NVIDIA's.</summary>
+    /// <summary>
+    /// A chain's model id that starts with this is Claude (or Titan) on Amazon Bedrock; one that starts with
+    /// <see cref="BedrockOpenPrefix"/> is an open model there; any other is NVIDIA's.
+    /// </summary>
     public const string BedrockPrefix = "bedrock:";
 
     public const string BedrockProviderName = "Amazon Bedrock";
 
+    /// <summary>A chain's model id that starts with this is an open model on Amazon Bedrock's OpenAI-compatible endpoint.</summary>
+    public const string BedrockOpenPrefix = "bedrock-oss:";
+
+    public const string BedrockOpenProviderName = "Amazon Bedrock (open models)";
+
     /// <summary>Bedrock's Messages API for Claude, in <paramref name="region"/>.</summary>
     public static string BedrockEndpoint(string region) => $"https://bedrock-mantle.{region}.api.aws/anthropic/v1/messages";
+
+    /// <summary>Bedrock's OpenAI-compatible chat endpoint for the open models, in <paramref name="region"/>.</summary>
+    public static string BedrockOpenEndpoint(string region) => $"https://bedrock-mantle.{region}.api.aws/v1/chat/completions";
 
     /// <summary>
     /// The Claude models a chain may name on Bedrock (Anthropic's ids, Oct 2026). Each must be enabled under Bedrock →
@@ -206,6 +234,23 @@ public static partial class AiCatalog
         new("bedrock:anthropic.claude-haiku-4-5", "Claude Haiku 4.5", AdaptiveThinking: false),
     ];
 
+    /// <summary>
+    /// The open models a chain may name on Bedrock: each answered in us-east-1 on 10 Oct 2026, through the
+    /// OpenAI-compatible endpoint signed with the server's AWS role, in about 1 to 2 s. Claude, OpenAI's GPT-5 and later
+    /// models, and Grok did not answer there for this account, so none of them is listed.
+    /// </summary>
+    public static readonly IReadOnlyList<BedrockOpenModelDef> BedrockOpenModels =
+    [
+        new("bedrock-oss:moonshotai.kimi-k2.5", "Kimi K2.5"),
+        new("bedrock-oss:zai.glm-5", "GLM-5"),
+        new("bedrock-oss:deepseek.v3.2", "DeepSeek V3.2"),
+        new("bedrock-oss:qwen.qwen3-235b-a22b-2507", "Qwen3 235B A22B 2507"),
+        new("bedrock-oss:openai.gpt-oss-120b", "gpt-oss-120b"),
+        new("bedrock-oss:mistral.mistral-large-3-675b-instruct", "Mistral Large 3"),
+        new("bedrock-oss:nvidia.nemotron-super-3-120b", "Nemotron 3 Super on Bedrock"),
+        new("bedrock-oss:minimax.minimax-m2.5", "MiniMax M2.5"),
+    ];
+
     public static bool IsBedrock(string model) => model.StartsWith(BedrockPrefix, StringComparison.Ordinal);
 
     /// <summary>The id Bedrock knows a model by: the chain's id without <see cref="BedrockPrefix"/>.</summary>
@@ -213,8 +258,19 @@ public static partial class AiCatalog
 
     public static BedrockModelDef? BedrockModel(string model) => BedrockModels.FirstOrDefault(m => m.Id == model);
 
+    public static bool IsBedrockOpen(string model) => model.StartsWith(BedrockOpenPrefix, StringComparison.Ordinal);
+
+    /// <summary>The id Bedrock knows an open model by: the chain's id without <see cref="BedrockOpenPrefix"/>.</summary>
+    public static string BedrockOpenModelId(string model) => IsBedrockOpen(model) ? model[BedrockOpenPrefix.Length..] : model;
+
+    public static BedrockOpenModelDef? BedrockOpenModel(string model) => BedrockOpenModels.FirstOrDefault(m => m.Id == model);
+
+    /// <summary>Served by Amazon Bedrock, Claude or an open model: AWS bills every call.</summary>
+    public static bool OnBedrock(string model) => IsBedrock(model) || IsBedrockOpen(model);
+
     /// <summary>Who serves <paramref name="model"/>, as the console names it.</summary>
-    public static string ProviderOf(string model) => IsBedrock(model) ? BedrockProviderName : ProviderName;
+    public static string ProviderOf(string model) =>
+        IsBedrock(model) ? BedrockProviderName : IsBedrockOpen(model) ? BedrockOpenProviderName : ProviderName;
 
     /// <summary>The console's chat. The one agent built in Phase 1.</summary>
     public const string DeskAssistant = "desk-assistant";
@@ -287,15 +343,22 @@ public static partial class AiCatalog
         //
         // With Amazon Bedrock on, every tier is Claude, the most capable model first (owner, 10 Oct: "the best
         // model, any region, cost no issue"); its second model is the fallback for a refusal or a busy hour.
+        //
+        // While Claude is off, two open models on Bedrock follow NVIDIA's chain (owner, 10 Oct): in the three days to
+        // 10 Oct, 12% of calls failed on every NVIDIA model of their chain. NVIDIA's stay first, being the newer
+        // versions (Kimi K3, GLM-5.3); the Bedrock ones answered in 1 to 2 s and catch the failures.
         new("judge", "Judge", "The hardest reasoning, few calls a day.",
             ["nvidia/nemotron-3-ultra-550b-a55b", "nvidia/nemotron-3-super-120b-a12b", "moonshotai/kimi-k3"],
-            BedrockChain: ["bedrock:anthropic.claude-fable-5-1", "bedrock:anthropic.claude-opus-5-5"]),
+            BedrockChain: ["bedrock:anthropic.claude-fable-5-1", "bedrock:anthropic.claude-opus-5-5"],
+            OpenFallbacks: ["bedrock-oss:moonshotai.kimi-k2.5", "bedrock-oss:zai.glm-5"]),
         new("analyst", "Analyst", "Reading data the code computed and writing a view.",
             ["moonshotai/kimi-k3", "nvidia/nemotron-3-super-120b-a12b", "z-ai/glm-5.3"],
-            BedrockChain: ["bedrock:anthropic.claude-opus-5-5", "bedrock:anthropic.claude-sonnet-5-5"]),
+            BedrockChain: ["bedrock:anthropic.claude-opus-5-5", "bedrock:anthropic.claude-sonnet-5-5"],
+            OpenFallbacks: ["bedrock-oss:deepseek.v3.2", "bedrock-oss:qwen.qwen3-235b-a22b-2507"]),
         new("extract", "Extract", "High volume: classifying, pulling numbers out of text, strict JSON.",
             ["deepseek-ai/deepseek-v4.1-flash", "nvidia/nemotron-3-super-120b-a12b", "nvidia/nemotron-3.5-lightning-30b-a3b"],
-            BedrockChain: ["bedrock:anthropic.claude-sonnet-5-5", "bedrock:anthropic.claude-haiku-5-5"]),
+            BedrockChain: ["bedrock:anthropic.claude-sonnet-5-5", "bedrock:anthropic.claude-haiku-5-5"],
+            OpenFallbacks: ["bedrock-oss:openai.gpt-oss-120b", "bedrock-oss:mistral.mistral-large-3-675b-instruct"]),
         new("embed", "Embed", "Search across docs, news and research (vectors, not answers).",
             ["nvidia/nemotron-3-embed-1b"], Chat: false),
     ];
@@ -941,6 +1004,10 @@ public static partial class AiCatalog
     /// <summary>Every Bedrock model a chain may name: the desk's own list, since Bedrock's Messages API has no model list.</summary>
     public static IReadOnlySet<string> BedrockModelIds { get; } =
         BedrockModels.Select(m => m.Id).ToHashSet(StringComparer.Ordinal);
+
+    /// <summary>Every open model on Bedrock a chain may name: the desk's own list of the ones that answered.</summary>
+    public static IReadOnlySet<string> BedrockOpenModelIds { get; } =
+        BedrockOpenModels.Select(m => m.Id).ToHashSet(StringComparer.Ordinal);
 
     /// <summary>True for a model that makes vectors rather than answers: it cannot sit in a chat chain.</summary>
     public static bool IsEmbeddingModel(string id) =>

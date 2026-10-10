@@ -1,9 +1,9 @@
 namespace AlgoTrading.Infrastructure.Ai;
 
 /// <summary>
-/// A provider of chat models: NVIDIA's NIM API (<see cref="NvidiaChatClient"/>) or Claude on Amazon Bedrock
-/// (<see cref="BedrockClaudeClient"/>). The gateway asks whichever serves the model a chain names, so one chain can
-/// fall back from one provider to the other.
+/// A provider of chat models: NVIDIA's NIM API (<see cref="NvidiaChatClient"/>), Claude on Amazon Bedrock
+/// (<see cref="BedrockClaudeClient"/>) or the open models there (<see cref="BedrockOpenChatClient"/>). The gateway asks
+/// whichever serves the model a chain names, so one chain can fall back from one provider to another.
 /// </summary>
 public interface IAiChatProvider
 {
@@ -24,12 +24,17 @@ public interface IAiChatProvider
     Task<AiAttemptEnd> StreamAsync(string model, AiChatRequest request, Func<AiStreamPiece, ValueTask> onPiece, CancellationToken cancellationToken);
 }
 
-/// <summary>Picks the provider for a model a chain names: <c>bedrock:</c> ids go to Bedrock, the rest to NVIDIA.</summary>
+/// <summary>
+/// Picks the provider for a model a chain names: <c>bedrock:</c> ids go to Claude on Bedrock, <c>bedrock-oss:</c> ids to
+/// the open models there, the rest to NVIDIA.
+/// </summary>
 public sealed class AiChatRouter
 {
     private readonly IReadOnlyList<IAiChatProvider> _providers;
 
-    public AiChatRouter(NvidiaChatClient nvidia, BedrockClaudeClient bedrock) : this([bedrock, nvidia]) { }
+    /// <param name="bedrockOpen">The open models on Bedrock; without it a <c>bedrock-oss:</c> model has no provider and is skipped.</param>
+    public AiChatRouter(NvidiaChatClient nvidia, BedrockClaudeClient bedrock, BedrockOpenChatClient? bedrockOpen = null)
+        : this(bedrockOpen is null ? [bedrock, nvidia] : [bedrock, bedrockOpen, nvidia]) { }
 
     /// <summary>The providers in the order they are asked who serves a model; the first that does wins.</summary>
     public AiChatRouter(IReadOnlyList<IAiChatProvider> providers) => _providers = providers;

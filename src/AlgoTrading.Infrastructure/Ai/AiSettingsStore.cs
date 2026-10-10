@@ -8,7 +8,11 @@ using Microsoft.Extensions.Options;
 namespace AlgoTrading.Infrastructure.Ai;
 
 /// <summary>A tier as it stands: its chain now, and whether the owner changed it.</summary>
-public sealed record AiTierState(AiTierDef Def, IReadOnlyList<string> Chain, bool Overridden, DateTime? UpdatedUtc, string? UpdatedBy);
+public sealed record AiTierState(AiTierDef Def, IReadOnlyList<string> Chain, bool Overridden, DateTime? UpdatedUtc, string? UpdatedBy)
+{
+    /// <summary>The chain it walks when the owner has not changed it, with the providers as they are switched now.</summary>
+    public IReadOnlyList<string> DefaultChain { get; init; } = Def.DefaultChain;
+}
 
 /// <summary>An agent as it stands: on or off, and the chain its calls walk.</summary>
 public sealed record AiAgentState(
@@ -53,6 +57,12 @@ public sealed record AiState(IReadOnlyList<AiTierState> Tiers, IReadOnlyList<AiA
 /// not touched, so turning Bedrock off brings the NVIDIA chains back as they
 /// were. The embed tier shows the embedding model in use (<see cref="AiEmbedder"/>).
 /// </para>
+/// <para>
+/// While Claude is off and the open models on Bedrock are on
+/// (<see cref="AiBedrockOpenSettings.Enabled"/>), an untouched tier walks its
+/// NVIDIA chain and then its <see cref="AiTierDef.OpenFallbacks"/>. A chain
+/// the owner set is walked as set, and may name <c>bedrock-oss:</c> models.
+/// </para>
 /// </remarks>
 public sealed class AiSettingsStore
 {
@@ -61,9 +71,9 @@ public sealed class AiSettingsStore
     /// <summary>At most this many models in one chain: past three the wait on a bad day is already long.</summary>
     public const int MaxChainLength = 5;
 
-    /// <summary>An NVIDIA id (<c>vendor/model</c>) or a Bedrock one (<c>bedrock:anthropic.claude-…</c>).</summary>
+    /// <summary>An NVIDIA id (<c>vendor/model</c>) or a Bedrock one (<c>bedrock:anthropic.claude-…</c>, <c>bedrock-oss:moonshotai.kimi-…</c>).</summary>
     private static readonly Regex ModelIdShape = new(
-        @"^([A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._:-]*|bedrock:[a-z0-9][a-z0-9._:-]*)$", RegexOptions.CultureInvariant);
+        @"^([A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._:-]*|bedrock(-oss)?:[a-z0-9][a-z0-9._:-]*)$", RegexOptions.CultureInvariant);
 
     private readonly TradingDbContext _db;
     private readonly TimeProvider _time;
@@ -90,6 +100,7 @@ public sealed class AiSettingsStore
 
         var settings = _settings?.CurrentValue;
         bool bedrock = settings?.Bedrock.Enabled ?? false;
+        bool bedrockOpen = settings?.BedrockOpen.Enabled ?? false;
         rows.TryGetValue(AiEmbedder.ActiveModelKey, out var embeddingRow);
 
         var tiers = AiCatalog.Tiers.Select(def =>
@@ -103,9 +114,10 @@ public sealed class AiSettingsStore
 
             rows.TryGetValue(TierChainKey(def.Key), out var row);
             var chain = Effective(ReadChain(row?.Value), bedrock);
+            var standard = def.DefaultFor(bedrock, bedrockOpen);
             return chain is null
-                ? new AiTierState(def, def.DefaultFor(bedrock), false, null, null)
-                : new AiTierState(def, chain, true, row!.UpdatedUtc, row.UpdatedBy);
+                ? new AiTierState(def, standard, false, null, null) { DefaultChain = standard }
+                : new AiTierState(def, chain, true, row!.UpdatedUtc, row.UpdatedBy) { DefaultChain = standard };
         }).ToList();
 
         var agents = AiCatalog.Agents.Select(def =>
@@ -158,7 +170,7 @@ public sealed class AiSettingsStore
         {
             if (string.IsNullOrWhiteSpace(id) || !ModelIdShape.IsMatch(id))
             {
-                return $"\"{id}\" is not a model id (vendor/model, or bedrock: and a Bedrock model id).";
+                return $"\"{id}\" is not a model id (vendor/model, or bedrock: or bedrock-oss: and a Bedrock model id).";
             }
 
             if (!seen.Add(id)) return $"{id} is in the chain twice.";
@@ -166,7 +178,8 @@ public sealed class AiSettingsStore
             if (chat && AiCatalog.IsEmbeddingModel(id)) return $"{id} makes vectors, not answers: it cannot answer a question.";
             if (bedrockOnly && !AiCatalog.IsBedrock(id))
             {
-                return $"Amazon Bedrock is on, so every chain is Claude on Bedrock: {id} is NVIDIA's.";
+                string whose = AiCatalog.IsBedrockOpen(id) ? "an open model, not Claude" : "NVIDIA's";
+                return $"Amazon Bedrock is on, so every chain is Claude on Bedrock: {id} is {whose}.";
             }
         }
 
