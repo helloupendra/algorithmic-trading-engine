@@ -41,6 +41,12 @@ export type AgentStatus = 'on' | 'off' | 'planned'
 /** ok, failed, refused (switched off, rate limit, busy, no key), cancelled (the asker stopped it), running. */
 export type CallOutcome = 'ok' | 'failed' | 'refused' | 'cancelled' | 'running'
 
+/** A provider on Amazon Bedrock as the API reports it: switched on or off, and the region it is asked in. */
+export interface AiBedrockProvider {
+  enabled: boolean
+  region: string
+}
+
 export interface AiProvider {
   key: string
   name: string
@@ -48,6 +54,10 @@ export interface AiProvider {
   keyConfigured: boolean
   catalogUrl: string
   terms: string
+  /** Claude on Amazon Bedrock: while on, every chain is Claude's. Absent from an older API. */
+  bedrock?: AiBedrockProvider
+  /** The open models on Amazon Bedrock, each tier's fallbacks after NVIDIA. Absent from an older API. */
+  bedrockOpen?: AiBedrockProvider
 }
 
 export interface AiLimits {
@@ -2986,6 +2996,20 @@ const MODEL_NAMES: Record<string, string> = {
   'z-ai/glm-5.3': 'GLM-5.3',
   'z-ai/glm-5.3-flash': 'GLM-5.3 Flash',
   'deepseek-ai/deepseek-v4.1-flash': 'DeepSeek V4.1 Flash',
+  // On Amazon Bedrock: named for where they run, since NVIDIA serves newer versions of some of them.
+  'bedrock-oss:moonshotai.kimi-k2.5': 'Kimi K2.5 · Bedrock',
+  'bedrock-oss:zai.glm-5': 'GLM-5 · Bedrock',
+  'bedrock-oss:deepseek.v3.2': 'DeepSeek V3.2 · Bedrock',
+  'bedrock-oss:qwen.qwen3-235b-a22b-2507': 'Qwen3 235B · Bedrock',
+  'bedrock-oss:openai.gpt-oss-120b': 'gpt-oss-120b · Bedrock',
+  'bedrock-oss:mistral.mistral-large-3-675b-instruct': 'Mistral Large 3 · Bedrock',
+  'bedrock-oss:nvidia.nemotron-super-3-120b': 'Nemotron 3 Super · Bedrock',
+  'bedrock-oss:minimax.minimax-m2.5': 'MiniMax M2.5 · Bedrock',
+  'bedrock:anthropic.claude-fable-5-1': 'Claude Fable 5.1',
+  'bedrock:anthropic.claude-opus-5-5': 'Claude Opus 5.5',
+  'bedrock:anthropic.claude-sonnet-5-5': 'Claude Sonnet 5.5',
+  'bedrock:anthropic.claude-haiku-5-5': 'Claude Haiku 5.5',
+  'bedrock:anthropic.claude-haiku-4-5': 'Claude Haiku 4.5',
 }
 
 /** "Nemotron 3 Ultra" for the models the desk uses; any other id without its vendor. */
@@ -2993,6 +3017,9 @@ export function modelName(id: string | null | undefined): string {
   if (!id) return '—'
   const known = MODEL_NAMES[id]
   if (known) return known
+  // "bedrock-oss:qwen.qwen3-32b" reads "qwen3-32b · Bedrock"; Claude's ids carry their own name.
+  const bedrock = /^bedrock(-oss)?:(?:[a-z0-9-]+\.)?(.+)$/.exec(id)
+  if (bedrock) return bedrock[1] ? `${bedrock[2]} · Bedrock` : bedrock[2]
   const slash = id.indexOf('/')
   return slash >= 0 && slash < id.length - 1 ? id.slice(slash + 1) : id
 }

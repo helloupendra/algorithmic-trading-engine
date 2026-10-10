@@ -19,7 +19,7 @@ import { useAiAgents, useAiOverview } from '../../lib/ai'
 import { formatAge, formatDateTime, formatTime } from '../../lib/format'
 import { Badge, EmptyState, InlineError, Loading, Panel, StatTile } from '../../components/ui'
 import { IconChip, IconClock, IconLayers, IconPulse, IconUsers } from '../../components/icons'
-import { CallLink, ChainChips, HealthLine, KeyBadge, ModelLabel, StatusPill } from './parts'
+import { BedrockLines, CallLink, ChainChips, HealthLine, KeyBadge, ModelLabel, StatusPill, nvidiaRole } from './parts'
 import { errorText, useNow } from './common'
 import '../system/health/health.css'
 import './ai.css'
@@ -32,19 +32,23 @@ function ProviderPanel({ o }: { o: AiOverview }) {
         <b>{p.name}</b>
         <span className="mono ai-provider__url">{p.baseUrl}</span>
         <KeyBadge configured={p.keyConfigured} />
+        <span className="faint">{nvidiaRole(p)}</span>
         {p.catalogUrl && (
           <a className="ai-provider__link" href={p.catalogUrl} target="_blank" rel="noreferrer noopener">
             Provider's catalog ↗
           </a>
         )}
       </div>
+      <BedrockLines provider={p} />
       {!p.keyConfigured && (
         <div className="alert alert--warn ai-flush" role="status">
-          No NVIDIA key on the server, so no model can be asked. The key goes in the server's <code>.env</code> as{' '}
+          No NVIDIA key on the server, so no NVIDIA model can be asked
+          {p.bedrockOpen?.enabled || p.bedrock?.enabled ? ' (Amazon Bedrock still answers)' : ''}. The key goes in the server's{' '}
+          <code>.env</code> as{' '}
           <code>NVIDIA_API_KEY</code>; the desk regenerates its settings on the next deploy. It is never entered here.
         </div>
       )}
-      {p.terms && <p className="small-note ai-flush">Terms: {p.terms}</p>}
+      {p.terms && <p className="small-note ai-flush">NVIDIA's terms: {p.terms}</p>}
     </section>
   )
 }
