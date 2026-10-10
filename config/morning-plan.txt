@@ -14,11 +14,15 @@
 # 2026-09-27: Fulcrum runs in admin only. After charges and spread it lost about
 # Rs 2.5 lakh across six runs on 25 Sep, and 388 trades a run load a box that is
 # already near 100% CPU; one account is enough to watch it with honest numbers.
+#
+# 2026-10-10: Fulcrum is off the plan. The owner stopped it on 1 Oct, but its line
+# stayed here, so the 08:45 job deployed it again on each of 5-9 Oct: 15 runs,
+# 7,474 trades, Rs 7.6 lakh of charges and Rs 11.8 lakh net lost. A strategy the
+# owner stops comes off this file the same day.
 
 accounts: admin coderforchange
 
 GhostTangentCrossings  BANKNIFTY,NIFTY,SENSEX  2
 ChainFlowBuy           BANKNIFTY,NIFTY,SENSEX  2
 SmcStructureBreak      BANKNIFTY,NIFTY,SENSEX  2
-Fulcrum                BANKNIFTY,NIFTY,SENSEX  2  -  @admin
 CrudeMomentum          CRUDEOIL                2  -
