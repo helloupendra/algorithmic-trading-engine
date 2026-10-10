@@ -315,7 +315,7 @@ public sealed class AiTraderRiskMemo(AiGateway gateway, AiReportWriter reports, 
         try
         {
             var report = await reports.SaveAsync(AiCatalog.RiskMemo, AiReportSubject.Decision, decision.Id.ToString(CultureInfo.InvariantCulture), decision.Day,
-                memo.Status, result, Title(decision.Id, plan, memo), Body(memo), JsonSerializer.Serialize(memo.Data(), Json),
+                memo.Status, result, Title(decision.Id, memo), Body(memo), JsonSerializer.Serialize(memo.Data(), Json),
                 memo.Status == AiReportStatus.Ok ? string.Empty : memo.Error ?? string.Empty, CancellationToken.None);
             memo = memo with { ReportId = report.Id };
         }
@@ -384,13 +384,14 @@ public sealed class AiTraderRiskMemo(AiGateway gateway, AiReportWriter reports, 
         if (obj["lots"] is not null && AiJson.Num(obj, "lots") is double l)
         {
             int current = plan.Lots ?? 1;
+            int lots = (int)l;
             if (l != Math.Floor(l)) ignored.Add($"lots {l.ToString(CultureInfo.InvariantCulture)} is not a whole number of lots");
-            else if ((int)l >= current) { if ((int)l > current) ignored.Add($"lots {(int)l} is more than the plan's {current}: looser, ignored"); }
-            else if (l < 1) ignored.Add($"lots {(int)l} is under 1");
-            else
+            else if (lots > current) ignored.Add($"lots {lots} is more than the plan's {current}: looser, ignored");
+            else if (lots < 1) ignored.Add($"lots {lots} is under 1");
+            else if (lots < current)
             {
-                result = result with { Lots = (int)l };
-                applied.Add($"lots {current} → {(int)l}");
+                result = result with { Lots = lots };
+                applied.Add($"lots {current} → {lots}");
             }
         }
 
@@ -400,13 +401,12 @@ public sealed class AiTraderRiskMemo(AiGateway gateway, AiReportWriter reports, 
             decimal stop = Math.Round((decimal)sd, 2);
             if (!buy) ignored.Add("a strategy start has no stop to tighten");
             else if (plan.StopLoss is not decimal current) ignored.Add("the plan has no stop to tighten");
-            else if (stop < current) ignored.Add($"stop {stop:0.##} is under the plan's {current:0.##}: looser, ignored");
-            else if (stop == current) { }
-            else if (price is decimal ask && stop >= ask) ignored.Add($"stop {stop:0.##} is at or above the price it is bought at ({ask:0.##})");
-            else
+            else if (stop < current) ignored.Add(Say($"stop {stop:0.##} is under the plan's {current:0.##}: looser, ignored"));
+            else if (price is decimal ask && stop >= ask) ignored.Add(Say($"stop {stop:0.##} is at or above the price it is bought at ({ask:0.##})"));
+            else if (stop > current)
             {
                 result = result with { StopLoss = stop };
-                applied.Add($"stop {current:0.##} → {stop:0.##}");
+                applied.Add(Say($"stop {current:0.##} → {stop:0.##}"));
             }
         }
 
@@ -415,20 +415,22 @@ public sealed class AiTraderRiskMemo(AiGateway gateway, AiReportWriter reports, 
             decimal target = Math.Round((decimal)td, 2);
             if (!buy) ignored.Add("a strategy start has no target to tighten");
             else if (plan.Target is not decimal current) ignored.Add("the plan has no target to tighten");
-            else if (target > current) ignored.Add($"target {target:0.##} is over the plan's {current:0.##}: looser, ignored");
-            else if (target == current) { }
-            else if (price is decimal ask && target <= ask) ignored.Add($"target {target:0.##} is at or under the price it is bought at ({ask:0.##})");
-            else
+            else if (target > current) ignored.Add(Say($"target {target:0.##} is over the plan's {current:0.##}: looser, ignored"));
+            else if (price is decimal ask && target <= ask) ignored.Add(Say($"target {target:0.##} is at or under the price it is bought at ({ask:0.##})"));
+            else if (target < current)
             {
                 result = result with { Target = target };
-                applied.Add($"target {current:0.##} → {target:0.##}");
+                applied.Add(Say($"target {current:0.##} → {target:0.##}"));
             }
         }
 
         return new AiTraderMemo(AiReportStatus.Ok, Cut(text, 1500), AiJson.Str(obj, "why"), result, applied, ignored, null);
     }
 
-    private static string Title(long decisionId, AiTraderPlan plan, AiTraderMemo m) => m.Status switch
+    /// <summary>A change in words, its numbers written the same on any server.</summary>
+    private static string Say(FormattableString text) => text.ToString(CultureInfo.InvariantCulture);
+
+    private static string Title(long decisionId, AiTraderMemo m) => m.Status switch
     {
         AiReportStatus.Ok when m.Applied.Count > 0 => Cut($"Decision #{decisionId}: tightened ({string.Join(", ", m.Applied)})", 300),
         AiReportStatus.Ok => $"Decision #{decisionId}: memo, plan unchanged",
