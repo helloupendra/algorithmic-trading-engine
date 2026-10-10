@@ -7,6 +7,23 @@ Hand-placed orders live in their own run, one per user: a `SimulationRun` with `
 
 This page covers what is special about the book: each position is **intraday or carried forward** (a tick on the ticket and on the position), carried positions are **settled at expiry**, and every open leg shows its **greeks** and what they are worth in rupees.
 
+### Placing an order: one path, two callers
+Placing lives in `ManualOrderService` (10 Oct), not in the controller, because two callers book orders into a manual book:
+
+| Caller | Whose book | What it asks |
+|---|---|---|
+| The ticket, `POST /api/ManualOrders` (`ManualOrdersController.Place`) | The signed-in user's | Anything the ticket offers: any segment, BUY or SELL, a limit or the far side of the book, optional stop and target, the carry tick |
+| The [AI Trader](ai_trader.md#how-a-plan-becomes-an-order), live | Its own (`ai-trader`) only | A BUY of an index option, lots × lot size, at the ask, its plan's stop and target, intraday |
+
+Both get the same rules and the same rows: the instrument must be in the master and unexpired; a limit must sit on the tick grid; with no limit a buy fills at the ask and a sell at the bid (else the last trade); with no price nothing is booked; a stop or target on the wrong side of the fill is refused; the book is found or opened (`ManualBook`); one `OPEN_GROUP` signal with the price final (`LegPricesAreFinal`); the stop, target and carry tick written on the new position, with the desk events. So the risk guard, the intraday square-off and expiry settlement treat an AI Trader position exactly as a hand-placed one.
+
+What the service adds for a caller other than the ticket:
+- `Source`: recorded on the order's signal beside the rest (the AI Trader names its decision, `{agent, decisionId}`); the ticket sends none, and its signal reads as before;
+- `Confirm`: a last check on the price the order would fill at, with the quote it came from, made just before it is booked; a reason refuses the order. The AI Trader judges its rules there on the price it would actually pay, and refuses a quote older than 3 minutes;
+- the fill's result: the book, group, price and how it was priced, the quote, and the new position and order ids.
+
+The ticket's answers are unchanged: the same 400 bodies (`{ message }`, with `expiryDate` or `tickSize` where they were) and the same 200 body.
+
 ---
 
 ## 1. Intraday or carry forward
@@ -154,7 +171,8 @@ The table scrolls sideways inside its frame on a phone, like every table in the 
 - `greeks` — `thetaRupeesPerDay`, `vegaRupeesPerIvPoint`, `netDeltaQuantity` (one underlying only), `byUnderlying[]`, `legs`, `unpriced`, `stale`, `oldestAsOfUtc`.
 
 ## Components
-- `src/AlgoTrading.Api/Controllers/ManualOrdersController.cs` — ticket, book, place (with the carry tick).
+- `src/AlgoTrading.Api/Controllers/ManualOrdersController.cs` — ticket, book, place (with the carry tick), through the service below.
+- `src/AlgoTrading.Api/Services/ManualOrderService.cs` — placing one order into a user's book: price, checks, booking, levels and tick; shared with the AI Trader.
 - `src/AlgoTrading.Api/Services/ManualBook.cs` — finding and opening a user's book, shared with the close's carry.
 - `src/AlgoTrading.Api/Services/ManualIntradaySquareOff.cs` — which unticked positions are due at which close, and the square-off.
 - `src/AlgoTrading.Api/Services/PositionCarryForward.cs` — changing the tick; moving a strategy's ticked legs into the book at the close.
@@ -167,4 +185,4 @@ The table scrolls sideways inside its frame on a phone, like every table in the 
 - `web/src/lib/greeks.ts`, `web/src/pages/strategies/RunCard.tsx` — the column group, the totals line, the LTP age, the Carry column.
 - `web/src/lib/carry.ts`, `web/src/pages/trading/ManualOrderPage.tsx` — the tick's rules and words; the ticket's tick.
 
-Tests: `tests/AlgoTrading.UnitTests/OptionGreeksTests.cs`, `PositionGreeksTests.cs`, `ExpirySettlementTests.cs`, `CarryForwardTests.cs`; `web/src/lib/greeks.test.ts`, `carry.test.ts`, `positions.test.ts`; `scripts/tests/market-close-manual-book.test.sh`.
+Tests: `tests/AlgoTrading.UnitTests/OptionGreeksTests.cs`, `PositionGreeksTests.cs`, `ExpirySettlementTests.cs`, `CarryForwardTests.cs`, `DeskEventTests.cs` (the ticket), `AiTraderExecutionTests.cs` (the AI Trader's buys and exits); `web/src/lib/greeks.test.ts`, `carry.test.ts`, `positions.test.ts`; `scripts/tests/market-close-manual-book.test.sh`.

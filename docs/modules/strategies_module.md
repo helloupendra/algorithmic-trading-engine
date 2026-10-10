@@ -21,6 +21,7 @@ The module runs strictly in **LivePaper** mode: real ticks, simulated fills thro
    - `Services/PositionCarryForward.cs` — the per-position carry-forward tick and the close's move of ticked legs (section 8).
    - `Services/StrategyRiskGuardService.cs` — background service; every 3 s it marks each running run to market, judges its leg, group and overall rules (leg and group only on fresh marks, section 9) and closes legs or trips the stop pipeline.
    - `Controllers/StrategyController.cs` — catalog, start, stop, live view, logs, signal mirror.
+   - `Services/StrategyStartService.cs` — the start itself (10 Oct): every check that can refuse (the request, the market's hours, duplicates, the caps, the host's memory, the owner's package), then the run row, the runner and its registration, one start at a time. The Start button and the [AI Trader](ai_trader.md#how-a-plan-becomes-an-order)'s starts in its own account both go through it, so a start it asks for is refused exactly where a person's would be.
    - `Controllers/InstrumentsController.cs` — `GET /api/Instruments/derivatives/underlyings`: the F&O inventory the launch dialog is built from.
 3. **Infrastructure (`src/AlgoTrading.Infrastructure`)**
    - `Services/LotSizeResolver.cs` — lot size from the instrument master, else the configured `LotSizes` table, else 1.
@@ -188,7 +189,7 @@ Rules that hold for every kind: nothing is sent for a write that did not happen 
 
 ### .NET
 - `src/AlgoTrading.Api/Controllers/StrategyController.cs`, `InstrumentsController.cs`, `PositionsController.cs`, `OrdersController.cs`
-- `src/AlgoTrading.Api/Services/StrategyCatalogService.cs`, `StrategyProcessRegistry.cs`, `StrategyRunControl.cs`, `StrategyRiskGuardService.cs`, `PythonEngineLocator.cs`, `MarketHoursService.cs`, `PositionCarryForward.cs`, `ManualBook.cs`
+- `src/AlgoTrading.Api/Services/StrategyCatalogService.cs`, `StrategyProcessRegistry.cs`, `StrategyRunControl.cs`, `StrategyRiskGuardService.cs`, `PythonEngineLocator.cs`, `MarketHoursService.cs`, `PositionCarryForward.cs`, `ManualBook.cs`, `StrategyStartService.cs`
 - `src/AlgoTrading.Api/Hubs/SignalRDeskEventPublisher.cs`, `src/AlgoTrading.Application/Interfaces/IDeskEventPublisher.cs` — desk events (section 13)
 - `src/AlgoTrading.Api/Services/RunPnl.cs` (a run's realized, unrealized, charges and net), `RunPnlRecorder.cs` (the minute recorder and its hosted service), `RunPnlSeriesBuilder.cs` (the day's series), `OpenPositionsBuilder.cs` (every open leg), `OrdersBuilder.cs` (a day of orders and refusals)
 - `src/AlgoTrading.Domain/Entities/RunPnlMinute.cs` — one run's P&L at one minute (`run_pnl_minutes`).

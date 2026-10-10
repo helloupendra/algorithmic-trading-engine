@@ -4,6 +4,10 @@ An AI agent that trades its own paper account in index options (owner's decision
 the system and collect data, not to promise profit: the desk's research found no proven edge, and any claim of
 improvement needs the numbers behind it.
 
+Since 10 Oct it is **live**: what its rules allow, and the [Validator](#the-validator) accepts, is placed as paper
+orders in its own ₹5 lakh account, never another's ([how a plan becomes an order](#how-a-plan-becomes-an-order)).
+There is no real money anywhere on this desk: every fill is a paper fill.
+
 ## The loop
 
 Every 10 minutes from 09:20 to 15:00 IST on trading days, while it is switched on (AI → Agents, `ai-trader`):
@@ -38,7 +42,11 @@ Every 10 minutes from 09:20 to 15:00 IST on trading days, while it is switched o
    and acts (`AiTraderAgent.BookGate`, which the shadow book's minute check takes too). So "Run now" beside the
    scheduled look cannot pass a limit the other was about to use, or close a position the other closed. The model is
    asked outside it, so a slow answer never holds up the minute check.
-4. **Every look is a row** in `ai_trader_decisions`, "none" included: the brief, the plan, the verdict, the call.
+4. **In live mode, an allowed plan is placed** in its own account: an exit or a strategy stop at once; a buy or a
+   strategy start only after the Validator has accepted it and the Risk Memo has read it, and the rules have judged it
+   once more on the fresh book ([below](#how-a-plan-becomes-an-order)).
+5. **Every look is a row** in `ai_trader_decisions`, "none" included: the brief, the plan, the verdict, the call, and
+   what was placed.
 
 ## The limits (code-enforced, never the model's)
 
@@ -55,11 +63,109 @@ Every 10 minutes from 09:20 to 15:00 IST on trading days, while it is switched o
 | Exits | Only its own open positions: the one the plan names by `positionId`, else the only open one on the plan's underlying (and option, when given); two or none are refused with the open positions' ids |
 | Strategies | Only GhostTangentCrossings and ChainFlowBuy, at most 3 running, in its own account |
 | Kill switch | The desk's kill switch stops anything new (a buy, a strategy start) in shadow and live mode; closing its own position or stopping its own run is never refused for it. A market replay places nothing, so the live desk's switch does not reach its book |
+| Validator | In live mode, a buy or a strategy start is placed only once the Validator has accepted it: two REJECTs of three block it, and so does no verdict at all ([below](#what-fails-closed)) |
 
-## Shadow first
+## Live: paper orders in its own account
 
-`Ai:AiTraderExecute` is off: it decides and places nothing (mode `shadow`). Placing paper orders through its own
-manual book and strategy starts is the next step, switched on only after its shadow decisions have been read.
+`Ai:AiTraderExecute` is on from 10 Oct 2026 (owner: every AI part on), so its looks are in mode `live`. Off, it is in
+shadow mode ([below](#shadow-mode)). A market replay places nothing whatever the switch.
+
+### How a plan becomes an order
+
+| Step | What happens |
+|---|---|
+| 1. The rules | The plan is judged (`AiTraderGuard`) under `AiTraderAgent.BookGate`, on its account as it is once the model has answered. A refusal is recorded and nothing else happens |
+| 2. An exit | Done at once, under the gate: its own position closed at the bid on the risk guard's path (`IPaperTradingService.ClosePositionsAsync` on its own manual book, by `ai-trader`, reason "AI Trader exit (decision #N): its reason"). The bid it saw just before is kept. Never put to the Validator; the kill switch never refuses it |
+| 3. A strategy stop | Done at once, under the gate: `StrategyRunControl.StopAsync` of its own run, squaring off the run's positions. A run of another account is refused, by the rules and again by the stop itself |
+| 4. A buy or a strategy start | Kept as allowed and "waiting for the Validator and the Risk Memo"; the gate is released, so the minute check and another look never wait on a model |
+| 5. The Validator | Three sampled asks ([below](#the-validator)). Rejected, or no verdict: not placed, and the decision is recorded as refused with the rule `validator` or `validator-unavailable` and the flaw or the reason, which its next look reads |
+| 6. The Risk Memo | A memo beside the rules' verdict; it may tighten the plan, never loosen it ([below](#the-risk-memo)) |
+| 7. Judged again | Under the gate: its account read again, as of now (the hours rule is the hours now, not the look's). A start is judged on it (its run limit, the hours, the daily loss); a buy is judged on it at the price it would pay, from inside the placement (`ManualOrderCommand.Confirm`): the stop floor, the premium cap and the capital are the fill's, not the brief's. A refusal there books nothing and is recorded with the rule ("Judged again on the fresh book at the price it would pay: …") |
+| 8. A buy is placed | Through the order ticket's own path (`ManualOrderService`): the contract's lots × lot size, bought at the ask of its live quote, into its own manual book; the plan's stop and target (as the memo left them) on the position; intraday. A quote older than 3 minutes, or none, is not bought on. So the risk guard closes it at its stop or target within seconds of a touch, and the 15:30 square-off closes what is left, as for any manual position ([Manual orders](manual_orders.md)) |
+| 9. A start is started | Through the Start button's own path (`StrategyStartService`), as the `ai-trader` user: the market's hours, the duplicate and capacity checks, the host's memory and its account's grants, exactly as a person's start. It runs with the plan's lots when 1 or 2, else 1; the start sets no run-level stop-loss or target of its own |
+| 10. Recorded | `Executed`, and in `ResultJson` what was placed and the checks' records ([below](#what-a-decision-keeps)). A failure anywhere is recorded on the decision (`Error`), never thrown out of the loop |
+
+Its account (`AiTraderAccount.EnsureAsync`) holds the grants a start needs, the same an admin gives a trader: the
+Strategies module and its two allowed strategies (`user_module_grants`, `user_strategy_grants`, granted by
+"system (AI Trader account)"). An account made before 10 Oct gets them on its next look. Without them every start was
+refused by the package check.
+
+### What fails closed
+
+A buy or a start is placed only when every check has said yes. Each of these leaves it unplaced, and says why on the
+decision:
+
+| What | Recorded as |
+|---|---|
+| Two of the Validator's three answers REJECT | Refused, rule `validator`, the flaw it named |
+| No majority: a model did not answer, an answer was not the JSON asked for, a REJECT quoted words not in the brief, the Validator is switched off on AI → Agents, no key on the server | Refused, rule `validator-unavailable`, with the counts and the first errors. Switched off or no key: asked once, not three times |
+| The rules, judged again on the fresh book or at the price it would pay | Refused, the rule that broke |
+| A quote older than 3 minutes, or none | Allowed, not placed: the error says how old |
+| The desk refusing the start (the market closed, a duplicate, a cap, memory) | Allowed, not started: the desk's own words |
+| Anything that throws while placing | Allowed, not placed: "Placing failed: …". A decision whose save fails half way is saved again on its own |
+
+Two parts never block: the Risk Memo (a memo that cannot be had leaves the plan as it was, and says so) and the
+Execution Reporter (it reads fills after they happen). An exit or a strategy stop is never put to the Validator.
+
+### The Validator
+
+`AiTraderValidator`, agent `validator` (judge tier), on by default.
+
+| Step | Rule |
+|---|---|
+| Asked | Three times, at temperature 0.7, one after another: the plan as proposed, the contract and the price it would be bought at, the rules' verdict, and the brief the plan rests on |
+| Answers | `{verdict: ACCEPT or REJECT, flaw, quote, confidence}`. A REJECT must name a flaw and quote the brief's or the plan's own words; a quote that is not in them (case and spacing aside) does not count, as a News Analyst number with no quote is invalid |
+| Decides | Two ACCEPTs: placed. Two REJECTs: blocked with the flaw of the most confident one. Anything else: blocked as no verdict |
+| Report | One `ai_reports` row per decision (subject `decision`), `ok` with a verdict, `failed` without: every answer's verdict, flaw, quote, confidence, call and error |
+| Not | The owner's limits: code has judged those already, and the Validator is told so |
+
+### The Risk Memo
+
+`AiTraderRiskMemo`, agent `risk-memo` (judge tier), on by default. Asked once for each plan the Validator accepted.
+
+| Step | Rule |
+|---|---|
+| Reads | The plan, the contract and its price, the rules' verdict, what it loses at its stop, the owner's limits, and its account now: net today, loss budget left, trades opened, premium in use, each open position and running run |
+| Answers | `{memo, lots, stopLoss, target, why}` |
+| Applied | Only a tightening that is still valid: fewer lots (at least 1); a higher stop still under the price it is bought at; a lower target still above it. A start takes fewer lots only. Anything else is ignored, and each ignored change says why ("target 200 is over the plan's 160: looser, ignored") |
+| Report | One `ai_reports` row per decision (subject `decision`): the memo, what was applied, what was ignored |
+| Never | Blocks a plan, or loosens one |
+
+### The Execution Reporter
+
+`AiTraderExecutionReporter`, agent `execution-reporter` (extract tier), on by default; a scheduled agent, one fill a
+minute, right after the AI Trader in the scheduler's round. AI Trader fills only: orders in its own manual books.
+Other users' fills, and its strategy runs' fills, are not its.
+
+| Fill | Compared with |
+|---|---|
+| An entry | The ask its decision saw (the brief's), and the time from the look to the fill |
+| Its own exit | The bid seen just before the exit, and the time from that look |
+| A stop or a target (the risk guard) | The level |
+| The square-off at the close | Nothing: no plan price to answer to |
+
+Code computes every number (`ExecutionFacts`): slippage a unit and in all, in rupees and per cent (positive is worse:
+paid over on a buy, sold under on a sell), the time to fill, the stop and target as placed and their distance from
+the entry, the realized P&L of an exit, how the fill was priced and the quote's age. The model writes one or two
+sentences and a flag (`clean`, `slipped`, `slow`, `check`). A note with a number that is not among the facts, as given
+or rounded, is not kept: the report is `invalid`, with code's numbers in it all the same. One `ai_reports` row per fill
+(subject `order`, the paper order's id). A fill no model answered for is tried again like any failed report.
+
+### What a decision keeps
+
+`ResultJson` of a live decision, beside the `contract` a buy resolved to:
+
+| Key | When |
+|---|---|
+| `validator` | A buy or start was put to it: the outcome, the counts, the flaw and quote, each answer, the report's id |
+| `riskMemo` | The memo was asked: its status, text, `tightened`, `applied`, `ignored`, the lots, stop and target that went on |
+| `placed` | A buy was placed: `bookRunId`, `orderId`, `positionId`, `groupId`, symbol, lots and lot size, `price` and how it was priced, stop, target, the bid and ask of the quote and its time |
+| `exit` | An exit closed its position: `bookRunId`, `positionId`, `orderId`, `price`, `bidSeen` |
+| `started` / `stopped` | Its run: `runId`, strategy, underlying and lots / positions squared off |
+
+The order's signal names the decision (`source: {agent: "ai-trader", decisionId}`), so a fill traces back to it.
+
+### Its live book
 
 In live mode the rules judge its own account (`AiTraderBookReader`), and its net today is today's part only:
 
@@ -73,6 +179,11 @@ In live mode the rules judge its own account (`AiTraderBookReader`), and its net
 
 Until 1 Oct a carried position's whole P&L since entry, and every running run's whole net, counted against today's
 charges only, so a winner carried in hid the day's losses from the daily-loss rule.
+
+## Shadow mode
+
+With `Ai:AiTraderExecute` off it decides and places nothing (mode `shadow`), as it did from 1 to 9 Oct, and no
+Validator or Risk Memo is asked. In a market replay it is always so.
 
 ### The shadow book
 
@@ -329,7 +440,8 @@ close and 15:45 ([when and how often](ai.md#scheduled-agents-phase-3)). Its sect
   it): each line's net is after its own round trip's charges, and the head line's is its net today (above) after the
   charges of the day's fills. A position carried in from an earlier day names that day. Its strategy runs are
   reviewed on their own;
-- the three rules that refused it most.
+- in live mode, what the Validator blocked (rejected, or no verdict) and how many plans the Risk Memo tightened;
+- the three rules that refused it most (the Validator's blocks among them).
 
 Rupees are whole, with Indian grouping, except premiums. A replay's looks and shadow book are never in it. Off all day
 with no looks, the section is left out; on with none, it says so. On a day with no session the digest goes only if it
@@ -351,10 +463,12 @@ In live mode:
 
 ```
 AI Trader (live mode)
-Looks 3 · proposed 3 · allowed 3 · refused 0 · no answer 0
+Looks 5 · proposed 5 · allowed 2 · refused 3 · no answer 0
 Live book: 2 trades, net −₹332 after ₹137 charges
 • NIFTY 22650 CE, 1 lot: 09:30 → 09:52, ₹120 → ₹88, −₹2,142
 • NIFTY 22600 PE, 2 lots: 10:00 → 11:00, ₹81 → ₹95.5, +₹1,809
+Validator rejected 2, gave no verdict on 1 (not placed) · risk memo tightened 1
+Top refusals: validator (2), validator-unavailable (1)
 ```
 
 ## API (admin)
@@ -362,7 +476,7 @@ Live book: 2 trades, net −₹332 after ₹137 charges
 | Endpoint | What |
 |---|---|
 | `GET /api/AiTrader/status` | On or off, shadow or live, the limits, today's looks, the last three, today's shadow book |
-| `GET /api/AiTrader/decisions?day=&replay=&take=&beforeId=` | Decisions, newest first by their clock (a day's list holds that day's replays too); `beforeId` goes on after that decision's clock and id |
+| `GET /api/AiTrader/decisions?day=&replay=&take=&beforeId=` | Decisions, newest first by their clock (a day's list holds that day's replays too); `beforeId` goes on after that decision's clock and id. A live decision that placed something carries `placed`: `kind` (order, exit, run-start, run-stop), a line of text, the console `link` (its manual book's run page, or the run's), and the order, position and run ids |
 | `GET /api/AiTrader/decisions/{id}` | One decision with its brief, plan and result, and the memories its call was given |
 | `GET /api/AiTrader/positions?day=&replay=` | The shadow book: a day's or a replay's positions, net after charges |
 | `GET /api/AiTrader/scoreboard?take=` | Each replay and live shadow day against the baseline rule, with totals over full days |
@@ -373,4 +487,11 @@ Live book: 2 trades, net −₹332 after ₹137 charges
 | `POST /api/Ai/agents/ai-trader-reflect/run` | One lesson step now (`{ subjectId }`: a replay's id, to reflect on it); never 09:00–15:45 IST on a trading day |
 
 Today shows its day in an "AI Trader" card. Its last three decisions are worded as on the AI Trader page, with the
-option the plan named ("Buy NIFTY CE").
+option the plan named ("Buy NIFTY CE") and, for one that placed something, what it placed with a link. On a day it is
+live the card adds its live book's net after charges, and how many decisions were placed, rejected or given no verdict
+by the Validator, and tightened by the Risk Memo.
+
+On AI → Agents each live decision shows what it placed ("order #12", "run #77 started") on its row, and in full, with
+a link to its manual book or the run, when it is opened. The mode badge says Live. The Validator's, the Risk Memo's
+and the Execution Reporter's records are on the Reports tab, and each can be talked with on AI → Assistant
+([AI workspace](ai.md#the-checks-around-the-ai-trader)).

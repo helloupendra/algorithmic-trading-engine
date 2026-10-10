@@ -8,12 +8,14 @@ The desk's hosted language models live on one console page. The page shows:
 - every call it made, in full;
 - the owner's own questions, streamed.
 
-Four agents are built:
+These agents are built:
 - the **Desk Assistant**, which the owner asks and which reads the desk through read-only tools (Phase 2);
 - three scheduled, advisory agents from Phase 3: the **Trade Reviewer**, the **News Analyst** and the
-  **Incident Explainer**.
+  **Incident Explainer**;
+- the [AI Trader](ai_trader.md), and from 10 Oct the three checks around its live paper orders: the **Validator**, the
+  **Risk Memo** and the **Execution Reporter** ([below](#the-checks-around-the-ai-trader)).
 
-The other ten are listed as planned, with the phase that builds them, so the page shows the whole plan and not just
+The rest are listed as planned, with the phase that builds them, so the page shows the whole plan and not just
 what runs. The owner can talk with each built agent, the [AI Trader](ai_trader.md) included, not only the Desk
 Assistant ([Talking to the agents](#talking-to-the-agents)).
 
@@ -378,7 +380,25 @@ Endpoints, admin only:
 | `GET reports?agent=&subjectType=&status=&date=&take=&beforeId=` | Reports, newest first |
 | `GET reports/{id}` | One report: body and data |
 | `GET reports/stats?days=` | Per agent and day: ok, invalid, failed, and the valid share |
-| `POST agents/{key}/run` | `{ subjectId }` (a run or incident id, a replay's id for `ai-trader-reflect`, or none for the next due work). Runs in the background and answers 202; the report appears when the model has answered. |
+| `POST agents/{key}/run` | `{ subjectId }` (a run or incident id, a replay's id for `ai-trader-reflect`, an AI Trader order's id for `execution-reporter`, or none for the next due work). Runs in the background and answers 202; the report appears when the model has answered. |
+
+## The checks around the AI Trader
+
+Built 10 Oct, when the AI Trader began placing paper orders in its own account (owner: every AI part on). All three
+**start switched on**: they call a model only when the AI Trader places something. Their records are `ai_reports` rows
+like the scheduled agents', and each has memory (`Ai:MemoryAgents`) and a chat persona. The whole path is in
+[AI Trader](ai_trader.md#how-a-plan-becomes-an-order).
+
+| Agent | When | Reads | Writes | Its say |
+| --- | --- | --- | --- | --- |
+| Validator / Skeptic (`validator`, judge) | Before each AI Trader buy or strategy start the rules allowed, in live mode; asked three times, sampled (temperature 0.7) | The plan, the contract and its price, the rules' verdict, the market brief the plan rests on | ACCEPT or REJECT, the flaw, the brief's own words that show it, a confidence; one report per decision (subject `decision`) | Two REJECTs block the placement. No majority blocks it too: the desk **fails closed** (a provider down, answers not the JSON asked for, a REJECT whose quote is not in the brief, the agent switched off) |
+| Risk Memo (`risk-memo`, judge) | After the Validator accepts, once | The plan, its price, the rules' verdict, what it loses at its stop, the owner's limits, the account's exposure | A memo, and fewer lots, a higher stop or a lower target; one report per decision | Code applies only a change that is tighter and still valid, and ignores anything looser. It never blocks: with no memo the plan goes on unchanged |
+| Execution Reporter (`execution-reporter`, extract) | A scheduled agent: one AI Trader fill a minute, entry or exit, from the last two days | The fill, how it was priced, the position, the decision behind it | A note and a flag (clean, slipped, slow, check) beside code's numbers: slippage in rupees and per cent against the price the decision saw (the ask, its exit's bid, the stop or target), the time to fill, the stop and target as placed; one report per fill (subject `order`) | None: it reads fills after they happen. A note with a number not among the facts is `invalid`, code's numbers kept |
+
+The Validator and the Risk Memo are asked by the AI Trader itself, outside its book gate, not by the scheduler, so
+they have no "Run now"; the Execution Reporter has one (`POST agents/execution-reporter/run`, `{ subjectId }` an AI
+Trader order's id, or none for the next fill due). Other users' fills are never reported. On Reports a decision's
+records link to the AI Trader's panel and a fill's to its manual book.
 
 ## Docs search
 
@@ -518,6 +538,7 @@ cannot be asked (409), as the Desk Assistant cannot.
 | Trade Reviewer | `get_trade_reviews`: a day's, a run's or the last days' reviews, by verdict, with the run's strategy and account, and the totals by verdict. `get_trade_review`: one in full (journal, deviations, stale fills, the lesson, a second review's verdict). And the tools its reviews use: `get_runs`, `get_run`, `get_strategy_spec`, `get_quotes`, `get_option_chain_summary`. |
 | News Analyst | `get_news_events`: its records by the items' publication time (default the last 24 hours), by direction, event or symbol, with the items in the window it has not read yet counted. `get_news_event`: one record with the item and the exact text it read (`NewsAnalystAgent.HeadlineText`, `FilingText`). `get_news`: the items themselves. |
 | Incident Explainer | `get_incidents`; `get_incident`: one incident with every evidence line, masked, and its explanation; `get_incident_explanations`: its explanations of the last days beside their incidents. And `get_latest_checkup`, `get_runs`, `get_open_positions`, `get_quotes`. |
+| Validator, Risk Memo, Execution Reporter | `get_ai_trader_checks`: the three's records for an IST day, or on one decision (its verdict, its memo and the notes on the fills it made), by agent, with each record's structured part. And `get_ai_trader_decisions`, `get_ai_trader_decision`: the decisions they were about, with what was placed. |
 
 Every chat tool only reads and is projected field by field, its free text masked like the desk tools'
 (`AiAgentChatToolTests`). A call runs only the tools it offered: a model that names another agent's tool is told the
@@ -544,7 +565,7 @@ memories its record lists.
 
 **On the console** (AI → Assistant):
 - A picker above the conversation: Desk Assistant (the default), AI Trader, Trade Reviewer, News Analyst, Incident
-  Explainer. The choice survives a reload; `/ai/assistant?agent=ai-trader` opens one, and each agent's panel on AI →
+  Explainer, and from 10 Oct the Validator, the Risk Memo and the Execution Reporter (console only, no Telegram prefix). The choice survives a reload; `/ai/assistant?agent=ai-trader` opens one, and each agent's panel on AI →
   Agents links to it ("Talk with it").
 - One conversation per agent while the page is open: switching back finds it as it was, and an answer streams on in
   its own conversation. One question at a time across them.
@@ -562,8 +583,9 @@ alone switches without asking. An answer from another agent than the Assistant n
 The models do not learn: their weights are the provider's. What an agent learns is kept as **memories**, short
 notes put into its system prompt on every call (`AiMemoryBook`). Each one can be read, edited, traced to where it
 came from, and taken out. Every built agent has memory (`Ai:MemoryAgents`): the Desk Assistant from the morning of
-1 Oct, the Trade Reviewer, News Analyst and Incident Explainer from that afternoon, once they were all switched on, and
-the AI Trader from 2 Oct, for the lessons it learns from its own days ([AI Trader](ai_trader.md#lessons)).
+1 Oct, the Trade Reviewer, News Analyst and Incident Explainer from that afternoon, once they were all switched on,
+the AI Trader from 2 Oct, for the lessons it learns from its own days ([AI Trader](ai_trader.md#lessons)), and the
+Validator, the Risk Memo and the Execution Reporter from 10 Oct.
 
 | Kind | Written by | Used |
 |---|---|---|
